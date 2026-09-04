@@ -331,17 +331,32 @@ describe("findCandidates — mime-keyed cloud services (PR 3)", () => {
   });
 
   // Important 2: arm 1 must match by the EXACT (service, type) pair, not by type alone. Uses the
-  // one real ITEM_TYPE_MODALITY pair (`filesystem:media_av`) as the collision partner — a
-  // DIFFERENT service using the SAME type name must not ride along on a type-only `IN (...)`.
-  test("arm 1 matches by the exact (service, type) pair, not by type alone", () => {
+  // one real ITEM_TYPE_MODALITY pair (`filesystem:media_av`) as the collision partner. A
+  // single-row DB can't discriminate a type-only arm 1 from a pair-keyed one — the JS loop drops
+  // an unregistered pair either way when nothing else competes for the LIMIT — so this mirrors
+  // the starvation shape: 5 unregistered `another_service:media_av` rows sort BEFORE the one real
+  // `filesystem:media_av` row by id. Under a bare `src.type IN (...)`, SQL admits all 6, LIMIT 5
+  // keeps only the 5 impostors, and the JS loop drops every one of them — the real candidate never
+  // reaches the page. Pair-keyed, SQL admits only the 1 real row.
+  test("arm 1 matches by the exact (service, type) pair, not by type alone — under-fill via LIMIT", () => {
     const cloud = freshIndexDb();
+    for (let i = 0; i < 5; i += 1) {
+      insertItem(cloud, {
+        id: `another_service:a${i}`,
+        service: "another_service",
+        type: "media_av",
+        metadata: {},
+      });
+    }
     insertItem(cloud, {
-      id: "some_other_service:s1",
-      service: "some_other_service",
+      id: "filesystem:real.mp4",
+      service: "filesystem",
       type: "media_av",
-      metadata: {},
+      metadata: { path: "/m/real.mp4" },
     });
-    expect(findCandidates(cloud, { limit: 10 })).toHaveLength(0);
+    expect(findCandidates(cloud, { limit: 5 }).map((c) => c.itemId)).toEqual([
+      "filesystem:real.mp4",
+    ]);
   });
 
   test("a Drive FOLDER is excluded — its mime fails every pattern", () => {
