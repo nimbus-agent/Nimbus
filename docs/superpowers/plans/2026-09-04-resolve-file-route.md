@@ -531,19 +531,72 @@ Append inside the existing `describe` block:
       stop();
     }
   });
+
+  // A GitLab project nests arbitrarily deep, so `repo` ITSELF carries slashes. A different
+  // parameter from the slashy ref above and a different risk: `/` has to survive URLSearchParams
+  // encoding it as `%2F` and this route decoding it back. A truncated `repo` would answer
+  // `remote_not_tracked` and read as an ordinary miss rather than a bug.
+  test("a deep GitLab subgroup survives as the repo coordinate", async () => {
+    const { port, token, db, stop } = await startServerWithClipToken(["resolve"]);
+    try {
+      seedTrackedRepo(db, {
+        remote: "gitlab:org/team/subgroup/repo",
+        root: "/home/d/sub",
+        files: ["src/foo.ts"],
+      });
+      const res = await get(
+        port,
+        token,
+        coord("gitlab", "org/team/subgroup/repo", "main/src/foo.ts"),
+      );
+      expect(res.status).toBe(200);
+      expect(await res.json()).toEqual({ ok: true, path: "src/foo.ts" });
+    } finally {
+      stop();
+    }
+  });
+
+  // Nothing leaves the machine, so nothing belongs in the ledger of what did. Asserted as a
+  // DELTA rather than `=== 0`: what must hold is that RESOLVING appends nothing, and a test
+  // pinned to an empty table would start failing for an unrelated row the server wrote at boot.
+  test("appends no egress row", async () => {
+    const { port, token, db, stop } = await startServerWithClipToken(["resolve"]);
+    try {
+      seedTrackedRepo(db, {
+        remote: "github:acme/web",
+        root: "/home/d/web",
+        files: ["src/foo.ts"],
+      });
+      const ledgerRows = (): number =>
+        (db.query("SELECT COUNT(*) AS n FROM egress_ledger").get() as { n: number }).n;
+      const before = ledgerRows();
+      const res = await get(port, token, coord("github", "acme/web", "main/src/foo.ts"));
+      expect(res.status).toBe(200);
+      expect(ledgerRows()).toBe(before);
+    } finally {
+      stop();
+    }
+  });
 ```
 
-**Not tested here, and not a gap:** the spec's §4.5 second property — several checkouts of one
-remote resolving to the most recently indexed, stably — is already covered at the unit level by
-`packages/gateway/src/index/resolve-file-by-remote.test.ts` ("two worktrees on one remote resolve
-to the one that has the file, stably" and "the more recently indexed checkout wins"). The route
-neither overrides nor exposes that choice, so a second copy through HTTP would assert nothing new.
+**Two things deliberately not tested here, neither of them a gap.** Both are resolver properties
+already pinned at the unit level in `packages/gateway/src/index/resolve-file-by-remote.test.ts`,
+and the route neither overrides nor exposes either, so an HTTP-level copy would assert nothing the
+unit test does not:
+
+- **Multi-worktree precedence** (spec §4.5) — "two worktrees on one remote resolve to the one that
+  has the file, stably" and "the more recently indexed checkout wins".
+- **Remote casing** — "remote casing does not decide the answer", covering the resolver's
+  `LOWER(r.external_id) = LOWER(?)` comparison.
+
+The GitLab-subgroup and encoding tests above are a different matter and DO belong here: both are
+about what survives the query string, which is this route's own boundary, not the resolver's.
 
 - [ ] **Step 2: Run the file**
 
 Run: `bun test packages/gateway/test/integration/http/items-resolve-file-route.test.ts`
 
-Expected: PASS — 12 tests.
+Expected: PASS — 14 tests.
 
 - [ ] **Step 3: Run the whole gateway suite for regressions**
 
@@ -650,3 +703,36 @@ git commit -m "docs(egress): resolve-file is now the newest local read most mist
 ## After the plan
 
 The client half is **not** in this plan and is not blocked by it — see the spec's §8. On its own branch in `nimbus-web-clipper`: a `file-lanes.e2e.ts` against the mock gateway that already serves this route, the `docs/development.md` manual step that currently says only one side can be run, and the ROADMAP C7.1 flip from 🟡 to 🟢 once this ships in a release. Two defects in that repo's committed C7 review ride along there too: its `< 7.8.1` version guess (the gateway is already at 7.9.0 with no route) and its 32 absolute `file:///C:/gitrep/...` links.
+
+---
+
+## Review responses
+
+The [plan review](./2026-09-04-resolve-file-route-review.md) raised six items. Two changed the
+plan; four did not.
+
+| Item | Disposition |
+| --- | --- |
+| Q2.1 coordinate trimming | **No change** — the review reaches the plan's own conclusion: uniform across all three params, untrimmed, matching `handleItemsResolve` |
+| Q2.2 casing over the wire | **Deferred** — already pinned by a resolver unit test; recorded in Task 3's "not a gap" note |
+| Q2.3 zero-egress assertion | **Accepted, mechanism corrected** — Task 3 |
+| I3.1 Sonar S3776 | **No change** — Task 1 Step 4 already shows the one-line guard, Step 7 already carries the note |
+| I3.2 Biome import order | **No change** — Task 1 Step 4 already names the insertion point and why |
+| I3.3 GitLab deep subgroup | **Accepted** — Task 3 |
+
+Two notes on the two that changed.
+
+**Q2.3 is right about the invariant and wrong about where it lives.** It proposes asserting over
+`graph_entity WHERE type = 'egress_item'`. There is no such row type: the ledger is its own table,
+`egress_ledger` (V44), written by `egress/egress-ledger.ts`. The test in Task 3 queries that table
+instead, and asserts a **delta across the request** rather than a count of zero — an absolute zero
+would be a test pinned to whatever the server happens not to write at boot today, which is not the
+property being defended.
+
+**I3.3 earns its place where Q2.2 does not**, and the distinction is worth stating because it
+decides both. Casing is resolved entirely inside `resolveFileByRemote`'s SQL, so an HTTP test of it
+re-proves a unit test through a slower path. A deep GitLab subgroup puts slashes in the `repo`
+**parameter**, which has to survive `URLSearchParams` encoding `/` as `%2F` and this route decoding
+it back — that is the route's own boundary, and no unit test touches it. A truncated `repo` would
+answer `remote_not_tracked` and read as an ordinary miss rather than a bug, which is exactly the
+kind of silent wrong answer §4.3 exists to prevent.
