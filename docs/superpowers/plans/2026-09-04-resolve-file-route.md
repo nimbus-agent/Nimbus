@@ -333,7 +333,7 @@ Three tests, no production code. Every gate here is inherited from Task 1's wiri
 
 **Interfaces:**
 
-- Consumes: the route from Task 1, plus `seedTrackedRepo`, `coord` and `get` already defined in this file.
+- Consumes: the route from Task 1, plus `coord` and `get` already defined in this file. These three tests seed nothing — none of them needs a tracked repo to reach its gate.
 - Produces: nothing.
 
 - [ ] **Step 1: Widen the harness import**
@@ -424,7 +424,7 @@ Five tests, no production code. These pin behaviour inherited from `resolveFileB
 - Consumes: everything already in the file.
 - Produces: nothing.
 
-- [ ] **Step 1: Add the five resolution tests**
+- [ ] **Step 1: Add the seven resolution tests**
 
 Append inside the existing `describe` block:
 
