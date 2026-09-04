@@ -1,5 +1,9 @@
 import { describe, expect, test } from "bun:test";
-import { assertSafeUrl, isPrivateAddress, safeFetch } from "./safe-fetch.ts";
+import type { lookup } from "node:dns/promises";
+import { assertSafeUrl, isPrivateAddress, safeFetch, safeFetchFollowing } from "./safe-fetch.ts";
+
+const publicLookup = (() =>
+  Promise.resolve([{ address: "93.184.216.34", family: 4 }])) as unknown as typeof lookup;
 
 describe("isPrivateAddress", () => {
   test.each([
@@ -101,5 +105,102 @@ describe("assertSafeUrl", () => {
   });
   test("accepts a public bracketed IPv6 url", () => {
     expect(() => assertSafeUrl("https://[2606:4700:4700::1111]/x")).not.toThrow();
+  });
+});
+
+describe("safeFetchFollowing", () => {
+  test("refuses a redirect to loopback", async () => {
+    const hops: string[] = [];
+    const fetchFn = ((url: URL | string, _init?: RequestInit) => {
+      hops.push(String(url));
+      return Promise.resolve(
+        new Response(null, { status: 302, headers: { location: "http://127.0.0.1:9/x" } }),
+      );
+    }) as unknown as typeof fetch;
+
+    await expect(
+      safeFetchFollowing("https://example.test/a", {}, { fetchFn, lookupFn: publicLookup }),
+    ).rejects.toThrow(/loopback\/private/);
+    expect(hops).toHaveLength(1);
+  });
+
+  test("stops after maxHops rather than following a redirect loop", async () => {
+    let calls = 0;
+    const fetchFn = (() => {
+      calls += 1;
+      return Promise.resolve(
+        new Response(null, { status: 302, headers: { location: "https://example.test/next" } }),
+      );
+    }) as unknown as typeof fetch;
+
+    await expect(
+      safeFetchFollowing(
+        "https://example.test/a",
+        {},
+        { fetchFn, lookupFn: publicLookup, maxHops: 3 },
+      ),
+    ).rejects.toThrow(/too many redirects/);
+    expect(calls).toBe(4); // initial + 3 hops
+  });
+
+  test("STRIPS Authorization when the redirect crosses an origin", async () => {
+    const seen: (string | null)[] = [];
+    let calls = 0;
+    const fetchFn = ((_u: URL | string, init?: RequestInit) => {
+      seen.push(new Headers(init?.headers).get("authorization"));
+      calls += 1;
+      return Promise.resolve(
+        calls === 1
+          ? new Response(null, { status: 302, headers: { location: "https://cdn.other.test/b" } })
+          : new Response("BYTES", { status: 200 }),
+      );
+    }) as unknown as typeof fetch;
+
+    await safeFetchFollowing(
+      "https://api.example.test/a",
+      { headers: { Authorization: "Bearer SECRET" } },
+      { fetchFn, lookupFn: publicLookup },
+    );
+    expect(seen).toEqual(["Bearer SECRET", null]);
+  });
+
+  test("KEEPS Authorization on a same-origin redirect", async () => {
+    const seen: (string | null)[] = [];
+    let calls = 0;
+    const fetchFn = ((_u: URL | string, init?: RequestInit) => {
+      seen.push(new Headers(init?.headers).get("authorization"));
+      calls += 1;
+      return Promise.resolve(
+        calls === 1
+          ? new Response(null, { status: 302, headers: { location: "https://api.example.test/b" } })
+          : new Response("BYTES", { status: 200 }),
+      );
+    }) as unknown as typeof fetch;
+
+    await safeFetchFollowing(
+      "https://api.example.test/a",
+      { headers: { Authorization: "Bearer SECRET" } },
+      { fetchFn, lookupFn: publicLookup },
+    );
+    expect(seen).toEqual(["Bearer SECRET", "Bearer SECRET"]);
+  });
+
+  test("returns the final response when every hop is public", async () => {
+    let calls = 0;
+    const fetchFn = (() => {
+      calls += 1;
+      return Promise.resolve(
+        calls === 1
+          ? new Response(null, { status: 302, headers: { location: "https://cdn.example.test/b" } })
+          : new Response("BYTES", { status: 200 }),
+      );
+    }) as unknown as typeof fetch;
+
+    const res = await safeFetchFollowing(
+      "https://example.test/a",
+      {},
+      { fetchFn, lookupFn: publicLookup },
+    );
+    expect(await res.text()).toBe("BYTES");
   });
 });

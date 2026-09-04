@@ -1,5 +1,5 @@
 import { load as yamlParse } from "js-yaml";
-import { safeFetch } from "./safe-fetch.ts";
+import { safeFetch } from "../util/safe-fetch.ts";
 import { type ShareFile, type VerifyResult, verifyShareBytes } from "./share-format.ts";
 import { verifyForwardingChain } from "./share-forwarding.ts";
 

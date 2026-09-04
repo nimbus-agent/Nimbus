@@ -112,3 +112,53 @@ export async function safeFetch(
   }
   return doFetch(url, init);
 }
+
+const DEFAULT_MAX_HOPS = 5;
+
+/**
+ * `safeFetch` with MANUAL redirect handling, so every hop is re-validated.
+ *
+ * `safeFetch` alone validates only the URL it is handed and then lets `fetch` follow redirects on
+ * its own — so a 302 to `127.0.0.1` is followed unchecked. That matters more for a
+ * provider-returned download URL, which is pinned to nothing, than for `share/`'s config-pinned
+ * sink; and the most interesting loopback target here is this gateway's own HTTP API.
+ *
+ * Manual following additionally removes any dependency on the runtime's own header handling across
+ * an origin crossing. Bun 1.3.14 strips `Authorization` there, but relying on that would make a
+ * security property depend on undocumented behaviour a version bump could change silently.
+ *
+ * INHERITED BOUND: `safeFetch`'s DNS-rebind TOCTOU is not closed here either — see its doc comment.
+ */
+export async function safeFetchFollowing(
+  raw: string,
+  init: RequestInit,
+  deps?: SafeFetchDeps & { readonly maxHops?: number },
+): Promise<Response> {
+  const maxHops = deps?.maxHops ?? DEFAULT_MAX_HOPS;
+  let url = raw;
+  let current: RequestInit = { ...init };
+
+  for (let hop = 0; hop <= maxHops; hop += 1) {
+    // Every hop, not just the first: assertSafeUrl + the DNS check run inside safeFetch.
+    const res = await safeFetch(url, { ...current, redirect: "manual" }, deps);
+    if (res.status < 300 || res.status >= 400) return res;
+
+    const location = res.headers.get("location");
+    if (location === null || location === "") return res;
+    const next = new URL(location, url).toString();
+
+    // STRIP the credential when the origin changes. Taking over redirect handling means taking
+    // over the header stripping the runtime was doing for us — and this path is LIVE, not
+    // theoretical: a Drive `alt=media` download carries a bearer to `www.googleapis.com` and is
+    // routinely 302'd to `*.googleusercontent.com`. Forwarding it there would hand an OAuth token
+    // to a host we never authenticated to, which is the exact failure the credential rule
+    // (spec § 16.4) exists to prevent.
+    if (new URL(next).origin !== new URL(url).origin) {
+      const headers = new Headers(current.headers);
+      headers.delete("authorization");
+      current = { ...current, headers };
+    }
+    url = next;
+  }
+  throw new Error(`unsafe url: too many redirects (>${maxHops})`);
+}
