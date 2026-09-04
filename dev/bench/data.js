@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1788522777160,
+  "lastUpdate": 1788523810799,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "e0d3054499f1c9b5a383d50682de8401d04facf6",
-          "message": "refactor(dedup): Wave A — intra-package cleanups (gitlab/google-drive/cli-dispatcher/gcloud) (#696)\n\n## Summary\n\n**Wave A** of the dedup \"realistic floor\" program — pure intra-package\nextraction, **zero behaviour change** (every existing test passes\nUNEDITED; new helpers got co-located tests). Strict `bunx jscpd\npackages` **3.97% → 3.95%**; gate left at 4.0 (ratchet tightens at\nprogram end).\n\n## Targets shipped (4)\n\n| # | Extraction |\n|---|---|\n| **A5** | `cloud-logging` + `vertex-ai` gcloud `Bun.spawn` wrapper →\nshared `_lib/gcloud-runner.ts` `runGcloudCommand(argv, credPath)`\n(env-scoped via `extensionProcessEnv`, I1) + co-located test |\n| **A1** | `gitlab/server.ts` → file-local\n`registerGitlabTool(name,desc,schema,buildUrl,buildInit?)` for the 9\nstandard `glFetch`+`mcpJsonResultIfOk` tools\n(job_trace/job_log_tail/pipeline_retry/cancel keep custom tails) |\n| **A2** | `google-drive/server.ts` → file-local\n`registerDriveTool(name,desc,schema,handler)` via the shared\n`createZodToolRegistrar` (drops the manual `safeParse` boilerplate;\nidentical thrown error text) |\n| **A4** | `catchup` + `impact` CLI → shared\n`cli/src/lib/agent-cli-dispatcher.ts` `runAgentCli(...)` (exact stderr\ntext + `exit(1\\|2)` codes preserved) + co-located test |\n\n## Deferred (documented — program forbids forcing harmful abstractions)\n\n- **A3 http-server admin bearer gate** — the three handlers' 401 bodies\ngenuinely differ (`handleAdminStatus` returns JSON; metrics/console\nreturn `text/plain`), so collapsing them would be a behaviour change and\nthe truly-shared part is sub-threshold. Left as-is.\n- **A6 peer-fanout `fanOutGeneric`** — federation/I17-sensitive for a\n~0.02pt gain; not worth the risk this wave.\n- `auth.ts`, `google-meet ↔ google-photos`, `agents-rpc.ts` — per the\nspec, genuinely parallel-by-design / forced-abstraction; kept.\n\n## Honest note on impact\n\nThe number moved only ~0.02pt because collapsing *boilerplate* leaves\nthe per-call-site specifics (URL builders, param shapes) parallel, which\njscpd still counts. Wave A is primarily a **code-quality** improvement\n(less boilerplate, single source for the dispatcher/registration\nshapes). Meaningfully lowering the metric requires the\nconnector-template codegen (Wave C), tracked separately.\n\n## Verification\n\nPer-target tsc + tests green unedited · full all-package typecheck ·\nbiome · coverage-floor (only the documented false-locals remain;\n`agent-cli-dispatcher.ts` covered by its co-located test) ·\nmarkdownlint. Spec:\n`docs/superpowers/specs/2026-06-20-dedup-wave-a-design.md`.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n## Summary by CodeRabbit\n\n* **Refactor**\n* Consolidated the catchup and impact agent CLI flows behind a shared\ndispatcher.\n* Standardized gcloud execution for cloud logging sinks and Vertex AI\nmodel listing, with optional override support.\n* Centralized GitLab and Google Drive MCP tool registration for\nconsistent validation and response formatting.\n* **Bug Fixes**\n* Improved resilience when gcloud commands fail by returning controlled\nnon-success results without crashing.\n* **Tests**\n* Added tests for the shared agent dispatcher and gcloud command runner.\n* **Documentation**\n* Added “Wave A” design documentation for the deduplication initiative.\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude Opus 4.8 (1M context) <noreply@anthropic.com>",
-          "timestamp": "2026-06-20T16:41:19+03:00",
-          "tree_id": "457f575e32618bcbb1ccdeb9ca2a8d921b530807",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/e0d3054499f1c9b5a383d50682de8401d04facf6"
-        },
-        "date": 1781963600376,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 295.2505725499956,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 295.1125793499967,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 339.386614349993,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "306811640+nimbus-release-bot[bot]@users.noreply.github.com",
+            "name": "nimbus-release-bot[bot]",
+            "username": "nimbus-release-bot[bot]"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "4d6168588220e5a56db4f78cc4b728f6cfdc9705",
+          "message": "chore: release main (#1446)\n\n:robot: I have created a release *beep* *boop*\n---\n\n\n<details><summary>7.9.0</summary>\n\n##\n[7.9.0](https://github.com/nimbus-agent/Nimbus/compare/v7.8.2...v7.9.0)\n(2026-09-04)\n\n\n### Features\n\n* **multimodal:** image understanding and sampled frame captions (S2 PR\n2 of 4) ([#1438](https://github.com/nimbus-agent/Nimbus/issues/1438))\n([a24300a](https://github.com/nimbus-agent/Nimbus/commit/a24300a76e03d90a1cbe44833330a3b2a22dee35))\n\n\n### Bug Fixes\n\n* **ci:** retry a status-less transport failure in the dependency audit\n([#1441](https://github.com/nimbus-agent/Nimbus/issues/1441))\n([4b1948b](https://github.com/nimbus-agent/Nimbus/commit/4b1948b79b57a7b66865dea4f7134306d0efbce9))\n* **ci:** the sdk release-train tagPattern never matched a real tag, and\nthat only warned\n([#1445](https://github.com/nimbus-agent/Nimbus/issues/1445))\n([19a371c](https://github.com/nimbus-agent/Nimbus/commit/19a371c3d9e6251a208e2c20655204b44d59e6cc))\n* **llm:** a provider named __proto__ vanished from the availability map\n([#1442](https://github.com/nimbus-agent/Nimbus/issues/1442))\n([c16855a](https://github.com/nimbus-agent/Nimbus/commit/c16855a7d09ba90cb129173852bfa281092ba114))\n</details>\n\n---\nThis PR was generated with [Release\nPlease](https://github.com/googleapis/release-please). See\n[documentation](https://github.com/googleapis/release-please#release-please).\n\nCo-authored-by: nimbus-release-bot[bot] <306811640+nimbus-release-bot[bot]@users.noreply.github.com>",
+          "timestamp": "2026-09-04T11:59:19Z",
+          "tree_id": "25c4ed7a7266b550cd5c530570e549d9b7ba25c0",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/4d6168588220e5a56db4f78cc4b728f6cfdc9705"
+        },
+        "date": 1788523808211,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 218.39620065000236,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 224.18166304999323,
             "unit": "ms"
           }
         ]
