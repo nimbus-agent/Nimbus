@@ -1376,7 +1376,7 @@ describe("fetchCloudBytes", () => {
       fetchFn: async () => new Response(null, { status: 429, headers: { "retry-after": "0" } }),
     });
     const r = await fetchCloudBytes(imageCandidate, providerUrl, deps);
-    expect(r).toEqual({ ok: false, stop: "rate_limited" });
+    expect(r).toEqual({ ok: false, stop: "rate_limited", fetched: 0 });
   });
 
   test("a 404 is a per-item fetch_miss, not a run stop", async () => {
