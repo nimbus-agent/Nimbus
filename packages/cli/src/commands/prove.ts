@@ -73,15 +73,20 @@ export const COVERAGE_CLASS_LABELS: Readonly<Record<string, string>> = {
   // "runs", not "calls": a scheduled sync is a paginated RUN that can make many upstream calls and
   // ledgers ONE row for the whole run (`sync/scheduler.ts`'s `appendSyncEgress`); a targeted
   // fetch-on-miss call (`POST /v1/items/fetch`, `sync/targeted-fetch.ts`'s `appendEgress`) ledgers
-  // one row for its one call. Both land through the same appender
+  // one row for its one call; a cloud media byte-fetch attempt (Google Photos/Drive/OneDrive,
+  // `multimodal/cloud-bytes.ts`'s `appendEgress`, one row per attempt including retries) ledgers
+  // one row per attempt. All three land through the same appender
   // (`egress/sync-egress.ts`'s `recordSyncEgress`), and "runs" is the word that does not overclaim
-  // the scheduled-sync half of the pair — "calls" would read as per-call precision this class does
+  // the scheduled-sync third of the set — "calls" would read as per-call precision this class does
   // not have. "configured", not unqualified "connector": `sync/scheduler.ts`'s `runJob` skips the
   // append entirely for a connector `isConnectorConfigured` (`sync/connector-configured.ts`) says
   // is unconfigured — the connector's own `sync()` still runs (and, for six of them, still fails
   // loudly), it just makes no outbound call and ledgers no row — so a zero here means no
-  // CONFIGURED connector's sync/fetch ran, not that no syncable on the scheduler executed at all.
-  sync: "configured connector sync runs and targeted fetch-on-miss calls",
+  // CONFIGURED connector's sync/fetch/byte-fetch ran, not that no syncable on the scheduler
+  // executed at all. The cloud byte-fetch arm has its own, separately-implemented analogue: it
+  // skips (and ledgers nothing) when `bearerFor` cannot resolve a usable OAuth grant for the
+  // candidate's service, rather than consulting `isConnectorConfigured`.
+  sync: "configured connector sync runs, targeted fetch-on-miss calls, and cloud media byte-fetches",
   // NOT "model calls". Covers every non-local ROUTE in the router's table (all callers, via the
   // provider wrapper `egress/model-egress.ts`), the Mastra engine agent (a second appender at the
   // AI-SDK seam, since it resolves its model outside the route table entirely), and remote

@@ -166,7 +166,9 @@ describe("formatProveResult", () => {
       chainOk: true,
       label: "during this query",
     });
-    expect(out).toContain("configured connector sync runs and targeted fetch-on-miss calls");
+    expect(out).toContain(
+      "configured connector sync runs, targeted fetch-on-miss calls, and cloud media byte-fetches",
+    );
     // The bare fallback never fires: a lone "sync" (unlabelled) would appear as its own
     // comma-delimited scope-clause token, which this rules out without over-matching the labelled
     // occurrence above (which contains the substring "sync" too, inside "targeted fetch-on-miss").
