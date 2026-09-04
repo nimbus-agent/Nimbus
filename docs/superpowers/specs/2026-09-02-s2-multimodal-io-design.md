@@ -820,3 +820,252 @@ sections above have been corrected in place to match rather than left to disagre
    (`wrapLedgeredVlm`, D22(g)), so a rule scanning for those two free-function identifiers would
    pass over the real shape and enforce nothing. Recorded here so PR 4 writes D27(a) against what
    actually exists by then.
+
+---
+
+## 16. PR 3 — the cloud arm (design, 2026-09-04)
+
+PR 3 gives the pass access to media that lives in a connected service rather than under
+`[[filesystem.roots]]`. Until it lands, multimodal understanding is structurally cut off from the
+~90 connectors that are the rest of the product: the recorded call in Drive, the screenshot in a
+OneDrive folder and the photo library are all invisible to it.
+
+**Scope: `google_photos`, `google_drive`, `onedrive`.** Zoom is dropped from this PR — see § 16.7.
+
+### 16.1 § 12.5 is wrong: this is a single-repo change
+
+§ 12.5 states that "every connector that gains `fetchBytes` is a change in `nimbus-mcp-servers`,
+not in this repo". That is false for all three target services. Their sync logic lives **here** and
+calls the provider's HTTPS API directly from the gateway process — none of them reaches the MCP
+subprocess mesh:
+
+| Service | Where it fetches | What it already indexes |
+| --- | --- | --- |
+| `google_photos` | `photoslibrary.googleapis.com` (`google-photos-sync.ts`) | `metadata.mimeType`, `metadata.baseUrl` |
+| `google_drive` | `googleapis.com/drive/v3` (`google-drive-sync.ts`) | `size`, `mimeType`, `type: "file"` |
+| `onedrive` | Microsoft Graph (`onedrive-sync.ts`) | size, mime, `type: "file"` |
+
+The gateway-side capability is still service-agnostic, so a connector whose sync genuinely lives in
+`nimbus-mcp-servers` remains additive later. But PR 3 itself coordinates no second repo.
+
+### 16.2 Placement
+
+- `multimodal/cloud-bytes.ts` — **new.** Owns dispatch, the byte caps, the scratch-file lifecycle
+  and the egress append. The cloud analogue of `media-bytes.ts`'s local arm.
+- `media-bytes.ts` — gains the cloud arm alongside `resolveLocalMediaPath`, so the gate keeps ONE
+  byte-acquisition collaborator rather than branching on modality at the call site.
+- Per-service URL resolution + rendition selection lives **next to each connector's sync**, where
+  the auth and API knowledge already is, reached through a `fetchBytes` capability minted in
+  `sync/sync-capabilities.ts` (the sole D24 exemption, per § 5.2).
+
+`MediaCandidate` needs no change: `sourcePath: string | null` already carries "null for a cloud
+artifact (PR 3)", and `sourceMime` / `sourceBytes` are already there.
+
+### 16.3 The return type becomes a union, and § 5.4's disk rule must be restated
+
+Images want bytes in memory (base64 to the VLM, nothing written). AV wants a seekable file, because
+`whisper-cli` takes a path and ffmpeg needs to seek an MP4 whose `moov` atom is at the end (§ 5.4).
+So byte acquisition returns `{ kind: "path" } | { kind: "bytes" }`, and the cloud AV arm streams its
+download to a 0600 gateway-owned scratch file.
+
+**This falsifies a claim that currently appears in this spec, in `CLAUDE.md` and in
+`docs/roadmap.md`:** that the one transcode WAV is "the ONLY file this subsystem writes, on any
+arm". Cloud AV writes two — the downloaded artifact and its transcode. Restated rather than shaved:
+
+> The image path writes nothing, on either arm. The AV path writes at most **two** 0600
+> gateway-owned scratch files — the downloaded artifact (cloud arm only) and its transcode — both
+> deleted in a `finally` and both swept at pass start.
+
+The start-of-pass sweep (§ 5.4) must learn the second filename pattern. Without that, a crash
+mid-download leaves decoded media of the user's recording on disk indefinitely, which is precisely
+the hazard the sweep exists for.
+
+### 16.4 Credential rule: a credential is attached only to a URL we constructed ourselves
+
+§ 5.2 routes the cloud arm through `sync/fetch-host-boundary.ts`. **It should not**, for two
+independent reasons.
+
+*Mechanically it does not fit.* The host boundary is exact-match with no guessing fallback, and
+these download hosts rotate: Photos serves bytes from `lh3.googleusercontent.com`, OneDrive from a
+per-item `@microsoft.graph.downloadUrl` on a rotating SharePoint/1drv host. Neither is derivable
+from configured connector credentials, so both would miss the map and be refused.
+
+*Conceptually it is the wrong instrument.* The host boundary answers "a **caller** handed me a URL
+— is it fetchable, and for which service?" That is the untrusted-URL problem, and it is why
+`targeted-fetch.ts` must consult it before any connector is reached. Here the URL is not
+caller-supplied: it is produced by an authenticated API response, in our own session, for an item
+already in the index. The threat that remains is different — a hostile or compromised provider
+response naming a host we then hand a bearer token to. So the rule that replaces it is narrower and
+checkable:
+
+> **A credential is attached only to a URL this codebase constructed itself.**
+>
+> - `google_drive` — we build `drive/v3/files/{id}?alt=media` against the fixed
+>   `www.googleapis.com` host. Bearer attached.
+> - `google_photos` — `baseUrl` is provider-returned and **pre-signed**. Fetched with **no**
+>   `Authorization` header.
+> - `onedrive` — `@microsoft.graph.downloadUrl` is provider-returned and **pre-signed**. Fetched
+>   with **no** `Authorization` header.
+>
+> A provider-returned URL is additionally pinned to `https:`. A response naming any host it likes
+> therefore learns nothing: there is no credential on the request.
+
+This is a stronger property than a host allow-list would give, and it does not rot when a provider
+changes CDN hosts.
+
+### 16.5 Modality resolution gains a mime-keyed arm
+
+`google_drive` and `onedrive` index everything as `type: "file"` (`google-drive-sync.ts:170`,
+`onedrive-sync.ts:97`), so `modalityForItem(service, type)` cannot resolve them. Modality for those
+two comes from `metadata.mimeType`.
+
+That does not weaken the registry's "never defaulted — guessing the modality means handing bytes to
+the wrong model" rule: a mime type is the **provider's own declaration**, not our inference. An item
+with no mime, or a mime outside the registry, is still skipped as `unresolvable_modality`.
+`google_photos:photo` keeps the type-keyed lookup and reads mime only to split image from video.
+
+### 16.6 Photos re-resolves rather than trusting the indexed URL
+
+A Google Photos `baseUrl` expires roughly an hour after issue, so the indexed one is dead in almost
+every case. The fetch re-resolves it via `mediaItems/{id}` in the same authenticated call that
+would have been needed anyway.
+
+Worth naming because it is the same rule as § 5.1's — never trust the URL or path stored on the
+item — arrived at from the opposite direction. Locally the reason is security (roots may have
+narrowed); here it is plain correctness. One rule, two justifications, no exceptions.
+
+### 16.7 Zoom is dropped from PR 3, and the reason is not cost
+
+`zoom-sync.ts` indexes `zoom:meeting` and `zoom:transcript` and **explicitly skips every recording
+file whose `file_type` is not `TRANSCRIPT`** (line 181). Two consequences:
+
+1. There is **no indexed item** for a Zoom recording's video or audio, so the pass has nothing to
+   discover. PR 3 would first have to add a `zoom:recording` item type — a connector sync change, a
+   new item type and its embedding-routing decision, inside a PR whose subject is byte-fetch.
+2. Zoom **already supplies the transcript**, converted from VTT to plain text and indexed. The
+   thing this slice adds for AV already exists for Zoom, produced by the provider, and more
+   accurately than local `whisper-cli` would produce it.
+
+So Zoom's remaining value here is frame captions of a recording, plus meetings where Zoom's own
+transcription was disabled. Real, but a different job — recorded as a follow-up scoped honestly as
+"index Zoom recording files and caption their frames", not as part of the cloud byte-fetch arm.
+
+### 16.8 Renditions: originals by default, with the choice made discoverable
+
+§ 12.9 deferred rendition choice to a per-connector cadence on the assumption that it was a
+cross-repo negotiation. It is not (§ 16.1): for two of the three services a cheaper representation
+is a different URL, not a negotiation.
+
+| Service | Cheap rendition | Mechanism |
+| --- | --- | --- |
+| `google_photos` | bounded long edge; transcoded video | `baseUrl` suffix `=w2048-h2048` / `=dv` |
+| `onedrive` | image thumbnail renditions | Graph `/thumbnails` |
+| `google_drive` | none | `alt=media` or nothing |
+
+**The default is originals.** A downscale is a real quality loss on the one workload where this
+subsystem is already weakest — § 12.10 concedes VLM OCR on a dense screenshot is materially worse
+than a purpose-built pass, and downscaling makes that worse still. So the owner chooses, and the
+design's job is to make sure they are actually offered the choice rather than nominally given a
+config key. Three mechanisms:
+
+1. **A flag, not only a key.** `nimbus media understand --renditions | --originals`, so it appears
+   in `--help` and in `docs/cli-reference.md`. `[multimodal] prefer_renditions` (default `false`)
+   persists the choice; the flag wins for a single run.
+2. **The decision arrives before the bytes move** (§ 16.9).
+3. **The run summary reports the counterfactual** — bytes fetched, and what the other choice would
+   have cost — so the option stays visible to a user who never trips the budget.
+
+**Disclosure.** The derived item's body states which rendition it was understood from. "Captioned
+from a 2048px render" and "captioned from the original" are different claims, and § 12.3 / § 12.8
+already hold this subsystem to saying which one it is making.
+
+### 16.9 The budget: priced up front where possible, enforced on the running total always
+
+A pre-flight total alone would be dishonest, because the sizes are not uniformly available: Drive
+and OneDrive index a byte size, **Google Photos does not** — its `mediaMetadata` carries width and
+height and no byte count. Printing an inferred total for a photo library would present an estimate
+as a measurement, which is the failure mode this document's honesty rules exist to prevent.
+
+Two layers instead:
+
+- **Pre-flight prices what it knows and names what it does not:**
+
+  ```text
+  200 artifacts · 143 with known size ≈ 3.9 GB · 57 unknown (google_photos indexes no byte size)
+  Refusing: known bytes exceed [multimodal] fetch_budget_bytes (2 GB).
+
+    --renditions   fetch downscaled/audio-only where available
+    --originals    fetch as-is, this run only
+  ```
+
+- **A running total aborts mid-pass** when actually-fetched bytes cross `fetch_budget_bytes`,
+  reporting where it stopped. This is the layer that binds for Photos, and it is nearly free: the
+  V58 cursor already makes the pass resumable, so stopping is a first-class outcome rather than a
+  failure. The summary says the run was budget-stopped and is resumable — never a bare count.
+
+The refusal is deliberate rather than a warning. This pass is non-interactive and about to move
+gigabytes over someone's connection and quota; § 6.4's principle — a budgeted, enumerated set
+approved once, up front — applies to bandwidth as much as to consent. The cost is that a first run
+against a large library fails once before it works, which is the point.
+
+Per-modality caps (§ 5.3, `max_image_bytes` / `max_media_bytes`) are unchanged and still **refuse
+rather than truncate**; they bound a single artifact, `fetch_budget_bytes` bounds a run.
+
+New config keys, both under `[multimodal]`:
+
+| Key | Default | Meaning |
+| --- | --- | --- |
+| `fetch_budget_bytes` | `2_147_483_648` (2 GiB) | Per-run ceiling on cloud bytes fetched. Refuses pre-flight on known sizes; aborts mid-run on the actual running total. |
+| `prefer_renditions` | `false` | Fetch a cheaper representation where the service offers one. `--renditions` / `--originals` override for one run. |
+
+### 16.10 Skip reasons
+
+Two joins to the `SkipReason` union, reusing `targeted-fetch.ts`'s vocabulary rather than a parallel
+one (§ 5.2): `not_configured` and `rate_limited`. `fetch_miss` already covers a deleted or
+unreadable artifact. `budget_exhausted` is **not** a skip reason — a budget stop ends the run, and
+recording it per-item would misreport artifacts that were never attempted as artifacts that failed.
+
+### 16.11 Egress: no new class, but I29's enumeration widens
+
+Each byte-fetch appends one `sync`-class row **before** the request, through
+`egress/sync-egress.ts`'s existing appender, fail-closed — an append failure aborts the fetch.
+`payload_summary` records byte length, mime and modality; never pixels, never transcript text.
+`nimbus prove` needs no new vocabulary.
+
+But I29 currently documents the `sync` class as *"`sync/scheduler.ts` appends one row per scheduled
+sync RUN and `sync/targeted-fetch.ts` appends one row per targeted single-item fetch"*. This makes
+it **three** appenders. Per the sweep-enumerations rule, the fix is to re-derive the list and not
+merely bump a count, in all three places that carry it: `CLAUDE.md`, `docs/SECURITY-INVARIANTS.md`
+and the `nimbus-egress` skill.
+
+**No `I37` in this PR.** I37 governs a media body reaching a non-local model; PR 3 adds no remote
+model, so the invariant would have nothing to bite on and shipping it here would leave it documented
+and inert — the exact failure § 5.4 was written to avoid. I37 and D27 stay with PR 4.
+
+### 16.12 Testing
+
+- **Per-service URL resolvers are tested against recorded real API response shapes**, not
+  hand-written fakes. A fake proves the ends and never the wire, and this repo has been bitten by
+  that repeatedly; the shapes here (`mediaItems.baseUrl`, `@microsoft.graph.downloadUrl`,
+  `files.get?alt=media`) are exactly where a fake would agree with itself and disagree with Google.
+- **The credential rule is red-provable and written as what cannot pass:** a test asserts that a
+  request to a provider-returned URL carries **no** `Authorization` header, and that a
+  provider-returned `http:` URL is refused. An allow-list-shaped assertion ("the bearer went to the
+  right host") would pass a request that also leaked the token elsewhere.
+- **The scratch-file sweep is tested for the second pattern**, including the crash case: a file left
+  by a dead process is swept, and a concurrent pass's file younger than the sweep age is not.
+- **The budget abort is tested on the running total**, with Photos-shaped candidates that have no
+  indexed size — the case pre-flight cannot see.
+- **One end-to-end acceptance run** against a real cloud artifact, producing an observed
+  `video_understanding` row carrying a non-empty transcript AND at least one frame caption. This is
+  the run that closes § 12.1's still-open claim: Phase 14 Core acceptance is currently recorded in
+  `CLAUDE.md` as "structurally satisfiable, not verified end-to-end", and it stays that way until a
+  real recording has been through the pass. Manual and machine-dependent (local `whisper-cli` + a
+  vision-capable Ollama model), so it is recorded as performed with its output, not automated.
+
+### 16.13 Docs to update on landing
+
+Beyond § 14's list: `CLAUDE.md` and `docs/roadmap.md` both carry the "only file this subsystem
+writes" sentence (§ 16.3) and the I29 `sync`-appender enumeration (§ 16.11). Both are restatements
+of a fact changed here, and a correction that lands at only one of them is the drift this project
+has hit repeatedly.
