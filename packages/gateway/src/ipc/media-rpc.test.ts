@@ -14,6 +14,8 @@ const SUMMARY: MediaPassSummary = {
     path_outside_roots: 0,
     transcode_failed: 0,
     transcribe_failed: 0,
+    not_configured: 0,
+    rate_limited: 0,
   },
   lastItemId: "filesystem:/m/a.mp4",
   stopReason: "completed",
