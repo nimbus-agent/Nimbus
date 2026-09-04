@@ -10,7 +10,11 @@
  * the column is never free-form text.
  */
 import type { Database } from "bun:sqlite";
-import { mediaItemTypesForModality, modalityForItem } from "./media-source-registry.ts";
+import {
+  mediaItemTypesForModality,
+  mediaSourceBytes,
+  modalityForItem,
+} from "./media-source-registry.ts";
 import { type MediaCandidate, type MediaModality, UNDERSTANDING_VERSION } from "./media-types.ts";
 
 export interface DiscoveryOptions {
@@ -89,7 +93,7 @@ export function findCandidates(db: Database, opts: DiscoveryOptions): MediaCandi
       modality,
       sourcePath: stringOrNull(meta["path"]),
       sourceMime: stringOrNull(meta["mimeType"]),
-      sourceBytes: numberOrNull(meta["sizeBytes"]),
+      sourceBytes: mediaSourceBytes(row.service, meta),
     });
   }
   return out;
@@ -109,8 +113,4 @@ function parseMetadata(raw: string | null): Record<string, unknown> {
 
 function stringOrNull(v: unknown): string | null {
   return typeof v === "string" && v !== "" ? v : null;
-}
-
-function numberOrNull(v: unknown): number | null {
-  return typeof v === "number" && Number.isFinite(v) ? v : null;
 }

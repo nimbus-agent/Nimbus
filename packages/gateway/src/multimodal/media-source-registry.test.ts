@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import {
   MEDIA_EXTENSIONS,
   mediaExtensionModality,
+  mediaSourceBytes,
   modalityForItem,
 } from "./media-source-registry.ts";
 
@@ -43,5 +44,31 @@ describe("modalityForItem", () => {
   test("an unregistered pair returns undefined, never a default", () => {
     expect(modalityForItem("filesystem", "symbol")).toBeUndefined();
     expect(modalityForItem("slack", "message")).toBeUndefined();
+  });
+});
+
+describe("mediaSourceBytes", () => {
+  test("filesystem reads sizeBytes as a number", () => {
+    expect(mediaSourceBytes("filesystem", { sizeBytes: 1234 })).toBe(1234);
+  });
+
+  test("google_drive coerces its STRING size — the Drive API returns int64 as a string", () => {
+    expect(mediaSourceBytes("google_drive", { size: "8388608" })).toBe(8388608);
+  });
+
+  test("onedrive reads its numeric size", () => {
+    expect(mediaSourceBytes("onedrive", { size: 4096 })).toBe(4096);
+  });
+
+  test("google_photos has no size at all — null, not zero", () => {
+    expect(mediaSourceBytes("google_photos", { width: "4032", height: "3024" })).toBeNull();
+  });
+
+  test("a non-numeric string is null, not NaN", () => {
+    expect(mediaSourceBytes("google_drive", { size: "not-a-number" })).toBeNull();
+  });
+
+  test("an unknown service is null rather than guessing a key", () => {
+    expect(mediaSourceBytes("slack", { size: 99 })).toBeNull();
   });
 });

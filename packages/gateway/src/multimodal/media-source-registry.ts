@@ -81,3 +81,40 @@ export function mediaItemTypesForModality(modality?: MediaModality): readonly st
   }
   return [...out];
 }
+
+/**
+ * Where a service records its artifact's byte size, and in what type.
+ *
+ * Not one key: `filesystem` writes `sizeBytes` (number), Drive and OneDrive both write `size` but
+ * Drive's is a STRING, because the Drive v3 API serialises int64 as a string. A plain numeric read
+ * of that field returns null silently, which degrades the byte budget rather than breaking
+ * anything visibly — which is exactly why this is a named table and not an inline read.
+ *
+ * A service absent from this map has no size to read. `google_photos` is deliberately absent:
+ * `mediaMetadata` carries width and height and no byte count, so its size is genuinely unknown and
+ * must be reported as unknown rather than estimated (spec § 16.9).
+ */
+const SOURCE_BYTES_KEY: ReadonlyMap<string, { readonly key: string; readonly numeric: boolean }> =
+  new Map([
+    ["filesystem", { key: "sizeBytes", numeric: true }],
+    ["google_drive", { key: "size", numeric: false }],
+    ["onedrive", { key: "size", numeric: true }],
+  ]);
+
+export function mediaSourceBytes(
+  service: string,
+  metadata: Record<string, unknown>,
+): number | null {
+  const spec = SOURCE_BYTES_KEY.get(service);
+  if (spec === undefined) return null;
+
+  const raw = metadata[spec.key];
+  if (typeof raw === "number") {
+    return Number.isFinite(raw) && raw >= 0 ? raw : null;
+  }
+  if (!spec.numeric && typeof raw === "string" && raw !== "") {
+    const parsed = Number.parseInt(raw, 10);
+    return Number.isFinite(parsed) && parsed >= 0 ? parsed : null;
+  }
+  return null;
+}
