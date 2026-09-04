@@ -1,7 +1,7 @@
 # Resolving a Forge File Coordinate to a Path in the Reader's Checkout
 
 **Date:** 2026-09-04
-**Status:** designed, not implemented
+**Status:** implemented on `dev/asafgolombek/resolve-file-route`; not yet merged
 **Slot:** Track 2 → Client surfaces, the browser row (`nimbus-web-clipper`)
 **Roadmap:** [`docs/roadmap.md` § Track 2 → Client surfaces](../../roadmap.md#client-surfaces)
 **Delivers as:** one PR — the route is additive and deprecates nothing
@@ -218,8 +218,9 @@ indexed-file set to any local process on the machine.
 
 ### 4.5 Behaviour the route inherits, and does not re-implement
 
-Two properties come from `resolveFileByRemote` itself. Both are stated here because a reader of the
-route will ask about them, and because a later "hardening" edit could break either.
+Three properties come from lower layers than this route — `resolveFileByRemote` for the first two,
+`parseRemoteUrl` for the third. All three are stated here because a reader of the route will ask
+about them, and because a later "hardening" edit could break any of them.
 
 **Traversal is a non-issue by construction, not by sanitisation.** A `refAndPath` of
 `main/../../etc/passwd` is not rejected, and does not need to be: resolution never touches the
@@ -234,6 +235,17 @@ keeps one running best across all of them, preferring the greater `indexedAt` an
 `fileEntityId` so the same URL cannot answer differently on two consecutive calls. The route
 neither overrides nor exposes that choice: `path` is repo-relative and identical across worktrees
 anyway, so the precedence is invisible in the response and needs no client hint.
+
+**Only a checkout of a public-forge, two-segment remote can ever resolve.** The `tracks_remote` edge
+this route walks is written by `bindRootRemote` (`ownership/ownership-pass.ts`) from whatever
+`parseRemoteUrl` (`ownership/repo-remote.ts`) hands it, and that function accepts exactly three
+hosts — `github.com`, `gitlab.com`, `bitbucket.org` — and only a repository path of exactly two
+segments (`owner/name`); anything else, including a self-hosted forge or a GitLab subgroup project
+(`org/team/subgroup/repo`), never produces a `repo` entity to bind against. A reader on such a page
+therefore gets `remote_not_tracked` even with the checkout genuinely present locally — not because
+this route mis-answers, but because the graph never had the edge to walk. Widening that host map
+or accepting deeper paths is a separate feature with its own configuration surface; this route
+takes `parseRemoteUrl`'s bound as given.
 
 ---
 

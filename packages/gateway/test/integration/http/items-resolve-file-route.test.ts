@@ -6,6 +6,7 @@
 
 import type { Database } from "bun:sqlite";
 import { describe, expect, test } from "bun:test";
+import { LEGACY_SCOPES } from "../../../src/clips/api-scopes.ts";
 import {
   startServerWithClipToken,
   startServerWithoutClipsVault,
@@ -34,8 +35,8 @@ function seedTrackedRepo(
     [wsId, `filesystem:${args.root}`, args.root],
   );
   db.run(
-    "INSERT INTO graph_entity (id, type, external_id, label, service, metadata) VALUES (?, 'repo', ?, ?, 'github', '{}')",
-    [repoId, args.remote, args.remote.split(":")[1] ?? ""],
+    "INSERT INTO graph_entity (id, type, external_id, label, service, metadata) VALUES (?, 'repo', ?, ?, ?, '{}')",
+    [repoId, args.remote, args.remote.split(":")[1] ?? "", args.remote.split(":")[0] ?? "github"],
   );
   db.run(
     "INSERT INTO graph_relation (from_id, to_id, type, created_at) VALUES (?, ?, 'tracks_remote', 0)",
@@ -106,6 +107,29 @@ describe("GET /v1/items/resolve-file (integration)", () => {
     },
   );
 
+  // Complements the blank-value case above: an ABSENT parameter takes `coordinateParam`'s
+  // `raw === null` arm (`url.searchParams.get` returns null, not ""), a different branch than a
+  // present-but-empty value. Both must land on the same 400, but only this pins the null arm.
+  test.each(["service", "repo", "refAndPath"])(
+    "400s when %s is absent entirely, not merely blank",
+    async (absent) => {
+      const { port, token, stop } = await startServerWithClipToken(["resolve"]);
+      try {
+        const params: Record<string, string> = {
+          service: "github",
+          repo: "acme/web",
+          refAndPath: "main/src/foo.ts",
+        };
+        delete params[absent];
+        const res = await get(port, token, new URLSearchParams(params).toString());
+        expect(res.status).toBe(400);
+        expect(await res.json()).toEqual({ error: "missing_coordinate" });
+      } finally {
+        stop();
+      }
+    },
+  );
+
   test("401s an unknown token", async () => {
     const { port, stop } = await startServerWithClipToken(["resolve"]);
     try {
@@ -117,18 +141,32 @@ describe("GET /v1/items/resolve-file (integration)", () => {
     }
   });
 
-  // A browser paired before scopes existed holds LEGACY_SCOPES = ["clip", "briefs"]. The body's
-  // `required` / `granted` are what the panel turns into a `nimbus clip scopes` line, so they are
-  // asserted by value, not merely by status.
+  // Distinct from the bad-token case above: no header at all takes `bearerToken`'s own
+  // "absent or wrong scheme" branch, returning undefined before `verifyApiToken` is ever called.
+  test("401s a request with no Authorization header at all", async () => {
+    const { port, stop } = await startServerWithClipToken(["resolve"]);
+    try {
+      const res = await get(port, undefined, coord("github", "acme/web", "main/a.ts"));
+      expect(res.status).toBe(401);
+      expect(await res.json()).toEqual({ error: "unauthorized" });
+    } finally {
+      stop();
+    }
+  });
+
+  // A browser paired before scopes existed holds LEGACY_SCOPES. The body's `required` / `granted`
+  // are what the panel turns into a `nimbus clip scopes` line, so they are asserted by value, not
+  // merely by status. Imported rather than hardcoded so this test stays honest if the constant
+  // changes, matching `http-route-auth.test.ts`'s own use of it.
   test("403s a legacy-scoped token, naming the gap", async () => {
-    const { port, token, stop } = await startServerWithClipToken(["clip", "briefs"]);
+    const { port, token, stop } = await startServerWithClipToken(LEGACY_SCOPES);
     try {
       const res = await get(port, token, coord("github", "acme/web", "main/a.ts"));
       expect(res.status).toBe(403);
       expect(await res.json()).toEqual({
         error: "insufficient_scope",
         required: "resolve",
-        granted: ["clip", "briefs"],
+        granted: LEGACY_SCOPES,
       });
     } finally {
       stop();
@@ -256,6 +294,12 @@ describe("GET /v1/items/resolve-file (integration)", () => {
   // parameter from the slashy ref above and a different risk: `/` has to survive URLSearchParams
   // encoding it as `%2F` and this route decoding it back. A truncated `repo` would answer
   // `remote_not_tracked` and read as an ordinary miss rather than a bug.
+  //
+  // This is a hand-seeded `graph_entity` row, not a row `parseRemoteUrl` can ever actually write:
+  // that parser requires an exactly-two-segment repository path, so a real four-segment GitLab
+  // subgroup remote never binds a `tracks_remote` edge in production and answers
+  // `remote_not_tracked` instead (see `repo-remote.ts` and §4.5 of the design doc). This test pins
+  // the route's own traversal given such a row, not that subgroups resolve end to end.
   test("a deep GitLab subgroup survives as the repo coordinate", async () => {
     const { port, token, db, stop } = await startServerWithClipToken(["resolve"]);
     try {
