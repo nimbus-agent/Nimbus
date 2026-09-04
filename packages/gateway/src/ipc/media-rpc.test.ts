@@ -1,7 +1,8 @@
 import { describe, expect, test } from "bun:test";
+import type { MediaPassSummary } from "../multimodal/media-pass.ts";
 import { dispatchMediaRpc } from "./media-rpc.ts";
 
-const SUMMARY = {
+const SUMMARY: MediaPassSummary = {
   understood: 2,
   skipped: 1,
   skippedByReason: {
@@ -15,6 +16,8 @@ const SUMMARY = {
     transcribe_failed: 0,
   },
   lastItemId: "filesystem:/m/a.mp4",
+  stopReason: "completed",
+  cloudBytesFetched: 0,
 };
 
 describe("dispatchMediaRpc", () => {

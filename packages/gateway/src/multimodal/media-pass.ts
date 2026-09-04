@@ -37,11 +37,24 @@ export interface MediaPassDeps {
   readonly scratchDir?: string;
 }
 
+export type MediaPassStopReason = "completed" | "budget_exhausted" | "rate_limited";
+
 export interface MediaPassSummary {
   readonly understood: number;
   readonly skipped: number;
   readonly skippedByReason: Readonly<Record<SkipReason, number>>;
   readonly lastItemId: string | null;
+  /**
+   * Why the run ended. Without this a truncated pass is indistinguishable from a finished one,
+   * and the CLI cannot print resume guidance (spec § 17.3).
+   *
+   * `budget_exhausted` is deliberately NOT a `SkipReason`: a budget stop ends the run, and
+   * recording it per-item would report artifacts that were never attempted as artifacts that
+   * failed (spec § 16.10).
+   */
+  readonly stopReason: MediaPassStopReason;
+  /** Bytes actually fetched from a connected service this run. Always 0 for a local-only pass. */
+  readonly cloudBytesFetched: number;
 }
 
 function emptyReasons(): Record<SkipReason, number> {
@@ -119,7 +132,14 @@ export async function runMediaPass(deps: MediaPassDeps): Promise<MediaPassSummar
     clearCursor(deps.db, deps.passId);
   }
 
-  return { understood, skipped, skippedByReason: reasons, lastItemId };
+  return {
+    understood,
+    skipped,
+    skippedByReason: reasons,
+    lastItemId,
+    stopReason: "completed",
+    cloudBytesFetched: 0,
+  };
 }
 
 /**

@@ -388,4 +388,10 @@ describe("runMediaPass — cursor resume", () => {
     const second = await runMediaPass(deps());
     expect(second.understood).toBe(1);
   });
+
+  test("a normal run reports stopReason completed and zero cloud bytes", async () => {
+    const summary = await runMediaPass(deps());
+    expect(summary.stopReason).toBe("completed");
+    expect(summary.cloudBytesFetched).toBe(0);
+  });
 });
