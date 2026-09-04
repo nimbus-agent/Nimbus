@@ -69,6 +69,40 @@ describe("loadMultimodalConfig", () => {
     expect(loadMultimodalConfig(dir).enabled).toBe(false);
   });
 
+  test("malformed TOML INSIDE a valid section fails the whole load off, not just the one line", () => {
+    // Pre-fix, a garbage line with no `=` was `continue`d past, silently, leaving the
+    // already-parsed `enabled = true` above it in effect — verified empirically before this fix.
+    const dir = withToml("[multimodal]\nenabled = true\nnot valid toml\n");
+    const cfg = loadMultimodalConfig(dir);
+    expect(cfg.enabled).toBe(false);
+    expect(cfg.maxFrames).toBe(DEFAULT_MAX_FRAMES);
+  });
+
+  test("max_frames with trailing garbage does not parse as its numeric prefix", () => {
+    // Pre-fix, `Number.parseInt("8junk", 10)` returned 8 — verified empirically before this fix.
+    // Trailing garbage on a value is malformed TOML, so the whole load fails off, same as the
+    // no-`=` case above.
+    const dir = withToml("[multimodal]\nenabled = true\nmax_frames = 8junk\n");
+    const cfg = loadMultimodalConfig(dir);
+    expect(cfg.enabled).toBe(false);
+    expect(cfg.maxFrames).toBe(DEFAULT_MAX_FRAMES);
+  });
+
+  test("an unrecognised but well-formed key is ignored (forward-compatibility), not a fail-off", () => {
+    const dir = withToml("[multimodal]\nenabled = true\nfuture_key = 1\n");
+    const cfg = loadMultimodalConfig(dir);
+    expect(cfg.enabled).toBe(true);
+    expect(cfg.maxFrames).toBe(DEFAULT_MAX_FRAMES);
+  });
+
+  test("a malformed line OUTSIDE the multimodal section never affects it", () => {
+    const dir = withToml(
+      "[llm]\nnot valid toml at all in this unrelated section\n\n[multimodal]\nenabled = true\n",
+    );
+    const cfg = loadMultimodalConfig(dir);
+    expect(cfg.enabled).toBe(true);
+  });
+
   test("a configDir with no nimbus.toml at all is OFF with defaults", () => {
     // No writeFileSync here, deliberately: an empty dir exercises the
     // `!existsSync(tomlPath)` branch, distinct from every other test's withToml-created file.

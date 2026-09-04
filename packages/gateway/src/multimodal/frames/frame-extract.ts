@@ -186,27 +186,61 @@ export async function extractFrameJpeg(
   // Read stdout CONCURRENTLY with waiting on exit. ffmpeg blocks once the pipe buffer fills, so
   // awaiting `exited` first would deadlock on any frame larger than that buffer.
   const collect = readBounded(proc.stdout, maxBytes);
+  // Observed unconditionally from here on (whichever way the race below settles) — this attaches
+  // a handler before any rejection can be reported as unhandled, regardless of which of the two
+  // outcomes below ends up (also) awaiting `collect` later.
+  collect.catch(() => undefined);
+
+  // A racer that stays pending on a SUCCESSFUL collect — the exit/timeout race still needs to
+  // run its course, since a clean exit code must still be confirmed — and rejects the instant
+  // the byte cap is breached, whatever `proc.exited` is doing. This is what lets the cap error
+  // win against a process that never exits: with a real ffmpeg, once nobody drains the pipe (see
+  // `readBounded`'s cancel-on-breach below) it blocks on its next write and `exited` may not
+  // settle for a long time, if ever — sequentially awaiting the timeout first, as this used to,
+  // meant the cap error was masked by a "timed out" error up to the full timeout later.
+  const capBreach: Promise<never> = collect.then(
+    (): Promise<never> => new Promise<never>(() => {}),
+    (err: unknown): never => {
+      throw err;
+    },
+  );
+
   let code: number;
   try {
-    code = await withProcessTimeout(
-      proc,
-      opts.timeoutMs ?? DEFAULT_FRAME_TIMEOUT_MS,
-      `ffmpeg frame ${atSeconds}s of ${input}`,
-    );
+    code = await Promise.race([
+      withProcessTimeout(
+        proc,
+        opts.timeoutMs ?? DEFAULT_FRAME_TIMEOUT_MS,
+        `ffmpeg frame ${atSeconds}s of ${input}`,
+      ),
+      capBreach,
+    ]);
   } catch (err) {
-    // The timeout fired. `collect` is still pending on a stream that will never close, and a
-    // pending read keeps `bun test` alive past the last assertion — a hanging suite rather than a
-    // failing one. Cancel it explicitly; a no-op on a stream already at EOF. Same shape as
-    // `probeDurationSeconds`'s timeout arm — the two must not diverge.
-    void proc.stdout.cancel().catch(() => undefined);
-    void collect.catch(() => undefined);
+    if (err instanceof FrameByteCapError) {
+      // The cap breach won the race. `withProcessTimeout`'s own timer is still running — a
+      // blocked-on-a-full-pipe ffmpeg is exactly the process that would otherwise sit there for
+      // the rest of the timeout window even though this call has already thrown. Reap it now
+      // rather than leaving it running.
+      try {
+        proc.kill();
+      } catch {
+        // Already gone.
+      }
+      void proc.exited.catch(() => undefined);
+    } else {
+      // The timeout fired first (the process genuinely hung without breaching the cap).
+      // `collect` is still pending on a stream that will never close, and a pending read keeps
+      // `bun test` alive past the last assertion — a hanging suite rather than a failing one.
+      // Cancel it explicitly; a no-op on a stream already at EOF. Same shape as
+      // `probeDurationSeconds`'s timeout arm — the two must not diverge.
+      void proc.stdout.cancel().catch(() => undefined);
+    }
     throw err;
   }
   if (code !== 0) {
     // Non-zero exit still leaves `collect` reading a stream ffmpeg may not have closed cleanly.
     // Same cancellation as the timeout arm above, for the same reason.
     void proc.stdout.cancel().catch(() => undefined);
-    void collect.catch(() => undefined);
     const err = await new Response(proc.stderr).text().catch(() => "");
     throw new Error(
       `ffmpeg exited ${code} extracting frame at ${atSeconds}s: ${err.slice(0, 400)}`,
@@ -220,6 +254,10 @@ export async function extractFrameJpeg(
   }
   return bytes;
 }
+
+/** Distinguishes a byte-cap breach from a timeout/exit rejection in {@link extractFrameJpeg}'s
+ * race, without matching on an error message. */
+class FrameByteCapError extends Error {}
 
 async function readBounded(
   stream: ReadableStream<Uint8Array>,
@@ -235,7 +273,17 @@ async function readBounded(
       if (value === undefined) continue;
       total += value.byteLength;
       if (total > maxBytes) {
-        throw new Error(`frame exceeds the ${maxBytes}-byte cap`);
+        // `releaseLock()` alone (in the `finally` below) does not cancel the underlying stream:
+        // with a real ffmpeg, nobody would be draining the pipe from this point on, so ffmpeg
+        // blocks on its next write and never exits. Cancel so the producer sees the consumer
+        // walk away. Guarded: a cancel failure must never mask the cap error itself, which is
+        // what the caller needs to see.
+        try {
+          await reader.cancel();
+        } catch {
+          // best-effort; the cap error below is what matters.
+        }
+        throw new FrameByteCapError(`frame exceeds the ${maxBytes}-byte cap`);
       }
       chunks.push(value);
     }

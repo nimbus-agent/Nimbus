@@ -225,4 +225,44 @@ describe("extractFrameJpeg", () => {
       }),
     ).rejects.toThrow(/timed out/);
   });
+
+  test("a cap breach wins the race against a process whose `exited` NEVER settles, and kills it", async () => {
+    // The real-world hazard this pins: a genuinely wedged ffmpeg legitimately never resolves
+    // `exited` once nobody drains its stdout pipe. Sequentially awaiting the process timeout
+    // before ever looking at `collect` (the pre-fix shape) would report "timed out" instead of
+    // the cap error, after waiting out the FULL timeout. `timeoutMs` is deliberately generous
+    // (30s): if this regresses to the sequential shape, the assertion below never gets to run —
+    // bun's own per-test timeout fires first, so a regression shows up as a HANG/timeout failure
+    // rather than a merely-wrong-message failure.
+    //
+    // Delivered across multiple `enqueue` calls (not one oversized chunk) so it's the read
+    // loop's running-total check inside `readBounded` that fires, matching the finding exactly.
+    const stream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new Uint8Array(3));
+        controller.enqueue(new Uint8Array(3));
+        // Deliberately never closes: pairs with `exited` never settling, mirroring ffmpeg
+        // blocked on a full pipe that nobody is reading from any more.
+      },
+    });
+    let killed = false;
+    const spawn = (() => ({
+      exited: new Promise<number>(() => {}),
+      stdout: stream,
+      stderr: new Response("").body,
+      kill: () => {
+        killed = true;
+      },
+    })) as unknown as typeof Bun.spawn;
+
+    await expect(
+      extractFrameJpeg("/v/clip.mp4", 1, {
+        ffmpegBin: "ffmpeg",
+        maxBytes: 4,
+        timeoutMs: 30_000,
+        spawn,
+      }),
+    ).rejects.toThrow(/exceeds/i);
+    expect(killed).toBe(true);
+  });
 });
