@@ -1744,9 +1744,12 @@ code_execution=true
     // Through PR 1 this capability was a real AI_V2_CAPABILITIES member whose lockoff did
     // nothing, because the dispatcher hardcoded `capabilityDisabled: false`. All five members
     // must now reach a gate.
-    const dispatchers = await Bun.file("packages/gateway/src/ipc/server/dispatchers.ts").text();
+    // `read()`, not a bare relative `Bun.file("packages/...")`: CI's coverage job `cd`s into
+    // `packages/gateway` before running `bun test`, so a cwd-relative path ENOENTs there while
+    // resolving fine from the repo root. That is why this helper exists.
+    const dispatchers = await read("packages/gateway/src/ipc/server/dispatchers.ts");
     expect(dispatchers).toContain("capabilitiesDisabled.has(MULTIMODAL_CAPABILITY)");
-    const assemble = await Bun.file("packages/gateway/src/platform/assemble.ts").text();
+    const assemble = await read("packages/gateway/src/platform/assemble.ts");
     expect(assemble).toContain("ipcOpts.mediaRpcCtx");
   });
 });
@@ -2423,7 +2426,10 @@ describe("I29 — egress-ledger completeness over the executor chokepoint", () =
 
   test("I29: a non-local VlmProvider cannot describe without a model-class row", async () => {
     // The decorator, not a call site, is the appender — so this holds for callers written later.
-    const src = await Bun.file("packages/gateway/src/egress/vlm-egress.ts").text();
+    // `read()`, not a bare relative `Bun.file("packages/...")`: CI's coverage job `cd`s into
+    // `packages/gateway` before running `bun test`, so a cwd-relative path ENOENTs there while
+    // resolving fine from the repo root. That is why this helper exists.
+    const src = await read("packages/gateway/src/egress/vlm-egress.ts");
     // Append precedes delegation, and the append failure path throws rather than continuing.
     // Anchored on the CALL (`appendEgressEntry(db`), matching the precedent this file already
     // uses for `recordAgentBriefEgress(ctx.db` — a bare `indexOf("appendEgressEntry")` would
