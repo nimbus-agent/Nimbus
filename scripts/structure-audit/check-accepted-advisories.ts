@@ -239,18 +239,77 @@ export function decideExit(findings: readonly Finding[]): { code: number; messag
   };
 }
 
+/**
+ * Is this stderr a TRANSPORT failure — the npm audit endpoint unreachable or erroring — rather
+ * than anything about the dependency tree?
+ *
+ * `bun audit` reports it in two shapes, and matching only the first is what took `main` red on
+ * 2026-09-04 in the sibling shell step of this same job:
+ *
+ *     error: audit request failed (status 503)      <- an HTTP status came back
+ *     ConnectionClosed: audit request failed        <- the socket died, NO status
+ *
+ * Anchored on `audit request failed` alone: the part common to both, and one `bun audit` never
+ * emits for a real advisory — a finding is reported as JSON on stdout, not as a failed request.
+ */
+export function isTransportFailure(stderr: string): boolean {
+  return /audit request failed/.test(stderr);
+}
+
+/** What one `bun audit --json` attempt produced. */
+export interface AuditAttempt {
+  readonly stdout: string;
+  readonly stderr: string;
+}
+
+/**
+ * Run `bun audit --json`, retrying ONLY a transport failure — the same posture, and the same
+ * bounded 3 attempts with linear backoff, as `security.yml`'s sibling step.
+ *
+ * The retry lives here rather than in a second copy of the shell loop because the two steps share
+ * one root cause and drifted apart once already: the shell step grew a retry and this one did not,
+ * so during an npm outage the first step recovered and the second failed the required check
+ * anyway. `run` and `sleep` are injected so the retry is testable without a network or a wait.
+ *
+ * Returns the first attempt that produced output. After the last attempt it returns whatever it
+ * got — the caller still fails closed, which is deliberate: a silent "clean" is the one outcome
+ * this gate must never produce, and `continue-on-error` on an unreachable registry would be
+ * exactly that.
+ */
+export function runBunAuditWithRetry(
+  run: () => AuditAttempt,
+  opts: { attempts?: number; sleep?: (ms: number) => void } = {},
+): { attempt: AuditAttempt; tries: number } {
+  const attempts = opts.attempts ?? 3;
+  const sleep = opts.sleep ?? ((ms: number) => Bun.sleepSync(ms));
+  let last = run();
+  for (let i = 1; i < attempts; i++) {
+    if (last.stdout.trim().length > 0) return { attempt: last, tries: i };
+    if (!isTransportFailure(last.stderr)) return { attempt: last, tries: i };
+    console.error(
+      `audit:advisories: npm audit endpoint unreachable (attempt ${String(i)}), retrying...`,
+    );
+    sleep(i * 10_000);
+    last = run();
+  }
+  return { attempt: last, tries: attempts };
+}
+
 if (import.meta.main) {
   const label = "audit:advisories";
-  const proc = Bun.spawnSync(["bun", "audit", "--json"], { stdout: "pipe", stderr: "pipe" });
-  const stdout = proc.stdout.toString();
+  const { attempt } = runBunAuditWithRetry(() => {
+    const p = Bun.spawnSync(["bun", "audit", "--json"], { stdout: "pipe", stderr: "pipe" });
+    return { stdout: p.stdout.toString(), stderr: p.stderr.toString() };
+  });
+  const stdout = attempt.stdout;
 
   // `bun audit` exits non-zero when it finds anything, which is not an error
-  // here — but an empty body with a non-zero exit means the command itself
-  // failed (offline, registry down). Fail loudly; a silent "clean" is the one
-  // outcome this gate must never produce.
+  // here — but an empty body means the command itself failed (offline, registry
+  // down) on every attempt. Fail loudly; a silent "clean" is the one outcome
+  // this gate must never produce.
   if (stdout.trim().length === 0) {
     console.error(
-      `::error::${label}: \`bun audit --json\` produced no output (exit ${proc.exitCode}): ${proc.stderr.toString().slice(0, 400)}`,
+      `::error::${label}: \`bun audit --json\` produced no output after 3 attempts: ${attempt.stderr.slice(0, 400)}`,
     );
     process.exit(1);
   }

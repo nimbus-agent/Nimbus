@@ -5,10 +5,13 @@ import {
   MAX_ACCEPTANCE_DAYS,
 } from "./accepted-advisories.ts";
 import {
+  type AuditAttempt,
   decideExit,
   evaluateAdvisories,
+  isTransportFailure,
   type LiveAdvisory,
   parseBunAudit,
+  runBunAuditWithRetry,
   severityRank,
 } from "./check-accepted-advisories.ts";
 
@@ -226,5 +229,74 @@ describe("ACCEPTED_ADVISORIES (the committed registry)", () => {
     for (const a of ACCEPTED_ADVISORIES) {
       expect(a.unblockedBy.trim().length).toBeGreaterThan(0);
     }
+  });
+});
+
+describe("transport-failure retry", () => {
+  test("both shapes of an unreachable endpoint are recognised as transport failures", () => {
+    expect(isTransportFailure("error: audit request failed (status 503)")).toBe(true);
+    // The shape that took `main` red on 2026-09-04: the socket died, so there is no status code
+    // and the sibling shell step's `(status NNN)` pattern missed it entirely.
+    expect(isTransportFailure("ConnectionClosed: audit request failed")).toBe(true);
+  });
+
+  test("an ordinary non-zero exit is NOT a transport failure", () => {
+    // `bun audit` exits non-zero when it finds advisories. That must never be retried away, and
+    // must never be mistaken for the registry being down.
+    expect(isTransportFailure("")).toBe(false);
+    expect(isTransportFailure("1 vulnerability (1 high)")).toBe(false);
+  });
+
+  test("a transport failure is retried, and a later success is returned", () => {
+    const outcomes: AuditAttempt[] = [
+      { stdout: "", stderr: "ConnectionClosed: audit request failed" },
+      { stdout: "", stderr: "error: audit request failed (status 503)" },
+      { stdout: '{"advisories":{}}', stderr: "" },
+    ];
+    let i = 0;
+    const slept: number[] = [];
+    const got = runBunAuditWithRetry(() => outcomes[i++] as AuditAttempt, {
+      sleep: (ms) => slept.push(ms),
+    });
+    expect(got.attempt.stdout).toBe('{"advisories":{}}');
+    expect(i).toBe(3);
+    expect(slept).toEqual([10_000, 20_000]); // linear backoff, matching security.yml's shell step
+  });
+
+  test("a REAL finding is returned on the first attempt, never retried", () => {
+    // The property that makes widening the match safe: output present means the audit ran, so
+    // there is nothing to retry regardless of exit code.
+    let calls = 0;
+    const got = runBunAuditWithRetry(() => {
+      calls += 1;
+      return { stdout: '{"advisories":{"GHSA-x":{}}}', stderr: "" };
+    });
+    expect(calls).toBe(1);
+    expect(got.tries).toBe(1);
+  });
+
+  test("a NON-transport failure is not retried either — it fails closed immediately", () => {
+    let calls = 0;
+    const got = runBunAuditWithRetry(() => {
+      calls += 1;
+      return { stdout: "", stderr: "bun: command not found" };
+    });
+    expect(calls).toBe(1);
+    expect(got.attempt.stdout).toBe("");
+  });
+
+  test("exhausting every attempt still returns empty output, so the caller fails closed", () => {
+    const slept: number[] = [];
+    let calls = 0;
+    const got = runBunAuditWithRetry(
+      () => {
+        calls += 1;
+        return { stdout: "", stderr: "ConnectionClosed: audit request failed" };
+      },
+      { sleep: (ms) => slept.push(ms) },
+    );
+    expect(calls).toBe(3);
+    expect(got.attempt.stdout).toBe("");
+    expect(slept).toEqual([10_000, 20_000]);
   });
 });
