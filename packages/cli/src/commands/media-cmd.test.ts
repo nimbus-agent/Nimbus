@@ -93,6 +93,8 @@ describe("renderSummary", () => {
         path_outside_roots: 0,
         transcode_failed: 0,
         transcribe_failed: 0,
+        not_configured: 0,
+        rate_limited: 0,
       },
       lastItemId: "x",
     });
@@ -116,6 +118,8 @@ describe("renderSummary", () => {
         path_outside_roots: 0,
         transcode_failed: 0,
         transcribe_failed: 0,
+        not_configured: 0,
+        rate_limited: 0,
       },
       lastItemId: "x",
     });
@@ -171,6 +175,8 @@ describe("runMediaCmd", () => {
         path_outside_roots: 0,
         transcode_failed: 0,
         transcribe_failed: 0,
+        not_configured: 0,
+        rate_limited: 0,
       },
       lastItemId: "item-1",
     };
@@ -211,6 +217,8 @@ describe("runMediaCmd", () => {
         path_outside_roots: 0,
         transcode_failed: 0,
         transcribe_failed: 0,
+        not_configured: 0,
+        rate_limited: 0,
       },
       lastItemId: null,
     };

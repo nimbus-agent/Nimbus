@@ -18,12 +18,26 @@ import type { MediaCandidate, SkipReason } from "./media-types.ts";
 
 export interface CloudUrlResolverDeps {
   readonly bearerFor: (service: string) => Promise<string | null>;
+  /**
+   * MUST NOT follow a redirect on its own — this module calls it with `redirect: "manual"` for
+   * exactly that reason, on the one request that carries a credential (the Photos/OneDrive
+   * round-trip). A `fetchFn` that re-issues the request against a `Location` header would hand
+   * that bearer to whatever host the provider named next — the same attack shape this module
+   * exists to prevent, just one hop later. The production caller is `util/safe-fetch.ts`'s
+   * `safeFetchFollowing`, which already forces manual redirects and strips credentials
+   * cross-origin; this states that requirement rather than inventing new behaviour.
+   */
   readonly fetchFn: (url: string, init: RequestInit) => Promise<Response>;
 }
 
 export type ResolvedByteUrl = ByteUrl | { readonly error: SkipReason };
 
-/** Narrows an untyped JSON body without an assertion — external data is `unknown` (no-`any` rule). */
+/**
+ * Reads one field off an untyped JSON body. The `typeof`/`null` check on `body` is what makes the
+ * `Record<string, unknown>` cast below it safe, and the caller only gets a value back once its own
+ * type is verified too — a runtime-checked narrow, not a bare type assertion trusted on faith
+ * (external data is `unknown`, never `any`).
+ */
 function stringField(body: unknown, key: string): string | null {
   if (typeof body !== "object" || body === null) return null;
   const v = (body as Record<string, unknown>)[key];
@@ -52,10 +66,21 @@ export async function resolveCloudByteUrl(
       ? `https://photoslibrary.googleapis.com/v1/mediaItems/${id}`
       : `https://graph.microsoft.com/v1.0/me/drive/items/${id}`;
 
-  const res = await deps.fetchFn(url, { headers: { Authorization: `Bearer ${token}` } });
-  if (!res.ok) return { error: res.status === 429 ? "rate_limited" : "fetch_miss" };
+  let body: unknown;
+  try {
+    const res = await deps.fetchFn(url, {
+      headers: { Authorization: `Bearer ${token}` },
+      redirect: "manual",
+    });
+    if (!res.ok) return { error: res.status === 429 ? "rate_limited" : "fetch_miss" };
+    body = await res.json();
+  } catch {
+    // A transport failure, or a 200 whose body is not JSON at all (a proxy interception, an HTML
+    // error page) — either way the round-trip did not produce a usable answer, and there is
+    // nothing left to trust it with.
+    return { error: "fetch_miss" };
+  }
 
-  const body: unknown = await res.json();
   if (candidate.service === "google_photos") {
     const baseUrl = stringField(body, "baseUrl");
     return baseUrl === null

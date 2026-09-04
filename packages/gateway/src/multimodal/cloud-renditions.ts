@@ -3,7 +3,9 @@
  *
  * THE RULE (spec § 16.4): a credential is attached only to a URL this codebase CONSTRUCTED. A
  * provider-returned URL is pre-signed and is fetched with no `Authorization` header at all, so a
- * hostile or compromised API response naming any host it likes learns nothing.
+ * hostile or compromised API response naming any host it likes learns no credential — it still
+ * learns that this machine issued a GET. Constraining the SCHEME/HOST a provider-returned URL is
+ * actually fetched against is the fetcher's job (a later task), not this one.
  *
  * Pure — no network, no vault, no clock — so the rule is testable without either.
  */
@@ -23,14 +25,14 @@ export function driveByteUrl(externalId: string): ByteUrl {
   };
 }
 
+const PHOTOS_RENDITION_EDGE = 2048;
+
 /**
  * Google Photos serves bytes from a pre-signed `baseUrl`. Renditions are a SUFFIX on it:
  * `=w<W>-h<H>` bounds a still's long edge; `=dv` asks for the transcoded video.
  *
  * NOTE: the caller must have RE-RESOLVED `baseUrl` — an indexed one is expired (spec § 16.6).
  */
-const PHOTOS_RENDITION_EDGE = 2048;
-
 export function photosByteUrl(
   baseUrl: string,
   modality: MediaModality,

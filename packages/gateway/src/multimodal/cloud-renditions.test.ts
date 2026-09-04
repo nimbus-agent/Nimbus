@@ -44,8 +44,4 @@ describe("renditions", () => {
       "https://lh3.example/abc",
     );
   });
-
-  test("drive has no rendition — the same URL either way", () => {
-    expect(driveByteUrl("x").url).toBe(driveByteUrl("x").url);
-  });
 });

@@ -21,7 +21,9 @@ export type SkipReasonKey =
   | "fetch_miss"
   | "path_outside_roots"
   | "transcode_failed"
-  | "transcribe_failed";
+  | "transcribe_failed"
+  | "not_configured"
+  | "rate_limited";
 
 export interface CliSummary {
   readonly understood: number;
