@@ -1183,7 +1183,7 @@ describe("tryDispatchPhase4Rpc", () => {
     expect(new Set([out.vlmBaseUrl, out.vlmModel, String(out.maxFrames)]).size).toBe(3);
   });
 
-  test("Important 4: the vault buildMediaPassDepsInput forwards reaches a REAL bearerFor on the constructed deps, not the null-returning fallback", async () => {
+  test("the vault buildMediaPassDepsInput forwards reaches a REAL bearerFor on the constructed deps, not the null-returning fallback", async () => {
     // Proof at the BEHAVIOURAL end of the wire, not just the intermediate `.vault` field: a
     // pre-populated cached OAuth token resolves through `buildMediaPassDeps`'s `cloudBearerFor`
     // ONLY if the vault this test set the token on is the one that actually reached it.

@@ -253,6 +253,12 @@ export async function runMediaPass(deps: MediaPassDeps): Promise<MediaPassSummar
           continue;
         }
 
+        // Captured BEFORE the call, and before this fetch's own debit below: this is the budget
+        // as it stood walking INTO this artifact, which is what "nothing spent yet this run"
+        // means. Reading `remainingBudget` itself after the debit would answer a different
+        // question — how much is left AFTER this attempt — which is not what tells us whether
+        // some EARLIER candidate this run already consumed part of the budget.
+        const budgetBeforeThisFetch = remainingBudget;
         const fetched: CloudBytes = await fetchCloudBytes(candidate, resolvedUrl, {
           scratchDir: requireCloudScratchDir(deps),
           maxBytes: deps.maxBytes,
@@ -271,6 +277,39 @@ export async function runMediaPass(deps: MediaPassDeps): Promise<MediaPassSummar
 
         if (!fetched.ok) {
           if ("stop" in fetched) {
+            // TWO DIFFERENT SHAPES hide behind one `CloudBytes` stop, and treating them alike is
+            // how a single oversized artifact wedges the pass PERMANENTLY:
+            //
+            //  - TRANSIENT: some EARLIER candidate this run already spent part of the budget, and
+            //    THIS artifact simply didn't fit in what was left. A future run, starting with a
+            //    fresh budget, may well get past it — so the pass stops here and the cursor stays
+            //    on the last COMPLETED item, exactly as the comment below describes.
+            //  - PERMANENT: `budgetBeforeThisFetch === deps.fetchBudgetBytes` means NOTHING was
+            //    spent before this attempt — the artifact was offered the ENTIRE run budget and
+            //    still could not fit (an unknown-size candidate, e.g. Google Photos, is the
+            //    reachable case: `priceRun`'s pre-flight admits it since it contributes nothing to
+            //    `knownBytes`). No FUTURE run using this same budget can ever do better, because no
+            //    run can offer this artifact more than its own full budget. Stopping here would
+            //    make `runMediaPass` return the identical page and stop on the identical candidate
+            //    forever — starving every artifact that sorts after it in `src.id` order,
+            //    local ones included. So this case is a PER-ITEM refusal instead: skip it,
+            //    `over_byte_cap` (the same reason the local arm uses for the same shape of
+            //    problem), advance past it, and keep going.
+            //
+            // Scoped to `budget_exhausted` only — a `rate_limited` stop says nothing about the
+            // artifact's SIZE (the provider might simply be busy right now), so applying the same
+            // "provably cannot fit" reasoning to it would record a dishonest skip reason for an
+            // artifact that may fetch fine on the very next attempt.
+            if (
+              fetched.stop === "budget_exhausted" &&
+              budgetBeforeThisFetch === deps.fetchBudgetBytes
+            ) {
+              reasons.over_byte_cap += 1;
+              skipped += 1;
+              lastItemId = candidate.itemId;
+              advance(deps, lastItemId, understood + skipped);
+              continue;
+            }
             stopReason = fetched.stop;
             // The STOPPING candidate was never fetched to completion — it must be RETRIED on the
             // next run, not skipped past. So `lastItemId`/the cursor are deliberately left at

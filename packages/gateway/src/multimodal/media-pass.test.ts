@@ -586,13 +586,19 @@ describe("runMediaPass — cloud budget, stop reasons and rendition (PR 3)", () 
     expect(cursor?.last_item_id).toBe("google_drive:0-prior");
   });
 
-  test("a mid-run budget stop retries the STOPPING artifact on resume — the cursor reflects the last COMPLETED item, not the one that stopped", async () => {
+  test("a TRANSIENT mid-run budget stop retries the STOPPING artifact on resume — the cursor reflects the last COMPLETED item, not the one that stopped", async () => {
     // DIRECTED OVERRIDE (controller review): the brief's own illustrative test asserted
     // `lastItemId === c2.itemId` (the STOPPING candidate). That was wrong — c2's bytes were never
     // fetched to completion, so advancing the cursor onto it would make a resume skip an artifact
     // that was never actually understood, self-healing only when a LATER run happens to drain the
     // whole queue and clear the cursor (which, on a growing library, may be never). The cursor
     // must stay at c1 — the last artifact that genuinely completed — so a resume retries c2.
+    //
+    // This is the TRANSIENT case specifically: c1 completes FIRST and spends 2 bytes of the
+    // budget, so c2's stop happens with `budgetBeforeThisFetch` (998) !== the full budget (1000) —
+    // c2 might well fit in a FUTURE run's fresh budget, so the pass stops rather than treating it
+    // as a permanent per-item refusal. See the fix-round-2 test below for the PERMANENT case,
+    // where nothing was spent before the stopping candidate's own attempt.
     addDriveItem("cbud-c1");
     addDriveItem("cbud-c2");
     addDriveItem("cbud-c3");
@@ -619,17 +625,20 @@ describe("runMediaPass — cloud budget, stop reasons and rendition (PR 3)", () 
     expect(cursor?.last_item_id ?? null).toBe(summary.lastItemId);
   });
 
-  test("a mid-run stop on the FIRST candidate this run leaves a previously seeded cursor untouched — not cleared, and not advanced onto the stopping candidate", async () => {
-    // Distinct from the pre-flight-refusal cursor-guard tests above: this stop happens INSIDE the
-    // loop (a declared content-length exceeds the budget), on the very first candidate this run
-    // attempts, with nothing having completed yet — the case where there is no "previous
-    // completed item this run" to fall back to, only the cursor this run RESUMED from.
-    writeCursor(db, "default", {
-      lastItemId: "google_drive:0-prior",
-      processedCount: 1,
-      nowMs: 5000,
-    });
-    addDriveItem("cfirst-stop");
+  test("a PERMANENTLY-oversized cloud candidate — nothing spent yet this run — is a per-item over_byte_cap refusal, not a pass-level stop", async () => {
+    // FIX ROUND 2 (controller review): the original version of this test asserted the opposite —
+    // that a stop on the very first candidate this run left `lastItemId` null and a pre-seeded
+    // cursor untouched. That was a genuine LIVELOCK: nothing ever advances past this candidate, so
+    // the next run returns the identical page and stops on the identical candidate, forever —
+    // starving every artifact that sorts after it in `src.id` order, local ones included.
+    //
+    // `budgetBeforeThisFetch === deps.fetchBudgetBytes` here (this candidate is the first cloud
+    // fetch attempted this run) means the artifact was offered the ENTIRE run budget and still
+    // couldn't fit — provably true of every future run using the same budget too. This is exactly
+    // the shape an unknown-size Photos candidate produces in production: `priceRun`'s pre-flight
+    // admits it (it contributes nothing to `knownBytes`), and only the fetch itself discovers the
+    // size is too large.
+    addDriveItem("cperm-solo");
     const summary = await runMediaPass(
       deps({
         scratchDir: cloudScratchDir(),
@@ -640,13 +649,42 @@ describe("runMediaPass — cloud budget, stop reasons and rendition (PR 3)", () 
         }),
       }),
     );
-    expect(summary.stopReason).toBe("budget_exhausted");
-    // Nothing completed this run — the STOPPING candidate is not "the last item processed".
-    expect(summary.lastItemId).toBeNull();
-    const cursor = db
-      .query<{ last_item_id: string }, []>("SELECT last_item_id FROM media_pass_cursor")
-      .get();
-    expect(cursor?.last_item_id).toBe("google_drive:0-prior");
+    expect(summary.stopReason).toBe("completed");
+    expect(summary.understood).toBe(0);
+    expect(summary.skippedByReason.over_byte_cap).toBe(1);
+    expect(summary.lastItemId).toBe("google_drive:cperm-solo");
+  });
+
+  test("a permanently-oversized artifact does not wedge the pass — later candidates progress in the SAME run, and a LATER run keeps making progress past it", async () => {
+    addDriveItem("cperm-a"); // permanently over the run budget alone
+    addDriveItem("cperm-b"); // would succeed whenever actually reached
+    const fetchFn = async (url: string): Promise<Response> => {
+      if (url.includes("cperm-a")) {
+        return new Response(null, { status: 200, headers: { "content-length": "5000" } });
+      }
+      return new Response("OK");
+    };
+    const passDeps = () =>
+      deps({
+        scratchDir: cloudScratchDir(),
+        fetchBudgetBytes: 1000,
+        cloudBytes: cloudDeps({ fetchFn }),
+      });
+
+    // Same-run progress: cperm-a is refused per-item and the loop CONTINUES to cperm-b, which
+    // succeeds — proof the permanently-oversized artifact does not stop the batch it is in.
+    const first = await runMediaPass(passDeps());
+    expect(first.stopReason).toBe("completed");
+    expect(first.skippedByReason.over_byte_cap).toBe(1);
+    expect(first.understood).toBe(1);
+
+    // A second run: the property with no coverage before this fix — resume does not wedge on the
+    // oversized artifact either. It is retried (a SKIP always gets "another chance", same as any
+    // other skip reason — this run's short page clears the cursor at the end), refused again the
+    // same honest way, and the already-understood cperm-b is correctly not re-fetched.
+    const second = await runMediaPass(passDeps());
+    expect(second.skippedByReason.over_byte_cap).toBe(1);
+    expect(second.understood).toBe(0);
   });
 
   test("a rate-limit stop reports rate_limited, not budget_exhausted", async () => {
@@ -704,7 +742,12 @@ describe("runMediaPass — cloud budget, stop reasons and rendition (PR 3)", () 
     expect(summary.cloudBytesFetched).toBe(2_000);
   });
 
-  test("counts partial bytes transferred before a budget abort — bytes that crossed the wire are never reported as zero", async () => {
+  test("counts partial bytes transferred before a TRANSIENT budget abort — bytes that crossed the wire are never reported as zero", async () => {
+    // A prior candidate completes FIRST and spends a little budget, so the streaming candidate's
+    // own stop is TRANSIENT (`budgetBeforeThisFetch` !== the full budget) rather than the
+    // PERMANENT per-item-refusal case (fix round 2) — this test is specifically about the byte
+    // COUNT on a genuine pass-level stop, which the permanent case no longer produces.
+    addDriveItem("cpartial-0");
     addDriveItem("cpartial-a");
     const chunk = new Uint8Array(1_800_000);
     const summary = await runMediaPass(
@@ -715,20 +758,27 @@ describe("runMediaPass — cloud budget, stop reasons and rendition (PR 3)", () 
         maxBytes: 5_000_000,
         fetchBudgetBytes: 1_000_000,
         cloudBytes: cloudDeps({
-          fetchFn: async () =>
-            new Response(
-              new ReadableStream<Uint8Array>({
-                start(controller) {
-                  controller.enqueue(chunk);
-                  controller.close();
-                },
-              }),
-            ),
+          fetchFn: async (url) => {
+            if (url.includes("cpartial-a")) {
+              return new Response(
+                new ReadableStream<Uint8Array>({
+                  start(controller) {
+                    controller.enqueue(chunk);
+                    controller.close();
+                  },
+                }),
+              );
+            }
+            return new Response("OK");
+          },
         }),
       }),
     );
     expect(summary.stopReason).toBe("budget_exhausted");
-    expect(summary.cloudBytesFetched).toBe(1_800_000);
+    expect(summary.understood).toBe(1);
+    // 2 bytes from "OK" (cpartial-0) + the full 1.8 MB chunk that crossed the wire before the
+    // abort (cpartial-a) — both arms debited, matching the "debits EVERY arm" property above.
+    expect(summary.cloudBytesFetched).toBe(2 + 1_800_000);
   });
 
   test("deletes a cloud AV scratch file after a SUCCESSFUL understanding", async () => {
