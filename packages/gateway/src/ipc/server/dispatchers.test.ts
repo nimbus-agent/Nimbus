@@ -15,6 +15,7 @@ import { runIndexedSchemaMigrations } from "../../index/migrations/runner.ts";
 import { LlmRegistry } from "../../llm/registry.ts";
 import type { LlmProvider } from "../../llm/types.ts";
 import { SessionMemoryStore } from "../../memory/session-memory-store.ts";
+import { buildMediaPassDeps } from "../../multimodal/build-media-pass-deps.ts";
 import type { MultimodalConfig } from "../../multimodal/multimodal-config.ts";
 import { createMockVault } from "../../vault/mock.ts";
 import type { StatusReaders } from "../admin-status-rpc.ts";
@@ -1138,14 +1139,18 @@ describe("tryDispatchPhase4Rpc", () => {
       skippedByReason: expect.any(Object),
     });
   });
-  test("buildMediaPassDepsInput forwards vlmBaseUrl/vlmModel/maxFrames by VALUE, not just by shape", () => {
+  test("buildMediaPassDepsInput forwards vlmBaseUrl/vlmModel/maxFrames/fetchBudgetBytes/preferRenditions/vault by VALUE, not just by shape", () => {
     // Task 8 fix round 1: `vlmBaseUrl`/`vlmModel`/`maxFrames` are OPTIONAL on
     // `BuildMediaPassDepsInput` and default internally inside `buildMediaPassDeps`, so deleting the
     // three forwarding lines here fails no type check and no `media.understand` result — the exact
-    // "parses, validates, silently ignored" shape the org-policy fix itself closed. This asserts on
-    // the returned VALUES, and uses three DISTINCT non-default values so a field SWAP (e.g.
-    // forwarding `vlmModel`'s value into the `vlmBaseUrl` slot) is caught too, not just a deletion.
+    // "parses, validates, silently ignored" shape the org-policy fix itself closed. `fetchBudgetBytes`
+    // and `preferRenditions` were the review's Important 3 finding: PR 3 added the config keys but
+    // this mapping stopped at three fields, so the running byte budget — this PR's headline
+    // feature — was un-configurable in production. This asserts on the returned VALUES, and uses
+    // distinct non-default values so a field SWAP (e.g. forwarding `vlmModel`'s value into the
+    // `vlmBaseUrl` slot) is caught too, not just a deletion.
     const db = trackedDb();
+    const vault = createMockVault();
     const config: MultimodalConfig = {
       enabled: true,
       vlmBaseUrl: "http://198.51.100.7:9999",
@@ -1160,15 +1165,54 @@ describe("tryDispatchPhase4Rpc", () => {
       dataDir: "/tmp",
       config,
       capabilityDisabled: true,
+      vault,
     });
     expect(out.vlmBaseUrl).toBe("http://198.51.100.7:9999");
     expect(out.vlmModel).toBe("distinctly-non-default-vlm-model");
     expect(out.maxFrames).toBe(37);
     expect(out.capabilityDisabled).toBe(true);
     expect(out.enabled).toBe(true);
-    // The three values are pairwise distinct, so any two-field swap among them is independently
-    // observable by the three equality assertions above — none would pass by accident.
+    expect(out.fetchBudgetBytes).toBe(1024 * 1024 * 1024);
+    expect(out.preferRenditions).toBe(true);
+    // Reference equality, not merely "some vault" — proof the SAME instance `ctx.options.vault`
+    // carries through, not a freshly constructed one that would authenticate as nobody.
+    expect(out.vault).toBe(vault);
+    // The three original values are pairwise distinct, so any two-field swap among them is
+    // independently observable by the three equality assertions above — none would pass by
+    // accident.
     expect(new Set([out.vlmBaseUrl, out.vlmModel, String(out.maxFrames)]).size).toBe(3);
+  });
+
+  test("Important 4: the vault buildMediaPassDepsInput forwards reaches a REAL bearerFor on the constructed deps, not the null-returning fallback", async () => {
+    // Proof at the BEHAVIOURAL end of the wire, not just the intermediate `.vault` field: a
+    // pre-populated cached OAuth token resolves through `buildMediaPassDeps`'s `cloudBearerFor`
+    // ONLY if the vault this test set the token on is the one that actually reached it.
+    const db = trackedDb();
+    const vault = createMockVault();
+    const farFuture = Date.now() + 24 * 60 * 60 * 1000;
+    await vault.set(
+      "google.oauth",
+      JSON.stringify({ accessToken: "real-drive-token", refreshToken: "r", expiresAt: farFuture }),
+    );
+    const config: MultimodalConfig = {
+      enabled: true,
+      vlmBaseUrl: "http://127.0.0.1:11434",
+      vlmModel: "qwen2.5vl:7b",
+      maxFrames: 8,
+      fetchBudgetBytes: 2 * 1024 * 1024 * 1024,
+      preferRenditions: false,
+    };
+    const deps = buildMediaPassDeps(
+      buildMediaPassDepsInput({
+        db,
+        configDir: undefined,
+        dataDir: "/tmp",
+        config,
+        capabilityDisabled: false,
+        vault,
+      }),
+    );
+    await expect(deps.cloudBytes.bearerFor("google_drive")).resolves.toBe("real-drive-token");
   });
   test("an unregistered method through the same path still 404s (negative control)", async () => {
     const { ctx } = makeCtx();

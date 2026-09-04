@@ -65,10 +65,15 @@ export function buildUnderstandingRow(
     // Matches `zoom:transcript`'s existing house style (`Transcript — <topic>`) so a derived row is
     // distinguishable from its source in a result list without a bracketed tag.
     title: `${isAv ? "Transcript" : "Caption"} — ${candidate.title}`,
-    // The rendition sentence is appended for EVERY candidate, local or cloud, so its presence never
-    // has to be inferred from absence — a reader who only ever sees "the original file" still knows
-    // that is what happened, rather than the pass simply never saying (spec § 16.8, OQ 1).
-    body: `${outcome.text}\n\n${RENDITION_SENTENCE[rendition]}`,
+    // The rendition sentence goes FIRST, mirroring `av-understander.ts`'s "WHY CAPTIONS COME
+    // FIRST": `upsertIndexedItem` clamps this body at `BODY_MAX_PROSE` (16,384) — an ordinary size
+    // for a transcript around 45 minutes long — and `clampBody` truncates the TAIL. A sentence
+    // appended after the model's text would be the first thing lost on exactly the recordings long
+    // enough to matter, and a long transcript would also lose its own last ~40 characters to a
+    // fragment of the sentence rather than a clean cut. Leading means it is present for EVERY
+    // candidate, local or cloud, regardless of length — its presence never has to be inferred from
+    // absence (spec § 16.8, OQ 1).
+    body: `${RENDITION_SENTENCE[rendition]}\n\n${outcome.text}`,
     url: candidate.url,
     modifiedAt: nowMs,
     syncedAt: nowMs,

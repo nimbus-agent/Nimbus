@@ -67,13 +67,14 @@ export interface BuildMediaPassDepsInput {
   /** `[multimodal] prefer_renditions` (spec § 16.8). Defaults to {@link DEFAULT_PREFER_RENDITIONS}. */
   readonly preferRenditions?: boolean;
   /**
-   * The Vault a cloud fetch's bearer token is resolved from (Drive/Photos/OneDrive OAuth). Absent
-   * in every wiring today — the `media.understand` dispatcher does not yet forward
-   * `ctx.options.vault` through this input — so `cloudBearerFor` below fails CLOSED rather than
-   * open: every bearer-requiring cloud fetch skips as `not_configured` rather than throwing or
-   * guessing a credential. That is a disclosed capability gap (cloud fetch cannot authenticate
-   * yet), not a silent one: this field exists so a future caller can close it by passing a real
-   * vault, without another change here.
+   * The Vault a cloud fetch's bearer token is resolved from (Drive/Photos/OneDrive OAuth).
+   * `ipc/server/dispatchers.ts`'s `buildMediaPassDepsInput` forwards `ctx.options.vault` here —
+   * the same vault every other vault-consuming dispatcher in that file reads — so production
+   * cloud fetch DOES authenticate. Optional on this type only for the many tests in this file that
+   * construct `BuildMediaPassDepsInput` directly without a vault: `cloudBearerFor` below fails
+   * CLOSED when this is absent, so every bearer-requiring cloud fetch in such a test skips as
+   * `not_configured` rather than throwing or guessing a credential — a deliberate, disclosed
+   * degradation for a caller that has no vault to give it, not a production gap.
    */
   readonly vault?: NimbusVault;
 }
@@ -112,9 +113,10 @@ async function cloudBearerFor(
 /**
  * The cloud arm's shared collaborators (spec § 16.2–16.6). `fetchFn` is `safeFetchFollowing` —
  * every hop of a redirect re-validated against the private-address/SSRF check, credentials
- * stripped on a cross-origin hop — never a bare `fetch`: `cloud-url-resolver.ts`'s and
- * `cloud-bytes.ts`'s own `fetchFn` docstrings both describe this as a TODO until a caller wires it,
- * and this is that wiring. `appendEgress` is the REAL `sync`-class ledger append (I29):
+ * stripped on a cross-origin hop — never a bare `fetch`: `cloud-url-resolver.ts`'s own `fetchFn`
+ * docstring describes this as a contract on the type until a caller wires it, and this is that
+ * wiring (`cloud-bytes.ts`'s `CloudBytesDeps.fetchFn` is an undocumented bare field, so only the
+ * resolver's docstring made the claim). `appendEgress` is the REAL `sync`-class ledger append (I29):
  * `cloud-bytes.ts` becomes a third caller of `recordSyncEgress`, alongside `sync/scheduler.ts` and
  * `sync/targeted-fetch.ts` (see `docs/SECURITY-INVARIANTS.md`'s I29 entry — the enumeration there
  * is stale until it is amended to say so). `sleep` is a real wall-clock delay, used only by

@@ -136,9 +136,9 @@ describe("runMediaPass", () => {
       .all();
     expect(rows).toHaveLength(1);
     // A local candidate always understands from "the original file" — the rendition sentence
-    // (pinned on its own in understanding-item.test.ts) is appended after the model's own text.
-    expect((rows[0]?.body ?? "").startsWith("transcript")).toBe(true);
-    expect(rows[0]?.body).toContain("Understood from the original file.");
+    // (ordering pinned on its own in understanding-item.test.ts) LEADS the model's own text.
+    expect(rows[0]?.body ?? "").toContain("transcript");
+    expect(rows[0]?.body ?? "").toContain("Understood from the original file.");
   });
 
   test("is idempotent — a second run understands nothing new", async () => {
@@ -299,10 +299,44 @@ describe("runMediaPass", () => {
         "SELECT body FROM item WHERE service='nimbus' AND type='video_understanding'",
       )
       .get();
-    // The rendition sentence appends after the model's text, so the exact total length is no
-    // longer 3,000 — the property this test pins is that the 3,000-char PREFIX survived uncapped.
-    expect(row?.body?.startsWith(long)).toBe(true);
+    // The rendition sentence LEADS the model's text, so the exact total length is no longer
+    // 3,000 — the property this test pins is that the 3,000-char transcript survived uncapped
+    // (as the body's TAIL, since it is well under BODY_MAX_PROSE once the short leading sentence
+    // is added — the "survives an actual cap" case is pinned separately, below).
+    expect(row?.body?.endsWith(long)).toBe(true);
     expect((row?.body?.length ?? 0) > 3_000).toBe(true);
+  });
+
+  test("the rendition sentence survives a body clamped at BODY_MAX_PROSE — a ~45-minute recording is ordinary here", async () => {
+    addMediaFile("verylong.mp4");
+    // Comfortably over BODY_MAX_PROSE (16,384) once the leading sentence is added too, so the
+    // clamp genuinely bites and truncates this transcript's TAIL — proving the property under
+    // test is "the sentence survives a REAL cap", not merely "the sentence exists on a short body".
+    const huge = "y".repeat(20_000);
+    await runMediaPass(
+      deps({
+        gate: {
+          enabled: true,
+          capabilityDisabled: false,
+          understanderFor: () => ({
+            isLocal: true,
+            model: "m",
+            isAvailable: async () => true,
+            understand: async () => ({ text: huge }),
+          }),
+          gpu: { acquire: async () => () => undefined, touch: () => undefined },
+        },
+      }),
+    );
+    const row = db
+      .query<{ body: string | null }, []>(
+        "SELECT body FROM item WHERE service='nimbus' AND type='video_understanding'",
+      )
+      .get();
+    const body = row?.body ?? "";
+    // The clamp genuinely fired — proof this is the over-cap case, not an accidentally-under-cap one.
+    expect(body.length).toBeLessThan(20_000);
+    expect(body.startsWith("Understood from the original file.")).toBe(true);
   });
 });
 
@@ -552,7 +586,13 @@ describe("runMediaPass — cloud budget, stop reasons and rendition (PR 3)", () 
     expect(cursor?.last_item_id).toBe("google_drive:0-prior");
   });
 
-  test("a mid-run budget stop ends the run and leaves the cursor exactly where it stopped", async () => {
+  test("a mid-run budget stop retries the STOPPING artifact on resume — the cursor reflects the last COMPLETED item, not the one that stopped", async () => {
+    // DIRECTED OVERRIDE (controller review): the brief's own illustrative test asserted
+    // `lastItemId === c2.itemId` (the STOPPING candidate). That was wrong — c2's bytes were never
+    // fetched to completion, so advancing the cursor onto it would make a resume skip an artifact
+    // that was never actually understood, self-healing only when a LATER run happens to drain the
+    // whole queue and clear the cursor (which, on a growing library, may be never). The cursor
+    // must stay at c1 — the last artifact that genuinely completed — so a resume retries c2.
     addDriveItem("cbud-c1");
     addDriveItem("cbud-c2");
     addDriveItem("cbud-c3");
@@ -572,31 +612,41 @@ describe("runMediaPass — cloud budget, stop reasons and rendition (PR 3)", () 
     );
     expect(summary.stopReason).toBe("budget_exhausted");
     expect(summary.understood).toBe(1);
-    expect(summary.lastItemId).toBe("google_drive:cbud-c2");
+    expect(summary.lastItemId).toBe("google_drive:cbud-c1");
     const cursor = db
       .query<{ last_item_id: string }, []>("SELECT last_item_id FROM media_pass_cursor")
       .get();
     expect(cursor?.last_item_id ?? null).toBe(summary.lastItemId);
   });
 
-  test("a mid-run budget stop does NOT clear the cursor, even though it is a short page", async () => {
-    addDriveItem("cshort-only", { sizeBytes: 10 });
+  test("a mid-run stop on the FIRST candidate this run leaves a previously seeded cursor untouched — not cleared, and not advanced onto the stopping candidate", async () => {
+    // Distinct from the pre-flight-refusal cursor-guard tests above: this stop happens INSIDE the
+    // loop (a declared content-length exceeds the budget), on the very first candidate this run
+    // attempts, with nothing having completed yet — the case where there is no "previous
+    // completed item this run" to fall back to, only the cursor this run RESUMED from.
+    writeCursor(db, "default", {
+      lastItemId: "google_drive:0-prior",
+      processedCount: 1,
+      nowMs: 5000,
+    });
+    addDriveItem("cfirst-stop");
     const summary = await runMediaPass(
       deps({
-        // A single candidate against a limit of 50 is exactly the "short page" the drained-queue
-        // rule reads as "nothing more to do" — proof the guard is on stopReason, not page length.
-        limit: 50,
         scratchDir: cloudScratchDir(),
         fetchBudgetBytes: 1000,
         cloudBytes: cloudDeps({
           fetchFn: async () =>
-            new Response(null, { status: 200, headers: { "content-length": "999999" } }),
+            new Response(null, { status: 200, headers: { "content-length": "5000" } }),
         }),
       }),
     );
     expect(summary.stopReason).toBe("budget_exhausted");
-    const cursor = db.query<{ n: number }, []>("SELECT COUNT(*) AS n FROM media_pass_cursor").get();
-    expect(cursor?.n).toBe(1);
+    // Nothing completed this run — the STOPPING candidate is not "the last item processed".
+    expect(summary.lastItemId).toBeNull();
+    const cursor = db
+      .query<{ last_item_id: string }, []>("SELECT last_item_id FROM media_pass_cursor")
+      .get();
+    expect(cursor?.last_item_id).toBe("google_drive:0-prior");
   });
 
   test("a rate-limit stop reports rate_limited, not budget_exhausted", async () => {
@@ -611,6 +661,47 @@ describe("runMediaPass — cloud budget, stop reasons and rendition (PR 3)", () 
     );
     expect(summary.stopReason).toBe("rate_limited");
     expect(summary.understood).toBe(0);
+  });
+
+  test("debits bytes fetched on the OK arm too — not only a stop's", async () => {
+    addDriveItem("cok-a");
+    const body = "z".repeat(777);
+    const summary = await runMediaPass(
+      deps({
+        scratchDir: cloudScratchDir(),
+        cloudBytes: cloudDeps({ fetchFn: async () => new Response(body) }),
+      }),
+    );
+    expect(summary.understood).toBe(1);
+    expect(summary.cloudBytesFetched).toBe(777);
+  });
+
+  test("debits bytes fetched on a per-item SKIP arm too — over_byte_cap after partial streaming still counts the bytes that crossed the wire", async () => {
+    addDriveItem("cskip-a");
+    const chunk = new Uint8Array(2_000);
+    const summary = await runMediaPass(
+      deps({
+        scratchDir: cloudScratchDir(),
+        // Smaller than the chunk, so the PER-ARTIFACT cap fires — not the run budget, which stays
+        // generous — isolating the skip arm's debit from the stop arm's (already pinned above).
+        maxBytes: 1_000,
+        fetchBudgetBytes: 1_000_000,
+        cloudBytes: cloudDeps({
+          fetchFn: async () =>
+            new Response(
+              new ReadableStream<Uint8Array>({
+                start(controller) {
+                  controller.enqueue(chunk);
+                  controller.close();
+                },
+              }),
+            ),
+        }),
+      }),
+    );
+    expect(summary.stopReason).toBe("completed");
+    expect(summary.skippedByReason.over_byte_cap).toBe(1);
+    expect(summary.cloudBytesFetched).toBe(2_000);
   });
 
   test("counts partial bytes transferred before a budget abort — bytes that crossed the wire are never reported as zero", async () => {

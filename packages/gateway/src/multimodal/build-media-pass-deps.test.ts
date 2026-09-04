@@ -140,9 +140,10 @@ describe("buildMediaPassDeps — cloud arm wiring (PR 3)", () => {
   });
 
   test("cloudBytes.bearerFor fails CLOSED (null) when no vault is supplied", async () => {
-    // No `media.understand` dispatcher forwards a vault into this input yet — a disclosed gap
-    // (see BuildMediaPassDepsInput.vault's doc comment), not a silent one. Every bearer-requiring
-    // service must skip as not_configured rather than throw or fabricate a credential.
+    // Production DOES supply a vault (`dispatchers.ts`'s `buildMediaPassDepsInput` forwards
+    // `ctx.options.vault`) — this test exercises the DIRECT-construction case every other test in
+    // this file uses, where omitting `vault` must degrade safely rather than throw or fabricate a
+    // credential. See BuildMediaPassDepsInput.vault's doc comment.
     const deps = buildMediaPassDeps({
       db: db(),
       roots: [],

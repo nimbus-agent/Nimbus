@@ -58,15 +58,19 @@ describe("buildUnderstandingRow", () => {
 
   test("declares a FULL body so the prose cap applies, not the 512-char default", () => {
     const row = buildUnderstandingRow(CANDIDATE, OUTCOME, 999);
-    // The rendition sentence (asserted on its own below) is appended after the model's own text —
-    // this test's job is only the prose-cap-eligible PREFIX.
-    expect(row.body.startsWith("we shipped the gate")).toBe(true);
+    // The rendition sentence (asserted on its own below, and its LEADING position pinned
+    // separately in media-pass.test.ts's truncation-survival test) precedes the model's own
+    // text — this test's job is only that the model's text is present in full.
+    expect(row.body).toContain("we shipped the gate");
   });
 
   test("states the rendition it was understood from, in the body AND in metadata", () => {
     const original = buildUnderstandingRow(CANDIDATE, OUTCOME, 999);
     expect(original.body).toContain("Understood from the original file.");
     expect(original.metadata["rendition"]).toBe("original");
+    // LEADS the body, not trails it — a body-length cap truncates the tail, and the rendition
+    // sentence must survive on exactly the artifacts long enough to be clamped.
+    expect(original.body.startsWith("Understood from the original file.")).toBe(true);
 
     const downsized = buildUnderstandingRow(CANDIDATE, OUTCOME, 999, "w2048-h2048");
     expect(downsized.body).toContain("downsized rendition");
@@ -126,7 +130,7 @@ describe("writeUnderstanding", () => {
       )
       .all();
     expect(rows).toHaveLength(1);
-    expect((rows[0]?.body ?? "").startsWith("revised transcript")).toBe(true);
+    expect(rows[0]?.body ?? "").toContain("revised transcript");
     db.close();
   });
 

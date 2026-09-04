@@ -6,7 +6,13 @@
  * index that must survive interruption.
  *
  * Two properties the tests pin, because both are easy to lose:
- *  - a per-artifact failure NEVER aborts the pass; it is recorded so a re-run retries exactly it;
+ *  - a per-artifact failure the gate CATEGORIZES (any `SkipReason`) never aborts the pass; it is
+ *    recorded so a re-run retries exactly it. This is narrower than "nothing aborts the pass": an
+ *    UNCAUGHT throw from a collaborator — e.g. `MediaGateDeps.understanderFor` itself, which
+ *    `understandArtifact` does not wrap in try/catch the way it wraps `provider.understand()` —
+ *    propagates out of `runMediaPass` and DOES abort the run. The per-iteration `finally` below
+ *    still runs on that path (a cloud scratch file is still released), but no `SkipReason` is
+ *    recorded and no later candidate is attempted;
  *  - the summary discloses skips BY REASON. "understood 42 of 108" with no breakdown is the
  *    disclosure failure this pass exists not to commit.
  *
@@ -220,7 +226,6 @@ export async function runMediaPass(deps: MediaPassDeps): Promise<MediaPassSummar
   let stopReason: MediaPassStopReason = "completed";
 
   for (const candidate of candidates) {
-    lastItemId = candidate.itemId;
     // Ownership of a cloud scratch file passes to THIS loop on success: `fetchCloudBytes` removes
     // it on its own failure paths but *returns* the path when it succeeds, since the understanding
     // step below is what actually consumes it. Without this `finally`, every successfully
@@ -243,6 +248,7 @@ export async function runMediaPass(deps: MediaPassDeps): Promise<MediaPassSummar
         if ("error" in resolvedUrl) {
           reasons[resolvedUrl.error] += 1;
           skipped += 1;
+          lastItemId = candidate.itemId;
           advance(deps, lastItemId, understood + skipped);
           continue;
         }
@@ -266,11 +272,18 @@ export async function runMediaPass(deps: MediaPassDeps): Promise<MediaPassSummar
         if (!fetched.ok) {
           if ("stop" in fetched) {
             stopReason = fetched.stop;
-            advance(deps, lastItemId, understood + skipped);
+            // The STOPPING candidate was never fetched to completion — it must be RETRIED on the
+            // next run, not skipped past. So `lastItemId`/the cursor are deliberately left at
+            // whatever the previous iteration (or the resumed-from cursor, if this was the first
+            // candidate this run) already set them to; neither is advanced onto this candidate.
+            // Advancing here — the original design — self-heals only when a LATER run drains the
+            // whole queue and clears the cursor, which on a growing library may be never, so each
+            // budget/rate-limit stop would silently lose exactly one artifact forever.
             break;
           }
           reasons[fetched.reason] += 1;
           skipped += 1;
+          lastItemId = candidate.itemId;
           advance(deps, lastItemId, understood + skipped);
           continue;
         }
@@ -287,6 +300,7 @@ export async function runMediaPass(deps: MediaPassDeps): Promise<MediaPassSummar
         if (!resolved.ok) {
           reasons[resolved.reason] += 1;
           skipped += 1;
+          lastItemId = candidate.itemId;
           advance(deps, lastItemId, understood + skipped);
           continue;
         }
@@ -297,6 +311,7 @@ export async function runMediaPass(deps: MediaPassDeps): Promise<MediaPassSummar
       if (!result.ok) {
         reasons[result.reason] += 1;
         skipped += 1;
+        lastItemId = candidate.itemId;
         advance(deps, lastItemId, understood + skipped);
         continue;
       }
@@ -310,6 +325,7 @@ export async function runMediaPass(deps: MediaPassDeps): Promise<MediaPassSummar
         rendition,
       );
       understood += 1;
+      lastItemId = candidate.itemId;
       advance(deps, lastItemId, understood + skipped);
     } finally {
       if (cloudScratch !== undefined) {

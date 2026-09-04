@@ -23,12 +23,13 @@ export interface CloudUrlResolverDeps {
    * exactly that reason, on the one request that carries a credential (the Photos/OneDrive
    * round-trip). A `fetchFn` that re-issues the request against a `Location` header would hand
    * that bearer to whatever host the provider named next — the same attack shape this module
-   * exists to prevent, just one hop later. NOT YET WIRED to a real implementation: a later task
-   * in this plan is expected to inject `util/safe-fetch.ts`'s `safeFetchFollowing` here (from
-   * `build-media-pass-deps.ts`), which already forces manual redirects per hop and strips
-   * credentials cross-origin, and to assert it with a test that a loopback URL is refused through
-   * the constructed deps. Until that lands, this is a contract on the type, not a fact about
-   * production.
+   * exists to prevent, just one hop later. WIRED: `build-media-pass-deps.ts`'s
+   * `buildCloudBytesDeps` injects `util/safe-fetch.ts`'s `safeFetchFollowing` here, which takes
+   * redirect handling over itself hop-by-hop (re-validating each hop's URL against the
+   * private-address/SSRF check) and strips the bearer on any cross-origin hop — so THIS module's
+   * `redirect: "manual"` is a contract the injected implementation actually satisfies, not merely
+   * a request this module makes of it. Asserted in `build-media-pass-deps.test.ts` by driving the
+   * constructed `deps.cloudBytes.fetchFn` with a loopback URL and observing the refusal.
    */
   readonly fetchFn: (url: string, init: RequestInit) => Promise<Response>;
 }
