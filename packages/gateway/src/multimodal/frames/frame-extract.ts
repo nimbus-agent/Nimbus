@@ -23,6 +23,13 @@ import { withProcessTimeout } from "../stt/ffmpeg-bin.ts";
 /** A probe is metadata only; it has no reason to be slow. */
 const DEFAULT_PROBE_TIMEOUT_MS = 30_000;
 
+/**
+ * ffprobe's `-show_entries format=duration` output is one short line, so this is a runaway guard
+ * rather than a real bound — it exists only because reading through {@link readBounded} (for the
+ * cancellation it provides) requires one.
+ */
+const PROBE_OUTPUT_MAX_BYTES = 64 * 1024;
+
 /** A single seek + decode. Generous enough for a slow disk, tight enough to bound a hang. */
 const DEFAULT_FRAME_TIMEOUT_MS = 60_000;
 
@@ -88,11 +95,20 @@ export async function probeDurationSeconds(
       ],
       { stdout: "pipe", stderr: "pipe", env: extensionProcessEnv({}) },
     ) as unknown as SpawnedProc;
-    // Start the read but do NOT await it before the timeout guard. `new Response(stream).text()`
-    // resolves only at EOF, and a wedged ffprobe never closes stdout — awaiting here would block
-    // forever and the timeout race below would never even be constructed. `extractFrameJpeg` has
-    // the same hazard and the same shape; the two must not diverge.
-    const outPromise = new Response(proc.stdout).text();
+    // Start the read but do NOT await it before the timeout guard: the read resolves only at EOF,
+    // and a wedged ffprobe never closes stdout — awaiting here would block forever and the timeout
+    // race below would never even be constructed.
+    //
+    // Read through `readBounded`, NOT `new Response(proc.stdout).text()`, for the cancellation
+    // half. `new Response(stream)` LOCKS the stream, and a locked stream cannot be cancelled:
+    // `stream.cancel()` rejects with a TypeError and the underlying source's `cancel()` never
+    // runs. The previous shape here called `proc.stdout.cancel().catch(() => undefined)`, which
+    // therefore always threw and was always swallowed — a cleanup that read as correct and did
+    // nothing. Holding the reader (which `readBounded` does) is what makes `cancel()` actually
+    // reach the source. `extractFrameJpeg` has the same hazard and the same shape; the two must
+    // not diverge, and this is the fix that made that comment true.
+    const out = readBounded(proc.stdout, PROBE_OUTPUT_MAX_BYTES);
+    void out.done.catch(() => undefined);
     let code: number;
     try {
       code = await withProcessTimeout(
@@ -101,19 +117,17 @@ export async function probeDurationSeconds(
         `ffprobe ${input}`,
       );
     } catch (err) {
-      // The timeout fired. `outPromise` is still pending on a stream that will never close, and a
+      // The timeout fired and the read is still pending on a stream that will never close. A
       // pending read keeps `bun test` alive past the last assertion — a hanging suite rather than
-      // a failing one. Cancel it explicitly; a no-op on a stream already at EOF.
-      void proc.stdout.cancel().catch(() => undefined);
-      void outPromise.catch(() => undefined);
+      // a failing one.
+      out.cancel();
       throw err;
     }
     if (code !== 0) {
-      void proc.stdout.cancel().catch(() => undefined);
-      void outPromise.catch(() => undefined);
+      out.cancel();
       return null;
     }
-    const seconds = Number.parseFloat((await outPromise).trim());
+    const seconds = Number.parseFloat(new TextDecoder().decode(await out.done).trim());
     // `N/A` and an empty line both land here. A NaN duration would produce NaN timestamps and an
     // ffmpeg invocation with a garbage `-ss`.
     return Number.isFinite(seconds) && seconds > 0 ? seconds : null;
@@ -188,8 +202,8 @@ export async function extractFrameJpeg(
   const collect = readBounded(proc.stdout, maxBytes);
   // Observed unconditionally from here on (whichever way the race below settles) — this attaches
   // a handler before any rejection can be reported as unhandled, regardless of which of the two
-  // outcomes below ends up (also) awaiting `collect` later.
-  collect.catch(() => undefined);
+  // outcomes below ends up (also) awaiting `collect.done` later.
+  collect.done.catch(() => undefined);
 
   // A racer that stays pending on a SUCCESSFUL collect — the exit/timeout race still needs to
   // run its course, since a clean exit code must still be confirmed — and rejects the instant
@@ -198,7 +212,7 @@ export async function extractFrameJpeg(
   // `readBounded`'s cancel-on-breach below) it blocks on its next write and `exited` may not
   // settle for a long time, if ever — sequentially awaiting the timeout first, as this used to,
   // meant the cap error was masked by a "timed out" error up to the full timeout later.
-  const capBreach: Promise<never> = collect.then(
+  const capBreach: Promise<never> = collect.done.then(
     (): Promise<never> => new Promise<never>(() => {}),
     (err: unknown): never => {
       throw err;
@@ -229,24 +243,27 @@ export async function extractFrameJpeg(
       void proc.exited.catch(() => undefined);
     } else {
       // The timeout fired first (the process genuinely hung without breaching the cap).
-      // `collect` is still pending on a stream that will never close, and a pending read keeps
-      // `bun test` alive past the last assertion — a hanging suite rather than a failing one.
-      // Cancel it explicitly; a no-op on a stream already at EOF. Same shape as
+      // `collect.done` is still pending on a stream that will never close, and a pending read
+      // keeps `bun test` alive past the last assertion — a hanging suite rather than a failing
+      // one. Cancel the READER via `collect.cancel()`, not `proc.stdout.cancel()`: `readBounded`
+      // holds a lock on `proc.stdout` via `getReader()`, and cancelling a LOCKED stream throws
+      // `TypeError` without ever running the underlying source's own `cancel()` — a `.catch(() =>
+      // undefined)` around that call swallows the throw and silently does nothing. Same shape as
       // `probeDurationSeconds`'s timeout arm — the two must not diverge.
-      void proc.stdout.cancel().catch(() => undefined);
+      collect.cancel();
     }
     throw err;
   }
   if (code !== 0) {
-    // Non-zero exit still leaves `collect` reading a stream ffmpeg may not have closed cleanly.
-    // Same cancellation as the timeout arm above, for the same reason.
-    void proc.stdout.cancel().catch(() => undefined);
+    // Non-zero exit still leaves `collect.done` reading a stream ffmpeg may not have closed
+    // cleanly. Same cancellation as the timeout arm above, for the same reason.
+    collect.cancel();
     const err = await new Response(proc.stderr).text().catch(() => "");
     throw new Error(
       `ffmpeg exited ${code} extracting frame at ${atSeconds}s: ${err.slice(0, 400)}`,
     );
   }
-  const bytes = await collect;
+  const bytes = await collect.done;
   if (bytes.byteLength === 0) {
     // A seek past the last frame exits 0 with no output. Throwing keeps the caller from sending
     // zero bytes to the model and storing whatever it says about them.
@@ -259,42 +276,60 @@ export async function extractFrameJpeg(
  * race, without matching on an error message. */
 class FrameByteCapError extends Error {}
 
-async function readBounded(
-  stream: ReadableStream<Uint8Array>,
-  maxBytes: number,
-): Promise<Uint8Array> {
+/** A pending {@link readBounded} read, plus the one way to abort it from the outside. */
+interface BoundedRead {
+  readonly done: Promise<Uint8Array>;
+  /**
+   * Cancels the READER `readBounded` is holding. `stream.cancel()` cannot be used for this once a
+   * reader has been obtained via `getReader()` — a locked stream's `cancel()` throws `TypeError`
+   * without ever running the underlying source's own `cancel()`, so a caller that swallowed that
+   * throw (as this file used to, via `.catch(() => undefined)`) believed it had cancelled the read
+   * when nothing had happened at all. `reader.cancel()` is the one call that actually reaches the
+   * underlying source. Swallows only its own rejection — never the caller's own error, which is
+   * what the caller needs to see.
+   */
+  cancel(): void;
+}
+
+function readBounded(stream: ReadableStream<Uint8Array>, maxBytes: number): BoundedRead {
   const reader = stream.getReader();
-  const chunks: Uint8Array[] = [];
-  let total = 0;
-  try {
-    for (;;) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      if (value === undefined) continue;
-      total += value.byteLength;
-      if (total > maxBytes) {
-        // `releaseLock()` alone (in the `finally` below) does not cancel the underlying stream:
-        // with a real ffmpeg, nobody would be draining the pipe from this point on, so ffmpeg
-        // blocks on its next write and never exits. Cancel so the producer sees the consumer
-        // walk away. Guarded: a cancel failure must never mask the cap error itself, which is
-        // what the caller needs to see.
-        try {
-          await reader.cancel();
-        } catch {
-          // best-effort; the cap error below is what matters.
+  const cancel = (): void => {
+    reader.cancel().catch(() => undefined);
+  };
+  const done = (async (): Promise<Uint8Array> => {
+    const chunks: Uint8Array[] = [];
+    let total = 0;
+    try {
+      for (;;) {
+        const { done: atEof, value } = await reader.read();
+        if (atEof) break;
+        if (value === undefined) continue;
+        total += value.byteLength;
+        if (total > maxBytes) {
+          // `releaseLock()` alone (in the `finally` below) does not cancel the underlying stream:
+          // with a real ffmpeg, nobody would be draining the pipe from this point on, so ffmpeg
+          // blocks on its next write and never exits. Cancel so the producer sees the consumer
+          // walk away. Guarded: a cancel failure must never mask the cap error itself, which is
+          // what the caller needs to see.
+          try {
+            await reader.cancel();
+          } catch {
+            // best-effort; the cap error below is what matters.
+          }
+          throw new FrameByteCapError(`frame exceeds the ${maxBytes}-byte cap`);
         }
-        throw new FrameByteCapError(`frame exceeds the ${maxBytes}-byte cap`);
+        chunks.push(value);
       }
-      chunks.push(value);
+    } finally {
+      reader.releaseLock();
     }
-  } finally {
-    reader.releaseLock();
-  }
-  const out = new Uint8Array(total);
-  let at = 0;
-  for (const c of chunks) {
-    out.set(c, at);
-    at += c.byteLength;
-  }
-  return out;
+    const out = new Uint8Array(total);
+    let at = 0;
+    for (const c of chunks) {
+      out.set(c, at);
+      at += c.byteLength;
+    }
+    return out;
+  })();
+  return { done, cancel };
 }

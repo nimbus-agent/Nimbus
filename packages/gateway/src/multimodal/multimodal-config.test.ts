@@ -119,6 +119,55 @@ describe("loadMultimodalConfig", () => {
     expect(() => loadMultimodalConfig(dir)).not.toThrow();
     expect(loadMultimodalConfig(dir).vlmBaseUrl).toBe(DEFAULT_VLM_BASE_URL);
   });
+
+  test("an unquoted vlm_model value fails the whole load off, never accepted as the literal string", () => {
+    // TOML requires string values to be quoted. `unquote` used to fall back to the raw trimmed
+    // text for anything that wasn't a clean `"..."`/`'...'` pair, so this malformed line was
+    // silently accepted as the model id `llava-unquoted` instead of failing the section off —
+    // verified empirically before this fix.
+    const dir = withToml("[multimodal]\nenabled = true\nvlm_model = llava-unquoted\n");
+    const cfg = loadMultimodalConfig(dir);
+    expect(cfg.enabled).toBe(false);
+    expect(cfg.vlmModel).toBe(DEFAULT_VLM_MODEL);
+  });
+
+  test("an unquoted vlm_base_url value fails the whole load off", () => {
+    const dir = withToml("[multimodal]\nenabled = true\nvlm_base_url = 127.0.0.1:11434\n");
+    const cfg = loadMultimodalConfig(dir);
+    expect(cfg.enabled).toBe(false);
+    expect(cfg.vlmBaseUrl).toBe(DEFAULT_VLM_BASE_URL);
+  });
+
+  test("an unbalanced (never-closed) quote fails the whole load off", () => {
+    const dir = withToml('[multimodal]\nenabled = true\nvlm_model = "unterminated\n');
+    const cfg = loadMultimodalConfig(dir);
+    expect(cfg.enabled).toBe(false);
+    expect(cfg.vlmModel).toBe(DEFAULT_VLM_MODEL);
+  });
+
+  test("a mismatched quote pair (opens double, closes single) fails the whole load off", () => {
+    const dir = withToml("[multimodal]\nenabled = true\nvlm_model = \"mismatched'\n");
+    const cfg = loadMultimodalConfig(dir);
+    expect(cfg.enabled).toBe(false);
+    expect(cfg.vlmModel).toBe(DEFAULT_VLM_MODEL);
+  });
+
+  test("an explicitly empty quoted value fails the whole load off rather than keeping the default silently", () => {
+    const dir = withToml('[multimodal]\nenabled = true\nvlm_model = ""\n');
+    const cfg = loadMultimodalConfig(dir);
+    expect(cfg.enabled).toBe(false);
+    expect(cfg.vlmModel).toBe(DEFAULT_VLM_MODEL);
+  });
+
+  test("correctly double- or single-quoted values still parse", () => {
+    const dblDir = withToml('[multimodal]\nenabled = true\nvlm_model = "llava-quoted"\n');
+    expect(loadMultimodalConfig(dblDir).vlmModel).toBe("llava-quoted");
+    expect(loadMultimodalConfig(dblDir).enabled).toBe(true);
+
+    const sglDir = withToml("[multimodal]\nenabled = true\nvlm_model = 'llava-quoted'\n");
+    expect(loadMultimodalConfig(sglDir).vlmModel).toBe("llava-quoted");
+    expect(loadMultimodalConfig(sglDir).enabled).toBe(true);
+  });
 });
 
 describe("loadMultimodalConfig — non-loopback vlm_base_url is refused LOUDLY", () => {
@@ -169,6 +218,20 @@ describe("loadMultimodalConfig — non-loopback vlm_base_url is refused LOUDLY",
       const dir = withToml(`[multimodal]\nvlm_base_url = "${url}"\n`);
       expect(() => loadMultimodalConfig(dir)).not.toThrow();
       expect(loadMultimodalConfig(dir).vlmBaseUrl).toBe(url);
+    }
+  });
+
+  test("a properly quoted non-loopback vlm_base_url still THROWS — the new quoting guard must not swallow it into a fail-off", () => {
+    // The interaction most likely to break by this fix: `unquote` returning `undefined` for a
+    // MALFORMED value must not be confused with a well-formed-but-refused value. A correctly
+    // quoted non-loopback host parses fine (`unquote` returns its content) and must still reach
+    // `requireLoopbackVlmBaseUrl`, which throws — never `defaults()`. Checked with both quote
+    // styles since the quoting guard now accepts either.
+    for (const dir of [
+      withToml('[multimodal]\nvlm_base_url = "http://gpu-box.lan:11434"\n'),
+      withToml("[multimodal]\nvlm_base_url = 'http://gpu-box.lan:11434'\n"),
+    ]) {
+      expect(() => loadMultimodalConfig(dir)).toThrow(MultimodalConfigError);
     }
   });
 

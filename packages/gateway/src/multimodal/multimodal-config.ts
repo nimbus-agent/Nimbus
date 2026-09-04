@@ -110,12 +110,24 @@ function requireLoopbackVlmBaseUrl(cfg: MultimodalConfig): MultimodalConfig {
   );
 }
 
-function unquote(raw: string): string {
+/**
+ * Unquotes a matching double- or single-quoted TOML string value, or reports MALFORMED (`undefined`)
+ * so the caller fails the WHOLE load off — same fail-off direction as the `enabled`/`max_frames`
+ * guards below. TOML requires a string value to be quoted; the previous shape returned the raw,
+ * un-stripped text for anything that was not a clean `"..."`/`'...'` pair, so an unquoted value
+ * (`vlm_model = llava-unquoted`) — malformed TOML — was silently accepted as the literal string
+ * `llava-unquoted` instead of failing the section off, in direct contradiction of this file's own
+ * header comment that malformed TOML always reads as OFF. A bare word, an unbalanced or mismatched
+ * quote (`"foo`, `'foo"`), and an explicitly empty quoted string (`""`, `''` — "with content" is a
+ * stated requirement, not a lesser-included case of "use the default") are all malformed here.
+ */
+function unquote(raw: string): string | undefined {
   const t = raw.trim();
-  if (t.length >= 2 && (t.startsWith('"') || t.startsWith("'")) && t.endsWith(t[0] ?? "")) {
-    return t.slice(1, -1);
-  }
-  return t;
+  if (t.length < 2) return undefined;
+  const quote = t[0];
+  if ((quote !== '"' && quote !== "'") || !t.endsWith(quote)) return undefined;
+  const content = t.slice(1, -1);
+  return content === "" ? undefined : content;
 }
 
 /**
@@ -170,10 +182,14 @@ function parseSection(raw: string): MultimodalConfig {
       else return defaults();
     } else if (key === "vlm_base_url") {
       const v = unquote(value);
-      if (v !== "") out = { ...out, vlmBaseUrl: v };
+      // An unquoted, unbalanced, or empty value is malformed TOML for this key — same fail-off
+      // direction as the unstructured-line and non-boolean-`enabled` cases above.
+      if (v === undefined) return defaults();
+      out = { ...out, vlmBaseUrl: v };
     } else if (key === "vlm_model") {
       const v = unquote(value);
-      if (v !== "") out = { ...out, vlmModel: v };
+      if (v === undefined) return defaults();
+      out = { ...out, vlmModel: v };
     } else if (key === "max_frames") {
       const n = parseStrictInt(value);
       // A non-integer value (`8junk`, `nonsense`) is malformed TOML for this key — same fail-off

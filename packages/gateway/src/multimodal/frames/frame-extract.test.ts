@@ -226,6 +226,43 @@ describe("extractFrameJpeg", () => {
     ).rejects.toThrow(/timed out/);
   });
 
+  test("a timed-out ffmpeg's stdout READER is actually cancelled, not just left locked", async () => {
+    // The hazard this pins: `readBounded` holds the stream via `getReader()`, and once a stream
+    // is locked, `stream.cancel()` throws `TypeError` WITHOUT ever running the underlying
+    // source's own `cancel()` — a `.catch(() => undefined)` around that call swallows the throw
+    // and the pending `reader.read()` is left running forever. Only `reader.cancel()` (exposed
+    // here as `readBounded`'s returned `cancel()`) actually reaches the underlying source. The
+    // trap this test is written to avoid: asserting only that `extractFrameJpeg` rejects would
+    // pass against the broken `proc.stdout.cancel()` version too, since that version already
+    // rejects on the timeout — it just never cancels the read underneath it. So the assertion
+    // here is on the underlying `cancel()` having actually run, not on the rejection alone.
+    let underlyingCancelRan = false;
+    const stream = new ReadableStream<Uint8Array>({
+      start() {
+        // Never enqueues and never closes — mirrors a wedged ffmpeg whose stdout never reaches
+        // EOF, so the pending `reader.read()` would otherwise hang forever.
+      },
+      cancel() {
+        underlyingCancelRan = true;
+      },
+    });
+    const spawn = (() => ({
+      exited: new Promise<number>(() => {}),
+      stdout: stream,
+      stderr: new Response("").body,
+      kill: () => {},
+    })) as unknown as typeof Bun.spawn;
+
+    await expect(
+      extractFrameJpeg("/v/clip.mp4", 1, {
+        ffmpegBin: "ffmpeg",
+        timeoutMs: 20,
+        spawn,
+      }),
+    ).rejects.toThrow(/timed out/);
+    expect(underlyingCancelRan).toBe(true);
+  });
+
   test("a cap breach wins the race against a process whose `exited` NEVER settles, and kills it", async () => {
     // The real-world hazard this pins: a genuinely wedged ffmpeg legitimately never resolves
     // `exited` once nobody drains its stdout pipe. Sequentially awaiting the process timeout
