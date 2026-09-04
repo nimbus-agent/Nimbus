@@ -7,6 +7,7 @@ import {
   DEFAULT_VLM_BASE_URL,
   DEFAULT_VLM_MODEL,
   loadMultimodalConfig,
+  MultimodalConfigError,
 } from "./multimodal-config.ts";
 
 function withToml(body: string): string {
@@ -33,18 +34,17 @@ describe("loadMultimodalConfig", () => {
       [
         "[multimodal]",
         "enabled = true # on locally",
-        // Deliberately non-loopback and distinct from DEFAULT_VLM_BASE_URL: proves the key
-        // is actually read (not just defaulted through), and documents that a remote VLM host
-        // is accepted here — the later locality invariant derives isLocal from this resolved
-        // URL, never from the vendor/model name.
-        'vlm_base_url = "http://gpu-box.lan:11434"',
+        // Loopback but distinct from DEFAULT_VLM_BASE_URL's port: proves the key is actually
+        // read (not just defaulted through) without tripping the non-loopback refusal below —
+        // a remote host cannot be used for this any more (see the describe block below).
+        'vlm_base_url = "http://127.0.0.1:9999"',
         'vlm_model = "qwen2.5vl:7b"',
         "max_frames = 4",
       ].join("\n"),
     );
     const cfg = loadMultimodalConfig(dir);
     expect(cfg.enabled).toBe(true);
-    expect(cfg.vlmBaseUrl).toBe("http://gpu-box.lan:11434");
+    expect(cfg.vlmBaseUrl).toBe("http://127.0.0.1:9999");
     expect(cfg.vlmModel).toBe("qwen2.5vl:7b");
     expect(cfg.maxFrames).toBe(4);
   });
@@ -112,5 +112,77 @@ describe("loadMultimodalConfig", () => {
     expect(cfg.vlmBaseUrl).toBe(DEFAULT_VLM_BASE_URL);
     expect(cfg.vlmModel).toBe(DEFAULT_VLM_MODEL);
     expect(cfg.maxFrames).toBe(DEFAULT_MAX_FRAMES);
+  });
+
+  test("the default (no vlm_base_url set) never triggers the refusal", () => {
+    const dir = withToml("[multimodal]\nenabled = true\n");
+    expect(() => loadMultimodalConfig(dir)).not.toThrow();
+    expect(loadMultimodalConfig(dir).vlmBaseUrl).toBe(DEFAULT_VLM_BASE_URL);
+  });
+});
+
+describe("loadMultimodalConfig — non-loopback vlm_base_url is refused LOUDLY", () => {
+  test("a well-formed but non-loopback vlm_base_url throws, naming the value and the reason", () => {
+    const dir = withToml('[multimodal]\nvlm_base_url = "http://gpu-box.lan:11434"\n');
+    expect(() => loadMultimodalConfig(dir)).toThrow(MultimodalConfigError);
+    let caught: unknown;
+    try {
+      loadMultimodalConfig(dir);
+    } catch (e) {
+      caught = e;
+    }
+    expect(caught).toBeInstanceOf(MultimodalConfigError);
+    const message = caught instanceof Error ? caught.message : "";
+    // Names the offending value verbatim...
+    expect(message).toContain("http://gpu-box.lan:11434");
+    // ...and the reason: no per-artifact grant exists in this release.
+    expect(message).toContain("per-artifact grant");
+    expect(message).toContain("this release");
+  });
+
+  test("never silently substitutes defaults() for a non-loopback value", () => {
+    // The bug this fix closes: a caller that only checked `.enabled` or `.vlmBaseUrl` after a
+    // catch-all would see the loopback default and never learn their setting was ignored. There
+    // must be no return path here at all — only the throw.
+    const dir = withToml('[multimodal]\nvlm_base_url = "http://10.0.0.5:11434"\n');
+    expect(() => loadMultimodalConfig(dir)).toThrow();
+  });
+
+  test("rejects a bare IP outside 127.0.0.0/8, an unresolvable hostname, and an IPv4-mapped non-loopback address alike", () => {
+    for (const url of [
+      "http://8.8.8.8:11434",
+      "http://vlm.example.com:11434",
+      "http://[::ffff:8.8.8.8]:11434",
+    ]) {
+      const dir = withToml(`[multimodal]\nvlm_base_url = "${url}"\n`);
+      expect(() => loadMultimodalConfig(dir)).toThrow(MultimodalConfigError);
+    }
+  });
+
+  test("loopback forms are all still accepted: 127.0.0.1, the whole 127.0.0.0/8 block, localhost, and [::1]", () => {
+    for (const url of [
+      "http://127.0.0.1:11434",
+      "http://127.5.5.5:11434",
+      "http://localhost:11434",
+      "http://[::1]:11434",
+    ]) {
+      const dir = withToml(`[multimodal]\nvlm_base_url = "${url}"\n`);
+      expect(() => loadMultimodalConfig(dir)).not.toThrow();
+      expect(loadMultimodalConfig(dir).vlmBaseUrl).toBe(url);
+    }
+  });
+
+  test("malformed-config fail-off still wins when the same file also has a non-loopback vlm_base_url", () => {
+    // The two rules must not collide: a line the parser cannot understand at all fails the WHOLE
+    // section off to defaults() (per 0c169ea9), even when a later line in the same section names
+    // a non-loopback vlm_base_url that would otherwise throw. Malformed-TOML detection happens
+    // inside parseSection's try, before requireLoopbackVlmBaseUrl is ever reached.
+    const dir = withToml(
+      '[multimodal]\nenabled = true\nnot valid toml\nvlm_base_url = "http://gpu-box.lan:11434"\n',
+    );
+    expect(() => loadMultimodalConfig(dir)).not.toThrow();
+    const cfg = loadMultimodalConfig(dir);
+    expect(cfg.enabled).toBe(false);
+    expect(cfg.vlmBaseUrl).toBe(DEFAULT_VLM_BASE_URL);
   });
 });

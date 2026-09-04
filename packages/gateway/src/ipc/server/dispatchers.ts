@@ -707,6 +707,11 @@ export async function tryDispatchMediaRpc(
       "media.understand requires mediaRpcCtx (the org-policy accessor)",
     );
   }
+  // `loadMultimodalConfig` throws `MultimodalConfigError` for a well-formed but non-loopback
+  // `vlm_base_url` (this slice has no per-artifact remote grant). Deliberately uncaught here,
+  // same shape as `runExecution`'s `ExecGateError` (`tryDispatchExecRpc`, below): it propagates
+  // to `server.ts`'s generic top-level catch and surfaces as JSON-RPC `-32603` carrying that
+  // error's own actionable message — never a silent substitution of the loopback default.
   const mmConfig = loadMultimodalConfig(ctx.options.configDir);
   const deps = buildMediaPassDeps(
     buildMediaPassDepsInput({

@@ -6,12 +6,22 @@
  * section-table machinery. Reuses `stripComment` from the dependency-free `toml-primitives.ts`
  * so `enabled = true # on locally` reads correctly.
  *
- * DEFAULT OFF, and every failure path — absent `configDir`, absent file, absent section, absent
- * key, unreadable or malformed TOML — reads as `false`. A missing config must never read as "on".
+ * DEFAULT OFF, and every MALFORMED-input failure path — absent `configDir`, absent file, absent
+ * section, absent key, unreadable or malformed TOML — reads as `false`. A missing config must
+ * never read as "on".
+ *
+ * ONE exception to that fail-OFF direction: a well-formed but non-loopback `vlm_base_url` is not
+ * malformed — the parser understood it fine — so it does not get the silent `defaults()`
+ * treatment above. It THROWS `MultimodalConfigError` instead. See `requireLoopbackVlmBaseUrl` for
+ * why: this slice has no per-artifact remote grant, so a remote value can never be honoured, and
+ * substituting the loopback default would silently give the operator local behaviour while
+ * ignoring the setting they actually wrote — the same "parsed then silently ignored" defect this
+ * file already closed for `enabled` and `max_frames`.
  */
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { stripComment } from "../config/toml-primitives.ts";
+import { isLoopbackBaseUrl } from "../llm/base-url-locality.ts";
 
 /** Loopback, so `isLoopbackBaseUrl` derives `isLocal === true` for the default (I34). */
 export const DEFAULT_VLM_BASE_URL = "http://127.0.0.1:11434";
@@ -36,6 +46,22 @@ export interface MultimodalConfig {
   readonly maxFrames: number;
 }
 
+/**
+ * Thrown by `loadMultimodalConfig` — and ONLY by it, never caught internally — when
+ * `[multimodal] vlm_base_url` names a non-loopback host. Deliberately a plain propagating `Error`
+ * subclass rather than a locally-caught-and-remapped one: `exec/exec-gate.ts`'s `ExecGateError`
+ * is the precedent this mirrors — it, too, is thrown from a gate/loader module and left uncaught
+ * by its RPC dispatcher, so it surfaces through `ipc/server/server.ts`'s generic top-level catch
+ * as JSON-RPC `-32603` with this error's own `message` verbatim. That message is therefore the
+ * WHOLE of what the caller sees, so it names both the offending value and the reason.
+ */
+export class MultimodalConfigError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "MultimodalConfigError";
+  }
+}
+
 function defaults(): MultimodalConfig {
   return {
     enabled: false,
@@ -49,11 +75,39 @@ export function loadMultimodalConfig(configDir: string | undefined): MultimodalC
   if (configDir === undefined) return defaults();
   const tomlPath = join(configDir, "nimbus.toml");
   if (!existsSync(tomlPath)) return defaults();
+  let parsed: MultimodalConfig;
   try {
-    return parseSection(readFileSync(tomlPath, "utf8"));
+    parsed = parseSection(readFileSync(tomlPath, "utf8"));
   } catch {
     return defaults();
   }
+  // Deliberately OUTSIDE the try/catch above. `parseSection` throwing means the TOML itself could
+  // not be trusted — the fail-OFF direction. A non-loopback `vlm_base_url` is the opposite case:
+  // the parser understood it perfectly, so this is a validation refusal, not a parse failure, and
+  // must never be caught by the generic `catch { return defaults() }` above it — that would
+  // silently substitute the loopback default for a value the operator explicitly set, exactly the
+  // "parsed then silently ignored" defect this file exists to close.
+  return requireLoopbackVlmBaseUrl(parsed);
+}
+
+/**
+ * Refuses LOUDLY (never `defaults()`) when `vlmBaseUrl` is not a loopback address. This slice's
+ * `media-gate.ts` `understandArtifact` refuses `!provider.isLocal` with `no_remote_grant` BEFORE
+ * `isAvailable()` or `describe()` ever run — the per-artifact remote grant that would permit a
+ * non-loopback VLM lands in a later PR — so a remote `vlm_base_url` can never be honoured today.
+ * Worse, it is not just inert: `av-understander.ts` computes `isLocal = stt.isLocal &&
+ * vlm.isLocal`, so a remote vision setting silently disables local audio transcription too, a
+ * shipped and unrelated feature. Reuses `isLoopbackBaseUrl` (I34) rather than a second predicate.
+ */
+function requireLoopbackVlmBaseUrl(cfg: MultimodalConfig): MultimodalConfig {
+  if (isLoopbackBaseUrl(cfg.vlmBaseUrl)) return cfg;
+  throw new MultimodalConfigError(
+    `[multimodal] vlm_base_url = "${cfg.vlmBaseUrl}" is not a loopback address. Remote vision ` +
+      "understanding requires a per-artifact grant that does not exist in this release: every " +
+      'artifact would be refused with "no_remote_grant", and local audio transcription — which ' +
+      "needs no VLM at all — would be silently disabled along with it. Point vlm_base_url at a " +
+      "loopback host (e.g. http://127.0.0.1:11434) or remove the key.",
+  );
 }
 
 function unquote(raw: string): string {

@@ -1788,14 +1788,17 @@ const streamReq: JSONRPCRequest = {
 // Egress: vision's own I29 `model`-class decorator, `egress/vlm-egress.ts`'s `wrapLedgeredVlm`
 //   (static D22(g)), ships ahead of any remote `VlmProvider` in production — the shipped Ollama
 //   adapter is local BY DEFAULT (`isLocal` derived from its resolved base URL, I34), not by
-//   construction, so a caller pointing `vlm_base_url` off-box gets a provider `wrapLedgeredVlm`
-//   WOULD wrap and append for. That is the decorator's CONTRACT, not a reachable outcome today:
-//   `media-gate.ts` refuses a non-local provider outright with `no_remote_grant` before `describe`
-//   is ever called, since the per-artifact remote grant that would permit it does not land before
-//   PR 4 — so a non-loopback `vlm_base_url` produces zero egress rows AND zero understanding
-//   (image or video), never a ledgered remote call. Transcription stays local-only in this slice —
-//   no `SttProvider` routing, no decorator, by construction rather than by check, mirroring
-//   `LOCAL_ONLY_SYNC_SERVICES`.
+//   construction, so a provider built directly with a non-loopback `baseUrl` gets a provider
+//   `wrapLedgeredVlm` WOULD wrap and append for. That is the decorator's CONTRACT, not a reachable
+//   outcome via config today: `multimodal-config.ts`'s `loadMultimodalConfig` REFUSES a
+//   non-loopback `vlm_base_url` LOUDLY at config load (throws `MultimodalConfigError`, naming the
+//   value and the reason) rather than silently substituting the loopback default — the
+//   per-artifact remote grant that would let this slice honour a remote host does not land before
+//   PR 4, so a remote value can never survive config load to reach `media-gate.ts`'s own
+//   `no_remote_grant` refusal at all; that refusal remains defense in depth for a provider
+//   constructed some other way, not the path an operator's `nimbus.toml` can reach. Transcription
+//   stays local-only in this slice — no `SttProvider` routing, no decorator, by construction
+//   rather than by check, mirroring `LOCAL_ONLY_SYNC_SERVICES`.
 ```
 
 ### AbortController scope in `engine.cancelStream`
