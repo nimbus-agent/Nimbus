@@ -426,8 +426,19 @@ async function readNpmLatest(pkg: string): Promise<NpmLatest | null> {
   }
 }
 
-/** The upstream repo's highest release whose tag matches the package pattern. */
-function readTaggedRelease(pkg: PackageSpec): PublishedRelease | null {
+/**
+ * The upstream repo's highest release whose tag matches the package pattern.
+ *
+ * `listRead` reports whether the release list itself came back and parsed, which
+ * the caller needs to tell a transient read failure from a `tagPattern` that
+ * matched nothing in a perfectly good list — the latter is a manifest bug. Both
+ * used to surface as a bare `null`, and the sdk train sat on an unmatchable
+ * pattern for the life of the gate as a result.
+ */
+function readTaggedRelease(pkg: PackageSpec): {
+  release: PublishedRelease | null;
+  listRead: boolean;
+} {
   const res = runGh([
     "gh",
     "api",
@@ -435,13 +446,13 @@ function readTaggedRelease(pkg: PackageSpec): PublishedRelease | null {
     "--jq",
     "[.[] | {tag: .tag_name, prerelease: .prerelease, draft: .draft, publishedAt: .published_at, assets: [.assets[].name]}]",
   ]);
-  if (!res.ok) return null;
+  if (!res.ok) return { release: null, listRead: false };
   try {
     const rels: unknown = JSON.parse(res.stdout);
-    if (!Array.isArray(rels)) return null;
-    return selectTaggedRelease(rels as ReleaseInfo[], pkg.tagPattern);
+    if (!Array.isArray(rels)) return { release: null, listRead: false };
+    return { release: selectTaggedRelease(rels as ReleaseInfo[], pkg.tagPattern), listRead: true };
   } catch {
-    return null;
+    return { release: null, listRead: false };
   }
 }
 
@@ -553,8 +564,11 @@ if (import.meta.main) {
       ...evaluatePackage({
         name: pkg.name,
         npm: pkg.npm,
-        taggedRelease,
-        taggedReleaseAgeHours: taggedRelease ? ageHours(taggedRelease.publishedAt) : null,
+        taggedRelease: taggedRelease.release,
+        taggedReleaseAgeHours: taggedRelease.release
+          ? ageHours(taggedRelease.release.publishedAt)
+          : null,
+        taggedReleaseListRead: taggedRelease.listRead,
         latest,
         latestAgeHours: latest ? ageHours(latest.publishedAt) : null,
         consumers,

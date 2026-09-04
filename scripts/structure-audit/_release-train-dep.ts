@@ -45,8 +45,20 @@ export function parseNpmLatest(doc: string): NpmLatest | null {
 /**
  * Highest stable release whose tag matches `pattern`, which MUST carry one
  * capture group holding the bare version. Upstream tags are component-prefixed
- * (`sdk-v1.6.0`), which Phase 1's `selectPublished` deliberately rejects — so
- * dep edges need their own selector rather than reusing it.
+ * (`typescript-v1.32.0`, `client-v0.17.3`), which Phase 1's `selectPublished`
+ * deliberately rejects — so dep edges need their own selector rather than
+ * reusing it.
+ *
+ * The prefix is the RELEASING COMPONENT's name, not the npm package's: the
+ * `@nimbus-dev/sdk` train releases out of the polyglot `nimbus-sdk` repo, whose
+ * TypeScript tags read `typescript-v*` (its Go and Python SDKs tag their own).
+ * `release-train.json` carried `^sdk-v(...)$` for that train from the start and
+ * so never matched a real tag — and because an unmatched pattern yields
+ * `indeterminate`, which `decideExit` downgrades to a warning, the sdk publish
+ * edge reported no failure for as long as it was broken. Every fixture in this
+ * module's tests supplies BOTH the pattern and the tags, so they agreed with
+ * each other and never with the repo. Derive a pattern from `gh release list`,
+ * not from the package name.
  */
 export function selectTaggedRelease(
   releases: readonly ReleaseInfo[],
@@ -200,6 +212,21 @@ export interface PackageEvalInput {
   npm: string;
   taggedRelease: PublishedRelease | null;
   taggedReleaseAgeHours: number | null;
+  /**
+   * Whether the upstream repo's release LIST was read successfully, independent
+   * of whether `tagPattern` then matched anything in it.
+   *
+   * The two collapse into `taggedRelease === null` otherwise, and they are not
+   * the same finding: an unreadable list is transient, while a readable list
+   * that nothing matched is a manifest bug in `release-train.json`. Conflating
+   * them is what let the sdk train ship a `tagPattern` (`^sdk-v(...)$`) that
+   * never matched a real tag — the repo tags TypeScript releases `typescript-v*`
+   * — while the edge reported a mere warning for as long as it was broken.
+   *
+   * `null` for a caller that cannot distinguish the two; that keeps the old
+   * warning-only behaviour rather than manufacturing a failure.
+   */
+  taggedReleaseListRead: boolean | null;
   latest: NpmLatest | null;
   latestAgeHours: number | null;
   consumers: ConsumerReading[];
@@ -215,11 +242,19 @@ function shortRepo(repo: string): string {
 function evaluatePublishEdge(i: PackageEvalInput): EdgeResult {
   const edge = `${i.name}:publish`;
   if (i.taggedRelease === null) {
-    return {
-      edge,
-      verdict: "indeterminate",
-      detail: `no release tag matched for ${i.npm} — releases unreadable or none published`,
-    };
+    // A readable list that matched nothing is a manifest bug, not a transient
+    // read failure, and must fail rather than warn — see `taggedReleaseListRead`.
+    return i.taggedReleaseListRead === true
+      ? {
+          edge,
+          verdict: "stale",
+          detail: `manifest error: no release in the upstream repo matches this train's tagPattern for ${i.npm} — the pattern names a component that does not tag under that prefix, so this edge has never been evaluated. Derive it from \`gh release list\`, not from the package name`,
+        }
+      : {
+          edge,
+          verdict: "indeterminate",
+          detail: `no release tag matched for ${i.npm} — releases unreadable`,
+        };
   }
   if (i.latest === null) {
     return { edge, verdict: "indeterminate", detail: `npm registry unreadable for ${i.npm}` };

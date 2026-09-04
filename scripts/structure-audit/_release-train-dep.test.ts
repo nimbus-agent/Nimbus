@@ -187,6 +187,7 @@ describe("evaluatePackage", () => {
     npm: "@nimbus-dev/sdk",
     taggedRelease: { version: "1.6.0", publishedAt: "x" },
     taggedReleaseAgeHours: 48,
+    taggedReleaseListRead: true,
     latest: { version: "1.6.0", publishedAt: "x" },
     latestAgeHours: 48,
     graceHours: 6,
@@ -296,11 +297,44 @@ describe("evaluatePackage", () => {
     expect(r.find((e) => e.edge === "sdk:nimbus-vscode")?.verdict).toBe("indeterminate");
   });
 
-  test("no tagged release => publish edge indeterminate, not phantom", () => {
+  test("no tagged release AND the list was unreadable => indeterminate, not phantom", () => {
     const r = evaluatePackage({
       ...green,
       taggedRelease: null,
       taggedReleaseAgeHours: null,
+      taggedReleaseListRead: false,
+      consumers: [],
+    });
+    expect(r.find((e) => e.edge === "sdk:publish")?.verdict).toBe("indeterminate");
+  });
+
+  /**
+   * The regression this pair exists for. `release-train.json` shipped the sdk
+   * train with `^sdk-v(...)$` while the upstream repo tags `typescript-v*`, so
+   * the pattern matched nothing — and because that produced `indeterminate`,
+   * which `decideExit` renders as a warning and exits 0 on, the edge announced
+   * no problem for as long as it was broken. A readable list that matched
+   * nothing is a manifest bug and must be reported as hard as any other.
+   */
+  test("no tagged release but the list WAS readable => stale (manifest bug), not indeterminate", () => {
+    const r = evaluatePackage({
+      ...green,
+      taggedRelease: null,
+      taggedReleaseAgeHours: null,
+      taggedReleaseListRead: true,
+      consumers: [],
+    });
+    const edge = r.find((e) => e.edge === "sdk:publish");
+    expect(edge?.verdict).toBe("stale");
+    expect(edge?.detail).toContain("tagPattern");
+  });
+
+  test("an unknown-read caller keeps the old warning-only behaviour", () => {
+    const r = evaluatePackage({
+      ...green,
+      taggedRelease: null,
+      taggedReleaseAgeHours: null,
+      taggedReleaseListRead: null,
       consumers: [],
     });
     expect(r.find((e) => e.edge === "sdk:publish")?.verdict).toBe("indeterminate");
