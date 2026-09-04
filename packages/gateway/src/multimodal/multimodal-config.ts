@@ -36,6 +36,12 @@ export const DEFAULT_VLM_MODEL = "qwen2.5vl:7b";
 /** Spec § 8: "a small fixed maximum (default 8) of uniformly spaced keyframes". */
 export const DEFAULT_MAX_FRAMES = 8;
 
+/** Spec § 16.9: a generous but finite ceiling on cloud bytes fetched in one run — 2 GiB. */
+export const DEFAULT_FETCH_BUDGET_BYTES = 2 * 1024 * 1024 * 1024;
+
+/** Spec § 16.8: fetch the original artifact unless the operator opts into downsized renditions. */
+export const DEFAULT_PREFER_RENDITIONS = false;
+
 const MIN_FRAMES = 1;
 const MAX_FRAMES_CEILING = 64;
 
@@ -70,8 +76,8 @@ function defaults(): MultimodalConfig {
     vlmBaseUrl: DEFAULT_VLM_BASE_URL,
     vlmModel: DEFAULT_VLM_MODEL,
     maxFrames: DEFAULT_MAX_FRAMES,
-    fetchBudgetBytes: 2 * 1024 * 1024 * 1024,
-    preferRenditions: false,
+    fetchBudgetBytes: DEFAULT_FETCH_BUDGET_BYTES,
+    preferRenditions: DEFAULT_PREFER_RENDITIONS,
   };
 }
 

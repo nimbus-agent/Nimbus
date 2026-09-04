@@ -1,15 +1,16 @@
 import { Database } from "bun:sqlite";
 import { beforeEach, describe, expect, test } from "bun:test";
-import { existsSync, mkdtempSync, utimesSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readdirSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { upsertIndexedItem } from "../index/item-store.ts";
 import { CURRENT_SCHEMA_VERSION } from "../index/local-index.ts";
 import { runIndexedSchemaMigrations } from "../index/migrations/runner.ts";
 import { findCandidates } from "./media-discovery.ts";
-import type { MediaPassDeps } from "./media-pass.ts";
-import { runMediaPass } from "./media-pass.ts";
+import type { MediaCloudDeps, MediaPassDeps } from "./media-pass.ts";
+import { priceRun, runMediaPass } from "./media-pass.ts";
 import { writeCursor } from "./media-pass-state.ts";
+import type { MediaCandidate } from "./media-types.ts";
 import { understandingExternalId } from "./understanding-item.ts";
 
 let db: Database;
@@ -31,6 +32,63 @@ function addMediaFile(name: string): string {
   return p;
 }
 
+/**
+ * Seeds a Drive-style cloud item: no `path` in metadata (so `sourcePath` resolves null, the cloud
+ * arm's own trigger), and `mimeType` set so `google_drive`'s mime-keyed discovery arm admits it.
+ * `sizeBytes` omitted means `mediaSourceBytes` returns null — `priceRun` must report that as
+ * UNKNOWN, never as free.
+ */
+function addDriveItem(
+  externalId: string,
+  opts: { readonly modality?: "image" | "av"; readonly sizeBytes?: number } = {},
+): void {
+  const modality = opts.modality ?? "image";
+  upsertIndexedItem(db, {
+    service: "google_drive",
+    type: "file",
+    externalId,
+    title: `${externalId}`,
+    bodyPreview: "",
+    modifiedAt: 1000,
+    syncedAt: 1000,
+    metadata: {
+      mimeType: modality === "image" ? "image/png" : "video/mp4",
+      // Drive's `size` is a STRING (the v3 API serialises int64 as one) — see
+      // `media-source-registry.ts`'s `SOURCE_BYTES_KEY`.
+      ...(opts.sizeBytes === undefined ? {} : { size: String(opts.sizeBytes) }),
+    },
+  });
+}
+
+/** google_photos never indexes a byte size at all — there is no `sizeBytes` option here. */
+function addPhotosItem(
+  externalId: string,
+  opts: { readonly modality?: "image" | "av" } = {},
+): void {
+  const modality = opts.modality ?? "image";
+  upsertIndexedItem(db, {
+    service: "google_photos",
+    type: "photo",
+    externalId,
+    title: `${externalId}`,
+    bodyPreview: "",
+    modifiedAt: 1000,
+    syncedAt: 1000,
+    metadata: { mimeType: modality === "image" ? "image/jpeg" : "video/mp4" },
+  });
+}
+
+/** A harmless default: bearerFor/fetchFn are never invoked by a purely-local candidate set. */
+function cloudDeps(over: Partial<MediaCloudDeps> = {}): MediaCloudDeps {
+  return {
+    bearerFor: async () => "test-token",
+    fetchFn: async () => new Response("stub-body"),
+    appendEgress: () => ({ rowHash: "h" }),
+    sleep: async () => undefined,
+    ...over,
+  };
+}
+
 function deps(over: Partial<MediaPassDeps> = {}): MediaPassDeps {
   return {
     db,
@@ -50,6 +108,11 @@ function deps(over: Partial<MediaPassDeps> = {}): MediaPassDeps {
       }),
       gpu: { acquire: async () => () => undefined, touch: () => undefined },
     },
+    // A local-only pass never reaches the cloud arm, so this budget is deliberately generous
+    // (never the trigger) unless a test overrides it — the cloud tests below always do.
+    fetchBudgetBytes: Number.MAX_SAFE_INTEGER,
+    preferRenditions: false,
+    cloudBytes: cloudDeps(),
     ...over,
   };
 }
@@ -72,7 +135,10 @@ describe("runMediaPass", () => {
       )
       .all();
     expect(rows).toHaveLength(1);
-    expect(rows[0]?.body).toBe("transcript");
+    // A local candidate always understands from "the original file" — the rendition sentence
+    // (pinned on its own in understanding-item.test.ts) is appended after the model's own text.
+    expect((rows[0]?.body ?? "").startsWith("transcript")).toBe(true);
+    expect(rows[0]?.body).toContain("Understood from the original file.");
   });
 
   test("is idempotent — a second run understands nothing new", async () => {
@@ -233,7 +299,10 @@ describe("runMediaPass", () => {
         "SELECT body FROM item WHERE service='nimbus' AND type='video_understanding'",
       )
       .get();
-    expect(row?.body?.length).toBe(3_000);
+    // The rendition sentence appends after the model's text, so the exact total length is no
+    // longer 3,000 — the property this test pins is that the 3,000-char PREFIX survived uncapped.
+    expect(row?.body?.startsWith(long)).toBe(true);
+    expect((row?.body?.length ?? 0) > 3_000).toBe(true);
   });
 });
 
@@ -393,5 +462,284 @@ describe("runMediaPass — cursor resume", () => {
     const summary = await runMediaPass(deps());
     expect(summary.stopReason).toBe("completed");
     expect(summary.cloudBytesFetched).toBe(0);
+  });
+});
+
+describe("priceRun", () => {
+  const base: MediaCandidate = {
+    itemId: "google_drive:a",
+    service: "google_drive",
+    externalId: "a",
+    type: "media_image",
+    title: "a",
+    url: null,
+    modality: "image",
+    sourcePath: null,
+    sourceMime: "image/png",
+    sourceBytes: null,
+  };
+
+  test("prices a run without inventing a number for unknown sizes", () => {
+    const priced = priceRun([
+      { ...base, sourceBytes: 1000 },
+      { ...base, sourceBytes: 2000 },
+      { ...base, sourceBytes: null },
+    ]);
+    expect(priced).toEqual({ knownBytes: 3000, knownCount: 2, unknownCount: 1 });
+  });
+
+  test("an all-unknown batch prices as zero known bytes across zero known candidates — never folded into a false zero total", () => {
+    const priced = priceRun([
+      { ...base, sourceBytes: null },
+      { ...base, sourceBytes: null },
+    ]);
+    expect(priced).toEqual({ knownBytes: 0, knownCount: 0, unknownCount: 2 });
+  });
+
+  test("an empty candidate list prices as all-zero", () => {
+    expect(priceRun([])).toEqual({ knownBytes: 0, knownCount: 0, unknownCount: 0 });
+  });
+});
+
+describe("runMediaPass — cloud budget, stop reasons and rendition (PR 3)", () => {
+  function cloudScratchDir(): string {
+    return mkdtempSync(join(tmpdir(), "nimbus-cloud-scratch-"));
+  }
+
+  test("a pre-flight budget refusal skips the whole batch before fetching a single byte", async () => {
+    addDriveItem("cpre-a", { sizeBytes: 5_000_000 });
+    addDriveItem("cpre-b", { sizeBytes: 5_000_000 });
+    let fetchCalls = 0;
+    const summary = await runMediaPass(
+      deps({
+        scratchDir: cloudScratchDir(),
+        fetchBudgetBytes: 1000,
+        cloudBytes: cloudDeps({
+          fetchFn: async () => {
+            fetchCalls += 1;
+            return new Response("never");
+          },
+        }),
+      }),
+    );
+    expect(summary.stopReason).toBe("budget_exhausted");
+    expect(summary.understood).toBe(0);
+    expect(summary.lastItemId).toBeNull();
+    expect(fetchCalls).toBe(0);
+  });
+
+  test("a pre-flight budget refusal does NOT clear a previously seeded cursor, even on a short page", async () => {
+    // Seeded BELOW every id this test adds (ASCII '0' sorts before the lowercase item names), so
+    // it is a genuine prior cursor discovery resumes past, not one that happens to already exclude
+    // the new candidate.
+    writeCursor(db, "default", {
+      lastItemId: "google_drive:0-prior",
+      processedCount: 1,
+      nowMs: 5000,
+    });
+    addDriveItem("cguard-only", { sizeBytes: 5_000 });
+
+    const summary = await runMediaPass(
+      deps({ scratchDir: cloudScratchDir(), limit: 50, fetchBudgetBytes: 100 }),
+    );
+    expect(summary.stopReason).toBe("budget_exhausted");
+
+    // candidates.length (1) < limit (50) is a "short page" by the OLD rule's own test — proof the
+    // fix is the stopReason guard, not merely "never called when there was more work left".
+    const cursor = db
+      .query<{ last_item_id: string }, []>("SELECT last_item_id FROM media_pass_cursor")
+      .get();
+    expect(cursor?.last_item_id).toBe("google_drive:0-prior");
+  });
+
+  test("a mid-run budget stop ends the run and leaves the cursor exactly where it stopped", async () => {
+    addDriveItem("cbud-c1");
+    addDriveItem("cbud-c2");
+    addDriveItem("cbud-c3");
+    const summary = await runMediaPass(
+      deps({
+        scratchDir: cloudScratchDir(),
+        fetchBudgetBytes: 1000,
+        cloudBytes: cloudDeps({
+          fetchFn: async (url) => {
+            if (url.includes("cbud-c2")) {
+              return new Response(null, { status: 200, headers: { "content-length": "5000" } });
+            }
+            return new Response("OK");
+          },
+        }),
+      }),
+    );
+    expect(summary.stopReason).toBe("budget_exhausted");
+    expect(summary.understood).toBe(1);
+    expect(summary.lastItemId).toBe("google_drive:cbud-c2");
+    const cursor = db
+      .query<{ last_item_id: string }, []>("SELECT last_item_id FROM media_pass_cursor")
+      .get();
+    expect(cursor?.last_item_id ?? null).toBe(summary.lastItemId);
+  });
+
+  test("a mid-run budget stop does NOT clear the cursor, even though it is a short page", async () => {
+    addDriveItem("cshort-only", { sizeBytes: 10 });
+    const summary = await runMediaPass(
+      deps({
+        // A single candidate against a limit of 50 is exactly the "short page" the drained-queue
+        // rule reads as "nothing more to do" — proof the guard is on stopReason, not page length.
+        limit: 50,
+        scratchDir: cloudScratchDir(),
+        fetchBudgetBytes: 1000,
+        cloudBytes: cloudDeps({
+          fetchFn: async () =>
+            new Response(null, { status: 200, headers: { "content-length": "999999" } }),
+        }),
+      }),
+    );
+    expect(summary.stopReason).toBe("budget_exhausted");
+    const cursor = db.query<{ n: number }, []>("SELECT COUNT(*) AS n FROM media_pass_cursor").get();
+    expect(cursor?.n).toBe(1);
+  });
+
+  test("a rate-limit stop reports rate_limited, not budget_exhausted", async () => {
+    addDriveItem("crl-a");
+    const summary = await runMediaPass(
+      deps({
+        scratchDir: cloudScratchDir(),
+        cloudBytes: cloudDeps({
+          fetchFn: async () => new Response(null, { status: 429, headers: { "retry-after": "0" } }),
+        }),
+      }),
+    );
+    expect(summary.stopReason).toBe("rate_limited");
+    expect(summary.understood).toBe(0);
+  });
+
+  test("counts partial bytes transferred before a budget abort — bytes that crossed the wire are never reported as zero", async () => {
+    addDriveItem("cpartial-a");
+    const chunk = new Uint8Array(1_800_000);
+    const summary = await runMediaPass(
+      deps({
+        scratchDir: cloudScratchDir(),
+        // Larger than the chunk, so the PER-ARTIFACT cap never fires first — this test isolates
+        // the RUN budget specifically.
+        maxBytes: 5_000_000,
+        fetchBudgetBytes: 1_000_000,
+        cloudBytes: cloudDeps({
+          fetchFn: async () =>
+            new Response(
+              new ReadableStream<Uint8Array>({
+                start(controller) {
+                  controller.enqueue(chunk);
+                  controller.close();
+                },
+              }),
+            ),
+        }),
+      }),
+    );
+    expect(summary.stopReason).toBe("budget_exhausted");
+    expect(summary.cloudBytesFetched).toBe(1_800_000);
+  });
+
+  test("deletes a cloud AV scratch file after a SUCCESSFUL understanding", async () => {
+    addDriveItem("cav-ok", { modality: "av" });
+    const scratchDir = cloudScratchDir();
+    const summary = await runMediaPass(
+      deps({
+        scratchDir,
+        cloudBytes: cloudDeps({ fetchFn: async () => new Response("video-bytes") }),
+      }),
+    );
+    expect(summary.understood).toBe(1);
+    expect(readdirSync(scratchDir).filter((n) => n.startsWith("nimbus-media-"))).toEqual([]);
+  });
+
+  test("deletes the scratch file even when understanding THROWS", async () => {
+    addDriveItem("cav-throw", { modality: "av" });
+    const scratchDir = cloudScratchDir();
+    await runMediaPass(
+      deps({
+        scratchDir,
+        cloudBytes: cloudDeps({ fetchFn: async () => new Response("video-bytes") }),
+        gate: {
+          enabled: true,
+          capabilityDisabled: false,
+          // Throws SYNCHRONOUSLY, unlike a throw from `understand()` — which `understandArtifact`
+          // already catches internally and turns into `transcribe_failed`. This is the one call in
+          // the gate NOT wrapped in a try/catch, so it is what actually exercises the throwing path
+          // through this loop's own `finally`, rather than the ordinary skip branch.
+          understanderFor: () => {
+            throw new Error("model died");
+          },
+          gpu: { acquire: async () => () => undefined, touch: () => undefined },
+        },
+      }),
+    ).catch(() => undefined);
+    expect(readdirSync(scratchDir).filter((n) => n.startsWith("nimbus-media-"))).toEqual([]);
+  });
+
+  test("a google_photos candidate resolves its byte URL before fetching bytes — an indexed baseUrl would be expired", async () => {
+    addPhotosItem("cphoto-a");
+    const calls: string[] = [];
+    const summary = await runMediaPass(
+      deps({
+        scratchDir: cloudScratchDir(),
+        cloudBytes: cloudDeps({
+          fetchFn: async (url) => {
+            calls.push(url);
+            if (url.includes("photoslibrary.googleapis.com")) {
+              return new Response(JSON.stringify({ baseUrl: "https://photos.example.test/real" }), {
+                status: 200,
+                headers: { "content-type": "application/json" },
+              });
+            }
+            return new Response("photo-bytes");
+          },
+        }),
+      }),
+    );
+    expect(summary.understood).toBe(1);
+    expect(calls.some((u) => u.includes("photoslibrary.googleapis.com"))).toBe(true);
+    expect(calls.some((u) => u.startsWith("https://photos.example.test/real"))).toBe(true);
+  });
+
+  test("a google_photos fetch with preferRenditions records the downsized rendition; Drive never varies", async () => {
+    addPhotosItem("crend-photo");
+    addDriveItem("crend-drive");
+    const summary = await runMediaPass(
+      deps({
+        scratchDir: cloudScratchDir(),
+        preferRenditions: true,
+        cloudBytes: cloudDeps({
+          fetchFn: async (url) => {
+            if (url.includes("photoslibrary.googleapis.com")) {
+              return new Response(JSON.stringify({ baseUrl: "https://photos.example.test/real" }), {
+                status: 200,
+                headers: { "content-type": "application/json" },
+              });
+            }
+            return new Response("bytes");
+          },
+        }),
+      }),
+    );
+    expect(summary.understood).toBe(2);
+
+    const rows = db
+      .query<{ external_id: string; metadata: string | null; body: string }, []>(
+        "SELECT external_id, metadata, body FROM item WHERE service='nimbus' AND type='image_understanding' ORDER BY external_id",
+      )
+      .all();
+    expect(rows).toHaveLength(2);
+    const drive = rows.find((r) => r.external_id.startsWith("google_drive:"));
+    const photo = rows.find((r) => r.external_id.startsWith("google_photos:"));
+    if (drive === undefined || photo === undefined) throw new Error("expected both rows");
+
+    // Drive has no rendition to offer, so it stays "original" regardless of preferRenditions.
+    expect(JSON.parse(drive.metadata ?? "{}")["rendition"]).toBe("original");
+    expect(drive.body).toContain("Understood from the original file.");
+
+    // Photos DOES vary, and the fetch requested the downsized suffix on the re-resolved baseUrl.
+    expect(JSON.parse(photo.metadata ?? "{}")["rendition"]).toBe("w2048-h2048");
+    expect(photo.body).toContain("downsized rendition");
   });
 });

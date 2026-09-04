@@ -106,3 +106,14 @@ export const UNDERSTANDING_VERSION = 2;
  * list rather than repeating the string — a typo here would read as "never disabled".
  */
 export const MULTIMODAL_CAPABILITY = "multimodal_input";
+
+/**
+ * What bytes an artifact was actually understood from (spec § 16.8, PR 3). `"original"` covers
+ * both the local arm (always the real file) and the cloud arm with `preferRenditions` off or a
+ * service that has no rendition to offer — Drive and OneDrive always serve the original regardless
+ * of that flag, since `cloud-renditions.ts`'s `driveByteUrl`/`onedriveByteUrl` take no rendition
+ * argument at all. Only a Photos fetch with `preferRenditions` on ever produces the other two.
+ * Recorded on the derived row in BOTH places, mirroring `framesSampled`/`framesCaptioned`: metadata
+ * for a later pass to filter on, and a body sentence for a reader to see directly.
+ */
+export type RenditionMode = "original" | "w2048-h2048" | "dv";

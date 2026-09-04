@@ -58,7 +58,23 @@ describe("buildUnderstandingRow", () => {
 
   test("declares a FULL body so the prose cap applies, not the 512-char default", () => {
     const row = buildUnderstandingRow(CANDIDATE, OUTCOME, 999);
-    expect(row.body).toBe("we shipped the gate");
+    // The rendition sentence (asserted on its own below) is appended after the model's own text —
+    // this test's job is only the prose-cap-eligible PREFIX.
+    expect(row.body.startsWith("we shipped the gate")).toBe(true);
+  });
+
+  test("states the rendition it was understood from, in the body AND in metadata", () => {
+    const original = buildUnderstandingRow(CANDIDATE, OUTCOME, 999);
+    expect(original.body).toContain("Understood from the original file.");
+    expect(original.metadata["rendition"]).toBe("original");
+
+    const downsized = buildUnderstandingRow(CANDIDATE, OUTCOME, 999, "w2048-h2048");
+    expect(downsized.body).toContain("downsized rendition");
+    expect(downsized.metadata["rendition"]).toBe("w2048-h2048");
+
+    const dv = buildUnderstandingRow(CANDIDATE, OUTCOME, 999, "dv");
+    expect(dv.body).toContain("provider-transcoded video rendition");
+    expect(dv.metadata["rendition"]).toBe("dv");
   });
 
   test("carries provenance: modelDerived, model, version, isLocal, derivedFrom", () => {
@@ -110,7 +126,7 @@ describe("writeUnderstanding", () => {
       )
       .all();
     expect(rows).toHaveLength(1);
-    expect(rows[0]?.body).toBe("revised transcript");
+    expect((rows[0]?.body ?? "").startsWith("revised transcript")).toBe(true);
     db.close();
   });
 

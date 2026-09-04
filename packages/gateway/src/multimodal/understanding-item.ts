@@ -13,11 +13,19 @@ import type { Database } from "bun:sqlite";
 import { itemPrimaryKey, upsertIndexedItem } from "../index/item-store.ts";
 import {
   type MediaCandidate,
+  type RenditionMode,
   UNDERSTANDING_VERSION,
   type UnderstandOutcome,
 } from "./media-types.ts";
 
 const SERVICE = "nimbus";
+
+/** What a reader sees in the body for each {@link RenditionMode} (spec § 16.8). */
+const RENDITION_SENTENCE: Readonly<Record<RenditionMode, string>> = {
+  original: "Understood from the original file.",
+  "w2048-h2048": "Understood from a downsized rendition (long edge capped at 2048px).",
+  dv: "Understood from a provider-transcoded video rendition.",
+};
 
 export interface UnderstandingRow {
   readonly service: string;
@@ -47,6 +55,7 @@ export function buildUnderstandingRow(
   candidate: MediaCandidate,
   outcome: UnderstandOutcome,
   nowMs: number,
+  rendition: RenditionMode = "original",
 ): UnderstandingRow {
   const isAv = candidate.modality === "av";
   return {
@@ -56,7 +65,10 @@ export function buildUnderstandingRow(
     // Matches `zoom:transcript`'s existing house style (`Transcript — <topic>`) so a derived row is
     // distinguishable from its source in a result list without a bracketed tag.
     title: `${isAv ? "Transcript" : "Caption"} — ${candidate.title}`,
-    body: outcome.text,
+    // The rendition sentence is appended for EVERY candidate, local or cloud, so its presence never
+    // has to be inferred from absence — a reader who only ever sees "the original file" still knows
+    // that is what happened, rather than the pass simply never saying (spec § 16.8, OQ 1).
+    body: `${outcome.text}\n\n${RENDITION_SENTENCE[rendition]}`,
     url: candidate.url,
     modifiedAt: nowMs,
     syncedAt: nowMs,
@@ -70,6 +82,10 @@ export function buildUnderstandingRow(
       isLocal: outcome.isLocal,
       sourceMime: candidate.sourceMime,
       sourceBytes: candidate.sourceBytes,
+      // The machine-readable half of the same disclosure the body sentence carries in prose — the
+      // same split `framesSampled`/`framesCaptioned` already uses, so a later pass can filter on it
+      // without re-parsing the body.
+      rendition,
       // Conditional spread, not `?? 0`: writing a zero for an artifact that never reached sampling
       // would be indistinguishable from one whose every frame failed.
       ...(outcome.framesSampled === undefined ? {} : { framesSampled: outcome.framesSampled }),
@@ -86,8 +102,9 @@ export function writeUnderstanding(
   outcome: UnderstandOutcome,
   nowMs: number,
   scheduleEmbedding?: (itemId: string) => void,
+  rendition: RenditionMode = "original",
 ): string {
-  const row = buildUnderstandingRow(candidate, outcome, nowMs);
+  const row = buildUnderstandingRow(candidate, outcome, nowMs, rendition);
   upsertIndexedItem(db, {
     service: row.service,
     type: row.type,

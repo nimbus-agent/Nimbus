@@ -120,6 +120,105 @@ describe("buildMediaPassDeps", () => {
   });
 });
 
+describe("buildMediaPassDeps — cloud arm wiring (PR 3)", () => {
+  test("the constructed deps fetch through safeFetchFollowing, not bare fetch", async () => {
+    const deps = buildMediaPassDeps({
+      db: db(),
+      roots: [],
+      enabled: true,
+      capabilityDisabled: false,
+      scratchDir: "/scratch",
+    });
+    // A loopback URL must be REFUSED by the wiring itself. Bare `fetch` would happily return —
+    // this is what proves `cloudBytes.fetchFn` is actually `safeFetchFollowing` and not a stub
+    // that merely has the right shape. Exercises BOTH consumers' shared field, since
+    // `cloud-url-resolver.ts`'s `CloudUrlResolverDeps.fetchFn` and `cloud-bytes.ts`'s
+    // `CloudBytesDeps.fetchFn` are the same function reference in the returned deps object.
+    await expect(deps.cloudBytes.fetchFn("http://127.0.0.1:9/x", {})).rejects.toThrow(
+      /loopback\/private/,
+    );
+  });
+
+  test("cloudBytes.bearerFor fails CLOSED (null) when no vault is supplied", async () => {
+    // No `media.understand` dispatcher forwards a vault into this input yet — a disclosed gap
+    // (see BuildMediaPassDepsInput.vault's doc comment), not a silent one. Every bearer-requiring
+    // service must skip as not_configured rather than throw or fabricate a credential.
+    const deps = buildMediaPassDeps({
+      db: db(),
+      roots: [],
+      enabled: true,
+      capabilityDisabled: false,
+      scratchDir: "/scratch",
+    });
+    await expect(deps.cloudBytes.bearerFor("google_drive")).resolves.toBeNull();
+    await expect(deps.cloudBytes.bearerFor("google_photos")).resolves.toBeNull();
+    await expect(deps.cloudBytes.bearerFor("onedrive")).resolves.toBeNull();
+    await expect(deps.cloudBytes.bearerFor("some_other_service")).resolves.toBeNull();
+  });
+
+  test("cloudBytes.appendEgress ledgers a REAL sync-class row via recordSyncEgress, not a stub", () => {
+    const database = db();
+    const deps = buildMediaPassDeps({
+      db: database,
+      roots: [],
+      enabled: true,
+      capabilityDisabled: false,
+      scratchDir: "/scratch",
+    });
+    const out = deps.cloudBytes.appendEgress({
+      destination: "google_drive",
+      method: "media.fetchBytes",
+    });
+    expect(out?.rowHash).toBeDefined();
+    const n = database.query<{ n: number }, []>("SELECT COUNT(*) AS n FROM egress_ledger").get()?.n;
+    expect(n).toBe(1);
+  });
+
+  test("cloudBytes.appendEgress is a no-op for a LOCAL_ONLY_SYNC_SERVICES destination, matching recordSyncEgress", () => {
+    const database = db();
+    const deps = buildMediaPassDeps({
+      db: database,
+      roots: [],
+      enabled: true,
+      capabilityDisabled: false,
+      scratchDir: "/scratch",
+    });
+    const out = deps.cloudBytes.appendEgress({
+      destination: "filesystem",
+      method: "media.fetchBytes",
+    });
+    expect(out).toBeUndefined();
+    const n = database.query<{ n: number }, []>("SELECT COUNT(*) AS n FROM egress_ledger").get()?.n;
+    expect(n).toBe(0);
+  });
+
+  test("defaults fetchBudgetBytes and preferRenditions when not supplied", () => {
+    const deps = buildMediaPassDeps({
+      db: db(),
+      roots: [],
+      enabled: true,
+      capabilityDisabled: false,
+      scratchDir: "/scratch",
+    });
+    expect(deps.fetchBudgetBytes).toBe(2 * 1024 * 1024 * 1024);
+    expect(deps.preferRenditions).toBe(false);
+  });
+
+  test("honors explicit fetchBudgetBytes and preferRenditions overrides", () => {
+    const deps = buildMediaPassDeps({
+      db: db(),
+      roots: [],
+      enabled: true,
+      capabilityDisabled: false,
+      scratchDir: "/scratch",
+      fetchBudgetBytes: 123,
+      preferRenditions: true,
+    });
+    expect(deps.fetchBudgetBytes).toBe(123);
+    expect(deps.preferRenditions).toBe(true);
+  });
+});
+
 describe("buildMediaPassDeps — optional overrides", () => {
   test("defaults maxBytes to 250 MB when not supplied", () => {
     const deps = buildMediaPassDeps({
