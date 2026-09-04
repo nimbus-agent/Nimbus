@@ -9,7 +9,7 @@ import { runIndexedSchemaMigrations } from "../index/migrations/runner.ts";
 import { findCandidates } from "./media-discovery.ts";
 import type { MediaCloudDeps, MediaPassDeps } from "./media-pass.ts";
 import { priceRun, runMediaPass } from "./media-pass.ts";
-import { writeCursor } from "./media-pass-state.ts";
+import { readCursor, writeCursor } from "./media-pass-state.ts";
 import type { MediaCandidate } from "./media-types.ts";
 import { understandingExternalId } from "./understanding-item.ts";
 
@@ -562,6 +562,59 @@ describe("runMediaPass — cloud budget, stop reasons and rendition (PR 3)", () 
     expect(fetchCalls).toBe(0);
   });
 
+  test("a pre-flight refusal REPORTS the numbers it priced, including the local candidates it also blocks", async () => {
+    // Two cloud candidates with declared sizes, one cloud candidate with none (Photos indexes no
+    // byte size), and one LOCAL file that needs no network at all. The refusal returns before the
+    // loop, so all four are blocked — and until `preflightRefusal` existed every one of these
+    // numbers was computed and thrown away, leaving the CLI to print generic guidance over an
+    // all-zero summary on the one screen a wedged pass ever shows.
+    addDriveItem("cnum-a", { sizeBytes: 5_000_000 });
+    addDriveItem("cnum-b", { sizeBytes: 3_000_000 });
+    addPhotosItem("cnum-c");
+    addMediaFile("cnum-local.mp4");
+    const summary = await runMediaPass(
+      deps({ scratchDir: cloudScratchDir(), fetchBudgetBytes: 1_000 }),
+    );
+    expect(summary.stopReason).toBe("budget_exhausted");
+    expect(summary.preflightRefusal).toEqual({
+      candidateCount: 4,
+      cloudCount: 3,
+      knownBytes: 8_000_000,
+      knownCount: 2,
+      unknownCount: 1,
+      budgetBytes: 1_000,
+    });
+  });
+
+  test("a MID-RUN stop reports preflightRefusal null — it is not the same outcome and must not borrow its numbers", async () => {
+    // A prior candidate spends part of the budget first, so this is a genuine transient mid-run
+    // stop rather than the permanent per-item refusal. The cursor moved and bytes were fetched;
+    // presenting the pre-flight refusal's "nothing was fetched" wording here would be false.
+    addDriveItem("cmid-0");
+    addDriveItem("cmid-a");
+    const chunk = new Uint8Array(1_800_000);
+    const summary = await runMediaPass(
+      deps({
+        scratchDir: cloudScratchDir(),
+        maxBytes: 5_000_000,
+        fetchBudgetBytes: 1_000_000,
+        cloudBytes: cloudDeps({
+          fetchFn: async () =>
+            new Response(
+              new ReadableStream<Uint8Array>({
+                start(controller) {
+                  controller.enqueue(chunk);
+                  controller.close();
+                },
+              }),
+            ),
+        }),
+      }),
+    );
+    expect(summary.stopReason).toBe("budget_exhausted");
+    expect(summary.preflightRefusal).toBeNull();
+  });
+
   test("a pre-flight budget refusal does NOT clear a previously seeded cursor, even on a short page", async () => {
     // Seeded BELOW every id this test adds (ASCII '0' sorts before the lowercase item names), so
     // it is a genuine prior cursor discovery resumes past, not one that happens to already exclude
@@ -882,5 +935,108 @@ describe("runMediaPass — cloud budget, stop reasons and rendition (PR 3)", () 
     // Photos DOES vary, and the fetch requested the downsized suffix on the re-resolved baseUrl.
     expect(JSON.parse(photo.metadata ?? "{}")["rendition"]).toBe("w2048-h2048");
     expect(photo.body).toContain("downsized rendition");
+  });
+
+  test("BOTH outbound requests of a Photos candidate are ledgered — the resolve round-trip and the byte fetch", async () => {
+    addPhotosItem("cledger-a");
+    const rows: Array<{ destination: string; method: string }> = [];
+    const summary = await runMediaPass(
+      deps({
+        scratchDir: cloudScratchDir(),
+        cloudBytes: cloudDeps({
+          appendEgress: (row) => {
+            rows.push(row);
+            return { rowHash: "h" };
+          },
+          fetchFn: async (url) => {
+            if (url.includes("photoslibrary.googleapis.com")) {
+              return new Response(JSON.stringify({ baseUrl: "https://photos.example.test/real" }), {
+                status: 200,
+                headers: { "content-type": "application/json" },
+              });
+            }
+            return new Response("photo-bytes");
+          },
+        }),
+      }),
+    );
+    expect(summary.understood).toBe(1);
+    // Two real credentialed/pre-signed requests leave the machine per Photos candidate, so two
+    // rows must exist and they must be distinguishable. One row for two requests was the gap.
+    expect(rows).toEqual([
+      { destination: "google_photos", method: "media.resolveByteUrl" },
+      { destination: "google_photos", method: "media.fetchBytes" },
+    ]);
+  });
+
+  test("a Drive candidate ledgers only its byte fetch — the resolver makes no round-trip to record", async () => {
+    addDriveItem("cledger-drive");
+    const rows: Array<{ destination: string; method: string }> = [];
+    await runMediaPass(
+      deps({
+        scratchDir: cloudScratchDir(),
+        cloudBytes: cloudDeps({
+          appendEgress: (row) => {
+            rows.push(row);
+            return { rowHash: "h" };
+          },
+          fetchFn: async () => new Response("drive-bytes"),
+        }),
+      }),
+    );
+    expect(rows).toEqual([{ destination: "google_drive", method: "media.fetchBytes" }]);
+  });
+
+  test("a 429 AT RESOLVE stops the run like a 429 at fetch — it does not burn the page as per-item skips", async () => {
+    // Three candidates, all resolving to the same provider-wide 429. The pre-fix behaviour treated
+    // a resolver error as a per-item skip that ADVANCES: all three would be skipped, the cursor
+    // would move past every one of them, and the run would report `completed` — so the CLI would
+    // print no resume guidance for a page nothing was attempted on.
+    addPhotosItem("crlr-a");
+    addPhotosItem("crlr-b");
+    addPhotosItem("crlr-c");
+    let resolveCalls = 0;
+    const summary = await runMediaPass(
+      deps({
+        scratchDir: cloudScratchDir(),
+        cloudBytes: cloudDeps({
+          fetchFn: async () => {
+            resolveCalls += 1;
+            return new Response("rate limited", { status: 429 });
+          },
+        }),
+      }),
+    );
+    expect(summary.stopReason).toBe("rate_limited");
+    expect(summary.skipped).toBe(0);
+    expect(summary.skippedByReason.rate_limited).toBe(0);
+    // Stopped on the FIRST one, not after walking the whole page.
+    expect(resolveCalls).toBe(1);
+    // The cursor is left where it was — untouched, so the very first candidate is RETRIED next
+    // run rather than skipped past.
+    expect(readCursor(db, "default")).toBe(null);
+  });
+
+  test("a NON-429 resolver error stays a per-item skip that advances", async () => {
+    // The distinction I1 turns on: only `rate_limited` is provider-wide. A 500 on one artifact
+    // says nothing about the next one, so the pass must keep going and record the skip.
+    addPhotosItem("crls-a");
+    addPhotosItem("crls-b");
+    let resolveCalls = 0;
+    const summary = await runMediaPass(
+      deps({
+        scratchDir: cloudScratchDir(),
+        cloudBytes: cloudDeps({
+          fetchFn: async () => {
+            resolveCalls += 1;
+            return new Response("server error", { status: 500 });
+          },
+        }),
+      }),
+    );
+    expect(summary.stopReason).toBe("completed");
+    expect(summary.skipped).toBe(2);
+    expect(summary.skippedByReason.fetch_miss).toBe(2);
+    expect(resolveCalls).toBe(2);
   });
 });

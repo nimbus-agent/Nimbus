@@ -12,6 +12,13 @@
  *
  * The resolve request itself carries a bearer to a host WE construct. The URL it returns for
  * Photos and OneDrive is pre-signed and is fetched with no credential at all.
+ *
+ * That resolve round-trip is a REAL outbound request carrying a credential, so it is ledgered in
+ * its own right (I29, `sync` class): one row before it fires, fail-closed, with its own
+ * `media.resolveByteUrl` method so it is distinguishable from the byte fetch that may follow.
+ * Without it a Photos/OneDrive candidate made TWO outbound requests and only the second was
+ * recorded — and a candidate that failed AT RESOLVE produced no row at all for a request that
+ * really left the machine, which is the one thing `nimbus prove`'s zero-row window must never mean.
  */
 import { type ByteUrl, driveByteUrl, onedriveByteUrl, photosByteUrl } from "./cloud-renditions.ts";
 import type { MediaCandidate, SkipReason } from "./media-types.ts";
@@ -32,6 +39,20 @@ export interface CloudUrlResolverDeps {
    * constructed `deps.cloudBytes.fetchFn` with a loopback URL and observing the refusal.
    */
   readonly fetchFn: (url: string, init: RequestInit) => Promise<Response>;
+  /**
+   * Appends ONE `sync` row for the resolve round-trip. THROWS to abort — fail-closed, exactly like
+   * `CloudBytesDeps.appendEgress`. Injected rather than importing `appendEgressEntry`, which static
+   * rule D22(b) confines to `egress/*`.
+   *
+   * Called only on the leg that actually issues a request: the Google Drive arm below constructs
+   * its byte URL from the external id with no round-trip at all, so it appends NOTHING here (its
+   * own byte fetch appends in `cloud-bytes.ts`). A row for a request that was never made would be
+   * the same honesty failure as a missing row, pointed the other way.
+   */
+  readonly appendEgress: (row: {
+    destination: string;
+    method: string;
+  }) => { rowHash: string } | undefined;
 }
 
 export type ResolvedByteUrl = ByteUrl | { readonly error: SkipReason };
@@ -69,6 +90,12 @@ export async function resolveCloudByteUrl(
     candidate.service === "google_photos"
       ? `https://photoslibrary.googleapis.com/v1/mediaItems/${id}`
       : `https://graph.microsoft.com/v1.0/me/drive/items/${id}`;
+
+  // Fail-closed: append BEFORE the round-trip fires, and deliberately OUTSIDE the try/catch below
+  // — that catch exists to turn a transport failure into a per-item skip, and swallowing an append
+  // failure there would convert "we could not record this request" into "we quietly made it".
+  // A throw here propagates and no request is made, exactly as in `cloud-bytes.ts`.
+  deps.appendEgress({ destination: candidate.service, method: "media.resolveByteUrl" });
 
   let body: unknown;
   try {

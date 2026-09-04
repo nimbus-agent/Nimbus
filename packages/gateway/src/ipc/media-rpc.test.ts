@@ -20,6 +20,7 @@ const SUMMARY: MediaPassSummary = {
   lastItemId: "filesystem:/m/a.mp4",
   stopReason: "completed",
   cloudBytesFetched: 0,
+  preflightRefusal: null,
 };
 
 describe("dispatchMediaRpc", () => {

@@ -190,6 +190,7 @@ describe("renderSummary", () => {
       lastItemId: "x",
       stopReason: "completed",
       cloudBytesFetched: 0,
+      preflightRefusal: null,
     });
     expect(out).toContain("Understood 42 of 44");
     expect(out).toContain("over_byte_cap: 1");
@@ -206,6 +207,7 @@ describe("renderSummary", () => {
       lastItemId: "x",
       stopReason: "completed",
       cloudBytesFetched: 0,
+      preflightRefusal: null,
     });
     expect(out).toContain("Understood 3 of 3");
   });
@@ -218,6 +220,7 @@ describe("renderSummary", () => {
       lastItemId: "x",
       stopReason: "completed",
       cloudBytesFetched: 0,
+      preflightRefusal: null,
     });
     expect(out).toContain("Cloud bytes fetched: 0");
   });
@@ -230,6 +233,7 @@ describe("renderSummary", () => {
       lastItemId: "x",
       stopReason: "completed",
       cloudBytesFetched: 12,
+      preflightRefusal: null,
     });
     expect(out).not.toContain("stopped");
     expect(out).not.toContain("Resumable");
@@ -243,10 +247,108 @@ describe("renderSummary", () => {
       lastItemId: "google_drive:f42",
       stopReason: "budget_exhausted",
       cloudBytesFetched: 2_147_483_648,
+      preflightRefusal: null,
     });
     expect(out).toContain("stopped: byte budget reached");
     expect(out).toContain("--renditions");
     expect(out).toContain("nimbus media understand");
+  });
+
+  test("a PRE-FLIGHT refusal prints the priced numbers, the budget, and both flags", () => {
+    const out = renderSummary({
+      understood: 0,
+      skipped: 0,
+      skippedByReason: { ...zeroReasons },
+      lastItemId: null,
+      stopReason: "budget_exhausted",
+      cloudBytesFetched: 0,
+      preflightRefusal: {
+        candidateCount: 200,
+        cloudCount: 143 + 57,
+        knownBytes: 3_900_000_000,
+        knownCount: 143,
+        unknownCount: 57,
+        budgetBytes: 2_000_000_000,
+      },
+    });
+    // The numbers the gateway computed, not generic guidance over an all-zero summary: this is the
+    // ONLY screen the user sees, and the refusal repeats verbatim every run until they act.
+    expect(out).toContain("200 artifacts");
+    expect(out).toContain("143 with known size");
+    expect(out).toContain("3.9 GB");
+    expect(out).toContain("57 unknown");
+    expect(out).toContain("2.0 GB");
+    // The flags that change the outcome, all three.
+    expect(out).toContain("--budget");
+    expect(out).toContain("--renditions");
+    expect(out).toContain("--originals");
+    // The mid-run stop block must NOT also appear: nothing was fetched or attempted here.
+    expect(out).not.toContain("byte budget reached before every candidate");
+    // "Understood 0 of 0" would say there was nothing to do, when a whole page was found and
+    // refused — the refusal replaces the ordinary summary rather than sitting under it.
+    expect(out).not.toContain("Understood 0 of 0");
+    expect(out).toContain("200 candidates found, none attempted");
+  });
+
+  test("a PRE-FLIGHT refusal states that the LOCAL candidates in the page are blocked too", () => {
+    const out = renderSummary({
+      understood: 0,
+      skipped: 0,
+      skippedByReason: { ...zeroReasons },
+      lastItemId: null,
+      stopReason: "budget_exhausted",
+      cloudBytesFetched: 0,
+      preflightRefusal: {
+        candidateCount: 10,
+        cloudCount: 4,
+        knownBytes: 9_000_000_000,
+        knownCount: 4,
+        unknownCount: 0,
+        budgetBytes: 1_000_000_000,
+      },
+    });
+    // Six of the ten need no network at all and are refused anyway, because the refusal returns
+    // before the candidate loop. Omitting this let a reader assume their local media still ran.
+    expect(out).toContain("6 of those 10 are LOCAL");
+    expect(out).toContain("blocked too");
+    // And it must NOT claim local candidates on an all-cloud page: a sentence that reads as a
+    // contradiction is a disclosure that gets ignored.
+    const allCloud = renderSummary({
+      understood: 0,
+      skipped: 0,
+      skippedByReason: { ...zeroReasons },
+      lastItemId: null,
+      stopReason: "budget_exhausted",
+      cloudBytesFetched: 0,
+      preflightRefusal: {
+        candidateCount: 5,
+        cloudCount: 5,
+        knownBytes: 9_000_000_000,
+        knownCount: 5,
+        unknownCount: 0,
+        budgetBytes: 1_000_000_000,
+      },
+    });
+    expect(allCloud).not.toContain("are LOCAL");
+  });
+
+  test("a MID-RUN budget stop keeps the resume block and prints no refusal numbers", () => {
+    // The distinction the two blocks exist to make: this run DID fetch, DID move the cursor onto
+    // the last completed item, and resumes on its own next run. Borrowing the refusal's wording
+    // ("nothing was fetched", "refused identically until you act") would be false here.
+    const out = renderSummary({
+      understood: 12,
+      skipped: 0,
+      skippedByReason: { ...zeroReasons },
+      lastItemId: "google_drive:f42",
+      stopReason: "budget_exhausted",
+      cloudBytesFetched: 2_147_483_648,
+      preflightRefusal: null,
+    });
+    expect(out).toContain("stopped: byte budget reached");
+    expect(out).toContain("Understood 12 of 12");
+    expect(out).not.toContain("Refusing:");
+    expect(out).not.toContain("none attempted");
   });
 
   test("a rate-limited summary names the reason and is resumable", () => {
@@ -257,6 +359,7 @@ describe("renderSummary", () => {
       lastItemId: "onedrive:x",
       stopReason: "rate_limited",
       cloudBytesFetched: 500,
+      preflightRefusal: null,
     });
     expect(out).toContain("rate-limiting");
     expect(out).toContain("Resumable");
@@ -307,6 +410,7 @@ describe("runMediaCmd", () => {
       lastItemId: "item-1",
       stopReason: "completed",
       cloudBytesFetched: 0,
+      preflightRefusal: null,
     };
     const ipc = createMockIpcClient([summary]);
     setFixture({
@@ -340,6 +444,7 @@ describe("runMediaCmd", () => {
       lastItemId: null,
       stopReason: "completed",
       cloudBytesFetched: 0,
+      preflightRefusal: null,
     };
     const ipc = createMockIpcClient([summary]);
     setFixture({
@@ -369,6 +474,7 @@ describe("runMediaCmd", () => {
       lastItemId: null,
       stopReason: "completed",
       cloudBytesFetched: 0,
+      preflightRefusal: null,
     };
     const ipc = createMockIpcClient([summary]);
     setFixture({

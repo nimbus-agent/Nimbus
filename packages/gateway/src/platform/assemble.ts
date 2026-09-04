@@ -721,8 +721,9 @@ async function createSchedulerWithMesh(opts: SchedulerWithMeshOpts): Promise<{
       ownershipRefresher?.trigger();
     },
     // I29/D22(b): the scheduled-sync closure around the `sync` egress class's shared appender —
-    // one of THREE production callers of `recordSyncEgress` (the other two: `sync/targeted-fetch.ts`,
-    // wired below in this file, and `multimodal/cloud-bytes.ts`, wired by
+    // one of FOUR production callers of `recordSyncEgress` (the other three: `sync/targeted-fetch.ts`,
+    // wired below in this file, and `multimodal/cloud-url-resolver.ts` +
+    // `multimodal/cloud-bytes.ts`, which share one closure wired by
     // `multimodal/build-media-pass-deps.ts`) — appending one `sync` row per paginated RUN, before
     // `connector.sync(...)` in `runJob`. Kept synchronous (`recordSyncEgress` returns `undefined`,
     // never a Promise) so a throw here aborts the run before any outbound call, matching the
@@ -2778,8 +2779,11 @@ function bootResolveFetchableIntoHttpSidecar(deps: {
  * `createSchedulerWithMesh`, above) are the two closures THIS FILE builds around the SAME appender,
  * `egress/sync-egress.ts`'s `recordSyncEgress` — never the raw `appendEgressEntry`, which D22(b)
  * confines to `egress/*`. A THIRD closure around the same appender is wired separately, outside
- * this file, by `multimodal/build-media-pass-deps.ts`'s `buildCloudBytesDeps` — for a cloud media
- * byte-fetch attempt, not a targeted item fetch.
+ * this file, by `multimodal/build-media-pass-deps.ts`'s `buildCloudBytesDeps` — and it serves TWO
+ * of the class's four appenders, since `media-pass.ts` hands that one closure to both
+ * `multimodal/cloud-url-resolver.ts` (the credentialed byte-URL resolve round-trip) and
+ * `multimodal/cloud-bytes.ts` (the byte-fetch attempt itself), neither of which is a targeted item
+ * fetch.
  */
 function bootTargetedFetchIntoHttpSidecar(deps: {
   db: Database;

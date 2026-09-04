@@ -15,6 +15,9 @@ const BASE: MediaCandidate = {
   sourceBytes: 10,
 };
 
+/** The append seam for a test that is not itself about the ledger. Records nothing, throws nothing. */
+const noAppend = (): { rowHash: string } | undefined => undefined;
+
 const driveCandidate: MediaCandidate = BASE;
 
 const photosCandidate: MediaCandidate = {
@@ -36,6 +39,7 @@ describe("resolveCloudByteUrl", () => {
     let called = false;
     const r = await resolveCloudByteUrl(driveCandidate, false, {
       bearerFor: async () => "tok",
+      appendEgress: noAppend,
       fetchFn: async () => {
         called = true;
         return new Response("{}");
@@ -50,7 +54,11 @@ describe("resolveCloudByteUrl", () => {
   });
 
   test("a rendition preference makes no difference to a Drive URL — driveByteUrl takes none", async () => {
-    const deps = { bearerFor: async () => "tok", fetchFn: async () => new Response("{}") };
+    const deps = {
+      bearerFor: async () => "tok",
+      fetchFn: async () => new Response("{}"),
+      appendEgress: noAppend,
+    };
     const withRenditions = await resolveCloudByteUrl(driveCandidate, true, deps);
     const without = await resolveCloudByteUrl(driveCandidate, false, deps);
     const expected = {
@@ -67,6 +75,7 @@ describe("resolveCloudByteUrl", () => {
     let init: RequestInit | undefined;
     const r = await resolveCloudByteUrl(photosCandidate, false, {
       bearerFor: async () => "photos-tok",
+      appendEgress: noAppend,
       fetchFn: async (u, i) => {
         requested = u;
         init = i;
@@ -82,6 +91,7 @@ describe("resolveCloudByteUrl", () => {
   test("photos with no baseUrl in the response is a fetch_miss, not a crash", async () => {
     const r = await resolveCloudByteUrl(photosCandidate, false, {
       bearerFor: async () => "tok",
+      appendEgress: noAppend,
       fetchFn: async () => new Response(JSON.stringify({ id: "p1" })),
     });
     expect(r).toEqual({ error: "fetch_miss" });
@@ -92,6 +102,7 @@ describe("resolveCloudByteUrl", () => {
     let init: RequestInit | undefined;
     const r = await resolveCloudByteUrl(onedriveCandidate, false, {
       bearerFor: async () => "od-tok",
+      appendEgress: noAppend,
       fetchFn: async (u, i) => {
         requested = u;
         init = i;
@@ -109,6 +120,7 @@ describe("resolveCloudByteUrl", () => {
   test("onedrive with no downloadUrl in the response is a fetch_miss, not a crash", async () => {
     const r = await resolveCloudByteUrl(onedriveCandidate, false, {
       bearerFor: async () => "tok",
+      appendEgress: noAppend,
       fetchFn: async () => new Response(JSON.stringify({ id: "o1" })),
     });
     expect(r).toEqual({ error: "fetch_miss" });
@@ -118,6 +130,7 @@ describe("resolveCloudByteUrl", () => {
     let called = false;
     const r = await resolveCloudByteUrl(photosCandidate, false, {
       bearerFor: async () => null,
+      appendEgress: noAppend,
       fetchFn: async () => {
         called = true;
         return new Response("{}");
@@ -130,6 +143,7 @@ describe("resolveCloudByteUrl", () => {
   test("an unknown service resolves nothing rather than guessing", async () => {
     const r = await resolveCloudByteUrl({ ...photosCandidate, service: "dropbox" }, false, {
       bearerFor: async () => "tok",
+      appendEgress: noAppend,
       fetchFn: async () => new Response("{}"),
     });
     expect(r).toEqual({ error: "unresolvable_modality" });
@@ -138,6 +152,7 @@ describe("resolveCloudByteUrl", () => {
   test("a 429 is reported as rate_limited, distinct from any other failure", async () => {
     const r = await resolveCloudByteUrl(photosCandidate, false, {
       bearerFor: async () => "tok",
+      appendEgress: noAppend,
       fetchFn: async () => new Response("rate limited", { status: 429 }),
     });
     expect(r).toEqual({ error: "rate_limited" });
@@ -146,6 +161,7 @@ describe("resolveCloudByteUrl", () => {
   test("a non-429 error status is a fetch_miss", async () => {
     const r = await resolveCloudByteUrl(photosCandidate, false, {
       bearerFor: async () => "tok",
+      appendEgress: noAppend,
       fetchFn: async () => new Response("server error", { status: 500 }),
     });
     expect(r).toEqual({ error: "fetch_miss" });
@@ -154,6 +170,7 @@ describe("resolveCloudByteUrl", () => {
   test("a 200 whose body is not JSON at all is a fetch_miss, not an uncaught throw", async () => {
     const r = await resolveCloudByteUrl(photosCandidate, false, {
       bearerFor: async () => "tok",
+      appendEgress: noAppend,
       fetchFn: async () => new Response("<html>not json</html>"),
     });
     expect(r).toEqual({ error: "fetch_miss" });
@@ -162,10 +179,122 @@ describe("resolveCloudByteUrl", () => {
   test("a transport failure from fetchFn itself is a fetch_miss, not an uncaught throw", async () => {
     const r = await resolveCloudByteUrl(photosCandidate, false, {
       bearerFor: async () => "tok",
+      appendEgress: noAppend,
       fetchFn: async () => {
         throw new Error("ECONNRESET");
       },
     });
     expect(r).toEqual({ error: "fetch_miss" });
+  });
+
+  describe("the resolve round-trip is itself ledgered (I29, sync class)", () => {
+    test("one row is appended BEFORE the credentialed request fires", async () => {
+      const order: string[] = [];
+      const rows: Array<{ destination: string; method: string }> = [];
+      const r = await resolveCloudByteUrl(photosCandidate, false, {
+        bearerFor: async () => "tok",
+        appendEgress: (row) => {
+          order.push("append");
+          rows.push(row);
+          return { rowHash: "h" };
+        },
+        fetchFn: async () => {
+          order.push("fetch");
+          return new Response(JSON.stringify({ baseUrl: "https://lh3.example/fresh" }));
+        },
+      });
+      // Ordering, not merely presence: a row appended AFTER the request would leave a window in
+      // which a credentialed call had gone out unrecorded.
+      expect(order).toEqual(["append", "fetch"]);
+      expect(rows).toEqual([{ destination: "google_photos", method: "media.resolveByteUrl" }]);
+      expect(r).toEqual({ kind: "provider", url: "https://lh3.example/fresh", bearer: false });
+    });
+
+    test("onedrive's round-trip appends under its own service id", async () => {
+      const rows: Array<{ destination: string; method: string }> = [];
+      await resolveCloudByteUrl(onedriveCandidate, false, {
+        bearerFor: async () => "tok",
+        appendEgress: (row) => {
+          rows.push(row);
+          return { rowHash: "h" };
+        },
+        fetchFn: async () =>
+          new Response(
+            JSON.stringify({ "@microsoft.graph.downloadUrl": "https://x.sharepoint.test/d" }),
+          ),
+      });
+      expect(rows).toEqual([{ destination: "onedrive", method: "media.resolveByteUrl" }]);
+    });
+
+    test("a throwing appender ABORTS — the request is never made (fail-closed)", async () => {
+      let called = false;
+      await expect(
+        resolveCloudByteUrl(photosCandidate, false, {
+          bearerFor: async () => "tok",
+          appendEgress: () => {
+            throw new Error("ledger append failed");
+          },
+          fetchFn: async () => {
+            called = true;
+            return new Response(JSON.stringify({ baseUrl: "https://lh3.example/fresh" }));
+          },
+        }),
+      ).rejects.toThrow("ledger append failed");
+      // The throw must NOT be swallowed by the module's own fetch try/catch and turned into a
+      // `fetch_miss` — that would report a per-item skip for a request that never happened, and
+      // would let a later append failure pass silently.
+      expect(called).toBe(false);
+    });
+
+    test("the Drive arm makes no round-trip and appends NOTHING here", async () => {
+      let appends = 0;
+      let called = false;
+      const r = await resolveCloudByteUrl(driveCandidate, false, {
+        bearerFor: async () => "tok",
+        appendEgress: () => {
+          appends += 1;
+          return { rowHash: "h" };
+        },
+        fetchFn: async () => {
+          called = true;
+          return new Response("{}");
+        },
+      });
+      expect(called).toBe(false);
+      expect(appends).toBe(0);
+      expect(r).toEqual({
+        kind: "constructed",
+        url: "https://www.googleapis.com/drive/v3/files/1AbC?alt=media&supportsAllDrives=true",
+        bearer: true,
+      });
+    });
+
+    test("a missing credential appends nothing — no request was ever possible", async () => {
+      let appends = 0;
+      const r = await resolveCloudByteUrl(photosCandidate, false, {
+        bearerFor: async () => null,
+        appendEgress: () => {
+          appends += 1;
+          return { rowHash: "h" };
+        },
+        fetchFn: async () => new Response("{}"),
+      });
+      expect(r).toEqual({ error: "not_configured" });
+      expect(appends).toBe(0);
+    });
+
+    test("an unknown service appends nothing", async () => {
+      let appends = 0;
+      const r = await resolveCloudByteUrl({ ...photosCandidate, service: "dropbox" }, false, {
+        bearerFor: async () => "tok",
+        appendEgress: () => {
+          appends += 1;
+          return { rowHash: "h" };
+        },
+        fetchFn: async () => new Response("{}"),
+      });
+      expect(r).toEqual({ error: "unresolvable_modality" });
+      expect(appends).toBe(0);
+    });
   });
 });

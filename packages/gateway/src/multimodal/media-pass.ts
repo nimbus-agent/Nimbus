@@ -43,8 +43,11 @@ import { writeUnderstanding } from "./understanding-item.ts";
 
 /**
  * The collaborators `resolveCloudByteUrl` and `fetchCloudBytes` need, shared by both since a
- * bearer-carrying URL round-trip and the byte fetch itself both go through the same transport and
- * the same credential resolver. Named for its OWN module rather than re-exporting `CloudBytesDeps`
+ * bearer-carrying URL round-trip and the byte fetch itself both go through the same transport, the
+ * same credential resolver and the same `sync`-class ledger appender — two REAL outbound requests
+ * per Photos/OneDrive candidate, each of which appends its own row before it fires (I29), under
+ * distinct `method`s (`media.resolveByteUrl` and `media.fetchBytes`).
+ * Named for its OWN module rather than re-exporting `CloudBytesDeps`
  * unchanged: `scratchDir`/`maxBytes`/`remainingBudget` vary PER CANDIDATE (the last two per CHUNK,
  * inside `fetchCloudBytes` itself), so they cannot live on a pass-wide deps object — only the
  * PICK below is pass-wide.
@@ -100,6 +103,42 @@ export interface MediaPassSummary {
   readonly stopReason: MediaPassStopReason;
   /** Bytes actually fetched from a connected service this run. Always 0 for a local-only pass. */
   readonly cloudBytesFetched: number;
+  /**
+   * The numbers behind a PRE-FLIGHT refusal, or `null` when the run was not refused up front.
+   *
+   * NOT optional, and that is deliberate: the pre-flight refusal is a permanent wedge by design —
+   * it touches neither the cursor nor a single byte, so the SAME page is refused on every
+   * subsequent run until a human raises the budget or asks for renditions. The numbers that tell
+   * them which knob to move are exactly `priceRun`'s output, and until this field existed they were
+   * computed and thrown away: the CLI printed generic guidance over an all-zero summary, so the one
+   * screen a user sees when the pass wedges carried none of the evidence for the decision it was
+   * asking them to make. An optional field would let a caller forget it and silently reproduce
+   * that, which is why every disclosure field on this pass is required (spec § 16.9).
+   */
+  readonly preflightRefusal: PreflightRefusal | null;
+}
+
+/**
+ * What a pre-flight budget refusal priced, and against what.
+ *
+ * `candidateCount` covers the WHOLE page, not just its cloud subset, because the refusal blocks
+ * every candidate in it — a local file that needs no network at all is refused alongside the cloud
+ * ones, since the pass returns before the loop starts. Reporting only the cloud count would let a
+ * reader conclude their local media was still being processed.
+ */
+export interface PreflightRefusal {
+  /** Every candidate in the refused page, local ones included. */
+  readonly candidateCount: number;
+  /** How many of those are cloud-backed (`sourcePath === null`) — the only ones that cost bytes. */
+  readonly cloudCount: number;
+  /** Summed `sourceBytes` over the cloud candidates that declare one. */
+  readonly knownBytes: number;
+  /** How many cloud candidates declared a size. */
+  readonly knownCount: number;
+  /** How many did not — priced as UNKNOWN, never folded into `knownBytes` as zero. */
+  readonly unknownCount: number;
+  /** The budget `knownBytes` exceeded (`[multimodal] fetch_budget_bytes`, or `--budget`). */
+  readonly budgetBytes: number;
 }
 
 function emptyReasons(): Record<SkipReason, number> {
@@ -213,6 +252,16 @@ export async function runMediaPass(deps: MediaPassDeps): Promise<MediaPassSummar
         lastItemId: null,
         stopReason: "budget_exhausted",
         cloudBytesFetched: 0,
+        // Carried out, not discarded. See {@link PreflightRefusal}: this refusal repeats every run
+        // until a human acts, and these are the numbers that say which knob to move.
+        preflightRefusal: {
+          candidateCount: candidates.length,
+          cloudCount: cloudCandidates.length,
+          knownBytes: priced.knownBytes,
+          knownCount: priced.knownCount,
+          unknownCount: priced.unknownCount,
+          budgetBytes: deps.fetchBudgetBytes,
+        },
       };
     }
   }
@@ -244,8 +293,20 @@ export async function runMediaPass(deps: MediaPassDeps): Promise<MediaPassSummar
         const resolvedUrl = await resolveCloudByteUrl(candidate, deps.preferRenditions, {
           bearerFor: deps.cloudBytes.bearerFor,
           fetchFn: deps.cloudBytes.fetchFn,
+          appendEgress: deps.cloudBytes.appendEgress,
         } satisfies CloudUrlResolverDeps);
         if ("error" in resolvedUrl) {
+          // A 429 at RESOLVE is the same provider-wide signal as a 429 at FETCH, and must end the
+          // run the same way. Treating it as an ordinary per-item skip — the original shape — is
+          // how a rate limit burns a whole page: every remaining candidate resolves to the same
+          // 429, each one advances the cursor past an artifact that was never attempted, and the
+          // run reports `stopReason: "completed"` so the CLI prints no resume guidance at all.
+          // As in the byte path's stop arm, the cursor is left on the last COMPLETED item so the
+          // stopping candidate is RETRIED next run rather than skipped past.
+          if (resolvedUrl.error === "rate_limited") {
+            stopReason = "rate_limited";
+            break;
+          }
           reasons[resolvedUrl.error] += 1;
           skipped += 1;
           lastItemId = candidate.itemId;
@@ -400,6 +461,10 @@ export async function runMediaPass(deps: MediaPassDeps): Promise<MediaPassSummar
     lastItemId,
     stopReason,
     cloudBytesFetched,
+    // A run that actually ran was not refused up front, whatever else stopped it — a MID-RUN
+    // `budget_exhausted` has different guidance (it leaves the cursor on the last completed item
+    // and resumes) and must not borrow the pre-flight refusal's numbers.
+    preflightRefusal: null,
   };
 }
 

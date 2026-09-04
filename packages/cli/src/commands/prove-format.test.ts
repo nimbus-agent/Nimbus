@@ -167,7 +167,7 @@ describe("formatProveResult", () => {
       label: "during this query",
     });
     expect(out).toContain(
-      "configured connector sync runs, targeted fetch-on-miss calls, and cloud media byte-fetches",
+      "configured connector sync runs, targeted fetch-on-miss calls, and cloud media byte-URL resolves and byte-fetches",
     );
     // The bare fallback never fires: a lone "sync" (unlabelled) would appear as its own
     // comma-delimited scope-clause token, which this rules out without over-matching the labelled

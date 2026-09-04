@@ -5,9 +5,10 @@
  * gateway: the dispatcher-driven path uses DI rather than `mock.module`, which is process-global
  * and leaks across the combined CI test run.
  *
- * Deliberately does NOT require `--yes` before a non-dry run, unlike `nimbus index rebody`:
- * `rebody` re-fetches indexed depth across the WHOLE index with no built-in cap, so a confirmation
- * is warranted there. This pass is different in kind, not just degree — every candidate is priced
+ * Deliberately requires no `--yes` confirmation, unlike `nimbus index rebody` (there is no dry-run
+ * mode here either — every invocation is a real run). `rebody` re-fetches indexed depth across the
+ * WHOLE index with no built-in cap, so a confirmation is warranted there. This pass is different
+ * in kind, not just degree — every candidate is priced
  * and the run refuses up front (spec § 16.9) once the cost would exceed `--budget`, so the
  * confirmation `--yes` exists to provide (bound the blast radius before it happens) is already
  * structural here. Understanding itself still runs entirely through local models; only the
@@ -50,6 +51,47 @@ export interface CliSummary {
   readonly lastItemId: string | null;
   readonly stopReason: MediaStopReason;
   readonly cloudBytesFetched: number;
+  /**
+   * Mirrors the gateway's `PreflightRefusal` (`multimodal/media-pass.ts`). Non-null ONLY for a
+   * pre-flight refusal — the case where the gateway priced the page, refused it before fetching a
+   * byte, and left the cursor untouched, so the identical refusal repeats every run until a human
+   * raises the budget or asks for renditions. These are the numbers that say which knob to move,
+   * and `renderSummary` MUST print them: generic guidance over an all-zero summary was what the
+   * user saw before, on the one screen where the evidence matters most.
+   */
+  readonly preflightRefusal: CliPreflightRefusal | null;
+}
+
+/** Mirrors the gateway's `PreflightRefusal`. Hand-maintained: the CLI reaches it over IPC only. */
+export interface CliPreflightRefusal {
+  readonly candidateCount: number;
+  readonly cloudCount: number;
+  readonly knownBytes: number;
+  readonly knownCount: number;
+  readonly unknownCount: number;
+  readonly budgetBytes: number;
+}
+
+/**
+ * Bytes as a short DECIMAL string (`3.9 GB`, `512 MB`), matching spec § 16.9's printed shape and
+ * `--budget`'s decimal units — `parseBudget` treats `GB` as 10^9, so echoing a binary-rounded
+ * number back at an operator who typed `4GB` would not agree with what they asked for.
+ * Exact for a byte count under 1 kB, since rounding `873` to `0.9 kB` loses more than it saves.
+ */
+export function formatBytes(bytes: number): string {
+  const units: readonly (readonly [number, string])[] = [
+    [1_000 ** 3, "GB"],
+    [1_000 ** 2, "MB"],
+    [1_000, "kB"],
+  ];
+  for (const [scale, label] of units) {
+    if (bytes >= scale) {
+      const value = bytes / scale;
+      // One decimal below 10 (3.9 GB), none above it (412 MB) — the extra digit stops mattering.
+      return `${value < 10 ? value.toFixed(1) : Math.round(value)} ${label}`;
+    }
+  }
+  return `${bytes} B`;
 }
 
 export interface ParsedMediaArgs {
@@ -220,6 +262,41 @@ function stopReasonGuidance(
 }
 
 /**
+ * The pre-flight refusal's own screen, replacing the ordinary summary entirely.
+ *
+ * It replaces rather than decorates because every line of the ordinary summary would be a false
+ * note here: "Understood 0 of 0" says there was nothing to do when in fact a whole page was found
+ * and refused, and `stopReasonGuidance`'s "byte budget reached before every candidate could be
+ * priced or fetched" describes a MID-RUN stop — a run that fetched, advanced its cursor and
+ * resumes on its own. This outcome fetched nothing, attempted nothing and moved no cursor, so the
+ * identical refusal repeats on every subsequent run until a human raises the budget or asks for
+ * renditions. That makes this the one screen where the priced numbers must appear: they are the
+ * evidence for the decision the refusal is demanding, and they were computed and discarded until
+ * `preflightRefusal` carried them out (spec § 16.9).
+ */
+function renderPreflightRefusal(refusal: CliPreflightRefusal): string {
+  const localCount = refusal.candidateCount - refusal.cloudCount;
+  return [
+    `Refused before fetching anything: ${refusal.candidateCount} candidate${refusal.candidateCount === 1 ? "" : "s"} found, none attempted.`,
+    `${refusal.candidateCount} artifacts · ${refusal.knownCount} with known size ~ ${formatBytes(refusal.knownBytes)} · ${refusal.unknownCount} unknown (google_photos indexes no byte size)`,
+    `Refusing: known bytes exceed the fetch budget (${formatBytes(refusal.budgetBytes)}). Nothing was fetched and the resume cursor is untouched, so every re-run is refused identically until you raise the budget or choose renditions.`,
+    // Named only when there ARE local candidates, so the sentence never reads as a contradiction on
+    // an all-cloud page. Stated because the old wording omitted it and the omission misleads: the
+    // refusal returns before the candidate loop starts, so a local file needing no network at all
+    // is blocked alongside the cloud ones rather than quietly understood.
+    ...(localCount > 0
+      ? [
+          `${localCount} of those ${refusal.candidateCount} are LOCAL and need no network at all — they are blocked too, because no candidate in the page is attempted.`,
+        ]
+      : []),
+    "",
+    "  --budget <size>   raise the ceiling for one run (e.g. --budget 4GB)",
+    "  --renditions      fetch downscaled/audio-only copies where available",
+    "  --originals       fetch as-is, this run only",
+  ].join("\n");
+}
+
+/**
  * Reports the total AND the per-reason breakdown. A bare "Understood 42" is precisely the
  * disclosure failure the pass exists not to commit (spec § 8) — the reader cannot tell whether the
  * other 66 were absent, too large, or silently refused. Reasons with a zero count are omitted as
@@ -228,8 +305,17 @@ function stopReasonGuidance(
  * A `stopReason` other than "completed" gets its own clearly separated block (never folded into
  * the skip breakdown, which is per-artifact — a budget/rate-limit stop ends the RUN, not one
  * artifact) naming what happened and the exact next step. See `stopReasonGuidance`.
+ *
+ * A PRE-FLIGHT refusal (`preflightRefusal !== null`) takes that block over entirely and prints the
+ * numbers the gateway actually computed: artifacts found, how many were priceable and to what
+ * total, how many were not, and the budget the total exceeded, plus the flags that change the
+ * outcome. It is the one outcome that repeats forever until a human acts (nothing fetched, cursor
+ * untouched), so printing generic guidance over an all-zero summary there withheld exactly the
+ * evidence the decision needs (spec § 16.9).
  */
 export function renderSummary(summary: CliSummary): string {
+  const refusal = summary.preflightRefusal;
+  if (refusal !== null) return renderPreflightRefusal(refusal);
   const total = summary.understood + summary.skipped;
   const lines = [`Understood ${summary.understood} of ${total}.`];
   const reasons = Object.entries(summary.skippedByReason).filter(([, n]) => n > 0);
@@ -279,8 +365,11 @@ stopping mid-way. --renditions and --originals are mutually exclusive.
     is why this command still needs no --yes confirmation the way "nimbus index rebody" does.
   * Resumable: an interrupted or re-run pass picks up where the last one left off rather than
     restarting from the beginning, and a per-artifact failure never aborts the whole run. A run
-    stopped by the byte budget leaves its resume cursor untouched (nothing already understood is
-    re-fetched on the next run).
+    REFUSED up front by the byte budget leaves its resume cursor untouched entirely (nothing was
+    fetched or attempted, so the next run sees exactly the same page). A run stopped MID-WAY by the
+    budget or by a rate limit instead leaves the cursor on the last COMPLETED artifact, so the one
+    it stopped on is retried next run rather than skipped, and nothing already understood is
+    re-fetched.
 `);
 }
 

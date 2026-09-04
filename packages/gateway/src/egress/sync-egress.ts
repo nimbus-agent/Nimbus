@@ -34,37 +34,45 @@ export const LOCAL_ONLY_SYNC_SERVICES: ReadonlySet<string> = new Set([
 ]);
 
 /**
- * The sole append site for `sync` egress rows (I29, D22(b)) — shared by THREE of that class's
+ * The sole append site for `sync` egress rows (I29, D22(b)) — shared by FOUR of that class's
  * appenders: `sync/scheduler.ts`'s per-RUN `appendSyncEgress` (one row before `connector.sync(...)`
- * in `runJob`), `sync/targeted-fetch.ts`'s per-CALL `appendEgress` (one row before `fetchOne`), and
- * `multimodal/cloud-bytes.ts`'s `fetchCloudBytes` (one row per FETCH ATTEMPT, before each cloud
- * byte-fetch of a Drive/Photos/OneDrive artifact — a retried request appends again, since a retry
- * really does dispatch a fresh outbound request).
+ * in `runJob`), `sync/targeted-fetch.ts`'s per-CALL `appendEgress` (one row before `fetchOne`),
+ * `multimodal/cloud-url-resolver.ts`'s `resolveCloudByteUrl` (one row before the CREDENTIALED
+ * round-trip that asks Google Photos or OneDrive where an artifact's bytes live — `method` is
+ * `media.resolveByteUrl`; the Google Drive arm constructs its URL with no round-trip at all and
+ * appends nothing there), and `multimodal/cloud-bytes.ts`'s `fetchCloudBytes` (one row per FETCH
+ * ATTEMPT, `method` `media.fetchBytes`, before each cloud byte-fetch of a Drive/Photos/OneDrive
+ * artifact — a retried request appends again, since a retry really does dispatch a fresh outbound
+ * request). The last two are the reason a single Photos/OneDrive candidate produces TWO rows: it
+ * makes two real outbound requests, and one row covering both would have meant a candidate that
+ * failed at RESOLVE left no row at all for a request that had already gone out.
  * `packages/gateway/src/platform/assemble.ts` is the only production caller of the first two
  * seams; it injects a thin closure around this function into `new SyncScheduler(...)` and into
- * `TargetedFetchDeps`. The third seam is wired separately by
- * `multimodal/build-media-pass-deps.ts`'s `buildCloudBytesDeps`, which injects the same kind of
- * closure into `MediaCloudDeps.appendEgress`. None of the three callers imports the raw
+ * `TargetedFetchDeps`. The last two seams are wired together by
+ * `multimodal/build-media-pass-deps.ts`'s `buildCloudBytesDeps`, whose single
+ * `MediaCloudDeps.appendEgress` closure reaches both (`media-pass.ts` hands it to the resolver and
+ * to the byte fetch alike). None of the four callers imports the raw
  * `appendEgressEntry` (D22(b) confines that identifier to this directory).
  *
  * `per-run` is the honest coverage granularity for the `sync` class as a whole (see the `sync`
  * paragraph on `THIS_BINARY_COVERAGE` in `egress-coverage.ts`): a scheduled sync is a paginated run
  * that can make many upstream calls and appends exactly ONE row for the whole run, a targeted
- * fetch appends one row for its one call, and a cloud byte-fetch appends one row per attempt — the
- * weakest of the three shapes is what the coverage vector must claim, and `per-run` is that shape.
+ * fetch appends one row for its one call, and each cloud resolve/byte-fetch appends one row per
+ * request — the weakest of the four shapes is what the coverage vector must claim, and `per-run`
+ * is that shape.
  *
  * A `destination` in `LOCAL_ONLY_SYNC_SERVICES` is a no-op — deliberately, and checked HERE rather
- * than at any call site, so all three appenders (and any future one) enforce the rule identically
+ * than at any call site, so all four appenders (and any future one) enforce the rule identically
  * instead of each needing its own copy of the exclusion list. Returns `undefined` in that case too,
  * so a caller cannot distinguish "skipped" from "appended" and is never tempted to branch on it.
  *
- * Called BEFORE the outbound call by all three callers; throwing here aborts the caller's
+ * Called BEFORE the outbound call by all four callers; throwing here aborts the caller's
  * run/fetch before any connector call is made — fail-closed, no row means no dispatch. Returns
  * `undefined`, never `void`: the callers' own seam types (`sync/targeted-fetch.ts`'s `appendEgress`
  * especially) are typed to return `undefined` so that an `async` implementation assigned there is a
  * compile error — see that file's doc comment for why an async append would break the fail-closed
  * property. Matching that return type here, rather than `void`, keeps this function assignable to
- * any of the three seams without a wrapping arrow function hiding an accidental async leak.
+ * any of the four seams without a wrapping arrow function hiding an accidental async leak.
  */
 export function recordSyncEgress(
   db: Database,

@@ -116,9 +116,13 @@ async function cloudBearerFor(
  * stripped on a cross-origin hop — never a bare `fetch`: `cloud-url-resolver.ts`'s own `fetchFn`
  * docstring describes this as a contract on the type until a caller wires it, and this is that
  * wiring (`cloud-bytes.ts`'s `CloudBytesDeps.fetchFn` is an undocumented bare field, so only the
- * resolver's docstring made the claim). `appendEgress` is the REAL `sync`-class ledger append (I29):
- * `cloud-bytes.ts` is the third caller of `recordSyncEgress`, alongside `sync/scheduler.ts` and
- * `sync/targeted-fetch.ts` (see `docs/SECURITY-INVARIANTS.md`'s I29 entry, which names all three).
+ * resolver's docstring made the claim). `appendEgress` is the REAL `sync`-class ledger append (I29),
+ * and this ONE closure serves TWO of that class's callers: `media-pass.ts` hands it both to
+ * `cloud-url-resolver.ts` (one row before the credentialed byte-URL resolve round-trip,
+ * `method='media.resolveByteUrl'`) and to `cloud-bytes.ts` (one row per byte-fetch attempt,
+ * `method='media.fetchBytes'`). They are the third and fourth callers of `recordSyncEgress`,
+ * alongside `sync/scheduler.ts` and `sync/targeted-fetch.ts` (see `docs/SECURITY-INVARIANTS.md`'s
+ * I29 entry, which names all four).
  * `sleep` is a real wall-clock delay, used only by `cloud-bytes.ts`'s 429/503 backoff.
  */
 function buildCloudBytesDeps(input: BuildMediaPassDepsInput): MediaCloudDeps {
@@ -131,7 +135,16 @@ function buildCloudBytesDeps(input: BuildMediaPassDepsInput): MediaCloudDeps {
   };
 }
 
-/** 250 MB (spec § 5.3 `max_media_bytes`). */
+/**
+ * The per-artifact byte cap: 250 MiB, ONE value for images and audio/video alike.
+ *
+ * NOT config-driven, despite what spec § 5.3 proposed: there is no `max_media_bytes` key and no
+ * `max_image_bytes` key — neither was built, and `[multimodal]`'s loader accepts neither. The only
+ * override is `BuildMediaPassDepsInput.maxBytes`, which nothing in production supplies, so this
+ * constant IS the cap on a shipped install. Named here rather than left implicit because
+ * `over_byte_cap` skips point at it, and a user told to "raise the cap" needs to know there is no
+ * knob to raise (see `docs/cli-reference.md`'s `nimbus media understand` section).
+ */
 const DEFAULT_MAX_MEDIA_BYTES = 250 * 1024 * 1024;
 
 /**
