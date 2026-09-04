@@ -24,6 +24,8 @@ export type SkipReason =
 export interface MediaCandidate {
   readonly itemId: string;
   readonly service: string;
+  /** The PROVIDER's own id, read from the column. */
+  readonly externalId: string;
   readonly type: string;
   readonly title: string;
   readonly url: string | null;

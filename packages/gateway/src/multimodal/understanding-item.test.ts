@@ -12,6 +12,7 @@ import {
 const CANDIDATE: MediaCandidate = {
   itemId: "filesystem:/m/standup.mp4",
   service: "filesystem",
+  externalId: "/m/standup.mp4",
   type: "media_av",
   title: "standup.mp4",
   url: "file:///m/standup.mp4",

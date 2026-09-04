@@ -26,6 +26,39 @@ beforeEach(() => {
   runIndexedSchemaMigrations(db, CURRENT_SCHEMA_VERSION);
 });
 
+function freshIndexDb(): Database {
+  const fresh = new Database(":memory:");
+  runIndexedSchemaMigrations(fresh, CURRENT_SCHEMA_VERSION);
+  return fresh;
+}
+
+/**
+ * Cloud-item fixture: `id` is the full `service:externalId` item id (matching how a real synced
+ * row reads), and the external id is derived from it rather than duplicated by the caller.
+ */
+function insertItem(
+  target: Database,
+  row: {
+    readonly id: string;
+    readonly service: string;
+    readonly type: string;
+    readonly metadata?: Record<string, unknown>;
+  },
+): void {
+  const prefix = `${row.service}:`;
+  const externalId = row.id.startsWith(prefix) ? row.id.slice(prefix.length) : row.id;
+  upsertIndexedItem(target, {
+    service: row.service,
+    type: row.type,
+    externalId,
+    title: row.id,
+    bodyPreview: "",
+    modifiedAt: 1000,
+    syncedAt: 1000,
+    metadata: row.metadata ?? {},
+  });
+}
+
 describe("findCandidates", () => {
   test("returns media items that have no understanding yet", () => {
     addMedia("/m/a.mp4");
@@ -216,5 +249,99 @@ describe("findCandidates — metadata edge cases", () => {
     const [c] = findCandidates(db, { limit: 10 });
     if (c === undefined) throw new Error("expected a candidate");
     expect(c.sourceBytes).toBeNull();
+  });
+});
+
+describe("findCandidates — mime-keyed cloud services (PR 3)", () => {
+  test("pages past non-media files without clearing the cursor (the starvation bug)", () => {
+    const cloud = freshIndexDb();
+    // 100 Drive files; only #70-#75 are media. A JS-side mime filter would return 0 candidates
+    // for page 1, and the pass would treat that as end-of-queue.
+    for (let i = 0; i < 100; i += 1) {
+      const media = i >= 70 && i < 76;
+      insertItem(cloud, {
+        id: `google_drive:f${String(i).padStart(3, "0")}`,
+        service: "google_drive",
+        type: "file",
+        metadata: { mimeType: media ? "video/mp4" : "application/pdf", size: "1024" },
+      });
+    }
+
+    const page1 = findCandidates(cloud, { limit: 50 });
+    // The SQL predicate excludes the PDFs, so page 1 is the SIX media items, not zero.
+    expect(page1).toHaveLength(6);
+    expect(page1.every((c) => c.modality === "av")).toBe(true);
+  });
+
+  test("--modality image excludes a video sharing the same item type", () => {
+    const cloud = freshIndexDb();
+    insertItem(cloud, {
+      id: "google_photos:p1",
+      service: "google_photos",
+      type: "photo",
+      metadata: { mimeType: "image/jpeg" },
+    });
+    insertItem(cloud, {
+      id: "google_photos:p2",
+      service: "google_photos",
+      type: "photo",
+      metadata: { mimeType: "video/mp4" },
+    });
+
+    expect(findCandidates(cloud, { limit: 10, modality: "image" }).map((c) => c.itemId)).toEqual([
+      "google_photos:p1",
+    ]);
+    expect(findCandidates(cloud, { limit: 10, modality: "av" }).map((c) => c.itemId)).toEqual([
+      "google_photos:p2",
+    ]);
+  });
+
+  test("a mime-keyed row with NO mimeType is excluded by SQL, not fetched and dropped", () => {
+    const cloud = freshIndexDb();
+    insertItem(cloud, {
+      id: "google_drive:f1",
+      service: "google_drive",
+      type: "file",
+      metadata: {},
+    });
+    expect(findCandidates(cloud, { limit: 10 })).toHaveLength(0);
+  });
+
+  test("a NON-mime-keyed service sharing the type name 'file' is never selected", () => {
+    // figma-file-mapping.ts:60 also emits type "file". If arm 1 matched it, the JS loop would drop
+    // it for having no modality and the page would under-fill — the same starvation bug, via a
+    // different service.
+    const cloud = freshIndexDb();
+    insertItem(cloud, {
+      id: "figma:f1",
+      service: "figma",
+      type: "file",
+      metadata: { mimeType: "image/png" },
+    });
+    expect(findCandidates(cloud, { limit: 10 })).toHaveLength(0);
+  });
+
+  test("a Drive FOLDER is excluded — its mime fails every pattern", () => {
+    const cloud = freshIndexDb();
+    insertItem(cloud, {
+      id: "google_drive:d1",
+      service: "google_drive",
+      type: "folder",
+      metadata: { mimeType: "application/vnd.google-apps.folder" },
+    });
+    expect(findCandidates(cloud, { limit: 10 })).toHaveLength(0);
+  });
+
+  test("carries the provider's own externalId from the column, not derived from the item id", () => {
+    const cloud = freshIndexDb();
+    insertItem(cloud, {
+      id: "google_drive:file123",
+      service: "google_drive",
+      type: "file",
+      metadata: { mimeType: "video/mp4" },
+    });
+    const [c] = findCandidates(cloud, { limit: 10 });
+    if (c === undefined) throw new Error("expected a candidate");
+    expect(c.externalId).toBe("file123");
   });
 });

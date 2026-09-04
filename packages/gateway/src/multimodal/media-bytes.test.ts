@@ -45,6 +45,7 @@ function candidate(path: string, bytes: number | null = 10): MediaCandidate {
   return {
     itemId: "filesystem:x",
     service: "filesystem",
+    externalId: "x",
     type: "media_av",
     title: "x",
     url: null,

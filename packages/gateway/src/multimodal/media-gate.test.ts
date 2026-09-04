@@ -6,6 +6,7 @@ import type { MediaCandidate } from "./media-types.ts";
 const CANDIDATE: MediaCandidate = {
   itemId: "filesystem:/m/a.mp4",
   service: "filesystem",
+  externalId: "/m/a.mp4",
   type: "media_av",
   title: "a.mp4",
   url: null,

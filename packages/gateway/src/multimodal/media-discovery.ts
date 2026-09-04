@@ -11,6 +11,8 @@
  */
 import type { Database } from "bun:sqlite";
 import {
+  MIME_KEYED_SERVICES,
+  MIME_PATTERNS_FOR_MODALITY,
   mediaItemTypesForModality,
   mediaSourceBytes,
   modalityForItem,
@@ -29,6 +31,7 @@ export interface DiscoveryOptions {
 interface CandidateRow {
   readonly id: string;
   readonly service: string;
+  readonly external_id: string;
   readonly type: string;
   readonly title: string;
   readonly url: string | null;
@@ -43,11 +46,30 @@ export function findCandidates(db: Database, opts: DiscoveryOptions): MediaCandi
   if (mediaTypes.length === 0) return [];
 
   const wheres: string[] = [
-    `src.type IN (${mediaTypes.map(() => "?").join(", ")})`,
     // No understanding row, OR one at an older version.
     `(u.id IS NULL OR COALESCE(json_extract(u.metadata, '$.understandingVersion'), -1) < ?)`,
   ];
-  const params: (string | number)[] = [...mediaTypes, UNDERSTANDING_VERSION];
+  const params: (string | number)[] = [UNDERSTANDING_VERSION];
+
+  const mimeServices = [...MIME_KEYED_SERVICES];
+  const mimePatterns =
+    opts.modality === undefined
+      ? [...MIME_PATTERNS_FOR_MODALITY.image, ...MIME_PATTERNS_FOR_MODALITY.av]
+      : MIME_PATTERNS_FOR_MODALITY[opts.modality];
+
+  // A mime-keyed service is admitted ONLY when its declared mime matches the requested modality.
+  // Filtering this in JS instead would under-fill the SQL page, and `media-pass.ts` reads a short
+  // page as end-of-queue and clears the cursor — silently truncating the pass (spec § 17.1).
+  wheres.push(
+    `(
+       (src.service NOT IN (${mimeServices.map(() => "?").join(", ")})
+        AND src.type IN (${mediaTypes.map(() => "?").join(", ")}))
+       OR
+       (src.service IN (${mimeServices.map(() => "?").join(", ")})
+        AND (${mimePatterns.map(() => "json_extract(src.metadata, '$.mimeType') LIKE ?").join(" OR ")}))
+     )`,
+  );
+  params.push(...mimeServices, ...mediaTypes, ...mimeServices, ...mimePatterns);
 
   if (opts.service !== undefined) {
     wheres.push("src.service = ?");
@@ -66,7 +88,7 @@ export function findCandidates(db: Database, opts: DiscoveryOptions): MediaCandi
 
   const rows = db
     .query<CandidateRow, (string | number)[]>(
-      `SELECT src.id, src.service, src.type, src.title, src.url, src.metadata
+      `SELECT src.id, src.service, src.external_id, src.type, src.title, src.url, src.metadata
          FROM item AS src
          LEFT JOIN item AS u
            ON u.service = 'nimbus'
@@ -79,20 +101,22 @@ export function findCandidates(db: Database, opts: DiscoveryOptions): MediaCandi
 
   const out: MediaCandidate[] = [];
   for (const row of rows) {
-    const modality = modalityForItem(row.service, row.type);
+    const meta = parseMetadata(row.metadata);
+    const mime = stringOrNull(meta["mimeType"]);
+    const modality = modalityForItem(row.service, row.type, mime);
     if (modality === undefined) continue;
     if (opts.modality !== undefined && modality !== opts.modality) continue;
 
-    const meta = parseMetadata(row.metadata);
     out.push({
       itemId: row.id,
       service: row.service,
+      externalId: row.external_id,
       type: row.type,
       title: row.title,
       url: row.url,
       modality,
       sourcePath: stringOrNull(meta["path"]),
-      sourceMime: stringOrNull(meta["mimeType"]),
+      sourceMime: mime,
       sourceBytes: mediaSourceBytes(row.service, meta),
     });
   }

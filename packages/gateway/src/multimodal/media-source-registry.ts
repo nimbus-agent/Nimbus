@@ -61,7 +61,42 @@ const ITEM_TYPE_MODALITY: ReadonlyMap<string, MediaModality> = new Map([
   ["filesystem:media_image", "image"],
 ]);
 
-export function modalityForItem(service: string, type: string): MediaModality | undefined {
+/**
+ * Services whose items carry a GENERIC type and whose modality must come from mime instead.
+ *
+ * Drive and OneDrive index everything as `type: "file"`; Photos indexes both stills and videos as
+ * `type: "photo"`. A mime type is the PROVIDER'S OWN DECLARATION, not our inference, so reading it
+ * does not weaken the "never defaulted" rule this module states above — an absent or unrecognised
+ * mime is still skipped rather than guessed.
+ */
+export const MIME_KEYED_SERVICES: ReadonlySet<string> = new Set([
+  "google_photos",
+  "google_drive",
+  "onedrive",
+]);
+
+/** SQL `LIKE` patterns per modality. Bound as parameters, never concatenated (I9). */
+export const MIME_PATTERNS_FOR_MODALITY: Readonly<Record<MediaModality, readonly string[]>> = {
+  image: ["image/%"],
+  av: ["video/%", "audio/%"],
+};
+
+export function mimeModality(mime: string | null): MediaModality | undefined {
+  if (mime === null || mime === "") return undefined;
+  const lower = mime.toLowerCase();
+  if (lower.startsWith("image/")) return "image";
+  if (lower.startsWith("video/") || lower.startsWith("audio/")) return "av";
+  return undefined;
+}
+
+export function modalityForItem(
+  service: string,
+  type: string,
+  mime?: string | null,
+): MediaModality | undefined {
+  if (MIME_KEYED_SERVICES.has(service)) {
+    return mimeModality(mime ?? null);
+  }
   return ITEM_TYPE_MODALITY.get(`${service}:${type}`);
 }
 
