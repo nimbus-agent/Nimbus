@@ -148,4 +148,153 @@ describe("GET /v1/items/resolve-file (integration)", () => {
       stop();
     }
   });
+
+  test("remote_not_tracked when no workspace tracks the remote", async () => {
+    const { port, token, stop } = await startServerWithClipToken(["resolve"]);
+    try {
+      const res = await get(port, token, coord("github", "other/unknown", "main/src/foo.ts"));
+      expect(res.status).toBe(200);
+      expect(await res.json()).toEqual({
+        ok: false,
+        reason: "remote_not_tracked",
+        repo: "other/unknown",
+      });
+    } finally {
+      stop();
+    }
+  });
+
+  // Asserted separately from the case above, and never folded into one "miss" test: the two are
+  // different facts with different remediations, and the panel prints a different sentence for
+  // each. Collapsing them is the one thing the client cannot survive.
+  test("file_not_indexed when the repo is tracked and the path is not in it", async () => {
+    const { port, token, db, stop } = await startServerWithClipToken(["resolve"]);
+    try {
+      seedTrackedRepo(db, {
+        remote: "github:acme/web",
+        root: "/home/d/web",
+        files: ["src/foo.ts"],
+      });
+      const res = await get(port, token, coord("github", "acme/web", "main/src/missing.ts"));
+      expect(res.status).toBe(200);
+      expect(await res.json()).toEqual({
+        ok: false,
+        reason: "file_not_indexed",
+        repo: "acme/web",
+      });
+    } finally {
+      stop();
+    }
+  });
+
+  // The reason the coordinate crosses the wire UNSPLIT: a branch name may contain slashes, and
+  // only the side holding the file list can tell where the ref ends. A browser that tried would
+  // have to call the forge to learn the branch list.
+  test("a branch name containing slashes still resolves", async () => {
+    const { port, token, db, stop } = await startServerWithClipToken(["resolve"]);
+    try {
+      seedTrackedRepo(db, {
+        remote: "github:acme/web",
+        root: "/home/d/web",
+        files: ["src/foo.ts"],
+      });
+      const res = await get(port, token, coord("github", "acme/web", "feat/auth-v2/src/foo.ts"));
+      expect(res.status).toBe(200);
+      expect(await res.json()).toEqual({ ok: true, path: "src/foo.ts" });
+    } finally {
+      stop();
+    }
+  });
+
+  // Traversal is a non-issue BY CONSTRUCTION, not by sanitisation: resolution never touches the
+  // filesystem, it matches `source_file` external ids in SQLite. A `..` segment simply produces a
+  // candidate no indexed entity matches. This test fails the day someone adds path normalisation
+  // the route must not have.
+  test("a traversal attempt is an ordinary miss, not an error", async () => {
+    const { port, token, db, stop } = await startServerWithClipToken(["resolve"]);
+    try {
+      seedTrackedRepo(db, {
+        remote: "github:acme/web",
+        root: "/home/d/web",
+        files: ["src/foo.ts"],
+      });
+      const res = await get(port, token, coord("github", "acme/web", "main/../../secret.txt"));
+      expect(res.status).toBe(200);
+      expect(await res.json()).toEqual({
+        ok: false,
+        reason: "file_not_indexed",
+        repo: "acme/web",
+      });
+    } finally {
+      stop();
+    }
+  });
+
+  // The space and the `+` are in the FILENAME, not the ref, on purpose: the resolver tries every
+  // ref/path split, so a mangled ref would still leave a matching candidate and the test would
+  // pass while decoding was broken. Put them in the path and only an exact round-trip resolves.
+  // That round-trip holds because both ends use URLSearchParams — the client writes with it
+  // (`gateway-client.ts`'s `getJson`), this route reads with it — so a space travels as `+` and a
+  // literal `+` as `%2B`.
+  test("a path carrying a space and a + survives the round trip", async () => {
+    const { port, token, db, stop } = await startServerWithClipToken(["resolve"]);
+    try {
+      seedTrackedRepo(db, {
+        remote: "github:acme/web",
+        root: "/home/d/web",
+        files: ["src/my file+v2.ts"],
+      });
+      const res = await get(port, token, coord("github", "acme/web", "main/src/my file+v2.ts"));
+      expect(res.status).toBe(200);
+      expect(await res.json()).toEqual({ ok: true, path: "src/my file+v2.ts" });
+    } finally {
+      stop();
+    }
+  });
+
+  // A GitLab project nests arbitrarily deep, so `repo` ITSELF carries slashes. A different
+  // parameter from the slashy ref above and a different risk: `/` has to survive URLSearchParams
+  // encoding it as `%2F` and this route decoding it back. A truncated `repo` would answer
+  // `remote_not_tracked` and read as an ordinary miss rather than a bug.
+  test("a deep GitLab subgroup survives as the repo coordinate", async () => {
+    const { port, token, db, stop } = await startServerWithClipToken(["resolve"]);
+    try {
+      seedTrackedRepo(db, {
+        remote: "gitlab:org/team/subgroup/repo",
+        root: "/home/d/sub",
+        files: ["src/foo.ts"],
+      });
+      const res = await get(
+        port,
+        token,
+        coord("gitlab", "org/team/subgroup/repo", "main/src/foo.ts"),
+      );
+      expect(res.status).toBe(200);
+      expect(await res.json()).toEqual({ ok: true, path: "src/foo.ts" });
+    } finally {
+      stop();
+    }
+  });
+
+  // Nothing leaves the machine, so nothing belongs in the ledger of what did. Asserted as a
+  // DELTA rather than `=== 0`: what must hold is that RESOLVING appends nothing, and a test
+  // pinned to an empty table would start failing for an unrelated row the server wrote at boot.
+  test("appends no egress row", async () => {
+    const { port, token, db, stop } = await startServerWithClipToken(["resolve"]);
+    try {
+      seedTrackedRepo(db, {
+        remote: "github:acme/web",
+        root: "/home/d/web",
+        files: ["src/foo.ts"],
+      });
+      const ledgerRows = (): number =>
+        (db.query("SELECT COUNT(*) AS n FROM egress_ledger").get() as { n: number }).n;
+      const before = ledgerRows();
+      const res = await get(port, token, coord("github", "acme/web", "main/src/foo.ts"));
+      expect(res.status).toBe(200);
+      expect(ledgerRows()).toBe(before);
+    } finally {
+      stop();
+    }
+  });
 });
