@@ -70,9 +70,19 @@ jobs:
             if [ "$code" -eq 0 ]; then
               exit 0
             fi
-            # Bun prints e.g. `error: audit request failed (status 503)` when the
-            # registry endpoint is unreachable or erroring.
-            if ! printf '%s' "$out" | grep -qE 'audit request failed \(status [0-9]+\)'; then
+            # Bun reports an unreachable/erroring registry endpoint in TWO shapes, and matching
+            # only the first is what made this guard fail for the wrong reason on 2026-09-04:
+            #
+            #   error: audit request failed (status 503)      <- an HTTP status came back
+            #   ConnectionClosed: audit request failed        <- the socket died, NO status
+            #
+            # The old pattern required `(status NNN)`, so the status-less form was classified as
+            # a FINDING and failed without retrying — turning a transport blip into a red required
+            # check on `main`, with a message asserting an advisory that did not exist. Anchor on
+            # `audit request failed` alone, which is the part common to both and which `bun audit`
+            # never prints for an actual advisory: a real finding is reported as a vulnerability
+            # table, not as a failed request.
+            if ! printf '%s' "$out" | grep -qE 'audit request failed'; then
               echo "bun audit reported a finding (exit $code) — not a transport error, failing without retry."
               exit "$code"
             fi
