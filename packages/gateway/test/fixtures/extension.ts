@@ -1,6 +1,7 @@
 import { Database } from "bun:sqlite";
+import { afterEach } from "bun:test";
 import { createHash } from "node:crypto";
-import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -8,6 +9,20 @@ import { insertExtensionRow } from "../../src/automation/extension-store.ts";
 import { encodeBase64, signManifest } from "../../src/extensions/verify-signature.ts";
 import { CURRENT_SCHEMA_VERSION } from "../../src/index/local-index.ts";
 import { runIndexedSchemaMigrations } from "../../src/index/migrations/runner.ts";
+
+const __nimbusTestDirs: string[] = [];
+function __cleanupNimbusTestDirs() {
+  for (const d of __nimbusTestDirs.splice(0)) {
+    try {
+      rmSync(d, { recursive: true, force: true });
+    } catch {
+      /* best-effort */
+    }
+  }
+}
+afterEach(() => {
+  __cleanupNimbusTestDirs();
+});
 
 function sha256HexOfBytes(buf: Buffer): string {
   return createHash("sha256").update(buf).digest("hex");
@@ -17,6 +32,7 @@ export function setupFreshExtensionDb(): { db: Database; extensionsDir: string }
   const db = new Database(":memory:");
   runIndexedSchemaMigrations(db, CURRENT_SCHEMA_VERSION);
   const extensionsDir = mkdtempSync(join(tmpdir(), "nimbus-ext-test-"));
+  __nimbusTestDirs.push(extensionsDir);
   return { db, extensionsDir };
 }
 
