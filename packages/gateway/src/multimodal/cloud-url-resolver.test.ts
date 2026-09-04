@@ -44,7 +44,7 @@ describe("resolveCloudByteUrl", () => {
     expect(called).toBe(false);
     expect(r).toEqual({
       kind: "constructed",
-      url: expect.stringContaining("alt=media"),
+      url: "https://www.googleapis.com/drive/v3/files/1AbC?alt=media&supportsAllDrives=true",
       bearer: true,
     });
   });
@@ -53,7 +53,13 @@ describe("resolveCloudByteUrl", () => {
     const deps = { bearerFor: async () => "tok", fetchFn: async () => new Response("{}") };
     const withRenditions = await resolveCloudByteUrl(driveCandidate, true, deps);
     const without = await resolveCloudByteUrl(driveCandidate, false, deps);
-    expect(withRenditions).toEqual(without);
+    const expected = {
+      kind: "constructed",
+      url: "https://www.googleapis.com/drive/v3/files/1AbC?alt=media&supportsAllDrives=true",
+      bearer: true,
+    } as const;
+    expect(withRenditions).toEqual(expected);
+    expect(without).toEqual(expected);
   });
 
   test("photos RE-RESOLVES baseUrl rather than trusting the indexed one, over an authenticated, non-redirect-following request", async () => {
