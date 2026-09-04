@@ -6,8 +6,6 @@
 
 import type { Database } from "bun:sqlite";
 import { describe, expect, test } from "bun:test";
-// `startServerWithoutClipsVault` is deliberately NOT imported yet: Task 2 adds it together with
-// the test that uses it. Biome fails an unused import, so Step 7's lint would go red here.
 import {
   startServerWithClipToken,
   startServerWithoutClipsVault,
