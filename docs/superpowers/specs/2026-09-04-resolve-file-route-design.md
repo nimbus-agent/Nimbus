@@ -5,6 +5,8 @@
 **Slot:** Track 2 → Client surfaces, the browser row (`nimbus-web-clipper`)
 **Roadmap:** [`docs/roadmap.md` § Track 2 → Client surfaces](../../roadmap.md#client-surfaces)
 **Delivers as:** one PR — the route is additive and deprecates nothing
+**Reviewed:** [design review](./2026-09-04-resolve-file-route-design-review.md) (Antigravity,
+2026-09-04) — responses in §11
 **Consumers:** the browser client, which has **already shipped** the caller
 (`nimbus-web-clipper` → `docs/superpowers/specs/2026-09-04-the-file-you-are-looking-at-design.md` §3).
 That document proposed this wire; this one owns and implements it.
@@ -129,9 +131,22 @@ fail-open guard that union was introduced for.
 `agents` scope then gets an honest hit or miss rather than a 403 from a route that only reads, and
 it sits under the same gate as `GET /v1/items/resolve` next door.
 
-The `HTTP_ROUTE_AUTH` completeness test is **source-scanning** (`http-route-auth.test.ts` reads the
-route literals out of `http-server.ts`), so a new literal with no auth decision fails the suite on
-its own. No hand-maintained second list needs updating.
+The `HTTP_ROUTE_AUTH` completeness test is **source-scanning**, and it gates both directions.
+`http-route-auth.test.ts` reads the route literals out of `http-server.ts` with
+
+```ts
+/(?:^|[^.\w])(?:path|url\.pathname)\s*===\s*"(\/[^"]*)"/g
+```
+
+then fails if a literal has no table entry, and separately — "no table entry is a route that no
+longer exists" — if a table entry has no literal. The row and the `url.pathname === "…"` line
+therefore have to land together; neither half can be merged alone.
+
+That also constrains how the route may be matched. It must be a bare
+`url.pathname === "/v1/items/resolve-file"` with double quotes: a `switch`, a template literal or a
+shared path constant is invisible to the scanner, and the table entry would then fail the stale
+test even though the route works perfectly. No hand-maintained second list needs updating; the
+price is that the match has to stay in the scanner's shape.
 
 ### 4.2 The handler
 
@@ -201,6 +216,25 @@ matched before the unauthenticated GET table in `handleGet`, whose `/v1/items/*`
 with no bearer gate at all. A `resolve-file` that fell through to it would serve the reader's
 indexed-file set to any local process on the machine.
 
+### 4.5 Behaviour the route inherits, and does not re-implement
+
+Two properties come from `resolveFileByRemote` itself. Both are stated here because a reader of the
+route will ask about them, and because a later "hardening" edit could break either.
+
+**Traversal is a non-issue by construction, not by sanitisation.** A `refAndPath` of
+`main/../../etc/passwd` is not rejected, and does not need to be: resolution never touches the
+filesystem. It normalises separators, splits on `/`, and looks each candidate up as a `source_file`
+`external_id` in SQLite. A `..` segment simply yields a candidate that no indexed entity matches,
+and the answer is `file_not_indexed`. The route adds **no** path sanitisation — sanitising would
+imply the string was about to be used as a path, which is exactly what does not happen.
+
+**Several checkouts of one remote resolve to the most recently indexed.** Where more than one
+workspace tracks `acme/web` — a worktree per branch is the ordinary case — `resolveFileByRemote`
+keeps one running best across all of them, preferring the greater `indexedAt` and breaking ties on
+`fileEntityId` so the same URL cannot answer differently on two consecutive calls. The route
+neither overrides nor exposes that choice: `path` is repo-relative and identical across worktrees
+anyway, so the precedence is invisible in the response and needs no client hint.
+
 ---
 
 ## 5. What the route deliberately does not do
@@ -237,19 +271,28 @@ serves", and it contains none of the clip-scoped bearer reads (`/v1/items/resolv
 vault holding one token with the caller's chosen scopes. Seed
 `workspace --tracks_remote--> repo` relations plus `source_file` entities, then assert:
 
-1. **Hit** — `{ ok: true, path: "src/foo.ts" }`, and the body has **no `repoRoot` and no
-   `fileEntityId` key**. Asserted as key absence, not by comparing `path`: this is the disclosure
-   guard, and it has to fail if someone later widens the projection.
+1. **Hit** — `{ ok: true, path: "src/foo.ts" }`, asserted as `Object.keys(body).sort()` equalling
+   exactly `["ok", "path"]`. Not "no `repoRoot` key", and not a comparison of `path` alone: this is
+   the disclosure guard, and an exact key set fails on *any* field a later edit adds, including one
+   nobody has thought of yet.
 2. **`remote_not_tracked`** — a repo with no tracking workspace, carrying `repo`.
 3. **`file_not_indexed`** — a tracked repo, a path that is not in it, carrying `repo`. Distinct from
    the previous case and asserted separately; collapsing the two is the one thing the client's two
    miss sentences cannot survive.
 4. **A ref containing slashes** — `feat/auth-v2/src/foo.ts` resolves to `src/foo.ts`, proving the
    unsplit coordinate is the point of the route rather than an accident of its signature.
-5. **403** — a token with `clip` but not `resolve`, body `{ error, required, granted }`.
-6. **401** — an unknown token.
-7. **400** — each of the three coordinates blank in turn.
-8. **404** — `clipsVault: undefined`. Worth naming explicitly: this is the branch the shipped
+5. **A traversal attempt** — `main/../../secret.txt` answers `file_not_indexed`: not an error, not
+   a hit. Cheap, and it pins §4.5's first property against a later edit that "helpfully" adds path
+   normalisation.
+6. **A ref carrying a space and a `+`** — the client builds its query with `new URLSearchParams(…)`
+   (`gateway-client.ts`'s `getJson`) and this route reads it back with `url.searchParams.get`, so
+   both ends agree on form-urlencoding: a space travels as `+`, a literal `+` as `%2B`. That
+   round-trip holds *only* because the two sides share a serialiser, and a test is the one thing
+   that would notice if either switched to `encodeURIComponent`.
+7. **403** — a token with `clip` but not `resolve`, body `{ error, required, granted }`.
+8. **401** — an unknown token.
+9. **400** — each of the three coordinates blank in turn.
+10. **404** — `clipsVault: undefined`. Worth naming explicitly: this is the branch the shipped
    browser client reads as "gateway too old", and a future refactor that turned it into a 500 would
    turn a silent, correct degradation into a visible error on every unmounted gateway.
 
@@ -303,6 +346,12 @@ of scope**: the 404 bodies differ (`resolve_disabled` vs `egress_disabled`), so 
 a parameter for its only interesting line, and it would drag three shipped routes into a diff that
 should be purely additive.
 
+**No rate limiter, matching `GET /v1/items/resolve`.** `handleEgressProve` carries one because it
+does real cryptographic work per call. This route does at most (workspaces tracking the remote) x
+(path segments) indexed point lookups — both small, both bounded by the request — for a caller that
+is a local browser holding a paired token. Worth revisiting only if a coordinate can ever be made
+to fan out further than that.
+
 ---
 
 ## 10. Non-goals
@@ -314,3 +363,43 @@ should be purely additive.
 - Federation-only lanes. `ghost` and `conflicts` answer nothing on a forge coordinate on every
   gateway, forever — a permanent exclusion, not a deferral. See the client spec's §4.7.
 - Exposing `repoRoot` under any flag, scope or query parameter.
+
+---
+
+## 11. Review responses
+
+The [design review](./2026-09-04-resolve-file-route-design-review.md) raised six numbered items plus
+a testing-guidance list. Five are folded in above; two needed no change.
+
+| Item | Disposition |
+| --- | --- |
+| Q2.1 traversal immunity | **Folded in** — §4.5 states the property, §6 test 5 pins it |
+| Q2.2 multi-worktree precedence | **Folded in** — §4.5, with the tiebreak that makes it stable |
+| Q2.3 query-parameter encoding | **Folded in** — §6 test 6 |
+| I3.1 cognitive complexity | **No change** — §4.4 already specifies the flat guard, §9 the risk |
+| I3.2 scanner compliance | **Folded in** — §4.1 |
+| I3.3 egress-coverage prose | **No change** — already §7 |
+| §5 testing guidance | **Folded in** — §6 test 1 now asserts an exact key set |
+
+Three notes where the review's framing is worth correcting, none of which changes its conclusion.
+
+**Q2.3 asks to verify that `url.searchParams.get` decodes percent-encoding.** Decoding was never in
+doubt. The property actually worth a test is the **symmetry** between the client's `URLSearchParams`
+writer and this route's `URLSearchParams` reader — the two agree on form-urlencoding, which is why a
+branch name containing a space or a `+` survives the trip at all. A test that only checked decoding
+would pass while that symmetry silently broke.
+
+**I3.2 describes the scanner as one gate.** It is two. The second — "no table entry is a route that
+no longer exists" — is the one that actually constrains the implementation, because it fails when a
+table entry's literal is written in a form the regex cannot see. That is why §4.1 now forbids a
+`switch` or a shared path constant for this route, which the review's advice implies but does not
+say.
+
+**I3.1's suggestion is already the spec.** §4.4 shows the single linear guard verbatim and §9
+carries the S3776 risk. Recorded here as no-change rather than folded in, so a later reader does not
+go looking for what moved.
+
+**§5's exact-key assertion is a genuine strengthening** and replaced what §6 test 1 said before. The
+original asserted the absence of the two fields known to exist today; `Object.keys(body).sort()`
+equalling `["ok", "path"]` also fails on a field added tomorrow, which is the failure mode the
+disclosure guard exists for.
