@@ -13,6 +13,7 @@
 import type {
   MediaCandidate,
   MediaModality,
+  MediaSource,
   SkipReason,
   UnderstandDetail,
   UnderstandOutcome,
@@ -23,7 +24,7 @@ export interface LocalUnderstander {
   readonly isLocal: boolean;
   readonly model: string;
   isAvailable(): Promise<boolean>;
-  understand(path: string): Promise<UnderstandDetail>;
+  understand(source: MediaSource): Promise<UnderstandDetail>;
 }
 
 /**
@@ -62,7 +63,7 @@ export type GateResult =
 
 export async function understandArtifact(
   candidate: MediaCandidate,
-  path: string,
+  source: MediaSource,
   deps: MediaGateDeps,
 ): Promise<GateResult> {
   // 0. Disabled by local config or org policy — refuse BEFORE resolving anything, so a disabled
@@ -110,7 +111,7 @@ export async function understandArtifact(
     deps.gpu.touch();
   }, deps.heartbeatMs ?? GPU_HEARTBEAT_MS);
   try {
-    const detail = await provider.understand(path);
+    const detail = await provider.understand(source);
     return {
       ok: true,
       outcome: {

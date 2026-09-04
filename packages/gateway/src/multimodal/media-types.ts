@@ -23,6 +23,20 @@ export type SkipReason =
   | "not_configured"
   | "rate_limited";
 
+/**
+ * What an understander is actually handed (spec § 5.4, PR 3). A local artifact resolves to a
+ * `path` (unchanged from PR 1/2); a cloud artifact's bytes never touch disk for an image, so that
+ * arm carries the bytes themselves instead. `mime` on the bytes arm is the SOURCE mime — a cloud
+ * provider's declared content type, not something an understander should trust further than that.
+ *
+ * AV never produces the `bytes` arm today (`whisper-cli`/`ffmpeg` need a seekable file), but the
+ * union exists here, not as two separate parameter types, so the gate and both understanders share
+ * one shape rather than each guessing which arm the other side means.
+ */
+export type MediaSource =
+  | { readonly kind: "path"; readonly path: string }
+  | { readonly kind: "bytes"; readonly bytes: Uint8Array; readonly mime: string | null };
+
 export interface MediaCandidate {
   readonly itemId: string;
   readonly service: string;

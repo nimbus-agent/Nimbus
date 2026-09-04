@@ -111,7 +111,7 @@ export async function runMediaPass(deps: MediaPassDeps): Promise<MediaPassSummar
       continue;
     }
 
-    const result = await understandArtifact(candidate, resolved.path, deps.gate);
+    const result = await understandArtifact(candidate, resolved.source, deps.gate);
     if (!result.ok) {
       reasons[result.reason] += 1;
       skipped += 1;

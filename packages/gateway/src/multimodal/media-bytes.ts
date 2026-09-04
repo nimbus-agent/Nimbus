@@ -11,10 +11,10 @@
  */
 import { existsSync, realpathSync, statSync } from "node:fs";
 import { resolve, sep } from "node:path";
-import type { MediaCandidate, SkipReason } from "./media-types.ts";
+import type { MediaCandidate, MediaSource, SkipReason } from "./media-types.ts";
 
 export type ResolvedMediaPath =
-  | { readonly ok: true; readonly path: string }
+  | { readonly ok: true; readonly source: MediaSource }
   | { readonly ok: false; readonly reason: SkipReason };
 
 /**
@@ -95,5 +95,5 @@ export function resolveLocalMediaPath(
     return { ok: false, reason: "over_byte_cap" };
   }
 
-  return { ok: true, path: real };
+  return { ok: true, source: { kind: "path", path: real } };
 }

@@ -21,7 +21,7 @@
  * records as partial.
  */
 import type { LocalUnderstander } from "../media-gate.ts";
-import type { UnderstandDetail } from "../media-types.ts";
+import type { MediaSource, UnderstandDetail } from "../media-types.ts";
 import { FRAME_CAPTION_PROMPT } from "../vlm/caption-prompts.ts";
 import type { VlmProvider } from "../vlm/vlm-types.ts";
 import { extractFrameJpeg, frameTimestamps, probeDurationSeconds } from "./frame-extract.ts";
@@ -81,11 +81,23 @@ export function createAvUnderstander(deps: AvUnderstanderDeps): LocalUnderstande
      */
     isAvailable: () => deps.stt.isAvailable(),
 
-    async understand(path: string): Promise<UnderstandDetail> {
+    async understand(source: MediaSource): Promise<UnderstandDetail> {
+      // whisper-cli and ffmpeg both need a seekable file, so this leg requires a path. The media
+      // pass never produces a `bytes` source for an `av` candidate (PR 3's cloud arm only fetches
+      // bytes for images; audio/video is fetched to a scratch file precisely so ffmpeg can seek
+      // it) — but that is a property of the CALLER, not of this type, so it is asserted here
+      // rather than cast past. Reusing `transcribe_failed` (rather than inventing a SkipReason)
+      // is honest: from the gate's `understandArtifact` catch, any throw from `understand()`
+      // already becomes that reason, so this is not a new outcome, only a defended-against one.
+      if (source.kind !== "path") {
+        throw new Error("av understander requires a seekable file path, not in-memory bytes");
+      }
+      const path = source.path;
+
       // A throw here propagates: the gate records `transcribe_failed` and a re-run retries this
       // artifact. Swallowing it and shipping captions alone would store a `video_understanding`
       // row whose transcript is silently absent.
-      const transcript = (await deps.stt.understand(path)).text.trim();
+      const transcript = (await deps.stt.understand({ kind: "path", path })).text.trim();
 
       const sections: string[] = [];
       const notes: string[] = [];

@@ -43,7 +43,7 @@ describe("createImageUnderstander", () => {
       vlm: spy.provider,
       readFile: () => Promise.resolve(bytes),
     });
-    const detail = await u.understand("/photos/board.png");
+    const detail = await u.understand({ kind: "path", path: "/photos/board.png" });
     expect(detail.text).toBe("A whiteboard.\nVisible text: none");
     // An image was never sampled, so it reports no frame counts at all — distinct from a video
     // whose every frame failed, which reports `0 of N`.
@@ -59,7 +59,9 @@ describe("createImageUnderstander", () => {
       vlm: vlmSpy().provider,
       readFile: () => Promise.reject(new Error("EACCES")),
     });
-    await expect(u.understand("/photos/locked.png")).rejects.toThrow(/EACCES/);
+    await expect(u.understand({ kind: "path", path: "/photos/locked.png" })).rejects.toThrow(
+      /EACCES/,
+    );
   });
 
   test("an empty caption REJECTS rather than writing a row that claims nothing", async () => {
@@ -67,7 +69,9 @@ describe("createImageUnderstander", () => {
       vlm: vlmSpy("   ").provider,
       readFile: () => Promise.resolve(new Uint8Array([1])),
     });
-    await expect(u.understand("/photos/x.png")).rejects.toThrow(/empty caption/i);
+    await expect(u.understand({ kind: "path", path: "/photos/x.png" })).rejects.toThrow(
+      /empty caption/i,
+    );
   });
 
   test("a zero-byte file REJECTS before the model is contacted", async () => {
@@ -79,7 +83,9 @@ describe("createImageUnderstander", () => {
       vlm: spy.provider,
       readFile: () => Promise.resolve(new Uint8Array()),
     });
-    await expect(u.understand("/photos/empty.png")).rejects.toThrow(/empty/i);
+    await expect(u.understand({ kind: "path", path: "/photos/empty.png" })).rejects.toThrow(
+      /empty/i,
+    );
     expect(spy.calls).toHaveLength(0);
   });
 
