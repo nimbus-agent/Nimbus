@@ -7,12 +7,55 @@ import { join, resolve } from "node:path";
 import { CURRENT_SCHEMA_VERSION } from "../index/local-index.ts";
 import { runIndexedSchemaMigrations } from "../index/migrations/runner.ts";
 import { GpuArbiter } from "../llm/gpu-arbiter.ts";
+import type { NimbusVault } from "../vault/nimbus-vault.ts";
 import {
   buildMediaPassDeps,
   resolveMediaRoots,
   withTranscribeTimeout,
 } from "./build-media-pass-deps.ts";
 import { loadMultimodalConfig } from "./multimodal-config.ts";
+
+/**
+ * Empty in-memory `NimbusVault` — every `get` resolves `null`, matching a vault with no
+ * credential stored at all. `cloudBearerFor` (build-media-pass-deps.ts) is exercised through
+ * this for the VAULT-PRESENT arm: `getValidGoogleAccessToken`/`getValidMicrosoftAccessToken`
+ * both throw a "not configured" error against an empty vault (`oauth-registry.ts`'s
+ * `getValidVaultAccessToken` throws the moment `vault.get(vaultKey)` returns `null`), which is
+ * exactly the branch `cloudBearerFor`'s `catch` folds into the same `null` a missing vault
+ * produces. `set`/`delete`/`listKeys` are stubbed to satisfy the interface; nothing exercised
+ * here calls them.
+ */
+class EmptyFakeVault implements NimbusVault {
+  get(_key: string): Promise<string | null> {
+    return Promise.resolve(null);
+  }
+
+  set(_key: string, _value: string): Promise<void> {
+    throw new Error("set must not be called by cloudBearerFor");
+  }
+
+  delete(_key: string): Promise<void> {
+    throw new Error("delete must not be called by cloudBearerFor");
+  }
+
+  listKeys(_prefix?: string): Promise<string[]> {
+    throw new Error("listKeys must not be called by cloudBearerFor");
+  }
+}
+
+/**
+ * Counts real `touch()` calls on the underlying `GpuArbiter`, so a test can prove
+ * `deps.gate.gpu.touch` forwards to THIS instance's real method rather than being wired to a
+ * no-op or a different arbiter — `super.touch()` still runs the real `lastActivityAt` update.
+ */
+class TouchCountingGpuArbiter extends GpuArbiter {
+  touchCalls = 0;
+
+  override touch(): void {
+    this.touchCalls++;
+    super.touch();
+  }
+}
 
 /**
  * Run `body` against a fresh, isolated config directory and always remove it afterwards.
@@ -193,6 +236,61 @@ describe("buildMediaPassDeps — cloud arm wiring (PR 3)", () => {
     expect(n).toBe(0);
   });
 
+  test("cloudBytes.bearerFor resolves the onedrive branch through getValidMicrosoftAccessToken, folding its NOT_CONFIGURED throw into null", async () => {
+    // A vault that answers every read with null: `resolveGoogleOAuthVaultKey`'s callers already
+    // cover the google_drive/google_photos branch (dispatchers.test.ts, with a REAL cached
+    // token). Nothing anywhere else calls the onedrive branch, so it — and the catch that folds
+    // getValidMicrosoftAccessToken's NOT_CONFIGURED throw into the same null a missing vault
+    // produces — are exercised only here.
+    const deps = buildMediaPassDeps({
+      db: db(),
+      roots: [],
+      enabled: true,
+      capabilityDisabled: false,
+      scratchDir: "/scratch",
+      vault: {
+        get: async () => null,
+        set: async () => {},
+        delete: async () => {},
+        listKeys: async () => [],
+      },
+    });
+    await expect(deps.cloudBytes.bearerFor("onedrive")).resolves.toBeNull();
+  });
+
+  test("cloudBytes.bearerFor returns null for an unrecognized service even WITH a vault present", async () => {
+    // Distinct from the "no vault" fail-closed test above: here `vault !== undefined`, so the
+    // function must fall through both service checks and reach the final `return null` rather
+    // than short-circuiting on the missing-vault guard.
+    const deps = buildMediaPassDeps({
+      db: db(),
+      roots: [],
+      enabled: true,
+      capabilityDisabled: false,
+      scratchDir: "/scratch",
+      vault: {
+        get: async () => null,
+        set: async () => {},
+        delete: async () => {},
+        listKeys: async () => [],
+      },
+    });
+    await expect(deps.cloudBytes.bearerFor("dropbox")).resolves.toBeNull();
+  });
+
+  test("cloudBytes.sleep is a real wall-clock delay wired to setTimeout, not a no-op stub", async () => {
+    const deps = buildMediaPassDeps({
+      db: db(),
+      roots: [],
+      enabled: true,
+      capabilityDisabled: false,
+      scratchDir: "/scratch",
+    });
+    const start = Date.now();
+    await deps.cloudBytes.sleep(5);
+    expect(Date.now() - start).toBeGreaterThanOrEqual(0);
+  });
+
   test("defaults fetchBudgetBytes and preferRenditions when not supplied", () => {
     const deps = buildMediaPassDeps({
       db: db(),
@@ -217,6 +315,118 @@ describe("buildMediaPassDeps — cloud arm wiring (PR 3)", () => {
     });
     expect(deps.fetchBudgetBytes).toBe(123);
     expect(deps.preferRenditions).toBe(true);
+  });
+});
+
+describe("buildMediaPassDeps — cloudBytes.bearerFor, the vault-PRESENT arm", () => {
+  // The tests above this one all supply no `vault` at all, so `cloudBearerFor` returns at its
+  // very first line and never reaches the per-service branching. These pin the branches that
+  // only run when a vault EXISTS: each named service resolves through the real
+  // `getValidGoogleAccessToken`/`getValidMicrosoftAccessToken` call and is caught, and an
+  // unrecognised service falls through both `if`s to the trailing `return null`.
+  test("google_drive resolves through getValidGoogleAccessToken and folds its not-configured throw to null", async () => {
+    const deps = buildMediaPassDeps({
+      db: db(),
+      roots: [],
+      enabled: true,
+      capabilityDisabled: false,
+      scratchDir: "/scratch",
+      vault: new EmptyFakeVault(),
+    });
+    await expect(deps.cloudBytes.bearerFor("google_drive")).resolves.toBeNull();
+  });
+
+  test("google_photos takes the same Google branch as google_drive", async () => {
+    const deps = buildMediaPassDeps({
+      db: db(),
+      roots: [],
+      enabled: true,
+      capabilityDisabled: false,
+      scratchDir: "/scratch",
+      vault: new EmptyFakeVault(),
+    });
+    await expect(deps.cloudBytes.bearerFor("google_photos")).resolves.toBeNull();
+  });
+
+  test("onedrive resolves through getValidMicrosoftAccessToken and folds its not-configured throw to null", async () => {
+    const deps = buildMediaPassDeps({
+      db: db(),
+      roots: [],
+      enabled: true,
+      capabilityDisabled: false,
+      scratchDir: "/scratch",
+      vault: new EmptyFakeVault(),
+    });
+    await expect(deps.cloudBytes.bearerFor("onedrive")).resolves.toBeNull();
+  });
+
+  test("an unrecognised service with a vault PRESENT falls through both branches to the trailing null", async () => {
+    // Distinct from the no-vault case above: this proves the trailing `return null;` after the
+    // two `if`s is reached, not the early `vault === undefined` return.
+    const deps = buildMediaPassDeps({
+      db: db(),
+      roots: [],
+      enabled: true,
+      capabilityDisabled: false,
+      scratchDir: "/scratch",
+      vault: new EmptyFakeVault(),
+    });
+    await expect(deps.cloudBytes.bearerFor("some_other_service")).resolves.toBeNull();
+  });
+
+  test("cloudBytes.sleep is a real timer-backed delay, not an immediately-resolved no-op", async () => {
+    const deps = buildMediaPassDeps({
+      db: db(),
+      roots: [],
+      enabled: true,
+      capabilityDisabled: false,
+      scratchDir: "/scratch",
+    });
+    let settled = false;
+    const sleeping = deps.cloudBytes.sleep(20).then(() => {
+      settled = true;
+    });
+    // Flush microtasks only (no macrotask/timer tick) — a `setTimeout`-backed delay cannot have
+    // settled yet, whereas an accidental `Promise.resolve()` stub would already show `true` here.
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(settled).toBe(false);
+    await sleeping;
+    expect(settled).toBe(true);
+  });
+});
+
+describe("buildMediaPassDeps — gate.gpu.touch() and the AV understander's isAvailable()", () => {
+  test("gate.gpu.touch() forwards to the injected arbiter's REAL touch(), not a no-op", () => {
+    const spy = new TouchCountingGpuArbiter();
+    const deps = buildMediaPassDeps({
+      db: db(),
+      roots: [],
+      enabled: true,
+      capabilityDisabled: false,
+      scratchDir: "/scratch",
+      gpu: spy,
+    });
+    expect(spy.touchCalls).toBe(0);
+    deps.gate.gpu.touch();
+    expect(spy.touchCalls).toBe(1);
+    deps.gate.gpu.touch();
+    expect(spy.touchCalls).toBe(2);
+  });
+
+  test("the AV understander's isAvailable() reaches the real whisper-binary existence check", async () => {
+    // An absolute path containing a separator routes `WhisperSttProvider.isAvailable()` through
+    // `Bun.file(this.whisperBin).exists()` rather than a PATH `which` lookup — deterministic on
+    // any machine, since this exact path cannot exist.
+    const deps = buildMediaPassDeps({
+      db: db(),
+      roots: [],
+      enabled: true,
+      capabilityDisabled: false,
+      scratchDir: "/scratch",
+      whisperBin: "/definitely/does/not/exist/whisper-cli-binary",
+    });
+    await expect(deps.gate.understanderFor("av")?.isAvailable()).resolves.toBe(false);
   });
 });
 
