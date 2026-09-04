@@ -72,6 +72,78 @@ function repoPathFromMetadata(meta: Record<string, unknown>): string | undefined
 }
 
 /**
+ * Upsert the `repo` entity a row belongs to, or undefined when it names none.
+ *
+ * CO-OWNED with ownership: `ownership/ownership-pass.ts` writes the same
+ * `<service>:<owner>/<name>` external id from `bindRootRemote`, so this write must be
+ * NAMESPACED — `metadata: {}` clears our OWN "symbols" namespace and leaves "ownership"
+ * untouched, which is not a no-op. One definition rather than one per item type, because that
+ * namespacing is the part a copy gets wrong silently.
+ *
+ * Returns the entity id and writes NO relation: the verb and the direction differ per item type
+ * (a PR `targets` its repo, an issue `belongs_to` one) and belong at the call site where a reader
+ * is looking for them.
+ */
+function upsertRepoEntityFor(
+  db: Database,
+  row: IndexedItemGraphInput,
+): { repoFull: string; entityId: string } | undefined {
+  const repoFull = repoPathFromMetadata(row.metadata);
+  if (repoFull === undefined) return undefined;
+  const entityId = upsertGraphEntityNamespaced(db, {
+    type: "repo",
+    externalId: `${row.service}:${repoFull}`,
+    label: repoFull,
+    service: row.service,
+    writer: "symbols",
+    metadata: {},
+  });
+  return { repoFull, entityId };
+}
+
+/**
+ * Upsert the `workspace` entity for a local repo root, or undefined when there is none.
+ *
+ * Co-owned exactly as `upsertRepoEntityFor` above is — `ownership-pass.ts` writes the same
+ * `filesystem:<root>` external id — and namespaced for the same reason.
+ */
+function upsertWorkspaceEntityFor(db: Database, repoRoot: string | undefined): string | undefined {
+  if (repoRoot === undefined) return undefined;
+  return upsertGraphEntityNamespaced(db, {
+    type: "workspace",
+    externalId: `filesystem:${repoRoot}`,
+    label: repoRoot,
+    service: "filesystem",
+    writer: "symbols",
+    metadata: {},
+  });
+}
+
+/**
+ * Upsert the `person` entity for a row's author, or undefined when none is recorded.
+ *
+ * The label prefers the resolved person, then the provider handle the row carried, and only then
+ * falls back to the raw id — showing an opaque id is the last resort, not the default.
+ */
+function upsertAuthorEntityFor(
+  db: Database,
+  row: IndexedItemGraphInput,
+): { authorId: string; entityId: string } | undefined {
+  const authorId = row.authorId;
+  if (authorId === null || authorId === "") return undefined;
+  const label = personDisplayName(db, authorId) ?? stringField(row.metadata, "user") ?? authorId;
+  const entityId = upsertGraphEntityNamespaced(db, {
+    type: "person",
+    externalId: authorId,
+    label,
+    service: row.service,
+    writer: "symbols",
+    metadata: {},
+  });
+  return { authorId, entityId };
+}
+
+/**
  * Relation types whose two endpoints come from *different* items' syncs.
  * The blanket clear below must not touch them: the entity being cleared is
  * only one endpoint, and the other side is authoritative for the edge.
@@ -256,35 +328,11 @@ function syncPrGraph(db: Database, row: IndexedItemGraphInput, now: number): voi
   });
   clearRelationsTouchingEntity(db, prEntityId);
 
-  if (repoFull !== undefined) {
-    const repoExt = `${row.service}:${repoFull}`;
-    // Co-owned: `ownership/ownership-pass.ts` writes the same `<service>:<owner>/<name>`
-    // external id from `bindRootRemote`. `metadata: {}` clears our OWN "symbols" namespace
-    // and leaves "ownership" untouched — not a no-op.
-    const repoId = upsertGraphEntityNamespaced(db, {
-      type: "repo",
-      externalId: repoExt,
-      label: repoFull,
-      service: row.service,
-      writer: "symbols",
-      metadata: {},
-    });
-    upsertGraphRelation(db, prEntityId, repoId, "targets", now);
-  }
+  const repo = upsertRepoEntityFor(db, row);
+  if (repo !== undefined) upsertGraphRelation(db, prEntityId, repo.entityId, "targets", now);
 
-  if (row.authorId !== null && row.authorId !== "") {
-    const label =
-      personDisplayName(db, row.authorId) ?? stringField(row.metadata, "user") ?? row.authorId;
-    const personEntityId = upsertGraphEntityNamespaced(db, {
-      type: "person",
-      externalId: row.authorId,
-      label,
-      service: row.service,
-      writer: "symbols",
-      metadata: {},
-    });
-    upsertGraphRelation(db, personEntityId, prEntityId, "authored", now);
-  }
+  const author = upsertAuthorEntityFor(db, row);
+  if (author !== undefined) upsertGraphRelation(db, author.entityId, prEntityId, "authored", now);
 
   const merged = row.metadata["merged"] === true;
   const mergeSha = stringField(row.metadata, "merge_commit_sha");
@@ -361,35 +409,11 @@ function syncIssueGraph(db: Database, row: IndexedItemGraphInput, now: number): 
   });
   clearRelationsTouchingEntity(db, issueEntityId);
 
-  if (repoFull !== undefined) {
-    const repoExt = `${row.service}:${repoFull}`;
-    // Co-owned: `ownership/ownership-pass.ts` writes the same `<service>:<owner>/<name>`
-    // external id from `bindRootRemote`. `metadata: {}` clears our OWN "symbols" namespace
-    // and leaves "ownership" untouched — not a no-op.
-    const repoId = upsertGraphEntityNamespaced(db, {
-      type: "repo",
-      externalId: repoExt,
-      label: repoFull,
-      service: row.service,
-      writer: "symbols",
-      metadata: {},
-    });
-    upsertGraphRelation(db, issueEntityId, repoId, "belongs_to", now);
-  }
+  const repo = upsertRepoEntityFor(db, row);
+  if (repo !== undefined) upsertGraphRelation(db, issueEntityId, repo.entityId, "belongs_to", now);
 
-  if (row.authorId !== null && row.authorId !== "") {
-    const label =
-      personDisplayName(db, row.authorId) ?? stringField(row.metadata, "user") ?? row.authorId;
-    const personEntityId = upsertGraphEntityNamespaced(db, {
-      type: "person",
-      externalId: row.authorId,
-      label,
-      service: row.service,
-      writer: "symbols",
-      metadata: {},
-    });
-    upsertGraphRelation(db, personEntityId, issueEntityId, "opened", now);
-  }
+  const author = upsertAuthorEntityFor(db, row);
+  if (author !== undefined) upsertGraphRelation(db, author.entityId, issueEntityId, "opened", now);
 }
 
 function syncGitCommitGraph(db: Database, row: IndexedItemGraphInput, now: number): void {
@@ -406,21 +430,8 @@ function syncGitCommitGraph(db: Database, row: IndexedItemGraphInput, now: numbe
     metadata: { sha, repoRoot: repoRoot ?? null },
   });
   clearRelationsTouchingEntity(db, commitEntityId);
-  if (repoRoot !== undefined) {
-    const wsExt = `filesystem:${repoRoot}`;
-    // Co-owned: `ownership/ownership-pass.ts` writes the same `filesystem:<root>` external
-    // id from `bindRootRemote`. `metadata: {}` clears our OWN "symbols" namespace and leaves
-    // "ownership" untouched — not a no-op.
-    const wsId = upsertGraphEntityNamespaced(db, {
-      type: "workspace",
-      externalId: wsExt,
-      label: repoRoot,
-      service: "filesystem",
-      writer: "symbols",
-      metadata: {},
-    });
-    upsertGraphRelation(db, commitEntityId, wsId, "in_repo", now);
-  }
+  const wsId = upsertWorkspaceEntityFor(db, repoRoot);
+  if (wsId !== undefined) upsertGraphRelation(db, commitEntityId, wsId, "in_repo", now);
 }
 
 function syncDependencyGraph(db: Database, row: IndexedItemGraphInput, now: number): void {
@@ -438,21 +449,8 @@ function syncDependencyGraph(db: Database, row: IndexedItemGraphInput, now: numb
     metadata: { packageName: pkg, version: ver },
   });
   clearRelationsTouchingEntity(db, depEntityId);
-  if (repoRoot !== undefined) {
-    const wsExt = `filesystem:${repoRoot}`;
-    // Co-owned: `ownership/ownership-pass.ts` writes the same `filesystem:<root>` external
-    // id from `bindRootRemote`. `metadata: {}` clears our OWN "symbols" namespace and leaves
-    // "ownership" untouched — not a no-op.
-    const wsId = upsertGraphEntityNamespaced(db, {
-      type: "workspace",
-      externalId: wsExt,
-      label: repoRoot,
-      service: "filesystem",
-      writer: "symbols",
-      metadata: {},
-    });
-    upsertGraphRelation(db, wsId, depEntityId, "depends_on", now);
-  }
+  const wsId = upsertWorkspaceEntityFor(db, repoRoot);
+  if (wsId !== undefined) upsertGraphRelation(db, wsId, depEntityId, "depends_on", now);
 }
 
 function syncApiEndpointGraph(db: Database, row: IndexedItemGraphInput, now: number): void {
@@ -595,19 +593,8 @@ function syncMessageGraph(db: Database, row: IndexedItemGraphInput, now: number)
   });
   clearRelationsTouchingEntity(db, msgEntityId);
 
-  if (row.authorId !== null && row.authorId !== "") {
-    const label =
-      personDisplayName(db, row.authorId) ?? stringField(row.metadata, "user") ?? row.authorId;
-    const personEntityId = upsertGraphEntityNamespaced(db, {
-      type: "person",
-      externalId: row.authorId,
-      label,
-      service: row.service,
-      writer: "symbols",
-      metadata: {},
-    });
-    upsertGraphRelation(db, personEntityId, msgEntityId, "posted", now);
-  }
+  const author = upsertAuthorEntityFor(db, row);
+  if (author !== undefined) upsertGraphRelation(db, author.entityId, msgEntityId, "posted", now);
 
   const channel = stringField(row.metadata, "channel");
   if (channel !== undefined) {

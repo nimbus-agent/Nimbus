@@ -94,6 +94,39 @@ function assignBoundedInt(
   if (n !== undefined && n >= bounds.min && n <= bounds.max) assign(n);
 }
 
+/**
+ * The `enabled` / `use_llm` prelude shared by the `[glossary]`, `[decisions]`, `[ownership]` and
+ * `[premortem]` sections.
+ *
+ * It MUST run before each section's integer branch, and that ordering is precisely why it is one
+ * function rather than four copies: routed through `parseIntDec`, `use_llm` is silently dropped
+ * and the section reads as if it were never set. `[ownership]` has no `use_llm` key of its own;
+ * recognising it there is harmless, since an unknown key is ignored either way.
+ *
+ * Returns true when the key was one of the two and has been HANDLED — including when the value
+ * was malformed and deliberately left unset, which is still handled and must not fall through to
+ * a numeric parse.
+ */
+function applyPassSectionToggle(
+  out: { enabled?: boolean; useLlm?: boolean },
+  key: string,
+  valRaw: string,
+): boolean {
+  if (key === "enabled") {
+    assignBool(valRaw, (b) => {
+      out.enabled = b;
+    });
+    return true;
+  }
+  if (key === "use_llm") {
+    assignBool(valRaw, (b) => {
+      out.useLlm = b;
+    });
+    return true;
+  }
+  return false;
+}
+
 function forEachSectionEntry(
   source: string,
   sectionHeader: string,
@@ -2080,16 +2113,7 @@ function applyNimbusGlossaryKey(
   key: string,
   valRaw: string,
 ): void {
-  if (key === "enabled") {
-    const b = parseBool(valRaw);
-    if (b !== undefined) out.enabled = b;
-    return;
-  }
-  if (key === "use_llm") {
-    const b = parseBool(valRaw);
-    if (b !== undefined) out.useLlm = b;
-    return;
-  }
+  if (applyPassSectionToggle(out, key, valRaw)) return;
   const n = parseIntDec(valRaw);
   if (n === undefined || n <= 0) return;
   switch (key) {
@@ -2183,16 +2207,7 @@ function applyNimbusDecisionsKey(
   // Bool keys MUST come before the integer branch below — same regression the
   // [glossary] block guards against: routed through `parseIntDec`, `use_llm`
   // is silently dropped and the section reads as if it were never set.
-  if (key === "enabled") {
-    const b = parseBool(valRaw);
-    if (b !== undefined) out.enabled = b;
-    return;
-  }
-  if (key === "use_llm") {
-    const b = parseBool(valRaw);
-    if (b !== undefined) out.useLlm = b;
-    return;
-  }
+  if (applyPassSectionToggle(out, key, valRaw)) return;
   // `min_confidence` is the one FLOAT key, so it must precede the integer
   // branch too: that branch would truncate 0.7 to 0, and its `n <= 0` guard
   // would discard a negative before the clamp below ever saw it.
@@ -2304,11 +2319,7 @@ function applyNimbusOwnershipKey(
   key: string,
   valRaw: string,
 ): void {
-  if (key === "enabled") {
-    const b = parseBool(valRaw);
-    if (b !== undefined) out.enabled = b;
-    return;
-  }
+  if (applyPassSectionToggle(out, key, valRaw)) return;
   if (key === "ignore_globs") {
     // `parseStringArray` THROWS a TypeError on anything not bracket-delimited.
     // Unguarded, that escapes `parseNimbusOwnershipToml` into `loadTomlSection`'s
@@ -2414,16 +2425,7 @@ function applyNimbusPremortemKey(
   // Bool keys MUST come before the integer branch below — same regression the
   // [glossary] block guards against: routed through `parseIntDec`, `use_llm`
   // is silently dropped and the section reads as if it were never set.
-  if (key === "enabled") {
-    const b = parseBool(valRaw);
-    if (b !== undefined) out.enabled = b;
-    return;
-  }
-  if (key === "use_llm") {
-    const b = parseBool(valRaw);
-    if (b !== undefined) out.useLlm = b;
-    return;
-  }
+  if (applyPassSectionToggle(out, key, valRaw)) return;
   const n = parseIntWithMin(valRaw, 1);
   if (n === undefined) return;
   switch (key) {

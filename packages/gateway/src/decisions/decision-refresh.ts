@@ -1,3 +1,4 @@
+import { createPassScheduler } from "../util/pass-scheduler.ts";
 import type { DecisionPassSummary } from "./decision-extract.ts";
 
 /** Carries `rpcCode` so a future `ipc/decisions-rpc.ts` maps it without re-deriving a code. */
@@ -36,101 +37,42 @@ export type DecisionRefresher = {
 };
 
 /**
- * Debounced, single-flight trigger for the decision extraction pass.
+ * Debounced, single-flight trigger for the decision extraction pass. The debounce, the
+ * single-flight guard and the dirty-rerun all live in `util/pass-scheduler.ts`, shared with the
+ * glossary, ownership and pre-mortem passes — this module supplies only what is specific to
+ * decisions: the summary type, the `ERR_DECISIONS_*` codes, and the pass itself.
  *
- * Mirrors `glossary/glossary-refresh.ts`: a burst of connector syncs must
- * coalesce into ONE pass. A trigger arriving while a pass is already running
- * sets a DIRTY flag rather than queueing: exactly one follow-up pass runs
- * afterwards, no matter how many syncs landed meanwhile, so a slow pass
- * cannot accumulate a backlog of redundant work. Dropping the trigger
- * outright would lose the items of whichever sync overlapped the pass until
- * some later sync triggered again.
+ * LIMIT — `stop()` is not cancellation. It clears the debounce timer and refuses every later
+ * run; a pass already awaiting `provider.generate` runs to completion, and there is no timeout
+ * beneath it. A hung local model therefore pins the scheduler `running` for the life of the
+ * process, and every later `run()` throws `ERR_DECISIONS_PASS_RUNNING` until the gateway
+ * restarts — which is the documented recovery (`docs/cli-reference.md`, `nimbus decisions`).
  *
- * LIMIT — `stop()` is not cancellation. It clears the debounce timer only; a
- * pass already awaiting `provider.generate` runs to completion, and there is
- * no timeout beneath it. A hung local model therefore pins `running = true`
- * for the life of the process, and every later `run()` throws
- * `ERR_DECISIONS_PASS_RUNNING` until the gateway restarts — which is the
- * documented recovery (`docs/cli-reference.md`, `nimbus decisions`).
- *
- * Adding an `AbortController` here would NOT fix that: the abort has nowhere
- * to go, because `LlmGenerateOptions` carries no `signal` field. The fix is
- * that cross-cutting LLM-layer change, which glossary needs identically — see
- * the LIMIT notes in `decisions/decision-llm-adapter.ts` and
- * `glossary/glossary-llm-adapter.ts`. Do it there first, then give this
- * refresher a per-pass controller.
+ * The scheduler's `AbortSignal` does NOT fix that, which is why this module discards it: the
+ * abort has nowhere to go, because `LlmGenerateOptions` carries no `signal` field. The fix is
+ * that cross-cutting LLM-layer change, which glossary needs identically — see the LIMIT notes in
+ * `decisions/decision-llm-adapter.ts` and `glossary/glossary-llm-adapter.ts`. Do it there first,
+ * then let this pass read the signal it is already handed.
  */
 export function createDecisionRefresher(deps: DecisionRefresherDeps): DecisionRefresher {
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  let running = false;
-  let dirty = false;
-  let stopped = false;
-
-  function fire(): void {
-    timer = undefined;
-    if (stopped) return;
-    if (running) {
-      dirty = true;
-      return;
-    }
-    running = true;
-    deps
-      .runPass()
-      .catch((err: unknown) => {
-        deps.onError?.(err);
-      })
-      .finally(() => {
-        running = false;
-        if (dirty) {
-          dirty = false;
-          // Re-enters through `fire`, so a `stop()` that landed during the pass
-          // is honoured by the single check at the top rather than duplicated
-          // here.
-          fire();
-        }
-      });
-  }
+  const scheduler = createPassScheduler<DecisionPassSummary, DecisionRunOptions | undefined>({
+    debounceMs: deps.debounceMs,
+    // The signal is accepted and DISCARDED — see the LIMIT note above: this pass has nowhere to
+    // route an abort, because `LlmGenerateOptions` carries no `signal` field.
+    runPass: (_signal, opts) => deps.runPass(opts),
+    scheduledOptions: undefined,
+    ...(deps.onError === undefined ? {} : { onError: deps.onError }),
+    refuse: (kind) =>
+      new DecisionRefresherError(
+        kind === "running"
+          ? "ERR_DECISIONS_PASS_RUNNING: a decisions pass is already running"
+          : "ERR_DECISIONS_STOPPED: the gateway is shutting down",
+      ),
+  });
 
   return {
-    trigger(): void {
-      // Belt-and-braces here (`fire` checks `stopped` too), but not redundant
-      // for SHUTDOWN: a pending `setTimeout` keeps Bun's event loop alive, so
-      // arming one here would delay process exit by up to `debounceMs` to run
-      // a no-op.
-      if (stopped) return;
-      if (timer !== undefined) clearTimeout(timer);
-      timer = setTimeout(fire, deps.debounceMs);
-    },
-
-    async run(opts?: DecisionRunOptions): Promise<DecisionPassSummary> {
-      if (stopped) {
-        throw new DecisionRefresherError("ERR_DECISIONS_STOPPED: the gateway is shutting down");
-      }
-      if (running) {
-        // Deliberately NOT "await the in-flight pass and return its summary":
-        // that pass is not the one the caller asked for.
-        throw new DecisionRefresherError(
-          "ERR_DECISIONS_PASS_RUNNING: a decisions pass is already running",
-        );
-      }
-      running = true;
-      try {
-        return await deps.runPass(opts);
-      } finally {
-        running = false;
-        // Preserve the scheduled path's dirty-rerun: a sync that landed during
-        // this on-demand pass still gets its follow-up.
-        if (dirty) {
-          dirty = false;
-          fire();
-        }
-      }
-    },
-
-    stop(): void {
-      stopped = true;
-      if (timer !== undefined) clearTimeout(timer);
-      timer = undefined;
-    },
+    trigger: scheduler.trigger,
+    run: (opts?: DecisionRunOptions) => scheduler.runNow(opts),
+    stop: scheduler.stop,
   };
 }

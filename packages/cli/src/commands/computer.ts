@@ -673,10 +673,42 @@ async function watchSessionUntilClosed(
   }
 }
 
-async function runComputerBrowser(args: string[], deps: RunComputerDeps): Promise<void> {
-  let parsed: ParsedComputerBrowserArgs;
+/**
+ * Open a computer-use session on one lane and watch it — the whole of `nimbus computer browser`
+ * and `nimbus computer terminal` except the two things that genuinely differ between them: how the
+ * argv parses, and what `computer.sessionOpen` is handed.
+ *
+ * ONE implementation rather than a copy per lane. Everything here is a property of the SESSION,
+ * not of the lane:
+ *
+ *  - Both prompt handlers are registered BEFORE the open call, matching `exec.ts`: a broadcast can
+ *    share a socket chunk with the RPC response. The envelope prompt fires (if at all) during
+ *    `sessionOpen`; the action prompt fires for every `actuating` action for the life of the
+ *    session, driven by whatever else is acting on it.
+ *  - All three non-`open` reply shapes are reported the same way and map to the same exit codes.
+ *  - Ctrl-C asks the GATEWAY to close the session rather than merely exiting this process. The
+ *    session belongs to the gateway: an abandoned lane sits inside an approved envelope with
+ *    nothing watching it until its wall-clock ceiling expires — for the default `[computer_use]`
+ *    bounds, five minutes — and the owner gets no signal it is still there beyond `nimbus computer
+ *    sessions`. A SECOND interrupt stops waiting: if the first close is not landing, blocking the
+ *    user's terminal on it is the wrong trade, and the message names the recovery command rather
+ *    than leaving them to find it.
+ *
+ * A PASSIVE LISTENER on both lanes, and for the same recorded reason: letting the local operator
+ * drive actions from here would render `model said (UNTRUSTED — a claim, not a fact): (none)` on
+ * every prompt, teaching the owner that the line is routinely empty and skippable — which destroys
+ * the vigilance the fact/claim split exists to build, on the one surface this whole design leans
+ * on a human reading carefully.
+ */
+async function runComputerLaneSession<P>(
+  args: string[],
+  deps: RunComputerDeps,
+  parse: (args: string[]) => P,
+  openParams: (parsed: P) => Record<string, unknown>,
+): Promise<void> {
+  let parsed: P;
   try {
-    parsed = parseComputerBrowserArgs(args);
+    parsed = parse(args);
   } catch (e) {
     deps.sink.err(`${e instanceof Error ? e.message : String(e)}\n`);
     deps.setExitCode(CU_EXIT_CODES.refused);
@@ -686,10 +718,6 @@ async function runComputerBrowser(args: string[], deps: RunComputerDeps): Promis
   try {
     let exitCode = 0;
     await deps.runWithClient(async (c) => {
-      // Registered BEFORE the call, matching `exec.ts`: a broadcast can share a socket chunk with
-      // the RPC response. Both prompt kinds are registered up front — the envelope prompt fires
-      // (if at all) during `sessionOpen`; the action prompt fires for every `actuating` action for
-      // the life of the session, driven by whatever else is acting on it.
       c.onNotification("computer.envelopeRequest", (params: unknown) =>
         handleEnvelopeBroadcast(params, deps.ask, (requestId, approved) =>
           c.call("computer.approvalRespond", { requestId, approved }),
@@ -701,13 +729,10 @@ async function runComputerBrowser(args: string[], deps: RunComputerDeps): Promis
         ),
       );
 
-      const openResult = (await c.call("computer.sessionOpen", {
-        lane: "browser",
-        navigateOrigins: parsed.navigateOrigins,
-        scriptOrigins: parsed.scriptOrigins,
-        ...(parsed.maxActions === undefined ? {} : { maxActions: parsed.maxActions }),
-        ...(parsed.maxWallClockMs === undefined ? {} : { maxWallClockMs: parsed.maxWallClockMs }),
-      })) as OpenSessionResultShape;
+      const openResult = (await c.call(
+        "computer.sessionOpen",
+        openParams(parsed),
+      )) as OpenSessionResultShape;
 
       if (openResult.status === "denied") {
         deps.sink.err("nimbus: session denied by owner\n");
@@ -728,17 +753,6 @@ async function runComputerBrowser(args: string[], deps: RunComputerDeps): Promis
       const sessionId = openResult.sessionId;
       deps.sink.out(`Session opened: ${sessionId}\n`);
 
-      // Ctrl-C used to leave the session OPEN SERVER-SIDE: this process exited, and the gateway
-      // kept a live headless browser inside an approved envelope with nothing left watching it —
-      // until its wall-clock ceiling expired, which for the default `[computer_use]` bounds is five
-      // minutes of an unobserved browser holding whatever the page had loaded. Worse, the owner had
-      // no signal that it was still there: `nimbus computer sessions` would show it open and the
-      // only way to end it was to know the id and run `nimbus computer close`.
-      //
-      // The session belongs to the GATEWAY, not to this process, so the fix is to ask the gateway
-      // to close it, not to exit harder. A second interrupt stops waiting — if the first close is
-      // not landing, blocking the user's terminal on it is the wrong trade, and the message names
-      // the recovery command rather than leaving them to find it.
       let interrupted = false;
       const forced = makeAbort();
       const unregisterSignals = deps.onSignal(() => {
@@ -771,6 +785,17 @@ async function runComputerBrowser(args: string[], deps: RunComputerDeps): Promis
     deps.sink.err(`${e instanceof Error ? e.message : String(e)}\n`);
     deps.setExitCode(CU_EXIT_CODES.refused);
   }
+}
+
+/** `nimbus computer browser` — opens a confined headless browser session and watches it. */
+async function runComputerBrowser(args: string[], deps: RunComputerDeps): Promise<void> {
+  await runComputerLaneSession(args, deps, parseComputerBrowserArgs, (parsed) => ({
+    lane: "browser",
+    navigateOrigins: parsed.navigateOrigins,
+    scriptOrigins: parsed.scriptOrigins,
+    ...(parsed.maxActions === undefined ? {} : { maxActions: parsed.maxActions }),
+    ...(parsed.maxWallClockMs === undefined ? {} : { maxWallClockMs: parsed.maxWallClockMs }),
+  }));
 }
 
 export interface ParsedComputerTerminalArgs {
@@ -851,90 +876,13 @@ export function parseComputerTerminalArgs(args: readonly string[]): ParsedComput
  * design leans on a human reading carefully.
  */
 async function runComputerTerminal(args: string[], deps: RunComputerDeps): Promise<void> {
-  let parsed: ParsedComputerTerminalArgs;
-  try {
-    parsed = parseComputerTerminalArgs(args);
-  } catch (e) {
-    deps.sink.err(`${e instanceof Error ? e.message : String(e)}\n`);
-    deps.setExitCode(CU_EXIT_CODES.refused);
-    return;
-  }
-
-  try {
-    let exitCode = 0;
-    await deps.runWithClient(async (c) => {
-      // Registered BEFORE the call: a broadcast can share a socket chunk with the RPC response.
-      c.onNotification("computer.envelopeRequest", (params: unknown) =>
-        handleEnvelopeBroadcast(params, deps.ask, (requestId, approved) =>
-          c.call("computer.approvalRespond", { requestId, approved }),
-        ),
-      );
-      c.onNotification("computer.actionRequest", (params: unknown) =>
-        handleActionBroadcast(params, deps.ask, (requestId, approved) =>
-          c.call("computer.approvalRespond", { requestId, approved }),
-        ),
-      );
-
-      const openResult = (await c.call("computer.sessionOpen", {
-        lane: "terminal",
-        cwd: parsed.cwd,
-        ...(parsed.shellId === undefined ? {} : { shellId: parsed.shellId }),
-        ...(parsed.maxActions === undefined ? {} : { maxActions: parsed.maxActions }),
-        ...(parsed.maxWallClockMs === undefined ? {} : { maxWallClockMs: parsed.maxWallClockMs }),
-      })) as OpenSessionResultShape;
-
-      if (openResult.status === "denied") {
-        deps.sink.err("nimbus: session denied by owner\n");
-        exitCode = CU_EXIT_CODES.deniedByOwner;
-        return;
-      }
-      if (openResult.status === "refused") {
-        deps.sink.err(`${describeRefusal(openResult.code ?? "unknown")}\n`);
-        exitCode = CU_EXIT_CODES.refused;
-        return;
-      }
-      if (openResult.status !== "open" || openResult.sessionId === undefined) {
-        deps.sink.err(`nimbus: unrecognised computer.sessionOpen reply: ${openResult.status}\n`);
-        exitCode = CU_EXIT_CODES.refused;
-        return;
-      }
-
-      const sessionId = openResult.sessionId;
-      deps.sink.out(`Session opened: ${sessionId}\n`);
-
-      // Ctrl-C asks the GATEWAY to close the session rather than just exiting: the session belongs
-      // to the gateway, and a shell left running inside an approved envelope with nothing watching
-      // it is exactly what the browser lane's own interrupt handling exists to prevent.
-      let interrupted = false;
-      const forced = makeAbort();
-      const unregisterSignals = deps.onSignal(() => {
-        if (interrupted) {
-          forced.abort();
-          deps.sink.err(
-            `nimbus: giving up on a clean close — the session may still be open. Run: nimbus computer close ${sessionId}\n`,
-          );
-          return;
-        }
-        interrupted = true;
-        deps.sink.err("\nnimbus: interrupted — closing the computer-use session...\n");
-        void Promise.resolve(c.call("computer.sessionClose", { sessionId })).catch(() => {
-          // The watch loop reports what actually happened; a failed close must not raise here,
-          // where nothing can await it.
-        });
-      });
-
-      try {
-        exitCode = await watchSessionUntilClosed(c, sessionId, deps, forced);
-      } finally {
-        unregisterSignals();
-      }
-      if (interrupted) exitCode = CU_EXIT_CODES.interrupted;
-    });
-    deps.setExitCode(exitCode);
-  } catch (e) {
-    deps.sink.err(`${e instanceof Error ? e.message : String(e)}\n`);
-    deps.setExitCode(CU_EXIT_CODES.refused);
-  }
+  await runComputerLaneSession(args, deps, parseComputerTerminalArgs, (parsed) => ({
+    lane: "terminal",
+    cwd: parsed.cwd,
+    ...(parsed.shellId === undefined ? {} : { shellId: parsed.shellId }),
+    ...(parsed.maxActions === undefined ? {} : { maxActions: parsed.maxActions }),
+    ...(parsed.maxWallClockMs === undefined ? {} : { maxWallClockMs: parsed.maxWallClockMs }),
+  }));
 }
 
 async function runComputerSessions(deps: RunComputerDeps): Promise<void> {
