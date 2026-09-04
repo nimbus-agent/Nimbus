@@ -16,6 +16,7 @@ import { findCandidates } from "./media-discovery.ts";
 import { type MediaGateDeps, understandArtifact } from "./media-gate.ts";
 import { clearCursor, readCursor, writeCursor } from "./media-pass-state.ts";
 import type { MediaModality, SkipReason } from "./media-types.ts";
+import { pruneOrphanedUnderstandings } from "./orphan-prune.ts";
 import { sweepStaleScratchFiles } from "./stt/ffmpeg-bin.ts";
 import { writeUnderstanding } from "./understanding-item.ts";
 
@@ -62,6 +63,10 @@ export async function runMediaPass(deps: MediaPassDeps): Promise<MediaPassSummar
   if (deps.scratchDir !== undefined) {
     sweepStaleScratchFiles(deps.scratchDir, deps.nowMs());
   }
+
+  // Reclaim derived rows whose source has left the index (spec § 4.2). Cheap, indexed, and it
+  // self-heals rows orphaned before this shipped.
+  pruneOrphanedUnderstandings(deps.db);
 
   // An explicit afterItemId always wins (a caller override); otherwise resume from the stored
   // cursor for this passId, which is what makes an interrupted run resumable at all (spec § 6.2).
