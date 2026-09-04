@@ -14,6 +14,7 @@
 
 - **No `any`.** External data is `unknown` and narrowed with a real guard, never a type assertion.
 - **Bound-parameter SQL only** (I9). Identifiers via `escapeIdentifier`. Never string-concatenate a value into SQL.
+- **Every SQLite WRITE goes through `dbRun` / `dbExec` / `dbStmtRun`** (`db/write.ts`, invariant **I14**, static rule **D12**). A bare `db.query(...).run(...)` fails `scripts/structure-audit/check-nimbus-invariants.ts` before the test suite even starts, and skips the `SQLITE_FULL` → `setDiskSpaceWarning` handling.
 - **Every outbound request appends one `sync`-class `egress_ledger` row BEFORE the request, fail-closed** (I29). An append failure aborts the fetch.
 - **A credential is attached only to a URL this codebase constructed itself** (§ 16.4). Provider-returned URLs are pre-signed, fetched with **no** `Authorization` header, and pinned to `https:`.
 - **Per-artifact byte caps refuse, never truncate** (§ 5.3). Half an image is not a smaller image.
@@ -264,25 +265,32 @@ Expected: FAIL — module not found.
  * literal in the source.
  */
 import type { Database } from "bun:sqlite";
+import { dbStmtRun } from "../db/write.ts";
 
 const UNDERSTANDING_TYPES = ["image_understanding", "video_understanding"] as const;
 
 export function pruneOrphanedUnderstandings(db: Database): number {
-  const result = db
-    .query(
-      `DELETE FROM item
-        WHERE service = 'nimbus'
-          AND type IN (${UNDERSTANDING_TYPES.map(() => "?").join(", ")})
-          AND json_extract(metadata, '$.derivedFrom') IS NOT NULL
-          AND NOT EXISTS (
-            SELECT 1 FROM item AS src
-             WHERE src.id = json_extract(item.metadata, '$.derivedFrom')
-          )`,
-    )
-    .run(...UNDERSTANDING_TYPES);
+  // dbStmtRun, never a bare .run() — invariant I14 / static rule D12. A raw call fails the
+  // structure audit before the tests run, and skips the SQLITE_FULL -> disk-space-warning path.
+  const stmt = db.query(
+    `DELETE FROM item
+      WHERE service = 'nimbus'
+        AND type IN (${UNDERSTANDING_TYPES.map(() => "?").join(", ")})
+        AND json_extract(metadata, '$.derivedFrom') IS NOT NULL
+        AND NOT EXISTS (
+          SELECT 1 FROM item AS src
+           WHERE src.id = json_extract(item.metadata, '$.derivedFrom')
+        )`,
+  );
+  const result = dbStmtRun(stmt, ...UNDERSTANDING_TYPES);
   return result.changes;
 }
 ```
+
+**Verify the invariant, not just the test:**
+
+Run: `bun run audit:invariants`
+Expected: PASS. Then temporarily change `dbStmtRun(stmt, …)` back to `stmt.run(…)`, re-run, and confirm D12 rejects it. Restore. A guard nobody has seen fail is a guard nobody knows works.
 
 - [ ] **Step 4: Call it at pass start**
 
@@ -671,6 +679,23 @@ In the candidate loop, pass the mime through:
 
 Note `meta` must be parsed **before** the modality call — move `const meta = parseMetadata(row.metadata);` above it.
 
+- [ ] **Step 4b: Carry `externalId` on `MediaCandidate`**
+
+Task 8's resolvers need the provider's own id (`mediaItems/{id}`, `drive/v3/files/{id}`). Select the column rather than reverse-engineering it from the primary key:
+
+```ts
+// media-discovery.ts — add to the SELECT list and the CandidateRow interface
+SELECT src.id, src.service, src.external_id, src.type, src.title, src.url, src.metadata
+```
+
+```ts
+// media-types.ts — MediaCandidate
+  /** The PROVIDER's own id, read from the column. */
+  readonly externalId: string;
+```
+
+Do **not** derive it with `itemId.slice(service.length + 1)`. `index/item-key.ts`'s `itemPrimaryKey` is idempotent — it returns `externalId` unchanged when it already starts with `${service}:` — so the key is not always `service` + `:` + `externalId`, and that slice would silently produce a wrong id for the one case that round-trips. The column is right there.
+
 - [ ] **Step 5: Run the discovery tests**
 
 Run: `bun test packages/gateway/src/multimodal/media-discovery.test.ts`
@@ -750,6 +775,48 @@ test("stops after maxHops rather than following a redirect loop", async () => {
   expect(calls).toBe(4); // initial + 3 hops
 });
 
+test("STRIPS Authorization when the redirect crosses an origin", async () => {
+  const seen: (string | null)[] = [];
+  let calls = 0;
+  const fetchFn = ((_u: URL | string, init?: RequestInit) => {
+    seen.push(new Headers(init?.headers).get("authorization"));
+    calls += 1;
+    return Promise.resolve(
+      calls === 1
+        ? new Response(null, { status: 302, headers: { location: "https://cdn.other.test/b" } })
+        : new Response("BYTES", { status: 200 }),
+    );
+  }) as unknown as typeof fetch;
+
+  await safeFetchFollowing(
+    "https://api.example.test/a",
+    { headers: { Authorization: "Bearer SECRET" } },
+    { fetchFn, lookupFn: publicLookup },
+  );
+  expect(seen).toEqual(["Bearer SECRET", null]);
+});
+
+test("KEEPS Authorization on a same-origin redirect", async () => {
+  const seen: (string | null)[] = [];
+  let calls = 0;
+  const fetchFn = ((_u: URL | string, init?: RequestInit) => {
+    seen.push(new Headers(init?.headers).get("authorization"));
+    calls += 1;
+    return Promise.resolve(
+      calls === 1
+        ? new Response(null, { status: 302, headers: { location: "https://api.example.test/b" } })
+        : new Response("BYTES", { status: 200 }),
+    );
+  }) as unknown as typeof fetch;
+
+  await safeFetchFollowing(
+    "https://api.example.test/a",
+    { headers: { Authorization: "Bearer SECRET" } },
+    { fetchFn, lookupFn: publicLookup },
+  );
+  expect(seen).toEqual(["Bearer SECRET", "Bearer SECRET"]);
+});
+
 test("returns the final response when every hop is public", async () => {
   let calls = 0;
   const fetchFn = (() => {
@@ -804,15 +871,29 @@ export async function safeFetchFollowing(
 ): Promise<Response> {
   const maxHops = deps?.maxHops ?? DEFAULT_MAX_HOPS;
   let url = raw;
+  let current: RequestInit = { ...init };
 
   for (let hop = 0; hop <= maxHops; hop += 1) {
     // Every hop, not just the first: assertSafeUrl + the DNS check run inside safeFetch.
-    const res = await safeFetch(url, { ...init, redirect: "manual" }, deps);
+    const res = await safeFetch(url, { ...current, redirect: "manual" }, deps);
     if (res.status < 300 || res.status >= 400) return res;
 
     const location = res.headers.get("location");
     if (location === null || location === "") return res;
-    url = new URL(location, url).toString();
+    const next = new URL(location, url).toString();
+
+    // STRIP the credential when the origin changes. Taking over redirect handling means taking
+    // over the header stripping the runtime was doing for us — and this path is LIVE, not
+    // theoretical: a Drive `alt=media` download carries a bearer to `www.googleapis.com` and is
+    // routinely 302'd to `*.googleusercontent.com`. Forwarding it there would hand an OAuth token
+    // to a host we never authenticated to, which is the exact failure the credential rule
+    // (spec § 16.4) exists to prevent.
+    if (new URL(next).origin !== new URL(url).origin) {
+      const headers = new Headers(current.headers);
+      headers.delete("authorization");
+      current = { ...current, headers };
+    }
+    url = next;
   }
   throw new Error(`unsafe url: too many redirects (>${maxHops})`);
 }
@@ -1028,10 +1109,162 @@ export function onedriveByteUrl(downloadUrl: string): ByteUrl {
 Run: `bun test packages/gateway/src/multimodal/cloud-renditions.test.ts`
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [ ] **Step 5: Write the failing test for the RESOLVER**
+
+The three helpers above are pure and take a URL they are given. Two of the three services do not *have* one yet: a Photos `baseUrl` expires in ~1 hour so the indexed copy is dead (spec § 16.6), and OneDrive's `@microsoft.graph.downloadUrl` is not indexed at all. Something has to call the provider first.
+
+That lives in a **separate, impure module** — `cloud-url-resolver.ts` — so `cloud-renditions.ts` stays pure and the credential rule stays testable with no network at all. Create `cloud-url-resolver.test.ts`:
+
+```ts
+describe("resolveCloudByteUrl", () => {
+  test("drive needs no round-trip — the URL is constructed from the external id", async () => {
+    let called = false;
+    const r = await resolveCloudByteUrl(driveCandidate, false, {
+      bearerFor: async () => "tok",
+      fetchFn: async () => { called = true; return new Response("{}"); },
+    });
+    expect(called).toBe(false);
+    expect(r).toEqual({ kind: "constructed", url: expect.stringContaining("alt=media"), bearer: true });
+  });
+
+  test("photos RE-RESOLVES baseUrl rather than trusting the indexed one", async () => {
+    let requested = "";
+    const r = await resolveCloudByteUrl(photosCandidate, false, {
+      bearerFor: async () => "tok",
+      fetchFn: async (u) => {
+        requested = u;
+        return new Response(JSON.stringify({ baseUrl: "https://lh3.example/fresh" }));
+      },
+    });
+    expect(requested).toContain("/v1/mediaItems/p1");
+    expect(r).toEqual({ kind: "provider", url: "https://lh3.example/fresh", bearer: false });
+  });
+
+  test("photos with no baseUrl in the response is a fetch_miss, not a crash", async () => {
+    const r = await resolveCloudByteUrl(photosCandidate, false, {
+      bearerFor: async () => "tok",
+      fetchFn: async () => new Response(JSON.stringify({ id: "p1" })),
+    });
+    expect(r).toEqual({ error: "fetch_miss" });
+  });
+
+  test("onedrive reads @microsoft.graph.downloadUrl", async () => {
+    const r = await resolveCloudByteUrl(onedriveCandidate, false, {
+      bearerFor: async () => "tok",
+      fetchFn: async () =>
+        new Response(JSON.stringify({ "@microsoft.graph.downloadUrl": "https://x.sharepoint.test/d" })),
+    });
+    expect(r).toEqual({ kind: "provider", url: "https://x.sharepoint.test/d", bearer: false });
+  });
+
+  test("a missing credential is not_configured, and no request is made", async () => {
+    let called = false;
+    const r = await resolveCloudByteUrl(photosCandidate, false, {
+      bearerFor: async () => null,
+      fetchFn: async () => { called = true; return new Response("{}"); },
+    });
+    expect(r).toEqual({ error: "not_configured" });
+    expect(called).toBe(false);
+  });
+
+  test("an unknown service resolves nothing rather than guessing", async () => {
+    const r = await resolveCloudByteUrl({ ...photosCandidate, service: "dropbox" }, false, {
+      bearerFor: async () => "tok",
+      fetchFn: async () => new Response("{}"),
+    });
+    expect(r).toEqual({ error: "unresolvable_modality" });
+  });
+});
+```
+
+Run: `bun test packages/gateway/src/multimodal/cloud-url-resolver.test.ts`
+Expected: FAIL — module not found.
+
+- [ ] **Step 6: Implement the resolver**
+
+```ts
+// packages/gateway/src/multimodal/cloud-url-resolver.ts
+/**
+ * Turns a cloud candidate into the URL its bytes live at (spec § 16.6).
+ *
+ * Separate from `cloud-renditions.ts` ON PURPOSE: that module is pure, which is what lets the
+ * credential rule be tested with no network and no vault. This one talks to a provider, so it
+ * takes its collaborators as injected functions rather than reaching for a global `fetch`.
+ *
+ * Drive alone needs no round-trip — its byte URL is constructed from the external id. The other
+ * two must ASK, because a Photos `baseUrl` expires in about an hour and OneDrive's
+ * `@microsoft.graph.downloadUrl` is never indexed. Same rule as the local arm's: what the item
+ * stored is not trusted (§ 5.1) — there for security, here for plain correctness.
+ *
+ * The resolve request itself carries a bearer to a host WE construct. The URL it returns for
+ * Photos and OneDrive is pre-signed and is fetched with no credential at all.
+ */
+import { type ByteUrl, driveByteUrl, onedriveByteUrl, photosByteUrl } from "./cloud-renditions.ts";
+import type { MediaCandidate, SkipReason } from "./media-types.ts";
+
+export interface CloudUrlResolverDeps {
+  readonly bearerFor: (service: string) => Promise<string | null>;
+  readonly fetchFn: (url: string, init: RequestInit) => Promise<Response>;
+}
+
+export type ResolvedByteUrl = ByteUrl | { readonly error: SkipReason };
+
+/** Narrows an untyped JSON body without an assertion — external data is `unknown` (no-`any` rule). */
+function stringField(body: unknown, key: string): string | null {
+  if (typeof body !== "object" || body === null) return null;
+  const v = (body as Record<string, unknown>)[key];
+  return typeof v === "string" && v !== "" ? v : null;
+}
+
+export async function resolveCloudByteUrl(
+  candidate: MediaCandidate,
+  preferRenditions: boolean,
+  deps: CloudUrlResolverDeps,
+): Promise<ResolvedByteUrl> {
+  if (candidate.service === "google_drive") {
+    return driveByteUrl(candidate.externalId);
+  }
+
+  if (candidate.service !== "google_photos" && candidate.service !== "onedrive") {
+    return { error: "unresolvable_modality" };
+  }
+
+  const token = await deps.bearerFor(candidate.service);
+  if (token === null) return { error: "not_configured" };
+
+  const id = encodeURIComponent(candidate.externalId);
+  const url =
+    candidate.service === "google_photos"
+      ? `https://photoslibrary.googleapis.com/v1/mediaItems/${id}`
+      : `https://graph.microsoft.com/v1.0/me/drive/items/${id}`;
+
+  const res = await deps.fetchFn(url, { headers: { Authorization: `Bearer ${token}` } });
+  if (!res.ok) return { error: res.status === 429 ? "rate_limited" : "fetch_miss" };
+
+  const body: unknown = await res.json();
+  if (candidate.service === "google_photos") {
+    const baseUrl = stringField(body, "baseUrl");
+    return baseUrl === null
+      ? { error: "fetch_miss" }
+      : photosByteUrl(baseUrl, candidate.modality, preferRenditions);
+  }
+
+  const downloadUrl = stringField(body, "@microsoft.graph.downloadUrl");
+  return downloadUrl === null ? { error: "fetch_miss" } : onedriveByteUrl(downloadUrl);
+}
+```
+
+**Note on `sync-capabilities.ts`:** the plan's original file list named a `fetchBytes` capability there, following spec § 5.2. It is not needed and is **dropped**: that capability exists so a *connector's own sync* can reach a credential without holding a vault handle, and this resolver is not a connector — it is gateway code that already receives `bearerFor` as an injected function, scoped by the caller. Adding a capability nothing consumes would widen the D24 boundary for no gain.
+
+- [ ] **Step 7: Run tests**
+
+Run: `bun test packages/gateway/src/multimodal/cloud-url-resolver.test.ts packages/gateway/src/multimodal/cloud-renditions.test.ts`
+Expected: PASS.
+
+- [ ] **Step 8: Commit**
 
 ```bash
-git add packages/gateway/src/multimodal/cloud-renditions.ts packages/gateway/src/multimodal/cloud-renditions.test.ts
+git add packages/gateway/src/multimodal/cloud-renditions.ts packages/gateway/src/multimodal/cloud-renditions.test.ts packages/gateway/src/multimodal/cloud-url-resolver.ts packages/gateway/src/multimodal/cloud-url-resolver.test.ts
 git commit -m "feat(multimodal): resolve per-service byte URLs and renditions"
 ```
 
@@ -1096,6 +1329,31 @@ describe("fetchCloudBytes", () => {
     });
     await fetchCloudBytes(imageCandidate, constructedUrl, deps);
     expect(seen?.get("authorization")).toBe("Bearer test-token");
+  });
+
+  test("refuses a provider-returned http: URL", async () => {
+    const insecure: ByteUrl = { kind: "provider", url: "http://example.test/i.jpg", bearer: false };
+    let fetched = false;
+    const deps = fakeDeps({ fetchFn: async () => { fetched = true; return new Response("AB"); } });
+    expect(await fetchCloudBytes(imageCandidate, insecure, deps)).toEqual({
+      ok: false, reason: "fetch_miss",
+    });
+    expect(fetched).toBe(false);
+  });
+
+  test("refuses BEFORE streaming when the declared length exceeds the run budget", async () => {
+    let bodyRead = false;
+    const deps = fakeDeps({
+      remainingBudget: 10,
+      fetchFn: async () =>
+        new Response(new ReadableStream({ pull() { bodyRead = true; } }), {
+          headers: { "content-length": "500000000" },
+        }),
+    });
+    expect(await fetchCloudBytes(imageCandidate, providerUrl, deps)).toEqual({
+      ok: false, stop: "budget_exhausted",
+    });
+    expect(bodyRead).toBe(false);
   });
 
   test("refuses over the per-artifact cap rather than truncating", async () => {
@@ -1205,6 +1463,20 @@ export async function fetchCloudBytes(
   byteUrl: ByteUrl,
   deps: CloudBytesDeps,
 ): Promise<CloudBytes> {
+  // A provider-returned URL is pinned to https: (spec § 16.4). `assertSafeUrl` permits both
+  // schemes — it guards the HOST, not the transport — so this check is not redundant with it.
+  // Checked BEFORE the ledger append: a URL we will never fetch should not produce an egress row
+  // claiming we did.
+  if (byteUrl.kind === "provider") {
+    let parsed: URL;
+    try {
+      parsed = new URL(byteUrl.url);
+    } catch {
+      return { ok: false, reason: "fetch_miss" };
+    }
+    if (parsed.protocol !== "https:") return { ok: false, reason: "fetch_miss" };
+  }
+
   // Fail-closed: append first. A throw here propagates and no request is made.
   deps.appendEgress({ destination: candidate.service, method: "media.fetchBytes" });
 
@@ -1228,10 +1500,20 @@ export async function fetchCloudBytes(
   if (!res.ok) return { ok: false, reason: "fetch_miss" };
 
   // A declared length lets an oversized artifact be refused without transferring it at all.
+  // Both bounds are checked here, not just the per-artifact one: streaming 10 MB of a 500 MB file
+  // before tripping the run budget spends exactly the resource the budget exists to conserve.
+  // `content-length` is a HINT, not a guarantee — it can be absent, or wrong — so the per-chunk
+  // checks below still run. This is an optimisation over them, never a replacement.
   const declared = Number.parseInt(res.headers.get("content-length") ?? "", 10);
-  if (Number.isFinite(declared) && declared > deps.maxBytes) {
-    controller.abort();
-    return { ok: false, reason: "over_byte_cap" };
+  if (Number.isFinite(declared)) {
+    if (declared > deps.maxBytes) {
+      controller.abort();
+      return { ok: false, reason: "over_byte_cap" };
+    }
+    if (declared > deps.remainingBudget) {
+      controller.abort();
+      return { ok: false, stop: "budget_exhausted" };
+    }
   }
 
   return candidate.modality === "image"
@@ -1240,7 +1522,7 @@ export async function fetchCloudBytes(
 }
 ```
 
-Both collectors share one loop shape: read chunks from `res.body`, accumulate a running count, and after each chunk check the per-artifact cap (`over_byte_cap`, abort) and then the run budget (`budget_exhausted`, abort). `collectToScratch` writes to `join(deps.scratchDir, CLOUD_SCRATCH_PREFIX + randomUUID())` with no extension, `chmodSync(path, 0o600)` immediately after creation, and removes the file in a `finally` on every non-`ok` exit. Write them as two small functions in this file rather than one branching one — the memory arm returns bytes and the disk arm owns a file lifecycle, and merging them makes the cleanup path harder to see.
+Both collectors share one loop shape: read chunks from `res.body`, accumulate a running count, and after each chunk check the per-artifact cap (`over_byte_cap`, abort) and then the run budget (`budget_exhausted`, abort). `collectToScratch` writes to `join(deps.scratchDir, CLOUD_SCRATCH_PREFIX + randomUUID())` with no extension, via `createWriteStream(path, { mode: 0o600 })` — the mode goes on **creation**, not a `chmodSync` afterwards, so there is no window in which the file exists world-readable under a permissive umask. It removes the file in a `finally` on every non-`ok` exit. Write them as two small functions in this file rather than one branching one — the memory arm returns bytes and the disk arm owns a file lifecycle, and merging them makes the cleanup path harder to see.
 
 - [ ] **Step 4: Add `not_configured` and `rate_limited` to `SkipReason`**
 
@@ -1376,6 +1658,29 @@ test("a rate-limit stop reports rate_limited, not budget_exhausted", async () =>
   const deps = passDeps({ candidates: [c1], cloudFetch: async () => ({ ok: false, stop: "rate_limited" }) });
   expect((await runMediaPass(deps)).stopReason).toBe("rate_limited");
 });
+
+test("deletes a cloud AV scratch file after a SUCCESSFUL understanding", async () => {
+  const deps = passDeps({ candidates: [avCloudCandidate] });
+  const summary = await runMediaPass(deps);
+  expect(summary.understood).toBe(1);
+  expect(readdirSync(deps.scratchDir).filter((n) => n.startsWith("nimbus-media-"))).toEqual([]);
+});
+
+test("deletes the scratch file even when understanding THROWS", async () => {
+  const deps = passDeps({
+    candidates: [avCloudCandidate],
+    gate: { ...gateStub, understand: async () => { throw new Error("model died"); } },
+  });
+  await runMediaPass(deps).catch(() => undefined);
+  expect(readdirSync(deps.scratchDir).filter((n) => n.startsWith("nimbus-media-"))).toEqual([]);
+});
+
+test("counts partial bytes transferred before a budget abort", async () => {
+  // 1.8 MB really crossed the wire before the abort. Reporting 0 would understate what the run
+  // actually cost the user's connection and quota.
+  const deps = passDeps({ candidates: [c1], cloudFetch: async () => ({ ok: false, stop: "budget_exhausted", fetched: 1_800_000 }) });
+  expect((await runMediaPass(deps)).cloudBytesFetched).toBe(1_800_000);
+});
 ```
 
 The third test is the important one: `media-pass.ts:113`'s existing `candidates.length < deps.limit → clearCursor` rule must not fire on an early stop.
@@ -1391,9 +1696,27 @@ Add `priceRun` (a pure fold over `sourceBytes`). In `runMediaPass`:
 
 1. After `findCandidates`, if any candidate is cloud-backed and `priceRun(...).knownBytes > deps.fetchBudgetBytes`, return immediately with `stopReason: "budget_exhausted"` and `understood: 0` — the pre-flight refusal. The CLI renders the guidance (Task 12).
 2. Track `cloudBytesFetched` and a `remainingBudget` across the loop.
-3. Route a cloud candidate (`sourcePath === null`) through `fetchCloudBytes`; a local one through `resolveLocalMediaPath`, unchanged.
-4. On a result carrying `stop`, break the loop and record that stop reason.
-5. Guard the cursor clear: `if (stopReason === "completed" && candidates.length < deps.limit)`.
+3. Route a cloud candidate (`sourcePath === null`) through `resolveCloudByteUrl` then `fetchCloudBytes`; a local one through `resolveLocalMediaPath`, unchanged. A resolver `{ error }` is a per-item skip.
+4. **Delete the cloud scratch file in a `finally` around each iteration's body.** `fetchCloudBytes` removes it on its own failure paths but *returns* it on success, and the understanding step is what consumes it — so ownership passes to this loop and this loop must release it:
+
+   ```ts
+   let cloudScratch: string | undefined;
+   try {
+     // …resolve, fetch, understand, writeUnderstanding…
+     if (fetched.ok && fetched.kind === "path") cloudScratch = fetched.path;
+   } finally {
+     if (cloudScratch !== undefined) {
+       try { rmSync(cloudScratch, { force: true }); } catch { /* a failed unlink must not end the pass */ }
+     }
+   }
+   ```
+
+   Without this, every successfully-understood cloud video stays on disk until the next pass's
+   hour-old sweep — so a single run over twenty videos can hold twenty full downloads at once. The
+   `finally` must also cover the throwing path, not just `continue`.
+5. On a result carrying `stop`, break the loop and record that stop reason. Add its `fetched` count to `cloudBytesFetched` first — those bytes really crossed the wire.
+6. Guard the cursor clear: `if (stopReason === "completed" && candidates.length < deps.limit)`.
+7. Pass the rendition mode into `writeUnderstanding` so the derived row records `rendition: "original" | "w2048-h2048" | "dv"` in metadata **and** states it in the body. The body sentence is what a reader sees; the metadata field is what a later pass can filter on, the same split `framesSampled`/`framesCaptioned` already uses (§ 12.8).
 
 - [ ] **Step 4: Run tests and typecheck**
 
@@ -1425,11 +1748,25 @@ test("--renditions and --originals together are rejected, not silently resolved"
   expect(r.stderr).toContain("--renditions and --originals are mutually exclusive");
 });
 
-test("--budget accepts a human size", async () => {
-  expect(parseBudget("4GB")).toBe(4 * 1024 * 1024 * 1024);
-  expect(parseBudget("500MB")).toBe(500 * 1024 * 1024);
+test("a value-less flag does not swallow the next flag", async () => {
+  // The existing loop steps i += 2, so `--renditions` would consume `--limit` as its value.
+  const parsed = parseMediaArgs(["understand", "--renditions", "--limit", "10"]);
+  expect(parsed.params.renditions).toBe(true);
+  expect(parsed.params.limit).toBe(10);
+});
+
+test("a value-less flag at the END does not throw 'requires a value'", async () => {
+  expect(() => parseMediaArgs(["understand", "--renditions"])).not.toThrow();
+});
+
+test("--budget uses the unit it was GIVEN — GB is decimal, GiB is binary", async () => {
+  expect(parseBudget("4GB")).toBe(4_000_000_000);
+  expect(parseBudget("4GiB")).toBe(4 * 1024 ** 3);
+  expect(parseBudget("500MB")).toBe(500_000_000);
+  expect(parseBudget("1.5GiB")).toBe(Math.round(1.5 * 1024 ** 3));
   expect(parseBudget("1048576")).toBe(1048576);
   expect(parseBudget("lots")).toBeNull();
+  expect(parseBudget("-1GB")).toBeNull();
 });
 
 test("a budget-stopped summary prints resume guidance and both flags", () => {
@@ -1450,7 +1787,37 @@ Expected: FAIL.
 
 - [ ] **Step 3: Implement**
 
-Add `--renditions`, `--originals`, `--budget <size>` to the parser. Reject the flag pair with an explicit message naming both — never resolve by precedence; a silent override on a pair that controls bandwidth is something a user discovers from their data cap. `parseBudget` accepts `GB`/`MB`/`KB` suffixes (case-insensitive) or a raw byte count, and returns `null` on anything else.
+**First, fix the loop.** `parseMediaArgs` (`media-cmd.ts:87`) is `for (let i = 1; i < argv.length; i += 2)` and treats every token as a flag/value pair — so `--renditions` swallows the next flag as its value, or throws `"--renditions requires a value"` when it is last. Both boolean flags are unusable until this changes. Rewrite as a `while` loop that consumes value-less flags with `i += 1` and flag/value pairs with `i += 2`:
+
+```ts
+  let i = 1;
+  while (i < argv.length) {
+    const flag = argv[i];
+    if (flag === "--renditions" || flag === "--originals") {
+      if (flag === "--renditions") params.renditions = true;
+      else params.originals = true;
+      i += 1;
+      continue;
+    }
+    const value = argv[i + 1];
+    if (value === undefined) {
+      throw new Error(`nimbus media: ${flag ?? ""} requires a value`);
+    }
+    switch (flag) {
+      // …existing cases, unchanged…
+      case "--budget":
+        params.budgetBytes = parseBudget(value);
+        break;
+      default:
+        throw new Error(`nimbus media: unknown flag "${flag ?? ""}"`);
+    }
+    i += 2;
+  }
+```
+
+Then reject the flag pair with an explicit message naming both — never resolve by precedence; a silent override on a pair that controls bandwidth is something a user discovers from their data cap.
+
+`parseBudget` accepts a raw byte count or a number with a unit, case-insensitively. **`GB` and `GiB` are not the same number and are not treated as such**: `GB`/`MB`/`KB` are decimal (10³ⁿ), `GiB`/`MiB`/`KiB` binary (2¹⁰ⁿ). Collapsing them would silently grant 7% more than a user typing `4GB` asked for — small, but it is a number reported back to them in the summary, and a budget that does not mean what it says is worse than no budget. Negative and non-finite values return `null`.
 
 `renderSummary` prints understood, skipped-by-reason (existing behaviour, unchanged), bytes fetched, the rendition mode in force, and — when `stopReason !== "completed"` — one line saying the run stopped and is resumable, plus the exact re-run command.
 
@@ -1488,8 +1855,10 @@ grep -rn "ONLY file this subsystem writes\|only file this subsystem writes" CLAU
 `multimodal/cloud-bytes.ts` is the **third** `sync`-class appender. Re-derive the *list*, do not bump a count — a total that is still right can hide an enumeration that is wrong.
 
 ```bash
-grep -rn "targeted-fetch.ts. appends one row\|one row per scheduled sync RUN" CLAUDE.md GEMINI.md docs/SECURITY-INVARIANTS.md .claude/commands/nimbus-egress.md
+grep -rn "targeted-fetch" CLAUDE.md GEMINI.md docs/SECURITY-INVARIANTS.md docs/architecture.md .claude/commands/nimbus-egress.md
 ```
+
+**`docs/architecture.md:1837` carries the enumeration too** — inside the long I29 coverage-vector bullet, which names `sync/scheduler.ts` and `sync/targeted-fetch.ts` as the two appenders sharing `recordSyncEgress`. It is easy to miss because it is one clause inside a very long paragraph, which is exactly how a restatement goes stale.
 
 - [ ] **Step 3: Roadmap and status**
 
@@ -1553,7 +1922,13 @@ Wait for **`PR quality — required gates`** to report green before merging, or 
 
 ## Self-Review
 
-**Spec coverage.** § 16.1 → Tasks 8–9 (single-repo, no `nimbus-mcp-servers` change). § 16.2 → Tasks 8–10. § 16.3 → Tasks 3, 9, 10, 13. § 16.4 → Tasks 6, 8, 9. § 16.5 → Task 5. § 16.6 → Task 8 (Photos re-resolve; the helper is exported from `google-photos-sync.ts` and called by the `fetchBytes` capability). § 16.7 → Task 13 (Zoom recorded as a follow-up). § 16.8 → Tasks 7, 8, 12. § 16.9 → Tasks 1, 7, 9, 11. § 16.10 → Task 9 step 4. § 16.11 → Tasks 9, 13. § 16.12 → tests throughout. § 16.13 → Task 13. § 17.1 → Task 5. § 17.2 → Task 6. § 17.3 → Tasks 4, 9, 11. § 17.4 → Task 3. § 17.5 → Task 9. § 17.6 → Task 2 (orphan prune); I37/D27 correctly absent — PR 4. § 17.7 → Task 1. § 17.8 → Task 12. § 17.9 → Tasks 5, 6, 9.
+> **Amended after the plan review — see the Review Disposition below.** This pass originally
+> matched each spec section to a *task* and called that coverage. It is not: § 16.6 was mapped to
+> Task 8 when no *step* in Task 8 implemented it. **Coverage means a spec section maps to a step
+> that carries real code**, and the mapping below now names steps wherever the task alone is
+> ambiguous.
+
+**Spec coverage.** § 16.1 → Tasks 8–9 (single-repo, no `nimbus-mcp-servers` change). § 16.2 → Tasks 8–10. § 16.3 → Tasks 3, 9, 10, 13. § 16.4 → Tasks 6, 8, 9. § 16.5 → Task 5. § 16.6 → Task 8 **step 6** (`cloud-url-resolver.ts` re-resolves the Photos `baseUrl` via `mediaItems/{id}`; OneDrive's `downloadUrl` likewise). § 16.7 → Task 13 (Zoom recorded as a follow-up). § 16.8 → Tasks 7, 8, 12. § 16.9 → Tasks 1, 7, 9, 11. § 16.10 → Task 9 step 4. § 16.11 → Tasks 9, 13. § 16.12 → tests throughout. § 16.13 → Task 13. § 17.1 → Task 5. § 17.2 → Task 6. § 17.3 → Tasks 4, 9, 11. § 17.4 → Task 3. § 17.5 → Task 9. § 17.6 → Task 2 (orphan prune); I37/D27 correctly absent — PR 4. § 17.7 → Task 1. § 17.8 → Task 12. § 17.9 → Tasks 5, 6, 9.
 
 **Not covered, deliberately:** I37, D27, `media_grant`/V59, the remote arm, remote STT, diarization, OCR — all PR 4 or explicitly out of scope. No task adds a remote model, so no task adds an egress class.
 
@@ -1562,3 +1937,87 @@ Wait for **`PR quality — required gates`** to report green before merging, or 
 **Type consistency:** `MediaSource` (Task 10) is the type `resolveLocalMediaPath` and `fetchCloudBytes` both produce and `understandArtifact` consumes. `CloudBytes.stop` values (`"budget_exhausted"` / `"rate_limited"`) match `MediaPassStopReason` (Task 4) exactly. `CLOUD_SCRATCH_PREFIX` is defined in Task 3 and consumed in Task 9. `mediaSourceBytes` is defined in Task 1 and consumed in Tasks 5 and 11. `ByteUrl` is defined in Task 8 and consumed in Task 9.
 
 **One ordering constraint that is load-bearing:** Task 5 must land before any cloud `(service, type)` pair can be discovered, or the pass silently truncates. Tasks 1–4 are independent shipped-code fixes and can be reviewed in any order among themselves.
+
+---
+
+## Review Disposition (plan review, 2026-09-04)
+
+Review: [`2026-09-04-multimodal-pr3-cloud-arm-review.md`](./2026-09-04-multimodal-pr3-cloud-arm-review.md)
+(Antigravity). Every finding was checked against the code before being accepted. **All five
+"blockers" were real** — three of them defects in this plan, one an invariant violation, one a
+credential leak in code this plan itself introduced.
+
+| # | Finding | Verdict | Landed in |
+| --- | --- | --- | --- |
+| 2.1 | Cloud byte-URL resolution pipeline missing | **Accepted, fix relocated** | Task 8 steps 5–8 |
+| 2.2 | Cloud AV scratch file leaks on the SUCCESS path | **Accepted** | Task 11 step 4 |
+| 2.3 | `parseMediaArgs` cannot parse a value-less flag | **Accepted** | Task 12 step 3 |
+| 2.4 | No `https:` pinning on provider-returned URLs | **Accepted** | Task 9 steps 1, 3 |
+| 2.5 | `safeFetchFollowing` forwards `Authorization` cross-origin | **Accepted** | Task 6 steps 2, 4 |
+| 3.1 | No pre-emptive check of `content-length` vs run budget | **Accepted** | Task 9 step 3 |
+| 3.2 | `pruneOrphanedUnderstandings` bypasses I14 / D12 | **Accepted** | Task 2 step 3 + Global Constraints |
+| 3.3 | `chmod` after create leaves a umask window | **Accepted** | Task 9 step 3 |
+| 3.4 | `parseBudget` unit handling | **Accepted, values corrected** | Task 12 |
+| 3.5 | `docs/architecture.md` also enumerates the `sync` appenders | **Accepted** | Task 13 step 2 |
+| OQ 1 | Rendition disclosed on the derived row | **Yes — body AND metadata** | Task 11 step 7 |
+| OQ 2 | Count partial bytes on a budget abort | **Yes** | Task 11 step 5 |
+| OQ 3 | OneDrive thumbnail renditions | **Deferred; spec corrected** | spec § 16.8 |
+
+### The three that were this plan's own defects
+
+**2.1 — work named in prose but present in no step.** The file list said Task 8 modifies the three
+connector sync files, and the self-review asserted "§ 16.6 → Task 8 (Photos re-resolve; the helper
+is exported from `google-photos-sync.ts`)". No step did it, and nothing turned a candidate into a
+`ByteUrl`, so Photos and OneDrive would have been undeliverable in production. **The self-review is
+what failed**: its spec-coverage pass matched each spec section to a task by *intent* and never
+checked that a step existed to carry it. Matching section→task is not coverage; matching
+section→**step** is.
+
+**2.2 — the leak is on the path that works.** `fetchCloudBytes` cleans up on its own failure paths
+and *returns* the path on success, so ownership passes to the pass loop — which had no `finally`.
+Every successfully-understood cloud video would sit on disk until the next pass's hour-old sweep, so
+one run over twenty videos holds twenty full downloads at once. The sweeper (Task 3) would have
+masked it into a slow disk-fill rather than an obvious bug.
+
+**2.5 — a credential leak in the function written to prevent credential leaks.** Taking over
+redirect handling meant taking over the `Authorization` stripping the runtime had been doing, and
+the plan's `safeFetchFollowing` passed `init` through unchanged on every hop. This is **live, not
+theoretical**: a Drive `alt=media` download carries a bearer to `www.googleapis.com` and is
+routinely 302'd to `*.googleusercontent.com`. The empirical probe that showed Bun 1.3.14 strips the
+header is exactly what made the regression invisible — the property was verified on the code path
+being *replaced*.
+
+### 3.2 was an invariant violation, not a style note
+
+`db.query(...).run(...)` fails static rule **D12** in
+`scripts/structure-audit/check-nimbus-invariants.ts`, which runs *before* the test suite — so the
+task would have failed the build at its first gate. I14 is now in Global Constraints, where I9
+already was; listing one write-path invariant and omitting the other is what let it through.
+
+### Two fixes taken, but not in the shape proposed
+
+**2.1's location.** The review put the network resolution inside `cloud-renditions.ts`, adding
+`fetchFn` and `bearerFor` to it. Rejected: that module is deliberately **pure** — "no network, no
+vault, no clock — so the rule is testable without either" — and the credential rule is the thing it
+exists to make testable. The resolution lives in a new impure `cloud-url-resolver.ts` that consumes
+the pure helpers instead.
+
+**2.1's id derivation.** The review derived the provider id as
+`candidate.itemId.slice(candidate.service.length + 1)`. Rejected: `index/item-key.ts`'s
+`itemPrimaryKey` is **idempotent** — it returns `externalId` unchanged when it already begins with
+`${service}:` — so the key is not always `service` + `:` + `externalId`, and that slice silently
+produces a wrong id for the case that round-trips. `external_id` is a column; Task 5 step 4b selects
+it and carries it on `MediaCandidate`.
+
+**3.4's unit values.** The review's `parseBudget` maps `GB` to 1024³. Rejected: `GB` is decimal and
+`GiB` is binary, and collapsing them silently grants 7% more than a user typing `4GB` asked for. Both
+spellings are accepted and each means what it says. The number is reported back in the run summary,
+so a budget that does not mean what it says is worse than no budget.
+
+### Dropped from the plan
+
+**The `fetchBytes` capability in `sync/sync-capabilities.ts`** (spec § 5.2) is not needed and no task
+adds it. That capability exists so a *connector's own sync* can reach a credential without holding a
+vault handle. `cloud-url-resolver.ts` is not a connector — it is gateway code that receives
+`bearerFor` as an injected function, already scoped by its caller. Adding a capability nothing
+consumes would widen the D24 boundary for nothing.

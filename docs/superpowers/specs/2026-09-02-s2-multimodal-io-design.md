@@ -963,8 +963,16 @@ is a different URL, not a negotiation.
 | Service | Cheap rendition | Mechanism |
 | --- | --- | --- |
 | `google_photos` | bounded long edge; transcoded video | `baseUrl` suffix `=w2048-h2048` / `=dv` |
-| `onedrive` | image thumbnail renditions | Graph `/thumbnails` |
+| `onedrive` | **none in PR 3** — deferred | Graph `/thumbnails` is a SECOND request per item |
 | `google_drive` | none | `alt=media` or nothing |
+
+**OneDrive renditions are deferred, and the earlier draft of this table overstated by listing them
+as available.** Photos' rendition is a suffix on a URL already being fetched — free. OneDrive's is a
+separate `/thumbnails` call per item, so it doubles the request count against a provider that is
+already the most likely to rate-limit a bulk pass (§ 17.5). That is a different trade from Photos'
+and it deserves its own decision rather than riding in on the same row. PR 3 fetches OneDrive
+originals; `--renditions` is a no-op for that service and the summary says so rather than implying a
+saving it did not make.
 
 **The default is originals.** A downscale is a real quality loss on the one workload where this
 subsystem is already weakest — § 12.10 concedes VLM OCR on a dense screenshot is materially worse
