@@ -117,4 +117,111 @@ describe("dispatchMediaRpc", () => {
       dispatchMediaRpc("media.understand", { modality: "smell" }, { runPass: async () => SUMMARY }),
     ).rejects.toThrow(/modality/);
   });
+
+  test("passes budgetBytes through as fetchBudgetBytes", async () => {
+    let seen: unknown = null;
+    await dispatchMediaRpc(
+      "media.understand",
+      { budgetBytes: 500_000_000 },
+      {
+        runPass: async (o) => {
+          seen = o;
+          return SUMMARY;
+        },
+      },
+    );
+    expect(seen).toMatchObject({ fetchBudgetBytes: 500_000_000 });
+  });
+
+  test("omits fetchBudgetBytes entirely when budgetBytes is absent, so the caller's own default carries through", async () => {
+    let seen: unknown = null;
+    await dispatchMediaRpc(
+      "media.understand",
+      {},
+      {
+        runPass: async (o) => {
+          seen = o;
+          return SUMMARY;
+        },
+      },
+    );
+    expect(seen).not.toHaveProperty("fetchBudgetBytes");
+  });
+
+  test("rejects a negative budgetBytes rather than coercing it", async () => {
+    await expect(
+      dispatchMediaRpc("media.understand", { budgetBytes: -1 }, { runPass: async () => SUMMARY }),
+    ).rejects.toThrow(/budgetBytes/);
+  });
+
+  test("rejects a non-numeric budgetBytes", async () => {
+    await expect(
+      dispatchMediaRpc(
+        "media.understand",
+        { budgetBytes: "lots" },
+        { runPass: async () => SUMMARY },
+      ),
+    ).rejects.toThrow(/budgetBytes/);
+  });
+
+  test("renditions:true resolves preferRenditions to true", async () => {
+    let seen: unknown = null;
+    await dispatchMediaRpc(
+      "media.understand",
+      { renditions: true },
+      {
+        runPass: async (o) => {
+          seen = o;
+          return SUMMARY;
+        },
+      },
+    );
+    expect(seen).toMatchObject({ preferRenditions: true });
+  });
+
+  test("originals:true resolves preferRenditions to false", async () => {
+    let seen: unknown = null;
+    await dispatchMediaRpc(
+      "media.understand",
+      { originals: true },
+      {
+        runPass: async (o) => {
+          seen = o;
+          return SUMMARY;
+        },
+      },
+    );
+    expect(seen).toMatchObject({ preferRenditions: false });
+  });
+
+  test("omits preferRenditions entirely when neither flag is set", async () => {
+    let seen: unknown = null;
+    await dispatchMediaRpc(
+      "media.understand",
+      {},
+      {
+        runPass: async (o) => {
+          seen = o;
+          return SUMMARY;
+        },
+      },
+    );
+    expect(seen).not.toHaveProperty("preferRenditions");
+  });
+
+  test("rejects renditions and originals together rather than resolving by precedence", async () => {
+    await expect(
+      dispatchMediaRpc(
+        "media.understand",
+        { renditions: true, originals: true },
+        { runPass: async () => SUMMARY },
+      ),
+    ).rejects.toThrow(/mutually exclusive/);
+  });
+
+  test("rejects a non-boolean renditions value", async () => {
+    await expect(
+      dispatchMediaRpc("media.understand", { renditions: "yes" }, { runPass: async () => SUMMARY }),
+    ).rejects.toThrow(/renditions/);
+  });
 });

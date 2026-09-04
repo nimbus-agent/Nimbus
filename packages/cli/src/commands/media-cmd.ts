@@ -6,10 +6,14 @@
  * and leaks across the combined CI test run.
  *
  * Deliberately does NOT require `--yes` before a non-dry run, unlike `nimbus index rebody`:
- * `rebody` triggers real outbound network traffic against connectors, so a confirmation is
- * warranted there. This pass makes NO network request at all — understanding runs entirely
- * through local models — so a confirmation gate here would be ceremony that trains users to type
- * `--yes` without reading it.
+ * `rebody` re-fetches indexed depth across the WHOLE index with no built-in cap, so a confirmation
+ * is warranted there. This pass is different in kind, not just degree — every candidate is priced
+ * and the run refuses up front (spec § 16.9) once the cost would exceed `--budget`, so the
+ * confirmation `--yes` exists to provide (bound the blast radius before it happens) is already
+ * structural here. Understanding itself still runs entirely through local models; only the
+ * *fetch* of a cloud-backed artifact's bytes (Drive/Photos/OneDrive, PR 3) leaves the machine, and
+ * that leg is budgeted, capped, and I29-ledgered rather than unbounded — so a `--yes` gate here
+ * would be ceremony that trains users to type it without reading it, not a real guardrail.
  */
 import { withGatewayIpc } from "../lib/with-gateway-ipc.ts";
 
@@ -25,11 +29,27 @@ export type SkipReasonKey =
   | "not_configured"
   | "rate_limited";
 
+/**
+ * Mirrors the gateway's `MediaPassStopReason` (`multimodal/media-pass.ts`) — the CLI reaches the
+ * gateway over IPC only, so this is a hand-maintained copy, not an import.
+ */
+export type MediaStopReason = "completed" | "budget_exhausted" | "rate_limited";
+
+/**
+ * Mirrors the gateway's `MediaPassSummary`. `stopReason` and `cloudBytesFetched` are REQUIRED,
+ * not optional-with-a-default: the gateway refuses a run whose priced cost exceeds the byte
+ * budget and leaves the resume cursor untouched, expecting the operator to raise `--budget` or
+ * pass `--renditions`. A `stopReason` that silently defaulted to "completed" would make that
+ * refusal indistinguishable on screen from a run that legitimately found nothing to do — the pass
+ * would appear to succeed while doing nothing, every run, forever.
+ */
 export interface CliSummary {
   readonly understood: number;
   readonly skipped: number;
   readonly skippedByReason: Readonly<Record<SkipReasonKey, number>>;
   readonly lastItemId: string | null;
+  readonly stopReason: MediaStopReason;
+  readonly cloudBytesFetched: number;
 }
 
 export interface ParsedMediaArgs {
@@ -39,6 +59,9 @@ export interface ParsedMediaArgs {
     modality?: "image" | "av";
     sinceDays?: number;
     limit?: number;
+    budgetBytes?: number;
+    renditions?: boolean;
+    originals?: boolean;
   };
 }
 
@@ -80,14 +103,58 @@ function parseSinceDays(value: string): number {
   return n;
 }
 
+/**
+ * Decimal vs. binary unit multipliers for {@link parseBudget}. `GB`/`MB`/`KB` are 10^3n; `GiB`/
+ * `MiB`/`KiB` are 2^10n. Collapsing the two would silently grant ~7% more than an operator typing
+ * "4GB" asked for — and this number is echoed straight back to them in the summary, so a budget
+ * that does not mean what it says is worse than no budget at all.
+ */
+const BYTE_UNIT_MULTIPLIERS: Readonly<Record<string, number>> = {
+  kb: 1_000,
+  mb: 1_000 ** 2,
+  gb: 1_000 ** 3,
+  kib: 1024,
+  mib: 1024 ** 2,
+  gib: 1024 ** 3,
+};
+
+/**
+ * `--budget`: a raw byte count, or a number with a case-insensitive unit suffix
+ * (KB/MB/GB decimal, KiB/MiB/GiB binary — see {@link BYTE_UNIT_MULTIPLIERS}). Negative and
+ * non-finite values return `null` rather than throwing, so the caller decides the error message
+ * (mirrors `parseModality`/`parseLimit`'s throw-at-the-call-site shape, except this one is also
+ * unit-tested directly per the plan).
+ */
+export function parseBudget(value: string): number | null {
+  const match = /^(\d+(?:\.\d+)?)\s*(kib|mib|gib|kb|mb|gb)?$/i.exec(value.trim());
+  if (match === null) return null;
+  const n = Number(match[1]);
+  if (!Number.isFinite(n) || n < 0) return null;
+  const unitToken = match[2];
+  if (unitToken === undefined) return Math.round(n);
+  const multiplier = BYTE_UNIT_MULTIPLIERS[unitToken.toLowerCase()];
+  if (multiplier === undefined) return null;
+  return Math.round(n * multiplier);
+}
+
 export function parseMediaArgs(argv: readonly string[]): ParsedMediaArgs {
   const sub = argv[0];
   if (sub !== "understand") {
     throw new Error(`nimbus media: unknown subcommand "${sub ?? ""}" (expected "understand")`);
   }
   const params: ParsedMediaArgs["params"] = {};
-  for (let i = 1; i < argv.length; i += 2) {
+  // A `while` loop, not the old `for (…; i += 2)`: `--renditions` and `--originals` carry no
+  // value, so a fixed pair-stride would swallow the next flag as this one's value (or throw
+  // "requires a value" when one of them is last). Only flag/value pairs advance by two.
+  let i = 1;
+  while (i < argv.length) {
     const flag = argv[i];
+    if (flag === "--renditions" || flag === "--originals") {
+      if (flag === "--renditions") params.renditions = true;
+      else params.originals = true;
+      i += 1;
+      continue;
+    }
     const value = argv[i + 1];
     if (value === undefined) {
       throw new Error(`nimbus media: ${flag ?? ""} requires a value`);
@@ -105,11 +172,51 @@ export function parseMediaArgs(argv: readonly string[]): ParsedMediaArgs {
       case "--since":
         params.sinceDays = parseSinceDays(value);
         break;
+      case "--budget": {
+        const budget = parseBudget(value);
+        if (budget === null) {
+          throw new Error(
+            `nimbus media: --budget must be a byte count or a number with a unit (KB/MB/GB decimal, KiB/MiB/GiB binary), e.g. "500MB"`,
+          );
+        }
+        params.budgetBytes = budget;
+        break;
+      }
       default:
         throw new Error(`nimbus media: unknown flag "${flag ?? ""}"`);
     }
+    i += 2;
+  }
+  // Rejected outright, never resolved by precedence: a silent override on a pair that controls
+  // bandwidth is something a user discovers from their data cap, not from the CLI.
+  if (params.renditions === true && params.originals === true) {
+    throw new Error("nimbus media: --renditions and --originals are mutually exclusive");
   }
   return { kind: "understand", params };
+}
+
+/**
+ * The exact text for a non-"completed" `stopReason` — what happened, and what to do about it.
+ * `budget_exhausted` is the important case: the gateway priced the run up front and refused it
+ * because the cost exceeded `--budget`, leaving the resume cursor untouched on purpose (spec
+ * § 16.9/17.3). Without this line, that refusal is indistinguishable on screen from a run that
+ * legitimately understood everything there was to understand.
+ */
+function stopReasonGuidance(
+  reason: Exclude<MediaStopReason, "completed">,
+): readonly [string, string] {
+  switch (reason) {
+    case "budget_exhausted":
+      return [
+        "Run stopped: byte budget reached before every candidate could be priced or fetched.",
+        'Resumable — raise --budget, or fetch smaller downsized copies with --renditions, then re-run "nimbus media understand".',
+      ];
+    case "rate_limited":
+      return [
+        "Run stopped: a connected service is rate-limiting cloud byte fetches.",
+        'Resumable — wait for the rate limit to clear, then re-run "nimbus media understand".',
+      ];
+  }
 }
 
 /**
@@ -117,6 +224,10 @@ export function parseMediaArgs(argv: readonly string[]): ParsedMediaArgs {
  * disclosure failure the pass exists not to commit (spec § 8) — the reader cannot tell whether the
  * other 66 were absent, too large, or silently refused. Reasons with a zero count are omitted as
  * noise; a non-zero reason always appears.
+ *
+ * A `stopReason` other than "completed" gets its own clearly separated block (never folded into
+ * the skip breakdown, which is per-artifact — a budget/rate-limit stop ends the RUN, not one
+ * artifact) naming what happened and the exact next step. See `stopReasonGuidance`.
  */
 export function renderSummary(summary: CliSummary): string {
   const total = summary.understood + summary.skipped;
@@ -127,6 +238,11 @@ export function renderSummary(summary: CliSummary): string {
     for (const [reason, n] of reasons) {
       lines.push(`  ${reason}: ${n}`);
     }
+  }
+  lines.push(`Cloud bytes fetched: ${summary.cloudBytesFetched}`);
+  if (summary.stopReason !== "completed") {
+    const [stopped, resume] = stopReasonGuidance(summary.stopReason);
+    lines.push("", stopped, resume);
   }
   return lines.join("\n");
 }
@@ -139,21 +255,32 @@ Usage:
                            [--modality image|av]
                            [--since <days>]
                            [--limit N]           (default 50)
+                           [--budget <bytes>]     (e.g. 500MB, 4GiB — cloud fetches only)
+                           [--renditions]         (prefer smaller downsized copies over originals)
+                           [--originals]          (always fetch the original, never a rendition)
                            [--json]
 
-Runs the budgeted, resumable understanding pass over indexed local audio, video and still images:
-transcribes recordings and captions images (plus a small number of sampled video frames) that have
-not been understood yet, and writes the result back into the index so it becomes searchable and
-available to agents. Omit --modality to discover both image and audio/video candidates in one pass.
+Runs the budgeted, resumable understanding pass over indexed local AND cloud-backed (Google Drive,
+Google Photos, OneDrive) audio, video and still images: transcribes recordings and captions images
+(plus a small number of sampled video frames) that have not been understood yet, and writes the
+result back into the index so it becomes searchable and available to agents. Omit --modality to
+discover both image and audio/video candidates in one pass.
 
 Vision captioning needs a local Ollama vision model pulled by you (see the [multimodal] vlm_model
 config key) — nothing here downloads one, and a machine without one still transcribes audio/video,
 just without frame captions.
 
-  * Local-models-only: this pass runs entirely on-device (spec § 3.4) — it makes no outbound
-    network request, so it needs no --yes confirmation the way "nimbus index rebody" does.
+A cloud-backed candidate's bytes are priced before any fetch happens; if fetching everything found
+this run would exceed --budget, the run refuses up front rather than fetching part of it and
+stopping mid-way. --renditions and --originals are mutually exclusive.
+
+  * Local models, budgeted cloud fetch: understanding itself is always local (spec § 3.4); only a
+    cloud-backed candidate's bytes leave the machine, capped by --budget and I29-ledgered — which
+    is why this command still needs no --yes confirmation the way "nimbus index rebody" does.
   * Resumable: an interrupted or re-run pass picks up where the last one left off rather than
-    restarting from the beginning, and a per-artifact failure never aborts the whole run.
+    restarting from the beginning, and a per-artifact failure never aborts the whole run. A run
+    stopped by the byte budget leaves its resume cursor untouched (nothing already understood is
+    re-fetched on the next run).
 `);
 }
 

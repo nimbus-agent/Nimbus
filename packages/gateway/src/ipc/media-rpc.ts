@@ -33,6 +33,14 @@ export interface MediaRpcDeps {
     modality?: MediaModality;
     sinceMs?: number;
     limit: number;
+    /**
+     * Overrides `MediaPassDeps.fetchBudgetBytes` (the `[multimodal] fetch_budget_bytes` config
+     * default) for this call ONLY — omitted, the caller's own default carries through, since the
+     * dispatcher wiring spreads these opts over an already-complete deps object.
+     */
+    fetchBudgetBytes?: number;
+    /** Overrides `MediaPassDeps.preferRenditions` for this call only. Same shape as above. */
+    preferRenditions?: boolean;
   }) => Promise<MediaPassSummary>;
   readonly nowMs?: () => number;
 }
@@ -54,12 +62,16 @@ export async function dispatchMediaRpc(
   const modality = readModality(params["modality"]);
   const service = typeof params["service"] === "string" ? params["service"] : undefined;
   const sinceMs = readSinceMs(params["sinceDays"], deps.nowMs ?? (() => Date.now()));
+  const fetchBudgetBytes = readBudgetBytes(params["budgetBytes"]);
+  const preferRenditions = readRenditionPreference(params["renditions"], params["originals"]);
 
   return deps.runPass({
     limit,
     ...(service === undefined ? {} : { service }),
     ...(modality === undefined ? {} : { modality }),
     ...(sinceMs === undefined ? {} : { sinceMs }),
+    ...(fetchBudgetBytes === undefined ? {} : { fetchBudgetBytes }),
+    ...(preferRenditions === undefined ? {} : { preferRenditions }),
   });
 }
 
@@ -81,6 +93,44 @@ function readModality(v: unknown): MediaModality | undefined {
   if (v === undefined || v === null) return undefined;
   if (v !== "image" && v !== "av") {
     throw new Error('media.understand: modality must be "image" or "av"');
+  }
+  return v;
+}
+
+function readBudgetBytes(v: unknown): number | undefined {
+  if (v === undefined || v === null) return undefined;
+  if (typeof v !== "number" || !Number.isFinite(v) || v < 0) {
+    throw new Error("media.understand: budgetBytes must be a non-negative number");
+  }
+  return v;
+}
+
+/**
+ * `renditions`/`originals` are mutually exclusive request flags, not a resolved preference — the
+ * CLI already rejects the pair before this ever runs, but this dispatcher is reachable from any
+ * IPC caller, so the rejection is re-asserted here rather than trusted from the edge. Resolving by
+ * precedence instead (say, `originals` wins) would be exactly the silent override the CLI-side
+ * check exists to prevent — a caller who set both would get one honored and one dropped with no
+ * error at all.
+ */
+function readRenditionPreference(
+  renditionsRaw: unknown,
+  originalsRaw: unknown,
+): boolean | undefined {
+  const renditions = readOptionalBool("renditions", renditionsRaw);
+  const originals = readOptionalBool("originals", originalsRaw);
+  if (renditions === true && originals === true) {
+    throw new Error("media.understand: renditions and originals are mutually exclusive");
+  }
+  if (renditions === true) return true;
+  if (originals === true) return false;
+  return undefined;
+}
+
+function readOptionalBool(name: string, v: unknown): boolean | undefined {
+  if (v === undefined || v === null) return undefined;
+  if (typeof v !== "boolean") {
+    throw new Error(`media.understand: ${name} must be a boolean`);
   }
   return v;
 }

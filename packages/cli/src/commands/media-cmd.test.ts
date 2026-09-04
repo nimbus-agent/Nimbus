@@ -3,9 +3,50 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { clearFixture, FAKE_SOCKET_PATH, setFixture } from "../../test/helpers/cli-mocks.ts";
 import { captureOutput } from "../../test/helpers/cli-output.ts";
 import { createMockIpcClient } from "../../test/helpers/mock-ipc-client.ts";
-import { parseMediaArgs, renderSummary, runMediaCmd } from "./media-cmd.ts";
+import {
+  parseBudget,
+  parseMediaArgs,
+  renderSummary,
+  runMediaCmd,
+  type SkipReasonKey,
+} from "./media-cmd.ts";
 
 const out = captureOutput();
+
+/** Every `SkipReason` at zero, spread into a test summary and overridden per-test. */
+const zeroReasons: Record<SkipReasonKey, number> = {
+  over_byte_cap: 0,
+  no_local_model: 0,
+  no_remote_grant: 0,
+  unresolvable_modality: 0,
+  fetch_miss: 0,
+  path_outside_roots: 0,
+  transcode_failed: 0,
+  transcribe_failed: 0,
+  not_configured: 0,
+  rate_limited: 0,
+};
+
+/**
+ * `runMediaCmd` itself only throws on a bad invocation — the catch/exit-code/stderr wrapping is
+ * `index.ts`'s `main()`, which this file does not exercise. This mirrors that wrapping locally so
+ * a CLI-shaped assertion (`exitCode`, `stderr`) can be made without dragging the whole entry point
+ * (and its REPL/banner/logger setup) into a unit test.
+ */
+async function runMediaCommand(
+  args: string[],
+): Promise<{ exitCode: number; stdout: string; stderr: string }> {
+  out.reset();
+  let exitCode = 0;
+  let stderr = "";
+  try {
+    await runMediaCmd(args);
+  } catch (e) {
+    exitCode = 1;
+    stderr = e instanceof Error ? e.message : String(e);
+  }
+  return { exitCode, stdout: out.stdout, stderr };
+}
 
 describe("parseMediaArgs", () => {
   test("defaults to the understand subcommand shape", () => {
@@ -77,6 +118,67 @@ describe("parseMediaArgs", () => {
   test("rejects an unknown flag", () => {
     expect(() => parseMediaArgs(["understand", "--bogus", "x"])).toThrow(/unknown flag "--bogus"/);
   });
+
+  test("--renditions and --originals together are rejected, not silently resolved", async () => {
+    const r = await runMediaCommand(["understand", "--renditions", "--originals"]);
+    expect(r.exitCode).not.toBe(0);
+    expect(r.stderr).toContain("--renditions and --originals are mutually exclusive");
+  });
+
+  test("a value-less flag does not swallow the next flag", () => {
+    // The old loop stepped i += 2, so `--renditions` would consume `--limit` as its value.
+    const parsed = parseMediaArgs(["understand", "--renditions", "--limit", "10"]);
+    expect(parsed.params.renditions).toBe(true);
+    expect(parsed.params.limit).toBe(10);
+  });
+
+  test("a value-less flag at the END does not throw 'requires a value'", () => {
+    expect(() => parseMediaArgs(["understand", "--renditions"])).not.toThrow();
+  });
+
+  test("parses --originals alone", () => {
+    expect(parseMediaArgs(["understand", "--originals"])).toEqual({
+      kind: "understand",
+      params: { originals: true },
+    });
+  });
+
+  test("parses --budget with a unit into budgetBytes", () => {
+    expect(parseMediaArgs(["understand", "--budget", "500MB"])).toEqual({
+      kind: "understand",
+      params: { budgetBytes: 500_000_000 },
+    });
+  });
+
+  test("rejects an unparseable --budget rather than defaulting", () => {
+    expect(() => parseMediaArgs(["understand", "--budget", "lots"])).toThrow(/--budget/);
+  });
+});
+
+describe("parseBudget", () => {
+  test("--budget uses the unit it was GIVEN — GB is decimal, GiB is binary", () => {
+    expect(parseBudget("4GB")).toBe(4_000_000_000);
+    expect(parseBudget("4GiB")).toBe(4 * 1024 ** 3);
+    expect(parseBudget("500MB")).toBe(500_000_000);
+    expect(parseBudget("1.5GiB")).toBe(Math.round(1.5 * 1024 ** 3));
+    expect(parseBudget("1048576")).toBe(1048576);
+    expect(parseBudget("lots")).toBeNull();
+    expect(parseBudget("-1GB")).toBeNull();
+  });
+
+  test("is case-insensitive on the unit", () => {
+    expect(parseBudget("2gb")).toBe(2_000_000_000);
+    expect(parseBudget("2Gib")).toBe(2 * 1024 ** 3);
+  });
+
+  test("rejects a non-finite raw value", () => {
+    expect(parseBudget("Infinity")).toBeNull();
+    expect(parseBudget("NaN")).toBeNull();
+  });
+
+  test("rejects an unrecognised unit", () => {
+    expect(parseBudget("4TB")).toBeNull();
+  });
 });
 
 describe("renderSummary", () => {
@@ -84,19 +186,10 @@ describe("renderSummary", () => {
     const out = renderSummary({
       understood: 42,
       skipped: 2,
-      skippedByReason: {
-        over_byte_cap: 1,
-        no_local_model: 1,
-        no_remote_grant: 0,
-        unresolvable_modality: 0,
-        fetch_miss: 0,
-        path_outside_roots: 0,
-        transcode_failed: 0,
-        transcribe_failed: 0,
-        not_configured: 0,
-        rate_limited: 0,
-      },
+      skippedByReason: { ...zeroReasons, over_byte_cap: 1, no_local_model: 1 },
       lastItemId: "x",
+      stopReason: "completed",
+      cloudBytesFetched: 0,
     });
     expect(out).toContain("Understood 42 of 44");
     expect(out).toContain("over_byte_cap: 1");
@@ -109,21 +202,65 @@ describe("renderSummary", () => {
     const out = renderSummary({
       understood: 3,
       skipped: 0,
-      skippedByReason: {
-        over_byte_cap: 0,
-        no_local_model: 0,
-        no_remote_grant: 0,
-        unresolvable_modality: 0,
-        fetch_miss: 0,
-        path_outside_roots: 0,
-        transcode_failed: 0,
-        transcribe_failed: 0,
-        not_configured: 0,
-        rate_limited: 0,
-      },
+      skippedByReason: { ...zeroReasons },
       lastItemId: "x",
+      stopReason: "completed",
+      cloudBytesFetched: 0,
     });
     expect(out).toContain("Understood 3 of 3");
+  });
+
+  test("always states cloud bytes fetched, even when zero", () => {
+    const out = renderSummary({
+      understood: 1,
+      skipped: 0,
+      skippedByReason: { ...zeroReasons },
+      lastItemId: "x",
+      stopReason: "completed",
+      cloudBytesFetched: 0,
+    });
+    expect(out).toContain("Cloud bytes fetched: 0");
+  });
+
+  test("a completed run prints no stop/resume guidance at all", () => {
+    const out = renderSummary({
+      understood: 1,
+      skipped: 0,
+      skippedByReason: { ...zeroReasons },
+      lastItemId: "x",
+      stopReason: "completed",
+      cloudBytesFetched: 12,
+    });
+    expect(out).not.toContain("stopped");
+    expect(out).not.toContain("Resumable");
+  });
+
+  test("a budget-stopped summary prints resume guidance and both flags", () => {
+    const out = renderSummary({
+      understood: 12,
+      skipped: 3,
+      skippedByReason: { ...zeroReasons, over_byte_cap: 3 },
+      lastItemId: "google_drive:f42",
+      stopReason: "budget_exhausted",
+      cloudBytesFetched: 2_147_483_648,
+    });
+    expect(out).toContain("stopped: byte budget reached");
+    expect(out).toContain("--renditions");
+    expect(out).toContain("nimbus media understand");
+  });
+
+  test("a rate-limited summary names the reason and is resumable", () => {
+    const out = renderSummary({
+      understood: 4,
+      skipped: 0,
+      skippedByReason: { ...zeroReasons },
+      lastItemId: "onedrive:x",
+      stopReason: "rate_limited",
+      cloudBytesFetched: 500,
+    });
+    expect(out).toContain("rate-limiting");
+    expect(out).toContain("Resumable");
+    expect(out).toContain("nimbus media understand");
   });
 });
 
@@ -166,19 +303,10 @@ describe("runMediaCmd", () => {
     const summary = {
       understood: 5,
       skipped: 1,
-      skippedByReason: {
-        over_byte_cap: 1,
-        no_local_model: 0,
-        no_remote_grant: 0,
-        unresolvable_modality: 0,
-        fetch_miss: 0,
-        path_outside_roots: 0,
-        transcode_failed: 0,
-        transcribe_failed: 0,
-        not_configured: 0,
-        rate_limited: 0,
-      },
+      skippedByReason: { ...zeroReasons, over_byte_cap: 1 },
       lastItemId: "item-1",
+      stopReason: "completed",
+      cloudBytesFetched: 0,
     };
     const ipc = createMockIpcClient([summary]);
     setFixture({
@@ -204,23 +332,43 @@ describe("runMediaCmd", () => {
     expect(stdoutBuf).toContain("over_byte_cap: 1");
   });
 
+  test("forwards --budget/--renditions to media.understand", async () => {
+    const summary = {
+      understood: 0,
+      skipped: 0,
+      skippedByReason: { ...zeroReasons },
+      lastItemId: null,
+      stopReason: "completed",
+      cloudBytesFetched: 0,
+    };
+    const ipc = createMockIpcClient([summary]);
+    setFixture({
+      gatewayState: { socketPath: FAKE_SOCKET_PATH },
+      ipcClient: { call: ipc.client.call, connect: () => {}, disconnect: () => {} },
+    });
+    const origWrite = process.stdout.write.bind(process.stdout);
+    // The summary text isn't asserted in this test — only the params reaching the IPC call — so
+    // the override just swallows the write rather than accumulating an unused buffer.
+    process.stdout.write = (() => true) as typeof process.stdout.write;
+    try {
+      await runMediaCmd(["understand", "--budget", "1GiB", "--renditions"]);
+    } finally {
+      process.stdout.write = origWrite;
+    }
+    expect(ipc.calls[0]).toEqual({
+      method: "media.understand",
+      params: { budgetBytes: 1024 ** 3, renditions: true },
+    });
+  });
+
   test("prints raw JSON instead of the rendered summary when --json is passed", async () => {
     const summary = {
       understood: 2,
       skipped: 0,
-      skippedByReason: {
-        over_byte_cap: 0,
-        no_local_model: 0,
-        no_remote_grant: 0,
-        unresolvable_modality: 0,
-        fetch_miss: 0,
-        path_outside_roots: 0,
-        transcode_failed: 0,
-        transcribe_failed: 0,
-        not_configured: 0,
-        rate_limited: 0,
-      },
+      skippedByReason: { ...zeroReasons },
       lastItemId: null,
+      stopReason: "completed",
+      cloudBytesFetched: 0,
     };
     const ipc = createMockIpcClient([summary]);
     setFixture({
