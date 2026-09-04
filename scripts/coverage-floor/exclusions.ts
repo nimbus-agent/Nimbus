@@ -117,7 +117,13 @@ export const EXCLUSIONS: readonly ExclusionPattern[] = Object.freeze([
   { kind: "exact", path: "packages/gateway/src/perf/derive-latest-json.ts" }, // 62.50 / 54.17
   { kind: "exact", path: "packages/gateway/src/perf/gateway-spawn-bench.ts" }, // 98.59 / 78.57
   { kind: "exact", path: "packages/gateway/src/perf/history-line.ts" }, // 75.00 / 50.00
-  { kind: "exact", path: "packages/gateway/src/perf/percentiles.ts" }, // 94.12 / 75.00
+  // `percentiles.ts` RETIRED from this block 2026-09-04. It sat at 94.12 line / 75.00 branch: the
+  // shortfall was three guards `computePercentiles` structurally cannot reach, because it filters
+  // to finite samples and sorts before calling `pickPercentile`. `pickPercentile` is now exported
+  // as an `@internal` test seam and those guards are covered directly — including the distinction
+  // between the interpolating arm (where the `?? 0` fallback fires) and the `lo === hi` arm (where
+  // an out-of-range index returns `undefined` instead), which is a real behavioural difference
+  // nothing had pinned. Delete an entry the moment its file clears both floors, not later.
   { kind: "exact", path: "packages/gateway/src/perf/perf-fixture.ts" }, // 93.94 / 57.14
   { kind: "exact", path: "packages/gateway/src/perf/rss-sampler.ts" }, // 85.71 / 72.73
   { kind: "exact", path: "packages/gateway/src/perf/signal-handler.ts" }, // 66.67 / 100.00

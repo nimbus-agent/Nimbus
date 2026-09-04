@@ -5,7 +5,18 @@ export interface PercentileResult {
   max?: number | undefined;
 }
 
-function pickPercentile(sorted: number[], p: number): number | undefined {
+/**
+ * The percentile at `p` over an ALREADY-SORTED ascending array, linearly interpolated between the
+ * two neighbouring ranks.
+ *
+ * @internal Exported for its own tests. `computePercentiles` below is the only production caller
+ * and it filters and sorts first, so two of the guards here — the empty array, and the `?? 0`
+ * fallbacks on an out-of-range index — are unreachable through it. They are still real behaviour
+ * on a direct call, and testing them here is what lets this module carry no coverage exemption:
+ * the alternative was leaving defensive branches permanently unmeasured and the file permanently
+ * excluded from the floor.
+ */
+export function pickPercentile(sorted: number[], p: number): number | undefined {
   if (sorted.length === 0) {
     return undefined;
   }

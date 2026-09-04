@@ -64,6 +64,17 @@ describe("[ownership] config", () => {
     expect(cfg.minShare).toBe(DEFAULT_NIMBUS_OWNERSHIP_TOML.minShare);
   });
 
+  // `[ownership]` shares its `enabled` handling with `[glossary]`/`[decisions]`/`[premortem]`,
+  // which ALSO have a `use_llm` key — and this section does not. Routing this section through the
+  // two-key helper wrote `useLlm` onto the returned object: a field nothing reads, that no type
+  // declares, and that every `toEqual` against the defaults would then see. Asserted on the KEY's
+  // absence rather than on the value, because `undefined` and "absent" are different objects here.
+  test("an unknown use_llm key is ignored, not written onto the config", () => {
+    const cfg = parseNimbusOwnershipToml("[ownership]\nenabled = true\nuse_llm = true\n");
+    expect(Object.keys(cfg)).not.toContain("useLlm");
+    expect(cfg).toEqual({ ...DEFAULT_NIMBUS_OWNERSHIP_TOML, enabled: true });
+  });
+
   test("a malformed ignore_globs does not discard the rest of the section", () => {
     // Regression: `parseStringArray` throws on a non-bracketed value. Unguarded
     // that unwinds out of the whole-section parse, so `enabled = false` would be

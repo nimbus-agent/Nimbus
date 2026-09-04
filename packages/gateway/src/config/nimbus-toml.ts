@@ -95,13 +95,29 @@ function assignBoundedInt(
 }
 
 /**
- * The `enabled` / `use_llm` prelude shared by the `[glossary]`, `[decisions]`, `[ownership]` and
- * `[premortem]` sections.
+ * `enabled` — the one toggle EVERY pass section has.
+ *
+ * Split from `applyPassSectionToggle` below rather than folded into it, because a section that
+ * does not declare `use_llm` must not have one INVENTED for it: `out` here is a
+ * `Partial<Nimbus…Toml>` that gets spread over the defaults, so writing a field the type does not
+ * carry puts a key in the returned config that nothing reads and every equality assertion sees.
+ * `[ownership]` is that section.
+ */
+function applyEnabledToggle(out: { enabled?: boolean }, key: string, valRaw: string): boolean {
+  if (key !== "enabled") return false;
+  assignBool(valRaw, (b) => {
+    out.enabled = b;
+  });
+  return true;
+}
+
+/**
+ * The `enabled` / `use_llm` prelude shared by the three LLM-backed pass sections — `[glossary]`,
+ * `[decisions]` and `[premortem]`.
  *
  * It MUST run before each section's integer branch, and that ordering is precisely why it is one
- * function rather than four copies: routed through `parseIntDec`, `use_llm` is silently dropped
- * and the section reads as if it were never set. `[ownership]` has no `use_llm` key of its own;
- * recognising it there is harmless, since an unknown key is ignored either way.
+ * function rather than three copies: routed through `parseIntDec`, `use_llm` is silently dropped
+ * and the section reads as if it were never set.
  *
  * Returns true when the key was one of the two and has been HANDLED — including when the value
  * was malformed and deliberately left unset, which is still handled and must not fall through to
@@ -112,19 +128,12 @@ function applyPassSectionToggle(
   key: string,
   valRaw: string,
 ): boolean {
-  if (key === "enabled") {
-    assignBool(valRaw, (b) => {
-      out.enabled = b;
-    });
-    return true;
-  }
-  if (key === "use_llm") {
-    assignBool(valRaw, (b) => {
-      out.useLlm = b;
-    });
-    return true;
-  }
-  return false;
+  if (applyEnabledToggle(out, key, valRaw)) return true;
+  if (key !== "use_llm") return false;
+  assignBool(valRaw, (b) => {
+    out.useLlm = b;
+  });
+  return true;
 }
 
 function forEachSectionEntry(
@@ -2319,7 +2328,9 @@ function applyNimbusOwnershipKey(
   key: string,
   valRaw: string,
 ): void {
-  if (applyPassSectionToggle(out, key, valRaw)) return;
+  // `applyEnabledToggle`, NOT `applyPassSectionToggle`: `[ownership]` has no `use_llm` key, and
+  // the two-key helper would write one onto the returned config.
+  if (applyEnabledToggle(out, key, valRaw)) return;
   if (key === "ignore_globs") {
     // `parseStringArray` THROWS a TypeError on anything not bracket-delimited.
     // Unguarded, that escapes `parseNimbusOwnershipToml` into `loadTomlSection`'s
