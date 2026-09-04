@@ -53,6 +53,12 @@ async function bodyOf(
 }
 
 describe("createAvUnderstander", () => {
+  test("rejects a bytes source instead of casting — whisper/ffmpeg need a seekable file", async () => {
+    await expect(
+      deps().understand({ kind: "bytes", bytes: new Uint8Array([1]), mime: "video/mp4" }),
+    ).rejects.toThrow(/seekable file path/);
+  });
+
   test("captions come FIRST, then the transcript", async () => {
     const body = await bodyOf(deps());
     expect(body.indexOf(FRAME_HEADING)).toBeLessThan(body.indexOf(TRANSCRIPT_HEADING));

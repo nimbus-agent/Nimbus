@@ -24,6 +24,13 @@ describe("createLongFormStt", () => {
     expect(createLongFormStt(deps()).isLocal).toBe(true);
   });
 
+  test("rejects a bytes source instead of casting — transcodeToWav needs a path", async () => {
+    const stt = createLongFormStt(deps());
+    await expect(
+      stt.understand({ kind: "bytes", bytes: new Uint8Array([1]), mime: "video/mp4" }),
+    ).rejects.toThrow(/path source/);
+  });
+
   test("transcodes then transcribes, returning the text", async () => {
     const stt = createLongFormStt(deps());
     expect(await stt.understand({ kind: "path", path: "/in/demo.mp4" })).toEqual({

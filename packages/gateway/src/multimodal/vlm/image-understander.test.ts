@@ -54,6 +54,26 @@ describe("createImageUnderstander", () => {
     expect(spy.calls[0]?.egressMethod).toBe("multimodal.vlm.image");
   });
 
+  test("understand takes bytes DIRECTLY on the bytes arm — the file is never read", async () => {
+    const spy = vlmSpy();
+    let readCalls = 0;
+    const bytes = new Uint8Array([1, 2, 3]);
+    const u = createImageUnderstander({
+      vlm: spy.provider,
+      readFile: () => {
+        readCalls += 1;
+        return Promise.resolve(new Uint8Array([9, 9, 9]));
+      },
+    });
+    const detail = await u.understand({ kind: "bytes", bytes, mime: "image/png" });
+    expect(detail.text).toBe("A whiteboard.\nVisible text: none");
+    expect(readCalls).toBe(0);
+    expect(spy.calls).toHaveLength(1);
+    expect(spy.calls[0]?.bytes).toBe(bytes);
+    expect(spy.calls[0]?.prompt).toBe(IMAGE_CAPTION_PROMPT);
+    expect(spy.calls[0]?.egressMethod).toBe("multimodal.vlm.image");
+  });
+
   test("an unreadable file REJECTS, so the gate records a reason rather than writing an empty row", async () => {
     const u = createImageUnderstander({
       vlm: vlmSpy().provider,
