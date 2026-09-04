@@ -41,7 +41,7 @@ export interface AdapterDeps {
 export interface ToolSpec {
   name: string;
   description: string;
-  schema: Record<string, z.ZodTypeAny>;
+  schema: Record<string, z.core.$ZodType>;
   run(deps: AdapterDeps, args: Record<string, unknown>): Promise<ToolResult>;
 }
 

@@ -306,6 +306,20 @@ function armOf(input: WhyInput): LaneInput["arm"] {
   return isWhyItemInput(input) ? "item" : "ref";
 }
 
+/**
+ * Which arm resolves this input's subject.
+ *
+ * The three arms are mutually exclusive and ORDERED — `isWhyPrInput` before `isWhyItemInput`
+ * before the ref fallback — so the fallback is genuinely a fallback rather than a fourth case.
+ * Written as guarded early returns rather than a chained conditional so that ordering is the
+ * shape of the function instead of something a reader reconstructs from indentation.
+ */
+async function resolveArm(input: WhyInput, ctx: WhyContext): Promise<WhyLaneResolution> {
+  if (isWhyPrInput(input)) return resolvePrArm(ctx.db, input.prUrl);
+  if (isWhyItemInput(input)) return resolveItemArm(ctx.db, input.itemUrl);
+  return resolveRefArm(input, ctx);
+}
+
 export async function runWhy(input: WhyInput, ctx: WhyContext): Promise<WhyBrief> {
   const start = performance.now();
   const preflightGaps: GapNote[] = [];
@@ -314,11 +328,7 @@ export async function runWhy(input: WhyInput, ctx: WhyContext): Promise<WhyBrief
 
   const arm = armOf(input);
   const { subject, blame, pr, changeSubject, itemSubject, itemEntityId, queryRef, queryLine } =
-    isWhyPrInput(input)
-      ? resolvePrArm(ctx.db, input.prUrl)
-      : isWhyItemInput(input)
-        ? resolveItemArm(ctx.db, input.itemUrl)
-        : await resolveRefArm(input, ctx);
+    await resolveArm(input, ctx);
 
   const lane: LaneInput = {
     subject,

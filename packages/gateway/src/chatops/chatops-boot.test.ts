@@ -527,7 +527,7 @@ describe("buildChatopsBoot — full production graph", () => {
 
     // The ledger half.
     const rows = listEgress(db, { limit: 10 });
-    expect(rows.length).toBe(1);
+    expect(rows).toHaveLength(1);
     expect(rows[0]?.sourceType).toBe("chatops");
     expect(rows[0]?.method).toBe("chatops.reply");
   });
@@ -730,7 +730,7 @@ describe("buildChatopsBoot — full production graph", () => {
     h.socket.emit(mention("C0", "U_BOB", "@nimbus who is on call for payment-service?", "40"));
     await until(() => logErrorCalls.length === 1);
     // Fail-closed: the append happens BEFORE the post, so a failed append means nothing posted.
-    expect(h.posts.length).toBe(0);
+    expect(h.posts).toHaveLength(0);
     expect(logErrorCalls[0]?.msg).toContain("egress ledger append failed");
     // Unhashed, per §13.1 — the log is not the ledger and carries a different threat model.
     expect(logErrorCalls[0]?.fields["channelId"]).toBe("C0");

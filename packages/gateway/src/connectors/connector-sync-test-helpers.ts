@@ -17,12 +17,15 @@ import type { NimbusVault } from "../vault/nimbus-vault.ts";
 import type { ConnectorServiceId } from "./connector-catalog.ts";
 
 export type LocalOnlySyncServiceId = "blame" | "filesystem" | "obsidian" | "openapi";
-const LOCAL_ONLY_SYNC_SERVICE_IDS: readonly LocalOnlySyncServiceId[] = [
+// A Set, so membership is `has` rather than `includes` — which also removes the
+// `as LocalOnlySyncServiceId` the array form needed at the call site to narrow a
+// wider ConnectorServiceId, i.e. a cast that asserted the very thing being tested.
+const LOCAL_ONLY_SYNC_SERVICE_IDS: ReadonlySet<string> = new Set<LocalOnlySyncServiceId>([
   "blame",
   "filesystem",
   "obsidian",
   "openapi",
-];
+]);
 
 export const EMPTY_NIMBUS_VAULT: NimbusVault = {
   set: async () => {},
@@ -132,7 +135,7 @@ export function syncTestContext(
   const caps =
     serviceId === undefined
       ? unboundSyncCapabilities()
-      : LOCAL_ONLY_SYNC_SERVICE_IDS.includes(serviceId as LocalOnlySyncServiceId)
+      : LOCAL_ONLY_SYNC_SERVICE_IDS.has(serviceId)
         ? buildLocalOnlySyncCapabilities(capDeps, serviceId as LocalOnlySyncServiceId)
         : buildSyncCapabilities(capDeps, serviceId as ConnectorServiceId);
   // `extras` carries the UNBOUND capability set as its default, so it must be spread FIRST — the

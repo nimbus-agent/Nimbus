@@ -266,7 +266,7 @@ No inline comments were mapped to I12 specifically in the triage. No additional 
 
 ### Migrated rationale (2026-05-28)
 
-The comment at `ipc/http-write-routes.ts:2–8` states that the file is the single source of truth for which POST paths `startReadOnlyHttpServer` is permitted to accept, and that the count assertion in `security-invariants.test.ts` must be bumped in the same commit as any new allowlist entry. The comment at `ipc/http-server.ts:323` notes the exact assertion location. The comment at `ipc/http-routes.ts:5,13` documents `READ_ONLY_HTTP_ROUTES` as the parallel source-of-truth for OpenAPI drift detection. The comment at `ipc/http-write-routes.test.ts:15` confirms the test asserts that `dispatchWriteRoute` is the only handler for POST paths. The comment at `ipc/deployment-rpc.ts:5` notes this handler is NOT in the renderer allowlist. The comment at `cli/src/commands/deploy-annotate.ts:14` calls out that the CLI uses the HTTP write surface (not IPC) for the annotate operation — the only CLI command that does so. The comment at `ipc/preflight-rpc.ts:5` and `ipc/people-rpc.test.ts:8` note their respective methods are read-only and do not go through `dispatchWriteRoute`.
+The comment at `ipc/http-write-routes.ts:2–8` states that the file is the single source of truth for which POST paths `startReadOnlyHttpServer` is permitted to accept, and that the count assertion in `security-invariants.test.ts` must be bumped in the same commit as any new allowlist entry. The comment at `ipc/http-server.ts:323` notes the exact assertion location. The comment at `ipc/http-routes.ts:2,8,15` documents `HTTP_ROUTES` as the source-of-truth for OpenAPI drift detection and bounds that claim: it is NOT every route the server serves, since `startReadOnlyHttpServer` also dispatches writes to `dispatchWriteRoute`, and it is NOT the write authorization - a route that writes needs a `WRITE_ROUTE_ALLOWLIST` entry as well. The comment at `ipc/http-write-routes.test.ts:15` confirms the test asserts that `dispatchWriteRoute` is the only handler for POST paths. The comment at `ipc/deployment-rpc.ts:5` notes this handler is NOT in the renderer allowlist. The comment at `cli/src/commands/deploy-annotate.ts:14` calls out that the CLI uses the HTTP write surface (not IPC) for the annotate operation — the only CLI command that does so. The comment at `ipc/preflight-rpc.ts:5` and `ipc/people-rpc.test.ts:8` note their respective methods are read-only and do not go through `dispatchWriteRoute`.
 
 ---
 
@@ -1055,15 +1055,7 @@ Reverse-lookup table for inline comments migrated from source files during the 2
 | `packages/gateway/src/connectors/lazy-mesh/mesh.test.ts:396` | I15 | mesh.test.ts verifies sandbox wrapper env vars are correctly set |
 | `packages/gateway/src/connectors/lazy-mesh/mesh.ts:82` | I15 | mesh.ts spawn site routes through wrapServerSpec |
 | `packages/gateway/src/connectors/lazy-mesh/phase3-config.test.ts:12` | I15 | phase3-config.test.ts verifies I15 wiring for phase3-config.ts spawn sites |
-| `packages/gateway/src/connectors/lazy-mesh/phase3-config.ts:14` | I15 | Phase-3 wrap() helper routes each Phase-3 ServerSpec through wrapServerSpec |
-| `packages/gateway/src/connectors/lazy-mesh/phase3-config.ts:137` | I15 | phase3-config AWS spawn site routes through wrap() |
-| `packages/gateway/src/connectors/lazy-mesh/phase3-config.ts:424` | I15 | phase3-config Azure spawn site routes through wrap() |
-| `packages/gateway/src/connectors/lazy-mesh/phase3-config.ts:450` | I15 | phase3-config GCP spawn site routes through wrap() |
-| `packages/gateway/src/connectors/lazy-mesh/phase3-config.ts:503` | I15 | phase3-config IaC spawn site routes through wrap() |
-| `packages/gateway/src/connectors/lazy-mesh/phase3-config.ts:533` | I15 | phase3-config observability (Grafana/Sentry) spawn site routes through wrap() |
-| `packages/gateway/src/connectors/lazy-mesh/phase3-config.ts:566` | I15 | phase3-config observability (New Relic/Datadog) spawn site routes through wrap() |
-| `packages/gateway/src/connectors/lazy-mesh/phase3-config.ts:595` | I15 | phase3-config additional spawn site routes through wrap() |
-| `packages/gateway/src/connectors/lazy-mesh/phase3-config.ts:804` | I15 | phase3-config additional spawn site routes through wrap() |
+| `scripts/structure-audit/check-nimbus-invariants.ts` | I15 | Every Phase-3 spawn site routes through the file-local `wrap()` delegation, enforced PER SITE by static rule D10 rather than by this table. This replaced nine rows citing `lazy-mesh/phase3-config.ts:<line>`. Seven of them were already pointing at non-comment lines before that file was split into `phase3-<group>.ts` modules - `:424` read `sandboxCwd: string,` while claiming to attest the Azure spawn site, which was at `:209`. `audit:doc-refs` checks only that a cited line is in range, so the drift stayed invisible until the split pushed the numbers past EOF. A hand-maintained list of line numbers cannot track a file that changes every time a connector lands; D10 can, and fails the build when a site stops delegating. |
 | `packages/gateway/src/connectors/lazy-mesh/slot.ts:27` | I15 | MeshSpawnContext.sandboxCwd is the working-directory anchor for every I15-wrapped spawn |
 | `packages/gateway/src/connectors/lazy-mesh/user-mcp.ts:15` | I15 | user-mcp.ts spawn site routes through wrapServerSpec |
 | `packages/gateway/src/connectors/lazy-mesh/user-mcp.ts:74` | I15 | user-mcp ensureUserMcpClient uses wrapServerSpec for user-installed MCP servers |
@@ -1091,8 +1083,9 @@ Reverse-lookup table for inline comments migrated from source files during the 2
 | `packages/gateway/src/ipc/automation-rpc.ts:114` | I2 | watcher.create does not trigger HITL; watchers are read-only observers |
 | `packages/gateway/src/ipc/automation-rpc.ts:132` | I2 | watcher.delete does not trigger HITL (watcher is gateway-local, not a cloud mutation) |
 | `packages/gateway/src/ipc/deployment-rpc.ts:5` | I13 | deployment-rpc handler is NOT in Tauri ALLOWED_METHODS (only reachable via HTTP write surface) |
-| `packages/gateway/src/ipc/http-routes.ts:5` | I13 | READ_ONLY_HTTP_ROUTES is source of truth for OpenAPI drift detection |
-| `packages/gateway/src/ipc/http-routes.ts:13` | I13 | OpenAPI drift gate compares READ_ONLY_HTTP_ROUTES against v1.yaml at CI time |
+| `packages/gateway/src/ipc/http-routes.ts:2` | I13 | HTTP_ROUTES is the OpenAPI drift source of truth, explicitly NOT the full served route set |
+| `packages/gateway/src/ipc/http-routes.ts:8` | I13 | Scope bound: writes go through dispatchWriteRoute under WRITE_ROUTE_ALLOWLIST and the drift gate does not see them |
+| `packages/gateway/src/ipc/http-routes.ts:15` | I13 | Adding a route means v1.yaml too; a WRITING route additionally needs WRITE_ROUTE_ALLOWLIST |
 | `packages/gateway/src/ipc/http-server.ts:323` | I13/I14 | Location of the count assertion for both WRITE_ROUTE_ALLOWLIST and writable DB handle |
 | `packages/gateway/src/ipc/http-write-routes.test.ts:15` | I13 | Test asserts dispatchWriteRoute is the only handler for POST paths |
 | `packages/gateway/src/ipc/http-write-routes.ts:2` | I13 | Module is single source of truth for allowed POST paths; count assertion in security-invariants.test.ts |

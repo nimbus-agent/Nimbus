@@ -13,7 +13,7 @@ Security scans: `bun audit`, `trivy`, CodeQL on every PR; Dependabot for depende
 **Structure-audit gates** (also CI-enforced) sit alongside the test pyramid:
 
 - `bun run audit:invariants` — runtime-test complement: static rules `D10`–`D23`, covering `I1` (`spawn` under `connectors/` uses `extensionProcessEnv()`), the vault-key allow-list (`D11`), `I14` (`D12` — direct `db.run` / `db.exec` outside `db/write.ts`), `I15` (`D10` — every `ServerSpec` under `connectors/lazy-mesh/` routes through `wrapServerSpec(...)`), and a `D`-numbered rule each (several of them multi-part) for `I17`–`I19`, `I22`–`I27`, `I29` and `I33`. The runtime tests in `security-invariants.test.ts` stay authoritative; this gate just fails first. See [`SECURITY-INVARIANTS.md`](./SECURITY-INVARIANTS.md) for the rule-to-invariant map.
-- `bun run audit:openapi-drift` — fails if `packages/gateway/openapi/v1.yaml` and `READ_ONLY_HTTP_ROUTES` disagree.
+- `bun run audit:openapi-drift` — fails if `packages/gateway/openapi/v1.yaml` and `HTTP_ROUTES` disagree.
 - `bun run audit:coverage-floor` — per-file coverage floor (≥85% line, ≥80% branch) with a ratcheting baseline; prevents new files from landing under-tested.
 - `bun run audit:boundaries`, `audit:dead-code`, `audit:duplication`, `audit:any` — package-boundary / unused-export / token-duplication / `any`-usage gates (Phase 4 B3 structure audit).
 

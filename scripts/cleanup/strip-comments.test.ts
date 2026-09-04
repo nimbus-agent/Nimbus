@@ -24,6 +24,27 @@ describe("shouldPreserveComment", () => {
     expect(shouldPreserveComment('/// <reference types="bun-types" />')).toBe(true);
     expect(shouldPreserveComment('/// <reference path="content.d.ts" />')).toBe(true);
   });
+  test("preserves NOSONAR — stripping one silently re-opens a suppressed Sonar issue", () => {
+    expect(shouldPreserveComment("// NOSONAR justified: the regex is linear")).toBe(true);
+  });
+  test("preserves coverage-instrumentation ranges", () => {
+    expect(shouldPreserveComment("/* c8 ignore start -- constructs the real DAVClient */")).toBe(
+      true,
+    );
+    expect(shouldPreserveComment("/* c8 ignore stop */")).toBe(true);
+    expect(shouldPreserveComment("// v8 ignore next")).toBe(true);
+    expect(shouldPreserveComment("/* istanbul ignore else */")).toBe(true);
+  });
+  test("preserves x-release-please-version — it drives the version bump and audit:release-please", () => {
+    expect(
+      shouldPreserveComment('export const GATEWAY_VERSION = "7.7.0"; // x-release-please-version'),
+    ).toBe(true);
+  });
+  test("preserves bundler and test-runner directives", () => {
+    expect(shouldPreserveComment("/* @__PURE__ */")).toBe(true);
+    expect(shouldPreserveComment("/* @license MIT */")).toBe(true);
+    expect(shouldPreserveComment("// @vitest-environment jsdom")).toBe(true);
+  });
   test("does not preserve regular comments", () => {
     expect(shouldPreserveComment("// just a comment")).toBe(false);
     expect(shouldPreserveComment("/* block */")).toBe(false);
@@ -187,5 +208,55 @@ describe("stripRustSource", () => {
     expect(stripped).toContain("let c = '/';");
     expect(stripped).toContain("'a");
     expect(stripped).not.toContain("gone");
+  });
+
+  test("honours PRESERVE_PRAGMAS — the Rust path used to ignore them entirely", () => {
+    const src = `// cross-platform-ok\nlet x = 1;\n// ordinary\nlet y = 2;\n`;
+    const { stripped } = stripRustSource(src);
+    expect(stripped).toContain("cross-platform-ok");
+    expect(stripped).not.toContain("ordinary");
+  });
+
+  test("does not collapse blank runs inside a raw string", () => {
+    const src = `let s = r#"a\n\n\nb"#;\n`;
+    const { stripped } = stripRustSource(src);
+    expect(stripped).toContain("a\n\n\nb");
+  });
+});
+
+// The stripper rewrites source in place, so a bug here is a silent data change rather
+// than a failed run. These pin the two ways it used to corrupt a file.
+describe("stripTsSource — does not edit program data", () => {
+  test("leaves blank runs inside a template literal alone", () => {
+    const src = "const help = `usage\n\n\ndetails`;\n";
+    const out = stripTsSource(src, { keepJsdoc: false });
+    expect(out).toContain("usage\n\n\ndetails");
+  });
+
+  test("leaves blank runs inside a plain string alone", () => {
+    const src = 'const sql = "SELECT 1;\\n\\n\\nSELECT 2;";\n';
+    const out = stripTsSource(src, { keepJsdoc: false });
+    expect(out).toContain("SELECT 1;\\n\\n\\nSELECT 2;");
+  });
+
+  test("still collapses blank runs in code", () => {
+    const src = `const x = 1;\n// removed\n\n\n\nconst y = 2;\n`;
+    const out = stripTsSource(src, { keepJsdoc: false });
+    expect(out).not.toMatch(/\n{3,}/);
+    expect(out).not.toContain("removed");
+  });
+
+  test("a trailing comment does not weld the next statement onto its line", () => {
+    const src = `const a = 1; // gone\nconst b = 2;\n`;
+    const out = stripTsSource(src, { keepJsdoc: false });
+    expect(out).not.toContain("gone");
+    expect(out.split("\n").filter((l) => l.includes("const")).length).toBe(2);
+  });
+
+  test("keeps a preserved trailing pragma and its line break", () => {
+    const src = `export const V = "7.7.0"; // x-release-please-version\nconst next = 1;\n`;
+    const out = stripTsSource(src, { keepJsdoc: false });
+    expect(out).toContain("x-release-please-version");
+    expect(out).toContain("const next = 1;");
   });
 });

@@ -11,19 +11,36 @@ export type AgentCommand =
 
 const KV_RE = /^([A-Za-z][\w.-]*)=(.+)$/;
 
-function coerce(raw: string, kind: ParamKind, field: string): unknown | { error: string } {
+/**
+ * A coerced parameter, or why it could not be coerced.
+ *
+ * Discriminated on `ok` rather than returning the value directly beside an `{ error }` object.
+ * The previous shape was `unknown | { error: string }`, which collapses to plain `unknown` — the
+ * error arm told the type system nothing and the caller narrowed with a hand-written
+ * `"error" in v` guard. That guard also could not distinguish a FAILURE from a successfully
+ * coerced value that happened to carry an `error` key; no current `kind` produces an object, so
+ * it never fired wrongly, but that was a fact about the arms below rather than a guarantee.
+ */
+type Coerced =
+  | { readonly ok: true; readonly value: unknown }
+  | { readonly ok: false; readonly error: string };
+
+function coerce(raw: string, kind: ParamKind, field: string): Coerced {
   switch (kind) {
     case "string":
-      return raw;
+      return { ok: true, value: raw };
     case "stringArray":
-      return raw
-        .split(",")
-        .map((s) => s.trim())
-        .filter((s) => s.length > 0);
+      return {
+        ok: true,
+        value: raw
+          .split(",")
+          .map((s) => s.trim())
+          .filter((s) => s.length > 0),
+      };
     case "boolean": {
-      if (raw === "true") return true;
-      if (raw === "false") return false;
-      return { error: `${field} must be true or false` };
+      if (raw === "true") return { ok: true, value: true };
+      if (raw === "false") return { ok: true, value: false };
+      return { ok: false, error: `${field} must be true or false` };
     }
     case "number": {
       const n = Number(raw);
@@ -31,14 +48,10 @@ function coerce(raw: string, kind: ParamKind, field: string): unknown | { error:
       // validator (`typeof !== "number" || < 0 || > 1`) is entirely false for NaN — so NaN would
       // reach the agent and every `confidence >= NaN` comparison would be false, producing a brief
       // with zero decisions and no error. Infinity is rejected for the same class of reason.
-      if (!Number.isFinite(n)) return { error: `${field} must be a finite number` };
-      return n;
+      if (!Number.isFinite(n)) return { ok: false, error: `${field} must be a finite number` };
+      return { ok: true, value: n };
     }
   }
-}
-
-function isError(v: unknown): v is { error: string } {
-  return typeof v === "object" && v !== null && "error" in v;
 }
 
 /**
@@ -96,8 +109,8 @@ export function parseAgentCommand(
         detail: `'${agent}' has no parameter '${field}'.`,
       };
     const coerced = coerce(value, kind, field);
-    if (isError(coerced)) return { ok: false, reason: "bad_agent_params", detail: coerced.error };
-    params[field] = coerced;
+    if (!coerced.ok) return { ok: false, reason: "bad_agent_params", detail: coerced.error };
+    params[field] = coerced.value;
   }
   return { ok: true, agent, params };
 }

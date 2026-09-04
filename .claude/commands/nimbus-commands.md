@@ -168,7 +168,7 @@ bun run audit:duplication               # jscpd token duplication (D6)
 bun run audit:exclusion-parity               # sonar.coverage.exclusions <-> local registry drift check
 bun run audit:any                       # D8 any-count print
 bun run audit:invariants                # static invariant complement D10–D23 (spawn rule, vault-key allow-list, SQL writes, federation/identity/team-vault gates, policy, chatops, preflight, tribal, connector writes, share, egress dispatch chokepoint, exec runConfined) — see CLAUDE.md § Security Invariants
-bun run audit:openapi-drift             # OpenAPI ↔ READ_ONLY_HTTP_ROUTES drift (Phase 5 T4 PR 1)
+bun run audit:openapi-drift             # OpenAPI ↔ HTTP_ROUTES drift (Phase 5 T4 PR 1)
 
 bun scripts/structure-audit/count-any-usage.ts --check     # D8 CI gate (fails on regression OR reduction without --update)
 bun scripts/structure-audit/count-any-usage.ts --update    # rewrite docs/structure-audit/any-baseline.json

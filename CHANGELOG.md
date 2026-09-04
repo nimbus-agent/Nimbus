@@ -2,6 +2,13 @@
 
 All notable changes to the `nimbus` core (headless Gateway + CLI binary + first-party MCP connectors) are documented in this file. release-please appends new entries between this header and the most recent version below when a release PR merges.
 
+## [7.8.0](https://github.com/nimbus-agent/Nimbus/compare/v7.7.0...v7.8.0) (2026-09-03)
+
+
+### Features
+
+* **multimodal:** local audio/video understanding, indexed and searchable (S2 PR 1 of 4) ([#1429](https://github.com/nimbus-agent/Nimbus/issues/1429)) ([b995a96](https://github.com/nimbus-agent/Nimbus/commit/b995a96b2c135fa19614123df49c82033254065e))
+
 ## [7.7.0](https://github.com/nimbus-agent/Nimbus/compare/v7.6.0...v7.7.0) (2026-09-03)
 
 

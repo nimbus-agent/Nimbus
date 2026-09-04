@@ -100,7 +100,7 @@ interface AgentToolDef {
   readonly tool: string;
   readonly agent: string;
   readonly description: string;
-  readonly schema: Record<string, z.ZodTypeAny>;
+  readonly schema: Record<string, z.core.$ZodType>;
   readonly build: (args: Record<string, unknown>) => Record<string, unknown>;
 }
 

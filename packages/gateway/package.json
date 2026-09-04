@@ -40,7 +40,6 @@
     "@types/bun": "^1.4.0",
     "@types/pidusage": "^2.0.5",
     "@types/semver": "^7.8.0",
-    "@types/tar": "^7.0.87",
     "fast-check": "^4.9.0",
     "msw": "^2.15.0",
     "pidusage": "^4.0.1"

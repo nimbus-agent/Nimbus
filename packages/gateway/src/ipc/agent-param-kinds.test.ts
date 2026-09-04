@@ -20,7 +20,7 @@ describe("agent param kinds", () => {
     // this, a future change that removed every `stringArray` field entirely would still pass this
     // test. The real claim is "there are exactly three (ghost/conflicts/huddle's `namespaces`),
     // and every one of them is `.namespaces`", so the count has to be pinned too.
-    expect(arrays.length).toBe(3);
+    expect(arrays).toHaveLength(3);
     expect(arrays.every((x) => x.endsWith(".namespaces"))).toBe(true);
   });
 

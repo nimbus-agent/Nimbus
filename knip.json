@@ -1,13 +1,15 @@
 {
-  "$schema": "https://unpkg.com/knip@5/schema.json",
+  "$schema": "https://unpkg.com/knip@6/schema.json",
   "workspaces": {
     ".": {
-      "entry": ["scripts/**/*.ts"],
-      "ignore": ["**/*.test.ts"]
+      "entry": ["scripts/**/*.ts", "packages/github-actions/*/src/main.ts"],
+      "ignore": ["**/*.test.ts", "packages/github-actions/*/dist/**"]
     },
     "packages/gateway": {
       "entry": [
         "src/index.ts",
+        "src/db/query-guard-worker.ts",
+        "src/embedding/embedding-worker.ts",
         "src/perf/surfaces/sqlite-worker-sync.ts",
         "src/perf/surfaces/sqlite-worker-watcher.ts",
         "src/perf/surfaces/sqlite-worker-audit.ts",
@@ -21,10 +23,10 @@
       "project": "src/**/*.{ts,tsx}"
     },
     "packages/ui": {
-      "entry": ["src/**/*.test.{ts,tsx}", "test/**/*.test.{ts,tsx}"],
+      "entry": ["test/**/*.test.{ts,tsx}"],
       "project": "src/**/*.{ts,tsx}"
     }
   },
-  "ignoreDependencies": [],
-  "ignoreBinaries": []
+  "ignoreDependencies": ["markdownlint-cli2", "@stryker-mutator/command-runner"],
+  "ignoreBinaries": ["gitleaks", "make", "pwsh", "termsvg"]
 }

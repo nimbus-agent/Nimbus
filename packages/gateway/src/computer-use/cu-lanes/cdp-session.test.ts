@@ -227,7 +227,7 @@ describe("CdpConnection — sendAndForget", () => {
     conn.close();
     const before = f.sent.length;
     expect(() => conn.sendAndForget("Fetch.failRequest", { requestId: "r" })).not.toThrow();
-    expect(f.sent.length).toBe(before);
+    expect(f.sent).toHaveLength(before);
   });
 
   test("swallows a socket write failure rather than replacing a lane-level error", () => {

@@ -1043,7 +1043,7 @@ describe("dispatchAgentsRpc — agents.negotiate", () => {
 
 describe("the externally-invokable agent set", () => {
   test("the external agent set is exactly eleven and excludes the four", () => {
-    expect(EXTERNAL_AGENT_NAMES.length).toBe(11);
+    expect(EXTERNAL_AGENT_NAMES).toHaveLength(11);
     for (const excluded of ["preflight", "premortem", "whyPeek", "negotiate"]) {
       expect(EXTERNAL_AGENT_NAMES).not.toContain(excluded);
       expect(resolveExternalAgentMethod(excluded)).toBeNull();

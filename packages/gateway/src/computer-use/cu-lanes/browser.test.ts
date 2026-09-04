@@ -662,7 +662,7 @@ describe("openBrowserLane — the BrowserLane surface", () => {
       configure: (f) =>
         f.respondWith("Runtime.evaluate", { result: { value: "x".repeat(250_000) } }),
     });
-    expect((await lane.readText()).length).toBe(100_000);
+    expect(await lane.readText()).toHaveLength(100_000);
   });
 
   test("domSnapshot() returns the document HTML, and empty rather than null when absent", async () => {

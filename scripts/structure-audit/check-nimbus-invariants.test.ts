@@ -20,6 +20,7 @@ import {
   checkSharePublishConfinement,
   checkSpawnInvariant,
   checkSyncContextNoRawHandles,
+  checkTribalKbWriteInvariant,
   checkVaultKeyAllowList,
   checkWrapServerSpecInvariant,
   collectDbRunCensus,
@@ -450,6 +451,76 @@ describe("D12 — direct db.run / db.exec outside allow-list", () => {
     const started = performance.now();
     findDirectDbRunExec([{ relPath: "packages/gateway/src/synthetic.ts", contents: pathological }]);
     expect(performance.now() - started).toBeLessThan(1_000);
+  });
+});
+
+describe("D19 — tribal KB write-id confinement", () => {
+  // D20's sibling rule shipped with a full describe block and this one shipped with none, so
+  // until now nothing proved D19 could fail at all. An allow-list guard that never fires is
+  // indistinguishable from one that is working.
+  test("flags a KB write tool id referenced outside the write-gate", () => {
+    const v = checkTribalKbWriteInvariant([
+      {
+        relPath: "packages/gateway/src/ipc/some-handler.ts",
+        contents: `dispatch("notion_kb_append")`,
+      },
+    ]);
+    expect(v).toHaveLength(1);
+    expect(v[0]?.rule).toBe("D19-tribal-kb-write");
+    expect(v[0]?.line).toBe(1);
+  });
+
+  test("flags the confluence id too", () => {
+    const v = checkTribalKbWriteInvariant([
+      {
+        relPath: "packages/gateway/src/tribal/somewhere-else.ts",
+        contents: `const id = "confluence_kb_append";`,
+      },
+    ]);
+    expect(v).toHaveLength(1);
+  });
+
+  test("allows the write-gate itself", () => {
+    const v = checkTribalKbWriteInvariant([
+      {
+        relPath: "packages/gateway/src/tribal/tribal-write-gate.ts",
+        contents: `const ids = ["notion_kb_append", "confluence_kb_append"];`,
+      },
+    ]);
+    expect(v).toEqual([]);
+  });
+
+  test("ignores a mention inside a comment", () => {
+    const v = checkTribalKbWriteInvariant([
+      {
+        relPath: "packages/gateway/src/ipc/some-handler.ts",
+        contents: `// notion_kb_append is gated elsewhere
+const x = 1;`,
+      },
+    ]);
+    expect(v).toEqual([]);
+  });
+
+  test("skips test files", () => {
+    const v = checkTribalKbWriteInvariant([
+      {
+        relPath: "packages/gateway/src/ipc/some-handler.test.ts",
+        contents: `dispatch("notion_kb_append")`,
+      },
+    ]);
+    expect(v).toEqual([]);
+  });
+
+  test("reports the offending line number, not just the file", () => {
+    const v = checkTribalKbWriteInvariant([
+      {
+        relPath: "packages/gateway/src/ipc/some-handler.ts",
+        contents: `const a = 1;
+const b = 2;
+dispatch("notion_kb_append")`,
+      },
+    ]);
+    expect(v[0]?.line).toBe(3);
   });
 });
 

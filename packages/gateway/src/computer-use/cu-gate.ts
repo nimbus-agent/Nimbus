@@ -1188,6 +1188,24 @@ function isCuOutcomeString(v: string): boolean {
  * calls next. The one thing read from THIS call's `deps` is the live policy re-check and the
  * consent broker, both of which must reflect the CURRENT world, not a frozen one.
  */
+/**
+ * Why a live session is being terminated mid-flight, in the order the gate checks them.
+ *
+ * Named rather than inlined as a ternary chain because this string is what the audit row and
+ * the owner both see: "disabled by local config" and "disabled by org policy" are different
+ * events with different remediations, and the lane case is neither — the capability is still
+ * on, this session's lane simply stopped being allowed. Reading that off a three-arm
+ * conditional at the call site made the ordering, which is the part that matters, easy to miss.
+ *
+ * Takes CuRunDeps, not CuGateDeps: the I35 split deliberately keeps lane construction out of
+ * the deps the model-facing tool layer holds, and this decision needs neither.
+ */
+function policyRefusalReason(deps: CuRunDeps, lane: CuLane): string {
+  if (!deps.config.enabled) return "disabled by local config";
+  if (deps.enforced.capabilitiesDisabled.has(CAPABILITY)) return "disabled by org policy";
+  return `lane no longer allowed: ${lane}`;
+}
+
 export async function runAction(req: RunActionRequest, deps: CuRunDeps): Promise<RunActionOutput> {
   const live = liveSessions.get(req.sessionId);
   if (live === undefined) {
@@ -1232,11 +1250,7 @@ async function runActionExclusive(
     deps.enforced.capabilitiesDisabled.has(CAPABILITY) ||
     !laneStillAllowed
   ) {
-    const reason = !deps.config.enabled
-      ? "disabled by local config"
-      : deps.enforced.capabilitiesDisabled.has(CAPABILITY)
-        ? "disabled by org policy"
-        : `lane no longer allowed: ${session.envelope.lane}`;
+    const reason = policyRefusalReason(deps, session.envelope.lane);
     session.close("terminated_policy", openDeps.now());
     await finalizeSession({
       deps: openDeps,

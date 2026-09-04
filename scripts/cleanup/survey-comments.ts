@@ -2,45 +2,9 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import { type CommentHit, iterateSourceFiles, REPO_ROOT, relPath } from "./lib.ts";
-
-const MARKERS = [
-  { name: "I-numbered", pattern: /\bI[1-9]\d?\b/ },
-  { name: "HITL", pattern: /\bHITL\b/ },
-  { name: "WHY", pattern: /\bWHY:/ },
-  { name: "NOTE", pattern: /\bNOTE:/ },
-  { name: "WORKAROUND", pattern: /\bWORKAROUND\b/i },
-  { name: "BUG-ref", pattern: /\bBUG-[A-Z0-9-]+\b/ },
-  { name: "ticket-ref", pattern: /#\d{2,}/ },
-  { name: "TODO", pattern: /\bTODO\b/ },
-  { name: "FIXME", pattern: /\bFIXME\b/ },
-  { name: "HACK", pattern: /\bHACK\b/ },
-  { name: "XXX", pattern: /\bXXX\b/ },
-  { name: "security/timing", pattern: /\b(constant-?time|side-?channel|leak)\b/i },
-];
-
-function findCommentLines(source: string): Array<{ line: number; text: string }> {
-  const lines = source.split(/\r?\n/);
-  const hits: Array<{ line: number; text: string }> = [];
-  let inBlock = false;
-  for (let i = 0; i < lines.length; i++) {
-    const raw = lines[i];
-    if (raw === undefined) continue;
-    if (inBlock) {
-      hits.push({ line: i + 1, text: raw.trim() });
-      if (raw.includes("*/")) inBlock = false;
-      continue;
-    }
-    const slashIdx = raw.indexOf("//");
-    const blockIdx = raw.indexOf("/*");
-    if (blockIdx >= 0 && (slashIdx < 0 || blockIdx < slashIdx)) {
-      hits.push({ line: i + 1, text: raw.slice(blockIdx).trim() });
-      if (!raw.slice(blockIdx).includes("*/")) inBlock = true;
-    } else if (slashIdx >= 0) {
-      hits.push({ line: i + 1, text: raw.slice(slashIdx).trim() });
-    }
-  }
-  return hits;
-}
+// One definition of "load-bearing", shared with strip-comments.ts so the surveyor and the
+// guard that refuses to strip these files cannot drift apart.
+import { findCommentLines, LOAD_BEARING_MARKERS } from "./protected-comments.ts";
 
 async function main() {
   const allHits: CommentHit[] = [];
@@ -49,7 +13,7 @@ async function main() {
     const source = await readFile(file, "utf8");
     const lines = findCommentLines(source);
     for (const { line, text } of lines) {
-      for (const { name, pattern } of MARKERS) {
+      for (const { name, pattern } of LOAD_BEARING_MARKERS) {
         if (pattern.test(text)) {
           allHits.push({ file: relPath(file), line, text, marker: name });
           break;

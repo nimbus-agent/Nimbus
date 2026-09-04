@@ -21,7 +21,6 @@
     "@nimbus-dev/client": "^0.17.3",
     "@nimbus-dev/sdk": "^1.19.0",
     "ink": "^7.1.1",
-    "ink-text-input": "^6.0.0",
     "pino": "^10.3.1",
     "react": "^19.2.7",
     "yaml": "^2.9.0"

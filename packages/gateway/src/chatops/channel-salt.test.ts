@@ -23,7 +23,7 @@ describe("channel salt", () => {
   test("generates a 32-byte salt on first use and persists it", async () => {
     const vault = fakeVault();
     const first = await ensureChannelSalt(vault);
-    expect(Buffer.from(first, "base64").length).toBe(32);
+    expect(Buffer.from(first, "base64")).toHaveLength(32);
     expect(await vault.get(CHATOPS_CHANNEL_SALT)).toBe(first);
   });
 
@@ -36,7 +36,7 @@ describe("channel salt", () => {
     const vault = fakeVault();
     await vault.set(CHATOPS_CHANNEL_SALT, "truncated");
     const salt = await ensureChannelSalt(vault);
-    expect(Buffer.from(salt, "base64").length).toBe(32);
+    expect(Buffer.from(salt, "base64")).toHaveLength(32);
   });
 
   test("the hash is deterministic per salt and never contains the channel id", () => {

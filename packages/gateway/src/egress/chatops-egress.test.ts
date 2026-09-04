@@ -64,7 +64,7 @@ describe("chatops egress appender", () => {
     db.close(); // make the append fail
     await expect(posts.reply("slack", "C1", "hi")).rejects.toBeInstanceOf(EgressAppendFailedError);
     // The whole point of fail-closed: proving it threw is not proving nothing left.
-    expect(s.calls.length).toBe(0);
+    expect(s.calls).toHaveLength(0);
     db = new Database(":memory:"); // so afterEach's close() is valid
   });
 

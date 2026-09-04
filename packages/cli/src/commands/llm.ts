@@ -4,7 +4,17 @@ import { withGatewayIpc } from "../lib/with-gateway-ipc.ts";
 // Mirrors gateway `llm/route-availability.ts`'s `RouteAvailability["reason"]` — kept as an
 // open string here (not re-imported: cli has no source dependency on gateway, IPC-only) so a
 // future reason value degrades to its raw text rather than a type error.
-type RouteReason = "ok" | "provider_unreachable" | "model_absent" | "not_configured" | string;
+//
+// The `string & {}` arm is what keeps that openness WITHOUT the four literals being swallowed.
+// A bare `| string` collapses the whole union to `string`, so the known values stop being
+// suggested and a typo in one of them stops being visible. This form accepts any string exactly
+// as before and keeps the four as named members.
+type RouteReason =
+  | "ok"
+  | "provider_unreachable"
+  | "model_absent"
+  | "not_configured"
+  | (string & {});
 
 type RouteStatus = {
   routeId: string;
@@ -100,7 +110,7 @@ function printRouteTable(routes: RouteStatus[]): void {
 function requireRoutesArray(res: unknown): unknown[] {
   const routes = (res as { routes?: unknown } | null | undefined)?.routes;
   if (!Array.isArray(routes)) {
-    throw new Error(
+    throw new TypeError(
       "llm.status returned an unexpected payload: no `routes` array. " +
         "The gateway is likely a different version than this CLI.",
     );
