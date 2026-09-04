@@ -8,7 +8,10 @@ import type { Database } from "bun:sqlite";
 import { describe, expect, test } from "bun:test";
 // `startServerWithoutClipsVault` is deliberately NOT imported yet: Task 2 adds it together with
 // the test that uses it. Biome fails an unused import, so Step 7's lint would go red here.
-import { startServerWithClipToken } from "../../../src/ipc/http-api-test-server.ts";
+import {
+  startServerWithClipToken,
+  startServerWithoutClipsVault,
+} from "../../../src/ipc/http-api-test-server.ts";
 
 /**
  * The bridge the route walks, as `ownership-pass.ts` and the symbol sync write it:
@@ -104,4 +107,47 @@ describe("GET /v1/items/resolve-file (integration)", () => {
       }
     },
   );
+
+  test("401s an unknown token", async () => {
+    const { port, stop } = await startServerWithClipToken(["resolve"]);
+    try {
+      const res = await get(port, "not-a-real-token", coord("github", "acme/web", "main/a.ts"));
+      expect(res.status).toBe(401);
+      expect(await res.json()).toEqual({ error: "unauthorized" });
+    } finally {
+      stop();
+    }
+  });
+
+  // A browser paired before scopes existed holds LEGACY_SCOPES = ["clip", "briefs"]. The body's
+  // `required` / `granted` are what the panel turns into a `nimbus clip scopes` line, so they are
+  // asserted by value, not merely by status.
+  test("403s a legacy-scoped token, naming the gap", async () => {
+    const { port, token, stop } = await startServerWithClipToken(["clip", "briefs"]);
+    try {
+      const res = await get(port, token, coord("github", "acme/web", "main/a.ts"));
+      expect(res.status).toBe(403);
+      expect(await res.json()).toEqual({
+        error: "insufficient_scope",
+        required: "resolve",
+        granted: ["clip", "briefs"],
+      });
+    } finally {
+      stop();
+    }
+  });
+
+  // The branch the shipped browser client reads as "this gateway is older than the route": it
+  // resolves to `unsupported`, withholds the file lanes and says nothing. It must stay a 404 and
+  // must never fall through to the PUBLIC /v1/items/* table.
+  test("404s a named refusal when the clips surface is not mounted", async () => {
+    const { port, stop } = await startServerWithoutClipsVault();
+    try {
+      const res = await get(port, undefined, coord("github", "acme/web", "main/a.ts"));
+      expect(res.status).toBe(404);
+      expect(await res.json()).toEqual({ error: "resolve_disabled" });
+    } finally {
+      stop();
+    }
+  });
 });
