@@ -25,10 +25,38 @@ import { upsertIndexedItem } from "../../../src/index/item-store.ts";
 import { CURRENT_SCHEMA_VERSION } from "../../../src/index/local-index.ts";
 import { runIndexedSchemaMigrations } from "../../../src/index/migrations/runner.ts";
 import type { MediaGateDeps } from "../../../src/multimodal/media-gate.ts";
+import type { MediaCloudDeps } from "../../../src/multimodal/media-pass.ts";
 import { runMediaPass } from "../../../src/multimodal/media-pass.ts";
+import {
+  DEFAULT_FETCH_BUDGET_BYTES,
+  DEFAULT_PREFER_RENDITIONS,
+} from "../../../src/multimodal/multimodal-config.ts";
 
 let db: Database;
 let root: string;
+
+/**
+ * `MediaPassDeps.cloudBytes` is REQUIRED (PR 3), but every candidate `addMedia` seeds is
+ * `filesystem`-backed (a real `sourcePath`), so `runMediaPass` never reaches the cloud arm at all
+ * in this file — its whole point is the LOCAL arm's egress claim. Every collaborator here THROWS
+ * if actually invoked, so a future change that accidentally makes one of this file's candidates
+ * cloud-backed (or otherwise routes through `resolveCloudByteUrl`/`fetchCloudBytes`) fails LOUDLY
+ * here, rather than silently turning this into a cloud-path test under a name and a doc comment
+ * that both say it is not one.
+ */
+function unreachableCloudBytes(): MediaCloudDeps {
+  const unreachable = (): never => {
+    throw new Error(
+      "local-pass-zero-egress.test.ts: the cloud arm must not be reached — every candidate here is local",
+    );
+  };
+  return {
+    bearerFor: () => unreachable(),
+    fetchFn: () => unreachable(),
+    appendEgress: () => unreachable(),
+    sleep: () => unreachable(),
+  };
+}
 
 function addMedia(name: string): void {
   const p = join(root, name);
@@ -91,6 +119,9 @@ describe("local understanding pass — egress", () => {
       gate: gate(true, () => {
         called += 1;
       }),
+      fetchBudgetBytes: DEFAULT_FETCH_BUDGET_BYTES,
+      preferRenditions: DEFAULT_PREFER_RENDITIONS,
+      cloudBytes: unreachableCloudBytes(),
     });
 
     expect(called).toBe(1);
@@ -120,6 +151,9 @@ describe("local understanding pass — egress", () => {
       nowMs: () => 5000,
       passId: "claim",
       gate: gate(true, () => undefined),
+      fetchBudgetBytes: DEFAULT_FETCH_BUDGET_BYTES,
+      preferRenditions: DEFAULT_PREFER_RENDITIONS,
+      cloudBytes: unreachableCloudBytes(),
     });
 
     expect(countEgress()).toBe(0);
@@ -143,6 +177,9 @@ describe("local understanding pass — egress", () => {
       gate: gate(false, () => {
         called += 1;
       }),
+      fetchBudgetBytes: DEFAULT_FETCH_BUDGET_BYTES,
+      preferRenditions: DEFAULT_PREFER_RENDITIONS,
+      cloudBytes: unreachableCloudBytes(),
     });
 
     expect(called).toBe(0);
