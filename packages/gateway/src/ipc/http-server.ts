@@ -24,6 +24,7 @@ import { IdentityStore } from "../identity/identity-store.ts";
 import { dispatchScimRead, isScimPath } from "../identity/scim-http-routes.ts";
 import { buildItemListSql, parseRelativeSinceToWindowMs } from "../index/item-list-query.ts";
 import { resolveItemByUrl } from "../index/resolve-by-url.ts";
+import { resolveFileByRemote } from "../index/resolve-file-by-remote.ts";
 import { ftsMatchQuery } from "../search/hybrid-internal.ts";
 import { formatPrometheus } from "../status/prometheus-format.ts";
 import type { TargetedFetchOutcome } from "../sync/targeted-fetch.ts";
@@ -47,6 +48,7 @@ import {
   ROUTE_KEY_EGRESS_PROVE,
   ROUTE_KEY_EGRESS_VERIFY,
   ROUTE_KEY_ITEMS_RESOLVE,
+  ROUTE_KEY_ITEMS_RESOLVE_FILE,
 } from "./http-route-auth.ts";
 import {
   dispatchWriteRoute,
@@ -661,6 +663,48 @@ async function handleItemsResolve(
   return json(resolveItemByUrl(db, raw, fetchable === undefined ? undefined : { fetchable }));
 }
 
+// GET /v1/items/resolve-file?service=&repo=&refAndPath= — bearer-authed read under the `resolve`
+// scope, mounted inline for exactly the reason handleItemsResolve is: the "/v1/items/*" entry in
+// dispatchReadOnlyDataGet's table is PUBLIC, so routing this through it would serve the reader's
+// indexed-file set to any local process on the machine.
+//
+// Appends NO egress row. Nothing leaves the machine — it reads the local graph and answers.
+async function handleItemsResolveFile(
+  req: Request,
+  url: URL,
+  db: Database,
+  opts: ReadOnlyHttpServerOptions,
+): Promise<Response> {
+  const clipsVault = opts.clipsVault;
+  if (clipsVault === undefined) {
+    // The same "surface not mounted" shape as handleItemsResolve. Load-bearing beyond tidiness:
+    // the shipped browser client reads a 404 from this route as "gateway older than the route"
+    // and withholds its file lanes silently. A 500 here would turn a correct, quiet degradation
+    // into a visible error on every gateway that does not mount the clips surface.
+    return json({ error: "resolve_disabled" }, 404);
+  }
+  const auth = await requireScopedClipToken(req, clipsVault, ROUTE_KEY_ITEMS_RESOLVE_FILE);
+  if (!auth.ok) return auth.response;
+
+  const service = coordinateParam(url, "service");
+  const repo = coordinateParam(url, "repo");
+  const refAndPath = coordinateParam(url, "refAndPath");
+  if (service === null || repo === null || refAndPath === null) {
+    return json({ error: "missing_coordinate" }, 400);
+  }
+
+  const result = resolveFileByRemote(db, { service, repo, refAndPath });
+  return json(
+    result.ok
+      ? // Field by field, naming `path` alone. NOT a spread and NOT a destructured rest:
+        // `ResolveFileResult` also carries `repoRoot` — the reader's local filesystem path — and
+        // `fileEntityId`, and this route is reachable by any holder of a clip token over HTTP. A
+        // field added to that type later cannot leak here unnamed.
+        { ok: true, path: result.path }
+      : { ok: false, reason: result.reason, repo: result.repo },
+  );
+}
+
 /**
  * `?name=` as a non-negative integer, or undefined.
  *
@@ -673,6 +717,22 @@ function intParam(url: URL, name: string): number | undefined {
   if (raw === null || raw.trim() === "") return undefined;
   const n = Number.parseInt(raw, 10);
   return Number.isSafeInteger(n) && n >= 0 ? n : undefined;
+}
+
+/**
+ * A REQUIRED `?name=` coordinate, or `null` when absent or blank.
+ *
+ * Blank is refused rather than passed through. `resolveFileByRemote` builds `":acme/web"` from an
+ * empty `service`, matches no workspace, and answers `remote_not_tracked` — telling the caller
+ * they have no local checkout of a repository they never named. A confident wrong answer is worse
+ * than a refusal, and that one is the panel's most permanent-sounding miss sentence.
+ *
+ * Returns the value UNTRIMMED, matching `handleItemsResolve`'s treatment of `?url=`: the blankness
+ * test is a guard, not a normalisation, and a path segment's own whitespace is not ours to edit.
+ */
+function coordinateParam(url: URL, name: string): string | null {
+  const raw = url.searchParams.get(name);
+  return raw === null || raw.trim() === "" ? null : raw;
 }
 
 /**
@@ -1084,6 +1144,8 @@ async function tryBearerAuthedGet(
 ): Promise<Response | null> {
   if (req.method !== "GET") return null;
   if (url.pathname === "/v1/items/resolve") return await handleItemsResolve(req, url, db, opts);
+  if (url.pathname === "/v1/items/resolve-file")
+    return await handleItemsResolveFile(req, url, db, opts);
   if (url.pathname === "/v1/egress") return await handleEgressList(req, url, db, opts);
   if (url.pathname === "/v1/egress/head") return await handleEgressHead(req, db, opts);
   if (url.pathname === "/v1/egress/verify") return await handleEgressVerify(req, db, opts);
