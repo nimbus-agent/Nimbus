@@ -48,13 +48,18 @@ export function mediaExtensionModality(ext: string): MediaModality | undefined {
 }
 
 /**
- * `(service, type)` -> modality. A pair that is absent returns undefined and the candidate is
- * skipped as `unresolvable_modality` — never defaulted, since guessing the modality means handing
- * bytes to the wrong model.
+ * `(service, type)` -> modality, for services whose item TYPE names the modality directly
+ * (`filesystem:media_av`, `filesystem:media_image`). A pair that is absent returns undefined and
+ * the candidate is skipped as `unresolvable_modality` — never defaulted, since guessing the
+ * modality means handing bytes to the wrong model.
  *
- * PR 3 adds the cloud pairs (`google_photos:photo`, `zoom:recording`, ...). Deliberately not
- * pre-populated: an entry here with no `fetchBytes` behind it would make discovery surface
- * candidates the pass can only skip.
+ * Mime-keyed services (`MIME_KEYED_SERVICES`, below) must NEVER be added here, even for a
+ * generic-sounding type like `zoom:recording`. This table has no mime condition — an entry here
+ * for a mime-keyed service's `(service, type)` pair would make discovery's SQL admit EVERY item of
+ * that type regardless of its declared mime, while `modalityForItem` still routes that service
+ * through the mime check and drops the non-matching ones — the exact starvation this task exists
+ * to prevent, reintroduced through this table instead of the mime arm. A mime-keyed service is
+ * discovered ONLY through `MIME_KEYED_SERVICES` + its declared mime.
  */
 const ITEM_TYPE_MODALITY: ReadonlyMap<string, MediaModality> = new Map([
   ["filesystem:media_av", "av"],
@@ -100,21 +105,37 @@ export function modalityForItem(
   return ITEM_TYPE_MODALITY.get(`${service}:${type}`);
 }
 
+export interface MediaItemTypePair {
+  readonly service: string;
+  readonly type: string;
+}
+
 /**
- * The `item.type` values that carry a given modality, derived from ITEM_TYPE_MODALITY so a new
- * registry entry is picked up automatically. Undefined modality means every media type.
+ * The `(service, type)` pairs that carry a given modality, derived from ITEM_TYPE_MODALITY so a
+ * new registry entry here is picked up automatically. Undefined modality means every pair in the
+ * table. Mime-keyed services are never in this table (see `MIME_KEYED_SERVICES` above) and are
+ * discovered through the separate mime arm instead.
+ *
+ * PAIR-keyed, not type-keyed: discovery's SQL arm built from this must match the same shape
+ * `modalityForItem`'s non-mime-keyed branch does (`ITEM_TYPE_MODALITY.get(`${service}:${type}`)`).
+ * A bare `src.type IN (...)` clause matches the type across EVERY service regardless of which one
+ * registered it — a future `zoom:recording` pair would also admit any other service that happens
+ * to use `type: "recording"`, which the JS check would then drop for lacking a registered pair,
+ * under-filling the SQL page exactly like the mime-arm starvation bug this task fixes.
  *
  * Discovery needs this because its LIMIT is applied by SQLite: filtering modality in JS after the
  * fetch silently under-fills the page and makes a resumable pass look finished when it is not.
  */
-export function mediaItemTypesForModality(modality?: MediaModality): readonly string[] {
-  const out = new Set<string>();
+export function mediaItemTypePairsForModality(
+  modality?: MediaModality,
+): readonly MediaItemTypePair[] {
+  const out: MediaItemTypePair[] = [];
   for (const [key, m] of ITEM_TYPE_MODALITY) {
     if (modality !== undefined && m !== modality) continue;
-    const type = key.slice(key.indexOf(":") + 1);
-    out.add(type);
+    const sep = key.indexOf(":");
+    out.push({ service: key.slice(0, sep), type: key.slice(sep + 1) });
   }
-  return [...out];
+  return out;
 }
 
 /**
