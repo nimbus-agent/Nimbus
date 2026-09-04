@@ -67,6 +67,33 @@ function parseBool(raw: string): boolean | undefined {
   return undefined;
 }
 
+/**
+ * Assign a boolean key when — and only when — the raw value actually parses as one.
+ *
+ * The whole file's contract for a malformed value is "leave the field UNSET so the default
+ * survives", never "coerce to false"; written once here so the ~30 boolean keys in this file
+ * cannot each re-derive it and one of them get it wrong.
+ */
+function assignBool(valRaw: string, assign: (b: boolean) => void): void {
+  const b = parseBool(valRaw);
+  if (b !== undefined) assign(b);
+}
+
+/**
+ * Assign an integer key when it parses AND lands inside `[min, max]` (both inclusive).
+ *
+ * Out-of-range is REJECTED, not clamped: clamping leaves the running config silently disagreeing
+ * with what the file says, which is the harder of the two failures to diagnose.
+ */
+function assignBoundedInt(
+  valRaw: string,
+  bounds: { readonly min: number; readonly max: number },
+  assign: (n: number) => void,
+): void {
+  const n = parseIntDec(valRaw);
+  if (n !== undefined && n >= bounds.min && n <= bounds.max) assign(n);
+}
+
 function forEachSectionEntry(
   source: string,
   sectionHeader: string,
@@ -291,11 +318,11 @@ export const DEFAULT_NIMBUS_LLM_TOML: NimbusLlmToml = {
 
 function applyNimbusLlmKey(out: Partial<NimbusLlmToml>, key: string, valRaw: string): void {
   switch (key) {
-    case "prefer_local": {
-      const b = parseBool(valRaw);
-      if (b !== undefined) out.preferLocal = b;
+    case "prefer_local":
+      assignBool(valRaw, (b) => {
+        out.preferLocal = b;
+      });
       break;
-    }
     // `remote_model` was removed on 2026-08-28 alongside `classifier_model`, for the same
     // reason and with the same handling: a stale key in an existing nimbus.toml is ignored.
     // `classifier_model` was removed on 2026-08-28 and is deliberately NOT parsed here: the
@@ -308,26 +335,26 @@ function applyNimbusLlmKey(out: Partial<NimbusLlmToml>, key: string, valRaw: str
     case "llamacpp_server_path":
       out.llamacppServerPath = parseString(valRaw);
       break;
-    case "min_reasoning_params": {
-      const n = parseIntDec(valRaw);
-      if (n !== undefined && n > 0) out.minReasoningParams = n;
+    case "min_reasoning_params":
+      assignBoundedInt(valRaw, { min: 1, max: Number.MAX_SAFE_INTEGER }, (n) => {
+        out.minReasoningParams = n;
+      });
       break;
-    }
-    case "enforce_air_gap": {
-      const b = parseBool(valRaw);
-      if (b !== undefined) out.enforceAirGap = b;
+    case "enforce_air_gap":
+      assignBool(valRaw, (b) => {
+        out.enforceAirGap = b;
+      });
       break;
-    }
-    case "max_agent_depth": {
-      const n = parseIntDec(valRaw);
-      if (n !== undefined && n >= 1 && n <= 10) out.maxAgentDepth = n;
+    case "max_agent_depth":
+      assignBoundedInt(valRaw, { min: 1, max: 10 }, (n) => {
+        out.maxAgentDepth = n;
+      });
       break;
-    }
-    case "max_tool_calls_per_session": {
-      const n = parseIntDec(valRaw);
-      if (n !== undefined && n >= 1 && n <= 200) out.maxToolCallsPerSession = n;
+    case "max_tool_calls_per_session":
+      assignBoundedInt(valRaw, { min: 1, max: 200 }, (n) => {
+        out.maxToolCallsPerSession = n;
+      });
       break;
-    }
     case "route_priority": {
       // `parseStringArray` THROWS on a non-bracket-delimited value. Unguarded, that
       // escapes into `loadTomlSection`'s catch and reverts the WHOLE [llm] section —
@@ -343,21 +370,21 @@ function applyNimbusLlmKey(out: Partial<NimbusLlmToml>, key: string, valRaw: str
       }
       break;
     }
+    case "local_context_tokens":
+      // A window below what `num_predict` alone reserves cannot hold a prompt at all, so a typo
+      // there would be worse than the default it replaced. Rejected rather than clamped, per
+      // `assignBoundedInt`.
+      assignBoundedInt(valRaw, { min: 2048, max: Number.MAX_SAFE_INTEGER }, (n) => {
+        out.localContextTokens = n;
+      });
+      break;
     default:
-      applyNimbusLlmNumericKey(out, key, valRaw);
       break;
   }
 }
 
 const LLM_LOCAL_TABLE_PREFIX = "[llm.local.";
 const LLM_REMOTE_TABLE_PREFIX = "[llm.remote.";
-
-/** Records a `key = value` line into the current `[llm.local.<name>]` bucket, if any. */
-function applyLlmLocalTableLine(bucket: Record<string, string> | undefined, trimmed: string): void {
-  if (bucket === undefined) return;
-  const kv = splitKeyValue(trimmed);
-  if (kv !== undefined) bucket[kv.key] = kv.valRaw;
-}
 
 /**
  * If `trimmed` is a `[llm.local.<name>]` header, resolves its id via the shared
@@ -413,7 +440,7 @@ function collectLlmKvSections(
       continue;
     }
     if (currentId === undefined) continue;
-    applyLlmLocalTableLine(accum.get(currentId), trimmed);
+    applyKvLine(accum.get(currentId), trimmed);
   }
 
   return accum;
@@ -529,21 +556,6 @@ function parseLlmTaskPins(source: string): Map<LlmTaskType, string> {
     if (routeId.length > 0) out.set(key, routeId);
   });
   return out;
-}
-
-/**
- * The bounded-integer `[llm]` keys, split out of the switch above to keep it under the
- * cognitive-complexity gate (Sonar `S3776`). Each is "parse, bounds-check, assign" — the same
- * three lines with different bounds, which is exactly the shape that reads better apart from a
- * switch of one-liners.
- */
-function applyNimbusLlmNumericKey(out: Partial<NimbusLlmToml>, key: string, valRaw: string): void {
-  if (key !== "local_context_tokens") return;
-  const n = parseIntDec(valRaw);
-  // A window below what `num_predict` alone reserves cannot hold a prompt at all, so a typo
-  // there would be worse than the default it replaced. Reject rather than clamp: clamping
-  // silently disagrees with what the file says.
-  if (n !== undefined && n >= 2048) out.localContextTokens = n;
 }
 
 export function parseNimbusTomlLlmSection(source: string): Partial<NimbusLlmToml> {
@@ -1553,7 +1565,14 @@ function beginQuorumTable(
   return id;
 }
 
-/** Records a `key = value` line into the current sub-table's bucket, if any. */
+/**
+ * Records a `key = value` line into the current sub-table's bucket, if any.
+ *
+ * ONE definition for every `[<section>.<id>]` sub-table parser in this file — `[llm.local.*]`,
+ * `[hitl.quorum."*"]` and the rest all accumulate raw kv strings identically, and a second copy of
+ * these four lines is a second place for "a line outside any table is DROPPED, never misfiled into
+ * the previous table" to drift.
+ */
 function applyKvLine(bucket: Record<string, string> | undefined, trimmed: string): void {
   if (bucket === undefined) return;
   const kv = splitKeyValue(trimmed);

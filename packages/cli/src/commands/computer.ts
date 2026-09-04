@@ -76,6 +76,14 @@ function exitCodeForCloseReason(closeReason: string | null): number {
 }
 
 /**
+ * The line printed when a watched session closes. Names the gateway's reason when it gave one —
+ * `null` is the ordinary owner-initiated close, which needs no parenthetical.
+ */
+function closedSessionLine(closeReason: string | null): string {
+  return closeReason === null ? "Session closed.\n" : `Session closed (${closeReason}).\n`;
+}
+
+/**
  * Canonicalise one owner-supplied origin, or REFUSE it — CLIENT-side, before any IPC call.
  *
  * The gateway's own `normalizeOrigin` (`computer-use/cu-request-policy.ts`) enforces the exact same
@@ -654,11 +662,7 @@ async function watchSessionUntilClosed(
       lastActionsUsed = entry.actionsUsed;
     }
     if (!entry.open) {
-      deps.sink.out(
-        entry.closeReason === null
-          ? "Session closed.\n"
-          : `Session closed (${entry.closeReason}).\n`,
-      );
+      deps.sink.out(closedSessionLine(entry.closeReason));
       return exitCodeForCloseReason(entry.closeReason);
     }
     // The sleep is raced too: most of this loop's life is spent here, so it is where a second

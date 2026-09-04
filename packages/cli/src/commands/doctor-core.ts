@@ -486,6 +486,29 @@ export function doctorPrintIndexFromSnapshot(snap: { index?: { totalItems?: unkn
  * `reason` is the payload that matters. "unavailable" alone is what the log already said and what
  * nobody could act on.
  */
+/** A non-empty string field, or null. An empty string carries no more detail than an absent one. */
+function detailField(rec: Record<string, unknown>, key: string): string | null {
+  const v = rec[key];
+  return typeof v === "string" && v !== "" ? v : null;
+}
+
+/** ` (detail)`, or "" — so no message body has to nest a template literal to stay optional. */
+function parenSuffix(detail: string | null): string {
+  return detail === null ? "" : ` (${detail})`;
+}
+
+/** `: detail`, or "" — the same, for the messages that read as a continuation. */
+function colonSuffix(detail: string | null): string {
+  return detail === null ? "" : `: ${detail}`;
+}
+
+/** How long the embedder has been warming, as `"12s"` — null when no finite elapsed time. */
+function warmingElapsed(rec: Record<string, unknown>): string | null {
+  const ms = rec["elapsedMs"];
+  if (typeof ms !== "number" || !Number.isFinite(ms)) return null;
+  return `${String(Math.max(0, Math.round(ms / 1000)))}s`;
+}
+
 export function doctorPrintEmbeddingFromSnapshot(snap: { embedding?: unknown }): number {
   const emb = snap.embedding;
   // A gateway that predates this field says nothing about embeddings. Stay silent rather than
@@ -495,43 +518,34 @@ export function doctorPrintEmbeddingFromSnapshot(snap: { embedding?: unknown }):
   }
   const rec = emb as Record<string, unknown>;
   const state = typeof rec["state"] === "string" ? rec["state"] : "";
-  const reason = typeof rec["reason"] === "string" && rec["reason"] !== "" ? rec["reason"] : null;
-  const model = typeof rec["model"] === "string" && rec["model"] !== "" ? rec["model"] : null;
+  const reason = detailField(rec, "reason");
 
-  if (state === "ready") {
-    console.log(`[ok] Embeddings: ready${model === null ? "" : ` (${model})`}.`);
-    return 0;
+  switch (state) {
+    case "ready":
+      console.log(`[ok] Embeddings: ready${parenSuffix(detailField(rec, "model"))}.`);
+      return 0;
+    case "disabled":
+      console.log(
+        `[ok] Embeddings: disabled by configuration — semantic search is off by design${parenSuffix(reason)}.`,
+      );
+      return 0;
+    case "warming":
+      console.log(
+        `[warn] Embeddings: still loading${parenSuffix(warmingElapsed(rec))} — semantic search is not available yet.`,
+      );
+      return 1;
+    case "unavailable":
+      console.log(
+        `[fail] Embeddings: unavailable — semantic search is disabled for this gateway run${colonSuffix(reason)}`,
+      );
+      return 2;
+    default:
+      // An unrecognised state is not evidence of health. Fail loudly rather than pass by default.
+      console.log(
+        `[fail] Embeddings: unrecognised runtime state ${JSON.stringify(state)} — treat as not working.`,
+      );
+      return 2;
   }
-  if (state === "disabled") {
-    console.log(
-      `[ok] Embeddings: disabled by configuration — semantic search is off by design${
-        reason === null ? "" : ` (${reason})`
-      }.`,
-    );
-    return 0;
-  }
-  if (state === "warming") {
-    const ms = rec["elapsedMs"];
-    const secs =
-      typeof ms === "number" && Number.isFinite(ms) ? Math.max(0, Math.round(ms / 1000)) : null;
-    console.log(
-      `[warn] Embeddings: still loading${secs === null ? "" : ` (${String(secs)}s)`} — semantic search is not available yet.`,
-    );
-    return 1;
-  }
-  if (state === "unavailable") {
-    console.log(
-      `[fail] Embeddings: unavailable — semantic search is disabled for this gateway run${
-        reason === null ? "" : `: ${reason}`
-      }`,
-    );
-    return 2;
-  }
-  // An unrecognised state is not evidence of health. Fail loudly rather than pass by default.
-  console.log(
-    `[fail] Embeddings: unrecognised runtime state ${JSON.stringify(state)} — treat as not working.`,
-  );
-  return 2;
 }
 
 export function doctorPrintHealthFromSnapshot(snap: { connectorHealth?: unknown }): number {

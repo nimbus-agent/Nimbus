@@ -483,6 +483,46 @@ export function collectMediaFiles(
   return found;
 }
 
+/**
+ * What the walk should do with ONE directory entry. A closed union rather than a bare
+ * `FoundMediaFile | undefined`, because "descend into it" and "ignore it" are different answers
+ * and collapsing them is how a directory silently stops being traversed.
+ */
+type MediaWalkStep =
+  | { readonly kind: "ignore" }
+  | { readonly kind: "descend"; readonly dir: string }
+  | { readonly kind: "media"; readonly file: FoundMediaFile };
+
+const IGNORE_ENTRY: MediaWalkStep = { kind: "ignore" };
+
+/**
+ * Classify one directory entry, applying BOTH exclusion checks the code walk applies (bare name
+ * and root-relative path) so the two walks stay one behaviour.
+ *
+ * Split out of the recursion so the walk itself carries only the bounds and the descent, and the
+ * per-entry rules read as one ordered list rather than as loop-body control flow.
+ */
+function classifyMediaEntry(
+  root: string,
+  exclude: readonly string[],
+  dir: string,
+  ent: Dirent,
+): MediaWalkStep {
+  const name = String(ent.name);
+  if (exclude.includes(name)) return IGNORE_ENTRY;
+  const full = join(dir, name);
+  if (isExcluded(relative(root, full), exclude)) return IGNORE_ENTRY;
+  if (ent.isDirectory()) return { kind: "descend", dir: full };
+  if (!ent.isFile()) return IGNORE_ENTRY;
+  const dot = name.lastIndexOf(".");
+  // Lowercased once: `MEDIA_EXTENSIONS` is a lowercase set and `mediaExtensionModality` folds
+  // case itself, so `.MP4` and `.mp4` reach both checks as the same extension.
+  const ext = (dot >= 0 ? name.slice(dot) : "").toLowerCase();
+  if (!MEDIA_EXTENSIONS.has(ext)) return IGNORE_ENTRY;
+  const modality = mediaExtensionModality(ext);
+  return modality === undefined ? IGNORE_ENTRY : { kind: "media", file: { path: full, modality } };
+}
+
 function walkMediaFilesRecursive(
   root: string,
   exclude: readonly string[],
@@ -502,30 +542,11 @@ function walkMediaFilesRecursive(
     if (found.length >= maxFiles) {
       return;
     }
-    const name = String(ent.name);
-    if (exclude.includes(name)) {
-      continue;
-    }
-    const full = join(dir, name);
-    const rel = relative(root, full);
-    if (isExcluded(rel, exclude)) {
-      continue;
-    }
-    if (ent.isDirectory()) {
-      walkMediaFilesRecursive(root, exclude, maxFiles, found, full, depth + 1);
-      continue;
-    }
-    if (!ent.isFile()) {
-      continue;
-    }
-    const dot = name.lastIndexOf(".");
-    const ext = dot >= 0 ? name.slice(dot) : "";
-    if (!MEDIA_EXTENSIONS.has(ext.toLowerCase())) {
-      continue;
-    }
-    const modality = mediaExtensionModality(ext);
-    if (modality !== undefined) {
-      found.push({ path: full, modality });
+    const step = classifyMediaEntry(root, exclude, dir, ent);
+    if (step.kind === "descend") {
+      walkMediaFilesRecursive(root, exclude, maxFiles, found, step.dir, depth + 1);
+    } else if (step.kind === "media") {
+      found.push(step.file);
     }
   }
 }

@@ -1,17 +1,5 @@
 export type LlmTaskType = "classification" | "reasoning" | "summarisation" | "agent_step";
 
-/**
- * A provider VENDOR id — `"ollama"`, `"llamacpp"`, and (slice 2) `"gemini"`,
- * `"bedrock"`, ... Deliberately an open string, not a union: the closed union it
- * replaced capped `LlmRouter.providers` at one provider per kind, so registering a
- * second vendor silently evicted the first.
- *
- * NOT unique across routes — two Ollama routes share `"ollama"`. Route identity is
- * `ModelRoute.routeId`. This is the value that reaches the egress ledger as
- * `destination`, so it names a place data can go.
- */
-export type ProviderId = string;
-
 export type ModelRoute = {
   readonly routeId: string;
   readonly provider: LlmProvider;
@@ -25,7 +13,7 @@ export type ProviderMeta = {
 };
 
 export type LlmModelInfo = {
-  provider: ProviderId;
+  provider: string;
   modelName: string;
   parameterCount?: number;
   contextWindow?: number;
@@ -62,7 +50,7 @@ export type LlmGenerateResult = {
   tokensOut: number;
   modelUsed: string;
   isLocal: boolean;
-  provider: ProviderId;
+  provider: string;
 };
 
 export type PullProgressChunk = {
@@ -72,7 +60,17 @@ export type PullProgressChunk = {
 };
 
 export interface LlmProvider {
-  readonly providerId: ProviderId;
+  /**
+   * A provider VENDOR id — `"ollama"`, `"llamacpp"`, `"anthropic"`, `"openai"`, ...
+   * Deliberately an open string, not a union: the closed union it replaced capped
+   * `LlmRouter.providers` at one provider per kind, so registering a second vendor
+   * silently evicted the first.
+   *
+   * NOT unique across routes — two Ollama routes share `"ollama"`. Route identity is
+   * `ModelRoute.routeId`. This is the value that reaches the egress ledger as
+   * `destination`, so it names a place data can go.
+   */
+  readonly providerId: string;
   /**
    * Whether this provider runs on this machine. REQUIRED, so omitting it is a
    * compile error rather than a silent `undefined`.

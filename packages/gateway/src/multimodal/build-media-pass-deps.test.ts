@@ -14,6 +14,21 @@ import {
   withTranscribeTimeout,
 } from "./build-media-pass-deps.ts";
 
+/**
+ * Run `body` against a fresh, isolated config directory and always remove it afterwards.
+ *
+ * `mkdtempSync` rather than a fixed path: these tests run in parallel with the rest of the file
+ * and a shared directory name would let one case observe another's `nimbus.toml`.
+ */
+function withTempConfigDir(body: (dir: string) => void): void {
+  const dir = mkdtempSync(join(tmpdir(), "nimbus-mm-cfg-"));
+  try {
+    body(dir);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
+
 function db(): Database {
   const d = new Database(":memory:");
   runIndexedSchemaMigrations(d, CURRENT_SCHEMA_VERSION);
@@ -203,17 +218,13 @@ describe("resolveMediaRoots", () => {
   });
 
   test("returns an empty array when nimbus.toml is absent", () => {
-    const dir = mkdtempSync(join(tmpdir(), "nimbus-media-roots-"));
-    try {
+    withTempConfigDir((dir) => {
       expect(resolveMediaRoots(dir)).toEqual([]);
-    } finally {
-      rmSync(dir, { recursive: true, force: true });
-    }
+    });
   });
 
   test("keeps only roots with media_index = true, mapped to their path", () => {
-    const dir = mkdtempSync(join(tmpdir(), "nimbus-media-roots-"));
-    try {
+    withTempConfigDir((dir) => {
       writeFileSync(
         join(dir, "nimbus.toml"),
         [
@@ -228,9 +239,7 @@ describe("resolveMediaRoots", () => {
       );
       const roots = resolveMediaRoots(dir);
       expect(roots).toEqual([resolve("/media-yes")]);
-    } finally {
-      rmSync(dir, { recursive: true, force: true });
-    }
+    });
   });
 });
 
@@ -240,93 +249,55 @@ describe("resolveMultimodalEnabled", () => {
   });
 
   test("reads false when nimbus.toml is absent", () => {
-    const dir = mkdtempSync(join(tmpdir(), "nimbus-mm-enabled-"));
-    try {
+    withTempConfigDir((dir) => {
       expect(resolveMultimodalEnabled(dir)).toBe(false);
-    } finally {
-      rmSync(dir, { recursive: true, force: true });
-    }
+    });
   });
 
-  test("reads false when [multimodal] section is absent", () => {
-    const dir = mkdtempSync(join(tmpdir(), "nimbus-mm-enabled-"));
-    try {
-      writeFileSync(join(dir, "nimbus.toml"), '[other]\nfoo = "bar"\n');
-      expect(resolveMultimodalEnabled(dir)).toBe(false);
-    } finally {
-      rmSync(dir, { recursive: true, force: true });
-    }
-  });
+  // The kill switch is DEFAULT OFF and every non-`true` shape must read as off, so the cases
+  // that matter are a table of (config text -> verdict) rather than eight copies of one fixture.
+  // Each row still runs as its own `test`, so a regression names the shape that broke.
+  const ENABLED_CASES: ReadonlyArray<{ what: string; toml: string; expected: boolean }> = [
+    { what: "[multimodal] section is absent", toml: '[other]\nfoo = "bar"\n', expected: false },
+    {
+      what: "[multimodal] is present but the 'enabled' key is absent",
+      toml: "[multimodal]\nother_key = true\n",
+      expected: false,
+    },
+    { what: "a literal 'true'", toml: "[multimodal]\nenabled = true\n", expected: true },
+    { what: "an explicit 'false'", toml: "[multimodal]\nenabled = false\n", expected: false },
+    {
+      what: "an inline comment after the value",
+      toml: "[multimodal]\nenabled = true # turn on locally\n",
+      expected: true,
+    },
+    {
+      what: "a garbage (non-boolean) value",
+      toml: "[multimodal]\nenabled = maybe\n",
+      expected: false,
+    },
+    {
+      what: "an 'enabled' key found OUTSIDE the [multimodal] section",
+      toml: "[other]\nenabled = true\n\n[multimodal]\n",
+      expected: false,
+    },
+  ];
 
-  test("reads false when [multimodal] is present but 'enabled' key is absent", () => {
-    const dir = mkdtempSync(join(tmpdir(), "nimbus-mm-enabled-"));
-    try {
-      writeFileSync(join(dir, "nimbus.toml"), "[multimodal]\nother_key = true\n");
-      expect(resolveMultimodalEnabled(dir)).toBe(false);
-    } finally {
-      rmSync(dir, { recursive: true, force: true });
-    }
-  });
-
-  test("reads true for a literal 'true'", () => {
-    const dir = mkdtempSync(join(tmpdir(), "nimbus-mm-enabled-"));
-    try {
-      writeFileSync(join(dir, "nimbus.toml"), "[multimodal]\nenabled = true\n");
-      expect(resolveMultimodalEnabled(dir)).toBe(true);
-    } finally {
-      rmSync(dir, { recursive: true, force: true });
-    }
-  });
-
-  test("reads false for an explicit 'false'", () => {
-    const dir = mkdtempSync(join(tmpdir(), "nimbus-mm-enabled-"));
-    try {
-      writeFileSync(join(dir, "nimbus.toml"), "[multimodal]\nenabled = false\n");
-      expect(resolveMultimodalEnabled(dir)).toBe(false);
-    } finally {
-      rmSync(dir, { recursive: true, force: true });
-    }
-  });
-
-  test("honors an inline comment after the value", () => {
-    const dir = mkdtempSync(join(tmpdir(), "nimbus-mm-enabled-"));
-    try {
-      writeFileSync(join(dir, "nimbus.toml"), "[multimodal]\nenabled = true # turn on locally\n");
-      expect(resolveMultimodalEnabled(dir)).toBe(true);
-    } finally {
-      rmSync(dir, { recursive: true, force: true });
-    }
-  });
-
-  test("reads false for a garbage (non-boolean) value", () => {
-    const dir = mkdtempSync(join(tmpdir(), "nimbus-mm-enabled-"));
-    try {
-      writeFileSync(join(dir, "nimbus.toml"), "[multimodal]\nenabled = maybe\n");
-      expect(resolveMultimodalEnabled(dir)).toBe(false);
-    } finally {
-      rmSync(dir, { recursive: true, force: true });
-    }
-  });
-
-  test("ignores an 'enabled' key found OUTSIDE the [multimodal] section", () => {
-    const dir = mkdtempSync(join(tmpdir(), "nimbus-mm-enabled-"));
-    try {
-      writeFileSync(join(dir, "nimbus.toml"), "[other]\nenabled = true\n\n[multimodal]\n");
-      expect(resolveMultimodalEnabled(dir)).toBe(false);
-    } finally {
-      rmSync(dir, { recursive: true, force: true });
-    }
-  });
+  for (const { what, toml, expected } of ENABLED_CASES) {
+    test(`reads ${String(expected)} for ${what}`, () => {
+      withTempConfigDir((dir) => {
+        writeFileSync(join(dir, "nimbus.toml"), toml);
+        expect(resolveMultimodalEnabled(dir)).toBe(expected);
+      });
+    });
+  }
 
   test("reads false when the file cannot be parsed as expected (readFileSync throws)", () => {
     // Point configDir at a location where nimbus.toml is actually a directory, so
     // existsSync() is true but readFileSync() throws — the catch-arm around parseMultimodalEnabled.
-    const dir = mkdtempSync(join(tmpdir(), "nimbus-mm-enabled-"));
-    try {
+    withTempConfigDir((dir) => {
       mkdirSync(join(dir, "nimbus.toml"));
       expect(resolveMultimodalEnabled(dir)).toBe(false);
-    } finally {
-      rmSync(dir, { recursive: true, force: true });
-    }
+    });
   });
 });

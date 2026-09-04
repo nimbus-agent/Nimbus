@@ -11,7 +11,7 @@ import { CURRENT_SCHEMA_VERSION } from "../index/local-index.ts";
 import { runIndexedSchemaMigrations } from "../index/migrations/runner.ts";
 import { LlmRegistry } from "./registry.ts";
 import type { LlmRouterConfig } from "./router.ts";
-import type { LlmModelInfo, LlmProvider, ProviderId, PullProgressChunk } from "./types.ts";
+import type { LlmModelInfo, LlmProvider, PullProgressChunk } from "./types.ts";
 
 // A stand-in remote model name. Was `LlmRouterConfig.remoteModel`, removed on 2026-08-28
 // along with `[llm] remote_model`; these tests only ever needed an arbitrary non-local id.
@@ -37,7 +37,7 @@ type ProviderOpts = {
   throwOnList?: boolean;
 };
 
-function makeProvider(id: ProviderId, opts: ProviderOpts): LlmProvider {
+function makeProvider(id: string, opts: ProviderOpts): LlmProvider {
   const base = {
     providerId: id,
     isLocal: id !== "remote",

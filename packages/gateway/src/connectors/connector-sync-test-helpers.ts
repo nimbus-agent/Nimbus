@@ -112,6 +112,23 @@ export function boundTestCapabilities(
   return buildSyncCapabilities({ vault, db, depth: "full" }, serviceId);
 }
 
+/**
+ * The three capability sets a test context can carry, chosen the same way `sync/scheduler.ts`
+ * chooses in production: no service named at all → the throwing unbound set; a LOCAL-ONLY
+ * syncable → the local-only set (no egress capability at all); anything else → the full bound set.
+ * Written as guarded returns so the three cases are three statements, not one expression.
+ */
+function buildCapsFor(
+  serviceId: ConnectorServiceId | LocalOnlySyncServiceId | undefined,
+  capDeps: SyncCapabilityDeps,
+): SyncCapabilities {
+  if (serviceId === undefined) return unboundSyncCapabilities();
+  if (LOCAL_ONLY_SYNC_SERVICE_IDS.has(serviceId)) {
+    return buildLocalOnlySyncCapabilities(capDeps, serviceId as LocalOnlySyncServiceId);
+  }
+  return buildSyncCapabilities(capDeps, serviceId as ConnectorServiceId);
+}
+
 export function syncTestContext(
   db: Database,
   vault: NimbusVault,
@@ -132,12 +149,7 @@ export function syncTestContext(
     depth,
     ...(resolveServiceId === undefined ? {} : { resolveServiceId }),
   };
-  const caps =
-    serviceId === undefined
-      ? unboundSyncCapabilities()
-      : LOCAL_ONLY_SYNC_SERVICE_IDS.has(serviceId)
-        ? buildLocalOnlySyncCapabilities(capDeps, serviceId as LocalOnlySyncServiceId)
-        : buildSyncCapabilities(capDeps, serviceId as ConnectorServiceId);
+  const caps = buildCapsFor(serviceId, capDeps);
   // `extras` carries the UNBOUND capability set as its default, so it must be spread FIRST — the
   // bound `caps` are the override, not the other way round. Reversed, every test silently got the
   // throwing capabilities back and 889 of them failed at once.

@@ -50,38 +50,83 @@ export interface BrowserActionInput {
  * final `actuating("no rule proved this action inert")`. The absence of evidence that a target is
  * dangerous is not evidence that it is safe.
  */
-export function classifyBrowserAction(input: BrowserActionInput): {
-  readonly cls: CuActionClass;
-  readonly why: string;
-} {
-  const actuating = (why: string) => ({ cls: "actuating" as const, why });
-  const observing = (why: string) => ({ cls: "observing" as const, why });
-
+export function classifyBrowserAction(input: BrowserActionInput): CuClassification {
   if (input.kind === "download") return actuating("initiates a download");
 
   if (input.kind === "read" || input.kind === "screenshot") {
     return observing(`${input.kind} does not actuate`);
   }
 
-  if (input.kind === "navigate") {
-    if (
-      input.currentOrigin !== null &&
-      input.targetOrigin !== null &&
-      input.currentOrigin === input.targetOrigin
-    ) {
-      return observing("same-origin navigation");
-    }
-    // C1: a null target origin (javascript:/data:/about: or a malformed URL) is NOT evidence of
-    // safety — such a navigation issues no network request, so `decideRequest` is never consulted
-    // and this is the only gate a `javascript:` navigation (arbitrary script execution) ever meets.
-    return actuating(
-      input.targetOrigin === null
-        ? "navigation target origin could not be determined"
-        : `cross-origin navigation to ${input.targetOrigin}`,
-    );
-  }
+  if (input.kind === "navigate") return classifyNavigation(input);
 
   // input.kind is now "click" | "type".
+  return classifyNodeInteraction(input);
+}
+
+/** The classifier's return shape. One name so every arm below declares the same contract. */
+type CuClassification = { readonly cls: CuActionClass; readonly why: string };
+
+const actuating = (why: string): CuClassification => ({ cls: "actuating" as const, why });
+const observing = (why: string): CuClassification => ({ cls: "observing" as const, why });
+
+/**
+ * The `navigate` arm. Same-origin only is inert; everything else needs the owner.
+ *
+ * Split out of `classifyBrowserAction` so each arm is one rule set rather than one long chain —
+ * the ORDER inside each arm is still the property, and each arm is short enough to read as a list.
+ */
+function classifyNavigation(input: BrowserActionInput): CuClassification {
+  if (
+    input.currentOrigin !== null &&
+    input.targetOrigin !== null &&
+    input.currentOrigin === input.targetOrigin
+  ) {
+    return observing("same-origin navigation");
+  }
+  // C1: a null target origin (javascript:/data:/about: or a malformed URL) is NOT evidence of
+  // safety — such a navigation issues no network request, so `decideRequest` is never consulted
+  // and this is the only gate a `javascript:` navigation (arbitrary script execution) ever meets.
+  return actuating(
+    input.targetOrigin === null
+      ? "navigation target origin could not be determined"
+      : `cross-origin navigation to ${input.targetOrigin}`,
+  );
+}
+
+/**
+ * Re-derive the safety condition EXPLICITLY, rather than relying on "we fell through every check
+ * in `classifyNodeInteraction`" implicitly: if a future edit ever deletes one of those early
+ * returns without updating this predicate, the caller still fails closed to its final
+ * `actuating`.
+ *
+ * Deliberately a SEPARATE, complete restatement of the rules and not a helper the early returns
+ * share — a shared helper would make the two agree by construction and destroy the very
+ * double-entry the check exists to provide.
+ */
+function hasNoActuatingProperty(
+  n: ObservedNode,
+  input: BrowserActionInput,
+  type: string | null,
+): boolean {
+  return (
+    !n.isSubmitControl &&
+    type !== "file" &&
+    type !== "submit" &&
+    type !== "image" &&
+    type !== "reset" &&
+    n.tagName !== "BUTTON" &&
+    !n.inFormWithPassword &&
+    (n.hrefScheme === null || n.hrefScheme === "http" || n.hrefScheme === "https") &&
+    (n.hrefOrigin === null || n.hrefOrigin === input.currentOrigin) &&
+    !(input.submitsForm === true && n.inForm)
+  );
+}
+
+/**
+ * The `click`/`type` arm: the ordered actuating rules over an observed DOM node, then the
+ * explicit re-derivation, then the default-deny fallthrough.
+ */
+function classifyNodeInteraction(input: BrowserActionInput): CuClassification {
   const n = input.node;
   if (n === null) return actuating("target node could not be observed");
 
@@ -123,22 +168,7 @@ export function classifyBrowserAction(input: BrowserActionInput): {
     return actuating("submits the enclosing form");
   }
 
-  // Re-derive the same safety condition explicitly, rather than relying on "we fell through every
-  // check above" implicitly: if a future edit ever deletes one of the early returns above without
-  // updating this expression, this still fails closed to the final `actuating` statement below.
-  const provenInert =
-    !n.isSubmitControl &&
-    type !== "file" &&
-    type !== "submit" &&
-    type !== "image" &&
-    type !== "reset" &&
-    n.tagName !== "BUTTON" &&
-    !n.inFormWithPassword &&
-    (n.hrefScheme === null || n.hrefScheme === "http" || n.hrefScheme === "https") &&
-    (n.hrefOrigin === null || n.hrefOrigin === input.currentOrigin) &&
-    !(input.submitsForm === true && n.inForm);
-
-  if (provenInert) {
+  if (hasNoActuatingProperty(n, input, type)) {
     return observing(`${n.tagName.toLowerCase()} interaction with no actuating property`);
   }
 

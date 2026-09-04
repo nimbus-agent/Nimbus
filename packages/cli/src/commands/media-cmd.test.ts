@@ -138,20 +138,14 @@ describe("runMediaCmd", () => {
     expect(out.stdout).toContain("understand");
   });
 
-  test("prints help for the 'help' subcommand", async () => {
-    await runMediaCmd(["help"]);
-    expect(out.stdout).toContain("Usage:");
-  });
-
-  test("prints help for --help", async () => {
-    await runMediaCmd(["--help"]);
-    expect(out.stdout).toContain("Usage:");
-  });
-
-  test("prints help for -h", async () => {
-    await runMediaCmd(["-h"]);
-    expect(out.stdout).toContain("Usage:");
-  });
+  // Every spelling of "show me the usage" reaches the same output. Parameterized so adding a
+  // fourth spelling is one line, and so a regression names WHICH spelling broke.
+  for (const arg of ["help", "--help", "-h"]) {
+    test(`prints help for ${arg}`, async () => {
+      await runMediaCmd([arg]);
+      expect(out.stdout).toContain("Usage:");
+    });
+  }
 
   test("throws GatewayNotRunningError when no gateway state is present", async () => {
     setFixture({});

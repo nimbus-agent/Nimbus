@@ -179,6 +179,20 @@ function stringResult(result: Record<string, unknown>): string | null {
   return typeof value === "string" ? value : null;
 }
 
+/**
+ * A FINITE number at `key`, or null when the field is absent, non-numeric, `NaN` or infinite.
+ *
+ * The bounding box comes back from an untyped CDP payload, so an unusable field means the PAGE
+ * did not produce a box a click can be aimed at — a page condition, which is why callers throw
+ * their own domain message rather than a `TypeError` about a caller's argument. `NaN` is folded
+ * in here deliberately: it survives a bare `typeof v === "number"` check and would otherwise
+ * reach `Input.dispatchMouseEvent` as a coordinate.
+ */
+function finiteFieldOf(o: Record<string, unknown>, key: string): number | null {
+  const v = o[key];
+  return typeof v === "number" && Number.isFinite(v) ? v : null;
+}
+
 function rawValue(result: Record<string, unknown>): unknown {
   const inner = result["result"];
   return typeof inner === "object" && inner !== null
@@ -405,17 +419,17 @@ export async function openBrowserLane(
         throw new Error(`no element matched selector: ${selector}`);
       }
       const b = box as Record<string, unknown>;
-      const x = b["x"];
-      const y = b["y"];
-      const w = b["w"];
-      const h = b["h"];
-      if (typeof x !== "number" || typeof y !== "number") {
+      const x = finiteFieldOf(b, "x");
+      const y = finiteFieldOf(b, "y");
+      const w = finiteFieldOf(b, "w");
+      const h = finiteFieldOf(b, "h");
+      if (x === null || y === null) {
         throw new Error(`no element matched selector: ${selector}`);
       }
       // A zero-area box is an element that is present in the DOM but not rendered. Dispatching a
       // mouse event at its centre would hit whatever IS at that coordinate — a different control
       // than the one the owner saw described in the prompt. Refuse rather than click a stranger.
-      if (typeof w !== "number" || typeof h !== "number" || w <= 0 || h <= 0) {
+      if (w === null || h === null || w <= 0 || h <= 0) {
         throw new Error(`element is not visible and cannot be clicked: ${selector}`);
       }
       return { x, y };

@@ -34,6 +34,56 @@ function formatTomlScalar(value: string): string {
 // sibling of `path`) rather than deleted, the retry rename is attempted, and if that ALSO fails
 // the aside is renamed straight back so the original file is exactly as it was before this call.
 /**
+ * The second-attempt ladder, reached only when the direct `renameSync(tmp, path)` failed.
+ *
+ * ORDERED, and the order is the data-safety property: move the original ASIDE (a rename, not a
+ * delete), retry the replacement, and on a second failure put the original straight back before
+ * re-throwing — so a caller that loses the write never also loses the file it was replacing.
+ * `aside` lives inside `swap`, a sibling directory of `path`, which is what makes every one of
+ * these renames same-filesystem and therefore atomic.
+ */
+function retryReplacePreservingOriginal(
+  path: string,
+  tmp: string,
+  swap: string,
+  _renameSync: (oldPath: string, newPath: string) => void,
+): void {
+  const aside = join(swap, "original-backup");
+  let movedAside = false;
+  try {
+    _renameSync(path, aside);
+    movedAside = true;
+  } catch {
+    // Nothing to preserve — either `path` doesn't exist yet (fresh file: the first
+    // renameSync failed for some other reason) or it's otherwise unmovable. Either way
+    // there is no original to protect, so just retry the direct rename below.
+  }
+  try {
+    _renameSync(tmp, path);
+  } catch (secondErr) {
+    if (movedAside) {
+      try {
+        _renameSync(aside, path);
+      } catch {
+        /* best-effort restore — the retry failure re-thrown below is the one that matters,
+           and a stuck `aside` file inside `swap` is still recoverable by hand, unlike a
+           deleted nimbus.toml. */
+      }
+    }
+    throw secondErr;
+  }
+  if (movedAside) {
+    try {
+      unlinkSync(aside);
+    } catch {
+      /* the replacement already succeeded; a leftover backup file is cosmetic, not data
+         loss, and would only stop the `rmdirSync(swap)` cleanup in the caller, which itself
+         already tolerates failure. */
+    }
+  }
+}
+
+/**
  * @internal test seam: lets a test force BOTH `renameSync(tmp, path)` attempts to fail
  * deterministically, without mocking `node:fs` (which is process-global and would leak into
  * every other test sharing this process). Production callers must never pass this — the
@@ -53,39 +103,7 @@ export function writeUtf8FileAtomicReplace(
     try {
       _renameSync(tmp, path);
     } catch {
-      const aside = join(swap, "original-backup");
-      let movedAside = false;
-      try {
-        _renameSync(path, aside);
-        movedAside = true;
-      } catch {
-        // Nothing to preserve — either `path` doesn't exist yet (fresh file: the first
-        // renameSync failed for some other reason) or it's otherwise unmovable. Either way
-        // there is no original to protect, so just retry the direct rename below.
-      }
-      try {
-        _renameSync(tmp, path);
-      } catch (secondErr) {
-        if (movedAside) {
-          try {
-            _renameSync(aside, path);
-          } catch {
-            /* best-effort restore — the retry failure re-thrown below is the one that matters,
-               and a stuck `aside` file inside `swap` is still recoverable by hand, unlike a
-               deleted nimbus.toml. */
-          }
-        }
-        throw secondErr;
-      }
-      if (movedAside) {
-        try {
-          unlinkSync(aside);
-        } catch {
-          /* the replacement already succeeded; a leftover backup file is cosmetic, not data
-             loss, and would only stop the `rmdirSync(swap)` cleanup below, which itself already
-             tolerates failure. */
-        }
-      }
+      retryReplacePreservingOriginal(path, tmp, swap, _renameSync);
     }
   } finally {
     try {
