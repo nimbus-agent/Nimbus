@@ -1151,6 +1151,8 @@ describe("tryDispatchPhase4Rpc", () => {
       vlmBaseUrl: "http://198.51.100.7:9999",
       vlmModel: "distinctly-non-default-vlm-model",
       maxFrames: 37,
+      fetchBudgetBytes: 1024 * 1024 * 1024,
+      preferRenditions: true,
     };
     const out = buildMediaPassDepsInput({
       db,

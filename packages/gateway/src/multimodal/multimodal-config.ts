@@ -44,6 +44,8 @@ export interface MultimodalConfig {
   readonly vlmBaseUrl: string;
   readonly vlmModel: string;
   readonly maxFrames: number;
+  readonly fetchBudgetBytes: number;
+  readonly preferRenditions: boolean;
 }
 
 /**
@@ -68,6 +70,8 @@ function defaults(): MultimodalConfig {
     vlmBaseUrl: DEFAULT_VLM_BASE_URL,
     vlmModel: DEFAULT_VLM_MODEL,
     maxFrames: DEFAULT_MAX_FRAMES,
+    fetchBudgetBytes: 2 * 1024 * 1024 * 1024,
+    preferRenditions: false,
   };
 }
 
@@ -196,6 +200,19 @@ function parseSection(raw: string): MultimodalConfig {
       // direction, not a silent fallback to the default frame count.
       if (n === undefined) return defaults();
       out = { ...out, maxFrames: clampFrames(n) };
+    } else if (key === "fetch_budget_bytes") {
+      const n = parseStrictInt(value);
+      // A non-integer value is malformed TOML for this key — same fail-off direction as
+      // `max_frames` and `enabled`.
+      if (n === undefined) return defaults();
+      out = { ...out, fetchBudgetBytes: n };
+    } else if (key === "prefer_renditions") {
+      const v = value.trim().toLowerCase();
+      if (v === "true") out = { ...out, preferRenditions: true };
+      else if (v === "false") out = { ...out, preferRenditions: false };
+      // Neither: a malformed boolean is malformed TOML, same fail-off direction as
+      // non-boolean `enabled`.
+      else return defaults();
     }
     // An unrecognised but well-formed key (e.g. a future `vlm_prompt` this binary predates) is
     // deliberately IGNORED rather than failing the section off. Chosen over the stricter
