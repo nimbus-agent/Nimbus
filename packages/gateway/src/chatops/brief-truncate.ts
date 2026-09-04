@@ -176,7 +176,8 @@ function assembleReservedForcedFit(
   const entryStarts = glossaryEntryStartsOf(synthBlock);
   // A recognised (glossary) synthesis block shrinks per-entry; an unrecognised one — none exist
   // today — is opaque and can only be present (1) or fully dropped (0).
-  const maxKept = isGlossaryTerms ? entryStarts.length : synthBlock === undefined ? 0 : 1;
+  const opaqueKept = synthBlock === undefined ? 0 : 1;
+  const maxKept = isGlossaryTerms ? entryStarts.length : opaqueKept;
 
   // D3: every notice built in this function carries the omitted-body-sections count FIRST (when
   // there is one), then whatever else applies (the glossary shrink count) — never just the latter.
@@ -187,11 +188,9 @@ function assembleReservedForcedFit(
     const parts = reservedBlocks
       .map((b) => {
         if (b !== synthBlock) return b.markdown;
-        return isGlossaryTerms
-          ? glossaryTermsBlockKeeping(b, entryStarts, kept)
-          : kept > 0
-            ? b.markdown
-            : "";
+        if (isGlossaryTerms) return glossaryTermsBlockKeeping(b, entryStarts, kept);
+        // Opaque block: present in full, or gone entirely. There is no middle state.
+        return kept > 0 ? b.markdown : "";
       })
       .filter((text) => text !== "");
     const extras = [

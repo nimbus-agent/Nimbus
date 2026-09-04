@@ -353,7 +353,7 @@ describe("classifyTerminalAction", () => {
   // SIGNATURE: the function takes ONE parameter, so a model-supplied description cannot even be
   // passed to it, let alone read. I3 transplanted, enforced by arity.
   test("takes exactly one parameter, so a model description cannot reach it", () => {
-    expect(classifyTerminalAction.length).toBe(1);
+    expect(classifyTerminalAction).toHaveLength(1);
   });
 
   test("no input produces observing", () => {

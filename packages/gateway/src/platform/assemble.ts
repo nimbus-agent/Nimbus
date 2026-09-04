@@ -1728,41 +1728,13 @@ export async function buildLlmRegistryFromToml(
     },
   });
 
-  if (validatedLocalRoutes.size > 0) {
-    for (const route of validatedLocalRoutes.values()) {
-      const baseUrl = resolveBaseUrl(route.runtime, route.baseUrl);
-      if (route.runtime === "llamacpp") {
-        llmRegistry.addRoute(new LlamaCppProvider(baseUrl, route.model), route.model);
-      } else {
-        llmRegistry.addRoute(
-          new OllamaProvider(baseUrl, route.model, llmToml.localContextTokens),
-          route.model,
-        );
-      }
-    }
-  } else {
-    llmRegistry.addRoute(
-      new OllamaProvider(OLLAMA_DEFAULT_BASE_URL, effectiveLocalModel, llmToml.localContextTokens),
-      effectiveLocalModel,
-    );
-    const llamacppBaseUrl = llmToml.llamacppServerPath.trim();
-    // The legacy single-route path reaches the same hazard through a different key: an
-    // `[llm] llamacpp_server_path` pointed at a LAN box also produces a non-local provider now,
-    // and that must be as visible here as it is for a `[llm.local.*]` entry.
-    if (llamacppBaseUrl !== "" && !isLoopbackBaseUrl(llamacppBaseUrl)) {
-      logger.warn(
-        `[llm] llamacpp_server_path "${llamacppBaseUrl}" is not loopback — registering the ` +
-          "llama.cpp route as REMOTE: it is excluded when [llm] enforce_air_gap is set",
-      );
-    }
-    llmRegistry.addRoute(
-      new LlamaCppProvider(
-        llamacppBaseUrl === "" ? undefined : llamacppBaseUrl,
-        effectiveLocalModel,
-      ),
-      effectiveLocalModel,
-    );
-  }
+  registerLocalRoutes(llmRegistry, validatedLocalRoutes, {
+    llmToml,
+    effectiveLocalModel,
+    logger,
+  });
+  await registerRemoteVendorRoutes(llmRegistry, enabledVendors, logger);
+
   // Fill in `parameterCount` so `[llm] min_reasoning_params` can fire at all (F8). Fire-and-
   // forget: nothing downstream blocks on it, and a provider that is down simply leaves the floor
   // fail-open exactly as it was. Called with NO argument — one pass over every registered local
@@ -1770,11 +1742,73 @@ export async function buildLlmRegistryFromToml(
   // single shared name looped across all routes (Task 9 review, finding 1: that shape cross-
   // assigned one route's parameterCount onto another route sharing the same daemon). One
   // `listModels()` call per local route, not per route × distinct model name.
-  // Registering a vendor HERE is what turns I29's `model` egress class from wired-but-zero-row
-  // into a live one: `addRoute` passes every non-local provider through `wrapLedgeredProvider`
-  // (slice 2a), so each of these routes ledgers before every generate without the adapter
-  // cooperating. A vendor that is enabled but whose key does not resolve is dropped with a
-  // warning rather than registered, so a keyless route never enters the priority walk at all.
+  void llmRegistry.refreshProviderMeta();
+  return llmRegistry;
+}
+
+/**
+ * Register the LOCAL routes: one per `[llm.local.<name>]` entry when any survived validation,
+ * else the two built-in Ollama + llama.cpp providers on the effective local model.
+ *
+ * Split out of `buildLlmRegistryFromToml` so the two shapes sit side by side instead of as an
+ * if/else the length of the function that contains them.
+ */
+function registerLocalRoutes(
+  llmRegistry: LlmRegistry,
+  validatedLocalRoutes: ReadonlyMap<string, NimbusLlmLocalRoute>,
+  ctx: {
+    llmToml: NimbusLlmToml;
+    effectiveLocalModel: string;
+    logger: RouteValidationLogger;
+  },
+): void {
+  const { llmToml, effectiveLocalModel, logger } = ctx;
+  if (validatedLocalRoutes.size > 0) {
+    for (const route of validatedLocalRoutes.values()) {
+      const baseUrl = resolveBaseUrl(route.runtime, route.baseUrl);
+      const provider =
+        route.runtime === "llamacpp"
+          ? new LlamaCppProvider(baseUrl, route.model)
+          : new OllamaProvider(baseUrl, route.model, llmToml.localContextTokens);
+      llmRegistry.addRoute(provider, route.model);
+    }
+    return;
+  }
+
+  llmRegistry.addRoute(
+    new OllamaProvider(OLLAMA_DEFAULT_BASE_URL, effectiveLocalModel, llmToml.localContextTokens),
+    effectiveLocalModel,
+  );
+  const llamacppBaseUrl = llmToml.llamacppServerPath.trim();
+  // The legacy single-route path reaches the same hazard through a different key: an
+  // `[llm] llamacpp_server_path` pointed at a LAN box also produces a non-local provider now,
+  // and that must be as visible here as it is for a `[llm.local.*]` entry.
+  if (llamacppBaseUrl !== "" && !isLoopbackBaseUrl(llamacppBaseUrl)) {
+    logger.warn(
+      `[llm] llamacpp_server_path "${llamacppBaseUrl}" is not loopback — registering the ` +
+        "llama.cpp route as REMOTE: it is excluded when [llm] enforce_air_gap is set",
+    );
+  }
+  llmRegistry.addRoute(
+    new LlamaCppProvider(llamacppBaseUrl === "" ? undefined : llamacppBaseUrl, effectiveLocalModel),
+    effectiveLocalModel,
+  );
+}
+
+/**
+ * Register the enabled `[llm.remote.<vendor>]` routes.
+ *
+ * Registering a vendor HERE is what turns I29's `model` egress class from wired-but-zero-row into
+ * a live one: `addRoute` passes every non-local provider through `wrapLedgeredProvider` (slice
+ * 2a), so each of these routes ledgers before every generate without the adapter cooperating. A
+ * vendor that is enabled but whose key does not resolve is DROPPED with a warning rather than
+ * registered, so a keyless route never enters the priority walk at all.
+ */
+async function registerRemoteVendorRoutes(
+  llmRegistry: LlmRegistry,
+  enabledVendors: readonly ResolvedRemoteVendor[],
+  logger: RouteValidationLogger,
+): Promise<void> {
   for (const vendor of enabledVendors) {
     const key = await vendor.apiKey();
     if (key === undefined || key.trim() === "") {
@@ -1786,9 +1820,6 @@ export async function buildLlmRegistryFromToml(
     }
     llmRegistry.addRoute(makeRemoteProvider(vendor), vendor.modelName);
   }
-
-  void llmRegistry.refreshProviderMeta();
-  return llmRegistry;
 }
 
 /** Start the extensions auto-update daemon when `NIMBUS_EXTENSIONS_REGISTRY_URL` enables it (and
@@ -2786,6 +2817,45 @@ function bootTargetedFetchIntoHttpSidecar(deps: {
 }
 
 /**
+ * Close the `cu_session` rows orphaned by a previous gateway process (I35, `cu-boot-reconcile.ts`).
+ *
+ * Best-effort, matching `appendBootMarkerOrWarn`: a bookkeeping failure must not abort gateway
+ * startup, and staying SILENT about it is what would make it a bug rather than an event.
+ */
+function reconcileOrphanedCuSessionsOrWarn(db: Database, logger: Logger): void {
+  try {
+    const reconciled = reconcileOrphanedSessions(db, { now: () => Date.now() });
+    if (reconciled.reconciled > 0) {
+      logger.info(
+        { sessions: reconciled.reconciled },
+        "computer-use: closed sessions orphaned by a previous gateway process",
+      );
+    }
+  } catch (e) {
+    logger.warn(
+      { err: e instanceof Error ? e.message : String(e) },
+      "computer-use: could not reconcile orphaned sessions; `nimbus computer sessions` may show a stale open session",
+    );
+  }
+}
+
+/**
+ * Assign an optional value onto `target[key]` only when it is present.
+ *
+ * Under `exactOptionalPropertyTypes` an explicit `undefined` is a DIFFERENT type from an absent
+ * key, so these cannot be plain assignments — and a run of `if (x !== undefined)` lines was a
+ * measurable share of the assembler's cognitive-complexity score, for the same reason `pushStops`
+ * below exists.
+ */
+function assignIfPresent<T extends object, K extends keyof T>(
+  target: T,
+  key: K,
+  value: T[K] | undefined,
+): void {
+  if (value !== undefined) target[key] = value;
+}
+
+/**
  * Register `stop()` for each refresher that is present.
  *
  * Deliberately takes the refreshers rather than pre-built closures: a caller
@@ -3339,20 +3409,7 @@ export async function assemblePlatformServices(
   // session shows open forever, `sessionClose` answers `not_found`, and the CLI's watch loop never
   // exits. Best-effort, matching `appendBootMarkerOrWarn`: a bookkeeping failure must not abort
   // gateway startup, and staying silent about it is what would make it a bug rather than an event.
-  try {
-    const reconciled = reconcileOrphanedSessions(db, { now: () => Date.now() });
-    if (reconciled.reconciled > 0) {
-      syncLogger.info(
-        { sessions: reconciled.reconciled },
-        "computer-use: closed sessions orphaned by a previous gateway process",
-      );
-    }
-  } catch (e) {
-    syncLogger.warn(
-      { err: e instanceof Error ? e.message : String(e) },
-      "computer-use: could not reconcile orphaned sessions; `nimbus computer sessions` may show a stale open session",
-    );
-  }
+  reconcileOrphanedCuSessionsOrWarn(db, syncLogger);
 
   ipcOpts.computerRpcCtx = {
     envelopeConsent: cuEnvelopeConsent,
@@ -3508,15 +3565,9 @@ export async function assemblePlatformServices(
   ipcOpts.egressRpcCtx = egressRpcCtx;
 
   ipcOpts.glossaryRefresher = glossaryRefresher;
-  if (decisionsRefresher !== undefined) {
-    ipcOpts.decisionsRefresher = decisionsRefresher;
-  }
-  if (ownershipRefresher !== undefined) {
-    ipcOpts.ownershipRefresher = ownershipRefresher;
-  }
-  if (premortemRefresher !== undefined) {
-    ipcOpts.premortemRefresher = premortemRefresher;
-  }
+  assignIfPresent(ipcOpts, "decisionsRefresher", decisionsRefresher);
+  assignIfPresent(ipcOpts, "ownershipRefresher", ownershipRefresher);
+  assignIfPresent(ipcOpts, "premortemRefresher", premortemRefresher);
 
   collectSidecarsFromEnv(db, paths, sidecarStops, httpSidecarOpts);
 

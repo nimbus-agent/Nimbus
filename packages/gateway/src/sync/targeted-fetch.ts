@@ -187,6 +187,74 @@ async function acquireWithinTimeout(
   return false;
 }
 
+/** What steps 1–3 resolve to: the parsed URL, the service that claims it, and its `fetchOne`. */
+interface ResolvedFetchTarget {
+  readonly parsed: URL;
+  readonly service: FetchableService;
+  readonly fetchOne: NonNullable<Syncable["fetchOne"]>;
+}
+
+/**
+ * Steps 1–3 of the order documented on `targetedFetch` below: parse the URL and pin its scheme,
+ * resolve the host against the derived boundary, then find the registered connector's `fetchOne`.
+ *
+ * Returns EITHER a fully resolved target or the outcome to return — never a partial one, so no
+ * caller can proceed on half a decision. Everything ordering-sensitive to I29 (acquire, then
+ * append, then fetch) stays in `targetedFetch` itself; nothing here reaches the network or the
+ * ledger.
+ */
+function resolveFetchTarget(
+  deps: TargetedFetchDeps,
+  url: string,
+): { ok: true; target: ResolvedFetchTarget } | { ok: false; outcome: TargetedFetchOutcome } {
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    return { ok: false, outcome: { status: "unsupported_url" } };
+  }
+  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+    return { ok: false, outcome: { status: "unsupported_url" } };
+  }
+  // Caller-controlled userinfo (`user:pass@host`) plays no role in host or scheme resolution
+  // (`.host`/`.origin` never include it) and every connector today discards the authority when
+  // it parses `fetchOne`'s `url` argument — but it must not be given the chance to ride along
+  // regardless. Cleared before `parsed` is ever serialized back into a string.
+  parsed.username = "";
+  parsed.password = "";
+
+  // The host boundary runs BEFORE anything else touches a connector — every connector's URL
+  // regex matches ANY host, so an unclaimed host must never reach `syncableFor`/`fetchOne`.
+  const service = serviceForHost(deps.hostMap, parsed.host);
+  if (service === null) {
+    // Absent credentials a service is not in the map at all, so "unknown host" and "service not
+    // configured" are the same fact and get the same honest answer (mirrors
+    // fetch-host-boundary.ts's own framing).
+    return { ok: false, outcome: { status: "not_configured" } };
+  }
+
+  // `https:` needs no exception. A caller-chosen `http:` would send the stored credential in
+  // cleartext, so it is accepted ONLY when it is exactly this service's own self-hosted origin —
+  // matched on the full origin (scheme+host+port), not merely the host the boundary already
+  // matched.
+  if (parsed.protocol === "http:" && deps.httpOriginFor(service) !== parsed.origin) {
+    return { ok: false, outcome: { status: "unsupported_url" } };
+  }
+
+  const syncable = deps.syncableFor(service);
+  if (syncable === undefined) {
+    // The boundary already resolved a service here, so naming it is a fact, not a
+    // guess. The host-miss return above stays bare: there is genuinely nothing to
+    // name, and guessing is what the boundary exists to refuse.
+    return { ok: false, outcome: { status: "not_configured", service } };
+  }
+  const fetchOne = syncable.fetchOne;
+  if (fetchOne === undefined) {
+    return { ok: false, outcome: { status: "no_targeted_fetch", service } };
+  }
+  return { ok: true, target: { parsed, service, fetchOne } };
+}
+
 /**
  * Fetch and index one item named by a URL, server-side. The single chokepoint every targeted
  * fetch passes through.
@@ -230,54 +298,9 @@ export async function targetedFetch(
    */
   callerLabel?: string,
 ): Promise<TargetedFetchOutcome> {
-  let parsed: URL;
-  try {
-    parsed = new URL(url);
-  } catch {
-    return { status: "unsupported_url" };
-  }
-  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
-    return { status: "unsupported_url" };
-  }
-  // Caller-controlled userinfo (`user:pass@host`) plays no role in host or scheme resolution
-  // (`.host`/`.origin` never include it) and every connector today discards the authority when
-  // it parses `fetchOne`'s `url` argument — but it must not be given the chance to ride along
-  // regardless. Cleared before `parsed` is ever serialized back into a string.
-  parsed.username = "";
-  parsed.password = "";
-
-  // The host boundary runs BEFORE anything else touches a connector — every connector's URL
-  // regex matches ANY host, so an unclaimed host must never reach `syncableFor`/`fetchOne`.
-  const service = serviceForHost(deps.hostMap, parsed.host);
-  if (service === null) {
-    // Absent credentials a service is not in the map at all, so "unknown host" and "service not
-    // configured" are the same fact and get the same honest answer (mirrors
-    // fetch-host-boundary.ts's own framing).
-    return { status: "not_configured" };
-  }
-
-  if (parsed.protocol === "http:") {
-    const allowedOrigin = deps.httpOriginFor(service);
-    // `https:` needs no exception. A caller-chosen `http:` would send the stored credential in
-    // cleartext, so it is accepted ONLY when it is exactly this service's own self-hosted origin
-    // — matched on the full origin (scheme+host+port), not merely the host the boundary already
-    // matched.
-    if (allowedOrigin === null || allowedOrigin !== parsed.origin) {
-      return { status: "unsupported_url" };
-    }
-  }
-
-  const syncable = deps.syncableFor(service);
-  if (syncable === undefined) {
-    // The boundary already resolved a service here, so naming it is a fact, not a
-    // guess. The host-miss return above stays bare: there is genuinely nothing to
-    // name, and guessing is what the boundary exists to refuse.
-    return { status: "not_configured", service };
-  }
-  const fetchOne = syncable.fetchOne;
-  if (fetchOne === undefined) {
-    return { status: "no_targeted_fetch", service };
-  }
+  const resolved = resolveFetchTarget(deps, url);
+  if (!resolved.ok) return resolved.outcome;
+  const { parsed, service, fetchOne } = resolved.target;
 
   const ctx = deps.contextFor(service);
   // The SAME bucket the scheduler uses, so a targeted fetch can neither starve nor bypass it —

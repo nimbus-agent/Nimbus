@@ -1,3 +1,4 @@
+import { createPassScheduler, type PassRefusal } from "../util/pass-scheduler.ts";
 import type { GlossaryPassSummary } from "./glossary-extract.ts";
 import type { GlossaryPassProgress } from "./glossary-types.ts";
 
@@ -46,108 +47,41 @@ export type GlossaryRefresher = {
 };
 
 /**
- * Debounced, single-flight trigger for the extraction pass.
+ * Debounced, single-flight trigger for the glossary extraction pass. The debounce, the
+ * single-flight guard and the dirty-rerun all live in `util/pass-scheduler.ts`, shared with the
+ * decisions, ownership and pre-mortem passes — this module supplies only what is specific to the
+ * glossary: the `[glossary].enabled` kill switch, the summary type, and the `ERR_GLOSSARY_*`
+ * codes.
  *
- * A burst of connector syncs must coalesce into ONE pass. A trigger arriving
- * while a pass is already running sets a DIRTY flag rather than queueing:
- * exactly one follow-up pass runs afterwards, no matter how many syncs landed
- * meanwhile, so a slow pass cannot accumulate a backlog of redundant work.
- * Dropping the trigger outright — the original behaviour — was cheaper still,
- * but it lost the items of whichever sync happened to overlap the pass until
- * some later sync triggered again, which for the last sync before an idle
- * period could be a long time.
+ * This is the ONLY one of the four with an `enabled` flag, which is why it is also the only one
+ * exposing `status()` — the scheduler's fourth state, `"disabled"`, is unreachable without it.
  */
 export function createGlossaryRefresher(deps: GlossaryRefresherDeps): GlossaryRefresher {
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  let running = false;
-  let dirty = false;
-  let stopped = false;
-  const controller = new AbortController();
-
-  function fire(): void {
-    timer = undefined;
-    if (stopped) return;
-    if (running) {
-      dirty = true;
-      return;
-    }
-    running = true;
-    deps
-      .runPass(controller.signal, { rebuild: false })
-      .catch((err: unknown) => {
-        deps.onError?.(err);
-      })
-      .finally(() => {
-        running = false;
-        if (dirty) {
-          dirty = false;
-          // Re-enters through `fire`, so a `stop()` that landed during the pass
-          // is honoured by the single check at the top rather than duplicated
-          // here.
-          fire();
-        }
-      });
-  }
+  const scheduler = createPassScheduler<GlossaryPassSummary, GlossaryRunOptions>({
+    isEnabled: () => deps.enabled,
+    debounceMs: deps.debounceMs,
+    runPass: deps.runPass,
+    scheduledOptions: { rebuild: false },
+    ...(deps.onError === undefined ? {} : { onError: deps.onError }),
+    refuse: (kind) => new GlossaryRefresherError(GLOSSARY_REFUSAL_MESSAGES[kind]),
+  });
 
   return {
-    trigger(): void {
-      // The `stopped` half is belt-and-braces for the PASS (`fire` checks it
-      // too, so no pass can start), but not redundant for SHUTDOWN: a pending
-      // `setTimeout` keeps Bun's event loop alive, so arming one here would
-      // delay process exit by up to `debounceMs` to run a no-op.
-      if (!deps.enabled || stopped) return;
-      if (timer !== undefined) clearTimeout(timer);
-      timer = setTimeout(fire, deps.debounceMs);
-    },
-
-    status(): "idle" | "running" | "stopped" | "disabled" {
-      if (stopped) return "stopped";
-      if (!deps.enabled) return "disabled";
-      return running ? "running" : "idle";
-    },
-
-    async runNow(o: GlossaryRunOptions): Promise<GlossaryPassSummary> {
-      // Order matters: a disabled glossary is a config problem the user can
-      // fix, a stopped one is not, and both are more useful answers than
-      // "already running".
-      if (!deps.enabled) {
-        throw new GlossaryRefresherError(
-          "ERR_GLOSSARY_DISABLED: the glossary is disabled — set [glossary].enabled = true in nimbus.toml",
-        );
-      }
-      if (stopped) {
-        throw new GlossaryRefresherError("ERR_GLOSSARY_STOPPED: the gateway is shutting down");
-      }
-      if (running) {
-        // Deliberately NOT "await the in-flight pass and return its summary":
-        // that pass is not the one the caller asked for, and for a rebuild it
-        // would report success for work that never happened.
-        throw new GlossaryRefresherError(
-          "ERR_GLOSSARY_PASS_RUNNING: a glossary pass is already running",
-        );
-      }
-      running = true;
-      try {
-        return await deps.runPass(controller.signal, o);
-      } finally {
-        running = false;
-        // Preserve the scheduled path's dirty-rerun: a sync that landed during
-        // this on-demand pass still gets its follow-up.
-        if (dirty) {
-          dirty = false;
-          fire();
-        }
-      }
-    },
-
-    stop(): void {
-      stopped = true;
-      if (timer !== undefined) clearTimeout(timer);
-      timer = undefined;
-      // Aborting is what makes shutdown responsive: `runGlossaryPass` checks
-      // the signal between terms, so an in-flight pass returns instead of
-      // continuing to consolidate against a database that is about to close.
-      controller.abort();
-    },
+    trigger: scheduler.trigger,
+    status: scheduler.status,
+    runNow: (o: GlossaryRunOptions) => scheduler.runNow(o),
+    stop: scheduler.stop,
   };
 }
+
+/**
+ * One message per refusal kind. A disabled glossary is a config problem the user can fix, a
+ * stopped one is not, and both are more useful answers than "already running" — which is why the
+ * scheduler checks them in that order.
+ */
+const GLOSSARY_REFUSAL_MESSAGES: Record<PassRefusal, string> = {
+  disabled:
+    "ERR_GLOSSARY_DISABLED: the glossary is disabled — set [glossary].enabled = true in nimbus.toml",
+  stopped: "ERR_GLOSSARY_STOPPED: the gateway is shutting down",
+  running: "ERR_GLOSSARY_PASS_RUNNING: a glossary pass is already running",
+};

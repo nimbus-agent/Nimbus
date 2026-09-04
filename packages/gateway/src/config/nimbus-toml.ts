@@ -67,6 +67,75 @@ function parseBool(raw: string): boolean | undefined {
   return undefined;
 }
 
+/**
+ * Assign a boolean key when — and only when — the raw value actually parses as one.
+ *
+ * The whole file's contract for a malformed value is "leave the field UNSET so the default
+ * survives", never "coerce to false"; written once here so the ~30 boolean keys in this file
+ * cannot each re-derive it and one of them get it wrong.
+ */
+function assignBool(valRaw: string, assign: (b: boolean) => void): void {
+  const b = parseBool(valRaw);
+  if (b !== undefined) assign(b);
+}
+
+/**
+ * Assign an integer key when it parses AND lands inside `[min, max]` (both inclusive).
+ *
+ * Out-of-range is REJECTED, not clamped: clamping leaves the running config silently disagreeing
+ * with what the file says, which is the harder of the two failures to diagnose.
+ */
+function assignBoundedInt(
+  valRaw: string,
+  bounds: { readonly min: number; readonly max: number },
+  assign: (n: number) => void,
+): void {
+  const n = parseIntDec(valRaw);
+  if (n !== undefined && n >= bounds.min && n <= bounds.max) assign(n);
+}
+
+/**
+ * `enabled` — the one toggle EVERY pass section has.
+ *
+ * Split from `applyPassSectionToggle` below rather than folded into it, because a section that
+ * does not declare `use_llm` must not have one INVENTED for it: `out` here is a
+ * `Partial<Nimbus…Toml>` that gets spread over the defaults, so writing a field the type does not
+ * carry puts a key in the returned config that nothing reads and every equality assertion sees.
+ * `[ownership]` is that section.
+ */
+function applyEnabledToggle(out: { enabled?: boolean }, key: string, valRaw: string): boolean {
+  if (key !== "enabled") return false;
+  assignBool(valRaw, (b) => {
+    out.enabled = b;
+  });
+  return true;
+}
+
+/**
+ * The `enabled` / `use_llm` prelude shared by the three LLM-backed pass sections — `[glossary]`,
+ * `[decisions]` and `[premortem]`.
+ *
+ * It MUST run before each section's integer branch, and that ordering is precisely why it is one
+ * function rather than three copies: routed through `parseIntDec`, `use_llm` is silently dropped
+ * and the section reads as if it were never set.
+ *
+ * Returns true when the key was one of the two and has been HANDLED — including when the value
+ * was malformed and deliberately left unset, which is still handled and must not fall through to
+ * a numeric parse.
+ */
+function applyPassSectionToggle(
+  out: { enabled?: boolean; useLlm?: boolean },
+  key: string,
+  valRaw: string,
+): boolean {
+  if (applyEnabledToggle(out, key, valRaw)) return true;
+  if (key !== "use_llm") return false;
+  assignBool(valRaw, (b) => {
+    out.useLlm = b;
+  });
+  return true;
+}
+
 function forEachSectionEntry(
   source: string,
   sectionHeader: string,
@@ -291,11 +360,11 @@ export const DEFAULT_NIMBUS_LLM_TOML: NimbusLlmToml = {
 
 function applyNimbusLlmKey(out: Partial<NimbusLlmToml>, key: string, valRaw: string): void {
   switch (key) {
-    case "prefer_local": {
-      const b = parseBool(valRaw);
-      if (b !== undefined) out.preferLocal = b;
+    case "prefer_local":
+      assignBool(valRaw, (b) => {
+        out.preferLocal = b;
+      });
       break;
-    }
     // `remote_model` was removed on 2026-08-28 alongside `classifier_model`, for the same
     // reason and with the same handling: a stale key in an existing nimbus.toml is ignored.
     // `classifier_model` was removed on 2026-08-28 and is deliberately NOT parsed here: the
@@ -308,26 +377,26 @@ function applyNimbusLlmKey(out: Partial<NimbusLlmToml>, key: string, valRaw: str
     case "llamacpp_server_path":
       out.llamacppServerPath = parseString(valRaw);
       break;
-    case "min_reasoning_params": {
-      const n = parseIntDec(valRaw);
-      if (n !== undefined && n > 0) out.minReasoningParams = n;
+    case "min_reasoning_params":
+      assignBoundedInt(valRaw, { min: 1, max: Number.MAX_SAFE_INTEGER }, (n) => {
+        out.minReasoningParams = n;
+      });
       break;
-    }
-    case "enforce_air_gap": {
-      const b = parseBool(valRaw);
-      if (b !== undefined) out.enforceAirGap = b;
+    case "enforce_air_gap":
+      assignBool(valRaw, (b) => {
+        out.enforceAirGap = b;
+      });
       break;
-    }
-    case "max_agent_depth": {
-      const n = parseIntDec(valRaw);
-      if (n !== undefined && n >= 1 && n <= 10) out.maxAgentDepth = n;
+    case "max_agent_depth":
+      assignBoundedInt(valRaw, { min: 1, max: 10 }, (n) => {
+        out.maxAgentDepth = n;
+      });
       break;
-    }
-    case "max_tool_calls_per_session": {
-      const n = parseIntDec(valRaw);
-      if (n !== undefined && n >= 1 && n <= 200) out.maxToolCallsPerSession = n;
+    case "max_tool_calls_per_session":
+      assignBoundedInt(valRaw, { min: 1, max: 200 }, (n) => {
+        out.maxToolCallsPerSession = n;
+      });
       break;
-    }
     case "route_priority": {
       // `parseStringArray` THROWS on a non-bracket-delimited value. Unguarded, that
       // escapes into `loadTomlSection`'s catch and reverts the WHOLE [llm] section —
@@ -343,21 +412,21 @@ function applyNimbusLlmKey(out: Partial<NimbusLlmToml>, key: string, valRaw: str
       }
       break;
     }
+    case "local_context_tokens":
+      // A window below what `num_predict` alone reserves cannot hold a prompt at all, so a typo
+      // there would be worse than the default it replaced. Rejected rather than clamped, per
+      // `assignBoundedInt`.
+      assignBoundedInt(valRaw, { min: 2048, max: Number.MAX_SAFE_INTEGER }, (n) => {
+        out.localContextTokens = n;
+      });
+      break;
     default:
-      applyNimbusLlmNumericKey(out, key, valRaw);
       break;
   }
 }
 
 const LLM_LOCAL_TABLE_PREFIX = "[llm.local.";
 const LLM_REMOTE_TABLE_PREFIX = "[llm.remote.";
-
-/** Records a `key = value` line into the current `[llm.local.<name>]` bucket, if any. */
-function applyLlmLocalTableLine(bucket: Record<string, string> | undefined, trimmed: string): void {
-  if (bucket === undefined) return;
-  const kv = splitKeyValue(trimmed);
-  if (kv !== undefined) bucket[kv.key] = kv.valRaw;
-}
 
 /**
  * If `trimmed` is a `[llm.local.<name>]` header, resolves its id via the shared
@@ -413,7 +482,7 @@ function collectLlmKvSections(
       continue;
     }
     if (currentId === undefined) continue;
-    applyLlmLocalTableLine(accum.get(currentId), trimmed);
+    applyKvLine(accum.get(currentId), trimmed);
   }
 
   return accum;
@@ -529,21 +598,6 @@ function parseLlmTaskPins(source: string): Map<LlmTaskType, string> {
     if (routeId.length > 0) out.set(key, routeId);
   });
   return out;
-}
-
-/**
- * The bounded-integer `[llm]` keys, split out of the switch above to keep it under the
- * cognitive-complexity gate (Sonar `S3776`). Each is "parse, bounds-check, assign" — the same
- * three lines with different bounds, which is exactly the shape that reads better apart from a
- * switch of one-liners.
- */
-function applyNimbusLlmNumericKey(out: Partial<NimbusLlmToml>, key: string, valRaw: string): void {
-  if (key !== "local_context_tokens") return;
-  const n = parseIntDec(valRaw);
-  // A window below what `num_predict` alone reserves cannot hold a prompt at all, so a typo
-  // there would be worse than the default it replaced. Reject rather than clamp: clamping
-  // silently disagrees with what the file says.
-  if (n !== undefined && n >= 2048) out.localContextTokens = n;
 }
 
 export function parseNimbusTomlLlmSection(source: string): Partial<NimbusLlmToml> {
@@ -1553,7 +1607,14 @@ function beginQuorumTable(
   return id;
 }
 
-/** Records a `key = value` line into the current sub-table's bucket, if any. */
+/**
+ * Records a `key = value` line into the current sub-table's bucket, if any.
+ *
+ * ONE definition for every `[<section>.<id>]` sub-table parser in this file — `[llm.local.*]`,
+ * `[hitl.quorum."*"]` and the rest all accumulate raw kv strings identically, and a second copy of
+ * these four lines is a second place for "a line outside any table is DROPPED, never misfiled into
+ * the previous table" to drift.
+ */
 function applyKvLine(bucket: Record<string, string> | undefined, trimmed: string): void {
   if (bucket === undefined) return;
   const kv = splitKeyValue(trimmed);
@@ -2061,16 +2122,7 @@ function applyNimbusGlossaryKey(
   key: string,
   valRaw: string,
 ): void {
-  if (key === "enabled") {
-    const b = parseBool(valRaw);
-    if (b !== undefined) out.enabled = b;
-    return;
-  }
-  if (key === "use_llm") {
-    const b = parseBool(valRaw);
-    if (b !== undefined) out.useLlm = b;
-    return;
-  }
+  if (applyPassSectionToggle(out, key, valRaw)) return;
   const n = parseIntDec(valRaw);
   if (n === undefined || n <= 0) return;
   switch (key) {
@@ -2164,16 +2216,7 @@ function applyNimbusDecisionsKey(
   // Bool keys MUST come before the integer branch below — same regression the
   // [glossary] block guards against: routed through `parseIntDec`, `use_llm`
   // is silently dropped and the section reads as if it were never set.
-  if (key === "enabled") {
-    const b = parseBool(valRaw);
-    if (b !== undefined) out.enabled = b;
-    return;
-  }
-  if (key === "use_llm") {
-    const b = parseBool(valRaw);
-    if (b !== undefined) out.useLlm = b;
-    return;
-  }
+  if (applyPassSectionToggle(out, key, valRaw)) return;
   // `min_confidence` is the one FLOAT key, so it must precede the integer
   // branch too: that branch would truncate 0.7 to 0, and its `n <= 0` guard
   // would discard a negative before the clamp below ever saw it.
@@ -2285,11 +2328,9 @@ function applyNimbusOwnershipKey(
   key: string,
   valRaw: string,
 ): void {
-  if (key === "enabled") {
-    const b = parseBool(valRaw);
-    if (b !== undefined) out.enabled = b;
-    return;
-  }
+  // `applyEnabledToggle`, NOT `applyPassSectionToggle`: `[ownership]` has no `use_llm` key, and
+  // the two-key helper would write one onto the returned config.
+  if (applyEnabledToggle(out, key, valRaw)) return;
   if (key === "ignore_globs") {
     // `parseStringArray` THROWS a TypeError on anything not bracket-delimited.
     // Unguarded, that escapes `parseNimbusOwnershipToml` into `loadTomlSection`'s
@@ -2395,16 +2436,7 @@ function applyNimbusPremortemKey(
   // Bool keys MUST come before the integer branch below — same regression the
   // [glossary] block guards against: routed through `parseIntDec`, `use_llm`
   // is silently dropped and the section reads as if it were never set.
-  if (key === "enabled") {
-    const b = parseBool(valRaw);
-    if (b !== undefined) out.enabled = b;
-    return;
-  }
-  if (key === "use_llm") {
-    const b = parseBool(valRaw);
-    if (b !== undefined) out.useLlm = b;
-    return;
-  }
+  if (applyPassSectionToggle(out, key, valRaw)) return;
   const n = parseIntWithMin(valRaw, 1);
   if (n === undefined) return;
   switch (key) {

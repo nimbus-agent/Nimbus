@@ -74,6 +74,42 @@ function renderLatency(ms: number): string {
   return `_generated in ${(ms / 1000).toFixed(1)} s_`;
 }
 
+/**
+ * Assemble a brief: the header, then the body parts, then the reserved `## Gaps` block and the
+ * latency footer — in that order, with empty parts dropped.
+ *
+ * The `""` between header and body is dropped by that same filter, so it produces NO blank line;
+ * it is kept only because removing it would change nothing and this shape is what every renderer
+ * already had. Spacing comes from the parts themselves — `renderGaps` opens with a newline, and
+ * each section block carries its own — which is why `renderGhost` passing a bare one-line body
+ * yields `# Ghost: …\n<body>` rather than a blank line between them. That is pre-existing
+ * behaviour, byte-identical before and after this helper existed, and the brief snapshots pin it.
+ *
+ * ONE assembler for every brief that ends this way, and it is I31 machinery rather than
+ * formatting sugar. `reserved()` is what WITHHOLDS a disclosure-only section from a synthesis
+ * rewrite so `synthesize.ts` can re-attach it verbatim; a renderer that assembled its own tail is
+ * a renderer that could forget to, or could order Gaps after the footer, and the guard in
+ * `brief-contract.ts` would then be checking a document the renderer never promised. Keeping the
+ * shape in one place is what makes "every brief ends with its Gaps, and honours `omitReserved`"
+ * true by construction rather than by fourteen agreeing copies.
+ *
+ * Briefs with additional reserved sections of their own — `negotiate`'s `## Sources` and
+ * `## Evidence not available from the index` — deliberately do NOT use this helper: their tail is
+ * longer than "gaps then footer", and forcing them through here would mean a parameter for every
+ * variation, which is how a shared assembler stops being one.
+ */
+function assembleBrief(
+  header: string,
+  body: readonly string[],
+  brief: { readonly gaps: GapNote[]; readonly latencyMs: number },
+  opts: RenderOpts | undefined,
+): string {
+  const gaps = reserved(renderGaps(brief.gaps), opts);
+  return [header, "", ...body, gaps, renderLatency(brief.latencyMs)]
+    .filter((s) => s !== "")
+    .join("\n");
+}
+
 function renderExpertFinding(f: ExpertFinding): string {
   const head = `**${f.displayName}** (${f.confidence} — ${f.evidence.length} evidence row${
     f.evidence.length === 1 ? "" : "s"
@@ -92,9 +128,7 @@ export function renderExpert(brief: ExpertBrief, opts?: RenderOpts): string {
     brief.ranked.length === 0
       ? "_no people matched_"
       : brief.ranked.map(renderExpertFinding).join("\n");
-  const gaps = reserved(renderGaps(brief.gaps), opts);
-  const footer = renderLatency(brief.latencyMs);
-  return [header, "", topHeading, "", body, gaps, footer].filter((s) => s !== "").join("\n");
+  return assembleBrief(header, [topHeading, "", body], brief, opts);
 }
 
 const IMPACT_BUCKET_HEADINGS: Readonly<Record<ImpactCategory, string>> = Object.freeze({
@@ -132,9 +166,7 @@ export function renderImpact(brief: ImpactBrief, opts?: RenderOpts): string {
       sections.push(block);
     }
   }
-  const gaps = reserved(renderGaps(brief.gaps), opts);
-  const footer = renderLatency(brief.latencyMs);
-  return [header, "", ...sections, gaps, footer].filter((s) => s !== "").join("\n");
+  return assembleBrief(header, [...sections], brief, opts);
 }
 
 function renderCatchupItem(item: {
@@ -162,9 +194,7 @@ export function renderCatchup(brief: CatchupBrief, opts?: RenderOpts): string {
       sections.push(block);
     }
   }
-  const gaps = reserved(renderGaps(brief.gaps), opts);
-  const footer = renderLatency(brief.latencyMs);
-  return [header, "", ...sections, gaps, footer].filter((s) => s !== "").join("\n");
+  return assembleBrief(header, [...sections], brief, opts);
 }
 
 function renderGhostFinding(f: GhostFinding): string {
@@ -180,9 +210,7 @@ export function renderGhost(brief: GhostBrief, opts?: RenderOpts): string {
     brief.findings.length === 0
       ? "_no teammate context found_"
       : brief.findings.map(renderGhostFinding).join("\n");
-  const gaps = reserved(renderGaps(brief.gaps), opts);
-  const footer = renderLatency(brief.latencyMs);
-  return [header, "", body, gaps, footer].filter((s) => s !== "").join("\n");
+  return assembleBrief(header, [body], brief, opts);
 }
 
 function renderConflictFinding(f: ConflictFinding): string {
@@ -197,9 +225,7 @@ export function renderConflict(brief: ConflictBrief, opts?: RenderOpts): string 
     brief.collisions.length === 0
       ? "_no work-in-progress collisions found_"
       : brief.collisions.map(renderConflictFinding).join("\n");
-  const gaps = reserved(renderGaps(brief.gaps), opts);
-  const footer = renderLatency(brief.latencyMs);
-  return [header, "", body, gaps, footer].filter((s) => s !== "").join("\n");
+  return assembleBrief(header, [body], brief, opts);
 }
 
 export function renderHuddle(brief: HuddleBrief, opts?: RenderOpts): string {
@@ -218,9 +244,7 @@ export function renderHuddle(brief: HuddleBrief, opts?: RenderOpts): string {
       sections.push([heading, "", ...(lines.length === 0 ? ["_quiet_"] : lines)].join("\n"));
     }
   }
-  const gaps = reserved(renderGaps(brief.gaps), opts);
-  const footer = renderLatency(brief.latencyMs);
-  return [header, "", ...sections, gaps, footer].filter((s) => s !== "").join("\n");
+  return assembleBrief(header, [...sections], brief, opts);
 }
 
 export function renderJanitor(brief: JanitorBrief, opts?: RenderOpts): string {
@@ -239,9 +263,7 @@ export function renderJanitor(brief: JanitorBrief, opts?: RenderOpts): string {
     );
     verdict = ["Still in use:", ...lines].join("\n");
   }
-  const gaps = reserved(renderGaps(brief.gaps), opts);
-  const footer = renderLatency(brief.latencyMs);
-  return [header, "", verdict, gaps, footer].filter((s) => s !== "").join("\n");
+  return assembleBrief(header, [verdict], brief, opts);
 }
 
 function preflightIcon(s: PreflightDownstream["status"]): string {
@@ -259,9 +281,7 @@ export function renderPreflight(brief: PreflightBrief, opts?: RenderOpts): strin
       : brief.downstreams
           .map((d) => `- **${d.who ?? d.peerId}**: ${preflightIcon(d.status)} — ${d.summary}`)
           .join("\n");
-  const gaps = reserved(renderGaps(brief.gaps), opts);
-  const footer = renderLatency(brief.latencyMs);
-  return [header, "", body, gaps, footer].filter((s) => s !== "").join("\n");
+  return assembleBrief(header, [body], brief, opts);
 }
 
 const WHY_LANE_ORDER: readonly WhyLane[] = Object.freeze([
@@ -520,9 +540,7 @@ export function renderOwnership(brief: OwnershipBrief, opts?: RenderOpts): strin
       `services ${String(brief.coverage.servicesBound)}`,
   ];
   const body = [...sections, ...svc, ...cov].join("\n");
-  const gaps = reserved(renderGaps(brief.gaps), opts);
-  const footer = renderLatency(brief.latencyMs);
-  return [header, "", body, gaps, footer].filter((s) => s !== "").join("\n");
+  return assembleBrief(header, [body], brief, opts);
 }
 
 const DECISIONS_EVIDENCE_PREFIX: Readonly<Record<DecisionEvidence["kind"], string>> = Object.freeze(
@@ -581,9 +599,7 @@ export function renderDecisions(brief: DecisionsBrief, opts?: RenderOpts): strin
     brief.entries.length === 0
       ? "_No decisions found._"
       : brief.entries.map((e) => renderDecisionsEntry(brief, e)).join("\n\n");
-  const gaps = reserved(renderGaps(brief.gaps), opts);
-  const footer = renderLatency(brief.latencyMs);
-  return [header, "", body, gaps, footer].filter((s) => s !== "").join("\n");
+  return assembleBrief(header, [body], brief, opts);
 }
 
 function renderPremortemRisk(r: Risk): string {
@@ -653,9 +669,7 @@ export function renderPremortem(brief: PremortemBrief, opts?: RenderOpts): strin
     sections.push(`\n## Watcher proposals\n\n${rows.join("\n")}`);
   }
 
-  const gaps = reserved(renderGaps(brief.gaps), opts);
-  const footer = renderLatency(brief.latencyMs);
-  return [header, "", ...sections, gaps, footer].filter((s) => s !== "").join("\n");
+  return assembleBrief(header, [...sections], brief, opts);
 }
 
 /**

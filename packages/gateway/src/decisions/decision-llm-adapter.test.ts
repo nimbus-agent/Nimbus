@@ -1,7 +1,7 @@
 import { describe, expect, it, test } from "bun:test";
 
 import { LlmRouter } from "../llm/router.ts";
-import type { LlmProvider, ProviderId } from "../llm/types.ts";
+import type { LlmProvider } from "../llm/types.ts";
 import {
   buildExtractionPrompt,
   createDecisionLlm,
@@ -14,7 +14,7 @@ function fakeLlm(reply: string): DecisionLlm {
   return { complete: async () => reply };
 }
 
-function fakeProvider(id: ProviderId, opts: { available: boolean; text?: string }): LlmProvider {
+function fakeProvider(id: string, opts: { available: boolean; text?: string }): LlmProvider {
   // The model this route registers under — `routerWith` below registers each provider
   // under `local-model`/`remote-model` based on `isLocal`, matching this listing.
   const modelName = id === "remote" ? "remote-model" : "local-model";

@@ -1,4 +1,4 @@
-import type { LlmProvider, ModelRoute, ProviderId } from "./types.ts";
+import type { LlmProvider, ModelRoute } from "./types.ts";
 
 /**
  * Why a route is or isn't usable, kept as two distinct failure reasons rather than a
@@ -115,8 +115,10 @@ export class RouteAvailabilityProbe {
    * we believe about all of them — dropping too much only costs a re-list, whereas
    * dropping too little leaves a just-pulled model reading as absent.
    */
-  invalidate(providerId: ProviderId): void {
-    for (const provider of [...this.cache.keys()]) {
+  invalidate(providerId: string): void {
+    // Iterated live rather than over a copy: deleting the CURRENT entry of a `Map` mid-iteration
+    // is well-defined — the removed entry is simply not revisited, and nothing here inserts.
+    for (const provider of this.cache.keys()) {
       if (provider.providerId === providerId) this.cache.delete(provider);
     }
   }

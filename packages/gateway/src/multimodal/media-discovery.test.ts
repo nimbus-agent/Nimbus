@@ -170,45 +170,27 @@ describe("findCandidates — metadata edge cases", () => {
     expect(c.sourceBytes).toBeNull();
   });
 
-  test("treats an empty-string metadata column as an empty object", () => {
-    addMedia("/m/a.mp4");
-    db.run("UPDATE item SET metadata = '' WHERE type = 'media_av'");
-    const [c] = findCandidates(db, { limit: 10 });
-    if (c === undefined) throw new Error("expected a candidate");
-    expect(c.sourcePath).toBeNull();
-  });
+  // Every shape a `metadata` column can take that is NOT an object carrying a usable `path`. The
+  // required outcome is one and the same — the candidate still exists, its `sourcePath` is null —
+  // so these are one table rather than five copies of one body. Each row is still its own `test`,
+  // so a regression names the shape that broke rather than "metadata edge cases".
+  const NO_USABLE_PATH_CASES: ReadonlyArray<{ what: string; sql: string }> = [
+    { what: "an empty-string metadata column", sql: "''" },
+    { what: "malformed JSON", sql: "'{not json'" },
+    { what: "a JSON array", sql: "'[1,2,3]'" },
+    { what: "a JSON primitive", sql: "'5'" },
+    { what: "an empty-string path", sql: "json_set(metadata, '$.path', '')" },
+  ];
 
-  test("falls back to an empty object when metadata is malformed JSON", () => {
-    addMedia("/m/a.mp4");
-    db.run("UPDATE item SET metadata = '{not json' WHERE type = 'media_av'");
-    const [c] = findCandidates(db, { limit: 10 });
-    if (c === undefined) throw new Error("expected a candidate");
-    expect(c.sourcePath).toBeNull();
-  });
-
-  test("falls back to an empty object when metadata parses to a JSON array", () => {
-    addMedia("/m/a.mp4");
-    db.run("UPDATE item SET metadata = '[1,2,3]' WHERE type = 'media_av'");
-    const [c] = findCandidates(db, { limit: 10 });
-    if (c === undefined) throw new Error("expected a candidate");
-    expect(c.sourcePath).toBeNull();
-  });
-
-  test("falls back to an empty object when metadata parses to a JSON primitive", () => {
-    addMedia("/m/a.mp4");
-    db.run("UPDATE item SET metadata = '5' WHERE type = 'media_av'");
-    const [c] = findCandidates(db, { limit: 10 });
-    if (c === undefined) throw new Error("expected a candidate");
-    expect(c.sourcePath).toBeNull();
-  });
-
-  test("treats an empty-string path as absent, not as a value", () => {
-    addMedia("/m/a.mp4");
-    db.run("UPDATE item SET metadata = json_set(metadata, '$.path', '') WHERE type = 'media_av'");
-    const [c] = findCandidates(db, { limit: 10 });
-    if (c === undefined) throw new Error("expected a candidate");
-    expect(c.sourcePath).toBeNull();
-  });
+  for (const { what, sql } of NO_USABLE_PATH_CASES) {
+    test(`reports a null sourcePath for ${what}`, () => {
+      addMedia("/m/a.mp4");
+      db.run(`UPDATE item SET metadata = ${sql} WHERE type = 'media_av'`);
+      const [c] = findCandidates(db, { limit: 10 });
+      if (c === undefined) throw new Error("expected a candidate");
+      expect(c.sourcePath).toBeNull();
+    });
+  }
 
   test("treats a missing sizeBytes key as null, not zero", () => {
     upsertIndexedItem(db, {

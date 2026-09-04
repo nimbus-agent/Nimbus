@@ -1,3 +1,4 @@
+import { createPassScheduler } from "../util/pass-scheduler.ts";
 import type { OwnershipPassSummary } from "./ownership-pass.ts";
 
 /**
@@ -37,93 +38,42 @@ export type OwnershipRefresher = {
 };
 
 /**
- * Debounced, single-flight trigger for the ownership pass. Mirrors
- * `decisions/decision-refresh.ts`: a burst of connector syncs must coalesce
- * into ONE pass, and a trigger arriving mid-pass sets a DIRTY flag rather than
- * queueing — exactly one follow-up runs however many syncs landed meanwhile,
- * so a slow pass cannot accumulate a backlog. Dropping the trigger outright
- * would lose whichever sync overlapped the pass until some later sync fired.
+ * Debounced, single-flight trigger for the ownership pass. The debounce, the single-flight guard
+ * and the dirty-rerun all live in `util/pass-scheduler.ts`, shared with the glossary, decisions
+ * and pre-mortem passes.
  *
- * `run()` shares the same `running`/`dirty` state as the debounced path: it
- * rejects if a pass is already in flight (never runs two passes
- * concurrently — both write graph relations and would race), and a trigger
- * that lands during an on-demand `run()` still gets its follow-up via the
- * same dirty re-fire, exactly as it would during a debounced pass.
+ * `run()` shares the scheduler's state with the debounced path: it rejects if a pass is already
+ * in flight (never runs two passes concurrently — both write graph relations and would race), and
+ * a trigger that lands during an on-demand `run()` still gets its follow-up via the same dirty
+ * re-fire, exactly as it would during a debounced pass.
  *
- * LIMIT — `stop()` clears the debounce timer only; a pass already in flight
- * runs to completion. Unlike the decisions pass there is no model call
- * underneath, so the unbounded-hang failure mode that pass documents does not
- * apply here: every await is SQLite or a timeout-bounded `git` spawn.
+ * LIMIT — `stop()` refuses later runs and clears the debounce timer; a pass already in flight
+ * runs to completion, since `runOwnershipPass` takes no signal to abort. Unlike the decisions
+ * pass there is no model call underneath, so the unbounded-hang failure mode that pass documents
+ * does not apply here: every await is SQLite or a timeout-bounded `git` spawn.
  */
 export function createOwnershipRefresher(deps: OwnershipRefresherDeps): OwnershipRefresher {
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  let running = false;
-  let dirty = false;
-  let stopped = false;
-
-  function fire(): void {
-    timer = undefined;
-    if (stopped) return;
-    if (running) {
-      dirty = true;
-      return;
-    }
-    running = true;
-    deps
-      .runPass()
-      .catch((err: unknown) => {
-        deps.onError?.(err);
-      })
-      .finally(() => {
-        running = false;
-        if (dirty) {
-          dirty = false;
-          fire();
-        }
-      });
-  }
+  const scheduler = createPassScheduler<OwnershipPassSummary, void>({
+    debounceMs: deps.debounceMs,
+    // The signal is accepted and DISCARDED: `runOwnershipPass` takes none, so there is nowhere
+    // to route an abort. `stop()` still refuses every later run, which is what matters here.
+    runPass: () => deps.runPass(),
+    scheduledOptions: undefined,
+    ...(deps.onError === undefined ? {} : { onError: deps.onError }),
+    refuse: (kind) =>
+      new OwnershipRefresherError(
+        kind === "running"
+          ? "ERR_OWNERSHIP_PASS_RUNNING: an ownership pass is already running"
+          : // `stop()` is a gateway shutdown callback (`platform/assemble.ts` `sidecarStops`).
+            // Without this refusal, an on-demand `run()` arriving after shutdown would start a
+            // fresh pass and write graph rows while the sidecars close.
+            "ERR_OWNERSHIP_STOPPED: the gateway is shutting down",
+      ),
+  });
 
   return {
-    trigger(): void {
-      if (stopped) return;
-      if (running) {
-        dirty = true;
-        return;
-      }
-      if (timer !== undefined) clearTimeout(timer);
-      timer = setTimeout(fire, deps.debounceMs);
-    },
-    async run(): Promise<OwnershipPassSummary> {
-      // `stop()` is a gateway shutdown callback (`platform/assemble.ts`
-      // `sidecarStops`). Without this, an on-demand `run()` arriving after
-      // shutdown would start a fresh pass and write graph rows while the
-      // sidecars close. Mirrors `ERR_DECISIONS_STOPPED` in
-      // `decisions/decision-refresh.ts`.
-      if (stopped) {
-        throw new OwnershipRefresherError("ERR_OWNERSHIP_STOPPED: the gateway is shutting down");
-      }
-      if (running) {
-        throw new OwnershipRefresherError(
-          "ERR_OWNERSHIP_PASS_RUNNING: an ownership pass is already running",
-        );
-      }
-      running = true;
-      try {
-        return await deps.runPass();
-      } finally {
-        running = false;
-        if (dirty) {
-          dirty = false;
-          fire();
-        }
-      }
-    },
-    stop(): void {
-      stopped = true;
-      if (timer !== undefined) {
-        clearTimeout(timer);
-        timer = undefined;
-      }
-    },
+    trigger: scheduler.trigger,
+    run: () => scheduler.runNow(undefined),
+    stop: scheduler.stop,
   };
 }

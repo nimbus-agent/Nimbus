@@ -320,6 +320,31 @@ async function resolveArm(input: WhyInput, ctx: WhyContext): Promise<WhyLaneReso
   return resolveRefArm(input, ctx);
 }
 
+/**
+ * The subject's timestamp, taken from the arm that resolved it and from nowhere else.
+ *
+ * Computed per-arm rather than through one shared nullish chain: on the ref arm
+ * `blame.authorTimeMs` can itself be null (no `author-time` line in the `git blame
+ * --line-porcelain` output) while `pr` is still non-null — a shared
+ * `blame?.authorTimeMs ?? pr?.modifiedAt ?? null` would silently borrow the PR's timestamp
+ * for a ref-arm answer, which is a different (and wrong) answer, not a missing one. The item
+ * arm takes its own timestamp for the same reason, rather than borrowing the PR's. Written as
+ * a switch over the arm so that "one arm, one source" is the shape of the function.
+ */
+function occurredAtOf(
+  arm: LaneInput["arm"],
+  sources: Pick<WhyLaneResolution, "blame" | "pr" | "itemSubject">,
+): number | null {
+  switch (arm) {
+    case "item":
+      return sources.itemSubject?.modifiedAt ?? null;
+    case "change":
+      return sources.pr?.modifiedAt ?? null;
+    default:
+      return sources.blame?.authorTimeMs ?? null;
+  }
+}
+
 export async function runWhy(input: WhyInput, ctx: WhyContext): Promise<WhyBrief> {
   const start = performance.now();
   const preflightGaps: GapNote[] = [];
@@ -335,19 +360,7 @@ export async function runWhy(input: WhyInput, ctx: WhyContext): Promise<WhyBrief
     blame,
     pr,
     itemEntityId,
-    // Computed per-arm, not through one shared nullish chain: on the ref arm
-    // `blame.authorTimeMs` can itself be null (no `author-time` line in the
-    // `git blame --line-porcelain` output) while `pr` is still non-null — a
-    // shared `blame?.authorTimeMs ?? pr?.modifiedAt ?? null` would silently
-    // borrow the PR's timestamp for a ref-arm answer, which is a different
-    // (and wrong) answer, not a missing one. The item arm takes its own
-    // timestamp for the same reason, rather than borrowing the PR's.
-    occurredAt:
-      arm === "item"
-        ? (itemSubject?.modifiedAt ?? null)
-        : arm === "change"
-          ? (pr?.modifiedAt ?? null)
-          : (blame?.authorTimeMs ?? null),
+    occurredAt: occurredAtOf(arm, { blame, pr, itemSubject }),
     arm,
   };
 

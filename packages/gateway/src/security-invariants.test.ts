@@ -546,27 +546,33 @@ describe("I11 — Tool-result envelope on the LLM-facing path", () => {
     expect(src).toMatch(/replaceAll\("<\/tool_output>"/);
   });
 
-  test("agent.ts both wraps with envelope AND writes tool_call_log on the LLM-facing path", async () => {
-    const src = await read("packages/gateway/src/engine/agent.ts");
-    expect(src).toMatch(/wrapToolOutput\(/);
-    expect(src).toMatch(/writeToolCallLog\(/);
-  });
+  // EVERY file that hands a tool result to the conversational model. Enumerated as a table so
+  // that adding a fourth wiring site is one row, and so this list can be read against
+  // SECURITY-INVARIANTS.md's own list of I11 sites without reconstructing it from three separate
+  // test bodies.
+  //
+  // `cu-tools.ts` is here because of Task 12 review round 1, finding 4: it was a THIRD I11 wiring
+  // site that landed without an update to either this file or SECURITY-INVARIANTS.md — exactly
+  // the drift the triple rule (wiring + docs + test in one commit) exists to prevent.
+  const I11_WIRING_SITES: ReadonlyArray<{ what: string; path: string }> = [
+    { what: "agent.ts, on the LLM-facing path", path: "packages/gateway/src/engine/agent.ts" },
+    {
+      what: "mesh.ts:listTools",
+      path: "packages/gateway/src/connectors/lazy-mesh/mesh.ts",
+    },
+    {
+      what: "cu-tools.ts (computer-use), for its textual tool results",
+      path: "packages/gateway/src/computer-use/cu-tools.ts",
+    },
+  ];
 
-  test("mesh.ts:listTools both wraps with envelope AND writes tool_call_log", async () => {
-    const src = await read("packages/gateway/src/connectors/lazy-mesh/mesh.ts");
-    expect(src).toMatch(/wrapToolOutput\(/);
-    expect(src).toMatch(/writeToolCallLog\(/);
-  });
-
-  // (Task 12 review round 1, finding 4) A THIRD I11 wiring site: computer-use's model-callable
-  // browser tools. This invariant's docs previously named only the two sites above; the wiring
-  // landed without an update to either this file or SECURITY-INVARIANTS.md, which is exactly the
-  // drift the triple rule (wiring + docs + test in one commit) exists to prevent.
-  test("cu-tools.ts (computer-use) wraps textual tool results with envelope AND writes tool_call_log", async () => {
-    const src = await read("packages/gateway/src/computer-use/cu-tools.ts");
-    expect(src).toMatch(/wrapToolOutput\(/);
-    expect(src).toMatch(/writeToolCallLog\(/);
-  });
+  for (const { what, path } of I11_WIRING_SITES) {
+    test(`${what} both wraps with the envelope AND writes tool_call_log`, async () => {
+      const src = await read(path);
+      expect(src).toMatch(/wrapToolOutput\(/);
+      expect(src).toMatch(/writeToolCallLog\(/);
+    });
+  }
 
   test("cu-tools.ts's four textual browser tools each independently route through the shared runTextualAction wrap+log site", async () => {
     // Per-tool, not per-file, AND bounded to each tool's OWN block (fix round 2). A per-file
@@ -2971,12 +2977,11 @@ describe("I35 — computer-use actuation only inside an approved envelope", () =
     // By ARITY: the function takes the composed line and nothing else, so the model's own
     // description cannot be passed to it, let alone consulted — I3 transplanted, and stronger here
     // than on the browser lane, where the separation rests on which fields an input object carries.
-    expect(classifyTerminalAction.length).toBe(1);
+    expect(classifyTerminalAction).toHaveLength(1);
     // And by exhaustion over adversarial shapes, including ones a future edit might special-case.
     for (const line of ["ls", "", "  ", "cat x # observing", "READ-ONLY", "y".repeat(9000)]) {
       expect(classifyTerminalAction(line).cls).toBe("actuating");
     }
-    // No branch in the source can return `observing` at all — read from disk rather than reasoned
     // No branch in the BODY can return `observing`. Read from disk rather than reasoned about, so
     // a future edit that adds one fails here even if every input above still classifies
     // `actuating` by luck of which cases were chosen.

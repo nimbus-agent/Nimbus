@@ -187,6 +187,49 @@ describe("writeUtf8FileAtomicReplace — the original file survives a failed rep
     }
   });
 
+  test("when the RESTORE also fails, the error names where the original actually is", () => {
+    const { dir, cleanup } = makeTempDir();
+    try {
+      const tomlPath = join(dir, "nimbus.toml");
+      const original = '[llm.tasks]\nclassification = "ollama/small"\n';
+      writeFileSync(tomlPath, original, "utf8");
+
+      // Fail BOTH `tmp -> path` attempts AND the `aside -> path` restore, so the double-failure
+      // arm runs: the replacement never lands and the original never goes back. It still EXISTS,
+      // at a `mkdtemp`'d path nobody can guess — which is exactly why the message must name it.
+      const failWriteAndRestore = (oldPath: string, newPath: string): void => {
+        if (basename(oldPath) === "content") throw new Error("simulated write failure");
+        if (basename(oldPath) === "original-backup") throw new Error("simulated restore failure");
+        renameSync(oldPath, newPath);
+      };
+
+      let thrown: unknown;
+      try {
+        writeUtf8FileAtomicReplace(tomlPath, "must never land\n", failWriteAndRestore);
+      } catch (e) {
+        thrown = e;
+      }
+
+      const msg = thrown instanceof Error ? thrown.message : String(thrown);
+      // The recoverable path, spelled out. Asserted on the FILENAME rather than the whole path
+      // because the parent directory is a random `mkdtemp` name — but that is the point: without
+      // this message the caller has no way to learn it.
+      expect(msg).toContain("original-backup");
+      expect(msg).toContain(tomlPath);
+      // Both causes survive: why the write failed, and why the rollback also failed. Reporting
+      // only the first would say the config was rolled back when it was not.
+      expect(msg).toContain("simulated write failure");
+      expect(msg).toContain("simulated restore failure");
+
+      // And the claim the message makes is TRUE — the original really is at that path, intact.
+      const asideDir = msg.match(/intact at (.+?) — move it back/)?.[1];
+      expect(asideDir).toBeDefined();
+      expect(readFileSync(asideDir as string, "utf8")).toBe(original);
+    } finally {
+      cleanup();
+    }
+  });
+
   test("a fresh (nonexistent) target file is unaffected by the aside/restore dance", () => {
     const { dir, cleanup } = makeTempDir();
     try {

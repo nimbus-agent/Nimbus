@@ -1,7 +1,5 @@
 // packages/gateway/src/llm/route-id.ts
 
-import type { ProviderId } from "./types.ts";
-
 /**
  * The ONLY place a route reference string is built or split.
  *
@@ -17,7 +15,7 @@ import type { ProviderId } from "./types.ts";
  * `hf.co/user/model`. The delimiter is unambiguous only because the LEFT half cannot
  * contain it, which `makeRouteId` enforces.
  */
-export function makeRouteId(providerId: ProviderId, modelName: string): string {
+export function makeRouteId(providerId: string, modelName: string): string {
   if (providerId.includes("/")) {
     throw new Error(`providerId must not contain "/": ${providerId}`);
   }
@@ -32,7 +30,7 @@ export function makeRouteId(providerId: ProviderId, modelName: string): string {
  * degrade the router to default ordering with no signal, which is the "a supplied
  * flag decaying into an omitted filter" shape — invisible from the outside.
  */
-export function parseRouteRef(raw: string): { providerId: ProviderId; modelName: string } {
+export function parseRouteRef(raw: string): { providerId: string; modelName: string } {
   const i = raw.indexOf("/");
   if (i === -1) {
     throw new Error(`malformed route reference "${raw}": expected "<provider>/<model>"`);

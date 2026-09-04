@@ -208,7 +208,11 @@ export class CdpConnection {
       params: asRecord(msg["params"]) ?? {},
       sessionId: typeof sessionId === "string" ? sessionId : undefined,
     };
-    for (const l of [...this.#listeners]) {
+    // Dispatch over a SNAPSHOT, not the live set: a listener may subscribe or unsubscribe from
+    // inside its own handler (the interception listener does exactly that on teardown), and a
+    // `Set` mutated mid-iteration would deliver this event to a listener registered by it.
+    const snapshot = [...this.#listeners];
+    for (const l of snapshot) {
       try {
         l(event);
       } catch {

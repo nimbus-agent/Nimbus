@@ -147,6 +147,16 @@ Note the `?.` — the asymmetry is real and load-bearing:
 | Progress notification | `glossary.passProgress` carries real progress | `decisions.passProgress` has nothing to relay |
 | "Already running" | Checked **synchronously** via `refresher.status()` before `registry.start()` — caller never gets a jobId | Enforced **inside** the async `run()` — caller gets `{ jobId }`, then an immediate `decisions.passError` |
 
+**One state machine, four consumers.** The debounce, the single-flight guard, the dirty-rerun
+and the shutdown abort all live in `gateway/src/util/pass-scheduler.ts`
+(`createPassScheduler`), shared by the glossary, decisions, ownership and pre-mortem
+refreshers. Each `*-refresh.ts` is now a thin adapter that supplies its own summary type, its
+own `ERR_<X>_*` codes (via the injected `refuse`) and its own pass — nothing else. **Change
+scheduling behaviour there, not in a refresher**: the four hand-written copies it replaced had
+already drifted (`trigger()` set the dirty flag directly in one and armed a redundant timer in
+the other three; only two carried an `AbortController`; only one `unref`'d its timer), and
+none of those divergences was intentional.
+
 **Debounce is coalescing, not queueing.** A trigger arriving while a pass is running sets a
 DIRTY flag; exactly one follow-up pass runs afterwards, no matter how many syncs landed
 meanwhile. Defaults: glossary `debounce_ms = 60000`, decisions `debounce_ms = 30000`.
@@ -154,6 +164,9 @@ meanwhile. Defaults: glossary `debounce_ms = 60000`, decisions `debounce_ms = 30
 The on-demand path (`glossary.refresh` / `decisions.refresh` and their `rebuild` twins) shares
 the *same* single-flight guard as the scheduled path — a scheduled pass and an on-demand pass
 must never run concurrently, since both write the watermark and both spend local-model time.
+`runNow` refuses in a fixed order — `disabled`, then `stopped`, then `running` — because a
+disabled pass is a config problem the user can fix and a stopped one is not, and both are more
+useful answers than "already running".
 
 ---
 

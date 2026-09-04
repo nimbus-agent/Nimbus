@@ -7,7 +7,6 @@ import type {
   LlmProvider,
   LlmTaskType,
   ModelRoute,
-  ProviderId,
   ProviderMeta,
 } from "./types.ts";
 
@@ -55,19 +54,19 @@ export type LlmRouterConfig = {
  * provider rather than trust config intent.
  */
 export type ResolvedSynthesisProvider = {
-  readonly providerId: ProviderId;
+  readonly providerId: string;
   readonly modelName: string;
   readonly isLocal: boolean;
 };
 
 export type LlmTaskStatus = {
-  providerId: ProviderId;
+  providerId: string;
   modelName: string;
   isAvailable: boolean;
   reason: string;
   // Populated only when the preferred provider is unavailable: the provider generate() would
   // actually fall back to, so the status reflects real routing rather than just config intent.
-  fallback?: { providerId: ProviderId; modelName: string };
+  fallback?: { providerId: string; modelName: string };
 };
 
 const CONTEXT_OVERFLOW_THRESHOLD = 0.85;

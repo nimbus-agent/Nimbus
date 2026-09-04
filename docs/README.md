@@ -186,7 +186,7 @@ Nimbus maintains a local SQLite metadata index. Searching across 50,000 indexed 
 - **The HITL consent gate** is implemented in the executor, not the prompt. A model that generates a plan to skip confirmation produces a plan that simply does not execute.
 - **Extensions** run in sandboxed child processes. They receive only credentials for their declared service and cannot enumerate Vault keys or access other connectors.
 - **Prompt injection** is mitigated by injecting file content and API responses as typed `<tool_output>` data blocks, never as instructions.
-- **Every authorized outbound action is ledgered.** An append-only, BLAKE3-chained egress ledger records what left the machine, and `nimbus prove` reports it. The structural rules behind all of this are enumerated in [`SECURITY-INVARIANTS.md`](./SECURITY-INVARIANTS.md); each of the thirty-two LIVE invariants — `I1`–`I27` and `I29`–`I33` — has a production wiring site *and* an enforcement test. `I28` is a reserved number with neither.
+- **Every authorized outbound action is ledgered.** An append-only, BLAKE3-chained egress ledger records what left the machine, and `nimbus prove` reports it. The structural rules behind all of this are enumerated in [`SECURITY-INVARIANTS.md`](./SECURITY-INVARIANTS.md); each of the thirty-five LIVE invariants — `I1`–`I27` and `I29`–`I36` — has a production wiring site *and* an enforcement test. `I28` is a reserved number with neither.
 
 ### True Cross-Platform
 
@@ -416,9 +416,16 @@ Nimbus uses phases, not calendar dates. A phase completes when its acceptance cr
 
 **S1 (Local Brain) shipped and closed** on 2026-08-20 — the always-on egress ledger and `nimbus prove` (invariant `I29`), the research-briefs HTTP surface, the full-body store that made briefs answerable at all, zero-config onboarding, and the fourteen built-in read-only agents: `expert`, `impact`, `catchup`, `ghost`, `conflicts`, `huddle`, `janitor`, `preflight`, `why`, `glossary`, `decisions`, `ownership`, `pre-mortem` and `negotiate`. The Wave 6 answer-quality set followed and closed it out: agent brief synthesis (`[agents] synthesis`, invariant `I31`), `nimbus ask --devil`, the `[persona]` `tone`/`voice` vocabulary, `nimbus stats` for bucketed time series over the index, and first-class negation queries.
 
-**Now building (S2 — Local Compute Fleet)**, opened 2026-08-21 with nothing shipped in it yet: sandboxed code execution, a HITL-gated local computer-use loop where screenshots never leave the machine, runtime tool generation, multimodal I/O, overnight sub-agent fleets on compute you already own, and bring-your-own-frontier-model routing with local fallback. S1 made the local index answerable; S2 makes local compute usable.
+**Now building (S2 — Local Compute Fleet)**, opened 2026-08-21. S1 made the local index answerable; S2 makes local compute usable. Shipped in it so far, all **default off**:
 
-**Recorded direction — not built, and not in the current slot.** The agents are the product; a client is only a context-aware way to reach them without leaving where you already are. The Slack/Teams `@nimbus` bot ships today but cannot yet run an agent — a channel can ask a question (which needs an LLM) but cannot get a brief (which does not). Closing that is the next surface direction. Two things were considered and deliberately **rejected**: shipping a Nimbus fork of VS Code, and letting an agent write your source code. The reasoning and the conditions that would reopen either are recorded in [`roadmap.md` § Rejected Directions](./roadmap.md#rejected-directions) — read that before proposing them again.
+- **Sandboxed code execution** (2026-08-23, invariant `I33`) — `nimbus exec` runs a script you approve VERBATIM inside the platform sandbox, with no network at all, loopback included. CLI/owner-only: the LLM cannot invoke an execution.
+- **Bring-your-own-frontier-model routing** (2026-08-28) — Anthropic, OpenAI, Gemini and xAI adapters, each behind a per-vendor `[llm.remote.<vendor>]` opt-in with its key read from the Vault and never the environment. This is what made the egress ledger's `model` class live rather than latent.
+- **A HITL-gated computer-use loop** (2026-09-01, invariant `I35`) — the `browser` lane drives a confined headless Chromium whose screenshots are BLAKE3-digested and never written to disk, and the `terminal` lane is a sandboxed line-oriented shell in which no byte reaches the child process before you have approved the complete command. The `screen` lane is deferred.
+- **Multimodal I/O, slice 1 of 4** (2026-09-02) — `nimbus media understand` transcribes local audio and video with `whisper-cli` and indexes the result as a searchable derived item, pinned to the local embedder so nothing extracted from the file can reach a remote one. Image understanding, cloud byte-fetch and any remote model are **not** in this slice.
+
+Still ahead in S2: runtime tool generation and overnight sub-agent fleets on compute you already own.
+
+**Recorded direction — not built, and not in the current slot.** The agents are the product; a client is only a context-aware way to reach them without leaving where you already are. The browser extension is a web clipper today and the recorded direction is a browser-side gateway client; the editor extension gets the same treatment. Two things were considered and deliberately **rejected**: shipping a Nimbus fork of VS Code, and letting an agent write your source code. The reasoning and the conditions that would reopen either are recorded in [`roadmap.md` § Rejected Directions](./roadmap.md#rejected-directions) — read that before proposing them again.
 
 The dated delivery log is [`CHANGELOG.md`](./CHANGELOG.md) — it is the single source for what landed when. [`roadmap.md`](./roadmap.md) carries the acceptance criteria, sequencing, and per-phase summaries. Command-level detail for everything above is in [`cli-reference.md`](./cli-reference.md).
 
@@ -581,6 +588,32 @@ nimbus pre-mortem                         # comparable-history risk brief
 nimbus negotiate --person <id> --since 90d  # cited contribution brief
 ```
 
+### Local compute
+
+Every command here is **off by default**, and two of the three go further. `nimbus exec` and
+`nimbus computer` each obtain your approval for the exact thing they are about to do — the
+verbatim script, the exact browser launch envelope, the complete command line — in a gate that
+lives in the executor, not the prompt. **`nimbus media understand` has no such gate**: it is
+governed by configuration alone (`[multimodal] enabled` plus a per-root `media_index`, both
+false by default), so enabling it is the whole of the decision. Full detail, including what each
+sandbox does and does not confine, is in [`cli-reference.md`](./cli-reference.md).
+
+```bash
+# Run code in the platform sandbox, with no network at all — loopback included.
+# You approve the verbatim body; the LLM cannot invoke this. [code_execution] enabled = true
+nimbus exec --file ./script.ts --timeout 5000
+
+# A confined headless browser, or a confined line-oriented shell. You approve the session
+# envelope up front and then every actuating step. [computer_use] enabled + allowed_lanes
+nimbus computer browser --origin https://github.com
+nimbus computer terminal --cwd ./my-project
+nimbus computer sessions
+
+# Transcribe local audio/video with whisper-cli and index it as searchable text.
+# Nothing extracted from the file can reach a remote model. [multimodal] enabled + media_index
+nimbus media understand --limit 10
+```
+
 ### Metrics and proof
 
 ```bash
@@ -721,7 +754,7 @@ The complete command reference — every subcommand, flag, exit code, and the fu
 - **Extension isolation** — third-party extensions run as sandboxed child processes (bwrap + seccomp on Linux, `sandbox-exec` on macOS, AppContainer on Windows), receive only their declared service's credentials, and cannot reach the Vault or other connectors. Publisher manifests are Ed25519-verified at install and on every Gateway startup.
 - **Full audit log** — every action, including every HITL decision, is recorded in a local BLAKE3-chained SQLite table before the action executes; `nimbus audit verify` proves the chain.
 - **Egress ledger** — every authorized outbound action is appended to an append-only, BLAKE3-chained ledger before dispatch, and a failed append aborts the action. `nimbus prove` reports what left the machine.
-- **Thirty-two enumerated invariants** — `I1`–`I27` and `I29`–`I33`, each with a production wiring site, a section in [`SECURITY-INVARIANTS.md`](./SECURITY-INVARIANTS.md), and an enforcement test. `I28` is a reserved number, deliberately skipped: it has no wiring, no section and no test, so it is not one of the thirty-two. A static audit runs before the test suite; the runtime tests stay authoritative.
+- **Thirty-five enumerated invariants** — `I1`–`I27` and `I29`–`I36`, each with a production wiring site, a section in [`SECURITY-INVARIANTS.md`](./SECURITY-INVARIANTS.md), and an enforcement test. `I28` is a reserved number, deliberately skipped: it has no wiring, no section and no test, so it is not one of the thirty-five. A static audit runs before the test suite; the runtime tests stay authoritative.
 - **Internal security audit (B1, 2026-04-25)** — 8 trust surfaces reviewed; 78 unique findings filed (0 Critical); all High and Medium items closed pre-`v0.1.0`. One Low item (`S6-F1`) closed in `v0.1.0`, and the two Tauri-specific Low items (`S4-F6`, `S4-F8`) are deferred to Phase 13 (`desktop-v0.1.0`); see [SECURITY.md](./SECURITY.md#security-audits) for the full record. A formal third-party penetration test is scheduled for Phase 12.
 
 > **Note:** Nimbus's guarantees hold at the process boundary. It is not a firewall, antivirus, or VPN application; endpoint protection (AV/EDR), network security (VPN/Firewall), and OS-level hardening are your responsibility. See [SECURITY.md](./SECURITY.md) for the full boundary definition.
@@ -793,6 +826,9 @@ nimbus/
 │   │       ├── connectors/   # Connector registry, lazy mesh, health model
 │   │       ├── sync/         # Delta sync scheduler, connectivity probe, targeted fetch
 │   │       ├── egress/       # Append-only BLAKE3 egress ledger (I29) + `nimbus prove`
+│   │       ├── exec/         # Sandboxed code execution gate (I33)
+│   │       ├── computer-use/ # HITL-gated browser + terminal lanes (I35)
+│   │       ├── multimodal/   # Local audio/video understanding pass
 │   │       ├── glossary/     # Implicit-knowledge terminology extraction
 │   │       ├── decisions/    # Implicit ADR extraction
 │   │       ├── ownership/    # Ownership graph
@@ -813,7 +849,8 @@ nimbus/
 │   │       └── ipc/          # JSON-RPC 2.0 server, HTTP API, Prometheus endpoint
 │   ├── cli/                  # nimbus CLI (+ Ink TUI)
 │   │   └── src/commands/     # ask, search, query, why, prove, stats, glossary, decisions,
-│   │                         # config, profile, diag, doctor, db, connector, extension, …
+│   │                         # exec, computer, media, config, profile, diag, doctor, db,
+│   │                         # connector, extension, …
 │   ├── ui/                   # Tauri 2.0 desktop app (Phase 4; release vehicle in Phase 13)
 │   ├── docs/                 # Astro Starlight documentation site
 │   ├── admin-console/        # Static admin console served at /admin/*
@@ -822,7 +859,7 @@ nimbus/
 │   ├── README.md             # this file — the repository landing page
 │   ├── architecture.md       # subsystem design, IPC catalogue, schema reference
 │   ├── SECURITY.md           # security model + vulnerability reporting
-│   ├── SECURITY-INVARIANTS.md# I1–I35 rationale + anti-patterns
+│   ├── SECURITY-INVARIANTS.md# I1–I36 rationale + anti-patterns
 │   ├── roadmap.md            # acceptance-criteria-driven roadmap
 │   ├── CHANGELOG.md          # dated delivery log (canonical)
 │   ├── cli-reference.md      # full CLI + nimbus.toml reference

@@ -363,7 +363,9 @@ export function listDistinctMetadataValues(
   service: string,
   metadataKey: string,
 ): string[] {
-  if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(metadataKey)) {
+  // `\w` is ASCII-only in JavaScript — it never becomes Unicode-aware, not even under `/u` — so
+  // it is exactly `[A-Za-z0-9_]` here and the guard is no wider than it reads.
+  if (!/^[A-Za-z_]\w*$/.test(metadataKey)) {
     throw new Error(`unsafe metadata key ${JSON.stringify(metadataKey)}`);
   }
   const path = `$.${metadataKey}`;

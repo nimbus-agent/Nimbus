@@ -106,7 +106,7 @@ describe("llm.pullModel", () => {
 
   // Deferred finding (Task 6/10): validity of a provider string is no longer decided by an
   // RPC-level closed set — `requireModelParams` accepts any non-empty string, so an
-  // unregistered provider reaches `registry.pullModel` (the widened `ProviderId` signature),
+  // unregistered provider reaches `registry.pullModel` (the widened, open-string provider signature),
   // and its rejection surfaces the same way any other pull failure does: via `llm.pullFailed`,
   // not an RPC-level throw (pullModel returns { pullId } immediately, fire-and-forget).
   test("an unregistered provider is rejected by the registry, not by RPC-level validation", async () => {
@@ -180,7 +180,7 @@ describe("llm.loadModel / llm.unloadModel", () => {
     expect(unloadModel).toHaveBeenCalledWith("ollama", "gemma:2b", {});
   });
 
-  // Deferred finding (Task 6/10): `loadModel`/`unloadModel` take `ProviderId` (any string) —
+  // Deferred finding (Task 6/10): `loadModel`/`unloadModel` take an open provider string (any non-empty string) —
   // previously `requireLocalProvider` narrowed to a closed two-member union and rejected
   // "remote" before the registry was ever called, making the widened signature unreachable
   // from IPC. Now the call reaches the registry, and the registry decides validity.

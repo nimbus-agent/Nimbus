@@ -25,6 +25,27 @@
 # IT IS NOT A SUBSTITUTE FOR --full. A narrow run cannot reproduce `mock.module` contamination,
 # which is a CROSS-FILE effect that only appears in the combined `bun test packages/cli/src` run.
 # A green --changed is evidence about your files, never about the suite.
+#
+# ── KNOWN NON-PARITY: the sandbox. `--full` reports ONE expected failure ───────────────────────
+#
+#   (fail) nimbus exec e2e — CI sandbox precondition
+#          > fails loudly instead of silently skipping the spawn-dependent cases
+#
+# That guard is working as designed and the failure is the HARNESS, not your branch. CI runs
+# `sudo bash scripts/linux/install-sandbox-deps.sh` (four call sites in _test-suite.yml); this
+# container cannot have the equivalent, and the reason is the container, not the package list:
+#
+#   * Installing `bubblewrap` in the image is NOT enough and was tried on 2026-09-04. bwrap needs
+#     UNPRIVILEGED USER NAMESPACES, which Docker's default seccomp profile denies to the non-root
+#     `bun` user this container runs as (`bwrap: No permissions to create a new namespace`).
+#   * With bubblewrap present but unusable the outcome is strictly WORSE: `canConfine` answers
+#     true, the precondition guard skips, and the three spawn-dependent cases then fail on
+#     `exitCode 1 vs 3` — a confusing symptom instead of the named one. So it is left out.
+#   * Making it work would mean `--privileged` or `--security-opt seccomp=unconfined`, which is a
+#     bigger divergence from the CI runner than the gap it closes.
+#
+# So: on `--full`, expect exactly that one red test and check that it IS that one. Any OTHER
+# failure is real. Sandbox and exec behaviour is verified on the real Linux runner, not here.
 set -euo pipefail
 
 # Git Bash / MSYS on Windows rewrites container-internal paths (/out, /src, /root/...) and
@@ -97,6 +118,10 @@ ENV DEBIAN_FRONTEND=noninteractive
 # scripts/release/fixtures/gen-test-key.sh (the release signature-verification tests). curl is
 # required by scripts/install/install-remote.test.ts (install.sh's remote-download mode) —
 # oven/bun:1.3 ships neither curl nor wget.
+#
+# bubblewrap is DELIBERATELY ABSENT, and this is the one place that decision is recorded — see the
+# "KNOWN NON-PARITY" note in the header above for the whole reasoning. Installing it was tried on
+# 2026-09-04 and made the diagnostics WORSE, not better.
 RUN apt-get update -qq \
  && apt-get install -y -qq git libsecret-tools gnome-keyring dbus gnupg curl \
  && rm -rf /var/lib/apt/lists/*

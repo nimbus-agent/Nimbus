@@ -196,6 +196,18 @@ at temp-dir SQLite work, so every wall-clock assumption in a test is a different
 - **CI-Linux-only failures — reproduce, don't guess:** CI is Ubuntu + Bun `1.3` (the `bun-version` default in `.github/actions/setup-nimbus-ci/action.yml`; no test/quality workflow overrides it — `bun-version: latest` appears only in the two scheduled drift sweeps, `org-drift-sweep.yml` and `release-channel-drift.yml`). Some failures never reproduce on Windows/macOS and aren't version-related — chiefly `mock.module` contamination in the combined `bun test packages/cli/src` run (prefer **dependency injection (DI) over `mock.module`** for dispatcher-driven code) and `@types/*` hoisting conflicts. Reproduce on Linux (Docker `oven/bun:1.3`, matching CI — or WSL on a Linux-native copy, not `/mnt/c`) **before** pushing a fix. `audit:coverage-floor` is **CI-Linux-authoritative**. Details: `nimbus-preflight` skill.
 - **The skills under `.claude/commands/` are gated, not scratch notes.** `audit:doc-refs` resolves every path they cite (and now every path in `docs/` too), and `audit:status-drift` derives the I13 write-route count _and_ full enumeration from code across `nimbus-http-write-surface.md` + `nimbus-federation-identity.md` — both had gone stale while the `docs/` copies of the same claim stayed correct, because only `docs/` was read. `audit:workflow-lint` likewise now requires `timeout-minutes` on every workflow job with `steps:`.
 - **A total that is still right can hide an enumeration that is wrong.** `ALLOWED_METHODS` stayed at 105 across one addition (`agents.negotiate`) and one removal (`connector.list`), so the prose ledger's arithmetic worked while its list named neither. When a count changes, re-derive the _list_, not just the number.
+- **A branch-count metric over a GATE measures the security surface and reads it as debt.** The three
+  worst Sonar `S3776` (cognitive-complexity) findings in this repo have been, repeatedly, the three
+  functions implementing I35 — `cu-gate.ts`'s `runAction`/`openSession` and `cu-classify.ts`'s
+  `classifyBrowserAction` — because I35 IS an ordered sequence of checks and each check is a branch.
+  **Check what a complex function IS before simplifying it.** When one of these must be brought under
+  the gate, the constraint is that the ORDER stays readable as an ordered list at the call site: split
+  by PHASE into named steps invoked in sequence (`assertOpenAllowedBeforeConsent`, then
+  `resolveSessionBounds`, then `buildEnvelope`), never by extracting a check into a helper a reader has
+  to go and find. Two further rules learned the same way: state that a single `finally` must write
+  exactly once belongs in ONE mutable record passed to the arms, not in each arm's own closure; and a
+  check both arms need (approve, then re-check liveness) belongs in ONE function, because two copies is
+  two places for it to go missing.
 
 Full command catalogue + coverage thresholds + env overrides: `nimbus-commands` skill. File-location pointers: `nimbus-file-map` skill.
 

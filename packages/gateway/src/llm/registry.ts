@@ -4,13 +4,7 @@ import { wrapLedgeredProvider } from "../egress/model-egress.ts";
 import type { RouteAvailability } from "./route-availability.ts";
 import { RouteAvailabilityProbe } from "./route-availability.ts";
 import { LlmRouter, type LlmRouterConfig, type ProviderMeta } from "./router.ts";
-import type {
-  LlmModelInfo,
-  LlmProvider,
-  ModelRoute,
-  ProviderId,
-  PullProgressChunk,
-} from "./types.ts";
+import type { LlmModelInfo, LlmProvider, ModelRoute, PullProgressChunk } from "./types.ts";
 
 export type LlmRegistryOptions = {
   config: LlmRouterConfig;
@@ -177,7 +171,7 @@ export class LlmRegistry {
 
   async checkAvailability(): Promise<Record<string, boolean>> {
     const result: Record<string, boolean> = {};
-    const seen = new Set<ProviderId>();
+    const seen = new Set<string>();
     for (const route of this.router.routes()) {
       const id = route.provider.providerId;
       if (seen.has(id)) continue;
@@ -230,10 +224,7 @@ export class LlmRegistry {
    * - `target.routeId` supplied → that route's provider, after checking the route exists and
    *   actually belongs to `providerId` (a mismatch is a caller bug, not a silent override).
    */
-  private resolveLifecycleProvider(
-    providerId: ProviderId,
-    target: LlmLifecycleTarget,
-  ): LlmProvider {
+  private resolveLifecycleProvider(providerId: string, target: LlmLifecycleTarget): LlmProvider {
     const routeId = target.routeId;
     if (routeId !== undefined) {
       const route = this.router.routeFor(routeId);
@@ -273,7 +264,7 @@ export class LlmRegistry {
   // tie-breaker for when one vendor id has several daemons — see
   // `resolveLifecycleProvider`, which refuses to guess rather than taking the first.
   async loadModel(
-    provider: ProviderId,
+    provider: string,
     modelName: string,
     target: LlmLifecycleTarget = {},
   ): Promise<void> {
@@ -285,7 +276,7 @@ export class LlmRegistry {
   }
 
   async unloadModel(
-    provider: ProviderId,
+    provider: string,
     modelName: string,
     target: LlmLifecycleTarget = {},
   ): Promise<void> {
@@ -296,7 +287,7 @@ export class LlmRegistry {
   }
 
   async pullModel(
-    provider: ProviderId,
+    provider: string,
     modelName: string,
     opts: {
       signal?: AbortSignal;

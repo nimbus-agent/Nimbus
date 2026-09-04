@@ -2,7 +2,7 @@ import { setNimbusTomlSectionKey } from "../config/toml-section-writer.ts";
 import type { LlmRegistry } from "../llm/registry.ts";
 import type { RouteAvailability } from "../llm/route-availability.ts";
 import { makeRouteId } from "../llm/route-id.ts";
-import type { LlmTaskType, ProviderId } from "../llm/types.ts";
+import type { LlmTaskType } from "../llm/types.ts";
 import { dispatchByMethod, type RpcMissOrHit } from "./_lib/dispatch-by-method.ts";
 
 export class LlmRpcError extends Error {
@@ -197,7 +197,7 @@ async function handleSetDefault(
   ) {
     throw new LlmRpcError(-32602, message);
   }
-  const routeId = makeRouteId(provider as ProviderId, modelName);
+  const routeId = makeRouteId(provider, modelName);
   if (ctx.registry.llmRouter.routeFor(routeId) === undefined) {
     const known = ctx.registry.llmRouter
       .routes()
