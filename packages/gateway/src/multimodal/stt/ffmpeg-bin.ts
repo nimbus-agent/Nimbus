@@ -167,6 +167,17 @@ export async function withScratchFile<T>(path: string, fn: (p: string) => Promis
 }
 
 /**
+ * Cloud downloads are named `nimbus-media-<uuid>` with NO extension.
+ *
+ * Deliberate: a downloaded artifact's extension is whatever the provider served (`.mov`, `.mkv`,
+ * `.m4a`, `.webm`, …), so matching on extension is a list guaranteed to drift and to fail on
+ * exactly the format nobody anticipated. ffmpeg probes content and never needs the suffix, so the
+ * prefix can be the only key.
+ */
+export const CLOUD_SCRATCH_PREFIX = "nimbus-media-";
+const STT_SCRATCH_PREFIX = "nimbus-stt-";
+
+/**
  * Deletes stale scratch WAVs left by a PREVIOUS gateway process.
  *
  * `withScratchFile`'s `finally` covers exceptions and rejections but NOT process death: a SIGINT,
@@ -191,7 +202,9 @@ export function sweepStaleScratchFiles(
     return 0;
   }
   for (const name of entries) {
-    if (!name.startsWith("nimbus-stt-") || !name.endsWith(".wav")) {
+    const isSttScratch = name.startsWith(STT_SCRATCH_PREFIX) && name.endsWith(".wav");
+    const isCloudScratch = name.startsWith(CLOUD_SCRATCH_PREFIX);
+    if (!isSttScratch && !isCloudScratch) {
       continue;
     }
     const full = join(scratchDir, name);
