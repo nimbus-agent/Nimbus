@@ -5,12 +5,17 @@
  *
  * Three properties the tests pin:
  *  - ONE `sync`-class egress row is appended BEFORE the request and an append failure ABORTS it,
- *    so a zero-row window means no bytes were fetched, never that some were fetched unrecorded;
+ *    so a zero-row window means no bytes were fetched, never that some were fetched unrecorded —
+ *    appended PER ATTEMPT (not once per call), since a retried request is a second real outbound
+ *    request and I29's `model` class already establishes that one prompt can produce N ledgered
+ *    rows across N attempts (see `egress/model-egress.ts`'s doc comment) — deduplicating would
+ *    misstate that a single row covered up to three real requests;
  *  - a credential rides only on a URL we constructed (§ 16.4);
  *  - the run budget is evaluated PER CHUNK, so an overrun aborts the transfer instead of paying
  *    for the whole artifact and then declining it.
  */
 import { randomUUID } from "node:crypto";
+import { once } from "node:events";
 import { createWriteStream, rmSync, type WriteStream } from "node:fs";
 import { join } from "node:path";
 import type { ByteUrl } from "./cloud-renditions.ts";
@@ -25,7 +30,7 @@ export type CloudBytes =
       readonly fetched: number;
     }
   | { readonly ok: true; readonly kind: "path"; readonly path: string; readonly fetched: number }
-  | { readonly ok: false; readonly reason: SkipReason }
+  | { readonly ok: false; readonly reason: SkipReason; readonly fetched: number }
   | {
       readonly ok: false;
       readonly stop: "budget_exhausted" | "rate_limited";
@@ -33,6 +38,15 @@ export type CloudBytes =
     };
 
 const MAX_429_RETRIES = 2;
+
+/**
+ * A provider-controlled `Retry-After` must not be able to stall a run for hours: the HTTP-date
+ * form already degrades safely to exponential backoff, and a negative value is left to the
+ * timer underneath `deps.sleep` (a negative delay is treated as 0, per the standard timer
+ * semantics, not clamped here) — but an untrusted large integer (`Retry-After: 86400`) would
+ * otherwise sleep for a full day, twice, inside the pass. This bound handles that case only.
+ */
+const MAX_RETRY_AFTER_MS = 30_000;
 
 export interface CloudBytesDeps {
   readonly scratchDir: string;
@@ -68,43 +82,58 @@ export async function fetchCloudBytes(
     try {
       parsed = new URL(byteUrl.url);
     } catch {
-      return { ok: false, reason: "fetch_miss" };
+      return { ok: false, reason: "fetch_miss", fetched: 0 };
     }
-    if (parsed.protocol !== "https:") return { ok: false, reason: "fetch_miss" };
+    if (parsed.protocol !== "https:") return { ok: false, reason: "fetch_miss", fetched: 0 };
   }
 
-  // Fail-closed: append first. A throw here propagates and no request is made.
-  deps.appendEgress({ destination: candidate.service, method: "media.fetchBytes" });
-
+  // Resolved BEFORE the ledger append, mirroring the https: check above: a request that can never
+  // be made (no credential for a URL that needs one) must not produce a row claiming one was.
   const headers: Record<string, string> = {};
   if (byteUrl.bearer) {
     const token = await deps.bearerFor(candidate.service);
-    if (token === null) return { ok: false, reason: "not_configured" };
+    if (token === null) return { ok: false, reason: "not_configured", fetched: 0 };
     headers["Authorization"] = `Bearer ${token}`;
   }
 
   const controller = new AbortController();
   let res: Response;
   for (let attempt = 0; ; attempt += 1) {
-    res = await deps.fetchFn(byteUrl.url, { headers, signal: controller.signal });
+    // Fail-closed: append before EACH attempt, not once before the loop — a retry really does
+    // dispatch a fresh outbound request. A throw here propagates and no request is made; it is
+    // deliberately NOT inside the try/catch below, which covers only the fetch call itself.
+    deps.appendEgress({ destination: candidate.service, method: "media.fetchBytes" });
+    try {
+      res = await deps.fetchFn(byteUrl.url, { headers, signal: controller.signal });
+    } catch {
+      // `safeFetchFollowing` (the production `fetchFn`) THROWS for a private-address target, an
+      // unsafe URL, or too many redirects — and the runtime throws on a bare transport failure.
+      // A single hostile provider-returned URL must skip this ONE item, not abort the whole pass.
+      return { ok: false, reason: "fetch_miss", fetched: 0 };
+    }
     if (res.status !== 429 && res.status !== 503) break;
     if (attempt >= MAX_429_RETRIES) return { ok: false, stop: "rate_limited", fetched: 0 };
     const retryAfter = Number.parseInt(res.headers.get("retry-after") ?? "", 10);
-    const waitMs = Number.isFinite(retryAfter) ? retryAfter * 1000 : 2 ** attempt * 1000;
+    const waitMs = Number.isFinite(retryAfter)
+      ? Math.min(retryAfter * 1000, MAX_RETRY_AFTER_MS)
+      : 2 ** attempt * 1000;
     await deps.sleep(waitMs + Math.floor(Math.random() * 250));
   }
-  if (!res.ok) return { ok: false, reason: "fetch_miss" };
+  if (!res.ok) return { ok: false, reason: "fetch_miss", fetched: 0 };
 
   // A declared length lets an oversized artifact be refused without transferring it at all.
   // Both bounds are checked here, not just the per-artifact one: streaming 10 MB of a 500 MB file
   // before tripping the run budget spends exactly the resource the budget exists to conserve.
   // `content-length` is a HINT, not a guarantee — it can be absent, or wrong — so the per-chunk
-  // checks below still run. This is an optimisation over them, never a replacement.
+  // checks below still run as a backstop for the PERMIT direction (a header that understates the
+  // real size). That backstop does NOT exist for the REFUSE direction taken here: a header that
+  // OVERSTATES the size refuses the artifact before a single byte streams, with no per-chunk check
+  // to overrule a lying provider's inflated number.
   const declared = Number.parseInt(res.headers.get("content-length") ?? "", 10);
   if (Number.isFinite(declared)) {
     if (declared > deps.maxBytes) {
       controller.abort();
-      return { ok: false, reason: "over_byte_cap" };
+      return { ok: false, reason: "over_byte_cap", fetched: 0 };
     }
     if (declared > deps.remainingBudget) {
       controller.abort();
@@ -143,7 +172,7 @@ async function collectToMemory(
       // the whole artifact and then declining it.
       if (fetched > deps.maxBytes) {
         controller.abort();
-        return { ok: false, reason: "over_byte_cap" };
+        return { ok: false, reason: "over_byte_cap", fetched };
       }
       if (fetched > deps.remainingBudget) {
         controller.abort();
@@ -174,7 +203,13 @@ function writeChunk(ws: WriteStream, chunk: Uint8Array): Promise<void> {
   });
 }
 
-/** Resolves once the stream has flushed and closed the underlying file descriptor. */
+/**
+ * Resolves once every pending write has flushed. This is the `finish` event, not `close`: the
+ * underlying file descriptor closes shortly AFTER `finish`, asynchronously. That distinction does
+ * not matter on the success path this function serves (the caller only needs the bytes durably
+ * written, not the fd closed) — it does matter on the cleanup path, which is why
+ * {@link collectToScratch}'s failure branch waits for `close` itself rather than reusing this.
+ */
 function closeStream(ws: WriteStream): Promise<void> {
   return new Promise((resolveEnd, reject) => {
     ws.end((err?: Error | null) => {
@@ -194,6 +229,15 @@ function closeStream(ws: WriteStream): Promise<void> {
  * every non-`ok` exit — including a thrown read/write error, not only the two budget refusals —
  * because `succeeded` is set only immediately before the happy-path return, and the `finally`
  * checks it unconditionally.
+ *
+ * `createWriteStream` opens its file descriptor ASYNCHRONOUSLY. On the reachable path where the
+ * very first chunk already exceeds the cap or the budget, this function can reach the cleanup
+ * branch before that `open` has completed — an `rmSync` at that moment removes nothing, and the
+ * still-pending open then creates the file anyway, moments after this function has already
+ * returned. `ws.destroy()` alone does not close synchronously either. The fix is to await the
+ * stream's own `close` event before removing: `close` fires only once the fd has genuinely been
+ * opened-then-closed, so by the time this function returns, the file is guaranteed to be either
+ * never created or created-and-removed — never present.
  */
 async function collectToScratch(
   res: Response,
@@ -216,7 +260,7 @@ async function collectToScratch(
           fetched += value.byteLength;
           if (fetched > deps.maxBytes) {
             controller.abort();
-            return { ok: false, reason: "over_byte_cap" };
+            return { ok: false, reason: "over_byte_cap", fetched };
           }
           if (fetched > deps.remainingBudget) {
             controller.abort();
@@ -234,6 +278,10 @@ async function collectToScratch(
   } finally {
     if (!succeeded) {
       ws.destroy();
+      // Wait for the fd to actually close before removing — see the docstring above. Swallowed:
+      // a `close` that never fires (or errors) does not change the outcome already decided above,
+      // and the `rmSync` below is itself `force: true` for the same reason.
+      await once(ws, "close").catch(() => undefined);
       try {
         rmSync(path, { force: true });
       } catch {
