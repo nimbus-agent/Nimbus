@@ -33,6 +33,11 @@ function formatTomlScalar(value: string): string {
 // ASIDE (a rename, not a copy — atomic and near-instant, and same-filesystem because `swap` is a
 // sibling of `path`) rather than deleted, the retry rename is attempted, and if that ALSO fails
 // the aside is renamed straight back so the original file is exactly as it was before this call.
+/** An unknown throw as text, without asserting it is an `Error`. */
+function errText(e: unknown): string {
+  return e instanceof Error ? e.message : String(e);
+}
+
 /**
  * The second-attempt ladder, reached only when the direct `renameSync(tmp, path)` failed.
  *
@@ -64,10 +69,20 @@ function retryReplacePreservingOriginal(
     if (movedAside) {
       try {
         _renameSync(aside, path);
-      } catch {
-        /* best-effort restore — the retry failure re-thrown below is the one that matters,
-           and a stuck `aside` file inside `swap` is still recoverable by hand, unlike a
-           deleted nimbus.toml. */
+      } catch (restoreErr) {
+        // BOTH failed: the replacement did not land AND the original did not go back. The file
+        // still EXISTS — at `aside`, inside a `mkdtemp`'d directory whose name is random — so
+        // "recoverable by hand" is only true if the caller is told where it is. Naming the path
+        // in the message is the whole difference between a recoverable state and a lost config.
+        // The restore failure rides as `cause`: `secondErr` stays the thrown error because it is
+        // why the write failed, but the reason the rollback ALSO failed is what a reader needs to
+        // decide whether to retry or move the file back themselves.
+        throw new Error(
+          `failed to replace ${path}, and the original could NOT be restored. ` +
+            `Your previous file is intact at ${aside} — move it back to ${path} by hand. ` +
+            `Write error: ${errText(secondErr)}. Restore error: ${errText(restoreErr)}.`,
+          { cause: secondErr },
+        );
       }
     }
     throw secondErr;

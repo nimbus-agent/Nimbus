@@ -75,8 +75,15 @@ function renderLatency(ms: number): string {
 }
 
 /**
- * Assemble a brief: the header, a blank line, the body parts, then the reserved `## Gaps` block
- * and the latency footer — in that order, with empty parts dropped.
+ * Assemble a brief: the header, then the body parts, then the reserved `## Gaps` block and the
+ * latency footer — in that order, with empty parts dropped.
+ *
+ * The `""` between header and body is dropped by that same filter, so it produces NO blank line;
+ * it is kept only because removing it would change nothing and this shape is what every renderer
+ * already had. Spacing comes from the parts themselves — `renderGaps` opens with a newline, and
+ * each section block carries its own — which is why `renderGhost` passing a bare one-line body
+ * yields `# Ghost: …\n<body>` rather than a blank line between them. That is pre-existing
+ * behaviour, byte-identical before and after this helper existed, and the brief snapshots pin it.
  *
  * ONE assembler for every brief that ends this way, and it is I31 machinery rather than
  * formatting sugar. `reserved()` is what WITHHOLDS a disclosure-only section from a synthesis

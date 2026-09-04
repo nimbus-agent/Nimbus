@@ -590,10 +590,13 @@ nimbus negotiate --person <id> --since 90d  # cited contribution brief
 
 ### Local compute
 
-Every command here is **off by default** and each one prompts you for the exact thing it is about
-to do — the verbatim script, the exact browser launch envelope, the complete command line. Full
-detail, including what each sandbox does and does not confine, is in
-[`cli-reference.md`](./cli-reference.md).
+Every command here is **off by default**, and two of the three go further. `nimbus exec` and
+`nimbus computer` each obtain your approval for the exact thing they are about to do — the
+verbatim script, the exact browser launch envelope, the complete command line — in a gate that
+lives in the executor, not the prompt. **`nimbus media understand` has no such gate**: it is
+governed by configuration alone (`[multimodal] enabled` plus a per-root `media_index`, both
+false by default), so enabling it is the whole of the decision. Full detail, including what each
+sandbox does and does not confine, is in [`cli-reference.md`](./cli-reference.md).
 
 ```bash
 # Run code in the platform sandbox, with no network at all — loopback included.

@@ -182,18 +182,49 @@ describe("createPassScheduler — runNow", () => {
     scheduler.stop();
   });
 
-  test("a rejected runNow releases the single-flight guard", async () => {
-    const { scheduler } = makeScheduler({
-      body: async () => {
-        throw new Error("boom");
+  test("a rejected runNow releases the single-flight guard ON THE SAME scheduler", async () => {
+    // The second call must go through THIS scheduler, not a fresh one: a fresh scheduler has its
+    // own `running` state, so it would resolve happily while the first stayed wedged and refused
+    // every later call as "running". That version of this test could not fail for the reason it
+    // exists — which is the whole property under test.
+    let first = true;
+    const { scheduler, seen } = makeScheduler({
+      body: async (_s, opts) => {
+        if (first) {
+          first = false;
+          throw new Error("boom");
+        }
+        return `ran:${opts}`;
       },
     });
     await expect(scheduler.runNow("a")).rejects.toThrow("boom");
-    // Not wedged `running`: the next call is refused for no reason at all, so it must succeed.
-    const { scheduler: fresh } = makeScheduler();
-    await expect(fresh.runNow("b")).resolves.toBe("ran:b");
+    expect(scheduler.status()).toBe("idle");
+    await expect(scheduler.runNow("b")).resolves.toBe("ran:b");
+    expect(seen.map((s) => s.opts)).toEqual(["a", "b"]);
     scheduler.stop();
-    fresh.stop();
+  });
+
+  test("a scheduled pass that throws also releases the guard for a later runNow", async () => {
+    // The same property on the OTHER entry point: `fire`'s `.catch(...).finally(...)` is a
+    // different release site from `runNow`'s `try/finally`, and one can wedge while the other
+    // does not.
+    let first = true;
+    const { scheduler } = makeScheduler({
+      debounceMs: 5,
+      body: async (_s, opts) => {
+        if (first) {
+          first = false;
+          throw new Error("scheduled boom");
+        }
+        return `ran:${opts}`;
+      },
+      onError: () => undefined,
+    });
+    scheduler.trigger();
+    await tick(30);
+    expect(scheduler.status()).toBe("idle");
+    await expect(scheduler.runNow("after")).resolves.toBe("ran:after");
+    scheduler.stop();
   });
 
   test("refusal ORDER is disabled, then stopped, then running", async () => {
