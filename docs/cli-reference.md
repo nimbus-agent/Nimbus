@@ -1311,13 +1311,15 @@ Only `false` carries meaning, matching `nimbus exec`'s lockoff.
 
 ### `nimbus media understand`
 
-Transcribe local audio/video already in the index, caption local still images, and — as
-of PR 2 (2026-09-03) — caption a small number of uniformly sampled frames from each video
-alongside its transcript. Output is stored as searchable derived items
+Transcribe audio/video already in the index — local files and, as of PR 3 (2026-09-04),
+cloud-backed artifacts from Google Photos, Google Drive and OneDrive — caption still images,
+and — as of PR 2 (2026-09-03) — caption a small number of uniformly sampled frames from each
+video alongside its transcript. Output is stored as searchable derived items
 (`nimbus:video_understanding`, `nimbus:image_understanding`). **Local models only** — both
 the STT and the vision model run on this machine; there is no remote tier for either, so
-the pass refuses rather than reaching for the cloud when no local model is available.
-Schema **V58**.
+the pass refuses rather than reaching for the cloud when no local model is available. A
+cloud candidate's BYTES leave the machine (bounded, ledgered — see below); the understanding
+of those bytes never does. Schema **V58**.
 
 **Off by default, twice.** Both switches must be set:
 
@@ -1333,7 +1335,7 @@ media_index = true        # DEFAULT false — per root
 `media_index` is per-root and separate on purpose: enabling the capability should not
 silently start walking every configured root for large binaries.
 
-**The whole `[multimodal]` section — four keys, all optional:**
+**The whole `[multimodal]` section — six keys, all optional:**
 
 | Key | Default | Meaning |
 | --- | --- | --- |
@@ -1341,6 +1343,8 @@ silently start walking every configured root for large binaries.
 | `vlm_base_url` | `http://127.0.0.1:11434` | The Ollama base URL the vision model is served from. **Must be a loopback address** (`127.0.0.0/8`, `localhost`, or `[::1]` — the same `isLoopbackBaseUrl` check I34 uses) **or the gateway refuses to load `[multimodal]` at all**, throwing an error that names the offending value and the reason, rather than silently substituting the loopback default. There is no per-artifact remote grant in this slice (it lands in a later PR), so a non-loopback host could never actually be honoured: `media-gate.ts` would refuse every artifact with `no_remote_grant` before any model is ever contacted — including video, because `av-understander.ts` computes `isLocal` as `stt.isLocal && vlm.isLocal`, so a non-local VLM would also disable the audio transcription that works today. Leave this at its default, or point it at another loopback port, until the remote grant ships. |
 | `vlm_model` | `qwen2.5vl:7b` | The Ollama model tag to caption with. **You must pull this yourself** (`ollama pull qwen2.5vl:7b` or your own tag) — nothing in this pass downloads a model. A daemon that is up but has not pulled a vision-capable model reports unavailable, and the pass refuses images/frames with `no_local_model` rather than guessing. |
 | `max_frames` | `8` | The maximum keyframes sampled per video, clamped to 1–64. Actual sampling is also density-capped at one frame per 2 seconds of video, so a short clip samples fewer than the maximum. |
+| `fetch_budget_bytes` | `2147483648` (2 GiB) | The byte budget for a single `nimbus media understand` run's cloud-backed fetches (Google Photos / Google Drive / OneDrive). A **negative** value is malformed for this key and fails the WHOLE `[multimodal]` section off (same fail-off direction as a malformed `enabled`), rather than substituting the default. `0` is accepted and means "no cloud bytes may be fetched this run" — a local-only pass still runs. Overridden per run by `--budget`, below. |
+| `prefer_renditions` | `false` | Ask Google Photos for a downsized rendition instead of the original artifact. Drive and OneDrive have no rendition concept and always serve the original regardless of this setting. Overridden per run by `--renditions`/`--originals`, below. |
 
 **Requires three external binaries on PATH:** `ffmpeg` (transcode + frame extraction) and
 `whisper-cli` (transcription) are required for audio/video; `ffprobe` (video duration,
@@ -1356,14 +1360,34 @@ nimbus media understand --service filesystem   # one service
 nimbus media understand --modality image       # still images only
 nimbus media understand --modality av          # audio/video only
 nimbus media understand --since 30             # modified within 30 days
+nimbus media understand --budget 500MB         # cap this run's cloud byte-fetches
+nimbus media understand --renditions           # prefer smaller downsized copies (Photos only)
+nimbus media understand --originals            # always fetch the original (mutually exclusive with --renditions)
 nimbus media understand --json                 # machine-readable summary
 ```
 
-**Resumable.** Progress is a cursor in `media_pass_cursor`, advanced on skips as well as
-successes, so an interrupted run resumes past the artifact it stopped on rather than
-retrying it forever. The understanding-format version bumped to 2 with PR 2, so a video
-already transcribed under PR 1 is re-offered once and gains frame captions on its next
-pass.
+**Cloud-backed as of PR 3 (2026-09-04).** Alongside local files under `[[filesystem.roots]]`,
+the pass now discovers and fetches candidate bytes from Google Photos, Google Drive and
+OneDrive — the same three OAuth-backed services already indexed elsewhere. `--budget <size>`
+bounds one run's cloud byte-fetches (a raw byte count, or a number with a unit suffix —
+decimal `KB`/`MB`/`GB`, 10^3n, vs. binary `KiB`/`MiB`/`GiB`, 2^10n; the two are **not**
+interchangeable, e.g. `4GB` = 4,000,000,000 bytes but `4GiB` = 4,294,967,296), overriding
+`[multimodal] fetch_budget_bytes` for that run. `--renditions` asks Google Photos for a
+downsized copy rather than the original (Drive and OneDrive always serve the original
+regardless); `--originals` is the explicit opposite; the two are mutually exclusive. The
+whole candidate batch is priced before any fetch: if the known cost already exceeds the
+budget, the run refuses up front rather than fetching part of it and stopping mid-way.
+
+**Resumable, with two different behaviors depending on WHY a run stopped.** Progress is a
+cursor in `media_pass_cursor`. A per-artifact SKIP always advances the cursor — including a
+**permanent** refusal, where a cloud candidate's size alone exceeds the ENTIRE run budget
+(reported as `over_byte_cap`, below) — so a re-run does not retry an unprocessable artifact
+forever. But a **transient** budget stop — a candidate that simply didn't fit what THIS run
+had left, having already spent part of its budget on earlier candidates — leaves the cursor
+on the last *completed* item instead, so the stopping artifact IS retried, not skipped, once
+a later run has a fresh budget to offer it. The understanding-format version bumped to 2
+with PR 2, so a video already transcribed under PR 1 is re-offered once and gains frame
+captions on its next pass.
 
 **The summary reports skips by reason, not just a total:**
 
@@ -1374,6 +1398,13 @@ Skipped:
   no_local_model: 15
 ```
 
+`over_byte_cap` covers **two different bounds**, not one: the per-artifact cap
+(`max_image_bytes`/`max_media_bytes`) AND, for a cloud candidate whose declared size alone
+exceeds the entire per-run `fetch_budget_bytes`, the permanent run-budget case described
+above. Seeing a nonzero `over_byte_cap` does not by itself say which knob to raise — check
+whether the skipped candidates are cloud-backed before assuming the per-artifact cap is the
+one to change.
+
 A bare count would not tell you whether the other 66 were absent, too large, or refused.
 The same discipline applies inside a `video_understanding` row's body: a caption count
 ("6 of 8 sampled frames captioned") and any reason frame captions are entirely absent
@@ -1382,8 +1413,10 @@ stated in the text itself, not only in metadata — the text is what an agent's 
 actually sees.
 
 **What it does NOT do in this slice:** no dedicated OCR engine (a VLM's text extraction on
-a dense screenshot is worse than a purpose-built OCR pass), cloud-hosted media (local
-files only — PR 3), and speaker diarization (`whisper-cli` cannot do it). A sampled video
+a dense screenshot is worse than a purpose-built OCR pass), no remote model of any kind —
+understanding itself is always local, even for a cloud-fetched artifact's bytes (PR 4 adds
+the per-artifact opt-in that would let a remote model see one) — and speaker diarization
+(`whisper-cli` cannot do it). A sampled video
 is not a watched video: anything happening only between sampled frames goes undescribed,
 and a caption is a model's guess, not an observation — nothing here stores a confidence
 number. Transcripts and captions are embedded **locally** even when a remote embedder is

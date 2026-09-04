@@ -639,7 +639,7 @@ export function modalityForItem(
 }
 ```
 
-**`mediaItemTypesForModality` is left EXACTLY as it is** — returning only the `ITEM_TYPE_MODALITY` (type-keyed) types. Do not add the cloud types to it.
+**`mediaItemTypePairsForModality` is left EXACTLY as it is** — returning only the `ITEM_TYPE_MODALITY` (type-keyed) types. Do not add the cloud types to it.
 
 An earlier draft of this plan unioned the mime-keyed types (`photo`, `file`) into its result. That is wrong, and wrong in the specific way this task exists to prevent: `connectors/figma-file-mapping.ts:60` emits `type: "file"` and Figma is **not** a mime-keyed service, so every Figma file would match arm 1 of the SQL below, `modalityForItem("figma", "file")` would return `undefined`, the JS loop would drop it, and the page would under-fill — cursor starvation, re-introduced through a different service.
 

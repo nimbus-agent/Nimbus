@@ -117,10 +117,9 @@ async function cloudBearerFor(
  * docstring describes this as a contract on the type until a caller wires it, and this is that
  * wiring (`cloud-bytes.ts`'s `CloudBytesDeps.fetchFn` is an undocumented bare field, so only the
  * resolver's docstring made the claim). `appendEgress` is the REAL `sync`-class ledger append (I29):
- * `cloud-bytes.ts` becomes a third caller of `recordSyncEgress`, alongside `sync/scheduler.ts` and
- * `sync/targeted-fetch.ts` (see `docs/SECURITY-INVARIANTS.md`'s I29 entry — the enumeration there
- * is stale until it is amended to say so). `sleep` is a real wall-clock delay, used only by
- * `cloud-bytes.ts`'s 429/503 backoff.
+ * `cloud-bytes.ts` is the third caller of `recordSyncEgress`, alongside `sync/scheduler.ts` and
+ * `sync/targeted-fetch.ts` (see `docs/SECURITY-INVARIANTS.md`'s I29 entry, which names all three).
+ * `sleep` is a real wall-clock delay, used only by `cloud-bytes.ts`'s 429/503 backoff.
  */
 function buildCloudBytesDeps(input: BuildMediaPassDepsInput): MediaCloudDeps {
   return {

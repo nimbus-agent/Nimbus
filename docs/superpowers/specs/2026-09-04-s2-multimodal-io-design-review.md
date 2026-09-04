@@ -40,7 +40,7 @@ Below are critical findings, open architectural questions, and concrete improvem
     }
     ```
 - **The Defect:**
-  - If `file` is registered in `mediaItemTypesForModality()`, SQLite returns a batch of 50 items with `type = "file"`.
+  - If `file` is registered in `mediaItemTypePairsForModality()`, SQLite returns a batch of 50 items with `type = "file"`.
   - In a typical Drive/OneDrive containing thousands of non-media files (PDFs, spreadsheets, code, docs), all 50 items in that page may have non-media MIME types (e.g., `application/pdf`, `text/plain`).
   - In JS, `findCandidates()` filters out non-media items, returning `candidates.length === 0` (or `< limit`).
   - `media-pass.ts` interprets `candidates.length < limit` as reaching the end of the entire queue and executes `clearCursor()`.
@@ -69,7 +69,7 @@ Below are critical findings, open architectural questions, and concrete improvem
 
 - **Context (§ 16.5 & `google-photos-sync.ts`):**
   - Google Photos indexes all assets as `type: "photo"`, but `mediaMetadata` / `mimeType` determines whether it is an image (`image/jpeg`, `image/png`) or a video (`video/mp4`, `video/quicktime`).
-  - When an operator runs `nimbus media understand --modality av`, `mediaItemTypesForModality("av")` must decide whether `photo` should be queried.
+  - When an operator runs `nimbus media understand --modality av`, `mediaItemTypePairsForModality("av")` must decide whether `photo` should be queried.
 - **The Dilemma:**
   - If `photo` is excluded from `"av"`, Google Photos videos will never be transcribed or captioned under `--modality av`.
   - If `photo` is included in `"av"`, SQLite will return still photos, which JS drops, causing the same candidate under-filling and cursor-clearing bug described in Finding 2.1.
