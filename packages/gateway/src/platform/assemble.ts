@@ -720,10 +720,13 @@ async function createSchedulerWithMesh(opts: SchedulerWithMeshOpts): Promise<{
       premortemRefresher?.trigger();
       ownershipRefresher?.trigger();
     },
-    // I29/D22(b): the ONE production appender for the `sync` egress class — one `sync` row per
-    // paginated RUN, before `connector.sync(...)` in `runJob`. Kept synchronous (`recordSyncEgress`
-    // returns `undefined`, never a Promise) so a throw here aborts the run before any outbound call,
-    // matching the fail-closed contract `sync/scheduler.ts`'s own doc comment states for this seam.
+    // I29/D22(b): the scheduled-sync closure around the `sync` egress class's shared appender —
+    // one of THREE production callers of `recordSyncEgress` (the other two: `sync/targeted-fetch.ts`,
+    // wired below in this file, and `multimodal/cloud-bytes.ts`, wired by
+    // `multimodal/build-media-pass-deps.ts`) — appending one `sync` row per paginated RUN, before
+    // `connector.sync(...)` in `runJob`. Kept synchronous (`recordSyncEgress` returns `undefined`,
+    // never a Promise) so a throw here aborts the run before any outbound call, matching the
+    // fail-closed contract `sync/scheduler.ts`'s own doc comment states for this seam.
     appendSyncEgress: (row) => recordSyncEgress(db, { ...row, now: Date.now() }),
   });
   const tomlRoots = loadNimbusFilesystemRootsFromConfigDir(paths.configDir);
@@ -2772,9 +2775,11 @@ function bootResolveFetchableIntoHttpSidecar(deps: {
  * (Task 10's `syncableFor`/`syncContextFor`), so a targeted fetch shares depth enforcement and the
  * rate-limiter bucket with scheduled syncs rather than constructing a parallel context that could
  * drift from it. `appendEgress` and `sync/scheduler.ts`'s `appendSyncEgress` (wired in
- * `createSchedulerWithMesh`, above) are two closures around the SAME appender,
+ * `createSchedulerWithMesh`, above) are the two closures THIS FILE builds around the SAME appender,
  * `egress/sync-egress.ts`'s `recordSyncEgress` — never the raw `appendEgressEntry`, which D22(b)
- * confines to `egress/*`.
+ * confines to `egress/*`. A THIRD closure around the same appender is wired separately, outside
+ * this file, by `multimodal/build-media-pass-deps.ts`'s `buildCloudBytesDeps` — for a cloud media
+ * byte-fetch attempt, not a targeted item fetch.
  */
 function bootTargetedFetchIntoHttpSidecar(deps: {
   db: Database;

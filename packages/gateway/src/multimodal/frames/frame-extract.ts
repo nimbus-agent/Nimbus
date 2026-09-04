@@ -10,8 +10,11 @@
  * caller to split a concatenated MJPEG stream on SOI/EOI markers; sound in principle (JPEG byte
  * stuffing escapes an in-scan `FF`), but it trades a process spawn for a hand-rolled parser on the
  * least-trusted bytes in the subsystem. It strengthens the narrowed disk rule: with this, "nothing
- * is written on the image path" covers video frames too, and the audio transcode's single 0600 WAV
- * is the only file this subsystem writes at all.
+ * is written on the image path" covers video frames too — frame extraction itself writes no file,
+ * on either the local or the cloud arm. It is the audio transcode's WAV (`stt/ffmpeg-bin.ts`) that
+ * still writes a scratch file, and as of the cloud arm (`multimodal/cloud-bytes.ts`) it is no
+ * longer the only one: a cloud AV candidate's downloaded artifact is a second 0600 scratch file
+ * alongside it.
  *
  * NOT in `platform/`: resolving an external binary is not OS-specific logic reached through
  * `PlatformServices`. Same reasoning as `stt/ffmpeg-bin.ts` and `computer-use/cu-lanes/chromium-path.ts`.

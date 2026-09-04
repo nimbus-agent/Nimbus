@@ -44,9 +44,10 @@ describe("coverage vector", () => {
     // `mcp` and `http` are per-call because ONE appender (`recordAgentBriefEgress`) serves both
     // transports and its dispatcher condition ships alongside this entry. `sync` is `per-run`
     // (weaker than per-call) because its ONE appender (`egress/sync-egress.ts`'s
-    // `recordSyncEgress`) backs two callers with different shapes: `sync/scheduler.ts` appends once
-    // per paginated RUN (many upstream calls per row), `sync/targeted-fetch.ts` appends once per
-    // CALL — the vector reports the weaker of the two, matching how `weakestCoverage` merges
+    // `recordSyncEgress`) backs THREE callers with different shapes: `sync/scheduler.ts` appends
+    // once per paginated RUN (many upstream calls per row), `sync/targeted-fetch.ts` appends once
+    // per CALL, and `multimodal/cloud-bytes.ts` appends once per cloud byte-fetch ATTEMPT — the
+    // vector reports the weakest of the three, matching how `weakestCoverage` merges
     // markers from different binaries. `model` is per-call and now backed by THREE appenders: the
     // route-table provider wrapper (`egress/model-egress.ts`'s `wrapLedgeredProvider`, applied at
     // `LlmRegistry.addRoute`), the Mastra engine agent (`egress/mastra-model-egress.ts`'s

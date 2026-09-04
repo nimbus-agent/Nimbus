@@ -3,7 +3,10 @@
  *
  * `whisper-cli` takes a PATH (`-f`) and wants 16 kHz 16-bit mono PCM WAV, so any compressed or
  * containerised media needs a transcode first. That is why the spec's "never written to disk" rule
- * is narrowed rather than absolute: ONE gateway-owned scratch file, 0600, deleted in a `finally`.
+ * is narrowed rather than absolute: this transcode is a gateway-owned scratch file, 0600, deleted
+ * in a `finally`. On the local AV arm it is the only scratch file the pass writes; on the cloud AV
+ * arm (`multimodal/cloud-bytes.ts`) it is the SECOND — the downloaded artifact itself is the first,
+ * also 0600 and also cleaned up in a `finally`. The image path, local or cloud, writes neither.
  *
  * NOT in `platform/`: resolving an external binary is not OS-specific logic reached through
  * `PlatformServices`. Both existing precedents keep the resolver beside its consumer —

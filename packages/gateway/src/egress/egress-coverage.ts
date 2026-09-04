@@ -45,9 +45,10 @@ export type CoverageVector = Readonly<Record<CoverageClass, Granularity>>;
  * What THIS binary is built to observe. SEVEN classes are non-`none`: `task` (the executor's
  * gated-action append, `engine/executor.ts`); `mcp` and `http` — the two external transports an
  * agent brief can be served over, sharing ONE appender (`egress/agent-brief-egress.ts`, selected
- * per transport by the total `EGRESS_BEARING_CLIENT_KINDS` map); `sync` (a connector sync run OR a
- * targeted fetch-on-miss call, both landing through `egress/sync-egress.ts`'s `recordSyncEgress` —
- * see the `sync` paragraph below); `model` (any generate OR embed on a NON-LOCAL route, appended
+ * per transport by the total `EGRESS_BEARING_CLIENT_KINDS` map); `sync` (a connector sync run, a
+ * targeted fetch-on-miss call, OR a cloud media byte-fetch attempt, all three landing through
+ * `egress/sync-egress.ts`'s `recordSyncEgress` — see the `sync` paragraph below); `model` (any
+ * generate OR embed on a NON-LOCAL route, appended
  * by three cooperating wrappers — `egress/model-egress.ts`'s `wrapLedgeredProvider`,
  * `egress/mastra-model-egress.ts`'s `wrapLedgeredMastraModel`, and `egress/embedding-egress.ts`'s
  * `wrapLedgeredEmbedder` — see the `model` paragraph below for exactly what each covers); and
@@ -85,17 +86,20 @@ export type CoverageVector = Readonly<Record<CoverageClass, Granularity>>;
  * KIND of egress (a connector call), not the transport port it arrived on.
  *
  * `sync` is `per-run`, RAISED FROM `none`, and `per-run` — not `per-call` — is the honest
- * granularity for the class as a whole, not a hedge. Two appenders share ONE function
- * (`egress/sync-egress.ts`'s `recordSyncEgress`, injected as a thin closure by
- * `platform/assemble.ts`, the only production `new SyncScheduler(...)` AND the sole builder of
- * `targetedFetch`'s deps — D22(b) confines the raw `appendEgressEntry` identifier to `egress/*`, so
- * neither caller imports it directly): `sync/scheduler.ts`'s `appendSyncEgress` appends ONE row per
- * RUN, before `connector.sync(...)` — and a scheduled sync is a paginated run that can make many
- * upstream calls per row, which is a WEAKER claim than `per-call` would assert; `sync/targeted-
- * fetch.ts`'s `appendEgress` appends one row per its one call, which alone would be `per-call`. The
- * vector reports the weaker of the two shapes it actually backs, exactly as `weakestCoverage` merges
- * markers from different binaries — asserting `per-call` here would overstate what the scheduled-
- * sync half of this class observes.
+ * granularity for the class as a whole, not a hedge. THREE appenders share ONE function
+ * (`egress/sync-egress.ts`'s `recordSyncEgress` — D22(b) confines the raw `appendEgressEntry`
+ * identifier to `egress/*`, so none of the three callers imports it directly): `sync/scheduler.ts`'s
+ * `appendSyncEgress` appends ONE row per RUN, before `connector.sync(...)` — and a scheduled sync is
+ * a paginated run that can make many upstream calls per row, which is a WEAKER claim than `per-call`
+ * would assert; `sync/targeted-fetch.ts`'s `appendEgress` appends one row per its one call, which
+ * alone would be `per-call`; and `multimodal/cloud-bytes.ts`'s `appendEgress` appends one row per
+ * cloud media byte-fetch ATTEMPT (a retry appends again), which alone would also be `per-call`. The
+ * first two closures are injected by `platform/assemble.ts` — the only production
+ * `new SyncScheduler(...)` AND the sole builder of `targetedFetch`'s deps; the third is injected
+ * separately by `multimodal/build-media-pass-deps.ts`'s `buildCloudBytesDeps`. The vector reports
+ * the weakest of the three shapes it actually backs, exactly as `weakestCoverage` merges markers
+ * from different binaries — asserting `per-call` here would overstate what the scheduled-sync third
+ * of this class observes.
  *
  * `model` is `per-call` and covers every NON-LOCAL route in the router's table. The appender is
  * `egress/model-egress.ts`'s `wrapLedgeredProvider`, applied at `LlmRegistry.addRoute`, so it
