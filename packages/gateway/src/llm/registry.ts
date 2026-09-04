@@ -169,8 +169,21 @@ export class LlmRegistry {
     return results;
   }
 
+  /**
+   * Availability per provider VENDOR id, for `llm.getStatus`.
+   *
+   * The result is a NULL-PROTOTYPE object, and that is load-bearing rather than defensive style.
+   * `providerId` is an open string — `makeRouteId` rejects only `/` and the empty string — so a
+   * provider could legitimately be named `__proto__`. Assigning that key to a plain `{}` hits
+   * `Object.prototype`'s setter instead of creating a property: the write silently does nothing,
+   * `Object.keys` omits it, `JSON.stringify` omits it, and the RPC answers as though the route did
+   * not exist. A route that IS registered reporting no status at all is worse than reporting it
+   * unavailable — silent omission is indistinguishable from "never configured".
+   *
+   * `Object.create(null)` has no such setter, so every id round-trips as an ordinary key.
+   */
   async checkAvailability(): Promise<Record<string, boolean>> {
-    const result: Record<string, boolean> = {};
+    const result = Object.create(null) as Record<string, boolean>;
     const seen = new Set<string>();
     for (const route of this.router.routes()) {
       const id = route.provider.providerId;
