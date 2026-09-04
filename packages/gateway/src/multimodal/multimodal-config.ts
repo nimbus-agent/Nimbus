@@ -2,9 +2,9 @@
  * The `[multimodal]` section (spec § 9.2, § 8).
  *
  * Standalone rather than routed through `nimbus-toml.ts`, mirroring
- * `connectors/openapi-indexer-config.ts`: four keys do not warrant a shared parser's full
- * section-table machinery. Reuses `stripComment` from the dependency-free `toml-primitives.ts`
- * so `enabled = true # on locally` reads correctly.
+ * `connectors/openapi-indexer-config.ts`: a small closed set of keys does not warrant a shared
+ * parser's full section-table machinery. Reuses `stripComment` from the dependency-free
+ * `toml-primitives.ts` so `enabled = true # on locally` reads correctly.
  *
  * DEFAULT OFF, and every MALFORMED-input failure path — absent `configDir`, absent file, absent
  * section, absent key, unreadable or malformed TOML — reads as `false`. A missing config must
@@ -203,8 +203,11 @@ function parseSection(raw: string): MultimodalConfig {
     } else if (key === "fetch_budget_bytes") {
       const n = parseStrictInt(value);
       // A non-integer value is malformed TOML for this key — same fail-off direction as
-      // `max_frames` and `enabled`.
-      if (n === undefined) return defaults();
+      // `max_frames` and `enabled`. A negative value is semantically malformed: this file's
+      // contract is that a value it cannot honour turns the section off rather than silently
+      // substituting one the user did not ask for. Zero is accepted and means "no cloud bytes
+      // may be fetched this run".
+      if (n === undefined || n < 0) return defaults();
       out = { ...out, fetchBudgetBytes: n };
     } else if (key === "prefer_renditions") {
       const v = value.trim().toLowerCase();

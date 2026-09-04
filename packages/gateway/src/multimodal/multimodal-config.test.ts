@@ -125,6 +125,28 @@ describe("loadMultimodalConfig", () => {
     expect(cfg.enabled).toBe(false);
   });
 
+  test("a negative budget fails the load off (semantically malformed)", () => {
+    const cfg = loadMultimodalConfig(
+      withToml("[multimodal]\nenabled = true\nfetch_budget_bytes = -1024\n"),
+    );
+    expect(cfg.enabled).toBe(false);
+  });
+
+  test("zero budget is accepted and means no cloud bytes may be fetched", () => {
+    const cfg = loadMultimodalConfig(
+      withToml("[multimodal]\nenabled = true\nfetch_budget_bytes = 0\n"),
+    );
+    expect(cfg.enabled).toBe(true);
+    expect(cfg.fetchBudgetBytes).toBe(0);
+  });
+
+  test("a malformed prefer_renditions fails the load off", () => {
+    const cfg = loadMultimodalConfig(
+      withToml("[multimodal]\nenabled = true\nprefer_renditions = maybe\n"),
+    );
+    expect(cfg.enabled).toBe(false);
+  });
+
   test("a configDir with no nimbus.toml at all is OFF with defaults", () => {
     // No writeFileSync here, deliberately: an empty dir exercises the
     // `!existsSync(tomlPath)` branch, distinct from every other test's withToml-created file.
