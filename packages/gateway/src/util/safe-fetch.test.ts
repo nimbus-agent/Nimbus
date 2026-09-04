@@ -111,8 +111,10 @@ describe("assertSafeUrl", () => {
 describe("safeFetchFollowing", () => {
   test("refuses a redirect to loopback", async () => {
     const hops: string[] = [];
-    const fetchFn = ((url: URL | string, _init?: RequestInit) => {
+    const redirects: (string | undefined)[] = [];
+    const fetchFn = ((url: URL | string, init?: RequestInit) => {
       hops.push(String(url));
+      redirects.push(init?.redirect);
       return Promise.resolve(
         new Response(null, { status: 302, headers: { location: "http://127.0.0.1:9/x" } }),
       );
@@ -122,12 +124,15 @@ describe("safeFetchFollowing", () => {
       safeFetchFollowing("https://example.test/a", {}, { fetchFn, lookupFn: publicLookup }),
     ).rejects.toThrow(/loopback\/private/);
     expect(hops).toHaveLength(1);
+    expect(redirects).toEqual(["manual"]);
   });
 
   test("stops after maxHops rather than following a redirect loop", async () => {
     let calls = 0;
-    const fetchFn = (() => {
+    const redirects: (string | undefined)[] = [];
+    const fetchFn = ((_u: URL | string, init?: RequestInit) => {
       calls += 1;
+      redirects.push(init?.redirect);
       return Promise.resolve(
         new Response(null, { status: 302, headers: { location: "https://example.test/next" } }),
       );
@@ -141,13 +146,42 @@ describe("safeFetchFollowing", () => {
       ),
     ).rejects.toThrow(/too many redirects/);
     expect(calls).toBe(4); // initial + 3 hops
+    expect(redirects).toEqual(["manual", "manual", "manual", "manual"]);
+  });
+
+  // The forced "manual" is the property this whole function exists to establish: without it, real
+  // `fetch` follows the redirect internally, the first response is already the final 200, and no
+  // intermediate hop is ever validated — silently restoring the bug this task fixes. A caller's
+  // own `redirect` request must not be able to win that argument.
+  test("forces redirect: 'manual' even when the caller requests 'follow'", async () => {
+    const redirects: (string | undefined)[] = [];
+    let calls = 0;
+    const fetchFn = ((_u: URL | string, init?: RequestInit) => {
+      calls += 1;
+      redirects.push(init?.redirect);
+      return Promise.resolve(
+        calls === 1
+          ? new Response(null, { status: 302, headers: { location: "https://example.test/b" } })
+          : new Response("BYTES", { status: 200 }),
+      );
+    }) as unknown as typeof fetch;
+
+    const res = await safeFetchFollowing(
+      "https://example.test/a",
+      { redirect: "follow" },
+      { fetchFn, lookupFn: publicLookup },
+    );
+    expect(await res.text()).toBe("BYTES");
+    expect(redirects).toEqual(["manual", "manual"]);
   });
 
   test("STRIPS Authorization when the redirect crosses an origin", async () => {
     const seen: (string | null)[] = [];
+    const redirects: (string | undefined)[] = [];
     let calls = 0;
     const fetchFn = ((_u: URL | string, init?: RequestInit) => {
       seen.push(new Headers(init?.headers).get("authorization"));
+      redirects.push(init?.redirect);
       calls += 1;
       return Promise.resolve(
         calls === 1
@@ -162,13 +196,16 @@ describe("safeFetchFollowing", () => {
       { fetchFn, lookupFn: publicLookup },
     );
     expect(seen).toEqual(["Bearer SECRET", null]);
+    expect(redirects).toEqual(["manual", "manual"]);
   });
 
   test("KEEPS Authorization on a same-origin redirect", async () => {
     const seen: (string | null)[] = [];
+    const redirects: (string | undefined)[] = [];
     let calls = 0;
     const fetchFn = ((_u: URL | string, init?: RequestInit) => {
       seen.push(new Headers(init?.headers).get("authorization"));
+      redirects.push(init?.redirect);
       calls += 1;
       return Promise.resolve(
         calls === 1
@@ -183,6 +220,79 @@ describe("safeFetchFollowing", () => {
       { fetchFn, lookupFn: publicLookup },
     );
     expect(seen).toEqual(["Bearer SECRET", "Bearer SECRET"]);
+    expect(redirects).toEqual(["manual", "manual"]);
+  });
+
+  // fetch's own cross-origin redirect handling strips Authorization, Cookie AND Proxy-Authorization
+  // — safeFetchFollowing must not be strictly weaker than the runtime behaviour it replaces.
+  test("STRIPS a standard Cookie header when the redirect crosses an origin", async () => {
+    const seen: (string | null)[] = [];
+    let calls = 0;
+    const fetchFn = ((_u: URL | string, init?: RequestInit) => {
+      seen.push(new Headers(init?.headers).get("cookie"));
+      calls += 1;
+      return Promise.resolve(
+        calls === 1
+          ? new Response(null, { status: 302, headers: { location: "https://cdn.other.test/b" } })
+          : new Response("BYTES", { status: 200 }),
+      );
+    }) as unknown as typeof fetch;
+
+    await safeFetchFollowing(
+      "https://api.example.test/a",
+      { headers: { Cookie: "sid=SECRET" } },
+      { fetchFn, lookupFn: publicLookup },
+    );
+    expect(seen).toEqual(["sid=SECRET", null]);
+  });
+
+  // This codebase also sends bearer-shaped credentials under repo-specific header names (GitLab's
+  // PRIVATE-TOKEN among them) that a deny-list naming only the WHATWG-standard three would miss.
+  test("STRIPS a repo-specific credential header (PRIVATE-TOKEN) when the redirect crosses an origin", async () => {
+    const seen: (string | null)[] = [];
+    let calls = 0;
+    const fetchFn = ((_u: URL | string, init?: RequestInit) => {
+      seen.push(new Headers(init?.headers).get("private-token"));
+      calls += 1;
+      return Promise.resolve(
+        calls === 1
+          ? new Response(null, { status: 302, headers: { location: "https://cdn.other.test/b" } })
+          : new Response("BYTES", { status: 200 }),
+      );
+    }) as unknown as typeof fetch;
+
+    await safeFetchFollowing(
+      "https://gitlab.example.test/a",
+      { headers: { "PRIVATE-TOKEN": "glpat-SECRET" } },
+      { fetchFn, lookupFn: publicLookup },
+    );
+    expect(seen).toEqual(["glpat-SECRET", null]);
+  });
+
+  // URL.origin includes the port, so this passes today — but it is the one axis a future refactor
+  // to a bare `.host`/`.hostname` comparison would break invisibly.
+  test("treats a differing port on the same host as a different origin", async () => {
+    const seen: (string | null)[] = [];
+    let calls = 0;
+    const fetchFn = ((_u: URL | string, init?: RequestInit) => {
+      seen.push(new Headers(init?.headers).get("authorization"));
+      calls += 1;
+      return Promise.resolve(
+        calls === 1
+          ? new Response(null, {
+              status: 302,
+              headers: { location: "https://api.example.test:8443/b" },
+            })
+          : new Response("BYTES", { status: 200 }),
+      );
+    }) as unknown as typeof fetch;
+
+    await safeFetchFollowing(
+      "https://api.example.test/a",
+      { headers: { Authorization: "Bearer SECRET" } },
+      { fetchFn, lookupFn: publicLookup },
+    );
+    expect(seen).toEqual(["Bearer SECRET", null]);
   });
 
   test("returns the final response when every hop is public", async () => {

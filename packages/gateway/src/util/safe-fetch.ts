@@ -116,16 +116,50 @@ export async function safeFetch(
 const DEFAULT_MAX_HOPS = 5;
 
 /**
+ * Request headers permitted to survive an origin-crossing redirect hop — an ALLOW-LIST, not a
+ * deny-list of known credential headers. WHATWG `fetch` itself strips only `Authorization`,
+ * `Cookie` and `Proxy-Authorization` on such a crossing, but this codebase also sends
+ * bearer-shaped credentials under repo-specific header names a deny-list would have to be told
+ * about one by one: `PRIVATE-TOKEN` (GitLab), `Circle-Token` (CircleCI), `X-Api-Key`/`x-api-key`
+ * (New Relic, Dependency-Track, the Anthropic provider), `x-auth-token` (Codemagic). An allow-list
+ * fails SAFE when a caller adds a new credential header later — it is dropped by default rather
+ * than forwarded until someone remembers to add it to a deny-list. Everything not named here is
+ * dropped on a cross-origin hop; every header is kept unchanged on a same-origin hop.
+ */
+const CROSS_ORIGIN_SAFE_REQUEST_HEADERS: ReadonlySet<string> = new Set([
+  "accept",
+  "accept-encoding",
+  "accept-language",
+  "user-agent",
+  "range",
+  "if-modified-since",
+  "if-none-match",
+  "content-type",
+]);
+
+/**
  * `safeFetch` with MANUAL redirect handling, so every hop is re-validated.
  *
  * `safeFetch` alone validates only the URL it is handed and then lets `fetch` follow redirects on
  * its own — so a 302 to `127.0.0.1` is followed unchecked. That matters more for a
  * provider-returned download URL, which is pinned to nothing, than for `share/`'s config-pinned
  * sink; and the most interesting loopback target here is this gateway's own HTTP API.
+ * `redirect: "manual"` is forced on every hop's `safeFetch` call regardless of what `init.redirect`
+ * requests — a caller-won `"follow"` would let the runtime follow internally, turn the first
+ * response into an already-final 200, and skip validating every hop after it, which is exactly the
+ * bug this function exists to fix.
  *
- * Manual following additionally removes any dependency on the runtime's own header handling across
- * an origin crossing. Bun 1.3.14 strips `Authorization` there, but relying on that would make a
- * security property depend on undocumented behaviour a version bump could change silently.
+ * Taking over redirect handling also means taking over the ONE piece of header handling the
+ * runtime was doing for us: on a cross-origin hop, only the allow-listed headers in
+ * {@link CROSS_ORIGIN_SAFE_REQUEST_HEADERS} are forwarded and everything else — every credential
+ * header included — is dropped; a same-origin hop forwards every header unchanged. This is not a
+ * claim that every other aspect of `fetch`'s own redirect behaviour is reproduced: per spec, a 303
+ * (and a 301/302 on POST) is supposed to turn into a bodyless GET on the next hop, and this
+ * function does not do that — method and body are forwarded as given. That is inert for the
+ * GET-only download callers this exists for today, but a future POST caller would (a) forward its
+ * body to the redirect target across an origin and (b) throw "body already used" on hop 2 if the
+ * body is a `ReadableStream` or `FormData`, each readable only once. Fix that when a POST caller
+ * lands, not before.
  *
  * INHERITED BOUND: `safeFetch`'s DNS-rebind TOCTOU is not closed here either — see its doc comment.
  */
@@ -139,7 +173,8 @@ export async function safeFetchFollowing(
   let current: RequestInit = { ...init };
 
   for (let hop = 0; hop <= maxHops; hop += 1) {
-    // Every hop, not just the first: assertSafeUrl + the DNS check run inside safeFetch.
+    // Every hop, not just the first: assertSafeUrl + the DNS check run inside safeFetch. The
+    // caller's own redirect preference never wins — see the docstring above.
     const res = await safeFetch(url, { ...current, redirect: "manual" }, deps);
     if (res.status < 300 || res.status >= 400) return res;
 
@@ -147,16 +182,20 @@ export async function safeFetchFollowing(
     if (location === null || location === "") return res;
     const next = new URL(location, url).toString();
 
-    // STRIP the credential when the origin changes. Taking over redirect handling means taking
-    // over the header stripping the runtime was doing for us — and this path is LIVE, not
-    // theoretical: a Drive `alt=media` download carries a bearer to `www.googleapis.com` and is
-    // routinely 302'd to `*.googleusercontent.com`. Forwarding it there would hand an OAuth token
-    // to a host we never authenticated to, which is the exact failure the credential rule
-    // (spec § 16.4) exists to prevent.
+    // Filter headers down to the allow-list when the origin changes — see
+    // CROSS_ORIGIN_SAFE_REQUEST_HEADERS for why an allow-list rather than naming credential
+    // headers one by one. This path is LIVE, not theoretical: a Drive `alt=media` download
+    // carries a bearer to `www.googleapis.com` and is routinely 302'd to
+    // `*.googleusercontent.com`. Forwarding the credential there would hand it to a host we never
+    // authenticated to.
     if (new URL(next).origin !== new URL(url).origin) {
-      const headers = new Headers(current.headers);
-      headers.delete("authorization");
-      current = { ...current, headers };
+      const filtered = new Headers();
+      for (const [name, value] of new Headers(current.headers)) {
+        if (CROSS_ORIGIN_SAFE_REQUEST_HEADERS.has(name.toLowerCase())) {
+          filtered.set(name, value);
+        }
+      }
+      current = { ...current, headers: filtered };
     }
     url = next;
   }
