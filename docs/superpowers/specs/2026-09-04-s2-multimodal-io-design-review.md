@@ -32,6 +32,7 @@ Below are critical findings, open architectural questions, and concrete improvem
   - In `google-drive-sync.ts` and `onedrive-sync.ts`, all items are indexed as `type: "file"`.
   - Currently, `media-discovery.ts` selects candidates with `WHERE src.type IN (...) ORDER BY src.id LIMIT ?`.
   - In `media-pass.ts`:
+
     ```ts
     const candidates = findCandidates(deps.db, { limit: deps.limit, ... });
     // ... process candidates ...
@@ -39,6 +40,7 @@ Below are critical findings, open architectural questions, and concrete improvem
       clearCursor(deps.db, deps.passId);
     }
     ```
+
 - **The Defect:**
   - If `file` is registered in `mediaItemTypePairsForModality()`, SQLite returns a batch of 50 items with `type = "file"`.
   - In a typical Drive/OneDrive containing thousands of non-media files (PDFs, spreadsheets, code, docs), all 50 items in that page may have non-media MIME types (e.g., `application/pdf`, `text/plain`).
@@ -47,6 +49,7 @@ Below are critical findings, open architectural questions, and concrete improvem
   - **Impact:** The pass prematurely terminates after inspecting the first 50 files, leaving the remaining tens of thousands of drive files unprocessed forever.
 - **Recommendations:**
   1. **SQL-Level MIME Filtering:** Add a service-aware MIME condition in `findCandidates()`:
+
      ```sql
      AND (
        src.type IN ('media_av', 'media_image', 'photo')
@@ -61,6 +64,7 @@ Below are critical findings, open architectural questions, and concrete improvem
        )
      )
      ```
+
   2. **Candidate Paging Loop in `findCandidates`:** Ensure `findCandidates` loops in SQLite until either `limit` valid `MediaCandidate` objects are accumulated or no further rows exist in the database.
 
 ---
@@ -117,10 +121,12 @@ Below are critical findings, open architectural questions, and concrete improvem
     - Audio transcode scratch: `nimbus-stt-${uuid}.wav`
     - Cloud download scratch: `nimbus-cloud-${uuid}.tmp` (or `nimbus-cloud-${uuid}.${ext}`)
   - Update `sweepStaleScratchFiles(scratchDir, nowMs)` to sweep both patterns:
+
     ```ts
     const isScratch = (name.startsWith("nimbus-stt-") && name.endsWith(".wav")) ||
                       (name.startsWith("nimbus-cloud-") && (name.endsWith(".tmp") || name.endsWith(".wav") || name.endsWith(".mp4")));
     ```
+
   - Ensure all cloud downloads wrap file creation and execution in `withScratchFile()` so normal error unwinding deletes them immediately.
 
 ---
@@ -180,6 +186,7 @@ Below are critical findings, open architectural questions, and concrete improvem
   - When a source item is deleted from Google Drive, OneDrive, or local disk, its corresponding derived `nimbus:*_understanding` row will be orphaned unless explicitly pruned.
 - **Suggestion:**
   - Add an explicit cascade cleanup in `deleteItemByServiceExternal` or a periodic orphan cleanup query in `media-discovery.ts`:
+
     ```sql
     DELETE FROM item
      WHERE service = 'nimbus'
@@ -203,6 +210,7 @@ Below are critical findings, open architectural questions, and concrete improvem
 ### 4.2 Interactive Run Summary & Counterfactual Reporting (§ 16.8, § 16.9)
 
 - To provide complete transparency to the user, ensure the CLI run summary formats:
+
   ```text
   Media Understanding Pass Summary:
     Understood: 42 (Images: 30, Videos: 12)

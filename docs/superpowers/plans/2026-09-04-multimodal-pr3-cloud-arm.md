@@ -28,18 +28,21 @@
 ## File Structure
 
 **Modified — shipped code being corrected (Tasks 1–5):**
+
 - `packages/gateway/src/multimodal/media-source-registry.ts` — gains a per-service size accessor and the mime-keyed modality arm
 - `packages/gateway/src/multimodal/media-discovery.ts` — SQL mime predicate; size read through the accessor
 - `packages/gateway/src/multimodal/media-pass.ts` — orphan prune at start; `stopReason` / `cloudBytesFetched`
 - `packages/gateway/src/multimodal/stt/ffmpeg-bin.ts` — sweeper matches two prefixes
 
 **Created:**
+
 - `packages/gateway/src/multimodal/orphan-prune.ts` — deletes derived rows whose source is gone
 - `packages/gateway/src/util/safe-fetch.ts` — moved from `share/`, plus redirect-safe following
 - `packages/gateway/src/multimodal/cloud-bytes.ts` — the cloud arm
 - `packages/gateway/src/multimodal/cloud-renditions.ts` — per-service rendition selection, pure
 
 **Modified — connectors and wiring (Tasks 8–11):**
+
 - `packages/gateway/src/connectors/{google-photos,google-drive,onedrive}-sync.ts` — one byte-URL resolver export each
 - `packages/gateway/src/sync/sync-capabilities.ts` — the `fetchBytes` capability
 - `packages/gateway/src/multimodal/{media-bytes,media-gate,multimodal-config,build-media-pass-deps}.ts`
@@ -54,11 +57,13 @@ Each file keeps one responsibility: the registry knows *what is media*, `cloud-b
 `media-discovery.ts` reads `metadata.sizeBytes`. Only the filesystem connector writes that key. Drive writes `size` as a **string** (the Drive API returns int64 as a string), OneDrive writes `size` as a number, Photos writes nothing. So `sourceBytes` is `null` for every cloud candidate — silently, on two independent counts — and § 16.9's pre-flight budget layer would be decoration.
 
 **Files:**
+
 - Modify: `packages/gateway/src/multimodal/media-source-registry.ts`
 - Modify: `packages/gateway/src/multimodal/media-discovery.ts:88` (the `sourceBytes` line)
 - Test: `packages/gateway/src/multimodal/media-source-registry.test.ts`
 
 **Interfaces:**
+
 - Consumes: nothing.
 - Produces: `export function mediaSourceBytes(service: string, metadata: Record<string, unknown>): number | null`
 
@@ -174,11 +179,13 @@ git commit -m "fix(multimodal): resolve source byte size per service"
 Spec § 4.2 states "Deleting a source item deletes its derived understanding row." `understanding-item.ts:64` writes `derivedFrom`, and **nothing in the codebase reads it**. The claim has been inert since PR 1. PR 3 makes orphans common, because a cloud item can leave the index without any local file being touched.
 
 **Files:**
+
 - Create: `packages/gateway/src/multimodal/orphan-prune.ts`
 - Create: `packages/gateway/src/multimodal/orphan-prune.test.ts`
 - Modify: `packages/gateway/src/multimodal/media-pass.ts` (call at pass start)
 
 **Interfaces:**
+
 - Consumes: nothing.
 - Produces: `export function pruneOrphanedUnderstandings(db: Database): number` — returns the number of rows deleted.
 
@@ -325,10 +332,12 @@ git commit -m "fix(multimodal): prune derived rows whose source has left the ind
 The review proposed matching an extension list (`.tmp`/`.wav`/`.mp4`). Rejected: a download's extension is whatever the artifact is (`.mov`, `.mkv`, `.m4a`, `.webm`, …) and that list will drift. **Cloud downloads are extensionless**, named `nimbus-media-<uuid>`; ffmpeg probes content and never needs a suffix.
 
 **Files:**
+
 - Modify: `packages/gateway/src/multimodal/stt/ffmpeg-bin.ts:193-196`
 - Test: `packages/gateway/src/multimodal/stt/ffmpeg-bin.test.ts`
 
 **Interfaces:**
+
 - Consumes: nothing.
 - Produces: `export const CLOUD_SCRATCH_PREFIX = "nimbus-media-"` (consumed by Task 9's `cloud-bytes.ts`).
 
@@ -424,10 +433,12 @@ Today the summary is `understood` / `skipped` / `skippedByReason` / `lastItemId`
 This task adds the fields and defaults them; Task 11 makes the budget actually set them. Landing the shape first keeps Task 11 a behaviour change rather than a shape-plus-behaviour change.
 
 **Files:**
+
 - Modify: `packages/gateway/src/multimodal/media-pass.ts:39-44`
 - Test: `packages/gateway/src/multimodal/media-pass.test.ts`
 
 **Interfaces:**
+
 - Produces: `MediaPassSummary.stopReason: "completed" | "budget_exhausted" | "rate_limited"` and `MediaPassSummary.cloudBytesFetched: number`.
 
 - [ ] **Step 1: Write the failing test**
@@ -512,11 +523,13 @@ git commit -m "feat(multimodal): report why a pass ended and how many cloud byte
 The review's alternative — loop until `limit` candidates accumulate — is rejected: it turns `limit` from *rows examined* into *rows returned*, so a `--limit 50` against a media-free 40,000-file Drive scans the whole table. The budget and the resumable cursor both assume one page is one bounded unit of work.
 
 **Files:**
+
 - Modify: `packages/gateway/src/multimodal/media-source-registry.ts`
 - Modify: `packages/gateway/src/multimodal/media-discovery.ts`
 - Test: `packages/gateway/src/multimodal/media-discovery.test.ts`
 
 **Interfaces:**
+
 - Consumes: `mediaSourceBytes` (Task 1).
 - Produces: `export const MIME_KEYED_SERVICES: ReadonlySet<string>`; `export function mimeModality(mime: string | null): MediaModality | undefined`; `modalityForItem(service, type, mime?)` gains an optional third parameter.
 
@@ -726,11 +739,13 @@ Two changes. It moves to `util/` because a `multimodal/ → share/` import would
 **Verified, do not redo:** Bun 1.3.14's `fetch` *does* strip `Authorization` across an origin-crossing redirect. Manual following is used anyway, so the property does not depend on undocumented runtime behaviour.
 
 **Files:**
+
 - Move: `packages/gateway/src/share/safe-fetch.ts` → `packages/gateway/src/util/safe-fetch.ts` (and its test)
 - Modify: importers named by `bun run typecheck`
 - Test: `packages/gateway/src/util/safe-fetch.test.ts`
 
 **Interfaces:**
+
 - Produces: `export async function safeFetchFollowing(raw: string, init: RequestInit, deps?: SafeFetchDeps & { maxHops?: number }): Promise<Response>`
 
 - [ ] **Step 1: Move the file**
@@ -919,10 +934,12 @@ git commit -m "refactor(util): move safe-fetch out of share and re-validate ever
 ### Task 7: Config keys `fetch_budget_bytes` and `prefer_renditions`
 
 **Files:**
+
 - Modify: `packages/gateway/src/multimodal/multimodal-config.ts`
 - Test: `packages/gateway/src/multimodal/multimodal-config.test.ts`
 
 **Interfaces:**
+
 - Produces: `MultimodalConfig.fetchBudgetBytes: number`, `MultimodalConfig.preferRenditions: boolean`.
 
 - [ ] **Step 1: Write the failing test**
@@ -981,12 +998,15 @@ git commit -m "feat(multimodal): add fetch_budget_bytes and prefer_renditions co
 Pure URL logic, separated from transport so it is testable without a network. **The credential rule lives here**: each resolver declares whether its URL is one we constructed (bearer attached) or one the provider returned (pre-signed, no header).
 
 **Files:**
+
 - Create: `packages/gateway/src/multimodal/cloud-renditions.ts`
 - Create: `packages/gateway/src/multimodal/cloud-renditions.test.ts`
 - Modify: `packages/gateway/src/connectors/google-photos-sync.ts` (export a `mediaItems/{id}` re-resolve helper)
 
 **Interfaces:**
+
 - Produces:
+
   ```ts
   export type ByteUrl =
     | { readonly kind: "constructed"; readonly url: string; readonly bearer: true }
@@ -1276,12 +1296,15 @@ git commit -m "feat(multimodal): resolve per-service byte URLs and renditions"
 ### Task 9: `cloud-bytes.ts` — the transport, budget and ledger
 
 **Files:**
+
 - Create: `packages/gateway/src/multimodal/cloud-bytes.ts`
 - Create: `packages/gateway/src/multimodal/cloud-bytes.test.ts`
 
 **Interfaces:**
+
 - Consumes: `ByteUrl` (Task 8), `safeFetchFollowing` (Task 6), `CLOUD_SCRATCH_PREFIX` (Task 3), `recordSyncEgress` from `egress/sync-egress.ts`.
 - Produces:
+
   ```ts
   export type CloudBytes =
     | { readonly ok: true; readonly kind: "bytes"; readonly bytes: Uint8Array; readonly fetched: number }
@@ -1550,12 +1573,14 @@ git commit -m "feat(multimodal): fetch cloud media bytes under a ledgered, budge
 `understandArtifact(candidate, path, deps)` takes a path. Images now arrive as bytes and never touch disk.
 
 **Files:**
+
 - Modify: `packages/gateway/src/multimodal/media-bytes.ts`
 - Modify: `packages/gateway/src/multimodal/media-gate.ts`
 - Modify: `packages/gateway/src/multimodal/vlm/image-understander.ts`, `frames/av-understander.ts`
 - Test: `packages/gateway/src/multimodal/media-gate.test.ts`
 
 **Interfaces:**
+
 - Produces: `export type MediaSource = { kind: "path"; path: string } | { kind: "bytes"; bytes: Uint8Array; mime: string | null };` and `LocalUnderstander.understand(source: MediaSource)`.
 
 - [ ] **Step 1: Write the failing test**
@@ -1621,11 +1646,13 @@ git commit -m "refactor(multimodal): accept bytes or a path as the understanding
 ### Task 11: Pass integration — pre-flight pricing, running budget, stop reasons
 
 **Files:**
+
 - Modify: `packages/gateway/src/multimodal/media-pass.ts`
 - Modify: `packages/gateway/src/multimodal/build-media-pass-deps.ts`
 - Test: `packages/gateway/src/multimodal/media-pass.test.ts`
 
 **Interfaces:**
+
 - Consumes: `fetchCloudBytes` (Task 9), `mediaSourceBytes` (Task 1), the config fields (Task 7).
 - Produces: `export function priceRun(candidates: readonly MediaCandidate[]): { knownBytes: number; knownCount: number; unknownCount: number }`.
 
@@ -1751,6 +1778,7 @@ git commit -m "feat(multimodal): price a run up front and stop it on the running
 ### Task 12: CLI flags and summary rendering
 
 **Files:**
+
 - Modify: `packages/cli/src/commands/media-cmd.ts`
 - Modify: `packages/gateway/src/ipc/media-rpc.ts`
 - Test: `packages/cli/src/commands/media-cmd.test.ts`
@@ -1856,6 +1884,7 @@ git commit -m "feat(cli): rendition and budget flags for nimbus media understand
 A correction that lands at one restatement and not the others is the drift this project has hit repeatedly. Four facts changed and each is stated in more than one place.
 
 **Files:**
+
 - Modify: `CLAUDE.md`, `GEMINI.md` (mirrors it), `docs/roadmap.md`, `docs/SECURITY-INVARIANTS.md`, `.claude/commands/nimbus-egress.md`, `docs/cli-reference.md`, `docs/architecture.md`
 
 - [ ] **Step 1: The scratch-file sentence (§ 16.3)**

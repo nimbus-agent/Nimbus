@@ -37,6 +37,7 @@ This review identifies **5 critical implementation blockers / bugs** (including 
 * **Fix:**
   Define the asynchronous URL resolution step explicitly:
   1. In `packages/gateway/src/multimodal/cloud-renditions.ts`, implement a resolver dispatcher:
+
      ```ts
      export interface CloudUrlResolverDeps {
        readonly bearerFor: (service: string) => Promise<string | null>;
@@ -84,6 +85,7 @@ This review identifies **5 critical implementation blockers / bugs** (including 
        return { error: "unresolvable_modality" };
      }
      ```
+
   2. Wire `resolveCloudByteUrl` directly into `runMediaPass` before invoking `fetchCloudBytes`.
   3. Clean up the file structure list: remove unused references to modifying `sync-capabilities.ts` or connector files unless connector helper exports are specifically preferred.
 
@@ -100,6 +102,7 @@ This review identifies **5 critical implementation blockers / bugs** (including 
   * As a result, every cloud video successfully downloaded remains in `scratchDir` indefinitely until the 1-hour start-of-pass sweeper cleans it up. A pass processing multiple videos will exhaust local disk space.
 * **Fix:**
   In `packages/gateway/src/multimodal/media-pass.ts`, ensure that every cloud scratch file is unlinked immediately in a `finally` block:
+
   ```ts
   const isCloud = candidate.sourcePath === null;
   let cloudScratchPath: string | undefined;
@@ -143,6 +146,7 @@ This review identifies **5 critical implementation blockers / bugs** (including 
   * Task 12 adds `--renditions` and `--originals` boolean flags to `nimbus media understand`.
 * **Issue:**
   * In `packages/cli/src/commands/media-cmd.ts` lines 87–93:
+
     ```ts
     for (let i = 1; i < argv.length; i += 2) {
       const flag = argv[i];
@@ -151,10 +155,12 @@ This review identifies **5 critical implementation blockers / bugs** (including 
         throw new Error(`nimbus media: ${flag ?? ""} requires a value`);
       }
     ```
+
   * Stepping by `i += 2` assumes every argument has an accompanying value.
   * If a user executes `nimbus media understand --renditions --limit 10`, `--renditions` will consume `--limit` as its value, or if passed at the end (`nimbus media understand --renditions`), it will throw `"--renditions requires a value"`.
 * **Fix:**
   Refactor `parseMediaArgs` loop in `packages/cli/src/commands/media-cmd.ts` to inspect individual tokens and step dynamically:
+
   ```ts
   let i = 1;
   while (i < argv.length) {
@@ -208,6 +214,7 @@ This review identifies **5 critical implementation blockers / bugs** (including 
   * Neither Task 8 nor Task 9 verifies that `byteUrl.kind === "provider"` URLs use `https:`, and Task 9 Step 1 does not include the required test asserting refusal of `http:` provider URLs.
 * **Fix:**
   1. In `fetchCloudBytes` (`packages/gateway/src/multimodal/cloud-bytes.ts`):
+
      ```ts
      if (byteUrl.kind === "provider") {
        let parsed: URL;
@@ -221,7 +228,9 @@ This review identifies **5 critical implementation blockers / bugs** (including 
        }
      }
      ```
+
   2. Add unit test to Task 9 Step 1:
+
      ```ts
      test("refuses a provider-returned http: URL", async () => {
        const deps = fakeDeps({});
@@ -239,6 +248,7 @@ This review identifies **5 critical implementation blockers / bugs** (including 
   * Task 6 notes: *"Manual following additionally removes any dependency on the runtime's own header handling across an origin crossing."*
 * **Issue:**
   * In Task 6 Step 4 (`safeFetchFollowing`):
+
     ```ts
     for (let hop = 0; hop <= maxHops; hop += 1) {
       const res = await safeFetch(url, { ...init, redirect: "manual" }, deps);
@@ -248,9 +258,11 @@ This review identifies **5 critical implementation blockers / bugs** (including 
       url = new URL(location, url).toString();
     }
     ```
+
   * `init` is passed unchanged across loop iterations. If `init.headers` contains an `Authorization` bearer token (e.g. on a constructed Google Drive URL), a redirect to a different host/origin will forward the `Authorization` header to that third-party host.
 * **Fix:**
   In `packages/gateway/src/util/safe-fetch.ts`, strip `Authorization` headers whenever redirecting across origins:
+
   ```ts
   export async function safeFetchFollowing(
     raw: string,
@@ -288,6 +300,7 @@ This review identifies **5 critical implementation blockers / bugs** (including 
 
 * **Observation:** In Task 9 Step 3, `fetchCloudBytes` checks `declared > deps.maxBytes` before streaming, but does not check `declared > deps.remainingBudget`.
 * **Improvement:** If the HTTP response headers report `content-length: 500MB` and `deps.remainingBudget` is `10MB`, aborting immediately avoids streaming the first 10MB across the wire before tripping the budget limit:
+
   ```ts
   const declared = Number.parseInt(res.headers.get("content-length") ?? "", 10);
   if (Number.isFinite(declared)) {
@@ -308,6 +321,7 @@ This review identifies **5 critical implementation blockers / bugs** (including 
 
 * **Observation:** In Task 2 Step 3, `pruneOrphanedUnderstandings` calls `db.query(...).run(...)` directly.
 * **Improvement:** Per Invariant **I14** (`packages/gateway/src/db/write.ts`), SQLite writes should go through `dbStmtRun` or `dbRun` so that `SQLITE_FULL` errors trigger `setDiskSpaceWarning(true)` and raise `DiskFullError`:
+
   ```ts
   import { dbStmtRun } from "../db/write.ts";
 
@@ -340,6 +354,7 @@ This review identifies **5 critical implementation blockers / bugs** (including 
 
 * **Observation:** In Task 12 Step 3, `parseBudget` parses strings like `"4GB"`, `"500MB"`.
 * **Improvement:** Support binary and metric unit suffixes (`G`, `GB`, `GiB`, `M`, `MB`, `MiB`, `K`, `KB`, `KiB`) case-insensitively:
+
   ```ts
   export function parseBudget(raw: string): number | null {
     const trimmed = raw.trim();
@@ -396,11 +411,11 @@ This review identifies **5 critical implementation blockers / bugs** (including 
 
 ## 5. Summary Checklist of Required Plan Updates
 
-- [ ] **Task 8 & 11:** Implement and wire `resolveCloudByteUrl` to handle Google Photos `mediaItems/{id}` re-resolution and OneDrive `@microsoft.graph.downloadUrl` retrieval with live OAuth tokens.
-- [ ] **Task 11:** Add scratch-file deletion in `runMediaPass`'s `finally` block for cloud AV candidates.
-- [ ] **Task 12:** Fix `parseMediaArgs` in `media-cmd.ts` to handle boolean flags (`--renditions`, `--originals`) without expecting a parameter value.
-- [ ] **Task 9:** Add `https:` protocol validation for `byteUrl.kind === "provider"` in `fetchCloudBytes` and include the test case.
-- [ ] **Task 6:** Update `safeFetchFollowing` to strip the `Authorization` header on cross-origin redirects.
-- [ ] **Task 9:** Add pre-emptive check on `declared > deps.remainingBudget`.
-- [ ] **Task 2:** Wrap `pruneOrphanedUnderstandings` statement execution in `dbStmtRun` for I14 compliance.
-- [ ] **Task 13:** Add `docs/architecture.md` to the list of files updated for the I29 `sync` appender enumeration.
+* [ ] **Task 8 & 11:** Implement and wire `resolveCloudByteUrl` to handle Google Photos `mediaItems/{id}` re-resolution and OneDrive `@microsoft.graph.downloadUrl` retrieval with live OAuth tokens.
+* [ ] **Task 11:** Add scratch-file deletion in `runMediaPass`'s `finally` block for cloud AV candidates.
+* [ ] **Task 12:** Fix `parseMediaArgs` in `media-cmd.ts` to handle boolean flags (`--renditions`, `--originals`) without expecting a parameter value.
+* [ ] **Task 9:** Add `https:` protocol validation for `byteUrl.kind === "provider"` in `fetchCloudBytes` and include the test case.
+* [ ] **Task 6:** Update `safeFetchFollowing` to strip the `Authorization` header on cross-origin redirects.
+* [ ] **Task 9:** Add pre-emptive check on `declared > deps.remainingBudget`.
+* [ ] **Task 2:** Wrap `pruneOrphanedUnderstandings` statement execution in `dbStmtRun` for I14 compliance.
+* [ ] **Task 13:** Add `docs/architecture.md` to the list of files updated for the I29 `sync` appender enumeration.
