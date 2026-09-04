@@ -19,6 +19,78 @@ export interface NpmLatest {
 }
 
 /**
+ * How a repo's release LIST read turned out, independent of what the tag pattern
+ * then matched in it.
+ *
+ * `absent` is a REAL FINDING — a 404 means the configured `repo` does not exist
+ * (deleted, renamed, or a typo in `release-train.json`), and an edge pointed at a
+ * repo that is not there can never go green on its own. `indeterminate` is the
+ * transient bucket: rate limit, network, auth, unparseable body. Collapsing the
+ * two would fail open on the misconfiguration exactly the way a bare `null` used
+ * to — see `parseReleaseList` and `evaluatePublishEdge`.
+ */
+export type ReleaseListStatus = "read" | "absent" | "indeterminate";
+
+/** One raw GitHub release row -> `ReleaseInfo`, or null if any field is the wrong shape. */
+function toReleaseInfo(raw: unknown): ReleaseInfo | null {
+  if (!isRecord(raw)) return null;
+  const tag = raw["tag_name"];
+  const prerelease = raw["prerelease"];
+  const draft = raw["draft"];
+  const publishedAt = raw["published_at"];
+  const assets = raw["assets"];
+  if (typeof tag !== "string") return null;
+  if (typeof prerelease !== "boolean" || typeof draft !== "boolean") return null;
+  // A DRAFT carries `published_at: null` — legitimately, since it was never
+  // published. Rejecting the row would let one draft invalidate the whole list;
+  // "" is safe because every consumer filters drafts before reading the date.
+  if (publishedAt !== null && typeof publishedAt !== "string") return null;
+  if (!Array.isArray(assets)) return null;
+  const names: string[] = [];
+  for (const a of assets) {
+    if (!isRecord(a) || typeof a["name"] !== "string") return null;
+    names.push(a["name"]);
+  }
+  return { tag, prerelease, draft, assets: names, publishedAt: publishedAt ?? "" };
+}
+
+/**
+ * Every release across every page, from `gh api --paginate --slurp` output — an
+ * array of PAGES, each an array of raw release objects.
+ *
+ * Returns `null` if anything is malformed, and deliberately does so for a SINGLE
+ * bad row rather than skipping it. A skipped row is indistinguishable from a repo
+ * that genuinely has no matching release, and that outcome is now a hard failure
+ * (`evaluatePublishEdge`) — so a lenient parser would let one unexpected payload
+ * red the build with a wrong reason. Losing the check for a run is the cheaper
+ * error than asserting a manifest bug that is not there.
+ *
+ * Reading EVERY page matters for the same reason: `nimbus-sdk` releases three
+ * SDKs from one repo and sat at 97 releases when this was written, so a single
+ * `per_page=100` page was three releases away from being able to miss the newest
+ * `typescript-v*` behind a run of `python-v*` and `sdks/go/v*` tags.
+ */
+export function parseReleaseList(text: string): ReleaseInfo[] | null {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    return null;
+  }
+  if (!Array.isArray(parsed)) return null;
+  const out: ReleaseInfo[] = [];
+  for (const page of parsed) {
+    if (!Array.isArray(page)) return null;
+    for (const raw of page) {
+      const rel = toReleaseInfo(raw);
+      if (rel === null) return null;
+      out.push(rel);
+    }
+  }
+  return out;
+}
+
+/**
  * `dist-tags.latest` + its publish timestamp from a FULL npm registry document.
  * The `/<pkg>/latest` endpoint is not usable here: it omits `time`, and the
  * grace rule is measured from the version's own publish time.
@@ -213,20 +285,20 @@ export interface PackageEvalInput {
   taggedRelease: PublishedRelease | null;
   taggedReleaseAgeHours: number | null;
   /**
-   * Whether the upstream repo's release LIST was read successfully, independent
-   * of whether `tagPattern` then matched anything in it.
+   * How the upstream repo's release LIST read went, independent of whether
+   * `tagPattern` then matched anything in it.
    *
-   * The two collapse into `taggedRelease === null` otherwise, and they are not
-   * the same finding: an unreadable list is transient, while a readable list
-   * that nothing matched is a manifest bug in `release-train.json`. Conflating
-   * them is what let the sdk train ship a `tagPattern` (`^sdk-v(...)$`) that
-   * never matched a real tag — the repo tags TypeScript releases `typescript-v*`
-   * — while the edge reported a mere warning for as long as it was broken.
+   * All three outcomes collapse into `taggedRelease === null` otherwise, and
+   * they are not the same finding. A readable list that nothing matched is a
+   * manifest bug — that is what let the sdk train ship `^sdk-v(...)$` against a
+   * repo tagging `typescript-v*` while the edge reported a mere warning for as
+   * long as it was broken. A 404 is a DIFFERENT manifest bug: the configured
+   * `repo` does not exist. Only a transient failure deserves a warning.
    *
-   * `null` for a caller that cannot distinguish the two; that keeps the old
+   * `null` for a caller that cannot distinguish them; that keeps the old
    * warning-only behaviour rather than manufacturing a failure.
    */
-  taggedReleaseListRead: boolean | null;
+  taggedReleaseListStatus: ReleaseListStatus | null;
   latest: NpmLatest | null;
   latestAgeHours: number | null;
   consumers: ConsumerReading[];
@@ -242,19 +314,28 @@ function shortRepo(repo: string): string {
 function evaluatePublishEdge(i: PackageEvalInput): EdgeResult {
   const edge = `${i.name}:publish`;
   if (i.taggedRelease === null) {
-    // A readable list that matched nothing is a manifest bug, not a transient
-    // read failure, and must fail rather than warn — see `taggedReleaseListRead`.
-    return i.taggedReleaseListRead === true
-      ? {
-          edge,
-          verdict: "stale",
-          detail: `manifest error: no release in the upstream repo matches this train's tagPattern for ${i.npm} — the pattern names a component that does not tag under that prefix, so this edge has never been evaluated. Derive it from \`gh release list\`, not from the package name`,
-        }
-      : {
-          edge,
-          verdict: "indeterminate",
-          detail: `no release tag matched for ${i.npm} — releases unreadable`,
-        };
+    // Two of the three outcomes are manifest bugs and must FAIL, not warn — a
+    // config error never fixes itself, so a warning here is a permanent silence.
+    // Only a transient read failure is worth a warning. See `taggedReleaseListStatus`.
+    if (i.taggedReleaseListStatus === "absent") {
+      return {
+        edge,
+        verdict: "stale",
+        detail: `manifest error: the repo configured for ${i.npm} returned 404 — it is deleted, renamed, or misspelled in release-train.json, so this edge can never go green`,
+      };
+    }
+    if (i.taggedReleaseListStatus === "read") {
+      return {
+        edge,
+        verdict: "stale",
+        detail: `manifest error: no release in the upstream repo matches this train's tagPattern for ${i.npm} — the pattern names a component that does not tag under that prefix, so this edge has never been evaluated. Derive it from \`gh release list\`, not from the package name`,
+      };
+    }
+    return {
+      edge,
+      verdict: "indeterminate",
+      detail: `no release tag matched for ${i.npm} — releases unreadable`,
+    };
   }
   if (i.latest === null) {
     return { edge, verdict: "indeterminate", detail: `npm registry unreadable for ${i.npm}` };

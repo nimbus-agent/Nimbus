@@ -26,6 +26,8 @@ import {
   type NpmLatest,
   type PrRef,
   parseNpmLatest,
+  parseReleaseList,
+  type ReleaseListStatus,
   resolvedFromBunLock,
   selectTaggedRelease,
 } from "./_release-train-dep.ts";
@@ -392,19 +394,16 @@ function readIntended(train: TrainSpec): { intended: string; intendedBumpAgeHour
   return { intended, intendedBumpAgeHours };
 }
 
-/** The published head: the latest stable Release that actually carries assets. */
+/**
+ * The published head: the latest stable Release that actually carries assets.
+ *
+ * Shares `readReleaseList` with the package edges. It previously ran its own
+ * single-page read with a bare `JSON.parse` OUTSIDE a try — a malformed body
+ * would have thrown out of the gate rather than degrading to null.
+ */
 function readPublished(train: TrainSpec): PublishedRelease | null {
-  const relRes = runGh([
-    "gh",
-    "api",
-    `repos/${train.source.manifestRepo}/releases?per_page=100`,
-    "--jq",
-    "[.[] | {tag: .tag_name, prerelease: .prerelease, draft: .draft, publishedAt: .published_at, assets: [.assets[].name]}]",
-  ]);
-  if (!relRes.ok) return null;
-  const rels: unknown = JSON.parse(relRes.stdout);
-  if (!Array.isArray(rels)) return null;
-  return selectPublished(rels as ReleaseInfo[], train.source.releaseAsset);
+  const { releases } = readReleaseList(train.source.manifestRepo);
+  return releases === null ? null : selectPublished(releases, train.source.releaseAsset);
 }
 
 /**
@@ -427,33 +426,50 @@ async function readNpmLatest(pkg: string): Promise<NpmLatest | null> {
 }
 
 /**
+ * EVERY release in `repo`, with how the read went.
+ *
+ * The single release-list reader for this gate — both the train's published head
+ * and each package's tagged release come through here, so neither can drift into
+ * reading one page or trusting an unvalidated cast while the other does not.
+ *
+ * `--paginate` because a repo that releases several components from one tree
+ * (`nimbus-sdk`: `typescript-v*`, `python-v*`, `sdks/go/v*`) can push the newest
+ * tag of one component off a single page. `--slurp` instead of the old `--jq`
+ * reshape because the two are mutually exclusive in `gh`, and doing the shaping
+ * in TypeScript is what lets `parseReleaseList` VALIDATE rather than cast.
+ */
+function readReleaseList(repo: string): {
+  releases: ReleaseInfo[] | null;
+  status: ReleaseListStatus;
+} {
+  const res = runGh(["gh", "api", "--paginate", "--slurp", `repos/${repo}/releases?per_page=100`]);
+  // A 404 is `absent` -- the repo is gone or misnamed, a real finding -- while
+  // anything else is transient. `classifyReadFailure` is the one place that call
+  // is made across this audit family.
+  if (!res.ok) return { releases: null, status: classifyReadFailure(res.httpStatus) };
+  const releases = parseReleaseList(res.stdout);
+  return releases === null
+    ? { releases: null, status: "indeterminate" }
+    : { releases, status: "read" };
+}
+
+/**
  * The upstream repo's highest release whose tag matches the package pattern.
  *
- * `listRead` reports whether the release list itself came back and parsed, which
- * the caller needs to tell a transient read failure from a `tagPattern` that
- * matched nothing in a perfectly good list — the latter is a manifest bug. Both
- * used to surface as a bare `null`, and the sdk train sat on an unmatchable
- * pattern for the life of the gate as a result.
+ * `status` is what lets the caller tell a transient read failure from a repo that
+ * is not there from a `tagPattern` that matched nothing in a perfectly good list.
+ * The last two are manifest bugs; all three used to surface as a bare `null`, and
+ * the sdk train sat on an unmatchable pattern for the life of the gate as a result.
  */
 function readTaggedRelease(pkg: PackageSpec): {
   release: PublishedRelease | null;
-  listRead: boolean;
+  status: ReleaseListStatus;
 } {
-  const res = runGh([
-    "gh",
-    "api",
-    `repos/${pkg.repo}/releases?per_page=100`,
-    "--jq",
-    "[.[] | {tag: .tag_name, prerelease: .prerelease, draft: .draft, publishedAt: .published_at, assets: [.assets[].name]}]",
-  ]);
-  if (!res.ok) return { release: null, listRead: false };
-  try {
-    const rels: unknown = JSON.parse(res.stdout);
-    if (!Array.isArray(rels)) return { release: null, listRead: false };
-    return { release: selectTaggedRelease(rels as ReleaseInfo[], pkg.tagPattern), listRead: true };
-  } catch {
-    return { release: null, listRead: false };
-  }
+  const { releases, status } = readReleaseList(pkg.repo);
+  return {
+    release: releases === null ? null : selectTaggedRelease(releases, pkg.tagPattern),
+    status,
+  };
 }
 
 /**
@@ -568,7 +584,7 @@ if (import.meta.main) {
         taggedReleaseAgeHours: taggedRelease.release
           ? ageHours(taggedRelease.release.publishedAt)
           : null,
-        taggedReleaseListRead: taggedRelease.listRead,
+        taggedReleaseListStatus: taggedRelease.status,
         latest,
         latestAgeHours: latest ? ageHours(latest.publishedAt) : null,
         consumers,

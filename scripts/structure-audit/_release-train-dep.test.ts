@@ -5,6 +5,7 @@ import {
   evaluatePackage,
   matchesBumpPr,
   parseNpmLatest,
+  parseReleaseList,
   resolvedFromBunLock,
   selectTaggedRelease,
   stripTrailingCommas,
@@ -187,7 +188,7 @@ describe("evaluatePackage", () => {
     npm: "@nimbus-dev/sdk",
     taggedRelease: { version: "1.6.0", publishedAt: "x" },
     taggedReleaseAgeHours: 48,
-    taggedReleaseListRead: true,
+    taggedReleaseListStatus: "read" as const,
     latest: { version: "1.6.0", publishedAt: "x" },
     latestAgeHours: 48,
     graceHours: 6,
@@ -302,7 +303,7 @@ describe("evaluatePackage", () => {
       ...green,
       taggedRelease: null,
       taggedReleaseAgeHours: null,
-      taggedReleaseListRead: false,
+      taggedReleaseListStatus: "indeterminate" as const,
       consumers: [],
     });
     expect(r.find((e) => e.edge === "sdk:publish")?.verdict).toBe("indeterminate");
@@ -321,7 +322,7 @@ describe("evaluatePackage", () => {
       ...green,
       taggedRelease: null,
       taggedReleaseAgeHours: null,
-      taggedReleaseListRead: true,
+      taggedReleaseListStatus: "read",
       consumers: [],
     });
     const edge = r.find((e) => e.edge === "sdk:publish");
@@ -329,14 +330,93 @@ describe("evaluatePackage", () => {
     expect(edge?.detail).toContain("tagPattern");
   });
 
+  /**
+   * The SECOND fail-open on the same shape, caught in review on #1445: a 404
+   * means the configured `repo` is gone, renamed, or misspelled. That edge can
+   * never go green on its own, so warning about it is a permanent silence — the
+   * same defect the tagPattern case had, one field over. `ConsumerReading`
+   * already treats an absent lockfile as `stale`; this matches it.
+   */
+  test("a 404 on the upstream repo => stale (manifest bug), not indeterminate", () => {
+    const r = evaluatePackage({
+      ...green,
+      taggedRelease: null,
+      taggedReleaseAgeHours: null,
+      taggedReleaseListStatus: "absent",
+      consumers: [],
+    });
+    const edge = r.find((e) => e.edge === "sdk:publish");
+    expect(edge?.verdict).toBe("stale");
+    expect(edge?.detail).toContain("404");
+  });
+
   test("an unknown-read caller keeps the old warning-only behaviour", () => {
     const r = evaluatePackage({
       ...green,
       taggedRelease: null,
       taggedReleaseAgeHours: null,
-      taggedReleaseListRead: null,
+      taggedReleaseListStatus: null,
       consumers: [],
     });
     expect(r.find((e) => e.edge === "sdk:publish")?.verdict).toBe("indeterminate");
+  });
+});
+
+describe("parseReleaseList", () => {
+  const page = (rows: unknown[]) => JSON.stringify([rows]);
+  const row = (over: Record<string, unknown> = {}) => ({
+    tag_name: "typescript-v1.32.0",
+    prerelease: false,
+    draft: false,
+    published_at: "2026-09-04T04:15:55Z",
+    assets: [{ name: "SHA256SUMS" }],
+    ...over,
+  });
+
+  test("flattens EVERY page, not just the first", () => {
+    // The whole point of --paginate: nimbus-sdk releases three SDKs from one
+    // repo, so the newest typescript-v* can sit behind a run of python/go tags.
+    const text = JSON.stringify([
+      [row({ tag_name: "python-v0.21.0" })],
+      [row({ tag_name: "typescript-v1.32.0" })],
+    ]);
+    const rels = parseReleaseList(text);
+    expect(rels?.map((r) => r.tag)).toEqual(["python-v0.21.0", "typescript-v1.32.0"]);
+  });
+
+  test("maps GitHub's field names and flattens asset names", () => {
+    expect(parseReleaseList(page([row()]))?.[0]).toEqual({
+      tag: "typescript-v1.32.0",
+      prerelease: false,
+      draft: false,
+      publishedAt: "2026-09-04T04:15:55Z",
+      assets: ["SHA256SUMS"],
+    });
+  });
+
+  test("a DRAFT's null published_at is kept, not treated as malformed", () => {
+    // Drafts legitimately have no publish date. Rejecting the row would let one
+    // draft invalidate the entire list; every consumer filters drafts first.
+    const rels = parseReleaseList(page([row({ draft: true, published_at: null })]));
+    expect(rels?.[0]?.publishedAt).toBe("");
+    expect(rels?.[0]?.draft).toBe(true);
+  });
+
+  test.each([
+    ["a non-string tag", row({ tag_name: 42 })],
+    ["a non-boolean draft", row({ draft: "no" })],
+    ["a non-array assets", row({ assets: "none" })],
+    ["an asset with no name", row({ assets: [{ label: "x" }] })],
+    ["a non-object row", "not-a-release"],
+  ])("returns null for %s — one bad row invalidates the list", (_label, bad) => {
+    // Deliberately all-or-nothing: a SKIPPED row is indistinguishable from a repo
+    // with no matching release, and that outcome is now a hard failure. Better to
+    // lose the check for one run than to red the build with a wrong reason.
+    expect(parseReleaseList(page([row(), bad]))).toBeNull();
+  });
+
+  test("returns null on malformed JSON and on a non-array body", () => {
+    expect(parseReleaseList("{not json")).toBeNull();
+    expect(parseReleaseList('{"message":"Not Found"}')).toBeNull();
   });
 });
