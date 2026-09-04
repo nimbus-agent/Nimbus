@@ -567,6 +567,26 @@ test("a mime-keyed row with NO mimeType is excluded by SQL, not fetched and drop
   insertItem(db, { id: "google_drive:f1", service: "google_drive", type: "file", metadata: {} });
   expect(findCandidates(db, { limit: 10 })).toHaveLength(0);
 });
+
+test("a NON-mime-keyed service sharing the type name 'file' is never selected", () => {
+  // figma-file-mapping.ts:60 also emits type "file". If arm 1 matched it, the JS loop would drop
+  // it for having no modality and the page would under-fill — the same starvation bug, via a
+  // different service.
+  const db = freshIndexDb();
+  insertItem(db, {
+    id: "figma:f1", service: "figma", type: "file", metadata: { mimeType: "image/png" },
+  });
+  expect(findCandidates(db, { limit: 10 })).toHaveLength(0);
+});
+
+test("a Drive FOLDER is excluded — its mime fails every pattern", () => {
+  const db = freshIndexDb();
+  insertItem(db, {
+    id: "google_drive:d1", service: "google_drive", type: "folder",
+    metadata: { mimeType: "application/vnd.google-apps.folder" },
+  });
+  expect(findCandidates(db, { limit: 10 })).toHaveLength(0);
+});
 ```
 
 - [ ] **Step 2: Run and confirm failure**
@@ -619,28 +639,11 @@ export function modalityForItem(
 }
 ```
 
-Add the cloud pairs to `ITEM_TYPE_MODALITY` **for the type-list query only**, with the modality left to mime. Simplest correct shape: keep `ITEM_TYPE_MODALITY` as the filesystem-only map and add a separate list of mime-keyed `(service, type)` pairs that `mediaItemTypesForModality` unions in:
+**`mediaItemTypesForModality` is left EXACTLY as it is** — returning only the `ITEM_TYPE_MODALITY` (type-keyed) types. Do not add the cloud types to it.
 
-```ts
-/** `(service, type)` pairs whose modality is mime-derived. Contributes TYPES to the query. */
-const MIME_KEYED_PAIRS: readonly (readonly [string, string])[] = [
-  ["google_photos", "photo"],
-  ["google_drive", "file"],
-  ["onedrive", "file"],
-];
+An earlier draft of this plan unioned the mime-keyed types (`photo`, `file`) into its result. That is wrong, and wrong in the specific way this task exists to prevent: `connectors/figma-file-mapping.ts:60` emits `type: "file"` and Figma is **not** a mime-keyed service, so every Figma file would match arm 1 of the SQL below, `modalityForItem("figma", "file")` would return `undefined`, the JS loop would drop it, and the page would under-fill — cursor starvation, re-introduced through a different service.
 
-export function mediaItemTypesForModality(modality?: MediaModality): readonly string[] {
-  const out = new Set<string>();
-  for (const [key, m] of ITEM_TYPE_MODALITY) {
-    if (modality !== undefined && m !== modality) continue;
-    out.add(key.slice(key.indexOf(":") + 1));
-  }
-  // Mime-keyed types are added for EVERY modality: the type alone cannot tell them apart, so the
-  // SQL mime predicate does the narrowing instead.
-  for (const [, type] of MIME_KEYED_PAIRS) out.add(type);
-  return [...out];
-}
-```
+The two arms are disjoint by construction: arm 1 selects **non**-mime-keyed services by type, arm 2 selects mime-keyed services by mime. Arm 2 needs no type list at all — a Drive folder carries `application/vnd.google-apps.folder`, which fails every mime pattern, so folders are excluded without one.
 
 - [ ] **Step 4: Add the SQL predicate in `findCandidates`**
 
@@ -1284,7 +1287,7 @@ git commit -m "feat(multimodal): resolve per-service byte URLs and renditions"
     | { readonly ok: true; readonly kind: "bytes"; readonly bytes: Uint8Array; readonly fetched: number }
     | { readonly ok: true; readonly kind: "path"; readonly path: string; readonly fetched: number }
     | { readonly ok: false; readonly reason: SkipReason }
-    | { readonly ok: false; readonly stop: "budget_exhausted" | "rate_limited" };
+    | { readonly ok: false; readonly stop: "budget_exhausted" | "rate_limited"; readonly fetched: number };
   export interface CloudBytesDeps { … }
   export async function fetchCloudBytes(candidate, byteUrl, deps): Promise<CloudBytes>;
   ```
@@ -1351,7 +1354,7 @@ describe("fetchCloudBytes", () => {
         }),
     });
     expect(await fetchCloudBytes(imageCandidate, providerUrl, deps)).toEqual({
-      ok: false, stop: "budget_exhausted",
+      ok: false, stop: "budget_exhausted", fetched: 0,
     });
     expect(bodyRead).toBe(false);
   });
@@ -1365,7 +1368,7 @@ describe("fetchCloudBytes", () => {
   test("stops the RUN when the streaming budget is exhausted mid-download", async () => {
     const deps = fakeDeps({ remainingBudget: 3, fetchFn: async () => new Response("ABCDEFGHIJ") });
     const r = await fetchCloudBytes(imageCandidate, providerUrl, deps);
-    expect(r).toEqual({ ok: false, stop: "budget_exhausted" });
+    expect(r).toEqual({ ok: false, stop: "budget_exhausted", fetched: expect.any(Number) });
   });
 
   test("a 429 that persists stops the run rather than skipping the item", async () => {
@@ -1437,7 +1440,7 @@ export type CloudBytes =
   | { readonly ok: true; readonly kind: "bytes"; readonly bytes: Uint8Array; readonly fetched: number }
   | { readonly ok: true; readonly kind: "path"; readonly path: string; readonly fetched: number }
   | { readonly ok: false; readonly reason: SkipReason }
-  | { readonly ok: false; readonly stop: "budget_exhausted" | "rate_limited" };
+  | { readonly ok: false; readonly stop: "budget_exhausted" | "rate_limited"; readonly fetched: number };
 
 const MAX_429_RETRIES = 2;
 
@@ -1492,7 +1495,7 @@ export async function fetchCloudBytes(
   for (let attempt = 0; ; attempt += 1) {
     res = await deps.fetchFn(byteUrl.url, { headers, signal: controller.signal });
     if (res.status !== 429 && res.status !== 503) break;
-    if (attempt >= MAX_429_RETRIES) return { ok: false, stop: "rate_limited" };
+    if (attempt >= MAX_429_RETRIES) return { ok: false, stop: "rate_limited", fetched: 0 };
     const retryAfter = Number.parseInt(res.headers.get("retry-after") ?? "", 10);
     const waitMs = Number.isFinite(retryAfter) ? retryAfter * 1000 : 2 ** attempt * 1000;
     await deps.sleep(waitMs + Math.floor(Math.random() * 250));
@@ -1512,7 +1515,7 @@ export async function fetchCloudBytes(
     }
     if (declared > deps.remainingBudget) {
       controller.abort();
-      return { ok: false, stop: "budget_exhausted" };
+      return { ok: false, stop: "budget_exhausted", fetched: 0 };
     }
   }
 
@@ -1716,7 +1719,20 @@ Add `priceRun` (a pure fold over `sourceBytes`). In `runMediaPass`:
    `finally` must also cover the throwing path, not just `continue`.
 5. On a result carrying `stop`, break the loop and record that stop reason. Add its `fetched` count to `cloudBytesFetched` first — those bytes really crossed the wire.
 6. Guard the cursor clear: `if (stopReason === "completed" && candidates.length < deps.limit)`.
-7. Pass the rendition mode into `writeUnderstanding` so the derived row records `rendition: "original" | "w2048-h2048" | "dv"` in metadata **and** states it in the body. The body sentence is what a reader sees; the metadata field is what a later pass can filter on, the same split `framesSampled`/`framesCaptioned` already uses (§ 12.8).
+7. **Wire `fetchFn` to `safeFetchFollowing` in `build-media-pass-deps.ts`, and assert the wiring.** Task 6 builds the redirect-re-validating fetch and Task 9 takes `fetchFn` as an injected dependency — nothing else connects them, so without this step both the SSRF re-validation and the cross-origin credential stripping exist and never run. Both `CloudBytesDeps.fetchFn` and `CloudUrlResolverDeps.fetchFn` get it:
+
+   ```ts
+   test("the constructed deps fetch through safeFetchFollowing, not bare fetch", async () => {
+     const deps = buildMediaPassDeps({ /* …minimal input… */ });
+     // A loopback URL must be REFUSED by the wiring itself. Bare `fetch` would happily return.
+     await expect(deps.cloudBytes.fetchFn("http://127.0.0.1:9/x", {})).rejects.toThrow(
+       /loopback\/private/,
+     );
+   });
+   ```
+
+   A guard that is built and never wired is worse than one that was never built — it reads as protection in every later review.
+8. Pass the rendition mode into `writeUnderstanding` so the derived row records `rendition: "original" | "w2048-h2048" | "dv"` in metadata **and** states it in the body. The body sentence is what a reader sees; the metadata field is what a later pass can filter on, the same split `framesSampled`/`framesCaptioned` already uses (§ 12.8).
 
 - [ ] **Step 4: Run tests and typecheck**
 
