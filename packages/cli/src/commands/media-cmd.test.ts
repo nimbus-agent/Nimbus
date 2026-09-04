@@ -4,6 +4,7 @@ import { clearFixture, FAKE_SOCKET_PATH, setFixture } from "../../test/helpers/c
 import { captureOutput } from "../../test/helpers/cli-output.ts";
 import { createMockIpcClient } from "../../test/helpers/mock-ipc-client.ts";
 import {
+  type CliSummary,
   parseBudget,
   parseMediaArgs,
   renderSummary,
@@ -364,6 +365,30 @@ describe("renderSummary", () => {
     expect(out).toContain("rate-limiting");
     expect(out).toContain("Resumable");
     expect(out).toContain("nimbus media understand");
+  });
+
+  test("a summary from a version-skewed gateway with no preflightRefusal field renders normally", () => {
+    // Simulates the wire, not the compiler: a gateway daemon that predates `preflightRefusal`
+    // sends a summary object with the field ABSENT entirely, not set to `null`. `CliSummary`
+    // requires the field, so we build a complete object and delete it behind a narrow, commented
+    // cast to reproduce exactly what `JSON.parse` on that older payload would hand `renderSummary`.
+    const full: CliSummary = {
+      understood: 3,
+      skipped: 0,
+      skippedByReason: { ...zeroReasons },
+      lastItemId: "x",
+      stopReason: "completed",
+      cloudBytesFetched: 0,
+      preflightRefusal: null,
+    };
+    // Narrow, commented cast (never `any` — see CLAUDE.md): simulating a version-skewed IPC
+    // payload missing a required field, since `delete` on a non-optional property needs an
+    // escape from the type it obeys.
+    delete (full as unknown as Record<string, unknown>)["preflightRefusal"];
+    expect(() => renderSummary(full)).not.toThrow();
+    const out = renderSummary(full);
+    expect(out).toContain("Understood 3 of 3");
+    expect(out).not.toContain("Refusing:");
   });
 });
 

@@ -49,10 +49,11 @@ export type CoverageVector = Readonly<Record<CoverageClass, Granularity>>;
  * targeted fetch-on-miss call, a cloud media byte-URL RESOLVE round-trip, OR a cloud media
  * byte-fetch attempt, all four landing through
  * `egress/sync-egress.ts`'s `recordSyncEgress` — see the `sync` paragraph below); `model` (any
- * generate OR embed on a NON-LOCAL route, appended
- * by three cooperating wrappers — `egress/model-egress.ts`'s `wrapLedgeredProvider`,
- * `egress/mastra-model-egress.ts`'s `wrapLedgeredMastraModel`, and `egress/embedding-egress.ts`'s
- * `wrapLedgeredEmbedder` — see the `model` paragraph below for exactly what each covers); and
+ * generate, embed, OR vision describe on a NON-LOCAL route, appended
+ * by four cooperating wrappers — `egress/model-egress.ts`'s `wrapLedgeredProvider`,
+ * `egress/mastra-model-egress.ts`'s `wrapLedgeredMastraModel`, `egress/embedding-egress.ts`'s
+ * `wrapLedgeredEmbedder`, and `egress/vlm-egress.ts`'s `wrapLedgeredVlm` — see the `model`
+ * paragraph below for exactly what each covers); and
  * `chatops` (every outbound Slack/Teams post, appended by ONE decorator over the shared `post`
  * closure — see the `chatops` paragraph below); and `browser` (every request a computer-use browser
  * lane makes, appended by a decorator over the CDP-backed context — see the `browser` paragraph

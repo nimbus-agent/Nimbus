@@ -315,7 +315,12 @@ function renderPreflightRefusal(refusal: CliPreflightRefusal): string {
  */
 export function renderSummary(summary: CliSummary): string {
   const refusal = summary.preflightRefusal;
-  if (refusal !== null) return renderPreflightRefusal(refusal);
+  // Loose equality is deliberate: `CliSummary` is hand-mirrored across the IPC boundary (no
+  // gateway source import), and a gateway daemon that predates `preflightRefusal` sends a summary
+  // with the field ABSENT rather than `null`, so `refusal` arrives as `undefined` here even though
+  // the type says it can't. `!== null` let `undefined` through to `renderPreflightRefusal`, which
+  // crashed on `undefined.candidateCount`. Do not "fix" this back to `!== null`.
+  if (refusal != null) return renderPreflightRefusal(refusal);
   const total = summary.understood + summary.skipped;
   const lines = [`Understood ${summary.understood} of ${total}.`];
   const reasons = Object.entries(summary.skippedByReason).filter(([, n]) => n > 0);
