@@ -2,6 +2,13 @@
 
 All notable changes to the `nimbus` core (headless Gateway + CLI binary + first-party MCP connectors) are documented in this file. release-please appends new entries between this header and the most recent version below when a release PR merges.
 
+## [7.8.2](https://github.com/nimbus-agent/Nimbus/compare/v7.8.1...v7.8.2) (2026-09-04)
+
+
+### Bug Fixes
+
+* **quality:** fix all 29 open Sonar findings in code, cut duplication 420 to 400 clones, and correct five stale doc facts ([#1439](https://github.com/nimbus-agent/Nimbus/issues/1439)) ([62a6a20](https://github.com/nimbus-agent/Nimbus/commit/62a6a20286e3d9a55d9507b4b25e8f36b13f8f8b))
+
 ## [7.8.1](https://github.com/nimbus-agent/Nimbus/compare/v7.8.0...v7.8.1) (2026-09-03)
 
 
