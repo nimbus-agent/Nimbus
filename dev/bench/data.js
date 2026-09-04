@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1788508912112,
+  "lastUpdate": 1788511286590,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "68dc62534e8fdfb645a45e9f8821c589b6717ba0",
-          "message": "⚡ Optimize backfill embedding loop by processing batches concurrently (#691)\n\n💡 **What:** Replaced the sequential `for (const row of rows)` iteration\nover embedding chunks in the database backfill logic with\n`Promise.all(rows.map(async row => { ... }))`.\n🎯 **Why:** Previously, chunks were fetched and sent to the embedding\nprovider sequentially, resulting in linear delay. Network latency acts\nas a heavy bottleneck. Concurrent resolution handles network latency\nsimultaneously.\n📊 **Measured Improvement:** Simulated an embedding workload with 50\nitems and a synthetic 10ms per-item latency in a local benchmark script.\nThe baseline sequential execution took ~530ms per batch. The optimized\nconcurrent approach took just ~18ms per batch. Validated using the\nbuilt-in test suite that no logic regressions occurred.\n\n---\n*PR created automatically by Jules for task\n[1302549734161483821](https://jules.google.com/task/1302549734161483821)\nstarted by @asafgolombek*\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n## Summary by CodeRabbit\n\n## Release Notes\n\n* **New Features**\n* Added configurable concurrency control for embedding backfill\noperations to optimize performance and throughput.\n\n* **Tests**\n* Added test coverage for concurrency limiting and error handling in\nbackfill operations.\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: google-labs-jules[bot] <161369871+google-labs-jules[bot]@users.noreply.github.com>\nCo-authored-by: asafgolombek <18427644+asafgolombek@users.noreply.github.com>\nCo-authored-by: Claude Opus 4.8 (1M context) <noreply@anthropic.com>",
-          "timestamp": "2026-06-20T13:34:14+03:00",
-          "tree_id": "54e946aff5e602a30a315cafcf755f25a2d3ccb4",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/68dc62534e8fdfb645a45e9f8821c589b6717ba0"
-        },
-        "date": 1781952117575,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 172.3617071499979,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 171.9275028999993,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 329.4894701499994,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "a24300a76e03d90a1cbe44833330a3b2a22dee35",
+          "message": "feat(multimodal): image understanding and sampled frame captions (S2 PR 2 of 4) (#1438)\n\nAdds the vision arm to the local media-understanding pass, the second of\nfour PRs in the S2 Multimodal I/O row. An Ollama-served vision model\ncaptions still images and a small number of uniformly sampled video\nframes; output lands on the same derived, locally-embedded index item\nthat already carries the transcript.\n\nImplements PR 2 of\n`docs/superpowers/specs/2026-09-02-s2-multimodal-io-design.md` § 13.\n\n## What ships\n\n- A `VlmProvider` seam, deliberately separate from `LlmProvider` —\n`LlmGenerateOptions` is text-only, and widening it would push image\nbytes through every text caller. Same fork the Mastra agent hit over\ntools, same answer.\n- `egress/vlm-egress.ts`'s `wrapLedgeredVlm`, a decorator on the\nprovider instance rather than a call-site append, so it covers callers\nwritten later without their cooperation. Ledger-then-act: an append\nfailure aborts the call.\n- Static rule **D22(g)** confining `wrapLedgeredVlm` and\n`createOllamaVlm` to one construction site, paren-matched so a second\nunwrapped constructor beside a wrapped one in the same approved file is\nstill caught.\n- Still-image captioning, ffmpeg frame extraction, and a composite\naudio/video understander that transcribes and then captions sampled\nframes.\n- **`multimodal_input` org-policy lockoff is now real.** It was a\ngenuine capability whose dispatcher hardcoded the flag to `false`, so\nthe policy did nothing while the docs said it worked. It now reads a\nlive per-call policy accessor and refuses fail-closed when that accessor\nis absent.\n\n## Not breaking\n\nNothing an existing user must change. The capability is default-off,\nevery new `[multimodal]` key has a default, and the\nunderstanding-version bump re-runs a pass that is off unless opted into.\n\n## Frame bytes never touch disk\n\nEach frame is its own single-frame ffmpeg invocation read off stdout.\nThe spec anticipated scratch files; this strengthens its narrowed disk\nrule instead — the audio transcode's one 0600 WAV remains the only file\nthis subsystem writes.\n\n## Deliberate bounds, stated rather than implied\n\n- **No live model was ever contacted.** The integration test that\nexercises a real daemon is skip-gated and was never run opted-in.\nCaption quality and the real HTTP wire are unverified by this branch.\n- **Phase 14 Core acceptance is structurally satisfiable, not verified\nend-to-end.** No live recording has been through this pipeline. The\nclaim rests on code inspection.\n- **A non-loopback `vlm_base_url` refuses every artifact** with\n`no_remote_grant` in this slice, audio included, until the per-artifact\nremote grant lands in PR 4. Three docs previously claimed it worked and\nappended ledger rows; they now say what is true.\n- Derived rows are FTS-searchable but not yet vector-embedded —\n`scheduleEmbedding` is unwired, a pre-existing gap from PR 1. The\nlocal-embedding set membership is correct; it is simply unexercised\ntoday.\n- The `maxFrames` config forwarding hop has no observable assertion\nwithout inventing production test surface. Its behaviour is pinned one\nlevel down; the one-line forward is not. Disclosed in the test file.\n\n## Verification\n\nWhole-repo `bun test packages/gateway packages/cli scripts`: **20,684\npass, 69 skip, 0 fail** across 1,438 files. `typecheck`,\n`typecheck:tests`, `audit:invariants`, `audit:doc-refs`,\n`audit:status-drift`, `lint:markdown` and Biome all green.\n`audit:coverage-floor` fails on Windows for four pre-existing files\nuntouched by this branch and is clean under Docker Linux, which is the\nauthoritative leg.\n\nD22(g) was red-proved by planting a violation and observing the audit\nfail, and its rule anchor was proved load-bearing by observing exit code\n2 rather than 1.\n\n## Review found eight tests that could not fail\n\nEvery task was reviewed and every fix round required a red-prove. That\nprocess caught eight assertions which passed against deliberately broken\ncode — including one where the test's own fake was the defect, because a\ndefault-strategy `ReadableStream` pulls eagerly at construction and so\ncould not observe the read-ordering property it existed to prove. It\nalso caught a rename that silently disabled the I29 zero-egress honesty\ntest, and a CLI flag that refused the very feature this PR adds.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nhttps://claude.ai/code/session_01Gghv1NV7Hy1ZuQ8nQqjpQh\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n## Summary by CodeRabbit\n\n* **New Features**\n  * Added image understanding with local vision-model captions.\n  * Added sampled video-frame captions alongside audio transcription.\n* Added `--modality image` support and configurable vision-model and\nframe limits.\n  * Added frame counts and caption details to processed media results.\n  * Added egress tracking for non-local vision-model requests.\n* **Bug Fixes**\n* Multimodal processing now fails closed when organization policy is\nunavailable or disables the capability.\n* Non-loopback vision-model URLs are rejected during configuration\nloading.\n* Improved handling of unavailable models, unreadable media, and\nindividual frame failures.\n* **Documentation**\n* Updated multimodal processing, CLI, architecture, roadmap, changelog,\nand security documentation.\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>",
+          "timestamp": "2026-09-04T11:11:58+03:00",
+          "tree_id": "4a1d2c3e0859321464c516aa9ce4a9f961ce02e2",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/a24300a76e03d90a1cbe44833330a3b2a22dee35"
+        },
+        "date": 1788511283151,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 292.95346649999954,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 294.75224044999413,
             "unit": "ms"
           }
         ]
