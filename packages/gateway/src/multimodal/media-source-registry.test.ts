@@ -1,7 +1,10 @@
 import { describe, expect, test } from "bun:test";
 import {
+  ITEM_TYPE_MODALITY,
   MEDIA_EXTENSIONS,
+  MIME_KEYED_SERVICES,
   mediaExtensionModality,
+  mediaItemTypePairsForModality,
   mediaSourceBytes,
   modalityForItem,
 } from "./media-source-registry.ts";
@@ -44,6 +47,25 @@ describe("modalityForItem", () => {
   test("an unregistered pair returns undefined, never a default", () => {
     expect(modalityForItem("filesystem", "symbol")).toBeUndefined();
     expect(modalityForItem("slack", "message")).toBeUndefined();
+  });
+});
+
+// Important B (fix round 3): nothing previously pinned the disjointness of ITEM_TYPE_MODALITY and
+// MIME_KEYED_SERVICES. The old arm-1 SQL carried a `NOT IN (mimeServices)` clause that made this
+// true structurally regardless of table contents; the pair-keyed rewrite dropped it, so this test
+// (plus mediaItemTypePairsForModality's own defensive filter) is what restores the guarantee.
+describe("ITEM_TYPE_MODALITY / MIME_KEYED_SERVICES disjointness (Important B)", () => {
+  test("no key in ITEM_TYPE_MODALITY names a service in MIME_KEYED_SERVICES", () => {
+    for (const key of ITEM_TYPE_MODALITY.keys()) {
+      const service = key.slice(0, key.indexOf(":"));
+      expect(MIME_KEYED_SERVICES.has(service)).toBe(false);
+    }
+  });
+
+  test("mediaItemTypePairsForModality never returns a pair for a mime-keyed service", () => {
+    for (const pair of mediaItemTypePairsForModality()) {
+      expect(MIME_KEYED_SERVICES.has(pair.service)).toBe(false);
+    }
   });
 });
 

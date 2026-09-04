@@ -4,7 +4,12 @@ import { upsertIndexedItem } from "../index/item-store.ts";
 import { CURRENT_SCHEMA_VERSION } from "../index/local-index.ts";
 import { runIndexedSchemaMigrations } from "../index/migrations/runner.ts";
 import { buildModalityPredicate, findCandidates } from "./media-discovery.ts";
-import { mimeModality } from "./media-source-registry.ts";
+import {
+  MIME_KEYED_SERVICES,
+  MIME_PATTERNS_FOR_MODALITY,
+  mediaItemTypePairsForModality,
+  mimeModality,
+} from "./media-source-registry.ts";
 import { writeUnderstanding } from "./understanding-item.ts";
 
 let db: Database;
@@ -423,6 +428,27 @@ describe("buildModalityPredicate — Important 1: the empty-arm guard", () => {
     expect(predicate?.params).toEqual(["filesystem", "media_av"]);
   });
 
+  // Important A (fix round 3): non-empty mimeServices with an EMPTY mimePatterns must also omit
+  // arm 2 — the old guard was `mimeServices.length > 0` alone, which would have emitted
+  // `... AND ())`, a SQLite syntax error, the exact failure this function's contract promises
+  // never happens. Not reachable through findCandidates today (every real MediaModality has a
+  // non-empty pattern list), but buildModalityPredicate is exported and independently callable.
+  test("non-empty mime services with an EMPTY pattern list omits arm 2 too (no `AND ()`)", () => {
+    const predicate = buildModalityPredicate(
+      [{ service: "filesystem", type: "media_av" }],
+      ["google_drive"],
+      [],
+    );
+    expect(predicate).not.toBeNull();
+    expect(predicate?.clause).not.toContain("AND ()");
+    expect(predicate?.clause).not.toContain("json_extract");
+    expect(predicate?.params).toEqual(["filesystem", "media_av"]);
+  });
+
+  test("empty pairs AND an empty pattern list return null even with non-empty mime services", () => {
+    expect(buildModalityPredicate([], ["google_drive"], [])).toBeNull();
+  });
+
   test("returns null only when BOTH arms are empty", () => {
     expect(buildModalityPredicate([], [], [])).toBeNull();
   });
@@ -464,9 +490,18 @@ describe("buildModalityPredicate — Important 1: the empty-arm guard", () => {
 
 describe("SQL/JS mime agreement — Important 3", () => {
   // MIME_PATTERNS_FOR_MODALITY (SQL) and mimeModality (JS) encode the same rule twice; nothing
-  // pins them together structurally. Driven through findCandidates against a REAL in-memory DB
-  // row for each fixture (not a re-implementation of the LIKE), so a pattern added to one without
-  // a matching branch in the other shows up as a length mismatch here.
+  // pins them together structurally.
+  //
+  // Round-3 correction: the first version of this test drove `findCandidates`, whose output is
+  // SQL admission AND JS admission — so the assertion `findCandidates(...).length === (JS
+  // admitted ? 1 : 0)` reduces to `(SQL ∧ JS) == JS`, which only pins `JS ⟹ SQL`. It could not
+  // catch SQL being WIDER than JS (e.g. a pattern like `application/%` added to
+  // MIME_PATTERNS_FOR_MODALITY without a matching `mimeModality` branch): SQL would admit the row,
+  // the JS loop in `findCandidates` would then drop it, `length` would still be 0, and the test
+  // would pass — silently missing the exact page-under-fill direction this task exists to
+  // prevent. Rewritten to observe SQL admission ALONE, the same technique the Important-1 tests
+  // use: run `buildModalityPredicate`'s clause as a raw SELECT against a real in-memory DB row,
+  // never through `findCandidates` and never by re-implementing the LIKE logic in JS.
   const MIME_FIXTURES: readonly string[] = [
     "image/jpeg",
     "IMAGE/PNG",
@@ -479,7 +514,7 @@ describe("SQL/JS mime agreement — Important 3", () => {
   ];
 
   for (const mime of MIME_FIXTURES) {
-    test(`SQL admission for mime ${JSON.stringify(mime)} agrees with mimeModality`, () => {
+    test(`raw SQL admission for mime ${JSON.stringify(mime)} agrees with mimeModality`, () => {
       const cloud = freshIndexDb();
       insertItem(cloud, {
         id: "google_drive:x1",
@@ -487,9 +522,25 @@ describe("SQL/JS mime agreement — Important 3", () => {
         type: "file",
         metadata: { mimeType: mime },
       });
+
+      // Mirrors exactly how findCandidates builds the predicate for an unset `modality` — every
+      // pattern from every modality is in play, matching what a real unfiltered discovery page
+      // would admit.
+      const predicate = buildModalityPredicate(
+        mediaItemTypePairsForModality(undefined),
+        [...MIME_KEYED_SERVICES],
+        [...MIME_PATTERNS_FOR_MODALITY.image, ...MIME_PATTERNS_FOR_MODALITY.av],
+      );
+      if (predicate === null) throw new Error("expected a predicate");
+
+      const rows = cloud
+        .query<{ id: string }, (string | number)[]>(
+          `SELECT src.id AS id FROM item AS src WHERE ${predicate.clause}`,
+        )
+        .all(...predicate.params);
+
       const expectAdmitted = mimeModality(mime) !== undefined;
-      const found = findCandidates(cloud, { limit: 10 });
-      expect(found.length).toBe(expectAdmitted ? 1 : 0);
+      expect(rows.length).toBe(expectAdmitted ? 1 : 0);
     });
   }
 });

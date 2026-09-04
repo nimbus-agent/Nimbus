@@ -82,8 +82,10 @@ export function buildModalityPredicate(
   // Arm 2: a mime-keyed service is admitted ONLY when its declared mime matches the requested
   // modality. Filtering this in JS instead would under-fill the SQL page, and `media-pass.ts`
   // reads a short page as end-of-queue and clears the cursor — silently truncating the pass
-  // (spec § 17.1).
-  if (mimeServices.length > 0) {
+  // (spec § 17.1). Guarded on BOTH lists, not just `mimeServices`: an empty `mimePatterns` with a
+  // non-empty `mimeServices` would otherwise emit `AND ()`, a SQLite syntax error — the exact
+  // failure this function's own contract (above) promises never happens (fix round 3).
+  if (mimeServices.length > 0 && mimePatterns.length > 0) {
     arms.push(
       `(src.service IN (${mimeServices.map(() => "?").join(", ")})
         AND (${mimePatterns.map(() => "json_extract(src.metadata, '$.mimeType') LIKE ?").join(" OR ")}))`,

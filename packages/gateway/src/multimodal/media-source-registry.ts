@@ -60,8 +60,13 @@ export function mediaExtensionModality(ext: string): MediaModality | undefined {
  * through the mime check and drops the non-matching ones — the exact starvation this task exists
  * to prevent, reintroduced through this table instead of the mime arm. A mime-keyed service is
  * discovered ONLY through `MIME_KEYED_SERVICES` + its declared mime.
+ *
+ * Exported (read-only) SOLELY so media-source-registry.test.ts can assert this table's keys never
+ * name a `MIME_KEYED_SERVICES` service — a test that inspects the raw table survives a future
+ * rewrite of `mediaItemTypePairsForModality`'s own defensive filter (below), which a test driven
+ * only through that function's output could not (fix round 3, Important B).
  */
-const ITEM_TYPE_MODALITY: ReadonlyMap<string, MediaModality> = new Map([
+export const ITEM_TYPE_MODALITY: ReadonlyMap<string, MediaModality> = new Map([
   ["filesystem:media_av", "av"],
   ["filesystem:media_image", "image"],
 ]);
@@ -113,8 +118,17 @@ export interface MediaItemTypePair {
 /**
  * The `(service, type)` pairs that carry a given modality, derived from ITEM_TYPE_MODALITY so a
  * new registry entry here is picked up automatically. Undefined modality means every pair in the
- * table. Mime-keyed services are never in this table (see `MIME_KEYED_SERVICES` above) and are
- * discovered through the separate mime arm instead.
+ * table.
+ *
+ * A pair whose service is in `MIME_KEYED_SERVICES` is filtered out here EVEN IF the docstring
+ * above (correctly) says such a pair should never exist in `ITEM_TYPE_MODALITY` in the first
+ * place. This is not redundant: the docstring is a promise about the table's CONTENTS, enforced
+ * only by the disjointness test in media-source-registry.test.ts; this filter is what makes
+ * discovery's SQL arm 1 safe even if that promise is ever broken. Without it, a mime-keyed pair
+ * slipping into the table (e.g. `("google_drive", "file")`) would make arm 1 admit EVERY item of
+ * that (service, type) regardless of declared mime — since arm 1 carries no mime condition — while
+ * `modalityForItem` still routes that service through the mime check and drops the non-matching
+ * ones, under-filling the page (fix round 3, Important B).
  *
  * PAIR-keyed, not type-keyed: discovery's SQL arm built from this must match the same shape
  * `modalityForItem`'s non-mime-keyed branch does (`ITEM_TYPE_MODALITY.get(`${service}:${type}`)`).
@@ -133,7 +147,9 @@ export function mediaItemTypePairsForModality(
   for (const [key, m] of ITEM_TYPE_MODALITY) {
     if (modality !== undefined && m !== modality) continue;
     const sep = key.indexOf(":");
-    out.push({ service: key.slice(0, sep), type: key.slice(sep + 1) });
+    const service = key.slice(0, sep);
+    if (MIME_KEYED_SERVICES.has(service)) continue;
+    out.push({ service, type: key.slice(sep + 1) });
   }
   return out;
 }
