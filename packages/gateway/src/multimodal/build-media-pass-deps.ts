@@ -106,6 +106,21 @@ export interface BuildMediaPassDepsInput {
    * (§ 19.3 — a grant with no configured vendor must still resolve LOCAL, never a refusal).
    */
   readonly remoteVlm?: RemoteVlmVendor | null;
+  /**
+   * `[llm.remote.<vendor>].enabled` for the vendor named by `remoteVlm` above — gate 3 of § 18.1
+   * needs BOTH "a vendor is named" (`remoteVlm`) AND "that vendor's OWN opt-in is on" (this field);
+   * neither alone is sufficient (§ 18.2). `llm/vendor-vault-keys.ts` deliberately SHARES
+   * `openai.api_key` with the embedding runtime, so an install can hold a live key while having
+   * never opted OpenAI in for text, let alone for vision — a credential that merely exists must
+   * never itself enable sending photos to a vendor.
+   *
+   * Resolved by `ipc/server/dispatchers.ts`'s `tryDispatchMediaRpc` from `[llm.remote.<vendor>]`,
+   * the SAME nimbus.toml the `[multimodal]` section itself lives in, and forwarded here
+   * UNCOMBINED with `remoteVlm` — this file, not the dispatcher, is what decides what an absent
+   * flag means. Absent or `false`: no remote arm, matching every other config-driven switch in
+   * this file's own fail-closed default.
+   */
+  readonly remoteVlmVendorEnabled?: boolean;
 }
 
 /**
@@ -261,6 +276,12 @@ export async function bytesForSource(source: MediaSource): Promise<Uint8Array> {
  * The grant half of the remote arm. Returns a provider only when a vendor is configured AND an
  * active grant names it for this artifact — the two independent conditions of § 18.1 steps 3 and 4.
  *
+ * `vendor` arrives here ALREADY GATED by `buildMediaPassDeps`'s own gate-3 check (the vendor's
+ * `[llm.remote.<vendor>].enabled` opt-in, § 18.2): a configured-but-disabled vendor is passed in
+ * as `null`, exactly as if `[multimodal] remote_vlm` were unset, so the `vendor === null` check
+ * below covers BOTH "unconfigured" and "configured but its parent opt-in is off" — there is
+ * nothing left for this function to check about the parent switch itself.
+ *
  * The `Database` read lives here rather than in the gate so `media-gate.ts` never touches SQL and
  * D27(b) holds without an exemption for it.
  *
@@ -362,6 +383,16 @@ export function buildMediaPassDeps(input: BuildMediaPassDepsInput): BuiltMediaPa
     ffprobeBin: resolveFfprobeBin(input.ffprobeBin),
   });
 
+  // Gate 3 of § 18.1 (spec § 18.2): `[multimodal] remote_vlm` naming a vendor is not enough on its
+  // own — that vendor's OWN `[llm.remote.<vendor>].enabled` opt-in must also be on, or a
+  // credential that merely exists (`openai.api_key` is shared with the embedding runtime) would
+  // silently enable sending images to a vendor nobody separately opted into for vision. Computed
+  // ONCE so both consumers below — `remoteFor` and `MediaPassDeps.remoteVendor` (read by
+  // `media-discovery.ts`'s re-offer query) — see the same answer: a disabled parent must mean no
+  // remote arm exists AT ALL, not a refusal deferred to `describe()`.
+  const remoteVlm =
+    input.remoteVlm != null && input.remoteVlmVendorEnabled === true ? input.remoteVlm : null;
+
   return {
     db: input.db,
     roots: input.roots,
@@ -372,15 +403,14 @@ export function buildMediaPassDeps(input: BuildMediaPassDepsInput): BuiltMediaPa
     fetchBudgetBytes: input.fetchBudgetBytes ?? DEFAULT_FETCH_BUDGET_BYTES,
     preferRenditions: input.preferRenditions ?? DEFAULT_PREFER_RENDITIONS,
     cloudBytes: buildCloudBytesDeps(input),
-    // The OTHER consumer of `input.remoteVlm`, alongside `buildRemoteFor` below: `findCandidates`
-    // (media-discovery.ts) reads THIS field to re-offer a locally-understood, actively-granted
-    // artifact (spec § 19.1). Omitted (rather than `null`), matching the field's own
-    // `string | undefined` shape on `MediaPassDeps` -- an install with no remote vendor configured
-    // must run the exact query it ran before PR 4, with no parameter bound for a clause that isn't
-    // there, not a `null` threaded through and compared away.
-    ...(input.remoteVlm === null || input.remoteVlm === undefined
-      ? {}
-      : { remoteVendor: input.remoteVlm }),
+    // The OTHER consumer of the GATED `remoteVlm` above, alongside `buildRemoteFor` below:
+    // `findCandidates` (media-discovery.ts) reads THIS field to re-offer a locally-understood,
+    // actively-granted artifact (spec § 19.1). Omitted (rather than `null`), matching the field's
+    // own `string | undefined` shape on `MediaPassDeps` -- an install with no USABLE remote vendor
+    // (unconfigured, OR configured but not enabled under `[llm.remote.<vendor>]`) must run the
+    // exact query it ran before PR 4, with no parameter bound for a clause that isn't there, not a
+    // `null` threaded through and compared away.
+    ...(remoteVlm === null ? {} : { remoteVendor: remoteVlm }),
     gate: {
       enabled: input.enabled,
       capabilityDisabled: input.capabilityDisabled,
@@ -392,7 +422,7 @@ export function buildMediaPassDeps(input: BuildMediaPassDepsInput): BuiltMediaPa
         modality: MediaModality,
         _candidate: MediaCandidate,
       ): Understander | undefined => (modality === "av" ? avUnderstander : imageUnderstander),
-      remoteFor: buildRemoteFor(input, input.remoteVlm ?? null),
+      remoteFor: buildRemoteFor(input, remoteVlm),
       gpu: {
         acquire: (id: string) => arbiter.acquire(id),
         // Load-bearing: a multi-minute transcription without a heartbeat is evicted by the

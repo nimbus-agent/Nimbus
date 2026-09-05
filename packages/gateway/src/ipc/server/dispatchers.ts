@@ -3,6 +3,7 @@ import { join } from "node:path";
 import pino from "pino";
 import { buildAgentSynthesisRunner } from "../../agents/_lib/agent-synthesis-runner.ts";
 import {
+  loadNimbusLlmFromConfigDir,
   loadNimbusPreflightFromConfigDir,
   loadNimbusServiceConfigsFromConfigDir,
   resolveNimbusTomlForProfile,
@@ -28,7 +29,7 @@ import {
   revokeGrant,
 } from "../../multimodal/media-grant-store.ts";
 import { runMediaPass } from "../../multimodal/media-pass.ts";
-import { MULTIMODAL_CAPABILITY } from "../../multimodal/media-types.ts";
+import { MULTIMODAL_CAPABILITY, type RemoteVlmVendor } from "../../multimodal/media-types.ts";
 import { loadMultimodalConfig, type MultimodalConfig } from "../../multimodal/multimodal-config.ts";
 import type { NimbusVault } from "../../vault/nimbus-vault.ts";
 import { GATEWAY_VERSION } from "../../version.ts";
@@ -682,6 +683,13 @@ export function buildMediaPassDepsInput(input: {
   readonly vault: NimbusVault;
   /** Forwarded verbatim to `BuildMediaPassDepsInput.sourceId` — see that field's doc comment. */
   readonly sourceId?: string;
+  /**
+   * Forwarded verbatim to `BuildMediaPassDepsInput.remoteVlmVendorEnabled` — see that field's doc
+   * comment. Resolved by the caller (`isRemoteVlmVendorEnabled`, below) rather than by this pure
+   * mapping function, matching how `config`/`capabilityDisabled`/`vault` are all resolved one
+   * level up too: this function only forwards values by VALUE, it does not read `nimbus.toml`.
+   */
+  readonly remoteVlmVendorEnabled?: boolean;
 }): BuildMediaPassDepsInput {
   return {
     db: input.db,
@@ -702,8 +710,31 @@ export function buildMediaPassDepsInput(input: {
     // re-offered by `findCandidates`). See `build-media-pass-deps.ts`'s `BuildMediaPassDepsInput.
     // remoteVlm` doc comment for both consumers this one value feeds.
     remoteVlm: input.config.remoteVlm,
+    ...(input.remoteVlmVendorEnabled === undefined
+      ? {}
+      : { remoteVlmVendorEnabled: input.remoteVlmVendorEnabled }),
     ...(input.sourceId === undefined ? {} : { sourceId: input.sourceId }),
   };
+}
+
+/**
+ * Gate 3 of § 18.1's own parent opt-in (spec § 18.2): `[multimodal] remote_vlm` naming a vendor
+ * must not be enough on its own to enable the remote arm — that vendor's OWN
+ * `[llm.remote.<vendor>].enabled` switch must ALSO be on, since `llm/vendor-vault-keys.ts`
+ * deliberately shares `openai.api_key` with the embedding runtime and a credential that merely
+ * exists must never itself enable anything (§ 18.2's own argument, applied to itself).
+ *
+ * Re-read on every call from the SAME nimbus.toml `loadMultimodalConfig` just read, matching that
+ * function's own live-reload posture — an `[llm.remote.*]` edit applies without a gateway restart,
+ * same as a `[multimodal]` edit does. An absent `configDir` (and therefore no file to read at all)
+ * fails CLOSED, same direction as every other config-driven switch in this file.
+ */
+export function isRemoteVlmVendorEnabled(
+  vendor: RemoteVlmVendor | null,
+  configDir: string | undefined,
+): boolean {
+  if (vendor === null || configDir === undefined) return false;
+  return loadNimbusLlmFromConfigDir(configDir).remoteVendors.get(vendor)?.enabled === true;
 }
 
 /**
@@ -776,6 +807,11 @@ export async function tryDispatchMediaRpc(
         capabilityDisabled: mediaCtx.enforced.capabilitiesDisabled.has(MULTIMODAL_CAPABILITY),
         vault: ctx.options.vault,
         sourceId: ctx.getClientKind(clientId),
+        // Gate 3 of § 18.1's parent opt-in (§ 18.2, Finding 1 of the whole-branch review). Without
+        // this, `[multimodal] remote_vlm` naming a vendor was sufficient on its own — a live
+        // `openai.api_key` shared with the embedding runtime could silently reach a vision model
+        // nobody separately opted into.
+        remoteVlmVendorEnabled: isRemoteVlmVendorEnabled(mmConfig.remoteVlm, ctx.options.configDir),
       }),
     );
     const out = await dispatchMediaRpc(method, params, {

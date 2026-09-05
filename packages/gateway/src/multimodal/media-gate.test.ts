@@ -535,4 +535,39 @@ describe("provider selection (§ 19.3 truth table)", () => {
     );
     expect(res).toEqual({ ok: false, reason: "no_remote_grant" });
   });
+
+  /**
+   * Finding 2 of the 2026-09-05 whole-branch review. Before the fix, step 4 skipped the
+   * availability probe for a non-local `chosen` entirely, on the theory that probing would cost a
+   * round-trip before the same refusal `describe()` reports anyway — false for the shipped remote
+   * adapter, whose `isAvailable` is Vault key PRESENCE only and makes no request. Skipping the
+   * probe meant a keyless/rotated-out vendor reached `understand()` unconditionally, which in
+   * production is exactly where `wrapLedgeredVlm` appends its egress row BEFORE delegating — see
+   * `security-invariants.test.ts`'s I37 describe block for the ledger-level proof. This test
+   * proves the GATE side: an unavailable remote provider refuses before `understand()` runs, the
+   * same as the local arm always has, and the reason is one the user can act on
+   * (`not_configured`), not `no_local_model` — the artifact WAS granted and the vendor IS enabled;
+   * only the credential is missing.
+   */
+  test("grant + remote configured but UNAVAILABLE (no key) -> REFUSE not_configured, never contacted", async () => {
+    let contacted = false;
+    const res = await understandArtifact(
+      imageCandidate(),
+      imageSource(),
+      gateDeps({
+        understanderFor: () => local(),
+        remoteFor: () => ({
+          isLocal: false,
+          model: "gpt-5",
+          isAvailable: async () => false, // no key in the Vault
+          understand: async () => {
+            contacted = true;
+            return { text: "leaked" };
+          },
+        }),
+      }),
+    );
+    expect(res).toEqual({ ok: false, reason: "not_configured" });
+    expect(contacted).toBe(false);
+  });
 });

@@ -53,6 +53,37 @@ describe("pruneOrphanedUnderstandings", () => {
     insert(db, "nimbus:orphan:understanding", "nimbus", "image_understanding", {});
     expect(pruneOrphanedUnderstandings(db)).toBe(0);
   });
+
+  /**
+   * `json_extract` RAISES on malformed JSON, and `COALESCE` does not guard it (see the module doc
+   * on `orphan-prune.ts`). This sweep runs FIRST at pass start, so before the `json_valid` guard, a
+   * single row like this one would have thrown out of the whole statement and aborted the ENTIRE
+   * sweep — hiding the real orphan seeded alongside it, and hiding every other orphan in the index
+   * besides.
+   */
+  test("a malformed-metadata row does not abort the sweep, and a real orphan alongside it is still pruned", () => {
+    insert(db, "nimbus:bad:understanding", "nimbus", "image_understanding", {});
+    db.run("UPDATE item SET metadata = '{not json' WHERE id = 'nimbus:bad:understanding'");
+    insert(db, "nimbus:vid1:understanding", "nimbus", "video_understanding", {
+      derivedFrom: "filesystem:vid1", // source item does not exist -- a real orphan
+    });
+
+    let pruned = -1;
+    expect(() => {
+      pruned = pruneOrphanedUnderstandings(db);
+    }).not.toThrow();
+    expect(pruned).toBe(1);
+
+    // The malformed row survives: an unparseable `derivedFrom` reads as absent, same as the
+    // "no derivedFrom" case above -- KEPT, never deleted on a guess.
+    expect(
+      db.query("SELECT COUNT(*) AS n FROM item WHERE id = 'nimbus:bad:understanding'").get(),
+    ).toEqual({ n: 1 });
+    // The real orphan is gone.
+    expect(
+      db.query("SELECT COUNT(*) AS n FROM item WHERE id = 'nimbus:vid1:understanding'").get(),
+    ).toEqual({ n: 0 });
+  });
 });
 
 describe("pruneOrphanedMedia", () => {

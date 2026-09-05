@@ -13,12 +13,27 @@
  * takes no argument from anywhere outside it. Bound rather than interpolated even so: an internal
  * literal spliced into SQL is one refactor away from a caller-supplied one, and the `?` costs
  * nothing.
+ *
+ * `json_extract` RAISES on malformed JSON — it does not return NULL — and `COALESCE` does NOT
+ * guard it: `COALESCE` only substitutes for a NULL RESULT, never for a thrown error, so a single
+ * derived row whose `metadata` does not round-trip would abort the whole statement. That matters
+ * more here than almost anywhere else in this subsystem: this sweep runs FIRST at pass start
+ * (`pruneOrphanedMedia`, below, called from `media-pass.ts`), so one bad row here would abort the
+ * ENTIRE pass before `media-discovery.ts`'s own `json_valid` guard ever got a chance to run. Both
+ * `json_extract` calls below are wrapped in `CASE WHEN json_valid(...) THEN ... END`, the same
+ * pattern `media-discovery.ts` uses, so an unparseable row reads as "no `derivedFrom`" — KEPT,
+ * never deleted on a guess — rather than blowing up the sweep for every artifact.
  */
 import type { Database } from "bun:sqlite";
 import { dbStmtRun } from "../db/write.ts";
 import { revokeOrphanedGrants } from "./media-grant-store.ts";
 
 const UNDERSTANDING_TYPES = ["image_understanding", "video_understanding"] as const;
+
+/** `CASE WHEN json_valid(...) THEN json_extract(...) END` — see the module doc above for why. */
+function safeExtractDerivedFrom(column: string): string {
+  return `CASE WHEN json_valid(${column}) THEN json_extract(${column}, '$.derivedFrom') END`;
+}
 
 // The single definition of "orphaned understanding row", shared verbatim by the COUNT and the
 // DELETE below. A second copy of this predicate is exactly the bug this module exists to avoid:
@@ -28,10 +43,10 @@ const UNDERSTANDING_TYPES = ["image_understanding", "video_understanding"] as co
 const ORPHANED_UNDERSTANDING_WHERE = `
   WHERE service = 'nimbus'
     AND type IN (${UNDERSTANDING_TYPES.map(() => "?").join(", ")})
-    AND json_extract(metadata, '$.derivedFrom') IS NOT NULL
+    AND ${safeExtractDerivedFrom("metadata")} IS NOT NULL
     AND NOT EXISTS (
       SELECT 1 FROM item AS src
-       WHERE src.id = json_extract(item.metadata, '$.derivedFrom')
+       WHERE src.id = ${safeExtractDerivedFrom("item.metadata")}
     )
 `;
 

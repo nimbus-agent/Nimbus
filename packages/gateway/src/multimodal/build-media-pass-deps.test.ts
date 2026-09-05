@@ -793,6 +793,7 @@ describe("buildMediaPassDeps — remote VLM wiring (Task 10)", () => {
       capabilityDisabled: false,
       scratchDir: "/scratch",
       remoteVlm: "openai",
+      remoteVlmVendorEnabled: true,
     });
     expect(deps.remoteVendor).toBe("openai");
   });
@@ -805,6 +806,7 @@ describe("buildMediaPassDeps — remote VLM wiring (Task 10)", () => {
       capabilityDisabled: false,
       scratchDir: "/scratch",
       remoteVlm: "anthropic",
+      remoteVlmVendorEnabled: true,
     });
     expect(deps.gate.remoteFor?.(candidateFor("av"))).toBeUndefined();
   });
@@ -817,6 +819,7 @@ describe("buildMediaPassDeps — remote VLM wiring (Task 10)", () => {
       capabilityDisabled: false,
       scratchDir: "/scratch",
       remoteVlm: "anthropic",
+      remoteVlmVendorEnabled: true,
     });
     expect(deps.gate.remoteFor?.(candidateFor("image"))).toBeUndefined();
   });
@@ -837,12 +840,67 @@ describe("buildMediaPassDeps — remote VLM wiring (Task 10)", () => {
       capabilityDisabled: false,
       scratchDir: "/scratch",
       remoteVlm: "anthropic",
+      remoteVlmVendorEnabled: true,
     });
     const understander = deps.gate.remoteFor?.(candidate);
     expect(understander).toBeDefined();
     // DERIVED from the provider, never restated (I34).
     expect(understander?.isLocal).toBe(false);
     expect(understander?.model).toBe("anthropic/claude-sonnet-5");
+  });
+
+  /**
+   * Finding 1 of the 2026-09-05 whole-branch review (spec § 18.1 gate 3, § 18.2): `remote_vlm`
+   * naming a vendor is not enough on its own — the vendor's OWN `[llm.remote.<vendor>].enabled`
+   * opt-in must also be on, since `openai.api_key` is shared with the embedding runtime and a
+   * credential that merely exists must never itself enable anything. `remoteVlmVendorEnabled`
+   * defaults to `undefined` when omitted, which must mean OFF (fail-closed), never ON.
+   */
+  test("remoteFor is undefined when the vendor is configured but remoteVlmVendorEnabled is omitted (fail-closed default)", () => {
+    const database = db();
+    const candidate = candidateFor("image");
+    createGrant(database, {
+      itemId: candidate.itemId,
+      modality: "image",
+      modelVendor: "anthropic",
+      nowMs: Date.now(),
+    });
+    const deps = buildMediaPassDeps({
+      db: database,
+      roots: [],
+      enabled: true,
+      capabilityDisabled: false,
+      scratchDir: "/scratch",
+      remoteVlm: "anthropic",
+      // remoteVlmVendorEnabled deliberately omitted.
+    });
+    expect(deps.gate.remoteFor?.(candidate)).toBeUndefined();
+    expect(deps.remoteVendor).toBeUndefined();
+    expect("remoteVendor" in deps).toBe(false);
+  });
+
+  test("remoteFor is undefined when the vendor is configured but remoteVlmVendorEnabled is explicitly false, EVEN WITH an active grant", () => {
+    const database = db();
+    const candidate = candidateFor("image");
+    createGrant(database, {
+      itemId: candidate.itemId,
+      modality: "image",
+      modelVendor: "anthropic",
+      nowMs: Date.now(),
+    });
+    const deps = buildMediaPassDeps({
+      db: database,
+      roots: [],
+      enabled: true,
+      capabilityDisabled: false,
+      scratchDir: "/scratch",
+      remoteVlm: "anthropic",
+      remoteVlmVendorEnabled: false,
+    });
+    // "No remote arm at all" — a granted artifact is not even re-offered by `findCandidates`,
+    // matching the finding's own wording, not merely a refusal deferred to `describe()`.
+    expect(deps.gate.remoteFor?.(candidate)).toBeUndefined();
+    expect(deps.remoteVendor).toBeUndefined();
   });
 
   test("a granted understander's isAvailable is false with no vault — vendorApiKey fails closed", async () => {
@@ -861,6 +919,7 @@ describe("buildMediaPassDeps — remote VLM wiring (Task 10)", () => {
       capabilityDisabled: false,
       scratchDir: "/scratch",
       remoteVlm: "anthropic",
+      remoteVlmVendorEnabled: true,
     });
     const understander = deps.gate.remoteFor?.(candidate);
     await expect(understander?.isAvailable()).resolves.toBe(false);
@@ -882,6 +941,7 @@ describe("buildMediaPassDeps — remote VLM wiring (Task 10)", () => {
       capabilityDisabled: false,
       scratchDir: "/scratch",
       remoteVlm: "anthropic",
+      remoteVlmVendorEnabled: true,
       vault: {
         get: async (key: string) => (key === "anthropic.api_key" ? "sk-configured" : null),
         set: async () => {},
@@ -913,6 +973,7 @@ describe("buildMediaPassDeps — remote VLM wiring (Task 10)", () => {
       capabilityDisabled: false,
       scratchDir: "/scratch",
       remoteVlm: "anthropic",
+      remoteVlmVendorEnabled: true,
     });
     const understander = deps.gate.remoteFor?.(candidate);
     await expect(
@@ -940,6 +1001,7 @@ describe("buildMediaPassDeps — remote VLM wiring (Task 10)", () => {
         capabilityDisabled: false,
         scratchDir: "/scratch",
         remoteVlm: "anthropic",
+        remoteVlmVendorEnabled: true,
       });
       const understander = deps.gate.remoteFor?.(candidate);
       await expect(understander?.understand({ kind: "path", path: filePath })).rejects.toThrow(

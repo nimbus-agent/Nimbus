@@ -1,17 +1,22 @@
 /**
  * THE chokepoint: the only path from media bytes to a model (spec § 3.2, § 3.4).
  *
- * The ORDER below is the invariant, exactly as in I33 and I35. It ships in PR 1 with only its
- * local arm — before there is any remote path to gate — because retrofitting a chokepoint onto
- * code that already reaches the resource is how a bypass gets built. PR 4 adds an ARM here; it
- * does not introduce a gate.
+ * The ORDER below is the invariant, exactly as in I33 and I35. It shipped in PR 1 with only its
+ * local arm — before there was any remote path to gate — because retrofitting a chokepoint onto
+ * code that already reaches the resource is how a bypass gets built. PR 4 added an ARM here; it
+ * did not introduce a gate.
  *
- * As of Task 9, `remoteFor` is a real seam but no remote provider exists yet (Task 10 builds the
- * adapters) — production's `remoteFor` returns `undefined` unconditionally, so step 3's refusal
- * remains the path every non-local `understanderFor` result takes, exercised only by tests using a
- * deliberately non-local fake. Once Task 10 lands, a granted artifact reaches step 3 with
- * `chosen === remote`, and the refusal there guards only a provider that arrived WITHOUT going
- * through `remoteFor` — the structural backstop this gate has carried since PR 1.
+ * As of PR 4, `remoteFor` IS wired to a real remote provider:
+ * `vlm/remote/remote-vlm-shared.ts`'s `createRemoteVlm`, constructed by
+ * `build-media-pass-deps.ts`'s `buildRemoteFor` and returned only for an image candidate that has
+ * BOTH a configured `[multimodal] remote_vlm` vendor AND an active, artifact-scoped grant naming
+ * it. A granted artifact now reaches step 3 with `chosen === remote` for real, through the same
+ * shape this file always exercised with a deliberately non-local test fake before a real adapter
+ * existed. The refusal at step 3 still guards a second, narrower case: a non-local provider that
+ * arrived any OTHER way than through `remoteFor` — the structural backstop this gate has carried
+ * since PR 1. That path is unreachable in production today, because every real non-local provider
+ * is built by `remoteFor`, but it stays tested: a future caller that hands the gate a non-local
+ * `Understander` some other way must still be refused, not silently trusted.
  */
 import type {
   MediaCandidate,
@@ -121,12 +126,25 @@ export async function understandArtifact(
     return { ok: false, reason: "no_remote_grant" };
   }
 
-  // 4. A LOCAL provider that is unavailable refuses; it does not degrade to remote. A REMOTE
-  //    provider is not availability-probed — there is no second arm to fall back to, so a probe
-  //    would only add a round-trip before the same refusal, and its failure is reported by the
-  //    describe itself.
-  if (chosen.isLocal && !(await chosen.isAvailable())) {
-    return { ok: false, reason: "no_local_model" };
+  // 4. BOTH arms are availability-probed before the model is contacted — local and remote alike.
+  //    This used to skip the probe for a remote provider, on the theory that a probe would cost a
+  //    round-trip before the same refusal `describe()` reports anyway. That theory was false for
+  //    every remote provider this file actually ships: `remote-vlm-shared.ts`'s `isAvailable` is
+  //    Vault key PRESENCE only and makes no request at all, so probing it is free — the same shape
+  //    as the local arm's own probe. Skipping it meant a keyless vendor (never configured, or a key
+  //    rotated out of the Vault after the grant was made) reached `chosen.understand()`
+  //    unconditionally, and `wrapLedgeredVlm` appends its `model` egress row BEFORE delegating —
+  //    so the ledger recorded a request that never left the machine, repeating on every pass for as
+  //    long as the grant stood. `nimbus prove` is worthless the moment one of its rows can lie.
+  //
+  //    A REMOTE refusal reads `not_configured`, not `no_local_model`: the artifact was granted and
+  //    the vendor is enabled, so "no local model" would blame the wrong arm. `not_configured`
+  //    mirrors how the cloud byte-fetch arm already reports a missing credential
+  //    (`build-media-pass-deps.ts`'s `cloudBearerFor`) — a reason the user can act on by setting or
+  //    re-setting the vendor's API key, not one that reads as this install having no vision model
+  //    at all. Neither arm degrades to the other on an unavailable probe.
+  if (!(await chosen.isAvailable())) {
+    return { ok: false, reason: chosen.isLocal ? "no_local_model" : "not_configured" };
   }
 
   // 5. Only now is the model contacted.

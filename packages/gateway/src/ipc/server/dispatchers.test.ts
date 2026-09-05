@@ -19,7 +19,7 @@ import { buildMediaPassDeps } from "../../multimodal/build-media-pass-deps.ts";
 import { findCandidates } from "../../multimodal/media-discovery.ts";
 import { createGrant, listActiveGrants } from "../../multimodal/media-grant-store.ts";
 import { UNDERSTANDING_VERSION } from "../../multimodal/media-types.ts";
-import type { MultimodalConfig } from "../../multimodal/multimodal-config.ts";
+import { loadMultimodalConfig, type MultimodalConfig } from "../../multimodal/multimodal-config.ts";
 import { createMockVault } from "../../vault/mock.ts";
 import type { StatusReaders } from "../admin-status-rpc.ts";
 import type { ChatopsRpcCtx } from "../chatops-rpc.ts";
@@ -44,6 +44,7 @@ import {
 import {
   buildMediaPassDepsInput,
   extractKbPageRef,
+  isRemoteVlmVendorEnabled,
   tryDispatchAdminRpc,
   tryDispatchAgentsRpc,
   tryDispatchAuditRpc,
@@ -1385,6 +1386,11 @@ describe("tryDispatchPhase4Rpc", () => {
       config,
       capabilityDisabled: false,
       vault: createMockVault(),
+      // The parent opt-in gate (Finding 1, § 18.2) is a SEPARATE concern from the mapper wiring
+      // this test proves — forced `true` here so this test still isolates the ONE thing it names.
+      // See "a configured remote_vlm with no matching [llm.remote.<vendor>].enabled..." below for
+      // the parent-gate behaviour itself, proven through the real production wiring.
+      remoteVlmVendorEnabled: true,
     });
     const deps = buildMediaPassDeps(input);
 
@@ -1405,6 +1411,105 @@ describe("tryDispatchPhase4Rpc", () => {
     const understander = deps.gate.remoteFor?.(candidate);
     expect(understander).toBeDefined();
     expect(understander?.isLocal).toBe(false);
+  });
+
+  /**
+   * Finding 1 of the 2026-09-05 whole-branch review (spec § 18.1 gate 3, § 18.2): `[multimodal]
+   * remote_vlm` naming a vendor must not be sufficient on its own -- that vendor's OWN
+   * `[llm.remote.<vendor>].enabled` opt-in must also be on, since `openai.api_key` is shared with
+   * the embedding runtime (`llm/vendor-vault-keys.ts`) and a credential that merely exists must
+   * never itself enable sending photos to a vendor. This drives the REAL production wiring --
+   * `loadMultimodalConfig` + `isRemoteVlmVendorEnabled` + `buildMediaPassDepsInput` -- against a
+   * real nimbus.toml with `[multimodal] remote_vlm = "openai"` but NO `[llm.remote.openai]` table
+   * at all, proving the parent-disabled case means "no remote arm at all", not a refusal deferred
+   * to `describe()`: the granted item is not even re-offered by `findCandidates`.
+   */
+  test("a configured remote_vlm with no matching [llm.remote.<vendor>].enabled produces no remote arm at all (Finding 1)", () => {
+    const configDir = mkdtempSync(join(tmpdir(), "disp-media-parent-gate-"));
+    writeFileSync(
+      join(configDir, "nimbus.toml"),
+      '[multimodal]\nenabled = true\nremote_vlm = "openai"\n',
+      "utf8",
+    );
+    const db = trackedDb();
+
+    upsertIndexedItem(db, {
+      service: "google_drive",
+      type: "file",
+      externalId: "img-1",
+      title: "img-1",
+      bodyPreview: "",
+      modifiedAt: 1000,
+      syncedAt: 1000,
+      metadata: { mimeType: "image/png" },
+    });
+    const itemId = db
+      .query<{ id: string }, []>("SELECT id FROM item WHERE external_id = 'img-1'")
+      .get()?.id as string;
+    upsertIndexedItem(db, {
+      service: "nimbus",
+      type: "image_understanding",
+      externalId: `${itemId}:understanding`,
+      title: "Caption — img-1",
+      bodyPreview: "a caption",
+      modifiedAt: 1000,
+      syncedAt: 1000,
+      metadata: {
+        derivedFrom: itemId,
+        understandingVersion: UNDERSTANDING_VERSION,
+        isLocal: true,
+        model: "qwen2.5vl:7b",
+      },
+    });
+    createGrant(db, { itemId, modality: "image", modelVendor: "openai", nowMs: 1000 });
+
+    const config = loadMultimodalConfig(configDir);
+    expect(config.remoteVlm).toBe("openai"); // sanity: the vendor IS configured
+
+    // The exact resolver `tryDispatchMediaRpc` calls in production.
+    const remoteVlmVendorEnabled = isRemoteVlmVendorEnabled(config.remoteVlm, configDir);
+    expect(remoteVlmVendorEnabled).toBe(false); // no [llm.remote.openai] table at all
+
+    const deps = buildMediaPassDeps(
+      buildMediaPassDepsInput({
+        db,
+        configDir,
+        dataDir: "/tmp",
+        config,
+        capabilityDisabled: false,
+        vault: createMockVault(),
+        remoteVlmVendorEnabled,
+      }),
+    );
+
+    // No remote arm at all: the granted item is not even re-offered.
+    expect(deps.remoteVendor).toBeUndefined();
+    expect(findCandidates(db, { limit: 10, remoteVendor: deps.remoteVendor })).toEqual([]);
+    expect(deps.gate.remoteFor).toBeUndefined();
+  });
+
+  test("[llm.remote.<vendor>] present but enabled = false ALSO fails the parent gate closed", () => {
+    const configDir = mkdtempSync(join(tmpdir(), "disp-media-parent-gate-disabled-"));
+    writeFileSync(
+      join(configDir, "nimbus.toml"),
+      '[multimodal]\nenabled = true\nremote_vlm = "openai"\n\n' +
+        '[llm.remote.openai]\nenabled = false\nmodel = "gpt-5"\n',
+      "utf8",
+    );
+    const config = loadMultimodalConfig(configDir);
+    expect(isRemoteVlmVendorEnabled(config.remoteVlm, configDir)).toBe(false);
+  });
+
+  test("isRemoteVlmVendorEnabled is true once [llm.remote.<vendor>] itself opts in", () => {
+    const configDir = mkdtempSync(join(tmpdir(), "disp-media-parent-gate-enabled-"));
+    writeFileSync(
+      join(configDir, "nimbus.toml"),
+      '[multimodal]\nenabled = true\nremote_vlm = "openai"\n\n' +
+        '[llm.remote.openai]\nenabled = true\nmodel = "gpt-5"\n',
+      "utf8",
+    );
+    const config = loadMultimodalConfig(configDir);
+    expect(isRemoteVlmVendorEnabled(config.remoteVlm, configDir)).toBe(true);
   });
 
   describe("media.allowRemote / media.grants.list / media.grants.revoke (Task 15)", () => {

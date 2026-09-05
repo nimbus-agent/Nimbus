@@ -3359,21 +3359,45 @@ describe("I37 — a media body reaches a non-local model only under a grant", ()
     };
   }
 
-  /** Negative control FIRST: without it, "zero rows" would pass for any reason at all. */
-  test("no grant: the gate refuses, contacts nothing, and appends NO egress row", async () => {
+  /**
+   * Negative control FIRST: without it, "zero rows" would pass for any reason at all.
+   *
+   * MUST be capable of failing, which the original version of this test was not: `db` was
+   * constructed and never touched by anything the gate could reach — `MediaGateDeps` carries no
+   * `db` at all, and the fake `understanderFor` result here appended nothing even if `understand`
+   * ran — so `countEgress(db, "model") === 0` passed no matter what the gate did with it. The fix
+   * is to route the fake remote understander's `understand` through a REAL `wrapLedgeredVlm`
+   * instance, the exact appender production wires in `build-media-pass-deps.ts`'s `buildRemoteFor`.
+   * Now the assertion is load-bearing: had the gate let this candidate through to `understand()`,
+   * this WOULD be 1 (the isolation test below drives the identical shape of wrapped provider to
+   * exactly one row) — a refusal that still appends nothing is the property I37 promises.
+   */
+  test("no grant: the gate refuses, contacts nothing, and appends NO egress row it would have appended if reached", async () => {
     const db = freshDb();
     let contacted = false;
+    const remoteProvider = wrapLedgeredVlm(db, {
+      providerId: "openai",
+      isLocal: false,
+      model: "gpt-5",
+      isAvailable: async () => true,
+      describe: async () => {
+        contacted = true;
+        return { text: "leaked" };
+      },
+    });
     const res = await understandArtifact(imageCandidate(), imageSource(), {
       enabled: true,
       capabilityDisabled: false,
       understanderFor: () => ({
         isLocal: false,
-        model: "gpt-5",
-        isAvailable: async () => true,
-        understand: async () => {
-          contacted = true;
-          return { text: "leaked" };
-        },
+        model: remoteProvider.model,
+        isAvailable: () => remoteProvider.isAvailable(),
+        understand: () =>
+          remoteProvider.describe({
+            bytes: new Uint8Array([1]),
+            prompt: "p",
+            mimeType: "image/png",
+          }),
       }),
       remoteFor: () => undefined, // no grant
       gpu: { acquire: async () => () => undefined, touch: () => undefined },
@@ -3383,7 +3407,54 @@ describe("I37 — a media body reaches a non-local model only under a grant", ()
     expect(countEgress(db, "model")).toBe(0);
   });
 
-  test("with a grant: the describe happens and appends exactly one model row BEFORE it", async () => {
+  /**
+   * Finding 2 of the 2026-09-05 whole-branch review: `remote-vlm-shared.ts`'s `isAvailable` is
+   * Vault key PRESENCE only and makes no request, so probing it is free. Before the fix,
+   * `media-gate.ts` skipped that probe for the remote arm entirely — a keyless (never configured,
+   * or rotated out of the Vault) vendor reached `chosen.understand()` unconditionally, which is
+   * exactly where `wrapLedgeredVlm` appends its row BEFORE delegating. The ledger recorded a
+   * request that never left the machine, on every pass, for as long as the grant stood.
+   */
+  test("grant present but the vendor has NO key in the Vault: the gate refuses BEFORE contact and appends NO egress row", async () => {
+    const db = freshDb();
+    let contacted = false;
+    const remoteProvider = wrapLedgeredVlm(db, {
+      providerId: "openai",
+      isLocal: false,
+      model: "gpt-5",
+      isAvailable: async () => false, // key-presence check fails: never set, or rotated out
+      describe: async () => {
+        contacted = true;
+        return { text: "leaked" };
+      },
+    });
+    const remoteUnderstander = {
+      isLocal: false,
+      model: remoteProvider.model,
+      isAvailable: () => remoteProvider.isAvailable(),
+      understand: () =>
+        remoteProvider.describe({ bytes: new Uint8Array([1]), prompt: "p", mimeType: "image/png" }),
+    };
+    const res = await understandArtifact(imageCandidate(), imageSource(), {
+      enabled: true,
+      capabilityDisabled: false,
+      understanderFor: () => remoteUnderstander,
+      remoteFor: () => remoteUnderstander, // configured AND granted -- only the key is missing
+      gpu: { acquire: async () => () => undefined, touch: () => undefined },
+    });
+    expect(res).toEqual({ ok: false, reason: "not_configured" });
+    expect(contacted).toBe(false);
+    expect(countEgress(db, "model")).toBe(0);
+  });
+
+  /**
+   * NOT a grant/gate test despite its former name ("with a grant: ...") — there is no grant here
+   * and no call to `understandArtifact`/media-gate.ts at all. This drives `wrapLedgeredVlm`'s
+   * appender directly against `provider.describe()`, in isolation, proving the appender's own
+   * BEFORE-ordering property (the row exists by the time the request runs). The gate's actual
+   * grant enforcement — and the keyless-vendor fix — are what the two tests above prove.
+   */
+  test("wrapLedgeredVlm in isolation (no grant, no gate): describe happens and appends exactly one model row BEFORE it", async () => {
     const db = freshDb();
     const order: string[] = [];
     const provider = wrapLedgeredVlm(db, {
