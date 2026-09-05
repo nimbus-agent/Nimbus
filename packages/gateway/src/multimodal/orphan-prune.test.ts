@@ -86,6 +86,27 @@ describe("pruneOrphanedUnderstandings", () => {
   });
 });
 
+describe("pruneOrphanedUnderstandings — defensive COUNT(*) guard", () => {
+  /**
+   * `COUNT(*)` always returns exactly one row against a real SQLite connection, so this branch
+   * is unreachable through the public API with a real `Database` — the guard exists as a defensive
+   * check against a driver that ever violated that guarantee. Exercised with a minimal fake that
+   * duck-types the two `Database` members this function calls, matching the established pattern in
+   * `db/writable-pragmas.test.ts`.
+   */
+  test("throws rather than silently treating a missing COUNT row as zero orphans", () => {
+    const fakeDb = {
+      transaction:
+        <T>(fn: () => T) =>
+        () =>
+          fn(),
+      query: () => ({ get: () => null }),
+    } as unknown as Database;
+
+    expect(() => pruneOrphanedUnderstandings(fakeDb)).toThrow(/COUNT\(\*\) query returned no row/);
+  });
+});
+
 describe("pruneOrphanedMedia", () => {
   test("sweeps derived rows AND grants in one pass-start call", () => {
     const db = new Database(":memory:");
