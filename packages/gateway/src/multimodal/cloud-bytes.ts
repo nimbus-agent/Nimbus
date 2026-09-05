@@ -48,6 +48,34 @@ const MAX_429_RETRIES = 2;
  */
 const MAX_RETRY_AFTER_MS = 30_000;
 
+/**
+ * Bounds the wait for a `WriteStream`'s own `close` event in {@link cleanupFailedScratch}.
+ *
+ * Cleanup must never be able to stall the whole pass: `close` normally fires quickly once
+ * `destroy()` is called, but a `writeChunk` rejection auto-destroys the stream (emitting `error`
+ * then `close`) BEFORE the async function that awaits it resumes — so on some event-loop
+ * schedules `close` has already fired by the time the listener attaches, and a bare `once(ws,
+ * "close")` then never settles. This is a backstop for that race, not the primary defense (see the
+ * `!ws.closed` check at the call site) — a value this small only matters when the stream is
+ * neither already closed NOR about to close on its own.
+ */
+const CLOSE_WAIT_MS = 2_000;
+
+/**
+ * Wall-clock bound on the WHOLE `fetchCloudBytes` call — connect, every 429/503 retry, and the
+ * full body transfer — not merely the initial connect. Production wires `fetchFn` to
+ * `safeFetchFollowing`, which delegates to the runtime `fetch` with no timeout of its own; the
+ * `AbortController` this module already carries is otherwise aborted only on a byte-cap/budget
+ * overrun, never on elapsed time, so a provider that accepts the connection and then never sends a
+ * byte would block the whole understanding pass indefinitely.
+ *
+ * Generous on purpose, same reasoning as `DEFAULT_TRANSCRIBE_TIMEOUT_MS`: this bounds a HANG, not
+ * slowness. It must clear the retry loop's own worst-case backoff (two waits up to
+ * {@link MAX_RETRY_AFTER_MS} plus jitter, ≈61s) with room left over for transferring a large
+ * artifact over a slow connection.
+ */
+const DEFAULT_REQUEST_TIMEOUT_MS = 5 * 60 * 1000;
+
 export interface CloudBytesDeps {
   readonly scratchDir: string;
   /** Per-artifact cap for this modality. Refuses, never truncates (spec § 5.3). */
@@ -66,6 +94,13 @@ export interface CloudBytesDeps {
   }) => { rowHash: string } | undefined;
   readonly fetchFn: (url: string, init: RequestInit) => Promise<Response>;
   readonly sleep: (ms: number) => Promise<void>;
+  /**
+   * Overrides {@link DEFAULT_REQUEST_TIMEOUT_MS}. Production never supplies this — the default is
+   * the real bound. Exists so a test can exercise the deadline arm with a never-resolving
+   * `fetchFn` and a millisecond-scale bound, rather than waiting out the real default, mirroring
+   * `build-media-pass-deps.ts`'s `withTranscribeTimeout` test seam.
+   */
+  readonly requestTimeoutMs?: number;
 }
 
 type CloudBytesRefusal = Extract<CloudBytes, { ok: false }>;
@@ -181,17 +216,28 @@ export async function fetchCloudBytes(
   if (!("headers" in auth)) return auth;
 
   const controller = new AbortController();
-  const attempt = await fetchWithRetry(byteUrl, candidate, auth.headers, controller, deps);
-  if (!("res" in attempt)) return attempt;
-  const { res } = attempt;
-  if (!res.ok) return { ok: false, reason: "fetch_miss", fetched: 0 };
+  // A stalled provider — connection accepted, then nothing sent — is otherwise unbounded: the
+  // AbortController above is aborted only on a byte-cap/budget overrun, never on elapsed time.
+  // Cleared in `finally` on EVERY exit from this function (every early return below, the error
+  // path, and the happy path alike), so a completed request never leaves a pending timer that
+  // could fire later and abort a read this call no longer owns.
+  const timeoutMs = deps.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS;
+  const deadline = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const attempt = await fetchWithRetry(byteUrl, candidate, auth.headers, controller, deps);
+    if (!("res" in attempt)) return attempt;
+    const { res } = attempt;
+    if (!res.ok) return { ok: false, reason: "fetch_miss", fetched: 0 };
 
-  const lengthRefusal = checkDeclaredLength(res, controller, deps);
-  if (lengthRefusal !== null) return lengthRefusal;
+    const lengthRefusal = checkDeclaredLength(res, controller, deps);
+    if (lengthRefusal !== null) return lengthRefusal;
 
-  return candidate.modality === "image"
-    ? await collectToMemory(res, controller, deps)
-    : await collectToScratch(res, controller, deps);
+    return candidate.modality === "image"
+      ? await collectToMemory(res, controller, deps)
+      : await collectToScratch(res, controller, deps);
+  } finally {
+    clearTimeout(deadline);
+  }
 }
 
 /**
@@ -328,10 +374,26 @@ async function streamBodyToFile(
  * first — see {@link collectToScratch}'s docstring for why `rmSync` alone races the async open.
  * Both the wait and the removal are best-effort: neither failing changes the outcome already
  * decided by the caller.
+ *
+ * `ws.destroy()` can complete SYNCHRONOUSLY when the stream has already closed (or was never
+ * opened) — `ws.closed` is then already `true` before `once(ws, "close")` ever attaches a
+ * listener, and an event that already fired never fires again. That is reachable in production,
+ * not merely hypothetical: a `writeChunk` rejection auto-destroys the stream, which emits `error`
+ * then `close` — and the rejection resumes the `await streamBodyToFile(...)` caller in a LATER
+ * microtask, so by the time this function runs, `close` can already be behind it. Without the
+ * `!ws.closed` guard, `once` would never settle: the whole pass stalls with no timeout, AND the
+ * scratch file this function exists to remove is never removed either, since the `try` below
+ * never runs. `CLOSE_WAIT_MS` is a second-line backstop for the remaining case where the stream is
+ * still mid-close when this function is called.
  */
-async function cleanupFailedScratch(ws: WriteStream, path: string): Promise<void> {
+export async function cleanupFailedScratch(ws: WriteStream, path: string): Promise<void> {
   ws.destroy();
-  await once(ws, "close").catch(() => undefined);
+  if (!ws.closed) {
+    await Promise.race([
+      once(ws, "close").catch(() => undefined),
+      new Promise((resolveTimeout) => setTimeout(resolveTimeout, CLOSE_WAIT_MS)),
+    ]);
+  }
   try {
     rmSync(path, { force: true });
   } catch {

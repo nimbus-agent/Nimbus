@@ -1,8 +1,8 @@
 import { describe, expect, test } from "bun:test";
-import { mkdtempSync, readdirSync, statSync } from "node:fs";
+import { createWriteStream, existsSync, mkdtempSync, readdirSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, extname, join } from "node:path";
-import { type CloudBytesDeps, fetchCloudBytes } from "./cloud-bytes.ts";
+import { type CloudBytesDeps, cleanupFailedScratch, fetchCloudBytes } from "./cloud-bytes.ts";
 import type { ByteUrl } from "./cloud-renditions.ts";
 import type { MediaCandidate } from "./media-types.ts";
 
@@ -346,5 +346,59 @@ describe("fetchCloudBytes", () => {
     // exercises cleanup of a file that really has content, not merely an opened-but-empty fd.
     expect(r).toEqual({ ok: false, stop: "budget_exhausted", fetched: 8 });
     expect(readdirSync(deps.scratchDir).filter((n) => n.startsWith("nimbus-media-"))).toEqual([]);
+  });
+
+  test("a stalled fetchFn is aborted by the request deadline rather than hanging the pass", async () => {
+    // Production wires `fetchFn` to `safeFetchFollowing`, which delegates to the runtime `fetch`
+    // with NO timeout of its own — nothing else in this module bounds a provider that accepts the
+    // connection and then never responds. `requestTimeoutMs` is a test-only override of the real
+    // default so this can run in milliseconds instead of the real 5-minute bound.
+    let aborted = false;
+    const deps = fakeDeps({
+      requestTimeoutMs: 20,
+      fetchFn: (_url, init) =>
+        new Promise<Response>((_resolve, reject) => {
+          init.signal?.addEventListener("abort", () => {
+            aborted = true;
+            reject(new Error("aborted by deadline"));
+          });
+          // Deliberately never resolves/rejects on its own — only the abort listener above
+          // settles this promise. If the deadline is never installed, this test hangs rather
+          // than failing cleanly, which is itself the property under test.
+        }),
+    });
+    const r = await fetchCloudBytes(imageCandidate, providerUrl, deps);
+    expect(aborted).toBe(true);
+    // The retry loop's own catch turns any fetchFn rejection into a per-item skip, not a crashed
+    // pass — same contract as a hostile provider-returned URL (see the test above).
+    expect(r).toEqual({ ok: false, reason: "fetch_miss", fetched: 0 });
+  });
+});
+
+describe("cleanupFailedScratch", () => {
+  test("resolves and still removes the file when the stream is ALREADY closed", async () => {
+    // Reproduces the state the `!ws.closed` guard exists for, without needing the exact
+    // `writeChunk`-rejection race that produces it in production: `close` has already fired by
+    // the time this function is called, so a bare `once(ws, "close")` would never settle — an
+    // event that already fired never fires again.
+    const dir = mkdtempSync(join(tmpdir(), "nimbus-cloud-bytes-cleanup-"));
+    const path = join(dir, "nimbus-media-already-closed");
+    const ws = createWriteStream(path);
+    await new Promise<void>((resolveClosed, reject) => {
+      ws.on("close", () => resolveClosed());
+      ws.on("error", reject);
+      ws.end();
+    });
+    expect(ws.closed).toBe(true);
+
+    // Bounded well under `CLOSE_WAIT_MS`'s backstop: if the `!ws.closed` guard were removed, the
+    // unconditional wait would still eventually resolve via that backstop, but not this fast —
+    // this bound is what makes a removed guard fail the test rather than merely slow it down.
+    const resolved = await Promise.race([
+      cleanupFailedScratch(ws, path).then(() => true),
+      new Promise<boolean>((r) => setTimeout(() => r(false), 500)),
+    ]);
+    expect(resolved).toBe(true);
+    expect(existsSync(path)).toBe(false);
   });
 });
