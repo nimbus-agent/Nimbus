@@ -20,6 +20,7 @@ export type SkipReason =
   | "path_outside_roots"
   | "transcode_failed"
   | "transcribe_failed"
+  | "describe_failed"
   | "not_configured"
   | "rate_limited"
   | "unsupported_image_format";

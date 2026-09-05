@@ -18,6 +18,9 @@
  */
 import { withGatewayIpc } from "../lib/with-gateway-ipc.ts";
 
+// Hand-mirrored from the gateway's `SkipReason` (packages/cli may not import gateway source).
+// A missing member here does not fail typecheck at the boundary — the summary arrives as JSON —
+// it prints nothing and once crashed the renderer outright. Both trees change together.
 export type SkipReasonKey =
   | "over_byte_cap"
   | "no_local_model"
@@ -27,6 +30,8 @@ export type SkipReasonKey =
   | "path_outside_roots"
   | "transcode_failed"
   | "transcribe_failed"
+  | "describe_failed"
+  | "unsupported_image_format"
   | "not_configured"
   | "rate_limited";
 
@@ -261,6 +266,18 @@ export function parseMediaArgs(argv: readonly string[]): ParsedMediaArgs {
 }
 
 /**
+ * Human-readable labels for a `SkipReasonKey`, appended after the raw `reason: count` line so the
+ * key a machine (or `--json`) reads and the sentence a person reads never disagree. Only the two
+ * PR-4 additions carry a label today — the older reasons are left as their raw key alone, which is
+ * pre-existing behavior this task does not change.
+ */
+const REASON_LABELS: Readonly<Partial<Record<SkipReasonKey, string>>> = {
+  describe_failed: "the vision model failed to describe it",
+  unsupported_image_format:
+    "not a JPEG, PNG, WebP or GIF — refused rather than sent as an unknown type",
+};
+
+/**
  * The exact text for a non-"completed" `stopReason` — what happened, and what to do about it.
  * `budget_exhausted` is the important case: the gateway priced the run up front and refused it
  * because the cost exceeded `--budget`, leaving the resume cursor untouched on purpose (spec
@@ -350,7 +367,8 @@ export function renderSummary(summary: CliSummary): string {
   if (reasons.length > 0) {
     lines.push("Skipped:");
     for (const [reason, n] of reasons) {
-      lines.push(`  ${reason}: ${n}`);
+      const label = REASON_LABELS[reason as SkipReasonKey];
+      lines.push(label === undefined ? `  ${reason}: ${n}` : `  ${reason}: ${n} — ${label}`);
     }
   }
   lines.push(`Cloud bytes fetched: ${summary.cloudBytesFetched}`);

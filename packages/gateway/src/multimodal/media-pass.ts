@@ -153,6 +153,7 @@ function emptyReasons(): Record<SkipReason, number> {
     path_outside_roots: 0,
     transcode_failed: 0,
     transcribe_failed: 0,
+    describe_failed: 0,
     not_configured: 0,
     rate_limited: 0,
     unsupported_image_format: 0,

@@ -18,6 +18,7 @@ import type {
   UnderstandDetail,
   UnderstandOutcome,
 } from "./media-types.ts";
+import { UnsupportedImageFormatError } from "./media-types.ts";
 
 export interface LocalUnderstander {
   /** DERIVED by the provider (I34). The gate READS it; it never accepts it from a caller. */
@@ -126,8 +127,20 @@ export async function understandArtifact(
           : { framesCaptioned: detail.framesCaptioned }),
       },
     };
-  } catch {
-    return { ok: false, reason: "transcribe_failed" };
+  } catch (err) {
+    // The reason a user READS. "transcribe failed" printed against a photograph is a lie in the
+    // one line the summary gives them, and the failures have different remedies: an unsupported
+    // format, a vision model that could not describe an image, or a bad transcode/transcription.
+    // `UnsupportedImageFormatError` is checked FIRST, before the modality branch — it is thrown by
+    // `image-understander.ts` and must win even though its candidate is also `image`, or the
+    // `unsupported_image_format` reason (added in Task 6) is unreachable dead code.
+    if (err instanceof UnsupportedImageFormatError) {
+      return { ok: false, reason: "unsupported_image_format" };
+    }
+    return {
+      ok: false,
+      reason: candidate.modality === "image" ? "describe_failed" : "transcribe_failed",
+    };
   } finally {
     clearInterval(heartbeat);
     release();

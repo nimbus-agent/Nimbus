@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import type { LocalUnderstander, MediaGateDeps } from "./media-gate.ts";
 import { understandArtifact } from "./media-gate.ts";
 import type { MediaCandidate, MediaSource } from "./media-types.ts";
+import { UnsupportedImageFormatError } from "./media-types.ts";
 
 const CANDIDATE: MediaCandidate = {
   itemId: "filesystem:/m/a.mp4",
@@ -30,6 +31,7 @@ const IMAGE_CANDIDATE: MediaCandidate = {
 };
 
 const PATH_SOURCE: MediaSource = { kind: "path", path: "/m/a.mp4" };
+const IMAGE_SOURCE: MediaSource = { kind: "bytes", bytes: new Uint8Array([1]), mime: "image/png" };
 
 function understander(over: Partial<LocalUnderstander> = {}): LocalUnderstander {
   return {
@@ -127,6 +129,54 @@ describe("understandArtifact — ordered refusals", () => {
       }),
     );
     expect(out).toEqual({ ok: false, reason: "transcribe_failed" });
+  });
+
+  test("an image understander that throws records describe_failed, not transcribe_failed", async () => {
+    const out = await understandArtifact(
+      IMAGE_CANDIDATE,
+      IMAGE_SOURCE,
+      gateDeps({
+        understanderFor: () =>
+          understander({
+            understand: async () => {
+              throw new Error("model exploded");
+            },
+          }),
+      }),
+    );
+    expect(out).toEqual({ ok: false, reason: "describe_failed" });
+  });
+
+  test("an AV understander that throws still records transcribe_failed", async () => {
+    const out = await understandArtifact(
+      CANDIDATE,
+      PATH_SOURCE,
+      gateDeps({
+        understanderFor: () =>
+          understander({
+            understand: async () => {
+              throw new Error("whisper exploded");
+            },
+          }),
+      }),
+    );
+    expect(out).toEqual({ ok: false, reason: "transcribe_failed" });
+  });
+
+  test("an UnsupportedImageFormatError wins over the modality branch — unsupported_image_format, not describe_failed", async () => {
+    const out = await understandArtifact(
+      IMAGE_CANDIDATE,
+      IMAGE_SOURCE,
+      gateDeps({
+        understanderFor: () =>
+          understander({
+            understand: async () => {
+              throw new UnsupportedImageFormatError("not a recognised wire format");
+            },
+          }),
+      }),
+    );
+    expect(out).toEqual({ ok: false, reason: "unsupported_image_format" });
   });
 
   test("RELEASES the GPU lease even when the understander throws", async () => {
