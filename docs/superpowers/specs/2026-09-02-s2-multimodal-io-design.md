@@ -74,23 +74,43 @@ click through, or a silent outbound send because "the user already opted into th
 
 ### 3.1 Placement
 
+**Amended 2026-09-05 (§ 19, finding 2.3).** The block below was speculative when written and three
+PRs have landed since. It now states what is actually on disk, with the PR 4 arrivals marked.
+
 ```text
 packages/gateway/src/multimodal/
   media-gate.ts            THE chokepoint: the only path from bytes to a model
-  media-bytes.ts           byte acquisition (local read | cloud fetch); touches no model
   media-discovery.ts       which indexed items are understandable candidates
   media-pass.ts            the budgeted, resumable understanding pass
   media-pass-state.ts      cursor + resume
-  understanding-item.ts    pure mapper: understanding -> derived item row
-  media-consent-broker.ts  per-artifact remote grant prompt          (PR 4)
-  media-grant-store.ts     durable grants, V59                        (PR 4)
+  media-types.ts           MediaCandidate / MediaSource / SkipReason / UnderstandOutcome
   media-source-registry.ts (service, type) -> modality; the SSoT
-  vlm/vlm-types.ts         VlmProvider: isLocal + describeBytes
+  build-media-pass-deps.ts THE wiring site: constructs providers, injects understanderFor
+  understanding-item.ts    pure mapper: understanding -> derived item row
+  orphan-prune.ts          deletes derived rows whose source item left the index      (PR 3)
+  multimodal-config.ts     [multimodal] loader; REFUSES a non-loopback vlm_base_url
+  cloud-bytes.ts           budgeted cloud byte-fetch, per-chunk caps                  (PR 3)
+  cloud-url-resolver.ts    ledgered re-resolve of a provider byte URL                 (PR 3)
+  cloud-renditions.ts      per-service rendition suffixes; originals by default       (PR 3)
+  stt/{ffmpeg-bin,whisper-bin,transcribe-file}.ts   local STT plumbing
+  frames/{frame-extract,av-understander}.ts         transcript + sampled captions
+  vlm/vlm-types.ts         VlmProvider: isLocal + describe()
   vlm/ollama-vlm.ts        local VLM; isLocal DERIVED via base-url-locality.ts
-  stt/long-form-stt.ts     wraps the existing WhisperSttProvider for file-length audio
+  vlm/image-understander.ts   still-image captioning over VlmProvider
+  vlm/caption-prompts.ts   the two prompts, as constants
+  media-grant-store.ts     durable grants, V59; the ONLY module naming media_grant     (PR 4)
+  vlm/image-mime.ts        magic-byte sniff -> the wire media_type                     (PR 4)
+  vlm/remote/*.ts          remote VlmProvider adapters, one per vendor                 (PR 4)
 packages/gateway/src/egress/
   vlm-egress.ts            wrapLedgeredVlm - the fourth model-class decorator
+packages/gateway/src/index/
+  media-grant-v59-sql.ts   the V59 table + partial unique index                        (PR 4)
 ```
+
+There is no `media-bytes.ts` and no `media-consent-broker.ts`. Byte acquisition split by arm
+(`cloud-bytes.ts` + a local read inside the pass) rather than landing as one module, and PR 4's
+consent lives in the CLI, not a gateway-side broker, because § 6.3 forbids prompting from inside a
+pass — a broker with no in-pass caller would be a module that only ever answers "no".
 
 Each unit answers the three questions independently: `media-bytes.ts` gets bytes and never contacts
 a model; `media-gate.ts` is the only thing that hands bytes to a model; `understanding-item.ts` is
@@ -574,9 +594,12 @@ reasoning rules out a linked dependency for frame extraction: ffmpeg (§ 12.1) i
 > refuses rather than falling back. Locality is DERIVED from `provider.isLocal` (I34) and never
 > supplied by a caller. Every remote send appends one `model`-class row **before** the request and
 > an append failure aborts it (fail-closed). Media bytes never appear in `payload_summary`, and
-> the DISK rule is the narrowed one stated in § 5.4 rather than an absolute: nothing is written on
-> the image path, no new bytes are written for local audio, and a transcode writes exactly one
-> 0600 gateway-owned scratch file that is deleted in a `finally` and swept at pass start. An
+> the DISK rule is the narrowed one stated in § 5.4 **as amended by § 16.3** rather than an
+> absolute: nothing is written on the image path, no new bytes are written for local audio, and an
+> AV artifact writes **at most two** 0600 gateway-owned scratch files — the downloaded media (cloud
+> AV only) and the transcode WAV — each deleted in a `finally` and swept by prefix at pass start.
+> ("Exactly one" was true only for local AV, and PR 3 made the cloud arm real; corrected 2026-09-05,
+> § 19 finding 2.2.) An
 > earlier draft of this line said bytes are never written to disk at all, which § 5.4 contradicts
 > and which the implementation cannot honour -- `whisper-cli` takes a path.
 
@@ -746,15 +769,19 @@ later.
 
 ## 13. Sequencing
 
-| PR | Ships | New egress | New consent | Droppable |
-| --- | --- | --- | --- | --- |
-| 1 | Local media discovery, long-form STT, `video_understanding` items, `nimbus media understand`, **V58** pass cursor, **the gate with only its local arm** | none | none | — |
-| 2 | `VlmProvider`, `wrapLedgeredVlm`, D22(g), local Ollama VLM, `image_understanding`, frame captions | none (local) | none | yes |
-| 3 | `fetchBytes` capability (D24), cloud byte-fetch over the existing host boundary | inbound, `sync` class | none | yes |
-| 4 | Remote arm, consent broker, **V59** grants, batch granting, **I37 + D27** | outbound, `model` class | per-artifact grant | yes |
+**Amended 2026-09-05 (§ 19, finding 2.1).** The PR 3 row described a design that was superseded
+before it shipped, and the table still called shipped work droppable.
 
-Each PR is independently shippable and independently valuable. The riskiest is last and can be
-dropped without unpicking anything — the property that let the screen lane be deferred cleanly.
+| PR | Status | Ships | New egress | New consent |
+| --- | --- | --- | --- | --- |
+| 1 | **SHIPPED** #1429 | Local media discovery, long-form STT, `video_understanding` items, `nimbus media understand`, **V58** pass cursor, **the gate with only its local arm** | none | none |
+| 2 | **SHIPPED** #1438 | `VlmProvider`, `wrapLedgeredVlm`, D22(g), local Ollama VLM, `image_understanding`, frame captions | none (local) | none |
+| 3 | **SHIPPED** #1448 | Cloud byte-fetch for `google_photos` / `google_drive` / `onedrive` via `cloud-url-resolver.ts` + `cloud-bytes.ts`, manual redirect validation, per-run and per-artifact byte budgets. **No `fetchBytes` capability, no D24 exemption, and `fetch-host-boundary.ts` is not on this path** (§ 16.2, § 16.4, § 17.10) | inbound, `sync` class — appenders 2 → 4 | none |
+| 4 | designed (§ 18, § 19) | Remote VLM arm (images only), **V59** grants, batch granting CLI, **I37 + D27** | outbound, `model` class | per-artifact grant |
+
+Each PR was independently shippable and independently valuable. PR 4 remains droppable: nothing
+shipped depends on it, which is the property that let the screen lane be deferred cleanly. PRs 1–3
+are no longer droppable in any useful sense — they are on `main`.
 
 ---
 
@@ -1529,8 +1556,16 @@ guarantee it was GATED. A ledgered-but-ungated describe satisfies I29 and still 
 bytes go, the row is written, no grant was ever checked. D27 exists to close exactly that.
 
 - **D27(a)** — a NON-LOCAL `VlmProvider` may be CONSTRUCTED in only one factory, and that factory is
-  nameable only by `media-gate.ts` (plus its own definition). A remote describe is therefore
-  unreachable from anywhere else by construction rather than by convention.
+  nameable only by `build-media-pass-deps.ts` (plus its own definition). A remote describe is
+  therefore unreachable from anywhere else by construction rather than by convention.
+
+  **Corrected 2026-09-05 (§ 19, finding 3.5): this line first said `media-gate.ts`, and that was
+  wrong.** `media-gate.ts` constructs nothing — it receives an understander through
+  `understanderFor` and never names a provider factory. The site that builds providers is
+  `build-media-pass-deps.ts:232`, which already carries the comment "THE ONLY production site that
+  may name `createOllamaVlm` or `wrapLedgeredVlm`" under D22(g). Confining the remote factory
+  anywhere else would have split one wiring site into two and left D22(g) and D27(a) pointing at
+  different files for the same class of object.
 
   Confining the constructor rather than the `.describe(` call is deliberate, and follows two
   precedents in this codebase. D22(g) already confines `createOllamaVlm` to its wrap site for the
@@ -1583,3 +1618,295 @@ the claim it makes simply becomes load-bearing for vision.
 `docs/architecture.md` (schema V59), `docs/roadmap.md` (the multimodal row closes as 4 of 4),
 `docs/cli-reference.md` (`allow-remote`, `grants list`, `grants revoke`, and `[multimodal] remote_vlm`),
 and `.claude/commands/nimbus-egress.md` only if the `model` class wording changes — it should not.
+
+---
+
+## 19. Review disposition (PR 4 design review, 2026-09-05)
+
+Review: [`2026-09-05-s2-multimodal-io-design-review.md`](./2026-09-05-s2-multimodal-io-design-review.md)
+(Antigravity), against § 18 plus the three shipped PRs. Twelve findings. **Ten accepted, one
+accepted with its central rule rejected, one answered rather than built** — plus one finding of my
+own that the review circled without naming (§ 19.A) and one correction to § 18 itself (3.5).
+
+Findings 2.1, 2.2, 2.3 and the § 18.7 confinement site were fixed **in place** above rather than
+described here, because they are drift: leaving the wrong text and a note saying it is wrong is how
+a document acquires two answers to the same question.
+
+### 19.1 Finding 3.1 — a grant on an already-understood item does nothing · **ACCEPTED (critical)**
+
+Verified. `media-discovery.ts:119` re-offers a candidate only when
+
+```sql
+(u.id IS NULL OR COALESCE(json_extract(u.metadata, '$.understandingVersion'), -1) < ?)
+```
+
+so an image already captioned by the local VLM sits at the current `UNDERSTANDING_VERSION` and is
+skipped. `nimbus media allow-remote` on a library that has already been indexed would therefore
+report `Understood 0 items` and change nothing.
+
+This is the **ships-inert** class, and it is the third time in this slice: § 4.2's `derivedFrom` was
+written and never read for two PRs, and § 16.11's ledger claim covered a call path the
+implementation had split in two. The pattern is the same each time — a new writer with no
+corresponding change to the reader.
+
+**Ruling: recommendation 2 (a discovery predicate), and recommendation 1 (grant-driven row
+invalidation) is REJECTED.** Invalidation writes `understandingVersion = 0` at grant time, which
+re-offers the item on every pass *until something understands it*. The moment the remote arm cannot
+run — vendor disabled, key rotated out of the Vault, rate limit, org policy flipping
+`multimodal_input` off — the item is re-offered, refused, and re-offered again, forever. That is
+exactly the livelock PR 3 hit with the pass cursor (§ 17), where a correct fix generated the next
+defect: the state that says "do this again" must never be written by anything other than the thing
+that can also clear it.
+
+The predicate keeps the decision derived rather than stored, so it self-corrects the instant
+`remote_vlm` changes:
+
+```sql
+OR EXISTS (
+  SELECT 1 FROM media_grant AS g
+   WHERE g.item_id = src.id
+     AND g.revoked_at IS NULL
+     AND g.model_vendor = ?              -- the CONFIGURED vendor, or no row is bound at all
+     AND json_extract(u.metadata, '$.isLocal') = 1
+)
+```
+
+Three properties are load-bearing and each is an enforcement test:
+
+- **The bound vendor is the configured one.** With `remote_vlm` unset the arm binds nothing and the
+  clause is omitted entirely, so an unconfigured install re-offers **zero** items and the query
+  costs what it costs today. A grant for a vendor the user is no longer using is inert, not a
+  standing re-offer.
+- **`isLocal = 1` on the existing row.** Without it, an item understood remotely is re-offered on
+  every subsequent pass and re-sent to the vendor each time — a consent surface that bills the user
+  forever off one approval. This clause is what makes the upgrade one-directional.
+- **`json_extract` on a row that may have no metadata.** `sqlite json_extract` RAISES on malformed
+  JSON; the existing predicate already guards with `COALESCE(..., -1)` and the new clause must be
+  written to the same standard rather than assuming every derived row round-trips.
+
+### 19.2 Finding 3.2 — `VlmDescribeInput` carries no mime type · **ACCEPTED, and made stricter**
+
+Verified: `vlm/vlm-types.ts` declares `{ bytes, prompt, egressMethod? }` and nothing more, and
+`vlm/image-understander.ts` never mentions mime at all — the value exists upstream
+(`MediaCandidate.sourceMime`, and `MediaSource`'s bytes arm carries `mime: string | null`) and is
+dropped at the seam. Ollama tolerates that; Anthropic returns HTTP 400 without a `media_type`, and
+Gemini and OpenAI both need one on the wire.
+
+Accepted, with one inversion. The review proposes a magic-byte sniffer as a **fallback** when the
+declared mime is missing or generic. **The sniffer is the authority and the declared value is the
+fallback**, because on the cloud arm the declared value is a remote provider's `Content-Type`
+header — `media-types.ts` already says in so many words that it is "not something an understander
+should trust further than that" — and a wrong `media_type` is not a soft failure: Anthropic rejects
+`image/png` over JPEG bytes outright, so trusting the header converts a provider quirk into a
+per-artifact failure the user cannot diagnose.
+
+- `vlm/image-mime.ts` sniffs JPEG / PNG / WebP / GIF from the leading bytes.
+- Sniff resolves → that is the wire `media_type`, whatever the header claimed.
+- Sniff inconclusive **and** the declared value names one of the four → use it.
+- Neither → **refuse this artifact**, with a new `unsupported_image_format` skip reason. Bytes of an
+  unknown type are not sent to a vendor on the theory that it might cope. HEIC straight off an
+  iPhone lands here, which is a real and reportable outcome rather than a 400 with no explanation.
+
+`mimeType` is added to `VlmDescribeInput` as **required at the remote adapters and optional on the
+interface**, so the local Ollama path is unchanged and no existing caller breaks.
+
+### 19.3 Finding 3.3 — the provider-selection matrix · **ACCEPTED, with row 3 REJECTED**
+
+The matrix is the right artifact and mostly right. Two corrections.
+
+**(a) `describe_failed` does not exist.** The shipped `SkipReason` union is `over_byte_cap |
+no_local_model | no_remote_grant | unresolvable_modality | fetch_miss | path_outside_roots |
+transcode_failed | transcribe_failed | not_configured | rate_limited`, and `media-gate.ts`'s catch
+arm returns `transcribe_failed` for every modality including images. Reusing it for a failed remote
+*describe* prints "transcribe failed" for a photograph, which is a lie in the one line the user
+actually reads. **`describe_failed` is added to the union**, and the gate's catch arm branches on
+modality. The CLI's hand-mirrored `SkipReasonKey` must be extended in the same commit — that mirror
+has already crashed the summary once (§ 17).
+
+**(b) Row 3 — "grant active, `remote_vlm` unset → refuse `no_remote_grant`" — is wrong and is
+rejected.** A grant is a **permission, not a mandate**. Under that row, a user who grants remote and
+then disables the vendor loses local captioning on those items too: a capability that worked before
+they granted anything stops working *because* they granted something. Consent that can only widen
+behaviour must not be able to remove it.
+
+**Ruling: a grant with no configured remote arm resolves exactly as if no grant existed — use the
+local VLM.** This also keeps § 19.1 coherent: with `remote_vlm` unset nothing is re-offered, so the
+item is never re-visited to be refused in the first place. The two rulings have to agree, and
+under the review's version they do not.
+
+The corrected table, which is the specification for `understandArtifact`'s remote arm:
+
+| Active grant? | `remote_vlm` set **and** `[llm.remote.<vendor>] enabled`? | Local VLM available? | Resolution | Outcome |
+| :-- | :-- | :-- | :-- | :-- |
+| No | *any* | Yes | Local VLM | `ok: true` (`isLocal: true`) |
+| No | *any* | No | Refuse | `ok: false, reason: "no_local_model"` |
+| Yes | **No** | Yes | **Local VLM** (a grant never removes a capability) | `ok: true` (`isLocal: true`) |
+| Yes | **No** | No | Refuse | `ok: false, reason: "no_local_model"` |
+| Yes | Yes | *any* | Remote VLM via `wrapLedgeredVlm` | `ok: true` (`isLocal: false`) |
+| Yes | Yes, and the remote call fails | *any* | Refuse — **never degrade to local** | `ok: false, reason: "describe_failed"` |
+
+The last row is the review's key rule and it is accepted without change. A silent fall-back to local
+on a rate limit means the same command produces a frontier caption on Tuesday and a 7B caption on
+Wednesday, with nothing in the output saying which — and § 12.3's "a caption is still a guess" only
+holds as a bound if the reader can tell which guesser made it.
+
+Note that the "non-local, no grant" row has no entry here because it is unreachable by construction
+once § 19.A lands: a remote provider is only ever resolved *for* a granted artifact. The gate's
+existing step-3 refusal stays anyway, as the structural backstop it has been since PR 1.
+
+### 19.4 Finding 3.4 — remote frames + local transcript on one video · **ANSWERED, not built**
+
+The hybrid the review asks about is **already structurally impossible**, and PR 4 keeps it that way.
+`frames/av-understander.ts:146` declares the composite's locality as a conjunction:
+
+```ts
+isLocal: deps.stt.isLocal && deps.vlm.isLocal
+```
+
+Inject a remote VLM into the AV understander and the whole composite reports `isLocal: false`, so
+`media-gate.ts` step 3 refuses the entire video — transcript included — with `no_remote_grant`. The
+conjunction is right and stays: a composite is exactly as local as its least local half, and the
+alternative (a per-half locality flag) would put a caller-shaped boolean back into the one place I34
+exists to keep derived.
+
+**Ruling: `understanderFor("av")` resolves the all-local composite unconditionally in PR 4.** Video
+frames are captioned locally or not at all. Building the hybrid would mean a second `UnderstandOutcome`
+shape (`model: "gpt-4o + whisper-cli"`, a split disclosure, a per-half `isLocal`) for a modality
+§ 12.7 and § 18 both put out of scope — an interface widened for a feature that is not shipping.
+
+That leaves the question the review's framing exposes: what should `nimbus media allow-remote`
+do when handed a **video**? Writing an `'av'` grant that nothing will ever read is the ships-inert
+pattern again, one layer up. **The store REFUSES to write a `modality = 'av'` row in PR 4**, with the
+message naming the bound ("remote understanding is images-only in this release"). The CHECK
+constraint keeps `'av'` because the column outlives this scope (§ 18.3) — the *column* is
+forward-looking, the *writer* is not.
+
+### 19.5 Finding 3.5 — D27 confinement mechanics · **ACCEPTED; and it corrects § 18.7**
+
+The review is right and § 18.7 was wrong: the confinement site is `build-media-pass-deps.ts`, not
+`media-gate.ts`. Corrected in place above. `grep -c createOllamaVlm packages/gateway/src/multimodal/media-gate.ts`
+returns `0`; `build-media-pass-deps.ts:232` already carries the D22(g) comment naming itself "THE
+ONLY production site". A rule pointing at the gate would have enforced nothing while reading as
+though it enforced everything — the same defect § 10's own D27(a) already had, twice over now.
+
+Accepted with two widenings:
+
+- **Scan repo-wide with an explicit allow-list, not "files outside `multimodal/`".** D22(g)'s
+  precedent scans every file and allows two named ones, which is what keeps the rule alert *inside*
+  the directory that legitimately contains the construction. A directory-level exemption makes every
+  future file in `multimodal/` a permitted construction site.
+- **Paren-matched per occurrence, as D22(g) does for `createOllamaVlm`.** The check is that each
+  remote-factory call sits inside a `wrapLedgeredVlm(...)` argument list — not that the file
+  contains both identifiers somewhere. File-level co-occurrence passes an unwrapped second
+  construction in a file whose first construction is wrapped.
+
+D27(b) accepted as written, with one addition: the scan keys on the **table name** `media_grant` in
+any string literal, allowing `multimodal/media-grant-store.ts` and `index/media-grant-v59-sql.ts`
+only. That is weaker than a symbol-confinement rule — a dynamically assembled identifier evades it,
+as it evades every source scanner here — and the residual is closed the way the others are, by
+capability: only the store is handed a `Database`.
+
+The red-prove requirement is accepted and is the part most likely to be skipped. A structure-audit
+rule that has never been shown to fail is a rule nobody has tested.
+
+### 19.6 Finding 4.1 — grant idempotency and batch dedup · **ACCEPTED**
+
+All three, cheaply:
+
+- `createGrant` on an already-active `(item_id, modality, model_vendor)` returns the existing row's
+  id rather than raising `SQLITE_CONSTRAINT_UNIQUE`. **Not `INSERT OR IGNORE`** — that succeeds
+  silently while returning no id, so the caller cannot tell "already granted" from "just granted",
+  which is precisely the distinction the preview has to print.
+- Re-granting after revocation is already correct by the partial index and needs a test, not code.
+- The batch preview separates new from already-granted and reports `Granted 16 new items (4 already
+  granted)`. § 18.5's rule is that a preview enumerates rather than summarises; a count that
+  silently includes rows the run did not write is the same failure in miniature.
+
+### 19.7 Finding 4.2 — orphaned grants · **ACCEPTED, with the bound stated**
+
+Real gap. `orphan-prune.ts` deletes derived understanding rows whose `derivedFrom` no longer
+resolves, and PR 4 adds a table it does not know about. The sweep runs in the same place, at pass
+start, and **revokes rather than deletes** — § 18.3's whole argument for the partial index is that
+revocation is an append-only audit trail, and a pruner that deletes rows would be the one caller
+allowed to rewrite history.
+
+Two bounds, both accepted rather than engineered around:
+
+- A prune-revocation and an owner revocation are indistinguishable in the table. Adding a
+  `revoked_reason` column to tell them apart serves no reader: the item the row points at is gone,
+  so nothing can render the distinction anyway.
+- **An item that leaves the index transiently — a reindex that drops and re-adds — loses its
+  grant, and the owner must grant again.** This is the safe direction of the failure, and it is the
+  same premise `pruneOrphanedUnderstandings` has already been running on since PR 3. Stated here
+  because re-granting is a real cost to a user who batch-granted an album, and a surprise is worse
+  than a documented rule.
+
+### 19.8 Finding 5.1 — `remote_vlm` validation · **ACCEPTED, with the vendor set corrected**
+
+All three sub-points accepted; the parent-enabled check (5.1.2) already matches § 18.2, and the
+no-environment-key rule (5.1.3) is slice 2b's property and needs an enforcement test here rather
+than an assumption.
+
+**The allow-list is corrected.** The review lists `"openai" | "anthropic" | "gemini" | "xai"` in
+5.1.1 while its own § 6 checklist ships only three adapters. There is also nothing to derive the set
+from: `nimbus-toml.ts` parses `[llm.remote.*]` into `ReadonlyMap<string, NimbusLlmRemoteVendor>`,
+open-keyed by design. So `remote_vlm` validates against **the set of vendors with a shipped VLM
+adapter** — a PR-4-local constant, deliberately narrower than the text-vendor set — and *then*
+requires that vendor to be enabled in the map. A vendor with a text adapter and no vision adapter
+must be rejected at config load naming the reason, not accepted and failed at describe time.
+
+This preserves `multimodal-config.ts`'s established shape: the loader fails the section OFF for a
+malformed value, with the single documented exception of a non-loopback `vlm_base_url`, which throws
+loudly. An unknown `remote_vlm` follows the exception, not the rule: silently disabling a section
+because the user misspelled `anthropic` would be indistinguishable from the feature not existing.
+`vlm_base_url`'s loopback refusal is unaffected — the remote arm is selected by vendor, never by
+pointing the local base URL somewhere else, and that must stay true or the refusal becomes bypassable.
+
+### 19.A My own finding — `understanderFor` is keyed by modality, and remote is per artifact
+
+Not in the review, and it is the thing that makes PR 4 more than an adapter. The gate's seam is
+
+```ts
+readonly understanderFor: (modality: MediaModality) => LocalUnderstander | undefined;
+```
+
+— one understander per **modality**, resolved before the candidate is consulted. Every gate decision
+in PR 4 is per **artifact**: this image has a grant, that one does not. The current seam cannot
+express it.
+
+**Ruling: the gate takes the grant store and both understanders, and resolves per candidate**, in
+the fixed order § 3.4 already mandates. `understanderFor` becomes
+`(modality, candidate) => LocalUnderstander | undefined` — the candidate is already the gate's first
+argument, so nothing new is threaded through the pass — and `build-media-pass-deps.ts` closes over
+the grant store when constructing it. The alternatives were both worse: resolving remote-vs-local in
+`media-pass.ts` moves a gate decision outside the gate, and constructing a per-artifact understander
+at the wiring site puts a `Database` read on a hot path in the one file D22(g) and D27(a) both pin.
+
+The name `LocalUnderstander` becomes a lie the moment a remote provider is returned through it, and
+renaming it touches every implementer. It is renamed to `Understander` in the same commit, because a
+type whose name asserts a security property it no longer carries is worse than the churn — this
+codebase has already shipped one `browserLanePolicy` that was asserted and never used.
+
+### 19.B What was NOT accepted, in one place
+
+| Item | Ruling |
+| --- | --- |
+| 3.1 rec. 1 — grant-driven row invalidation | Rejected: re-offers forever when the remote arm cannot run (the § 17 livelock class). Rec. 2's predicate is derived and self-corrects. |
+| 3.2 — sniffer as *fallback* | Inverted: the sniffer is authoritative; a provider's declared `Content-Type` is the fallback, and neither resolving is a refusal, not a guess. |
+| 3.3 row 3 — grant + remote unset ⇒ refuse | Rejected: a grant is a permission, not a mandate, and must never remove the local capability the user already had. |
+| 3.4 — hybrid remote frames + local transcript | Not built: `av-understander.ts`'s conjunction already forbids it, and PR 4 keeps AV all-local. `allow-remote` refuses an `'av'` grant outright rather than writing an inert row. |
+| 3.5 — scan "files outside `multimodal/`" | Widened: repo-wide with a named allow-list, paren-matched per occurrence, as D22(g) does. |
+| 5.1.1 — four-vendor allow-list | Corrected: the set is vendors with a shipped VLM adapter, which is narrower than the text-vendor set and not derivable from `nimbus-toml.ts`'s open-keyed map. |
+| § 3.1's `media-consent-broker.ts` | Dropped from the placement map. § 6.3 forbids prompting inside a pass, so a broker would have no in-pass caller; consent is a CLI act writing a durable row. |
+
+### 19.C Two things this review did not reach
+
+Recorded because their absence is not evidence of their being fine.
+
+- **The § 6 verification checklist asserts `wrapLedgeredVlm` appends before firing.** It does — that
+  is D22(g), shipped in PR 2. What has never happened is that decorator wrapping a call that
+  actually leaves the machine (§ 18). The checklist's positive control uses a mock remote provider,
+  which proves the wiring and not the wire.
+- **PR 3's acceptance run is still unperformed** (§ 18.9). PR 4 composes on top of it: cloud-fetched
+  bytes forwarded to a third-party model is the path with the least real-world evidence behind it in
+  the entire slice, and no amount of design review moves that number.
