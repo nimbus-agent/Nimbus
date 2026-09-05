@@ -407,3 +407,132 @@ describe("understandArtifact — ordered refusals", () => {
     expect(seen).toEqual(["a", "b"]);
   });
 });
+
+describe("provider selection (§ 19.3 truth table)", () => {
+  const remote = (): Understander => ({
+    isLocal: false,
+    model: "gpt-5",
+    isAvailable: async () => true,
+    understand: async () => ({ text: "remote caption" }),
+  });
+  const local = (available = true): Understander => ({
+    isLocal: true,
+    model: "qwen2.5vl:7b",
+    isAvailable: async () => available,
+    understand: async () => ({ text: "local caption" }),
+  });
+
+  test("no grant + local available -> LOCAL", async () => {
+    const res = await understandArtifact(
+      imageCandidate(),
+      imageSource(),
+      gateDeps({ understanderFor: () => local(), remoteFor: () => undefined }),
+    );
+    expect(res).toMatchObject({ ok: true, outcome: { isLocal: true } });
+  });
+
+  /**
+   * Corrected from the task brief's literal draft (see task-9-report.md): as written there,
+   * `remoteFor` returned a fully valid, available `remote()` — which step 2 of the gate picks as
+   * `chosen` UNCONDITIONALLY (a defined `remoteFor` result is never availability-probed against
+   * local's own state — that IS the trap the brief calls out separately), so the draft actually
+   * asserted a caption would be produced, contradicting its own `toEqual({ ok: false, ... })`
+   * expectation two lines below. "No grant" is modeled honestly by `remoteFor` returning
+   * `undefined`, exactly as `hasActiveGrant` reports when nothing was granted — the flag proves
+   * the grant IS consulted (this is not a case where `remoteFor` is skipped), it simply has
+   * nothing to offer, so the local refusal stands and is never upgraded into a remote attempt.
+   */
+  test("no grant + local unavailable -> REFUSE no_local_model, never remote", async () => {
+    let remoteConsulted = false;
+    const res = await understandArtifact(
+      imageCandidate(),
+      imageSource(),
+      gateDeps({
+        understanderFor: () => local(false),
+        remoteFor: () => {
+          remoteConsulted = true;
+          return undefined;
+        },
+      }),
+    );
+    expect(res).toEqual({ ok: false, reason: "no_local_model" });
+    expect(remoteConsulted).toBe(true);
+  });
+
+  /**
+   * § 19.3, and the row I REJECTED from the review. A grant is a PERMISSION, not a mandate:
+   * granting remote and then disabling the vendor must not cost the user local captioning too.
+   * Consent that can only widen behaviour must never remove it.
+   */
+  test("grant + NO remote arm configured -> LOCAL, exactly as if no grant existed", async () => {
+    const res = await understandArtifact(
+      imageCandidate(),
+      imageSource(),
+      gateDeps({ understanderFor: () => local(), remoteFor: () => undefined }),
+    );
+    expect(res).toMatchObject({ ok: true, outcome: { isLocal: true } });
+  });
+
+  test("grant + remote configured -> REMOTE", async () => {
+    const res = await understandArtifact(
+      imageCandidate(),
+      imageSource(),
+      gateDeps({ understanderFor: () => remote(), remoteFor: () => remote() }),
+    );
+    expect(res).toMatchObject({ ok: true, outcome: { isLocal: false, model: "gpt-5" } });
+  });
+
+  /**
+   * Corrected from the task brief's literal draft (see task-9-report.md): as written there, the
+   * throwing provider was returned by `understanderFor` while `remoteFor` returned `undefined` —
+   * which is exactly the shape of the NEXT test (the structural backstop) and, run against the
+   * gate as specified, resolves to `no_remote_grant` before `understand()` is ever called, never
+   * reaching `describe_failed`. To actually exercise "a chosen REMOTE arm that fails", the failing
+   * provider must be the one `remoteFor` returns — the arm step 2 picks as `chosen` — while the
+   * local candidate's own `understand()` is instrumented instead, so `localTouched` proves the
+   * local arm was never invoked as a fallback once remote had already been chosen and failed.
+   *
+   * The key rule. A silent fall-back to local on a rate limit means the same command produces a
+   * frontier caption on Tuesday and a 7B caption on Wednesday with nothing saying which — and
+   * § 12.3's "a caption is still a guess" only holds as a bound if the reader can tell which
+   * guesser made it.
+   */
+  test("remote failure is TERMINAL — it never degrades to local", async () => {
+    let localTouched = false;
+    const res = await understandArtifact(
+      imageCandidate(),
+      imageSource(),
+      gateDeps({
+        understanderFor: () => ({
+          isLocal: true,
+          model: "qwen2.5vl:7b",
+          isAvailable: async () => true,
+          understand: async () => {
+            localTouched = true;
+            return { text: "local caption" };
+          },
+        }),
+        remoteFor: () => ({
+          isLocal: false,
+          model: "gpt-5",
+          isAvailable: async () => true,
+          understand: async () => {
+            throw new Error("429");
+          },
+        }),
+      }),
+    );
+    expect(res).toEqual({ ok: false, reason: "describe_failed" });
+    expect(localTouched).toBe(false);
+  });
+
+  /** The PR 1 structural backstop stays reachable: a non-local provider with no grant refuses. */
+  test("a non-local provider reached without a grant still refuses no_remote_grant", async () => {
+    const res = await understandArtifact(
+      imageCandidate(),
+      imageSource(),
+      gateDeps({ understanderFor: () => remote(), remoteFor: () => undefined }),
+    );
+    expect(res).toEqual({ ok: false, reason: "no_remote_grant" });
+  });
+});

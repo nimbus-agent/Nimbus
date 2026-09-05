@@ -21,8 +21,9 @@ import { WhisperSttProvider } from "../voice/stt.ts";
 import { createAvUnderstander } from "./frames/av-understander.ts";
 import { resolveFfprobeBin } from "./frames/frame-extract.ts";
 import type { Understander } from "./media-gate.ts";
+import { hasActiveGrant } from "./media-grant-store.ts";
 import type { MediaCloudDeps, MediaPassDeps } from "./media-pass.ts";
-import type { MediaCandidate, MediaModality } from "./media-types.ts";
+import type { MediaCandidate, MediaModality, RemoteVlmVendor } from "./media-types.ts";
 import {
   DEFAULT_FETCH_BUDGET_BYTES,
   DEFAULT_MAX_FRAMES,
@@ -91,6 +92,14 @@ export interface BuildMediaPassDepsInput {
    * file its egress under another's name.
    */
   readonly sourceId?: string;
+  /**
+   * `[multimodal] remote_vlm` (Task 5's `MultimodalConfig.remoteVlm`), `null` when unset — which is
+   * every install's state before a remote adapter ships (Task 10) and every install that never
+   * opts in after. Threading this through is what lets `buildRemoteFor` check "is a vendor
+   * configured" independently of "is this exact artifact granted": neither alone is sufficient
+   * (§ 19.3 — a grant with no configured vendor must still resolve LOCAL, never a refusal).
+   */
+  readonly remoteVlm?: RemoteVlmVendor | null;
 }
 
 /**
@@ -211,6 +220,38 @@ export function withTranscribeTimeout(
     });
 }
 
+/**
+ * The grant half of the remote arm. Returns a provider only when a vendor is configured AND an
+ * active grant names it for this artifact — the two independent conditions of § 18.1 steps 3 and 4.
+ *
+ * The `Database` read lives here rather than in the gate so `media-gate.ts` never touches SQL and
+ * D27(b) holds without an exemption for it.
+ *
+ * Returns `undefined` unconditionally at the end for now — Task 10 slots the wrapped remote
+ * understander in there. Until then this closure exists purely to prove the GRANT half is wired:
+ * production is inert (no remote adapter exists), exactly as PR 1 shipped the gate before the
+ * local understanders existed.
+ */
+function buildRemoteFor(
+  input: BuildMediaPassDepsInput,
+  vendor: RemoteVlmVendor | null,
+): ((candidate: MediaCandidate) => Understander | undefined) | undefined {
+  if (vendor === null) return undefined;
+  return (candidate: MediaCandidate): Understander | undefined => {
+    if (candidate.modality !== "image") return undefined; // § 19.4: AV is local-only, always.
+    if (
+      !hasActiveGrant(input.db, {
+        itemId: candidate.itemId,
+        modality: "image",
+        modelVendor: vendor,
+      })
+    ) {
+      return undefined;
+    }
+    return undefined; // Task 10 returns the wrapped remote understander here.
+  };
+}
+
 export type BuiltMediaPassDeps = Omit<
   MediaPassDeps,
   "limit" | "service" | "modality" | "sinceMs" | "afterItemId"
@@ -267,14 +308,15 @@ export function buildMediaPassDeps(input: BuildMediaPassDepsInput): BuiltMediaPa
     gate: {
       enabled: input.enabled,
       capabilityDisabled: input.capabilityDisabled,
-      // `candidate` is not yet consulted here: this wiring predates the per-artifact remote-grant
-      // check (later in PR 4's task sequence) and still resolves purely by modality — both
-      // registered understanders are local, so there is nothing per-artifact to decide yet. The
-      // parameter is accepted so this call site keeps compiling once a grant lookup lands here.
+      // `candidate` is still not consulted HERE: the LOCAL resolution stays purely modality-keyed
+      // — both registered understanders are local, so there is nothing per-artifact to decide on
+      // this arm. Per-artifact eligibility now lives on `remoteFor` below instead, which is the
+      // seam that actually varies by candidate (this image has a grant, that one does not).
       understanderFor: (
         modality: MediaModality,
         _candidate: MediaCandidate,
       ): Understander | undefined => (modality === "av" ? avUnderstander : imageUnderstander),
+      remoteFor: buildRemoteFor(input, input.remoteVlm ?? null),
       gpu: {
         acquire: (id: string) => arbiter.acquire(id),
         // Load-bearing: a multi-minute transcription without a heartbeat is evicted by the

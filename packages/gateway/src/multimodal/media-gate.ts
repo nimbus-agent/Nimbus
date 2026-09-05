@@ -6,9 +6,12 @@
  * code that already reaches the resource is how a bypass gets built. PR 4 adds an ARM here; it
  * does not introduce a gate.
  *
- * In this PR step 3 is structurally unreachable: every registered understander is local, so
- * `isLocal === false` cannot occur. It is implemented anyway, and tested with a deliberately
- * non-local fake, so the refusal exists before the thing it refuses does.
+ * As of Task 9, `remoteFor` is a real seam but no remote provider exists yet (Task 10 builds the
+ * adapters) — production's `remoteFor` returns `undefined` unconditionally, so step 3's refusal
+ * remains the path every non-local `understanderFor` result takes, exercised only by tests using a
+ * deliberately non-local fake. Once Task 10 lands, a granted artifact reaches step 3 with
+ * `chosen === remote`, and the refusal there guards only a provider that arrived WITHOUT going
+ * through `remoteFor` — the structural backstop this gate has carried since PR 1.
  */
 import type {
   MediaCandidate,
@@ -56,6 +59,16 @@ export interface MediaGateDeps {
     candidate: MediaCandidate,
   ) => Understander | undefined;
   /**
+   * The REMOTE understander for this artifact, when one is both configured and granted. Absent
+   * (or returning undefined) means no remote arm exists — which is production's state whenever
+   * `[multimodal] remote_vlm` is unset, and was every install's state before PR 4.
+   *
+   * The grant lookup lives BEHIND this closure, in `build-media-pass-deps.ts`, so the gate never
+   * touches a `Database` and D27(b)'s confinement of the grant store holds without the gate
+   * needing an exemption.
+   */
+  readonly remoteFor?: ((candidate: MediaCandidate) => Understander | undefined) | undefined;
+  /**
    * `touch` is REQUIRED, not optional: a production wiring that forgets it would compile and
    * silently lose the heartbeat — exactly the multi-minute-eviction failure this file exists to
    * prevent. Structural enforcement over prose; a caller with no real `GpuArbiter.touch` yet must
@@ -91,17 +104,28 @@ export async function understandArtifact(
     return { ok: false, reason: "unresolvable_modality" };
   }
 
-  // 2. Locality is DERIVED from the provider (I34), never supplied.
-  // 3. Non-local requires a per-artifact grant. There is no grant store until PR 4, so a non-local
-  //    provider is refused outright here — never silently allowed, never prompted from inside a
-  //    pass (spec § 6.3).
-  if (!provider.isLocal) {
+  // 2. Prefer the REMOTE arm when this artifact has one — meaning a vendor is configured AND an
+  //    active grant names it for this exact artifact. `remoteFor` returns undefined otherwise, and
+  //    the local provider resolved above stands.
+  //
+  //    A grant with no configured remote arm therefore resolves as if no grant existed (§ 19.3):
+  //    consent widens what may happen, and must never take away the local capability the user
+  //    already had.
+  const remote = deps.remoteFor?.(candidate);
+  const chosen = remote ?? provider;
+
+  // 3. Locality is DERIVED (I34). A non-local provider that arrived any other way than through
+  //    `remoteFor` has no grant behind it and is refused outright — the structural backstop this
+  //    gate has carried since PR 1, still reachable and still tested.
+  if (!chosen.isLocal && remote === undefined) {
     return { ok: false, reason: "no_remote_grant" };
   }
 
-  // 4. A local provider that is unavailable REFUSES. It does not degrade to remote — the same
-  //    fail-closed posture as `enforce_air_gap`.
-  if (!(await provider.isAvailable())) {
+  // 4. A LOCAL provider that is unavailable refuses; it does not degrade to remote. A REMOTE
+  //    provider is not availability-probed — there is no second arm to fall back to, so a probe
+  //    would only add a round-trip before the same refusal, and its failure is reported by the
+  //    describe itself.
+  if (chosen.isLocal && !(await chosen.isAvailable())) {
     return { ok: false, reason: "no_local_model" };
   }
 
@@ -123,14 +147,14 @@ export async function understandArtifact(
     deps.gpu.touch();
   }, deps.heartbeatMs ?? GPU_HEARTBEAT_MS);
   try {
-    const detail = await provider.understand(source);
+    const detail = await chosen.understand(source);
     return {
       ok: true,
       outcome: {
         text: detail.text,
         // Both DERIVED from the provider, never reported by the understander (I34).
-        model: provider.model,
-        isLocal: provider.isLocal,
+        model: chosen.model,
+        isLocal: chosen.isLocal,
         // Conditional spread: absent counts must stay absent, not become 0. See UnderstandDetail.
         ...(detail.framesSampled === undefined ? {} : { framesSampled: detail.framesSampled }),
         ...(detail.framesCaptioned === undefined
