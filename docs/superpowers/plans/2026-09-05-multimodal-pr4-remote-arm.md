@@ -609,7 +609,7 @@ export function revokeOrphanedGrants(db: Database, nowMs: number): number {
 - [ ] **Step 5: Run tests to verify they pass**
 
 Run: `bun test packages/gateway/src/multimodal/media-grant-store.test.ts`
-Expected: PASS (14 tests).
+Expected: PASS (9 tests).
 
 - [ ] **Step 6: Commit**
 
