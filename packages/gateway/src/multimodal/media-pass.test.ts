@@ -6,12 +6,31 @@ import { join } from "node:path";
 import { upsertIndexedItem } from "../index/item-store.ts";
 import { CURRENT_SCHEMA_VERSION } from "../index/local-index.ts";
 import { runIndexedSchemaMigrations } from "../index/migrations/runner.ts";
+
 import { findCandidates } from "./media-discovery.ts";
 import type { MediaCloudDeps, MediaPassDeps } from "./media-pass.ts";
 import { priceRun, runMediaPass } from "./media-pass.ts";
 import { readCursor, writeCursor } from "./media-pass-state.ts";
 import type { MediaCandidate } from "./media-types.ts";
 import { understandingExternalId } from "./understanding-item.ts";
+
+/**
+ * Host-EXACT, never a substring.
+ *
+ * `url.includes("photoslibrary.googleapis.com")` would also match
+ * `https://evil.example/?x=photoslibrary.googleapis.com` — the precise host confusion the cloud
+ * arm's credential rule exists to prevent. A fake that dispatches on a substring, or an assertion
+ * that accepts one, is weaker than the code it guards: it would keep passing if the resolver
+ * started sending its bearer to the wrong host. CodeQL flags the pattern
+ * (`js/incomplete-url-substring-sanitization`) and is right to.
+ */
+function isHost(url: string, host: string): boolean {
+  try {
+    return new URL(url).host === host;
+  } catch {
+    return false;
+  }
+}
 
 let db: Database;
 let root: string;
@@ -880,7 +899,7 @@ describe("runMediaPass — cloud budget, stop reasons and rendition (PR 3)", () 
         cloudBytes: cloudDeps({
           fetchFn: async (url) => {
             calls.push(url);
-            if (url.includes("photoslibrary.googleapis.com")) {
+            if (isHost(url, "photoslibrary.googleapis.com")) {
               return new Response(JSON.stringify({ baseUrl: "https://photos.example.test/real" }), {
                 status: 200,
                 headers: { "content-type": "application/json" },
@@ -892,7 +911,7 @@ describe("runMediaPass — cloud budget, stop reasons and rendition (PR 3)", () 
       }),
     );
     expect(summary.understood).toBe(1);
-    expect(calls.some((u) => u.includes("photoslibrary.googleapis.com"))).toBe(true);
+    expect(calls.some((u) => isHost(u, "photoslibrary.googleapis.com"))).toBe(true);
     expect(calls.some((u) => u.startsWith("https://photos.example.test/real"))).toBe(true);
   });
 
@@ -905,7 +924,7 @@ describe("runMediaPass — cloud budget, stop reasons and rendition (PR 3)", () 
         preferRenditions: true,
         cloudBytes: cloudDeps({
           fetchFn: async (url) => {
-            if (url.includes("photoslibrary.googleapis.com")) {
+            if (isHost(url, "photoslibrary.googleapis.com")) {
               return new Response(JSON.stringify({ baseUrl: "https://photos.example.test/real" }), {
                 status: 200,
                 headers: { "content-type": "application/json" },
@@ -949,7 +968,7 @@ describe("runMediaPass — cloud budget, stop reasons and rendition (PR 3)", () 
             return { rowHash: "h" };
           },
           fetchFn: async (url) => {
-            if (url.includes("photoslibrary.googleapis.com")) {
+            if (isHost(url, "photoslibrary.googleapis.com")) {
               return new Response(JSON.stringify({ baseUrl: "https://photos.example.test/real" }), {
                 status: 200,
                 headers: { "content-type": "application/json" },

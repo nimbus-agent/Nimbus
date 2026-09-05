@@ -1,7 +1,7 @@
 # Implementation Plan Review: Multimodal PR 3 — Cloud Byte-Fetch (2026-09-04)
 
 **Date:** 2026-09-04  
-**Review Target:** [`2026-09-04-multimodal-pr3-cloud-arm.md`](file:///C:/gitrep/Nimbus/docs/superpowers/plans/2026-09-04-multimodal-pr3-cloud-arm.md)  
+**Review Target:** [`2026-09-04-multimodal-pr3-cloud-arm.md`](./2026-09-04-multimodal-pr3-cloud-arm.md)  
 **Status:** Review Complete  
 
 ---
