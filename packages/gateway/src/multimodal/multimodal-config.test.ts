@@ -16,6 +16,11 @@ function withToml(body: string): string {
   return dir;
 }
 
+/** Writes `body` to a temp config dir and loads it — a one-call shorthand over `withToml`. */
+function loadFrom(body: string) {
+  return loadMultimodalConfig(withToml(body));
+}
+
 describe("loadMultimodalConfig", () => {
   test("no configDir is OFF with defaults", () => {
     const cfg = loadMultimodalConfig(undefined);
@@ -282,5 +287,37 @@ describe("loadMultimodalConfig — non-loopback vlm_base_url is refused LOUDLY",
     const cfg = loadMultimodalConfig(dir);
     expect(cfg.enabled).toBe(false);
     expect(cfg.vlmBaseUrl).toBe(DEFAULT_VLM_BASE_URL);
+  });
+});
+
+describe("remote_vlm", () => {
+  test("defaults to null — the remote arm is off unless named", () => {
+    expect(loadFrom("[multimodal]\nenabled = true\n").remoteVlm).toBeNull();
+  });
+
+  test("accepts a vendor with a shipped VLM adapter", () => {
+    expect(loadFrom('[multimodal]\nenabled = true\nremote_vlm = "openai"\n').remoteVlm).toBe(
+      "openai",
+    );
+  });
+
+  /**
+   * LOUD, not fail-off. Silently disabling the section because the user misspelled `anthropic`
+   * would be indistinguishable from the feature not existing — the same reasoning that makes a
+   * non-loopback `vlm_base_url` throw rather than turn the section off.
+   */
+  test("REFUSES an unknown vendor loudly, naming the value", () => {
+    expect(() => loadFrom('[multimodal]\nenabled = true\nremote_vlm = "gpt"\n')).toThrow(
+      /remote_vlm/,
+    );
+  });
+
+  /**
+   * § 19.8: the vision vendor set is NARROWER than the text vendor set. `xai` has a text adapter
+   * and no VLM adapter, so it must be refused at config load naming the reason, never accepted
+   * and failed per-artifact at describe time.
+   */
+  test("REFUSES a text-only vendor that has no vision adapter", () => {
+    expect(() => loadFrom('[multimodal]\nenabled = true\nremote_vlm = "xai"\n')).toThrow(/xai/);
   });
 });

@@ -1183,6 +1183,7 @@ describe("tryDispatchPhase4Rpc", () => {
       maxFrames: 37,
       fetchBudgetBytes: 1024 * 1024 * 1024,
       preferRenditions: true,
+      remoteVlm: null,
     };
     const out = buildMediaPassDepsInput({
       db,
@@ -1218,6 +1219,7 @@ describe("tryDispatchPhase4Rpc", () => {
       maxFrames: 8,
       fetchBudgetBytes: 2 * 1024 * 1024 * 1024,
       preferRenditions: false,
+      remoteVlm: null,
     };
     const withLabel = buildMediaPassDepsInput({
       db,
@@ -1262,6 +1264,7 @@ describe("tryDispatchPhase4Rpc", () => {
       maxFrames: 8,
       fetchBudgetBytes: 2 * 1024 * 1024 * 1024,
       preferRenditions: false,
+      remoteVlm: null,
     };
     const deps = buildMediaPassDeps(
       buildMediaPassDepsInput({
