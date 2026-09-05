@@ -2,6 +2,14 @@
 
 All notable changes to the `nimbus` core (headless Gateway + CLI binary + first-party MCP connectors) are documented in this file. release-please appends new entries between this header and the most recent version below when a release PR merges.
 
+## [7.10.0](https://github.com/nimbus-agent/Nimbus/compare/v7.9.0...v7.10.0) (2026-09-05)
+
+
+### Features
+
+* **http:** resolve a forge file coordinate to a path in the reader's checkout ([#1447](https://github.com/nimbus-agent/Nimbus/issues/1447)) ([b472f67](https://github.com/nimbus-agent/Nimbus/commit/b472f67988de1f7ef16577e47da57f7c42f7e7db))
+* **multimodal:** cloud byte-fetch for Photos, Drive and OneDrive (S2 PR 3 of 4) ([#1448](https://github.com/nimbus-agent/Nimbus/issues/1448)) ([3f7e7b6](https://github.com/nimbus-agent/Nimbus/commit/3f7e7b62668387cf61b40ff0a3ddcc6bf6cf69e9))
+
 ## [7.9.0](https://github.com/nimbus-agent/Nimbus/compare/v7.8.2...v7.9.0) (2026-09-04)
 
 
