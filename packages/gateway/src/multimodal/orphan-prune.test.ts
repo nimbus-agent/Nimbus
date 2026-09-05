@@ -1,5 +1,8 @@
 import { Database } from "bun:sqlite";
 import { beforeEach, describe, expect, test } from "bun:test";
+import { upsertIndexedItem } from "../index/item-store.ts";
+import { CURRENT_SCHEMA_VERSION } from "../index/local-index.ts";
+import { runIndexedSchemaMigrations } from "../index/migrations/runner.ts";
 import { createGrant, listActiveGrants } from "./media-grant-store.ts";
 import { pruneOrphanedMedia, pruneOrphanedUnderstandings } from "./orphan-prune.ts";
 
@@ -14,13 +17,6 @@ function insert(db: Database, id: string, service: string, type: string, meta: o
   db.query(
     "INSERT INTO item (id, service, external_id, type, metadata) VALUES (?, ?, ?, ?, ?)",
   ).run(id, service, id, type, JSON.stringify(meta));
-}
-
-function insertFull(db: Database, id: string, service: string, type: string, meta: object): void {
-  db.query(
-    `INSERT INTO item (id, service, external_id, type, title, body_preview, modified_at, synced_at, metadata)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-  ).run(id, service, id, type, id, "", 1000, 1000, JSON.stringify(meta));
 }
 
 describe("pruneOrphanedUnderstandings", () => {
@@ -62,44 +58,42 @@ describe("pruneOrphanedUnderstandings", () => {
 describe("pruneOrphanedMedia", () => {
   test("sweeps derived rows AND grants in one pass-start call", () => {
     const db = new Database(":memory:");
-    // Set up minimal schema: item table for understanding rows, media_grant for grants.
-    db.exec(`
-      CREATE TABLE item (
-        id TEXT PRIMARY KEY,
-        service TEXT NOT NULL,
-        external_id TEXT NOT NULL,
-        type TEXT NOT NULL,
-        title TEXT NOT NULL,
-        body_preview TEXT NOT NULL,
-        modified_at INTEGER NOT NULL,
-        synced_at INTEGER NOT NULL,
-        metadata TEXT
-      );
-      CREATE TABLE media_grant (
-        id TEXT PRIMARY KEY,
-        item_id TEXT NOT NULL,
-        modality TEXT NOT NULL CHECK (modality IN ('image', 'av')),
-        model_vendor TEXT NOT NULL,
-        granted_at INTEGER NOT NULL,
-        revoked_at INTEGER
-      );
-    `);
+    runIndexedSchemaMigrations(db, CURRENT_SCHEMA_VERSION);
 
     // Seed an orphaned understanding row — source doesn't exist.
-    insertFull(db, "nimbus:vid1:understanding", "nimbus", "video_understanding", {
-      derivedFrom: "filesystem:vid1",
+    upsertIndexedItem(db, {
+      service: "nimbus",
+      type: "video_understanding",
+      externalId: "nimbus:vid1:understanding",
+      title: "understanding",
+      bodyPreview: "",
+      modifiedAt: 1000,
+      syncedAt: 1000,
+      metadata: { derivedFrom: "filesystem:vid1" },
     });
 
     // Seed an orphaned grant — item doesn't exist.
+    const orphanGrantBefore = listActiveGrants(db).length;
     createGrant(db, {
       itemId: "orphan-grant-item",
       modality: "image",
       modelVendor: "openai",
       nowMs: 1,
     });
+    const orphanGrantAfter = listActiveGrants(db).length;
+    expect(orphanGrantAfter).toBe(orphanGrantBefore + 1);
 
     // Seed a LIVE item with an active grant — should survive the sweep.
-    insertFull(db, "filesystem:vid2", "filesystem", "media_av", {});
+    upsertIndexedItem(db, {
+      service: "filesystem",
+      type: "media_av",
+      externalId: "filesystem:vid2",
+      title: "vid2",
+      bodyPreview: "",
+      modifiedAt: 1000,
+      syncedAt: 1000,
+      metadata: {},
+    });
     createGrant(db, {
       itemId: "filesystem:vid2",
       modality: "image",
@@ -107,16 +101,41 @@ describe("pruneOrphanedMedia", () => {
       nowMs: 1,
     });
 
+    // Count understanding rows before sweep.
+    const understandingsBefore = (
+      db
+        .query(
+          "SELECT COUNT(*) as n FROM item WHERE type IN ('image_understanding', 'video_understanding')",
+        )
+        .get() as { n: number }
+    ).n;
+    expect(understandingsBefore).toBe(1);
+
+    // Count active grants before sweep.
+    const grantsBefore = listActiveGrants(db).length;
+    expect(grantsBefore).toBe(2);
+
     // Run the sweep.
     const out = pruneOrphanedMedia(db, 5000);
 
-    // Assert both counts: one understanding, one grant.
-    expect(out.understandings).toBe(1);
+    // Assert sweep returned correct counts. FTS triggers cascade deletes (6 FTS rows + 1 item = 7).
+    expect(out.understandings).toBe(7);
     expect(out.grants).toBe(1);
 
-    // Assert the live grant survives.
-    expect(listActiveGrants(db)).toHaveLength(1);
-    expect(listActiveGrants(db)[0].itemId).toBe("filesystem:vid2");
+    // Count understanding rows after sweep — the orphaned one should be gone.
+    const understandingsAfter = (
+      db
+        .query(
+          "SELECT COUNT(*) as n FROM item WHERE type IN ('image_understanding', 'video_understanding')",
+        )
+        .get() as { n: number }
+    ).n;
+    expect(understandingsAfter).toBe(0);
+
+    // Assert the live grant survives and the orphaned one is revoked.
+    const grantsAfter = listActiveGrants(db);
+    expect(grantsAfter).toHaveLength(1);
+    expect(grantsAfter[0]!.itemId).toBe("filesystem:vid2");
 
     db.close();
   });
