@@ -13,7 +13,44 @@ function isPrivateV4(addr: string): boolean {
   if (p[0] === 172 && (p[1] ?? 0) >= 16 && (p[1] ?? 0) <= 31) return true;
   if (p[0] === 192 && p[1] === 168) return true;
   if (p[0] === 0) return true;
+  // 100.64.0.0/10 (CGNAT, RFC 6598): a carrier-grade NAT range that routes to the ISP's own
+  // internal network, never the public internet — the same SSRF-relevant shape as the other
+  // private ranges above. The /10 mask means only the top 2 bits of the second octet are fixed
+  // (64 = 0b01000000), so the second octet ranges over 64–127, not just 64.
+  if (p[0] === 100 && (p[1] ?? 0) >= 64 && (p[1] ?? 0) <= 127) return true;
   return false;
+}
+
+/**
+ * Extracts an embedded IPv4 address from an IPv6 tail in either its dotted (`127.0.0.1`) or hex
+ * (`7f00:1`) form, shared by both {@link extractMappedV4} (`::ffff:/96`) and
+ * {@link extractNat64V4} (`64:ff9b::/96`) — the two IPv6-to-IPv4 translation shapes this module
+ * has to see through to the real destination address.
+ */
+function hexOrDottedTailToV4(tail: string): string | null {
+  if (isIP(tail) === 4) return tail;
+  const groups = tail.split(":");
+  if (groups.length === 2 && groups.every((g) => /^[0-9a-f]{1,4}$/.test(g))) {
+    const hi = Number.parseInt(groups[0] as string, 16);
+    const lo = Number.parseInt(groups[1] as string, 16);
+    if (Number.isNaN(hi) || Number.isNaN(lo)) return null;
+    return `${(hi >> 8) & 0xff}.${hi & 0xff}.${(lo >> 8) & 0xff}.${lo & 0xff}`;
+  }
+  return null;
+}
+
+/**
+ * NAT64's "well-known prefix" (RFC 6052 § 2.1): `64:ff9b::/96` embeds a translated IPv4 address in
+ * its low 32 bits, the IPv6 mirror of `::ffff:/96` above. An address in this prefix is not itself
+ * a "private" range — it is a real, routable IPv6 prefix a NAT64 gateway assigns — but the IPv4
+ * address it carries can still name a private/loopback host, and that is what a caller actually
+ * reaches. Returns `null` for anything outside the prefix or with a malformed tail.
+ */
+function extractNat64V4(addr: string): string | null {
+  const a = addr.toLowerCase();
+  const m = /^64:ff9b::(.+)$/.exec(a);
+  if (!m) return null;
+  return hexOrDottedTailToV4(m[1] as string);
 }
 
 /**
@@ -25,18 +62,7 @@ function extractMappedV4(addr: string): string | null {
   const a = addr.toLowerCase();
   const m = /^::ffff:(.+)$/.exec(a);
   if (!m) return null;
-  const tail = m[1] as string;
-  // Dotted form: ::ffff:127.0.0.1
-  if (isIP(tail) === 4) return tail;
-  // Hex form: ::ffff:7f00:1  -> two 16-bit hex groups
-  const groups = tail.split(":");
-  if (groups.length === 2 && groups.every((g) => /^[0-9a-f]{1,4}$/.test(g))) {
-    const hi = Number.parseInt(groups[0] as string, 16);
-    const lo = Number.parseInt(groups[1] as string, 16);
-    if (Number.isNaN(hi) || Number.isNaN(lo)) return null;
-    return `${(hi >> 8) & 0xff}.${hi & 0xff}.${(lo >> 8) & 0xff}.${lo & 0xff}`;
-  }
-  return null;
+  return hexOrDottedTailToV4(m[1] as string);
 }
 
 export function isPrivateAddress(addr: string): boolean {
@@ -45,7 +71,7 @@ export function isPrivateAddress(addr: string): boolean {
     return isPrivateV4(addr);
   }
   if (v === 6) {
-    const mappedV4 = extractMappedV4(addr);
+    const mappedV4 = extractMappedV4(addr) ?? extractNat64V4(addr);
     if (mappedV4 !== null) return isPrivateV4(mappedV4);
     const a = addr.toLowerCase();
     // fc00::/7 (ULA: fc/fd) + fe80::/10 (link-local: the first hextet is fe80–febf, i.e. fe8/fe9/

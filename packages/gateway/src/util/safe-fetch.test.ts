@@ -26,6 +26,23 @@ describe("isPrivateAddress", () => {
     ["fea0::1", true],
     ["febf::1", true],
     ["not-an-ip", false],
+    // 100.64.0.0/10 (CGNAT, RFC 6598): the /10 mask covers second-octet values 64–127, so the
+    // near-miss just below the range (100.63.x) must stay public and the first address IN the
+    // range (100.64.0.0) must be blocked.
+    ["100.64.0.1", true],
+    ["100.100.1.1", true],
+    ["100.127.255.255", true],
+    ["100.63.255.255", false],
+    ["100.128.0.0", false],
+    // NAT64's well-known prefix (RFC 6052, `64:ff9b::/96`) embeds a translated IPv4 address in its
+    // low 32 bits — the IPv6 mirror of `::ffff:/96` above. `7f00:1` decodes to 127.0.0.1, so this
+    // must resolve as private through the SAME embedded-address check the mapped form uses.
+    ["64:ff9b::7f00:1", true],
+    // The embedded address itself is public, so the NAT64 wrapper must not make it private.
+    ["64:ff9b::808:808", false],
+    // One hextet off the real well-known prefix (64:ff9c, not 64:ff9b) — must NOT be treated as
+    // NAT64 at all, so it falls through to the plain non-private IPv6 case.
+    ["64:ff9c::7f00:1", false],
   ])("%s -> private=%p", (addr, expected) => {
     expect(isPrivateAddress(addr as string)).toBe(expected);
   });
