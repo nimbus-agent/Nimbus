@@ -1,9 +1,9 @@
 /**
- * Test-only harness for the small family of bearer-authed HTTP routes mounted INLINE in the
- * `fetch` handler, ahead of the unauthenticated GET table — `GET /v1/items/resolve` today, and a
- * later task's `POST /v1/items/fetch` behind the same seam. Boots a REAL
- * `startReadOnlyHttpServer` on port 0 with a fresh temp-dir SQLite DB (migrated to latest) and an
- * in-memory vault seeded with exactly ONE token minted with the caller's chosen scopes.
+ * Test-only harness for the small family of bearer-authed HTTP GET routes mounted INLINE in the
+ * `fetch` handler, ahead of the unauthenticated GET table — `GET /v1/items/resolve` and
+ * `GET /v1/items/resolve-file`. Boots a REAL `startReadOnlyHttpServer` on port 0 with a fresh
+ * temp-dir SQLite DB (migrated to latest) and an in-memory vault seeded with exactly ONE token
+ * minted with the caller's chosen scopes.
  *
  * Modelled on `agent-runs/agent-test-server.ts` / `briefs/brief-test-server.ts`. NOT itself a
  * `*.test.ts` file — importers use `startServerWithClipToken` rather than redefining it, so this
@@ -11,8 +11,9 @@
  *
  * `extraOpts` is spread BEFORE `clipsVault` in the options object handed to
  * `startReadOnlyHttpServer`, so a caller's own options can never accidentally strip the minted
- * vault by supplying a `clipsVault` key of their own — this is the seam a later task needs (e.g.
- * wiring `fetchItem` in for `POST /v1/items/fetch`) without a second parallel harness.
+ * vault by supplying a `clipsVault` key of their own — this is the seam a future addition to this
+ * GET family needs without a second parallel harness. `POST /v1/items/fetch` is NOT part of this
+ * family: it is a write, dispatched through `dispatchWriteRoute` on a separate seam.
  */
 
 import { Database } from "bun:sqlite";
@@ -38,8 +39,9 @@ export type ClipTestServer = {
 
 /**
  * Boots a real server with exactly one clip token minted with `scopes`. `extraOpts` passes
- * straight through to `startReadOnlyHttpServer` for anything beyond `clipsVault` (e.g. a later
- * task's `fetchItem` closure for the `POST /v1/items/fetch` write seam).
+ * straight through to `startReadOnlyHttpServer` for anything beyond `clipsVault` (e.g. the
+ * `fetchItem` closure `POST /v1/items/fetch`'s own test wires in for its write seam, shared
+ * options object notwithstanding).
  */
 export async function startServerWithClipToken(
   scopes: readonly ApiScope[],
