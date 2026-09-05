@@ -132,6 +132,60 @@ describe("findUnhiddenSpawns", () => {
     expect(findUnhiddenSpawns(src, F)).toEqual([]);
   });
 
+  test("flags `windowsHide: false` — the token is not the property value", () => {
+    // The pre-fix rule accepted any `windowsHide` token, so this passed while still popping a
+    // window. It is not hypothetical: this PR's own measurement harness used exactly this shape
+    // to build its positive control.
+    const src = `const p = Bun.spawn(a, { windowsHide: false });`;
+    expect(findUnhiddenSpawns(src, F)).toHaveLength(1);
+  });
+
+  test("flags a windowsHide nested one object deeper than the options literal", () => {
+    const src = `const p = Bun.spawn(a, { env: { windowsHide: true } });`;
+    expect(findUnhiddenSpawns(src, F)).toHaveLength(1);
+  });
+
+  test("accepts `windowsHide` spelled with unusual spacing", () => {
+    const src = `const p = Bun.spawn(a, { windowsHide   :   true });`;
+    expect(findUnhiddenSpawns(src, F)).toEqual([]);
+  });
+
+  test("accepts windowsHide alongside a spread of shared options", () => {
+    const src = `const p = spawn(cmd, [url], { ...detachedIgnore, windowsHide: true });`;
+    const withImport = `import { spawn } from "node:child_process";\n${src}`;
+    expect(findUnhiddenSpawns(withImport, F)).toEqual([]);
+  });
+
+  test("flags a namespace-imported spawn that omits the flag", () => {
+    // `findUnhiddenSpawns` skips member calls so `runner.spawn(...)` indirection is ignored,
+    // but a `node:child_process` namespace import is a REAL spawn wearing the same shape.
+    const src = [
+      `import * as childProcess from "node:child_process";`,
+      `const c = childProcess.spawn(cmd, args, { stdio: "ignore" });`,
+    ].join("\n");
+    const issues = findUnhiddenSpawns(src, F);
+    expect(issues).toHaveLength(1);
+    expect(issues[0]?.line).toBe(2);
+  });
+
+  test("accepts a namespace-imported spawn that passes the flag", () => {
+    const src = [
+      `import * as cp from "node:child_process";`,
+      `const c = cp.spawnSync(cmd, args, { windowsHide: true });`,
+    ].join("\n");
+    expect(findUnhiddenSpawns(src, F)).toEqual([]);
+  });
+
+  test("a member call on an unrelated object is still ignored", () => {
+    // Guards the exclusion the namespace support must not swallow: `runner` is a SandboxRunner,
+    // and the real spawn it reaches is checked at the runner's own definition.
+    const src = [
+      `import * as childProcess from "node:child_process";`,
+      `const c = runner.spawn(cmd, args, opts);`,
+    ].join("\n");
+    expect(findUnhiddenSpawns(src, F)).toEqual([]);
+  });
+
   test("an unterminated call is reported rather than silently skipped", () => {
     // Fail-closed: a paren-match that runs off the end must not read as 'no issue found'.
     const src = `const p = Bun.spawn(args, { stdout: "pipe"`;
