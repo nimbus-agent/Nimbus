@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1788590652843,
+  "lastUpdate": 1788591742735,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "def4c74d84a5ad4371fdbfa78eecfccbf292f990",
-          "message": "chore(main): release 0.14.0 (#699)\n\n:robot: I have created a release *beep* *boop*\n---\n\n\n##\n[0.14.0](https://github.com/nimbus-agent/Nimbus/compare/v0.13.1...v0.14.0)\n(2026-06-21)\n\n\n### Features\n\n* **egress:** Egress Ledger & nimbus prove (S1 Local Brain —\nI29/D22/V44) ([#698](https://github.com/nimbus-agent/Nimbus/issues/698))\n([34fb594](https://github.com/nimbus-agent/Nimbus/commit/34fb5942fd536981f58405a8e4904529addd40a3))\n\n---\nThis PR was generated with [Release\nPlease](https://github.com/googleapis/release-please). See\n[documentation](https://github.com/googleapis/release-please#release-please).\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n\n## Summary by CodeRabbit\n\n* **New Features**\n  * Egress Ledger & nimbus prove functionality\n\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->",
-          "timestamp": "2026-06-21T06:42:27Z",
-          "tree_id": "690913fd3232b198e2bb0f649eaa1b5acad87728",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/def4c74d84a5ad4371fdbfa78eecfccbf292f990"
-        },
-        "date": 1782024892150,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 299.6245578500002,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 299.89566504999675,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 309.7343996000003,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "306811640+nimbus-release-bot[bot]@users.noreply.github.com",
+            "name": "nimbus-release-bot[bot]",
+            "username": "nimbus-release-bot[bot]"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "5c622162e5ef638757fec7a1d6fba1540e8baa9c",
+          "message": "chore: release main (#1450)\n\n:robot: I have created a release *beep* *boop*\n---\n\n\n<details><summary>7.10.0</summary>\n\n##\n[7.10.0](https://github.com/nimbus-agent/Nimbus/compare/v7.9.0...v7.10.0)\n(2026-09-05)\n\n\n### Features\n\n* **http:** resolve a forge file coordinate to a path in the reader's\ncheckout ([#1447](https://github.com/nimbus-agent/Nimbus/issues/1447))\n([b472f67](https://github.com/nimbus-agent/Nimbus/commit/b472f67988de1f7ef16577e47da57f7c42f7e7db))\n* **multimodal:** cloud byte-fetch for Photos, Drive and OneDrive (S2 PR\n3 of 4) ([#1448](https://github.com/nimbus-agent/Nimbus/issues/1448))\n([3f7e7b6](https://github.com/nimbus-agent/Nimbus/commit/3f7e7b62668387cf61b40ff0a3ddcc6bf6cf69e9))\n</details>\n\n---\nThis PR was generated with [Release\nPlease](https://github.com/googleapis/release-please). See\n[documentation](https://github.com/googleapis/release-please#release-please).\n\nCo-authored-by: nimbus-release-bot[bot] <306811640+nimbus-release-bot[bot]@users.noreply.github.com>",
+          "timestamp": "2026-09-05T06:51:25Z",
+          "tree_id": "bc4676e8e98585ddaed8fa9270f8313fb9411637",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/5c622162e5ef638757fec7a1d6fba1540e8baa9c"
+        },
+        "date": 1788591739628,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 298.69603274999645,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 295.9203590000008,
             "unit": "ms"
           }
         ]
