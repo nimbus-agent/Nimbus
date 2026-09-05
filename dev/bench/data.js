@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1788523810799,
+  "lastUpdate": 1788583843478,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "4d38898ca1c3d8235371c15a6a388d45c611a6fa",
-          "message": "refactor(dedup): Wave C — shared makeRestToolRegistrar across 10 REST connectors (#697)\n\n## Summary\n\nGeneralizes Wave A's file-local REST registrars (`registerGitlabTool` /\n`registerDriveTool`, #696) into one **shared** helper,\n`makeRestToolRegistrar`\n(`packages/mcp-connectors/shared/rest-tool-kit.ts`), and applies it\nacross the **ten remaining hand-rolled REST/Graph connectors**.\n\nIt collapses the repeated standard-tool body:\n\n```ts\nreg(name, desc, schema, async (args) => {\n  const token = requireProcessEnv(<env>);\n  const res = await <fetch>(token, buildPath(args)[, buildInit(args)]);\n  return mcpJsonResultIfOk(<label>, res[, snippetMax]);\n});\n```\n\nA connector supplies its registrar, token env, service label, and\ntoken-bearing fetcher **once**; each tool then provides only its\nname/description/schema + a pure `buildPath` (and optional `buildInit`\nfor method/body). The `snippetMax` knob preserves each connector's exact\n`mcpJsonResultIfOk` body-snippet length (Graph connectors use `200`;\ndefault is `300`).\n\n**Migrated (10):** circleci, discord, github, github-actions, gmail,\ngoogle-meet, google-photos, onedrive, outlook, pagerduty.\n\nTools with a non-standard tail (custom error text, 204 tolerance,\nraw-text body, bespoke write shapes — e.g. `outlook_mail_send`,\n`github_branch_delete`, onedrive download) stay hand-written on the\nconnector's own `reg`.\n\n## Fidelity — pure dedup, zero behavior change\n\n- The fetchers are **unchanged**, so #694's `resolveUrlWithBase`\n`nextLink` SSRF origin-pinning and the `headerLine` CR/LF header-safety\nschemas are preserved byte-for-byte.\n- Every connector `*-sandbox.test.ts` / `*-search-filter.test.ts` stays\ngreen **unedited** (full connector suite 871 pass / 0 fail).\n- New co-located tests cover `makeRestToolRegistrar` (token read,\nbuildPath/buildInit forwarding, `snippetMax` on error, the `undefined →\n300` default, fail-closed on missing env).\n- A 3-angle whole-branch review (per-connector OLD-vs-NEW diff of every\nmigrated tool + the helper/tests) found **zero fidelity slips**.\n\n## Scope / invariants\n\nNo migration, **no new invariant** — the helper lives in\n`mcp-connectors/shared/` (the established connector-internal-helper\nprecedent, not the SDK; no new SDK export, no coverage-floor ratchet).\n\n## jscpd\n\nStrict `bunx jscpd packages` **3.95% → 3.93%** (CI duplication ratchet\nstays **4.0**). As the realistic-floor analysis predicted, collapsing\nthe *boilerplate* body into a factory leaves the per-tool *specifics*\n(URL builders, schemas) parallel — so jscpd barely moves; the value here\nis maintainability and headroom under the gate.\n\nDesign:\n`docs/superpowers/specs/2026-06-20-dedup-wave-c-rest-registrar-design.md`\n\n## Local gates (all green before first push)\n\nall-package tsc · biome · strict tsc on the 5 `../shared/**`-including\nemail connectors · security-invariants (83) · nimbus-invariants static\naudit · full connector suite (871/0) · markdownlint · lychee · jscpd\n3.93% (EXIT 0)\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n\n## Summary by CodeRabbit\n\n* **Refactor**\n* Consolidated REST tool registration patterns across multiple\nconnectors to reduce code duplication and improve maintainability.\n\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude Opus 4.8 (1M context) <noreply@anthropic.com>",
-          "timestamp": "2026-06-20T15:08:24Z",
-          "tree_id": "75f06746bf01174798d1995a420c920ce3b50e91",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/4d38898ca1c3d8235371c15a6a388d45c611a6fa"
-        },
-        "date": 1781968831360,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 300.3340959000037,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 301.3472597999949,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 224.18166304999323,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "b472f67988de1f7ef16577e47da57f7c42f7e7db",
+          "message": "feat(http): resolve a forge file coordinate to a path in the reader's checkout (#1447)\n\n## Summary\n\nAdds `GET /v1/items/resolve-file` — a bearer-authed loopback read that\nmaps a forge file coordinate (`service`, `repo`, `refAndPath`) to a\nrepo-relative path in the reader's own checkout.\n\n**This route already has a caller in production.** `nimbus-web-clipper`\nshipped Phase C7.1 — three agent lanes on a GitHub/GitLab/Bitbucket\nsource-file page (*what breaks if this changes*, *who knows this file*,\n*who owns this*) — against a route no gateway has ever served. The\nclient reads the resulting 404 as \"gateway too old\", withholds the lanes\nand stays silent, so the feature is not broken, it is **inert on every\ngateway that exists**. This is the read that makes it work. No client\nchange and no re-pairing.\n\nThe resolution itself already existed: `resolveFileByRemote` is\nuntouched. This is the HTTP read in front of it, mirroring\n`handleItemsResolve` next door.\n\nTwo decisions carry the weight:\n\n- **The response names `path` field by field and never `repoRoot`.**\n`ResolveFileResult` also carries `repoRoot` — the reader's local\nfilesystem path — and `fileEntityId`. This route is reachable by any\nholder of a clip token, so the projection is written as an explicit\ntwo-field object rather than a spread, and a test pins\n`Object.keys(body)` to exactly `[\"ok\", \"path\"]` so a field added later\ncannot leak unnamed.\n- **A blank coordinate is a 400, not a pass-through.** An empty\n`service` would otherwise build `\":acme/web\"`, match no workspace, and\nanswer `remote_not_tracked` — telling the caller they have no checkout\nof a repository they never named.\n\nThe coordinate crosses the wire **unsplit** by design: a branch name may\ncontain slashes, so only the side holding the file list can tell where\nthe ref ends.\n\nUnder the existing `resolve` scope (it resolves; it runs nothing), **no\negress row** (nothing leaves the machine), and **no version floor** —\nthe route's presence *is* the capability signal the client probes, which\ncannot drift the way a floor constant needs raising. Additive:\n`agents-rpc.ts` keeps its `-32602`. No schema change, no new invariant.\n\n## Related Issue\n\nNo issue — this closes the gateway half of `nimbus-web-clipper`'s Phase\nC7.1, which shipped client-complete and gateway-blocked.\n\n## Linked Discussion\n\nN/A\n\n## Type of Change\n\n- [ ] Bug fix (non-breaking change that fixes an issue)\n- [x] New feature (non-breaking change that adds functionality)\n- [ ] Breaking change (fix or feature that changes existing behaviour)\n- [ ] Refactor (no behaviour change)\n- [x] Test improvement\n- [ ] Documentation only\n- [ ] CI / tooling\n\n## Non-Negotiables Checklist\n\n- [x] `bun run typecheck` passes with zero errors\n- [x] `bun run lint` passes (Biome — format + lint)\n- [x] All existing tests pass (`bun test`) — 16394 pass / 57 skip / 0\nfail\n- [x] New behaviour is covered by tests — 18 tests in\n`items-resolve-file-route.test.ts`\n- [x] No `any` types introduced — `unknown` is used for external data\n- [x] No credentials, tokens, or secret values appear in logs, IPC\nmessages, config, or test fixtures\n- [x] Platform-specific code is behind the `PlatformServices`\nabstraction — N/A, no OS-dependent code added\n- [x] The HITL consent gate has not been weakened, bypassed, or made\nconfigurable\n- [x] If this PR touches `docs/README.md`, a screenshot is attached —\nN/A, `docs/README.md` untouched\n\n## Coverage (if engine/ or vault/ was changed)\n\nN/A — neither `engine/` nor `vault/` was modified. Changes are confined\nto `packages/gateway/src/ipc/`, one comment in\n`packages/gateway/src/egress/`, and docs.\n\n## Testing\n\nFull gateway suite on the final tree: **16394 pass, 57 skip, 0 fail**\n(16451 across 1175 files).\n\n\n`packages/gateway/test/integration/http/items-resolve-file-route.test.ts`\nboots a real `startReadOnlyHttpServer` on port 0 against a real migrated\nSQLite DB, seeding the graph rows the route walks (`workspace\n--tracks_remote--> repo`, plus `source_file` entities). 18 tests:\n\n| Area | What is pinned |\n| --- | --- |\n| Hit | `{ ok: true, path }` and an **exact** key set — the disclosure\nguard |\n| Misses | `remote_not_tracked` and `file_not_indexed` asserted\nseparately, never collapsed |\n| Coordinates | Slashy branch names; a deep GitLab subgroup in the\n`repo` param; a space and `+` in the filename |\n| Traversal | `main/../../secret.txt` is an ordinary miss, not an error\n|\n| Egress | `egress_ledger` count unchanged across the request (a delta,\nnot a count of zero) |\n| Gates | 401 (bad token **and** no header), 403 with the\n`LEGACY_SCOPES` gap body, 400 per coordinate (blank **and** absent), 404\nwhen the clips surface is unmounted |\n\nThe encoding test puts the space and `+` in the **filename**, not the\nref: the resolver tries every ref/path split, so a mangled ref would\nstill leave a matching candidate and the test would pass while decoding\nwas broken.\n\n## Notes for Reviewers\n\n**The one thing worth your attention** is a bound this PR documents\nrather than changes. The `tracks_remote` edge the route walks is written\nonly from `parseRemoteUrl`, which accepts exactly three hosts\n(`repo-remote.ts:9-13`) and requires a two-segment `owner/name` path\n(`:70`). So a **self-hosted forge** — GitHub Enterprise, self-hosted\nGitLab/Bitbucket — and any **GitLab subgroup** project can never produce\na `repo` entity. A reader on a GHE blob page who genuinely has the\ncheckout is told `remote_not_tracked`.\n\nThe route is correct — it faithfully reports what the graph knows — but\nnothing said so, and the browser client recognises self-hosted forges\nand sends `service: \"github\"` regardless of host, so it *will* reach\nthis and get that answer. The bound is now stated in the spec's §4.5 and\nin the CHANGELOG entry. Widening `parseRemoteUrl` to self-hosted hosts\nis a separate feature with its own config surface; it is deliberately\n**not** in this PR.\n\nTwo smaller notes:\n\n- `tryBearerAuthedGet` was previously split out of the `fetch` handler\nfor Sonar S3776 (scored 17). This adds one branch to it. Deliberately\nnot restructured.\n- The route is **not** in `HTTP_ROUTES` / `openapi/v1.yaml`, matching\nevery other clip-scoped bearer read (`/v1/items/resolve`, the four\n`/v1/egress` reads, `/v1/agents`, the brief routes). That list is\ndocumented as the OpenAPI-checked public surface, not every served\nroute.\n\nThe design spec and its review ship in the branch under\n`docs/superpowers/specs/`, and the implementation plan under\n`docs/superpowers/plans/`.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nhttps://claude.ai/code/session_01AMxZTcMwFnhsoLb9QE2uER\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n\n## Summary by CodeRabbit\n\n- **New Features**\n- Added an authenticated `GET /v1/items/resolve-file` endpoint for\nresolving tracked Forge repository coordinates to local,\nrepository-relative file paths.\n- Supports GitHub, GitLab, and Bitbucket repositories with standard\n`owner/name` paths.\n- Successful responses expose only the resolved path; failures provide\nstructured resolution reasons.\n- Requests require the `resolve` permission and validate required\ncoordinates, encoding, and traversal rules.\n  - Resolution is local-only and makes no outbound requests.\n\n- **Documentation**\n- Documented the endpoint, authentication, response behavior, supported\nrepositories, and limitations.\n\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>",
+          "timestamp": "2026-09-05T04:41:38Z",
+          "tree_id": "c3a561cceb7c8b340e644c138e00e2bd720b0759",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/b472f67988de1f7ef16577e47da57f7c42f7e7db"
+        },
+        "date": 1788583841215,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 246.0222060500033,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 245.99545580000012,
             "unit": "ms"
           }
         ]
