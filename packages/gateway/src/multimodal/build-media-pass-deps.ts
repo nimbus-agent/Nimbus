@@ -9,12 +9,14 @@
  * arm, so an image or video candidate no longer falls through to `unresolvable_modality` here.
  */
 import type { Database } from "bun:sqlite";
+import { readFile as fsReadFile } from "node:fs/promises";
 import { getValidGoogleAccessToken } from "../auth/google-access-token.ts";
 import { getValidMicrosoftAccessToken } from "../auth/microsoft-access-token.ts";
 import { loadNimbusFilesystemRootsFromConfigDir } from "../config/filesystem-toml.ts";
 import { recordSyncEgress } from "../egress/sync-egress.ts";
 import { wrapLedgeredVlm } from "../egress/vlm-egress.ts";
 import { GpuArbiter } from "../llm/gpu-arbiter.ts";
+import { vendorApiKeyName } from "../llm/vendor-vault-keys.ts";
 import { safeFetchFollowing } from "../util/safe-fetch.ts";
 import type { NimbusVault } from "../vault/nimbus-vault.ts";
 import { WhisperSttProvider } from "../voice/stt.ts";
@@ -23,7 +25,8 @@ import { resolveFfprobeBin } from "./frames/frame-extract.ts";
 import type { Understander } from "./media-gate.ts";
 import { hasActiveGrant } from "./media-grant-store.ts";
 import type { MediaCloudDeps, MediaPassDeps } from "./media-pass.ts";
-import type { MediaCandidate, MediaModality, RemoteVlmVendor } from "./media-types.ts";
+import type { MediaCandidate, MediaModality, MediaSource, RemoteVlmVendor } from "./media-types.ts";
+import { UnsupportedImageFormatError } from "./media-types.ts";
 import {
   DEFAULT_FETCH_BUDGET_BYTES,
   DEFAULT_MAX_FRAMES,
@@ -33,9 +36,12 @@ import {
 } from "./multimodal-config.ts";
 import { resolveFfmpegBin } from "./stt/ffmpeg-bin.ts";
 import { createLongFormStt } from "./stt/long-form-stt.ts";
+import { IMAGE_CAPTION_PROMPT } from "./vlm/caption-prompts.ts";
+import { resolveWireMime } from "./vlm/image-mime.ts";
 import { createImageUnderstander } from "./vlm/image-understander.ts";
 import type { FetchLike } from "./vlm/ollama-vlm.ts";
 import { createOllamaVlm } from "./vlm/ollama-vlm.ts";
+import { createRemoteVlm } from "./vlm/remote/remote-vlm-shared.ts";
 
 export interface BuildMediaPassDepsInput {
   readonly db: Database;
@@ -134,6 +140,23 @@ async function cloudBearerFor(
 }
 
 /**
+ * The remote VLM arm's Vault read, mirroring `cloudBearerFor`'s fail-closed shape: no vault means
+ * no key, never a guess and never an environment fallback (Non-Negotiable #3). Resolved PER CALL,
+ * same as `platform/assemble.ts`'s text-route `apiKey` closures — a key added after boot works
+ * with no restart, and `vendorApiKeyName` is the ONE place a vendor's Vault key name is
+ * constructed (D11).
+ */
+async function vendorApiKey(
+  vault: NimbusVault | undefined,
+  vendor: RemoteVlmVendor,
+): Promise<string | null> {
+  if (vault === undefined) {
+    return null;
+  }
+  return vault.get(vendorApiKeyName(vendor));
+}
+
+/**
  * The cloud arm's shared collaborators (spec § 16.2–16.6). `fetchFn` is `safeFetchFollowing` —
  * every hop of a redirect re-validated against the private-address/SSRF check, credentials
  * stripped on a cross-origin hop — never a bare `fetch`: `cloud-url-resolver.ts`'s own `fetchFn`
@@ -221,22 +244,62 @@ export function withTranscribeTimeout(
 }
 
 /**
+ * Reads a `MediaSource`'s bytes, mirroring `image-understander.ts`'s inline pattern for the local
+ * arm: cloud bytes (PR 3) never touch disk and are taken directly, a local artifact is read here.
+ * No exported equivalent existed to reuse (checked before adding this) — a second private copy in
+ * the one other caller would have been the third occurrence of the same three-line branch.
+ */
+async function bytesForSource(source: MediaSource): Promise<Uint8Array> {
+  return source.kind === "bytes" ? source.bytes : new Uint8Array(await fsReadFile(source.path));
+}
+
+/**
  * The grant half of the remote arm. Returns a provider only when a vendor is configured AND an
  * active grant names it for this artifact — the two independent conditions of § 18.1 steps 3 and 4.
  *
  * The `Database` read lives here rather than in the gate so `media-gate.ts` never touches SQL and
  * D27(b) holds without an exemption for it.
  *
- * Returns `undefined` unconditionally at the end for now — Task 10 slots the wrapped remote
- * understander in there. Until then this closure exists purely to prove the GRANT half is wired:
- * production is inert (no remote adapter exists), exactly as PR 1 shipped the gate before the
- * local understanders existed.
+ * The remote provider and its `Understander` adapter are built ONCE, here, when `vendor` is
+ * non-null — not inside the returned per-candidate closure — so one provider instance (and one
+ * egress-ledger wrapper) serves every granted artifact in the pass, mirroring how `vlm`/
+ * `imageUnderstander` are each built once in `buildMediaPassDeps` below.
  */
 function buildRemoteFor(
   input: BuildMediaPassDepsInput,
   vendor: RemoteVlmVendor | null,
 ): ((candidate: MediaCandidate) => Understander | undefined) | undefined {
   if (vendor === null) return undefined;
+
+  // THE ONLY production site that may name `createRemoteVlm` (static rule D27(a)) -- the same file
+  // that already holds `createOllamaVlm` under D22(g), so one wiring site carries both and the two
+  // rules cannot point at different files for the same class of object.
+  const remoteProvider = wrapLedgeredVlm(
+    input.db,
+    createRemoteVlm({ vendor, apiKey: () => vendorApiKey(input.vault, vendor) }),
+  );
+
+  const remoteUnderstander: Understander = {
+    // DERIVED from the provider, never restated (I34).
+    isLocal: remoteProvider.isLocal,
+    model: `${vendor}/${remoteProvider.model}`,
+    isAvailable: () => remoteProvider.isAvailable(),
+    understand: async (source) => {
+      const bytes = await bytesForSource(source);
+      const mime = resolveWireMime(bytes, source.kind === "bytes" ? source.mime : null);
+      if (mime === null) {
+        throw new UnsupportedImageFormatError("not a JPEG, PNG, WebP or GIF");
+      }
+      const { text } = await remoteProvider.describe({
+        bytes,
+        prompt: IMAGE_CAPTION_PROMPT,
+        mimeType: mime,
+        egressMethod: "multimodal.vlm.image",
+      });
+      return { text };
+    },
+  };
+
   return (candidate: MediaCandidate): Understander | undefined => {
     if (candidate.modality !== "image") return undefined; // § 19.4: AV is local-only, always.
     if (
@@ -248,7 +311,7 @@ function buildRemoteFor(
     ) {
       return undefined;
     }
-    return undefined; // Task 10 returns the wrapped remote understander here.
+    return remoteUnderstander;
   };
 }
 
