@@ -104,8 +104,13 @@ function seedTrackedRepo(
     [wsId, `filesystem:${args.root}`, args.root],
   );
   db.run(
-    "INSERT INTO graph_entity (id, type, external_id, label, service, metadata) VALUES (?, 'repo', ?, ?, 'github', '{}')",
-    [repoId, args.remote, args.remote.split(":")[1] ?? ""],
+    "INSERT INTO graph_entity (id, type, external_id, label, service, metadata) VALUES (?, 'repo', ?, ?, ?, '{}')",
+    // `service` is DERIVED from the remote, mirroring the label on the line above. The real
+    // writer (`ownership-pass.ts`) sets it from the parsed remote, so hardcoding "github" here
+    // would make the GitLab fixture wrong relative to production — harmless today, since
+    // `resolveFileByRemote` matches on `external_id` and never reads this column, but a trap for
+    // the next forge test that copies this helper.
+    [repoId, args.remote, args.remote.split(":")[1] ?? "", args.remote.split(":")[0] ?? "github"],
   );
   db.run(
     "INSERT INTO graph_relation (from_id, to_id, type, created_at) VALUES (?, ?, 'tracks_remote', 0)",
