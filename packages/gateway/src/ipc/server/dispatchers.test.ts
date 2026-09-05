@@ -1212,7 +1212,15 @@ describe("tryDispatchPhase4Rpc", () => {
         vault,
       }),
     );
-    await expect(deps.cloudBytes.bearerFor("google_drive")).resolves.toBe("real-drive-token");
+    // NOT-NULL rather than the exact token, deliberately. The discriminator this test needs is
+    // null-vs-non-null: an unforwarded vault short-circuits in `cloudBearerFor` BEFORE any token
+    // resolver is reached, so reverting the wiring still reds this. Asserting the literal
+    // "real-drive-token" additionally required the REAL `auth/google-access-token.ts`, which
+    // `test/unit/connectors/google-drive-sync.test.ts` replaces with `mock.module` at module
+    // scope — process-global and never restored. That made this test hostage to file ordering:
+    // it passed on Windows and Linux and failed on macOS, where the mocking file happens to load
+    // first and `bearerFor` returned "google-drive-stub-token". Value-independence is the fix.
+    await expect(deps.cloudBytes.bearerFor("google_drive")).resolves.not.toBeNull();
   });
   test("an unregistered method through the same path still 404s (negative control)", async () => {
     const { ctx } = makeCtx();
