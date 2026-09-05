@@ -18,7 +18,7 @@
  */
 import { formatBytes } from "../lib/format-bytes.ts";
 import { withGatewayIpc } from "../lib/with-gateway-ipc.ts";
-import { runAllowRemoteCmd } from "./media-grants-cmd.ts";
+import { runAllowRemoteCmd, runGrantsCmd } from "./media-grants-cmd.ts";
 
 // Hand-mirrored from the gateway's `SkipReason` (packages/cli may not import gateway source).
 // A missing member here does not fail typecheck at the boundary — the summary arrives as JSON —
@@ -379,12 +379,16 @@ Usage:
 
   nimbus media allow-remote <itemId>... --vendor <name>
   nimbus media allow-remote --service <name> --limit N --vendor <name> [--since <days>]
+  nimbus media grants list
+  nimbus media grants revoke <itemId> [--vendor <name>]
 
 Grants remote-vision consent for specific images (never audio/video), one artifact at a time and
 by explicit approval only: allow-remote always shows every matching artifact by title before
 asking to confirm, naming both the source (the service holding the bytes today) and the
 destination (the third-party vendor about to receive them). A selector form (--service/--since)
 MUST also pass --limit — there is no default, since an unbounded grant must never be expressible.
+"grants list" names the vendor holding each active grant; "grants revoke" always requires an item
+id (never "revoke everything").
 
 Runs the budgeted, resumable understanding pass over indexed local AND cloud-backed (Google Drive,
 Google Photos, OneDrive) audio, video and still images: transcribes recordings and captions images
@@ -421,6 +425,10 @@ export async function runMediaCmd(args: string[]): Promise<void> {
   }
   if (sub === "allow-remote") {
     await runAllowRemoteCmd(args.slice(1));
+    return;
+  }
+  if (sub === "grants") {
+    await runGrantsCmd(args.slice(1));
     return;
   }
   const isJson = args.includes("--json");

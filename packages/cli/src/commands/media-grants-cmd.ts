@@ -1,15 +1,14 @@
 /**
- * `nimbus media allow-remote` — the consent surface that gates sending a user's photos to a
- * third-party vision model (spec S2 multimodal PR 4, §§ 18-19).
+ * `nimbus media allow-remote` and `nimbus media grants list|revoke` — the consent surface that
+ * gates sending a user's photos to a third-party vision model (spec S2 multimodal PR 4, §§ 18-19).
  *
- * The gateway's `media.allowRemote` IPC method (`packages/gateway/src/ipc/media-rpc.ts`) is the
- * source of truth for its own wire shape; this file never invents one. It takes
+ * The gateway's three IPC methods (`media.allowRemote`, `media.grants.list`,
+ * `media.grants.revoke` — `packages/gateway/src/ipc/media-rpc.ts`) are the source of truth for
+ * their own wire shapes; this file never invents one. In particular `media.allowRemote` takes
  * `{ itemIds: string[], vendor: string }` and returns only `{ granted, alreadyGranted }` — no item
  * metadata comes back — so the enumerated, dual-ended PREVIEW this command shows before asking for
  * confirmation is built client-side, from the existing general-purpose `index.queryItems` read
- * surface (the same one `nimbus query` uses) plus `media.grants.list` (so an already-granted
- * artifact is flagged honestly rather than reported as new), never from a new or gateway-modified
- * method.
+ * surface (the same one `nimbus query` uses), never from a new or gateway-modified method.
  *
  * Argument parsing and rendering are pure and exported so they can be tested without a gateway,
  * matching `media-cmd.ts`'s own split.
@@ -56,6 +55,11 @@ export interface GrantListEntry {
   readonly title: string | null;
   readonly modelVendor: string;
   readonly grantedAt: number;
+}
+
+export interface GrantsRevokeArgs {
+  readonly itemId: string;
+  readonly modelVendor?: string;
 }
 
 /**
@@ -197,6 +201,56 @@ function confirmationPrompt(count: number, vendor: string): string {
     `Send ${count} artifact${count === 1 ? "" : "s"} to ${vendor}? ` +
     "This cannot be undone for bytes already sent. [y/N] "
   );
+}
+
+export function renderGrantList(grants: readonly GrantListEntry[]): string {
+  if (grants.length === 0) {
+    return "No active grants.";
+  }
+  return grants
+    .map((g) => {
+      const title = g.title ?? "(item no longer indexed)";
+      const grantedAt = new Date(g.grantedAt).toISOString();
+      return `  ${title} — ${g.modelVendor} (granted ${grantedAt}, item ${g.itemId})`;
+    })
+    .join("\n");
+}
+
+/**
+ * `nimbus media grants revoke <itemId> [--vendor <name>]`. Refuses with no item id (§ 19.7: a
+ * revocation always names its target — there is no "revoke everything").
+ */
+export function parseGrantsRevokeArgs(argv: readonly string[]): GrantsRevokeArgs {
+  let itemId: string | undefined;
+  let modelVendor: string | undefined;
+
+  let i = 0;
+  while (i < argv.length) {
+    const arg = argv[i];
+    if (arg === "--vendor") {
+      const value = argv[i + 1];
+      if (value === undefined) {
+        throw new Error("nimbus media grants revoke: --vendor requires a value");
+      }
+      modelVendor = value;
+      i += 2;
+      continue;
+    }
+    if (arg?.startsWith("--")) {
+      throw new Error(`nimbus media grants revoke: unknown flag "${arg}"`);
+    }
+    if (itemId === undefined && arg !== undefined && arg.length > 0) {
+      itemId = arg;
+    }
+    i += 1;
+  }
+
+  if (itemId === undefined) {
+    throw new Error(
+      "nimbus media grants revoke: an item id is required -- refusing to revoke every grant",
+    );
+  }
+  return modelVendor === undefined ? { itemId } : { itemId, modelVendor };
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -420,4 +474,37 @@ export async function runAllowRemoteCmd(argv: string[]): Promise<void> {
     });
     console.log(`Granted ${result.granted} new, ${result.alreadyGranted} already granted.`);
   });
+}
+
+async function runGrantsListCmd(): Promise<void> {
+  await withGatewayIpc(async (c) => {
+    const grants = await fetchGrantList(c);
+    console.log(renderGrantList(grants));
+  });
+}
+
+async function runGrantsRevokeCmd(argv: string[]): Promise<void> {
+  const parsed = parseGrantsRevokeArgs(argv);
+  await withGatewayIpc(async (c) => {
+    const result = await c.call<{ revoked: number }>("media.grants.revoke", {
+      itemId: parsed.itemId,
+      ...(parsed.modelVendor === undefined ? {} : { modelVendor: parsed.modelVendor }),
+    });
+    console.log(`Revoked ${result.revoked} grant${result.revoked === 1 ? "" : "s"}.`);
+  });
+}
+
+export async function runGrantsCmd(argv: string[]): Promise<void> {
+  const sub = argv[0];
+  if (sub === "list") {
+    await runGrantsListCmd();
+    return;
+  }
+  if (sub === "revoke") {
+    await runGrantsRevokeCmd(argv.slice(1));
+    return;
+  }
+  throw new Error(
+    `nimbus media grants: unknown subcommand "${sub ?? ""}" (expected "list" or "revoke")`,
+  );
 }

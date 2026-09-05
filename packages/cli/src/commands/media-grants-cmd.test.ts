@@ -1,6 +1,11 @@
 import { describe, expect, test } from "bun:test";
 import type { GrantPreviewItem } from "./media-grants-cmd.ts";
-import { parseAllowRemoteArgs, renderGrantPreview } from "./media-grants-cmd.ts";
+import {
+  parseAllowRemoteArgs,
+  parseGrantsRevokeArgs,
+  renderGrantList,
+  renderGrantPreview,
+} from "./media-grants-cmd.ts";
 
 describe("parseAllowRemoteArgs", () => {
   test("accepts explicit item ids", () => {
@@ -78,5 +83,30 @@ describe("renderGrantPreview", () => {
     const out = renderGrantPreview({ items, vendor: "openai" });
     expect(out).toMatch(/1 new/);
     expect(out).toMatch(/1 already granted/);
+  });
+});
+
+describe("renderGrantList", () => {
+  test("names the vendor per grant — the whole point is which third party may see what", () => {
+    const out = renderGrantList([
+      { itemId: "i1", title: "chart.png", modelVendor: "openai", grantedAt: 1_700_000_000_000 },
+    ]);
+    expect(out).toContain("openai");
+    expect(out).toContain("chart.png");
+  });
+
+  test("an empty list says so plainly rather than printing a bare header", () => {
+    expect(renderGrantList([])).toMatch(/no active grants/i);
+  });
+});
+
+describe("parseGrantsRevokeArgs", () => {
+  test("--vendor narrows the revocation; without it every vendor's grant on the item goes", () => {
+    expect(parseGrantsRevokeArgs(["i1", "--vendor", "openai"]).modelVendor).toBe("openai");
+    expect(parseGrantsRevokeArgs(["i1"]).modelVendor).toBeUndefined();
+  });
+
+  test("REFUSES with no item id rather than revoking everything", () => {
+    expect(() => parseGrantsRevokeArgs([])).toThrow();
   });
 });
