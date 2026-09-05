@@ -141,6 +141,34 @@ export function listActiveGrants(db: Database): MediaGrant[] {
     .map(toGrant);
 }
 
+export interface MediaGrantWithTitle extends MediaGrant {
+  /** `null` when the granted item itself has since left the index (see `revokeOrphanedGrants`). */
+  readonly title: string | null;
+}
+
+/**
+ * `listActiveGrants` plus each grant's item TITLE, for `media.grants.list` (§ 19.6/19.7's
+ * companion read surface): "openai has i7f3..." tells an owner nothing about what they exposed.
+ *
+ * The title is joined from `item` in a SEPARATE bound-param query, never woven into the
+ * `media_grant` query itself — `item` is not the table D27(b) confines, so this stays outside
+ * `D27_GRANT_TABLE_ALLOWED` without needing an exemption, and this file's read still applies
+ * `listActiveGrants`'s own active-row filter rather than re-deriving one.
+ */
+export function listActiveGrantsWithTitles(db: Database): MediaGrantWithTitle[] {
+  const grants = listActiveGrants(db);
+  if (grants.length === 0) return [];
+  const ids = [...new Set(grants.map((g) => g.itemId))];
+  const placeholders = ids.map(() => "?").join(", ");
+  const rows = db
+    .query<{ id: string; title: string }, string[]>(
+      `SELECT id, title FROM item WHERE id IN (${placeholders})`,
+    )
+    .all(...ids);
+  const titleById = new Map(rows.map((r) => [r.id, r.title]));
+  return grants.map((g) => ({ ...g, title: titleById.get(g.itemId) ?? null }));
+}
+
 export function hasActiveGrant(
   db: Database,
   args: {

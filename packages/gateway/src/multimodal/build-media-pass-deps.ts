@@ -372,6 +372,15 @@ export function buildMediaPassDeps(input: BuildMediaPassDepsInput): BuiltMediaPa
     fetchBudgetBytes: input.fetchBudgetBytes ?? DEFAULT_FETCH_BUDGET_BYTES,
     preferRenditions: input.preferRenditions ?? DEFAULT_PREFER_RENDITIONS,
     cloudBytes: buildCloudBytesDeps(input),
+    // The OTHER consumer of `input.remoteVlm`, alongside `buildRemoteFor` below: `findCandidates`
+    // (media-discovery.ts) reads THIS field to re-offer a locally-understood, actively-granted
+    // artifact (spec § 19.1). Omitted (rather than `null`), matching the field's own
+    // `string | undefined` shape on `MediaPassDeps` -- an install with no remote vendor configured
+    // must run the exact query it ran before PR 4, with no parameter bound for a clause that isn't
+    // there, not a `null` threaded through and compared away.
+    ...(input.remoteVlm === null || input.remoteVlm === undefined
+      ? {}
+      : { remoteVendor: input.remoteVlm }),
     gate: {
       enabled: input.enabled,
       capabilityDisabled: input.capabilityDisabled,

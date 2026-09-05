@@ -76,6 +76,26 @@ describe("checkLanMethodAllowed", () => {
     ).toThrow(LanError);
   });
 
+  /**
+   * PR 4's three consent-management methods. Consent to send a user's photos to a third party is
+   * the local owner's to give, and a LAN peer must never be able to grant it — nor to ENUMERATE
+   * which artifacts the owner has already exposed, which is why `media.grants.list` is forbidden
+   * too even though it writes nothing: it is a read, but a read of exactly the fact I27/I30-style
+   * reasoning treats as sensitive. All three ride the pre-existing `media` NAMESPACE forbid rather
+   * than needing a new entry — this test is the proof that they actually do, not an assumption.
+   */
+  test.each(["media.allowRemote", "media.grants.list", "media.grants.revoke"])(
+    "%s is LAN-forbidden regardless of grant-write",
+    (method) => {
+      expect(() => checkLanMethodAllowed(method, { peerId: "p", writeAllowed: true })).toThrow(
+        LanError,
+      );
+      expect(() => checkLanMethodAllowed(method, { peerId: "p", writeAllowed: false })).toThrow(
+        LanError,
+      );
+    },
+  );
+
   test("rejects connector.addMcp even with writeAllowed false (also forbidden, not just write-gated)", () => {
     expect(() =>
       checkLanMethodAllowed("connector.addMcp", { peerId: "p", writeAllowed: false }),

@@ -227,4 +227,182 @@ describe("dispatchMediaRpc", () => {
       dispatchMediaRpc("media.understand", { renditions: "yes" }, { runPass: async () => SUMMARY }),
     ).rejects.toThrow(/renditions/);
   });
+
+  test("media.understand throws a clear error when runPass is not wired, rather than a TypeError", async () => {
+    await expect(dispatchMediaRpc("media.understand", {}, {})).rejects.toThrow(/runPass/);
+  });
+});
+
+describe("dispatchMediaRpc — media.allowRemote (Task 15)", () => {
+  /** A minimal in-memory stand-in for `media-grant-store.ts`'s `createGrant`. */
+  function fakeGrantStore() {
+    const active = new Set<string>();
+    return {
+      grantRemote: ({ itemId, vendor }: { itemId: string; vendor: string; nowMs: number }) => {
+        const key = `${itemId}:${vendor}`;
+        const alreadyActive = active.has(key);
+        active.add(key);
+        return { alreadyActive };
+      },
+    };
+  }
+
+  test("writes a grant and reports new-vs-already-granted, deduplicating a repeated id naturally", async () => {
+    const { grantRemote } = fakeGrantStore();
+    const res = await dispatchMediaRpc(
+      "media.allowRemote",
+      { itemIds: ["i1", "i1"], vendor: "openai" },
+      { configuredRemoteVlm: "openai", grantRemote },
+    );
+    expect(res).toEqual({ granted: 1, alreadyGranted: 1 });
+  });
+
+  test("grants two DIFFERENT items as two new grants, not one", async () => {
+    const { grantRemote } = fakeGrantStore();
+    const res = await dispatchMediaRpc(
+      "media.allowRemote",
+      { itemIds: ["i1", "i2"], vendor: "openai" },
+      { configuredRemoteVlm: "openai", grantRemote },
+    );
+    expect(res).toEqual({ granted: 2, alreadyGranted: 0 });
+  });
+
+  /**
+   * The ships-inert pattern this method exists to close: a grant for a vendor the install cannot
+   * use. Silently substituting the configured vendor would be worse — the caller named a specific
+   * third party.
+   */
+  test("REFUSES a vendor that is not the configured one", async () => {
+    const { grantRemote } = fakeGrantStore();
+    await expect(
+      dispatchMediaRpc(
+        "media.allowRemote",
+        { itemIds: ["i1"], vendor: "anthropic" },
+        { configuredRemoteVlm: "openai", grantRemote },
+      ),
+    ).rejects.toThrow(/does not match the configured/);
+  });
+
+  test("REFUSES any vendor when none is configured at all", async () => {
+    const { grantRemote } = fakeGrantStore();
+    await expect(
+      dispatchMediaRpc(
+        "media.allowRemote",
+        { itemIds: ["i1"], vendor: "openai" },
+        { configuredRemoteVlm: null, grantRemote },
+      ),
+    ).rejects.toThrow(/no remote vision vendor is configured/);
+  });
+
+  test("rejects an empty itemIds array rather than granting nothing silently", async () => {
+    const { grantRemote } = fakeGrantStore();
+    await expect(
+      dispatchMediaRpc(
+        "media.allowRemote",
+        { itemIds: [], vendor: "openai" },
+        { configuredRemoteVlm: "openai", grantRemote },
+      ),
+    ).rejects.toThrow(/itemIds/);
+  });
+
+  test("rejects a missing vendor", async () => {
+    const { grantRemote } = fakeGrantStore();
+    await expect(
+      dispatchMediaRpc(
+        "media.allowRemote",
+        { itemIds: ["i1"] },
+        { configuredRemoteVlm: "openai", grantRemote },
+      ),
+    ).rejects.toThrow(/vendor/);
+  });
+
+  test("throws a wiring error when deps.grantRemote is absent, rather than skipping silently", async () => {
+    await expect(
+      dispatchMediaRpc(
+        "media.allowRemote",
+        { itemIds: ["i1"], vendor: "openai" },
+        { configuredRemoteVlm: "openai" },
+      ),
+    ).rejects.toThrow(/grantRemote/);
+  });
+
+  test("throws a wiring error when deps.configuredRemoteVlm is absent (undefined, not null)", async () => {
+    const { grantRemote } = fakeGrantStore();
+    await expect(
+      dispatchMediaRpc("media.allowRemote", { itemIds: ["i1"], vendor: "openai" }, { grantRemote }),
+    ).rejects.toThrow(/configuredRemoteVlm/);
+  });
+});
+
+describe("dispatchMediaRpc — media.grants.list (Task 15)", () => {
+  test("returns the grants deps.listGrants supplies, wrapped as { grants }", async () => {
+    const grants = [
+      {
+        id: "g1",
+        itemId: "i1",
+        modality: "image" as const,
+        modelVendor: "openai",
+        grantedAt: 1000,
+        revokedAt: null,
+        title: "chart.png",
+      },
+    ];
+    const res = await dispatchMediaRpc("media.grants.list", {}, { listGrants: () => grants });
+    expect(res).toEqual({ grants });
+  });
+
+  test("throws a wiring error when deps.listGrants is absent", async () => {
+    await expect(dispatchMediaRpc("media.grants.list", {}, {})).rejects.toThrow(/listGrants/);
+  });
+});
+
+describe("dispatchMediaRpc — media.grants.revoke (Task 15)", () => {
+  test("revokes by itemId and reports the row count", async () => {
+    const res = await dispatchMediaRpc(
+      "media.grants.revoke",
+      { itemId: "i1" },
+      { revokeGrants: () => 1 },
+    );
+    expect(res).toEqual({ revoked: 1 });
+  });
+
+  test("forwards an explicit modelVendor, omitting it entirely when not given", async () => {
+    let seen: unknown;
+    await dispatchMediaRpc(
+      "media.grants.revoke",
+      { itemId: "i1", modelVendor: "openai" },
+      {
+        revokeGrants: (args) => {
+          seen = args;
+          return 1;
+        },
+      },
+    );
+    expect(seen).toMatchObject({ itemId: "i1", modelVendor: "openai" });
+
+    let seenWithout: unknown;
+    await dispatchMediaRpc(
+      "media.grants.revoke",
+      { itemId: "i1" },
+      {
+        revokeGrants: (args) => {
+          seenWithout = args;
+          return 1;
+        },
+      },
+    );
+    expect(seenWithout).not.toHaveProperty("modelVendor");
+  });
+
+  test("rejects a missing itemId rather than revoking everything", async () => {
+    await expect(
+      dispatchMediaRpc("media.grants.revoke", {}, { revokeGrants: () => 1 }),
+    ).rejects.toThrow(/itemId/);
+  });
+
+  test("throws a wiring error when deps.revokeGrants is absent", async () => {
+    await expect(dispatchMediaRpc("media.grants.revoke", { itemId: "i1" }, {})).rejects.toThrow(
+      /revokeGrants/,
+    );
+  });
 });

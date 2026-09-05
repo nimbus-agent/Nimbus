@@ -764,6 +764,39 @@ describe("buildMediaPassDeps — remote VLM wiring (Task 10)", () => {
     expect(deps.gate.remoteFor).toBeUndefined();
   });
 
+  /**
+   * Task 15's wiring fix, second consumer: `MediaPassDeps.remoteVendor` (read by
+   * `media-discovery.ts`'s `findCandidates` to re-offer a granted, locally-understood artifact —
+   * spec § 19.1) was never populated at all, even though `buildRemoteFor`'s `remoteFor` arm
+   * (tested throughout this describe block) already read `input.remoteVlm` correctly. A test that
+   * only exercised `gate.remoteFor` could never have caught this half of the gap — see
+   * `dispatchers.test.ts`'s end-to-end wiring test for the behavioural proof through
+   * `findCandidates` itself.
+   */
+  test("remoteVendor is omitted from the returned deps when no remote vendor is configured", () => {
+    const deps = buildMediaPassDeps({
+      db: db(),
+      roots: [],
+      enabled: true,
+      capabilityDisabled: false,
+      scratchDir: "/scratch",
+    });
+    expect(deps.remoteVendor).toBeUndefined();
+    expect("remoteVendor" in deps).toBe(false);
+  });
+
+  test("remoteVendor carries the configured vendor by VALUE, not just by shape", () => {
+    const deps = buildMediaPassDeps({
+      db: db(),
+      roots: [],
+      enabled: true,
+      capabilityDisabled: false,
+      scratchDir: "/scratch",
+      remoteVlm: "openai",
+    });
+    expect(deps.remoteVendor).toBe("openai");
+  });
+
   test("remoteFor returns undefined for an av candidate even when a vendor is configured — § 19.4, AV is local-only", () => {
     const deps = buildMediaPassDeps({
       db: db(),

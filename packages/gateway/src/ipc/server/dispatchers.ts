@@ -22,6 +22,11 @@ import {
   buildMediaPassDeps,
   resolveMediaRoots,
 } from "../../multimodal/build-media-pass-deps.ts";
+import {
+  createGrant,
+  listActiveGrantsWithTitles,
+  revokeGrant,
+} from "../../multimodal/media-grant-store.ts";
 import { runMediaPass } from "../../multimodal/media-pass.ts";
 import { MULTIMODAL_CAPABILITY } from "../../multimodal/media-types.ts";
 import { loadMultimodalConfig, type MultimodalConfig } from "../../multimodal/multimodal-config.ts";
@@ -690,6 +695,13 @@ export function buildMediaPassDepsInput(input: {
     fetchBudgetBytes: input.config.fetchBudgetBytes,
     preferRenditions: input.config.preferRenditions,
     vault: input.vault,
+    // `[multimodal] remote_vlm`. Without this line `buildMediaPassDeps` always sees `undefined`
+    // regardless of what the operator configured: `buildRemoteFor` resolves `remoteFor` to
+    // `undefined` unconditionally (no artifact can ever reach a remote model) and
+    // `MediaPassDeps.remoteVendor` is never populated either (no granted artifact is ever even
+    // re-offered by `findCandidates`). See `build-media-pass-deps.ts`'s `BuildMediaPassDepsInput.
+    // remoteVlm` doc comment for both consumers this one value feeds.
+    remoteVlm: input.config.remoteVlm,
     ...(input.sourceId === undefined ? {} : { sourceId: input.sourceId }),
   };
 }
@@ -712,47 +724,86 @@ export function buildMediaPassDepsInput(input: {
  * runs, so without this every `media.resolveByteUrl`/`media.fetchBytes` row filed as an
  * unattributed background sync indistinguishable from one nobody asked for.
  */
+/**
+ * The four media methods (`media.understand`, `media.allowRemote`, `media.grants.list`,
+ * `media.grants.revoke`), dispatched from `dispatchMediaRpc` — widened from an equality check on
+ * `"media.understand"` alone once PR 4 added the consent-management three.
+ */
+const MEDIA_RPC_METHODS = new Set([
+  "media.understand",
+  "media.allowRemote",
+  "media.grants.list",
+  "media.grants.revoke",
+]);
+
 export async function tryDispatchMediaRpc(
   ctx: ServerCtx,
   method: string,
   params: unknown,
   clientId: string,
 ): Promise<unknown> {
-  if (method !== "media.understand") {
+  if (!MEDIA_RPC_METHODS.has(method)) {
     return phase4RpcSkipped;
   }
   if (ctx.options.localIndex === undefined) {
-    throw new RpcMethodError(-32603, "media.understand requires LocalIndex");
+    throw new RpcMethodError(-32603, `${method} requires LocalIndex`);
   }
-  if (ctx.options.dataDir === undefined) {
-    throw new RpcMethodError(-32603, "media.understand requires dataDir");
-  }
-  const mediaCtx = ctx.options.mediaRpcCtx;
-  if (mediaCtx === undefined) {
-    throw new RpcMethodError(
-      -32603,
-      "media.understand requires mediaRpcCtx (the org-policy accessor)",
+  const db = ctx.options.localIndex.getDatabase();
+
+  if (method === "media.understand") {
+    if (ctx.options.dataDir === undefined) {
+      throw new RpcMethodError(-32603, "media.understand requires dataDir");
+    }
+    const mediaCtx = ctx.options.mediaRpcCtx;
+    if (mediaCtx === undefined) {
+      throw new RpcMethodError(
+        -32603,
+        "media.understand requires mediaRpcCtx (the org-policy accessor)",
+      );
+    }
+    // `loadMultimodalConfig` throws `MultimodalConfigError` for a well-formed but non-loopback
+    // `vlm_base_url` (this slice has no per-artifact remote grant). Deliberately uncaught here,
+    // same shape as `runExecution`'s `ExecGateError` (`tryDispatchExecRpc`, below): it propagates
+    // to `server.ts`'s generic top-level catch and surfaces as JSON-RPC `-32603` carrying that
+    // error's own actionable message — never a silent substitution of the loopback default.
+    const mmConfig = loadMultimodalConfig(ctx.options.configDir);
+    const deps = buildMediaPassDeps(
+      buildMediaPassDepsInput({
+        db,
+        configDir: ctx.options.configDir,
+        dataDir: ctx.options.dataDir,
+        config: mmConfig,
+        capabilityDisabled: mediaCtx.enforced.capabilitiesDisabled.has(MULTIMODAL_CAPABILITY),
+        vault: ctx.options.vault,
+        sourceId: ctx.getClientKind(clientId),
+      }),
     );
+    const out = await dispatchMediaRpc(method, params, {
+      runPass: (opts) => runMediaPass({ ...deps, ...opts }),
+    });
+    return out ?? phase4RpcSkipped;
   }
-  // `loadMultimodalConfig` throws `MultimodalConfigError` for a well-formed but non-loopback
-  // `vlm_base_url` (this slice has no per-artifact remote grant). Deliberately uncaught here,
-  // same shape as `runExecution`'s `ExecGateError` (`tryDispatchExecRpc`, below): it propagates
-  // to `server.ts`'s generic top-level catch and surfaces as JSON-RPC `-32603` carrying that
-  // error's own actionable message — never a silent substitution of the loopback default.
+
+  // media.allowRemote / media.grants.list / media.grants.revoke: consent management over the
+  // grant store (media-grant-store.ts, D27(b)-confined). None of the three run the understanding
+  // pass, so neither `dataDir` nor `mediaRpcCtx` (the org-policy accessor) is required here — a
+  // grant is a row in the local index, not a model call; the model call it later gates still goes
+  // through `media.understand`'s own full check above.
   const mmConfig = loadMultimodalConfig(ctx.options.configDir);
-  const deps = buildMediaPassDeps(
-    buildMediaPassDepsInput({
-      db: ctx.options.localIndex.getDatabase(),
-      configDir: ctx.options.configDir,
-      dataDir: ctx.options.dataDir,
-      config: mmConfig,
-      capabilityDisabled: mediaCtx.enforced.capabilitiesDisabled.has(MULTIMODAL_CAPABILITY),
-      vault: ctx.options.vault,
-      sourceId: ctx.getClientKind(clientId),
-    }),
-  );
   const out = await dispatchMediaRpc(method, params, {
-    runPass: (opts) => runMediaPass({ ...deps, ...opts }),
+    configuredRemoteVlm: mmConfig.remoteVlm,
+    grantRemote: ({ itemId, vendor, nowMs }) => {
+      const { alreadyActive } = createGrant(db, {
+        itemId,
+        modality: "image",
+        modelVendor: vendor,
+        nowMs,
+      });
+      return { alreadyActive };
+    },
+    listGrants: () => listActiveGrantsWithTitles(db),
+    revokeGrants: ({ itemId, modelVendor, nowMs }) =>
+      revokeGrant(db, { itemId, ...(modelVendor === undefined ? {} : { modelVendor }), nowMs }),
   });
   return out ?? phase4RpcSkipped;
 }
