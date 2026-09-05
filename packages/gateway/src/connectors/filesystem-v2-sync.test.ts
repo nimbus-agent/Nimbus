@@ -1,7 +1,8 @@
 import { describe, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import type { BlameRow } from "../security/blame-store.ts";
 import {
   createMemoryIndexDb,
   EMPTY_NIMBUS_VAULT,
@@ -17,7 +18,7 @@ import {
   gitLogRecords,
   mergeRanges,
 } from "./filesystem-v2-sync.ts";
-import { encodeNimbusJsonCursor } from "./nimbus-json-cursor.ts";
+import { decodeNimbusJsonCursorPayload, encodeNimbusJsonCursor } from "./nimbus-json-cursor.ts";
 
 // A minimal Bun.spawn stand-in for the blame helper. Only the fields gitBlameLinePorcelain
 // reads (`exited`, `stdout`) are populated; cast through unknown (no `any`).
@@ -1398,5 +1399,195 @@ describe("windows console hygiene", () => {
     await gitLogRecords("/r", 10, spawn);
     expect(seen).toHaveLength(1);
     expect(seen[0]?.["windowsHide"]).toBe(true);
+  });
+});
+
+// ── code-symbol mtime gate ───────────────────────────────────────────────────
+
+describe("code index re-runs only what changed", () => {
+  /**
+   * Before this gate, `syncFilesystemCodeSymbolsForRoot` ran unconditionally on EVERY tick:
+   * it walked up to 120 code files, re-read each, re-upserted byte-identical symbol rows and
+   * spawned one `git blame` per file. Measured against a real 7.10.1 daemon on an idle repo,
+   * a steady-state tick still made at least 47 git spawns with nothing changed on disk.
+   */
+  function codeRoot(
+    dir: string,
+  ): Parameters<typeof createFilesystemV2Syncable>[0]["roots"][number] {
+    return {
+      path: dir,
+      gitAware: false,
+      codeIndex: true,
+      dependencyGraph: false,
+      mediaIndex: false,
+      exclude: [],
+    };
+  }
+
+  function makeRoot(prefix: string): string {
+    const dir = mkdtempSync(join(tmpdir(), prefix));
+    writeFileSync(join(dir, "a.ts"), "export function alpha() {}\nexport const A = 1;\n");
+    writeFileSync(join(dir, "b.ts"), "export class Beta {}\n");
+    return dir;
+  }
+
+  test("a second run over untouched files indexes nothing", async () => {
+    const dir = makeRoot("nimbus-fsv2-mtime-");
+    const sync = createFilesystemV2Syncable({ roots: [codeRoot(dir)] });
+    const db = createMemoryIndexDb();
+    const ctx = syncTestContext(db, EMPTY_NIMBUS_VAULT, "filesystem");
+
+    const first = await sync.sync(ctx, null);
+    expect(first.itemsUpserted).toBeGreaterThan(0);
+
+    const second = await sync.sync(ctx, first.cursor);
+    expect(second.itemsUpserted).toBe(0);
+  });
+
+  test("the items indexed by the first run survive a skipped second run", async () => {
+    // Skipping must not be mistaken for pruning: the rows stay, they are simply not rewritten.
+    const dir = makeRoot("nimbus-fsv2-mtime-keep-");
+    const sync = createFilesystemV2Syncable({ roots: [codeRoot(dir)] });
+    const db = createMemoryIndexDb();
+    const ctx = syncTestContext(db, EMPTY_NIMBUS_VAULT, "filesystem");
+
+    const first = await sync.sync(ctx, null);
+    const countAfterFirst = (
+      db
+        .query(
+          `SELECT COUNT(*) AS c FROM item WHERE service = 'filesystem' AND type = 'code_symbol'`,
+        )
+        .get() as { c: number }
+    ).c;
+    await sync.sync(ctx, first.cursor);
+    const countAfterSecond = (
+      db
+        .query(
+          `SELECT COUNT(*) AS c FROM item WHERE service = 'filesystem' AND type = 'code_symbol'`,
+        )
+        .get() as { c: number }
+    ).c;
+
+    expect(countAfterFirst).toBeGreaterThan(0);
+    expect(countAfterSecond).toBe(countAfterFirst);
+  });
+
+  test("touching one file re-indexes that file only", async () => {
+    const dir = makeRoot("nimbus-fsv2-mtime-touch-");
+    const sync = createFilesystemV2Syncable({ roots: [codeRoot(dir)] });
+    const db = createMemoryIndexDb();
+    const ctx = syncTestContext(db, EMPTY_NIMBUS_VAULT, "filesystem");
+
+    const first = await sync.sync(ctx, null);
+    // b.ts declares exactly one exported symbol, so the re-index count is unambiguous.
+    writeFileSync(join(dir, "b.ts"), "export class Beta {}\nexport const extra = 2;\n");
+
+    const second = await sync.sync(ctx, first.cursor);
+    expect(second.itemsUpserted).toBe(2);
+    expect(first.itemsUpserted).toBeGreaterThan(2);
+  });
+
+  test("a file added after the first run is picked up", async () => {
+    const dir = makeRoot("nimbus-fsv2-mtime-add-");
+    const sync = createFilesystemV2Syncable({ roots: [codeRoot(dir)] });
+    const db = createMemoryIndexDb();
+    const ctx = syncTestContext(db, EMPTY_NIMBUS_VAULT, "filesystem");
+
+    const first = await sync.sync(ctx, null);
+    writeFileSync(join(dir, "c.ts"), "export function gamma() {}\n");
+
+    const second = await sync.sync(ctx, first.cursor);
+    expect(second.itemsUpserted).toBe(1);
+  });
+
+  test("a null cursor re-indexes everything — the `--full` escape hatch", async () => {
+    // `nimbus connector sync filesystem --full` clears the cursor server-side
+    // (`clearConnectorSyncCursor`), which is the documented way to force a rebuild.
+    const dir = makeRoot("nimbus-fsv2-mtime-full-");
+    const sync = createFilesystemV2Syncable({ roots: [codeRoot(dir)] });
+    const db = createMemoryIndexDb();
+    const ctx = syncTestContext(db, EMPTY_NIMBUS_VAULT, "filesystem");
+
+    const first = await sync.sync(ctx, null);
+    const forced = await sync.sync(ctx, null);
+    expect(forced.itemsUpserted).toBe(first.itemsUpserted);
+  });
+
+  test("a deleted file drops out of the cursor rather than accumulating", async () => {
+    const dir = makeRoot("nimbus-fsv2-mtime-del-");
+    const sync = createFilesystemV2Syncable({ roots: [codeRoot(dir)] });
+    const db = createMemoryIndexDb();
+    const ctx = syncTestContext(db, EMPTY_NIMBUS_VAULT, "filesystem");
+
+    // The cursor is base64 JSON, so assert on the DECODED payload — a `toContain` against the
+    // encoded string passes or fails for reasons unrelated to what is in the map.
+    const filesIn = (cursor: string | null): string[] => {
+      const payload = decodeNimbusJsonCursorPayload(cursor ?? "", "nimbus-fsv2:") as {
+        codeMtimes?: Record<string, Record<string, number>>;
+      } | null;
+      return Object.values(payload?.codeMtimes ?? {}).flatMap((m) => Object.keys(m));
+    };
+
+    const first = await sync.sync(ctx, null);
+    expect(filesIn(first.cursor).sort()).toEqual(["a.ts", "b.ts"]);
+    rmSync(join(dir, "b.ts"));
+
+    const second = await sync.sync(ctx, first.cursor);
+    expect(filesIn(second.cursor)).toEqual(["a.ts"]);
+  });
+
+  test("an unchanged run does no blame work at all", async () => {
+    // The directly-relevant assertion. `itemsUpserted === 0` is indirect evidence; this counts
+    // the blame writes, which is what the `git blame` subprocess per file was there to produce.
+    const dir = mkdtempSync(join(tmpdir(), "nimbus-fsv2-mtime-blame-"));
+    const git = async (...args: string[]): Promise<number> => {
+      const proc = Bun.spawn(["git", "-C", dir, ...args], {
+        env: { ...process.env, GIT_TERMINAL_PROMPT: "0" } as Record<string, string>,
+        stdout: "pipe",
+        stderr: "pipe",
+        windowsHide: true,
+      });
+      return await proc.exited;
+    };
+    await git("init", "-q", "-b", "main");
+    await git("config", "user.email", "test@example.com");
+    await git("config", "user.name", "Test");
+    writeFileSync(join(dir, "a.ts"), "export function alpha() {}\n");
+    await git("add", "a.ts");
+    await git("commit", "-q", "-m", "add a");
+
+    const sync = createFilesystemV2Syncable({
+      roots: [{ ...codeRoot(dir), gitAware: true }],
+    });
+    const db = createMemoryIndexDb();
+    const base = syncTestContext(db, EMPTY_NIMBUS_VAULT, "filesystem");
+    let blameWrites = 0;
+    const ctx = {
+      ...base,
+      upsertBlameLines: (root: string, file: string, rows: readonly BlameRow[]): void => {
+        blameWrites += 1;
+        base.upsertBlameLines(root, file, rows);
+      },
+    };
+
+    const first = await sync.sync(ctx, null);
+    expect(blameWrites).toBeGreaterThan(0); // positive control: the blame path really ran
+
+    blameWrites = 0;
+    await sync.sync(ctx, first.cursor);
+    expect(blameWrites).toBe(0);
+  });
+
+  test("a cursor from before this gate is accepted and re-indexes once", async () => {
+    // Forward compatibility with a cursor written by an older gateway: it carries `tips` but no
+    // `codeMtimes`, and must read as "nothing known yet" rather than throwing or skipping.
+    const dir = makeRoot("nimbus-fsv2-mtime-legacy-");
+    const sync = createFilesystemV2Syncable({ roots: [codeRoot(dir)] });
+    const db = createMemoryIndexDb();
+    const ctx = syncTestContext(db, EMPTY_NIMBUS_VAULT, "filesystem");
+
+    const legacy = encodeNimbusJsonCursor("nimbus-fsv2:", { tips: {} });
+    const run = await sync.sync(ctx, legacy);
+    expect(run.itemsUpserted).toBeGreaterThan(0);
   });
 });
