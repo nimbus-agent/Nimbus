@@ -638,13 +638,53 @@ Append to `packages/gateway/src/multimodal/orphan-prune.test.ts`:
 
 ```ts
 describe("pruneOrphanedMedia", () => {
-  test("sweeps derived rows AND grants in one pass-start call", () => {
+  /**
+   * BOTH halves, in one call, with a live row present. The whole reason the two sweeps were
+   * combined into one function is that a future third derived artifact cannot be added to one and
+   * forgotten in the other — and that property is only guarded if the test exercises both. The
+   * live grant is what proves the sweep is SELECTIVE: one that revoked everything would pass a
+   * test that only counted what disappeared.
+   */
+  test("sweeps orphaned derived rows AND orphaned grants, sparing live ones", () => {
     const db = new Database(":memory:");
     runIndexedSchemaMigrations(db, CURRENT_SCHEMA_VERSION);
+
+    // A live source item, with a grant that must SURVIVE.
+    upsertIndexedItem(db, {
+      service: "google_drive",
+      type: "file",
+      externalId: "live",
+      title: "live",
+      bodyPreview: "",
+      modifiedAt: 1,
+      syncedAt: 1,
+      metadata: { mimeType: "image/png" },
+    });
+    const liveId = db
+      .query<{ id: string }, []>("SELECT id FROM item WHERE external_id = 'live'")
+      .get()?.id as string;
+    createGrant(db, { itemId: liveId, modality: "image", modelVendor: "openai", nowMs: 1 });
+
+    // An orphaned derived understanding — same shape the existing
+    // `pruneOrphanedUnderstandings` tests use, so the two agree on what an orphan is.
+    upsertIndexedItem(db, {
+      service: "nimbus",
+      type: "image_understanding",
+      externalId: "missing:understanding",
+      title: "Caption — missing",
+      bodyPreview: "a caption",
+      modifiedAt: 1,
+      syncedAt: 1,
+      metadata: { derivedFrom: "missing", understandingVersion: 2 },
+    });
+
+    // An orphaned grant.
     createGrant(db, { itemId: "gone", modality: "image", modelVendor: "openai", nowMs: 1 });
+
     const out = pruneOrphanedMedia(db, 5000);
+    expect(out.understandings).toBe(1);
     expect(out.grants).toBe(1);
-    expect(listActiveGrants(db)).toHaveLength(0);
+    expect(listActiveGrants(db).map((g) => g.itemId)).toEqual([liveId]);
     db.close();
   });
 });
