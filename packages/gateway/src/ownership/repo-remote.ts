@@ -25,6 +25,9 @@ async function runGit(
       env: extensionProcessEnv({}),
       stdout: "pipe",
       stderr: "pipe",
+      // See `connectors/blame-index-sync.ts`: the detached Gateway has no console, so an
+      // unhidden child pops a visible window on Windows.
+      windowsHide: true,
       signal: AbortSignal.timeout(GIT_TIMEOUT_MS),
     });
     const code = await proc.exited;

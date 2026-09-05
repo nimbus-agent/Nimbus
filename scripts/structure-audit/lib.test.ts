@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { iterateSourceFiles, REPO_ROOT, stripComments } from "./lib.ts";
+import { iterateSourceFiles, REPO_ROOT, stripComments, stripStringLiterals } from "./lib.ts";
 
 describe("iterateSourceFiles", () => {
   // Collected once: the walk reads every production source file in the monorepo, so doing it
@@ -54,16 +54,76 @@ describe("iterateSourceFiles", () => {
   });
 });
 
-describe("stripComments — known regex-literal limitation", () => {
-  // PINS the documented limitation rather than asserting it is desirable. If someone teaches
-  // stripComments about regex literals, this test fails — that is the point: it is the tripwire
-  // telling them to delete this block and the KNOWN LIMITATION note in lib.ts along with it.
-  test("a quote inside a regex literal opens a phantom string, so later comments survive", () => {
+describe("stripComments — regex literals", () => {
+  test("a quote inside a regex literal does not open a phantom string", () => {
     const src = 'const RE = /(["|]) /;\n/** marker */\nconst a = 1;\n';
-    expect(stripComments(src)).toContain("marker");
+    expect(stripComments(src)).not.toContain("marker");
   });
 
   test("without the regex, the same comment is stripped", () => {
     expect(stripComments("const RE = 1;\n/** marker */\nconst a = 1;\n")).not.toContain("marker");
+  });
+
+  test("the regex literal itself survives comment stripping", () => {
+    expect(stripComments('const RE = /a"b/;\nconst x = 1;\n')).toContain('/a"b/');
+  });
+});
+
+describe("stripStringLiterals — regex literals", () => {
+  test("a double quote inside a regex does not swallow the code after it", () => {
+    const src = `const RE = /"([^"]*)"/m;\nconst z = Bun.spawnSync({ cmd: [] });`;
+    expect(stripStringLiterals(stripComments(src))).toContain("Bun.spawnSync");
+  });
+
+  test("an apostrophe inside a regex does not swallow the code after it", () => {
+    const src = `const RE = /it's/;\nconst z = Bun.spawnSync({ cmd: [] });`;
+    expect(stripStringLiterals(stripComments(src))).toContain("Bun.spawnSync");
+  });
+
+  test("the regex body is blanked, so its contents cannot be read as code", () => {
+    const out = stripStringLiterals(`const RE = /Bun.spawn\\(x\\)/;`);
+    expect(out).not.toContain("Bun.spawn");
+    expect(out).toContain("/");
+  });
+
+  test("division is not mistaken for a regex", () => {
+    const src = `const q = a / b;\nconst z = Bun.spawn(a);`;
+    expect(stripStringLiterals(src)).toBe(src);
+  });
+
+  test("division after a closing paren is not mistaken for a regex", () => {
+    const src = `const q = (a + b) / 2;\nconst z = Bun.spawn(a);`;
+    expect(stripStringLiterals(src)).toBe(src);
+  });
+
+  test("a slash inside a character class does not end the regex early", () => {
+    const src = `const RE = /[/"]x/;\nconst z = Bun.spawn(a);`;
+    expect(stripStringLiterals(stripComments(src))).toContain("Bun.spawn");
+  });
+
+  test("an escaped slash does not end the regex early", () => {
+    const src = `const RE = /a\\/"b/;\nconst z = Bun.spawn(a);`;
+    expect(stripStringLiterals(stripComments(src))).toContain("Bun.spawn");
+  });
+
+  test("a regex after `return` is recognised", () => {
+    const src = `function f() { return /"/.test(x); }\nconst z = Bun.spawn(a);`;
+    expect(stripStringLiterals(stripComments(src))).toContain("Bun.spawn");
+  });
+
+  test("an unclosed slash-on-one-line is treated as ordinary code, bounding any misparse", () => {
+    // A real regex literal cannot span a newline, so refusing to cross one is what keeps a
+    // wrong regex-vs-division call from eating the rest of the file.
+    const src = `const q = x /y;\nconst z = Bun.spawn(a);`;
+    expect(stripStringLiterals(src)).toContain("Bun.spawn");
+  });
+
+  test("length is preserved so callers can still recover line numbers", () => {
+    const src = `const RE = /"([^"]*)"/m;\nconst z = 1;`;
+    expect(stripStringLiterals(src)).toHaveLength(src.length);
+  });
+
+  test("a string literal is still blanked", () => {
+    expect(stripStringLiterals(`const a = "secret";`)).toBe(`const a = "      ";`);
   });
 });

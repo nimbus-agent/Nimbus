@@ -83,6 +83,9 @@ export async function gitLogRecords(
     env: extensionProcessEnv({}),
     stdout: "pipe",
     stderr: "pipe",
+    // The detached Gateway has no console of its own, so an unhidden child gets a visible
+    // window on Windows. See `gitBlameLinePorcelain` below for why that adds up here.
+    windowsHide: true,
   });
   const code = await proc.exited;
   const out = await new Response(proc.stdout).text();
@@ -666,6 +669,10 @@ export async function gitBlameLinePorcelain(
       env: extensionProcessEnv({}),
       stdout: "pipe",
       stderr: "pipe",
+      // `syncFilesystemCodeSymbolsForRoot` calls this once per indexed file, up to 120 per root,
+      // on EVERY tick — there is no cursor gate. Unhidden, that is ~120 console windows flashing
+      // every 10 minutes for as long as the Gateway runs.
+      windowsHide: true,
       signal: AbortSignal.timeout(BLAME_TIMEOUT_MS),
     });
     const code = await proc.exited;

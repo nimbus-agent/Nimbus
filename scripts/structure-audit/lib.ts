@@ -11,6 +11,115 @@ type StripState = {
   done: boolean;
 };
 
+/**
+ * Characters after which a `/` opens a REGEX literal rather than a division.
+ *
+ * The complement is what matters: after an identifier, a number, a closing `)` / `]`, a string
+ * or a member access, `/` is division. `)` is deliberately in the DIVISION camp — `(a + b) / 2`
+ * is common and `if (x) /re/.test(y)` is not — and the newline bound below is what keeps that
+ * trade cheap when it is wrong.
+ */
+const REGEX_PREV_CHARS = new Set([
+  "(",
+  ",",
+  "=",
+  ":",
+  "[",
+  "!",
+  "&",
+  "|",
+  "?",
+  "{",
+  "}",
+  ";",
+  "+",
+  "-",
+  "*",
+  "%",
+  "<",
+  ">",
+  "~",
+  "^",
+]);
+const REGEX_PREV_KEYWORDS = new Set([
+  "return",
+  "typeof",
+  "instanceof",
+  "in",
+  "of",
+  "new",
+  "delete",
+  "void",
+  "do",
+  "else",
+  "case",
+  "yield",
+  "await",
+]);
+
+const WORD_CHAR = /[A-Za-z0-9_$]/;
+
+/**
+ * Can a regex literal legally begin right after `code[0..end)`? Backward half of the decision,
+ * separated so `stripComments` can ask it about the code it has EMITTED (comments removed) while
+ * reading the character itself from the raw source.
+ */
+export function regexCanFollow(code: string, end: number): boolean {
+  let i = end - 1;
+  while (i >= 0 && /\s/.test(code[i] ?? "")) i--;
+  if (i < 0) return true; // start of file: nothing to divide
+  const ch = code[i] ?? "";
+  if (REGEX_PREV_CHARS.has(ch)) return true;
+  if (!WORD_CHAR.test(ch)) return false; // `)`, `]`, a quote, `.` → division / member access
+  let j = i;
+  while (j >= 0 && WORD_CHAR.test(code[j] ?? "")) j--;
+  return REGEX_PREV_KEYWORDS.has(code.slice(j + 1, i + 1));
+}
+
+/** Does the `/` at `slash` open a regex literal (as opposed to a division operator)? */
+export function startsRegexLiteral(code: string, slash: number): boolean {
+  const next = code[slash + 1];
+  // `//` and `/*` are comments, and the empty regex must be written `/(?:)/` — so neither
+  // can be a literal. Checked here too so this is safe on source that still has comments.
+  if (next === "/" || next === "*" || next === undefined) return false;
+  return regexCanFollow(code, slash);
+}
+
+/**
+ * Index one past the end of the regex literal opening at `slash` (flags included), or `null`
+ * when it does not close before the end of the line.
+ *
+ * Refusing to cross a newline is the safety property: a real regex literal cannot span one, so
+ * a wrong regex-vs-division call can never swallow more than the rest of its own line — which is
+ * what made this cheap enough to fix. `[...]` is tracked because `/` inside a character class is
+ * a literal slash, not the terminator.
+ */
+export function regexLiteralEnd(code: string, slash: number): number | null {
+  let inClass = false;
+  for (let i = slash + 1; i < code.length; i++) {
+    const ch = code[i];
+    if (ch === "\n") return null;
+    if (ch === "\\") {
+      i++;
+      continue;
+    }
+    if (inClass) {
+      if (ch === "]") inClass = false;
+      continue;
+    }
+    if (ch === "[") {
+      inClass = true;
+      continue;
+    }
+    if (ch === "/") {
+      let j = i + 1;
+      while (j < code.length && /[a-z]/.test(code[j] ?? "")) j++;
+      return j;
+    }
+  }
+  return null;
+}
+
 function stepInString(src: string, state: StripState): void {
   const c = src[state.i] as string;
   const next = src[state.i + 1];
@@ -49,6 +158,21 @@ function stepDefault(src: string, state: StripState): void {
     state.i = nl;
     return;
   }
+  // A regex literal is emitted VERBATIM and skipped past, so a quote inside it can no longer
+  // open a phantom string and leave every later comment unstripped. `state.out` is the code
+  // emitted so far, which is exactly the token context the regex-vs-division call needs.
+  // The two comment forms are already handled above, so any `/` reaching here is either a
+  // division or a regex. The backward look reads `state.out` — the code emitted so far, with
+  // comments removed — because a comment sitting between the previous token and this `/` must
+  // not change the answer.
+  if (c === "/" && regexCanFollow(state.out, state.out.length)) {
+    const end = regexLiteralEnd(src, state.i);
+    if (end !== null) {
+      state.out += src.slice(state.i, end);
+      state.i = end;
+      return;
+    }
+  }
   if (c === '"' || c === "'" || c === "`") {
     state.inString = c;
     state.out += c;
@@ -62,28 +186,23 @@ function stepDefault(src: string, state: StripState): void {
 /**
  * Remove comments from TypeScript source.
  *
- * KNOWN LIMITATION — no regex-literal awareness. The scanner tracks `"`, `'` and `` ` `` but does
- * not recognise a regex literal, so a quote character INSIDE one opens a phantom string and every
- * comment after it survives unstripped. Verified minimal case:
+ * Regex literals ARE recognised (`startsRegexLiteral` / `regexLiteralEnd`). They were not until
+ * 2026-09-05: a quote inside one opened a phantom string and every comment after it survived
+ * unstripped, which the previous note recorded as acceptable because the one affected connector
+ * had a `test:connector-boot` backstop. `audit:windows-console` has no backstop — nothing else
+ * detects an unhidden spawn — and 12 of 1986 `gateway/src` files derailed the scanner, including
+ * `platform/linux.ts`, which contains two real violations the guard could not see. That is the
+ * "next time someone is in this file with reason to" the old note anticipated.
  *
- * ```ts
- * const RE = /(["|]) /;
- * /** this whole comment survives stripComments *\/
- * ```
+ * The `/`-as-regex vs `/`-as-division call is the standard backward-token heuristic, and the
+ * safety property that makes it cheap is `regexLiteralEnd` refusing to cross a newline: a real
+ * regex literal cannot span one, so a wrong call can never swallow more than the rest of its own
+ * line. Verified over the tree: `gateway/src` went from 12 derailing files to 0.
  *
- * Measured against the tree on 2026-08-23: of the 94 connector `src/server.ts` files, exactly ONE
- * desyncs — `snowflake`, on `/^(?:[A-Za-z_][A-Za-z0-9_$]*|"[^"]+")$/` — and it changes NO audit
- * verdict, because snowflake both guards on `import.meta.main` and exports `startConnector`. So
- * `check-connector-entrypoints` is correct today by luck, not by construction: a connector that
- * adds a quote-bearing regex AND has the guard-without-export shape would be silently passed.
- * `test:connector-boot` still catches the resulting dead connector, which is why this is recorded
- * rather than fixed.
- *
- * Fixing it means disambiguating `/`-as-regex from `/`-as-division (standard heuristic: a `/`
- * starts a regex unless the preceding token is an identifier, literal or closing bracket). That is
- * worth doing the next time someone is in this file with reason to; it was judged a poor trade to
- * hand-roll lexer heuristics into a helper three passing audits depend on, for a latent issue with
- * a backstop.
+ * REMAINING LIMITATION — nested template substitutions. One file still derails the scanner,
+ * `scripts/structure-audit/check-coverage-gate-pal.ts`, on the escaped-backtick-inside-a-nested-
+ * `${}` shape around its line 344. That is a template-frame issue, unrelated to regex literals,
+ * and no audit reads that file as input.
  *
  * If you need comment-stripping for a NEW guard, consider whether a line-based skip suffices —
  * `check-connector-consent.ts` uses one. Note the trade: line-based handles block comments and
@@ -172,6 +291,16 @@ export function stripStringLiterals(src: string): string {
     }
 
     // Code — either top level or inside a substitution.
+    if (ch === "/" && startsRegexLiteral(src, i)) {
+      const end = regexLiteralEnd(src, i);
+      if (end !== null) {
+        // Blank the BODY, keep the delimiters and the length. A quote inside can no longer open
+        // a phantom string, and a `spawn(` inside can no longer be read as a call.
+        for (let k = i + 1; k < end - 1; k++) out[k] = " ";
+        i = end - 1;
+        continue;
+      }
+    }
     if (ch === '"' || ch === "'") {
       stack.push({ kind: "string", quote: ch });
     } else if (ch === "`") {

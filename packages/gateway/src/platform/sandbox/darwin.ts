@@ -193,6 +193,7 @@ export function createDarwinSandboxRunner(): SandboxRunner {
       writeFileSync(profilePath, profile);
       // Absolute path to the SIP-protected system binary — never resolve via
       // PATH, which could be attacker-influenced (Sonar S4036 hardening).
+      // windows-console-ok: `sandbox/darwin.ts` runs only on macOS.
       const child = spawn("/usr/bin/sandbox-exec", ["-f", profilePath, cmd, ...args], {
         // TMPDIR is redirected into `sandboxDir`, which the profile already grants read AND
         // write. A runtime writes to its temp directory during startup, and on macOS that is

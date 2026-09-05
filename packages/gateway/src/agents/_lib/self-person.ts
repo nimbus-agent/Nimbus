@@ -20,11 +20,16 @@ export type ResolveSelfPersonInput = {
   osUsername?: string;
 };
 
-export async function defaultRunGitConfigUserEmail(): Promise<string | null> {
+export async function defaultRunGitConfigUserEmail(
+  spawn: typeof Bun.spawn = Bun.spawn,
+): Promise<string | null> {
   try {
-    const proc = Bun.spawn(["git", "config", "user.email"], {
+    const proc = spawn(["git", "config", "user.email"], {
       stdout: "pipe",
       stderr: "ignore",
+      // The detached Gateway has no console of its own; without this the child gets a visible
+      // one on Windows. See `connectors/blame-index-sync.ts`.
+      windowsHide: true,
     });
     const out = await new Response(proc.stdout).text();
     const code = await proc.exited;

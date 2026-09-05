@@ -31,6 +31,8 @@ function spawnChild<W, S>(opts: SpawnGatewayForBenchOptions<W, S>): ProcSubset {
     stdin: "ignore",
     stdout: "pipe",
     stderr: "pipe",
+    // Matches how the Gateway spawns in production, so the measured cost is the real one.
+    windowsHide: true,
     ...(opts.env !== undefined && { env: { ...process.env, ...opts.env } }),
   });
 }

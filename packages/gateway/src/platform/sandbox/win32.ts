@@ -26,7 +26,7 @@ function probeHelper(path: string): HelperState {
     return { available: false, reason: `nimbus-sandbox-helper.exe not found at ${path}` };
   }
   try {
-    const r = spawnSync(path, ["--check-caps"], { encoding: "utf8" });
+    const r = spawnSync(path, ["--check-caps"], { encoding: "utf8", windowsHide: true });
     if (r.status === 0 && r.stdout.trim() === "OK") return { available: true, reason: null };
     const stderr = (r.stderr ?? "").trim();
     return {
@@ -62,7 +62,10 @@ export function createWin32SandboxRunner(): SandboxRunner {
       const cwd = canonicalPath(opts.cwd);
       const policy = canonicalPolicyPaths(opts.policy);
       const argv = [...buildHelperArgv(policy, { cwd }), cmd, ...args];
-      return spawn(path, argv, { env: opts.env, cwd, stdio: opts.stdio });
+      // Hides the console Windows allocates for this child of the console-less Gateway.
+      // Purely about window visibility: it is not part of the AppContainer confinement and
+      // does not alter the helper argv, the ACL grant, or the stdio the helper forwards.
+      return spawn(path, argv, { env: opts.env, cwd, stdio: opts.stdio, windowsHide: true });
     },
     isFullyActive(): boolean {
       return helper.available;

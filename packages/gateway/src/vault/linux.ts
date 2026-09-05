@@ -60,6 +60,7 @@ function spawnSecretTool(
     const stdio: ["pipe", "pipe", "pipe" | "ignore"] = options.captureStderr
       ? ["pipe", "pipe", "pipe"]
       : ["pipe", "pipe", "ignore"];
+    // windows-console-ok: `vault/linux.ts` runs only on Linux, where the flag is ignored.
     const child = spawn(secretToolExecutable(), args, { stdio });
     const outStream = child.stdout;
     const inStream = child.stdin;

@@ -72,6 +72,19 @@ not: the legs now load the same FILES in the same PROCESS as the push run, which
 green PR leg predictive at all — but they still run on runners ~13–18× slower than a dev machine,
 so a wall-clock assumption that holds locally can still fail there. Build paths with `path.join()` / `os.tmpdir()` / `PlatformServices`, never hardcoded separators. `bun run audit:cross-platform` flags hardcoded **Windows-separator** path literals (backslash, drive-letter `C:\`, UNC `\\server`) in `*.test.ts(x)` assertions — the "passes on my Windows machine, fails on the Ubuntu PR gate" footgun. POSIX forward-slash absolutes (`/tmp/...`, `/home/...`) are intentionally **not** flagged: in this codebase they are overwhelmingly legitimate data values (socket-path fixtures, env-var pass-throughs, HTTP/API routes) that a regex cannot distinguish from a constructed path — an empirical pass produced 52 false positives and 0 real bugs, so reliable POSIX-absolute detection is deferred to the AST v2 rewrite (see the script header). Genuinely platform-specific literal? End the line with `// cross-platform-ok`.
 
+`bun run audit:windows-console` covers the opposite direction — a Windows-only defect no Linux
+gate and no test can see. The Gateway is launched detached and console-less (`spawn-gateway.ts`
+passes `windowsHide: true`), so on Windows every console-subsystem child it spawns is handed a
+brand-new console **and a visible window**: measured 8 visible windows for 8 children, 0 with
+`windowsHide: true`. The user-visible symptom is console windows flashing on an idle machine —
+one per `git blame`, and `filesystem-v2-sync` spawns up to 120 per root on every 10-minute tick.
+So every spawn under `packages/gateway/src` must pass `windowsHide`, route through
+`platform/spawn-capture.ts`, or carry `// windows-console-ok: <reason>`. `packages/cli` is out of
+scope: it is a console app whose children inherit the user's terminal. **Do not try to verify this
+by counting `conhost.exe`** — `CREATE_NO_WINDOW` still allocates a console and still spawns a
+conhost, it is only invisible, so both modes give identical conhost counts; enumerate visible
+`ConsoleWindowClass` windows instead.
+
 ## Git guardrails (opt-in)
 
 `bun run hooks:install` points `core.hooksPath` at `.githooks/` (warns + needs `--force` if you already use another hooks path):

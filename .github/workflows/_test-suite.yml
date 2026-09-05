@@ -103,6 +103,13 @@ jobs:
       - name: Cross-platform audit (test path assertions)
         run: bun run audit:cross-platform
 
+      # The Gateway runs detached and console-less, so an unhidden console child pops a
+      # visible window on Windows — one per `git blame`, per ffmpeg call, per vendor CLI.
+      # Static because the symptom only appears on a real Windows daemon: no test on any
+      # runner would have caught it.
+      - name: Windows console-window audit (gateway spawns pass windowsHide)
+        run: bun run audit:windows-console
+
       - name: Status-drift audit (docs invariant/schema vs code)
         run: bun run audit:status-drift
 

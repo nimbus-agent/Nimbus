@@ -287,6 +287,7 @@ function createDefaultProbeExec(): LinuxVaultProbeExec {
         : resolveSecretToolExecutable(),
     probeSecretTool: (exe, args) => {
       try {
+        // windows-console-ok: `platform/linux.ts` is the Linux PAL; unreachable on Windows.
         const p = Bun.spawnSync({
           cmd: [exe, ...args],
           // "ignore", not "pipe": a looked-up secret must have nowhere to go.
@@ -302,6 +303,7 @@ function createDefaultProbeExec(): LinuxVaultProbeExec {
     which: (name) => Bun.which(name),
     query: (cmd) => {
       try {
+        // windows-console-ok: Linux PAL.
         const p = Bun.spawnSync({
           cmd: [...cmd],
           stdout: "pipe",
