@@ -1,7 +1,5 @@
 import { Database } from "bun:sqlite";
 import { beforeEach, describe, expect, test } from "bun:test";
-import { CURRENT_SCHEMA_VERSION } from "../index/local-index.ts";
-import { runIndexedSchemaMigrations } from "../index/migrations/runner.ts";
 import { createGrant, listActiveGrants } from "./media-grant-store.ts";
 import { pruneOrphanedMedia, pruneOrphanedUnderstandings } from "./orphan-prune.ts";
 
@@ -16,6 +14,13 @@ function insert(db: Database, id: string, service: string, type: string, meta: o
   db.query(
     "INSERT INTO item (id, service, external_id, type, metadata) VALUES (?, ?, ?, ?, ?)",
   ).run(id, service, id, type, JSON.stringify(meta));
+}
+
+function insertFull(db: Database, id: string, service: string, type: string, meta: object): void {
+  db.query(
+    `INSERT INTO item (id, service, external_id, type, title, body_preview, modified_at, synced_at, metadata)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+  ).run(id, service, id, type, id, "", 1000, 1000, JSON.stringify(meta));
 }
 
 describe("pruneOrphanedUnderstandings", () => {
@@ -57,11 +62,62 @@ describe("pruneOrphanedUnderstandings", () => {
 describe("pruneOrphanedMedia", () => {
   test("sweeps derived rows AND grants in one pass-start call", () => {
     const db = new Database(":memory:");
-    runIndexedSchemaMigrations(db, CURRENT_SCHEMA_VERSION);
-    createGrant(db, { itemId: "gone", modality: "image", modelVendor: "openai", nowMs: 1 });
+    // Set up minimal schema: item table for understanding rows, media_grant for grants.
+    db.exec(`
+      CREATE TABLE item (
+        id TEXT PRIMARY KEY,
+        service TEXT NOT NULL,
+        external_id TEXT NOT NULL,
+        type TEXT NOT NULL,
+        title TEXT NOT NULL,
+        body_preview TEXT NOT NULL,
+        modified_at INTEGER NOT NULL,
+        synced_at INTEGER NOT NULL,
+        metadata TEXT
+      );
+      CREATE TABLE media_grant (
+        id TEXT PRIMARY KEY,
+        item_id TEXT NOT NULL,
+        modality TEXT NOT NULL CHECK (modality IN ('image', 'av')),
+        model_vendor TEXT NOT NULL,
+        granted_at INTEGER NOT NULL,
+        revoked_at INTEGER
+      );
+    `);
+
+    // Seed an orphaned understanding row — source doesn't exist.
+    insertFull(db, "nimbus:vid1:understanding", "nimbus", "video_understanding", {
+      derivedFrom: "filesystem:vid1",
+    });
+
+    // Seed an orphaned grant — item doesn't exist.
+    createGrant(db, {
+      itemId: "orphan-grant-item",
+      modality: "image",
+      modelVendor: "openai",
+      nowMs: 1,
+    });
+
+    // Seed a LIVE item with an active grant — should survive the sweep.
+    insertFull(db, "filesystem:vid2", "filesystem", "media_av", {});
+    createGrant(db, {
+      itemId: "filesystem:vid2",
+      modality: "image",
+      modelVendor: "openai",
+      nowMs: 1,
+    });
+
+    // Run the sweep.
     const out = pruneOrphanedMedia(db, 5000);
+
+    // Assert both counts: one understanding, one grant.
+    expect(out.understandings).toBe(1);
     expect(out.grants).toBe(1);
-    expect(listActiveGrants(db)).toHaveLength(0);
+
+    // Assert the live grant survives.
+    expect(listActiveGrants(db)).toHaveLength(1);
+    expect(listActiveGrants(db)[0].itemId).toBe("filesystem:vid2");
+
     db.close();
   });
 });
