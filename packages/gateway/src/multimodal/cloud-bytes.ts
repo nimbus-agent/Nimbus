@@ -91,6 +91,12 @@ export interface CloudBytesDeps {
   readonly appendEgress: (row: {
     destination: string;
     method: string;
+    /**
+     * The artifact's indexed size, passed so the row discloses how large the thing being fetched
+     * was believed to be. It is NOT this request's transferred count — the append happens before
+     * the request — and `sync-egress.ts` documents the ways the two can diverge.
+     */
+    expectedBytes?: number | null;
   }) => { rowHash: string } | undefined;
   readonly fetchFn: (url: string, init: RequestInit) => Promise<Response>;
   readonly sleep: (ms: number) => Promise<void>;
@@ -156,7 +162,11 @@ async function fetchWithRetry(
     // Fail-closed: append before EACH attempt, not once before the loop — a retry really does
     // dispatch a fresh outbound request. A throw here propagates and no request is made; it is
     // deliberately NOT inside the try/catch below, which covers only the fetch call itself.
-    deps.appendEgress({ destination: candidate.service, method: "media.fetchBytes" });
+    deps.appendEgress({
+      destination: candidate.service,
+      method: "media.fetchBytes",
+      expectedBytes: candidate.sourceBytes,
+    });
     let res: Response;
     try {
       res = await deps.fetchFn(byteUrl.url, { headers, signal: controller.signal });

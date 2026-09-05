@@ -958,7 +958,7 @@ describe("runMediaPass — cloud budget, stop reasons and rendition (PR 3)", () 
 
   test("BOTH outbound requests of a Photos candidate are ledgered — the resolve round-trip and the byte fetch", async () => {
     addPhotosItem("cledger-a");
-    const rows: Array<{ destination: string; method: string }> = [];
+    const rows: Array<{ destination: string; method: string; expectedBytes?: number | null }> = [];
     const summary = await runMediaPass(
       deps({
         scratchDir: cloudScratchDir(),
@@ -982,15 +982,21 @@ describe("runMediaPass — cloud budget, stop reasons and rendition (PR 3)", () 
     expect(summary.understood).toBe(1);
     // Two real credentialed/pre-signed requests leave the machine per Photos candidate, so two
     // rows must exist and they must be distinguishable. One row for two requests was the gap.
+    // The asymmetry is deliberate: the resolve round-trip carries no artifact bytes, so it
+    // attaches no size, while the byte fetch discloses the size it expects to move.
     expect(rows).toEqual([
       { destination: "google_photos", method: "media.resolveByteUrl" },
-      { destination: "google_photos", method: "media.fetchBytes" },
+      { destination: "google_photos", method: "media.fetchBytes", expectedBytes: null },
     ]);
   });
 
   test("a Drive candidate ledgers only its byte fetch — the resolver makes no round-trip to record", async () => {
-    addDriveItem("cledger-drive");
-    const rows: Array<{ destination: string; method: string }> = [];
+    // A real indexed size, so this also proves the artifact's size REACHES the ledger seam
+    // through the whole pass rather than being dropped somewhere between discovery and append.
+    // The row's `expectedBytes` is what the artifact was believed to weigh when the request went
+    // out — not a measurement of the transfer, which has not happened yet at append time.
+    addDriveItem("cledger-drive", { sizeBytes: 390_842 });
+    const rows: Array<{ destination: string; method: string; expectedBytes?: number | null }> = [];
     await runMediaPass(
       deps({
         scratchDir: cloudScratchDir(),
@@ -1003,7 +1009,9 @@ describe("runMediaPass — cloud budget, stop reasons and rendition (PR 3)", () 
         }),
       }),
     );
-    expect(rows).toEqual([{ destination: "google_drive", method: "media.fetchBytes" }]);
+    expect(rows).toEqual([
+      { destination: "google_drive", method: "media.fetchBytes", expectedBytes: 390_842 },
+    ]);
   });
 
   test("a 429 AT RESOLVE stops the run like a 429 at fetch — it does not burn the page as per-item skips", async () => {

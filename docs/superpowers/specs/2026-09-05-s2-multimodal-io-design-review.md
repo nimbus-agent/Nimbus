@@ -5,7 +5,8 @@
 **Status:** Review Complete / Actionable Feedback Provided  
 **Target Spec:** [`docs/superpowers/specs/2026-09-02-s2-multimodal-io-design.md`](./2026-09-02-s2-multimodal-io-design.md)  
 **Slot:** [Spine S2 — Local Compute Fleet](../../roadmap.md#active)  
-**Implementation State:** 
+**Implementation State:**
+
 - **PR 1 (Shipped #1429, 2026-09-02):** Local discovery, long-form STT, V58 cursor, `video_understanding`, local-arm `media-gate.ts`.
 - **PR 2 (Shipped #1438, 2026-09-03):** Local Ollama VLM (`/api/show`), `wrapLedgeredVlm`, D22(g), `image_understanding`, frame extraction, `UNDERSTANDING_VERSION = 2`.
 - **PR 3 (Shipped, 2026-09-04):** Cloud byte acquisition (`google_photos`, `google_drive`, `onedrive`), safe URL resolution (`cloud-url-resolver.ts`), manual redirect following (`safeFetchFollowing`), stream-level bandwidth budget, two scratch files for cloud AV with prefix sweeper, `sync`-class egress enumeration (4 appenders).
@@ -34,16 +35,19 @@ Below are critical architectural gaps, spec drift issues, edge cases, and concre
 As PRs 1, 2, and 3 were implemented and amended (§ 15, § 16, § 17), several earlier sections in the design specification became outdated. These should be reconciled in place to preserve document integrity:
 
 ### 2.1 Table § 13 (Sequencing Table) Contains Obsolete PR 3 Details
+
 - **Issue:** In § 13, the PR 3 row states: `Ships: fetchBytes capability (D24), cloud byte-fetch over the existing host boundary | Droppable: yes`.
 - **Reality:** As ratified in § 16.2, § 16.4, and § 17.10, PR 3 shipped with **no `fetchBytes` capability**, **no D24 exemption**, and bypassed `fetch-host-boundary.ts` in favor of `cloud-url-resolver.ts` with manual redirect validation. PR 3 is also already **shipped**, not droppable.
 - **Recommendation:** Update § 13 to mark PRs 1–3 as SHIPPED with their actual architectural mechanisms.
 
 ### 2.2 Invariant I37 Scratch File Wording Discrepancy (§ 10 vs § 16.3 vs § 18.6)
+
 - **Issue:** In § 10, the definition of I37 claims: *"a transcode writes exactly one 0600 gateway-owned scratch file that is deleted in a finally and swept at pass start."*
 - **Reality:** § 16.3 and § 18.6 correctly explain that Cloud AV downloads require **two** scratch files (the downloaded media artifact and the transcoded WAV).
 - **Recommendation:** Update the verbatim I37 definition block in § 10 to state *"at most two 0600 gateway-owned scratch files (cloud download + transcode WAV)"*, aligning with § 16.3 and § 18.6.
 
 ### 2.3 Placement Map (§ 3.1) vs Shipped Subsystem Layout
+
 - **Issue:** § 3.1 reflects the initial speculative directory layout before PRs 1–3 landed.
 - **Reality:** The codebase now contains modular subdirectories: `multimodal/frames/` (`frame-extract.ts`, `av-understander.ts`), `multimodal/vlm/` (`image-understander.ts`, `ollama-vlm.ts`, `caption-prompts.ts`), `multimodal/stt/` (`ffmpeg-bin.ts`, `whisper-bin.ts`, `transcribe-file.ts`), `multimodal/cloud-bytes.ts`, `multimodal/cloud-url-resolver.ts`, `multimodal/cloud-renditions.ts`, and `multimodal/orphan-prune.ts`.
 - **Recommendation:** Update § 3.1 with the actual directory structure and note the arrival points for PR 4 (`media-grant-store.ts`, `media-consent-broker.ts`, `multimodal/vlm/remote/`).
@@ -56,15 +60,19 @@ As PRs 1, 2, and 3 were implemented and amended (§ 15, § 16, § 17), several e
 
 - **Context (§ 4.1, § 8, § 18.4 vs `media-discovery.ts`):**
   - In `media-discovery.ts`, candidate discovery selects items where:
+
     ```sql
     (u.id IS NULL OR COALESCE(json_extract(u.metadata, '$.understandingVersion'), -1) < ?)
     ```
+
     where `?` is `UNDERSTANDING_VERSION` (currently `2`).
   - Suppose a user runs a pass under local Ollama. 100 images are processed locally, and each receives a derived `nimbus:image_understanding` row with `metadata.understandingVersion = 2`, `metadata.isLocal = true`, and `metadata.model = "qwen2.5vl:7b"`.
   - Later, the user identifies 5 low-quality or complex charts and explicitly grants remote access:
+
     ```bash
     nimbus media allow-remote item_42 item_43 item_44
     ```
+
   - The user runs `nimbus media understand`.
 - **The Defect:**
   - `media-discovery.ts` checks SQLite: `u.metadata.understandingVersion` is already `2`.
@@ -74,6 +82,7 @@ As PRs 1, 2, and 3 were implemented and amended (§ 15, § 16, § 17), several e
 - **Recommendations:**
   1. **Grant-Driven Row Invalidation:** When `nimbus media allow-remote <item>` writes a grant into `media_grant`, it should update existing derived understanding rows for that source item, setting `json_extract(metadata, '$.understandingVersion') = 0` (or deleting the derived row), forcing `media-discovery.ts` to re-evaluate it on the next pass.
   2. **Selective Version Predicate in Discovery Query:** Alternatively, expand `findCandidates()` SQL to re-offer items if an active remote grant exists for a vendor that differs from `json_extract(u.metadata, '$.model')`:
+
      ```sql
      OR EXISTS (
        SELECT 1 FROM media_grant AS g
@@ -90,6 +99,7 @@ As PRs 1, 2, and 3 were implemented and amended (§ 15, § 16, § 17), several e
 
 - **Context (§ 9.2, § 18 vs `vlm-types.ts`):**
   - `VlmDescribeInput` is currently defined as:
+
     ```ts
     export interface VlmDescribeInput {
       readonly bytes: Uint8Array;
@@ -97,6 +107,7 @@ As PRs 1, 2, and 3 were implemented and amended (§ 15, § 16, § 17), several e
       readonly egressMethod?: string;
     }
     ```
+
   - For local Ollama (`ollama-vlm.ts`), raw base64 encoding without an explicit MIME type works because Ollama's `/api/generate` accepts raw base64 arrays in `images: [base64]`.
   - However, **remote frontier APIs strictly require MIME types**:
     - **Anthropic Messages API:** `source: { type: "base64", media_type: "image/jpeg" | "image/png" | "image/webp" | "image/gif", data: base64 }`. Missing or invalid `media_type` causes immediate HTTP 400 rejection.
@@ -179,11 +190,13 @@ As PRs 1, 2, and 3 were implemented and amended (§ 15, § 16, § 17), several e
 
 - **Context (§ 18.3, § 18.5):**
   - `media_grant` has a partial unique index:
+
     ```sql
     CREATE UNIQUE INDEX IF NOT EXISTS idx_media_grant_active
       ON media_grant (item_id, modality, model_vendor)
       WHERE revoked_at IS NULL;
     ```
+
 - **Edge Cases in `media-grant-store.ts`:**
   1. **Idempotent Insertion:** Calling `createGrant(db, { itemId, modality, modelVendor })` when an active grant already exists for `(itemId, modality, modelVendor)` must not throw a SQLite `SQLITE_CONSTRAINT_UNIQUE` exception. It should either return the existing grant ID or execute `INSERT OR IGNORE`.
   2. **Re-Granting after Revocation:** If an active grant was previously revoked (`revoked_at` is set to timestamp `T1`), calling `createGrant` creates a new row with `id = uuid()`, `granted_at = T2`, `revoked_at = NULL`. The partial index allows this without conflict.
@@ -201,6 +214,7 @@ As PRs 1, 2, and 3 were implemented and amended (§ 15, § 16, § 17), several e
   - If a source item is deleted from Google Drive or local disk, active grants in `media_grant` for that `item_id` will linger indefinitely.
 - **Recommendation:**
   - In `orphan-prune.ts`, add an orphan cleanup query for active grants:
+
     ```sql
     UPDATE media_grant
        SET revoked_at = :nowMs
@@ -209,6 +223,7 @@ As PRs 1, 2, and 3 were implemented and amended (§ 15, § 16, § 17), several e
          SELECT 1 FROM item AS src WHERE src.id = media_grant.item_id
        );
     ```
+
   - Marking them revoked (or deleting them) ensures stale grants do not accumulate while maintaining an accurate count of active grants in `nimbus media grants list`.
 
 ---
@@ -232,29 +247,34 @@ As PRs 1, 2, and 3 were implemented and amended (§ 15, § 16, § 17), several e
 When executing PR 4, the following end-to-end deliverables should be verified:
 
 ### Database & Schema (V59)
+
 - [ ] Implement `index/media-grant-v59-sql.ts` creating `media_grant` table and `idx_media_grant_active` partial unique index.
 - [ ] Register schema version `59` in `index/schema-migrations.ts` and update `CURRENT_SCHEMA_VERSION`.
 - [ ] Implement `multimodal/media-grant-store.ts` (`createGrant`, `revokeGrant`, `listActiveGrants`, `hasActiveGrant`).
 
 ### Remote VLM Providers & Egress
+
 - [ ] Implement remote VLM adapters in `multimodal/vlm/remote/` (`openai-vlm.ts`, `anthropic-vlm.ts`, `gemini-vlm.ts`) implementing `VlmProvider`.
 - [ ] Implement `VlmDescribeInput` MIME sniffing / propagation in `multimodal/vlm/image-mime.ts`.
 - [ ] Wire remote VLM construction in `multimodal/build-media-pass-deps.ts` wrapped by `wrapLedgeredVlm(db, provider)` (D22(g)).
 - [ ] Assert `wrapLedgeredVlm` appends `sourceType: "model"`, `destination: vendor`, `method: "multimodal.vlm.describe"`, and `payloadSummary: { model, imageBytes }` before firing requests.
 
 ### Gate & Pass Logic
+
 - [ ] Update `media-gate.ts` to evaluate active grants via `deps.grantStore` when `remote_vlm` is configured.
 - [ ] Ensure local VLM is used for ungranted items, and remote VLM is used exclusively for granted items.
 - [ ] Assert fail-closed behavior: an ungranted item never contacts a remote provider, and a remote failure never silently falls back to local.
 - [ ] Update `media-discovery.ts` (or `media-grant-store.ts`) to ensure newly granted items are re-offered for understanding even if previously understood locally (Finding 3.1).
 
 ### CLI Commands & UX
+
 - [ ] Implement `nimbus media allow-remote <itemId>` and `nimbus media allow-remote --service <service> --since <date> --limit <n>`.
 - [ ] Implement dual-ended preview: `source <service> · destination <vendor>` with mandatory confirmation prompt.
 - [ ] Implement `nimbus media grants list` and `nimbus media grants revoke <itemId> [--vendor <vendor>]`.
 - [ ] Update `nimbus media understand` summary to disclose remote items understood vs skipped for lack of grant (`skippedByReason.no_remote_grant`).
 
 ### Static Invariant Rules & Security Tests
+
 - [ ] Add static rule **D27(a)** in `check-nimbus-invariants.ts` confining remote VLM constructors to `multimodal/build-media-pass-deps.ts`.
 - [ ] Add static rule **D27(b)** confining `media_grant` SQL operations to `multimodal/media-grant-store.ts`.
 - [ ] Implement **I37** enforcement test in `packages/gateway/src/security-invariants.test.ts`:

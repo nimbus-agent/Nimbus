@@ -143,7 +143,11 @@ function buildCloudBytesDeps(input: BuildMediaPassDepsInput): MediaCloudDeps {
   return {
     bearerFor: (service: string) => cloudBearerFor(input.vault, service),
     fetchFn: (url: string, init: RequestInit) => safeFetchFollowing(url, init),
-    appendEgress: (row: { destination: string; method: string }) =>
+    // `expectedBytes` is OPTIONAL on the seam and only `cloud-bytes.ts` supplies it: the resolver
+    // shares this one closure and its `media.resolveByteUrl` row is a metadata round-trip that
+    // transfers no artifact bytes, so it correctly leaves the field absent rather than attaching
+    // a size to a request that never carries one.
+    appendEgress: (row: { destination: string; method: string; expectedBytes?: number | null }) =>
       recordSyncEgress(input.db, { ...row, now: Date.now(), sourceId: input.sourceId }),
     sleep: (ms: number) => new Promise<void>((resolveSleep) => setTimeout(resolveSleep, ms)),
   };

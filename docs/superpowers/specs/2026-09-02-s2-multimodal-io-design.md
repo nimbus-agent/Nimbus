@@ -1965,7 +1965,19 @@ bytes → local VLM → derived item works end to end.
 
 ### 20.3 Three findings the run surfaced
 
-1. **The ledger records that a fetch happened, not how much crossed.** `payload_summary` is
+1. **The ledger records that a fetch happened, not how much crossed.** **FIXED 2026-09-05** — a
+   `media.fetchBytes` row now carries `expectedBytes`, verified against real traffic:
+   `{"method":"media.fetchBytes","expectedBytes":390842}`, chain still `ok` over 63 rows. The name
+   is deliberate and the field is NOT a transfer measurement: every `recordSyncEgress` caller
+   appends BEFORE the request (the fail-closed property I29 rests on), so no transferred count
+   exists yet, and recording one would need a second row per fetch or an UPDATE to an append-only
+   BLAKE3-chained table. It is the artifact's INDEXED size, and it diverges from the transfer in
+   both directions — a rendition fetch moves a downsized copy while this stays the original's size.
+   **Bound worth stating: `google_photos` indexes no byte size at all**, so its rows carry
+   `expectedBytes: null` and this disclosure lands only for Drive and OneDrive. Original finding
+   below.
+
+    `payload_summary` is
    `{"method":"media.fetchBytes"}` — no byte count, though the CLI printed `390842` from the same
    run. For a BYTE-TRANSFER class that is the interesting number, and its absence is sharpened by
    contrast: the `model` class deliberately carries the image's byte count. Not a PR 3 regression —
