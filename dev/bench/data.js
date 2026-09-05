@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1788591742735,
+  "lastUpdate": 1788616816776,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "437569a0b1b903cba9efd9e29f7cb2f5a4e35813",
-          "message": "docs: staleness sweep, superpowers cleanup, and nimbus-egress skill (#701)\n\n## Summary\n\nA docs/skills/agents/scripts staleness sweep against `main` @`34fb5942`\n(v0.13.1, Phase 6 complete, invariants I1–I29, schema V44), plus cleanup\nof shipped planning artifacts. No TS/source touched.\n\nDriven by a parallel audit (8-agent staleness sweep) + additive-doc\ndrafting; every claim was verified against the live code.\n\n### Staleness fixes\n- **Root context** — `CLAUDE.md` + `GEMINI.md` (kept mirrored):\n`v0.11.2`→`v0.13.1`, `I1–I27`→`I1–I29`; fixed GEMINI's divergent stale\nskill list. **`docs/README.md`**: release/status badges, Phase-6\nparagraph + roadmap/pricing tables.\n- **Status docs** — `SECURITY.md` (Phase 6 complete, `v0.13.x` support\ntable), `roadmap.md` (Last-updated, Active→Complete, Slice 7c/8/9\ndelivery annotations), `architecture.md` (self-contradiction\n`I1–I27`↔`I1–I29`, added `egress.*` IPC block + V44 schema bullet, Tauri\ncount 95→99, schema-version 43→44).\n- **Skills (10)** — tauri-allowlist `83`→`99`, file-map `D21`→`D22`,\narchitecture `44`→`54` commands + Phase-6-complete, ipc\n(+`share.*`/`egress.*` registry), commands / db-migrations /\nsecurity-invariants / tool-output-envelope.\n- **Agents (3)** — preflight-guard + ci-doctor `16`→`18` static gates;\ncoverage-floor `targets`-overlay note.\n- **Misc** — install/verify docs' wrong GitHub orgs (`asafgolombek` /\n`nimbus-dev` → canonical `nimbus-agent`); known-todos stale symbol.\n\n### Additive (new docs for the shipped egress-ledger subsystem, #698)\n- **New `nimbus-egress` skill** (+ rows in CLAUDE.md/GEMINI.md skill\ntables).\n- **`schema-reference.md`** backfilled V35→V44 (was frozen at V34 —\nmissing `egress_ledger`, share/tribal/lineage/team-vault tables).\n- **`cli-reference.md`** — new `nimbus prove` / `nimbus egress` section.\n\n### Cleanup\n- Deleted **56 shipped** superpowers plans/specs (each tied to a merged\nPR). Kept the unbuilt backlog (3 plans + 19 specs) **and 3 specs\ncross-linked from durable docs** (CHANGELOG / roadmap /\ncontributors-coverage). Verified `standup` + `demo-mode` are **not** on\nmain, so their specs were kept.\n- Untracked **6 regenerable** `docs/structure-audit/*.json` dumps\n(jscpd-report 1.1MB etc.) via `.gitignore` + `git rm --cached`; kept the\nratchet baselines.\n- Deleted **3 dead** `scripts/linux/*.sh` shims (unreferenced thin\nwrappers).\n\n**Deliberately skipped:** `regen-slo.ts`'s \"TBD (Phase 5)\" prose — those\ncells gate on the perf program's still-dormant *M1 Air reference run*,\nnot Phase 5, so the text is plausibly accurate and editing it would trip\nthe `regen-slo:check` gate.\n\n## Verification\nAll green: `audit:doc-refs` (614 refs resolve), `audit:status-drift`,\n`audit:readme-cli`, `lint:markdown` (0/74), `lychee --offline` (0\nerrors). Pre-push `preflight:fast` passed.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n\n## Summary by CodeRabbit\n\n## Release Notes\n\n* **New Features**\n* Added Egress Ledger—a tamper-evident, append-only outbound action\naccounting system with BLAKE3-chained verification\n* Added `nimbus prove` CLI command for querying egress ledger snapshots\nand proving outbound event deltas\n* Added `nimbus egress` and `nimbus egress verify` commands for ledger\ninspection and offline verification\n  * Enhanced share and virality capabilities (Phase 6 Slice 8)\n  * Expanded IPC surface with `share.*` and `egress.*` namespaces\n\n* **Documentation**\n  * Updated project to v0.13.1; Phase 6 (Team) now complete\n  * Extended security invariant coverage through I29\n  * Updated database schema (V44) with new tables and migration guidance\n\n* **Chores**\n  * Updated installation references to new GitHub repository owner\n\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude Opus 4.8 (1M context) <noreply@anthropic.com>",
-          "timestamp": "2026-06-21T10:07:23+03:00",
-          "tree_id": "3d29b55639c399696f4543cf546fca5ea3dc73fa",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/437569a0b1b903cba9efd9e29f7cb2f5a4e35813"
-        },
-        "date": 1782026346234,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 297.6031256000024,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 298.25646490000435,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 295.9203590000008,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "2042740e9aac2b8cbf87e9ab04e801a3f51e5df2",
+          "message": "fix(gateway): stop console windows flashing on every Windows sync (#1451)\n\n## What\n\nConsole windows stop flashing on Windows while Nimbus syncs.\n\nThe Gateway is launched **detached and console-less**\n(`cli/src/lib/spawn-gateway.ts` passes `windowsHide: true` + `detached:\ntrue`), so on Windows every console-subsystem child it spawns is handed\na brand-new console **and a visible window**. `filesystem-v2-sync`\nspawns one `git blame` per indexed file — up to 120 per root, on\n**every** tick, with no cursor gate — and `blame-index-sync` up to 400\non a full run. The user-visible result is a screenful of windows opening\nand closing every 10 minutes on an otherwise idle machine.\n\n`platform/spawn-capture.ts` already exists for exactly this and fixed\nthe vendor CLIs (`aws`/`gcloud`/`az`/`bq`/`kubectl`). The git, ffmpeg,\nvoice and sandbox paths were written afterwards without it. A helper you\ncan decline to use is not a defense, so this adds the gate too.\n\n## Measurement\n\nWindows 11 / Bun 1.3.14, console-less parent, counting **visible\n`ConsoleWindowClass` windows** via `EnumWindows` + `IsWindowVisible`:\n\n| what | windows |\n| --- | --- |\n| `Bun.spawn`, no flag, 8 children | 8 |\n| `Bun.spawn`, `windowsHide: true` | 0 |\n| `node:child_process` under Bun, no flag | 8 |\n| `node:child_process` under Bun, `windowsHide: true` | 0 |\n\nEnd-to-end on the real production helper (`gitBlameLinePorcelain`, 10\nfiles, launched console-less):\n\n| | windows |\n| --- | --- |\n| flag forced off — the pre-fix behaviour, as a positive control | **7**\n|\n| as shipped | **0** |\n\n**Counting `conhost.exe` cannot detect this bug.** `CREATE_NO_WINDOW`\nstill allocates a console and still spawns a conhost — it is only\ninvisible — so both modes give identical conhost counts. Two of my\nmeasurement attempts were worthless for exactly that reason before I\nswitched to visible-window enumeration.\n\n## Changes\n\n- **26 spawn sites** under `packages/gateway/src` now pass `windowsHide:\ntrue`. Nine platform-scoped ones (Linux PAL, macOS sandbox,\n`open`/`xdg-open`) carry `// windows-console-ok: <reason>` instead,\nsince the flag would be dead code there.\n- **New gate `audit:windows-console`**\n(`scripts/audit/check-windows-console-hide.ts`), wired into\n`_test-suite.yml` and the preflight manifest. Static because nothing\nelse can catch this: the symptom needs a real detached Windows daemon,\nwhich no test on any runner is. Scoped to `packages/gateway/src` —\n`packages/cli` is a console app whose children inherit the user's\nterminal.\n- **`spawn-capture.ts`'s rationale corrected.** It claimed `windowsHide`\n\"appears nowhere in `@types/bun`\" and would be a no-op on `Bun.spawn`.\n`bun-types@1.3.14` declares it and Bun honours it. The helper is still\nthe right shape for capture-style spawns; only the stated reason was\nwrong, and it would have talked the next person out of the one-line fix.\n- **`stripComments` / `stripStringLiterals` now understand regex\nliterals.** Prerequisite, not a drive-by: a quote inside a regex opened\na phantom string and swallowed the rest of the file, blinding the new\nguard on **12 of 1986** `gateway/src` files — including\n`platform/linux.ts`, which holds two real violations it could not see.\n`lib.ts`'s own note asked for this \"the next time someone is in this\nfile with reason to\", and unlike the connector case it cited, this guard\nhas no backstop. `gateway/src` now derails **0 of 1986**. The\n`/`-as-regex vs `/`-as-division call refuses to cross a newline, so a\nwrong call can never eat more than its own line.\n\n## Verification\n\n- `bun test packages/gateway packages/cli scripts` — **21004 pass, 0\nfail** (the CI command, whole-repo, one process).\n- `bun run preflight:fast` — all gates pass, including the new one.\n- Every audit consuming the changed stripper re-run individually:\n`invariants`, `worker-entries`, `import-meta-dir`, `coverage-gate-pal`,\n`cross-platform` — all exit 0. `audit:any` unchanged at 1.\n- Each production fix is covered by a test that was watched failing\nfirst.\n\n## Review follow-ups\n\nTwo real holes in the gate, found in review and fixed in `16dcd09e`:\n\n- **`windowsHide: false` passed.** The rule accepted the bare token, so\na spawn that explicitly disables the flag satisfied it while still\npopping a window. Not hypothetical — the positive control in the\nmeasurement above is built from exactly that shape. The value must now\nbe the literal `true`, and it must sit in the call's own options object:\n`parens === 1` so a nested call cannot excuse the outer one, `braces ===\n1` so a flag one object deeper cannot either. Re-run after tightening:\nstill 0 violations, so all 26 sites genuinely pass `windowsHide: true`\nat the right depth rather than merely containing the token.\n- **A `node:child_process` namespace import bypassed the gate.** Member\ncalls were excluded wholesale to ignore `runner.spawn` indirection,\nwhich also skipped `childProcess.spawn` — a real spawn in the same\nshape. The qualifier is captured rather than excluded now. No such\nimport exists today; the gate exists for the code written next.\n\nAlso red-proved against the tree rather than only fixtures: flipping one\nshipped site to `windowsHide: false` is caught, reverting clears it.\n\nA third comment asked for a `docs/SECURITY-INVARIANTS.md` row plus a\n`security-invariants.test.ts` entry under the triple rule. Declined,\nwith reasoning on the thread: that file scopes itself to structural\n**security** defenses from the B1 threat chains, and a console window\nhas no confidentiality, integrity or availability impact.\n`audit:cross-platform` is the direct precedent — same kind of static\nCI-gated source guard, zero hits in that document. The defense is\nenforced by a blocking gate plus 23 unit tests, which is the right\nmechanism for it.\n\n## Not in this PR\n\n`syncFilesystemCodeSymbolsForRoot` re-blames up to 120 files on every\n10-minute tick with **no cursor gate** — it redoes identical work\nforever. That is a real efficiency bug and it is what made the window\nstorm so dense, but fixing it changes indexing semantics and deserves\nits own PR. Flagged, not touched.\n\nOne file still derails the stripper —\n`scripts/structure-audit/check-coverage-gate-pal.ts`, on a\nnested-template-substitution shape, unrelated to regex literals. No\naudit reads that file as input; recorded in `lib.ts` as the remaining\nlimitation.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nhttps://claude.ai/code/session_01U1wLEizp9Qpq81VZYQjsuo\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n## Summary by CodeRabbit\n\n- **Bug Fixes**\n- Prevented visible Windows console windows when Gateway launches Git,\nmedia, browser, voice, sandbox, and other child processes.\n- Preserved existing process output, launch behavior, and sandbox\ncontrols.\n\n- **Tests**\n- Added Windows-specific coverage for hidden-console behavior across\nsupported subprocesses.\n\n- **Chores**\n- Added automated audits and preflight checks to detect subprocesses\nthat could show Windows consoles.\n- Improved code scanning to correctly handle comments, strings, and\nregular expressions.\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>",
+          "timestamp": "2026-09-05T13:47:06Z",
+          "tree_id": "b26b96471aa074ac9d13c35c9d14d8cc23a6f777",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/2042740e9aac2b8cbf87e9ab04e801a3f51e5df2"
+        },
+        "date": 1788616813944,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 337.91887704999755,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 343.7927299000024,
             "unit": "ms"
           }
         ]
