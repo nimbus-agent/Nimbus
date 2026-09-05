@@ -21,20 +21,39 @@ import { revokeOrphanedGrants } from "./media-grant-store.ts";
 const UNDERSTANDING_TYPES = ["image_understanding", "video_understanding"] as const;
 
 export function pruneOrphanedUnderstandings(db: Database): number {
-  // dbStmtRun, never a bare .run() — invariant I14 / static rule D12. A raw call fails the
-  // structure audit before the tests run, and skips the SQLITE_FULL -> disk-space-warning path.
-  const stmt = db.query(
-    `DELETE FROM item
-      WHERE service = 'nimbus'
-        AND type IN (${UNDERSTANDING_TYPES.map(() => "?").join(", ")})
-        AND json_extract(metadata, '$.derivedFrom') IS NOT NULL
-        AND NOT EXISTS (
-          SELECT 1 FROM item AS src
-           WHERE src.id = json_extract(item.metadata, '$.derivedFrom')
-        )`,
-  );
-  const result = dbStmtRun(stmt, ...UNDERSTANDING_TYPES);
-  return result.changes;
+  // Count orphaned understanding rows with the same WHERE predicate as the DELETE, then delete them.
+  // Both statements run inside a transaction so nothing can change between count and delete.
+  // Do NOT return result.changes: bun:sqlite's .changes includes trigger-cascaded rows, and item
+  // carries FTS5 triggers that delete shadow-table rows on item deletion. Returning .changes would
+  // count FTS bookkeeping as pruned understandings, not the actual orphans.
+  return db.transaction(() => {
+    const countStmt = db.query(
+      `SELECT COUNT(*) as n FROM item
+        WHERE service = 'nimbus'
+          AND type IN (${UNDERSTANDING_TYPES.map(() => "?").join(", ")})
+          AND json_extract(metadata, '$.derivedFrom') IS NOT NULL
+          AND NOT EXISTS (
+            SELECT 1 FROM item AS src
+             WHERE src.id = json_extract(item.metadata, '$.derivedFrom')
+          )`,
+    );
+    const orphanCount = (countStmt.get(...UNDERSTANDING_TYPES) as { n: number }).n;
+
+    // dbStmtRun, never a bare .run() — invariant I14 / static rule D12. A raw call fails the
+    // structure audit before the tests run, and skips the SQLITE_FULL -> disk-space-warning path.
+    const deleteStmt = db.query(
+      `DELETE FROM item
+        WHERE service = 'nimbus'
+          AND type IN (${UNDERSTANDING_TYPES.map(() => "?").join(", ")})
+          AND json_extract(metadata, '$.derivedFrom') IS NOT NULL
+          AND NOT EXISTS (
+            SELECT 1 FROM item AS src
+             WHERE src.id = json_extract(item.metadata, '$.derivedFrom')
+          )`,
+    );
+    dbStmtRun(deleteStmt, ...UNDERSTANDING_TYPES);
+    return orphanCount;
+  })();
 }
 
 /**

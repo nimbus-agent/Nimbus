@@ -118,8 +118,8 @@ describe("pruneOrphanedMedia", () => {
     // Run the sweep.
     const out = pruneOrphanedMedia(db, 5000);
 
-    // Assert sweep returned correct counts. FTS triggers cascade deletes (6 FTS rows + 1 item = 7).
-    expect(out.understandings).toBe(7);
+    // Assert sweep returned correct counts of actual orphans pruned (not FTS cascade counts).
+    expect(out.understandings).toBe(1);
     expect(out.grants).toBe(1);
 
     // Count understanding rows after sweep — the orphaned one should be gone.
