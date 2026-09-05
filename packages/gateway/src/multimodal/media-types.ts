@@ -21,7 +21,24 @@ export type SkipReason =
   | "transcode_failed"
   | "transcribe_failed"
   | "not_configured"
-  | "rate_limited";
+  | "rate_limited"
+  | "unsupported_image_format";
+
+/**
+ * Thrown when neither the magic-byte sniff nor a declared `Content-Type` resolves an image's
+ * bytes to one of the four wire types (`image-mime.ts`'s `resolveWireMime`). Corresponds to the
+ * `"unsupported_image_format"` skip reason above — the two belong together because both
+ * throwers (`image-understander.ts`, and the cloud-arm per-artifact describe call) import from
+ * this module already, and refusing an unknown format is a REFUSAL, not a `transcribe_failed`
+ * catch-all: a HEIC straight off an iPhone should read as "this format isn't supported", not as
+ * an opaque model failure.
+ */
+export class UnsupportedImageFormatError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "UnsupportedImageFormatError";
+  }
+}
 
 /**
  * What an understander is actually handed (spec § 5.4, PR 3). A local artifact resolves to a

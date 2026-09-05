@@ -105,6 +105,7 @@ async function sampleFrameCaptions(
       const { text } = await deps.vlm.describe({
         bytes,
         prompt: FRAME_CAPTION_PROMPT,
+        mimeType: "image/jpeg",
         egressMethod: "multimodal.vlm.frame",
       });
       const caption = text.trim();

@@ -11,7 +11,9 @@
 import { readFile as fsReadFile } from "node:fs/promises";
 import type { LocalUnderstander } from "../media-gate.ts";
 import type { MediaSource, UnderstandDetail } from "../media-types.ts";
+import { UnsupportedImageFormatError } from "../media-types.ts";
 import { IMAGE_CAPTION_PROMPT } from "./caption-prompts.ts";
+import { resolveWireMime } from "./image-mime.ts";
 import type { VlmProvider } from "./vlm-types.ts";
 
 export interface ImageUnderstanderDeps {
@@ -41,9 +43,16 @@ export function createImageUnderstander(deps: ImageUnderstanderDeps): LocalUnder
         // the user as the vaguer `transcribe_failed`. Refuse before the call, not after it.
         throw new Error(`image source is empty: ${label}`);
       }
+      const wire = resolveWireMime(bytes, source.kind === "bytes" ? source.mime : null);
+      if (wire === null) {
+        throw new UnsupportedImageFormatError(
+          "image bytes are not JPEG, PNG, WebP or GIF — refusing rather than sending an unknown type",
+        );
+      }
       const { text } = await deps.vlm.describe({
         bytes,
         prompt: IMAGE_CAPTION_PROMPT,
+        mimeType: wire,
         egressMethod: "multimodal.vlm.image",
       });
       const caption = text.trim();

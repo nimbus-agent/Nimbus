@@ -155,6 +155,7 @@ function emptyReasons(): Record<SkipReason, number> {
     transcribe_failed: 0,
     not_configured: 0,
     rate_limited: 0,
+    unsupported_image_format: 0,
   };
 }
 

@@ -15,6 +15,17 @@ export interface VlmDescribeInput {
   readonly bytes: Uint8Array;
   readonly prompt: string;
   /**
+   * The wire `media_type` for {@link bytes}, resolved by `image-mime.ts` (sniff first, declared
+   * `Content-Type` only as a fallback).
+   *
+   * OPTIONAL on the interface and REQUIRED in practice by the remote adapters: Ollama accepts a
+   * bare base64 array and needs none, while Anthropic returns HTTP 400 without one and Gemini and
+   * OpenAI both put it on the wire. Keeping it optional here means the local path and every
+   * existing caller are unchanged; each remote adapter refuses on its own when it is absent,
+   * rather than this type forcing a value the local provider has no use for.
+   */
+  readonly mimeType?: string;
+  /**
    * Names the ledger row when this call is ledgered. It can never SUPPRESS one — same contract as
    * `LlmGenerateOptions.egressMethod`.
    */
