@@ -1153,8 +1153,9 @@ find.
 (`modalityForItem(...) === undefined → continue`). Today that JS filter can never drop a row,
 because the type list it pages by comes from the same registry map — it is a no-op safety net.
 § 16.5's mime-keyed arm breaks that equivalence: `google_drive:file` enters the type list, and a
-page of 50 PDFs yields zero candidates. `media-pass.ts:113` then reads `candidates.length <
-deps.limit` as "discovery reached the end of the queue" and calls `clearCursor`.
+page of 50 PDFs yields zero candidates. `runMediaPass`'s short-page guard (`media-pass.ts`,
+`stopReason === "completed" && candidates.length < deps.limit`) then reads that as "discovery
+reached the end of the queue" and calls `clearCursor`.
 
 The consequence is not a slow pass but a **silently truncated** one: a Drive with 40,000 files and
 6 videos deep in the id ordering would report a clean, complete run having understood nothing. The

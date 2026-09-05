@@ -1,5 +1,11 @@
 # Implementation Plan Review: Multimodal PR 3 — Cloud Byte-Fetch (2026-09-04)
 
+*This is a dated, pre-implementation review of the PR 3 plan as it stood on 2026-09-04. This
+repo's convention is not to rewrite history, so the sync-appender counts below are left
+AS-REVIEWED rather than corrected: the shipped arm has FOUR `recordSyncEgress` callers
+(`sync/scheduler.ts`, `sync/targeted-fetch.ts`, `multimodal/cloud-url-resolver.ts`,
+`multimodal/cloud-bytes.ts`), not the count this document reasons about.*
+
 **Date:** 2026-09-04  
 **Review Target:** [`2026-09-04-multimodal-pr3-cloud-arm.md`](./2026-09-04-multimodal-pr3-cloud-arm.md)  
 **Status:** Review Complete  

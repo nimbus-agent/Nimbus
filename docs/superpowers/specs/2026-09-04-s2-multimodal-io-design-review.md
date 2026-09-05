@@ -1,5 +1,12 @@
 # Design Review: S2 — Multimodal I/O (Local-First Media Understanding) — PR 3 Cloud Arm & Architecture Audit
 
+*This is a dated, pre-implementation review as of 2026-09-04 — written while PR 3 was still "Designed
+in § 16", not yet built. This repo's convention is not to rewrite history, so the sync-appender
+counts below are left AS-REVIEWED rather than corrected: the shipped arm has FOUR
+`recordSyncEgress` callers (`sync/scheduler.ts`, `sync/targeted-fetch.ts`,
+`multimodal/cloud-url-resolver.ts`, `multimodal/cloud-bytes.ts`), not the two-or-three this
+document reasons about.*
+
 **Date:** 2026-09-04  
 **Reviewer:** Antigravity (AI Coding Assistant)  
 **Status:** Review Complete / Actionable Feedback Provided  
