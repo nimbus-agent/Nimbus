@@ -1495,6 +1495,119 @@ export function checkVlmAppenderConfinement(files: readonly FileEntry[]): Violat
   return out;
 }
 
+// D27 (a): the remote VLM CONSTRUCTOR. `wrapLedgeredVlm` (D22(g)) guarantees a remote describe is
+// LEDGERED; it does not guarantee it was GATED. A ledgered-but-ungated describe satisfies I29 and
+// still violates I37 -- the bytes go, the row is written, no grant was ever checked. This rule
+// closes exactly that, by making a non-local provider unconstructible outside the one wiring site
+// that consults the grant store.
+//
+// Confining the CONSTRUCTOR rather than the `.describe(` call follows D26(c): the capability
+// travels as a function VALUE, and a method-name regex cannot follow a provider held in a variable
+// and invoked through an alias.
+//
+// A SEPARATE rule from D22(g) rather than an extension of it: the two guard different properties
+// -- D22(g) is egress COMPLETENESS (every remote describe is ledgered), D27(a) is GATING (every
+// remote describe was consent-checked) -- and folding them into one function would mean a future
+// change made for one property silently moves the other.
+const D27_REMOTE_CTOR_CALL_RE = /\bcreateRemoteVlm\s*\(/;
+const D27_REMOTE_CTOR_DEFINITION =
+  "packages/gateway/src/multimodal/vlm/remote/remote-vlm-shared.ts";
+const D27_REMOTE_CTOR_ALLOWED: readonly string[] = [
+  "packages/gateway/src/multimodal/build-media-pass-deps.ts",
+];
+
+export function checkRemoteVlmConfinement(files: readonly FileEntry[]): Violation[] {
+  const out: Violation[] = [];
+  for (const f of files) {
+    if (f.relPath.endsWith(".test.ts")) continue;
+    if (!f.relPath.startsWith("packages/gateway/src/")) continue;
+    if (f.relPath === D27_REMOTE_CTOR_DEFINITION) continue;
+
+    // Comments AND string/template literals blanked length-preservingly, so neither can fake a
+    // match nor desync the paren-depth count below.
+    const code = stripStringLiterals(stripComments(f.contents));
+    const original = f.contents.split("\n");
+    const ctorMatches = [...code.matchAll(new RegExp(D27_REMOTE_CTOR_CALL_RE.source, "g"))];
+    if (ctorMatches.length === 0) continue;
+
+    const snippetAt = (index: number): Violation => {
+      const line = code.slice(0, index).split("\n").length;
+      return {
+        rule: "remote-vlm-constructor-confined",
+        file: f.relPath,
+        line,
+        snippet: (original[line - 1] ?? "").trim(),
+      };
+    };
+
+    if (!D27_REMOTE_CTOR_ALLOWED.includes(f.relPath)) {
+      for (const m of ctorMatches) out.push(snippetAt(m.index ?? 0));
+      continue;
+    }
+
+    // Approved site: every `createRemoteVlm(` must sit inside a `wrapLedgeredVlm(...)` argument
+    // list -- association, not co-occurrence, checked per occurrence.
+    const wrapSpans: Array<[number, number]> = [];
+    for (const m of code.matchAll(new RegExp(D22_VLM_WRAP_CALL_RE.source, "g"))) {
+      const openIdx = (m.index ?? 0) + m[0].length - 1;
+      const closeIdx = findMatchingParenClose(code, openIdx);
+      if (closeIdx !== -1) wrapSpans.push([openIdx, closeIdx]);
+    }
+    for (const m of ctorMatches) {
+      const idx = m.index ?? 0;
+      if (!wrapSpans.some(([open, close]) => idx > open && idx < close)) out.push(snippetAt(idx));
+    }
+  }
+  return out;
+}
+
+// D27 (b): the `media_grant` TABLE. Keyed on the table name in SQL text rather than on a symbol,
+// because the leak this prevents is a hand-written query somewhere else reading around the store's
+// `revoked_at IS NULL` filter. WEAKER than a symbol rule by construction -- a dynamically
+// assembled identifier evades it, as it evades every source scanner in this file -- and that
+// residual is closed the way the others are, by capability: only `media-grant-store.ts` is ever
+// handed a `Database` for this table.
+//
+// THREE files are allow-listed, not one, and the comment says so plainly rather than overstating:
+// `media-grant-store.ts` is the only module that WRITES `media_grant` (inserts, revokes, the
+// orphan-sweep); `media-discovery.ts` READS it, once, through a correlated `EXISTS (SELECT ...
+// FROM media_grant ...)` subquery on the candidate-selection hot path (added alongside the grant
+// model itself) -- routing that read through the store would mean either one `hasActiveGrant`
+// call per candidate row, or a store function hand-rolling a SQL fragment back to its caller,
+// which is confinement in name only; the correlated subquery is the right shape, so the rule
+// records the exception instead of the code contorting to avoid it. `media-grant-v59-sql.ts`
+// defines the table (CREATE TABLE / indexes) and is exempted for the same reason every migration
+// module is: DDL for the table is not a caller of it.
+const D27_GRANT_TABLE_RE = /\b(?:FROM|INTO|UPDATE|TABLE|JOIN)\s+media_grant\b/i;
+const D27_GRANT_TABLE_ALLOWED: readonly string[] = [
+  "packages/gateway/src/multimodal/media-grant-store.ts",
+  "packages/gateway/src/multimodal/media-discovery.ts",
+  "packages/gateway/src/index/media-grant-v59-sql.ts",
+];
+
+export function checkMediaGrantStoreConfinement(files: readonly FileEntry[]): Violation[] {
+  const out: Violation[] = [];
+  for (const f of files) {
+    if (f.relPath.endsWith(".test.ts")) continue;
+    if (!f.relPath.startsWith("packages/gateway/src/")) continue;
+    if (D27_GRANT_TABLE_ALLOWED.includes(f.relPath)) continue;
+    // Comments blanked ONLY: the table name legitimately lives inside string literals here, which
+    // is the whole point -- so literals must NOT be stripped for this rule.
+    const code = stripComments(f.contents);
+    const original = f.contents.split("\n");
+    for (const m of code.matchAll(new RegExp(D27_GRANT_TABLE_RE.source, "gi"))) {
+      const line = code.slice(0, m.index).split("\n").length;
+      out.push({
+        rule: "media-grant-table-confined",
+        file: f.relPath,
+        line,
+        snippet: (original[line - 1] ?? "").trim(),
+      });
+    }
+  }
+  return out;
+}
+
 export function checkEgressChokepointConfinement(files: readonly FileEntry[]): Violation[] {
   const out: Violation[] = [];
   for (const f of files) {
@@ -2001,6 +2114,24 @@ async function run(): Promise<void> {
     for (const e of v) {
       console.error(
         `::error file=${e.file},line=${e.line}::D22(g) a VlmProvider constructed or wrapped outside egress/vlm-egress.ts + build-media-pass-deps.ts — an unrecorded vision egress path; I29 regression: ${e.snippet}`,
+      );
+    }
+    if (v.length > 0) exit = 1;
+  }
+  if (mode === "binary-only" || mode === "all") {
+    const v = checkRemoteVlmConfinement(files);
+    for (const e of v) {
+      console.error(
+        `::error file=${e.file},line=${e.line}::D27(a) a non-local VlmProvider constructed outside build-media-pass-deps.ts, or not wrapped by wrapLedgeredVlm — an ungated remote describe; I37 regression: ${e.snippet}`,
+      );
+    }
+    if (v.length > 0) exit = 1;
+  }
+  if (mode === "binary-only" || mode === "all") {
+    const v = checkMediaGrantStoreConfinement(files);
+    for (const e of v) {
+      console.error(
+        `::error file=${e.file},line=${e.line}::D27(b) media_grant reached outside media-grant-store.ts — a caller can synthesise a grant or read around the active-row filter; I37 regression: ${e.snippet}`,
       );
     }
     if (v.length > 0) exit = 1;
