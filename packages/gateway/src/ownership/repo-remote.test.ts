@@ -181,3 +181,22 @@ test("parseRemoteUrl stays linear on a degenerate slash run", () => {
   expect(parseRemoteUrl(hostile)).toEqual({ service: "github", ownerName: "a/x" });
   expect(performance.now() - started).toBeLessThan(1000);
 });
+
+describe("windows console hygiene", () => {
+  // Rationale in `connectors/blame-index-sync.test.ts`: the detached Gateway has no console of
+  // its own, so an unhidden console child pops a visible window on Windows.
+  test("git is spawned with windowsHide so no console window appears", async () => {
+    const seen: Record<string, unknown>[] = [];
+    const capturingSpawn = ((_cmd: readonly string[], opts: Record<string, unknown>) => {
+      seen.push(opts);
+      return { exited: Promise.resolve(1), stdout: new Response("").body };
+    }) as unknown as RemoteSpawn;
+
+    await resolveRepoRemote("/r", capturingSpawn);
+
+    expect(seen.length).toBeGreaterThan(0);
+    for (const opts of seen) {
+      expect(opts["windowsHide"]).toBe(true);
+    }
+  });
+});

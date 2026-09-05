@@ -2,7 +2,12 @@ import { Database } from "bun:sqlite";
 import { afterEach, describe, expect, mock, test } from "bun:test";
 import { LocalIndex } from "../../index/local-index.ts";
 import { insertPerson } from "../../people/person-store.ts";
-import { resolveByGitEmail, resolveByOsUsername, resolveSelfPerson } from "./self-person.ts";
+import {
+  defaultRunGitConfigUserEmail,
+  resolveByGitEmail,
+  resolveByOsUsername,
+  resolveSelfPerson,
+} from "./self-person.ts";
 
 function freshDb(): Database {
   const db = new Database(":memory:");
@@ -183,5 +188,22 @@ describe("resolveSelfPerson (orchestrator)", () => {
     });
     expect(out.personId).toBe("person-does-not-exist");
     expect(out.source).toBe("override");
+  });
+});
+
+describe("defaultRunGitConfigUserEmail — windows console hygiene", () => {
+  // Rationale in `connectors/blame-index-sync.test.ts`: the detached Gateway has no console of
+  // its own, so an unhidden console child pops a visible window on Windows.
+  test("spawns git with windowsHide", async () => {
+    const seen: Record<string, unknown>[] = [];
+    const capturingSpawn = ((_cmd: readonly string[], opts: Record<string, unknown>) => {
+      seen.push(opts);
+      return { exited: Promise.resolve(0), stdout: new Response("me@example.com\n").body };
+    }) as unknown as typeof Bun.spawn;
+
+    await defaultRunGitConfigUserEmail(capturingSpawn);
+
+    expect(seen).toHaveLength(1);
+    expect(seen[0]?.["windowsHide"]).toBe(true);
   });
 });

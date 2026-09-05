@@ -22,7 +22,7 @@ type WakeWordDetectorOptions = {
 async function defaultIsChunkSilent(audioPath: string): Promise<boolean> {
   const proc = Bun.spawn(
     ["ffmpeg", "-i", audioPath, "-af", "silencedetect=noise=-50dB:d=0.5", "-f", "null", "-"],
-    { stdout: "ignore", stderr: "pipe" },
+    { stdout: "ignore", stderr: "pipe", windowsHide: true },
   );
   const stderr = await new Response(proc.stderr).text();
   await proc.exited;
@@ -86,10 +86,12 @@ function defaultRecordAudio(durationMs: number): Promise<string> {
   }
 
   return new Promise<string>((resolve, reject) => {
-    Bun.spawn(cmd, { stdout: "ignore", stderr: "ignore" }).exited.then((code) => {
-      if (code === 0) resolve(outPath);
-      else reject(new Error(`ffmpeg exited with ${code}`));
-    });
+    Bun.spawn(cmd, { stdout: "ignore", stderr: "ignore", windowsHide: true }).exited.then(
+      (code) => {
+        if (code === 0) resolve(outPath);
+        else reject(new Error(`ffmpeg exited with ${code}`));
+      },
+    );
   });
 }
 

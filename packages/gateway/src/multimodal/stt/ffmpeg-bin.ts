@@ -120,6 +120,8 @@ export async function transcodeToWav(input: string, opts: TranscodeOptions): Pro
     stderr: "pipe",
     // I1: scope the child's env rather than let it inherit the gateway's whole process.env.
     env: extensionProcessEnv({}),
+    // The detached Gateway has no console; without this ffmpeg pops a window per transcode.
+    windowsHide: true,
   }) as unknown as {
     exited: Promise<number>;
     // What Bun.spawn({stderr:"pipe"}) actually gives: a byte stream, NOT a Response.

@@ -317,3 +317,28 @@ describe("createBlameIndexSyncable (real repo)", () => {
     expect(countBlame(db, plain, "a.ts")).toBe(0);
   });
 });
+
+describe("windows console hygiene", () => {
+  /**
+   * The Gateway is launched detached and console-less (`cli/src/lib/spawn-gateway.ts` passes
+   * `windowsHide: true`), so on Windows every console-subsystem child it spawns is handed a
+   * brand-new console AND a visible window. This syncable spawns one `git blame` per file —
+   * up to MAX_BLAME_FILES = 400 on a full run — so without the flag one sync tick flashes
+   * hundreds of console windows across the user's screen.
+   */
+  test("git is spawned with windowsHide so no console window appears", async () => {
+    const seen: Record<string, unknown>[] = [];
+    const capturingSpawn = ((_cmd: readonly string[], opts: Record<string, unknown>) => {
+      seen.push(opts);
+      return {
+        exited: Promise.resolve(0),
+        stdout: new Response(`${SHA_A}\n`).body,
+      };
+    }) as unknown as typeof Bun.spawn;
+
+    await gitHeadSha("/r", capturingSpawn);
+
+    expect(seen).toHaveLength(1);
+    expect(seen[0]?.["windowsHide"]).toBe(true);
+  });
+});

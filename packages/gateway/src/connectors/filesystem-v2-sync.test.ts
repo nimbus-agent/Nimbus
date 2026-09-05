@@ -1365,3 +1365,38 @@ test("dependencyGraph: stops mid-iteration once maxFiles (80) package.json files
   expect(r.itemsUpserted).toBeLessThanOrEqual(80);
   expect(r.itemsUpserted).toBeGreaterThan(0);
 });
+
+describe("windows console hygiene", () => {
+  /**
+   * Rationale in `blame-index-sync.test.ts`. This file is the worse of the two offenders:
+   * `syncFilesystemCodeSymbolsForRoot` runs on EVERY tick with no cursor gate, walking up to
+   * 120 code files and spawning one `git blame` for each that has indexed ranges — so an
+   * unhidden spawn here means ~120 console windows flashing every 10 minutes, indefinitely.
+   */
+  function capturing(): { spawn: typeof Bun.spawn; seen: Record<string, unknown>[] } {
+    const seen: Record<string, unknown>[] = [];
+    const spawn = ((_cmd: readonly string[], opts: Record<string, unknown>) => {
+      seen.push(opts);
+      return {
+        exited: Promise.resolve(0),
+        stdout: new Response("").body,
+        stderr: new Response("").body,
+      };
+    }) as unknown as typeof Bun.spawn;
+    return { spawn, seen };
+  }
+
+  test("gitBlameLinePorcelain spawns with windowsHide", async () => {
+    const { spawn, seen } = capturing();
+    await gitBlameLinePorcelain("/r", "a.ts", [{ from: 1, to: 2 }], spawn);
+    expect(seen).toHaveLength(1);
+    expect(seen[0]?.["windowsHide"]).toBe(true);
+  });
+
+  test("gitLogRecords spawns with windowsHide", async () => {
+    const { spawn, seen } = capturing();
+    await gitLogRecords("/r", 10, spawn);
+    expect(seen).toHaveLength(1);
+    expect(seen[0]?.["windowsHide"]).toBe(true);
+  });
+});

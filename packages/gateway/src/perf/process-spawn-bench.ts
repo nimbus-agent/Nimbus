@@ -64,6 +64,8 @@ function spawnChild(opts: SpawnAndTimeOptions): ProcSubset {
     stdin: "ignore",
     stdout: stdio,
     stderr: stdio,
+    // Matches how the Gateway spawns in production, so the measured cost is the real one.
+    windowsHide: true,
     ...(opts.env !== undefined && { env: { ...process.env, ...opts.env } }),
   });
   // Bun's Subprocess types stdout/stderr as `ReadableStream | undefined` (the
