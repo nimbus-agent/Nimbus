@@ -33,6 +33,26 @@ const CLOUD_MEDIA_SERVICES: ReadonlySet<string> = new Set([
   "onedrive",
 ]);
 
+/**
+ * Services/types the explicit-item-id lookup scans, mirroring the gateway's own media-discovery
+ * registry (`multimodal/media-source-registry.ts`'s `ITEM_TYPE_MODALITY` + `MIME_KEYED_SERVICES`)
+ * as closely as the CLI-exposed `index.queryItems` filters allow. Scoping the scan to these
+ * services/types -- rather than the previous unfiltered whole-index scan -- is what keeps
+ * ordinary unrelated activity (Slack messages, emails, PRs) from evicting the target item out of
+ * the scan window before it can be matched.
+ *
+ * `index.queryItems` has no mime filter (only a plain `type IN (...)`), so `google_drive` and
+ * `onedrive` -- which index every file as the generic `type: "file"` and carry their real modality
+ * only in a mime field the exposed read surface cannot filter on -- still admit non-media files
+ * from those two services into the scan. That is the limit of what this EXPOSED read surface can
+ * express without a gateway change, which this task does not make. It is not a correctness gap:
+ * an item that STILL falls outside the (now much smaller) window is caught by the unresolved-id
+ * refusal below, which is what actually prevents a misreported source rather than this narrowing
+ * alone.
+ */
+const MEDIA_LOOKUP_SERVICES: readonly string[] = ["filesystem", ...CLOUD_MEDIA_SERVICES];
+const MEDIA_LOOKUP_TYPES: readonly string[] = ["media_av", "media_image", "photo", "file"];
+
 export interface AllowRemoteArgs {
   readonly itemIds: readonly string[]; // explicit form
   readonly service?: string; // selector form
@@ -266,7 +286,7 @@ function asRecord(v: unknown): Record<string, unknown> {
     : {};
 }
 
-interface CandidateRow {
+export interface CandidateRow {
   readonly itemId: string;
   readonly title: string;
   readonly sizeBytes: number | null;
@@ -306,10 +326,20 @@ function toCandidateRow(raw: unknown): CandidateRow | undefined {
 
 async function fetchCandidatesViaQuery(
   c: IPCClient,
-  opts: { readonly service?: string; readonly sinceMs?: number; readonly limit: number },
+  opts: {
+    readonly services?: readonly string[];
+    readonly types?: readonly string[];
+    readonly sinceMs?: number;
+    readonly limit: number;
+  },
 ): Promise<CandidateRow[]> {
   const params: Record<string, unknown> = { limit: opts.limit };
-  if (opts.service !== undefined) params["services"] = [opts.service];
+  if (opts.services !== undefined && opts.services.length > 0) {
+    params["services"] = opts.services;
+  }
+  if (opts.types !== undefined && opts.types.length > 0) {
+    params["types"] = opts.types;
+  }
   if (opts.sinceMs !== undefined) params["sinceMs"] = opts.sinceMs;
   const res = await c.call<unknown>("index.queryItems", params);
   const rawItems = asRecord(res)["items"];
@@ -322,37 +352,55 @@ async function fetchCandidatesViaQuery(
   return rows;
 }
 
+export interface ResolvedGrantCandidates {
+  readonly rows: readonly CandidateRow[];
+  /**
+   * Explicit item ids the scan could not find. A consent preview must never assert a source it
+   * cannot substantiate — an unresolved id is therefore never turned into a `CandidateRow` at all
+   * (there is no "unknown" placeholder), so `runAllowRemoteCmd` can refuse outright rather than
+   * silently showing (or defaulting) a source for an item it never actually found.
+   */
+  readonly unresolvedIds: readonly string[];
+}
+
 /**
  * Resolves the candidate set for either form of `AllowRemoteArgs`.
  *
  * The explicit form names ids the gateway has no by-id lookup for over IPC, so the ids are
- * matched against a broad recent scan; an id the scan does not surface still appears in the
- * preview (title falls back to the bare id) rather than being silently dropped from what the
- * owner is about to approve.
+ * matched against a scan scoped to media-bearing services/types (`MEDIA_LOOKUP_SERVICES`/
+ * `MEDIA_LOOKUP_TYPES` — never the whole index, which would let ordinary unrelated activity evict
+ * the target from the window). An id the scan still does not surface is reported in
+ * `unresolvedIds`, never defaulted into a fabricated "local" row.
  */
-async function resolveGrantCandidates(
+export async function resolveGrantCandidates(
   c: IPCClient,
   parsed: AllowRemoteArgs,
-): Promise<CandidateRow[]> {
+): Promise<ResolvedGrantCandidates> {
   if (parsed.itemIds.length > 0) {
-    const scanned = await fetchCandidatesViaQuery(c, { limit: 1000 });
+    const scanned = await fetchCandidatesViaQuery(c, {
+      services: MEDIA_LOOKUP_SERVICES,
+      types: MEDIA_LOOKUP_TYPES,
+      limit: 1000,
+    });
     const byId = new Map(scanned.map((r) => [r.itemId, r]));
-    return parsed.itemIds.map(
-      (itemId) =>
-        byId.get(itemId) ?? {
-          itemId,
-          title: itemId,
-          sizeBytes: null,
-          modifiedAt: 0,
-          service: "unknown",
-        },
-    );
+    const rows: CandidateRow[] = [];
+    const unresolvedIds: string[] = [];
+    for (const itemId of parsed.itemIds) {
+      const found = byId.get(itemId);
+      if (found === undefined) {
+        unresolvedIds.push(itemId);
+      } else {
+        rows.push(found);
+      }
+    }
+    return { rows, unresolvedIds };
   }
-  return fetchCandidatesViaQuery(c, {
-    ...(parsed.service === undefined ? {} : { service: parsed.service }),
+  const rows = await fetchCandidatesViaQuery(c, {
+    ...(parsed.service === undefined ? {} : { services: [parsed.service] }),
     ...(parsed.sinceDays === undefined ? {} : { sinceMs: Date.now() - parsed.sinceDays * DAY_MS }),
     limit: parsed.limit ?? MAX_GRANT_LIMIT,
   });
+  return { rows, unresolvedIds: [] };
 }
 
 function toGrantListEntry(raw: unknown): GrantListEntry | undefined {
@@ -378,6 +426,40 @@ async function fetchGrantList(c: IPCClient): Promise<GrantListEntry[]> {
     if (entry !== undefined) out.push(entry);
   }
   return out;
+}
+
+interface AllowRemoteResult {
+  readonly granted: number;
+  readonly alreadyGranted: number;
+}
+
+/** `media.allowRemote(...)` -> `{ granted, alreadyGranted }` (`ipc/media-rpc.ts`). */
+function toAllowRemoteResult(raw: unknown): AllowRemoteResult {
+  const r = asRecord(raw);
+  const granted = typeof r["granted"] === "number" ? r["granted"] : undefined;
+  const alreadyGranted = typeof r["alreadyGranted"] === "number" ? r["alreadyGranted"] : undefined;
+  if (granted === undefined || alreadyGranted === undefined) {
+    throw new Error(
+      "nimbus media allow-remote: malformed media.allowRemote response from the gateway",
+    );
+  }
+  return { granted, alreadyGranted };
+}
+
+interface RevokeResult {
+  readonly revoked: number;
+}
+
+/** `media.grants.revoke(...)` -> `{ revoked }` (`ipc/media-rpc.ts`). */
+function toRevokeResult(raw: unknown): RevokeResult {
+  const r = asRecord(raw);
+  const revoked = typeof r["revoked"] === "number" ? r["revoked"] : undefined;
+  if (revoked === undefined) {
+    throw new Error(
+      "nimbus media grants revoke: malformed media.grants.revoke response from the gateway",
+    );
+  }
+  return { revoked };
 }
 
 async function fetchAlreadyGrantedItemIds(c: IPCClient, vendor: string): Promise<Set<string>> {
@@ -435,10 +517,22 @@ export async function runAllowRemoteCmd(argv: string[]): Promise<void> {
   const parsed = parseAllowRemoteArgs(rest);
 
   await withGatewayIpc(async (c) => {
-    const [candidates, alreadyGrantedIds] = await Promise.all([
+    const [{ rows: candidates, unresolvedIds }, alreadyGrantedIds] = await Promise.all([
       resolveGrantCandidates(c, parsed),
       fetchAlreadyGrantedItemIds(c, vendor),
     ]);
+
+    // A consent preview must never assert a source it cannot substantiate: refuse outright rather
+    // than show a partial preview or default an unresolved item to "local" (spec § 18.5/§ 19.6).
+    if (unresolvedIds.length > 0) {
+      throw new Error(
+        `nimbus media allow-remote: could not resolve the source service for ` +
+          `${unresolvedIds.length} item id${unresolvedIds.length === 1 ? "" : "s"} ` +
+          `(${unresolvedIds.join(", ")}) -- refusing to preview or grant, since a source that ` +
+          "cannot be named cannot be consented to. Re-run with a --service selector instead, or " +
+          "sync the connector that holds the item, then try the explicit id again.",
+      );
+    }
 
     if (candidates.length === 0) {
       console.log("No matching artifacts found — nothing to grant.");
@@ -468,10 +562,12 @@ export async function runAllowRemoteCmd(argv: string[]): Promise<void> {
       return;
     }
 
-    const result = await c.call<{ granted: number; alreadyGranted: number }>("media.allowRemote", {
-      itemIds: items.map((i) => i.itemId),
-      vendor,
-    });
+    const result = toAllowRemoteResult(
+      await c.call<unknown>("media.allowRemote", {
+        itemIds: items.map((i) => i.itemId),
+        vendor,
+      }),
+    );
     console.log(`Granted ${result.granted} new, ${result.alreadyGranted} already granted.`);
   });
 }
@@ -486,10 +582,12 @@ async function runGrantsListCmd(): Promise<void> {
 async function runGrantsRevokeCmd(argv: string[]): Promise<void> {
   const parsed = parseGrantsRevokeArgs(argv);
   await withGatewayIpc(async (c) => {
-    const result = await c.call<{ revoked: number }>("media.grants.revoke", {
-      itemId: parsed.itemId,
-      ...(parsed.modelVendor === undefined ? {} : { modelVendor: parsed.modelVendor }),
-    });
+    const result = toRevokeResult(
+      await c.call<unknown>("media.grants.revoke", {
+        itemId: parsed.itemId,
+        ...(parsed.modelVendor === undefined ? {} : { modelVendor: parsed.modelVendor }),
+      }),
+    );
     console.log(`Revoked ${result.revoked} grant${result.revoked === 1 ? "" : "s"}.`);
   });
 }

@@ -1,10 +1,14 @@
-import { describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, test } from "bun:test";
+import { clearFixture, FAKE_SOCKET_PATH, setFixture } from "../../test/helpers/cli-mocks.ts";
+import { createMockIpcClient } from "../../test/helpers/mock-ipc-client.ts";
 import type { GrantPreviewItem } from "./media-grants-cmd.ts";
 import {
   parseAllowRemoteArgs,
   parseGrantsRevokeArgs,
   renderGrantList,
   renderGrantPreview,
+  resolveGrantCandidates,
+  runAllowRemoteCmd,
 } from "./media-grants-cmd.ts";
 
 describe("parseAllowRemoteArgs", () => {
@@ -108,5 +112,94 @@ describe("parseGrantsRevokeArgs", () => {
 
   test("REFUSES with no item id rather than revoking everything", () => {
     expect(() => parseGrantsRevokeArgs([])).toThrow();
+  });
+});
+
+/**
+ * The Critical from review: an explicit item id outside the scan window used to be silently
+ * defaulted to `service: "unknown"`, which `renderGrantPreview`'s `sourceLabel` then rendered as
+ * "source local" for a photo that might actually live in Google Photos. A consent preview must
+ * never assert a source it cannot substantiate, so an unresolved id is now reported separately
+ * rather than turned into a fabricated row at all.
+ */
+describe("resolveGrantCandidates", () => {
+  afterEach(() => clearFixture());
+
+  test("marks an id outside the scan window as unresolved, never defaulting it to local", async () => {
+    const ipc = createMockIpcClient([{ items: [], meta: { limit: 1000, total: 0 } }]);
+    const result = await resolveGrantCandidates(ipc.client, { itemIds: ["missing-id"] });
+    expect(result.unresolvedIds).toEqual(["missing-id"]);
+    expect(result.rows).toEqual([]);
+  });
+
+  test("resolves an id the scan DOES find, and scopes the scan to media services/types", async () => {
+    const ipc = createMockIpcClient([
+      {
+        items: [
+          {
+            indexPrimaryKey: "i1",
+            name: "chart.png",
+            service: "google_photos",
+            sizeBytes: 100,
+            modifiedAt: 42,
+          },
+        ],
+        meta: { limit: 1000, total: 1 },
+      },
+    ]);
+    const result = await resolveGrantCandidates(ipc.client, { itemIds: ["i1"] });
+    expect(result.unresolvedIds).toEqual([]);
+    expect(result.rows).toEqual([
+      {
+        itemId: "i1",
+        title: "chart.png",
+        sizeBytes: 100,
+        modifiedAt: 42,
+        service: "google_photos",
+      },
+    ]);
+    const call = ipc.calls[0];
+    expect(call?.method).toBe("index.queryItems");
+    const params = call?.params as { services?: string[]; types?: string[] };
+    // Scoped to media-bearing services/types, never the whole index — this is what keeps
+    // ordinary unrelated activity from evicting the target out of the scan window.
+    expect(params.services).toContain("google_photos");
+    expect(params.services).not.toBeUndefined();
+    expect(params.types).not.toBeUndefined();
+  });
+});
+
+describe("runAllowRemoteCmd", () => {
+  afterEach(() => clearFixture());
+
+  test("REFUSES to preview or grant when any explicit item id could not be resolved", async () => {
+    const ipc = createMockIpcClient([
+      // index.queryItems: only "i1" is found; "missing-id" is not in the scan.
+      {
+        items: [
+          {
+            indexPrimaryKey: "i1",
+            name: "chart.png",
+            service: "google_photos",
+            sizeBytes: 100,
+            modifiedAt: 42,
+          },
+        ],
+        meta: { limit: 1000, total: 1 },
+      },
+      // media.grants.list, fetched in parallel with the scan above.
+      { grants: [] },
+    ]);
+    setFixture({
+      gatewayState: { socketPath: FAKE_SOCKET_PATH },
+      ipcClient: { call: ipc.client.call, connect: () => {}, disconnect: () => {} },
+    });
+
+    await expect(runAllowRemoteCmd(["i1", "missing-id", "--vendor", "openai"])).rejects.toThrow(
+      /missing-id/,
+    );
+
+    // The refusal must happen before any write: media.allowRemote is never called.
+    expect(ipc.calls.some((c) => c.method === "media.allowRemote")).toBe(false);
   });
 });
