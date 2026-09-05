@@ -16,7 +16,7 @@
  *   - a thrown fetch contributes only its `name`, never its `message` -- Gemini puts the API key in
  *     the URL query string and a fetch failure message embeds the URL.
  */
-import { classifyHttpStatus, LlmProviderError } from "../../../llm/provider-error.ts";
+import { classifyHttpStatus, LlmProviderError, readJsonBody } from "../../../llm/provider-error.ts";
 import type { RemoteVlmVendor } from "../../media-types.ts";
 import type { FetchLike } from "../ollama-vlm.ts";
 import type { VlmDescribeInput, VlmDescribeResult, VlmProvider } from "../vlm-types.ts";
@@ -134,14 +134,15 @@ function readCaption(vendor: RemoteVlmVendor, payload: unknown): string {
       : vendor === "openai"
         ? firstString(payload, ["choices", 0, "message", "content"])
         : firstString(payload, ["candidates", 0, "content", "parts", 0, "text"]);
-  if (text === null) {
-    // Returning an empty caption instead would write a row claiming an understanding that never
-    // happened -- the same rule `ollama-vlm.ts` states for its own response parsing. Classified
-    // `transport`, mirroring `readJsonBody`'s "response body was not JSON": whatever answered was
-    // not a usable vendor response.
+  // `null` (field absent/wrong-shaped) AND `""`/whitespace-only are both rejected here, for the
+  // same reason `image-understander.ts` trims and rejects an empty caption on the local path:
+  // writing an empty-bodied row would claim an understanding that never happened. Classified
+  // `transport`, mirroring `readJsonBody`'s "response body was not JSON": whatever answered was
+  // not a usable vendor response.
+  if (text === null || text.trim() === "") {
     throw new LlmProviderError(`${vendor} vlm: response carried no caption text`, "transport");
   }
-  return text;
+  return text.trim();
 }
 
 export function createRemoteVlm(opts: RemoteVlmOptions): VlmProvider {
@@ -204,7 +205,10 @@ export function createRemoteVlm(opts: RemoteVlmOptions): VlmProvider {
           resp.status,
         );
       }
-      return { text: readCaption(opts.vendor, await resp.json()) };
+      // Routed through the module's own error taxonomy, same as the non-2xx branch above: a 200
+      // carrying a non-JSON body (a proxy's HTML error page, say) must classify as `transport`
+      // rather than escape as a raw `SyntaxError` the caller cannot classify.
+      return { text: readCaption(opts.vendor, await readJsonBody(resp, opts.vendor)) };
     },
   };
 }

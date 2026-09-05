@@ -146,7 +146,7 @@ async function cloudBearerFor(
  * with no restart, and `vendorApiKeyName` is the ONE place a vendor's Vault key name is
  * constructed (D11).
  */
-async function vendorApiKey(
+export async function vendorApiKey(
   vault: NimbusVault | undefined,
   vendor: RemoteVlmVendor,
 ): Promise<string | null> {
@@ -248,8 +248,12 @@ export function withTranscribeTimeout(
  * arm: cloud bytes (PR 3) never touch disk and are taken directly, a local artifact is read here.
  * No exported equivalent existed to reuse (checked before adding this) — a second private copy in
  * the one other caller would have been the third occurrence of the same three-line branch.
+ *
+ * Exported so both `MediaSource` arms can be exercised directly, without routing a real image
+ * through the wrapped remote provider's `describe()` (a real outbound request) just to prove which
+ * branch ran.
  */
-async function bytesForSource(source: MediaSource): Promise<Uint8Array> {
+export async function bytesForSource(source: MediaSource): Promise<Uint8Array> {
   return source.kind === "bytes" ? source.bytes : new Uint8Array(await fsReadFile(source.path));
 }
 

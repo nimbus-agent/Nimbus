@@ -26,6 +26,13 @@ function capture(): {
   };
 }
 
+/** Builds a 200 response body for `vendor` carrying `text` as the caption, for the empty/blank tests. */
+function replyBodyFor(vendor: "anthropic" | "openai" | "gemini", text: string): unknown {
+  if (vendor === "anthropic") return { content: [{ type: "text", text }] };
+  if (vendor === "openai") return { choices: [{ message: { content: text } }] };
+  return { candidates: [{ content: { parts: [{ text }] } }] };
+}
+
 describe("anthropic", () => {
   test("sends media_type and base64 data, and reads the caption back", async () => {
     const c = capture();
@@ -125,6 +132,34 @@ describe("every vendor", () => {
       await expect(
         p.describe({ bytes: BYTES, prompt: "d", mimeType: "image/jpeg" }),
       ).rejects.toThrow(/^(?!.*SECRET-LEAKED).*$/s);
+    },
+  );
+
+  /**
+   * A 200 with an empty caption would write a row claiming an understanding that never happened —
+   * the same rule `image-understander.ts` states for the local path's own empty-caption check.
+   */
+  test.each(["anthropic", "openai", "gemini"] as const)(
+    "%s rejects a 200 with an empty caption rather than recording a false success",
+    async (vendor) => {
+      const c = capture();
+      c.reply(replyBodyFor(vendor, ""));
+      const p = createRemoteVlm({ vendor, apiKey: async () => "k", fetchImpl: c.fetchImpl });
+      await expect(
+        p.describe({ bytes: BYTES, prompt: "d", mimeType: "image/jpeg" }),
+      ).rejects.toThrow();
+    },
+  );
+
+  test.each(["anthropic", "openai", "gemini"] as const)(
+    "%s rejects a 200 with a whitespace-only caption the same way",
+    async (vendor) => {
+      const c = capture();
+      c.reply(replyBodyFor(vendor, "   \n\t  "));
+      const p = createRemoteVlm({ vendor, apiKey: async () => "k", fetchImpl: c.fetchImpl });
+      await expect(
+        p.describe({ bytes: BYTES, prompt: "d", mimeType: "image/jpeg" }),
+      ).rejects.toThrow();
     },
   );
 
