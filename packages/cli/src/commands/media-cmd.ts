@@ -16,7 +16,9 @@
  * that leg is budgeted, capped, and I29-ledgered rather than unbounded — so a `--yes` gate here
  * would be ceremony that trains users to type it without reading it, not a real guardrail.
  */
+import { formatBytes } from "../lib/format-bytes.ts";
 import { withGatewayIpc } from "../lib/with-gateway-ipc.ts";
+import { runAllowRemoteCmd } from "./media-grants-cmd.ts";
 
 // Hand-mirrored from the gateway's `SkipReason` (packages/cli may not import gateway source).
 // A missing member here does not fail typecheck at the boundary — the summary arrives as JSON —
@@ -77,27 +79,10 @@ export interface CliPreflightRefusal {
   readonly budgetBytes: number;
 }
 
-/**
- * Bytes as a short DECIMAL string (`3.9 GB`, `512 MB`), matching spec § 16.9's printed shape and
- * `--budget`'s decimal units — `parseBudget` treats `GB` as 10^9, so echoing a binary-rounded
- * number back at an operator who typed `4GB` would not agree with what they asked for.
- * Exact for a byte count under 1 kB, since rounding `873` to `0.9 kB` loses more than it saves.
- */
-export function formatBytes(bytes: number): string {
-  const units: readonly (readonly [number, string])[] = [
-    [1_000 ** 3, "GB"],
-    [1_000 ** 2, "MB"],
-    [1_000, "kB"],
-  ];
-  for (const [scale, label] of units) {
-    if (bytes >= scale) {
-      const value = bytes / scale;
-      // One decimal below 10 (3.9 GB), none above it (412 MB) — the extra digit stops mattering.
-      return `${value < 10 ? value.toFixed(1) : Math.round(value)} ${label}`;
-    }
-  }
-  return `${bytes} B`;
-}
+// `formatBytes` now lives in `../lib/format-bytes.ts` (re-exported here for back-compat, and used
+// below) so that `media-grants-cmd.ts` can reuse it without an import cycle between the two
+// command files.
+export { formatBytes } from "../lib/format-bytes.ts";
 
 export interface ParsedMediaArgs {
   readonly kind: "understand";
@@ -392,6 +377,15 @@ Usage:
                            [--originals]          (always fetch the original, never a rendition)
                            [--json]
 
+  nimbus media allow-remote <itemId>... --vendor <name>
+  nimbus media allow-remote --service <name> --limit N --vendor <name> [--since <days>]
+
+Grants remote-vision consent for specific images (never audio/video), one artifact at a time and
+by explicit approval only: allow-remote always shows every matching artifact by title before
+asking to confirm, naming both the source (the service holding the bytes today) and the
+destination (the third-party vendor about to receive them). A selector form (--service/--since)
+MUST also pass --limit — there is no default, since an unbounded grant must never be expressible.
+
 Runs the budgeted, resumable understanding pass over indexed local AND cloud-backed (Google Drive,
 Google Photos, OneDrive) audio, video and still images: transcribes recordings and captions images
 (plus a small number of sampled video frames) that have not been understood yet, and writes the
@@ -423,6 +417,10 @@ export async function runMediaCmd(args: string[]): Promise<void> {
   const sub = args[0];
   if (sub === undefined || sub === "help" || sub === "--help" || sub === "-h") {
     printMediaHelp();
+    return;
+  }
+  if (sub === "allow-remote") {
+    await runAllowRemoteCmd(args.slice(1));
     return;
   }
   const isJson = args.includes("--json");
