@@ -2,6 +2,20 @@
 
 All notable changes to the `nimbus` core (headless Gateway + CLI binary + first-party MCP connectors) are documented in this file. release-please appends new entries between this header and the most recent version below when a release PR merges.
 
+## [7.9.0](https://github.com/nimbus-agent/Nimbus/compare/v7.8.2...v7.9.0) (2026-09-04)
+
+
+### Features
+
+* **multimodal:** image understanding and sampled frame captions (S2 PR 2 of 4) ([#1438](https://github.com/nimbus-agent/Nimbus/issues/1438)) ([a24300a](https://github.com/nimbus-agent/Nimbus/commit/a24300a76e03d90a1cbe44833330a3b2a22dee35))
+
+
+### Bug Fixes
+
+* **ci:** retry a status-less transport failure in the dependency audit ([#1441](https://github.com/nimbus-agent/Nimbus/issues/1441)) ([4b1948b](https://github.com/nimbus-agent/Nimbus/commit/4b1948b79b57a7b66865dea4f7134306d0efbce9))
+* **ci:** the sdk release-train tagPattern never matched a real tag, and that only warned ([#1445](https://github.com/nimbus-agent/Nimbus/issues/1445)) ([19a371c](https://github.com/nimbus-agent/Nimbus/commit/19a371c3d9e6251a208e2c20655204b44d59e6cc))
+* **llm:** a provider named __proto__ vanished from the availability map ([#1442](https://github.com/nimbus-agent/Nimbus/issues/1442)) ([c16855a](https://github.com/nimbus-agent/Nimbus/commit/c16855a7d09ba90cb129173852bfa281092ba114))
+
 ## [7.8.2](https://github.com/nimbus-agent/Nimbus/compare/v7.8.1...v7.8.2) (2026-09-04)
 
 
