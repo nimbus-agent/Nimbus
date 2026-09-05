@@ -149,4 +149,35 @@ describe("sweepStaleScratchFiles", () => {
   test("returns 0 for a directory that does not exist", () => {
     expect(sweepStaleScratchFiles(join(tmpdir(), "nimbus-not-here-xyz"), Date.now())).toBe(0);
   });
+
+  test("sweeps a stale extensionless cloud download", () => {
+    const dir = mkdtempSync(join(tmpdir(), "nimbus-sweep-"));
+    const stale = join(dir, "nimbus-media-abc123");
+    writeFileSync(stale, "x");
+    const twoHoursAgo = Date.now() - 2 * 60 * 60 * 1000;
+    utimesSync(stale, twoHoursAgo / 1000, twoHoursAgo / 1000);
+
+    expect(sweepStaleScratchFiles(dir, Date.now())).toBe(1);
+    expect(existsSync(stale)).toBe(false);
+  });
+
+  test("leaves a YOUNG cloud download alone — a concurrent pass may own it", () => {
+    const dir = mkdtempSync(join(tmpdir(), "nimbus-sweep-"));
+    const fresh = join(dir, "nimbus-media-def456");
+    writeFileSync(fresh, "x");
+
+    expect(sweepStaleScratchFiles(dir, Date.now())).toBe(0);
+    expect(existsSync(fresh)).toBe(true);
+  });
+
+  test("never touches an unrelated file, however old", () => {
+    const dir = mkdtempSync(join(tmpdir(), "nimbus-sweep-"));
+    const other = join(dir, "important.mp4");
+    writeFileSync(other, "x");
+    const twoHoursAgo = Date.now() - 2 * 60 * 60 * 1000;
+    utimesSync(other, twoHoursAgo / 1000, twoHoursAgo / 1000);
+
+    expect(sweepStaleScratchFiles(dir, Date.now())).toBe(0);
+    expect(existsSync(other)).toBe(true);
+  });
 });

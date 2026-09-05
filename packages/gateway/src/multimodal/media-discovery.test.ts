@@ -3,7 +3,13 @@ import { beforeEach, describe, expect, test } from "bun:test";
 import { upsertIndexedItem } from "../index/item-store.ts";
 import { CURRENT_SCHEMA_VERSION } from "../index/local-index.ts";
 import { runIndexedSchemaMigrations } from "../index/migrations/runner.ts";
-import { findCandidates } from "./media-discovery.ts";
+import { buildModalityPredicate, findCandidates } from "./media-discovery.ts";
+import {
+  MIME_KEYED_SERVICES,
+  MIME_PATTERNS_FOR_MODALITY,
+  mediaItemTypePairsForModality,
+  mimeModality,
+} from "./media-source-registry.ts";
 import { writeUnderstanding } from "./understanding-item.ts";
 
 let db: Database;
@@ -26,6 +32,39 @@ beforeEach(() => {
   runIndexedSchemaMigrations(db, CURRENT_SCHEMA_VERSION);
 });
 
+function freshIndexDb(): Database {
+  const fresh = new Database(":memory:");
+  runIndexedSchemaMigrations(fresh, CURRENT_SCHEMA_VERSION);
+  return fresh;
+}
+
+/**
+ * Cloud-item fixture: `id` is the full `service:externalId` item id (matching how a real synced
+ * row reads), and the external id is derived from it rather than duplicated by the caller.
+ */
+function insertItem(
+  target: Database,
+  row: {
+    readonly id: string;
+    readonly service: string;
+    readonly type: string;
+    readonly metadata?: Record<string, unknown>;
+  },
+): void {
+  const prefix = `${row.service}:`;
+  const externalId = row.id.startsWith(prefix) ? row.id.slice(prefix.length) : row.id;
+  upsertIndexedItem(target, {
+    service: row.service,
+    type: row.type,
+    externalId,
+    title: row.id,
+    bodyPreview: "",
+    modifiedAt: 1000,
+    syncedAt: 1000,
+    metadata: row.metadata ?? {},
+  });
+}
+
 describe("findCandidates", () => {
   test("returns media items that have no understanding yet", () => {
     addMedia("/m/a.mp4");
@@ -37,7 +76,14 @@ describe("findCandidates", () => {
     addMedia("/m/a.mp4");
     const [c] = findCandidates(db, { limit: 10 });
     if (c === undefined) throw new Error("expected a candidate");
-    writeUnderstanding(db, c, { text: "t", model: "m", isLocal: true }, 2000);
+    writeUnderstanding(
+      db,
+      c,
+      { text: "t", model: "m", isLocal: true },
+      2000,
+      undefined,
+      "original",
+    );
     expect(findCandidates(db, { limit: 10 })).toHaveLength(0);
   });
 
@@ -45,7 +91,14 @@ describe("findCandidates", () => {
     addMedia("/m/a.mp4");
     const [c] = findCandidates(db, { limit: 10 });
     if (c === undefined) throw new Error("expected a candidate");
-    writeUnderstanding(db, c, { text: "t", model: "m", isLocal: true }, 2000);
+    writeUnderstanding(
+      db,
+      c,
+      { text: "t", model: "m", isLocal: true },
+      2000,
+      undefined,
+      "original",
+    );
     db.run(
       "UPDATE item SET metadata = json_set(metadata, '$.understandingVersion', 0) WHERE type = 'video_understanding'",
     );
@@ -61,7 +114,14 @@ describe("findCandidates", () => {
     addMedia("/m/a.mp4");
     const [c] = findCandidates(db, { limit: 10 });
     if (c === undefined) throw new Error("expected a candidate");
-    writeUnderstanding(db, c, { text: "t", model: "m", isLocal: true }, 2000);
+    writeUnderstanding(
+      db,
+      c,
+      { text: "t", model: "m", isLocal: true },
+      2000,
+      undefined,
+      "original",
+    );
     db.run(
       "UPDATE item SET metadata = json_set(metadata, '$.understandingVersion', 1) WHERE type = 'video_understanding'",
     );
@@ -217,4 +277,291 @@ describe("findCandidates — metadata edge cases", () => {
     if (c === undefined) throw new Error("expected a candidate");
     expect(c.sourceBytes).toBeNull();
   });
+});
+
+describe("findCandidates — mime-keyed cloud services (PR 3)", () => {
+  test("pages past non-media files without clearing the cursor (the starvation bug)", () => {
+    const cloud = freshIndexDb();
+    // 100 Drive files; only #70-#75 are media. A JS-side mime filter would return 0 candidates
+    // for page 1, and the pass would treat that as end-of-queue.
+    for (let i = 0; i < 100; i += 1) {
+      const media = i >= 70 && i < 76;
+      insertItem(cloud, {
+        id: `google_drive:f${String(i).padStart(3, "0")}`,
+        service: "google_drive",
+        type: "file",
+        metadata: { mimeType: media ? "video/mp4" : "application/pdf", size: "1024" },
+      });
+    }
+
+    const page1 = findCandidates(cloud, { limit: 50 });
+    // The SQL predicate excludes the PDFs, so page 1 is the SIX media items, not zero.
+    expect(page1).toHaveLength(6);
+    expect(page1.every((c) => c.modality === "av")).toBe(true);
+  });
+
+  test("--modality image excludes a video sharing the same item type", () => {
+    const cloud = freshIndexDb();
+    insertItem(cloud, {
+      id: "google_photos:p1",
+      service: "google_photos",
+      type: "photo",
+      metadata: { mimeType: "image/jpeg" },
+    });
+    insertItem(cloud, {
+      id: "google_photos:p2",
+      service: "google_photos",
+      type: "photo",
+      metadata: { mimeType: "video/mp4" },
+    });
+
+    expect(findCandidates(cloud, { limit: 10, modality: "image" }).map((c) => c.itemId)).toEqual([
+      "google_photos:p1",
+    ]);
+    expect(findCandidates(cloud, { limit: 10, modality: "av" }).map((c) => c.itemId)).toEqual([
+      "google_photos:p2",
+    ]);
+  });
+
+  test("a mime-keyed row with NO mimeType is excluded by SQL, not fetched and dropped", () => {
+    const cloud = freshIndexDb();
+    insertItem(cloud, {
+      id: "google_drive:f1",
+      service: "google_drive",
+      type: "file",
+      metadata: {},
+    });
+    expect(findCandidates(cloud, { limit: 10 })).toHaveLength(0);
+  });
+
+  // This is a regression guard on the RULING (mediaItemTypePairsForModality/ITEM_TYPE_MODALITY
+  // holds ONLY filesystem's media_av/media_image, never a cloud pair) rather than coverage for
+  // arm 1's pair-vs-type shape: it goes red the moment someone adds `figma:file` — or any
+  // `file`/`photo` pair — to ITEM_TYPE_MODALITY, but arm 1 is already pair-keyed
+  // (`src.service = ? AND src.type = ?`), so a same-named-type collision on a DIFFERENT service
+  // (e.g. a hypothetical `other_service:file` pair) cannot make this specific figma row match —
+  // that shape is covered separately below ("arm 1 matches by the exact pair, not by type alone").
+  test("a NON-mime-keyed service sharing the type name 'file' is never selected", () => {
+    // figma-file-mapping.ts:60 also emits type "file". If ITEM_TYPE_MODALITY ever grew a
+    // `<service>:file` pair for a mime-keyed service, arm 1 would still be scoped to that exact
+    // (service, type) pair and would not admit this figma row — but if someone instead adds a
+    // bare `file`/`photo` type to the registry expecting "any file-typed item", this guards that.
+    const cloud = freshIndexDb();
+    insertItem(cloud, {
+      id: "figma:f1",
+      service: "figma",
+      type: "file",
+      metadata: { mimeType: "image/png" },
+    });
+    expect(findCandidates(cloud, { limit: 10 })).toHaveLength(0);
+  });
+
+  // Important 2: arm 1 must match by the EXACT (service, type) pair, not by type alone. Uses the
+  // one real ITEM_TYPE_MODALITY pair (`filesystem:media_av`) as the collision partner. A
+  // single-row DB can't discriminate a type-only arm 1 from a pair-keyed one — the JS loop drops
+  // an unregistered pair either way when nothing else competes for the LIMIT — so this mirrors
+  // the starvation shape: 5 unregistered `another_service:media_av` rows sort BEFORE the one real
+  // `filesystem:media_av` row by id. Under a bare `src.type IN (...)`, SQL admits all 6, LIMIT 5
+  // keeps only the 5 impostors, and the JS loop drops every one of them — the real candidate never
+  // reaches the page. Pair-keyed, SQL admits only the 1 real row.
+  test("arm 1 matches by the exact (service, type) pair, not by type alone — under-fill via LIMIT", () => {
+    const cloud = freshIndexDb();
+    for (let i = 0; i < 5; i += 1) {
+      insertItem(cloud, {
+        id: `another_service:a${i}`,
+        service: "another_service",
+        type: "media_av",
+        metadata: {},
+      });
+    }
+    insertItem(cloud, {
+      id: "filesystem:real.mp4",
+      service: "filesystem",
+      type: "media_av",
+      metadata: { path: "/m/real.mp4" },
+    });
+    expect(findCandidates(cloud, { limit: 5 }).map((c) => c.itemId)).toEqual([
+      "filesystem:real.mp4",
+    ]);
+  });
+
+  test("a Drive FOLDER is excluded — its mime fails every pattern", () => {
+    const cloud = freshIndexDb();
+    insertItem(cloud, {
+      id: "google_drive:d1",
+      service: "google_drive",
+      type: "folder",
+      metadata: { mimeType: "application/vnd.google-apps.folder" },
+    });
+    expect(findCandidates(cloud, { limit: 10 })).toHaveLength(0);
+  });
+
+  test("carries the provider's own externalId from the column, not derived from the item id", () => {
+    const cloud = freshIndexDb();
+    insertItem(cloud, {
+      id: "google_drive:file123",
+      service: "google_drive",
+      type: "file",
+      metadata: { mimeType: "video/mp4" },
+    });
+    const [c] = findCandidates(cloud, { limit: 10 });
+    if (c === undefined) throw new Error("expected a candidate");
+    expect(c.externalId).toBe("file123");
+  });
+
+  // Discriminates the forbidden `itemId.slice(service.length + 1)` derivation from reading the
+  // `external_id` COLUMN. `itemPrimaryKey` is idempotent: when the caller's externalId ALREADY
+  // starts with "service:", it is stored UNCHANGED — so here `id` and `external_id` are the SAME
+  // string, "google_drive:abc". The forbidden slice would strip the leading "google_drive:" and
+  // wrongly produce "abc"; the fixture in the test above (`file123`) cannot catch this, because
+  // slice and column agree on a key that never round-trips.
+  test("carries externalId unchanged when it already starts with the service prefix (idempotent key round-trip)", () => {
+    const cloud = freshIndexDb();
+    upsertIndexedItem(cloud, {
+      service: "google_drive",
+      type: "file",
+      externalId: "google_drive:abc",
+      title: "abc",
+      bodyPreview: "",
+      modifiedAt: 1000,
+      syncedAt: 1000,
+      metadata: { mimeType: "video/mp4" },
+    });
+    const [c] = findCandidates(cloud, { limit: 10 });
+    if (c === undefined) throw new Error("expected a candidate");
+    expect(c.externalId).toBe("google_drive:abc");
+  });
+});
+
+describe("buildModalityPredicate — Important 1: the empty-arm guard", () => {
+  test("an empty pairs list does not suppress arm 2 — the clause still admits via mime alone", () => {
+    const predicate = buildModalityPredicate([], ["google_drive"], ["image/%"]);
+    expect(predicate).not.toBeNull();
+    expect(predicate?.clause).not.toContain("src.type =");
+    expect(predicate?.clause).toContain("json_extract");
+    expect(predicate?.params).toEqual(["google_drive", "image/%"]);
+  });
+
+  test("a non-empty pairs list with no mime services omits arm 2 entirely (no empty IN/OR)", () => {
+    const predicate = buildModalityPredicate([{ service: "filesystem", type: "media_av" }], [], []);
+    expect(predicate).not.toBeNull();
+    expect(predicate?.clause).not.toContain("json_extract");
+    expect(predicate?.params).toEqual(["filesystem", "media_av"]);
+  });
+
+  // Important A (fix round 3): non-empty mimeServices with an EMPTY mimePatterns must also omit
+  // arm 2 — the old guard was `mimeServices.length > 0` alone, which would have emitted
+  // `... AND ())`, a SQLite syntax error, the exact failure this function's contract promises
+  // never happens. Not reachable through findCandidates today (every real MediaModality has a
+  // non-empty pattern list), but buildModalityPredicate is exported and independently callable.
+  test("non-empty mime services with an EMPTY pattern list omits arm 2 too (no `AND ()`)", () => {
+    const predicate = buildModalityPredicate(
+      [{ service: "filesystem", type: "media_av" }],
+      ["google_drive"],
+      [],
+    );
+    expect(predicate).not.toBeNull();
+    expect(predicate?.clause).not.toContain("AND ()");
+    expect(predicate?.clause).not.toContain("json_extract");
+    expect(predicate?.params).toEqual(["filesystem", "media_av"]);
+  });
+
+  test("empty pairs AND an empty pattern list return null even with non-empty mime services", () => {
+    expect(buildModalityPredicate([], ["google_drive"], [])).toBeNull();
+  });
+
+  test("returns null only when BOTH arms are empty", () => {
+    expect(buildModalityPredicate([], [], [])).toBeNull();
+  });
+
+  // The literal behavioural claim: with a REAL empty pairs array (standing in for a future
+  // registry state — today's ITEM_TYPE_MODALITY always covers both modalities, so this cannot be
+  // driven through findCandidates' own registry lookup), the built predicate still returns real
+  // cloud candidates from a real database when run as an actual SQL WHERE clause.
+  test("with an empty type list for a modality, cloud candidates for that modality are still returned", () => {
+    const cloud = freshIndexDb();
+    insertItem(cloud, {
+      id: "google_drive:img1",
+      service: "google_drive",
+      type: "file",
+      metadata: { mimeType: "image/jpeg" },
+    });
+    insertItem(cloud, {
+      id: "google_drive:doc1",
+      service: "google_drive",
+      type: "file",
+      metadata: { mimeType: "application/pdf" },
+    });
+
+    const predicate = buildModalityPredicate(
+      [],
+      ["google_drive", "google_photos", "onedrive"],
+      ["image/%"],
+    );
+    if (predicate === null) throw new Error("expected a predicate");
+
+    const rows = cloud
+      .query<{ id: string }, (string | number)[]>(
+        `SELECT src.id AS id FROM item AS src WHERE ${predicate.clause}`,
+      )
+      .all(...predicate.params);
+    expect(rows.map((r) => r.id)).toEqual(["google_drive:img1"]);
+  });
+});
+
+describe("SQL/JS mime agreement — Important 3", () => {
+  // MIME_PATTERNS_FOR_MODALITY (SQL) and mimeModality (JS) encode the same rule twice; nothing
+  // pins them together structurally.
+  //
+  // Round-3 correction: the first version of this test drove `findCandidates`, whose output is
+  // SQL admission AND JS admission — so the assertion `findCandidates(...).length === (JS
+  // admitted ? 1 : 0)` reduces to `(SQL ∧ JS) == JS`, which only pins `JS ⟹ SQL`. It could not
+  // catch SQL being WIDER than JS (e.g. a pattern like `application/%` added to
+  // MIME_PATTERNS_FOR_MODALITY without a matching `mimeModality` branch): SQL would admit the row,
+  // the JS loop in `findCandidates` would then drop it, `length` would still be 0, and the test
+  // would pass — silently missing the exact page-under-fill direction this task exists to
+  // prevent. Rewritten to observe SQL admission ALONE, the same technique the Important-1 tests
+  // use: run `buildModalityPredicate`'s clause as a raw SELECT against a real in-memory DB row,
+  // never through `findCandidates` and never by re-implementing the LIKE logic in JS.
+  const MIME_FIXTURES: readonly string[] = [
+    "image/jpeg",
+    "IMAGE/PNG",
+    "video/mp4",
+    "audio/mpeg",
+    "application/pdf",
+    "application/vnd.google-apps.folder",
+    "",
+    "image/",
+  ];
+
+  for (const mime of MIME_FIXTURES) {
+    test(`raw SQL admission for mime ${JSON.stringify(mime)} agrees with mimeModality`, () => {
+      const cloud = freshIndexDb();
+      insertItem(cloud, {
+        id: "google_drive:x1",
+        service: "google_drive",
+        type: "file",
+        metadata: { mimeType: mime },
+      });
+
+      // Mirrors exactly how findCandidates builds the predicate for an unset `modality` — every
+      // pattern from every modality is in play, matching what a real unfiltered discovery page
+      // would admit.
+      const predicate = buildModalityPredicate(
+        mediaItemTypePairsForModality(undefined),
+        [...MIME_KEYED_SERVICES],
+        [...MIME_PATTERNS_FOR_MODALITY.image, ...MIME_PATTERNS_FOR_MODALITY.av],
+      );
+      if (predicate === null) throw new Error("expected a predicate");
+
+      const rows = cloud
+        .query<{ id: string }, (string | number)[]>(
+          `SELECT src.id AS id FROM item AS src WHERE ${predicate.clause}`,
+        )
+        .all(...predicate.params);
+
+      const expectAdmitted = mimeModality(mime) !== undefined;
+      expect(rows).toHaveLength(expectAdmitted ? 1 : 0);
+    });
+  }
 });

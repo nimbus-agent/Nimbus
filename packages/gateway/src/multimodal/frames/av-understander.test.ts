@@ -49,10 +49,16 @@ async function bodyOf(
   u: ReturnType<typeof createAvUnderstander>,
   p = "/v/clip.mp4",
 ): Promise<string> {
-  return (await u.understand(p)).text;
+  return (await u.understand({ kind: "path", path: p })).text;
 }
 
 describe("createAvUnderstander", () => {
+  test("rejects a bytes source instead of casting — whisper/ffmpeg need a seekable file", async () => {
+    await expect(
+      deps().understand({ kind: "bytes", bytes: new Uint8Array([1]), mime: "video/mp4" }),
+    ).rejects.toThrow(/seekable file path/);
+  });
+
   test("captions come FIRST, then the transcript", async () => {
     const body = await bodyOf(deps());
     expect(body.indexOf(FRAME_HEADING)).toBeLessThan(body.indexOf(TRANSCRIPT_HEADING));
@@ -73,21 +79,25 @@ describe("createAvUnderstander", () => {
   test("the frame counts are RETURNED, not only rendered into prose", async () => {
     // The defect this pins: counts that exist only in the body never reach `item.metadata`,
     // because the gate builds `UnderstandOutcome` from what the understander returns.
-    const detail = await deps().understand("/v/clip.mp4");
+    const detail = await deps().understand({ kind: "path", path: "/v/clip.mp4" });
     expect(detail.framesSampled).toBe(2);
     expect(detail.framesCaptioned).toBe(2);
   });
 
   test("a video that never reached sampling reports NO counts, not zeros", async () => {
-    const detail = await deps({ probeDuration: () => Promise.resolve(null) }).understand(
-      "/v/c.mp4",
-    );
+    const detail = await deps({ probeDuration: () => Promise.resolve(null) }).understand({
+      kind: "path",
+      path: "/v/c.mp4",
+    });
     expect(detail.framesSampled).toBeUndefined();
     expect(detail.framesCaptioned).toBeUndefined();
   });
 
   test("sampled-but-all-failed reports 0 captioned, distinct from never-sampled", async () => {
-    const detail = await deps({ vlm: vlm({ fail: true }) }).understand("/v/clip.mp4");
+    const detail = await deps({ vlm: vlm({ fail: true }) }).understand({
+      kind: "path",
+      path: "/v/clip.mp4",
+    });
     expect(detail.framesSampled).toBe(2);
     expect(detail.framesCaptioned).toBe(0);
   });
@@ -101,7 +111,10 @@ describe("createAvUnderstander", () => {
 
   test("no speech AND no captions REJECTS — an all-disclosure body understands nothing", async () => {
     await expect(
-      deps({ stt: stt(""), vlm: vlm({ fail: true }) }).understand("/v/silent.mp4"),
+      deps({ stt: stt(""), vlm: vlm({ fail: true }) }).understand({
+        kind: "path",
+        path: "/v/silent.mp4",
+      }),
     ).rejects.toThrow(/no speech and no frame captions/);
   });
 
@@ -146,7 +159,7 @@ describe("createAvUnderstander", () => {
           : Promise.resolve(new Uint8Array([0xff]));
       },
     });
-    const detail = await u.understand("/v/clip.mp4");
+    const detail = await u.understand({ kind: "path", path: "/v/clip.mp4" });
     expect(detail.text).toContain("hello from the recording");
     expect(detail.text).toContain("1 of 2");
     expect(detail.framesCaptioned).toBe(1);
@@ -162,7 +175,9 @@ describe("createAvUnderstander", () => {
     const bad = deps({
       stt: { ...stt(), understand: () => Promise.reject(new Error("whisper died")) },
     });
-    await expect(bad.understand("/v/clip.mp4")).rejects.toThrow(/whisper died/);
+    await expect(bad.understand({ kind: "path", path: "/v/clip.mp4" })).rejects.toThrow(
+      /whisper died/,
+    );
   });
 
   test("frame captions carry their own egressMethod", async () => {
@@ -175,7 +190,7 @@ describe("createAvUnderstander", () => {
           return Promise.resolve({ text: "a slide" });
         },
       },
-    }).understand("/v/clip.mp4");
+    }).understand({ kind: "path", path: "/v/clip.mp4" });
     expect(seen).toEqual(["multimodal.vlm.frame", "multimodal.vlm.frame"]);
   });
 });

@@ -2173,6 +2173,11 @@ describe("I29 — egress-ledger completeness over the executor chokepoint", () =
     // `targetedFetch`'s deps — both closures around ONE appender, `egress/sync-egress.ts`'s
     // `recordSyncEgress`. `per-run`, not `per-call`, because the scheduler side appends ONE row per
     // paginated run (many upstream calls), the weaker of the two shapes this class actually backs.
+    // (A THIRD closure around the same appender landed in a later commit than this raise, and
+    // serves TWO more callers: `multimodal/cloud-url-resolver.ts`'s append before the credentialed
+    // byte-URL resolve round-trip and `multimodal/cloud-bytes.ts`'s per-attempt cloud byte-fetch
+    // append — so the class has FOUR callers behind one appender. Neither changes the `per-run`
+    // granularity, since neither is weaker than the scheduler's already-weakest shape.)
     // `model` is now the FIFTH non-`none` class, backed by FOUR appenders: the route-table
     // provider wrapper (`egress/model-egress.ts`'s `wrapLedgeredProvider`, applied at
     // `LlmRegistry.addRoute`, covering `LlmRouter.generate`/`generateMarkdown`/every

@@ -13,11 +13,19 @@ import type { Database } from "bun:sqlite";
 import { itemPrimaryKey, upsertIndexedItem } from "../index/item-store.ts";
 import {
   type MediaCandidate,
+  type RenditionMode,
   UNDERSTANDING_VERSION,
   type UnderstandOutcome,
 } from "./media-types.ts";
 
 const SERVICE = "nimbus";
+
+/** What a reader sees in the body for each {@link RenditionMode} (spec § 16.8). */
+const RENDITION_SENTENCE: Readonly<Record<RenditionMode, string>> = {
+  original: "Understood from the original file.",
+  "w2048-h2048": "Understood from a downsized rendition (long edge capped at 2048px).",
+  dv: "Understood from a provider-transcoded video rendition.",
+};
 
 export interface UnderstandingRow {
   readonly service: string;
@@ -47,6 +55,14 @@ export function buildUnderstandingRow(
   candidate: MediaCandidate,
   outcome: UnderstandOutcome,
   nowMs: number,
+  /**
+   * REQUIRED, with no default. This field is a DISCLOSURE — it decides whether the body says
+   * "Understood from the original file." or names a downsized rendition — so a default silently
+   * writes the wrong sentence for a caller that simply forgot to thread it, which is the one
+   * failure mode a disclosure must not have. Every other field this arm added for disclosure is
+   * non-optional for the same reason; a missing argument is a compile error, not a wrong claim.
+   */
+  rendition: RenditionMode,
 ): UnderstandingRow {
   const isAv = candidate.modality === "av";
   return {
@@ -56,7 +72,20 @@ export function buildUnderstandingRow(
     // Matches `zoom:transcript`'s existing house style (`Transcript — <topic>`) so a derived row is
     // distinguishable from its source in a result list without a bracketed tag.
     title: `${isAv ? "Transcript" : "Caption"} — ${candidate.title}`,
-    body: outcome.text,
+    // The rendition sentence goes FIRST, mirroring `av-understander.ts`'s "WHY CAPTIONS COME
+    // FIRST": `upsertIndexedItem` clamps this body at `BODY_MAX_PROSE` (16,384) — an ordinary size
+    // for a transcript around 45 minutes long — and `clampBody` truncates the TAIL. A sentence
+    // appended after the model's text would be the first thing lost on exactly the recordings long
+    // enough to matter, and a long transcript would also lose its own last ~40 characters to a
+    // fragment of the sentence rather than a clean cut. Leading means it is present for EVERY
+    // candidate this code writes, local or cloud, regardless of length (spec § 16.8, OQ 1). NOT a
+    // claim about every row already in the index, though: a row written by an EARLIER version of
+    // this function — before the rendition disclosure existed — carries neither this sentence nor
+    // the `rendition` metadata field below, and is identified by that field's absence rather than
+    // by a differently-worded body. `UNDERSTANDING_VERSION` is deliberately NOT bumped for this —
+    // see the constant's own doc comment — so an old row is not reprocessed just to add one
+    // sentence; it is left as a distinguishable pre-disclosure row instead.
+    body: `${RENDITION_SENTENCE[rendition]}\n\n${outcome.text}`,
     url: candidate.url,
     modifiedAt: nowMs,
     syncedAt: nowMs,
@@ -70,6 +99,10 @@ export function buildUnderstandingRow(
       isLocal: outcome.isLocal,
       sourceMime: candidate.sourceMime,
       sourceBytes: candidate.sourceBytes,
+      // The machine-readable half of the same disclosure the body sentence carries in prose — the
+      // same split `framesSampled`/`framesCaptioned` already uses, so a later pass can filter on it
+      // without re-parsing the body.
+      rendition,
       // Conditional spread, not `?? 0`: writing a zero for an artifact that never reached sampling
       // would be indistinguishable from one whose every frame failed.
       ...(outcome.framesSampled === undefined ? {} : { framesSampled: outcome.framesSampled }),
@@ -85,9 +118,14 @@ export function writeUnderstanding(
   candidate: MediaCandidate,
   outcome: UnderstandOutcome,
   nowMs: number,
-  scheduleEmbedding?: (itemId: string) => void,
+  /**
+   * Explicitly `| undefined` rather than optional (`?`), so that `rendition` after it can be
+   * REQUIRED — see {@link buildUnderstandingRow}'s note on why that disclosure takes no default.
+   */
+  scheduleEmbedding: ((itemId: string) => void) | undefined,
+  rendition: RenditionMode,
 ): string {
-  const row = buildUnderstandingRow(candidate, outcome, nowMs);
+  const row = buildUnderstandingRow(candidate, outcome, nowMs, rendition);
   upsertIndexedItem(db, {
     service: row.service,
     type: row.type,

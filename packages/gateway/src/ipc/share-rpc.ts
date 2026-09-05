@@ -7,7 +7,6 @@ import { isReadOnlyToolId } from "../share/read-tool-registry.ts";
 import { buildRecipeFromSession } from "../share/recipe.ts";
 import { replayShare, type ToolRunOutcome } from "../share/recipe-runner.ts";
 import { serializeShareFileToYaml } from "../share/recipe-yaml.ts";
-import { safeFetch } from "../share/safe-fetch.ts";
 import type { ShareFile } from "../share/share-format.ts";
 import { type CreateShareRequest, createShare, type ShareSink } from "../share/share-gate.ts";
 import { listReceivedShares } from "../share/share-inbox-store.ts";
@@ -19,6 +18,7 @@ import {
   verifyShareFromBytes,
   verifyShareFromInput,
 } from "../share/verify-share.ts";
+import { safeFetch } from "../util/safe-fetch.ts";
 import type { NimbusVault } from "../vault/nimbus-vault.ts";
 import {
   dispatchByMethod,

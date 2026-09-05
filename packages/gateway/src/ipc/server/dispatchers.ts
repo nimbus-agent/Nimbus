@@ -25,6 +25,7 @@ import {
 import { runMediaPass } from "../../multimodal/media-pass.ts";
 import { MULTIMODAL_CAPABILITY } from "../../multimodal/media-types.ts";
 import { loadMultimodalConfig, type MultimodalConfig } from "../../multimodal/multimodal-config.ts";
+import type { NimbusVault } from "../../vault/nimbus-vault.ts";
 import { GATEWAY_VERSION } from "../../version.ts";
 import { buildStatus } from "../admin-status-rpc.ts";
 import { AgentsRpcError, dispatchAgentsRpc } from "../agents-rpc.ts";
@@ -646,14 +647,26 @@ export async function tryDispatchIndexRebodyRpc(
  * exact `BuildMediaPassDepsInput` the `media.understand` dispatcher below passes to
  * `buildMediaPassDeps`.
  *
- * Extracted and exported for ONE reason: `vlmBaseUrl`/`vlmModel`/`maxFrames` are OPTIONAL on
- * `BuildMediaPassDepsInput` and default internally, so a caller that forgets to forward them fails
- * NOTHING at the type level and NOTHING at the `media.understand` result level (the pass still
- * runs, still returns a summary) — the exact "parses, validates, silently ignored" shape this
- * whole task exists to close for the org-policy flag, now closed for these three keys too. A
- * source-text grep for the forwarding lines cannot catch a field SWAP (`vlmModel`'s value forwarded
- * into `vlmBaseUrl`); a unit test asserting on this function's return VALUES can. See
- * `media-policy-wiring.test.ts` / `dispatchers.test.ts`.
+ * Extracted and exported for ONE reason: `vlmBaseUrl`/`vlmModel`/`maxFrames`/`fetchBudgetBytes`/
+ * `preferRenditions` are all OPTIONAL on `BuildMediaPassDepsInput` and default internally, so a
+ * caller that forgets to forward one fails NOTHING at the type level and NOTHING at the
+ * `media.understand` result level (the pass still runs, still returns a summary) — the exact
+ * "parses, validates, silently ignored" shape this whole task exists to close for the org-policy
+ * flag, now closed for these five keys too. `fetchBudgetBytes`/`preferRenditions` were the most
+ * recent instance of exactly that defect: PR 3 added the config keys and the `buildMediaPassDeps`
+ * plumbing to honour them, but this mapping function — the one place that actually reaches
+ * production — stopped at three fields and silently left the running byte budget, this PR's
+ * headline feature, un-configurable (always the 2 GiB default, `preferRenditions` always false,
+ * no matter what the operator wrote). A source-text grep for the forwarding lines cannot catch a
+ * field SWAP (`vlmModel`'s value forwarded into `vlmBaseUrl`); a unit test asserting on this
+ * function's return VALUES can. See `media-policy-wiring.test.ts` / `dispatchers.test.ts`.
+ *
+ * `vault` closes a SEPARATE instance of the same defect, one level up: `buildMediaPassDeps`'s
+ * cloud-fetch `bearerFor` is genuinely Vault-backed, but resolves to a fail-closed null-returning
+ * stub whenever no vault is supplied — which, before this change, was ALWAYS, since nothing forwarded
+ * `ctx.options.vault` (present here, used by every other vault-consuming dispatcher in this file)
+ * through this mapping. Every bearer-requiring cloud fetch (Drive always; Photos/OneDrive on their
+ * resolve round-trip) skipped as `not_configured` regardless of how the operator authenticated.
  */
 export function buildMediaPassDepsInput(input: {
   readonly db: Database;
@@ -661,6 +674,9 @@ export function buildMediaPassDepsInput(input: {
   readonly dataDir: string;
   readonly config: MultimodalConfig;
   readonly capabilityDisabled: boolean;
+  readonly vault: NimbusVault;
+  /** Forwarded verbatim to `BuildMediaPassDepsInput.sourceId` — see that field's doc comment. */
+  readonly sourceId?: string;
 }): BuildMediaPassDepsInput {
   return {
     db: input.db,
@@ -671,6 +687,10 @@ export function buildMediaPassDepsInput(input: {
     vlmBaseUrl: input.config.vlmBaseUrl,
     vlmModel: input.config.vlmModel,
     maxFrames: input.config.maxFrames,
+    fetchBudgetBytes: input.config.fetchBudgetBytes,
+    preferRenditions: input.config.preferRenditions,
+    vault: input.vault,
+    ...(input.sourceId === undefined ? {} : { sourceId: input.sourceId }),
   };
 }
 
@@ -685,11 +705,18 @@ export function buildMediaPassDepsInput(input: {
  * (invariant I22) — the same live accessor `code_execution` and `computer_use` use. When that ctx
  * is absent the method REFUSES: defaulting to `false` is what made this capability's policy
  * lockoff inert through PR 1.
+ *
+ * `clientId` labels the cloud arm's `sync`-class egress rows with the SERVER-derived caller kind
+ * (`ctx.getClientKind`, keyed by the server-assigned connection id — never a request-body field):
+ * `media.understand` is caller-initiated over IPC, unlike `sync/scheduler.ts`'s own timer-driven
+ * runs, so without this every `media.resolveByteUrl`/`media.fetchBytes` row filed as an
+ * unattributed background sync indistinguishable from one nobody asked for.
  */
 export async function tryDispatchMediaRpc(
   ctx: ServerCtx,
   method: string,
   params: unknown,
+  clientId: string,
 ): Promise<unknown> {
   if (method !== "media.understand") {
     return phase4RpcSkipped;
@@ -720,6 +747,8 @@ export async function tryDispatchMediaRpc(
       dataDir: ctx.options.dataDir,
       config: mmConfig,
       capabilityDisabled: mediaCtx.enforced.capabilitiesDisabled.has(MULTIMODAL_CAPABILITY),
+      vault: ctx.options.vault,
+      sourceId: ctx.getClientKind(clientId),
     }),
   );
   const out = await dispatchMediaRpc(method, params, {

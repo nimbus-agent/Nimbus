@@ -19,11 +19,29 @@ export type SkipReason =
   | "fetch_miss"
   | "path_outside_roots"
   | "transcode_failed"
-  | "transcribe_failed";
+  | "transcribe_failed"
+  | "not_configured"
+  | "rate_limited";
+
+/**
+ * What an understander is actually handed (spec § 5.4, PR 3). A local artifact resolves to a
+ * `path` (unchanged from PR 1/2); a cloud artifact's bytes never touch disk for an image, so that
+ * arm carries the bytes themselves instead. `mime` on the bytes arm is the SOURCE mime — a cloud
+ * provider's declared content type, not something an understander should trust further than that.
+ *
+ * AV never produces the `bytes` arm today (`whisper-cli`/`ffmpeg` need a seekable file), but the
+ * union exists here, not as two separate parameter types, so the gate and both understanders share
+ * one shape rather than each guessing which arm the other side means.
+ */
+export type MediaSource =
+  | { readonly kind: "path"; readonly path: string }
+  | { readonly kind: "bytes"; readonly bytes: Uint8Array; readonly mime: string | null };
 
 export interface MediaCandidate {
   readonly itemId: string;
   readonly service: string;
+  /** The PROVIDER's own id, read from the column. */
+  readonly externalId: string;
   readonly type: string;
   readonly title: string;
   readonly url: string | null;
@@ -79,6 +97,14 @@ export interface UnderstandDetail {
  * It lives in item METADATA and never in an `externalId`: `item` is UNIQUE(service, external_id),
  * so a version in the id would create a second row per artifact per version rather than replacing
  * the first — duplicate FTS hits and duplicate agent context (spec § 4.1).
+ *
+ * NOT bumped for the PR 3 rendition disclosure (`understanding-item.ts`'s `RENDITION_SENTENCE` +
+ * the `rendition` metadata field): re-understanding every already-processed artifact just to add
+ * one sentence would mean re-running `whisper-cli` over an entire local media library — hours of
+ * compute for one disclosure sentence — and the disclosure is not actually lost by skipping the
+ * bump. A row written before this change carries no `rendition` metadata field either, so it is
+ * still distinguishable from a post-disclosure row by that field's ABSENCE, without needing a
+ * version bump to force it to say so.
  */
 export const UNDERSTANDING_VERSION = 2;
 
@@ -88,3 +114,14 @@ export const UNDERSTANDING_VERSION = 2;
  * list rather than repeating the string — a typo here would read as "never disabled".
  */
 export const MULTIMODAL_CAPABILITY = "multimodal_input";
+
+/**
+ * What bytes an artifact was actually understood from (spec § 16.8, PR 3). `"original"` covers
+ * both the local arm (always the real file) and the cloud arm with `preferRenditions` off or a
+ * service that has no rendition to offer — Drive and OneDrive always serve the original regardless
+ * of that flag, since `cloud-renditions.ts`'s `driveByteUrl`/`onedriveByteUrl` take no rendition
+ * argument at all. Only a Photos fetch with `preferRenditions` on ever produces the other two.
+ * Recorded on the derived row in BOTH places, mirroring `framesSampled`/`framesCaptioned`: metadata
+ * for a later pass to filter on, and a body sentence for a reader to see directly.
+ */
+export type RenditionMode = "original" | "w2048-h2048" | "dv";

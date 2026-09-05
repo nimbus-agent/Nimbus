@@ -1,0 +1,124 @@
+/**
+ * Turns a cloud candidate into the URL its bytes live at (spec § 16.6).
+ *
+ * Separate from `cloud-renditions.ts` ON PURPOSE: that module is pure, which is what lets the
+ * credential rule be tested with no network and no vault. This one talks to a provider, so it
+ * takes its collaborators as injected functions rather than reaching for a global `fetch`.
+ *
+ * Drive alone needs no round-trip — its byte URL is constructed from the external id. The other
+ * two must ASK, because a Photos `baseUrl` expires in about an hour and OneDrive's
+ * `@microsoft.graph.downloadUrl` is never indexed. Same rule as the local arm's: what the item
+ * stored is not trusted (§ 5.1) — there for security, here for plain correctness.
+ *
+ * The resolve request itself carries a bearer to a host WE construct. The URL it returns for
+ * Photos and OneDrive is pre-signed and is fetched with no credential at all.
+ *
+ * That resolve round-trip is a REAL outbound request carrying a credential, so it is ledgered in
+ * its own right (I29, `sync` class): one row before it fires, fail-closed, with its own
+ * `media.resolveByteUrl` method so it is distinguishable from the byte fetch that may follow.
+ * Without it a Photos/OneDrive candidate made TWO outbound requests and only the second was
+ * recorded — and a candidate that failed AT RESOLVE produced no row at all for a request that
+ * really left the machine, which is the one thing `nimbus prove`'s zero-row window must never mean.
+ */
+import { type ByteUrl, driveByteUrl, onedriveByteUrl, photosByteUrl } from "./cloud-renditions.ts";
+import type { MediaCandidate, SkipReason } from "./media-types.ts";
+
+export interface CloudUrlResolverDeps {
+  readonly bearerFor: (service: string) => Promise<string | null>;
+  /**
+   * MUST NOT follow a redirect on its own — this module calls it with `redirect: "manual"` for
+   * exactly that reason, on the one request that carries a credential (the Photos/OneDrive
+   * round-trip). A `fetchFn` that re-issues the request against a `Location` header would hand
+   * that bearer to whatever host the provider named next — the same attack shape this module
+   * exists to prevent, just one hop later. WIRED: `build-media-pass-deps.ts`'s
+   * `buildCloudBytesDeps` injects `util/safe-fetch.ts`'s `safeFetchFollowing` here, which takes
+   * redirect handling over itself hop-by-hop (re-validating each hop's URL against the
+   * private-address/SSRF check) and strips the bearer on any cross-origin hop — so THIS module's
+   * `redirect: "manual"` is a contract the injected implementation actually satisfies, not merely
+   * a request this module makes of it. Asserted in `build-media-pass-deps.test.ts` by driving the
+   * constructed `deps.cloudBytes.fetchFn` with a loopback URL and observing the refusal.
+   */
+  readonly fetchFn: (url: string, init: RequestInit) => Promise<Response>;
+  /**
+   * Appends ONE `sync` row for the resolve round-trip. THROWS to abort — fail-closed, exactly like
+   * `CloudBytesDeps.appendEgress`. Injected rather than importing `appendEgressEntry`, which static
+   * rule D22(b) confines to `egress/*`.
+   *
+   * Called only on the leg that actually issues a request: the Google Drive arm below constructs
+   * its byte URL from the external id with no round-trip at all, so it appends NOTHING here (its
+   * own byte fetch appends in `cloud-bytes.ts`). A row for a request that was never made would be
+   * the same honesty failure as a missing row, pointed the other way.
+   */
+  readonly appendEgress: (row: {
+    destination: string;
+    method: string;
+  }) => { rowHash: string } | undefined;
+}
+
+export type ResolvedByteUrl = ByteUrl | { readonly error: SkipReason };
+
+/**
+ * Reads one field off an untyped JSON body. The `typeof`/`null` check on `body` is what makes the
+ * `Record<string, unknown>` cast below it safe, and the caller only gets a value back once its own
+ * type is verified too — a runtime-checked narrow, not a bare type assertion trusted on faith
+ * (external data is `unknown`, never `any`).
+ */
+function stringField(body: unknown, key: string): string | null {
+  if (typeof body !== "object" || body === null) return null;
+  const v = (body as Record<string, unknown>)[key];
+  return typeof v === "string" && v !== "" ? v : null;
+}
+
+export async function resolveCloudByteUrl(
+  candidate: MediaCandidate,
+  preferRenditions: boolean,
+  deps: CloudUrlResolverDeps,
+): Promise<ResolvedByteUrl> {
+  if (candidate.service === "google_drive") {
+    return driveByteUrl(candidate.externalId);
+  }
+
+  if (candidate.service !== "google_photos" && candidate.service !== "onedrive") {
+    return { error: "unresolvable_modality" };
+  }
+
+  const token = await deps.bearerFor(candidate.service);
+  if (token === null) return { error: "not_configured" };
+
+  const id = encodeURIComponent(candidate.externalId);
+  const url =
+    candidate.service === "google_photos"
+      ? `https://photoslibrary.googleapis.com/v1/mediaItems/${id}`
+      : `https://graph.microsoft.com/v1.0/me/drive/items/${id}`;
+
+  // Fail-closed: append BEFORE the round-trip fires, and deliberately OUTSIDE the try/catch below
+  // — that catch exists to turn a transport failure into a per-item skip, and swallowing an append
+  // failure there would convert "we could not record this request" into "we quietly made it".
+  // A throw here propagates and no request is made, exactly as in `cloud-bytes.ts`.
+  deps.appendEgress({ destination: candidate.service, method: "media.resolveByteUrl" });
+
+  let body: unknown;
+  try {
+    const res = await deps.fetchFn(url, {
+      headers: { Authorization: `Bearer ${token}` },
+      redirect: "manual",
+    });
+    if (!res.ok) return { error: res.status === 429 ? "rate_limited" : "fetch_miss" };
+    body = await res.json();
+  } catch {
+    // A transport failure, or a 200 whose body is not JSON at all (a proxy interception, an HTML
+    // error page) — either way the round-trip did not produce a usable answer, and there is
+    // nothing left to trust it with.
+    return { error: "fetch_miss" };
+  }
+
+  if (candidate.service === "google_photos") {
+    const baseUrl = stringField(body, "baseUrl");
+    return baseUrl === null
+      ? { error: "fetch_miss" }
+      : photosByteUrl(baseUrl, candidate.modality, preferRenditions);
+  }
+
+  const downloadUrl = stringField(body, "@microsoft.graph.downloadUrl");
+  return downloadUrl === null ? { error: "fetch_miss" } : onedriveByteUrl(downloadUrl);
+}

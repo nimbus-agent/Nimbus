@@ -7,7 +7,7 @@
  * Everything is injected rather than constructed here: `mock.module` is process-global and leaks
  * across the combined CI test run, so DI is the house rule for anything spawning a subprocess.
  */
-import type { UnderstandDetail } from "../media-types.ts";
+import type { MediaSource, UnderstandDetail } from "../media-types.ts";
 import { transcodeToWav, withScratchFile } from "./ffmpeg-bin.ts";
 
 export interface LongFormSttDeps {
@@ -28,7 +28,7 @@ export interface LongFormStt {
   readonly isLocal: true;
   readonly model: string;
   isAvailable(): Promise<boolean>;
-  understand(path: string): Promise<UnderstandDetail>;
+  understand(source: MediaSource): Promise<UnderstandDetail>;
 }
 
 export function createLongFormStt(deps: LongFormSttDeps): LongFormStt {
@@ -36,8 +36,16 @@ export function createLongFormStt(deps: LongFormSttDeps): LongFormStt {
     isLocal: true,
     model: deps.model,
     isAvailable: deps.isAvailable,
-    async understand(path: string): Promise<UnderstandDetail> {
-      const wav = await transcodeToWav(path, {
+    async understand(source: MediaSource): Promise<UnderstandDetail> {
+      // This leg is reached only through `av-understander.ts`, which itself requires a path
+      // source before calling here (whisper-cli/ffmpeg both need a seekable file) — so `bytes`
+      // cannot arrive in production. Asserted rather than assumed: a future direct caller of this
+      // module that skips that guard fails loudly instead of `transcodeToWav` receiving an object
+      // where it expects a path string.
+      if (source.kind !== "path") {
+        throw new Error("long-form STT requires a path source, not in-memory bytes");
+      }
+      const wav = await transcodeToWav(source.path, {
         ffmpegBin: deps.ffmpegBin,
         scratchDir: deps.scratchDir,
         ...(deps.spawn === undefined ? {} : { spawn: deps.spawn }),

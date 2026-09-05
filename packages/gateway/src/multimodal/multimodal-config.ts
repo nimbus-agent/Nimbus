@@ -2,9 +2,9 @@
  * The `[multimodal]` section (spec § 9.2, § 8).
  *
  * Standalone rather than routed through `nimbus-toml.ts`, mirroring
- * `connectors/openapi-indexer-config.ts`: four keys do not warrant a shared parser's full
- * section-table machinery. Reuses `stripComment` from the dependency-free `toml-primitives.ts`
- * so `enabled = true # on locally` reads correctly.
+ * `connectors/openapi-indexer-config.ts`: a small closed set of keys does not warrant a shared
+ * parser's full section-table machinery. Reuses `stripComment` from the dependency-free
+ * `toml-primitives.ts` so `enabled = true # on locally` reads correctly.
  *
  * DEFAULT OFF, and every MALFORMED-input failure path — absent `configDir`, absent file, absent
  * section, absent key, unreadable or malformed TOML — reads as `false`. A missing config must
@@ -36,6 +36,12 @@ export const DEFAULT_VLM_MODEL = "qwen2.5vl:7b";
 /** Spec § 8: "a small fixed maximum (default 8) of uniformly spaced keyframes". */
 export const DEFAULT_MAX_FRAMES = 8;
 
+/** Spec § 16.9: a generous but finite ceiling on cloud bytes fetched in one run — 2 GiB. */
+export const DEFAULT_FETCH_BUDGET_BYTES = 2 * 1024 * 1024 * 1024;
+
+/** Spec § 16.8: fetch the original artifact unless the operator opts into downsized renditions. */
+export const DEFAULT_PREFER_RENDITIONS = false;
+
 const MIN_FRAMES = 1;
 const MAX_FRAMES_CEILING = 64;
 
@@ -44,6 +50,8 @@ export interface MultimodalConfig {
   readonly vlmBaseUrl: string;
   readonly vlmModel: string;
   readonly maxFrames: number;
+  readonly fetchBudgetBytes: number;
+  readonly preferRenditions: boolean;
 }
 
 /**
@@ -68,6 +76,8 @@ function defaults(): MultimodalConfig {
     vlmBaseUrl: DEFAULT_VLM_BASE_URL,
     vlmModel: DEFAULT_VLM_MODEL,
     maxFrames: DEFAULT_MAX_FRAMES,
+    fetchBudgetBytes: DEFAULT_FETCH_BUDGET_BYTES,
+    preferRenditions: DEFAULT_PREFER_RENDITIONS,
   };
 }
 
@@ -196,6 +206,22 @@ function parseSection(raw: string): MultimodalConfig {
       // direction, not a silent fallback to the default frame count.
       if (n === undefined) return defaults();
       out = { ...out, maxFrames: clampFrames(n) };
+    } else if (key === "fetch_budget_bytes") {
+      const n = parseStrictInt(value);
+      // A non-integer value is malformed TOML for this key — same fail-off direction as
+      // `max_frames` and `enabled`. A negative value is semantically malformed: this file's
+      // contract is that a value it cannot honour turns the section off rather than silently
+      // substituting one the user did not ask for. Zero is accepted and means "no cloud bytes
+      // may be fetched this run".
+      if (n === undefined || n < 0) return defaults();
+      out = { ...out, fetchBudgetBytes: n };
+    } else if (key === "prefer_renditions") {
+      const v = value.trim().toLowerCase();
+      if (v === "true") out = { ...out, preferRenditions: true };
+      else if (v === "false") out = { ...out, preferRenditions: false };
+      // Neither: a malformed boolean is malformed TOML, same fail-off direction as
+      // non-boolean `enabled`.
+      else return defaults();
     }
     // An unrecognised but well-formed key (e.g. a future `vlm_prompt` this binary predates) is
     // deliberately IGNORED rather than failing the section off. Chosen over the stricter

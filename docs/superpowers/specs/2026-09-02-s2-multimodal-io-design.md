@@ -820,3 +820,550 @@ sections above have been corrected in place to match rather than left to disagre
    (`wrapLedgeredVlm`, D22(g)), so a rule scanning for those two free-function identifiers would
    pass over the real shape and enforce nothing. Recorded here so PR 4 writes D27(a) against what
    actually exists by then.
+
+---
+
+## 16. PR 3 — the cloud arm (design, 2026-09-04)
+
+PR 3 gives the pass access to media that lives in a connected service rather than under
+`[[filesystem.roots]]`. Until it lands, multimodal understanding is structurally cut off from the
+~90 connectors that are the rest of the product: the recorded call in Drive, the screenshot in a
+OneDrive folder and the photo library are all invisible to it.
+
+**Scope: `google_photos`, `google_drive`, `onedrive`.** Zoom is dropped from this PR — see § 16.7.
+
+### 16.1 § 12.5 is wrong: this is a single-repo change
+
+§ 12.5 states that "every connector that gains `fetchBytes` is a change in `nimbus-mcp-servers`,
+not in this repo". That is false for all three target services. Their sync logic lives **here** and
+calls the provider's HTTPS API directly from the gateway process — none of them reaches the MCP
+subprocess mesh:
+
+| Service | Where it fetches | What it already indexes |
+| --- | --- | --- |
+| `google_photos` | `photoslibrary.googleapis.com` (`google-photos-sync.ts`) | `metadata.mimeType`, `metadata.baseUrl` |
+| `google_drive` | `googleapis.com/drive/v3` (`google-drive-sync.ts`) | `size`, `mimeType`, `type: "file"` |
+| `onedrive` | Microsoft Graph (`onedrive-sync.ts`) | size, mime, `type: "file"` |
+
+The gateway-side capability is still service-agnostic, so a connector whose sync genuinely lives in
+`nimbus-mcp-servers` remains additive later. But PR 3 itself coordinates no second repo.
+
+### 16.2 Placement
+
+**Amended on landing — what shipped differs from what this section originally proposed. See § 17.10.**
+
+- `multimodal/cloud-bytes.ts` — **new.** Owns dispatch, the byte caps, the scratch-file lifecycle
+  and the byte-fetch egress append (`method='media.fetchBytes'`). The cloud analogue of
+  `media-bytes.ts`'s local arm.
+- `multimodal/cloud-url-resolver.ts` — **new**, and NOT in the original plan. Per-service byte-URL
+  resolution lives here, in the multimodal directory, not next to each connector's sync: the three
+  services differ only in one URL template and one response field, so the logic is a few lines per
+  service and splitting it across three connector packages would have bought nothing but distance.
+  It takes its collaborators as injected functions (`bearerFor`, `fetchFn`, `appendEgress`), which
+  is what lets the credential rule of § 16.4 be tested with no network and no vault. It appends its
+  OWN `sync` row (`method='media.resolveByteUrl'`) before the credentialed round-trip.
+- `multimodal/cloud-renditions.ts` — **new.** The pure half of URL construction (§ 16.8's rendition
+  suffixes), split out precisely so it can be tested without a transport.
+- `media-bytes.ts` — **unchanged.** It keeps only `resolveLocalMediaPath`; the gate branches on
+  `candidate.sourcePath === null` in `media-pass.ts` instead. The "ONE byte-acquisition
+  collaborator" idea was not built.
+- There is **no `fetchBytes` capability** and **no D24 exemption**. `sync/sync-capabilities.ts`
+  mints nothing of the sort, and D24's SyncContext capability boundary was never opened. The cloud
+  arm reaches providers through its own injected `fetchFn` (`util/safe-fetch.ts`'s
+  `safeFetchFollowing`), wired in `multimodal/build-media-pass-deps.ts`.
+
+`MediaCandidate` needs no change: `sourcePath: string | null` already carries "null for a cloud
+artifact (PR 3)", and `sourceMime` / `sourceBytes` are already there.
+
+### 16.3 The return type becomes a union, and § 5.4's disk rule must be restated
+
+Images want bytes in memory (base64 to the VLM, nothing written). AV wants a seekable file, because
+`whisper-cli` takes a path and ffmpeg needs to seek an MP4 whose `moov` atom is at the end (§ 5.4).
+So byte acquisition returns `{ kind: "path" } | { kind: "bytes" }`, and the cloud AV arm streams its
+download to a 0600 gateway-owned scratch file.
+
+**This falsifies a claim that currently appears in this spec, in `CLAUDE.md` and in
+`docs/roadmap.md`:** that the one transcode WAV is "the ONLY file this subsystem writes, on any
+arm". Cloud AV writes two — the downloaded artifact and its transcode. Restated rather than shaved:
+
+> The image path writes nothing, on either arm. The AV path writes at most **two** 0600
+> gateway-owned scratch files — the downloaded artifact (cloud arm only) and its transcode — both
+> deleted in a `finally` and both swept at pass start.
+
+The start-of-pass sweep (§ 5.4) must learn the second filename pattern. Without that, a crash
+mid-download leaves decoded media of the user's recording on disk indefinitely, which is precisely
+the hazard the sweep exists for.
+
+### 16.4 Credential rule: a credential is attached only to a URL we constructed ourselves
+
+§ 5.2 routes the cloud arm through `sync/fetch-host-boundary.ts`. **It should not**, for two
+independent reasons.
+
+*Mechanically it does not fit.* The host boundary is exact-match with no guessing fallback, and
+these download hosts rotate: Photos serves bytes from `lh3.googleusercontent.com`, OneDrive from a
+per-item `@microsoft.graph.downloadUrl` on a rotating SharePoint/1drv host. Neither is derivable
+from configured connector credentials, so both would miss the map and be refused.
+
+*Conceptually it is the wrong instrument.* The host boundary answers "a **caller** handed me a URL
+— is it fetchable, and for which service?" That is the untrusted-URL problem, and it is why
+`targeted-fetch.ts` must consult it before any connector is reached. Here the URL is not
+caller-supplied: it is produced by an authenticated API response, in our own session, for an item
+already in the index. The threat that remains is different — a hostile or compromised provider
+response naming a host we then hand a bearer token to. So the rule that replaces it is narrower and
+checkable:
+
+> **A credential is attached only to a URL this codebase constructed itself.**
+>
+> - `google_drive` — we build `drive/v3/files/{id}?alt=media` against the fixed
+>   `www.googleapis.com` host. Bearer attached.
+> - `google_photos` — `baseUrl` is provider-returned and **pre-signed**. Fetched with **no**
+>   `Authorization` header.
+> - `onedrive` — `@microsoft.graph.downloadUrl` is provider-returned and **pre-signed**. Fetched
+>   with **no** `Authorization` header.
+>
+> A provider-returned URL is additionally pinned to `https:`. A response naming any host it likes
+> therefore learns nothing: there is no credential on the request.
+
+This is a stronger property than a host allow-list would give, and it does not rot when a provider
+changes CDN hosts.
+
+### 16.5 Modality resolution gains a mime-keyed arm
+
+`google_drive` and `onedrive` index everything as `type: "file"` (`google-drive-sync.ts:170`,
+`onedrive-sync.ts:97`), so `modalityForItem(service, type)` cannot resolve them. Modality for those
+two comes from `metadata.mimeType`.
+
+That does not weaken the registry's "never defaulted — guessing the modality means handing bytes to
+the wrong model" rule: a mime type is the **provider's own declaration**, not our inference. An item
+with no mime, or a mime outside the registry, is still skipped as `unresolvable_modality`.
+`google_photos:photo` keeps the type-keyed lookup and reads mime only to split image from video.
+
+**The mime filter MUST run in SQL, not in the JS loop** — see § 17.1. Filtering it in JS would
+silently terminate the pass after one page on exactly the two connectors this section exists to
+support.
+
+### 16.6 Photos re-resolves rather than trusting the indexed URL
+
+A Google Photos `baseUrl` expires roughly an hour after issue, so the indexed one is dead in almost
+every case. The fetch re-resolves it via `mediaItems/{id}` in the same authenticated call that
+would have been needed anyway.
+
+Worth naming because it is the same rule as § 5.1's — never trust the URL or path stored on the
+item — arrived at from the opposite direction. Locally the reason is security (roots may have
+narrowed); here it is plain correctness. One rule, two justifications, no exceptions.
+
+### 16.7 Zoom is dropped from PR 3, and the reason is not cost
+
+`zoom-sync.ts` indexes `zoom:meeting` and `zoom:transcript` and **explicitly skips every recording
+file whose `file_type` is not `TRANSCRIPT`** (line 181). Two consequences:
+
+1. There is **no indexed item** for a Zoom recording's video or audio, so the pass has nothing to
+   discover. PR 3 would first have to add a `zoom:recording` item type — a connector sync change, a
+   new item type and its embedding-routing decision, inside a PR whose subject is byte-fetch.
+2. Zoom **already supplies the transcript**, converted from VTT to plain text and indexed. The
+   thing this slice adds for AV already exists for Zoom, produced by the provider, and more
+   accurately than local `whisper-cli` would produce it.
+
+So Zoom's remaining value here is frame captions of a recording, plus meetings where Zoom's own
+transcription was disabled. Real, but a different job — recorded as a follow-up scoped honestly as
+"index Zoom recording files and caption their frames", not as part of the cloud byte-fetch arm.
+
+### 16.8 Renditions: originals by default, with the choice made discoverable
+
+§ 12.9 deferred rendition choice to a per-connector cadence on the assumption that it was a
+cross-repo negotiation. It is not (§ 16.1): for two of the three services a cheaper representation
+is a different URL, not a negotiation.
+
+| Service | Cheap rendition | Mechanism |
+| --- | --- | --- |
+| `google_photos` | bounded long edge; transcoded video | `baseUrl` suffix `=w2048-h2048` / `=dv` |
+| `onedrive` | **none in PR 3** — deferred | Graph `/thumbnails` is a SECOND request per item |
+| `google_drive` | none | `alt=media` or nothing |
+
+**OneDrive renditions are deferred, and the earlier draft of this table overstated by listing them
+as available.** Photos' rendition is a suffix on a URL already being fetched — free. OneDrive's is a
+separate `/thumbnails` call per item, so it doubles the request count against a provider that is
+already the most likely to rate-limit a bulk pass (§ 17.5). That is a different trade from Photos'
+and it deserves its own decision rather than riding in on the same row. PR 3 fetches OneDrive
+originals; `--renditions` is a no-op for that service and the summary says so rather than implying a
+saving it did not make.
+
+**The default is originals.** A downscale is a real quality loss on the one workload where this
+subsystem is already weakest — § 12.10 concedes VLM OCR on a dense screenshot is materially worse
+than a purpose-built pass, and downscaling makes that worse still. So the owner chooses, and the
+design's job is to make sure they are actually offered the choice rather than nominally given a
+config key. Three mechanisms:
+
+1. **A flag, not only a key.** `nimbus media understand --renditions | --originals`, so it appears
+   in `--help` and in `docs/cli-reference.md`. `[multimodal] prefer_renditions` (default `false`)
+   persists the choice; the flag wins for a single run.
+2. **The decision arrives before the bytes move** (§ 16.9).
+3. **The run summary reports the counterfactual** — bytes fetched, and what the other choice would
+   have cost — so the option stays visible to a user who never trips the budget.
+
+**Disclosure.** The derived item's body states which rendition it was understood from. "Captioned
+from a 2048px render" and "captioned from the original" are different claims, and § 12.3 / § 12.8
+already hold this subsystem to saying which one it is making.
+
+### 16.9 The budget: priced up front where possible, enforced on the running total always
+
+A pre-flight total alone would be dishonest, because the sizes are not uniformly available: Drive
+and OneDrive index a byte size, **Google Photos does not** — its `mediaMetadata` carries width and
+height and no byte count. Printing an inferred total for a photo library would present an estimate
+as a measurement, which is the failure mode this document's honesty rules exist to prevent.
+
+**And the two sizes that do exist are not currently readable — see § 17.7.** `media-discovery.ts`
+populates `sourceBytes` from `metadata.sizeBytes`, a key neither connector writes: Drive writes
+`size` as a **string** (the Drive API returns int64 as a string) and OneDrive writes `size` as a
+number. So `sourceBytes` is `null` for every cloud candidate today, on two independent counts. PR 3
+must resolve the size through a per-service accessor before the pre-flight layer means anything.
+
+Two layers instead:
+
+- **Pre-flight prices what it knows and names what it does not:**
+
+  ```text
+  200 artifacts · 143 with known size ≈ 3.9 GB · 57 unknown (google_photos indexes no byte size)
+  Refusing: known bytes exceed [multimodal] fetch_budget_bytes (2 GB).
+
+    --renditions   fetch downscaled/audio-only where available
+    --originals    fetch as-is, this run only
+  ```
+
+- **A running total aborts mid-pass** when actually-fetched bytes cross `fetch_budget_bytes`,
+  reporting where it stopped. This is the layer that binds for Photos, and it is nearly free: the
+  V58 cursor already makes the pass resumable, so stopping is a first-class outcome rather than a
+  failure. The summary says the run was budget-stopped and is resumable — never a bare count.
+
+The refusal is deliberate rather than a warning. This pass is non-interactive and about to move
+gigabytes over someone's connection and quota; § 6.4's principle — a budgeted, enumerated set
+approved once, up front — applies to bandwidth as much as to consent. The cost is that a first run
+against a large library fails once before it works, which is the point.
+
+The per-artifact cap still **refuses rather than truncates**; it bounds a single artifact,
+`fetch_budget_bytes` bounds a run. **Amended on landing:** § 5.3's per-modality split
+(`max_image_bytes` / `max_media_bytes`) was not built. What shipped is ONE hardcoded 250 MiB value
+for both modalities — `DEFAULT_MAX_MEDIA_BYTES` in `multimodal/build-media-pass-deps.ts` — with no
+config key and no flag. See § 17.10.
+
+New config keys, both under `[multimodal]`:
+
+| Key | Default | Meaning |
+| --- | --- | --- |
+| `fetch_budget_bytes` | `2_147_483_648` (2 GiB) | Per-run ceiling on cloud bytes fetched. Refuses pre-flight on known sizes; aborts mid-run on the actual running total. |
+| `prefer_renditions` | `false` | Fetch a cheaper representation where the service offers one. `--renditions` / `--originals` override for one run. |
+
+### 16.10 Skip reasons
+
+Two joins to the `SkipReason` union, reusing `targeted-fetch.ts`'s vocabulary rather than a parallel
+one (§ 5.2): `not_configured` and `rate_limited`. `fetch_miss` already covers a deleted or
+unreadable artifact. `budget_exhausted` is **not** a skip reason — a budget stop ends the run, and
+recording it per-item would misreport artifacts that were never attempted as artifacts that failed.
+
+### 16.11 Egress: no new class, but I29's enumeration widens
+
+Each outbound request appends one `sync`-class row **before** it fires, through
+`egress/sync-egress.ts`'s existing appender, fail-closed — an append failure aborts the request.
+`nimbus prove` needs no new vocabulary.
+
+**Amended on landing — `payload_summary` carries the METHOD ONLY.** This section originally said it
+records byte length, mime and modality. It does not, and cannot: `recordSyncEgress` builds
+`payload_summary` as `redactEgressSummary({ method })`, and the append happens BEFORE the request,
+where the byte length is genuinely unknown — a `content-length` header has not been seen yet and
+may never arrive. Recording a size there would mean either appending after the transfer (which
+breaks the fail-closed ordering that is the whole point) or writing a number the gateway guessed.
+Mime and modality are known at append time, but were not added: they describe the artifact, not the
+egress, and `method` plus `destination` already answer "what left, to whom". Pixels and transcript
+text were never in scope and are not recorded.
+
+**Amended on landing — the enumeration goes to FOUR, not three.** I29 documented the `sync` class as
+*"`sync/scheduler.ts` appends one row per scheduled sync RUN and `sync/targeted-fetch.ts` appends
+one row per targeted single-item fetch"*. The cloud arm adds TWO appenders, not one: a Photos or
+OneDrive candidate makes two real outbound requests — the credentialed byte-URL RESOLVE round-trip
+(`multimodal/cloud-url-resolver.ts`, `method='media.resolveByteUrl'`) and the byte fetch itself
+(`multimodal/cloud-bytes.ts`, `method='media.fetchBytes'`) — and each appends its own row. Google
+Drive constructs its byte URL with no round-trip and so appends only the second. Per the
+sweep-enumerations rule the fix is to re-derive the list, not bump a count, in every place that
+carries it: `CLAUDE.md`, `GEMINI.md`, `docs/SECURITY-INVARIANTS.md`, `docs/architecture.md`, the
+`nimbus-egress` skill, `egress/sync-egress.ts`, `egress/egress-coverage.ts` (+ its test),
+`platform/assemble.ts`, `security-invariants.test.ts`, and `cli/src/commands/prove.ts`'s
+user-facing `sync` scope label (+ its assertion in `prove-format.test.ts`).
+
+**No `I37` in this PR.** I37 governs a media body reaching a non-local model; PR 3 adds no remote
+model, so the invariant would have nothing to bite on and shipping it here would leave it documented
+and inert — the exact failure § 5.4 was written to avoid. I37 and D27 stay with PR 4.
+
+### 16.12 Testing
+
+- **Per-service URL resolvers are tested against recorded real API response shapes**, not
+  hand-written fakes. A fake proves the ends and never the wire, and this repo has been bitten by
+  that repeatedly; the shapes here (`mediaItems.baseUrl`, `@microsoft.graph.downloadUrl`,
+  `files.get?alt=media`) are exactly where a fake would agree with itself and disagree with Google.
+- **The credential rule is red-provable and written as what cannot pass:** a test asserts that a
+  request to a provider-returned URL carries **no** `Authorization` header, and that a
+  provider-returned `http:` URL is refused. An allow-list-shaped assertion ("the bearer went to the
+  right host") would pass a request that also leaked the token elsewhere.
+- **The scratch-file sweep is tested for the second pattern**, including the crash case: a file left
+  by a dead process is swept, and a concurrent pass's file younger than the sweep age is not.
+- **The budget abort is tested on the running total**, with Photos-shaped candidates that have no
+  indexed size — the case pre-flight cannot see.
+- **One end-to-end acceptance run** against a real cloud artifact, producing an observed
+  `video_understanding` row carrying a non-empty transcript AND at least one frame caption. This is
+  the run that closes § 12.1's still-open claim: Phase 14 Core acceptance is currently recorded in
+  `CLAUDE.md` as "structurally satisfiable, not verified end-to-end", and it stays that way until a
+  real recording has been through the pass. Manual and machine-dependent (local `whisper-cli` + a
+  vision-capable Ollama model), so it is recorded as performed with its output, not automated.
+
+### 16.13 Docs to update on landing
+
+Beyond § 14's list: `CLAUDE.md`, `GEMINI.md` (which mirrors it) and `docs/roadmap.md` all carry the
+"only file this subsystem writes" sentence (§ 16.3) and the I29 `sync`-appender enumeration
+(§ 16.11). Each is a restatement of a fact changed here, and a correction that lands at only one of
+them is the drift this project has hit repeatedly. `docs/SECURITY-INVARIANTS.md` and the
+`nimbus-egress` skill carry the appender enumeration too.
+
+---
+
+## 17. Review disposition (PR 3 design review, 2026-09-04)
+
+External review: [`2026-09-04-s2-multimodal-io-design-review.md`](./2026-09-04-s2-multimodal-io-design-review.md)
+(Antigravity). Every finding was checked against the shipped code before being accepted; the
+verdicts below record what was verified, what was rejected, and one defect the review did not
+find.
+
+| # | Finding | Verdict |
+| --- | --- | --- |
+| 2.1 | Cursor starvation on `type: "file"` connectors | **Accepted** — § 17.1 |
+| 2.2 | Modality split for `google_photos:photo` | **Accepted**, same fix — § 17.1 |
+| 2.3 | Redirect handling, bearer leakage, SSRF | **Partly accepted** — § 17.2 |
+| 2.4 | Stream-level budget, abort, summary fields | **Accepted** — § 17.3 |
+| 2.5 | Scratch sweeper patterns | **Finding accepted, fix rejected** — § 17.4 |
+| 2.6 | 429 backoff | **Accepted** — § 17.5 |
+| 3.1 | I29 appender enumeration | Already § 16.11; `GEMINI.md` added to § 16.13 |
+| 3.2 | I37 / D27(a)(b) formulation | **Deferred to PR 4** — § 17.6 |
+| 3.3 | Embedding isolation audit | No action — verified sound, no change |
+| 3.4 | Orphan pruning of derived rows | **Accepted, and it is a PR 1 gap** — § 17.6 |
+| 4.1 | CLI mutual exclusivity, `--budget` | **Accepted** — § 17.8 |
+| 4.2 | Summary formatting | **Accepted** — § 17.3 |
+| — | `sourceBytes` is unreadable for both cloud services | **Found during review, not by it** — § 17.7 |
+
+### 17.1 Discovery must filter mime in SQL, or the pass terminates after one page
+
+**Verified.** `media-discovery.ts` applies `LIMIT` in SQL and then filters in JS
+(`modalityForItem(...) === undefined → continue`). Today that JS filter can never drop a row,
+because the type list it pages by comes from the same registry map — it is a no-op safety net.
+§ 16.5's mime-keyed arm breaks that equivalence: `google_drive:file` enters the type list, and a
+page of 50 PDFs yields zero candidates. `runMediaPass`'s short-page guard (`media-pass.ts`,
+`stopReason === "completed" && candidates.length < deps.limit`) then reads that as "discovery
+reached the end of the queue" and calls `clearCursor`.
+
+The consequence is not a slow pass but a **silently truncated** one: a Drive with 40,000 files and
+6 videos deep in the id ordering would report a clean, complete run having understood nothing. The
+same shape applies to `google_photos:photo` under `--modality av`, since stills and videos share
+one item type (finding 2.2).
+
+**Fix — the predicate moves into SQL,** so the page and the JS result agree again and the existing
+safety net stays a no-op:
+
+```sql
+AND (
+  ((src.service = ? AND src.type = ?) OR (src.service = ? AND src.type = ?))
+  OR (
+    src.service IN (?, ?, ?)
+    AND json_extract(src.metadata, '$.mimeType') LIKE ?
+  )
+)
+```
+
+**Amended on landing — arm 1 is pair-keyed, not type-keyed.** This snippet originally read
+`src.type IN ('media_av', 'media_image')`. A later fix round ruled against that and replaced it
+with OR'd `(service, type)` equalities, because a bare type match admits that type across every
+OTHER service too — a future `zoom:recording` pair would catch an unrelated service's
+`type: "recording"`, which the JS loop then drops for lacking a registered pair, under-filling the
+page and re-creating the very truncation § 17.1 exists to fix. `buildModalityPredicate`
+(`media-discovery.ts`) builds both arms and drops an EMPTY arm from the clause entirely rather than
+emitting `src.type IN ()` or `AND ()`, both of which are SQLite syntax errors. Every literal above
+is a bound parameter (I9); none is concatenated.
+
+`:mimePrefix` is derived from the requested modality (`image/%`, or the video/audio pair for `av`),
+never string-concatenated — I9. A row whose metadata carries no `mimeType` is excluded by the
+predicate rather than fetched and dropped.
+
+**The review's second recommendation — make `findCandidates` loop until `limit` candidates
+accumulate — is rejected.** It changes `limit` from "rows examined" to "rows returned", which makes
+a bounded pass unbounded in work: a `--limit 50` against a 40,000-file Drive with no media would
+scan the whole table before returning. The budget and the resumable cursor both assume one page is
+one bounded unit of work. Fixing the predicate keeps that true; looping breaks it.
+
+**`json_extract` guard.** `json_extract` raises on malformed JSON rather than returning NULL. The
+existing query already relies on `metadata` being connector-written and therefore well-formed
+(`upsertIndexedItem` serialises it), and the same argument covers `src.metadata` — but the
+predicate must tolerate a NULL `metadata` column, which `json_extract` handles and a bare
+`LIKE` on the raw column would not.
+
+### 17.2 Transport: manual redirects and the existing SSRF helper
+
+The review's two risks are not equally live, and the difference was settled empirically rather than
+assumed.
+
+**Bearer leakage across a redirect — not reproducible on the shipped runtime.** A probe against
+Bun 1.3.14 (a 302 from one loopback port to another, which is an origin crossing) shows the
+`Authorization` header is **stripped** by `fetch` itself. So the review's first risk does not exist
+today.
+
+It is still designed against, for a reason unrelated to the risk being real: relying on it makes a
+security property depend on undocumented third-party runtime behaviour that a Bun upgrade could
+change without anyone noticing. **The cloud arm uses `redirect: "manual"` and follows hops itself**
+(bounded at 5), which removes the dependency entirely and is what makes the next paragraph possible.
+
+**SSRF — real, and only half-covered by what exists.** `share/safe-fetch.ts` already ships
+`assertSafeUrl` / `isPrivateAddress` / `safeFetch`, covering IPv4 and IPv6 private ranges, IPv4-mapped
+IPv6, and a DNS resolution check. PR 3 **reuses it rather than writing a second one** — a duplicate
+private-range table is exactly the kind of thing that drifts.
+
+But `safeFetch` validates only the URL it is handed: it passes `init` to `fetch`, which follows
+redirects on its own, so a 302 to `127.0.0.1` is followed unchecked. Manual redirect handling closes
+that: **every hop is re-validated through `assertSafeUrl`, not just the first.** This matters more
+here than in `share/`, whose sink host is config-pinned, because a provider-returned download URL is
+not pinned to anything — and the most interesting loopback target on this machine is the gateway's
+own HTTP API (the I13 write surface), the same target I33's scope note names.
+
+`safe-fetch.ts` moves from `share/` to `util/` in this PR. It is a general helper with no static
+rule confining it, and a `multimodal/ → share/` import would read as a subsystem dependency that
+does not exist.
+
+**Known limitation, inherited and restated:** `safeFetch`'s own doc records a DNS-rebind TOCTOU it
+does not close (resolution happens twice, and pinning the IP would break TLS verification in Bun).
+That bound applies here too and is not re-litigated by this PR.
+
+### 17.3 Budget enforcement is stream-level, and the summary must say so
+
+Three sub-points, all accepted.
+
+1. **Check during the stream, not after it.** Bytes are counted as they arrive and the budget is
+   evaluated per chunk. Downloading 300 MB to discover 50 MB of budget remained wastes the exact
+   resource the budget exists to conserve.
+2. **An overrun aborts through `AbortController`**, severing the connection, and the partial scratch
+   file is removed in a `finally` — the same unwinding the transcode path already uses.
+3. **`MediaPassSummary` gains two fields.** It currently carries `understood` / `skipped` /
+   `skippedByReason` / `lastItemId` and has no way to express "stopped early but healthy":
+
+   ```ts
+   readonly stopReason: "completed" | "budget_exhausted" | "rate_limited";
+   readonly cloudBytesFetched: number;
+   ```
+
+   Without `stopReason` a budget stop is indistinguishable from a completed run, which would make the
+   CLI's resume guidance unprintable and — worse — would let a truncated pass report as a finished
+   one. That is the same disclosure failure § 8 forbids for skip counts.
+
+`budget_exhausted` deliberately does **not** join `SkipReason` (§ 16.10): a budget stop ends the run,
+and recording it per-item would report artifacts that were never attempted as artifacts that failed.
+
+### 17.4 Scratch sweeper — finding accepted, proposed fix rejected
+
+**Verified:** `sweepStaleScratchFiles` (`stt/ffmpeg-bin.ts:181`) matches only
+`nimbus-stt-*.wav` (line 194), so a cloud download scratch file left by a killed process is never
+reclaimed.
+
+The review's fix enumerates extensions — `.tmp`, `.wav`, `.mp4`. **Rejected:** a cloud download's
+extension is whatever the artifact happens to be (`.mov`, `.mkv`, `.m4a`, `.webm`, …), so that list
+is guaranteed to drift and will fail exactly on the formats nobody thought of. Extension is the
+wrong key.
+
+**Instead the prefix is the key, and it is the only key.** Cloud downloads are named
+`nimbus-media-<uuid>` with **no extension at all** — nothing downstream needs one, since ffmpeg
+probes content rather than trusting a suffix. The sweeper matches `nimbus-stt-` (existing, extension
+retained for compatibility with in-flight files) or `nimbus-media-` (new), both age-bounded exactly
+as today. A pattern that cannot be extended by a new media format cannot rot.
+
+### 17.5 429 handling stops the run rather than burning the candidate list
+
+**Accepted.** Treating a 429 as a per-item skip means a quota-limited album produces one 429 per
+candidate and risks account-level throttling — the pass would do maximum damage precisely when the
+provider is asking it to stop.
+
+Bounded retry with jitter, honouring `Retry-After` where present; on persistent limiting the run
+**stops** with `stopReason: "rate_limited"` and a resumable cursor. This matches the existing
+precedent in `zoom-sync.ts`, which calls a 429 a "graceful break" rather than a skip.
+
+### 17.6 Two items that are not PR 3's, and are recorded rather than absorbed
+
+**I37 / D27 (finding 3.2) stay with PR 4.** The review's formulation — D27(a) confines the
+grant check to `media-gate.ts`, D27(b) confines `media_grant` writes to `media-grant-store.ts` — is
+sharper than § 10's original and supersedes it, which § 15 decision 6 already anticipated. It is
+recorded here and written in PR 4, when a remote provider exists for it to bite on. Shipping it now
+would produce a rule guarding nothing.
+
+**Orphan pruning (finding 3.4) is a PR 1 gap, and § 4.2 currently overstates.** Verified:
+`understanding-item.ts:64` writes `derivedFrom`, and **nothing in the codebase reads it** — there is
+no cascade in `deleteItemByServiceExternal`, no orphan query, nothing. So § 4.2's "Deleting a source
+item deletes its derived understanding row" describes behaviour that does not exist. That is the
+documented-but-inert failure this document elsewhere goes out of its way to avoid, and leaving it
+stated as fact is worse than the missing feature.
+
+PR 3 closes it, because it is small and it is this PR that makes orphans common (a cloud item can
+leave the index without any local file being touched): one age-independent orphan `DELETE` at pass
+start, alongside the scratch sweep that already runs there. Keyed on `derivedFrom` having no
+surviving source row. Cheaper than a cascade in every delete path, and it self-heals rows orphaned
+before it shipped.
+
+### 17.7 The defect the review did not find: `sourceBytes` is null for every cloud candidate
+
+`media-discovery.ts` populates `sourceBytes` from `metadata.sizeBytes` via `numberOrNull`. Neither
+target connector writes that key:
+
+| Service | Key written | Type written | Read as `sizeBytes: number` |
+| --- | --- | --- | --- |
+| `google_drive` | `size` (line 180) | **string** — the Drive API returns int64 as a string | `null` — wrong key *and* wrong type |
+| `onedrive` | `size` (line 72) | number | `null` — wrong key |
+| `google_photos` | — | — | `null` — genuinely absent |
+
+`sizeBytes` belongs to a different subsystem entirely (`data-profile-sync.ts`), which is how the
+mismatch survived: the key exists, so nothing looked wrong.
+
+This matters because § 16.9's pre-flight layer is built on knowing sizes. Uncorrected, **every**
+cloud candidate reports unknown size, the pre-flight price is always `0 known / N unknown`, the
+budget refusal never fires, and the whole first layer is decoration — leaving only the running-total
+abort, which was designed as the backstop rather than the whole mechanism.
+
+**Fix:** resolve size through a per-service accessor in `media-source-registry.ts` that names the
+metadata key and coerces, with the Drive string case handled explicitly and commented — a numeric
+read of a string field returning `null` is silent, and a silent `null` here degrades a safety
+mechanism rather than breaking anything visibly. Read at discovery rather than normalised at index
+time, so already-indexed rows are covered without a re-sync.
+
+### 17.8 CLI
+
+- `--renditions` and `--originals` are **mutually exclusive**, rejected at parse with a message
+  naming both, never resolved by precedence. A silent override on a flag pair that controls
+  bandwidth is the kind of thing a user discovers from their data cap.
+- **`--budget <size>`** (accepting `4GB` / `500MB` / a raw byte count) overrides
+  `fetch_budget_bytes` for one run. Not scope creep: § 16.9 makes refusal the default, and without
+  this the only way past a refusal while keeping originals is editing `nimbus.toml` — which
+  re-creates the discoverability problem § 16.8 exists to solve.
+- The run summary reports understood/skipped-by-reason (existing), plus bytes fetched, the rendition
+  mode in force, the counterfactual for the other mode, and `stopReason` with resume guidance when
+  the run stopped early.
+
+### 17.9 Testing additions
+
+Folded into § 16.12: redirect-hop re-validation (a 302 to `127.0.0.1` is refused), a private-IP
+target refused at hop 0 and at hop N, the paging test the review specifies (100 `google_drive`
+`type: "file"` rows of which only #70–#75 are media, asserting the pass does not clear its cursor at
+page 1), and a size-resolution test covering Drive's string-typed `size`.
+
+### 17.10 Deviations ratified on landing, recorded here because § 16 was written before the code
+
+Task 8 ratified each of these when the code landed, but the sections that describe them were never
+updated — so a reader following § 16 alone would look for files and mechanisms that do not exist.
+Each is a deliberate choice, not an omission:
+
+| § | What the section said | What shipped | Why |
+| --- | --- | --- | --- |
+| 16.2 | Byte acquisition lands in `media-bytes.ts` | `media-bytes.ts` is **unchanged**; the cloud arm is `multimodal/cloud-bytes.ts` and `media-pass.ts` branches on `candidate.sourcePath === null` | One collaborator with two unrelated failure vocabularies is harder to read than two collaborators with one each |
+| 16.2 | Per-service URL resolution lives next to each connector's sync, reached through a `fetchBytes` capability minted in `sync/sync-capabilities.ts` — "the sole D24 exemption" | `multimodal/cloud-url-resolver.ts`, with injected `bearerFor`/`fetchFn`/`appendEgress`. **No such capability exists and D24 was never opened** | The per-service difference is one URL template and one response field; splitting a few lines across three connector packages would have bought distance, not cohesion — and opening D24's capability boundary for it would have been a real security-surface change bought for nothing |
+| 16.9 | Per-modality caps `max_image_bytes` / `max_media_bytes` (§ 5.3) | ONE hardcoded 250 MiB `DEFAULT_MAX_MEDIA_BYTES`, no config key, no flag | Neither key was built; the split bought nothing while `fetch_budget_bytes` (which IS configurable) is the bound that actually binds a run |
+| 16.11 | `payload_summary` records byte length, mime and modality | `method` only | The append precedes the request, where the byte length is unknowable without either breaking the fail-closed ordering or guessing |
+| 16.11 | The `sync` enumeration becomes **three** appenders | **Four** | The resolve round-trip is a second real credentialed request per Photos/OneDrive candidate and appends its own row — see § 16.11 |
+| 17.1 | Arm 1 of the discovery predicate is `src.type IN (...)` | OR'd `(service, type)` equalities | A bare type match crosses service boundaries — see § 17.1 |

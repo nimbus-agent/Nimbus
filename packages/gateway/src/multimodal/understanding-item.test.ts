@@ -12,6 +12,7 @@ import {
 const CANDIDATE: MediaCandidate = {
   itemId: "filesystem:/m/standup.mp4",
   service: "filesystem",
+  externalId: "/m/standup.mp4",
   type: "media_av",
   title: "standup.mp4",
   url: "file:///m/standup.mp4",
@@ -38,30 +39,55 @@ describe("understandingExternalId", () => {
 
 describe("buildUnderstandingRow", () => {
   test("maps to a nimbus-service derived item of the right type", () => {
-    const row = buildUnderstandingRow(CANDIDATE, OUTCOME, 999);
+    const row = buildUnderstandingRow(CANDIDATE, OUTCOME, 999, "original");
     expect(row.service).toBe("nimbus");
     expect(row.type).toBe("video_understanding");
   });
 
   test("titles with the house Transcript prefix and inherits the source url", () => {
-    const row = buildUnderstandingRow(CANDIDATE, OUTCOME, 999);
+    const row = buildUnderstandingRow(CANDIDATE, OUTCOME, 999, "original");
     expect(row.title).toBe("Transcript — standup.mp4");
     expect(row.url).toBe("file:///m/standup.mp4");
   });
 
   test("an image candidate becomes a Caption", () => {
-    const row = buildUnderstandingRow({ ...CANDIDATE, modality: "image" }, OUTCOME, 999);
+    const row = buildUnderstandingRow(
+      { ...CANDIDATE, modality: "image" },
+      OUTCOME,
+      999,
+      "original",
+    );
     expect(row.type).toBe("image_understanding");
     expect(row.title).toBe("Caption — standup.mp4");
   });
 
   test("declares a FULL body so the prose cap applies, not the 512-char default", () => {
-    const row = buildUnderstandingRow(CANDIDATE, OUTCOME, 999);
-    expect(row.body).toBe("we shipped the gate");
+    const row = buildUnderstandingRow(CANDIDATE, OUTCOME, 999, "original");
+    // The rendition sentence (asserted on its own below, and its LEADING position pinned
+    // separately in media-pass.test.ts's truncation-survival test) precedes the model's own
+    // text — this test's job is only that the model's text is present in full.
+    expect(row.body).toContain("we shipped the gate");
+  });
+
+  test("states the rendition it was understood from, in the body AND in metadata", () => {
+    const original = buildUnderstandingRow(CANDIDATE, OUTCOME, 999, "original");
+    expect(original.body).toContain("Understood from the original file.");
+    expect(original.metadata["rendition"]).toBe("original");
+    // LEADS the body, not trails it — a body-length cap truncates the tail, and the rendition
+    // sentence must survive on exactly the artifacts long enough to be clamped.
+    expect(original.body.startsWith("Understood from the original file.")).toBe(true);
+
+    const downsized = buildUnderstandingRow(CANDIDATE, OUTCOME, 999, "w2048-h2048");
+    expect(downsized.body).toContain("downsized rendition");
+    expect(downsized.metadata["rendition"]).toBe("w2048-h2048");
+
+    const dv = buildUnderstandingRow(CANDIDATE, OUTCOME, 999, "dv");
+    expect(dv.body).toContain("provider-transcoded video rendition");
+    expect(dv.metadata["rendition"]).toBe("dv");
   });
 
   test("carries provenance: modelDerived, model, version, isLocal, derivedFrom", () => {
-    const row = buildUnderstandingRow(CANDIDATE, OUTCOME, 999);
+    const row = buildUnderstandingRow(CANDIDATE, OUTCOME, 999, "original");
     expect(row.metadata["modelDerived"]).toBe(true);
     expect(row.metadata["model"]).toBe("whisper-base");
     expect(row.metadata["isLocal"]).toBe(true);
@@ -73,7 +99,7 @@ describe("buildUnderstandingRow", () => {
 });
 
 test("buildUnderstandingRow stamps the current understandingVersion", () => {
-  const row = buildUnderstandingRow(CANDIDATE, OUTCOME, 1_700_000_000_000);
+  const row = buildUnderstandingRow(CANDIDATE, OUTCOME, 1_700_000_000_000, "original");
   expect(row.metadata["understandingVersion"]).toBe(2);
 });
 
@@ -82,6 +108,7 @@ test("frame sampling is recorded in metadata when the outcome carries it", () =>
     CANDIDATE,
     { ...OUTCOME, framesSampled: 8, framesCaptioned: 6 },
     1_700_000_000_000,
+    "original",
   );
   expect(row.metadata["framesSampled"]).toBe(8);
   expect(row.metadata["framesCaptioned"]).toBe(6);
@@ -89,7 +116,7 @@ test("frame sampling is recorded in metadata when the outcome carries it", () =>
 
 test("an outcome with no frame data omits the keys rather than writing zeros", () => {
   const image: MediaCandidate = { ...CANDIDATE, modality: "image", type: "media_image" };
-  const row = buildUnderstandingRow(image, OUTCOME, 1_700_000_000_000);
+  const row = buildUnderstandingRow(image, OUTCOME, 1_700_000_000_000, "original");
   expect(row.type).toBe("image_understanding");
   // A zero would be indistinguishable from a video whose every frame failed.
   expect("framesSampled" in row.metadata).toBe(false);
@@ -100,8 +127,15 @@ describe("writeUnderstanding", () => {
     const db = new Database(":memory:");
     runIndexedSchemaMigrations(db, CURRENT_SCHEMA_VERSION);
 
-    writeUnderstanding(db, CANDIDATE, OUTCOME, 1000);
-    writeUnderstanding(db, CANDIDATE, { ...OUTCOME, text: "revised transcript" }, 2000);
+    writeUnderstanding(db, CANDIDATE, OUTCOME, 1000, undefined, "original");
+    writeUnderstanding(
+      db,
+      CANDIDATE,
+      { ...OUTCOME, text: "revised transcript" },
+      2000,
+      undefined,
+      "original",
+    );
 
     const rows = db
       .query<{ body: string | null }, []>(
@@ -109,7 +143,7 @@ describe("writeUnderstanding", () => {
       )
       .all();
     expect(rows).toHaveLength(1);
-    expect(rows[0]?.body).toBe("revised transcript");
+    expect(rows[0]?.body ?? "").toContain("revised transcript");
     db.close();
   });
 
@@ -117,7 +151,14 @@ describe("writeUnderstanding", () => {
     const db = new Database(":memory:");
     runIndexedSchemaMigrations(db, CURRENT_SCHEMA_VERSION);
     const scheduled: string[] = [];
-    const id = writeUnderstanding(db, CANDIDATE, OUTCOME, 1000, (i) => scheduled.push(i));
+    const id = writeUnderstanding(
+      db,
+      CANDIDATE,
+      OUTCOME,
+      1000,
+      (i) => scheduled.push(i),
+      "original",
+    );
     expect(scheduled).toEqual([id]);
     db.close();
   });

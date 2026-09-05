@@ -44,16 +44,21 @@ describe("coverage vector", () => {
     // `mcp` and `http` are per-call because ONE appender (`recordAgentBriefEgress`) serves both
     // transports and its dispatcher condition ships alongside this entry. `sync` is `per-run`
     // (weaker than per-call) because its ONE appender (`egress/sync-egress.ts`'s
-    // `recordSyncEgress`) backs two callers with different shapes: `sync/scheduler.ts` appends once
-    // per paginated RUN (many upstream calls per row), `sync/targeted-fetch.ts` appends once per
-    // CALL — the vector reports the weaker of the two, matching how `weakestCoverage` merges
-    // markers from different binaries. `model` is per-call and now backed by THREE appenders: the
+    // `recordSyncEgress`) backs FOUR callers with different shapes: `sync/scheduler.ts` appends
+    // once per paginated RUN (many upstream calls per row), `sync/targeted-fetch.ts` appends once
+    // per CALL, `multimodal/cloud-url-resolver.ts` appends once before the credentialed round-trip
+    // that resolves a Photos/OneDrive byte URL, and `multimodal/cloud-bytes.ts` appends once per
+    // cloud byte-fetch ATTEMPT — so one Photos candidate contributes two rows for its two real
+    // requests. The vector reports the weakest of the four, matching how `weakestCoverage` merges
+    // markers from different binaries. `model` is per-call and now backed by FOUR appenders: the
     // route-table provider wrapper (`egress/model-egress.ts`'s `wrapLedgeredProvider`, applied at
     // `LlmRegistry.addRoute`), the Mastra engine agent (`egress/mastra-model-egress.ts`'s
-    // `wrapLedgeredMastraModel`, since that agent resolves its model outside the route table), and
+    // `wrapLedgeredMastraModel`, since that agent resolves its model outside the route table),
     // remote embeddings (`egress/embedding-egress.ts`'s `wrapLedgeredEmbedder`, at each embedding
-    // pipeline construction site). The class carries no NAMED exclusion — a local provider, a
-    // locally-run Mastra model, or a local embedder each append nothing by design, not as a gap.
+    // pipeline construction site), and vision (`egress/vlm-egress.ts`'s `wrapLedgeredVlm`, over
+    // every `VlmProvider.describe` call). The class carries no NAMED exclusion — a local provider,
+    // a locally-run Mastra model, a local embedder, or a local VLM each append nothing by design,
+    // not as a gap.
     // Every other class stays `none` until its appender lands — raising an entry on the strength of
     // an unwired seam would be a claim with no code behind it, which is the exact defect this vector
     // prevents. `browser` is the worked example OF THAT RULE BEING FOLLOWED, in both directions: it

@@ -1,11 +1,12 @@
 import { describe, expect, test } from "bun:test";
 import type { LocalUnderstander, MediaGateDeps } from "./media-gate.ts";
 import { understandArtifact } from "./media-gate.ts";
-import type { MediaCandidate } from "./media-types.ts";
+import type { MediaCandidate, MediaSource } from "./media-types.ts";
 
 const CANDIDATE: MediaCandidate = {
   itemId: "filesystem:/m/a.mp4",
   service: "filesystem",
+  externalId: "/m/a.mp4",
   type: "media_av",
   title: "a.mp4",
   url: null,
@@ -14,6 +15,21 @@ const CANDIDATE: MediaCandidate = {
   sourceMime: null,
   sourceBytes: 10,
 };
+
+const IMAGE_CANDIDATE: MediaCandidate = {
+  itemId: "onedrive:img-1",
+  service: "onedrive",
+  externalId: "img-1",
+  type: "media_image",
+  title: "a.png",
+  url: null,
+  modality: "image",
+  sourcePath: null,
+  sourceMime: "image/png",
+  sourceBytes: 10,
+};
+
+const PATH_SOURCE: MediaSource = { kind: "path", path: "/m/a.mp4" };
 
 function understander(over: Partial<LocalUnderstander> = {}): LocalUnderstander {
   return {
@@ -25,7 +41,7 @@ function understander(over: Partial<LocalUnderstander> = {}): LocalUnderstander 
   };
 }
 
-function deps(over: Partial<MediaGateDeps> = {}): MediaGateDeps {
+function gateDeps(over: Partial<MediaGateDeps> = {}): MediaGateDeps {
   return {
     enabled: true,
     capabilityDisabled: false,
@@ -38,8 +54,8 @@ function deps(over: Partial<MediaGateDeps> = {}): MediaGateDeps {
 describe("understandArtifact — ordered refusals", () => {
   test("refuses when the capability is disabled by config, before any model work", async () => {
     let touched = false;
-    const out = await understandArtifact(CANDIDATE, "/m/a.mp4", {
-      ...deps({ enabled: false }),
+    const out = await understandArtifact(CANDIDATE, PATH_SOURCE, {
+      ...gateDeps({ enabled: false }),
       understanderFor: () => {
         touched = true;
         return understander();
@@ -51,8 +67,8 @@ describe("understandArtifact — ordered refusals", () => {
 
   test("refuses when disabled by org policy, before any model work", async () => {
     let touched = false;
-    const out = await understandArtifact(CANDIDATE, "/m/a.mp4", {
-      ...deps({ capabilityDisabled: true }),
+    const out = await understandArtifact(CANDIDATE, PATH_SOURCE, {
+      ...gateDeps({ capabilityDisabled: true }),
       understanderFor: () => {
         touched = true;
         return understander();
@@ -65,8 +81,8 @@ describe("understandArtifact — ordered refusals", () => {
   test("refuses an unresolvable modality rather than guessing", async () => {
     const out = await understandArtifact(
       CANDIDATE,
-      "/m/a.mp4",
-      deps({ understanderFor: () => undefined }),
+      PATH_SOURCE,
+      gateDeps({ understanderFor: () => undefined }),
     );
     expect(out).toEqual({ ok: false, reason: "unresolvable_modality" });
   });
@@ -74,8 +90,8 @@ describe("understandArtifact — ordered refusals", () => {
   test("REFUSES rather than degrading when the local model is unavailable", async () => {
     const out = await understandArtifact(
       CANDIDATE,
-      "/m/a.mp4",
-      deps({ understanderFor: () => understander({ isAvailable: async () => false }) }),
+      PATH_SOURCE,
+      gateDeps({ understanderFor: () => understander({ isAvailable: async () => false }) }),
     );
     expect(out).toEqual({ ok: false, reason: "no_local_model" });
   });
@@ -83,14 +99,14 @@ describe("understandArtifact — ordered refusals", () => {
   test("refuses a NON-LOCAL understander with no grant — never falls back to remote", async () => {
     const out = await understandArtifact(
       CANDIDATE,
-      "/m/a.mp4",
-      deps({ understanderFor: () => understander({ isLocal: false }) }),
+      PATH_SOURCE,
+      gateDeps({ understanderFor: () => understander({ isLocal: false }) }),
     );
     expect(out).toEqual({ ok: false, reason: "no_remote_grant" });
   });
 
   test("succeeds locally and reports isLocal DERIVED from the provider", async () => {
-    const out = await understandArtifact(CANDIDATE, "/m/a.mp4", deps());
+    const out = await understandArtifact(CANDIDATE, PATH_SOURCE, gateDeps());
     expect(out).toEqual({
       ok: true,
       outcome: { text: "transcript text", model: "whisper-base", isLocal: true },
@@ -100,8 +116,8 @@ describe("understandArtifact — ordered refusals", () => {
   test("maps a thrown understander error to transcribe_failed, not a crash", async () => {
     const out = await understandArtifact(
       CANDIDATE,
-      "/m/a.mp4",
-      deps({
+      PATH_SOURCE,
+      gateDeps({
         understanderFor: () =>
           understander({
             understand: async () => {
@@ -115,8 +131,8 @@ describe("understandArtifact — ordered refusals", () => {
 
   test("RELEASES the GPU lease even when the understander throws", async () => {
     let released = 0;
-    await understandArtifact(CANDIDATE, "/m/a.mp4", {
-      ...deps({
+    await understandArtifact(CANDIDATE, PATH_SOURCE, {
+      ...gateDeps({
         understanderFor: () =>
           understander({
             understand: async () => {
@@ -136,8 +152,8 @@ describe("understandArtifact — ordered refusals", () => {
 
   test("RELEASES the GPU lease on the success path", async () => {
     let released = 0;
-    await understandArtifact(CANDIDATE, "/m/a.mp4", {
-      ...deps(),
+    await understandArtifact(CANDIDATE, PATH_SOURCE, {
+      ...gateDeps(),
       gpu: {
         acquire: async () => () => {
           released += 1;
@@ -151,7 +167,7 @@ describe("understandArtifact — ordered refusals", () => {
   test("acquires the GPU lease ONCE PER CALL, not once per pass", async () => {
     let acquired = 0;
     const d: MediaGateDeps = {
-      ...deps(),
+      ...gateDeps(),
       gpu: {
         acquire: async () => {
           acquired += 1;
@@ -160,16 +176,16 @@ describe("understandArtifact — ordered refusals", () => {
         touch: () => undefined,
       },
     };
-    await understandArtifact(CANDIDATE, "/m/a.mp4", d);
-    await understandArtifact(CANDIDATE, "/m/a.mp4", d);
+    await understandArtifact(CANDIDATE, PATH_SOURCE, d);
+    await understandArtifact(CANDIDATE, PATH_SOURCE, d);
     expect(acquired).toBe(2);
   });
 
   test("does NOT acquire the GPU on any refusal before the model call", async () => {
     async function acquireCount(over: Partial<MediaGateDeps>): Promise<number> {
       let acquired = 0;
-      await understandArtifact(CANDIDATE, "/m/a.mp4", {
-        ...deps(over),
+      await understandArtifact(CANDIDATE, PATH_SOURCE, {
+        ...gateDeps(over),
         gpu: {
           acquire: async () => {
             acquired += 1;
@@ -198,8 +214,8 @@ describe("understandArtifact — ordered refusals", () => {
    */
   test("heartbeats touch() while a slow understander runs", async () => {
     let touches = 0;
-    const out = await understandArtifact(CANDIDATE, "/m/a.mp4", {
-      ...deps({
+    const out = await understandArtifact(CANDIDATE, PATH_SOURCE, {
+      ...gateDeps({
         understanderFor: () =>
           understander({
             understand: async () => {
@@ -222,8 +238,8 @@ describe("understandArtifact — ordered refusals", () => {
 
   test("stops heartbeating once the call returns — a live interval hangs the suite", async () => {
     let touches = 0;
-    await understandArtifact(CANDIDATE, "/m/a.mp4", {
-      ...deps(),
+    await understandArtifact(CANDIDATE, PATH_SOURCE, {
+      ...gateDeps(),
       heartbeatMs: 10,
       gpu: {
         acquire: async () => () => undefined,
@@ -238,8 +254,8 @@ describe("understandArtifact — ordered refusals", () => {
   });
 
   test("understandArtifact carries frame counts from the understander onto the outcome", async () => {
-    const res = await understandArtifact(CANDIDATE, "/m/a.mp4", {
-      ...deps(),
+    const res = await understandArtifact(CANDIDATE, PATH_SOURCE, {
+      ...gateDeps(),
       understanderFor: () => ({
         isLocal: true,
         model: "m",
@@ -255,15 +271,61 @@ describe("understandArtifact — ordered refusals", () => {
   });
 
   test("an understander reporting no counts leaves them absent, not zero", async () => {
-    const res = await understandArtifact(CANDIDATE, "/m/a.png", {
-      ...deps(),
+    const res = await understandArtifact(
+      CANDIDATE,
+      { kind: "path", path: "/m/a.png" },
+      {
+        ...gateDeps(),
+        understanderFor: () => ({
+          isLocal: true,
+          model: "m",
+          isAvailable: () => Promise.resolve(true),
+          understand: () => Promise.resolve({ text: "t" }),
+        }),
+      },
+    );
+    if (res.ok) expect("framesSampled" in res.outcome).toBe(false);
+  });
+
+  test("the gate passes a bytes source straight through to the understander", async () => {
+    let received: MediaSource | undefined;
+    const deps = gateDeps({
       understanderFor: () => ({
         isLocal: true,
-        model: "m",
-        isAvailable: () => Promise.resolve(true),
-        understand: () => Promise.resolve({ text: "t" }),
+        model: "fake",
+        isAvailable: async () => true,
+        understand: async (s: MediaSource) => {
+          received = s;
+          return { text: "ok" };
+        },
       }),
     });
-    if (res.ok) expect("framesSampled" in res.outcome).toBe(false);
+    const src: MediaSource = { kind: "bytes", bytes: new Uint8Array([1, 2]), mime: "image/png" };
+    const r = await understandArtifact(IMAGE_CANDIDATE, src, deps);
+    expect(r.ok).toBe(true);
+    expect(received).toEqual(src);
+  });
+
+  /**
+   * Regression guard: the union must not reorder the gate's steps. Step 3 (non-local refused)
+   * still precedes step 4 (availability) and step 5 (model contact) — if the shape change moved
+   * the refusal after either of those, `touched` would flip to `true`.
+   */
+  test("a non-local provider is still refused BEFORE the source is touched", async () => {
+    let touched = false;
+    const deps = gateDeps({
+      understanderFor: () => ({
+        isLocal: false,
+        model: "remote",
+        isAvailable: async () => {
+          touched = true;
+          return true;
+        },
+        understand: async () => ({ text: "" }),
+      }),
+    });
+    const r = await understandArtifact(IMAGE_CANDIDATE, { kind: "path", path: "/x" }, deps);
+    expect(r).toEqual({ ok: false, reason: "no_remote_grant" });
+    expect(touched).toBe(false);
   });
 });

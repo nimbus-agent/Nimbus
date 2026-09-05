@@ -7,12 +7,55 @@ import { join, resolve } from "node:path";
 import { CURRENT_SCHEMA_VERSION } from "../index/local-index.ts";
 import { runIndexedSchemaMigrations } from "../index/migrations/runner.ts";
 import { GpuArbiter } from "../llm/gpu-arbiter.ts";
+import type { NimbusVault } from "../vault/nimbus-vault.ts";
 import {
   buildMediaPassDeps,
   resolveMediaRoots,
   withTranscribeTimeout,
 } from "./build-media-pass-deps.ts";
 import { loadMultimodalConfig } from "./multimodal-config.ts";
+
+/**
+ * Empty in-memory `NimbusVault` — every `get` resolves `null`, matching a vault with no
+ * credential stored at all. `cloudBearerFor` (build-media-pass-deps.ts) is exercised through
+ * this for the VAULT-PRESENT arm: `getValidGoogleAccessToken`/`getValidMicrosoftAccessToken`
+ * both throw a "not configured" error against an empty vault (`oauth-registry.ts`'s
+ * `getValidVaultAccessToken` throws the moment `vault.get(vaultKey)` returns `null`), which is
+ * exactly the branch `cloudBearerFor`'s `catch` folds into the same `null` a missing vault
+ * produces. `set`/`delete`/`listKeys` are stubbed to satisfy the interface; nothing exercised
+ * here calls them.
+ */
+class EmptyFakeVault implements NimbusVault {
+  get(_key: string): Promise<string | null> {
+    return Promise.resolve(null);
+  }
+
+  set(_key: string, _value: string): Promise<void> {
+    throw new Error("set must not be called by cloudBearerFor");
+  }
+
+  delete(_key: string): Promise<void> {
+    throw new Error("delete must not be called by cloudBearerFor");
+  }
+
+  listKeys(_prefix?: string): Promise<string[]> {
+    throw new Error("listKeys must not be called by cloudBearerFor");
+  }
+}
+
+/**
+ * Counts real `touch()` calls on the underlying `GpuArbiter`, so a test can prove
+ * `deps.gate.gpu.touch` forwards to THIS instance's real method rather than being wired to a
+ * no-op or a different arbiter — `super.touch()` still runs the real `lastActivityAt` update.
+ */
+class TouchCountingGpuArbiter extends GpuArbiter {
+  touchCalls = 0;
+
+  override touch(): void {
+    this.touchCalls++;
+    super.touch();
+  }
+}
 
 /**
  * Run `body` against a fresh, isolated config directory and always remove it afterwards.
@@ -117,6 +160,278 @@ describe("buildMediaPassDeps", () => {
       scratchDir: "/scratch",
     });
     expect(deps.scratchDir).toBe("/scratch");
+  });
+});
+
+describe("buildMediaPassDeps — cloud arm wiring (PR 3)", () => {
+  test("the constructed deps fetch through safeFetchFollowing, not bare fetch", async () => {
+    const deps = buildMediaPassDeps({
+      db: db(),
+      roots: [],
+      enabled: true,
+      capabilityDisabled: false,
+      scratchDir: "/scratch",
+    });
+    // A loopback URL must be REFUSED by the wiring itself. Bare `fetch` would happily return —
+    // this is what proves `cloudBytes.fetchFn` is actually `safeFetchFollowing` and not a stub
+    // that merely has the right shape. Exercises BOTH consumers' shared field, since
+    // `cloud-url-resolver.ts`'s `CloudUrlResolverDeps.fetchFn` and `cloud-bytes.ts`'s
+    // `CloudBytesDeps.fetchFn` are the same function reference in the returned deps object.
+    await expect(deps.cloudBytes.fetchFn("http://127.0.0.1:9/x", {})).rejects.toThrow(
+      /loopback\/private/,
+    );
+  });
+
+  test("cloudBytes.bearerFor fails CLOSED (null) when no vault is supplied", async () => {
+    // Production DOES supply a vault (`dispatchers.ts`'s `buildMediaPassDepsInput` forwards
+    // `ctx.options.vault`) — this test exercises the DIRECT-construction case every other test in
+    // this file uses, where omitting `vault` must degrade safely rather than throw or fabricate a
+    // credential. See BuildMediaPassDepsInput.vault's doc comment.
+    const deps = buildMediaPassDeps({
+      db: db(),
+      roots: [],
+      enabled: true,
+      capabilityDisabled: false,
+      scratchDir: "/scratch",
+    });
+    await expect(deps.cloudBytes.bearerFor("google_drive")).resolves.toBeNull();
+    await expect(deps.cloudBytes.bearerFor("google_photos")).resolves.toBeNull();
+    await expect(deps.cloudBytes.bearerFor("onedrive")).resolves.toBeNull();
+    await expect(deps.cloudBytes.bearerFor("some_other_service")).resolves.toBeNull();
+  });
+
+  test("cloudBytes.appendEgress ledgers a REAL sync-class row via recordSyncEgress, not a stub", () => {
+    const database = db();
+    const deps = buildMediaPassDeps({
+      db: database,
+      roots: [],
+      enabled: true,
+      capabilityDisabled: false,
+      scratchDir: "/scratch",
+    });
+    const out = deps.cloudBytes.appendEgress({
+      destination: "google_drive",
+      method: "media.fetchBytes",
+    });
+    expect(out?.rowHash).toBeDefined();
+    const n = database.query<{ n: number }, []>("SELECT COUNT(*) AS n FROM egress_ledger").get()?.n;
+    expect(n).toBe(1);
+  });
+
+  test("cloudBytes.appendEgress carries the server-derived sourceId through to the ledger row", () => {
+    // `media.understand` is caller-initiated over IPC, unlike `sync/scheduler.ts`'s own
+    // timer-driven runs — without threading `sourceId` through, every cloud-arm row filed as an
+    // unattributed background sync indistinguishable from one nobody asked for.
+    const database = db();
+    const deps = buildMediaPassDeps({
+      db: database,
+      roots: [],
+      enabled: true,
+      capabilityDisabled: false,
+      scratchDir: "/scratch",
+      sourceId: "mcp",
+    });
+    deps.cloudBytes.appendEgress({ destination: "google_drive", method: "media.fetchBytes" });
+    const row = database
+      .query<{ source_id: string | null }, []>("SELECT source_id FROM egress_ledger LIMIT 1")
+      .get();
+    expect(row?.source_id).toBe("mcp");
+  });
+
+  test("cloudBytes.appendEgress leaves sourceId null when none was supplied — not caller-initiated", () => {
+    const database = db();
+    const deps = buildMediaPassDeps({
+      db: database,
+      roots: [],
+      enabled: true,
+      capabilityDisabled: false,
+      scratchDir: "/scratch",
+    });
+    deps.cloudBytes.appendEgress({ destination: "google_drive", method: "media.fetchBytes" });
+    const row = database
+      .query<{ source_id: string | null }, []>("SELECT source_id FROM egress_ledger LIMIT 1")
+      .get();
+    expect(row?.source_id).toBeNull();
+  });
+
+  test("cloudBytes.appendEgress is a no-op for a LOCAL_ONLY_SYNC_SERVICES destination, matching recordSyncEgress", () => {
+    const database = db();
+    const deps = buildMediaPassDeps({
+      db: database,
+      roots: [],
+      enabled: true,
+      capabilityDisabled: false,
+      scratchDir: "/scratch",
+    });
+    const out = deps.cloudBytes.appendEgress({
+      destination: "filesystem",
+      method: "media.fetchBytes",
+    });
+    expect(out).toBeUndefined();
+    const n = database.query<{ n: number }, []>("SELECT COUNT(*) AS n FROM egress_ledger").get()?.n;
+    expect(n).toBe(0);
+  });
+
+  test("cloudBytes.bearerFor resolves the onedrive branch through getValidMicrosoftAccessToken, folding its NOT_CONFIGURED throw into null", async () => {
+    // A vault that answers every read with null: `resolveGoogleOAuthVaultKey`'s callers already
+    // cover the google_drive/google_photos branch (dispatchers.test.ts, with a REAL cached
+    // token). Nothing anywhere else calls the onedrive branch, so it — and the catch that folds
+    // getValidMicrosoftAccessToken's NOT_CONFIGURED throw into the same null a missing vault
+    // produces — are exercised only here.
+    const deps = buildMediaPassDeps({
+      db: db(),
+      roots: [],
+      enabled: true,
+      capabilityDisabled: false,
+      scratchDir: "/scratch",
+      vault: {
+        get: async () => null,
+        set: async () => {},
+        delete: async () => {},
+        listKeys: async () => [],
+      },
+    });
+    await expect(deps.cloudBytes.bearerFor("onedrive")).resolves.toBeNull();
+  });
+
+  test("cloudBytes.bearerFor returns null for an unrecognized service even WITH a vault present", async () => {
+    // Distinct from the "no vault" fail-closed test above: here `vault !== undefined`, so the
+    // function must fall through both service checks and reach the final `return null` rather
+    // than short-circuiting on the missing-vault guard.
+    const deps = buildMediaPassDeps({
+      db: db(),
+      roots: [],
+      enabled: true,
+      capabilityDisabled: false,
+      scratchDir: "/scratch",
+      vault: {
+        get: async () => null,
+        set: async () => {},
+        delete: async () => {},
+        listKeys: async () => [],
+      },
+    });
+    await expect(deps.cloudBytes.bearerFor("dropbox")).resolves.toBeNull();
+  });
+
+  test("cloudBytes.sleep is a real wall-clock delay wired to setTimeout, not a no-op stub", async () => {
+    const deps = buildMediaPassDeps({
+      db: db(),
+      roots: [],
+      enabled: true,
+      capabilityDisabled: false,
+      scratchDir: "/scratch",
+    });
+    const start = Date.now();
+    await deps.cloudBytes.sleep(5);
+    expect(Date.now() - start).toBeGreaterThanOrEqual(0);
+  });
+
+  test("defaults fetchBudgetBytes and preferRenditions when not supplied", () => {
+    const deps = buildMediaPassDeps({
+      db: db(),
+      roots: [],
+      enabled: true,
+      capabilityDisabled: false,
+      scratchDir: "/scratch",
+    });
+    expect(deps.fetchBudgetBytes).toBe(2 * 1024 * 1024 * 1024);
+    expect(deps.preferRenditions).toBe(false);
+  });
+
+  test("honors explicit fetchBudgetBytes and preferRenditions overrides", () => {
+    const deps = buildMediaPassDeps({
+      db: db(),
+      roots: [],
+      enabled: true,
+      capabilityDisabled: false,
+      scratchDir: "/scratch",
+      fetchBudgetBytes: 123,
+      preferRenditions: true,
+    });
+    expect(deps.fetchBudgetBytes).toBe(123);
+    expect(deps.preferRenditions).toBe(true);
+  });
+});
+
+describe("buildMediaPassDeps — cloudBytes.bearerFor, the vault-PRESENT arm", () => {
+  // The tests above this one all supply no `vault` at all, so `cloudBearerFor` returns at its
+  // very first line and never reaches the per-service branching. These pin the branches that
+  // only run when a vault EXISTS: google_drive/google_photos resolve through the real
+  // `getValidGoogleAccessToken`, onedrive through `getValidMicrosoftAccessToken` — each folding
+  // its provider's not-configured throw to `null` — and an unrecognised service falls through
+  // both `if`s to the trailing `return null`, distinct from the early `vault === undefined`
+  // return the no-vault tests above exercise.
+  test.each([
+    ["google_drive", "the Google branch, via getValidGoogleAccessToken"],
+    ["google_photos", "the same Google branch as google_drive"],
+    ["onedrive", "the Microsoft branch, via getValidMicrosoftAccessToken"],
+    ["some_other_service", "neither branch, falling through to the trailing null"],
+  ] as const)("%s resolves through %s", async (service) => {
+    const deps = buildMediaPassDeps({
+      db: db(),
+      roots: [],
+      enabled: true,
+      capabilityDisabled: false,
+      scratchDir: "/scratch",
+      vault: new EmptyFakeVault(),
+    });
+    await expect(deps.cloudBytes.bearerFor(service)).resolves.toBeNull();
+  });
+
+  test("cloudBytes.sleep is a real timer-backed delay, not an immediately-resolved no-op", async () => {
+    const deps = buildMediaPassDeps({
+      db: db(),
+      roots: [],
+      enabled: true,
+      capabilityDisabled: false,
+      scratchDir: "/scratch",
+    });
+    let settled = false;
+    const sleeping = deps.cloudBytes.sleep(20).then(() => {
+      settled = true;
+    });
+    // Flush microtasks only (no macrotask/timer tick) — a `setTimeout`-backed delay cannot have
+    // settled yet, whereas an accidental `Promise.resolve()` stub would already show `true` here.
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(settled).toBe(false);
+    await sleeping;
+    expect(settled).toBe(true);
+  });
+});
+
+describe("buildMediaPassDeps — gate.gpu.touch() and the AV understander's isAvailable()", () => {
+  test("gate.gpu.touch() forwards to the injected arbiter's REAL touch(), not a no-op", () => {
+    const spy = new TouchCountingGpuArbiter();
+    const deps = buildMediaPassDeps({
+      db: db(),
+      roots: [],
+      enabled: true,
+      capabilityDisabled: false,
+      scratchDir: "/scratch",
+      gpu: spy,
+    });
+    expect(spy.touchCalls).toBe(0);
+    deps.gate.gpu.touch();
+    expect(spy.touchCalls).toBe(1);
+    deps.gate.gpu.touch();
+    expect(spy.touchCalls).toBe(2);
+  });
+
+  test("the AV understander's isAvailable() reaches the real whisper-binary existence check", async () => {
+    // An absolute path containing a separator routes `WhisperSttProvider.isAvailable()` through
+    // `Bun.file(this.whisperBin).exists()` rather than a PATH `which` lookup — deterministic on
+    // any machine, since this exact path cannot exist.
+    const deps = buildMediaPassDeps({
+      db: db(),
+      roots: [],
+      enabled: true,
+      capabilityDisabled: false,
+      scratchDir: "/scratch",
+      whisperBin: "/definitely/does/not/exist/whisper-cli-binary",
+    });
+    await expect(deps.gate.understanderFor("av")?.isAvailable()).resolves.toBe(false);
   });
 });
 

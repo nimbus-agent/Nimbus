@@ -3,7 +3,10 @@
  *
  * `whisper-cli` takes a PATH (`-f`) and wants 16 kHz 16-bit mono PCM WAV, so any compressed or
  * containerised media needs a transcode first. That is why the spec's "never written to disk" rule
- * is narrowed rather than absolute: ONE gateway-owned scratch file, 0600, deleted in a `finally`.
+ * is narrowed rather than absolute: this transcode is a gateway-owned scratch file, 0600, deleted
+ * in a `finally`. On the local AV arm it is the only scratch file the pass writes; on the cloud AV
+ * arm (`multimodal/cloud-bytes.ts`) it is the SECOND — the downloaded artifact itself is the first,
+ * also 0600 and also cleaned up in a `finally`. The image path, local or cloud, writes neither.
  *
  * NOT in `platform/`: resolving an external binary is not OS-specific logic reached through
  * `PlatformServices`. Both existing precedents keep the resolver beside its consumer —
@@ -167,6 +170,17 @@ export async function withScratchFile<T>(path: string, fn: (p: string) => Promis
 }
 
 /**
+ * Cloud downloads are named `nimbus-media-<uuid>` with NO extension.
+ *
+ * Deliberate: a downloaded artifact's extension is whatever the provider served (`.mov`, `.mkv`,
+ * `.m4a`, `.webm`, …), so matching on extension is a list guaranteed to drift and to fail on
+ * exactly the format nobody anticipated. ffmpeg probes content and never needs the suffix, so the
+ * prefix can be the only key.
+ */
+export const CLOUD_SCRATCH_PREFIX = "nimbus-media-";
+const STT_SCRATCH_PREFIX = "nimbus-stt-";
+
+/**
  * Deletes stale scratch WAVs left by a PREVIOUS gateway process.
  *
  * `withScratchFile`'s `finally` covers exceptions and rejections but NOT process death: a SIGINT,
@@ -191,7 +205,9 @@ export function sweepStaleScratchFiles(
     return 0;
   }
   for (const name of entries) {
-    if (!name.startsWith("nimbus-stt-") || !name.endsWith(".wav")) {
+    const isSttScratch = name.startsWith(STT_SCRATCH_PREFIX) && name.endsWith(".wav");
+    const isCloudScratch = name.startsWith(CLOUD_SCRATCH_PREFIX);
+    if (!isSttScratch && !isCloudScratch) {
       continue;
     }
     const full = join(scratchDir, name);

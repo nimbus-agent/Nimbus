@@ -24,9 +24,18 @@ describe("createLongFormStt", () => {
     expect(createLongFormStt(deps()).isLocal).toBe(true);
   });
 
+  test("rejects a bytes source instead of casting — transcodeToWav needs a path", async () => {
+    const stt = createLongFormStt(deps());
+    await expect(
+      stt.understand({ kind: "bytes", bytes: new Uint8Array([1]), mime: "video/mp4" }),
+    ).rejects.toThrow(/path source/);
+  });
+
   test("transcodes then transcribes, returning the text", async () => {
     const stt = createLongFormStt(deps());
-    expect(await stt.understand("/in/demo.mp4")).toEqual({ text: "hello world" });
+    expect(await stt.understand({ kind: "path", path: "/in/demo.mp4" })).toEqual({
+      text: "hello world",
+    });
   });
 
   test("passes the TRANSCODED wav to whisper, not the original", async () => {
@@ -39,7 +48,7 @@ describe("createLongFormStt", () => {
         },
       }),
     );
-    await stt.understand("/in/demo.mp4");
+    await stt.understand({ kind: "path", path: "/in/demo.mp4" });
     expect(given.endsWith(".wav")).toBe(true);
     expect(given).not.toContain("demo.mp4");
   });
@@ -54,7 +63,7 @@ describe("createLongFormStt", () => {
         },
       }),
     );
-    await stt.understand("/in/demo.mp4");
+    await stt.understand({ kind: "path", path: "/in/demo.mp4" });
     expect(existsSync(given)).toBe(false);
   });
 
@@ -68,7 +77,9 @@ describe("createLongFormStt", () => {
         },
       }),
     );
-    await expect(stt.understand("/in/demo.mp4")).rejects.toThrow("whisper blew up");
+    await expect(stt.understand({ kind: "path", path: "/in/demo.mp4" })).rejects.toThrow(
+      "whisper blew up",
+    );
     expect(given).not.toBe("");
     expect(existsSync(given)).toBe(false);
   });
@@ -90,6 +101,8 @@ describe("createLongFormStt", () => {
       scratchDir: mkdtempSync(join(tmpdir(), "nimbus-lfs-")),
       model: "whisper-base",
     });
-    await expect(stt.understand("/nonexistent/demo.mp4")).rejects.toBeDefined();
+    await expect(
+      stt.understand({ kind: "path", path: "/nonexistent/demo.mp4" }),
+    ).rejects.toBeDefined();
   });
 });

@@ -45,12 +45,15 @@ export type CoverageVector = Readonly<Record<CoverageClass, Granularity>>;
  * What THIS binary is built to observe. SEVEN classes are non-`none`: `task` (the executor's
  * gated-action append, `engine/executor.ts`); `mcp` and `http` — the two external transports an
  * agent brief can be served over, sharing ONE appender (`egress/agent-brief-egress.ts`, selected
- * per transport by the total `EGRESS_BEARING_CLIENT_KINDS` map); `sync` (a connector sync run OR a
- * targeted fetch-on-miss call, both landing through `egress/sync-egress.ts`'s `recordSyncEgress` —
- * see the `sync` paragraph below); `model` (any generate OR embed on a NON-LOCAL route, appended
- * by three cooperating wrappers — `egress/model-egress.ts`'s `wrapLedgeredProvider`,
- * `egress/mastra-model-egress.ts`'s `wrapLedgeredMastraModel`, and `egress/embedding-egress.ts`'s
- * `wrapLedgeredEmbedder` — see the `model` paragraph below for exactly what each covers); and
+ * per transport by the total `EGRESS_BEARING_CLIENT_KINDS` map); `sync` (a connector sync run, a
+ * targeted fetch-on-miss call, a cloud media byte-URL RESOLVE round-trip, OR a cloud media
+ * byte-fetch attempt, all four landing through
+ * `egress/sync-egress.ts`'s `recordSyncEgress` — see the `sync` paragraph below); `model` (any
+ * generate, embed, OR vision describe on a NON-LOCAL route, appended
+ * by four cooperating wrappers — `egress/model-egress.ts`'s `wrapLedgeredProvider`,
+ * `egress/mastra-model-egress.ts`'s `wrapLedgeredMastraModel`, `egress/embedding-egress.ts`'s
+ * `wrapLedgeredEmbedder`, and `egress/vlm-egress.ts`'s `wrapLedgeredVlm` — see the `model`
+ * paragraph below for exactly what each covers); and
  * `chatops` (every outbound Slack/Teams post, appended by ONE decorator over the shared `post`
  * closure — see the `chatops` paragraph below); and `browser` (every request a computer-use browser
  * lane makes, appended by a decorator over the CDP-backed context — see the `browser` paragraph
@@ -87,17 +90,26 @@ export type CoverageVector = Readonly<Record<CoverageClass, Granularity>>;
  * KIND of egress (a connector call), not the transport port it arrived on.
  *
  * `sync` is `per-run`, RAISED FROM `none`, and `per-run` — not `per-call` — is the honest
- * granularity for the class as a whole, not a hedge. Two appenders share ONE function
- * (`egress/sync-egress.ts`'s `recordSyncEgress`, injected as a thin closure by
- * `platform/assemble.ts`, the only production `new SyncScheduler(...)` AND the sole builder of
- * `targetedFetch`'s deps — D22(b) confines the raw `appendEgressEntry` identifier to `egress/*`, so
- * neither caller imports it directly): `sync/scheduler.ts`'s `appendSyncEgress` appends ONE row per
- * RUN, before `connector.sync(...)` — and a scheduled sync is a paginated run that can make many
- * upstream calls per row, which is a WEAKER claim than `per-call` would assert; `sync/targeted-
- * fetch.ts`'s `appendEgress` appends one row per its one call, which alone would be `per-call`. The
- * vector reports the weaker of the two shapes it actually backs, exactly as `weakestCoverage` merges
- * markers from different binaries — asserting `per-call` here would overstate what the scheduled-
- * sync half of this class observes.
+ * granularity for the class as a whole, not a hedge. FOUR appenders share ONE function
+ * (`egress/sync-egress.ts`'s `recordSyncEgress` — D22(b) confines the raw `appendEgressEntry`
+ * identifier to `egress/*`, so none of the four callers imports it directly): `sync/scheduler.ts`'s
+ * `appendSyncEgress` appends ONE row per RUN, before `connector.sync(...)` — and a scheduled sync is
+ * a paginated run that can make many upstream calls per row, which is a WEAKER claim than `per-call`
+ * would assert; `sync/targeted-fetch.ts`'s `appendEgress` appends one row per its one call, which
+ * alone would be `per-call`; `multimodal/cloud-url-resolver.ts`'s `appendEgress` appends one row
+ * before the credentialed round-trip that asks Photos/OneDrive where an artifact's bytes live
+ * (`method='media.resolveByteUrl'`; the Drive arm needs no round-trip and appends nothing); and
+ * `multimodal/cloud-bytes.ts`'s `appendEgress` appends one row per cloud media byte-fetch ATTEMPT
+ * (`method='media.fetchBytes'`; a retry appends again), each of which alone would also be
+ * `per-call`. So ONE Photos/OneDrive candidate contributes TWO rows, because it makes two real
+ * outbound requests — that is not double-counting, and collapsing them would have meant a candidate
+ * failing at resolve left NO row for a request that had already gone out. The
+ * first two closures are injected by `platform/assemble.ts` — the only production
+ * `new SyncScheduler(...)` AND the sole builder of `targetedFetch`'s deps; the last two share one
+ * closure injected by `multimodal/build-media-pass-deps.ts`'s `buildCloudBytesDeps`. The vector
+ * reports the weakest of the four shapes it actually backs, exactly as `weakestCoverage` merges
+ * markers from different binaries — asserting `per-call` here would overstate what the
+ * scheduled-sync quarter of this class observes.
  *
  * `model` is `per-call` and covers every NON-LOCAL route in the router's table. The appender is
  * `egress/model-egress.ts`'s `wrapLedgeredProvider`, applied at `LlmRegistry.addRoute`, so it
