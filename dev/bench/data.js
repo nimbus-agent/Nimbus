@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1788616816776,
+  "lastUpdate": 1788629888235,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "bccab8bf9e8f34fabed47afff3619bf6dc6802ff",
-          "message": "feat(slice9-w1): HITL-gated GitOps + ML writes (ArgoCD/Flux/MLflow), generalize I26 (#700)\n\n## Phase 6 Slice 9 W1 — HITL-gated GitOps + ML writes (ArgoCD / Flux /\nMLflow)\n\nAdds six HITL-gated connector write tools, each executing **only**\nbehind the LOCAL owner's executor I2 consent gate, with a personal **+\nteam** credential path. Built by generalizing the Wave 7c\nwarehouse-write machinery to *all* connector writes — **no new invariant\nnumber, no migration (schema stays V43), no new vault keys**.\n\n**Spec:**\n[`docs/superpowers/specs/2026-06-20-slice9-w1-gitops-ml-writes-design.md`](docs/superpowers/specs/2026-06-20-slice9-w1-gitops-ml-writes-design.md)\n· **Plan:**\n[`docs/superpowers/plans/2026-06-20-slice9-w1-gitops-ml-writes.md`](docs/superpowers/plans/2026-06-20-slice9-w1-gitops-ml-writes.md)\n\n### Write tools\n| Tool | Action type (HITL) | API |\n| --- | --- | --- |\n| `argocd_app_sync` / `argocd_app_rollback` | `argocd.app.sync` /\n`argocd.app.rollback` | `POST\n/api/v1/applications/{name}/sync\\|rollback` |\n| `flux_kustomization_reconcile` / `flux_helmrelease_reconcile` |\n`flux.kustomization.reconcile` / `flux.helmrelease.reconcile` | PATCH\nthe CR with `reconcile.fluxcd.io/requestedAt` (needs the SA's `patch`\nRBAC verb) |\n| `mlflow_model_promote` / `mlflow_model_transition_stage` |\n`mlflow.model.promote` / `mlflow.model.transition_stage` | `POST\n/api/2.0/mlflow/model-versions/transition-stage` (promote defaults\n`archive_existing_versions=true`) |\n\nAll writes are **async** (the action is *requested*; verify via the next\nmetadata sync).\n\n### Architecture\n- Hoisted `ConnectorWrite` descriptor + a per-group SSoT\n(`gitops-ml-write-tools.ts`) + a union registry\n(`connector-write-registry.ts`); renamed\n`warehouse-write-{transport,dispatch}.ts` →\n`connector-write-{transport,dispatch}.ts`.\n- The six action types are in the frozen `HITL_REQUIRED_BACKING`, tied\nto the SSoT by a drift test.\n- **I26/D20 generalized in place** (\"warehouse/BI write tool ids\" →\n\"connector write tool ids, warehouse/BI ∪ GitOps/ML\"): the federated\npeer invoke gate now fail-closed rejects ANY connector write id via the\nunion `isConnectorWriteToolId` — a peer can never trigger a GitOps/ML\nwrite over the wire (proven by a functional rejection test in\n`invoke-gate.test.ts`).\n- Each connector's read tools extracted to an exported\n`register<Svc>Tools(reg)` registrar (`import.meta.main` guard runs the\nstdio server), keeping the write tools unit-testable via\n`captureTools()`.\n- `argocd`/`flux`/`mlflow` enrolled in `TEAM_CREDENTIAL_CONNECTORS` +\n`TEAM_SECRET_ANYOF_GROUPS` so the I19 localOperator team-write rail is\nreachable.\n\n### Deferred\nSageMaker + Vertex AI writes (CLI-credential connectors — no discrete\ntoken, don't fit the team-vault write model) and all destructive\n`delete`/`drop` writes.\n\n### Verification\n- Docker-Linux (`oven/bun:latest`) full test suite + coverage-floor\n(baseline `{}`): **0 violations / 1045 files**.\n- typecheck, biome, static D20 (`nimbus-invariants`), markdown-lint,\ndoc-refs: all green. Final sweep **2562 pass / 0 fail**.\n- Whole-branch multi-agent review: security model sound; the one real\nfinding (team-credential rail was unreachable) fixed in this branch.\n\nInvariant count stays **I1–I27**.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n## Summary by CodeRabbit\n\n* **New Features**\n* Added consent-gated, async connector write tools for GitOps (ArgoCD\napp sync/rollback; Flux Kustomization/HelmRelease reconcile) and ML\n(MLflow model promote/transition-stage).\n* **Security**\n* Expanded fail-closed protections so federated invocations for\nconnector write actions are blocked unless authorized by the local HITL\ngate.\n* **Configuration**\n* Enabled Nimbus team-credential support for ArgoCD, Flux, and MLflow,\nincluding required token/secret mappings.\n* **Documentation**\n* Updated changelog, security invariant documentation, architecture, and\nroadmap to reflect connector-wide write tooling.\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude Opus 4.8 (1M context) <noreply@anthropic.com>",
-          "timestamp": "2026-06-21T07:58:58Z",
-          "tree_id": "ed95d88129bb1f79d4aca89489a7f2df5a5508bb",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/bccab8bf9e8f34fabed47afff3619bf6dc6802ff"
-        },
-        "date": 1782029747937,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 299.1350286500019,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 300.77311249999764,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 343.7927299000024,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "306811640+nimbus-release-bot[bot]@users.noreply.github.com",
+            "name": "nimbus-release-bot[bot]",
+            "username": "nimbus-release-bot[bot]"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "4d03c7032688d03dc4795ca6583c80a3a8450b72",
+          "message": "chore: release main (#1452)\n\n:robot: I have created a release *beep* *boop*\n---\n\n\n<details><summary>7.10.1</summary>\n\n##\n[7.10.1](https://github.com/nimbus-agent/Nimbus/compare/v7.10.0...v7.10.1)\n(2026-09-05)\n\n\n### Bug Fixes\n\n* **gateway:** stop console windows flashing on every Windows sync\n([#1451](https://github.com/nimbus-agent/Nimbus/issues/1451))\n([2042740](https://github.com/nimbus-agent/Nimbus/commit/2042740e9aac2b8cbf87e9ab04e801a3f51e5df2))\n</details>\n\n---\nThis PR was generated with [Release\nPlease](https://github.com/googleapis/release-please). See\n[documentation](https://github.com/googleapis/release-please#release-please).\n\nCo-authored-by: nimbus-release-bot[bot] <306811640+nimbus-release-bot[bot]@users.noreply.github.com>",
+          "timestamp": "2026-09-05T20:26:20+03:00",
+          "tree_id": "dd8f02c6a1d8b0f6318f717b6936344ad2e13419",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/4d03c7032688d03dc4795ca6583c80a3a8450b72"
+        },
+        "date": 1788629885294,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 347.25719860000174,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 339.1818545999922,
             "unit": "ms"
           }
         ]
