@@ -179,6 +179,56 @@ export function parseBudget(value: string): number | null {
   return Math.round(n * multiplier);
 }
 
+/**
+ * `--renditions`/`--originals` carry no value. Returns whether `flag` was one of them (and, if
+ * so, has already applied it) — the caller advances by 1 rather than 2 in that case.
+ */
+function applyNoValueFlag(params: ParsedMediaArgs["params"], flag: string | undefined): boolean {
+  if (flag === "--renditions") {
+    params.renditions = true;
+    return true;
+  }
+  if (flag === "--originals") {
+    params.originals = true;
+    return true;
+  }
+  return false;
+}
+
+/** Every flag that DOES take a value. `flag` may be `undefined` only for the final argv slot. */
+function applyValueFlag(
+  params: ParsedMediaArgs["params"],
+  flag: string | undefined,
+  value: string,
+): void {
+  switch (flag) {
+    case "--service":
+      params.service = value;
+      break;
+    case "--modality":
+      params.modality = parseModality(value);
+      break;
+    case "--limit":
+      params.limit = parseLimit(value);
+      break;
+    case "--since":
+      params.sinceDays = parseSinceDays(value);
+      break;
+    case "--budget": {
+      const budget = parseBudget(value);
+      if (budget === null) {
+        throw new Error(
+          `nimbus media: --budget must be a byte count or a number with a unit (KB/MB/GB decimal, KiB/MiB/GiB binary), e.g. "500MB"`,
+        );
+      }
+      params.budgetBytes = budget;
+      break;
+    }
+    default:
+      throw new Error(`nimbus media: unknown flag "${flag ?? ""}"`);
+  }
+}
+
 export function parseMediaArgs(argv: readonly string[]): ParsedMediaArgs {
   const sub = argv[0];
   if (sub !== "understand") {
@@ -191,9 +241,7 @@ export function parseMediaArgs(argv: readonly string[]): ParsedMediaArgs {
   let i = 1;
   while (i < argv.length) {
     const flag = argv[i];
-    if (flag === "--renditions" || flag === "--originals") {
-      if (flag === "--renditions") params.renditions = true;
-      else params.originals = true;
+    if (applyNoValueFlag(params, flag)) {
       i += 1;
       continue;
     }
@@ -201,32 +249,7 @@ export function parseMediaArgs(argv: readonly string[]): ParsedMediaArgs {
     if (value === undefined) {
       throw new Error(`nimbus media: ${flag ?? ""} requires a value`);
     }
-    switch (flag) {
-      case "--service":
-        params.service = value;
-        break;
-      case "--modality":
-        params.modality = parseModality(value);
-        break;
-      case "--limit":
-        params.limit = parseLimit(value);
-        break;
-      case "--since":
-        params.sinceDays = parseSinceDays(value);
-        break;
-      case "--budget": {
-        const budget = parseBudget(value);
-        if (budget === null) {
-          throw new Error(
-            `nimbus media: --budget must be a byte count or a number with a unit (KB/MB/GB decimal, KiB/MiB/GiB binary), e.g. "500MB"`,
-          );
-        }
-        params.budgetBytes = budget;
-        break;
-      }
-      default:
-        throw new Error(`nimbus media: unknown flag "${flag ?? ""}"`);
-    }
+    applyValueFlag(params, flag, value);
     i += 2;
   }
   // Rejected outright, never resolved by precedence: a silent override on a pair that controls

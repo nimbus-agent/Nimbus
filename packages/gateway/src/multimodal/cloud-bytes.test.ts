@@ -291,7 +291,7 @@ describe("fetchCloudBytes", () => {
       fetchFn: async () => new Response(null, { status: 429, headers: { "retry-after": "86400" } }),
     });
     await fetchCloudBytes(imageCandidate, providerUrl, deps);
-    expect(waits.length).toBe(2); // MAX_429_RETRIES
+    expect(waits).toHaveLength(2); // MAX_429_RETRIES
     for (const ms of waits) {
       // 30s clamp plus up to 250ms of jitter — never the unclamped 86,400,000ms a lying/huge
       // Retry-After would otherwise produce.

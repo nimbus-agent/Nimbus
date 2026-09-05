@@ -14,7 +14,7 @@
  *  - the run budget is evaluated PER CHUNK, so an overrun aborts the transfer instead of paying
  *    for the whole artifact and then declining it.
  */
-import { randomUUID } from "node:crypto";
+import { randomInt, randomUUID } from "node:crypto";
 import { once } from "node:events";
 import { createWriteStream, rmSync, type WriteStream } from "node:fs";
 import { join } from "node:path";
@@ -68,41 +68,61 @@ export interface CloudBytesDeps {
   readonly sleep: (ms: number) => Promise<void>;
 }
 
-export async function fetchCloudBytes(
-  candidate: MediaCandidate,
-  byteUrl: ByteUrl,
-  deps: CloudBytesDeps,
-): Promise<CloudBytes> {
-  // A provider-returned URL is pinned to https: (spec § 16.4). `assertSafeUrl` permits both
-  // schemes — it guards the HOST, not the transport — so this check is not redundant with it.
-  // Checked BEFORE the ledger append: a URL we will never fetch should not produce an egress row
-  // claiming we did.
-  if (byteUrl.kind === "provider") {
-    let parsed: URL;
-    try {
-      parsed = new URL(byteUrl.url);
-    } catch {
-      return { ok: false, reason: "fetch_miss", fetched: 0 };
-    }
-    if (parsed.protocol !== "https:") return { ok: false, reason: "fetch_miss", fetched: 0 };
-  }
+type CloudBytesRefusal = Extract<CloudBytes, { ok: false }>;
 
-  // Resolved BEFORE the ledger append, mirroring the https: check above: a request that can never
-  // be made (no credential for a URL that needs one) must not produce a row claiming one was.
+/**
+ * A provider-returned URL is pinned to https: (spec § 16.4). `assertSafeUrl` permits both
+ * schemes — it guards the HOST, not the transport — so this check is not redundant with it.
+ * Checked BEFORE the ledger append: a URL we will never fetch should not produce an egress row
+ * claiming we did.
+ */
+function checkProviderUrlScheme(byteUrl: ByteUrl): CloudBytesRefusal | null {
+  if (byteUrl.kind !== "provider") return null;
+  let parsed: URL;
+  try {
+    parsed = new URL(byteUrl.url);
+  } catch {
+    return { ok: false, reason: "fetch_miss", fetched: 0 };
+  }
+  if (parsed.protocol !== "https:") return { ok: false, reason: "fetch_miss", fetched: 0 };
+  return null;
+}
+
+/**
+ * Resolved BEFORE the ledger append, mirroring the https: check above: a request that can never
+ * be made (no credential for a URL that needs one) must not produce a row claiming one was.
+ */
+async function resolveAuthHeaders(
+  byteUrl: ByteUrl,
+  candidate: MediaCandidate,
+  deps: CloudBytesDeps,
+): Promise<{ headers: Record<string, string> } | CloudBytesRefusal> {
   const headers: Record<string, string> = {};
   if (byteUrl.bearer) {
     const token = await deps.bearerFor(candidate.service);
     if (token === null) return { ok: false, reason: "not_configured", fetched: 0 };
     headers["Authorization"] = `Bearer ${token}`;
   }
+  return { headers };
+}
 
-  const controller = new AbortController();
-  let res: Response;
+/**
+ * The 429/503 retry loop. Appends one egress row per ATTEMPT (see the module doc comment) and
+ * backs off on a rate-limit response, up to {@link MAX_429_RETRIES}.
+ */
+async function fetchWithRetry(
+  byteUrl: ByteUrl,
+  candidate: MediaCandidate,
+  headers: Record<string, string>,
+  controller: AbortController,
+  deps: CloudBytesDeps,
+): Promise<{ res: Response } | CloudBytesRefusal> {
   for (let attempt = 0; ; attempt += 1) {
     // Fail-closed: append before EACH attempt, not once before the loop — a retry really does
     // dispatch a fresh outbound request. A throw here propagates and no request is made; it is
     // deliberately NOT inside the try/catch below, which covers only the fetch call itself.
     deps.appendEgress({ destination: candidate.service, method: "media.fetchBytes" });
+    let res: Response;
     try {
       res = await deps.fetchFn(byteUrl.url, { headers, signal: controller.signal });
     } catch {
@@ -111,35 +131,63 @@ export async function fetchCloudBytes(
       // A single hostile provider-returned URL must skip this ONE item, not abort the whole pass.
       return { ok: false, reason: "fetch_miss", fetched: 0 };
     }
-    if (res.status !== 429 && res.status !== 503) break;
+    if (res.status !== 429 && res.status !== 503) return { res };
     if (attempt >= MAX_429_RETRIES) return { ok: false, stop: "rate_limited", fetched: 0 };
     const retryAfter = Number.parseInt(res.headers.get("retry-after") ?? "", 10);
     const waitMs = Number.isFinite(retryAfter)
       ? Math.min(retryAfter * 1000, MAX_RETRY_AFTER_MS)
       : 2 ** attempt * 1000;
-    await deps.sleep(waitMs + Math.floor(Math.random() * 250));
+    await deps.sleep(waitMs + randomInt(250));
   }
+}
+
+/**
+ * A declared length lets an oversized artifact be refused without transferring it at all.
+ * Both bounds are checked here, not just the per-artifact one: streaming 10 MB of a 500 MB file
+ * before tripping the run budget spends exactly the resource the budget exists to conserve.
+ * `content-length` is a HINT, not a guarantee — it can be absent, or wrong — so the per-chunk
+ * checks in {@link collectToMemory}/{@link collectToScratch} still run as a backstop for the
+ * PERMIT direction (a header that understates the real size). That backstop does NOT exist for
+ * the REFUSE direction taken here: a header that OVERSTATES the size refuses the artifact before
+ * a single byte streams, with no per-chunk check to overrule a lying provider's inflated number.
+ */
+function checkDeclaredLength(
+  res: Response,
+  controller: AbortController,
+  deps: CloudBytesDeps,
+): CloudBytesRefusal | null {
+  const declared = Number.parseInt(res.headers.get("content-length") ?? "", 10);
+  if (!Number.isFinite(declared)) return null;
+  if (declared > deps.maxBytes) {
+    controller.abort();
+    return { ok: false, reason: "over_byte_cap", fetched: 0 };
+  }
+  if (declared > deps.remainingBudget) {
+    controller.abort();
+    return { ok: false, stop: "budget_exhausted", fetched: 0 };
+  }
+  return null;
+}
+
+export async function fetchCloudBytes(
+  candidate: MediaCandidate,
+  byteUrl: ByteUrl,
+  deps: CloudBytesDeps,
+): Promise<CloudBytes> {
+  const schemeRefusal = checkProviderUrlScheme(byteUrl);
+  if (schemeRefusal !== null) return schemeRefusal;
+
+  const auth = await resolveAuthHeaders(byteUrl, candidate, deps);
+  if (!("headers" in auth)) return auth;
+
+  const controller = new AbortController();
+  const attempt = await fetchWithRetry(byteUrl, candidate, auth.headers, controller, deps);
+  if (!("res" in attempt)) return attempt;
+  const { res } = attempt;
   if (!res.ok) return { ok: false, reason: "fetch_miss", fetched: 0 };
 
-  // A declared length lets an oversized artifact be refused without transferring it at all.
-  // Both bounds are checked here, not just the per-artifact one: streaming 10 MB of a 500 MB file
-  // before tripping the run budget spends exactly the resource the budget exists to conserve.
-  // `content-length` is a HINT, not a guarantee — it can be absent, or wrong — so the per-chunk
-  // checks below still run as a backstop for the PERMIT direction (a header that understates the
-  // real size). That backstop does NOT exist for the REFUSE direction taken here: a header that
-  // OVERSTATES the size refuses the artifact before a single byte streams, with no per-chunk check
-  // to overrule a lying provider's inflated number.
-  const declared = Number.parseInt(res.headers.get("content-length") ?? "", 10);
-  if (Number.isFinite(declared)) {
-    if (declared > deps.maxBytes) {
-      controller.abort();
-      return { ok: false, reason: "over_byte_cap", fetched: 0 };
-    }
-    if (declared > deps.remainingBudget) {
-      controller.abort();
-      return { ok: false, stop: "budget_exhausted", fetched: 0 };
-    }
-  }
+  const lengthRefusal = checkDeclaredLength(res, controller, deps);
+  if (lengthRefusal !== null) return lengthRefusal;
 
   return candidate.modality === "image"
     ? await collectToMemory(res, controller, deps)
@@ -239,6 +287,59 @@ function closeStream(ws: WriteStream): Promise<void> {
  * opened-then-closed, so by the time this function returns, the file is guaranteed to be either
  * never created or created-and-removed — never present.
  */
+/**
+ * Streams `res.body` into `ws`, chunk by chunk, checking both budgets per chunk (spec § 16.9) —
+ * an overrun aborts the transfer and reports it as a refusal rather than a success.
+ */
+async function streamBodyToFile(
+  res: Response,
+  controller: AbortController,
+  ws: WriteStream,
+  deps: CloudBytesDeps,
+): Promise<{ fetched: number } | CloudBytesRefusal> {
+  const body = res.body;
+  if (body === null) return { fetched: 0 };
+  let fetched = 0;
+  const reader = body.getReader();
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (value === undefined) continue;
+      fetched += value.byteLength;
+      if (fetched > deps.maxBytes) {
+        controller.abort();
+        return { ok: false, reason: "over_byte_cap", fetched };
+      }
+      if (fetched > deps.remainingBudget) {
+        controller.abort();
+        return { ok: false, stop: "budget_exhausted", fetched };
+      }
+      await writeChunk(ws, value);
+    }
+  } finally {
+    reader.releaseLock();
+  }
+  return { fetched };
+}
+
+/**
+ * Removes a scratch file a failed collection created. Waits for the stream's own `close` event
+ * first — see {@link collectToScratch}'s docstring for why `rmSync` alone races the async open.
+ * Both the wait and the removal are best-effort: neither failing changes the outcome already
+ * decided by the caller.
+ */
+async function cleanupFailedScratch(ws: WriteStream, path: string): Promise<void> {
+  ws.destroy();
+  await once(ws, "close").catch(() => undefined);
+  try {
+    rmSync(path, { force: true });
+  } catch {
+    // Best-effort: a filesystem that rejects the removal does not change the outcome already
+    // decided above.
+  }
+}
+
 async function collectToScratch(
   res: Response,
   controller: AbortController,
@@ -248,46 +349,12 @@ async function collectToScratch(
   const ws = createWriteStream(path, { mode: 0o600 });
   let succeeded = false;
   try {
-    let fetched = 0;
-    const body = res.body;
-    if (body !== null) {
-      const reader = body.getReader();
-      try {
-        for (;;) {
-          const { done, value } = await reader.read();
-          if (done) break;
-          if (value === undefined) continue;
-          fetched += value.byteLength;
-          if (fetched > deps.maxBytes) {
-            controller.abort();
-            return { ok: false, reason: "over_byte_cap", fetched };
-          }
-          if (fetched > deps.remainingBudget) {
-            controller.abort();
-            return { ok: false, stop: "budget_exhausted", fetched };
-          }
-          await writeChunk(ws, value);
-        }
-      } finally {
-        reader.releaseLock();
-      }
-    }
+    const streamed = await streamBodyToFile(res, controller, ws, deps);
+    if ("ok" in streamed) return streamed;
     await closeStream(ws);
     succeeded = true;
-    return { ok: true, kind: "path", path, fetched };
+    return { ok: true, kind: "path", path, fetched: streamed.fetched };
   } finally {
-    if (!succeeded) {
-      ws.destroy();
-      // Wait for the fd to actually close before removing — see the docstring above. Swallowed:
-      // a `close` that never fires (or errors) does not change the outcome already decided above,
-      // and the `rmSync` below is itself `force: true` for the same reason.
-      await once(ws, "close").catch(() => undefined);
-      try {
-        rmSync(path, { force: true });
-      } catch {
-        // Best-effort: a filesystem that rejects the removal does not change the outcome already
-        // decided above.
-      }
-    }
+    if (!succeeded) await cleanupFailedScratch(ws, path);
   }
 }

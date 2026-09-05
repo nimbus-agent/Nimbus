@@ -130,7 +130,7 @@ function readRenditionPreference(
 function readOptionalBool(name: string, v: unknown): boolean | undefined {
   if (v === undefined || v === null) return undefined;
   if (typeof v !== "boolean") {
-    throw new Error(`media.understand: ${name} must be a boolean`);
+    throw new TypeError(`media.understand: ${name} must be a boolean`);
   }
   return v;
 }

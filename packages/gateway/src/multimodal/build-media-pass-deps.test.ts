@@ -321,10 +321,17 @@ describe("buildMediaPassDeps — cloud arm wiring (PR 3)", () => {
 describe("buildMediaPassDeps — cloudBytes.bearerFor, the vault-PRESENT arm", () => {
   // The tests above this one all supply no `vault` at all, so `cloudBearerFor` returns at its
   // very first line and never reaches the per-service branching. These pin the branches that
-  // only run when a vault EXISTS: each named service resolves through the real
-  // `getValidGoogleAccessToken`/`getValidMicrosoftAccessToken` call and is caught, and an
-  // unrecognised service falls through both `if`s to the trailing `return null`.
-  test("google_drive resolves through getValidGoogleAccessToken and folds its not-configured throw to null", async () => {
+  // only run when a vault EXISTS: google_drive/google_photos resolve through the real
+  // `getValidGoogleAccessToken`, onedrive through `getValidMicrosoftAccessToken` — each folding
+  // its provider's not-configured throw to `null` — and an unrecognised service falls through
+  // both `if`s to the trailing `return null`, distinct from the early `vault === undefined`
+  // return the no-vault tests above exercise.
+  test.each([
+    ["google_drive", "the Google branch, via getValidGoogleAccessToken"],
+    ["google_photos", "the same Google branch as google_drive"],
+    ["onedrive", "the Microsoft branch, via getValidMicrosoftAccessToken"],
+    ["some_other_service", "neither branch, falling through to the trailing null"],
+  ] as const)("%s resolves through %s", async (service) => {
     const deps = buildMediaPassDeps({
       db: db(),
       roots: [],
@@ -333,45 +340,7 @@ describe("buildMediaPassDeps — cloudBytes.bearerFor, the vault-PRESENT arm", (
       scratchDir: "/scratch",
       vault: new EmptyFakeVault(),
     });
-    await expect(deps.cloudBytes.bearerFor("google_drive")).resolves.toBeNull();
-  });
-
-  test("google_photos takes the same Google branch as google_drive", async () => {
-    const deps = buildMediaPassDeps({
-      db: db(),
-      roots: [],
-      enabled: true,
-      capabilityDisabled: false,
-      scratchDir: "/scratch",
-      vault: new EmptyFakeVault(),
-    });
-    await expect(deps.cloudBytes.bearerFor("google_photos")).resolves.toBeNull();
-  });
-
-  test("onedrive resolves through getValidMicrosoftAccessToken and folds its not-configured throw to null", async () => {
-    const deps = buildMediaPassDeps({
-      db: db(),
-      roots: [],
-      enabled: true,
-      capabilityDisabled: false,
-      scratchDir: "/scratch",
-      vault: new EmptyFakeVault(),
-    });
-    await expect(deps.cloudBytes.bearerFor("onedrive")).resolves.toBeNull();
-  });
-
-  test("an unrecognised service with a vault PRESENT falls through both branches to the trailing null", async () => {
-    // Distinct from the no-vault case above: this proves the trailing `return null;` after the
-    // two `if`s is reached, not the early `vault === undefined` return.
-    const deps = buildMediaPassDeps({
-      db: db(),
-      roots: [],
-      enabled: true,
-      capabilityDisabled: false,
-      scratchDir: "/scratch",
-      vault: new EmptyFakeVault(),
-    });
-    await expect(deps.cloudBytes.bearerFor("some_other_service")).resolves.toBeNull();
+    await expect(deps.cloudBytes.bearerFor(service)).resolves.toBeNull();
   });
 
   test("cloudBytes.sleep is a real timer-backed delay, not an immediately-resolved no-op", async () => {

@@ -561,7 +561,7 @@ describe("SQL/JS mime agreement — Important 3", () => {
         .all(...predicate.params);
 
       const expectAdmitted = mimeModality(mime) !== undefined;
-      expect(rows.length).toBe(expectAdmitted ? 1 : 0);
+      expect(rows).toHaveLength(expectAdmitted ? 1 : 0);
     });
   }
 });

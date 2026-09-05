@@ -1033,7 +1033,7 @@ describe("runMediaPass — cloud budget, stop reasons and rendition (PR 3)", () 
     expect(resolveCalls).toBe(1);
     // The cursor is left where it was — untouched, so the very first candidate is RETRIED next
     // run rather than skipped past.
-    expect(readCursor(db, "default")).toBe(null);
+    expect(readCursor(db, "default")).toBeNull();
   });
 
   test("a NON-429 resolver error stays a per-item skip that advances", async () => {

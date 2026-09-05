@@ -213,6 +213,110 @@ function requireCloudScratchDir(deps: MediaPassDeps): string {
   return deps.scratchDir;
 }
 
+/**
+ * What resolving a CLOUD candidate's bytes produced — a usable source, a per-item skip, or a
+ * run-ending stop. Pulled out of {@link runMediaPass}'s loop so the cognitive load of the
+ * resolve-then-fetch-then-classify sequence lives in one place, in the order it actually runs.
+ */
+type CloudResolution =
+  | {
+      readonly kind: "source";
+      readonly source: MediaSource;
+      readonly rendition: RenditionMode;
+      readonly cloudScratch?: string;
+    }
+  | { readonly kind: "skip"; readonly reason: SkipReason }
+  | { readonly kind: "stop"; readonly reason: MediaPassStopReason };
+
+/**
+ * Re-resolves a cloud candidate's provider URL, then fetches it under the run's remaining byte
+ * budget. `budget` is mutated in place — `cloudBytesFetched`/`remainingBudget` must be debited
+ * from EVERY arm (ok, per-item skip, AND run-stop alike), since an artifact refused at a cap
+ * still pulled bytes down the wire before the refusal (spec § 16.9).
+ */
+async function resolveCloudSource(
+  candidate: MediaCandidate,
+  deps: MediaPassDeps,
+  budget: { remainingBudget: number; cloudBytesFetched: number },
+): Promise<CloudResolution> {
+  // A cloud candidate has no usable URL until re-resolved: a Photos `baseUrl` expires in about an
+  // hour, and OneDrive's download URL is never indexed at all. Runs BEFORE fetchCloudBytes for
+  // exactly that reason.
+  const resolvedUrl = await resolveCloudByteUrl(candidate, deps.preferRenditions, {
+    bearerFor: deps.cloudBytes.bearerFor,
+    fetchFn: deps.cloudBytes.fetchFn,
+    appendEgress: deps.cloudBytes.appendEgress,
+  } satisfies CloudUrlResolverDeps);
+  if ("error" in resolvedUrl) {
+    // A 429 at RESOLVE is the same provider-wide signal as a 429 at FETCH, and must end the run
+    // the same way — treating it as an ordinary per-item skip is how a rate limit burns a whole
+    // page, since every remaining candidate would resolve to the same 429.
+    if (resolvedUrl.error === "rate_limited") return { kind: "stop", reason: "rate_limited" };
+    return { kind: "skip", reason: resolvedUrl.error };
+  }
+
+  // Captured BEFORE the call, and before this fetch's own debit below: this is the budget as it
+  // stood walking INTO this artifact, which is what "nothing spent yet this run" means below.
+  const budgetBeforeThisFetch = budget.remainingBudget;
+  const fetched: CloudBytes = await fetchCloudBytes(candidate, resolvedUrl, {
+    scratchDir: requireCloudScratchDir(deps),
+    maxBytes: deps.maxBytes,
+    remainingBudget: budget.remainingBudget,
+    bearerFor: deps.cloudBytes.bearerFor,
+    appendEgress: deps.cloudBytes.appendEgress,
+    fetchFn: deps.cloudBytes.fetchFn,
+    sleep: deps.cloudBytes.sleep,
+  });
+
+  budget.cloudBytesFetched += fetched.fetched;
+  budget.remainingBudget -= fetched.fetched;
+
+  if (!fetched.ok) {
+    if ("stop" in fetched) {
+      // TWO DIFFERENT SHAPES hide behind one `CloudBytes` stop, and treating them alike is how a
+      // single oversized artifact wedges the pass PERMANENTLY:
+      //
+      //  - TRANSIENT: some EARLIER candidate this run already spent part of the budget, and THIS
+      //    artifact simply didn't fit in what was left. A future run, starting with a fresh
+      //    budget, may well get past it — so the caller stops here and leaves the cursor on the
+      //    last COMPLETED item.
+      //  - PERMANENT: `budgetBeforeThisFetch === deps.fetchBudgetBytes` means NOTHING was spent
+      //    before this attempt — the artifact was offered the ENTIRE run budget and still could
+      //    not fit (an unknown-size candidate, e.g. Google Photos, is the reachable case:
+      //    `priceRun`'s pre-flight admits it since it contributes nothing to `knownBytes`). No
+      //    FUTURE run using this same budget can ever do better, so stopping here would make
+      //    `runMediaPass` return the identical page and stop on the identical candidate forever —
+      //    starving every artifact that sorts after it. So this case is a PER-ITEM refusal
+      //    instead: skip it, `over_byte_cap` (the same reason the local arm uses for the same
+      //    shape of problem), and keep going.
+      //
+      // Scoped to `budget_exhausted` only — a `rate_limited` stop says nothing about the
+      // artifact's SIZE, so applying the same reasoning to it would record a dishonest skip
+      // reason for an artifact that may fetch fine on the very next attempt.
+      if (fetched.stop === "budget_exhausted" && budgetBeforeThisFetch === deps.fetchBudgetBytes) {
+        return { kind: "skip", reason: "over_byte_cap" };
+      }
+      return { kind: "stop", reason: fetched.stop };
+    }
+    return { kind: "skip", reason: fetched.reason };
+  }
+
+  const rendition = renditionModeFor(candidate, deps.preferRenditions);
+  if (fetched.kind === "path") {
+    return {
+      kind: "source",
+      source: { kind: "path", path: fetched.path },
+      rendition,
+      cloudScratch: fetched.path,
+    };
+  }
+  return {
+    kind: "source",
+    source: { kind: "bytes", bytes: fetched.bytes, mime: candidate.sourceMime },
+    rendition,
+  };
+}
+
 export async function runMediaPass(deps: MediaPassDeps): Promise<MediaPassSummary> {
   // Reclaim scratch WAVs a previous gateway process died mid-write and never unwound (spec § 5.4).
   // Age-bounded, so a concurrently running pass's file is never removed under it.
@@ -287,114 +391,31 @@ export async function runMediaPass(deps: MediaPassDeps): Promise<MediaPassSummar
       let rendition: RenditionMode = "original";
 
       if (candidate.sourcePath === null) {
-        // A cloud candidate has no usable URL until re-resolved: a Photos `baseUrl` expires in
-        // about an hour, and OneDrive's download URL is never indexed at all. Runs BEFORE
-        // fetchCloudBytes for exactly that reason.
-        const resolvedUrl = await resolveCloudByteUrl(candidate, deps.preferRenditions, {
-          bearerFor: deps.cloudBytes.bearerFor,
-          fetchFn: deps.cloudBytes.fetchFn,
-          appendEgress: deps.cloudBytes.appendEgress,
-        } satisfies CloudUrlResolverDeps);
-        if ("error" in resolvedUrl) {
-          // A 429 at RESOLVE is the same provider-wide signal as a 429 at FETCH, and must end the
-          // run the same way. Treating it as an ordinary per-item skip — the original shape — is
-          // how a rate limit burns a whole page: every remaining candidate resolves to the same
-          // 429, each one advances the cursor past an artifact that was never attempted, and the
-          // run reports `stopReason: "completed"` so the CLI prints no resume guidance at all.
-          // As in the byte path's stop arm, the cursor is left on the last COMPLETED item so the
-          // stopping candidate is RETRIED next run rather than skipped past.
-          if (resolvedUrl.error === "rate_limited") {
-            stopReason = "rate_limited";
-            break;
-          }
-          reasons[resolvedUrl.error] += 1;
+        const budget = { remainingBudget, cloudBytesFetched };
+        const resolution = await resolveCloudSource(candidate, deps, budget);
+        // Debited from EVERY arm — ok, per-item skip, AND run-stop alike — by resolveCloudSource
+        // itself; copy its result back regardless of which arm this turned out to be.
+        remainingBudget = budget.remainingBudget;
+        cloudBytesFetched = budget.cloudBytesFetched;
+
+        if (resolution.kind === "stop") {
+          stopReason = resolution.reason;
+          // The STOPPING candidate was never fetched to completion — it must be RETRIED on the
+          // next run, not skipped past. So `lastItemId`/the cursor are deliberately left at
+          // whatever the previous iteration (or the resumed-from cursor, if this was the first
+          // candidate this run) already set them to; neither is advanced onto this candidate.
+          break;
+        }
+        if (resolution.kind === "skip") {
+          reasons[resolution.reason] += 1;
           skipped += 1;
           lastItemId = candidate.itemId;
           advance(deps, lastItemId, understood + skipped);
           continue;
         }
-
-        // Captured BEFORE the call, and before this fetch's own debit below: this is the budget
-        // as it stood walking INTO this artifact, which is what "nothing spent yet this run"
-        // means. Reading `remainingBudget` itself after the debit would answer a different
-        // question — how much is left AFTER this attempt — which is not what tells us whether
-        // some EARLIER candidate this run already consumed part of the budget.
-        const budgetBeforeThisFetch = remainingBudget;
-        const fetched: CloudBytes = await fetchCloudBytes(candidate, resolvedUrl, {
-          scratchDir: requireCloudScratchDir(deps),
-          maxBytes: deps.maxBytes,
-          remainingBudget,
-          bearerFor: deps.cloudBytes.bearerFor,
-          appendEgress: deps.cloudBytes.appendEgress,
-          fetchFn: deps.cloudBytes.fetchFn,
-          sleep: deps.cloudBytes.sleep,
-        });
-
-        // Debited from EVERY arm — ok, per-item skip, AND run-stop alike. An artifact refused at
-        // the per-artifact cap or the run budget still pulled `fetched` bytes down the wire before
-        // it was refused; under-counting any arm is how the run budget stops binding.
-        cloudBytesFetched += fetched.fetched;
-        remainingBudget -= fetched.fetched;
-
-        if (!fetched.ok) {
-          if ("stop" in fetched) {
-            // TWO DIFFERENT SHAPES hide behind one `CloudBytes` stop, and treating them alike is
-            // how a single oversized artifact wedges the pass PERMANENTLY:
-            //
-            //  - TRANSIENT: some EARLIER candidate this run already spent part of the budget, and
-            //    THIS artifact simply didn't fit in what was left. A future run, starting with a
-            //    fresh budget, may well get past it — so the pass stops here and the cursor stays
-            //    on the last COMPLETED item, exactly as the comment below describes.
-            //  - PERMANENT: `budgetBeforeThisFetch === deps.fetchBudgetBytes` means NOTHING was
-            //    spent before this attempt — the artifact was offered the ENTIRE run budget and
-            //    still could not fit (an unknown-size candidate, e.g. Google Photos, is the
-            //    reachable case: `priceRun`'s pre-flight admits it since it contributes nothing to
-            //    `knownBytes`). No FUTURE run using this same budget can ever do better, because no
-            //    run can offer this artifact more than its own full budget. Stopping here would
-            //    make `runMediaPass` return the identical page and stop on the identical candidate
-            //    forever — starving every artifact that sorts after it in `src.id` order,
-            //    local ones included. So this case is a PER-ITEM refusal instead: skip it,
-            //    `over_byte_cap` (the same reason the local arm uses for the same shape of
-            //    problem), advance past it, and keep going.
-            //
-            // Scoped to `budget_exhausted` only — a `rate_limited` stop says nothing about the
-            // artifact's SIZE (the provider might simply be busy right now), so applying the same
-            // "provably cannot fit" reasoning to it would record a dishonest skip reason for an
-            // artifact that may fetch fine on the very next attempt.
-            if (
-              fetched.stop === "budget_exhausted" &&
-              budgetBeforeThisFetch === deps.fetchBudgetBytes
-            ) {
-              reasons.over_byte_cap += 1;
-              skipped += 1;
-              lastItemId = candidate.itemId;
-              advance(deps, lastItemId, understood + skipped);
-              continue;
-            }
-            stopReason = fetched.stop;
-            // The STOPPING candidate was never fetched to completion — it must be RETRIED on the
-            // next run, not skipped past. So `lastItemId`/the cursor are deliberately left at
-            // whatever the previous iteration (or the resumed-from cursor, if this was the first
-            // candidate this run) already set them to; neither is advanced onto this candidate.
-            // Advancing here — the original design — self-heals only when a LATER run drains the
-            // whole queue and clears the cursor, which on a growing library may be never, so each
-            // budget/rate-limit stop would silently lose exactly one artifact forever.
-            break;
-          }
-          reasons[fetched.reason] += 1;
-          skipped += 1;
-          lastItemId = candidate.itemId;
-          advance(deps, lastItemId, understood + skipped);
-          continue;
-        }
-
-        if (fetched.kind === "path") {
-          cloudScratch = fetched.path;
-          source = { kind: "path", path: fetched.path };
-        } else {
-          source = { kind: "bytes", bytes: fetched.bytes, mime: candidate.sourceMime };
-        }
-        rendition = renditionModeFor(candidate, deps.preferRenditions);
+        source = resolution.source;
+        rendition = resolution.rendition;
+        cloudScratch = resolution.cloudScratch;
       } else {
         const resolved = resolveLocalMediaPath(candidate, deps.roots, deps.maxBytes);
         if (!resolved.ok) {

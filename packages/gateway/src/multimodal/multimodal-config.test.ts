@@ -118,17 +118,15 @@ describe("loadMultimodalConfig", () => {
     expect(cfg.preferRenditions).toBe(false);
   });
 
-  test("a malformed budget fails the load off, matching enabled/max_frames", () => {
-    const cfg = loadMultimodalConfig(
-      withToml("[multimodal]\nenabled = true\nfetch_budget_bytes = lots\n"),
-    );
-    expect(cfg.enabled).toBe(false);
-  });
-
-  test("a negative budget fails the load off (semantically malformed)", () => {
-    const cfg = loadMultimodalConfig(
-      withToml("[multimodal]\nenabled = true\nfetch_budget_bytes = -1024\n"),
-    );
+  // Type-malformed (a non-numeric budget), semantically-malformed (a negative budget), and a
+  // malformed sibling key (prefer_renditions) all fail the WHOLE load off, matching how
+  // enabled/max_frames already behave on a malformed value — one section is atomic.
+  test.each([
+    ["a non-numeric fetch_budget_bytes", "fetch_budget_bytes = lots"],
+    ["a negative fetch_budget_bytes", "fetch_budget_bytes = -1024"],
+    ["a malformed prefer_renditions", "prefer_renditions = maybe"],
+  ] as const)("%s fails the load off", (_label, line) => {
+    const cfg = loadMultimodalConfig(withToml(`[multimodal]\nenabled = true\n${line}\n`));
     expect(cfg.enabled).toBe(false);
   });
 
@@ -138,13 +136,6 @@ describe("loadMultimodalConfig", () => {
     );
     expect(cfg.enabled).toBe(true);
     expect(cfg.fetchBudgetBytes).toBe(0);
-  });
-
-  test("a malformed prefer_renditions fails the load off", () => {
-    const cfg = loadMultimodalConfig(
-      withToml("[multimodal]\nenabled = true\nprefer_renditions = maybe\n"),
-    );
-    expect(cfg.enabled).toBe(false);
   });
 
   test("a configDir with no nimbus.toml at all is OFF with defaults", () => {

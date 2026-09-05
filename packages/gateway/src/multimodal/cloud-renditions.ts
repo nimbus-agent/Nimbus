@@ -28,6 +28,17 @@ export function driveByteUrl(externalId: string): ByteUrl {
 const PHOTOS_RENDITION_EDGE = 2048;
 
 /**
+ * The rendition suffix for a Google Photos `baseUrl` (spec § 16.4/16.6): a bounded still edge for
+ * an image, `=dv` (transcoded video) for AV, or no suffix at all when the caller asked for the
+ * original bytes.
+ */
+function photosRenditionSuffix(modality: MediaModality, renditions: boolean): string {
+  if (!renditions) return "";
+  if (modality === "image") return `=w${PHOTOS_RENDITION_EDGE}-h${PHOTOS_RENDITION_EDGE}`;
+  return "=dv";
+}
+
+/**
  * Google Photos serves bytes from a pre-signed `baseUrl`. Renditions are a SUFFIX on it:
  * `=w<W>-h<H>` bounds a still's long edge; `=dv` asks for the transcoded video.
  *
@@ -38,11 +49,7 @@ export function photosByteUrl(
   modality: MediaModality,
   renditions: boolean,
 ): ByteUrl {
-  const suffix = !renditions
-    ? ""
-    : modality === "image"
-      ? `=w${PHOTOS_RENDITION_EDGE}-h${PHOTOS_RENDITION_EDGE}`
-      : "=dv";
+  const suffix = photosRenditionSuffix(modality, renditions);
   return { kind: "provider", url: `${baseUrl}${suffix}`, bearer: false };
 }
 
