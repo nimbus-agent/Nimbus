@@ -97,6 +97,14 @@ export interface UnderstandDetail {
  * It lives in item METADATA and never in an `externalId`: `item` is UNIQUE(service, external_id),
  * so a version in the id would create a second row per artifact per version rather than replacing
  * the first — duplicate FTS hits and duplicate agent context (spec § 4.1).
+ *
+ * NOT bumped for the PR 3 rendition disclosure (`understanding-item.ts`'s `RENDITION_SENTENCE` +
+ * the `rendition` metadata field): re-understanding every already-processed artifact just to add
+ * one sentence would mean re-running `whisper-cli` over an entire local media library — hours of
+ * compute for one disclosure sentence — and the disclosure is not actually lost by skipping the
+ * bump. A row written before this change carries no `rendition` metadata field either, so it is
+ * still distinguishable from a post-disclosure row by that field's ABSENCE, without needing a
+ * version bump to force it to say so.
  */
 export const UNDERSTANDING_VERSION = 2;
 

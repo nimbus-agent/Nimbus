@@ -78,8 +78,13 @@ export function buildUnderstandingRow(
     // appended after the model's text would be the first thing lost on exactly the recordings long
     // enough to matter, and a long transcript would also lose its own last ~40 characters to a
     // fragment of the sentence rather than a clean cut. Leading means it is present for EVERY
-    // candidate, local or cloud, regardless of length — its presence never has to be inferred from
-    // absence (spec § 16.8, OQ 1).
+    // candidate this code writes, local or cloud, regardless of length (spec § 16.8, OQ 1). NOT a
+    // claim about every row already in the index, though: a row written by an EARLIER version of
+    // this function — before the rendition disclosure existed — carries neither this sentence nor
+    // the `rendition` metadata field below, and is identified by that field's absence rather than
+    // by a differently-worded body. `UNDERSTANDING_VERSION` is deliberately NOT bumped for this —
+    // see the constant's own doc comment — so an old row is not reprocessed just to add one
+    // sentence; it is left as a distinguishable pre-disclosure row instead.
     body: `${RENDITION_SENTENCE[rendition]}\n\n${outcome.text}`,
     url: candidate.url,
     modifiedAt: nowMs,
