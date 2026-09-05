@@ -13,7 +13,28 @@ import {
   resolveMediaRoots,
   withTranscribeTimeout,
 } from "./build-media-pass-deps.ts";
+import type { MediaCandidate, MediaModality } from "./media-types.ts";
 import { loadMultimodalConfig } from "./multimodal-config.ts";
+
+/**
+ * Minimal fixture for `understanderFor`'s second parameter. The production wiring under test
+ * (`buildMediaPassDeps`) does not yet consult the candidate — resolution here is by modality
+ * alone — so these tests only need a shape-correct value to pass through, not a realistic one.
+ */
+function candidateFor(modality: MediaModality): MediaCandidate {
+  return {
+    itemId: "test:1",
+    service: "filesystem",
+    externalId: "1",
+    type: modality === "av" ? "media_av" : "media_image",
+    title: "t",
+    url: null,
+    modality,
+    sourcePath: "/x",
+    sourceMime: null,
+    sourceBytes: 1,
+  };
+}
 
 /**
  * Empty in-memory `NimbusVault` — every `get` resolves `null`, matching a vault with no
@@ -98,8 +119,8 @@ describe("buildMediaPassDeps", () => {
       capabilityDisabled: false,
       scratchDir: "/scratch",
     });
-    expect(deps.gate.understanderFor("av")).toBeDefined();
-    expect(deps.gate.understanderFor("image")).toBeDefined();
+    expect(deps.gate.understanderFor("av", candidateFor("av"))).toBeDefined();
+    expect(deps.gate.understanderFor("image", candidateFor("image"))).toBeDefined();
   });
 
   test("the image understander is the LEDGERED provider, not a bare one", () => {
@@ -125,7 +146,7 @@ describe("buildMediaPassDeps", () => {
       capabilityDisabled: false,
       scratchDir: "/scratch",
     });
-    expect(deps.gate.understanderFor("av")?.isLocal).toBe(true);
+    expect(deps.gate.understanderFor("av", candidateFor("av"))?.isLocal).toBe(true);
   });
 
   test("propagates the disabled flags into the gate, so the gate refuses", () => {
@@ -431,7 +452,9 @@ describe("buildMediaPassDeps — gate.gpu.touch() and the AV understander's isAv
       scratchDir: "/scratch",
       whisperBin: "/definitely/does/not/exist/whisper-cli-binary",
     });
-    await expect(deps.gate.understanderFor("av")?.isAvailable()).resolves.toBe(false);
+    await expect(deps.gate.understanderFor("av", candidateFor("av"))?.isAvailable()).resolves.toBe(
+      false,
+    );
   });
 });
 
@@ -514,7 +537,9 @@ describe("buildMediaPassDeps — the input->provider hop (second-hop wiring)", (
     });
     // `av-understander.ts`'s `model` field is `${stt.model}+${vlm.model}` — "whisper-cli" is the
     // STT leg's fixed model id, so a non-default suffix here can only have come from `input.vlmModel`.
-    expect(deps.gate.understanderFor("av")?.model).toBe("whisper-cli+custom-vision:9b");
+    expect(deps.gate.understanderFor("av", candidateFor("av"))?.model).toBe(
+      "whisper-cli+custom-vision:9b",
+    );
   });
 
   test("input.vlmBaseUrl reaches the constructed VLM, observed via non-loopback flipping isLocal false", () => {
@@ -531,14 +556,14 @@ describe("buildMediaPassDeps — the input->provider hop (second-hop wiring)", (
     // `createOllamaVlm`'s `baseUrl` option. Checked on both understanders: the image understander
     // mirrors the VLM's `isLocal` directly, and the AV understander ANDs it with the STT leg's (see
     // `av-understander.ts`), so a dropped `input.vlmBaseUrl` read would leave BOTH `true`.
-    expect(deps.gate.understanderFor("image")?.isLocal).toBe(false);
-    expect(deps.gate.understanderFor("av")?.isLocal).toBe(false);
+    expect(deps.gate.understanderFor("image", candidateFor("image"))?.isLocal).toBe(false);
+    expect(deps.gate.understanderFor("av", candidateFor("av"))?.isLocal).toBe(false);
   });
 
   // `input.maxFrames` has NO observable assertion at this seam without adding new production
   // surface. `AvUnderstanderDeps.maxFrames` is consumed only inside `av-understander.ts`'s private
   // `understand()` closure (`frameTimestamps(duration, deps.maxFrames)`) — it is never exposed on
-  // the constructed `LocalUnderstander`, and `buildMediaPassDeps` wires the AV understander to the
+  // the constructed `Understander`, and `buildMediaPassDeps` wires the AV understander to the
   // REAL `probeDurationSeconds`/`extractFrameJpeg` (no injection hooks), so exercising `understand()`
   // here would need a real ffprobe/ffmpeg and a real video file, which is exactly the kind of
   // production-surface widening this fix is not meant to introduce. `av-understander.test.ts`

@@ -20,7 +20,13 @@ import type {
 } from "./media-types.ts";
 import { UnsupportedImageFormatError } from "./media-types.ts";
 
-export interface LocalUnderstander {
+/**
+ * Renamed from `LocalUnderstander` in PR 4 (§ 19.A). The old name asserted a security property
+ * this type no longer carries — a remote provider is returned through it now — and a type whose
+ * name claims a guarantee it does not enforce is worse than the churn of renaming it. Locality is
+ * read from `isLocal` (I34), which is the only thing that ever decided it.
+ */
+export interface Understander {
   /** DERIVED by the provider (I34). The gate READS it; it never accepts it from a caller. */
   readonly isLocal: boolean;
   readonly model: string;
@@ -39,11 +45,16 @@ export interface MediaGateDeps {
   /** Resolved org policy (I22) disabling the capability. Checked BEFORE any model work. */
   readonly capabilityDisabled: boolean;
   /**
-   * Resolves the understander for a modality. Named for what it does rather than for STT: since
-   * PR 2 the `image` modality resolves to a VLM-backed understander, and `av` to a composite of
-   * transcription and frame captions.
+   * Resolves the understander for THIS artifact.
+   *
+   * Keyed on the candidate as well as the modality since PR 4: remote eligibility is per-artifact
+   * (this image has a grant, that one does not), and a modality-keyed seam cannot express it. The
+   * candidate is already the gate's first argument, so nothing new is threaded through the pass.
    */
-  readonly understanderFor: (modality: MediaModality) => LocalUnderstander | undefined;
+  readonly understanderFor: (
+    modality: MediaModality,
+    candidate: MediaCandidate,
+  ) => Understander | undefined;
   /**
    * `touch` is REQUIRED, not optional: a production wiring that forgets it would compile and
    * silently lose the heartbeat — exactly the multi-minute-eviction failure this file exists to
@@ -75,7 +86,7 @@ export async function understandArtifact(
 
   // 1. Resolve the provider for this modality. Absent means SKIP, never a default: guessing the
   //    modality means handing bytes to the wrong model.
-  const provider = deps.understanderFor(candidate.modality);
+  const provider = deps.understanderFor(candidate.modality, candidate);
   if (provider === undefined) {
     return { ok: false, reason: "unresolvable_modality" };
   }

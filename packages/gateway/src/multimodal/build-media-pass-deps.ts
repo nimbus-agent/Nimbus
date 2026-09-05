@@ -20,9 +20,9 @@ import type { NimbusVault } from "../vault/nimbus-vault.ts";
 import { WhisperSttProvider } from "../voice/stt.ts";
 import { createAvUnderstander } from "./frames/av-understander.ts";
 import { resolveFfprobeBin } from "./frames/frame-extract.ts";
-import type { LocalUnderstander } from "./media-gate.ts";
+import type { Understander } from "./media-gate.ts";
 import type { MediaCloudDeps, MediaPassDeps } from "./media-pass.ts";
-import type { MediaModality } from "./media-types.ts";
+import type { MediaCandidate, MediaModality } from "./media-types.ts";
 import {
   DEFAULT_FETCH_BUDGET_BYTES,
   DEFAULT_MAX_FRAMES,
@@ -267,8 +267,14 @@ export function buildMediaPassDeps(input: BuildMediaPassDepsInput): BuiltMediaPa
     gate: {
       enabled: input.enabled,
       capabilityDisabled: input.capabilityDisabled,
-      understanderFor: (modality: MediaModality): LocalUnderstander | undefined =>
-        modality === "av" ? avUnderstander : imageUnderstander,
+      // `candidate` is not yet consulted here: this wiring predates the per-artifact remote-grant
+      // check (later in PR 4's task sequence) and still resolves purely by modality — both
+      // registered understanders are local, so there is nothing per-artifact to decide yet. The
+      // parameter is accepted so this call site keeps compiling once a grant lookup lands here.
+      understanderFor: (
+        modality: MediaModality,
+        _candidate: MediaCandidate,
+      ): Understander | undefined => (modality === "av" ? avUnderstander : imageUnderstander),
       gpu: {
         acquire: (id: string) => arbiter.acquire(id),
         // Load-bearing: a multi-minute transcription without a heartbeat is evicted by the

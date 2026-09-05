@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import type { LocalUnderstander, MediaGateDeps } from "./media-gate.ts";
+import type { MediaGateDeps, Understander } from "./media-gate.ts";
 import { understandArtifact } from "./media-gate.ts";
 import type { MediaCandidate, MediaSource } from "./media-types.ts";
 import { UnsupportedImageFormatError } from "./media-types.ts";
@@ -33,7 +33,7 @@ const IMAGE_CANDIDATE: MediaCandidate = {
 const PATH_SOURCE: MediaSource = { kind: "path", path: "/m/a.mp4" };
 const IMAGE_SOURCE: MediaSource = { kind: "bytes", bytes: new Uint8Array([1]), mime: "image/png" };
 
-function understander(over: Partial<LocalUnderstander> = {}): LocalUnderstander {
+function understander(over: Partial<Understander> = {}): Understander {
   return {
     isLocal: true,
     model: "whisper-base",
@@ -51,6 +51,14 @@ function gateDeps(over: Partial<MediaGateDeps> = {}): MediaGateDeps {
     gpu: { acquire: async () => () => undefined, touch: () => undefined },
     ...over,
   };
+}
+
+function imageCandidate(over: Partial<MediaCandidate> = {}): MediaCandidate {
+  return { ...IMAGE_CANDIDATE, ...over };
+}
+
+function imageSource(): MediaSource {
+  return IMAGE_SOURCE;
 }
 
 describe("understandArtifact — ordered refusals", () => {
@@ -377,5 +385,25 @@ describe("understandArtifact — ordered refusals", () => {
     const r = await understandArtifact(IMAGE_CANDIDATE, { kind: "path", path: "/x" }, deps);
     expect(r).toEqual({ ok: false, reason: "no_remote_grant" });
     expect(touched).toBe(false);
+  });
+
+  test("resolves the understander PER CANDIDATE, not once per modality", async () => {
+    const seen: string[] = [];
+    const deps = gateDeps({
+      understanderFor: (_m, candidate) => {
+        seen.push(candidate.itemId);
+        return {
+          isLocal: true,
+          model: "m",
+          isAvailable: async () => true,
+          understand: async () => ({ text: "ok" }),
+        };
+      },
+    });
+    await understandArtifact(imageCandidate({ itemId: "a" }), imageSource(), deps);
+    await understandArtifact(imageCandidate({ itemId: "b" }), imageSource(), deps);
+    // Two different artifacts of the SAME modality must each get their own resolution — that is what
+    // lets one be granted remote and the other not.
+    expect(seen).toEqual(["a", "b"]);
   });
 });
