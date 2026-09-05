@@ -2,6 +2,13 @@
 
 All notable changes to the `nimbus` core (headless Gateway + CLI binary + first-party MCP connectors) are documented in this file. release-please appends new entries between this header and the most recent version below when a release PR merges.
 
+## [7.10.1](https://github.com/nimbus-agent/Nimbus/compare/v7.10.0...v7.10.1) (2026-09-05)
+
+
+### Bug Fixes
+
+* **gateway:** stop console windows flashing on every Windows sync ([#1451](https://github.com/nimbus-agent/Nimbus/issues/1451)) ([2042740](https://github.com/nimbus-agent/Nimbus/commit/2042740e9aac2b8cbf87e9ab04e801a3f51e5df2))
+
 ## [7.10.0](https://github.com/nimbus-agent/Nimbus/compare/v7.9.0...v7.10.0) (2026-09-05)
 
 
