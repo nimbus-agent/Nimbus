@@ -69,6 +69,8 @@ export interface MediaPassDeps {
   readonly modality?: MediaModality;
   readonly sinceMs?: number;
   readonly afterItemId?: string;
+  /** The vendor named by `[multimodal] remote_vlm`, when configured. See spec § 19.1. */
+  readonly remoteVendor?: string | undefined;
   readonly scheduleEmbedding?: (itemId: string) => void;
   /**
    * Where transcodes AND cloud downloads land. Omitted, no start-of-pass sweep runs (unit tests
@@ -338,6 +340,7 @@ export async function runMediaPass(deps: MediaPassDeps): Promise<MediaPassSummar
     ...(deps.modality === undefined ? {} : { modality: deps.modality }),
     ...(deps.sinceMs === undefined ? {} : { sinceMs: deps.sinceMs }),
     ...(afterItemId === undefined ? {} : { afterItemId }),
+    ...(deps.remoteVendor === undefined ? {} : { remoteVendor: deps.remoteVendor }),
   });
 
   // Pre-flight pricing (spec § 16.9): refuse the WHOLE batch before fetching a single byte when

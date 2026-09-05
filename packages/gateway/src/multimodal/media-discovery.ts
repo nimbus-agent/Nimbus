@@ -27,6 +27,14 @@ export interface DiscoveryOptions {
   readonly limit: number;
   /** Resume cursor: return only ids strictly greater than this. */
   readonly afterItemId?: string;
+  /**
+   * The vendor named by `[multimodal] remote_vlm`, when one is configured.
+   *
+   * ABSENT means the whole grant clause is omitted and no parameter is bound — an install with no
+   * remote arm runs exactly the query it ran before PR 4, at the same cost. Present, it re-offers
+   * items whose existing understanding is LOCAL and which carry an active grant for THIS vendor.
+   */
+  readonly remoteVendor?: string | undefined;
 }
 
 interface CandidateRow {
@@ -114,12 +122,49 @@ export function findCandidates(db: Database, opts: DiscoveryOptions): MediaCandi
   const predicate = buildModalityPredicate(pairs, mimeServices, mimePatterns);
   if (predicate === null) return [];
 
-  const wheres: string[] = [
-    // No understanding row, OR one at an older version.
-    `(u.id IS NULL OR COALESCE(json_extract(u.metadata, '$.understandingVersion'), -1) < ?)`,
-    predicate.clause,
-  ];
-  const params: (string | number)[] = [UNDERSTANDING_VERSION, ...predicate.params];
+  // No understanding row, OR one at an older version, OR one that is LOCAL while an active grant
+  // names the configured remote vendor (spec § 19.1).
+  //
+  // Derived rather than STORED, deliberately: the rejected alternative wrote
+  // `understandingVersion = 0` at grant time, which re-offers the item on every pass until
+  // something understands it — so the moment the remote arm cannot run (vendor disabled, key
+  // rotated out of the Vault, org policy flipped), the item is re-offered, refused, and
+  // re-offered again forever. That is the livelock PR 3 hit with the pass cursor. A predicate
+  // self-corrects the instant `remote_vlm` changes.
+  //
+  // COALESCE alone does not guard `json_extract` against malformed JSON: SQLite RAISES before
+  // COALESCE ever sees a value to substitute (COALESCE only replaces NULL results, never a thrown
+  // error), and OR does not reliably short-circuit around it either — a row with an understanding
+  // row present (`u.id IS NOT NULL`) still forces evaluation of the right-hand json_extract. A
+  // `json_valid` guard is what actually stops a derived row whose metadata does not round-trip
+  // from blowing up discovery for every artifact; wrapping json_extract's own extraction inside a
+  // CASE keeps a valid-JSON row's behaviour byte-for-byte identical to a bare json_extract.
+  const safeExtract = (path: string) =>
+    `CASE WHEN json_valid(u.metadata) THEN json_extract(u.metadata, '${path}') END`;
+  const versionArm = `(u.id IS NULL OR COALESCE(${safeExtract("$.understandingVersion")}, -1) < ?)`;
+  const wheres: string[] = [];
+  const params: (string | number)[] = [];
+
+  if (opts.remoteVendor === undefined) {
+    wheres.push(versionArm);
+    params.push(UNDERSTANDING_VERSION);
+  } else {
+    wheres.push(
+      `(${versionArm} OR (
+          COALESCE(${safeExtract("$.isLocal")}, 0) IN (1, 'true')
+          AND EXISTS (
+            SELECT 1 FROM media_grant AS g
+             WHERE g.item_id = src.id
+               AND g.revoked_at IS NULL
+               AND g.modality = 'image'
+               AND g.model_vendor = ?
+          )
+        ))`,
+    );
+    params.push(UNDERSTANDING_VERSION, opts.remoteVendor);
+  }
+  wheres.push(predicate.clause);
+  params.push(...predicate.params);
 
   if (opts.service !== undefined) {
     wheres.push("src.service = ?");
