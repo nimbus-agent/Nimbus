@@ -125,3 +125,17 @@ export const MULTIMODAL_CAPABILITY = "multimodal_input";
  * for a later pass to filter on, and a body sentence for a reader to see directly.
  */
 export type RenditionMode = "original" | "w2048-h2048" | "dv";
+
+/**
+ * Vendors with a SHIPPED remote VLM adapter — deliberately NARROWER than the text-vendor set
+ * (`llm/vendor-vault-keys.ts`'s `VendorWithApiKey`, which also carries `xai`). A vendor with a
+ * text adapter and no vision adapter must be refused at config load naming the reason, never
+ * accepted and failed per-artifact at describe time (§ 19.8).
+ */
+export type RemoteVlmVendor = "anthropic" | "openai" | "gemini";
+
+export const REMOTE_VLM_VENDORS: readonly RemoteVlmVendor[] = ["anthropic", "openai", "gemini"];
+
+export function isRemoteVlmVendor(v: string): v is RemoteVlmVendor {
+  return (REMOTE_VLM_VENDORS as readonly string[]).includes(v);
+}
