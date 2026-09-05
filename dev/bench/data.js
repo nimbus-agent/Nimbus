@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1788583843478,
+  "lastUpdate": 1788590652843,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "34fb5942fd536981f58405a8e4904529addd40a3",
-          "message": "feat(egress): Egress Ledger & nimbus prove (S1 Local Brain — I29/D22/V44) (#698)\n\n## Egress Ledger & `nimbus prove` (S1 \"Local Brain\" — provable-locality\nprimitive)\n\nAn always-on, append-only, BLAKE3-chained ledger of every authorized\noutbound action, written from `ToolExecutor.gate()` **before**\n`connectors.dispatch()`. A denied gate records a\n`result_status='blocked'` row; an append failure aborts the action\n(**fail-closed, never dispatches**).\n\n### What's in it\n- **Schema V44** — `egress_ledger` table (`id`, `timestamp`,\n`source_type`, `source_id`, `destination`, `method`, `payload_summary`,\n`hitl_status`, `result_status`, `row_hash`, `prev_hash`) + 3 lookup\nindexes; the chain reuses `db/audit-chain.ts`'s genesis + BLAKE3\nprimitives. `destination` is the `serviceOf()` action-type prefix (never\na raw URL); `payload_summary` is `redactAuditPayload`-scrubbed, capped\nat 256 bytes (debugging aid, **not** the security boundary).\n- **Invariant I29 + static complement D22** — the executor chokepoint is\nmade *total*: D22 confines `connectors.dispatch` to `engine/executor.ts`\nand the ledger append to `egress/*`, so a `0`-row window is a sound\nnegative. I28 is reserved (MCP-server owner-sink on the in-flight\n`phase7-mcp-gateway-server` branch); reconcile at that merge. **Count\nmoves I1–I27 → I1–I29 (I28 reserved).**\n- **Completeness wiring** — the egress sink is injected into *every*\n`ToolExecutor` that reaches a real connector dispatch (agent action path\nvia `run-ask`, chatops-approved writes, both tribal-capture executors);\ngate-only stub executors\n(vault/teamvault/reindex/data/auto-update/connector.auth) deliberately\nget no sink (local mutations, not outbound).\n- **`nimbus prove \"<query>\"`** — snapshots the ledger head before/after\na query and prints the diff (`outbound egress events during this query:\n0 ✓` for a local-only query).\n- **`nimbus egress [verify|prune|--since|--json|--sign]`** — report /\noffline chain-verify (timing-safe via `sha256HexEqualConstantTime`, I10)\n/ HITL-gated retention. A degraded chain prints `indeterminate`, never a\nfalse `0`.\n- **IPC** — 4 read verbs (`egress.head`/`list`/`verify`/`proveWindow`)\nrenderer-exposed (I7, allowlist 95→99); **`egress.prune`** — the sole\nmutation (a continuing tombstone, not a silent gap) — is in the I2 HITL\nfrozen set, gated through the owner-consent channel, NOT\nrenderer-exposed. Receipt signing reuses the Vault-only Ed25519 share\nkeypair (no new Vault key).\n\n### Deferred\nAuditor-grade portable signed export remains deferred to Phase 12.5.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n\n## Summary by CodeRabbit\n\n* **New Features**\n* Introduced an egress ledger to audit and prove outbound actions with\ntamper-evident chaining.\n* Added `nimbus prove` command to verify outbound action completeness\nwith optional cryptographic signatures.\n* Added `nimbus egress` command to list, verify, and prune egress ledger\nentries.\n* Updated schema to V44 with new security invariant I29 (egress-ledger\ncompleteness).\n\n* **Documentation**\n* Updated architecture, changelog, and security-invariants docs to\nreflect V44 schema and I29 invariant.\n* Added multiple design specifications for upcoming features (mobile\ncompanion, federation relay, sky-gapped mode, etc.).\n\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude Opus 4.8 (1M context) <noreply@anthropic.com>",
-          "timestamp": "2026-06-21T06:09:25Z",
-          "tree_id": "09b6ae0e7bd58a2ec4d4cffb2c819178bc7db941",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/34fb5942fd536981f58405a8e4904529addd40a3"
-        },
-        "date": 1782022893370,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 301.27279354999735,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 304.8986682499955,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 245.99545580000012,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "3f7e7b62668387cf61b40ff0a3ddcc6bf6cf69e9",
+          "message": "feat(multimodal): cloud byte-fetch for Photos, Drive and OneDrive (S2 PR 3 of 4) (#1448)\n\nAdds the cloud arm to the media-understanding pass. Until now the pass\ncould\nonly reach files under `[[filesystem.roots]]`, so multimodal\nunderstanding was\nstructurally cut off from the ~90 connectors that are the rest of the\nproduct:\nthe recorded call in Drive, the screenshot in a OneDrive folder and the\nphoto\nlibrary were all invisible to it.\n\nScope: `google_photos`, `google_drive`, `onedrive`. Still **no remote\nmodel and\nno cloud STT** — understanding remains local, and this PR only changes\nwhere the\nbytes come from.\n\nDesign: `docs/superpowers/specs/2026-09-02-s2-multimodal-io-design.md`\nsections 16\nand 17. Plan:\n`docs/superpowers/plans/2026-09-04-multimodal-pr3-cloud-arm.md`.\n\n## What it does\n\n- Resolves a cloud artifact to the URL its bytes live at, re-resolving\nrather\nthan trusting the index: a Photos `baseUrl` expires in about an hour and\n  OneDrive's download URL is never indexed at all.\n- Fetches bytes under a per-run byte budget, evaluated **per chunk** so\nan\noverrun aborts the transfer rather than paying for the whole artifact\nfirst.\n- Appends one `sync`-class `egress_ledger` row **before every outbound\nrequest**,\nfail-closed: an append failure aborts the request, so a zero-row window\nmeans\n  nothing left the machine rather than something left unrecorded.\n- Understands the bytes locally, exactly as it already did for local\nfiles.\n\nDefault-off is unchanged: `[multimodal] enabled` and the per-root\n`media_index`\nboth still default to false.\n\n## Four spec claims that were wrong, corrected here\n\nEach was checked against code rather than reasoned about:\n\n1. Section 12.5 said every connector gaining `fetchBytes` is a change in\n`nimbus-mcp-servers`. False for all three services - their sync lives in\nthis\nrepo and calls the provider API directly, so this is a single-repo\nchange.\n2. Section 5.2 routed the fetch through `fetch-host-boundary.ts`, which\nis\nexact-match with no fallback. These download hosts rotate, so it would\nmiss.\n   Replaced by a narrower rule, below.\n3. Section 5.4's \"the only file this subsystem writes\" stops being true\nonce a\n   cloud download streams to disk before transcoding.\n4. Section 4.2 claimed deleting a source item deletes its derived\nunderstanding\nrow. Nothing read `derivedFrom` anywhere - the claim had been inert\nsince PR 1.\n   Now implemented as an orphan sweep at pass start.\n\n## The credential rule\n\nA credential is attached only to a URL this codebase constructed itself.\n\n- `google_drive` - we build `files/{id}?alt=media` against a fixed host,\nso the\n  bearer rides on it.\n- `google_photos` and `onedrive` - the download URL is provider-returned\nand\npre-signed, so it is fetched with **no** `Authorization` header at all.\n\nA hostile or compromised provider response can therefore name any host\nit likes\nand learn nothing. Redirects are followed manually so every hop is\nre-validated\nagainst the SSRF check, and the cross-origin header allow-list drops\n`Authorization`, `Cookie` and `Proxy-Authorization` - the set WHATWG\n`fetch`\nstrips, which hand-rolled redirect handling would otherwise have\nsilently lost.\n\n## What the whole-branch review caught\n\nFourteen task reviews each saw one diff. The whole-branch review saw all\nof them\nand found a **Critical** none of them could: the resolver's own\nround-trip made a\ncredentialed request to Google or Microsoft and appended **no ledger\nrow**. Every\nPhotos and OneDrive candidate made two outbound requests with only the\nsecond\nrecorded, and a candidate failing at resolve produced zero rows for a\nrequest\nthat really went out - so `nimbus prove` could have reported `sync: 0`\nafter real\ncredentialed traffic. That is the exact property invariant I29 exists to\nmake\nimpossible, and it was an undisclosed exclusion rather than a stated\none.\n\nClosed by appending before the round-trip, fail-closed, with the\nappender\nenumeration re-derived across 15 sites - including `nimbus prove`'s own\nuser-facing label, which had been under-reporting to the operator.\n\n## Honest state - the acceptance run has NOT been performed\n\n**No leg of this arm has contacted a real provider.** The manual\nend-to-end run\nneeds a local `whisper-cli`, a vision-capable Ollama model and a real\ncloud\nartifact under the owner's own credentials, none of which an automated\nrun can\nsupply.\n\nTwo properties are therefore unverified and cannot be verified by\nreading:\n\n- whether Drive's 302 to `googleusercontent.com` still serves bytes\nafter the\n  bearer is correctly stripped;\n- whether Photos' `=w2048-h2048` and `=dv` rendition suffixes behave as\nassumed.\n\nBoth fail closed as `fetch_miss` rather than dangerously. **\"PR 3\nshipped\" must\nnot be read as \"PR 3 has fetched a byte.\"** `CLAUDE.md`'s Phase 14\nacceptance\nclaim stays open until someone runs it.\n\n## Known bounds, stated rather than glossed\n\n- An OAuth **token refresh** performed while resolving a credential is\nitself an\noutbound request that appends no row. Pre-existing and repo-wide rather\nthan\n  specific to this arm, now stated in `docs/SECURITY-INVARIANTS.md`.\n- `over_byte_cap` now covers two different bounds - the per-artifact cap\nand the\nper-run budget - documented in the CLI reference so an operator does not\nreach\n  for the wrong knob.\n- `if-range` is deliberately **not** in the cross-origin allow-list.\nNothing\nissues a `Range` request today; the coupling is documented so the next\nauthor\n  does not assume resume works.\n- Photos and OneDrive now produce roughly double the `sync` rows,\nbecause there\n  genuinely are two requests per artifact.\n\n## Verification\n\n- Full suite: **20,954 pass, 0 fail, 69 skip** across 1,444 files\n- `typecheck` clean; `typecheck:tests` ok, 0 new\n- `preflight:fast` 28/28; `audit:coverage-floor` ok; `audit:invariants`,\n  `audit:doc-refs`, `audit:status-drift` all pass\n- `test:connector-boot`: 94 connectors, 0 failed\n\nEvery new test in the final wave was red-proved by reverting the fix\nrather than\nby observing green.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nhttps://claude.ai/code/session_01EkD84tDHvSD3HqUNRgSr7L\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n## Summary by CodeRabbit\n\n- **New Features**\n- Added cloud-media support for Google Photos, Google Drive, and\nOneDrive.\n- Added configurable fetch budgets and rendition preferences through the\nCLI and configuration.\n- Added resumable processing with reporting for budget limits, rate\nlimits, skipped items, and fetched cloud bytes.\n- Added direct processing for cloud images and secure downloads for\naudio/video.\n  - Added rendition details to generated understanding results.\n\n- **Documentation**\n- Expanded CLI, security, architecture, and roadmap documentation for\ncloud-media behavior, egress tracking, and privacy boundaries.\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>",
+          "timestamp": "2026-09-05T06:31:35Z",
+          "tree_id": "d7b48f3c17839392987e75babbde97932b31e55a",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/3f7e7b62668387cf61b40ff0a3ddcc6bf6cf69e9"
+        },
+        "date": 1788590649900,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 311.1196836000039,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 309.7343996000003,
             "unit": "ms"
           }
         ]
