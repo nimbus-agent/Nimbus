@@ -901,8 +901,12 @@ and replace the version predicate (currently `wheres[0]`, near line 119) with:
   // re-offered again forever. That is the livelock PR 3 hit with the pass cursor. A predicate
   // self-corrects the instant `remote_vlm` changes.
   //
-  // COALESCE on both json_extract calls: SQLite's json_extract RAISES on malformed JSON, and a
-  // derived row whose metadata does not round-trip must not blow up discovery for every artifact.
+  // json_valid on both json_extract calls. NOT COALESCE — that was wrong in an earlier draft of
+  // this plan and is worth stating so nobody re-introduces it: `json_extract` RAISES on malformed
+  // JSON, and it raises BEFORE COALESCE can supply a default, so COALESCE guards nothing here. `OR`
+  // does not short-circuit around a raised error either. Only `CASE WHEN json_valid(...)` guards
+  // it. One derived row whose metadata does not round-trip would otherwise break discovery for the
+  // entire library.
   const versionArm = `(u.id IS NULL OR COALESCE(json_extract(u.metadata, '$.understandingVersion'), -1) < ?)`;
   const wheres: string[] = [];
   const params: (string | number)[] = [];
