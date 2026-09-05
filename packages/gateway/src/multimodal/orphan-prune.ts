@@ -16,6 +16,7 @@
  */
 import type { Database } from "bun:sqlite";
 import { dbStmtRun } from "../db/write.ts";
+import { revokeOrphanedGrants } from "./media-grant-store.ts";
 
 const UNDERSTANDING_TYPES = ["image_understanding", "video_understanding"] as const;
 
@@ -34,4 +35,21 @@ export function pruneOrphanedUnderstandings(db: Database): number {
   );
   const result = dbStmtRun(stmt, ...UNDERSTANDING_TYPES);
   return result.changes;
+}
+
+/**
+ * Both orphan sweeps, run together at pass start (spec § 19.7).
+ *
+ * One function rather than two calls at the call site so a future third derived artifact cannot be
+ * added to one sweep and forgotten in the other — the same reason the egress exclusion list lives
+ * inside `recordSyncEgress` rather than at each of its four call sites.
+ */
+export function pruneOrphanedMedia(
+  db: Database,
+  nowMs: number,
+): { understandings: number; grants: number } {
+  return {
+    understandings: pruneOrphanedUnderstandings(db),
+    grants: revokeOrphanedGrants(db, nowMs),
+  };
 }

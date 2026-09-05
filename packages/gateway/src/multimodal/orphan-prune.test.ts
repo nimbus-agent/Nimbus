@@ -1,6 +1,9 @@
 import { Database } from "bun:sqlite";
 import { beforeEach, describe, expect, test } from "bun:test";
-import { pruneOrphanedUnderstandings } from "./orphan-prune.ts";
+import { CURRENT_SCHEMA_VERSION } from "../index/local-index.ts";
+import { runIndexedSchemaMigrations } from "../index/migrations/runner.ts";
+import { createGrant, listActiveGrants } from "./media-grant-store.ts";
+import { pruneOrphanedMedia, pruneOrphanedUnderstandings } from "./orphan-prune.ts";
 
 function seed(db: Database): void {
   db.exec(`CREATE TABLE item (
@@ -48,5 +51,17 @@ describe("pruneOrphanedUnderstandings", () => {
   test("a derived row with no derivedFrom is left alone rather than deleted", () => {
     insert(db, "nimbus:orphan:understanding", "nimbus", "image_understanding", {});
     expect(pruneOrphanedUnderstandings(db)).toBe(0);
+  });
+});
+
+describe("pruneOrphanedMedia", () => {
+  test("sweeps derived rows AND grants in one pass-start call", () => {
+    const db = new Database(":memory:");
+    runIndexedSchemaMigrations(db, CURRENT_SCHEMA_VERSION);
+    createGrant(db, { itemId: "gone", modality: "image", modelVendor: "openai", nowMs: 1 });
+    const out = pruneOrphanedMedia(db, 5000);
+    expect(out.grants).toBe(1);
+    expect(listActiveGrants(db)).toHaveLength(0);
+    db.close();
   });
 });
