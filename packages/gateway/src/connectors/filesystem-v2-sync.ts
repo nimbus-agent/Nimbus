@@ -212,17 +212,36 @@ function parsePackageJsonDeps(path: string): { name: string; version: string; ki
   return out;
 }
 
+/**
+ * Indexes the root's recent commits, skipping the whole list when HEAD has not moved.
+ *
+ * `nextTips` was RECORDED on every run and never READ back, so the cursor field that exists to
+ * prevent this was inert and all 40 commits were re-upserted every tick whether or not anything
+ * had been committed. Found by benchmarking the code-symbol gate against a real repo: that gate
+ * correctly skipped all 120 files while the run still reported 40 upserts, all of them here.
+ *
+ * The `git log` itself still runs — it is one cheap subprocess, and it is also how HEAD is
+ * learned. What it no longer does is rewrite 40 byte-identical rows behind it.
+ */
 async function syncFilesystemGitCommits(
   ctx: SyncContext,
   root: string,
   rk: string,
   now: number,
   nextTips: Record<string, string>,
+  prevTip: string | undefined,
 ): Promise<{ upserted: number; bytes: number }> {
   if (!isGitRepo(root)) {
     return { upserted: 0, bytes: 0 };
   }
   const commits = await gitLogRecords(root, 40);
+  const head = commits[0]?.sha;
+  if (head !== undefined && head === prevTip) {
+    // HEAD is where we left it, so the 40 rows below would be byte-identical. Keep the tip so
+    // the next run compares against the same value.
+    nextTips[`git:${root}`] = head;
+    return { upserted: 0, bytes: 0 };
+  }
   let upserted = 0;
   const bytes = commits.length * 80;
   for (const c of commits) {
@@ -866,7 +885,14 @@ export function createFilesystemV2Syncable(options: FilesystemV2SyncableOptions)
         const rk = rootKey(root);
 
         if (rootCfg.gitAware) {
-          const g = await syncFilesystemGitCommits(ctx, root, rk, now, nextTips);
+          const g = await syncFilesystemGitCommits(
+            ctx,
+            root,
+            rk,
+            now,
+            nextTips,
+            prev.tips[`git:${root}`],
+          );
           upserted += g.upserted;
           bytes += g.bytes;
         }

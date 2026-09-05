@@ -1578,6 +1578,60 @@ describe("code index re-runs only what changed", () => {
     expect(blameWrites).toBe(0);
   });
 
+  test("an unchanged HEAD does not re-upsert the commit list", async () => {
+    /**
+     * `syncFilesystemGitCommits` recorded `nextTips["git:<root>"]` on every run and never read
+     * it back, so the cursor field meant to prevent this was inert and the last 40 commits were
+     * re-upserted on every tick regardless of whether HEAD had moved. Found by benchmarking the
+     * mtime gate above against a real repo: the code index correctly skipped all 120 files while
+     * the run still reported 40 upserts.
+     */
+    const dir = mkdtempSync(join(tmpdir(), "nimbus-fsv2-tips-"));
+    const git = async (...args: string[]): Promise<number> => {
+      const proc = Bun.spawn(["git", "-C", dir, ...args], {
+        env: { ...process.env, GIT_TERMINAL_PROMPT: "0" } as Record<string, string>,
+        stdout: "pipe",
+        stderr: "pipe",
+        windowsHide: true,
+      });
+      return await proc.exited;
+    };
+    await git("init", "-q", "-b", "main");
+    await git("config", "user.email", "test@example.com");
+    await git("config", "user.name", "Test");
+    writeFileSync(join(dir, "f.txt"), "one\n");
+    await git("add", "f.txt");
+    await git("commit", "-q", "-m", "first");
+
+    const sync = createFilesystemV2Syncable({
+      roots: [
+        {
+          path: dir,
+          gitAware: true,
+          codeIndex: false,
+          dependencyGraph: false,
+          mediaIndex: false,
+          exclude: [],
+        },
+      ],
+    });
+    const db = createMemoryIndexDb();
+    const ctx = syncTestContext(db, EMPTY_NIMBUS_VAULT, "filesystem");
+
+    const first = await sync.sync(ctx, null);
+    expect(first.itemsUpserted).toBe(1);
+
+    const second = await sync.sync(ctx, first.cursor);
+    expect(second.itemsUpserted).toBe(0);
+
+    writeFileSync(join(dir, "f.txt"), "two\n");
+    await git("add", "f.txt");
+    await git("commit", "-q", "-m", "second");
+
+    const third = await sync.sync(ctx, second.cursor);
+    expect(third.itemsUpserted).toBe(2);
+  });
+
   test("a cursor from before this gate is accepted and re-indexes once", async () => {
     // Forward compatibility with a cursor written by an older gateway: it carries `tips` but no
     // `codeMtimes`, and must read as "nothing known yet" rather than throwing or skipping.
