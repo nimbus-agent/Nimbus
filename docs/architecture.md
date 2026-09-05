@@ -2,7 +2,7 @@
 
 **Version:** 1.0
 **Runtime:** Bun v1.2+ / TypeScript 7.x (strict)
-**Status + dated delivery log:** see [`CHANGELOG.md`](./CHANGELOG.md) (canonical) and [`roadmap.md`](./roadmap.md) (phases + acceptance criteria). Current invariants through I36 (I28 reserved); schema V59.
+**Status + dated delivery log:** see [`CHANGELOG.md`](./CHANGELOG.md) (canonical) and [`roadmap.md`](./roadmap.md) (phases + acceptance criteria). Current invariants through I37 (I28 reserved); schema V59.
 
 > **Authoring references for AI-assisted contributors:** the [`.claude/commands/nimbus-*.md`](../.claude/commands/) skill files are the load-bearing how-to references for every subsystem in this document. Treat this architecture doc as the *what + where* and the skills as the *how*. Pair them when adding new code:
 >
@@ -1761,11 +1761,13 @@ const streamReq: JSONRPCRequest = {
 //   `[[filesystem.roots]]` edit, a `[multimodal]` edit, or a newly installed org policy applies
 //   without a gateway restart.
 //
-// `multimodal/` shape (PR 1, 2026-09-02; vision arm PR 2, 2026-09-03): `media-gate.ts` is the one
-//   chokepoint every `LocalUnderstander` implementation goes through — it owns the per-artifact
-//   `GpuArbiter` lease + heartbeat (§ 8.1 of the design spec) and the local-vs-remote decision
-//   (the design spec's planned I37 — CLAUDE.md's ceiling stops at I36 and no I37 row exists in
-//   SECURITY-INVARIANTS.md; not yet reachable, since no remote arm ships before PR 4). `multimodal-config.ts`
+// `multimodal/` shape (PR 1, 2026-09-02; vision arm PR 2, 2026-09-03; remote arm PR 4,
+//   2026-09-05): `media-gate.ts` is the one chokepoint every `Understander` implementation goes
+//   through — it owns the per-artifact `GpuArbiter` lease + heartbeat (§ 8.1 of the design spec)
+//   and the local-vs-remote decision, now invariant I37 (`SECURITY-INVARIANTS.md`, static rule
+//   D27): a non-local provider is reachable only through a per-artifact, per-vendor grant in
+//   `media-grant-store.ts`'s `media_grant` table (V59), never by degrading a local refusal.
+//   `multimodal-config.ts`
 //   is the whole `[multimodal]` section reader (standalone, mirroring
 //   `connectors/openapi-indexer-config.ts` rather than routing through `nimbus-toml.ts`) — FOUR
 //   keys, all DEFAULT OFF or defaulted: `enabled` (bool, default false), `vlm_base_url` (default
@@ -1781,7 +1783,7 @@ const streamReq: JSONRPCRequest = {
 //   REFUSAL — `no_local_model` — never a guess), never a name match over `/api/tags`. `frames/`
 //   (PR 2) holds `frame-extract.ts` (one `ffmpeg -ss <t> -frames:v 1` spawn per sampled frame, JPEG
 //   bytes read off stdout — no scratch file, strengthening PR 1's disk rule rather than amending
-//   it) and `av-understander.ts` (the composite `LocalUnderstander`: transcript via the PR 1 STT
+//   it) and `av-understander.ts` (the composite `Understander`, always local (§ 19.4): transcript via the PR 1 STT
 //   path, then up to `max_frames` captions via the VLM, transcript-only with a stated reason when
 //   the VLM or `ffprobe` is unavailable — never a silent thinner row).
 //
@@ -1937,11 +1939,11 @@ A new structural defense lands as a *triple*: the production wiring, an entry in
 
 ### Active invariants summary
 
-The canonical invariant table (currently **I1–I36**, with I28 reserved) lives in [`SECURITY-INVARIANTS.md`](./SECURITY-INVARIANTS.md) — each row names the defense, its production wiring site, the anti-pattern that regresses it, and the enforcement test. It is deliberately **not** duplicated here: a third copy (alongside the compact summaries in `CLAUDE.md` / `GEMINI.md`) is how it drifts. When changing a wiring site, update the invariants file *and* the enforcement test in the same commit.
+The canonical invariant table (currently **I1–I37**, with I28 reserved) lives in [`SECURITY-INVARIANTS.md`](./SECURITY-INVARIANTS.md) — each row names the defense, its production wiring site, the anti-pattern that regresses it, and the enforcement test. It is deliberately **not** duplicated here: a third copy (alongside the compact summaries in `CLAUDE.md` / `GEMINI.md`) is how it drifts. When changing a wiring site, update the invariants file *and* the enforcement test in the same commit.
 
 A static-time complement (`scripts/structure-audit/check-nimbus-invariants.ts`) catches I1 (`spawn` under `connectors/` must use `extensionProcessEnv()`), the vault-key allow-list, I14 (`D12` — direct `db.run`/`db.exec` outside `db/write.ts` exits 1), I15 (`D10` — every `ServerSpec` under `connectors/lazy-mesh/` must pass through `wrapServerSpec(...)`), I17 (`D13` — federation modules other than `query-gate.ts` may not import the item-list query), I18 (`D14` — identity-token Vault-key literals are forbidden outside `identity/`), I19 (`D15` — the `teamvault.` Vault-key prefix is composed only in `team-vault-keys.ts`), I22 (`D16` — `parsePolicyToml` may be imported only under `policy/`), I23 (`D17` — the `slack_chat_post` / `teams_chat_post` operational-post tools are referenced only from `chatops/reply-dispatcher.ts` and the transport), I24 (`D18` — a federated preflight action resolves its command from local config only and runs behind the local owner's HITL gate, scoped to `federation/preflight-gate.ts`), I25 (`D19` — the `notion_kb_append` / `confluence_kb_append` tribal-KB write tools are confined to `tribal/tribal-write-gate.ts` and the connector), I26 (`D20` — connector write tool ids (warehouse/BI ∪ GitOps/ML) are confined to their SSoT + connector + transport sites and rejected by the federated invoke gate), I27 (`D21` — an outbound share emit + the `createShare()` call are confined to `share/share-gate.ts` and `ipc/share-rpc.ts`), I29 (`D22` — six rules: `connectors.dispatch` confined to `engine/executor.ts`, the `egress_ledger` append to `egress/*`, `recordAgentBriefEgress` pinned to its single caller, the `agents/<name>.ts` emitters unimportable outside `ipc/agents-rpc.ts`, `registerRoute` confined to `llm/registry.ts`, and `wrapLedgeredEmbedder` to `egress/embedding-egress.ts` plus its three construction sites — keeping the egress chokepoints total), I33 (`D23` — `runConfined` is confined to `exec/exec-gate.ts`, so user-supplied code has one spawn path), I35 (`D26` — three rules: `performActuation` confined to the computer-use gate, the driver capability (an automation-library import **or** a raw CDP `Domain.method` literal) confined to `computer-use/cu-lanes/`, and each lane constructor nameable only by its own definition plus `platform/assemble.ts`), and the SyncContext capability boundary (`D24`) at audit time. The runtime tests in `packages/gateway/src/security-invariants.test.ts` remain authoritative for invariant wiring; the static checks just catch regressions before the tests run.
 
-This list is COMPLETE as of I36 — it is checked against `scripts/structure-audit/check-nimbus-invariants.ts` rather than appended to by habit. An invariant with no static rule is absent here on purpose: most are runtime-only, and `D`-numbers exist only where a source-scannable shape can catch a regression before the tests run.
+This list is COMPLETE as of I37 — it is checked against `scripts/structure-audit/check-nimbus-invariants.ts` rather than appended to by habit. An invariant with no static rule is absent here on purpose: most are runtime-only, and `D`-numbers exist only where a source-scannable shape can catch a regression before the tests run.
 
 ### Threat-to-mitigation table
 

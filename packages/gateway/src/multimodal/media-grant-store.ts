@@ -1,9 +1,18 @@
 /**
- * The ONLY module that names the `media_grant` table (static rule D27(b), spec § 18.7).
+ * The ONLY module that WRITES the `media_grant` table (static rule D27(b), spec § 18.7/§ 19.5).
  *
- * Confining table access here is what stops a caller synthesising a grant or reading around the
- * active-row filter: every read goes through `hasActiveGrant`/`listActiveGrants`, both of which
- * apply `revoked_at IS NULL` themselves rather than trusting a caller to remember it.
+ * Not the only module that NAMES it: `media-discovery.ts` reads it through one correlated
+ * `EXISTS (SELECT ... FROM media_grant ...)` subquery in the discovery predicate — an allow-listed
+ * exception, because routing that read through this store would mean either a `hasActiveGrant`
+ * call per candidate row on the selection hot path, or a store function handing back a raw SQL
+ * fragment, which is confinement in name only. `index/media-grant-v59-sql.ts` defines the table
+ * (CREATE TABLE / indexes); DDL is not a caller of it.
+ *
+ * What DOES stay confined here: every WRITE (insert, revoke, the orphan-sweep) and every read that
+ * needs the active-row filter applied ON ITS BEHALF — `hasActiveGrant`/`listActiveGrants` both
+ * apply `revoked_at IS NULL` themselves rather than trusting a caller to remember it. That is what
+ * stops a caller synthesising a grant or reading around the filter, even though a second file may
+ * now name the table.
  *
  * I9-safe throughout: every value is bound, every identifier is a literal in this source.
  * I14/D12: writes go through `dbRun`, never a bare `.run()`.
