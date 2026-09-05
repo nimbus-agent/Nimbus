@@ -1367,3 +1367,219 @@ Each is a deliberate choice, not an omission:
 | 16.11 | `payload_summary` records byte length, mime and modality | `method` only | The append precedes the request, where the byte length is unknowable without either breaking the fail-closed ordering or guessing |
 | 16.11 | The `sync` enumeration becomes **three** appenders | **Four** | The resolve round-trip is a second real credentialed request per Photos/OneDrive candidate and appends its own row — see § 16.11 |
 | 17.1 | Arm 1 of the discovery predicate is `src.type IN (...)` | OR'd `(service, type)` equalities | A bare type match crosses service boundaries — see § 17.1 |
+
+---
+
+## 18. PR 4 — the remote arm (design, 2026-09-05)
+
+PR 4 is the last of the four and the one the sequencing put last on purpose: it is the first time a
+media body leaves the machine for a model. Everything before it kept understanding local and only
+changed where the bytes came from.
+
+**Scope: images only.** § 12.7 pins speech-to-text local-only across all four PRs, and that does not
+move here. I37 below is worded generally so a later remote STT tier inherits it rather than needing
+a new invariant, but today it holds vacuously for audio.
+
+**Prerequisite already shipped, deliberately ahead of its caller.** `egress/vlm-egress.ts`'s
+`wrapLedgeredVlm` (static rule D22(g)) landed in PR 2, before any remote `VlmProvider` existed —
+the same gate-before-the-thing-it-gates posture PR 1 used. PR 4 is the first time it decorates a
+real remote call. Worth stating rather than assuming: **a decorator that has never decorated a
+remote request is untested in the way that matters**, so its first exercise is part of this PR's
+acceptance rather than a foregone conclusion.
+
+Likewise `media-gate.ts` step 3 already refuses every non-local provider with `no_remote_grant`.
+**PR 4 adds an ARM to an existing gate; it does not introduce a gate.**
+
+### 18.1 Four independent gates, in order
+
+An image reaches a remote model only if all four hold:
+
+1. **Org policy** — `EnforcedPolicy.capabilitiesDisabled` does not list `multimodal_input` (I22).
+   Already live since PR 2 and fail-closed when the accessor itself is absent.
+2. **`[multimodal] enabled`** — default false, unchanged.
+3. **`[multimodal] remote_vlm = "<vendor>"`** — NEW, default unset. Enabling a vendor for text must
+   not silently widen it to a photo library (§ 18.2).
+4. **A durable, artifact-scoped grant** for that exact artifact and vendor (§ 18.3).
+
+Each is checked before the one after it, and each refuses rather than degrading. The order matters
+for the same reason it does in I33 and I35: a capability that is off must never announce itself by
+prompting.
+
+### 18.2 Credentials are REUSED; the capability is NOT
+
+The vendor key comes from the existing `[llm.remote.<vendor>]` Vault entry that slice 2b
+established — **not** a second credential surface.
+
+That inheritance is the point. Slice 2b's property is that a key is read from the Vault and NEVER
+from the environment, so a credential that merely exists cannot enable anything. Minting a parallel
+`[multimodal.remote]` secret would duplicate that surface and give a future bug a second place to
+leak from, for no gain: it is the same vendor, the same account, the same key.
+
+But the **capability** is not inherited. `[multimodal] remote_vlm` is its own default-off switch,
+because "I gave you my OpenAI key so `nimbus ask` works" is not the statement "you may send my
+photos to OpenAI". Reusing the key while requiring a separate opt-in is the split that matches what
+the user actually consented to.
+
+`remote_vlm` names a vendor that must already be enabled under `[llm.remote.<vendor>]`; naming a
+disabled or unknown vendor is a config error that fails the section off, matching this file's
+existing fail-off contract for `enabled` and `max_frames`.
+
+### 18.3 The grant (schema V59)
+
+`index/media-grant-v59-sql.ts`, exactly as § 6.2 specified:
+
+```sql
+CREATE TABLE IF NOT EXISTS media_grant (
+  id            TEXT PRIMARY KEY,
+  item_id       TEXT NOT NULL,
+  modality      TEXT NOT NULL CHECK (modality IN ('image', 'av')),
+  model_vendor  TEXT NOT NULL,
+  granted_at    INTEGER NOT NULL,
+  revoked_at    INTEGER
+) WITHOUT ROWID;
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_media_grant_active
+  ON media_grant (item_id, modality, model_vendor)
+  WHERE revoked_at IS NULL;
+```
+
+Two properties that are not incidental:
+
+- **No `'all'` vendor.** A wildcard grant is broader than anyone means when they approve one, and it
+  would silently extend to a vendor added after the grant was given. Authorising two vendors means
+  two grants.
+- **Uniqueness is a partial index over ACTIVE rows.** A plain `UNIQUE(item_id, modality)` makes
+  revocation terminal — the revoked row occupies the slot forever — so the same artifact could never
+  be re-granted without mutating history. Scoping to `revoked_at IS NULL` keeps revocation an
+  append-only audit trail while still permitting exactly one live grant per (item, modality, vendor).
+
+`modality` retains `'av'` even though PR 4 grants only images, because the column outlives the
+scope: a later remote STT tier writes `'av'` rows into the same table rather than migrating it.
+
+### 18.4 The pass never prompts
+
+The load-bearing consent decision, unchanged from § 6.3 and restated because PR 4 is where it
+becomes real: **granting is a separate, deliberate act.** The pass reads existing grants and
+silently declines remote for everything not covered, reporting the declines by reason in its
+summary.
+
+A batch over 500 photos that prompts 500 times does not produce 500 decisions. It produces one
+decision followed by 499 reflexes, and the gate stays technically satisfied while having stopped
+meaning anything — the same failure I33's docs guard against when they insist the owner sees the
+verbatim body rather than a digest.
+
+Surfaces: `nimbus media allow-remote <item>`, `nimbus media grants list`, `nimbus media grants revoke`.
+
+### 18.5 Batch granting, and the preview names BOTH ends
+
+Granting one artifact at a time does not scale to an album, and a rule that is unusable gets worked
+around. So a selector form exists, with a **mandatory, capped** `--limit` so an unbounded "grant
+everything" is not expressible:
+
+```text
+nimbus media allow-remote --service google_photos --since 2026-08-01 --limit 20
+```
+
+It renders ONE preview that **enumerates** the matching artifacts — titles, dates, sizes, count —
+and takes ONE confirmation, writing the grants in a single transaction. The preview must enumerate
+rather than summarise: "20 items" is a count, not consent.
+
+**New in PR 4, because PR 3 changed what a grant can authorise.** When § 6.4 was written every
+artifact was a local file. Since the cloud arm shipped, a granted artifact may be one whose bytes
+live in Google Photos, Drive or OneDrive — so approving it authorises a **cross-vendor transfer**:
+bytes the owner stored with one provider being sent to a different one. The preview states both
+ends explicitly:
+
+```text
+20 photos · source google_photos · destination openai
+```
+
+A local artifact reads `source local`. This is not a schema change and not a second grant kind — one
+grant concept, one revocation story — but the owner sees the actual path before approving, which is
+the whole purpose of an enumerated preview.
+
+### 18.6 Invariant I37
+
+> **I37** — a media body reaches a NON-LOCAL model only through `multimodal/media-gate.ts`, and only
+> when a durable, artifact-scoped remote grant exists for **that** artifact and that vendor. Absent a
+> grant the gate REFUSES rather than degrading to remote; a local provider that is unavailable
+> likewise refuses rather than falling back — the same fail-closed posture as `enforce_air_gap`.
+> Locality is DERIVED from `provider.isLocal` (I34) and never supplied by a caller. Every remote send
+> appends one `model`-class row BEFORE the request and an append failure aborts it (fail-closed,
+> `egress/vlm-egress.ts`'s `wrapLedgeredVlm`, D22(g)). Media bytes never appear in `payload_summary`,
+> which carries the model name and the image's byte COUNT. The DISK rule is § 5.4's narrowed one as
+> amended by § 16.3, not an absolute.
+
+**Scope note.** Because STT is local-only in this slice (§ 7, § 12.7), images are the only modality
+that can reach a non-local model today. The invariant is deliberately NOT narrowed to images in its
+wording: a remote STT tier added later should inherit it rather than need a new one.
+
+### 18.7 Static rule D27 — re-derived against what actually shipped
+
+§ 10 wrote D27(a) as confining free functions named `describeBytes` / `transcribeBytes`. **Those
+functions have never existed**, as § 15 decision 6 already recorded. A rule scanning for those two
+identifiers would pass over the real shape and enforce nothing — a guard that is documented and
+inert, which is the failure § 5.4 was rewritten to avoid.
+
+The real shape: model contact for vision is a provider METHOD, `VlmProvider.describe`, reached
+through the D22(g)-confined decorator `wrapLedgeredVlm`.
+
+**The gap that leaves.** `wrapLedgeredVlm` guarantees a remote describe is LEDGERED. It does not
+guarantee it was GATED. A ledgered-but-ungated describe satisfies I29 and still violates I37: the
+bytes go, the row is written, no grant was ever checked. D27 exists to close exactly that.
+
+- **D27(a)** — a NON-LOCAL `VlmProvider` may be CONSTRUCTED in only one factory, and that factory is
+  nameable only by `media-gate.ts` (plus its own definition). A remote describe is therefore
+  unreachable from anywhere else by construction rather than by convention.
+
+  Confining the constructor rather than the `.describe(` call is deliberate, and follows two
+  precedents in this codebase. D22(g) already confines `createOllamaVlm` to its wrap site for the
+  same reason. And D26(c) confines the computer-use LANE CONSTRUCTORS specifically because "the
+  capability travels as a function VALUE that neither (a) nor (b) can see" — a method-name regex
+  cannot follow a provider held in a variable and invoked through an alias, which is the same
+  weakness that let a raw CDP socket pass D26(b) silently before that rule was widened. A
+  value-creation site is source-scannable in a way a method call on an aliased object is not.
+
+- **D27(b)** — a grant is readable only through `multimodal/media-grant-store.ts`, so no caller can
+  synthesise one or read around the store's active-row filter.
+
+Wiring, docs entry and enforcement test land in the SAME commit — the triple rule. Retiring any of
+it means deleting the row, never leaving drift.
+
+### 18.8 Egress: no new coverage class, but a first real exercise
+
+The `model` class is already `per-call` and already names `wrapLedgeredVlm` as its fourth appender
+(D22(g)). PR 4 adds no class, no appender and no `nimbus prove` vocabulary.
+
+What it does add is the first remote `VlmProvider` in production, so it is the first time that
+appender decorates a call that actually leaves the machine. `THIS_BINARY_COVERAGE` does not change;
+the claim it makes simply becomes load-bearing for vision.
+
+### 18.9 Bounds
+
+- **No remote STT, at any tier.** A user with a frontier key and no usable local whisper still cannot
+  transcribe — the pass refuses rather than reaching for the cloud. Deliberate: it keeps I37's
+  practical scope to images, avoids a second provider interface and a fifth decorator, and keeps the
+  strongest version of the privacy claim true for the modality where recordings of real
+  conversations live.
+- **OCR quality is unchanged** (§ 12.10). A remote VLM may read a dense screenshot better than the
+  local one, but no dedicated OCR engine ships here either.
+- **A caption is still a guess** (§ 12.3). `modelDerived: true` is not weakened by the model being
+  larger or remote.
+- **The disclosure must say which model.** A remote-understood artifact records its vendor and model,
+  so a reader can tell a local caption from one a third party produced.
+- **PR 3's acceptance run remains unperformed.** No leg of the cloud arm has contacted a real
+  provider. PR 4 therefore builds a consent surface on top of a fetch path proven only against
+  fakes: whether Drive's 302 to `googleusercontent.com` still serves bytes after the bearer is
+  stripped, and whether Photos' rendition suffixes behave as assumed, are still unverified. Both
+  fail closed as `fetch_miss` rather than dangerously, but the composition of PR 3 and PR 4 —
+  cloud-fetched bytes forwarded to a third-party model — is the path with the least real-world
+  evidence behind it in the whole slice, and its own acceptance run should exercise exactly that.
+
+### 18.10 Docs to update on landing
+
+`CLAUDE.md` and `GEMINI.md` (the I37 row and the invariant range, which becomes I1–I37),
+`docs/SECURITY-INVARIANTS.md` (the I37 section and D27's two rules),
+`docs/architecture.md` (schema V59), `docs/roadmap.md` (the multimodal row closes as 4 of 4),
+`docs/cli-reference.md` (`allow-remote`, `grants list`, `grants revoke`, and `[multimodal] remote_vlm`),
+and `.claude/commands/nimbus-egress.md` only if the `model` class wording changes — it should not.
