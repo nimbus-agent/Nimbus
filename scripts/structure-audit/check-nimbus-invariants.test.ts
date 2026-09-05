@@ -1924,4 +1924,47 @@ describe("D27(b) media_grant table confinement", () => {
       ]),
     ).toHaveLength(1);
   });
+
+  /**
+   * All three are valid SQLite identifier-quoting forms and all three are something a person
+   * types by hand -- not a "dynamically assembled identifier": that is a materially different,
+   * and much narrower, residual than a bare-identifier regex actually leaves.
+   */
+  test.each([
+    ["double-quoted", 'SELECT 1 FROM "media_grant"'],
+    ["backtick-quoted", "SELECT 1 FROM `media_grant`"],
+    ["bracket-quoted", "SELECT 1 FROM [media_grant]"],
+  ])("FAILS on the %s SQLite form from anywhere else", (_n, sqlText) => {
+    expect(
+      checkMediaGrantStoreConfinement([
+        file("packages/gateway/src/ipc/server/dispatchers.ts", sqlText),
+      ]),
+    ).toHaveLength(1);
+  });
+
+  /**
+   * Widening the trailing match to swallow an optional closing quote must not also widen it to
+   * swallow a longer identifier sharing this prefix -- `\b` alone does not guard that once a quote
+   * character can sit in the boundary position, since `\b` never fires between two non-word
+   * characters.
+   */
+  test("does NOT trip on a longer table name sharing the same prefix", () => {
+    expect(
+      checkMediaGrantStoreConfinement([
+        file("packages/gateway/src/ipc/server/dispatchers.ts", "SELECT 1 FROM media_grant_history"),
+      ]),
+    ).toEqual([]);
+  });
+
+  /** Proves stripComments is actually exercised for THIS rule, not merely shared and untested here. */
+  test("a mention inside a comment does not trip it", () => {
+    expect(
+      checkMediaGrantStoreConfinement([
+        file(
+          "packages/gateway/src/ipc/server/dispatchers.ts",
+          "// see FROM media_grant in the store for the active-row filter",
+        ),
+      ]),
+    ).toEqual([]);
+  });
 });

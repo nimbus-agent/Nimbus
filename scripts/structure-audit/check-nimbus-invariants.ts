@@ -1563,10 +1563,23 @@ export function checkRemoteVlmConfinement(files: readonly FileEntry[]): Violatio
 
 // D27 (b): the `media_grant` TABLE. Keyed on the table name in SQL text rather than on a symbol,
 // because the leak this prevents is a hand-written query somewhere else reading around the store's
-// `revoked_at IS NULL` filter. WEAKER than a symbol rule by construction -- a dynamically
-// assembled identifier evades it, as it evades every source scanner in this file -- and that
-// residual is closed the way the others are, by capability: only `media-grant-store.ts` is ever
-// handed a `Database` for this table.
+// `revoked_at IS NULL` filter.
+//
+// The table name may be bare or SQLite-quoted (`"media_grant"`, `` `media_grant` ``,
+// `[media_grant]` -- all three are valid SQLite identifier-quoting forms and all three are
+// something a person types by hand, not merely a theoretical evasion), so the optional quote
+// characters are matched on both sides. The trailing boundary is enforced with a negative
+// lookahead for an identifier character rather than `\b`, because `\b` does not fire between two
+// non-word characters (e.g. a closing quote followed by whitespace) -- so widening the match to
+// cover a closing quote must not also widen it to swallow a longer identifier sharing this
+// prefix, such as `media_grant_history` or `media_grantX`: the lookahead is what keeps that
+// closed.
+//
+// What remains WEAKER than a symbol rule after that fix: a dynamically assembled identifier
+// (string concatenation, a template literal building the query at runtime) still evades any text
+// scan, as it evades every source scanner in this file -- that residual is closed the way the
+// others are, by capability, not by this rule: only `media-grant-store.ts` is ever handed a
+// `Database` for this table.
 //
 // THREE files are allow-listed, not one, and the comment says so plainly rather than overstating:
 // `media-grant-store.ts` is the only module that WRITES `media_grant` (inserts, revokes, the
@@ -1578,7 +1591,8 @@ export function checkRemoteVlmConfinement(files: readonly FileEntry[]): Violatio
 // records the exception instead of the code contorting to avoid it. `media-grant-v59-sql.ts`
 // defines the table (CREATE TABLE / indexes) and is exempted for the same reason every migration
 // module is: DDL for the table is not a caller of it.
-const D27_GRANT_TABLE_RE = /\b(?:FROM|INTO|UPDATE|TABLE|JOIN)\s+media_grant\b/i;
+const D27_GRANT_TABLE_RE =
+  /\b(?:FROM|INTO|UPDATE|TABLE|JOIN)\s+[`"[]?media_grant[`"\]]?(?![A-Za-z0-9_])/i;
 const D27_GRANT_TABLE_ALLOWED: readonly string[] = [
   "packages/gateway/src/multimodal/media-grant-store.ts",
   "packages/gateway/src/multimodal/media-discovery.ts",
