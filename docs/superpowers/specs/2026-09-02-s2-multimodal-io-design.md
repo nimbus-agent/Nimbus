@@ -1603,6 +1603,9 @@ the claim it makes simply becomes load-bearing for vision.
   larger or remote.
 - **The disclosure must say which model.** A remote-understood artifact records its vendor and model,
   so a reader can tell a local caption from one a third party produced.
+- **PARTLY SUPERSEDED 2026-09-05 — see § 20.** The Google DRIVE leg has now been run against a real
+  provider and passed; the PHOTOS and ONEDRIVE legs have not, so the paragraph below still holds for
+  them and the Photos rendition question it names is still open.
 - **PR 3's acceptance run remains unperformed.** No leg of the cloud arm has contacted a real
   provider. PR 4 therefore builds a consent surface on top of a fetch path proven only against
   fakes: whether Drive's 302 to `googleusercontent.com` still serves bytes after the bearer is
@@ -1910,3 +1913,89 @@ Recorded because their absence is not evidence of their being fine.
 - **PR 3's acceptance run is still unperformed** (§ 18.9). PR 4 composes on top of it: cloud-fetched
   bytes forwarded to a third-party model is the path with the least real-world evidence behind it in
   the entire slice, and no amount of design review moves that number.
+
+---
+
+## 20. PR 3 acceptance run — Drive leg PASSED, Photos and OneDrive legs still open (2026-09-05)
+
+The first time any leg of the cloud arm contacted a real provider. Run against a real Google
+account with a throwaway index (see § 20.4), on `main` at v7.9.0 built from source — the *installed*
+binary was v7.1.0 and did not contain PR 3 at all, which is worth stating because "I ran
+`nimbus media understand`" is not evidence about this code unless the binary is checked.
+
+### 20.1 What passed
+
+One `image/png` in Google Drive, 390,842 bytes.
+
+| Property | Where claimed | Result |
+| --- | --- | --- |
+| A credentialed `files/{id}?alt=media` fetch returns real bytes | § 16.5 | **390,842 bytes fetched** |
+| A Drive candidate yields exactly ONE ledger row | I29 (`CLAUDE.md`), § 16.11 | **1 × `media.fetchBytes`, 0 × `media.resolveByteUrl`** — the constructed-URL claim holds |
+| The row is BLAKE3-chained into the existing ledger | I29 | `prev_hash` links the sync chain |
+| The image path writes NOTHING to disk | § 5.4 | **zero scratch files** after the run |
+| A LOCAL VLM describe appends no `model`-class row | D22(g), I34 | **no `model` row** — `wrapLedgeredVlm` passthrough confirmed on a real describe |
+| The derived row records provenance | § 4, § 12.3 | `model: qwen2.5vl:7b`, `modelDerived: true`, `isLocal: true`, `sourceMime`, `sourceBytes`, `rendition: "original"` |
+| The body opens with the rendition disclosure | § 17 | "Understood from the original file." |
+| `nimbus prove`'s scope label names the new coverage | § 16.11 | includes "cloud media byte-URL resolves and byte-fetches" |
+
+The caption was substantive rather than generic — the model read a knife diagram and named the
+scarf joint, copper wire, owner's mark band and a registration number off the pledge tag. Cloud
+bytes → local VLM → derived item works end to end.
+
+### 20.2 What is STILL unverified, and one of them is the question § 18.9 named
+
+- **The Google PHOTOS leg, entirely.** `google_photos` authenticates and syncs `healthy`, and
+  returns an EMPTY library: zero items. The granted scopes are `photoslibrary.readonly` +
+  `photoslibrary.readonly.appcreateddata`, and `google-photos-sync.ts:113` calls
+  `POST /v1/mediaItems:search` — which since Google's March 2025 restriction no longer returns a
+  user's library under `photoslibrary.readonly`, only app-created media. Nimbus has never uploaded
+  anything, so that set is empty by construction. **Strong hypothesis, not proven** — a 200-with-
+  empty-list is indistinguishable from an empty account without a raw API call.
+  **Consequence:** the two Photos-specific properties § 18.9 called out remain untested — that a
+  pre-signed `baseUrl` is fetched with NO `Authorization` header, and that the `=w2048-h2048` / `=dv`
+  rendition suffixes behave as assumed. `prefer_renditions = true` was set for this run and Drive
+  correctly ignored it (`rendition: "original"`), because renditions are a Photos/OneDrive concept —
+  so the rendition CODE PATH was never entered at all. **If the Photos API restriction is real, this
+  connector cannot be acceptance-tested on any ordinary account, and § 12 should say so.**
+- **The OneDrive leg, entirely** — Microsoft OAuth is not configured on this machine.
+- **The AV path and its two scratch files** (§ 16.3) — no `ffmpeg`/`ffprobe`/`whisper-cli` present,
+  and no video artifact.
+- **Budget and per-artifact cap enforcement at a real boundary.** 390 KB against a 50 MiB budget
+  never approached either bound, so the cap-then-budget ordering is still fixture-only.
+
+### 20.3 Three findings the run surfaced
+
+1. **The ledger records that a fetch happened, not how much crossed.** `payload_summary` is
+   `{"method":"media.fetchBytes"}` — no byte count, though the CLI printed `390842` from the same
+   run. For a BYTE-TRANSFER class that is the interesting number, and its absence is sharpened by
+   contrast: the `model` class deliberately carries the image's byte count. Not a PR 3 regression —
+   `sync.run` rows have the identical shape because both share `recordSyncEgress` — but § 16.11
+   reads stronger than what the row actually proves. Worth closing before PR 4 adds a second
+   byte-bearing path.
+2. **A refusal still spends the byte budget.** `fetchCloudBytes` (`media-pass.ts:261`) runs BEFORE
+   `understandArtifact` (`:431`), so an artifact refused for `no_local_model` has already been
+   downloaded. Observed directly: two `media.fetchBytes` rows for one caption, because the first
+   pass ran with no VLM installed, refused, wrote no understanding row, and the second pass
+   re-offered and re-fetched the same bytes. Harmless at 390 KB; over a photo library with a
+   misconfigured VLM it spends the whole budget on bytes that are discarded. The ordering also has a
+   virtue worth keeping — it is what let the fetch path be verified with no model present at all —
+   so the fix is a cheap availability pre-check before the fetch, not a reordering.
+3. **`source_id` disagrees with itself.** The media row carries the string `"unknown"`; `sync.run`
+   rows carry SQL `NULL`. Two spellings of "no id" in one column is a future query bug.
+
+### 20.4 The harness, because it is reusable and the obvious knob is the wrong one
+
+`NIMBUS_CONFIG_DIR` is NOT the isolation knob. `platform/paths.ts` moves only `configDir`, and
+`dataDir` deliberately does not ("this cannot silently repoint a live gateway's database") — and the
+Vault lives under `configDir`. So it yields a throwaway config with NO credentials while still
+writing the live index: exactly backwards.
+
+On Windows the right knob is **`LOCALAPPDATA`**, since `createWindowsPaths()` derives `dataDir` from
+it and `configDir` from `APPDATA`. Overriding `LOCALAPPDATA` alone gives real Vault + real
+credentials + real outbound traffic against a throwaway database. Set it on BOTH the gateway and the
+CLI: the CLI locates the gateway through `gateway.json` in its own resolved `dataDir`
+(`admin.ts`'s `readGatewayState`), not by dialling a pipe, so a CLI with the real `LOCALAPPDATA`
+reports "Gateway is not running" against a perfectly healthy sandbox gateway.
+
+Proof the isolation held: the live index stayed at `user_version = 56` throughout, while the
+sandbox migrated 1 → 58 from empty. A v7.9.0 gateway opening the live file would have migrated it.
