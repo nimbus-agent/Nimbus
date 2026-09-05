@@ -1139,6 +1139,31 @@ describe("tryDispatchPhase4Rpc", () => {
       skippedByReason: expect.any(Object),
     });
   });
+  test("media.understand derives its egress sourceId from the server-derived clientId/kind, not a hand-built one", async () => {
+    // Same shape as `tryDispatchAgentsRpc`'s equivalent test above: `tryDispatchMediaRpc` has no
+    // injectable seam over `buildMediaPassDepsInput`/`buildMediaPassDeps` themselves, so this
+    // observes the wiring through the one seam that IS injectable — `ctx.getClientKind` — rather
+    // than asserting on an un-mockable internal call.
+    const db = trackedDb();
+    const localIndex = new LocalIndex(db);
+    const dataDir = mkdtempSync(join(tmpdir(), "disp-media-source-"));
+    const { ctx } = makeCtx({
+      localIndex,
+      dataDir,
+      mediaRpcCtx: { enforced: { capabilitiesDisabled: new Set<string>() } },
+    });
+    const getClientKindCalls: string[] = [];
+    ctx.getClientKind = (clientId: string) => {
+      getClientKindCalls.push(clientId);
+      return "mcp";
+    };
+
+    await tryDispatchPhase4Rpc(ctx, "media.understand", {}, "client-xyz");
+
+    // "client-xyz" is deliberately not a valid ClientKind and "mcp" is deliberately not the
+    // clientId used here, so a clientId/kind swap at the call site cannot coincidentally pass.
+    expect(getClientKindCalls).toEqual(["client-xyz"]);
+  });
   test("buildMediaPassDepsInput forwards vlmBaseUrl/vlmModel/maxFrames/fetchBudgetBytes/preferRenditions/vault by VALUE, not just by shape", () => {
     // Task 8 fix round 1: `vlmBaseUrl`/`vlmModel`/`maxFrames` are OPTIONAL on
     // `BuildMediaPassDepsInput` and default internally inside `buildMediaPassDeps`, so deleting the
@@ -1181,6 +1206,42 @@ describe("tryDispatchPhase4Rpc", () => {
     // independently observable by the three equality assertions above — none would pass by
     // accident.
     expect(new Set([out.vlmBaseUrl, out.vlmModel, String(out.maxFrames)]).size).toBe(3);
+  });
+
+  test("buildMediaPassDepsInput forwards sourceId by VALUE when given, and omits it entirely when not", () => {
+    const db = trackedDb();
+    const vault = createMockVault();
+    const config: MultimodalConfig = {
+      enabled: true,
+      vlmBaseUrl: "http://127.0.0.1:11434",
+      vlmModel: "qwen2.5vl:7b",
+      maxFrames: 8,
+      fetchBudgetBytes: 2 * 1024 * 1024 * 1024,
+      preferRenditions: false,
+    };
+    const withLabel = buildMediaPassDepsInput({
+      db,
+      configDir: undefined,
+      dataDir: "/tmp",
+      config,
+      capabilityDisabled: false,
+      vault,
+      sourceId: "mcp",
+    });
+    expect(withLabel.sourceId).toBe("mcp");
+
+    // Omitted, not forwarded as `sourceId: undefined` — `exactOptionalPropertyTypes` distinguishes
+    // the two, and `recordSyncEgress` treats an explicit key differently only at the type level;
+    // this proves the object literal itself never carries the key when the caller didn't supply one.
+    const withoutLabel = buildMediaPassDepsInput({
+      db,
+      configDir: undefined,
+      dataDir: "/tmp",
+      config,
+      capabilityDisabled: false,
+      vault,
+    });
+    expect("sourceId" in withoutLabel).toBe(false);
   });
 
   test("the vault buildMediaPassDepsInput forwards reaches a REAL bearerFor on the constructed deps, not the null-returning fallback", async () => {

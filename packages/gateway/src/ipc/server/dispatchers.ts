@@ -675,6 +675,8 @@ export function buildMediaPassDepsInput(input: {
   readonly config: MultimodalConfig;
   readonly capabilityDisabled: boolean;
   readonly vault: NimbusVault;
+  /** Forwarded verbatim to `BuildMediaPassDepsInput.sourceId` — see that field's doc comment. */
+  readonly sourceId?: string;
 }): BuildMediaPassDepsInput {
   return {
     db: input.db,
@@ -688,6 +690,7 @@ export function buildMediaPassDepsInput(input: {
     fetchBudgetBytes: input.config.fetchBudgetBytes,
     preferRenditions: input.config.preferRenditions,
     vault: input.vault,
+    ...(input.sourceId === undefined ? {} : { sourceId: input.sourceId }),
   };
 }
 
@@ -702,11 +705,18 @@ export function buildMediaPassDepsInput(input: {
  * (invariant I22) — the same live accessor `code_execution` and `computer_use` use. When that ctx
  * is absent the method REFUSES: defaulting to `false` is what made this capability's policy
  * lockoff inert through PR 1.
+ *
+ * `clientId` labels the cloud arm's `sync`-class egress rows with the SERVER-derived caller kind
+ * (`ctx.getClientKind`, keyed by the server-assigned connection id — never a request-body field):
+ * `media.understand` is caller-initiated over IPC, unlike `sync/scheduler.ts`'s own timer-driven
+ * runs, so without this every `media.resolveByteUrl`/`media.fetchBytes` row filed as an
+ * unattributed background sync indistinguishable from one nobody asked for.
  */
 export async function tryDispatchMediaRpc(
   ctx: ServerCtx,
   method: string,
   params: unknown,
+  clientId: string,
 ): Promise<unknown> {
   if (method !== "media.understand") {
     return phase4RpcSkipped;
@@ -738,6 +748,7 @@ export async function tryDispatchMediaRpc(
       config: mmConfig,
       capabilityDisabled: mediaCtx.enforced.capabilitiesDisabled.has(MULTIMODAL_CAPABILITY),
       vault: ctx.options.vault,
+      sourceId: ctx.getClientKind(clientId),
     }),
   );
   const out = await dispatchMediaRpc(method, params, {

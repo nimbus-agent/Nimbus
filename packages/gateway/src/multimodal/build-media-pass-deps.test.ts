@@ -218,6 +218,42 @@ describe("buildMediaPassDeps — cloud arm wiring (PR 3)", () => {
     expect(n).toBe(1);
   });
 
+  test("cloudBytes.appendEgress carries the server-derived sourceId through to the ledger row", () => {
+    // `media.understand` is caller-initiated over IPC, unlike `sync/scheduler.ts`'s own
+    // timer-driven runs — without threading `sourceId` through, every cloud-arm row filed as an
+    // unattributed background sync indistinguishable from one nobody asked for.
+    const database = db();
+    const deps = buildMediaPassDeps({
+      db: database,
+      roots: [],
+      enabled: true,
+      capabilityDisabled: false,
+      scratchDir: "/scratch",
+      sourceId: "mcp",
+    });
+    deps.cloudBytes.appendEgress({ destination: "google_drive", method: "media.fetchBytes" });
+    const row = database
+      .query<{ source_id: string | null }, []>("SELECT source_id FROM egress_ledger LIMIT 1")
+      .get();
+    expect(row?.source_id).toBe("mcp");
+  });
+
+  test("cloudBytes.appendEgress leaves sourceId null when none was supplied — not caller-initiated", () => {
+    const database = db();
+    const deps = buildMediaPassDeps({
+      db: database,
+      roots: [],
+      enabled: true,
+      capabilityDisabled: false,
+      scratchDir: "/scratch",
+    });
+    deps.cloudBytes.appendEgress({ destination: "google_drive", method: "media.fetchBytes" });
+    const row = database
+      .query<{ source_id: string | null }, []>("SELECT source_id FROM egress_ledger LIMIT 1")
+      .get();
+    expect(row?.source_id).toBeNull();
+  });
+
   test("cloudBytes.appendEgress is a no-op for a LOCAL_ONLY_SYNC_SERVICES destination, matching recordSyncEgress", () => {
     const database = db();
     const deps = buildMediaPassDeps({

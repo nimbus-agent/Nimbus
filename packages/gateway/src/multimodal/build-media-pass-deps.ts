@@ -77,6 +77,20 @@ export interface BuildMediaPassDepsInput {
    * degradation for a caller that has no vault to give it, not a production gap.
    */
   readonly vault?: NimbusVault;
+  /**
+   * The label of the client that ASKED for this pass, forwarded into every `sync`-class egress
+   * row `buildCloudBytesDeps` appends (`recordSyncEgress`'s `sourceId`). `media.understand` is
+   * caller-initiated over IPC — unlike `sync/scheduler.ts`'s own timer-driven runs, which is what
+   * an absent `sourceId` on a `sync` row is reserved to mean — so without this, every
+   * `media.resolveByteUrl`/`media.fetchBytes` row filed as an unattributed background sync and an
+   * auditor could not separate a caller-initiated cloud fetch from a scheduled one.
+   *
+   * Server-derived ONLY: `ipc/server/dispatchers.ts`'s `tryDispatchMediaRpc` sets this from
+   * `ctx.getClientKind(clientId)` — the connection's declared kind, keyed by a server-assigned
+   * `clientId` — never from a `media.understand` request body field, which would let one client
+   * file its egress under another's name.
+   */
+  readonly sourceId?: string;
 }
 
 /**
@@ -130,7 +144,7 @@ function buildCloudBytesDeps(input: BuildMediaPassDepsInput): MediaCloudDeps {
     bearerFor: (service: string) => cloudBearerFor(input.vault, service),
     fetchFn: (url: string, init: RequestInit) => safeFetchFollowing(url, init),
     appendEgress: (row: { destination: string; method: string }) =>
-      recordSyncEgress(input.db, { ...row, now: Date.now() }),
+      recordSyncEgress(input.db, { ...row, now: Date.now(), sourceId: input.sourceId }),
     sleep: (ms: number) => new Promise<void>((resolveSleep) => setTimeout(resolveSleep, ms)),
   };
 }
