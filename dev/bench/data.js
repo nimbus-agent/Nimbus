@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1788675699078,
+  "lastUpdate": 1788677153542,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "b1978b923fa9e5f59693adc5b915acd683d4048d",
-          "message": "docs(roadmap): add Phase 9.7 Connector Write-Enablement + Phase 20 Wave 0 (#707)\n\n## What\n\nAdds two roadmap entries surfaced in a connector-strategy brainstorm.\nDocs-only; no code or invariants touched.\n\n### Phase 9.7 — Connector Write-Enablement (The Acting Roster)\nPromotes the ~88 read-only connectors into an **acting** roster. The\nwrite machinery already exists — the `I26` write-registry, the `I29`\negress ledger, the `I2` HITL chokepoint — but only ~4 connectors use it.\nThis phase systematically builds HITL-gated write tools across the\nexisting roster, ordered by blast radius:\n\n- **Wave 1** — write-authoring framework (generalize I26 registry,\nconsent preview, egress coverage, taint integration)\n- **Wave 2** — productivity writes (drafts, comments, issue\ncreate/transition, knowledge append)\n- **Wave 3** — code & change writes (VCS, incident ack/resolve, flag\ntoggles)\n- **Wave 4** — infra & production writes (k8s/IaC/deploy/data-ML;\nstrictest gating)\n\nNumbered **9.7** (fractional insert, no renumber) so it lands\nimmediately before Phase 10 — it's the write substrate the autonomy arc\n(Phases 10/16/17) already assumes but no phase delivers. Marked **Track\n1 (spine)**; the sequencing-spine S4 row now references it.\n\n### Phase 20 Wave 0 — Personal Data Sources\nThe household-federation phase assumes personal data is *already\nindexed* but nothing ingests it. This wave adds read-only,\n**non-federatable-by-default** personal connectors — finance\n(Plaid/SimpleFIN), health/wearables (Apple Health/Google\nFit/Oura/Whoop), home (Home Assistant), media (Plex/Jellyfin/photos).\nExisting federation content relabeled Wave 1.\n\n## Why\nConnector *breadth* is saturated (~92); the leverage is read→write depth\nand the local-first personal-data moat. These two entries capture that\ndirection.\n\n## Verification\n- `bun run audit:doc-refs` — ✅ 616 refs across 15 docs resolve\n- No status-drift surface touched (new `[ ]` future phases only)\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n\n## Summary by CodeRabbit\n\n## Documentation\n* Updated the product roadmap to reflect connector write-enablement as a\nprerequisite for autonomous agent functionality.\n* Added a new phase defining write-enablement guardrails and a four-wave\nrollout plan.\n* Extended the Phase 20 roadmap with planned personal and household data\nsource support, establishing privacy defaults.\n\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\nCo-authored-by: Claude Opus 4.8 (1M context) <noreply@anthropic.com>",
-          "timestamp": "2026-06-21T14:42:46+03:00",
-          "tree_id": "20588bb667e92024ee4c0df5fca77cdb9851c475",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/b1978b923fa9e5f59693adc5b915acd683d4048d"
-        },
-        "date": 1782042872796,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 292.4725989999999,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 292.7491513500128,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 250.21484999999376,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "306811640+nimbus-release-bot[bot]@users.noreply.github.com",
+            "name": "nimbus-release-bot[bot]",
+            "username": "nimbus-release-bot[bot]"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "5c1922f4b6b260dc7da2153caca57ef968f54240",
+          "message": "chore: release main (#1456)\n\n:robot: I have created a release *beep* *boop*\n---\n\n\n<details><summary>7.11.0</summary>\n\n##\n[7.11.0](https://github.com/nimbus-agent/Nimbus/compare/v7.10.1...v7.11.0)\n(2026-09-06)\n\n\n### Features\n\n* **multimodal:** remote vision arm with per-artifact grants, I37 and\nD27 — S2 PR 4 of 4\n([#1454](https://github.com/nimbus-agent/Nimbus/issues/1454))\n([580e893](https://github.com/nimbus-agent/Nimbus/commit/580e8930c7575a760cb838ce3fec4babddb0ae3a))\n\n\n### Performance Improvements\n\n* **filesystem:** index only what changed since the last sync tick\n([#1453](https://github.com/nimbus-agent/Nimbus/issues/1453))\n([ec284d1](https://github.com/nimbus-agent/Nimbus/commit/ec284d13fbf66f4c0b5680768441f253e4c9daf0))\n</details>\n\n---\nThis PR was generated with [Release\nPlease](https://github.com/googleapis/release-please). See\n[documentation](https://github.com/googleapis/release-please#release-please).\n\nCo-authored-by: nimbus-release-bot[bot] <306811640+nimbus-release-bot[bot]@users.noreply.github.com>",
+          "timestamp": "2026-09-06T06:31:13Z",
+          "tree_id": "c83f0cfa4cc4d92393d9ed3700ee74ec354febb5",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/5c1922f4b6b260dc7da2153caca57ef968f54240"
+        },
+        "date": 1788677150751,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 312.46183619999573,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 312.7095503500001,
             "unit": "ms"
           }
         ]
