@@ -396,6 +396,12 @@ async function blameIndexedExcerptRanges(
  * subprocess. A `stat` failure falls back to `now`, which never matches a recorded mtime — the
  * fail-open direction, re-indexing rather than silently skipping.
  *
+ * An entry is recorded ONLY for a file this run actually indexed, or one it skipped because it
+ * was already indexed at that mtime. A file that fails to READ records nothing, so the next run
+ * retries it. Recording before the read is the tempting shape and it is wrong: a transient
+ * permission or IO error would mark the file as done and leave its symbols out of the index
+ * until someone edited it, which is silent and looks exactly like a file with no exports.
+ *
  * Returns the mtimes to record. Rebuilt from the files actually walked, never merged into the
  * previous map, so a deleted or newly-excluded file drops out on its own and the cursor stays
  * bounded by the same 120-file cap as the walk.
@@ -423,12 +429,18 @@ async function syncFilesystemCodeSymbolsForRoot(
   for (const fp of files) {
     const relNorm = relative(root, fp).replaceAll("\\", "/");
     const mtime = fileMtimeOrFallback(fp, now);
-    mtimes[relNorm] = mtime;
     if (prevMtimes[relNorm] === mtime) {
+      // Already indexed at this mtime. Carry the entry forward — dropping it would re-index the
+      // file next run and defeat the gate.
+      mtimes[relNorm] = mtime;
       continue;
     }
     const src = readFileTextOrUndefined(fp);
     if (src === undefined) {
+      // Deliberately records NOTHING. A transient read failure — a permission change, a passing
+      // IO error — must not mark the file as done: an entry here would make the next run see an
+      // unchanged mtime, skip the file, and leave its symbols out of the index until someone
+      // edits it. Silent, and indistinguishable from a file with no exported symbols.
       continue;
     }
     bytes += src.length;
@@ -445,6 +457,9 @@ async function syncFilesystemCodeSymbolsForRoot(
     if (gitAware && fileResult.blameRanges.length > 0) {
       await blameIndexedExcerptRanges(ctx, root, relNorm, fileResult.blameRanges);
     }
+    // Recorded only here, once the file has actually been read and indexed — the single point
+    // that makes "this mtime is in the map" mean "this content is in the index".
+    mtimes[relNorm] = mtime;
   }
   return { upserted, bytes, mtimes };
 }

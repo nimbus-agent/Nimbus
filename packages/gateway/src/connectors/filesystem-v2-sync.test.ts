@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { BlameRow } from "../security/blame-store.ts";
@@ -1630,6 +1630,54 @@ describe("code index re-runs only what changed", () => {
 
     const third = await sync.sync(ctx, second.cursor);
     expect(third.itemsUpserted).toBe(2);
+  });
+
+  test("a file that fails to read is retried on the next run, not locked out", async () => {
+    /**
+     * The mtime must be recorded only for a file that was actually indexed. Recording it before
+     * the read means a transient failure — a permission change, a temporary IO error — marks the
+     * file as done: the next run sees an unchanged mtime, skips it, and its symbols never enter
+     * the index until someone modifies the file. Silent, and indistinguishable from "this file
+     * has no exported symbols".
+     *
+     * SELF-VALIDATING: if the chmod does not actually block the read (running as root, or a
+     * filesystem that ignores mode bits) the test skips rather than passing vacuously — a test
+     * that cannot observe the failure it is about proves nothing.
+     */
+    const dir = mkdtempSync(join(tmpdir(), "nimbus-fsv2-mtime-unreadable-"));
+    writeFileSync(join(dir, "readable.ts"), "export const ok = 1;\n");
+    const blocked = join(dir, "blocked.ts");
+    writeFileSync(blocked, "export const hidden = 2;\n");
+
+    let readIsBlocked = false;
+    try {
+      chmodSync(blocked, 0o000);
+      readFileSync(blocked, "utf8");
+    } catch {
+      readIsBlocked = true;
+    }
+    if (!readIsBlocked) {
+      chmodSync(blocked, 0o644);
+      return; // cannot simulate the failure here; the assertion below would be meaningless
+    }
+
+    const sync = createFilesystemV2Syncable({ roots: [codeRoot(dir)] });
+    const db = createMemoryIndexDb();
+    const ctx = syncTestContext(db, EMPTY_NIMBUS_VAULT, "filesystem");
+
+    const first = await sync.sync(ctx, null);
+    // The unreadable file must NOT be in the cursor: nothing was indexed for it.
+    const payload = decodeNimbusJsonCursorPayload(first.cursor ?? "", "nimbus-fsv2:") as {
+      codeMtimes?: Record<string, Record<string, number>>;
+    } | null;
+    const recorded = Object.values(payload?.codeMtimes ?? {}).flatMap((m) => Object.keys(m));
+    expect(recorded).toContain("readable.ts");
+    expect(recorded).not.toContain("blocked.ts");
+
+    // Once readable again, the next run picks it up rather than skipping it forever.
+    chmodSync(blocked, 0o644);
+    const second = await sync.sync(ctx, first.cursor);
+    expect(second.itemsUpserted).toBe(1);
   });
 
   test("a cursor from before this gate is accepted and re-indexes once", async () => {
