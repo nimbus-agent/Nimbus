@@ -29,6 +29,10 @@ async function runGit(
       env: extensionProcessEnv({}),
       stdout: "pipe",
       stderr: "pipe",
+      // The Gateway runs detached and console-less, so on Windows an unhidden child is handed
+      // its own console AND a visible window. This spawns once per blamed file — up to
+      // MAX_BLAME_FILES per tick — which is a screenful of flashing windows, not one.
+      windowsHide: true,
       signal: AbortSignal.timeout(GIT_TIMEOUT_MS),
     });
     const code = await proc.exited;

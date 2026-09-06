@@ -96,7 +96,7 @@ export async function probeDurationSeconds(
         "default=nw=1:nk=1",
         input,
       ],
-      { stdout: "pipe", stderr: "pipe", env: extensionProcessEnv({}) },
+      { stdout: "pipe", stderr: "pipe", env: extensionProcessEnv({}), windowsHide: true },
     ) as unknown as SpawnedProc;
     // Start the read but do NOT await it before the timeout guard: the read resolves only at EOF,
     // and a wedged ffprobe never closes stdout — awaiting here would block forever and the timeout
@@ -197,6 +197,8 @@ export async function extractFrameJpeg(
       stderr: "pipe",
       // I1: scope the child's env rather than inherit the gateway's whole process.env.
       env: extensionProcessEnv({}),
+      // The detached Gateway has no console; without this every sampled frame pops a window.
+      windowsHide: true,
     },
   ) as unknown as SpawnedProc;
 

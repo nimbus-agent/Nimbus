@@ -115,6 +115,7 @@ function probeBwrap(bwrapPath: string | null): string | null {
     return `bwrap not found at ${BWRAP_CANDIDATES.join(", ")} (set NIMBUS_BWRAP_PATH to override)`;
   }
   // Absolute path, no shell: nothing to inject into and nothing for PATH to redirect.
+  // windows-console-ok: `sandbox/linux.ts` runs only on Linux, where the flag is ignored.
   const r = spawnSync(bwrapPath, ["--version"], { encoding: "utf8" });
   return r.error === undefined && r.status === 0 ? null : `bwrap at ${bwrapPath} is not executable`;
 }
@@ -127,6 +128,7 @@ function probeHelper(): HelperState {
     };
   }
   try {
+    // windows-console-ok: Linux-only module.
     const result = spawnSync(HELPER_PATH, ["--check-caps"], { encoding: "utf8" });
     if (result.status === 0 && result.stdout.trim() === "OK") {
       return { available: true, reason: null };
@@ -206,6 +208,7 @@ export function createLinuxSandboxRunner(): SandboxRunner {
       const seccompFd = openSync(seccompPath, "r");
       try {
         const stdio = buildStdioWithSeccomp(opts.stdio, seccompFd);
+        // windows-console-ok: Linux-only module.
         return spawn(spawnCmd, spawnArgs, {
           env: opts.env,
           stdio,

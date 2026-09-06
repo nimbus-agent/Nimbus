@@ -50,7 +50,12 @@ export interface BrowserLaneRuntime {
 export const DEFAULT_LAUNCH_TIMEOUT_MS = 30_000;
 
 export const defaultBrowserLaneRuntime: BrowserLaneRuntime = {
-  spawnBrowser: (cmd, argv) => spawn(cmd, [...argv], { stdio: ["ignore", "pipe", "pipe"] }),
+  spawnBrowser: (cmd, argv) =>
+    // `windowsHide` hides the console Windows would otherwise allocate for this child of the
+    // console-less Gateway. It does NOT hide the browser: the lane launches headless, and the
+    // flag governs console allocation, not a GUI window. It changes nothing about the launch
+    // policy asserted by `assertBrowserLaunchPolicy` (I35).
+    spawn(cmd, [...argv], { stdio: ["ignore", "pipe", "pipe"], windowsHide: true }),
   connect: (url) => new WebSocket(url) as unknown as CdpSocket,
   ensureProfileDir: (dir) => {
     // Created AFTER consent, never before: making a directory for a session the owner may deny is

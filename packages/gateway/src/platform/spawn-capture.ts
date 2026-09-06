@@ -18,12 +18,21 @@ import { spawn } from "node:child_process";
  *
  * ## Why `node:child_process` rather than `Bun.spawn`
  *
- * `windowsHide` sets `CREATE_NO_WINDOW` on the child. It is a documented `child_process` option
- * and this repo already depends on it working in three places (`vault/win32.ts`,
- * `extensions/install-from-local.ts`, `platform/browser.ts` — all `spawnSync`). It is **not** part
- * of Bun's spawn API: `windowsHide` appears nowhere in `@types/bun`, so passing it to `Bun.spawn`
- * needs a cast and has no declared effect. A fix that MIGHT be a no-op is not a fix, so this goes
- * through the API where the flag is specified.
+ * `windowsHide` sets `CREATE_NO_WINDOW` on the child, which is what suppresses the window.
+ *
+ * The ORIGINAL reason for reaching for `node:child_process` here — that `windowsHide` "appears
+ * nowhere in `@types/bun`", so passing it to `Bun.spawn` would need a cast and might be a no-op —
+ * is no longer true and must not be repeated: `bun-types@1.3.14` declares it on Bun's spawn
+ * options, and Bun honours it. Measured on Windows 11 / Bun 1.3.14, console-less parent, 8
+ * children, counting VISIBLE `ConsoleWindowClass` windows: `Bun.spawn` without the flag 8/8,
+ * with `windowsHide: true` 0/8 — identical to `node:child_process`. Note that counting
+ * `conhost.exe` cannot measure this: `CREATE_NO_WINDOW` still allocates a console and still
+ * spawns a conhost, it is only invisible, so both modes give the same conhost count.
+ *
+ * What remains true is the shape of this helper: it captures a bounded amount of stdout, never
+ * rejects, and optionally times out. Spawns that need to stream, hold an `AbortSignal`, or keep a
+ * long-lived child pass `windowsHide: true` to `Bun.spawn` directly instead — `audit:windows-console`
+ * is what keeps them honest.
  *
  * ## What this does NOT do
  *

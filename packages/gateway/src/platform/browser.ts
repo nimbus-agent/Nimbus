@@ -17,8 +17,10 @@ export async function openUrlInDefaultBrowser(url: string): Promise<void> {
         windowsHide: true,
       });
     } else if (os === "darwin") {
+      // windows-console-ok: guarded by `os === "darwin"`; unreachable on Windows.
       child = spawn("/usr/bin/open", [url], detachedIgnore);
     } else {
+      // windows-console-ok: the non-win32/darwin branch; unreachable on Windows.
       child = spawn("/usr/bin/xdg-open", [url], detachedIgnore);
     }
     (child as unknown as EventEmitter).on("error", (err: Error) => {

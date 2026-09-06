@@ -109,6 +109,17 @@ const FAST: readonly Gate[] = [
   { name: "audit:readme-cli", cmd: ["bun", "run", "audit:readme-cli"], tier: "fast" },
   { name: "audit:package-readmes", cmd: ["bun", "run", "audit:package-readmes"], tier: "fast" },
   { name: "audit:cross-platform", cmd: ["bun", "run", "audit:cross-platform"], tier: "fast" },
+  {
+    // The detached Gateway has no console of its own, so on Windows every unhidden
+    // console-subsystem child is handed a brand-new console AND a visible window. Static,
+    // because nothing else can catch it: the symptom needs a real detached Windows daemon,
+    // which no test on any runner is. `platform/spawn-capture.ts` fixed the vendor CLIs and
+    // then the git sync paths were written without it — a helper you can decline to use is
+    // not a defense.
+    name: "audit:windows-console",
+    cmd: ["bun", "run", "audit:windows-console"],
+    tier: "fast",
+  },
   { name: "audit:status-drift", cmd: ["bun", "run", "audit:status-drift"], tier: "fast" },
   { name: "audit:action-sha-pins", cmd: ["bun", "run", "audit:action-sha-pins"], tier: "fast" },
   {

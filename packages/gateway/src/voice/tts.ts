@@ -39,7 +39,7 @@ export class NativeTtsProvider implements TtsProvider {
 
   async speak(text: string): Promise<void> {
     const cmd = buildTtsCommand(this.platform, text);
-    const proc = Bun.spawn(cmd, { stdout: "ignore", stderr: "ignore" });
+    const proc = Bun.spawn(cmd, { stdout: "ignore", stderr: "ignore", windowsHide: true });
     const exitCode = await proc.exited;
     if (exitCode !== 0) {
       throw new Error(`TTS exited with code ${exitCode}`);
@@ -86,12 +86,14 @@ export class PiperTtsProvider implements TtsProvider {
       }),
       stdout: "pipe",
       stderr: "ignore",
+      windowsHide: true,
     });
 
     const player = Bun.spawn(playerCmd, {
       stdin: proc.stdout,
       stdout: "ignore",
       stderr: "ignore",
+      windowsHide: true,
     });
 
     const [piperCode, playerCode] = await Promise.all([proc.exited, player.exited]);

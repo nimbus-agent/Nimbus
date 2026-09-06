@@ -54,6 +54,7 @@ function defaultSpawn(): GhSpawnFn {
     const proc = Bun.spawn(["gh", ...args], {
       stdout: "pipe",
       stderr: "pipe",
+      windowsHide: true,
       ...(opts?.cwd !== undefined && { cwd: opts.cwd }),
       ...(opts?.env !== undefined && {
         env: { ...process.env, ...opts.env } as Record<string, string>,
