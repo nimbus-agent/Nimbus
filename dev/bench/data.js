@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1788629888235,
+  "lastUpdate": 1788673779553,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "7e6436b20ff0a4d189ebfd1459bca6dda9c2d8e0",
-          "message": "Sonar cleanup (22 issues) + raise coverage line floor 80→85% (#702)\n\nTwo related quality passes on a fresh branch off `main`.\n\n## Part 1 — clear all open SonarCloud issues (fix-not-exclude)\n\nThe quality gate was already green, but **22 issues** were open (outside\nthe new-code window). All fixed in code (no rule-excludes):\n\n- **S7763 ×9** — re-export imported SDK symbols via `export…from`\n(`data-profile-mapping`, `storybook-story-mapping`, dataprofile\n`profile`); only *pure* re-exports converted, locally-used symbols kept\nimported.\n- **S7735 ×6** — flip negated `if`/ternary conditions (`egress-prune`,\n`share-forward`, `assemble`, `verify-share`).\n- **S3776 (CRITICAL)** — `runShare` cognitive complexity 17→~8 via\nper-subcommand handler extraction (flat dispatcher).\n- **S3863 ×2** (duplicate `share-format` import), **S6582** (optional\nchain), **S6571** (redundant `| null` on `Promise<unknown>`), **S7786**\n(`TypeError` for a type check), **S1874** (stop using the deprecated\n`StorybookStoryInput` alias internally).\n\n## Part 2 — raise the per-file **line** coverage floor 80 → 85%\n\n`FLOOR_PCT` → 85 in `scripts/coverage-floor/baseline.ts`. **Branch floor\nstays 80** (separate constant) — raising the branch floor (an 83-file\nprogram) will be a **follow-up PR**.\n\nAuthoritative Docker/Linux lcov confirms the gate is green at the new\nfloor with a still-empty baseline. The 14 files below 85% line were\nresolved:\n\n- **10 raised ≥85% line with focused tests**:\n`warehouse-write-transport`, `voice/service`, `share/verify-share`,\n`chatops/chatops-bot-spawn-call`, `policy/policy-trust`,\n`telemetry/collector` (new), `auth/oauth-vault-tokens`,\n`connectors/cloudwatch-log-group-mapping` (new),\n`agents/_lib/synthesize`, `updater/signature-verifier`.\n- **4 excluded as genuine no-seam shells** (with justification):\n`cli/commands/{tribal,telemetry}` (CLI IPC wrapper shells),\n`client/src/ipc-transport` + `ipc/server/server` (unix-socket\ntransport/listener shells).\n\nAlso updates the coverage-floor unit-test fixtures for the diverged\nfloors and the floor wording in `docs/testing.md` + the\n`nimbus-coverage-floor` / `nimbus-commands` /\n`nimbus-connector-authoring` skills.\n\n## Verification\n- Typecheck: all packages clean (`preflight:fast` typecheck).\n- Biome: clean (`bunx biome check packages scripts`).\n- Tests: all new/changed test files pass; no `mock.module` leak in\ncombined runs.\n- Coverage floor: **green** at ≥85% line / ≥80% branch, verified on the\nDocker/Linux-authoritative lcov.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n## Summary by CodeRabbit\n\n## Release Notes\n\n* **Bug Fixes**\n* Improved `prove --before` validation with a clearer, formatted error\nmessage.\n* Corrected share forwarding behavior so unavailable destinations are\nqueued instead of handled as immediately deliverable.\n\n* **Documentation**\n* Raised coverage gate minimums to **≥85% line** and **≥80% branch** for\nnew source files, and updated the related CI/commands/auth connector\nguidance accordingly.\n\n* **Tests**\n* Expanded test suites and fixtures across gateway, CLI, and connectors,\nincluding additional edge cases and verification paths.\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude Opus 4.8 (1M context) <noreply@anthropic.com>",
-          "timestamp": "2026-06-21T08:33:53Z",
-          "tree_id": "ff2f3d81103d619056f7ed6e8736525ca827aa82",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/7e6436b20ff0a4d189ebfd1459bca6dda9c2d8e0"
-        },
-        "date": 1782032109048,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 295.27814079999916,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 300.53370375000304,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 339.1818545999922,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "ec284d13fbf66f4c0b5680768441f253e4c9daf0",
+          "message": "perf(filesystem): index only what changed since the last sync tick (#1453)\n\n## What\n\nThe filesystem syncable stops redoing byte-identical work on every tick.\n\n`syncFilesystemCodeSymbolsForRoot` ran unconditionally with no cursor\ngate: it walked up to 120 code files per root and, for each, re-read the\nsource, re-upserted identical symbol rows and spawned one `git blame`.\nMeasured against a real v7.10.1 daemon on an idle repo, a steady-state\ntick with nothing changed on disk still made **at least 47 git spawns**\n— every 10 minutes, indefinitely. The dedicated `blame` syncable made\n**1** over the same window, because it is already incremental. That\nasymmetry was the bug.\n\n## Two gates, not one\n\n**1. Code symbols — an mtime gate.** The cursor already carried `tips`;\nit now also carries `codeMtimes` (`rootKey` → `relPath` → `mtime`). A\nfile whose mtime is unchanged is skipped entirely: read, extract, upsert\nand blame. The mtime is read *before* the file, so a skip costs one\n`stat` rather than a read plus a subprocess. The map is rebuilt from the\nfiles actually walked rather than merged into the previous one, so a\ndeleted or newly-excluded file drops out on its own and the cursor stays\nbounded by the same 120-file cap.\n\n**2. Commits — the cursor that was already there, and inert.**\n`syncFilesystemGitCommits` *recorded* `nextTips[\"git:<root>\"]` on every\nrun and never *read* it back, so all 40 commits were re-upserted every\ntick regardless of whether HEAD had moved.\n\nThe second one was not in the original plan. I found it by benchmarking\nthe first against a real repo: the code-symbol gate correctly skipped\nall 120 files and the run **still reported 40 upserts**, all of them\nfrom the commit indexer. Shipping only the first fix would have meant\nclaiming a quiet steady state with a second unconditional re-index\nsitting next to it in the same file. Flagging the scope extension rather\nthan burying it — it is four lines and uses a cursor field that already\nexisted.\n\n## Measured\n\nOn a real repository, both gates, cold pass then unchanged pass:\n\n| pass | upserts | time |\n| --- | --- | --- |\n| cold | 352 | 2883 ms |\n| unchanged | **0** | **48 ms** |\n\nInstrumenting the gate directly showed **120 files re-indexed on the\ncold pass and 0 on the unchanged pass**.\n\n## Compatibility and bounds\n\nA cursor written before this decodes to an empty map — \"nothing known\nyet\" — so an upgrade re-indexes once and is then quiet. Covered by a\ntest.\n\nTwo bounds, both already handled elsewhere rather than newly introduced:\n\n- An edit landing inside the same filesystem timestamp tick as the\nindexed one is missed until the file changes again. `nimbus connector\nsync filesystem --full` clears the cursor (`clearConnectorSyncCursor`)\nand re-indexes everything.\n- Blame that changes without the file changing — an amend or a rebase —\nis re-blamed by the separate `blame` syncable on a HEAD-ancestor break,\nwhich is precisely the case an mtime gate cannot see.\n\nVerified before relying on it: nothing reaps indexed items by\n`synced_at` staleness, so skipping the upsert cannot cause a live symbol\nto be pruned. And `reindexConnector`'s `deepen` is a no-op returning\n`itemsAffected: 0` — depth recovery is `nimbus index rebody`, which runs\nindependently of this syncable — so the gate cannot strand a re-depth.\n\n## Testing\n\nEight tests, each watched failing first. The gate was also red-proved by\ndisabling it and confirming four of them go red.\n\nThe load-bearing one asserts blame *writes*, not just the upsert count,\nwith a positive control: on a real repo the first run records blame rows\nand the unchanged second run records **zero**. `itemsUpserted === 0`\nalone is indirect evidence; this counts the thing the subprocess existed\nto produce.\n\nAlso covered: touching one file re-indexes only that file; a new file is\npicked up; a deleted file leaves the cursor; a null cursor re-does\neverything; a pre-gate cursor is accepted; indexed rows survive a\nskipped run (skipping must not read as pruning).\n\n## Verification\n\n- `bun test packages/gateway packages/cli scripts` — **21020 pass, 0\nfail** (the CI command, whole-repo, one process).\n- `bun run preflight:fast` — all gates pass.\n\n## Review follow-up\n\n**An unreadable file was being marked as indexed.** The mtime was\nrecorded before the read, so a file that failed to read still got a\ncursor entry — and the next run then saw an unchanged mtime, skipped it,\nand left its symbols out of the index until someone edited the file. A\ntransient permission or IO error was enough. Silent, and\nindistinguishable from a file that genuinely exports nothing. It also\ncontradicted the doc comment's own fail-open claim.\n\nThe entry is now written in exactly one place, after the file has been\nread and indexed, plus the unchanged-skip path which carries its\nexisting entry forward. A read failure records nothing and is retried.\n\nVerified on Linux via `verify:docker --changed`, because Windows ignores\nPOSIX mode bits and cannot observe this locally. Against the unfixed\ncode the cursor came back as `[\"readable.ts\", \"blocked.ts\"]` with\n`blocked.ts` never read. Green after.\n\nThe test is **self-validating rather than platform-skipped**: it chmods\nthe file, confirms the read actually fails, and returns early if it does\nnot — running as root, or a filesystem ignoring mode bits — instead of\nasserting vacuously. Otherwise it would have reported green on Windows\nwhile covering nothing.\n\n## Noticed, not fixed\n\n`code_symbol` items are never pruned, so a deleted file's symbols linger\nin the index indefinitely. Pre-existing and its own change.\n\nThe default root exclude list is `[\"node_modules\", \".git\", \"dist\",\n\"target\", \"build\", \".next\"]` — it omits `coverage` and `out`, so\ngenerated output competes with real source for the 120-file cap. Worth a\nlook separately.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nhttps://claude.ai/code/session_01U1wLEizp9Qpq81VZYQjsuo\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n## Summary by CodeRabbit\n\n* **Performance**\n* Improved code indexing by skipping unchanged files during subsequent\nsyncs.\n* Reduced unnecessary source reads, symbol updates, and blame\nprocessing.\n  * Skips Git history processing when no new commits are detected.\n\n* **Reliability**\n  * Preserves indexing progress across sync runs.\n  * Removes outdated file and directory entries from sync state.\n  * Ensures unreadable files are retried after they become accessible.\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>",
+          "timestamp": "2026-09-06T08:36:21+03:00",
+          "tree_id": "bf59af3b77bdce17d70b70023ef49c7109ed9a85",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/ec284d13fbf66f4c0b5680768441f253e4c9daf0"
+        },
+        "date": 1788673776291,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 326.2611517499972,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 325.43134040001024,
             "unit": "ms"
           }
         ]
