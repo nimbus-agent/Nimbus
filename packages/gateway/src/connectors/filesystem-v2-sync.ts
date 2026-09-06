@@ -14,15 +14,45 @@ import { decodeNimbusJsonCursorPayload, encodeNimbusJsonCursor } from "./nimbus-
 const SERVICE_ID = "filesystem";
 const CURSOR_PREFIX = "nimbus-fsv2:";
 
-type FsCursorV1 = { tips: Record<string, string> };
+/** Per-root map of repo-relative code file → the mtime it carried when last indexed. */
+export type CodeMtimeMap = Record<string, number>;
+
+type FsCursorV1 = {
+  tips: Record<string, string>;
+  /**
+   * `rootKey` → the file mtimes the code index last ran against. Absent in a cursor written
+   * before the gate landed, which decodes to `{}` — "nothing known yet" — so an upgrade
+   * re-indexes once and is then quiet.
+   */
+  codeMtimes: Record<string, CodeMtimeMap>;
+};
 
 function encodeCursor(c: FsCursorV1): string {
   return encodeNimbusJsonCursor(CURSOR_PREFIX, c);
 }
 
+function emptyCursor(): FsCursorV1 {
+  return { tips: {}, codeMtimes: {} };
+}
+
+/** Numbers only, and finite: a corrupt entry must re-index rather than skip. */
+function decodeCodeMtimes(raw: unknown): Record<string, CodeMtimeMap> {
+  const out: Record<string, CodeMtimeMap> = {};
+  if (raw === null || typeof raw !== "object" || Array.isArray(raw)) return out;
+  for (const [key, files] of Object.entries(raw as Record<string, unknown>)) {
+    if (files === null || typeof files !== "object" || Array.isArray(files)) continue;
+    const perRoot: CodeMtimeMap = {};
+    for (const [rel, mtime] of Object.entries(files as Record<string, unknown>)) {
+      if (typeof mtime === "number" && Number.isFinite(mtime)) perRoot[rel] = mtime;
+    }
+    out[key] = perRoot;
+  }
+  return out;
+}
+
 function decodeCursor(raw: string | null): FsCursorV1 {
   if (raw === null || raw === "") {
-    return { tips: {} };
+    return emptyCursor();
   }
   const parsed = decodeNimbusJsonCursorPayload(raw, CURSOR_PREFIX);
   if (
@@ -31,7 +61,7 @@ function decodeCursor(raw: string | null): FsCursorV1 {
     typeof parsed !== "object" ||
     Array.isArray(parsed)
   ) {
-    return { tips: {} };
+    return emptyCursor();
   }
   const rec = parsed as Record<string, unknown>;
   const tipsRaw = rec["tips"];
@@ -43,7 +73,7 @@ function decodeCursor(raw: string | null): FsCursorV1 {
       }
     }
   }
-  return { tips };
+  return { tips, codeMtimes: decodeCodeMtimes(rec["codeMtimes"]) };
 }
 
 function isExcluded(relPath: string, exclude: readonly string[]): boolean {
@@ -182,17 +212,36 @@ function parsePackageJsonDeps(path: string): { name: string; version: string; ki
   return out;
 }
 
+/**
+ * Indexes the root's recent commits, skipping the whole list when HEAD has not moved.
+ *
+ * `nextTips` was RECORDED on every run and never READ back, so the cursor field that exists to
+ * prevent this was inert and all 40 commits were re-upserted every tick whether or not anything
+ * had been committed. Found by benchmarking the code-symbol gate against a real repo: that gate
+ * correctly skipped all 120 files while the run still reported 40 upserts, all of them here.
+ *
+ * The `git log` itself still runs — it is one cheap subprocess, and it is also how HEAD is
+ * learned. What it no longer does is rewrite 40 byte-identical rows behind it.
+ */
 async function syncFilesystemGitCommits(
   ctx: SyncContext,
   root: string,
   rk: string,
   now: number,
   nextTips: Record<string, string>,
+  prevTip: string | undefined,
 ): Promise<{ upserted: number; bytes: number }> {
   if (!isGitRepo(root)) {
     return { upserted: 0, bytes: 0 };
   }
   const commits = await gitLogRecords(root, 40);
+  const head = commits[0]?.sha;
+  if (head !== undefined && head === prevTip) {
+    // HEAD is where we left it, so the 40 rows below would be byte-identical. Keep the tip so
+    // the next run compares against the same value.
+    nextTips[`git:${root}`] = head;
+    return { upserted: 0, bytes: 0 };
+  }
   let upserted = 0;
   const bytes = commits.length * 80;
   for (const c of commits) {
@@ -334,26 +383,68 @@ async function blameIndexedExcerptRanges(
   }
 }
 
+/**
+ * Indexes a root's exported symbols, SKIPPING every file whose mtime is unchanged since the
+ * last run.
+ *
+ * Without the gate this walked up to 120 files on EVERY tick and, for each, re-read the source,
+ * re-upserted byte-identical symbol rows and spawned one blame subprocess — measured at 47+
+ * such spawns per steady-state tick against a real daemon on an idle repo, every 10 minutes,
+ * indefinitely.
+ *
+ * The mtime is read BEFORE the file, so a skip costs one `stat` rather than a full read plus a
+ * subprocess. A `stat` failure falls back to `now`, which never matches a recorded mtime — the
+ * fail-open direction, re-indexing rather than silently skipping.
+ *
+ * An entry is recorded ONLY for a file this run actually indexed, or one it skipped because it
+ * was already indexed at that mtime. A file that fails to READ records nothing, so the next run
+ * retries it. Recording before the read is the tempting shape and it is wrong: a transient
+ * permission or IO error would mark the file as done and leave its symbols out of the index
+ * until someone edited it, which is silent and looks exactly like a file with no exports.
+ *
+ * Returns the mtimes to record. Rebuilt from the files actually walked, never merged into the
+ * previous map, so a deleted or newly-excluded file drops out on its own and the cursor stays
+ * bounded by the same 120-file cap as the walk.
+ *
+ * The known limit is mtime's own: an edit landing inside the same filesystem timestamp tick as
+ * the indexed one is missed until the file changes again. `nimbus connector sync filesystem
+ * --full` clears the cursor (`clearConnectorSyncCursor`) and re-indexes everything, which is the
+ * documented way out. Blame that changes without the file changing — an amend or a rebase — is
+ * NOT lost either: the separate `blame` syncable re-blames on a HEAD-ancestor break, which is
+ * exactly the case this gate cannot see.
+ */
 async function syncFilesystemCodeSymbolsForRoot(
   ctx: SyncContext,
   root: string,
   exclude: readonly string[],
   rk: string,
   now: number,
-): Promise<{ upserted: number; bytes: number }> {
+  prevMtimes: CodeMtimeMap,
+): Promise<{ upserted: number; bytes: number; mtimes: CodeMtimeMap }> {
   let upserted = 0;
   let bytes = 0;
   const gitAware = isGitRepo(root);
   const files = listCodeFiles(root, exclude, 120);
+  const mtimes: CodeMtimeMap = {};
   for (const fp of files) {
+    const relNorm = relative(root, fp).replaceAll("\\", "/");
+    const mtime = fileMtimeOrFallback(fp, now);
+    if (prevMtimes[relNorm] === mtime) {
+      // Already indexed at this mtime. Carry the entry forward — dropping it would re-index the
+      // file next run and defeat the gate.
+      mtimes[relNorm] = mtime;
+      continue;
+    }
     const src = readFileTextOrUndefined(fp);
     if (src === undefined) {
+      // Deliberately records NOTHING. A transient read failure — a permission change, a passing
+      // IO error — must not mark the file as done: an entry here would make the next run see an
+      // unchanged mtime, skip the file, and leave its symbols out of the index until someone
+      // edits it. Silent, and indistinguishable from a file with no exported symbols.
       continue;
     }
     bytes += src.length;
-    const relNorm = relative(root, fp).replaceAll("\\", "/");
     const symbols = extractExportedSymbols(src, fp);
-    const mtime = fileMtimeOrFallback(fp, now);
     const fileResult = upsertCodeSymbolsForFile(ctx, symbols, {
       src,
       root,
@@ -366,8 +457,11 @@ async function syncFilesystemCodeSymbolsForRoot(
     if (gitAware && fileResult.blameRanges.length > 0) {
       await blameIndexedExcerptRanges(ctx, root, relNorm, fileResult.blameRanges);
     }
+    // Recorded only here, once the file has actually been read and indexed — the single point
+    // that makes "this mtime is in the map" mean "this content is in the index".
+    mtimes[relNorm] = mtime;
   }
-  return { upserted, bytes };
+  return { upserted, bytes, mtimes };
 }
 
 const CODE_EXT = new Set([".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs"]);
@@ -789,8 +883,11 @@ export function createFilesystemV2Syncable(options: FilesystemV2SyncableOptions)
         return syncNoopResult(cursor, t0);
       }
       await ctx.rateLimiter.acquire("filesystem");
-      const tips = decodeCursor(cursor).tips;
-      const nextTips: Record<string, string> = { ...tips };
+      const prev = decodeCursor(cursor);
+      const nextTips: Record<string, string> = { ...prev.tips };
+      // Rebuilt per run rather than copied from `prev`: a root dropped from config, or a file
+      // deleted from a root, must leave the cursor instead of accumulating in it forever.
+      const nextCodeMtimes: Record<string, CodeMtimeMap> = {};
       let upserted = 0;
       const now = Date.now();
       let bytes = 0;
@@ -803,7 +900,14 @@ export function createFilesystemV2Syncable(options: FilesystemV2SyncableOptions)
         const rk = rootKey(root);
 
         if (rootCfg.gitAware) {
-          const g = await syncFilesystemGitCommits(ctx, root, rk, now, nextTips);
+          const g = await syncFilesystemGitCommits(
+            ctx,
+            root,
+            rk,
+            now,
+            nextTips,
+            prev.tips[`git:${root}`],
+          );
           upserted += g.upserted;
           bytes += g.bytes;
         }
@@ -815,9 +919,17 @@ export function createFilesystemV2Syncable(options: FilesystemV2SyncableOptions)
         }
 
         if (rootCfg.codeIndex) {
-          const c = await syncFilesystemCodeSymbolsForRoot(ctx, root, rootCfg.exclude, rk, now);
+          const c = await syncFilesystemCodeSymbolsForRoot(
+            ctx,
+            root,
+            rootCfg.exclude,
+            rk,
+            now,
+            prev.codeMtimes[rk] ?? {},
+          );
           upserted += c.upserted;
           bytes += c.bytes;
+          nextCodeMtimes[rk] = c.mtimes;
         }
 
         if (rootCfg.mediaIndex) {
@@ -834,7 +946,7 @@ export function createFilesystemV2Syncable(options: FilesystemV2SyncableOptions)
       }
 
       return {
-        cursor: encodeCursor({ tips: nextTips }),
+        cursor: encodeCursor({ tips: nextTips, codeMtimes: nextCodeMtimes }),
         itemsUpserted: upserted,
         itemsDeleted: 0,
         hasMore: false,
