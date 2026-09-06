@@ -2,6 +2,18 @@
 
 All notable changes to the `nimbus` core (headless Gateway + CLI binary + first-party MCP connectors) are documented in this file. release-please appends new entries between this header and the most recent version below when a release PR merges.
 
+## [7.11.0](https://github.com/nimbus-agent/Nimbus/compare/v7.10.1...v7.11.0) (2026-09-06)
+
+
+### Features
+
+* **multimodal:** remote vision arm with per-artifact grants, I37 and D27 — S2 PR 4 of 4 ([#1454](https://github.com/nimbus-agent/Nimbus/issues/1454)) ([580e893](https://github.com/nimbus-agent/Nimbus/commit/580e8930c7575a760cb838ce3fec4babddb0ae3a))
+
+
+### Performance Improvements
+
+* **filesystem:** index only what changed since the last sync tick ([#1453](https://github.com/nimbus-agent/Nimbus/issues/1453)) ([ec284d1](https://github.com/nimbus-agent/Nimbus/commit/ec284d13fbf66f4c0b5680768441f253e4c9daf0))
+
 ## [7.10.1](https://github.com/nimbus-agent/Nimbus/compare/v7.10.0...v7.10.1) (2026-09-05)
 
 
