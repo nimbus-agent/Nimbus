@@ -65,6 +65,24 @@ function firstString(value: unknown, path: readonly (string | number)[]): string
   return typeof cur === "string" ? cur : null;
 }
 
+/**
+ * Anthropic's `content` array is not always `[{ type: "text", ... }]` -- a `thinking` or
+ * `tool_use` block can precede the text block (this request sends no tools, so that is unlikely
+ * here, but the scan is cheap and removes the assumption). Scans for the first block whose own
+ * `type` is `"text"` rather than trusting index 0.
+ */
+function firstAnthropicText(payload: unknown): string | null {
+  const content = asRecord(payload)?.["content"];
+  if (!Array.isArray(content)) return null;
+  for (const block of content) {
+    const rec = asRecord(block);
+    if (rec !== undefined && rec["type"] === "text" && typeof rec["text"] === "string") {
+      return rec["text"];
+    }
+  }
+  return null;
+}
+
 type VendorRequest = { url: string; headers: Record<string, string>; body: unknown };
 
 function buildRequest(
@@ -130,7 +148,7 @@ function buildRequest(
 function readCaption(vendor: RemoteVlmVendor, payload: unknown): string {
   const text =
     vendor === "anthropic"
-      ? firstString(payload, ["content", 0, "text"])
+      ? firstAnthropicText(payload)
       : vendor === "openai"
         ? firstString(payload, ["choices", 0, "message", "content"])
         : firstString(payload, ["candidates", 0, "content", "parts", 0, "text"]);

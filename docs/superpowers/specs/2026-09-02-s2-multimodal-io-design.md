@@ -81,6 +81,7 @@ PRs have landed since. It now states what is actually on disk, with the PR 4 arr
 packages/gateway/src/multimodal/
   media-gate.ts            THE chokepoint: the only path from bytes to a model
   media-discovery.ts       which indexed items are understandable candidates
+  media-bytes.ts           resolveLocalMediaPath: candidate -> a live, root-contained local path
   media-pass.ts            the budgeted, resumable understanding pass
   media-pass-state.ts      cursor + resume
   media-types.ts           MediaCandidate / MediaSource / SkipReason / UnderstandOutcome
@@ -98,7 +99,7 @@ packages/gateway/src/multimodal/
   vlm/ollama-vlm.ts        local VLM; isLocal DERIVED via base-url-locality.ts
   vlm/image-understander.ts   still-image captioning over VlmProvider
   vlm/caption-prompts.ts   the two prompts, as constants
-  media-grant-store.ts     durable grants, V59; the ONLY module naming media_grant     (PR 4)
+  media-grant-store.ts     durable grants, V59; the ONLY module WRITING media_grant    (PR 4)
   vlm/image-mime.ts        magic-byte sniff -> the wire media_type                     (PR 4)
   vlm/remote/*.ts          remote VlmProvider adapters, one per vendor                 (PR 4)
 packages/gateway/src/egress/
@@ -107,10 +108,14 @@ packages/gateway/src/index/
   media-grant-v59-sql.ts   the V59 table + partial unique index                        (PR 4)
 ```
 
-There is no `media-bytes.ts` and no `media-consent-broker.ts`. Byte acquisition split by arm
-(`cloud-bytes.ts` + a local read inside the pass) rather than landing as one module, and PR 4's
-consent lives in the CLI, not a gateway-side broker, because § 6.3 forbids prompting from inside a
-pass — a broker with no in-pass caller would be a module that only ever answers "no".
+There **is** a `media-bytes.ts` — this block was wrong about that, contradicting both reality and
+§ 16.2's own earlier note. It keeps only the LOCAL arm (`resolveLocalMediaPath`); the cloud arm is
+the separate `cloud-bytes.ts` (PR 3), and `media-pass.ts` branches on `candidate.sourcePath === null`
+to choose between them — the "one byte-acquisition collaborator" idea from an earlier draft of this
+section was never built. There is no `media-consent-broker.ts`: PR 4's consent lives in the CLI
+(`nimbus media allow-remote`'s enumerated preview + `[y/N]` confirmation), not a gateway-side broker,
+because § 6.3 forbids prompting from inside a pass — a broker with no in-pass caller would be a
+module that only ever answers "no".
 
 Each unit answers the three questions independently: `media-bytes.ts` gets bytes and never contacts
 a model; `media-gate.ts` is the only thing that hands bytes to a model; `understanding-item.ts` is
@@ -122,8 +127,14 @@ The same reasoning I33 and I35 both reached. The executor's HITL gate (I2) is fo
 actions** dispatched to `connectors.dispatch`; understanding is neither — it is a local model call
 over local bytes. Routing it through the executor would mean inventing a connector action that does
 not dispatch to a connector, which is precisely the shape I29's `NULL_EGRESS_SINK` executors exist
-to accommodate and which has already proven confusing. A dedicated gate with its own consent broker
-follows `exec-consent-broker.ts` and `cu-consent-broker.ts`.
+to accommodate and which has already proven confusing. A dedicated gate, `media-gate.ts`, is what
+shipped.
+
+**This section was speculative when written and describes a design that changed on landing — see
+§ 3.1.** `media-gate.ts` does **not** carry its own consent broker the way `exec-consent-broker.ts`
+and `cu-consent-broker.ts` do: § 6.3 forbids prompting from inside a pass, so PR 4's per-artifact
+consent is a durable grant obtained up front, in the CLI (`nimbus media allow-remote`), which the
+gate only ever CONSULTS (`hasActiveGrant`) rather than a round-trip it initiates itself.
 
 ### 3.3 The gate ships before the thing it gates
 
@@ -403,7 +414,7 @@ Granting one item at a time does not scale to an album, and a rule that is unusa
 around. So a selector form exists:
 
 ```text
-nimbus media allow-remote --service google_photos --since 2026-08-01 --limit 20
+nimbus media allow-remote --service google_photos --since 2026-08-01 --limit 20 --vendor openai
 ```
 
 It renders **one preview that enumerates the matching items** — titles, dates, sizes, count — and
@@ -1504,7 +1515,7 @@ around. So a selector form exists, with a **mandatory, capped** `--limit` so an 
 everything" is not expressible:
 
 ```text
-nimbus media allow-remote --service google_photos --since 2026-08-01 --limit 20
+nimbus media allow-remote --service google_photos --since 2026-08-01 --limit 20 --vendor openai
 ```
 
 It renders ONE preview that **enumerates** the matching artifacts — titles, dates, sizes, count —
@@ -1603,16 +1614,15 @@ the claim it makes simply becomes load-bearing for vision.
   larger or remote.
 - **The disclosure must say which model.** A remote-understood artifact records its vendor and model,
   so a reader can tell a local caption from one a third party produced.
-- **PARTLY SUPERSEDED 2026-09-05 — see § 20.** The Google DRIVE leg has now been run against a real
-  provider and passed; the PHOTOS and ONEDRIVE legs have not, so the paragraph below still holds for
-  them and the Photos rendition question it names is still open.
-- **PR 3's acceptance run remains unperformed.** No leg of the cloud arm has contacted a real
-  provider. PR 4 therefore builds a consent surface on top of a fetch path proven only against
-  fakes: whether Drive's 302 to `googleusercontent.com` still serves bytes after the bearer is
-  stripped, and whether Photos' rendition suffixes behave as assumed, are still unverified. Both
-  fail closed as `fetch_miss` rather than dangerously, but the composition of PR 3 and PR 4 —
-  cloud-fetched bytes forwarded to a third-party model — is the path with the least real-world
-  evidence behind it in the whole slice, and its own acceptance run should exercise exactly that.
+- **SUPERSEDED 2026-09-05 — see § 20 for the run itself.** The Google DRIVE leg of PR 3's acceptance
+  run has now been performed against a real provider and PASSED (390,842 bytes fetched, one ledger
+  row, chain intact — § 20.1). The PHOTOS and ONEDRIVE legs remain unperformed: whether Photos'
+  rendition suffixes behave as assumed is still unverified (§ 20.2), and OneDrive has not been
+  exercised against a real account at all. PR 4 therefore builds a consent surface on top of a fetch
+  path proven against a real provider for ONE of its three services, not zero — the composition of
+  PR 3 and PR 4 for Photos and OneDrive specifically (cloud-fetched bytes forwarded to a third-party
+  model) remains the path with the least real-world evidence behind it in the whole slice, and an
+  acceptance run against those two remaining services should exercise exactly that.
 
 ### 18.10 Docs to update on landing
 

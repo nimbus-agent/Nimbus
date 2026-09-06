@@ -825,9 +825,16 @@ export async function tryDispatchMediaRpc(
   // pass, so neither `dataDir` nor `mediaRpcCtx` (the org-policy accessor) is required here — a
   // grant is a row in the local index, not a model call; the model call it later gates still goes
   // through `media.understand`'s own full check above.
-  const mmConfig = loadMultimodalConfig(ctx.options.configDir);
+  //
+  // `loadMultimodalConfig` is resolved ONLY for `media.allowRemote`, the one branch that consumes
+  // `configuredRemoteVlm` (`media-rpc.ts`'s `dispatchMediaRpc`). It throws `MultimodalConfigError`
+  // for a well-formed but non-loopback `vlm_base_url` — a field `media.grants.list`/
+  // `media.grants.revoke` never read — so resolving it unconditionally would block revocation, the
+  // WITHDRAWAL path for consent, on a config error unrelated to grants.
   const out = await dispatchMediaRpc(method, params, {
-    configuredRemoteVlm: mmConfig.remoteVlm,
+    ...(method === "media.allowRemote"
+      ? { configuredRemoteVlm: loadMultimodalConfig(ctx.options.configDir).remoteVlm }
+      : {}),
     grantRemote: ({ itemId, vendor, nowMs }) => {
       const { alreadyActive } = createGrant(db, {
         itemId,

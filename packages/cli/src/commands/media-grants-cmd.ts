@@ -159,6 +159,18 @@ export function parseAllowRemoteArgs(argv: readonly string[]): AllowRemoteArgs {
     return { itemIds };
   }
 
+  // A consent preview must never assert a source it cannot substantiate (spec § 18.5/§ 19.6): an
+  // unrecognized --service would otherwise reach `sourceLabel`, which defaults anything outside
+  // `CLOUD_MEDIA_SERVICES` to "local" -- printing a reassuring falsehood for bytes a third party
+  // actually holds. Refuse rather than pass it through, the same posture the explicit-item-id path
+  // already takes for an id the scan cannot resolve.
+  if (service !== undefined && !MEDIA_LOOKUP_SERVICES.includes(service)) {
+    throw new Error(
+      `nimbus media allow-remote: unknown --service "${service}" (expected one of: ` +
+        `${MEDIA_LOOKUP_SERVICES.join(", ")})`,
+    );
+  }
+
   // An unbounded "grant everything" must not be EXPRESSIBLE (spec § 18.5): a missing --limit is
   // a REFUSAL, not a default -- a default would be a number the user never chose.
   if (limit === undefined) {
@@ -230,7 +242,13 @@ export function renderGrantList(grants: readonly GrantListEntry[]): string {
   return grants
     .map((g) => {
       const title = g.title ?? "(item no longer indexed)";
-      const grantedAt = new Date(g.grantedAt).toISOString();
+      // A NaN/out-of-range `grantedAt` on one malformed persisted row must not make the whole
+      // list throw -- `nimbus media grants list` is the only surface a user has to see (and then
+      // revoke) an existing grant, so it must stay usable even against a bad row.
+      const grantedTime = new Date(g.grantedAt);
+      const grantedAt = Number.isFinite(grantedTime.getTime())
+        ? grantedTime.toISOString()
+        : `unknown (${String(g.grantedAt)})`;
       return `  ${title} — ${g.modelVendor} (granted ${grantedAt}, item ${g.itemId})`;
     })
     .join("\n");

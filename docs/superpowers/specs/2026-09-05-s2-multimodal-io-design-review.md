@@ -10,13 +10,13 @@
 - **PR 1 (Shipped #1429, 2026-09-02):** Local discovery, long-form STT, V58 cursor, `video_understanding`, local-arm `media-gate.ts`.
 - **PR 2 (Shipped #1438, 2026-09-03):** Local Ollama VLM (`/api/show`), `wrapLedgeredVlm`, D22(g), `image_understanding`, frame extraction, `UNDERSTANDING_VERSION = 2`.
 - **PR 3 (Shipped, 2026-09-04):** Cloud byte acquisition (`google_photos`, `google_drive`, `onedrive`), safe URL resolution (`cloud-url-resolver.ts`), manual redirect following (`safeFetchFollowing`), stream-level bandwidth budget, two scratch files for cloud AV with prefix sweeper, `sync`-class egress enumeration (4 appenders).
-- **PR 4 (Designed in § 18):** Remote VLM arm (images only), durable grants (Schema **V59** `media_grant`), consent broker & batch granting CLI, Invariant **I37**, and Static Rule **D27**.
+- **PR 4 (Designed in § 18):** Remote VLM arm (images only), durable grants (Schema **V59** `media_grant`), the CLI/RPC grant workflow (`nimbus media allow-remote`/`grants list`/`grants revoke` — no gateway-side consent broker; § 6.3 forbids prompting from inside a pass), Invariant **I37**, and Static Rule **D27**.
 
 ---
 
 ## 1. Executive Summary
 
-The S2 Multimodal I/O design specification [`2026-09-02-s2-multimodal-io-design.md`](./2026-09-02-s2-multimodal-io-design.md) has evolved across three shipped pull requests into a robust, privacy-first subsystem. The newly added **§ 18 (PR 4 — The Remote Arm)** provides the blueprint for the final, most sensitive leg of this slice: permitting user-selected image artifacts to be described by frontier vision models (OpenAI, Anthropic, Gemini, xAI) under strict, durable, artifact-scoped consent.
+The S2 Multimodal I/O design specification [`2026-09-02-s2-multimodal-io-design.md`](./2026-09-02-s2-multimodal-io-design.md) has evolved across three shipped pull requests into a robust, privacy-first subsystem. The newly added **§ 18 (PR 4 — The Remote Arm)** provides the blueprint for the final, most sensitive leg of this slice: permitting user-selected image artifacts to be described by frontier vision models (OpenAI, Anthropic, Gemini) under strict, durable, artifact-scoped consent.
 
 ### Core Architectural Strengths
 

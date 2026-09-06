@@ -1764,9 +1764,10 @@ const streamReq: JSONRPCRequest = {
 // `multimodal/` shape (PR 1, 2026-09-02; vision arm PR 2, 2026-09-03; remote arm PR 4,
 //   2026-09-05): `media-gate.ts` is the one chokepoint every `Understander` implementation goes
 //   through — it owns the per-artifact `GpuArbiter` lease + heartbeat (§ 8.1 of the design spec)
-//   and the local-vs-remote decision, now invariant I37 (`SECURITY-INVARIANTS.md`, static rule
+//   and the local-vs-remote decision, now invariant I37 (`docs/SECURITY-INVARIANTS.md`, static rule
 //   D27): a non-local provider is reachable only through a per-artifact, per-vendor grant in
-//   `media-grant-store.ts`'s `media_grant` table (V59), never by degrading a local refusal.
+//   `packages/gateway/src/multimodal/media-grant-store.ts`'s `media_grant` table (V59), never by
+//   degrading a local refusal.
 //   `multimodal-config.ts`
 //   is the whole `[multimodal]` section reader (standalone, mirroring
 //   `connectors/openapi-indexer-config.ts` rather than routing through `nimbus-toml.ts`) — FOUR

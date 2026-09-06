@@ -1624,6 +1624,34 @@ describe("tryDispatchPhase4Rpc", () => {
         { grants: [] },
       );
     });
+
+    /**
+     * Review finding (CodeRabbit, PR 4): `loadMultimodalConfig` used to be resolved unconditionally
+     * for all three methods, so a well-formed but non-loopback `vlm_base_url` (which
+     * `loadMultimodalConfig` REFUSES loudly, `MultimodalConfigError`) blocked `media.grants.list`
+     * and `media.grants.revoke` too, even though neither reads `configuredRemoteVlm`. Revocation is
+     * the WITHDRAWAL path for consent and must not fail for a reason unrelated to grants.
+     */
+    test("a non-loopback vlm_base_url blocks media.allowRemote but NOT media.grants.list/revoke", async () => {
+      const configDir = mkdtempSync(join(tmpdir(), "disp-media-bad-vlm-url-"));
+      writeFileSync(
+        join(configDir, "nimbus.toml"),
+        '[multimodal]\nenabled = true\nvlm_base_url = "http://example.com:11434"\n',
+        "utf8",
+      );
+      const { ctx } = withGrantsCtx({ configDir });
+
+      await expect(
+        tryDispatchPhase4Rpc(ctx, "media.allowRemote", { itemIds: ["i1"], vendor: "openai" }, "c1"),
+      ).rejects.toThrow(/not a loopback address/);
+
+      await expect(tryDispatchPhase4Rpc(ctx, "media.grants.list", {}, "c1")).resolves.toMatchObject(
+        { grants: [] },
+      );
+      await expect(
+        tryDispatchPhase4Rpc(ctx, "media.grants.revoke", { itemId: "i1" }, "c1"),
+      ).resolves.toMatchObject({ revoked: 0 });
+    });
   });
 
   test("an unregistered method through the same path still 404s (negative control)", async () => {

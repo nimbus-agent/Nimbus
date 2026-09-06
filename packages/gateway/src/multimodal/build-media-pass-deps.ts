@@ -311,10 +311,20 @@ function buildRemoteFor(
     isAvailable: () => remoteProvider.isAvailable(),
     understand: async (source) => {
       const bytes = await bytesForSource(source);
+      if (bytes.byteLength === 0) {
+        // Mirrors `image-understander.ts`'s own guard: empty bytes still resolve a MIME when the
+        // source carries a declared type (`resolveWireMime`'s fallback), which would otherwise
+        // send an empty payload to a vendor and buy a paid, ledgered request for nothing. Refuse
+        // before the call, not after it.
+        throw new Error("image source is empty");
+      }
       const mime = resolveWireMime(bytes, source.kind === "bytes" ? source.mime : null);
       if (mime === null) {
         throw new UnsupportedImageFormatError("not a JPEG, PNG, WebP or GIF");
       }
+      // `readCaption` (remote-vlm-shared.ts) already trims and rejects an empty caption before
+      // `describe()` resolves, so no second guard is needed here — this line only ever runs with
+      // an already-validated, non-empty `text`.
       const { text } = await remoteProvider.describe({
         bytes,
         prompt: IMAGE_CAPTION_PROMPT,

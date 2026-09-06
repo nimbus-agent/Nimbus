@@ -3484,7 +3484,10 @@ describe("I37 — a media body reaches a non-local model only under a grant", ()
       mimeType: "image/png",
     });
     const summary = egressRows(db)[0]?.payloadSummary ?? "";
-    expect(summary).toContain("4");
+    // Parses the field rather than substring-matching the digit "4" -- `toContain("4")` would pass
+    // for `imageBytes: 14` or `imageBytes: 42` just as readily, which is not what this test claims
+    // to prove.
+    expect(JSON.parse(summary)).toMatchObject({ model: "gpt-5", imageBytes: 4 });
     expect(summary).not.toContain("SECRET PROMPT");
   });
 

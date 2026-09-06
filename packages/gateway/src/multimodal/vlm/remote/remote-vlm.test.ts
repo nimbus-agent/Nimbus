@@ -51,6 +51,29 @@ describe("anthropic", () => {
     expect(c.calls[0]?.init.headers).toMatchObject({ "x-api-key": "sk-ant-SECRET" });
   });
 
+  /**
+   * Review finding (CodeRabbit, PR 4): `content` is not always `[{ type: "text", ... }]` — a
+   * `thinking` block (or any other non-text block) can precede the text one. Reading only
+   * `content[0].text` would throw "no caption text" even though a usable caption is right there
+   * at index 1.
+   */
+  test("finds the caption when a non-text block precedes it in `content`", async () => {
+    const c = capture();
+    c.reply({
+      content: [
+        { type: "thinking", thinking: "considering the image" },
+        { type: "text", text: "a knife diagram" },
+      ],
+    });
+    const p = createRemoteVlm({
+      vendor: "anthropic",
+      apiKey: async () => "k",
+      fetchImpl: c.fetchImpl,
+    });
+    const out = await p.describe({ bytes: BYTES, prompt: "describe", mimeType: "image/jpeg" });
+    expect(out.text).toBe("a knife diagram");
+  });
+
   /** Anthropic returns HTTP 400 without a media_type — refuse before spending the request. */
   test("REFUSES to send when mimeType is absent", async () => {
     const c = capture();
