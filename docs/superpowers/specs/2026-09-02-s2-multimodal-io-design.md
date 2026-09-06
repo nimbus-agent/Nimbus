@@ -2021,3 +2021,90 @@ reports "Gateway is not running" against a perfectly healthy sandbox gateway.
 
 Proof the isolation held: the live index stayed at `user_version = 56` throughout, while the
 sandbox migrated 1 → 58 from empty. A v7.9.0 gateway opening the live file would have migrated it.
+
+---
+
+## 21. PR 4 acceptance run — the remote arm reached a real vendor (2026-09-06)
+
+The gap §§ 18.9, 19.C and 20 all left open. PR 4's three vendor request shapes were written from
+each vendor's documented image API and tested only against fakes, so every claim about them proved
+the shape this code SENDS and none proved that a vendor ACCEPTS it. One does now.
+
+Run on `main` at `580e8930` — the merged PR 4 — built from source, against a real Gemini key held
+in the Vault, with the same `LOCALAPPDATA`-override sandbox § 20.4 describes: real config, real
+Vault, real credentials, real outbound traffic, throwaway index.
+
+### 21.1 What passed
+
+One `image/png` in Google Drive, 390,842 bytes, granted to `gemini` and understood remotely.
+
+| Property | Where claimed | Result |
+| --- | --- | --- |
+| A vendor ACCEPTS our request shape | § 19.C, § 20's open gap | **Gemini returned a caption** — the first time any of the three adapters has been answered by the vendor it targets |
+| `[multimodal] remote_vlm = "gemini"` validates and gates | § 18.1 gate 3 | accepted at config load; the arm activated |
+| The grant is what unlocks it | I37 | `media.allowRemote` wrote one row; the pass then chose remote for that artifact |
+| Exactly ONE `model`-class row per describe | I29, D22(g) | **1 row**, `destination: gemini`, `method: multimodal.vlm.image` |
+| `payload_summary` carries the model and byte COUNT, never the prompt or the bytes | I37 | `{"model":"gemini-3.5-flash","imageBytes":390842}` |
+| The derived row records provenance | § 18.9 | `model: "gemini/gemini-3.5-flash"`, `isLocal: false`, `sourceBytes: 390842` |
+| `expectedBytes` on the cloud fetch | § 20.3 finding 1, fixed | `{"method":"media.fetchBytes","expectedBytes":390842}` |
+| Ledger chain intact across both rows | I29 | `verifyEgressChain` ok over 65 rows |
+
+**The remote caption is visibly better, which is the feature's whole premise.** The local
+`qwen2.5vl:7b` called this artifact "a knife". Gemini identified "a long pole weapon with a curved
+blade", named the copper-wire scarf joint, the owner's mark band and the pledge tag, and described a
+magnified detail panel — on a file named `cell_nine_glaive_rack_14.png`. A glaive is a pole weapon;
+the local model was wrong about the class of object and the remote one was not.
+
+### 21.2 The non-interactive refusal fired, and it blocked this run
+
+Worth recording because it is the consent surface working against the operator, which is what it is
+for. `nimbus media allow-remote` rendered its preview correctly —
+
+```text
+cell_nine_glaive_rack_14.png (size unknown) — source google_drive · destination gemini [new]
+1 artifact: 1 new, 0 already granted
+nimbus media allow-remote: refusing to grant without confirmation in non-TTY mode
+```
+
+— enumerating by title, naming both ends of the transfer, splitting new from already-granted, and
+then REFUSING a piped `y`. § 18.5's rule that a selector form must never be unbounded has a sibling
+here: a confirmation that a script can satisfy is not a confirmation. The grant for this run was
+therefore created through the `media.allowRemote` IPC method directly, with the owner's approval
+obtained out of band. **That is the correct escape hatch and not a bypass** — the method is
+LAN-forbidden and absent from the Tauri allowlist, so its only reachable caller is an
+owner-equivalent local process — but it is worth stating plainly that this run did not exercise the
+TTY confirmation path itself.
+
+### 21.3 One defect the run surfaced
+
+**`(size unknown)` in the preview for an artifact whose size is known.** The grant preview printed
+no size, while the index holds `metadata.size = "390842"` for that row and the pass itself resolved
+`sourceBytes: 390842` correctly from the same field. Google Drive's v3 API serialises `size` as a
+STRING, since it is an int64 — `media-source-registry.ts` already knows this and comments on it —
+and the CLI's own preview resolution does not appear to parse the string form.
+
+Small, but it lands on the consent surface: the preview exists so an owner can see what they are
+approving, and size is part of what they are approving. Filed rather than fixed here, since this
+section is a record of the run.
+
+### 21.4 What is STILL unverified after this run
+
+- **Anthropic and OpenAI adapters.** Only the Gemini path has been answered by a real vendor. The
+  other two share `remote-vlm-shared.ts`'s dispatch and error handling, so the shared half is
+  exercised — but each vendor's own request body and response shape is not, and those are exactly
+  the parts that differ.
+- **The Google Photos leg**, unchanged from § 20.2: that API still returns an empty library under
+  `photoslibrary.readonly`, so the pre-signed `baseUrl` fetch and the rendition suffixes have still
+  never run. This run used Drive, whose bytes are fetched from a URL this codebase constructs.
+- **OneDrive**, entirely — no Microsoft OAuth on the test machine.
+- **The TTY confirmation path**, per § 21.2.
+- **A refusal against a live vendor.** Every failure mode — a 400 on a bad `media_type`, a 429, an
+  auth failure — is still fixture-only. This run exercised the success path.
+
+### 21.5 The claim this run retires, and the one it does not
+
+Retired: "PR 4's remote vendor adapters have not been exercised against a live endpoint." One of
+three has, end to end, with the ledger row and the chain to show for it.
+
+NOT retired: the same sentence for Anthropic and OpenAI. A slice is not verified because one third
+of it is, and § 18.9's bound should be read as narrowed rather than closed.

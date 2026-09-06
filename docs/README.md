@@ -420,8 +420,8 @@ Nimbus uses phases, not calendar dates. A phase completes when its acceptance cr
 
 - **Sandboxed code execution** (2026-08-23, invariant `I33`) — `nimbus exec` runs a script you approve VERBATIM inside the platform sandbox, with no network at all, loopback included. CLI/owner-only: the LLM cannot invoke an execution.
 - **Bring-your-own-frontier-model routing** (2026-08-28) — Anthropic, OpenAI, Gemini and xAI adapters, each behind a per-vendor `[llm.remote.<vendor>]` opt-in with its key read from the Vault and never the environment. This is what made the egress ledger's `model` class live rather than latent.
-- **A HITL-gated computer-use loop** (2026-09-01, invariant `I35`) — the `browser` lane drives a confined headless Chromium whose screenshots are BLAKE3-digested and never written to disk, and the `terminal` lane is a sandboxed line-oriented shell in which no byte reaches the child process before you have approved the complete command. The `screen` lane is deferred.
-- **Multimodal I/O, slice 1 of 4** (2026-09-02) — `nimbus media understand` transcribes local audio and video with `whisper-cli` and indexes the result as a searchable derived item, pinned to the local embedder so nothing extracted from the file can reach a remote one. Image understanding, cloud byte-fetch and any remote model are **not** in this slice.
+- **A HITL-gated computer-use loop** (2026-08-31 → 2026-09-01, invariant `I35`) — the `browser` lane drives a confined headless Chromium whose screenshots are BLAKE3-digested and never written to disk, and the `terminal` lane is a sandboxed line-oriented shell in which no byte reaches the child process before you have approved the complete command. The `screen` lane is deferred.
+- **Multimodal I/O, all 4 slices** (2026-09-02 → 2026-09-05, invariant `I37`) — `nimbus media understand` transcribes local audio and video with `whisper-cli`, captions still images and sampled video frames with a local Ollama-served vision model, and indexes the result as a searchable derived item. Derived text is pinned to the local embedder, so nothing extracted from a file can reach a remote one by the embedding path. A cloud-backed artifact's bytes can be fetched under a byte budget (Google Photos, Google Drive, OneDrive), and a **still image** — never audio, never video — can be described by one configured remote vendor, but only after you grant that one artifact to that one vendor with `nimbus media allow-remote`. Absent a grant it is captioned locally exactly as before. The Gemini adapter has been exercised end to end against a live endpoint; Anthropic and OpenAI have not.
 
 Still ahead in S2: runtime tool generation and overnight sub-agent fleets on compute you already own.
 
@@ -590,13 +590,16 @@ nimbus negotiate --person <id> --since 90d  # cited contribution brief
 
 ### Local compute
 
-Every command here is **off by default**, and two of the three go further. `nimbus exec` and
-`nimbus computer` each obtain your approval for the exact thing they are about to do — the
+Every command here is **off by default**, and each asks for your approval in a different shape.
+`nimbus exec` and `nimbus computer` obtain it for the exact thing they are about to do — the
 verbatim script, the exact browser launch envelope, the complete command line — in a gate that
-lives in the executor, not the prompt. **`nimbus media understand` has no such gate**: it is
-governed by configuration alone (`[multimodal] enabled` plus a per-root `media_index`, both
-false by default), so enabling it is the whole of the decision. Full detail, including what each
-sandbox does and does not confine, is in [`cli-reference.md`](./cli-reference.md).
+lives in the executor, not the prompt. **`nimbus media understand` has no such per-run gate**: the
+local pass is governed by configuration alone (`[multimodal] enabled` plus a per-root
+`media_index`, both false by default), so enabling it is the whole of the decision. Its *remote*
+arm is gated differently again — the decision is made once, up front, per artifact, by
+`nimbus media allow-remote`, and the pass never prompts on its own: an artifact you have not
+granted is understood locally, silently. Full detail, including what each sandbox does and does
+not confine, is in [`cli-reference.md`](./cli-reference.md).
 
 ```bash
 # Run code in the platform sandbox, with no network at all — loopback included.
@@ -609,9 +612,15 @@ nimbus computer browser --origin https://github.com
 nimbus computer terminal --cwd ./my-project
 nimbus computer sessions
 
-# Transcribe local audio/video with whisper-cli and index it as searchable text.
-# Nothing extracted from the file can reach a remote model. [multimodal] enabled + media_index
+# Transcribe local audio/video with whisper-cli, caption images with a local vision model,
+# and index the result as searchable text. [multimodal] enabled + a per-root media_index
 nimbus media understand --limit 10
+
+# Let ONE configured vendor describe ONE still image — never audio, never video. Durable,
+# revocable, per artifact; without it the same image is captioned locally. [multimodal] remote_vlm
+nimbus media allow-remote <itemId> --vendor gemini
+nimbus media grants list
+nimbus media grants revoke <itemId>
 ```
 
 ### Metrics and proof
@@ -828,7 +837,7 @@ nimbus/
 │   │       ├── egress/       # Append-only BLAKE3 egress ledger (I29) + `nimbus prove`
 │   │       ├── exec/         # Sandboxed code execution gate (I33)
 │   │       ├── computer-use/ # HITL-gated browser + terminal lanes (I35)
-│   │       ├── multimodal/   # Local audio/video understanding pass
+│   │       ├── multimodal/   # Media understanding pass + per-artifact remote grants (I37)
 │   │       ├── glossary/     # Implicit-knowledge terminology extraction
 │   │       ├── decisions/    # Implicit ADR extraction
 │   │       ├── ownership/    # Ownership graph

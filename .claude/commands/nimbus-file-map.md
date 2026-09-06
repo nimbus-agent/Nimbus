@@ -283,7 +283,7 @@ Everything else follows the standard triple. These break from it in a way worth 
 |---|---|
 | `scripts/structure-audit/lib.ts` | Shared B3 helpers — `REPO_ROOT`, `stripComments`, `countAnyInSource`, `iterateSourceFiles` |
 | `scripts/structure-audit/check-doc-references.ts` | Doc-ref drift audit (broken `[text](path)` and backtick path refs) over CLAUDE/GEMINI + all of `docs/` + the skills; `DOCS_EXCLUDED_PREFIXES` names the few docs that are out and why |
-| `scripts/structure-audit/check-nimbus-invariants.ts` | Static-time complement to `security-invariants.test.ts` (I1 + vault-key allowlist + static rules D10–D23) |
+| `scripts/structure-audit/check-nimbus-invariants.ts` | Static-time complement to `security-invariants.test.ts` (I1 + vault-key allowlist + static rules D10–D27 — derive the range from the file, it has read low twice) |
 | `scripts/structure-audit/check-openapi-drift.ts` | OpenAPI drift detector — `v1.yaml` vs `HTTP_ROUTES` |
 | `docs/structure-audit/baseline.md` | Phase 1 baseline reference; per-dimension state + Phase 2 thresholds |
 
@@ -321,6 +321,16 @@ Everything else follows the standard triple. These break from it in a way worth 
 | `packages/gateway/src/ipc/egress-rpc.ts` | `egress.{head,list,verify,proveWindow,prune}` — 4 renderer-exposed reads + CLI-only HITL-gated prune |
 | `packages/cli/src/commands/prove.ts` | `nimbus prove "<query>"` + `nimbus egress [verify\|prune]` CLI |
 | `packages/gateway/src/index/egress-ledger-v44-sql.ts` | V44 `egress_ledger` migration SQL |
+| `packages/gateway/src/exec/exec-gate.ts` | `runExecution` — invariant `I33`/`D23` sole sandboxed-code-execution path (config + policy refusal BEFORE consent, `canConfine(policy)`, read-once body, `network: []` by construction) |
+| `packages/gateway/src/computer-use/cu-gate.ts` | `runAction` / `openSession` — invariant `I35`/`D26` computer-use chokepoint; branch count IS the ordered gate sequence, so refactor by PHASE, never suppress |
+| `packages/gateway/src/computer-use/cu-lanes/*` | The `browser` (raw CDP, no dependency) and `terminal` (pipe-backed shell) lane drivers — `D26(b)`/`D26(c)`; the browser lane is confined by Chromium's own sandbox, NOT `SandboxRunner` |
+| `packages/gateway/src/multimodal/media-gate.ts` | `understandArtifact` — invariant `I37`/`D27` local-vs-remote decision; locality DERIVED from `provider.isLocal` (`I34`), never a caller flag |
+| `packages/gateway/src/multimodal/media-grant-store.ts` | `createGrant` / `hasActiveGrant` — the SOLE writer of the V59 `media_grant` table (`D27(b)`); REFUSES an `av`-modality row, which is one of the two mechanisms keeping audio/video local |
+| `packages/gateway/src/multimodal/build-media-pass-deps.ts` | The one wiring site allowed to name `createRemoteVlm` (`D27(a)`) and `createOllamaVlm` (`D22(g)`), each inside a `wrapLedgeredVlm(...)` argument list |
+| `packages/gateway/src/egress/vlm-egress.ts` | `wrapLedgeredVlm` — the `model`-class appender over `VlmProvider.describe` (`D22(g)`); `payload_summary` = model name + image byte COUNT, never the prompt or the bytes |
+| `packages/gateway/src/index/{computer-use-v57-sql,media-pass-v58-sql,media-grant-v59-sql}.ts` | V57 `cu_session`/`cu_action`, V58 `media_pass_cursor`, V59 `media_grant` migration SQL |
+| `packages/cli/src/commands/{exec,computer,media-cmd,media-grants-cmd}.ts` | `nimbus exec` / `nimbus computer` / `nimbus media understand` / `nimbus media allow-remote`+`grants` CLI |
+| `packages/gateway/src/ipc/{exec-rpc,computer-rpc,media-rpc}.ts` | `exec.*` / `computer.*` / `media.*` — all three LAN-forbidden (`I5`) and absent from the Tauri allowlist (`I7`) |
 
 ## Top-level docs
 
@@ -328,7 +338,7 @@ Everything else follows the standard triple. These break from it in a way worth 
 |---|---|
 | `docs/architecture.md` | Full subsystem design — read before modifying any subsystem |
 | `docs/roadmap.md` | Phases, acceptance criteria, delivered summary |
-| `docs/SECURITY-INVARIANTS.md` | I1–I35 rationale (I28 reserved) + anti-patterns + audit cross-references |
+| `docs/SECURITY-INVARIANTS.md` | I1–I37 rationale (I28 reserved) + anti-patterns + audit cross-references |
 | `docs/release/manual-smoke-headless.md` | Reusable manual smoke checklist; per-platform results matrix |
 | `docs/cli/use-in-ci.md` | CI integration examples (GitHub Actions, GitLab, Jenkins) using `nimbus query --json` |
 | `docs/templates/nimbus-pre-commit.sh` | Bash pre-commit template — `nimbus diag` reachability + incident/CI gates |

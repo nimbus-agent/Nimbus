@@ -1770,10 +1770,15 @@ const streamReq: JSONRPCRequest = {
 //   degrading a local refusal.
 //   `multimodal-config.ts`
 //   is the whole `[multimodal]` section reader (standalone, mirroring
-//   `connectors/openapi-indexer-config.ts` rather than routing through `nimbus-toml.ts`) — FOUR
-//   keys, all DEFAULT OFF or defaulted: `enabled` (bool, default false), `vlm_base_url` (default
-//   `http://127.0.0.1:11434`), `vlm_model` (default `qwen2.5vl:7b` — a tag the USER must have
-//   pulled; nothing here downloads a model), and `max_frames` (default 8, clamped 1–64). `stt/`
+//   `connectors/openapi-indexer-config.ts` rather than routing through `nimbus-toml.ts`) — SEVEN
+//   keys as of PR 4 (the count read FOUR through PRs 3 and 4; derive it from
+//   `MultimodalConfig`, never from a sentence), all DEFAULT OFF or defaulted: `enabled` (bool,
+//   default false), `vlm_base_url` (default `http://127.0.0.1:11434`, and REFUSED loudly if
+//   non-loopback), `vlm_model` (default `qwen2.5vl:7b` — a tag the USER must have pulled;
+//   nothing here downloads a model), `max_frames` (default 8, clamped 1–64), `fetch_budget_bytes`
+//   (PR 3; default 2 GiB per run), `prefer_renditions` (PR 3; default false), and `remote_vlm`
+//   (PR 4; default NULL — one of `REMOTE_VLM_VENDORS`, and the only way an image can reach a
+//   non-local model at all, and then only for an artifact carrying a grant). `stt/`
 //   (PR 1) resolves and spawns `whisper-cli`/`ffmpeg` for local transcription. `vlm/` (PR 2) is the
 //   new vision seam: `vlm-types.ts`'s `VlmProvider` is DELIBERATELY NOT a widened `LlmProvider` —
 //   `LlmGenerateOptions` is `{ task, prompt: string, ... }` with no image field, and widening it
@@ -1789,19 +1794,27 @@ const streamReq: JSONRPCRequest = {
 //   the VLM or `ffprobe` is unavailable — never a silent thinner row).
 //
 // Egress: vision's own I29 `model`-class decorator, `egress/vlm-egress.ts`'s `wrapLedgeredVlm`
-//   (static D22(g)), ships ahead of any remote `VlmProvider` in production — the shipped Ollama
-//   adapter is local BY DEFAULT (`isLocal` derived from its resolved base URL, I34), not by
-//   construction, so a provider built directly with a non-loopback `baseUrl` gets a provider
-//   `wrapLedgeredVlm` WOULD wrap and append for. That is the decorator's CONTRACT, not a reachable
-//   outcome via config today: `multimodal-config.ts`'s `loadMultimodalConfig` REFUSES a
-//   non-loopback `vlm_base_url` LOUDLY at config load (throws `MultimodalConfigError`, naming the
-//   value and the reason) rather than silently substituting the loopback default — the
-//   per-artifact remote grant that would let this slice honour a remote host does not land before
-//   PR 4, so a remote value can never survive config load to reach `media-gate.ts`'s own
-//   `no_remote_grant` refusal at all; that refusal remains defense in depth for a provider
-//   constructed some other way, not the path an operator's `nimbus.toml` can reach. Transcription
-//   stays local-only in this slice — no `SttProvider` routing, no decorator, by construction
-//   rather than by check, mirroring `LOCAL_ONLY_SYNC_SERVICES`.
+//   (static D22(g)), shipped in PR 2 AHEAD of any remote `VlmProvider` and, as of PR 4, has one
+//   — `multimodal/vlm/remote/remote-vlm-shared.ts`'s `createRemoteVlm`, ONE factory covering
+//   Anthropic/OpenAI/Gemini rather than three files, so D27(a)'s constructor confinement stays a
+//   single allow-list entry: it may be named only in `build-media-pass-deps.ts` and only inside a
+//   `wrapLedgeredVlm(...)` argument list. Locality is never asserted by a caller: the Ollama
+//   adapter is local BY DEFAULT (`isLocal` DERIVED from its resolved base URL, I34), a cloud
+//   adapter hardcodes `false`, and the wrapper reads that field. A non-local `describe()` appends
+//   one `source_type='model'` row BEFORE the request, `payload_summary` carrying the model name
+//   and the image's byte COUNT — never the prompt, never the bytes — and an append failure
+//   aborts the call.
+//   The remote path is NOT reachable through `vlm_base_url`: `loadMultimodalConfig` still REFUSES
+//   a non-loopback value LOUDLY at config load (`MultimodalConfigError`, naming the value and the
+//   reason) rather than silently substituting the default. It is reachable only through
+//   `remote_vlm` naming a configured vendor AND a `media_grant` row for that (artifact, vendor)
+//   pair — invariant I37 — so `media-gate.ts`'s `no_remote_grant` refusal is now a live path
+//   rather than defense in depth for a provider constructed some other way. Verified end to end
+//   against a live Gemini endpoint on 2026-09-06 (one 390,842-byte Drive PNG, exactly one ledger
+//   row, chain intact over 65 rows); the Anthropic and OpenAI request bodies remain fixture-only.
+//   Transcription stays local-only regardless — no `SttProvider` routing, no decorator, no
+//   grant modality that could express it, by construction rather than by check, mirroring
+//   `LOCAL_ONLY_SYNC_SERVICES`.
 ```
 
 ### AbortController scope in `engine.cancelStream`
@@ -1998,11 +2011,16 @@ nimbus/
 │   │       ├── chatops/         ← Bidirectional Slack/Teams @nimbus bot (I23) (Phase 6)
 │   │       ├── tribal/          ← Repeat-question detection + owner-HITL KB capture (I25) (Phase 6)
 │   │       ├── share/           ← Outbound share gate (I27), keypair, redaction, recipes (Phase 6)
-│   │       ├── multimodal/      ← Local media understanding (S2): media-gate.ts (the chokepoint
-│   │       │                      every understander goes through), multimodal-config.ts (the
-│   │       │                      [multimodal] section), vlm/ (VlmProvider seam + the Ollama
-│   │       │                      adapter, PR 2), frames/ (frame extraction + the audio/video
-│   │       │                      composite understander, PR 2), stt/ (whisper-cli + ffmpeg, PR 1)
+│   │       ├── multimodal/      ← Media understanding (S2): media-gate.ts (the chokepoint every
+│   │       │                      understander goes through, and the local-vs-remote decision,
+│   │       │                      I37), multimodal-config.ts (the [multimodal] section), vlm/
+│   │       │                      (VlmProvider seam + the Ollama adapter, PR 2; vlm/remote/ is
+│   │       │                      the one non-local factory, PR 4), frames/ (frame extraction +
+│   │       │                      the audio/video composite understander, PR 2), stt/
+│   │       │                      (whisper-cli + ffmpeg, PR 1), cloud-bytes.ts + cloud-url-
+│   │       │                      resolver.ts (budgeted, I29-ledgered cloud byte-fetch, PR 3),
+│   │       │                      media-grant-store.ts (the V59 media_grant table's sole
+│   │       │                      writer — D27(b), PR 4)
 │   │       └── ipc/            ← JSON-RPC 2.0 server, consent channel,
 │   │                              http-server.ts (read-only HTTP API, SQLITE_OPEN_READONLY),
 │   │                              metrics-server.ts (Prometheus endpoint, localhost only),

@@ -101,4 +101,4 @@ When registering a new agent tool or extending a sub-agent worker:
 - [`docs/SECURITY-INVARIANTS.md`](../../docs/SECURITY-INVARIANTS.md) — full I-numbered list with anti-patterns
 - [`docs/SECURITY.md`](../../docs/SECURITY.md) §"Prompt Injection" — the hard structural barrier (HITL gate) vs the soft barrier (envelope) split
 - [`docs/architecture.md`](../../docs/architecture.md) §"Security Model" — threat-to-mitigation table
-- `nimbus-security-invariants` skill — the invariant triple rule (production wiring + docs entry + enforcement test) that every invariant (I1–I35; I28 reserved) follows
+- `nimbus-security-invariants` skill — the invariant triple rule (production wiring + docs entry + enforcement test) that every invariant (I1–I37; I28 reserved) follows

@@ -167,7 +167,7 @@ bun run audit:dead-code                 # knip unused exports / orphan files (D7
 bun run audit:duplication               # jscpd token duplication (D6)
 bun run audit:exclusion-parity               # sonar.coverage.exclusions <-> local registry drift check
 bun run audit:any                       # D8 any-count print
-bun run audit:invariants                # static invariant complement D10–D23 (spawn rule, vault-key allow-list, SQL writes, federation/identity/team-vault gates, policy, chatops, preflight, tribal, connector writes, share, egress dispatch chokepoint, exec runConfined) — see CLAUDE.md § Security Invariants
+bun run audit:invariants                # static invariant complement D10–D27 (spawn rule, vault-key allow-list, SQL writes, federation/identity/team-vault gates, policy, chatops, preflight, tribal, connector writes, share, egress dispatch chokepoint, exec runConfined, computer-use actuation/driver/lane, remote-VLM constructor + media_grant table) — derive the range from `check-nimbus-invariants.ts`; see CLAUDE.md § Security Invariants
 bun run audit:openapi-drift             # OpenAPI ↔ HTTP_ROUTES drift (Phase 5 T4 PR 1)
 
 bun scripts/structure-audit/count-any-usage.ts --check     # D8 CI gate (fails on regression OR reduction without --update)
@@ -499,6 +499,38 @@ nimbus clip delete <id|url> | --all [--yes]           # delete clips
 ```
 
 The browser extension lives in the satellite repo `nimbus-agent/nimbus-web-clipper` and reaches the gateway over HTTP only (`POST /v1/clips`, `/v1/clips/pair/confirm`, `/v1/clips/related`).
+
+### Spine S2 — local compute (all DEFAULT OFF; `exec.*` / `computer.*` / `media.*` are LAN-forbidden and off the Tauri allowlist)
+
+```bash
+# Sandboxed code execution — invariant I33 / static D23. [code_execution] enabled = true.
+# You approve the VERBATIM body (never a digest); no network at all, loopback included;
+# CLI/owner-only — the LLM cannot invoke an execution.
+nimbus exec (--code <src> | --file <path>) [--runtime <id>] [--allow-fs-read <path>]... [--allow-fs-write <path>]... [--timeout <ms>]
+
+# HITL-gated computer use — invariant I35 / static D26. [computer_use] enabled + a non-empty
+# allowed_lanes (enabled alone grants NO lane). `screen` is a config-forward name with an EMPTY
+# kind set, so every kind proposed against it is refused out of envelope.
+nimbus computer browser --origin <origin> [--origin <origin>]... [--script-origin <origin>]... [--max-actions <n>] [--timeout <seconds>]
+nimbus computer terminal --cwd <dir> [--shell <id>] [--max-actions <n>] [--timeout <seconds>]
+nimbus computer sessions
+nimbus computer close <session-id>
+
+# Multimodal understanding pass — resumable (V58 cursor). [multimodal] enabled + a per-root
+# media_index, both false by default. Local whisper-cli transcription + local VLM captions.
+nimbus media understand [--service <name>] [--modality image|av] [--since <days>] [--limit N] [--budget <bytes>] [--renditions|--originals] [--json]
+
+# Per-artifact remote-vision consent — invariant I37 / static D27, schema V59 `media_grant`.
+# IMAGES ONLY (an `av` grant is refused by the store AND ignored by the pass). Needs
+# [multimodal] remote_vlm = "anthropic"|"openai"|"gemini" plus that vendor's existing
+# [llm.remote.<vendor>] Vault key — the key alone grants nothing.
+nimbus media allow-remote <itemId>... --vendor <name>
+nimbus media allow-remote --service <name> --limit N --vendor <name> [--since <days>]   # --limit MANDATORY, capped at 500
+nimbus media grants list
+nimbus media grants revoke <itemId> [--vendor <name>]                                   # an item id is always required
+```
+
+`allow-remote` refuses outright in non-TTY mode rather than defaulting to "no" — a piped `y` is not a confirmation. The escape hatch for a scripted/acceptance run is the `media.allowRemote` IPC method directly, which is owner-equivalent because it is LAN-forbidden and off the Tauri allowlist. Live-vendor status as of 2026-09-06: **Gemini verified end to end; Anthropic and OpenAI fixture-only.**
 
 ### MCP server mode
 
