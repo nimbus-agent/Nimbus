@@ -1,6 +1,6 @@
 // packages/gateway/src/multimodal/frames/av-understander.test.ts
 import { describe, expect, test } from "bun:test";
-import type { LocalUnderstander } from "../media-gate.ts";
+import type { Understander } from "../media-gate.ts";
 import type { VlmProvider } from "../vlm/vlm-types.ts";
 import {
   AV_SAMPLING_DISCLOSURE,
@@ -9,7 +9,7 @@ import {
   TRANSCRIPT_HEADING,
 } from "./av-understander.ts";
 
-function stt(text = "hello from the recording"): LocalUnderstander {
+function stt(text = "hello from the recording"): Understander {
   return {
     isLocal: true,
     model: "whisper-cli",

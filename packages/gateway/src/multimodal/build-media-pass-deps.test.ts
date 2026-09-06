@@ -10,10 +10,34 @@ import { GpuArbiter } from "../llm/gpu-arbiter.ts";
 import type { NimbusVault } from "../vault/nimbus-vault.ts";
 import {
   buildMediaPassDeps,
+  bytesForSource,
   resolveMediaRoots,
+  vendorApiKey,
   withTranscribeTimeout,
 } from "./build-media-pass-deps.ts";
+import { createGrant } from "./media-grant-store.ts";
+import type { MediaCandidate, MediaModality } from "./media-types.ts";
 import { loadMultimodalConfig } from "./multimodal-config.ts";
+
+/**
+ * Minimal fixture for `understanderFor`'s second parameter. The production wiring under test
+ * (`buildMediaPassDeps`) does not yet consult the candidate — resolution here is by modality
+ * alone — so these tests only need a shape-correct value to pass through, not a realistic one.
+ */
+function candidateFor(modality: MediaModality): MediaCandidate {
+  return {
+    itemId: "test:1",
+    service: "filesystem",
+    externalId: "1",
+    type: modality === "av" ? "media_av" : "media_image",
+    title: "t",
+    url: null,
+    modality,
+    sourcePath: "/x",
+    sourceMime: null,
+    sourceBytes: 1,
+  };
+}
 
 /**
  * Empty in-memory `NimbusVault` — every `get` resolves `null`, matching a vault with no
@@ -98,8 +122,8 @@ describe("buildMediaPassDeps", () => {
       capabilityDisabled: false,
       scratchDir: "/scratch",
     });
-    expect(deps.gate.understanderFor("av")).toBeDefined();
-    expect(deps.gate.understanderFor("image")).toBeDefined();
+    expect(deps.gate.understanderFor("av", candidateFor("av"))).toBeDefined();
+    expect(deps.gate.understanderFor("image", candidateFor("image"))).toBeDefined();
   });
 
   test("the image understander is the LEDGERED provider, not a bare one", () => {
@@ -125,7 +149,7 @@ describe("buildMediaPassDeps", () => {
       capabilityDisabled: false,
       scratchDir: "/scratch",
     });
-    expect(deps.gate.understanderFor("av")?.isLocal).toBe(true);
+    expect(deps.gate.understanderFor("av", candidateFor("av"))?.isLocal).toBe(true);
   });
 
   test("propagates the disabled flags into the gate, so the gate refuses", () => {
@@ -431,7 +455,9 @@ describe("buildMediaPassDeps — gate.gpu.touch() and the AV understander's isAv
       scratchDir: "/scratch",
       whisperBin: "/definitely/does/not/exist/whisper-cli-binary",
     });
-    await expect(deps.gate.understanderFor("av")?.isAvailable()).resolves.toBe(false);
+    await expect(deps.gate.understanderFor("av", candidateFor("av"))?.isAvailable()).resolves.toBe(
+      false,
+    );
   });
 });
 
@@ -514,7 +540,9 @@ describe("buildMediaPassDeps — the input->provider hop (second-hop wiring)", (
     });
     // `av-understander.ts`'s `model` field is `${stt.model}+${vlm.model}` — "whisper-cli" is the
     // STT leg's fixed model id, so a non-default suffix here can only have come from `input.vlmModel`.
-    expect(deps.gate.understanderFor("av")?.model).toBe("whisper-cli+custom-vision:9b");
+    expect(deps.gate.understanderFor("av", candidateFor("av"))?.model).toBe(
+      "whisper-cli+custom-vision:9b",
+    );
   });
 
   test("input.vlmBaseUrl reaches the constructed VLM, observed via non-loopback flipping isLocal false", () => {
@@ -531,14 +559,14 @@ describe("buildMediaPassDeps — the input->provider hop (second-hop wiring)", (
     // `createOllamaVlm`'s `baseUrl` option. Checked on both understanders: the image understander
     // mirrors the VLM's `isLocal` directly, and the AV understander ANDs it with the STT leg's (see
     // `av-understander.ts`), so a dropped `input.vlmBaseUrl` read would leave BOTH `true`.
-    expect(deps.gate.understanderFor("image")?.isLocal).toBe(false);
-    expect(deps.gate.understanderFor("av")?.isLocal).toBe(false);
+    expect(deps.gate.understanderFor("image", candidateFor("image"))?.isLocal).toBe(false);
+    expect(deps.gate.understanderFor("av", candidateFor("av"))?.isLocal).toBe(false);
   });
 
   // `input.maxFrames` has NO observable assertion at this seam without adding new production
   // surface. `AvUnderstanderDeps.maxFrames` is consumed only inside `av-understander.ts`'s private
   // `understand()` closure (`frameTimestamps(duration, deps.maxFrames)`) — it is never exposed on
-  // the constructed `LocalUnderstander`, and `buildMediaPassDeps` wires the AV understander to the
+  // the constructed `Understander`, and `buildMediaPassDeps` wires the AV understander to the
   // REAL `probeDurationSeconds`/`extractFrameJpeg` (no injection hooks), so exercising `understand()`
   // here would need a real ffprobe/ffmpeg and a real video file, which is exactly the kind of
   // production-surface widening this fix is not meant to introduce. `av-understander.test.ts`
@@ -682,5 +710,305 @@ describe("loadMultimodalConfig(...).enabled", () => {
       mkdirSync(join(dir, "nimbus.toml"));
       expect(loadMultimodalConfig(dir).enabled).toBe(false);
     });
+  });
+});
+
+describe("bytesForSource (Task 10)", () => {
+  test("the bytes arm returns the bytes unchanged", async () => {
+    const bytes = new Uint8Array([1, 2, 3, 4]);
+    await expect(bytesForSource({ kind: "bytes", bytes, mime: null })).resolves.toEqual(bytes);
+  });
+
+  test("the path arm reads the file from disk", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "nimbus-mm-bytes-"));
+    try {
+      const filePath = join(dir, "img.bin");
+      const contents = new Uint8Array([9, 8, 7, 6, 5]);
+      writeFileSync(filePath, contents);
+      await expect(bytesForSource({ kind: "path", path: filePath })).resolves.toEqual(contents);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("vendorApiKey (Task 10)", () => {
+  test("returns null when the vault is absent — fail-closed", async () => {
+    await expect(vendorApiKey(undefined, "anthropic")).resolves.toBeNull();
+  });
+
+  test("resolves the vendor's key through vendorApiKeyName when the vault carries it", async () => {
+    const vault: NimbusVault = {
+      get: async (key: string) => (key === "anthropic.api_key" ? "sk-configured" : null),
+      set: async () => {},
+      delete: async () => {},
+      listKeys: async () => [],
+    };
+    await expect(vendorApiKey(vault, "anthropic")).resolves.toBe("sk-configured");
+  });
+
+  test("returns null when the vault has no entry for this vendor's key", async () => {
+    await expect(vendorApiKey(new EmptyFakeVault(), "anthropic")).resolves.toBeNull();
+  });
+});
+
+describe("buildMediaPassDeps — remote VLM wiring (Task 10)", () => {
+  test("gate.remoteFor is undefined when no remote vendor is configured", () => {
+    const deps = buildMediaPassDeps({
+      db: db(),
+      roots: [],
+      enabled: true,
+      capabilityDisabled: false,
+      scratchDir: "/scratch",
+    });
+    expect(deps.gate.remoteFor).toBeUndefined();
+  });
+
+  /**
+   * Task 15's wiring fix, second consumer: `MediaPassDeps.remoteVendor` (read by
+   * `media-discovery.ts`'s `findCandidates` to re-offer a granted, locally-understood artifact —
+   * spec § 19.1) was never populated at all, even though `buildRemoteFor`'s `remoteFor` arm
+   * (tested throughout this describe block) already read `input.remoteVlm` correctly. A test that
+   * only exercised `gate.remoteFor` could never have caught this half of the gap — see
+   * `dispatchers.test.ts`'s end-to-end wiring test for the behavioural proof through
+   * `findCandidates` itself.
+   */
+  test("remoteVendor is omitted from the returned deps when no remote vendor is configured", () => {
+    const deps = buildMediaPassDeps({
+      db: db(),
+      roots: [],
+      enabled: true,
+      capabilityDisabled: false,
+      scratchDir: "/scratch",
+    });
+    expect(deps.remoteVendor).toBeUndefined();
+    expect("remoteVendor" in deps).toBe(false);
+  });
+
+  test("remoteVendor carries the configured vendor by VALUE, not just by shape", () => {
+    const deps = buildMediaPassDeps({
+      db: db(),
+      roots: [],
+      enabled: true,
+      capabilityDisabled: false,
+      scratchDir: "/scratch",
+      remoteVlm: "openai",
+      remoteVlmVendorEnabled: true,
+    });
+    expect(deps.remoteVendor).toBe("openai");
+  });
+
+  test("remoteFor returns undefined for an av candidate even when a vendor is configured — § 19.4, AV is local-only", () => {
+    const deps = buildMediaPassDeps({
+      db: db(),
+      roots: [],
+      enabled: true,
+      capabilityDisabled: false,
+      scratchDir: "/scratch",
+      remoteVlm: "anthropic",
+      remoteVlmVendorEnabled: true,
+    });
+    expect(deps.gate.remoteFor?.(candidateFor("av"))).toBeUndefined();
+  });
+
+  test("remoteFor returns undefined when there is no active grant for this artifact", () => {
+    const deps = buildMediaPassDeps({
+      db: db(),
+      roots: [],
+      enabled: true,
+      capabilityDisabled: false,
+      scratchDir: "/scratch",
+      remoteVlm: "anthropic",
+      remoteVlmVendorEnabled: true,
+    });
+    expect(deps.gate.remoteFor?.(candidateFor("image"))).toBeUndefined();
+  });
+
+  test("remoteFor returns a non-local understander once a vendor is configured AND an active grant exists", () => {
+    const database = db();
+    const candidate = candidateFor("image");
+    createGrant(database, {
+      itemId: candidate.itemId,
+      modality: "image",
+      modelVendor: "anthropic",
+      nowMs: Date.now(),
+    });
+    const deps = buildMediaPassDeps({
+      db: database,
+      roots: [],
+      enabled: true,
+      capabilityDisabled: false,
+      scratchDir: "/scratch",
+      remoteVlm: "anthropic",
+      remoteVlmVendorEnabled: true,
+    });
+    const understander = deps.gate.remoteFor?.(candidate);
+    expect(understander).toBeDefined();
+    // DERIVED from the provider, never restated (I34).
+    expect(understander?.isLocal).toBe(false);
+    expect(understander?.model).toBe("anthropic/claude-sonnet-5");
+  });
+
+  /**
+   * Finding 1 of the 2026-09-05 whole-branch review (spec § 18.1 gate 3, § 18.2): `remote_vlm`
+   * naming a vendor is not enough on its own — the vendor's OWN `[llm.remote.<vendor>].enabled`
+   * opt-in must also be on, since `openai.api_key` is shared with the embedding runtime and a
+   * credential that merely exists must never itself enable anything. `remoteVlmVendorEnabled`
+   * defaults to `undefined` when omitted, which must mean OFF (fail-closed), never ON.
+   */
+  test("remoteFor is undefined when the vendor is configured but remoteVlmVendorEnabled is omitted (fail-closed default)", () => {
+    const database = db();
+    const candidate = candidateFor("image");
+    createGrant(database, {
+      itemId: candidate.itemId,
+      modality: "image",
+      modelVendor: "anthropic",
+      nowMs: Date.now(),
+    });
+    const deps = buildMediaPassDeps({
+      db: database,
+      roots: [],
+      enabled: true,
+      capabilityDisabled: false,
+      scratchDir: "/scratch",
+      remoteVlm: "anthropic",
+      // remoteVlmVendorEnabled deliberately omitted.
+    });
+    expect(deps.gate.remoteFor?.(candidate)).toBeUndefined();
+    expect(deps.remoteVendor).toBeUndefined();
+    expect("remoteVendor" in deps).toBe(false);
+  });
+
+  test("remoteFor is undefined when the vendor is configured but remoteVlmVendorEnabled is explicitly false, EVEN WITH an active grant", () => {
+    const database = db();
+    const candidate = candidateFor("image");
+    createGrant(database, {
+      itemId: candidate.itemId,
+      modality: "image",
+      modelVendor: "anthropic",
+      nowMs: Date.now(),
+    });
+    const deps = buildMediaPassDeps({
+      db: database,
+      roots: [],
+      enabled: true,
+      capabilityDisabled: false,
+      scratchDir: "/scratch",
+      remoteVlm: "anthropic",
+      remoteVlmVendorEnabled: false,
+    });
+    // "No remote arm at all" — a granted artifact is not even re-offered by `findCandidates`,
+    // matching the finding's own wording, not merely a refusal deferred to `describe()`.
+    expect(deps.gate.remoteFor?.(candidate)).toBeUndefined();
+    expect(deps.remoteVendor).toBeUndefined();
+  });
+
+  test("a granted understander's isAvailable is false with no vault — vendorApiKey fails closed", async () => {
+    const database = db();
+    const candidate = candidateFor("image");
+    createGrant(database, {
+      itemId: candidate.itemId,
+      modality: "image",
+      modelVendor: "anthropic",
+      nowMs: Date.now(),
+    });
+    const deps = buildMediaPassDeps({
+      db: database,
+      roots: [],
+      enabled: true,
+      capabilityDisabled: false,
+      scratchDir: "/scratch",
+      remoteVlm: "anthropic",
+      remoteVlmVendorEnabled: true,
+    });
+    const understander = deps.gate.remoteFor?.(candidate);
+    await expect(understander?.isAvailable()).resolves.toBe(false);
+  });
+
+  test("a granted understander's isAvailable is true once the vault carries the vendor's key", async () => {
+    const database = db();
+    const candidate = candidateFor("image");
+    createGrant(database, {
+      itemId: candidate.itemId,
+      modality: "image",
+      modelVendor: "anthropic",
+      nowMs: Date.now(),
+    });
+    const deps = buildMediaPassDeps({
+      db: database,
+      roots: [],
+      enabled: true,
+      capabilityDisabled: false,
+      scratchDir: "/scratch",
+      remoteVlm: "anthropic",
+      remoteVlmVendorEnabled: true,
+      vault: {
+        get: async (key: string) => (key === "anthropic.api_key" ? "sk-configured" : null),
+        set: async () => {},
+        delete: async () => {},
+        listKeys: async () => [],
+      },
+    });
+    const understander = deps.gate.remoteFor?.(candidate);
+    await expect(understander?.isAvailable()).resolves.toBe(true);
+  });
+
+  test("a granted understander refuses an unsupported image format BEFORE any network request (bytes arm)", async () => {
+    // Proves the wired `remoteUnderstander.understand` runs `bytesForSource`'s "bytes" arm and
+    // feeds the real bytes into `resolveWireMime`: unrecognised bytes are refused before
+    // `remoteProvider.describe` would ever be reached, so this stays hermetic with no fetch
+    // injected and no network access.
+    const database = db();
+    const candidate = candidateFor("image");
+    createGrant(database, {
+      itemId: candidate.itemId,
+      modality: "image",
+      modelVendor: "anthropic",
+      nowMs: Date.now(),
+    });
+    const deps = buildMediaPassDeps({
+      db: database,
+      roots: [],
+      enabled: true,
+      capabilityDisabled: false,
+      scratchDir: "/scratch",
+      remoteVlm: "anthropic",
+      remoteVlmVendorEnabled: true,
+    });
+    const understander = deps.gate.remoteFor?.(candidate);
+    await expect(
+      understander?.understand({ kind: "bytes", bytes: new Uint8Array([1, 2, 3, 4]), mime: null }),
+    ).rejects.toThrow(/JPEG|PNG|WebP|GIF/);
+  });
+
+  test("a granted understander reads a local path source via bytesForSource's path arm, still hermetically", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "nimbus-mm-remote-img-"));
+    try {
+      const filePath = join(dir, "img.bin");
+      writeFileSync(filePath, new Uint8Array([1, 2, 3, 4])); // not a real image signature
+      const database = db();
+      const candidate = candidateFor("image");
+      createGrant(database, {
+        itemId: candidate.itemId,
+        modality: "image",
+        modelVendor: "anthropic",
+        nowMs: Date.now(),
+      });
+      const deps = buildMediaPassDeps({
+        db: database,
+        roots: [],
+        enabled: true,
+        capabilityDisabled: false,
+        scratchDir: "/scratch",
+        remoteVlm: "anthropic",
+        remoteVlmVendorEnabled: true,
+      });
+      const understander = deps.gate.remoteFor?.(candidate);
+      await expect(understander?.understand({ kind: "path", path: filePath })).rejects.toThrow(
+        /JPEG|PNG|WebP|GIF/,
+      );
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });

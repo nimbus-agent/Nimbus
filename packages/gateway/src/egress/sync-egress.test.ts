@@ -153,3 +153,97 @@ describe("LOCAL_ONLY_SYNC_SERVICES", () => {
     expect(listEgress(db, {})).toHaveLength(1);
   });
 });
+
+describe("recordSyncEgress expectedBytes", () => {
+  /**
+   * Before this field existed a `media.fetchBytes` row's whole payload was `{"method":"..."}` —
+   * the ledger recorded THAT a cloud fetch happened and nothing about its size, which is a thin
+   * disclosure for the one egress class whose entire subject is bytes crossing a boundary.
+   */
+  test("discloses the artifact size on a byte-fetch row", () => {
+    recordSyncEgress(db, {
+      destination: "google_drive",
+      method: "media.fetchBytes",
+      now: 1_000,
+      expectedBytes: 390_842,
+    });
+    expect(JSON.parse(listEgress(db, {})[0]?.payloadSummary ?? "{}")).toEqual({
+      method: "media.fetchBytes",
+      expectedBytes: 390_842,
+    });
+  });
+
+  /**
+   * The resolver shares one closure with the byte fetch, and its round-trip carries no artifact
+   * bytes. An absent field must stay absent rather than becoming a `0` that reads as
+   * "a zero-byte artifact".
+   */
+  test("omits the field entirely when no size is supplied", () => {
+    recordSyncEgress(db, {
+      destination: "google_photos",
+      method: "media.resolveByteUrl",
+      now: 1_000,
+    });
+    const summary = JSON.parse(listEgress(db, {})[0]?.payloadSummary ?? "{}");
+    expect(summary).toEqual({ method: "media.resolveByteUrl" });
+    expect("expectedBytes" in summary).toBe(false);
+  });
+
+  test("keeps a genuine zero distinct from an absent size", () => {
+    recordSyncEgress(db, {
+      destination: "google_drive",
+      method: "media.fetchBytes",
+      now: 1_000,
+      expectedBytes: 0,
+    });
+    expect(JSON.parse(listEgress(db, {})[0]?.payloadSummary ?? "{}")).toEqual({
+      method: "media.fetchBytes",
+      expectedBytes: 0,
+    });
+  });
+
+  /**
+   * `expectedBytes` comes from provider metadata read at index time, so these are reachable
+   * without a bug in the appender. A nonsense number in a disclosure field is worse than the
+   * field's absence, which at least reads as "not known".
+   */
+  test.each([
+    ["negative", -1],
+    ["fractional", 12.5],
+    ["NaN", Number.NaN],
+    ["Infinity", Number.POSITIVE_INFINITY],
+  ])("drops a %s size rather than writing it", (_label, value) => {
+    recordSyncEgress(db, {
+      destination: "google_drive",
+      method: "media.fetchBytes",
+      now: 1_000,
+      expectedBytes: value,
+    });
+    expect(JSON.parse(listEgress(db, {})[0]?.payloadSummary ?? "{}")).toEqual({
+      method: "media.fetchBytes",
+    });
+  });
+
+  test("null reads as 'not known', not as zero", () => {
+    recordSyncEgress(db, {
+      destination: "google_drive",
+      method: "media.fetchBytes",
+      now: 1_000,
+      expectedBytes: null,
+    });
+    expect(JSON.parse(listEgress(db, {})[0]?.payloadSummary ?? "{}")).toEqual({
+      method: "media.fetchBytes",
+    });
+  });
+
+  test("the row still verifies in the BLAKE3 chain", () => {
+    recordSyncEgress(db, {
+      destination: "google_drive",
+      method: "media.fetchBytes",
+      now: 1_000,
+      expectedBytes: 390_842,
+    });
+    recordSyncEgress(db, { destination: "github", method: "sync.run", now: 2_000 });
+    expect(verifyEgressChain(db).ok).toBe(true);
+  });
+});

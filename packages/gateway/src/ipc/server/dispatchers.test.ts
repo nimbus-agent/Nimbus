@@ -16,7 +16,10 @@ import { LlmRegistry } from "../../llm/registry.ts";
 import type { LlmProvider } from "../../llm/types.ts";
 import { SessionMemoryStore } from "../../memory/session-memory-store.ts";
 import { buildMediaPassDeps } from "../../multimodal/build-media-pass-deps.ts";
-import type { MultimodalConfig } from "../../multimodal/multimodal-config.ts";
+import { findCandidates } from "../../multimodal/media-discovery.ts";
+import { createGrant, listActiveGrants } from "../../multimodal/media-grant-store.ts";
+import { UNDERSTANDING_VERSION } from "../../multimodal/media-types.ts";
+import { loadMultimodalConfig, type MultimodalConfig } from "../../multimodal/multimodal-config.ts";
 import { createMockVault } from "../../vault/mock.ts";
 import type { StatusReaders } from "../admin-status-rpc.ts";
 import type { ChatopsRpcCtx } from "../chatops-rpc.ts";
@@ -41,6 +44,7 @@ import {
 import {
   buildMediaPassDepsInput,
   extractKbPageRef,
+  isRemoteVlmVendorEnabled,
   tryDispatchAdminRpc,
   tryDispatchAgentsRpc,
   tryDispatchAuditRpc,
@@ -1183,6 +1187,7 @@ describe("tryDispatchPhase4Rpc", () => {
       maxFrames: 37,
       fetchBudgetBytes: 1024 * 1024 * 1024,
       preferRenditions: true,
+      remoteVlm: null,
     };
     const out = buildMediaPassDepsInput({
       db,
@@ -1208,6 +1213,36 @@ describe("tryDispatchPhase4Rpc", () => {
     expect(new Set([out.vlmBaseUrl, out.vlmModel, String(out.maxFrames)]).size).toBe(3);
   });
 
+  /**
+   * Task 15's fix, first half: `remoteVlm` is the sixth field this mapper silently dropped before
+   * this fix (see the describe-level comment above for the pattern this repeats). Asserting the
+   * VALUE, not just presence, so a swap against another field is caught too — this alone is NOT
+   * proof the feature works end to end, only that the mapper carries the value; see the dedicated
+   * "config.remoteVlm reaches BOTH ..." test below for the behavioural half.
+   */
+  test("buildMediaPassDepsInput forwards remoteVlm by VALUE", () => {
+    const db = trackedDb();
+    const vault = createMockVault();
+    const config: MultimodalConfig = {
+      enabled: true,
+      vlmBaseUrl: "http://127.0.0.1:11434",
+      vlmModel: "qwen2.5vl:7b",
+      maxFrames: 8,
+      fetchBudgetBytes: 2 * 1024 * 1024 * 1024,
+      preferRenditions: false,
+      remoteVlm: "openai",
+    };
+    const out = buildMediaPassDepsInput({
+      db,
+      configDir: undefined,
+      dataDir: "/tmp",
+      config,
+      capabilityDisabled: false,
+      vault,
+    });
+    expect(out.remoteVlm).toBe("openai");
+  });
+
   test("buildMediaPassDepsInput forwards sourceId by VALUE when given, and omits it entirely when not", () => {
     const db = trackedDb();
     const vault = createMockVault();
@@ -1218,6 +1253,7 @@ describe("tryDispatchPhase4Rpc", () => {
       maxFrames: 8,
       fetchBudgetBytes: 2 * 1024 * 1024 * 1024,
       preferRenditions: false,
+      remoteVlm: null,
     };
     const withLabel = buildMediaPassDepsInput({
       db,
@@ -1262,6 +1298,7 @@ describe("tryDispatchPhase4Rpc", () => {
       maxFrames: 8,
       fetchBudgetBytes: 2 * 1024 * 1024 * 1024,
       preferRenditions: false,
+      remoteVlm: null,
     };
     const deps = buildMediaPassDeps(
       buildMediaPassDepsInput({
@@ -1283,6 +1320,340 @@ describe("tryDispatchPhase4Rpc", () => {
     // first and `bearerFor` returned "google-drive-stub-token". Value-independence is the fix.
     await expect(deps.cloudBytes.bearerFor("google_drive")).resolves.not.toBeNull();
   });
+
+  /**
+   * THE most important test in this file for PR 4: `buildMediaPassDepsInput` (this file) and
+   * `buildMediaPassDeps` (build-media-pass-deps.ts) BOTH silently dropped `config.remoteVlm`
+   * before this fix, and every individual unit test for either function still passed — the mapper
+   * tests never asserted the field existed at all, and `build-media-pass-deps.test.ts`'s own
+   * `remoteFor` tests always constructed `BuildMediaPassDepsInput` BY HAND with `remoteVlm` set
+   * directly, so they never exercised the mapper this dispatcher actually calls. This test chains
+   * the two REAL production functions together, starting from a `MultimodalConfig` (the shape
+   * `loadMultimodalConfig` returns) exactly as `tryDispatchMediaRpc` does, and then drives BOTH
+   * downstream consumers of the resulting value to a real behavioural outcome — not just an
+   * intermediate field equality — which a unit test of the mapper alone cannot catch: reverting
+   * either the `buildMediaPassDepsInput` forwarding line OR the `buildMediaPassDeps` assignment
+   * line reds this test, but would leave every pre-existing `remoteFor`/discovery test green.
+   */
+  test("config.remoteVlm reaches BOTH gate.remoteFor and MediaPassDeps.remoteVendor end to end (Task 15 wiring fix)", () => {
+    const db = trackedDb();
+
+    // Seed a locally-understood image, mirroring media-discovery.test.ts's own
+    // `seedUnderstoodImage` fixture — the exact shape PR 4's re-offer clause exists to handle.
+    upsertIndexedItem(db, {
+      service: "google_drive",
+      type: "file",
+      externalId: "img-1",
+      title: "img-1",
+      bodyPreview: "",
+      modifiedAt: 1000,
+      syncedAt: 1000,
+      metadata: { mimeType: "image/png" },
+    });
+    const itemId = db
+      .query<{ id: string }, []>("SELECT id FROM item WHERE external_id = 'img-1'")
+      .get()?.id as string;
+    upsertIndexedItem(db, {
+      service: "nimbus",
+      type: "image_understanding",
+      externalId: `${itemId}:understanding`,
+      title: "Caption — img-1",
+      bodyPreview: "a caption",
+      modifiedAt: 1000,
+      syncedAt: 1000,
+      metadata: {
+        derivedFrom: itemId,
+        understandingVersion: UNDERSTANDING_VERSION,
+        isLocal: true,
+        model: "qwen2.5vl:7b",
+      },
+    });
+    createGrant(db, { itemId, modality: "image", modelVendor: "openai", nowMs: 1000 });
+
+    const config: MultimodalConfig = {
+      enabled: true,
+      vlmBaseUrl: "http://127.0.0.1:11434",
+      vlmModel: "qwen2.5vl:7b",
+      maxFrames: 8,
+      fetchBudgetBytes: 2 * 1024 * 1024 * 1024,
+      preferRenditions: false,
+      remoteVlm: "openai",
+    };
+    const input = buildMediaPassDepsInput({
+      db,
+      configDir: undefined,
+      dataDir: "/tmp",
+      config,
+      capabilityDisabled: false,
+      vault: createMockVault(),
+      // The parent opt-in gate (Finding 1, § 18.2) is a SEPARATE concern from the mapper wiring
+      // this test proves — forced `true` here so this test still isolates the ONE thing it names.
+      // See "a configured remote_vlm with no matching [llm.remote.<vendor>].enabled..." below for
+      // the parent-gate behaviour itself, proven through the real production wiring.
+      remoteVlmVendorEnabled: true,
+    });
+    const deps = buildMediaPassDeps(input);
+
+    // Consumer 1: `MediaPassDeps.remoteVendor` (media-discovery.ts's `findCandidates`). Before the
+    // fix this is `undefined` even though `config.remoteVlm` is "openai", and the granted item is
+    // never re-offered.
+    expect(deps.remoteVendor).toBe("openai");
+    expect(
+      findCandidates(db, { limit: 10, remoteVendor: deps.remoteVendor }).map((c) => c.itemId),
+    ).toEqual([itemId]);
+
+    // Consumer 2: `gate.remoteFor` (build-media-pass-deps.ts's `buildRemoteFor`). Before the fix
+    // `input.remoteVlm` is `undefined` regardless of `config.remoteVlm`, so `remoteFor` is
+    // `undefined` unconditionally and no artifact can ever reach a remote model.
+    const candidate = findCandidates(db, { limit: 10, remoteVendor: deps.remoteVendor })[0];
+    expect(candidate).toBeDefined();
+    if (candidate === undefined) throw new Error("fixture");
+    const understander = deps.gate.remoteFor?.(candidate);
+    expect(understander).toBeDefined();
+    expect(understander?.isLocal).toBe(false);
+  });
+
+  /**
+   * Finding 1 of the 2026-09-05 whole-branch review (spec § 18.1 gate 3, § 18.2): `[multimodal]
+   * remote_vlm` naming a vendor must not be sufficient on its own -- that vendor's OWN
+   * `[llm.remote.<vendor>].enabled` opt-in must also be on, since `openai.api_key` is shared with
+   * the embedding runtime (`llm/vendor-vault-keys.ts`) and a credential that merely exists must
+   * never itself enable sending photos to a vendor. This drives the REAL production wiring --
+   * `loadMultimodalConfig` + `isRemoteVlmVendorEnabled` + `buildMediaPassDepsInput` -- against a
+   * real nimbus.toml with `[multimodal] remote_vlm = "openai"` but NO `[llm.remote.openai]` table
+   * at all, proving the parent-disabled case means "no remote arm at all", not a refusal deferred
+   * to `describe()`: the granted item is not even re-offered by `findCandidates`.
+   */
+  test("a configured remote_vlm with no matching [llm.remote.<vendor>].enabled produces no remote arm at all (Finding 1)", () => {
+    const configDir = mkdtempSync(join(tmpdir(), "disp-media-parent-gate-"));
+    writeFileSync(
+      join(configDir, "nimbus.toml"),
+      '[multimodal]\nenabled = true\nremote_vlm = "openai"\n',
+      "utf8",
+    );
+    const db = trackedDb();
+
+    upsertIndexedItem(db, {
+      service: "google_drive",
+      type: "file",
+      externalId: "img-1",
+      title: "img-1",
+      bodyPreview: "",
+      modifiedAt: 1000,
+      syncedAt: 1000,
+      metadata: { mimeType: "image/png" },
+    });
+    const itemId = db
+      .query<{ id: string }, []>("SELECT id FROM item WHERE external_id = 'img-1'")
+      .get()?.id as string;
+    upsertIndexedItem(db, {
+      service: "nimbus",
+      type: "image_understanding",
+      externalId: `${itemId}:understanding`,
+      title: "Caption — img-1",
+      bodyPreview: "a caption",
+      modifiedAt: 1000,
+      syncedAt: 1000,
+      metadata: {
+        derivedFrom: itemId,
+        understandingVersion: UNDERSTANDING_VERSION,
+        isLocal: true,
+        model: "qwen2.5vl:7b",
+      },
+    });
+    createGrant(db, { itemId, modality: "image", modelVendor: "openai", nowMs: 1000 });
+
+    const config = loadMultimodalConfig(configDir);
+    expect(config.remoteVlm).toBe("openai"); // sanity: the vendor IS configured
+
+    // The exact resolver `tryDispatchMediaRpc` calls in production.
+    const remoteVlmVendorEnabled = isRemoteVlmVendorEnabled(config.remoteVlm, configDir);
+    expect(remoteVlmVendorEnabled).toBe(false); // no [llm.remote.openai] table at all
+
+    const deps = buildMediaPassDeps(
+      buildMediaPassDepsInput({
+        db,
+        configDir,
+        dataDir: "/tmp",
+        config,
+        capabilityDisabled: false,
+        vault: createMockVault(),
+        remoteVlmVendorEnabled,
+      }),
+    );
+
+    // No remote arm at all: the granted item is not even re-offered.
+    expect(deps.remoteVendor).toBeUndefined();
+    expect(findCandidates(db, { limit: 10, remoteVendor: deps.remoteVendor })).toEqual([]);
+    expect(deps.gate.remoteFor).toBeUndefined();
+  });
+
+  test("[llm.remote.<vendor>] present but enabled = false ALSO fails the parent gate closed", () => {
+    const configDir = mkdtempSync(join(tmpdir(), "disp-media-parent-gate-disabled-"));
+    writeFileSync(
+      join(configDir, "nimbus.toml"),
+      '[multimodal]\nenabled = true\nremote_vlm = "openai"\n\n' +
+        '[llm.remote.openai]\nenabled = false\nmodel = "gpt-5"\n',
+      "utf8",
+    );
+    const config = loadMultimodalConfig(configDir);
+    expect(isRemoteVlmVendorEnabled(config.remoteVlm, configDir)).toBe(false);
+  });
+
+  test("isRemoteVlmVendorEnabled is true once [llm.remote.<vendor>] itself opts in", () => {
+    const configDir = mkdtempSync(join(tmpdir(), "disp-media-parent-gate-enabled-"));
+    writeFileSync(
+      join(configDir, "nimbus.toml"),
+      '[multimodal]\nenabled = true\nremote_vlm = "openai"\n\n' +
+        '[llm.remote.openai]\nenabled = true\nmodel = "gpt-5"\n',
+      "utf8",
+    );
+    const config = loadMultimodalConfig(configDir);
+    expect(isRemoteVlmVendorEnabled(config.remoteVlm, configDir)).toBe(true);
+  });
+
+  describe("media.allowRemote / media.grants.list / media.grants.revoke (Task 15)", () => {
+    function withGrantsCtx(overrides: Partial<ServerCtx["options"]> = {}) {
+      const db = trackedDb();
+      const localIndex = new LocalIndex(db);
+      const { ctx } = makeCtx({ localIndex, ...overrides });
+      return { db, ctx };
+    }
+
+    test("all three hit through the chain (not phase4RpcSkipped) — the widened membership guard", async () => {
+      const { ctx } = withGrantsCtx();
+      const list = await tryDispatchPhase4Rpc(ctx, "media.grants.list", {}, "c1");
+      expect(list).not.toBe(phase4RpcSkipped);
+      expect(list).toMatchObject({ grants: [] });
+
+      const revoke = await tryDispatchPhase4Rpc(ctx, "media.grants.revoke", { itemId: "i1" }, "c1");
+      expect(revoke).not.toBe(phase4RpcSkipped);
+      expect(revoke).toMatchObject({ revoked: 0 });
+    });
+
+    test("media.allowRemote writes a real grant through the store and media.grants.list sees it", async () => {
+      const configDir = mkdtempSync(join(tmpdir(), "disp-media-grants-"));
+      writeFileSync(
+        join(configDir, "nimbus.toml"),
+        '[multimodal]\nenabled = true\nremote_vlm = "openai"\n',
+        "utf8",
+      );
+      const db = trackedDb();
+      const localIndex = new LocalIndex(db);
+      upsertIndexedItem(db, {
+        service: "google_drive",
+        type: "file",
+        externalId: "img-1",
+        title: "chart.png",
+        bodyPreview: "",
+        modifiedAt: 1000,
+        syncedAt: 1000,
+        metadata: { mimeType: "image/png" },
+      });
+      const itemId = db
+        .query<{ id: string }, []>("SELECT id FROM item WHERE external_id = 'img-1'")
+        .get()?.id as string;
+      const { ctx } = makeCtx({ localIndex, configDir });
+
+      const out = await tryDispatchPhase4Rpc(
+        ctx,
+        "media.allowRemote",
+        { itemIds: [itemId], vendor: "openai" },
+        "c1",
+      );
+      expect(out).toMatchObject({ granted: 1, alreadyGranted: 0 });
+
+      // Proof this actually reached `media-grant-store.ts` (D27(b)-confined), not a stub: the row
+      // is readable back through the store's own `listActiveGrants`.
+      expect(listActiveGrants(db)).toMatchObject([{ itemId, modelVendor: "openai" }]);
+
+      const listOut = await tryDispatchPhase4Rpc(ctx, "media.grants.list", {}, "c1");
+      expect(listOut).toMatchObject({
+        grants: [{ itemId, title: "chart.png", modelVendor: "openai" }],
+      });
+
+      const revokeOut = await tryDispatchPhase4Rpc(ctx, "media.grants.revoke", { itemId }, "c1");
+      expect(revokeOut).toMatchObject({ revoked: 1 });
+      expect(listActiveGrants(db)).toEqual([]);
+    });
+
+    test("media.allowRemote REFUSES a vendor that does not match the configured remote_vlm", async () => {
+      const configDir = mkdtempSync(join(tmpdir(), "disp-media-grants-mismatch-"));
+      writeFileSync(
+        join(configDir, "nimbus.toml"),
+        '[multimodal]\nenabled = true\nremote_vlm = "openai"\n',
+        "utf8",
+      );
+      const { ctx } = withGrantsCtx({ configDir });
+      await expect(
+        tryDispatchPhase4Rpc(
+          ctx,
+          "media.allowRemote",
+          { itemIds: ["i1"], vendor: "anthropic" },
+          "c1",
+        ),
+      ).rejects.toThrow(/does not match the configured/);
+    });
+
+    test("media.allowRemote REFUSES every vendor when [multimodal] remote_vlm is unset", async () => {
+      const { ctx } = withGrantsCtx();
+      await expect(
+        tryDispatchPhase4Rpc(ctx, "media.allowRemote", { itemIds: ["i1"], vendor: "openai" }, "c1"),
+      ).rejects.toThrow(/no remote vision vendor is configured/);
+    });
+
+    test("all three require LocalIndex, same as media.understand", async () => {
+      const { ctx } = makeCtx();
+      await expect(tryDispatchPhase4Rpc(ctx, "media.allowRemote", {}, "c1")).rejects.toThrow(
+        /requires LocalIndex/,
+      );
+      await expect(tryDispatchPhase4Rpc(ctx, "media.grants.list", {}, "c1")).rejects.toThrow(
+        /requires LocalIndex/,
+      );
+      await expect(tryDispatchPhase4Rpc(ctx, "media.grants.revoke", {}, "c1")).rejects.toThrow(
+        /requires LocalIndex/,
+      );
+    });
+
+    // Unlike media.understand, none of the three needs dataDir or mediaRpcCtx: a grant is a row
+    // in the local index, not a model call, so no scratch dir and no org-policy accessor are
+    // required to write, list or revoke one.
+    test("none of the three requires dataDir or mediaRpcCtx", async () => {
+      const { ctx } = withGrantsCtx(); // no dataDir, no mediaRpcCtx
+      await expect(tryDispatchPhase4Rpc(ctx, "media.grants.list", {}, "c1")).resolves.toMatchObject(
+        { grants: [] },
+      );
+    });
+
+    /**
+     * Review finding (CodeRabbit, PR 4): `loadMultimodalConfig` used to be resolved unconditionally
+     * for all three methods, so a well-formed but non-loopback `vlm_base_url` (which
+     * `loadMultimodalConfig` REFUSES loudly, `MultimodalConfigError`) blocked `media.grants.list`
+     * and `media.grants.revoke` too, even though neither reads `configuredRemoteVlm`. Revocation is
+     * the WITHDRAWAL path for consent and must not fail for a reason unrelated to grants.
+     */
+    test("a non-loopback vlm_base_url blocks media.allowRemote but NOT media.grants.list/revoke", async () => {
+      const configDir = mkdtempSync(join(tmpdir(), "disp-media-bad-vlm-url-"));
+      writeFileSync(
+        join(configDir, "nimbus.toml"),
+        '[multimodal]\nenabled = true\nvlm_base_url = "http://example.com:11434"\n',
+        "utf8",
+      );
+      const { ctx } = withGrantsCtx({ configDir });
+
+      await expect(
+        tryDispatchPhase4Rpc(ctx, "media.allowRemote", { itemIds: ["i1"], vendor: "openai" }, "c1"),
+      ).rejects.toThrow(/not a loopback address/);
+
+      await expect(tryDispatchPhase4Rpc(ctx, "media.grants.list", {}, "c1")).resolves.toMatchObject(
+        { grants: [] },
+      );
+      await expect(
+        tryDispatchPhase4Rpc(ctx, "media.grants.revoke", { itemId: "i1" }, "c1"),
+      ).resolves.toMatchObject({ revoked: 0 });
+    });
+  });
+
   test("an unregistered method through the same path still 404s (negative control)", async () => {
     const { ctx } = makeCtx();
     const phase4Out = await tryDispatchPhase4Rpc(ctx, "definitely.notAMethod", {}, "c1");

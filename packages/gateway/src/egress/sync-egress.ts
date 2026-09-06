@@ -93,11 +93,45 @@ export function recordSyncEgress(
      * egress under another's name.
      */
     readonly sourceId?: string | undefined;
+    /**
+     * The size of the artifact this request is FOR, as recorded in the index at sync time.
+     *
+     * NOT a measurement of this request, and deliberately not named as one. Every caller of this
+     * function appends BEFORE the outbound call (that is the fail-closed property I29 rests on),
+     * so at append time the number of bytes that will actually cross does not exist yet, and the
+     * `content-length` header has not been seen either. Recording a real transferred count would
+     * mean either a second row per fetch or an UPDATE to an append-only, BLAKE3-chained table
+     * whose sole sanctioned mutation is HITL-gated `egress.prune` — neither is worth it.
+     *
+     * So this is an EXPECTATION, and it can differ from the transfer in both directions:
+     * a rendition fetch (`prefer_renditions`) transfers a downsized copy while this stays the
+     * ORIGINAL's indexed size, and stale provider metadata can under- or overstate it. Read it as
+     * "how big this artifact was believed to be when the request went out" — which is the
+     * question a reader auditing a byte-fetch window actually has, and which the row could not
+     * answer at all before (it carried only `{"method":"media.fetchBytes"}`, so the ledger
+     * recorded THAT a fetch happened and nothing about its size).
+     *
+     * Absent for the two seams where no artifact size is knowable or meaningful: a scheduled
+     * `sync.run` covers a whole paginated run, and `media.resolveByteUrl` is a metadata
+     * round-trip that transfers no artifact bytes at all.
+     */
+    readonly expectedBytes?: number | null | undefined;
   },
 ): { rowHash: string } | undefined {
   if (LOCAL_ONLY_SYNC_SERVICES.has(args.destination)) {
     return undefined;
   }
+  // Guarded rather than trusted: `expectedBytes` originates in provider metadata read at index
+  // time, so a negative, fractional or NaN value is reachable without any bug here. A value that
+  // cannot be a byte count is dropped rather than written — a nonsense number in a disclosure
+  // field is worse than the field's absence, which at least reads as "not known".
+  const expected =
+    typeof args.expectedBytes === "number" &&
+    Number.isFinite(args.expectedBytes) &&
+    Number.isInteger(args.expectedBytes) &&
+    args.expectedBytes >= 0
+      ? args.expectedBytes
+      : undefined;
   return appendEgressEntry(db, {
     timestamp: args.now,
     sourceType: "sync",
@@ -106,7 +140,13 @@ export function recordSyncEgress(
     sourceId: args.sourceId === undefined || args.sourceId === "" ? null : args.sourceId,
     destination: args.destination,
     method: args.method,
-    payloadSummary: redactEgressSummary({ method: args.method }),
+    // Conditional spread, so an absent expectation stays ABSENT rather than becoming a `0` that
+    // would read as "a zero-byte artifact" — the same absent-is-not-zero rule `media-gate.ts`
+    // applies to its frame counts.
+    payloadSummary: redactEgressSummary({
+      method: args.method,
+      ...(expected === undefined ? {} : { expectedBytes: expected }),
+    }),
     hitlStatus: "not_required",
     resultStatus: "authorized",
   });

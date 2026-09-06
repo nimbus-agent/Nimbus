@@ -1,14 +1,20 @@
 /**
- * `media.understand` — runs the multimodal understanding pass (spec § 8).
- *
- * LAN-FORBIDDEN and absent from the Tauri allowlist: it reads local files and spawns subprocesses,
- * the same posture the whole `exec.*` namespace has. Do not add it to `ALLOWED_METHODS`.
+ * `media.understand`, `media.allowRemote`, `media.grants.list` and `media.grants.revoke` (spec
+ * § 8, § 18–19). All four are LAN-FORBIDDEN (the whole `media` namespace, `lan-rpc.ts`) and absent
+ * from the Tauri allowlist: `media.understand` reads local files and spawns subprocesses, the same
+ * posture the whole `exec.*` namespace has, and the other three grant/enumerate/revoke consent to
+ * send a user's photos to a third party -- the local owner's to give, never a paired peer's. Do
+ * not add any of the four to `ALLOWED_METHODS`.
  *
  * Params are validated, never coerced — an unparseable `limit` is a caller error, and silently
- * defaulting it would run an unbounded pass the caller thought they had bounded.
+ * defaulting it would run an unbounded pass the caller thought they had bounded. Same posture for
+ * `media.allowRemote`'s `vendor`: a mismatch against the CONFIGURED `[multimodal] remote_vlm` is
+ * REFUSED, never silently rewritten to the configured vendor — the user asked for a specific third
+ * party, and granting a different one behind their back is worse than granting none.
  */
+import type { MediaGrantWithTitle } from "../multimodal/media-grant-store.ts";
 import type { MediaPassSummary } from "../multimodal/media-pass.ts";
-import type { MediaModality } from "../multimodal/media-types.ts";
+import type { MediaModality, RemoteVlmVendor } from "../multimodal/media-types.ts";
 import type { EnforcedPolicy } from "../policy/policy-gate.ts";
 
 /**
@@ -28,7 +34,7 @@ export interface MediaRpcCtx {
 }
 
 export interface MediaRpcDeps {
-  readonly runPass: (opts: {
+  readonly runPass?: (opts: {
     service?: string;
     modality?: MediaModality;
     sinceMs?: number;
@@ -43,18 +49,76 @@ export interface MediaRpcDeps {
     preferRenditions?: boolean;
   }) => Promise<MediaPassSummary>;
   readonly nowMs?: () => number;
+  /**
+   * `[multimodal] remote_vlm`, resolved ONCE by the server wiring and handed down here — never
+   * re-read from the request. `media.allowRemote` refuses when the caller's `vendor` does not
+   * match this exactly (§ 19.5): writing a grant for a vendor the install cannot use is the
+   * ships-inert pattern this whole PR exists to close, and silently substituting the configured
+   * vendor for the one the caller asked for would be worse, since the user named a specific third
+   * party. Required for `media.allowRemote` specifically — a caller that omits it is a wiring bug,
+   * not a request the method can answer either way.
+   */
+  readonly configuredRemoteVlm?: RemoteVlmVendor | null;
+  /**
+   * The grant-store write for ONE item, bound to a real `Database` by the server wiring
+   * (`media-grant-store.ts`'s `createGrant`, confined there by D27(b) — this file never touches
+   * `media_grant` itself). `alreadyActive` is what lets `media.allowRemote` report a batch's
+   * new-vs-already-granted split honestly rather than treating every call as new.
+   */
+  readonly grantRemote?: (args: {
+    readonly itemId: string;
+    readonly vendor: string;
+    readonly nowMs: number;
+  }) => { readonly alreadyActive: boolean };
+  /** `media-grant-store.ts`'s `listActiveGrantsWithTitles`, bound to a real `Database`. */
+  readonly listGrants?: () => readonly MediaGrantWithTitle[];
+  /** `media-grant-store.ts`'s `revokeGrant`, bound to a real `Database`. Returns the row count. */
+  readonly revokeGrants?: (args: {
+    readonly itemId: string;
+    readonly modelVendor?: string;
+    readonly nowMs: number;
+  }) => number;
 }
 
 const DEFAULT_LIMIT = 50;
 const DAY_MS = 86_400_000;
 
+const MEDIA_RPC_METHODS = new Set([
+  "media.understand",
+  "media.allowRemote",
+  "media.grants.list",
+  "media.grants.revoke",
+]);
+
+export type MediaRpcResult =
+  | MediaPassSummary
+  | { readonly granted: number; readonly alreadyGranted: number }
+  | { readonly grants: readonly MediaGrantWithTitle[] }
+  | { readonly revoked: number };
+
 export async function dispatchMediaRpc(
   method: string,
   rawParams: unknown,
   deps: MediaRpcDeps,
-): Promise<MediaPassSummary | undefined> {
-  if (method !== "media.understand") {
+): Promise<MediaRpcResult | undefined> {
+  if (!MEDIA_RPC_METHODS.has(method)) {
     return undefined;
+  }
+  if (method === "media.allowRemote") {
+    return handleAllowRemote(rawParams, deps);
+  }
+  if (method === "media.grants.list") {
+    return handleGrantsList(deps);
+  }
+  if (method === "media.grants.revoke") {
+    return handleGrantsRevoke(rawParams, deps);
+  }
+  return handleUnderstand(rawParams, deps);
+}
+
+async function handleUnderstand(rawParams: unknown, deps: MediaRpcDeps): Promise<MediaPassSummary> {
+  if (deps.runPass === undefined) {
+    throw new Error("media.understand requires deps.runPass");
   }
   const params = asRecord(rawParams);
 
@@ -73,6 +137,121 @@ export async function dispatchMediaRpc(
     ...(fetchBudgetBytes === undefined ? {} : { fetchBudgetBytes }),
     ...(preferRenditions === undefined ? {} : { preferRenditions }),
   });
+}
+
+/**
+ * `itemIds` is deliberately NOT deduplicated before granting: a duplicate id in the same call
+ * naturally reports as `granted: 1, alreadyGranted: 1` because the second `grantRemote` call sees
+ * the first's write — the same idempotent lookup-then-insert `createGrant` already applies to any
+ * two calls, whether they land in one request or two.
+ */
+function readItemIds(v: unknown): string[] {
+  if (!Array.isArray(v) || v.length === 0) {
+    throw new Error("media.allowRemote: itemIds must be a non-empty array of strings");
+  }
+  return v.map((entry, i) => {
+    if (typeof entry !== "string" || entry.length === 0) {
+      throw new Error(`media.allowRemote: itemIds[${i}] must be a non-empty string`);
+    }
+    return entry;
+  });
+}
+
+function readVendor(v: unknown, methodLabel: string): string {
+  if (typeof v !== "string" || v.length === 0) {
+    throw new Error(`${methodLabel}: vendor must be a non-empty string`);
+  }
+  return v;
+}
+
+/**
+ * The refusal this whole method exists to enforce (§ 19.5): a grant for a vendor the install
+ * cannot use is the ships-inert pattern again, and silently substituting the configured vendor
+ * for the one the caller asked for would be worse, since the caller named a specific third party.
+ */
+function requireConfiguredVendorMatch(
+  configured: RemoteVlmVendor | null | undefined,
+  vendor: string,
+): void {
+  if (configured === undefined) {
+    throw new Error("media.allowRemote requires deps.configuredRemoteVlm to be wired");
+  }
+  if (configured === null) {
+    throw new Error(
+      `media.allowRemote: no remote vision vendor is configured ([multimodal] remote_vlm is unset); ` +
+        `refusing to grant "${vendor}" rather than accepting a grant nothing can ever use`,
+    );
+  }
+  if (configured !== vendor) {
+    throw new Error(
+      `media.allowRemote: requested vendor "${vendor}" does not match the configured ` +
+        `[multimodal] remote_vlm ("${configured}"); refusing rather than silently substituting it`,
+    );
+  }
+}
+
+async function handleAllowRemote(
+  rawParams: unknown,
+  deps: MediaRpcDeps,
+): Promise<{ granted: number; alreadyGranted: number }> {
+  if (deps.grantRemote === undefined) {
+    throw new Error("media.allowRemote requires deps.grantRemote to be wired");
+  }
+  const params = asRecord(rawParams);
+  const itemIds = readItemIds(params["itemIds"]);
+  const vendor = readVendor(params["vendor"], "media.allowRemote");
+  requireConfiguredVendorMatch(deps.configuredRemoteVlm, vendor);
+
+  const nowMs = deps.nowMs ?? (() => Date.now());
+  let granted = 0;
+  let alreadyGranted = 0;
+  for (const itemId of itemIds) {
+    const { alreadyActive } = deps.grantRemote({ itemId, vendor, nowMs: nowMs() });
+    if (alreadyActive) {
+      alreadyGranted += 1;
+    } else {
+      granted += 1;
+    }
+  }
+  return { granted, alreadyGranted };
+}
+
+function handleGrantsList(deps: MediaRpcDeps): { grants: readonly MediaGrantWithTitle[] } {
+  if (deps.listGrants === undefined) {
+    throw new Error("media.grants.list requires deps.listGrants to be wired");
+  }
+  return { grants: deps.listGrants() };
+}
+
+function readItemId(v: unknown, methodLabel: string): string {
+  if (typeof v !== "string" || v.length === 0) {
+    throw new Error(`${methodLabel}: itemId must be a non-empty string`);
+  }
+  return v;
+}
+
+function readOptionalVendor(v: unknown, methodLabel: string): string | undefined {
+  if (v === undefined || v === null) return undefined;
+  if (typeof v !== "string" || v.length === 0) {
+    throw new Error(`${methodLabel}: modelVendor must be a non-empty string`);
+  }
+  return v;
+}
+
+function handleGrantsRevoke(rawParams: unknown, deps: MediaRpcDeps): { revoked: number } {
+  if (deps.revokeGrants === undefined) {
+    throw new Error("media.grants.revoke requires deps.revokeGrants to be wired");
+  }
+  const params = asRecord(rawParams);
+  const itemId = readItemId(params["itemId"], "media.grants.revoke");
+  const modelVendor = readOptionalVendor(params["modelVendor"], "media.grants.revoke");
+  const nowMs = deps.nowMs ?? (() => Date.now());
+  const revoked = deps.revokeGrants({
+    itemId,
+    ...(modelVendor === undefined ? {} : { modelVendor }),
+    nowMs: nowMs(),
+  });
+  return { revoked };
 }
 
 function asRecord(v: unknown): Record<string, unknown> {

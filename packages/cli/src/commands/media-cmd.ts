@@ -16,8 +16,13 @@
  * that leg is budgeted, capped, and I29-ledgered rather than unbounded — so a `--yes` gate here
  * would be ceremony that trains users to type it without reading it, not a real guardrail.
  */
+import { formatBytes } from "../lib/format-bytes.ts";
 import { withGatewayIpc } from "../lib/with-gateway-ipc.ts";
+import { runAllowRemoteCmd, runGrantsCmd } from "./media-grants-cmd.ts";
 
+// Hand-mirrored from the gateway's `SkipReason` (packages/cli may not import gateway source).
+// A missing member here does not fail typecheck at the boundary — the summary arrives as JSON —
+// it prints nothing and once crashed the renderer outright. Both trees change together.
 export type SkipReasonKey =
   | "over_byte_cap"
   | "no_local_model"
@@ -27,6 +32,8 @@ export type SkipReasonKey =
   | "path_outside_roots"
   | "transcode_failed"
   | "transcribe_failed"
+  | "describe_failed"
+  | "unsupported_image_format"
   | "not_configured"
   | "rate_limited";
 
@@ -72,27 +79,10 @@ export interface CliPreflightRefusal {
   readonly budgetBytes: number;
 }
 
-/**
- * Bytes as a short DECIMAL string (`3.9 GB`, `512 MB`), matching spec § 16.9's printed shape and
- * `--budget`'s decimal units — `parseBudget` treats `GB` as 10^9, so echoing a binary-rounded
- * number back at an operator who typed `4GB` would not agree with what they asked for.
- * Exact for a byte count under 1 kB, since rounding `873` to `0.9 kB` loses more than it saves.
- */
-export function formatBytes(bytes: number): string {
-  const units: readonly (readonly [number, string])[] = [
-    [1_000 ** 3, "GB"],
-    [1_000 ** 2, "MB"],
-    [1_000, "kB"],
-  ];
-  for (const [scale, label] of units) {
-    if (bytes >= scale) {
-      const value = bytes / scale;
-      // One decimal below 10 (3.9 GB), none above it (412 MB) — the extra digit stops mattering.
-      return `${value < 10 ? value.toFixed(1) : Math.round(value)} ${label}`;
-    }
-  }
-  return `${bytes} B`;
-}
+// `formatBytes` now lives in `../lib/format-bytes.ts` (re-exported here for back-compat, and used
+// below) so that `media-grants-cmd.ts` can reuse it without an import cycle between the two
+// command files.
+export { formatBytes } from "../lib/format-bytes.ts";
 
 export interface ParsedMediaArgs {
   readonly kind: "understand";
@@ -261,6 +251,18 @@ export function parseMediaArgs(argv: readonly string[]): ParsedMediaArgs {
 }
 
 /**
+ * Human-readable labels for a `SkipReasonKey`, appended after the raw `reason: count` line so the
+ * key a machine (or `--json`) reads and the sentence a person reads never disagree. Only the two
+ * PR-4 additions carry a label today — the older reasons are left as their raw key alone, which is
+ * pre-existing behavior this task does not change.
+ */
+const REASON_LABELS: Readonly<Partial<Record<SkipReasonKey, string>>> = {
+  describe_failed: "the vision model failed to describe it",
+  unsupported_image_format:
+    "not a JPEG, PNG, WebP or GIF — refused rather than sent as an unknown type",
+};
+
+/**
  * The exact text for a non-"completed" `stopReason` — what happened, and what to do about it.
  * `budget_exhausted` is the important case: the gateway priced the run up front and refused it
  * because the cost exceeded `--budget`, leaving the resume cursor untouched on purpose (spec
@@ -350,7 +352,8 @@ export function renderSummary(summary: CliSummary): string {
   if (reasons.length > 0) {
     lines.push("Skipped:");
     for (const [reason, n] of reasons) {
-      lines.push(`  ${reason}: ${n}`);
+      const label = REASON_LABELS[reason as SkipReasonKey];
+      lines.push(label === undefined ? `  ${reason}: ${n}` : `  ${reason}: ${n} — ${label}`);
     }
   }
   lines.push(`Cloud bytes fetched: ${summary.cloudBytesFetched}`);
@@ -373,6 +376,19 @@ Usage:
                            [--renditions]         (prefer smaller downsized copies over originals)
                            [--originals]          (always fetch the original, never a rendition)
                            [--json]
+
+  nimbus media allow-remote <itemId>... --vendor <name>
+  nimbus media allow-remote --service <name> --limit N --vendor <name> [--since <days>]
+  nimbus media grants list
+  nimbus media grants revoke <itemId> [--vendor <name>]
+
+Grants remote-vision consent for specific images (never audio/video), one artifact at a time and
+by explicit approval only: allow-remote always shows every matching artifact by title before
+asking to confirm, naming both the source (the service holding the bytes today) and the
+destination (the third-party vendor about to receive them). A selector form (--service/--since)
+MUST also pass --limit — there is no default, since an unbounded grant must never be expressible.
+"grants list" names the vendor holding each active grant; "grants revoke" always requires an item
+id (never "revoke everything").
 
 Runs the budgeted, resumable understanding pass over indexed local AND cloud-backed (Google Drive,
 Google Photos, OneDrive) audio, video and still images: transcribes recordings and captions images
@@ -405,6 +421,14 @@ export async function runMediaCmd(args: string[]): Promise<void> {
   const sub = args[0];
   if (sub === undefined || sub === "help" || sub === "--help" || sub === "-h") {
     printMediaHelp();
+    return;
+  }
+  if (sub === "allow-remote") {
+    await runAllowRemoteCmd(args.slice(1));
+    return;
+  }
+  if (sub === "grants") {
+    await runGrantsCmd(args.slice(1));
     return;
   }
   const isJson = args.includes("--json");

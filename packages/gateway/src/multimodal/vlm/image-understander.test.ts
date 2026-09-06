@@ -38,7 +38,8 @@ describe("createImageUnderstander", () => {
 
   test("understand reads the file into memory and sends the caption prompt", async () => {
     const spy = vlmSpy();
-    const bytes = new Uint8Array([9, 8, 7]);
+    // Real PNG magic bytes: the mime sniff must resolve for the describe call to be reached.
+    const bytes = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
     const u = createImageUnderstander({
       vlm: spy.provider,
       readFile: () => Promise.resolve(bytes),
@@ -51,6 +52,7 @@ describe("createImageUnderstander", () => {
     expect(spy.calls).toHaveLength(1);
     expect(spy.calls[0]?.bytes).toBe(bytes);
     expect(spy.calls[0]?.prompt).toBe(IMAGE_CAPTION_PROMPT);
+    expect(spy.calls[0]?.mimeType).toBe("image/png");
     expect(spy.calls[0]?.egressMethod).toBe("multimodal.vlm.image");
   });
 
@@ -87,11 +89,25 @@ describe("createImageUnderstander", () => {
   test("an empty caption REJECTS rather than writing a row that claims nothing", async () => {
     const u = createImageUnderstander({
       vlm: vlmSpy("   ").provider,
-      readFile: () => Promise.resolve(new Uint8Array([1])),
+      // Real PNG magic bytes so the mime sniff resolves and the describe call is reached.
+      readFile: () =>
+        Promise.resolve(new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])),
     });
     await expect(u.understand({ kind: "path", path: "/photos/x.png" })).rejects.toThrow(
       /empty caption/i,
     );
+  });
+
+  test("bytes that sniff to no known image format REJECT with unsupported_image_format", async () => {
+    const spy = vlmSpy();
+    const u = createImageUnderstander({
+      vlm: spy.provider,
+      readFile: () => Promise.resolve(new Uint8Array([1, 2, 3])),
+    });
+    await expect(u.understand({ kind: "path", path: "/photos/x.heic" })).rejects.toThrow(
+      /not JPEG, PNG, WebP or GIF/i,
+    );
+    expect(spy.calls).toHaveLength(0);
   });
 
   test("a zero-byte file REJECTS before the model is contacted", async () => {

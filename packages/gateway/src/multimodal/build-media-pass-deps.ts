@@ -9,20 +9,24 @@
  * arm, so an image or video candidate no longer falls through to `unresolvable_modality` here.
  */
 import type { Database } from "bun:sqlite";
+import { readFile as fsReadFile } from "node:fs/promises";
 import { getValidGoogleAccessToken } from "../auth/google-access-token.ts";
 import { getValidMicrosoftAccessToken } from "../auth/microsoft-access-token.ts";
 import { loadNimbusFilesystemRootsFromConfigDir } from "../config/filesystem-toml.ts";
 import { recordSyncEgress } from "../egress/sync-egress.ts";
 import { wrapLedgeredVlm } from "../egress/vlm-egress.ts";
 import { GpuArbiter } from "../llm/gpu-arbiter.ts";
+import { vendorApiKeyName } from "../llm/vendor-vault-keys.ts";
 import { safeFetchFollowing } from "../util/safe-fetch.ts";
 import type { NimbusVault } from "../vault/nimbus-vault.ts";
 import { WhisperSttProvider } from "../voice/stt.ts";
 import { createAvUnderstander } from "./frames/av-understander.ts";
 import { resolveFfprobeBin } from "./frames/frame-extract.ts";
-import type { LocalUnderstander } from "./media-gate.ts";
+import type { Understander } from "./media-gate.ts";
+import { hasActiveGrant } from "./media-grant-store.ts";
 import type { MediaCloudDeps, MediaPassDeps } from "./media-pass.ts";
-import type { MediaModality } from "./media-types.ts";
+import type { MediaCandidate, MediaModality, MediaSource, RemoteVlmVendor } from "./media-types.ts";
+import { UnsupportedImageFormatError } from "./media-types.ts";
 import {
   DEFAULT_FETCH_BUDGET_BYTES,
   DEFAULT_MAX_FRAMES,
@@ -32,9 +36,12 @@ import {
 } from "./multimodal-config.ts";
 import { resolveFfmpegBin } from "./stt/ffmpeg-bin.ts";
 import { createLongFormStt } from "./stt/long-form-stt.ts";
+import { IMAGE_CAPTION_PROMPT } from "./vlm/caption-prompts.ts";
+import { resolveWireMime } from "./vlm/image-mime.ts";
 import { createImageUnderstander } from "./vlm/image-understander.ts";
 import type { FetchLike } from "./vlm/ollama-vlm.ts";
 import { createOllamaVlm } from "./vlm/ollama-vlm.ts";
+import { createRemoteVlm } from "./vlm/remote/remote-vlm-shared.ts";
 
 export interface BuildMediaPassDepsInput {
   readonly db: Database;
@@ -91,6 +98,29 @@ export interface BuildMediaPassDepsInput {
    * file its egress under another's name.
    */
   readonly sourceId?: string;
+  /**
+   * `[multimodal] remote_vlm` (Task 5's `MultimodalConfig.remoteVlm`), `null` when unset — which is
+   * every install's state before a remote adapter ships (Task 10) and every install that never
+   * opts in after. Threading this through is what lets `buildRemoteFor` check "is a vendor
+   * configured" independently of "is this exact artifact granted": neither alone is sufficient
+   * (§ 19.3 — a grant with no configured vendor must still resolve LOCAL, never a refusal).
+   */
+  readonly remoteVlm?: RemoteVlmVendor | null;
+  /**
+   * `[llm.remote.<vendor>].enabled` for the vendor named by `remoteVlm` above — gate 3 of § 18.1
+   * needs BOTH "a vendor is named" (`remoteVlm`) AND "that vendor's OWN opt-in is on" (this field);
+   * neither alone is sufficient (§ 18.2). `llm/vendor-vault-keys.ts` deliberately SHARES
+   * `openai.api_key` with the embedding runtime, so an install can hold a live key while having
+   * never opted OpenAI in for text, let alone for vision — a credential that merely exists must
+   * never itself enable sending photos to a vendor.
+   *
+   * Resolved by `ipc/server/dispatchers.ts`'s `tryDispatchMediaRpc` from `[llm.remote.<vendor>]`,
+   * the SAME nimbus.toml the `[multimodal]` section itself lives in, and forwarded here
+   * UNCOMBINED with `remoteVlm` — this file, not the dispatcher, is what decides what an absent
+   * flag means. Absent or `false`: no remote arm, matching every other config-driven switch in
+   * this file's own fail-closed default.
+   */
+  readonly remoteVlmVendorEnabled?: boolean;
 }
 
 /**
@@ -125,6 +155,23 @@ async function cloudBearerFor(
 }
 
 /**
+ * The remote VLM arm's Vault read, mirroring `cloudBearerFor`'s fail-closed shape: no vault means
+ * no key, never a guess and never an environment fallback (Non-Negotiable #3). Resolved PER CALL,
+ * same as `platform/assemble.ts`'s text-route `apiKey` closures — a key added after boot works
+ * with no restart, and `vendorApiKeyName` is the ONE place a vendor's Vault key name is
+ * constructed (D11).
+ */
+export async function vendorApiKey(
+  vault: NimbusVault | undefined,
+  vendor: RemoteVlmVendor,
+): Promise<string | null> {
+  if (vault === undefined) {
+    return null;
+  }
+  return vault.get(vendorApiKeyName(vendor));
+}
+
+/**
  * The cloud arm's shared collaborators (spec § 16.2–16.6). `fetchFn` is `safeFetchFollowing` —
  * every hop of a redirect re-validated against the private-address/SSRF check, credentials
  * stripped on a cross-origin hop — never a bare `fetch`: `cloud-url-resolver.ts`'s own `fetchFn`
@@ -143,7 +190,11 @@ function buildCloudBytesDeps(input: BuildMediaPassDepsInput): MediaCloudDeps {
   return {
     bearerFor: (service: string) => cloudBearerFor(input.vault, service),
     fetchFn: (url: string, init: RequestInit) => safeFetchFollowing(url, init),
-    appendEgress: (row: { destination: string; method: string }) =>
+    // `expectedBytes` is OPTIONAL on the seam and only `cloud-bytes.ts` supplies it: the resolver
+    // shares this one closure and its `media.resolveByteUrl` row is a metadata round-trip that
+    // transfers no artifact bytes, so it correctly leaves the field absent rather than attaching
+    // a size to a request that never carries one.
+    appendEgress: (row: { destination: string; method: string; expectedBytes?: number | null }) =>
       recordSyncEgress(input.db, { ...row, now: Date.now(), sourceId: input.sourceId }),
     sleep: (ms: number) => new Promise<void>((resolveSleep) => setTimeout(resolveSleep, ms)),
   };
@@ -207,6 +258,98 @@ export function withTranscribeTimeout(
     });
 }
 
+/**
+ * Reads a `MediaSource`'s bytes, mirroring `image-understander.ts`'s inline pattern for the local
+ * arm: cloud bytes (PR 3) never touch disk and are taken directly, a local artifact is read here.
+ * No exported equivalent existed to reuse (checked before adding this) — a second private copy in
+ * the one other caller would have been the third occurrence of the same three-line branch.
+ *
+ * Exported so both `MediaSource` arms can be exercised directly, without routing a real image
+ * through the wrapped remote provider's `describe()` (a real outbound request) just to prove which
+ * branch ran.
+ */
+export async function bytesForSource(source: MediaSource): Promise<Uint8Array> {
+  return source.kind === "bytes" ? source.bytes : new Uint8Array(await fsReadFile(source.path));
+}
+
+/**
+ * The grant half of the remote arm. Returns a provider only when a vendor is configured AND an
+ * active grant names it for this artifact — the two independent conditions of § 18.1 steps 3 and 4.
+ *
+ * `vendor` arrives here ALREADY GATED by `buildMediaPassDeps`'s own gate-3 check (the vendor's
+ * `[llm.remote.<vendor>].enabled` opt-in, § 18.2): a configured-but-disabled vendor is passed in
+ * as `null`, exactly as if `[multimodal] remote_vlm` were unset, so the `vendor === null` check
+ * below covers BOTH "unconfigured" and "configured but its parent opt-in is off" — there is
+ * nothing left for this function to check about the parent switch itself.
+ *
+ * The `Database` read lives here rather than in the gate so `media-gate.ts` never touches SQL and
+ * D27(b) holds without an exemption for it.
+ *
+ * The remote provider and its `Understander` adapter are built ONCE, here, when `vendor` is
+ * non-null — not inside the returned per-candidate closure — so one provider instance (and one
+ * egress-ledger wrapper) serves every granted artifact in the pass, mirroring how `vlm`/
+ * `imageUnderstander` are each built once in `buildMediaPassDeps` below.
+ */
+function buildRemoteFor(
+  input: BuildMediaPassDepsInput,
+  vendor: RemoteVlmVendor | null,
+): ((candidate: MediaCandidate) => Understander | undefined) | undefined {
+  if (vendor === null) return undefined;
+
+  // THE ONLY production site that may name `createRemoteVlm` (static rule D27(a)) -- the same file
+  // that already holds `createOllamaVlm` under D22(g), so one wiring site carries both and the two
+  // rules cannot point at different files for the same class of object.
+  const remoteProvider = wrapLedgeredVlm(
+    input.db,
+    createRemoteVlm({ vendor, apiKey: () => vendorApiKey(input.vault, vendor) }),
+  );
+
+  const remoteUnderstander: Understander = {
+    // DERIVED from the provider, never restated (I34).
+    isLocal: remoteProvider.isLocal,
+    model: `${vendor}/${remoteProvider.model}`,
+    isAvailable: () => remoteProvider.isAvailable(),
+    understand: async (source) => {
+      const bytes = await bytesForSource(source);
+      if (bytes.byteLength === 0) {
+        // Mirrors `image-understander.ts`'s own guard: empty bytes still resolve a MIME when the
+        // source carries a declared type (`resolveWireMime`'s fallback), which would otherwise
+        // send an empty payload to a vendor and buy a paid, ledgered request for nothing. Refuse
+        // before the call, not after it.
+        throw new Error("image source is empty");
+      }
+      const mime = resolveWireMime(bytes, source.kind === "bytes" ? source.mime : null);
+      if (mime === null) {
+        throw new UnsupportedImageFormatError("not a JPEG, PNG, WebP or GIF");
+      }
+      // `readCaption` (remote-vlm-shared.ts) already trims and rejects an empty caption before
+      // `describe()` resolves, so no second guard is needed here — this line only ever runs with
+      // an already-validated, non-empty `text`.
+      const { text } = await remoteProvider.describe({
+        bytes,
+        prompt: IMAGE_CAPTION_PROMPT,
+        mimeType: mime,
+        egressMethod: "multimodal.vlm.image",
+      });
+      return { text };
+    },
+  };
+
+  return (candidate: MediaCandidate): Understander | undefined => {
+    if (candidate.modality !== "image") return undefined; // § 19.4: AV is local-only, always.
+    if (
+      !hasActiveGrant(input.db, {
+        itemId: candidate.itemId,
+        modality: "image",
+        modelVendor: vendor,
+      })
+    ) {
+      return undefined;
+    }
+    return remoteUnderstander;
+  };
+}
+
 export type BuiltMediaPassDeps = Omit<
   MediaPassDeps,
   "limit" | "service" | "modality" | "sinceMs" | "afterItemId"
@@ -250,6 +393,16 @@ export function buildMediaPassDeps(input: BuildMediaPassDepsInput): BuiltMediaPa
     ffprobeBin: resolveFfprobeBin(input.ffprobeBin),
   });
 
+  // Gate 3 of § 18.1 (spec § 18.2): `[multimodal] remote_vlm` naming a vendor is not enough on its
+  // own — that vendor's OWN `[llm.remote.<vendor>].enabled` opt-in must also be on, or a
+  // credential that merely exists (`openai.api_key` is shared with the embedding runtime) would
+  // silently enable sending images to a vendor nobody separately opted into for vision. Computed
+  // ONCE so both consumers below — `remoteFor` and `MediaPassDeps.remoteVendor` (read by
+  // `media-discovery.ts`'s re-offer query) — see the same answer: a disabled parent must mean no
+  // remote arm exists AT ALL, not a refusal deferred to `describe()`.
+  const remoteVlm =
+    input.remoteVlm != null && input.remoteVlmVendorEnabled === true ? input.remoteVlm : null;
+
   return {
     db: input.db,
     roots: input.roots,
@@ -260,11 +413,26 @@ export function buildMediaPassDeps(input: BuildMediaPassDepsInput): BuiltMediaPa
     fetchBudgetBytes: input.fetchBudgetBytes ?? DEFAULT_FETCH_BUDGET_BYTES,
     preferRenditions: input.preferRenditions ?? DEFAULT_PREFER_RENDITIONS,
     cloudBytes: buildCloudBytesDeps(input),
+    // The OTHER consumer of the GATED `remoteVlm` above, alongside `buildRemoteFor` below:
+    // `findCandidates` (media-discovery.ts) reads THIS field to re-offer a locally-understood,
+    // actively-granted artifact (spec § 19.1). Omitted (rather than `null`), matching the field's
+    // own `string | undefined` shape on `MediaPassDeps` -- an install with no USABLE remote vendor
+    // (unconfigured, OR configured but not enabled under `[llm.remote.<vendor>]`) must run the
+    // exact query it ran before PR 4, with no parameter bound for a clause that isn't there, not a
+    // `null` threaded through and compared away.
+    ...(remoteVlm === null ? {} : { remoteVendor: remoteVlm }),
     gate: {
       enabled: input.enabled,
       capabilityDisabled: input.capabilityDisabled,
-      understanderFor: (modality: MediaModality): LocalUnderstander | undefined =>
-        modality === "av" ? avUnderstander : imageUnderstander,
+      // `candidate` is still not consulted HERE: the LOCAL resolution stays purely modality-keyed
+      // — both registered understanders are local, so there is nothing per-artifact to decide on
+      // this arm. Per-artifact eligibility now lives on `remoteFor` below instead, which is the
+      // seam that actually varies by candidate (this image has a grant, that one does not).
+      understanderFor: (
+        modality: MediaModality,
+        _candidate: MediaCandidate,
+      ): Understander | undefined => (modality === "av" ? avUnderstander : imageUnderstander),
+      remoteFor: buildRemoteFor(input, remoteVlm),
       gpu: {
         acquire: (id: string) => arbiter.acquire(id),
         // Load-bearing: a multi-minute transcription without a heartbeat is evicted by the

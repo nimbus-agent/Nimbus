@@ -8,11 +8,18 @@
  * sites that exist today, which is how `recordSynthesisEgress` came to leave one of two reachable
  * remote paths silent.
  *
- * Ships BEFORE any remote VLM exists, for the same reason PR 1 shipped the gate with only its
- * local arm: retrofitting an appender onto code that already reaches the model is how a silent
- * window gets built. In this PR a local provider is the only one constructed, so this function is
- * an identity — and it is tested with a deliberately non-local fake so the row exists before the
- * thing that would emit it.
+ * Shipped BEFORE any remote VLM existed (PR 2), for the same reason PR 1 shipped the gate with
+ * only its local arm: retrofitting an appender onto code that already reaches the model is how a
+ * silent window gets built. It was tested against a deliberately non-local fake back then, so the
+ * row's shape existed before the thing that would emit it.
+ *
+ * PR 4 is what gives this its first REAL remote provider: `vlm/remote/remote-vlm-shared.ts`'s
+ * `createRemoteVlm`, wrapped at both of this file's D22(g)-confined construction sites in
+ * `build-media-pass-deps.ts`. This function is therefore no longer an identity for every caller
+ * that reaches it — a granted image's `describe()` call is wrapped for real, and I37 (spec § 18.6)
+ * has its first live exercise rather than a foregone conclusion. It stays an identity ONLY for a
+ * local provider (`provider.isLocal`, I34), which makes no outbound request and still needs no
+ * ledger row — that bound is unchanged and correct, not a residual gap.
  *
  * WHY LOCALITY IS DERIVED. Reading `provider.isLocal` (I34) makes both failure modes
  * unrepresentable: a caller cannot pass `false` for a remote provider and put a false zero in the

@@ -1,6 +1,6 @@
 # Nimbus Security Invariants
 
-**Current ceiling:** invariants I1–I36 (static rules D10–D26; I31, I32, I34 and I36 have no static rule — see their own sections for why). Note: I28 is reserved for the MCP-server owner-sink and is unimplemented — no wiring, no section below, no enforcement test. The I27→I29 gap is documented intent, reconciled if and when that work lands.
+**Current ceiling:** invariants I1–I37 (static rules D10–D27; I31, I32, I34 and I36 have no static rule — see their own sections for why). Note: I28 is reserved for the MCP-server owner-sink and is unimplemented — no wiring, no section below, no enforcement test. The I27→I29 gap is documented intent, reconciled if and when that work lands.
 
 Canonical list of structural defenses Nimbus relies on. Each invariant names the defense, points to the production wiring that makes it active (not just defined), and lists the anti-pattern that would regress it. The B1 internal audit (Phase 4, 2026-04-25) found that several of these defenses *existed* in the codebase but had **zero production callers** — the most common root cause of High-severity findings. This file exists so that gap is impossible to re-introduce silently.
 
@@ -939,6 +939,40 @@ The lane gets **no command allow-list**, deliberately. An allow-list over shell 
 **Anti-pattern:** reading `namespaces` once for both shapes and passing the value through, which is exactly how this shipped before the guard existed; or adding a third agent that takes a forge coordinate without routing it through `requireFileParam`.
 
 **How to comply:** a new agent that accepts a forge coordinate takes it through `requireFileParam`. If a future caller genuinely needs federated fan-out over a forge coordinate, that is a new decision with its own gate — not a relaxation of this one.
+
+---
+
+## I37 — a media body reaches a non-local model only under a grant
+
+**Statement.** A media body reaches a NON-LOCAL model only through `packages/gateway/src/multimodal/media-gate.ts`'s `understandArtifact()`, and only when a durable, artifact-scoped remote grant exists for **that** artifact and that vendor. Absent a grant the gate REFUSES rather than degrading to remote; a local provider that is unavailable likewise refuses rather than falling back — the same fail-closed posture as `enforce_air_gap`. Locality is DERIVED from `provider.isLocal` (I34) and never supplied by a caller. Every remote send appends one `model`-class row BEFORE the request, and an append failure aborts it (fail-closed) — `packages/gateway/src/egress/vlm-egress.ts`'s `wrapLedgeredVlm`, D22(g). Media bytes never appear in `payload_summary`, which carries the model name and the image's byte COUNT. The DISK rule is spec § 5.4's narrowed one as amended by § 16.3, not an absolute.
+
+**Scope note.** STT (speech-to-text) is local-only in this release, so images are the only modality that can reach a non-local model today. The invariant is deliberately NOT narrowed to images in its wording: a remote STT tier added later should inherit it rather than need a new one.
+
+**Audio/video cannot reach a remote model, by two independent mechanisms, and a reader needs both.** `packages/gateway/src/multimodal/media-grant-store.ts`'s `createGrant` REFUSES to write a grant row whose `modality` is `"av"` at all, throwing `MediaGrantRefusedError` — so no durable AV grant can ever exist to be read back later. Separately, `packages/gateway/src/multimodal/build-media-pass-deps.ts`'s `buildRemoteFor` closure returns `undefined` for any candidate whose modality is not `"image"`, so the gate resolves an AV candidate to the all-local `avUnderstander` composite regardless of what the grant store holds. Neither alone is the whole story: a reader who knows only the write-time refusal would not know the read path is independently closed, and a reader who knows only the read-time composite would not know the store actively refuses to persist the row in the first place. The write-time refusal keeps the `media_grant` table itself honest — nothing in it ever claims an AV artifact was authorized for remote use — and the read-time composite keeps the gate correct even against a stray row a future migration or a hand-rolled `INSERT` managed to get past the store.
+
+**A grant is a permission, not a mandate.** A configured remote vendor plus an active grant for an artifact WIDENS what may happen to that artifact; it never narrows the local capability the artifact already had. `media-gate.ts`'s step 2 falls back to the local provider whenever `remoteFor` returns `undefined` for any reason — no grant, the wrong vendor, an AV modality — so the ordering can never leave a granted-but-currently-unservable artifact worse off than before the grant existed.
+
+**The gap D27 closes.** `wrapLedgeredVlm` (D22(g)) guarantees a remote `describe` is LEDGERED. It does not guarantee it was GATED. A ledgered-but-ungated describe satisfies I29 and still violates I37: the bytes go, the row is written, and no grant was ever checked. D27 exists to close exactly that.
+
+**Static rule D27:**
+
+- **D27(a) — remote-VLM constructor confinement.** A non-local `VlmProvider` may be CONSTRUCTED (`createRemoteVlm(...)`) in only one production site — `packages/gateway/src/multimodal/build-media-pass-deps.ts` (plus the constructor's own definition file) — and every call there must sit inside a `wrapLedgeredVlm(...)` argument list: association, not file-level co-occurrence, checked per occurrence via paren-matching, the same technique D22(g) already uses for `createOllamaVlm`. The confinement site is deliberately `build-media-pass-deps.ts`, **not** `media-gate.ts` — the gate constructs nothing; it receives an `Understander` through the `understanderFor`/`remoteFor` seams and never names a provider factory. Confining the CONSTRUCTOR rather than the `.describe(` call follows D22(g) and D26(c): the capability travels as a function VALUE, and a method-name regex cannot follow a provider held in a variable and invoked through an alias.
+- **D27(b) — grant-table confinement.** The literal `media_grant` (bare, or SQLite-quoted with `` ` ``/`"`/`[]`) may appear in a `FROM`/`INTO`/`UPDATE`/`TABLE`/`JOIN` clause in only three files: `packages/gateway/src/multimodal/media-grant-store.ts` (the only WRITER — inserts, revokes, the orphan-sweep — and every reader applies `revoked_at IS NULL` itself rather than trusting a caller to remember it), `packages/gateway/src/multimodal/media-discovery.ts` (a single correlated `EXISTS (SELECT ... FROM media_grant ...)` subquery on the candidate-selection hot path — routing that read through the store would mean either a `hasActiveGrant` call per candidate row or a store function handing back a raw SQL fragment, which is confinement in name only), and `packages/gateway/src/index/media-grant-v59-sql.ts` (the migration defining the table — DDL is not a caller of it). **Stated bound:** this is a text scan over SQL, strictly weaker than a symbol-confinement rule — a dynamically assembled identifier (string concatenation, a template literal built at runtime) evades it, as it evades every source scanner in this file. **The actual boundary, stated precisely rather than overstated:** `media-discovery.ts` is legitimately handed a `Database` too, to run its own correlated read — so capability does not confine READS to the store alone; the text scan above is what does. What capability closes is narrower and is the WRITE half only: `media-grant-store.ts` is the only module that ever issues an `INSERT`/`UPDATE` against `media_grant`, so an identifier that evaded the text scan could still only ever be read through this table, never used to write a grant row from outside the store.
+
+Wiring, docs entry and enforcement test land in the SAME commit — the triple rule. Retiring any of it means deleting the row, never leaving drift.
+
+**Wired at:**
+
+- `packages/gateway/src/multimodal/media-gate.ts` `understandArtifact()` — steps 2–3 (resolve `remoteFor`, refuse a non-local provider that arrived any other way).
+- `packages/gateway/src/multimodal/media-grant-store.ts` — `createGrant`'s AV refusal; `hasActiveGrant`'s `revoked_at IS NULL` filter, applied on every read.
+- `packages/gateway/src/multimodal/build-media-pass-deps.ts` — `buildRemoteFor`, the one production site permitted to construct a non-local `VlmProvider` (D27(a)).
+- `packages/gateway/src/egress/vlm-egress.ts` `wrapLedgeredVlm` — the `model`-class appender (D22(g), I29).
+- `scripts/structure-audit/check-nimbus-invariants.ts` `checkRemoteVlmConfinement` / `checkMediaGrantStoreConfinement` — D27's static half.
+- Runtime test in `packages/gateway/src/security-invariants.test.ts` — the `I37` describe block.
+
+**Anti-pattern:** constructing a non-local `VlmProvider` anywhere but `build-media-pass-deps.ts`, or leaving one there unwrapped by `wrapLedgeredVlm`. Reading or writing `media_grant` from anywhere but the three allow-listed files. Letting a grant's presence remove a local fallback the artifact already had. Assembling a `media_grant` query dynamically to route around D27(b)'s text scan.
+
+**How to comply:** a new remote-modality arm resolves its provider only inside `build-media-pass-deps.ts`, wrapped by `wrapLedgeredVlm` (or its successor decorator) in the same expression that constructs it. A new grant read goes through `media-grant-store.ts`'s exported functions, never a hand-rolled query. A migration that touches `media_grant`'s schema stays DDL-only and does not become a second caller.
 
 ---
 

@@ -1,6 +1,6 @@
 // packages/gateway/src/multimodal/frames/av-understander.ts
 /**
- * Transcript + sampled frame captions, as ONE `LocalUnderstander` (spec § 8, § 12.8).
+ * Transcript + sampled frame captions, as ONE `Understander` (spec § 8, § 12.8).
  *
  * WHY THE TRANSCRIPT IS LOAD-BEARING AND THE CAPTIONS ARE NOT. A video with no transcript is a
  * failed artifact — the gate records `transcribe_failed` and a re-run retries it. A video with a
@@ -20,7 +20,7 @@
  * and let another caller take the GPU mid-artifact, leaving a half-captioned video that nothing
  * records as partial.
  */
-import type { LocalUnderstander } from "../media-gate.ts";
+import type { Understander } from "../media-gate.ts";
 import type { MediaSource, UnderstandDetail } from "../media-types.ts";
 import { FRAME_CAPTION_PROMPT } from "../vlm/caption-prompts.ts";
 import type { VlmProvider } from "../vlm/vlm-types.ts";
@@ -37,7 +37,7 @@ export const AV_SAMPLING_DISCLOSURE =
   "Frames were sampled at uniform intervals, not watched: anything occurring only between sampled frames is not described here.";
 
 export interface AvUnderstanderDeps {
-  readonly stt: LocalUnderstander;
+  readonly stt: Understander;
   readonly vlm: VlmProvider;
   readonly maxFrames: number;
   readonly ffmpegBin: string;
@@ -105,6 +105,7 @@ async function sampleFrameCaptions(
       const { text } = await deps.vlm.describe({
         bytes,
         prompt: FRAME_CAPTION_PROMPT,
+        mimeType: "image/jpeg",
         egressMethod: "multimodal.vlm.frame",
       });
       const caption = text.trim();
@@ -128,7 +129,7 @@ async function sampleFrameCaptions(
   };
 }
 
-export function createAvUnderstander(deps: AvUnderstanderDeps): LocalUnderstander {
+export function createAvUnderstander(deps: AvUnderstanderDeps): Understander {
   const probe =
     deps.probeDuration ??
     ((input: string) => probeDurationSeconds(input, { ffprobeBin: deps.ffprobeBin }));

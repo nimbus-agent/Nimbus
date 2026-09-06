@@ -24,6 +24,8 @@ const zeroReasons: Record<SkipReasonKey, number> = {
   path_outside_roots: 0,
   transcode_failed: 0,
   transcribe_failed: 0,
+  describe_failed: 0,
+  unsupported_image_format: 0,
   not_configured: 0,
   rate_limited: 0,
 };
@@ -198,6 +200,38 @@ describe("renderSummary", () => {
     expect(out).toContain("no_local_model: 1");
     // Zero-count reasons are noise, not disclosure.
     expect(out).not.toContain("fetch_miss");
+  });
+
+  test("every gateway SkipReason has a CLI label — a missing one printed nothing and crashed", () => {
+    // Mirrors the gateway's `SkipReason` (packages/cli may not import gateway source, so this is a
+    // literal list rather than an import) — the guard against the § 17 crash recurring: a reason
+    // added to the gateway's union without a matching mirror member here does not fail typecheck
+    // at the boundary, since the summary arrives as JSON, not a typed value.
+    for (const reason of [
+      "over_byte_cap",
+      "no_local_model",
+      "no_remote_grant",
+      "unresolvable_modality",
+      "fetch_miss",
+      "path_outside_roots",
+      "transcode_failed",
+      "transcribe_failed",
+      "describe_failed",
+      "unsupported_image_format",
+      "not_configured",
+      "rate_limited",
+    ] as const) {
+      const rendered = renderSummary({
+        understood: 0,
+        skipped: 1,
+        skippedByReason: { ...zeroReasons, [reason]: 1 },
+        lastItemId: null,
+        stopReason: "completed",
+        cloudBytesFetched: 0,
+        preflightRefusal: null,
+      });
+      expect(rendered).toContain(reason);
+    }
   });
 
   test("says so plainly when nothing was skipped", () => {

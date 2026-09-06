@@ -3,6 +3,7 @@ import { join } from "node:path";
 import pino from "pino";
 import { buildAgentSynthesisRunner } from "../../agents/_lib/agent-synthesis-runner.ts";
 import {
+  loadNimbusLlmFromConfigDir,
   loadNimbusPreflightFromConfigDir,
   loadNimbusServiceConfigsFromConfigDir,
   resolveNimbusTomlForProfile,
@@ -22,8 +23,13 @@ import {
   buildMediaPassDeps,
   resolveMediaRoots,
 } from "../../multimodal/build-media-pass-deps.ts";
+import {
+  createGrant,
+  listActiveGrantsWithTitles,
+  revokeGrant,
+} from "../../multimodal/media-grant-store.ts";
 import { runMediaPass } from "../../multimodal/media-pass.ts";
-import { MULTIMODAL_CAPABILITY } from "../../multimodal/media-types.ts";
+import { MULTIMODAL_CAPABILITY, type RemoteVlmVendor } from "../../multimodal/media-types.ts";
 import { loadMultimodalConfig, type MultimodalConfig } from "../../multimodal/multimodal-config.ts";
 import type { NimbusVault } from "../../vault/nimbus-vault.ts";
 import { GATEWAY_VERSION } from "../../version.ts";
@@ -677,6 +683,13 @@ export function buildMediaPassDepsInput(input: {
   readonly vault: NimbusVault;
   /** Forwarded verbatim to `BuildMediaPassDepsInput.sourceId` — see that field's doc comment. */
   readonly sourceId?: string;
+  /**
+   * Forwarded verbatim to `BuildMediaPassDepsInput.remoteVlmVendorEnabled` — see that field's doc
+   * comment. Resolved by the caller (`isRemoteVlmVendorEnabled`, below) rather than by this pure
+   * mapping function, matching how `config`/`capabilityDisabled`/`vault` are all resolved one
+   * level up too: this function only forwards values by VALUE, it does not read `nimbus.toml`.
+   */
+  readonly remoteVlmVendorEnabled?: boolean;
 }): BuildMediaPassDepsInput {
   return {
     db: input.db,
@@ -690,8 +703,38 @@ export function buildMediaPassDepsInput(input: {
     fetchBudgetBytes: input.config.fetchBudgetBytes,
     preferRenditions: input.config.preferRenditions,
     vault: input.vault,
+    // `[multimodal] remote_vlm`. Without this line `buildMediaPassDeps` always sees `undefined`
+    // regardless of what the operator configured: `buildRemoteFor` resolves `remoteFor` to
+    // `undefined` unconditionally (no artifact can ever reach a remote model) and
+    // `MediaPassDeps.remoteVendor` is never populated either (no granted artifact is ever even
+    // re-offered by `findCandidates`). See `build-media-pass-deps.ts`'s `BuildMediaPassDepsInput.
+    // remoteVlm` doc comment for both consumers this one value feeds.
+    remoteVlm: input.config.remoteVlm,
+    ...(input.remoteVlmVendorEnabled === undefined
+      ? {}
+      : { remoteVlmVendorEnabled: input.remoteVlmVendorEnabled }),
     ...(input.sourceId === undefined ? {} : { sourceId: input.sourceId }),
   };
+}
+
+/**
+ * Gate 3 of § 18.1's own parent opt-in (spec § 18.2): `[multimodal] remote_vlm` naming a vendor
+ * must not be enough on its own to enable the remote arm — that vendor's OWN
+ * `[llm.remote.<vendor>].enabled` switch must ALSO be on, since `llm/vendor-vault-keys.ts`
+ * deliberately shares `openai.api_key` with the embedding runtime and a credential that merely
+ * exists must never itself enable anything (§ 18.2's own argument, applied to itself).
+ *
+ * Re-read on every call from the SAME nimbus.toml `loadMultimodalConfig` just read, matching that
+ * function's own live-reload posture — an `[llm.remote.*]` edit applies without a gateway restart,
+ * same as a `[multimodal]` edit does. An absent `configDir` (and therefore no file to read at all)
+ * fails CLOSED, same direction as every other config-driven switch in this file.
+ */
+export function isRemoteVlmVendorEnabled(
+  vendor: RemoteVlmVendor | null,
+  configDir: string | undefined,
+): boolean {
+  if (vendor === null || configDir === undefined) return false;
+  return loadNimbusLlmFromConfigDir(configDir).remoteVendors.get(vendor)?.enabled === true;
 }
 
 /**
@@ -712,47 +755,98 @@ export function buildMediaPassDepsInput(input: {
  * runs, so without this every `media.resolveByteUrl`/`media.fetchBytes` row filed as an
  * unattributed background sync indistinguishable from one nobody asked for.
  */
+/**
+ * The four media methods (`media.understand`, `media.allowRemote`, `media.grants.list`,
+ * `media.grants.revoke`), dispatched from `dispatchMediaRpc` — widened from an equality check on
+ * `"media.understand"` alone once PR 4 added the consent-management three.
+ */
+const MEDIA_RPC_METHODS = new Set([
+  "media.understand",
+  "media.allowRemote",
+  "media.grants.list",
+  "media.grants.revoke",
+]);
+
 export async function tryDispatchMediaRpc(
   ctx: ServerCtx,
   method: string,
   params: unknown,
   clientId: string,
 ): Promise<unknown> {
-  if (method !== "media.understand") {
+  if (!MEDIA_RPC_METHODS.has(method)) {
     return phase4RpcSkipped;
   }
   if (ctx.options.localIndex === undefined) {
-    throw new RpcMethodError(-32603, "media.understand requires LocalIndex");
+    throw new RpcMethodError(-32603, `${method} requires LocalIndex`);
   }
-  if (ctx.options.dataDir === undefined) {
-    throw new RpcMethodError(-32603, "media.understand requires dataDir");
-  }
-  const mediaCtx = ctx.options.mediaRpcCtx;
-  if (mediaCtx === undefined) {
-    throw new RpcMethodError(
-      -32603,
-      "media.understand requires mediaRpcCtx (the org-policy accessor)",
+  const db = ctx.options.localIndex.getDatabase();
+
+  if (method === "media.understand") {
+    if (ctx.options.dataDir === undefined) {
+      throw new RpcMethodError(-32603, "media.understand requires dataDir");
+    }
+    const mediaCtx = ctx.options.mediaRpcCtx;
+    if (mediaCtx === undefined) {
+      throw new RpcMethodError(
+        -32603,
+        "media.understand requires mediaRpcCtx (the org-policy accessor)",
+      );
+    }
+    // `loadMultimodalConfig` throws `MultimodalConfigError` for a well-formed but non-loopback
+    // `vlm_base_url` (this slice has no per-artifact remote grant). Deliberately uncaught here,
+    // same shape as `runExecution`'s `ExecGateError` (`tryDispatchExecRpc`, below): it propagates
+    // to `server.ts`'s generic top-level catch and surfaces as JSON-RPC `-32603` carrying that
+    // error's own actionable message — never a silent substitution of the loopback default.
+    const mmConfig = loadMultimodalConfig(ctx.options.configDir);
+    const deps = buildMediaPassDeps(
+      buildMediaPassDepsInput({
+        db,
+        configDir: ctx.options.configDir,
+        dataDir: ctx.options.dataDir,
+        config: mmConfig,
+        capabilityDisabled: mediaCtx.enforced.capabilitiesDisabled.has(MULTIMODAL_CAPABILITY),
+        vault: ctx.options.vault,
+        sourceId: ctx.getClientKind(clientId),
+        // Gate 3 of § 18.1's parent opt-in (§ 18.2, Finding 1 of the whole-branch review). Without
+        // this, `[multimodal] remote_vlm` naming a vendor was sufficient on its own — a live
+        // `openai.api_key` shared with the embedding runtime could silently reach a vision model
+        // nobody separately opted into.
+        remoteVlmVendorEnabled: isRemoteVlmVendorEnabled(mmConfig.remoteVlm, ctx.options.configDir),
+      }),
     );
+    const out = await dispatchMediaRpc(method, params, {
+      runPass: (opts) => runMediaPass({ ...deps, ...opts }),
+    });
+    return out ?? phase4RpcSkipped;
   }
-  // `loadMultimodalConfig` throws `MultimodalConfigError` for a well-formed but non-loopback
-  // `vlm_base_url` (this slice has no per-artifact remote grant). Deliberately uncaught here,
-  // same shape as `runExecution`'s `ExecGateError` (`tryDispatchExecRpc`, below): it propagates
-  // to `server.ts`'s generic top-level catch and surfaces as JSON-RPC `-32603` carrying that
-  // error's own actionable message — never a silent substitution of the loopback default.
-  const mmConfig = loadMultimodalConfig(ctx.options.configDir);
-  const deps = buildMediaPassDeps(
-    buildMediaPassDepsInput({
-      db: ctx.options.localIndex.getDatabase(),
-      configDir: ctx.options.configDir,
-      dataDir: ctx.options.dataDir,
-      config: mmConfig,
-      capabilityDisabled: mediaCtx.enforced.capabilitiesDisabled.has(MULTIMODAL_CAPABILITY),
-      vault: ctx.options.vault,
-      sourceId: ctx.getClientKind(clientId),
-    }),
-  );
+
+  // media.allowRemote / media.grants.list / media.grants.revoke: consent management over the
+  // grant store (media-grant-store.ts, D27(b)-confined). None of the three run the understanding
+  // pass, so neither `dataDir` nor `mediaRpcCtx` (the org-policy accessor) is required here — a
+  // grant is a row in the local index, not a model call; the model call it later gates still goes
+  // through `media.understand`'s own full check above.
+  //
+  // `loadMultimodalConfig` is resolved ONLY for `media.allowRemote`, the one branch that consumes
+  // `configuredRemoteVlm` (`media-rpc.ts`'s `dispatchMediaRpc`). It throws `MultimodalConfigError`
+  // for a well-formed but non-loopback `vlm_base_url` — a field `media.grants.list`/
+  // `media.grants.revoke` never read — so resolving it unconditionally would block revocation, the
+  // WITHDRAWAL path for consent, on a config error unrelated to grants.
   const out = await dispatchMediaRpc(method, params, {
-    runPass: (opts) => runMediaPass({ ...deps, ...opts }),
+    ...(method === "media.allowRemote"
+      ? { configuredRemoteVlm: loadMultimodalConfig(ctx.options.configDir).remoteVlm }
+      : {}),
+    grantRemote: ({ itemId, vendor, nowMs }) => {
+      const { alreadyActive } = createGrant(db, {
+        itemId,
+        modality: "image",
+        modelVendor: vendor,
+        nowMs,
+      });
+      return { alreadyActive };
+    },
+    listGrants: () => listActiveGrantsWithTitles(db),
+    revokeGrants: ({ itemId, modelVendor, nowMs }) =>
+      revokeGrant(db, { itemId, ...(modelVendor === undefined ? {} : { modelVendor }), nowMs }),
   });
   return out ?? phase4RpcSkipped;
 }

@@ -15,6 +15,8 @@ import {
   checkEmbeddingConstructorConfinement,
   checkFlatUpsertGraphEntityCoOwnedTypes,
   checkForwardShareConfinement,
+  checkMediaGrantStoreConfinement,
+  checkRemoteVlmConfinement,
   checkRunConfinedConfinement,
   checkShareConsentBrokerConfinement,
   checkSharePublishConfinement,
@@ -1829,5 +1831,140 @@ describe("D26 — computer-use actuation confinement", () => {
     ]);
     expect(v.length).toBe(1);
     expect(v[0]?.rule).toBe("D26-lane-constructor");
+  });
+});
+
+describe("D27(a) remote VLM constructor confinement", () => {
+  const file = (relPath: string, contents: string): FileEntry => ({ relPath, contents });
+  const wiring = "packages/gateway/src/multimodal/build-media-pass-deps.ts";
+  const definition = "packages/gateway/src/multimodal/vlm/remote/remote-vlm-shared.ts";
+
+  test("passes at the wiring site when the call is inside a wrapLedgeredVlm argument list", () => {
+    expect(
+      checkRemoteVlmConfinement([
+        file(wiring, "const p = wrapLedgeredVlm(db, createRemoteVlm({ vendor, apiKey }));"),
+      ]),
+    ).toEqual([]);
+  });
+
+  /** Ledgered is not gated, and unwrapped is not ledgered -- this catches the second failure. */
+  test("FAILS at the wiring site when the construction is not wrapped", () => {
+    expect(
+      checkRemoteVlmConfinement([file(wiring, "const p = createRemoteVlm({ vendor, apiKey });")]),
+    ).toHaveLength(1);
+  });
+
+  /**
+   * Paren-matched per occurrence, not file-level: a second unwrapped construction planted beside a
+   * legitimate wrapped one in an already-approved file was invisible to the file-level form of
+   * this check, which is the exact hole D22(g) was widened to close.
+   */
+  test("FAILS on an unwrapped call sitting beside a wrapped one in the SAME file", () => {
+    expect(
+      checkRemoteVlmConfinement([
+        file(
+          wiring,
+          "const a = wrapLedgeredVlm(db, createRemoteVlm({ vendor }));\nconst b = createRemoteVlm({ vendor });",
+        ),
+      ]),
+    ).toHaveLength(1);
+  });
+
+  test("FAILS anywhere else, wrapped or not -- a new site demands a deliberate allow-list edit", () => {
+    expect(
+      checkRemoteVlmConfinement([
+        file(
+          "packages/gateway/src/engine/agent.ts",
+          "const p = wrapLedgeredVlm(db, createRemoteVlm({ vendor }));",
+        ),
+      ]),
+    ).toHaveLength(1);
+  });
+
+  test("exempts the factory's own definition -- there is nothing to wrap there", () => {
+    expect(
+      checkRemoteVlmConfinement([file(definition, "export function createRemoteVlm(opts) {}")]),
+    ).toEqual([]);
+  });
+
+  test("a mention inside a comment or a string literal does not trip it", () => {
+    expect(
+      checkRemoteVlmConfinement([
+        file(
+          "packages/gateway/src/engine/agent.ts",
+          '// createRemoteVlm( is discussed here\nconst s = "createRemoteVlm(";',
+        ),
+      ]),
+    ).toEqual([]);
+  });
+});
+
+describe("D27(b) media_grant table confinement", () => {
+  const file = (relPath: string, contents: string): FileEntry => ({ relPath, contents });
+  const store = "packages/gateway/src/multimodal/media-grant-store.ts";
+  const sql = "packages/gateway/src/index/media-grant-v59-sql.ts";
+
+  test("allows the store and the V59 SQL module", () => {
+    expect(
+      checkMediaGrantStoreConfinement([
+        file(store, "SELECT id FROM media_grant WHERE revoked_at IS NULL"),
+        file(sql, "CREATE TABLE IF NOT EXISTS media_grant ("),
+      ]),
+    ).toEqual([]);
+  });
+
+  test.each([
+    ["a read", "SELECT 1 FROM media_grant"],
+    ["a write", "INSERT INTO media_grant (id) VALUES (?)"],
+    ["an update", "UPDATE media_grant SET revoked_at = ?"],
+  ])("FAILS on %s from anywhere else", (_n, sqlText) => {
+    expect(
+      checkMediaGrantStoreConfinement([
+        file("packages/gateway/src/ipc/server/dispatchers.ts", sqlText),
+      ]),
+    ).toHaveLength(1);
+  });
+
+  /**
+   * All three are valid SQLite identifier-quoting forms and all three are something a person
+   * types by hand -- not a "dynamically assembled identifier": that is a materially different,
+   * and much narrower, residual than a bare-identifier regex actually leaves.
+   */
+  test.each([
+    ["double-quoted", 'SELECT 1 FROM "media_grant"'],
+    ["backtick-quoted", "SELECT 1 FROM `media_grant`"],
+    ["bracket-quoted", "SELECT 1 FROM [media_grant]"],
+  ])("FAILS on the %s SQLite form from anywhere else", (_n, sqlText) => {
+    expect(
+      checkMediaGrantStoreConfinement([
+        file("packages/gateway/src/ipc/server/dispatchers.ts", sqlText),
+      ]),
+    ).toHaveLength(1);
+  });
+
+  /**
+   * Widening the trailing match to swallow an optional closing quote must not also widen it to
+   * swallow a longer identifier sharing this prefix -- `\b` alone does not guard that once a quote
+   * character can sit in the boundary position, since `\b` never fires between two non-word
+   * characters.
+   */
+  test("does NOT trip on a longer table name sharing the same prefix", () => {
+    expect(
+      checkMediaGrantStoreConfinement([
+        file("packages/gateway/src/ipc/server/dispatchers.ts", "SELECT 1 FROM media_grant_history"),
+      ]),
+    ).toEqual([]);
+  });
+
+  /** Proves stripComments is actually exercised for THIS rule, not merely shared and untested here. */
+  test("a mention inside a comment does not trip it", () => {
+    expect(
+      checkMediaGrantStoreConfinement([
+        file(
+          "packages/gateway/src/ipc/server/dispatchers.ts",
+          "// see FROM media_grant in the store for the active-row filter",
+        ),
+      ]),
+    ).toEqual([]);
   });
 });

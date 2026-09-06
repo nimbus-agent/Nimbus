@@ -1315,11 +1315,18 @@ Transcribe audio/video already in the index — local files and, as of PR 3 (202
 cloud-backed artifacts from Google Photos, Google Drive and OneDrive — caption still images,
 and — as of PR 2 (2026-09-03) — caption a small number of uniformly sampled frames from each
 video alongside its transcript. Output is stored as searchable derived items
-(`nimbus:video_understanding`, `nimbus:image_understanding`). **Local models only** — both
-the STT and the vision model run on this machine; there is no remote tier for either, so
-the pass refuses rather than reaching for the cloud when no local model is available. A
-cloud candidate's BYTES leave the machine (bounded, ledgered — see below); the understanding
-of those bytes never does. Schema **V58**.
+(`nimbus:video_understanding`, `nimbus:image_understanding`).
+
+**Local models by default, with one narrow exception.** As of PR 4 (2026-09-05), a STILL IMAGE —
+never audio or video — may instead be described by a remote vision model, but only for an
+artifact the owner has explicitly granted with `nimbus media allow-remote` (below). Absent a
+grant, images are captioned locally exactly as before PR 4. **Audio and video are never sent to a
+remote model in this release, full stop** — transcription and frame sampling stay entirely local,
+and the pass refuses rather than reaching for the cloud when no local whisper/vision model is
+available, unchanged from PR 1. A cloud candidate's BYTES leaving the machine (bounded, ledgered —
+see below, PR 3) is a separate question from whether its UNDERSTANDING does — granting one grants
+neither the other. Schema **V58** (`media_pass_cursor`); the per-artifact remote-consent grant
+below is schema **V59** (`media_grant`).
 
 **Off by default, twice.** Both switches must be set:
 
@@ -1335,16 +1342,17 @@ media_index = true        # DEFAULT false — per root
 `media_index` is per-root and separate on purpose: enabling the capability should not
 silently start walking every configured root for large binaries.
 
-**The whole `[multimodal]` section — six keys, all optional:**
+**The whole `[multimodal]` section — seven keys, all optional:**
 
 | Key | Default | Meaning |
 | --- | --- | --- |
 | `enabled` | `false` | The capability kill switch, above. |
-| `vlm_base_url` | `http://127.0.0.1:11434` | The Ollama base URL the vision model is served from. **Must be a loopback address** (`127.0.0.0/8`, `localhost`, or `[::1]` — the same `isLoopbackBaseUrl` check I34 uses) **or the gateway refuses to load `[multimodal]` at all**, throwing an error that names the offending value and the reason, rather than silently substituting the loopback default. There is no per-artifact remote grant in this slice (it lands in a later PR), so a non-loopback host could never actually be honoured: `packages/gateway/src/multimodal/media-gate.ts` would refuse every artifact with `no_remote_grant` before any model is ever contacted — including video, because `av-understander.ts` computes `isLocal` as `stt.isLocal && vlm.isLocal`, so a non-local VLM would also disable the audio transcription that works today. Leave this at its default, or point it at another loopback port, until the remote grant ships. |
+| `vlm_base_url` | `http://127.0.0.1:11434` | The Ollama base URL the LOCAL vision model is served from. **Must be a loopback address** (`127.0.0.0/8`, `localhost`, or `[::1]` — the same `isLoopbackBaseUrl` check I34 uses) **or the gateway refuses to load `[multimodal]` at all**, throwing an error that names the offending value and the reason, rather than silently substituting the loopback default. This key has nothing to do with sending an image to a remote vendor — that is `remote_vlm`, below, a wholly separate provider selected per artifact by an explicit grant, never by pointing this URL off-loopback. A non-loopback value here is still refused after PR 4: `av-understander.ts` computes `isLocal` as `stt.isLocal && vlm.isLocal`, so a non-local value on this key would silently disable the audio transcription that works today — the failure mode `remote_vlm`'s separate, grant-gated opt-in exists to avoid. Leave this at its default, or point it at another loopback port. |
 | `vlm_model` | `qwen2.5vl:7b` | The Ollama model tag to caption with. **You must pull this yourself** (`ollama pull qwen2.5vl:7b` or your own tag) — nothing in this pass downloads a model. A daemon that is up but has not pulled a vision-capable model reports unavailable, and the pass refuses images/frames with `no_local_model` rather than guessing. |
 | `max_frames` | `8` | The maximum keyframes sampled per video, clamped to 1–64. Actual sampling is also density-capped at one frame per 2 seconds of video, so a short clip samples fewer than the maximum. |
 | `fetch_budget_bytes` | `2147483648` (2 GiB) | The byte budget for a single `nimbus media understand` run's cloud-backed fetches (Google Photos / Google Drive / OneDrive). A **negative** value is malformed for this key and fails the WHOLE `[multimodal]` section off (same fail-off direction as a malformed `enabled`), rather than substituting the default. `0` is accepted and means "no cloud bytes may be fetched this run" — a local-only pass still runs. Overridden per run by `--budget`, below. |
 | `prefer_renditions` | `false` | Ask Google Photos for a downsized rendition instead of the original artifact. Drive and OneDrive have no rendition concept and always serve the original regardless of this setting. Overridden per run by `--renditions`/`--originals`, below. |
+| `remote_vlm` | unset | **As of PR 4 (2026-09-05).** Names the ONE vendor allowed to receive a per-artifact remote-vision grant: `anthropic`, `openai` or `gemini` — a deliberately narrower set than `[llm.remote.*]`'s four text vendors (no `xai`; it ships no vision adapter here). **Images only** — this key has no effect on audio or video, which stay local-only regardless of its value. Unset (the default) means no remote vendor is configured, and `nimbus media allow-remote` refuses every grant request outright rather than silently picking one. An unsupported or misspelled name **refuses to load `[multimodal]` at all**, naming the offending value — the same loud-refusal posture as a non-loopback `vlm_base_url`, and for the same reason: a silently-disabled section would be indistinguishable from the feature not existing. The vendor's API key is **reused**, never re-entered: it is the existing `[llm.remote.<vendor>]` Vault entry (`nimbus vault set <vendor>.api_key` — see the "Cloud vendors" subsection below). Reusing the credential is deliberate and its limit is stated plainly: having given that vendor a key for `nimbus ask` does **not** grant it permission to see this machine's photos — that permission is `nimbus media allow-remote`'s alone, artifact by artifact. |
 
 **Requires three external binaries on PATH:** `ffmpeg` (transcode + frame extraction) and
 `whisper-cli` (transcription) are required for audio/video; `ffprobe` (video duration,
@@ -1415,16 +1423,18 @@ The same discipline applies inside a `video_understanding` row's body: a caption
 stated in the text itself, not only in metadata — the text is what an agent's context
 actually sees.
 
-**What it does NOT do in this slice:** no dedicated OCR engine (a VLM's text extraction on
-a dense screenshot is worse than a purpose-built OCR pass), no remote model of any kind —
-understanding itself is always local, even for a cloud-fetched artifact's bytes (PR 4 adds
-the per-artifact opt-in that would let a remote model see one) — and speaker diarization
-(`whisper-cli` cannot do it). A sampled video
-is not a watched video: anything happening only between sampled frames goes undescribed,
-and a caption is a model's guess, not an observation — nothing here stores a confidence
-number. Transcripts and captions are embedded **locally** even when a remote embedder is
-configured, so text and image descriptions extracted from a private recording are never
-sent to a remote embedding service.
+**What it does NOT do:** no dedicated OCR engine (a VLM's text extraction on a dense
+screenshot is worse than a purpose-built OCR pass); no remote model for audio or video, at
+any tier — transcription and frame sampling stay entirely local even for a cloud-fetched
+artifact's bytes, refusing rather than reaching for the cloud when no local model is
+available, unchanged since PR 1; and speaker diarization (`whisper-cli` cannot do it). A
+sampled video is not a watched video: anything happening only between sampled frames goes
+undescribed, and a caption is a model's guess, not an observation — nothing here stores a
+confidence number. Transcripts and captions are embedded **locally** even when a remote
+embedder is configured, so text and image descriptions extracted from a private recording
+or a remotely-described image are never sent to a remote embedding service. **Still images
+are the one exception to "no remote model"** — see `nimbus media allow-remote` immediately
+below.
 
 **Not reachable over LAN.** The whole `media` namespace is denied to paired peers,
 alongside `exec` and `computer` — the command reads local files and spawns subprocesses.
@@ -1433,6 +1443,62 @@ alongside `exec` and `computer` — the command reads local files and spawns sub
 flag is read live on every call (invariant I22); setting it disables `media.understand`
 even when `[multimodal] enabled = true` locally, and the command also refuses fail-closed
 if the policy accessor itself is unavailable rather than silently proceeding.
+
+### `nimbus media allow-remote` — grant remote vision consent, per artifact
+
+**As of PR 4 (2026-09-05). This grants a REMOTE MODEL permission to see an image, and
+ONLY an image** — there is no way to grant audio or video: the grant store itself refuses
+to write one for either modality, and the pass never even asks a granted-but-non-image
+candidate whether it has one. Reading an image's bytes over the network (PR 3, `--budget`
+above) and letting a remote model DESCRIBE those bytes (this command) are two independent
+permissions; granting one never implies the other.
+
+```bash
+nimbus media allow-remote <itemId>... --vendor <name>
+nimbus media allow-remote --service <name> --limit N --vendor <name> [--since <days>]
+```
+
+Two mutually exclusive forms — explicit item ids, or a selector — and mixing them is
+refused rather than resolved by precedence:
+
+- **Explicit form:** name one or more indexed item ids directly.
+- **Selector form:** `--service`/`--since` narrow a scan of indexed media; **`--limit` is
+  MANDATORY here and has no default** — an unbounded "grant everything matching" must never
+  be expressible. **`--limit` is capped at 500** (`MAX_GRANT_LIMIT`); a value above that is
+  refused outright, not clamped down to it. If you hit that refusal, it is the documented
+  ceiling working as intended, not a bug — split the grant across more than one invocation,
+  or narrow the selector with `--service`/`--since` first.
+
+`--vendor <name>` is required on every invocation and must match the configured
+`[multimodal] remote_vlm` **exactly** — a mismatch is refused rather than silently granted
+to whichever vendor actually is configured, since the caller named a specific third party.
+Every invocation prints an enumerated preview — every matching artifact by **title**, never
+just a count, naming BOTH ends of the transfer (`source <service>|local` and `destination
+<vendor>`) and whether it is new or already granted — then asks for `[y/N]` confirmation
+before writing anything. Refuses outright in non-interactive (non-TTY) mode rather than
+defaulting to "no": a consent surface must never assume an answer. An explicit item id the
+scan cannot resolve to a known source service is refused rather than shown with a
+guessed or blank source, since a consent preview must never assert a source it cannot
+substantiate.
+
+A grant is durable and per `(artifact, modality, vendor)` until revoked — see
+`nimbus media grants list`/`revoke` below — and, once written, the artifact is re-offered by
+`nimbus media understand` even if it was already understood locally, so the next run
+re-describes it through the granted remote vendor.
+
+### `nimbus media grants list` / `nimbus media grants revoke`
+
+```bash
+nimbus media grants list
+nimbus media grants revoke <itemId> [--vendor <name>]
+```
+
+`grants list` prints every currently ACTIVE grant — title (or a placeholder if the item is
+no longer indexed), vendor, and the timestamp it was granted — with no filtering flags.
+`grants revoke` **always requires an item id**; there is no "revoke everything" form, by
+design (a blanket revoke is a `for` loop over `grants list`'s output, not a command this
+surface offers). `--vendor` narrows a revoke to one vendor's grant on that item; omitted, it
+revokes every vendor's active grant on that item.
 
 ---
 

@@ -39,7 +39,12 @@ const FORBIDDEN_OVER_LAN = new Set([
   // reads local files (audio/video under `[[filesystem.roots]]`) and spawns ffmpeg/whisper
   // subprocesses on the owner's machine; admitting it over the wire would let a paired peer
   // trigger that local file access and process spawn on the owner's behalf. There are no read
-  // verbs here worth preserving.
+  // verbs here worth preserving. PR 4 adds three more served methods to this namespace —
+  // `media.allowRemote`, `media.grants.list`, `media.grants.revoke` — and all three stay covered
+  // by this SAME namespace forbid rather than needing their own entries: consent to send a user's
+  // photos to a third party is the local owner's to give, and a peer must never be able to grant
+  // it, nor to ENUMERATE which artifacts the owner has already exposed (`media.grants.list`
+  // writes nothing, but leaks exactly that).
   "media",
   "audit", // exfiltration-class namespace
   "data", // exfiltration-class namespace

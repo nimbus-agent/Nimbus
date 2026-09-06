@@ -10,18 +10,29 @@
  * section, absent key, unreadable or malformed TOML — reads as `false`. A missing config must
  * never read as "on".
  *
- * ONE exception to that fail-OFF direction: a well-formed but non-loopback `vlm_base_url` is not
- * malformed — the parser understood it fine — so it does not get the silent `defaults()`
- * treatment above. It THROWS `MultimodalConfigError` instead. See `requireLoopbackVlmBaseUrl` for
- * why: this slice has no per-artifact remote grant, so a remote value can never be honoured, and
- * substituting the loopback default would silently give the operator local behaviour while
- * ignoring the setting they actually wrote — the same "parsed then silently ignored" defect this
- * file already closed for `enabled` and `max_frames`.
+ * TWO exceptions to that fail-OFF direction, both well-formed-but-refused values rather than
+ * malformed TOML, so neither gets the silent `defaults()` treatment above — each THROWS
+ * `MultimodalConfigError` instead:
+ *
+ *   1. A non-loopback `vlm_base_url`. See `requireLoopbackVlmBaseUrl` for why: this slice has no
+ *      per-artifact remote grant, so a remote value can never be honoured, and substituting the
+ *      loopback default would silently give the operator local behaviour while ignoring the
+ *      setting they actually wrote — the same "parsed then silently ignored" defect this file
+ *      already closed for `enabled` and `max_frames`.
+ *   2. An unknown/unsupported `remote_vlm` vendor. See `assertRemoteVlmSupported`: silently
+ *      disabling the section because of a misspelled vendor name would be indistinguishable, from
+ *      the operator's side, from the feature not existing at all.
+ *
+ * Both checks run AFTER `parseSection` returns, which is why `remote_vlm`'s raw string rides
+ * through parsing unvalidated (on the internal `MultimodalConfigDraft.remoteVlmRaw`) rather than
+ * being checked inline the way `enabled`/`max_frames` are — `parseSection` itself must stay total
+ * and fail-off for actually malformed TOML.
  */
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { stripComment } from "../config/toml-primitives.ts";
 import { isLoopbackBaseUrl } from "../llm/base-url-locality.ts";
+import { isRemoteVlmVendor, REMOTE_VLM_VENDORS, type RemoteVlmVendor } from "./media-types.ts";
 
 /** Loopback, so `isLoopbackBaseUrl` derives `isLocal === true` for the default (I34). */
 export const DEFAULT_VLM_BASE_URL = "http://127.0.0.1:11434";
@@ -52,7 +63,24 @@ export interface MultimodalConfig {
   readonly maxFrames: number;
   readonly fetchBudgetBytes: number;
   readonly preferRenditions: boolean;
+  /**
+   * The frontier vision vendor, or null. Its API key is the EXISTING `[llm.remote.<vendor>]` Vault
+   * entry — reusing that credential is deliberate (§ 18.2), because minting a second secret
+   * surface for the same vendor and account gives a future bug a second place to leak from.
+   * The CAPABILITY is not inherited, which is why this key exists at all: "I gave you my OpenAI
+   * key so `nimbus ask` works" is not "you may send my photos to OpenAI".
+   */
+  readonly remoteVlm: RemoteVlmVendor | null;
 }
+
+/**
+ * Internal draft carried from `parseSection` to `loadMultimodalConfig`. `remoteVlmRaw` holds the
+ * UNVALIDATED `remote_vlm` string (when the key was present at all) so `parseSection` can stay
+ * total and fail-off for malformed TOML while the vendor check happens afterward, loudly, next to
+ * the existing `vlm_base_url` loopback refusal. Not exported: no caller outside this file needs to
+ * see the raw string, and `MultimodalConfig` itself never carries it.
+ */
+type MultimodalConfigDraft = MultimodalConfig & { remoteVlmRaw?: string };
 
 /**
  * Thrown by `loadMultimodalConfig` — and ONLY by it, never caught internally — when
@@ -78,6 +106,7 @@ function defaults(): MultimodalConfig {
     maxFrames: DEFAULT_MAX_FRAMES,
     fetchBudgetBytes: DEFAULT_FETCH_BUDGET_BYTES,
     preferRenditions: DEFAULT_PREFER_RENDITIONS,
+    remoteVlm: null,
   };
 }
 
@@ -85,19 +114,29 @@ export function loadMultimodalConfig(configDir: string | undefined): MultimodalC
   if (configDir === undefined) return defaults();
   const tomlPath = join(configDir, "nimbus.toml");
   if (!existsSync(tomlPath)) return defaults();
-  let parsed: MultimodalConfig;
+  let parsed: MultimodalConfigDraft;
   try {
     parsed = parseSection(readFileSync(tomlPath, "utf8"));
   } catch {
     return defaults();
   }
   // Deliberately OUTSIDE the try/catch above. `parseSection` throwing means the TOML itself could
-  // not be trusted — the fail-OFF direction. A non-loopback `vlm_base_url` is the opposite case:
-  // the parser understood it perfectly, so this is a validation refusal, not a parse failure, and
-  // must never be caught by the generic `catch { return defaults() }` above it — that would
-  // silently substitute the loopback default for a value the operator explicitly set, exactly the
+  // not be trusted — the fail-OFF direction. A non-loopback `vlm_base_url` (and, below, an
+  // unsupported `remote_vlm` vendor) is the opposite case: the parser understood it perfectly, so
+  // this is a validation refusal, not a parse failure, and must never be caught by the generic
+  // `catch { return defaults() }` above it — that would silently substitute the loopback default
+  // (or a silently-disabled remote arm) for a value the operator explicitly set, exactly the
   // "parsed then silently ignored" defect this file exists to close.
-  return requireLoopbackVlmBaseUrl(parsed);
+  const validated = requireLoopbackVlmBaseUrl(parsed);
+  return {
+    enabled: validated.enabled,
+    vlmBaseUrl: validated.vlmBaseUrl,
+    vlmModel: validated.vlmModel,
+    maxFrames: validated.maxFrames,
+    fetchBudgetBytes: validated.fetchBudgetBytes,
+    preferRenditions: validated.preferRenditions,
+    remoteVlm: assertRemoteVlmSupported(validated),
+  };
 }
 
 /**
@@ -109,7 +148,7 @@ export function loadMultimodalConfig(configDir: string | undefined): MultimodalC
  * vlm.isLocal`, so a remote vision setting silently disables local audio transcription too, a
  * shipped and unrelated feature. Reuses `isLoopbackBaseUrl` (I34) rather than a second predicate.
  */
-function requireLoopbackVlmBaseUrl(cfg: MultimodalConfig): MultimodalConfig {
+function requireLoopbackVlmBaseUrl(cfg: MultimodalConfigDraft): MultimodalConfigDraft {
   if (isLoopbackBaseUrl(cfg.vlmBaseUrl)) return cfg;
   throw new MultimodalConfigError(
     `[multimodal] vlm_base_url = "${cfg.vlmBaseUrl}" is not a loopback address. Remote vision ` +
@@ -118,6 +157,28 @@ function requireLoopbackVlmBaseUrl(cfg: MultimodalConfig): MultimodalConfig {
       "needs no VLM at all — would be silently disabled along with it. Point vlm_base_url at a " +
       "loopback host (e.g. http://127.0.0.1:11434) or remove the key.",
   );
+}
+
+/**
+ * LOUD, not fail-off — the second exception in this file after `requireLoopbackVlmBaseUrl`. A
+ * misspelled or unsupported vendor that silently disabled the section would be indistinguishable
+ * from the feature not existing at all, so this throws naming the offending value rather than
+ * returning `defaults()`. The supported set (`REMOTE_VLM_VENDORS`) is deliberately narrower than
+ * the text-model vendor set in `llm/vendor-vault-keys.ts` (which also carries `xai`): a vendor
+ * with a text adapter and no vision adapter is refused HERE, at config load, rather than being
+ * accepted and failing per-artifact at describe time with no explanation.
+ */
+function assertRemoteVlmSupported(cfg: MultimodalConfigDraft): RemoteVlmVendor | null {
+  if (cfg.remoteVlmRaw === undefined || cfg.remoteVlmRaw === "") return null;
+  if (!isRemoteVlmVendor(cfg.remoteVlmRaw)) {
+    throw new MultimodalConfigError(
+      `[multimodal] remote_vlm = "${cfg.remoteVlmRaw}" is not a vendor with a vision adapter. ` +
+        `Supported: ${REMOTE_VLM_VENDORS.join(", ")}. Note this set is deliberately narrower ` +
+        "than the text-model vendors in [llm.remote.*] — a vendor can have a text adapter and no " +
+        "vision adapter. Fix the value or remove the key to keep image understanding local.",
+    );
+  }
+  return cfg.remoteVlmRaw;
 }
 
 /**
@@ -158,9 +219,9 @@ function clampFrames(n: number): number {
   return Math.min(MAX_FRAMES_CEILING, Math.max(MIN_FRAMES, n));
 }
 
-function parseSection(raw: string): MultimodalConfig {
+function parseSection(raw: string): MultimodalConfigDraft {
   let inSection = false;
-  let out = defaults();
+  let out: MultimodalConfigDraft = defaults();
   for (const rawLine of raw.split(/\r?\n/)) {
     const line = stripComment(rawLine).trim();
     if (line === "") continue;
@@ -200,6 +261,14 @@ function parseSection(raw: string): MultimodalConfig {
       const v = unquote(value);
       if (v === undefined) return defaults();
       out = { ...out, vlmModel: v };
+    } else if (key === "remote_vlm") {
+      const v = unquote(value);
+      // An unquoted, unbalanced, or empty value is malformed TOML for this key — same fail-off
+      // direction as the other quoted-string keys above. The VENDOR check (unknown/unsupported)
+      // is deliberately NOT here: it happens after parsing, loudly, in `assertRemoteVlmSupported`
+      // — see that function and this file's header comment for why.
+      if (v === undefined) return defaults();
+      out = { ...out, remoteVlmRaw: v };
     } else if (key === "max_frames") {
       const n = parseStrictInt(value);
       // A non-integer value (`8junk`, `nonsense`) is malformed TOML for this key — same fail-off

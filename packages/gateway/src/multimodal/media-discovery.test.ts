@@ -4,12 +4,14 @@ import { upsertIndexedItem } from "../index/item-store.ts";
 import { CURRENT_SCHEMA_VERSION } from "../index/local-index.ts";
 import { runIndexedSchemaMigrations } from "../index/migrations/runner.ts";
 import { buildModalityPredicate, findCandidates } from "./media-discovery.ts";
+import { createGrant, revokeGrant } from "./media-grant-store.ts";
 import {
   MIME_KEYED_SERVICES,
   MIME_PATTERNS_FOR_MODALITY,
   mediaItemTypePairsForModality,
   mimeModality,
 } from "./media-source-registry.ts";
+import { UNDERSTANDING_VERSION } from "./media-types.ts";
 import { writeUnderstanding } from "./understanding-item.ts";
 
 let db: Database;
@@ -564,4 +566,97 @@ describe("SQL/JS mime agreement — Important 3", () => {
       expect(rows).toHaveLength(expectAdmitted ? 1 : 0);
     });
   }
+});
+
+/** Seeds a Drive image plus its derived understanding row at the CURRENT version. */
+function seedUnderstoodImage(db: Database, opts: { readonly isLocal: boolean }): string {
+  upsertIndexedItem(db, {
+    service: "google_drive",
+    type: "file",
+    externalId: "img-1",
+    title: "img-1",
+    bodyPreview: "",
+    modifiedAt: 1000,
+    syncedAt: 1000,
+    metadata: { mimeType: "image/png" },
+  });
+  const itemId = db
+    .query<{ id: string }, []>("SELECT id FROM item WHERE external_id = 'img-1'")
+    .get()?.id as string;
+  upsertIndexedItem(db, {
+    service: "nimbus",
+    type: "image_understanding",
+    externalId: `${itemId}:understanding`,
+    title: "Caption — img-1",
+    bodyPreview: "a caption",
+    modifiedAt: 1000,
+    syncedAt: 1000,
+    metadata: {
+      derivedFrom: itemId,
+      understandingVersion: UNDERSTANDING_VERSION,
+      isLocal: opts.isLocal,
+      model: opts.isLocal ? "qwen2.5vl:7b" : "gpt-5",
+    },
+  });
+  return itemId;
+}
+
+describe("grant-driven re-offer (§ 19.1)", () => {
+  /** The defect this whole task exists to close. */
+  test("re-offers a LOCALLY-understood item once an active grant names the configured vendor", () => {
+    const itemId = seedUnderstoodImage(db, { isLocal: true });
+    expect(findCandidates(db, { limit: 10 })).toHaveLength(0);
+
+    createGrant(db, { itemId, modality: "image", modelVendor: "openai", nowMs: 1000 });
+    expect(findCandidates(db, { limit: 10, remoteVendor: "openai" }).map((c) => c.itemId)).toEqual([
+      itemId,
+    ]);
+  });
+
+  /**
+   * The bound vendor is the CONFIGURED one. With `remote_vlm` unset the clause is omitted
+   * entirely, so an unconfigured install re-offers ZERO items and the query costs what it costs
+   * today. A grant for a vendor the user no longer runs is inert, not a standing re-offer.
+   */
+  test("re-offers NOTHING when no remote vendor is configured", () => {
+    const itemId = seedUnderstoodImage(db, { isLocal: true });
+    createGrant(db, { itemId, modality: "image", modelVendor: "openai", nowMs: 1000 });
+    expect(findCandidates(db, { limit: 10 })).toHaveLength(0);
+  });
+
+  test("a grant for a DIFFERENT vendor than the configured one does not re-offer", () => {
+    const itemId = seedUnderstoodImage(db, { isLocal: true });
+    createGrant(db, { itemId, modality: "image", modelVendor: "anthropic", nowMs: 1000 });
+    expect(findCandidates(db, { limit: 10, remoteVendor: "openai" })).toHaveLength(0);
+  });
+
+  /**
+   * Without the isLocal clause an item understood REMOTELY is re-offered on every subsequent pass
+   * and re-sent to the vendor each time — a consent surface that bills the user forever off one
+   * approval. This clause is what makes the upgrade one-directional.
+   */
+  test("does NOT re-offer an item already understood REMOTELY", () => {
+    const itemId = seedUnderstoodImage(db, { isLocal: false });
+    createGrant(db, { itemId, modality: "image", modelVendor: "openai", nowMs: 1000 });
+    expect(findCandidates(db, { limit: 10, remoteVendor: "openai" })).toHaveLength(0);
+  });
+
+  test("a REVOKED grant does not re-offer", () => {
+    const itemId = seedUnderstoodImage(db, { isLocal: true });
+    createGrant(db, { itemId, modality: "image", modelVendor: "openai", nowMs: 1000 });
+    revokeGrant(db, { itemId, nowMs: 2000 });
+    expect(findCandidates(db, { limit: 10, remoteVendor: "openai" })).toHaveLength(0);
+  });
+
+  /**
+   * `json_extract` RAISES on malformed JSON in SQLite, and the existing version predicate already
+   * guards with COALESCE. A derived row whose metadata does not round-trip must not blow up the
+   * whole discovery query.
+   */
+  test("survives a derived row with unparseable metadata", () => {
+    const itemId = seedUnderstoodImage(db, { isLocal: true });
+    db.run("UPDATE item SET metadata = '{not json' WHERE service='nimbus'");
+    createGrant(db, { itemId, modality: "image", modelVendor: "openai", nowMs: 1000 });
+    expect(() => findCandidates(db, { limit: 10, remoteVendor: "openai" })).not.toThrow();
+  });
 });

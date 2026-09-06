@@ -20,8 +20,26 @@ export type SkipReason =
   | "path_outside_roots"
   | "transcode_failed"
   | "transcribe_failed"
+  | "describe_failed"
   | "not_configured"
-  | "rate_limited";
+  | "rate_limited"
+  | "unsupported_image_format";
+
+/**
+ * Thrown when neither the magic-byte sniff nor a declared `Content-Type` resolves an image's
+ * bytes to one of the four wire types (`image-mime.ts`'s `resolveWireMime`). Corresponds to the
+ * `"unsupported_image_format"` skip reason above — the two belong together because both
+ * throwers (`image-understander.ts`, and the cloud-arm per-artifact describe call) import from
+ * this module already, and refusing an unknown format is a REFUSAL, not a `transcribe_failed`
+ * catch-all: a HEIC straight off an iPhone should read as "this format isn't supported", not as
+ * an opaque model failure.
+ */
+export class UnsupportedImageFormatError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "UnsupportedImageFormatError";
+  }
+}
 
 /**
  * What an understander is actually handed (spec § 5.4, PR 3). A local artifact resolves to a
@@ -125,3 +143,17 @@ export const MULTIMODAL_CAPABILITY = "multimodal_input";
  * for a later pass to filter on, and a body sentence for a reader to see directly.
  */
 export type RenditionMode = "original" | "w2048-h2048" | "dv";
+
+/**
+ * Vendors with a SHIPPED remote VLM adapter — deliberately NARROWER than the text-vendor set
+ * (`llm/vendor-vault-keys.ts`'s `VendorWithApiKey`, which also carries `xai`). A vendor with a
+ * text adapter and no vision adapter must be refused at config load naming the reason, never
+ * accepted and failed per-artifact at describe time (§ 19.8).
+ */
+export type RemoteVlmVendor = "anthropic" | "openai" | "gemini";
+
+export const REMOTE_VLM_VENDORS: readonly RemoteVlmVendor[] = ["anthropic", "openai", "gemini"];
+
+export function isRemoteVlmVendor(v: string): v is RemoteVlmVendor {
+  return (REMOTE_VLM_VENDORS as readonly string[]).includes(v);
+}

@@ -37,7 +37,7 @@ import type {
   RenditionMode,
   SkipReason,
 } from "./media-types.ts";
-import { pruneOrphanedUnderstandings } from "./orphan-prune.ts";
+import { pruneOrphanedMedia } from "./orphan-prune.ts";
 import { sweepStaleScratchFiles } from "./stt/ffmpeg-bin.ts";
 import { writeUnderstanding } from "./understanding-item.ts";
 
@@ -69,6 +69,8 @@ export interface MediaPassDeps {
   readonly modality?: MediaModality;
   readonly sinceMs?: number;
   readonly afterItemId?: string;
+  /** The vendor named by `[multimodal] remote_vlm`, when configured. See spec § 19.1. */
+  readonly remoteVendor?: string | undefined;
   readonly scheduleEmbedding?: (itemId: string) => void;
   /**
    * Where transcodes AND cloud downloads land. Omitted, no start-of-pass sweep runs (unit tests
@@ -151,8 +153,10 @@ function emptyReasons(): Record<SkipReason, number> {
     path_outside_roots: 0,
     transcode_failed: 0,
     transcribe_failed: 0,
+    describe_failed: 0,
     not_configured: 0,
     rate_limited: 0,
+    unsupported_image_format: 0,
   };
 }
 
@@ -326,7 +330,7 @@ export async function runMediaPass(deps: MediaPassDeps): Promise<MediaPassSummar
 
   // Reclaim derived rows whose source has left the index (spec § 4.2). Cheap, indexed, and it
   // self-heals rows orphaned before this shipped.
-  pruneOrphanedUnderstandings(deps.db);
+  pruneOrphanedMedia(deps.db, deps.nowMs());
 
   // An explicit afterItemId always wins (a caller override); otherwise resume from the stored
   // cursor for this passId, which is what makes an interrupted run resumable at all (spec § 6.2).
@@ -338,6 +342,7 @@ export async function runMediaPass(deps: MediaPassDeps): Promise<MediaPassSummar
     ...(deps.modality === undefined ? {} : { modality: deps.modality }),
     ...(deps.sinceMs === undefined ? {} : { sinceMs: deps.sinceMs }),
     ...(afterItemId === undefined ? {} : { afterItemId }),
+    ...(deps.remoteVendor === undefined ? {} : { remoteVendor: deps.remoteVendor }),
   });
 
   // Pre-flight pricing (spec § 16.9): refuse the WHOLE batch before fetching a single byte when
