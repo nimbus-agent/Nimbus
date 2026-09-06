@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1788677153542,
+  "lastUpdate": 1788707869568,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "242612324aaf198e83943e3ced923643c1d0a142",
-          "message": "chore(main): release 0.15.0 (#708)\n\n:robot: I have created a release *beep* *boop*\n---\n\n\n##\n[0.15.0](https://github.com/nimbus-agent/Nimbus/compare/v0.14.0...v0.15.0)\n(2026-06-21)\n\n\n### Features\n\n* **slice9-w1:** HITL-gated GitOps + ML writes (ArgoCD/Flux/MLflow),\ngeneralize I26\n([#700](https://github.com/nimbus-agent/Nimbus/issues/700))\n([bccab8b](https://github.com/nimbus-agent/Nimbus/commit/bccab8bf9e8f34fabed47afff3619bf6dc6802ff))\n\n\n### Bug Fixes\n\n* **test:** resolve LanServer gate test flake\n([#705](https://github.com/nimbus-agent/Nimbus/issues/705))\n([2e757e8](https://github.com/nimbus-agent/Nimbus/commit/2e757e8143045963ba7c78cb58bcb4806071fdd9))\n\n---\nThis PR was generated with [Release\nPlease](https://github.com/googleapis/release-please). See\n[documentation](https://github.com/googleapis/release-please#release-please).\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n\n## Summary by CodeRabbit\n\n* **New Features**\n  * Added slice9-w1 feature.\n\n* **Bug Fixes**\n  * Fixed test flake issue.\n\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->",
-          "timestamp": "2026-06-21T15:41:49+03:00",
-          "tree_id": "47d8224eb728b9b5b15ce7f34f2fa181d3f6b606",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/242612324aaf198e83943e3ced923643c1d0a142"
-        },
-        "date": 1782046427062,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 291.01356785000496,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 292.15229370000236,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 312.7095503500001,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "b519c713d49df680cca1fb479329e1549702dc63",
+          "message": "docs: record the PR 4 acceptance run and narrow the live-vendor claim wherever it is restated (#1457)\n\nRecords the PR 4 acceptance run, then narrows the claim it retires\neverywhere that claim was restated — and fixes the count-and-range drift\nthe sweep turned up on the way.\n\n## The run\n\nPR 4's three vendor request shapes were written from each vendor's own\ndocumented image API and tested only against fakes, so every claim about\nthem proved the shape this code **sends** and none proved that a vendor\n**accepts** it. One does now.\n\nOn merged `main` at `580e8930`, built from source, against a real Gemini\nkey held in the Vault and a real 390,842-byte Google Drive PNG, in the\n`LOCALAPPDATA`-override sandbox — real config, real Vault, real outbound\ntraffic, throwaway index:\n\n- Gemini returned a caption for the granted image\n- **exactly one** `model`-class ledger row: `destination: gemini`,\n`method: multimodal.vlm.image`, `payload_summary`\n`{\"model\":\"gemini-3.5-flash\",\"imageBytes\":390842}` — the model name and\nthe byte **count**, never the prompt and never the bytes\n- the derived row carries `model: \"gemini/gemini-3.5-flash\"` and\n`isLocal: false`\n- `expectedBytes` rode the cloud-fetch row, as intended\n- `verifyEgressChain` ok over 65 rows\n\nThe remote caption is visibly better, which is the feature's whole\npremise: the local `qwen2.5vl:7b` called the artifact \"a knife\", while\nGemini identified a long pole weapon with a curved blade and named the\nscarf joint, the owner's-mark band and the pledge tag — on a file called\n`cell_nine_glaive_rack_14.png`.\n\n## It narrows the gap rather than closing it\n\nStill fixture-only: the Anthropic and OpenAI request bodies, every\n**failure** mode on all three — a 400 on a bad `media_type`, a 429, an\nauth refusal — the Google Photos leg, OneDrive entirely, and the TTY\nconfirmation path. That last one because `nimbus media allow-remote`\n**correctly refused a piped `y`** in non-TTY mode, so the run's grant\nwas created through the LAN-forbidden `media.allowRemote` IPC method\nwith approval obtained out of band. A slice is not verified because one\nthird of it is.\n\nOne defect surfaced and is filed rather than fixed: the grant preview\nprints `(size unknown)` for an artifact whose size the index holds,\nbecause Google Drive serialises `size` as a **string** and the CLI\npreview does not parse that form. Small, but it lands on the consent\nsurface, which exists so an owner can see what they are approving.\n\n## The restatements\n\nThe record alone would have left six other places asserting that no\nvendor had ever answered. Each now says what is true:\n\n- `CLAUDE.md` / `GEMINI.md` status paragraph — still byte-identical\napart from lines 1 and 24\n- `docs/roadmap.md`'s own \"Bounds, stated rather than glossed\"\nparagraph, plus a new `Last updated` head entry and the PR 2/3/4 entries\nthat log never got\n- `docs/CHANGELOG.md` — the 2026-09-05 entry is marked **superseded**,\nnot rewritten; a new dated 2026-09-06 entry carries the run\n- `docs/architecture.md`'s egress paragraph, which still said the vision\nappender \"ships ahead of any remote VlmProvider in production\" and that\nthe grant \"does not land before PR 4\"\n- `.claude/commands/nimbus-egress.md`, in both places it made that claim\n\n## Drift found while sweeping\n\nEvery one of these is a count or a range that had gone stale across\nseveral landings, so each now carries a \"derive it from the source, not\nfrom this sentence\" note:\n\n| Where | Said | Actually |\n|---|---|---|\n| `docs/architecture.md` | `[multimodal]` has FOUR keys | **seven** — PR\n3 added two, PR 4 one |\n| `docs/README.md` | \"Multimodal I/O, slice 1 of 4\" | all four shipped;\nits `media understand` comment also still promised nothing from a file\ncould reach a remote model |\n| 2 skills + `.github/SECURITY.md` | `I1–I35` | `I1–I37` |\n| 2 skills | `D10–D23` | `D10–D27` |\n| `nimbus-db-migrations.md` | latest **V55** | **V59**, four behind |\n| `nimbus-security-invariants.md` | titled I30 \"latest\" | seven\ninvariants ago |\n\n`architecture.md`'s directory tree also named neither `vlm/remote/`,\n`cloud-bytes.ts` nor the grant store.\n\n## Two real gaps, not drift\n\n`nimbus-commands.md` had **no S2 CLI section at all** — `nimbus exec`,\n`nimbus computer`, `nimbus media` — and `nimbus-file-map.md` had no rows\nfor `exec/`, `computer-use/` or `multimodal/`. So the two skills whose\nwhole job is \"where does X live\" and \"how do I run X\" could not point at\nthe subsystems holding I33, I35 and I37. Both added, every path verified\nagainst the tree.\n\n## Verification\n\nDocs only. No behaviour changed, no invariant moved, no schema touched.\n`bun run preflight:fast` green across all 34 gates, `audit:doc-refs` and\n`audit:status-drift` among them.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nhttps://claude.ai/code/session_011Y892sZiZTXXX7UpPZm33e\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n## Summary by CodeRabbit\n\n- **Documentation**\n- Expanded multimodal guidance for local transcription, media\ncaptioning, cloud artifact retrieval, and consent-controlled remote\nimage analysis.\n- Updated security invariant and migration references, including newer\nchecks and schema guidance.\n- Documented vendor allowlisting, confirmation behavior, provenance\ntracking, and remote-vision restrictions.\n\n- **Validation**\n- Recorded successful live Gemini image-analysis validation with ledger\nand integrity verification.\n- Documented remaining unverified providers and scenarios, plus a known\nartifact-size display issue.\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>",
+          "timestamp": "2026-09-06T15:04:30Z",
+          "tree_id": "d97ff42243ade2c767c12ef433b65f5fe2958d0d",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/b519c713d49df680cca1fb479329e1549702dc63"
+        },
+        "date": 1788707866430,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 327.8885919499997,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 332.13739884999234,
             "unit": "ms"
           }
         ]
