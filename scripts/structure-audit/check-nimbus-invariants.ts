@@ -26,6 +26,10 @@ export const VAULT_KEY_ALLOW_LIST = [
   // that prefix) is the real defense and this entry documents the keyspace, exactly as D27(b)
   // states of the media_grant table.
   "packages/gateway/src/toolgen/toolgen-credentials.ts",
+  // The toolgen SIGNING keys, unlike `toolgen-credentials.ts`'s per-host keys directly above, are
+  // STATIC literals — the audit's literal scan genuinely sees them, so this entry is real
+  // enforcement rather than documentation of a keyspace the scan cannot reach.
+  "packages/gateway/src/toolgen/toolgen-keypair.ts",
 ];
 
 /**
@@ -53,6 +57,8 @@ export const PLATFORM_VAULT_KEYS = [
   "gemini.api_key",
   "xai.api_key",
   "chatops.channel.salt",
+  "toolgen.signing.privkey",
+  "toolgen.signing.pubkey",
 ] as const;
 
 const SPAWN_RE = /\b(?:Bun\.spawn|Bun\.spawnSync|child_process\.spawn|spawn)\s*\(/;
