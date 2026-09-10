@@ -171,6 +171,12 @@ const HITL_REQUIRED_BACKING = new Set<string>([
   // Phase 7 egress-ledger — the sole retention-edit mutation (I29) is owner-HITL-gated;
   // the egress.prune RPC consults the owner consent broker before pruning the ledger.
   "egress.prune",
+  // S2 toolgen persistence (I40) — promoting a generated tool from session-only to durable is a
+  // NEW fact about the same bytes ("run this in every future session, unattended") that the
+  // create-time approval never covered, so it gets its own owner-HITL-gated prompt via
+  // `toolgen-save-gate.ts`'s `saveGeneratedTool` and its own consent broker
+  // (`toolgen-consent-broker.ts`'s `toolgenSaveConsent`), never a reuse of the create approval.
+  "tool.save",
 ]);
 
 export const HITL_REQUIRED = Object.freeze({

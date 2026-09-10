@@ -7,6 +7,7 @@ import {
   getSavedTool,
   insertSavedTool,
   listSavedTools,
+  repairDisabledSavedTool,
   repairSavedToolCache,
   type SavedToolRow,
   setSavedToolDisabled,
@@ -94,6 +95,55 @@ test("repairSavedToolCache overwrites artifactJson and artifactDigest only", () 
   expect(row?.artifactDigest).toBe("newdigest");
   expect(row?.signature).toBe("sig");
   expect(row?.pubkey).toBe("pk");
+});
+
+test("insertSavedTool UPSERTS — a second call for the same tool_id replaces every column, approved_at included", () => {
+  const db = migratedTestDb();
+  insertSavedTool(db, sampleRow());
+  insertSavedTool(
+    db,
+    sampleRow({
+      toolName: "gitea_issues_v2",
+      description: "d2",
+      artifactJson: '{"a":2}',
+      artifactDigest: "newdigest",
+      signature: "sig2",
+      pubkey: "pk2",
+      approvedAt: 5000,
+      savedAt: 6000,
+      disabledReason: "signature_mismatch",
+    }),
+  );
+  expect(getSavedTool(db, "t1")).toEqual(
+    sampleRow({
+      toolName: "gitea_issues_v2",
+      description: "d2",
+      artifactJson: '{"a":2}',
+      artifactDigest: "newdigest",
+      signature: "sig2",
+      pubkey: "pk2",
+      approvedAt: 5000,
+      savedAt: 6000,
+      disabledReason: "signature_mismatch",
+    }),
+  );
+});
+
+test("repairDisabledSavedTool clears disabled_reason and updates signature/pubkey/saved_at only", () => {
+  const db = migratedTestDb();
+  insertSavedTool(db, sampleRow({ disabledReason: "pubkey_rotated" }));
+  repairDisabledSavedTool(db, "t1", { signature: "newsig", pubkey: "newpk", savedAt: 9000 });
+  const row = getSavedTool(db, "t1");
+  expect(row?.disabledReason).toBeNull();
+  expect(row?.signature).toBe("newsig");
+  expect(row?.pubkey).toBe("newpk");
+  expect(row?.savedAt).toBe(9000);
+  // Untouched: no new approval happened, so nothing about the approval record may look newer.
+  expect(row?.approvedAt).toBe(1000);
+  expect(row?.artifactJson).toBe('{"a":1}');
+  expect(row?.artifactDigest).toBe("deadbeef");
+  expect(row?.toolName).toBe("gitea_issues");
+  expect(row?.description).toBe("d");
 });
 
 test("the migration actually ran — schema version is 61", () => {

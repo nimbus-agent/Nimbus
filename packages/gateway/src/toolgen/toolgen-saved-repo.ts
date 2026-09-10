@@ -115,13 +115,37 @@ const SELECT_COLS = `SELECT tool_id, tool_name, description, artifact_json, arti
                              disabled_reason
                         FROM generated_tool`;
 
+/**
+ * Persist a fresh approval for `toolId` — either the FIRST save of this tool, or a resave after the
+ * owner revised its body/hosts/schema in the same session (a digest change under the SAME
+ * `tool_id`, which the save gate treats identically to a brand-new save: see
+ * `toolgen-save-gate.ts`'s `saveGeneratedTool`). Both are the same database operation: a wholly new
+ * approval record that must fully replace whatever was there before — `approved_at` included.
+ *
+ * `ON CONFLICT ... DO UPDATE` rather than a plain `INSERT`, because `tool_id` is the primary key,
+ * not `(tool_id, artifact_digest)` — a caller cannot assume `toolId` is unwritten just because the
+ * artifact changed. This is deliberately a DIFFERENT operation from `repairDisabledSavedTool`
+ * below: that one heals a row whose digest has NOT changed (nothing new was approved, so
+ * `approved_at` must not move); this one always reflects a real, fresh consent decision.
+ */
 export function insertSavedTool(db: Database, row: SavedToolRow): void {
   dbRun(
     db,
     `INSERT INTO generated_tool
        (tool_id, tool_name, description, artifact_json, artifact_digest, signature, pubkey,
         approved_at, saved_at, last_loaded_at, disabled_reason)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+     ON CONFLICT (tool_id) DO UPDATE SET
+       tool_name = excluded.tool_name,
+       description = excluded.description,
+       artifact_json = excluded.artifact_json,
+       artifact_digest = excluded.artifact_digest,
+       signature = excluded.signature,
+       pubkey = excluded.pubkey,
+       approved_at = excluded.approved_at,
+       saved_at = excluded.saved_at,
+       last_loaded_at = excluded.last_loaded_at,
+       disabled_reason = excluded.disabled_reason`,
     [
       row.toolId,
       row.toolName,
@@ -184,4 +208,37 @@ export function repairSavedToolCache(
     cache.artifactDigest,
     toolId,
   ]);
+}
+
+/**
+ * Heals a row disabled by a boot-time (or spawn-time) verification failure, for the ONE case where
+ * healing does not need a fresh owner decision: `toolgen-save-gate.ts`'s `saveGeneratedTool` calls
+ * this only when the LIVE in-session artifact's digest still matches what this row already recorded
+ * approval for. A matching digest means the disk/signature problem is the only thing wrong — the
+ * bytes themselves are exactly what the owner already consented to persist.
+ *
+ * Deliberately narrower than `insertSavedTool`'s upsert: `approved_at`, `tool_name`, `description`,
+ * `artifact_json` and `artifact_digest` are left UNTOUCHED. A digest match guarantees the cached
+ * `artifact_json` is already byte-identical to what would be recomputed (both are the output of the
+ * same canonicalisation over the same fields), so rewriting it would be a no-op at best; more to
+ * the point, `approved_at` must not move, because no new approval happened here — re-dating it
+ * would misrepresent a repair as a fresh consent event on a `tool.save` audit row that reads
+ * `hitl_status = 'not_required'` for exactly this reason.
+ *
+ * `signature`/`pubkey` DO change: the artifact may have been re-signed under a rotated Vault key
+ * (the `pubkey_rotated` case), and even when it was not, this always reflects the signature that
+ * was just written to disk. `saved_at` advances too, since the on-disk files were just rewritten.
+ */
+export function repairDisabledSavedTool(
+  db: Database,
+  toolId: string,
+  fields: { readonly signature: string; readonly pubkey: string; readonly savedAt: number },
+): void {
+  dbRun(
+    db,
+    `UPDATE generated_tool
+        SET signature = ?, pubkey = ?, saved_at = ?, disabled_reason = NULL
+      WHERE tool_id = ?`,
+    [fields.signature, fields.pubkey, fields.savedAt, toolId],
+  );
 }
