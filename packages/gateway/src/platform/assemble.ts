@@ -285,6 +285,7 @@ import {
 import { spawnTeamToolAndCall } from "../teamvault/team-tool-spawn.ts";
 import { TeamVaultStore } from "../teamvault/team-vault-store.ts";
 import { startTelemetryFlushScheduler } from "../telemetry/flush-scheduler.ts";
+import { reconcileSavedToolsOrWarn } from "../toolgen/toolgen-boot-reconcile.ts";
 import { ToolgenBroker } from "../toolgen/toolgen-broker.ts";
 import { spawnGeneratedTool } from "../toolgen/toolgen-client.ts";
 import { assertToolConfinement } from "../toolgen/toolgen-confinement.ts";
@@ -3819,6 +3820,23 @@ export async function assemblePlatformServices(
   // inaccessible OS keychain) would abort the ENTIRE gateway boot over a bookkeeping pass --
   // matching `appendBootMarkerOrWarn`/`reconcileOrphanedCuSessionsOrWarn` above.
   await sweepToolgenCredentialsOrWarn(vault, syncLogger);
+
+  // Boot reconciliation for SAVED (persisted) generated tools (spec § 7.1, Task 8): re-verify every
+  // `generated_tool` row against the Vault's current signing pubkey, repairing/re-enabling what
+  // still verifies and disabling what does not, then sweep any `saved/<toolId>` directory with no
+  // row. Run AFTER the credential sweep above (so a stale credential is gone before anything reads
+  // saved-tool state) and BEFORE `toolgenRegistry` below is populated by anything -- this pass never
+  // spawns a child process and never registers a tool itself, it only updates the database and the
+  // `saved/` directory a later load reads from.
+  //
+  // `...OrWarn`, matching `sweepToolgenCredentialsOrWarn` immediately above: a database or
+  // filesystem failure here must not abort gateway boot over a health-check pass.
+  await reconcileSavedToolsOrWarn({
+    db,
+    configDir: paths.configDir,
+    vault,
+    logger: syncLogger,
+  });
 
   // `toolgenRegistry` is the ONE registry instance shared by three places: the gate (counts a
   // session's budget and registers a live tool), the broker's `approvedHostsFor` AND

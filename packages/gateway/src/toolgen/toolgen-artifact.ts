@@ -39,6 +39,20 @@ export function canonicalArtifactBytes(artifact: GeneratedToolArtifact): string 
   });
 }
 
+/**
+ * The digest half of `artifactDigest`, taken directly over already-canonical bytes rather than an
+ * artifact object. Extracted for `toolgen-boot-reconcile.ts` (spec § 7.1): a boot-time verify reads
+ * `artifact.json` as a raw string (`readVerifiedSavedTool`'s `canonicalJson`) and must hash EXACTLY
+ * those bytes, never re-derive them by rebuilding a `GeneratedToolArtifact` — the saved shape holds
+ * a `PortableToolManifest`, not the concrete `ExtensionManifest` this file's `GeneratedToolArtifact`
+ * expects, so round-tripping through `canonicalArtifactBytes` a second time is not just redundant
+ * but the wrong type. `artifactDigest` below is a thin wrapper over this for the one call site
+ * (`toolgen-save-gate.ts`) that starts from a live artifact instead of on-disk bytes.
+ */
+export function digestOfCanonicalBytes(canonicalBytes: string): string {
+  return bytesToHex(blake3(new TextEncoder().encode(canonicalBytes)));
+}
+
 export function artifactDigest(artifact: GeneratedToolArtifact): string {
-  return bytesToHex(blake3(new TextEncoder().encode(canonicalArtifactBytes(artifact))));
+  return digestOfCanonicalBytes(canonicalArtifactBytes(artifact));
 }
