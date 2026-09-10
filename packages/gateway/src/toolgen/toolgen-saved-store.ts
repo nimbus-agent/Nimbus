@@ -10,15 +10,27 @@ import type { PortableToolManifest, ToolInputSchema } from "./toolgen-types.ts";
  * The `saved/<toolId>` directory (spec § 3) — a generated tool bound by an Ed25519 signature to
  * the exact bytes its owner approved, so it survives a gateway restart.
  *
- * **D29(d): there is no unverified read accessor for a saved artifact.** `readVerifiedSavedTool`
- * below is the ONLY function in this codebase permitted to hand a saved tool's body or artifact
- * fields to a caller, and it verifies the Ed25519 signature before it returns anything. Adding a
- * second accessor — a "just peek at the JSON" helper, a debug dump, a fast path that skips
- * verification because "the row already says healthy" — defeats the entire design: the row is a
- * cache of a past approval (`toolgen-saved-repo.ts`'s docstring), never the current truth, and only
- * a signature check performed on THIS read tells you the bytes on disk today are still the bytes
- * that were approved. If you are tempted to read `artifact.json` directly anywhere else in this
- * codebase, route through this module instead — that is the whole point of it existing.
+ * **D29(d): there is no unverified read accessor for a saved artifact ON DISK.**
+ * `readVerifiedSavedTool` below is the ONLY function in this codebase permitted to hand a caller a
+ * saved tool's body or artifact fields as read from `saved/<toolId>/artifact.json`, and it verifies
+ * the Ed25519 signature before it returns anything. Adding a second such accessor — a "just peek at
+ * the JSON" helper, a debug dump, a fast path that skips verification because "the row already says
+ * healthy" — defeats the entire design: the row is a cache of a past approval
+ * (`toolgen-saved-repo.ts`'s docstring), never the current truth, and only a signature check
+ * performed on THIS read tells you the bytes on disk today are still the bytes that were approved.
+ * If you are tempted to read `artifact.json` directly anywhere else in this codebase, route through
+ * this module instead — that is the whole point of it existing.
+ *
+ * **The scope of that claim is the DISK, deliberately — and it is narrower than an earlier draft of
+ * this comment said.** `parseCanonicalArtifact` is exported from this module too, and
+ * `ipc/toolgen-rpc.ts`'s `toSavedListEntry` calls it, unverified, on the `generated_tool` row's
+ * cached `artifact_json` COLUMN. That is display-only and applies ONLY to a row with no healthy
+ * in-memory match — a DISABLED row, which by definition cannot verify, and which `nimbus tool list`
+ * must still be able to show a name and hosts for rather than reporting silence. It touches no
+ * file, loads nothing, registers nothing and spawns nothing. Writing the claim absolutely and then
+ * not narrowing it when a later change qualified it is its own defect; this paragraph is the
+ * narrowing. D29(d) keys on other identifiers and does not catch that call, so the confinement
+ * there is by CAPABILITY (only this module is handed the `saved/` path) plus this statement.
  *
  * Three files per tool, written in this exact order and never any other:
  *

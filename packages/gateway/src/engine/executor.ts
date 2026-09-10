@@ -171,11 +171,20 @@ const HITL_REQUIRED_BACKING = new Set<string>([
   // Phase 7 egress-ledger — the sole retention-edit mutation (I29) is owner-HITL-gated;
   // the egress.prune RPC consults the owner consent broker before pruning the ledger.
   "egress.prune",
-  // S2 toolgen persistence (I40) — promoting a generated tool from session-only to durable is a
-  // NEW fact about the same bytes ("run this in every future session, unattended") that the
-  // create-time approval never covered, so it gets its own owner-HITL-gated prompt via
-  // `toolgen-save-gate.ts`'s `saveGeneratedTool` and its own consent broker
-  // (`toolgen-consent-broker.ts`'s `toolgenSaveConsent`), never a reuse of the create approval.
+  // S2 toolgen persistence (I40) — RESERVED, not load-bearing today. Promoting a generated tool
+  // from session-only to durable is a NEW fact about the same bytes ("run this in every future
+  // session, unattended") that the create-time approval never covered, so it is owner-approved —
+  // but through `toolgen-save-gate.ts`'s own `ToolgenSaveConsentBroker`, NOT through this
+  // executor. Nothing constructs an executor action of type `tool.save`, so this membership is
+  // currently inert: removing it changes no behaviour, and I40's guarantee does not rest on it.
+  //
+  // It is kept rather than deleted because the design spec reserves the name
+  // (`docs/superpowers/specs/2026-09-10-s2-toolgen-persistence-design.md` § "Reserves"), so this
+  // is where an executor-routed save would belong if one is ever built. Note that the three
+  // sibling capability gates — `code.execute` (I33), `computer.action` (I35) and `tool.generate`
+  // (I39) — are all deliberately ABSENT from this set for the same structural reason: they too
+  // prompt through their own brokers. Do not read this entry as "the save gate consults
+  // HITL_REQUIRED"; it does not.
   "tool.save",
 ]);
 

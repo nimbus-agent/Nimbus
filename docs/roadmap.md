@@ -973,10 +973,12 @@ multimodal row; it is not a spine row and is not counted in either half.
   artifact is signed with a Vault-only Ed25519 seed (`toolgen.signing.privkey`/`.pubkey`, generated
   on first use) and written to `<configDir>/toolgen/saved/<toolId>/`. New invariant **I40** and
   static rule **D29(d)**: `toolgen-saved-store.ts`'s `readVerifiedSavedTool` is the ONE accessor for
-  a saved artifact, and it re-verifies the live signature THREE times independently — at boot
-  (`toolgen-boot-reconcile.ts`, a health-report pass that also sweeps `saved/` directories with no
-  database row), when the registry loads saved tools into visibility (`loadSavedToolsIntoRegistry`),
-  and again immediately before the tool actually runs (`spawnSavedTool`) — never trusting an earlier
+  a saved artifact's ON-DISK bytes, and it re-verifies the live signature THREE times independently
+  — at boot (`toolgen-boot-reconcile.ts`, a health-report pass that also sweeps `saved/` directories
+  with no database row), when the registry loads saved tools into visibility
+  (`loadSavedToolsIntoRegistry`), and again immediately before the tool actually runs
+  (`spawnSavedTool` — implemented and integration-tested, but with NO production caller this
+  release, for the same reason `deps.toolgen` is unwired) — never trusting an earlier
   pass's result or the `disabled_reason` column, which is a cache. New schema **V61**
   (`generated_tool`): existence only, never content — the signed `artifact.json` plus its signature
   is what proves the persisted bytes are the exact ones approved. **What signing defends, and does
@@ -985,8 +987,19 @@ multimodal row; it is not a spine row and is not counted in either half.
   forge one — a narrower, precise claim, not a restatement of `extensions/verify-extensions.ts`'s
   existing hash-based tamper detection, which already covers every extension including this one.
   **No saved tool's credential outlives it:** `sweepToolgenCredentials` deletes every per-host
-  generated-tool Vault credential (never the signing keypair) on revoke, shutdown AND boot — total
-  by design, since there is no "keep the saved ones" set to compute. The concrete manifest's
+  generated-tool Vault credential (never the signing keypair) on shutdown AND boot — total by
+  design, since there is no "keep the saved ones" set to compute; a saved tool re-acquires what it
+  needs via `nimbus tool credential set`. Revoke closes the third window through the SIBLING
+  `deleteCredentialsForTool`, a per-tool prefix delete — the two now share one signing-prefix
+  exclusion (`TOOLGEN_SIGNING_KEY_PREFIX`), and `toolgen.revoke` also refuses the reserved tool id
+  `signing`, whose prefix IS that keypair's. **Revocation is the standing approval's withdrawal
+  path** and drops all four halves — live child, registry saved entry, `generated_tool` row,
+  `saved/<toolId>` directory — plus the ephemeral script and the Vault credentials, idempotently and
+  identically for a saved-only, ephemeral-only or both-halves tool; the save prompt promises exactly
+  this. **The `[tool_generation] enabled` kill switch and the org-policy lock-off reach the DURABLE
+  half too** (`toolgen-capability.ts`): both boot passes skip when the capability is off and
+  fail-closed when the policy accessor is absent, so no saved tool loads or is offered. The concrete
+  manifest's
   `filesystem.read` (machine-derived, ephemeral paths) is deliberately dropped from what gets SIGNED
   (`toolgen-portable-manifest.ts`) and is rebuilt fresh from code on every load/spawn instead —
   proven end to end by an integration test that saves a tool in one gateway process, boots a SECOND,
@@ -1000,10 +1013,13 @@ multimodal row; it is not a spine row and is not counted in either half.
   — the function that would put a generated (ephemeral or saved) tool in front of the conversational
   model — exists and is tested, but `engine/agent.ts`'s `NimbusEngineAgentDeps.toolgen` is optional
   and its one production caller, `gateway-main.ts`'s `createNimbusEngineAgent(...)` call, never
-  supplies it. `nimbus tool create`/`save` therefore work end to end, and a saved tool survives a
-  restart and can be spawned and invoked directly (proven by this closing PR's own integration
-  test), but the model itself cannot call one — a generated tool is reachable only via the CLI this
-  release, the same disclosure shape `deps.computerUse` already carries for the identical reason.
+  supplies it. `nimbus tool create`/`save`/`list`/`revoke`/`credential set` therefore work end to
+  end, and a saved tool survives a restart and is spawnable IN-PROCESS (`spawnSavedTool`, exercised
+  end to end by this closing PR's own integration test across two independent gateway processes).
+  **No path INVOKES a generated tool this release** — there is no `toolgen.invoke` IPC method and no
+  CLI subcommand that calls one, and with `deps.toolgen` unwired the model cannot either; the cited
+  proof is an in-process test call, not a shipped surface. Same disclosure shape
+  `deps.computerUse` already carries for the identical reason.
   Wiring `deps.toolgen` is a deliberate, undone decision, not an oversight: it would activate a
   dormant capability (model-authored code becoming model-invocable) and is left for a human to
   schedule.

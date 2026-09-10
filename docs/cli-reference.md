@@ -1696,11 +1696,25 @@ body AND its input schema in one structured reply, runs a four-rung validation l
 is JSON; the schema fits the restricted input-schema subset; the body parses as valid JavaScript;
 the body contains no construct the sandbox would refuse — with exactly ONE bounded redraft on
 failure, and only then prompts the owner to approve the verbatim body, the drafted parameters, and
-the grounding provenance. `ERR_TOOLGEN_DRAFT_NOT_IMPLEMENTED` is gone. **Not shipped:**
-agent-initiated tool proposal (`allow_agent_initiated` + `allowed_hosts`) and persistence via
-`nimbus tool save` (PR 3, which must resolve how I16's Ed25519 verification applies to a tool with
-no publisher). Design:
+the grounding provenance. `ERR_TOOLGEN_DRAFT_NOT_IMPLEMENTED` is gone. Design:
 [`docs/superpowers/specs/2026-09-09-s2-toolgen-drafting-design.md`](./superpowers/specs/2026-09-09-s2-toolgen-drafting-design.md).
+
+**Persistence shipped as PR 3 of 3 (invariant I40, schema V61).** `nimbus tool save <tool-id>`
+promotes a live, session-only generated tool to a DURABLE one: the artifact is signed with a
+Vault-held Ed25519 key, written to `<configDir>/toolgen/saved/<tool-id>/`, rowed in
+`generated_tool`, verified again at every boot and — where an invoke path exists — again at spawn.
+It is the first STANDING approval in this codebase, so it prompts separately from `create` and over
+a separate broker: approving a save consents to "run this in every future session, unattended",
+which the create-time approval never covered. `nimbus tool revoke` is its withdrawal path and drops
+the row, the `saved/` directory, the registry entry, the ephemeral script and the Vault credential
+together. Design:
+[`docs/superpowers/specs/2026-09-10-s2-toolgen-persistence-design.md`](./superpowers/specs/2026-09-10-s2-toolgen-persistence-design.md).
+
+**Not shipped:** agent-initiated tool proposal (`allow_agent_initiated` + `allowed_hosts`), and any
+path that INVOKES a generated tool — neither an IPC method nor a CLI subcommand calls one, and the
+engine's `deps.toolgen` is deliberately left unwired. A saved tool is spawnable in-process
+(`spawnSavedTool`) and is exercised end to end by an integration test; nothing in the shipped
+gateway calls it.
 
 **`[tool_generation] drafting` controls which model may author a tool body — DEFAULT `"local"`:**
 
@@ -1817,6 +1831,7 @@ nimbus tool create --description "post to my tracker" --host api.example.com \
   --host files.example.com --credential api.example.com=sk_live_...
 nimbus tool list
 nimbus tool list --json
+nimbus tool save 3fa85f64-5717-4562-b3fc-2c963f66afa6
 nimbus tool revoke 3fa85f64-5717-4562-b3fc-2c963f66afa6
 nimbus tool credential set 3fa85f64-5717-4562-b3fc-2c963f66afa6 api.example.com --bearer sk_live_...
 ```
@@ -1826,9 +1841,10 @@ A tool id is a raw `randomUUID()` value (`ToolgenGateDeps.newId`) — there is n
 | Subcommand | Meaning |
 | --- | --- |
 | `create --description <text> --host <h>...` | Register a tool. `--host` is repeatable and at least one is required. `--credential <host>=<token>` is repeatable and bearer-only from the CLI; naming a host not also passed to `--host` is refused before anything is sent to the gateway. |
-| `list [--json]` | Live tools from this CLI's own session — never a credential value, only the host names a credential is bound for. |
-| `revoke <tool-id>` | Ends the tool's child process AND deletes its approved script from disk — one call, both halves, so a revoked tool cannot be pointed at again. |
-| `credential set <tool-id> <host> (--bearer <token> \| --header <name> <value> \| --basic <user> <pass>)` | **Always refuses a live tool — a permanent refusal stub, not a gap.** Credentials are bound only at CREATE time, before the toolId exists — adding one afterward would change the artifact the owner already approved (`credentialHosts` sits inside the hashed, owner-approved artifact for exactly this reason). The refusal names the fix: revoke, then recreate with `--credential` included. |
+| `list [--json]` | Live tools from this CLI's own session, UNION every SAVED tool regardless of session — including a saved tool that failed verification, which is listed with its `disabledReason` rather than silently omitted. Never a credential value, only the host names a credential is bound for. |
+| `save <tool-id>` | Promotes a live tool to a DURABLE one (I40): signs the artifact with a Vault-held Ed25519 key, writes `saved/<tool-id>/`, rows it in `generated_tool`. Prompts SEPARATELY from `create`, over its own broker — approving a save is a STANDING approval ("runs in every future session, unattended"), not the create-time one reused. Refuses a tool that is not live in this session. Saving the exact bytes twice is a no-op (`already_saved`); re-saving bytes whose row is disabled but whose digest still matches is a `repaired`, with no fresh prompt. |
+| `revoke <tool-id>` | The WITHDRAWAL PATH, and the one the save prompt names. Ends the tool's child process, evicts it from the registry's saved set, deletes its `generated_tool` row and its `saved/<tool-id>` directory, deletes its approved ephemeral script, and deletes every Vault credential bound to it — one call, all of it, so a revoked tool does not come back at the next boot. Idempotent, and works whether the tool is saved-only, ephemeral-only, or both. The reserved id `signing` is refused (`ERR_TOOLGEN_TOOL_ID_RESERVED`): its Vault prefix is the artifact-signing keypair's. |
+| `credential set <tool-id> <host> (--bearer <token> \| --header <name> <value> \| --basic <user> <pass>)` | Binds a credential to a host the tool was ALREADY approved to reach. This is the recovery path for a SAVED tool after a restart: a saved tool's approval persists, its per-host secret never does (the boot/shutdown sweep is total), so a saved tool needing a credential re-acquires it here. `credentialHosts` is part of the signed artifact and is never widened — a host outside it is refused with `ERR_TOOLGEN_CREDENTIAL_HOST_UNKNOWN`. All three schemes work. |
 
 **`--credential <host>=<token>` is now transmitted and binds a BEARER credential per host, at
 create time.** `create`'s `--credential <host>=<token>` is parsed and checked client-side (host
@@ -1840,18 +1856,24 @@ an `Authorization: Bearer <token>` header on every brokered request to that host
 value never reaches the drafting prompt or the approval prompt (spec § 9.1) — only the host name
 does.
 
-**`header` and `basic` credential bindings exist in the broker but are reachable from no
-user-facing path in this release — a stated bound, not an oversight.** `ToolCredentialBinding`
-supports three schemes (`bearer`, `header`, `basic`) and the broker applies all three correctly,
-but `nimbus tool create --credential` only ever constructs a `bearer` binding — there is no CLI
-flag to request the other two at create time, and `nimbus tool credential set` (which parses
-`--header`/`--basic`) always refuses before it could write one. Closing this gap means widening
-`--credential`'s own syntax, not touching the broker.
+**All three credential schemes are now reachable, via `nimbus tool credential set`.** `nimbus tool
+create --credential <host>=<token>` still only ever constructs a `bearer` binding — there is no
+create-time flag for the other two — but `credential set` parses `--bearer`, `--header <name>
+<value>` and `--basic <user> <pass>`, sends the narrowed binding on `toolgen.credentialSet`, and the
+gateway writes it to the per-host Vault entry. (Through PR 2 this subcommand always refused, and
+`header`/`basic` were reachable from no user-facing path at all; both statements are now out of
+date.)
 
-**Credentials are supplied at create time, never after.** The toolId a credential would be bound
-to does not exist until `create` runs, so `credential set` cannot be the way a tool first gets one —
-and once a tool is registered, `credentialHosts` is part of what the owner approved, so widening it
-silently is exactly what this gate exists to prevent.
+**A credential can be supplied AFTER create — but only for a host that was already approved.** The
+earlier "credentials are supplied at create time, never after" framing described PR 2 and no longer
+holds: a SAVED tool's approval survives a restart while its per-host secret deliberately does not
+(the boot/shutdown Vault sweep is total), so a saved tool that needs a credential has to be able to
+get one again, and `credential set` is that path. What has NOT changed is the part that carries the
+security weight: `credentialHosts` sits inside the signed, owner-approved artifact, and
+`credential set` never widens it — a host outside that signed list is refused
+(`ERR_TOOLGEN_CREDENTIAL_HOST_UNKNOWN`), so a standing approval can never quietly come to cover a
+recipient the owner did not consent to. Binding a secret for an already-approved host is not the
+same act as approving a new host, and only the second one is what the gate exists to prevent.
 
 **The approval prompt shows the tool's VERBATIM body, its drafted parameters, its grounding
 provenance, its host list and its credential host list — never a digest and never a credential
