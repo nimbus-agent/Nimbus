@@ -93,6 +93,7 @@ function unreachableBroker(): ToolgenBroker {
     },
     readCredential: async () => null,
     approvedHostsFor: () => [],
+    credentialHostsFor: () => [],
     doFetch: async () => {
       throw new Error("unreachableBroker: doFetch must not be called by this test");
     },
@@ -412,6 +413,7 @@ describe("wireToolProtocol -- a brokered fetch is the tool's ONLY route out (inv
       resolveHost: async () => ["93.184.216.34"],
       readCredential: async () => null,
       approvedHostsFor: () => ["api.example.com"],
+      credentialHostsFor: () => [],
       doFetch: async () => new Response("payload", { status: 200 }),
     });
   }

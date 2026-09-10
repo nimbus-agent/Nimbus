@@ -3821,9 +3821,10 @@ export async function assemblePlatformServices(
   await sweepToolgenCredentialsOrWarn(vault, syncLogger);
 
   // `toolgenRegistry` is the ONE registry instance shared by three places: the gate (counts a
-  // session's budget and registers a live tool), the broker's `approvedHostsFor` (reads back the
-  // artifact the owner approved -- fail-closed `?? []` for an unknown/revoked toolId), and
-  // `PlatformServices.toolgenRegistry`, which `gateway-main.ts`'s shutdown drains.
+  // session's budget and registers a live tool), the broker's `approvedHostsFor` AND
+  // `credentialHostsFor` (both read back the same artifact the owner approved -- fail-closed
+  // `?? []` for an unknown/revoked toolId), and `PlatformServices.toolgenRegistry`, which
+  // `gateway-main.ts`'s shutdown drains.
   const toolGenerationCfg = loadNimbusToolGenerationFromConfigDir(paths.configDir);
   const toolgenRegistry = new ToolgenRegistry();
   const toolgenBroker = new ToolgenBroker({
@@ -3837,6 +3838,10 @@ export async function assemblePlatformServices(
     // revoked toolId gets NO approved hosts (the `?? []`), so every request from it is refused
     // and ledgered `blocked` rather than falling back to some other notion of "approved".
     approvedHostsFor: (toolId) => toolgenRegistry.get(toolId)?.artifact.approvedHosts ?? [],
+    // Mirrors `approvedHostsFor` immediately above: the SAME signed artifact, the same fail-closed
+    // `?? []` for an unknown/revoked toolId, so an unregistered tool is refused for both reasons at
+    // once rather than being treated as "no credential was ever promised".
+    credentialHostsFor: (toolId) => toolgenRegistry.get(toolId)?.artifact.credentialHosts ?? [],
     // A bare pass-through, deliberately -- `redirect: "error"` is set by `toolgen-broker.ts`
     // itself on the `init` it builds, not here, so the guarantee travels with the broker's checks
     // rather than living in this one wiring site (see `ToolgenBroker.handleFetch`'s docstring).
