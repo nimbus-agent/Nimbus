@@ -236,15 +236,19 @@ describe("D11 — checkVaultKeyAllowList", () => {
 });
 
 describe("D11 — VAULT_KEY_ALLOW_LIST is frozen at structural entries", () => {
-  test("VAULT_KEY_ALLOW_LIST has exactly 11 entries", () => {
+  test("VAULT_KEY_ALLOW_LIST has exactly 12 entries", () => {
     // 9 → 10: slice 2b adds ONLY `llm/vendor-vault-keys.ts`, which owns the vendor keyspace. The
     // `<vendor>.api_key` when resolving the credential per call. 10 → 11: the toolgen credential
     // store (`toolgen-credentials.ts`) composes the DYNAMIC `toolgen.<toolId>.<hostSlug>` keyspace
     // (D29(c)'s stated bound — a text scan cannot see it, capability confinement is the real
-    // defense, and this entry documents the keyspace). The count is frozen ON PURPOSE — a file
-    // gaining permission to construct a vault key is a decision, so it must be made deliberately in
-    // a commit that also explains it, never absorbed silently.
-    expect(VAULT_KEY_ALLOW_LIST).toHaveLength(11);
+    // defense, and this entry documents the keyspace). 11 → 12: `toolgen-keypair.ts` (I40) holds
+    // the STATIC `toolgen.signing.privkey` / `toolgen.signing.pubkey` literals — unlike
+    // `toolgen-credentials.ts`'s dynamic per-host keys directly above, the audit's literal scan
+    // genuinely sees these, so this entry is real enforcement rather than keyspace documentation.
+    // The count is frozen ON PURPOSE — a file gaining permission to construct a vault key is a
+    // decision, so it must be made deliberately in a commit that also explains it, never absorbed
+    // silently.
+    expect(VAULT_KEY_ALLOW_LIST).toHaveLength(12);
   });
 });
 
