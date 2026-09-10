@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { buildGeneratedTools } from "./toolgen-agent-tools.ts";
-import { ToolgenRegistry } from "./toolgen-registry.ts";
+import { type SavedToolEnvelope, ToolgenRegistry } from "./toolgen-registry.ts";
 
 const wrap = <T>(_service: string, _tool: string, def: T): T => def;
 
@@ -16,7 +16,7 @@ import type { ToolgenEnvelope } from "./toolgen-types.ts";
  */
 class CountingRegistry extends ToolgenRegistry {
   forSessionCalls = 0;
-  override forSession(sessionId: string): ToolgenEnvelope[] {
+  override forSession(sessionId: string): Array<ToolgenEnvelope | SavedToolEnvelope> {
     this.forSessionCalls += 1;
     return super.forSession(sessionId);
   }
@@ -106,5 +106,49 @@ describe("buildGeneratedTools", () => {
     if (tool === undefined) throw new Error("expected tool t1 to be registered");
     expect(tool.inputSchema.safeParse({}).success).toBe(false);
     expect(tool.inputSchema.safeParse({ owner: "nimbus" }).success).toBe(true);
+  });
+
+  function savedEnv(toolId: string): SavedToolEnvelope {
+    return {
+      toolId,
+      needsCredentials: false,
+      artifact: {
+        toolId,
+        toolName: toolId,
+        description: "d",
+        body: "b",
+        approvedHosts: [],
+        credentialHosts: [],
+        manifest: {
+          id: `toolgen.${toolId}`,
+          version: "0.0.0",
+          permissions: { network: [], filesystem: { read: [], write: [] } },
+          updateChannel: "stable",
+        },
+        inputSchema: { type: "object", properties: {} },
+      },
+    };
+  }
+
+  // The interface note this task's plan carries: "buildGeneratedTools needs no change if
+  // forSession unions -- but assert that, since it is the surface the model sees." This is that
+  // assertion: no code in this file changed for a saved tool to reach the model, because
+  // `buildGeneratedTools` only ever destructures `.artifact` off whatever `forSession` returns.
+  test("a SAVED tool is offered to a session that never created it, exactly like an ephemeral one", () => {
+    const r = new ToolgenRegistry();
+    r.registerSaved(savedEnv("saved_a"));
+    expect(
+      Object.keys(buildGeneratedTools("some-other-session", r, async () => null, wrap)),
+    ).toEqual(["saved_a"]);
+  });
+
+  test("ephemeral and saved tools coexist on the model surface without one shadowing the other", () => {
+    const r = new ToolgenRegistry();
+    r.register(env("tg_a", "s1"), async () => {});
+    r.registerSaved(savedEnv("saved_b"));
+    expect(Object.keys(buildGeneratedTools("s1", r, async () => null, wrap)).sort()).toEqual([
+      "saved_b",
+      "tg_a",
+    ]);
   });
 });

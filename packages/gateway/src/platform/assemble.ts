@@ -169,6 +169,7 @@ import {
 import { quorumCoordinator } from "../engine/quorum/quorum-singleton.ts";
 import type { ConnectorDispatcher } from "../engine/types.ts";
 import { execConsent } from "../exec/exec-consent-broker.ts";
+import { resolveRuntimeById } from "../exec/exec-runtimes.ts";
 import { type AutoUpdateRuntime, createAutoUpdateRuntime } from "../extensions/auto-update-init.ts";
 import { verifyExtensionsBestEffort } from "../extensions/verify-extensions.ts";
 import { federationConsent } from "../federation/consent-broker.ts";
@@ -305,6 +306,7 @@ import {
 import type { ToolgenGateDeps } from "../toolgen/toolgen-gate.ts";
 import { createEndpointFinder } from "../toolgen/toolgen-grounding.ts";
 import { ToolgenRegistry } from "../toolgen/toolgen-registry.ts";
+import { loadSavedToolsIntoRegistry } from "../toolgen/toolgen-saved-spawn.ts";
 import {
   removeToolScript,
   toolScriptDir,
@@ -3845,6 +3847,33 @@ export async function assemblePlatformServices(
   // `gateway-main.ts`'s shutdown drains.
   const toolGenerationCfg = loadNimbusToolGenerationFromConfigDir(paths.configDir);
   const toolgenRegistry = new ToolgenRegistry();
+
+  // Populate the registry's SAVED collection (Task 9, spec § 7.2) so a persisted tool is visible
+  // to every session, not only demonstrable in a unit test that calls `registerSaved` by hand.
+  // This RE-VERIFIES every row against the Vault's CURRENT pubkey rather than trusting
+  // `reconcileSavedToolsOrWarn`'s cached `disabled_reason` column -- see
+  // `loadSavedToolsIntoRegistry`'s docstring for why a health-report cache is never an authority a
+  // loader may rely on. It is still not the security GATE: `spawnSavedTool` (invoked wherever a
+  // saved tool is actually called) verifies a THIRD time before anything runs, and re-checks the
+  // reconstructed manifest against the signed shape besides -- this load only decides what the
+  // model and `nimbus tool list` are OFFERED.
+  //
+  // Wrapped, not `...OrWarn`-style delegated: a Vault or filesystem failure here must not abort
+  // gateway boot over saved-tool visibility, matching the credential sweep and reconciliation pass
+  // immediately above.
+  try {
+    await loadSavedToolsIntoRegistry(
+      { db, configDir: paths.configDir, vault, runtime: resolveRuntimeById("bun") },
+      toolgenRegistry,
+    );
+  } catch (err) {
+    syncLogger.warn(
+      { err },
+      "toolgen: could not load saved tools into the registry this boot; they remain saved but " +
+        "are not visible until the next successful boot",
+    );
+  }
+
   const toolgenBroker = new ToolgenBroker({
     db,
     now: () => Date.now(),

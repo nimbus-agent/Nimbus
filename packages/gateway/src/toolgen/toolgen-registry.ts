@@ -1,4 +1,4 @@
-import type { ToolgenEnvelope } from "./toolgen-types.ts";
+import type { GeneratedToolArtifact, ToolgenEnvelope } from "./toolgen-types.ts";
 
 interface Entry {
   readonly envelope: ToolgenEnvelope;
@@ -7,14 +7,52 @@ interface Entry {
 }
 
 /**
- * Ephemeral, session-keyed registry of live generated tools.
+ * A saved (persisted) generated tool as it lives in the registry's `#saved` collection (spec
+ * § 7.2, PR 3 of runtime tool generation).
  *
- * IN-MEMORY ONLY, and that is the feature: a gateway restart drops every generated tool, so
- * "ephemeral for the session" is true by construction rather than by a cleanup job. Same shape as
- * I30's in-memory pairing window. PR 1 adds no schema migration precisely because of this.
+ * Deliberately NOT a `ToolgenEnvelope`: a saved tool has no live session (it is visible to every
+ * session, not scoped to one), no live `scriptPath` (nothing has spawned it yet in this process —
+ * `index.ts` is re-derived fresh at spawn time from the verified body, never trusted from a prior
+ * write), and no meaningful `approvedAt` on THIS object (that value lives on the `generated_tool`
+ * DB row, per `spawnSavedTool`'s docstring — inventing one here to satisfy a shape neither needs
+ * nor should have is exactly the "stamp a fake value into a real field" anti-pattern this feature's
+ * design review rejected for `sessionId`). Keeping the shape genuinely narrower than
+ * `ToolgenEnvelope`, rather than padding it with placeholder fields to reuse that type, is what
+ * keeps every field on this object honest.
+ *
+ * `needsCredentials` is `artifact.credentialHosts.length > 0`, computed by the caller that builds
+ * this object (`toolgen-saved-spawn.ts`'s `loadSavedToolsIntoRegistry`) — never by the registry
+ * itself, which has no way to know whether a Vault binding exists. It is TRUE for any saved tool
+ * with a non-empty `credentialHosts`, unconditionally: spec § 8.2's boot/shutdown Vault sweep is
+ * TOTAL, so no saved tool can ever carry a bound credential across a restart, which makes this a
+ * static property of the artifact rather than something that needs a live Vault check.
+ */
+export interface SavedToolEnvelope {
+  readonly artifact: GeneratedToolArtifact;
+  readonly toolId: string;
+  readonly needsCredentials: boolean;
+}
+
+/**
+ * Ephemeral, session-keyed registry of live generated tools, PLUS the saved (persisted) collection
+ * every session can see (spec § 7.2).
+ *
+ * The ephemeral half (`#byId`) is IN-MEMORY ONLY, and that is the feature: a gateway restart drops
+ * every ephemeral generated tool, so "ephemeral for the session" is true by construction rather
+ * than by a cleanup job. Same shape as I30's in-memory pairing window. PR 1 adds no schema
+ * migration precisely because of this.
+ *
+ * The saved half (`#saved`) is the OPPOSITE by design: a saved tool survives a restart (it is
+ * loaded back in at boot from the signed `saved/<toolId>` store — `loadSavedToolsIntoRegistry`),
+ * is visible from EVERY session rather than the one that created it, and does not consume the
+ * per-session creation budget (`countForSession` reads `#byId` alone — see its docstring). The two
+ * collections are kept SEPARATE rather than merged into one map with an optional discriminator:
+ * an optional `sessionId` invites `undefined` to mean "global" to one reader and "unknown" to
+ * another, and `ToolgenEnvelope.sessionId` stays required throughout for exactly that reason.
  */
 export class ToolgenRegistry {
   readonly #byId = new Map<string, Entry>();
+  readonly #saved = new Map<string, SavedToolEnvelope>();
 
   register(envelope: ToolgenEnvelope, close: () => Promise<void>): void {
     this.#byId.set(envelope.artifact.toolId, { envelope, close, terminated: false });
@@ -24,16 +62,52 @@ export class ToolgenRegistry {
     return this.#byId.get(toolId)?.envelope;
   }
 
-  /** Live tools only. A terminated tool is not offered to the model as though it still worked. */
-  forSession(sessionId: string): ToolgenEnvelope[] {
+  /**
+   * Register a saved tool as visible to every session. Idempotent by `toolId` (a re-register, e.g.
+   * a resave in a later session, simply replaces the prior entry) — never merged field-by-field,
+   * since the artifact is signed as one whole object and a partial merge could mix fields from two
+   * different approvals.
+   */
+  registerSaved(envelope: SavedToolEnvelope): void {
+    this.#saved.set(envelope.toolId, envelope);
+  }
+
+  /** Every saved tool currently loaded, regardless of session. */
+  savedTools(): SavedToolEnvelope[] {
+    return [...this.#saved.values()];
+  }
+
+  /** Ephemeral tools live in THIS session and not terminated — the shared filter both public
+   * session-scoped methods below build on. Named for what it excludes as much as what it includes:
+   * a terminated tool is not offered to the model as though it still worked, and a tool created in
+   * a different session is invisible here (unlike a SAVED tool, which is deliberately global). */
+  #liveEphemeralForSession(sessionId: string): ToolgenEnvelope[] {
     return [...this.#byId.values()]
       .filter((e) => !e.terminated && e.envelope.sessionId === sessionId)
       .map((e) => e.envelope);
   }
 
-  /** Counts live tools only, so a crashed tool does not permanently consume session budget. */
+  /**
+   * Every tool visible to `sessionId`: this session's own live ephemeral tools, UNION the saved
+   * set (spec § 7.2 — a saved tool is reachable from every session, not just the one that created
+   * it). The saved half is appended, never merged by `toolId`, so an ephemeral and a saved tool
+   * sharing an id (a resave while the original session is still live) both appear rather than one
+   * silently shadowing the other — a real possibility today's assemble.ts wiring does not create,
+   * but not one this method should have to assume away.
+   */
+  forSession(sessionId: string): Array<ToolgenEnvelope | SavedToolEnvelope> {
+    return [...this.#liveEphemeralForSession(sessionId), ...this.savedTools()];
+  }
+
+  /**
+   * Counts LIVE EPHEMERAL tools only — deliberately NOT `forSession(sessionId).length`. That cap
+   * (`maxToolsPerSession` in `createGeneratedTool`) bounds how many tools one session may CREATE; a
+   * saved tool was created, and individually approved, in some earlier session already. Letting a
+   * saved tool consume this budget would mean saving three tools permanently disables tool
+   * creation for every future session — the exact bug spec § 7.2 calls out by name.
+   */
   countForSession(sessionId: string): number {
-    return this.forSession(sessionId).length;
+    return this.#liveEphemeralForSession(sessionId).length;
   }
 
   /**

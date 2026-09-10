@@ -1,6 +1,7 @@
 import { asRecord } from "../connectors/unknown-record.ts";
 import type { ToolgenConsentBroker } from "../toolgen/toolgen-consent-broker.ts";
 import { createGeneratedTool, type ToolgenGateDeps } from "../toolgen/toolgen-gate.ts";
+import type { SavedToolEnvelope } from "../toolgen/toolgen-registry.ts";
 import type { ToolCredentialParam, ToolgenEnvelope } from "../toolgen/toolgen-types.ts";
 import {
   dispatchByMethod,
@@ -96,6 +97,21 @@ function parseCredentials(raw: unknown): ToolCredentialParam[] {
 }
 
 /**
+ * `ToolgenRegistry.forSession` (Task 9) now unions in the SAVED collection, which is not a
+ * `ToolgenEnvelope` at all -- it has no live `sessionId`/`scriptPath`/`approvedAt` (see
+ * `SavedToolEnvelope`'s docstring for why those are not fabricated). Filtering to the ephemeral
+ * shape here keeps `toolgen.list`'s CURRENT behaviour byte-for-byte unchanged (it never showed a
+ * saved tool before this task, and every existing test needs that to stay true) rather than
+ * exposing a saved tool through a listing shape that has no field for `needsCredentials` or
+ * `disabledReason` to go in. Task 10 owns building the real merged view (spec § 9: `{ saved,
+ * needsCredentials, disabledReason }`) -- this predicate is an interim seam for THIS task to keep
+ * the tree compiling, not a design decision about what `toolgen.list` should eventually show.
+ */
+function isEphemeralEnvelope(entry: ToolgenEnvelope | SavedToolEnvelope): entry is ToolgenEnvelope {
+  return "sessionId" in entry;
+}
+
+/**
  * The `toolgen.list` wire shape: enough for an owner to recognise and manage a tool (I don't
  * return `body`/`manifest`/`scriptPath` here — those are plumbing, not a listing). The full
  * artifact the owner approved is `toolgen.approvalRequest`'s payload, not this one.
@@ -135,10 +151,16 @@ const HANDLERS: RpcMethodHandlerMap<ToolgenRpcCtx> = {
   },
 
   // Live tools only (a terminated tool is not offered back to a caller as though it still
-  // worked) -- `ToolgenRegistry.forSession` already applies that filter.
+  // worked) -- `ToolgenRegistry.forSession` already applies that filter. Saved tools are filtered
+  // OUT here for now -- see `isEphemeralEnvelope`'s docstring.
   "toolgen.list": (params, ctx) => {
     const sessionId = requireString(params, "sessionId");
-    return { tools: ctx.gateDeps.registry.forSession(sessionId).map(toListEntry) };
+    return {
+      tools: ctx.gateDeps.registry
+        .forSession(sessionId)
+        .filter(isEphemeralEnvelope)
+        .map(toListEntry),
+    };
   },
 
   "toolgen.revoke": async (params, ctx) => {
