@@ -826,19 +826,23 @@ describe("runTool credential set — a real gateway call (no longer a permanent 
   });
 
   test("a gateway refusal (e.g. an unknown credential host) is reported and exits refused", async () => {
+    // Mirrors the REAL gateway message shape (`ipc/toolgen-rpc.ts`'s `toolgen.credentialSet`
+    // handler): named codes travel on `.code`, never embedded into `.message` -- see that file's
+    // own comment on why (Task 1 of this branch reverted the embedded-code pattern once already).
     const h = fakeDeps({
       runWithClient: async (fn) =>
         fn({
           onNotification: () => {},
           call: async () => {
             throw new Error(
-              'ERR_TOOLGEN_CREDENTIAL_HOST_UNKNOWN: host "evil.com" is not among this tool\'s approved credential hosts: []',
+              'host "evil.com" (normalised: "evil.com") is not among tool "tg_a"\'s approved credential hosts: []',
             );
           },
         }),
     });
     await runTool(["credential", "set", "tg_a", "evil.com", "--bearer", "t"], h.d);
-    expect(h.err.join("")).toContain("ERR_TOOLGEN_CREDENTIAL_HOST_UNKNOWN");
+    expect(h.err.join("")).toContain("is not among tool");
+    expect(h.err.join("")).toContain("approved credential hosts");
     expect(h.codes).toEqual([TOOL_EXIT_CODES.refused]);
   });
 });

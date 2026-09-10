@@ -371,10 +371,15 @@ const HANDLERS: RpcMethodHandlerMap<ToolgenRpcCtx> = {
     const host = normalizeHost(rawHost);
     const credentialHosts = credentialHostsForTool(ctx, toolId);
     if (!credentialHosts.includes(host)) {
+      // Named codes exist so a caller distinguishes refusals via `.code`, never by matching on
+      // message text (`ToolgenError`'s own docstring) -- no other `ToolgenError` site in
+      // `toolgen/` embeds its code into the message, and Task 1 of this branch reverted the same
+      // pattern on `toolgen-portable-manifest.ts` for the identical reason. The message still
+      // names BOTH host spellings, which is the part that actually helps a refused owner.
       throw new ToolgenError(
         ERR_TOOLGEN_CREDENTIAL_HOST_UNKNOWN,
-        `ERR_TOOLGEN_CREDENTIAL_HOST_UNKNOWN: host "${rawHost}" (normalised: "${host}") is not ` +
-          `among tool "${toolId}"'s approved credential hosts: [${credentialHosts.join(", ")}]`,
+        `host "${rawHost}" (normalised: "${host}") is not among tool "${toolId}"'s approved ` +
+          `credential hosts: [${credentialHosts.join(", ")}]`,
       );
     }
     // The Vault only -- never a log line, never the response. `ToolgenSaveDeps.vault` is reused

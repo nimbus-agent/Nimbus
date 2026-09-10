@@ -15,7 +15,11 @@ import type { ToolgenGateDeps } from "../toolgen/toolgen-gate.ts";
 import { type SavedToolEnvelope, ToolgenRegistry } from "../toolgen/toolgen-registry.ts";
 import type { ToolgenSaveDeps } from "../toolgen/toolgen-save-gate.ts";
 import { insertSavedTool } from "../toolgen/toolgen-saved-repo.ts";
-import { type ToolgenEnvelope, ToolgenError } from "../toolgen/toolgen-types.ts";
+import {
+  ERR_TOOLGEN_CREDENTIAL_HOST_UNKNOWN,
+  type ToolgenEnvelope,
+  ToolgenError,
+} from "../toolgen/toolgen-types.ts";
 import type { NimbusVault } from "../vault/nimbus-vault.ts";
 import { checkLanMethodAllowed, LanError } from "./lan-rpc.ts";
 import { dispatchToolgenRpc, type ToolgenRpcCtx } from "./toolgen-rpc.ts";
@@ -437,10 +441,18 @@ describe("toolgen RPC", () => {
   });
 
   // Task 10 carried-forward item 5: `ToolgenRegistry.forSession` can return an ephemeral AND a
-  // saved entry sharing a `toolId` (the same session that created a tool has also saved it, and
-  // the ephemeral child is still running). This is a KNOWN, pre-existing, inert collision --
-  // documented here as OBSERVABLE now that `toolgen.list` shows both halves, not silently
-  // resolved. See the Task 10 report for why this is not this task's to fix.
+  // saved entry sharing a `toolId`, and `toolgen.list`'s union now surfaces both rather than one
+  // silently shadowing the other. Fixed round 1: the mechanism is NOT "create then save in the
+  // same session" -- `saveGeneratedTool` never calls `registry.registerSaved()`; the only
+  // production caller is `loadSavedToolsIntoRegistry` (`toolgen-saved-spawn.ts`), run once at
+  // boot, so a same-session save does not enter the in-memory saved collection at all, and by the
+  // next boot the ephemeral map is gone anyway. The only production route to this state is a
+  // freshly minted `randomUUID()` (`toolgen-gate.ts`'s `newId`) for a BRAND-NEW ephemeral tool
+  // colliding with an id a PREVIOUS boot persisted and THIS boot loaded -- a probability
+  // indistinguishable from zero, and unrelated to any create/save sequencing. This test is a
+  // regression guard on `toolgen.list`'s union behaviour (should a future change make the save
+  // gate register synchronously, this documents what the listing would then show), not a
+  // realistic scenario. See the Task 10 report for why this is not this task's to fix.
   test("a toolId live as BOTH an ephemeral tool and an already-saved tool produces two list entries (known collision, not resolved here)", async () => {
     const ctx = makeCtx();
     ctx.gateDeps.registry.register(makeEnvelope("dup", "s1"), async () => {});
@@ -699,13 +711,17 @@ describe("toolgen.credentialSet", () => {
   test("refuses a host outside the signed credentialHosts", async () => {
     const ctx = makeCtx();
     registerCredentialedLiveTool(ctx);
+    // Asserted via `.code`, never a message-text regex: named `ToolgenError` codes exist so a
+    // caller distinguishes refusals without matching on message text (its own docstring), and
+    // `.rejects.toMatchObject({ code })` still fails the test outright if the call unexpectedly
+    // resolves instead of rejecting.
     await expect(
       dispatchToolgenRpc(
         "toolgen.credentialSet",
         { toolId: "t1", host: "evil.com", binding: { type: "bearer", token: "x" } },
         ctx,
       ),
-    ).rejects.toThrow(/ERR_TOOLGEN_CREDENTIAL_HOST_UNKNOWN/);
+    ).rejects.toMatchObject({ code: ERR_TOOLGEN_CREDENTIAL_HOST_UNKNOWN });
   });
 
   // Positive control: without this, "refuses unknown hosts" would pass for an implementation that
@@ -825,7 +841,7 @@ describe("toolgen.credentialSet", () => {
         { toolId: "ghost", host: "api.example.com", binding: { type: "bearer", token: "x" } },
         ctx,
       ),
-    ).rejects.toThrow(/ERR_TOOLGEN_CREDENTIAL_HOST_UNKNOWN/);
+    ).rejects.toMatchObject({ code: ERR_TOOLGEN_CREDENTIAL_HOST_UNKNOWN });
   });
 
   test("without toolId, host or binding is an invalid-params error", async () => {
