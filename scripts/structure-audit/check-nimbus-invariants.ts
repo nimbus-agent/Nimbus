@@ -1872,6 +1872,59 @@ export function checkToolgenVaultKeyConfinement(files: readonly FileEntry[]): Vi
   return out;
 }
 
+// D29 (d) (I40): there is no unverified read accessor for a saved generated-tool artifact.
+// `toolgen-saved-store.ts`'s `readVerifiedSavedTool` is the ONLY function this codebase permits to
+// hand a saved tool's body or fields to a caller, and it verifies the artifact's Ed25519 signature
+// (I40) before returning anything -- see that file's own docstring, which calls this "the whole
+// point of it existing".
+//
+// Keyed on IDENTIFIERS, not on the on-disk path text. A proposed form scanned file contents for
+// `/toolgen[\\/]saved/`, and there are ZERO such literals anywhere in this tree -- the store
+// composes every path from its own private constants (`join(configDir, STORE_DIR, SAVED_DIR,
+// toolId)`), so that rule would match nothing and report green forever, which is worse than no
+// rule at all: it reads as coverage.
+//
+// `SAVED_DIR` is the store's own private directory-segment constant (value `"saved"`). Deliberately
+// NOT `STORE_DIR` (value `"toolgen"`): the unrelated ephemeral script store (`toolgen-script-store.ts`)
+// declares its own module-private `STORE_DIR` of the same name for an unrelated purpose, so keying
+// on that name would false-positive on a file this rule has no business flagging. `SAVED_DIR` names
+// no other file's concept and is safe to key on without that collision.
+// `readSavedToolUnverified` and `rawSavedArtifact` name no function that exists in this tree today;
+// they are the SHAPE a future bypass would plausibly take (a "just peek at the JSON" helper, a
+// debug dump, a fast path that trusts the row's cached health column because "it already says
+// healthy") rather than a shape actually present anywhere yet. `readVerifiedSavedTool` itself is
+// deliberately NOT matched -- it is the sanctioned door this rule exists to protect, not to flag.
+//
+// STATED BOUND, in D27(b)'s own style: a dynamically composed path, or a renamed local built by
+// string concatenation or re-exported under an alias, still evades a text scan -- that residual is
+// closed the way the others are, by capability, not by this rule: only `toolgen-saved-store.ts` is
+// ever hard-coded with the saved-tool directory layout, and every other module reaches a saved
+// artifact only through `readVerifiedSavedTool`. This rule is the backstop for a second definition
+// or a leaked constant appearing in the wrong file, exactly as D27(b) says of `media_grant`.
+const D29D_STORE = "packages/gateway/src/toolgen/toolgen-saved-store.ts";
+const D29D_FORBIDDEN_RE = /\b(SAVED_DIR|readSavedToolUnverified|rawSavedArtifact)\b/;
+
+export function checkSavedToolAccessorConfinement(files: readonly FileEntry[]): Violation[] {
+  const out: Violation[] = [];
+  for (const f of files) {
+    if (f.relPath.endsWith(".test.ts")) continue;
+    if (!f.relPath.startsWith("packages/gateway/src/")) continue;
+    if (f.relPath === D29D_STORE) continue;
+    const code = stripComments(f.contents);
+    const original = f.contents.split("\n");
+    for (const m of code.matchAll(new RegExp(D29D_FORBIDDEN_RE.source, "g"))) {
+      const line = code.slice(0, m.index).split("\n").length;
+      out.push({
+        rule: "D29(d)-saved-tool-accessor-confined",
+        file: f.relPath,
+        line,
+        snippet: (original[line - 1] ?? "").trim(),
+      });
+    }
+  }
+  return out;
+}
+
 export function checkEgressChokepointConfinement(files: readonly FileEntry[]): Violation[] {
   const out: Violation[] = [];
   for (const f of files) {
@@ -2131,13 +2184,14 @@ export const RULE_ANCHORS: readonly string[] = [
   // without an anchor of its own, D28 would report clean while scanning nothing the moment
   // `iterateSourceFiles()` stopped reaching `fleet/`.
   "packages/gateway/src/fleet/fleet-invoker.ts",
-  // D29 (a)/(b)/(c) — anchored on `toolgen-broker.ts`, a file all three rules SCAN (it names none
-  // of `nimbus/fetch`, `buildGeneratedManifest`'s definition, or a `toolgen.` vault-key template,
-  // so it is read and then reported clean) rather than on any of the three DEFINITION sites the
-  // rules themselves skip (`toolgen-types.ts`, `toolgen-stub.ts`'s own file is scanned but for a
-  // different check, `toolgen-credentials.ts`). Without an anchor of its own, all three D29 rules
-  // would report clean while scanning nothing the moment `iterateSourceFiles()` stopped reaching
-  // `toolgen/` — the same inert-guard failure mode D23/D28 exist to catch.
+  // D29 (a)/(b)/(c)/(d) — anchored on `toolgen-broker.ts`, a file all four rules SCAN (it names
+  // none of `nimbus/fetch`, `buildGeneratedManifest`'s definition, a `toolgen.` vault-key template,
+  // or a forbidden saved-tool identifier, so it is read and then reported clean) rather than on any
+  // of the DEFINITION/allow-listed sites the rules themselves skip (`toolgen-types.ts`,
+  // `toolgen-stub.ts`'s own file is scanned but for a different check, `toolgen-credentials.ts`,
+  // `toolgen-saved-store.ts`). Without an anchor of its own, all four D29 rules would report clean
+  // while scanning nothing the moment `iterateSourceFiles()` stopped reaching `toolgen/` — the same
+  // inert-guard failure mode D23/D28 exist to catch.
   "packages/gateway/src/toolgen/toolgen-broker.ts",
 ];
 
@@ -2447,6 +2501,15 @@ async function run(): Promise<void> {
     for (const e of v) {
       console.error(
         `::error file=${e.file},line=${e.line}::D29(c) a toolgen. Vault-key prefix composed outside toolgen-credentials.ts — a second producer of the per-host credential keyspace; I39 regression: ${e.snippet}`,
+      );
+    }
+    if (v.length > 0) exit = 1;
+  }
+  if (mode === "binary-only" || mode === "all") {
+    const v = checkSavedToolAccessorConfinement(files);
+    for (const e of v) {
+      console.error(
+        `::error file=${e.file},line=${e.line}::D29(d) a saved-tool private accessor/constant is named outside toolgen-saved-store.ts — a second, unverified read path for a saved artifact; I40 regression: ${e.snippet}`,
       );
     }
     if (v.length > 0) exit = 1;
