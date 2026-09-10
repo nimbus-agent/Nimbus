@@ -108,6 +108,55 @@ Shutdown needs **no change** to leave saved tools alone: `removeAllToolScripts` 
 
 Saved tools inherit I16's **property** and none of its **machinery**.
 
+### 3.1 The signed manifest cannot contain machine-derived paths
+
+**A blocker the first draft missed, and the reason its obvious fix is also wrong.**
+
+`buildGeneratedManifest` writes `opts.scriptDir` into `permissions.filesystem.read`, and
+`canonicalArtifactBytes` covers `artifact.manifest`. So an artifact signed at save time carries a
+read grant naming `toolgen/ephemeral/<toolId>` — a directory that is wiped at shutdown. A saved tool
+spawning from `saved/<toolId>` would be granted read on the empty ephemeral path and **denied read
+on its own body**: an immediate failure under Windows AppContainer, and a path simply not mounted
+into the namespace under Linux `bwrap`.
+
+The obvious fix is to rebuild the manifest against the saved directory before signing. **That fails
+too, for a reason that only shows up one level down.** `requiredReadPaths()` returns
+`dirname(process.execPath)` — the *Bun binary's* directory — and on macOS its parent as well. So a
+signed manifest is not merely session-specific, it is **machine- and platform-specific**, and it
+breaks on events that are not attacks at all:
+
+- a Bun upgrade that installs to a versioned or relocated path,
+- moving the config directory, or running the compiled binary rather than dev Bun,
+- the same artifact evaluated on macOS versus Linux (two read paths versus one).
+
+Signing that would mean a routine runtime upgrade silently disables every saved tool, reporting a
+signature mismatch — a **tampering warning for an event that is not tampering**. § 4 already argues
+that conflating those two destroys the owner's trust in the next real warning; this would be the
+same error with a much more common trigger.
+
+**Resolution: machine-derived absolute paths are not signed. The manifest is reconstructed at spawn
+and checked against the signed shape.**
+
+- The canonical artifact carries the manifest's **portable security shape**: `network` is empty, and
+  the filesystem read set is expressible as *own script directory ∪ runtime read paths*. No resolved
+  absolute string enters the signature.
+- At spawn, `buildGeneratedManifest` builds the concrete manifest from the tool id, the store
+  directory actually in use (`ephemeral` or `saved`), and the live `runtime.requiredReadPaths()`.
+- The spawn path then **asserts the reconstructed manifest satisfies the signed shape** — network
+  empty, read set a subset of own-dir ∪ runtime paths — and refuses otherwise.
+
+This is *stronger* than signing the concrete manifest, not a relaxation. A reconstructed manifest is
+built from code and is not attacker-influenceable at all; a signed one is a value read back from
+disk, which is the thing an attacker touches. The signature's job is to bind the **body, the schema
+and the destinations** — the things a human actually evaluated. It was never able to bind an
+absolute path to anything meaningful.
+
+**This is the last cheap moment to change `canonicalArtifactBytes`.** Ephemeral tools do not survive
+a restart, so no stored artifact exists to invalidate and no migration is owed; the only digests
+affected are historical audit rows, which are records of past events and are not re-verified. Once
+PR 3 ships, signed artifacts exist on disk and this function's output is frozen by compatibility.
+Make the change here or accept it permanently.
+
 ---
 
 ## 4. Schema V61 — `generated_tool`
@@ -128,11 +177,28 @@ CREATE TABLE generated_tool (
 );
 ```
 
-**The DB is the index; disk-plus-signature is the authority.** The row exists so `nimbus tool list`
-can enumerate without reading and verifying every artifact on disk. It is never the thing trusted:
-on any disagreement between row and disk, **the verified disk artifact wins and the row is
-repaired** — never the reverse. Writing that rule down matters because the convenient direction is
-the wrong one, and a future reader optimising a slow list is exactly who would invert it.
+**Authority splits on two axes, and conflating them is what the first draft got wrong.**
+
+- **Existence — the row governs.** A `generated_tool` row *is* the record that an owner approved
+  persistence. A directory under `saved/` with no row is an orphan and is **swept**, exactly as
+  `sweepOrphanActiveDirsBestEffort` sweeps an extensions-root directory with no `extension` row. It
+  is never adopted.
+- **Content — disk plus signature governs.** For a tool that does have a row, the verified on-disk
+  artifact is the truth about what the tool *is*. If the row's cached digest disagrees with the
+  verified artifact, the disk wins and the row's cached fields are repaired — never the reverse. The
+  convenient direction is the wrong one, and whoever later optimises a slow `tool list` is exactly
+  the reader who would invert it.
+
+**Why existence is not disk-governed**, though adopting a validly-signed orphan directory looks
+harmless: a signature proves the artifact was approved *once*, never that it is approved *now*.
+Adopting orphans would let a restored backup, or a directory an owner deliberately revoked and an
+attacker kept a copy of, silently re-register a standing execution capability. Revocation deletes the
+row and the directory together; if only the directory comes back, the correct reading is that it
+should not be there.
+
+The cost is stated: **if the database is lost, every saved tool is swept.** That is data loss and it
+is the right posture — the record of approval is what was lost, so the approval is gone with it, and
+the owner re-saves. Fail-closed beats resurrecting standing capabilities from files.
 
 `pubkey` is stored per row so a Vault key rotation is reported as its own `disabled_reason`
 (`pubkey_rotated`) rather than presenting as tampering. Those are different events, and an owner
@@ -187,12 +253,26 @@ DB column, and never logged — the `share-keypair.ts` contract verbatim.
 3. **Take the artifact from the registry envelope, never re-derived from disk.** I33's read-once
    rule one hop on: re-reading at save time is a TOCTOU that defeats the gate, since the human is
    the boundary here.
-4. **Obtain the owner's approval** of the verbatim artifact plus the persistence fact, via a new
+4. **Derive the portable artifact** (§ 3.1) — strip machine-derived absolute paths, retaining the
+   manifest's security shape. This happens *before* the prompt, so the bytes the owner approves are
+   the bytes that get signed, with no step in between.
+5. **Obtain the owner's approval** of the verbatim artifact plus the persistence fact, via a new
    `tool.save` HITL action type joining `HITL_REQUIRED_BACKING` (I2's frozen set,
    `engine/executor.ts`). Fail-closed on TTL.
-5. **Sign, write, insert** — `ensureToolgenKeypair`, sign `canonicalArtifactBytes(artifact)`, write
+6. **Sign, write, insert** — `ensureToolgenKeypair`, sign `canonicalArtifactBytes(artifact)`, write
    the three files, insert the row.
-6. **Audit** one `tool.save` row carrying the digest, on every outcome.
+7. **Audit** one `tool.save` row carrying the digest, on every outcome.
+
+**Already saved?** `saveGeneratedTool` is idempotent when the derived artifact's digest matches the
+stored one: it returns `already_saved` and does **not** re-prompt, since nothing new is being
+consented to. When the digest differs — the owner revised the tool in this session — it is a fresh
+save and **does** prompt, because the standing approval would otherwise widen to bytes nobody
+approved.
+
+**The running child is left alone.** Promoting a live tool does not kill or restart its process: it
+keeps running from `ephemeral/<toolId>` for the rest of the session, and `saved/<toolId>` is what
+subsequent sessions spawn from. Killing a working tool as a side effect of saving it would be a
+surprising cost for an action the owner framed as preservation.
 
 A denied or timed-out approval writes nothing: no files, no row.
 
@@ -230,9 +310,45 @@ broker envelope), and the signature is checked **again** at that moment rather t
 boot pass. The boot pass is a health report for `nimbus tool list`; the spawn check is the gate. A
 gateway that has been running for a week must not be spawning a body that was verified a week ago.
 
+**Spawn re-checks the manifest shape too** (§ 3.1): the reconstructed manifest must have empty
+`network` and a read set within own-dir ∪ runtime paths, or the spawn refuses. That check is what
+makes reconstruction safe rather than merely convenient.
+
 A saved tool that fails verification is **not offered to the model at all** — the `{}` shape
 `buildGeneratedTools` already uses for an empty session, not a registered tool that errors when
 called.
+
+### 7.1 Boot reconciliation is one-directional, plus an orphan sweep
+
+Per § 4's split:
+
+1. **Row pass.** For every `generated_tool` row, check the three files, verify, and write
+   `disabled_reason` on failure. This is the health report.
+2. **Orphan sweep.** Every directory under `saved/` with no row is removed. It is **not** adopted,
+   for the reason § 4 gives: a valid signature proves the artifact was approved once, never that it
+   is approved now.
+
+There is deliberately no disk-to-database adoption pass. `cu-boot-reconcile.ts` is the shape to
+follow — it closes rows orphaned by a previous process; it does not invent rows from residue.
+
+### 7.2 Saved tools are visible to every session, and cost no session budget
+
+`ToolgenRegistry` is session-scoped today: `forSession` filters on `sessionId`, and
+`countForSession` feeds the `maxToolsPerSession` check in `createGeneratedTool`. Both need care.
+
+- **Visibility.** A saved tool must be reachable from every session — a later CLI run
+  (`CLI_TOOLGEN_SESSION_ID`), an agent session with a fresh UUID, a fleet job. `forSession` returns
+  the session's ephemeral tools **∪** the saved set.
+- **Budget.** Saved tools **do not** count toward `maxToolsPerSession`. That cap exists to bound how
+  many tools one session may *create*; a saved tool was created — and individually approved — in
+  some earlier session. Letting saved tools consume the cap would mean saving three tools
+  permanently disables tool creation.
+
+**Not by making `sessionId` optional.** The reviewer's sketch weakens a currently-required field, and
+an optional discriminator invites `undefined` to mean "global" in one reader and "unknown" in
+another. The saved set is a **separate collection** on the registry with its own accessors; the
+union happens in `forSession`, and `countForSession` keeps reading the ephemeral map alone. Ephemeral
+tools keep their required `sessionId` and their existing type.
 
 ---
 
@@ -283,6 +399,24 @@ carry a credential. On load with nothing bound, the tool lists as `needs-credent
 uncredentialed request "just in case" would leak the request itself to a host expecting
 authentication and would make the failure mode a silent 401 instead of a stated refusal.
 
+**That refusal does not exist today and must be built** — the first draft asserted it as though it
+did. `ToolgenBroker.handleFetch` currently ends its credential step with
+`if (binding !== null) applyCredential(headers, binding);`, so a `null` binding — an unbound host, or
+one whose key the sweep removed — falls through to an **unauthenticated outbound request**. Under the
+§ 8.3 rule that becomes reachable on every restart rather than being a corner case, so it is a
+security fix this PR owes, not a nicety:
+
+- `ToolgenBrokerDeps` gains `credentialHostsFor: (toolId: string) => readonly string[]`, resolved
+  from the signed artifact rather than from anything the tool supplies.
+- `handleFetch` refuses with `ERR_TOOLGEN_CREDENTIAL_REQUIRED` when the host is in that set and the
+  binding is `null`, naming the `nimbus tool credential set` command that fixes it.
+- The refusal appends a `blocked` `tool`-class egress row before returning, matching how I39 already
+  treats a refused host — a refusal is an attempted egress and is recorded as one.
+
+Note the asymmetry, which is deliberate: a host **not** in `credentialHosts` and with no binding is
+uncredentialed *by design* and proceeds. The refusal covers hosts the owner was told would carry a
+credential.
+
 `nimbus tool credential set <toolId> <host> --bearer|--header|--basic` becomes real. It is currently
 a permanent refusal stub whose argument parser already exists, so making it real also puts the
 `header` and `basic` bindings on a user-facing path for the first time and closes that stated
@@ -324,8 +458,17 @@ saved tool does not load when it is false. Deliberately no `[tool_generation] ma
 whose only enforcement is a refusal at save time adds a knob without adding a property, and every
 saved tool has passed an individual HITL approval already.
 
-**Error codes** — `ERR_TOOLGEN_SAVE_DISABLED`, `ERR_TOOLGEN_SAVE_NOT_LIVE`,
-`ERR_TOOLGEN_SAVE_DENIED`, `ERR_TOOLGEN_SIGNATURE_INVALID`, `ERR_TOOLGEN_CREDENTIAL_HOST_UNKNOWN`.
+**Error codes** —
+
+| Code | Raised when |
+| --- | --- |
+| `ERR_TOOLGEN_SAVE_DISABLED` | capability off by config or org policy |
+| `ERR_TOOLGEN_SAVE_NOT_LIVE` | the id is not an active, non-terminated tool |
+| `ERR_TOOLGEN_SAVE_DENIED` | the owner rejected the `tool.save` prompt |
+| `ERR_TOOLGEN_SIGNATURE_INVALID` | signature mismatch at load or spawn |
+| `ERR_TOOLGEN_MANIFEST_SHAPE_INVALID` | reconstructed manifest violates the signed shape (§ 3.1) |
+| `ERR_TOOLGEN_CREDENTIAL_REQUIRED` | fetch to a `credentialHosts` host with no binding (§ 8.3) |
+| `ERR_TOOLGEN_CREDENTIAL_HOST_UNKNOWN` | binding attempted for a host outside `credentialHosts` |
 
 ---
 
@@ -365,6 +508,19 @@ reader elsewhere is a build failure rather than a review comment. Capability con
 (only that module is handed the store path); the rule makes the shape non-recurring, in the manner
 of D27(a).
 
+**How it must NOT be implemented.** The review proposed scanning file contents for a
+`/toolgen[\\/]saved/` path literal. **That rule matches nothing and would pass vacuously** — checked:
+there are zero such occurrences in the tree, because the existing store composes its paths from
+constants (`const STORE_DIR = "toolgen"; const EPHEMERAL_DIR = "ephemeral";` then
+`join(configDir, STORE_DIR, EPHEMERAL_DIR, toolId)`), and the saved store will do the same. A guard
+that cannot fire is worse than no guard: it reports green forever and is read as coverage.
+
+The rule therefore keys on **identifiers, not path text** — the exported loader's name and the
+saved-directory constant, each nameable only by its defining module plus the wiring site — and
+carries the same stated bound D27(b) carries: a dynamically assembled path still evades a text scan,
+so capability confinement is the real defense and the rule prevents the shape from recurring rather
+than proving it absent. The bound is written into the rule's own comment, not just here.
+
 **Triple rule:** wiring, the `docs/SECURITY-INVARIANTS.md` I40 section, and the
 `security-invariants.test.ts` enforcement test land in the same commit.
 
@@ -382,14 +538,47 @@ of D27(a).
 - Signature file removed → refuses, `signature_missing`, distinct from a mismatch.
 - Vault keypair regenerated → `pubkey_rotated`, **distinguishable** from tampering. Asserted on the
   reason, not merely on the refusal.
-- Row says healthy, disk says tampered → disk wins, row repaired. And the inverse: row missing, disk
-  valid → the row is rebuilt, not the artifact deleted.
+- Row says healthy, disk says tampered → disk wins, the row's cached fields are repaired (§ 4,
+  content axis).
+- **Orphan: valid signed directory under `saved/` with no row → swept, NOT adopted** (§ 4, existence
+  axis). The signature verifying is precisely what makes this test meaningful — it proves the sweep
+  is driven by the missing row and not by a failed check.
 - Spawn-time re-verification: a tool that passed boot verification and was tampered with afterwards
   refuses at spawn. This is the assertion that proves boot and spawn are two checks and not one.
+
+**Manifest portability (§ 3.1)** — the case the first draft would have shipped broken:
+
+- A saved tool **spawns and answers on all three platforms**, from `saved/<toolId>`, in a process
+  whose gateway never saw the create. This is the test the ephemeral-path bug would have failed, and
+  it must run per-platform rather than being asserted from unit fakes: the failure was an OS-level
+  access denial, which no fake reproduces.
+- `requiredReadPaths()` changes between save and load (simulating a Bun upgrade) → the tool still
+  loads and spawns. This is the regression test for signing machine-derived paths; it fails against
+  the rejected design and passes against this one.
+- A reconstructed manifest that violates the signed shape — non-empty `network`, or a read path
+  outside own-dir ∪ runtime paths → refuses with `ERR_TOOLGEN_MANIFEST_SHAPE_INVALID`. Red-proved by
+  removing the assertion.
+
+**Idempotency (§ 6)** — saving an unchanged tool twice returns `already_saved` and prompts **once**;
+saving after the artifact changed prompts **again**. Asserted on the prompt count, not just the
+return value, since the whole point is that consent is not silently skipped.
+
+**The D29(d) guard must be able to fail.** Add a fixture that *should* violate it and assert the
+audit reports the violation — without that, the guard's green is indistinguishable from the guard
+matching nothing, which is exactly what the rejected regex would have done.
 
 **Credential lifecycle** — create → revoke → the Vault key is gone. Create → shutdown → gone. Save →
 shutdown → the tool survives and the credential does not. A crash-orphaned key is swept at next boot.
 `credential set` on a host outside `credentialHosts` refuses.
+
+**The full post-restart cycle, end to end** — save a credentialed tool → restart → it loads
+`needs-credentials` → a brokered fetch to the credentialed host refuses with
+`ERR_TOOLGEN_CREDENTIAL_REQUIRED` **and appends a `blocked` egress row** → `nimbus tool credential
+set` → the same fetch now succeeds and carries the header. Asserted on the outbound request's
+headers, not on a return code: the defect being guarded is a request that *went out* without
+authentication, and only inspecting what was sent can see it. The negative half must also assert
+**no request was made at all**, since a refusal that still hits the network is the bug wearing a
+different exit code.
 
 **Shutdown non-interference** — `removeAllToolScripts` leaves `saved/` intact. Asserted, not assumed,
 because the failure mode is silent deletion.
@@ -435,7 +624,22 @@ persistence, and says so in those words.
 - `VaultLister.listKeys(prefix?)` exists.
 - `toolgen.revoke` does not delete Vault credentials; nothing sweeps them at shutdown or boot.
 - `allow_agent_initiated` / `allowed_hosts` are absent from config.
-- Schema head is V60, so V61 is next.
+- Schema head is V60 (`CURRENT_SCHEMA_VERSION` in `index/local-index.ts`), so V61 is next.
+
+**Asserted — added during review response, 2026-09-10:**
+
+- `buildGeneratedManifest` writes `opts.scriptDir` into `permissions.filesystem.read`, and
+  `canonicalArtifactBytes` covers `manifest` — so an ephemeral path would be signed into a saved
+  artifact (§ 3.1).
+- `requiredReadPaths()` returns `dirname(process.execPath)`, plus its parent on macOS — machine- and
+  platform-specific, which is what rules out signing the concrete manifest (§ 3.1).
+- `ToolgenBroker.handleFetch` ends its credential step with
+  `if (binding !== null) applyCredential(...)`: a null binding proceeds **unauthenticated** (§ 8.3).
+- `ToolgenRegistry.forSession` filters on `sessionId`, and `countForSession` feeds the
+  `maxToolsPerSession` check in `createGeneratedTool` (§ 7.2).
+- `CLI_TOOLGEN_SESSION_ID` is the literal `"cli"`; agent sessions use UUIDs (§ 7.2).
+- The tree contains **zero** occurrences of a `toolgen/saved` path literal, and the store composes
+  paths from constants — which is why the reviewed regex form of D29(d) would match nothing (§ 10).
 
 **Assumed — to confirm during implementation, not to build on blind:**
 
@@ -453,3 +657,35 @@ persistence, and says so in those words.
 references above are ungated and will rot silently. They were hand-verified on 2026-09-10. This spec
 deliberately cites files rather than file:line for that reason — a moved line is the failure mode
 that rot takes most often.
+
+---
+
+## 14. Review disposition (2026-09-10)
+
+Against [`2026-09-10-s2-toolgen-persistence-design-review.md`](./2026-09-10-s2-toolgen-persistence-design-review.md).
+Every item was checked against the tree before being accepted or refused; the checks are recorded in
+§ 13.
+
+| # | Item | Disposition | Note |
+|---|---|---|---|
+| 2.1 | Manifest path invalidation | **Accepted — blocker confirmed; both proposed fixes rejected** | Verified real. Neither fix survives: `requiredReadPaths()` is the Bun binary dir and is platform-conditional, so a rebuilt-and-signed manifest breaks on a Bun upgrade and differs across OSes. § 3.1 signs the portable shape and reconstructs at spawn — stronger, since a reconstructed manifest is not attacker-influenceable. |
+| 2.2 | Broker sends uncredentialed | **Accepted in full** | Verified: `if (binding !== null) applyCredential(...)`. The first draft asserted a refusal that does not exist. § 8.3 now specifies `credentialHostsFor`, `ERR_TOOLGEN_CREDENTIAL_REQUIRED`, and a `blocked` egress row. |
+| 2.3 | Two-way DB↔disk reconciliation | **Contradiction accepted; resolution rejected** | § 7 and the old § 11 did conflict. But adopting signed orphans lets a backup restore, or a kept copy of a revoked tool, silently re-register a standing capability. § 4 splits the axes: the row governs existence (orphans swept, per `sweepOrphanActiveDirsBestEffort`), disk+signature governs content. |
+| 2.4 | Registry session scope | **Problem accepted; fix refined** | Both halves verified. Rejected making `sessionId` optional — it weakens a required field and lets `undefined` mean "global" to one reader and "unknown" to another. § 7.2 uses a separate saved collection; `countForSession` keeps reading the ephemeral map, so saved tools cost no budget. |
+| 3.1 | Migration wiring | **Accepted** | `CURRENT_SCHEMA_VERSION = 60` confirmed in `index/local-index.ts`. D12 already binding. |
+| 3.2 | Detached-signature sketch | **Accepted** | Matches § 5 and settles the § 13 open question — a small local detached verifier, not `extensions/verify-signature.ts`, whose shape is a manifest with an embedded signature field. |
+| 3.3 | D29(d) as a path regex | **Rejected — the rule matches nothing** | Zero `toolgen/saved` literals exist; the store composes from constants. A guard that cannot fire reports green forever and reads as coverage. § 10 keys on identifiers and states the evasion bound; § 11 adds a must-fail fixture. |
+| Q1 | pubkey recovery if the DB is lost | **Moot** | Under § 4, a lost database means saved tools are swept, so there is nothing left to verify. No pubkey copy in `artifact.json` is needed — and adding one would invite adopting orphans. |
+| Q2 | Save an already-saved tool | **Accepted, refined** | Idempotent with no re-prompt when the digest matches; a **changed** artifact prompts again, or the standing approval widens to bytes nobody approved. |
+| Q3 | Running child on promotion | **Accepted** | Recorded in § 6: the child keeps running from `ephemeral/`; `saved/` is what later sessions spawn. |
+| Q4 | Error taxonomy | **Accepted** | § 9 is now a table, adding `ERR_TOOLGEN_CREDENTIAL_REQUIRED` and `ERR_TOOLGEN_MANIFEST_SHAPE_INVALID`. |
+| 5 | Test additions | **Accepted, minus disk→DB reconciliation** | That test is replaced by its inverse (orphan swept, not adopted), following 2.3. Added: per-platform saved-tool spawn, the Bun-upgrade regression, prompt-count idempotency, and the guard's must-fail fixture. |
+
+**One thing the review did not have, and it changed an answer:** `requiredReadPaths()`'s volatility is
+what turned 2.1 from "rebuild the manifest before signing" into "do not sign machine-derived paths at
+all". The review found the blocker; the fix is different because of a fact one level below where it
+was looking.
+
+**And a deadline the review surfaced without naming:** § 3.1's change to `canonicalArtifactBytes` is
+free today and permanent after this PR, because ephemeral artifacts do not persist and signed ones
+will. It has to be decided here.
