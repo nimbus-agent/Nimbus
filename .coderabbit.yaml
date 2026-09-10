@@ -12,8 +12,8 @@
 # scripts/structure-audit/*; this file tells the reviewer what the repo's
 # invariants MEAN so its prose comments are useful rather than generic.
 #
-# Invariant ids below refer to docs/SECURITY-INVARIANTS.md (I1-I39; I28 is
-# reserved, so the LIVE count is 38, not 39 — do not derive one number from the
+# Invariant ids below refer to docs/SECURITY-INVARIANTS.md (I1-I40; I28 is
+# reserved, so the LIVE count is 39, not 40 — do not derive one number from the
 # other by hand). Keep them in sync — scripts/structure-audit/check-coderabbit-config.test.ts
 # fails if this file cites an invariant that does not exist there.
 language: en-US

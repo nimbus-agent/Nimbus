@@ -632,26 +632,44 @@ the `tool` coverage class, I39, D29(a)+(b), `[tool_generation]` (`enabled` +
 namespace, `nimbus tool create|list|revoke|credential set`, the LAN-forbid, and `tool_generation`
 enforced at last rather than merely declared. No migration.
 
-**PR 2 — agent-initiated**, behind `allow_agent_initiated` plus `allowed_hosts`: the agent-facing
-proposal tool, the mid-turn consent pause, and an approval prompt that states the agent rather
-than the owner initiated it.
+**PR 2 — drafting, not agent-initiated as this paragraph originally said.** **Corrected 2026-09-10,
+by PR 3's own closing task, once both PRs had actually shipped:** PR 2 shipped 2026-09-10 as the
+drafting capability § 6 had assigned to PR 1 as a stub (`ERR_TOOLGEN_DRAFT_NOT_IMPLEMENTED`) —
+`nimbus tool create` actually drafts a tool body and input schema via a model
+(`[tool_generation] drafting`, `"off"`/`"local"`/`"allow-remote"`, DEFAULT `"local"`) — rather than
+the agent-facing proposal flow this paragraph originally described under that number. Detail:
+[`2026-09-09-s2-toolgen-drafting-design.md`](./2026-09-09-s2-toolgen-drafting-design.md).
 
-**PR 3 — persistence**, `nimbus tool save`, schema V61. It carries an unresolved question named
-here rather than discovered there: **I16 verifies `publisher` extensions by Ed25519 at install and
-at every startup, and a self-authored tool has no publisher.** Either it installs unsigned like a
-local dev extension — meaning nothing detects on-disk tampering between sessions — or the owner
-gets a signing key and saved tools are signed locally. The second is right, and it is a real chunk
-of work, which is why it is its own PR rather than smuggled into PR 1. § 4.5 is what makes it
-cheap when it arrives.
+**Agent-initiated proposal** — `allow_agent_initiated` plus `allowed_hosts`, the agent-facing
+proposal tool, the mid-turn consent pause, and an approval prompt that states the agent rather than
+the owner initiated it — **did not ship as a numbered PR in this slice and is a named,
+reason-recorded deferral**, the same treatment fleet's subject-enumeration PR 2b and the
+computer-use screen lane received rather than a PR that quietly evaporated: every capability
+through PR 3 is OWNER-initiated (`nimbus tool create`, `nimbus tool save`), and a model proposing a
+network-reaching tool mid-conversation is a materially larger trust boundary than drafting one the
+owner explicitly asked for — it deserves its own consent-UX design pass, not a rider on whichever
+PR happened to ship next. See `docs/roadmap.md`'s toolgen row for the live deferral record.
 
-**Recorded direction for PR 3, not designed here:** a local signing keypair
-(`toolgen.signing.privkey` / `.pubkey`, Vault-only, joining `PLATFORM_VAULT_KEYS`); `nimbus tool
-save` signs the § 4.5 canonical artifact and writes it under `<configDir>/extensions/local.<toolId>/`;
-`verify-extensions.ts` verifies `local.*` against the local pubkey at every startup and refuses
-fail-closed on mismatch, so on-disk tampering between sessions is detected. That gives I16's
-property without third-party publisher infrastructure. **Unverified premise:** whether
-`verify-extensions.ts` can today distinguish a `local.*` extension from an unsigned dev install —
-PR 3 must check that before assuming this shape drops in.
+**PR 3 — persistence**, `nimbus tool save`, schema V61, shipped 2026-09-10. It carries an
+unresolved question named here rather than discovered there: **I16 verifies `publisher` extensions
+by Ed25519 at install and at every startup, and a self-authored tool has no publisher.** Either it
+installs unsigned like a local dev extension — meaning nothing detects on-disk tampering between
+sessions — or the owner gets a signing key and saved tools are signed locally. The second is right,
+and it is a real chunk of work, which is why it is its own PR rather than smuggled into PR 1. § 4.5
+is what makes it cheap when it arrives.
+
+**Recorded direction for PR 3, not designed here — and not what shipped; see invariant I40 for the
+as-built shape:** a local signing keypair (`toolgen.signing.privkey` / `.pubkey`, Vault-only,
+joining `PLATFORM_VAULT_KEYS`); `nimbus tool save` signs the § 4.5 canonical artifact and writes it
+under `<configDir>/extensions/local.<toolId>/`; `verify-extensions.ts` verifies `local.*` against
+the local pubkey at every startup and refuses fail-closed on mismatch, so on-disk tampering between
+sessions is detected. That gives I16's property without third-party publisher infrastructure.
+**As shipped, this premise did not hold, and the design changed accordingly:** PR 3 built a
+dedicated `saved/<toolId>/` store with its own boot/load/spawn re-verification path
+(`toolgen-saved-store.ts`, `toolgen-boot-reconcile.ts`, `toolgen-saved-spawn.ts`) entirely separate
+from `extensions/verify-extensions.ts` and the `local.*` extension shape, rather than reusing
+either — see invariant **I40** in `docs/SECURITY-INVARIANTS.md` for why and for the as-built
+wiring.
 
 ## 11. Invariant I39 and static rule D29
 

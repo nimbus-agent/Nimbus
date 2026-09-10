@@ -170,6 +170,39 @@ describe("saved tools (spec § 7.2) — visible everywhere, budget-free", () => 
   });
 });
 
+describe("findArtifact -- the union lookup a per-request broker check needs", () => {
+  test("resolves a SAVED tool's artifact, which get() cannot see", () => {
+    const r = new ToolgenRegistry();
+    r.registerSaved(savedEnvelope("saved_only"));
+    expect(r.get("saved_only")).toBeUndefined();
+    expect(r.findArtifact("saved_only")?.toolId).toBe("saved_only");
+  });
+
+  test("resolves a live ephemeral tool's artifact", () => {
+    const r = new ToolgenRegistry();
+    r.register(env("tg_a"), async () => {});
+    expect(r.findArtifact("tg_a")?.toolId).toBe("tg_a");
+  });
+
+  test("an unknown toolId resolves to undefined, never a throw", () => {
+    const r = new ToolgenRegistry();
+    expect(r.findArtifact("never-registered")).toBeUndefined();
+  });
+
+  test("the ephemeral entry wins when a toolId exists in both collections", () => {
+    const r = new ToolgenRegistry();
+    r.register(env("dup", "s1"), async () => {});
+    r.registerSaved({
+      ...savedEnvelope("dup"),
+      artifact: { ...savedEnvelope("dup").artifact, approvedHosts: ["saved-only.example.com"] },
+    });
+    // The live ephemeral artifact's own hosts, not the saved one's -- an in-session tool being
+    // resaved under the same id must not have its live requests re-authorized against the OLDER
+    // saved artifact while the new approval is still pending.
+    expect(r.findArtifact("dup")?.approvedHosts).toEqual(["api.example.com"]);
+  });
+});
+
 describe("an unknown toolId is a no-op, never a throw", () => {
   // Both arms matter for a real reason: `wireExitCallback` fires `markTerminated` AFTER an
   // owner-initiated `revoke()` has already deleted the entry (see `spawnGeneratedTool`'s doc

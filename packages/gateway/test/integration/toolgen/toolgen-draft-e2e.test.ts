@@ -169,6 +169,9 @@ function buildBroker(db: Database, registry: ToolgenRegistry): ToolgenBroker {
     resolveHost: async (host) => (host === STUB_HOST ? ["93.184.216.34"] : []),
     readCredential: async () => null,
     approvedHostsFor: (toolId) => registry.get(toolId)?.artifact.approvedHosts ?? [],
+    // No case in this file ever binds a credential -- an always-empty list mirrors
+    // `approvedHostsFor`'s fail-closed `?? []` for a toolId with none.
+    credentialHostsFor: (toolId) => registry.get(toolId)?.artifact.credentialHosts ?? [],
     doFetch: async (url, init) => {
       dialed = url;
       return fetch(`http://127.0.0.1:${server.port}/`, init);

@@ -63,6 +63,22 @@ export class ToolgenRegistry {
   }
 
   /**
+   * The artifact for `toolId`, resolved across BOTH collections — the live ephemeral one first,
+   * then the saved one. Deliberately session-independent and shape-independent, unlike `get`
+   * (ephemeral only) and `forSession` (session-filtered, and returns the whole envelope union
+   * rather than just the artifact): a per-request broker check has no session of its own and does
+   * not care which collection currently holds the tool, only what the OWNER signed for it
+   * (`toolgen-broker.ts`'s `approvedHostsFor`/`credentialHostsFor`, wired in `platform/assemble.ts`
+   * — a live request from a spawned SAVED tool must resolve its approved/credential hosts exactly
+   * as reliably as a live ephemeral one does, or every such request is silently refused as though
+   * no host were ever approved). `get()` stays ephemeral-only on purpose — see its own docstring —
+   * this is the union view a caller that must not care which collection wins should use instead.
+   */
+  findArtifact(toolId: string): GeneratedToolArtifact | undefined {
+    return this.#byId.get(toolId)?.envelope.artifact ?? this.#saved.get(toolId)?.artifact;
+  }
+
+  /**
    * Register a saved tool as visible to every session. Idempotent by `toolId` (a re-register, e.g.
    * a resave in a later session, simply replaces the prior entry) — never merged field-by-field,
    * since the artifact is signed as one whole object and a partial merge could mix fields from two

@@ -3885,11 +3885,15 @@ export async function assemblePlatformServices(
     // The artifact the owner approved IS the source of truth for this list -- an unknown or
     // revoked toolId gets NO approved hosts (the `?? []`), so every request from it is refused
     // and ledgered `blocked` rather than falling back to some other notion of "approved".
-    approvedHostsFor: (toolId) => toolgenRegistry.get(toolId)?.artifact.approvedHosts ?? [],
-    // Mirrors `approvedHostsFor` immediately above: the SAME signed artifact, the same fail-closed
-    // `?? []` for an unknown/revoked toolId, so an unregistered tool is refused for both reasons at
-    // once rather than being treated as "no credential was ever promised".
-    credentialHostsFor: (toolId) => toolgenRegistry.get(toolId)?.artifact.credentialHosts ?? [],
+    // `findArtifact`, not `get`: a request may come from a SPAWNED SAVED tool (Task 12's
+    // `spawnSavedTool`), which lives in the registry's saved collection, not its ephemeral one --
+    // `get`'s `?? []` would refuse every host for such a tool regardless of what was approved.
+    approvedHostsFor: (toolId) => toolgenRegistry.findArtifact(toolId)?.approvedHosts ?? [],
+    // Mirrors `approvedHostsFor` immediately above: the SAME signed artifact (ephemeral or saved),
+    // the same fail-closed `?? []` for an unknown/revoked toolId, so an unregistered tool is
+    // refused for both reasons at once rather than being treated as "no credential was ever
+    // promised".
+    credentialHostsFor: (toolId) => toolgenRegistry.findArtifact(toolId)?.credentialHosts ?? [],
     // A bare pass-through, deliberately -- `redirect: "error"` is set by `toolgen-broker.ts`
     // itself on the `init` it builds, not here, so the guarantee travels with the broker's checks
     // rather than living in this one wiring site (see `ToolgenBroker.handleFetch`'s docstring).
