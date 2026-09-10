@@ -88,6 +88,26 @@ export class ToolgenRegistry {
     this.#saved.set(envelope.toolId, envelope);
   }
 
+  /**
+   * Evict a saved tool from the in-memory saved collection — the IN-PROCESS half of
+   * `toolgen.revoke` for a persisted tool, paired with deleting its `generated_tool` row and its
+   * `saved/<toolId>` directory (`ipc/toolgen-rpc.ts`).
+   *
+   * Deliberately NOT folded into `revoke` below, which closes a live CHILD PROCESS and is async
+   * for exactly that reason. A saved tool has no live child to close here: `#saved` holds an
+   * approved artifact, not a running thing (`SavedToolEnvelope`'s docstring — no `scriptPath`, no
+   * handle). Merging the two would make `revoke` claim to have stopped something it never started,
+   * and would give one method two different meanings of "the tool is gone".
+   *
+   * Returns whether an entry was actually present, so a caller can disclose whether a revoke
+   * touched the saved half — never used as a precondition, since revoke must stay idempotent: a
+   * tool that is saved-on-disk but absent from this map (it failed verification at load and was
+   * skipped, per `loadSavedToolsIntoRegistry`) must still be revocable.
+   */
+  unregisterSaved(toolId: string): boolean {
+    return this.#saved.delete(toolId);
+  }
+
   /** Every saved tool currently loaded, regardless of session. */
   savedTools(): SavedToolEnvelope[] {
     return [...this.#saved.values()];

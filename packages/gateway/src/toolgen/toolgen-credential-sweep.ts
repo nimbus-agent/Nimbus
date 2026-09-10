@@ -1,14 +1,21 @@
 import type { Logger } from "pino";
 import type { NimbusVault } from "../vault/nimbus-vault.ts";
+import { TOOLGEN_SIGNING_KEY_PREFIX } from "./toolgen-keypair.ts";
 
 /**
  * The one prefix a per-host generated-tool credential can NEVER share: `toolCredentialKey`
- * (`toolgen-credentials.ts`) composes `toolgen.<toolId>.<hostSlug>`, and no tool id is ever
- * `signing` (tool ids are minted by the gateway, not chosen by a caller). Skipping this prefix is
- * what keeps a full sweep from deleting `ensureToolgenKeypair`'s (`toolgen-keypair.ts`) two Vault
- * entries.
+ * (`toolgen-credentials.ts`) composes `toolgen.<toolId>.<hostSlug>`, so a tool id of `signing`
+ * would collide with `ensureToolgenKeypair`'s (`toolgen-keypair.ts`) two Vault entries exactly.
+ * Skipping this prefix is what keeps a full sweep from deleting them.
+ *
+ * This used to justify itself with "no tool id is ever `signing` (tool ids are minted by the
+ * gateway, not chosen by a caller)". That premise is TRUE of this sweep, which takes no tool id at
+ * all — and it was FALSE of `deleteCredentialsForTool`, whose id arrives from a caller over
+ * `toolgen.revoke`. The exclusion is therefore a shared constant rather than a private one, and
+ * `deleteCredentialsForTool` applies it too: the safety of a keyspace boundary must not depend on
+ * where the string that addresses it happened to come from.
  */
-const SIGNING_PREFIX = "toolgen.signing.";
+const SIGNING_PREFIX = TOOLGEN_SIGNING_KEY_PREFIX;
 
 /**
  * Delete every per-host generated-tool credential, retaining only the signing keypair.
@@ -21,12 +28,18 @@ const SIGNING_PREFIX = "toolgen.signing.";
  * would have to join Vault keys against `generated_tool` rows — more code, and a place for a saved
  * tool's credential to survive a restart in contradiction of that design.
  *
- * Called from three places, each closing a different window the leak could otherwise open in:
- * `toolgen.revoke` (via `deleteCredentialsForTool`, immediately, for the one tool being revoked),
+ * Called from TWO places, each closing a different window the leak could otherwise open in:
  * gateway shutdown (for every tool that was live when the process exited without an explicit
  * revoke), and gateway boot (for anything a previous, uncleanly-terminated process left behind —
  * a crash between approval and registration, or a kill signal that skipped the shutdown drain
  * entirely).
+ *
+ * `toolgen.revoke` closes the third window, but NOT through this function: it calls the sibling
+ * `deleteCredentialsForTool` (`toolgen-credentials.ts`), a per-tool prefix delete scoped to the one
+ * tool being revoked rather than a total sweep. That distinction is worth stating precisely,
+ * because the two functions once differed in whether they excluded the signing keypair — they no
+ * longer do (`TOOLGEN_SIGNING_KEY_PREFIX` is shared), and any future divergence must be
+ * deliberate.
  *
  * Returns the count of keys deleted, for the caller to log/disclose — never the keys' values,
  * which this function never reads in the first place (`listKeys` returns names only).

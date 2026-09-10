@@ -3963,7 +3963,14 @@ describe("I40 — a saved generated tool is durable only under a live signature,
 
     const registry = new ToolgenRegistry();
     await loadSavedToolsIntoRegistry(
-      { db, configDir, vault, runtime: { requiredReadPaths: () => [] } },
+      {
+        db,
+        configDir,
+        vault,
+        runtime: { requiredReadPaths: () => [] },
+        config: { enabled: true },
+        enforced: { capabilitiesDisabled: new Set<string>() },
+      },
       registry,
     );
 
@@ -3973,15 +3980,23 @@ describe("I40 — a saved generated tool is durable only under a live signature,
     expect(registry.forSession("any-session")).toEqual([]);
   });
 
-  test("I40: tool.save is in the HITL frozen set", () => {
+  test("I40: tool.save is RESERVED in the HITL frozen set — inert, not load-bearing", () => {
     // `HITL_REQUIRED_BACKING` is module-PRIVATE (I2 asserts it is never exported), so this
     // asserts through the frozen `HITL_REQUIRED` facade, which IS exported — importing the
     // backing set would not compile, and a source-regex check would pass on a commented-out
-    // entry. This matters more than it looks: I2's own enforcement checks that the set is
-    // frozen, that it is unexported, and that it holds more than 80 entries — none of which
-    // would notice ONE specific member being deleted. Nothing else in this suite would catch
-    // "tool.save" vanishing from `HITL_REQUIRED_BACKING`, and I40's entire "durable only under
-    // an owner-approved signature" claim depends on that one membership holding.
+    // entry.
+    //
+    // What this test does NOT claim, corrected from an earlier overstatement: I40's "durable only
+    // under an owner-approved signature" guarantee does not depend on this membership. Nothing
+    // constructs an executor action of type `tool.save`; `saveGeneratedTool` prompts through its
+    // own `ToolgenSaveConsentBroker` and never consults `HITL_REQUIRED` at all — exactly as I33's
+    // `code.execute`, I35's `computer.action` and I39's `tool.generate` do, all three of which are
+    // correctly ABSENT from this set. Deleting this entry would change no behaviour.
+    //
+    // It is asserted anyway because the design spec RESERVES the name, so this is where an
+    // executor-routed save would belong; the test pins the reservation, and the comment above
+    // pins what it is worth. The real enforcement of the save prompt lives in
+    // `toolgen-save-gate.test.ts`.
     expect(HITL_REQUIRED.has("tool.save")).toBe(true);
   });
 

@@ -153,3 +153,22 @@ export const ERR_TOOLGEN_SIGNATURE_INVALID = "ERR_TOOLGEN_SIGNATURE_INVALID";
 export const ERR_TOOLGEN_SAVE_DISABLED = "ERR_TOOLGEN_SAVE_DISABLED";
 export const ERR_TOOLGEN_SAVE_NOT_LIVE = "ERR_TOOLGEN_SAVE_NOT_LIVE";
 export const ERR_TOOLGEN_SAVE_DENIED = "ERR_TOOLGEN_SAVE_DENIED";
+
+/**
+ * A caller-supplied `toolId` that could not be a tool id this gateway ever minted — it fails
+ * `assertSafeToolId`'s `^[A-Za-z0-9_-]{1,64}$` shape (`toolgen-script-store.ts`).
+ *
+ * Distinct from `ERR_TOOLGEN_TOOL_ID_RESERVED` below on purpose: this one says "that is not a tool
+ * id at all", the other says "that is a well-formed id the gateway will never mint". A caller
+ * distinguishes them by `.code`, never by matching message text.
+ */
+export const ERR_TOOLGEN_TOOL_ID_INVALID = "ERR_TOOLGEN_TOOL_ID_INVALID";
+
+/**
+ * A caller-supplied `toolId` that is well-formed but RESERVED: `signing`, whose per-tool Vault
+ * prefix (`toolgen.signing.`) is exactly the prefix the artifact-signing keypair lives under
+ * (`TOOLGEN_SIGNING_KEY_PREFIX`, `toolgen-keypair.ts`). A tool by that name is never minted, so
+ * refusing it costs nothing and closes the one id that lets a caller name the Vault's own
+ * signing keyspace through a tool-scoped API.
+ */
+export const ERR_TOOLGEN_TOOL_ID_RESERVED = "ERR_TOOLGEN_TOOL_ID_RESERVED";

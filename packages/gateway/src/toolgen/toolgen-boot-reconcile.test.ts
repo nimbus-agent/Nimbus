@@ -127,9 +127,22 @@ async function createSavedTool(
   });
 }
 
+/**
+ * The capability ENABLED, which is what every pre-existing test in this file assumes. Spread into
+ * deps rather than defaulted inside `reconcileSavedTools`, because the production posture is
+ * fail-closed: a caller that forgets `config`/`enforced` must not get an enabled pass, so the
+ * fields are REQUIRED in the type and every construction site says which state it is testing.
+ */
+function enabledCapability() {
+  return {
+    config: { enabled: true },
+    enforced: { capabilitiesDisabled: new Set<string>() },
+  };
+}
+
 function deps(db: Database, configDir: string, vault: NimbusVault) {
   const { logger } = fakeLogger();
-  return { db, configDir, vault, logger };
+  return { db, configDir, vault, logger, ...enabledCapability() };
 }
 
 describe("reconcileSavedTools — row pass", () => {
@@ -140,7 +153,7 @@ describe("reconcileSavedTools — row pass", () => {
     await createSavedTool(db, configDir, vault, "t1");
 
     const r = await reconcileSavedTools(deps(db, configDir, vault));
-    expect(r).toEqual({ verified: 1, disabled: 0, sweptOrphans: 0 });
+    expect(r).toEqual({ verified: 1, disabled: 0, sweptOrphans: 0, skipped: false });
     expect(getSavedTool(db, "t1")?.disabledReason).toBeNull();
   });
 
@@ -153,7 +166,7 @@ describe("reconcileSavedTools — row pass", () => {
     writeFileSync(join(savedToolDir(configDir, "t1"), "artifact.json"), "not the signed bytes");
 
     const r = await reconcileSavedTools(deps(db, configDir, vault));
-    expect(r).toEqual({ verified: 0, disabled: 1, sweptOrphans: 0 });
+    expect(r).toEqual({ verified: 0, disabled: 1, sweptOrphans: 0, skipped: false });
     expect(getSavedTool(db, "t1")?.disabledReason).toBe("signature_mismatch");
   });
 
@@ -169,7 +182,7 @@ describe("reconcileSavedTools — row pass", () => {
     await ensureToolgenKeypair(vault);
 
     const r = await reconcileSavedTools(deps(db, configDir, vault));
-    expect(r).toEqual({ verified: 0, disabled: 1, sweptOrphans: 0 });
+    expect(r).toEqual({ verified: 0, disabled: 1, sweptOrphans: 0, skipped: false });
     expect(getSavedTool(db, "t1")?.disabledReason).toBe("pubkey_rotated");
   });
 
@@ -201,7 +214,7 @@ describe("reconcileSavedTools — row pass", () => {
     await rm(join(savedToolDir(configDir, "t1"), "artifact.json"));
 
     const r = await reconcileSavedTools(deps(db, configDir, vault));
-    expect(r).toEqual({ verified: 0, disabled: 1, sweptOrphans: 0 });
+    expect(r).toEqual({ verified: 0, disabled: 1, sweptOrphans: 0, skipped: false });
     expect(getSavedTool(db, "t1")?.disabledReason).toBe("artifact_missing");
   });
 
@@ -213,7 +226,7 @@ describe("reconcileSavedTools — row pass", () => {
     db.exec("UPDATE generated_tool SET artifact_digest = 'stale' WHERE tool_id = 't1'");
 
     const r = await reconcileSavedTools(deps(db, configDir, vault));
-    expect(r).toEqual({ verified: 1, disabled: 0, sweptOrphans: 0 });
+    expect(r).toEqual({ verified: 1, disabled: 0, sweptOrphans: 0, skipped: false });
     const row = getSavedTool(db, "t1");
     expect(row?.artifactDigest).not.toBe("stale");
     expect(row?.disabledReason).toBeNull();
@@ -227,7 +240,7 @@ describe("reconcileSavedTools — row pass", () => {
     setSavedToolDisabled(db, "t1", "signature_mismatch");
 
     const r = await reconcileSavedTools(deps(db, configDir, vault));
-    expect(r).toEqual({ verified: 1, disabled: 0, sweptOrphans: 0 });
+    expect(r).toEqual({ verified: 1, disabled: 0, sweptOrphans: 0, skipped: false });
     expect(getSavedTool(db, "t1")?.disabledReason).toBeNull();
   });
 
@@ -240,7 +253,7 @@ describe("reconcileSavedTools — row pass", () => {
     await vault.delete(TOOLGEN_SIGNING_PUBKEY);
 
     const r = await reconcileSavedTools(deps(db, configDir, vault));
-    expect(r).toEqual({ verified: 0, disabled: 1, sweptOrphans: 0 });
+    expect(r).toEqual({ verified: 0, disabled: 1, sweptOrphans: 0, skipped: false });
     expect(getSavedTool(db, "t1")?.disabledReason).toBe("pubkey_unavailable");
   });
 
@@ -266,7 +279,7 @@ describe("reconcileSavedTools — row pass", () => {
     await rm(join(savedToolDir(configDir, "t1"), "artifact.sig"));
 
     const r = await reconcileSavedTools(deps(db, configDir, vault));
-    expect(r).toEqual({ verified: 0, disabled: 1, sweptOrphans: 0 });
+    expect(r).toEqual({ verified: 0, disabled: 1, sweptOrphans: 0, skipped: false });
     expect(getSavedTool(db, "t1")?.disabledReason).toBe("signature_missing");
   });
 
@@ -309,7 +322,7 @@ describe("reconcileSavedTools — row pass", () => {
     });
 
     const r = await reconcileSavedTools(deps(db, configDir, vault));
-    expect(r).toEqual({ verified: 0, disabled: 1, sweptOrphans: 0 });
+    expect(r).toEqual({ verified: 0, disabled: 1, sweptOrphans: 0, skipped: false });
     expect(getSavedTool(db, "t1")?.disabledReason).toBe("schema_invalid");
   });
 
@@ -346,7 +359,7 @@ describe("reconcileSavedTools — row pass", () => {
     const { logger, warnCalls } = fakeLogger();
     let r: Awaited<ReturnType<typeof reconcileSavedTools>>;
     try {
-      r = await reconcileSavedTools({ db, configDir, vault, logger });
+      r = await reconcileSavedTools({ db, configDir, vault, logger, ...enabledCapability() });
     } finally {
       db.run = originalRun;
     }
@@ -354,7 +367,7 @@ describe("reconcileSavedTools — row pass", () => {
     // "boom" is neither verified nor disabled -- nothing was established about it this boot, so it
     // must NOT be counted as `disabled` (that would assert a verification outcome that never
     // happened). "z2" (the later row) and the orphan sweep both still ran.
-    expect(r).toEqual({ verified: 1, disabled: 0, sweptOrphans: 1 });
+    expect(r).toEqual({ verified: 1, disabled: 0, sweptOrphans: 1, skipped: false });
     expect(getSavedTool(db, "z2")?.disabledReason).toBeNull();
     expect(getSavedTool(db, "boom")).not.toBeNull(); // the row itself is untouched, not deleted
     expect(existsSync(savedToolDir(configDir, "orphan"))).toBe(false);
@@ -415,7 +428,7 @@ describe("reconcileSavedTools — orphan sweep", () => {
     });
 
     const r = await reconcileSavedTools(deps(db, configDir, vault));
-    expect(r).toEqual({ verified: 1, disabled: 0, sweptOrphans: 1 });
+    expect(r).toEqual({ verified: 1, disabled: 0, sweptOrphans: 1, skipped: false });
     expect(existsSync(savedToolDir(configDir, "t1"))).toBe(true);
     expect(existsSync(savedToolDir(configDir, "orphan2"))).toBe(false);
   });
@@ -469,7 +482,7 @@ describe("reconcileSavedToolsOrWarn", () => {
 
     const { logger, warnCalls } = fakeLogger();
     await expect(
-      reconcileSavedToolsOrWarn({ db, configDir, vault, logger }),
+      reconcileSavedToolsOrWarn({ db, configDir, vault, logger, ...enabledCapability() }),
     ).resolves.toBeUndefined();
 
     expect(warnCalls).toHaveLength(1);
@@ -486,9 +499,85 @@ describe("reconcileSavedToolsOrWarn", () => {
     await createSavedTool(db, configDir, vault, "t1");
     const { logger, warnCalls, infoCalls } = fakeLogger();
 
-    await reconcileSavedToolsOrWarn({ db, configDir, vault, logger });
+    await reconcileSavedToolsOrWarn({ db, configDir, vault, logger, ...enabledCapability() });
 
     expect(warnCalls).toHaveLength(0);
     expect(infoCalls).toHaveLength(0);
+  });
+});
+
+/**
+ * The kill switch reaching the DURABLE half. `[tool_generation] enabled = false` and an org-policy
+ * lock-off both reached creation (`toolgen-gate.ts`) and saving (`toolgen-save-gate.ts`) and
+ * NEITHER reached this pass or `loadSavedToolsIntoRegistry` — so turning the capability off stopped
+ * new tools appearing while every already-approved tool kept loading and stayed model-visible. For
+ * this codebase's first standing approval, the disable path is the one that must not have a hole.
+ *
+ * All three states are covered, including the ABSENT accessor: fail-closed there is the posture
+ * `assertSaveEnabled` and `media.understand` (I22) already take, and an `enforced ?? enabled`
+ * default would be the exact bug those two exist to avoid.
+ */
+describe("reconcileSavedTools — the capability kill switch", () => {
+  async function skipCase(over: {
+    config: { enabled: boolean };
+    enforced?: { capabilitiesDisabled: Set<string> } | undefined;
+  }) {
+    const db = migratedDb();
+    const configDir = tmpConfigDir();
+    const vault = new FakeVault();
+    await createSavedTool(db, configDir, vault, "t1");
+    // A row whose cached state says "broken" and an ORPHAN directory with no row: between them,
+    // an enabled pass would write to the database AND delete a directory. A skipped pass must do
+    // neither -- disabling is not revoking, and a destructive sweep is the last thing to run while
+    // the capability is off.
+    setSavedToolDisabled(db, "t1", "signature_mismatch");
+    await createSavedTool(db, configDir, vault, "orphan");
+    db.exec("DELETE FROM generated_tool WHERE tool_id = 'orphan'");
+    const { logger } = fakeLogger();
+
+    const r = await reconcileSavedTools({ db, configDir, vault, logger, ...over });
+
+    expect(r).toEqual({ verified: 0, disabled: 0, sweptOrphans: 0, skipped: true });
+    // Untouched: the stale reason was NOT cleared and the orphan was NOT swept.
+    expect(getSavedTool(db, "t1")?.disabledReason).toBe("signature_mismatch");
+    expect(existsSync(savedToolDir(configDir, "orphan"))).toBe(true);
+  }
+
+  test("config-disabled: the whole pass is skipped", async () => {
+    await skipCase({
+      config: { enabled: false },
+      enforced: { capabilitiesDisabled: new Set<string>() },
+    });
+  });
+
+  test("policy-disabled: the whole pass is skipped", async () => {
+    await skipCase({
+      config: { enabled: true },
+      enforced: { capabilitiesDisabled: new Set(["tool_generation"]) },
+    });
+  });
+
+  test("accessor-absent: fail-CLOSED, never defaulting to enabled", async () => {
+    await skipCase({ config: { enabled: true } });
+  });
+
+  test("an unrelated capability being locked off does not disable this one", async () => {
+    // The guard must read the capability NAME, not merely "the policy disables something".
+    const db = migratedDb();
+    const configDir = tmpConfigDir();
+    const vault = new FakeVault();
+    await createSavedTool(db, configDir, vault, "t1");
+    const { logger } = fakeLogger();
+
+    const r = await reconcileSavedTools({
+      db,
+      configDir,
+      vault,
+      logger,
+      config: { enabled: true },
+      enforced: { capabilitiesDisabled: new Set(["code_execution"]) },
+    });
+
+    expect(r).toEqual({ verified: 1, disabled: 0, sweptOrphans: 0, skipped: false });
   });
 });

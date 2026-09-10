@@ -14,9 +14,12 @@ import { deleteCredentialsForTool, writeToolCredential } from "../toolgen/toolge
 import type { ToolgenGateDeps } from "../toolgen/toolgen-gate.ts";
 import { type SavedToolEnvelope, ToolgenRegistry } from "../toolgen/toolgen-registry.ts";
 import type { ToolgenSaveDeps } from "../toolgen/toolgen-save-gate.ts";
-import { insertSavedTool } from "../toolgen/toolgen-saved-repo.ts";
+import { getSavedTool, insertSavedTool } from "../toolgen/toolgen-saved-repo.ts";
+import { removeSavedTool, savedToolDir } from "../toolgen/toolgen-saved-store.ts";
 import {
   ERR_TOOLGEN_CREDENTIAL_HOST_UNKNOWN,
+  ERR_TOOLGEN_TOOL_ID_INVALID,
+  ERR_TOOLGEN_TOOL_ID_RESERVED,
   type ToolgenEnvelope,
   ToolgenError,
 } from "../toolgen/toolgen-types.ts";
@@ -174,6 +177,10 @@ interface TestCtx extends ToolgenRpcCtx {
    * than trusting a mock that only records it was asked. */
   vault: NimbusVault;
   revokeCredentialsForToolCalls: string[];
+  /** The temp dir `saveDeps.configDir` points at, so a test can assert `saved/<toolId>` is really
+   * gone from disk after a revoke rather than trusting a call counter. */
+  configDir: string;
+  removeSavedDirCalls: string[];
 }
 
 function makeCtx(
@@ -198,6 +205,7 @@ function makeCtx(
   const removeScriptCalls: string[] = [];
   const vault = new FakeVault();
   const revokeCredentialsForToolCalls: string[] = [];
+  const removeSavedDirCalls: string[] = [];
   const configDir = mkdtempSync(join(tmpdir(), "nimbus-toolgen-rpc-"));
   return {
     consent,
@@ -207,8 +215,17 @@ function makeCtx(
     removeScriptCalls,
     vault,
     revokeCredentialsForToolCalls,
+    configDir,
+    removeSavedDirCalls,
     removeScript: async (toolId: string) => {
       removeScriptCalls.push(toolId);
+    },
+    // The REAL `removeSavedTool`, against the REAL temp `configDir` -- not a call-count stub. A
+    // stub here would let "revoke drops the saved directory" pass while the directory survived,
+    // which is exactly the class of defect this wiring exists to close.
+    removeSavedDir: async (toolId: string) => {
+      removeSavedDirCalls.push(toolId);
+      await removeSavedTool(configDir, toolId);
     },
     revokeCredentialsForTool: async (toolId: string) => {
       revokeCredentialsForToolCalls.push(toolId);
@@ -472,7 +489,7 @@ describe("toolgen RPC", () => {
     });
     const out = await dispatchToolgenRpc("toolgen.revoke", { toolId: "tg_a" }, ctx);
     if (out.kind !== "hit") throw new Error("unreachable");
-    expect(out.value).toEqual({ revoked: true });
+    expect(out.value).toEqual({ revoked: true, savedRemoved: false });
     expect(closed).toBe(true);
     expect(ctx.gateDeps.registry.get("tg_a")).toBeUndefined();
     // The failure worth catching: a drain that clears the registry but leaves the script behind
@@ -497,7 +514,7 @@ describe("toolgen RPC", () => {
     const out = await dispatchToolgenRpc("toolgen.revoke", { toolId: "t1" }, ctx);
 
     if (out.kind !== "hit") throw new Error("unreachable");
-    expect(out.value).toEqual({ revoked: true });
+    expect(out.value).toEqual({ revoked: true, savedRemoved: false });
     expect(await ctx.vault.get("toolgen.t1.api_pexample_pcom")).toBeNull();
   });
 
@@ -522,9 +539,125 @@ describe("toolgen RPC", () => {
     const ctx = makeCtx();
     const out = await dispatchToolgenRpc("toolgen.revoke", { toolId: "tg_ghost" }, ctx);
     if (out.kind !== "hit") throw new Error("unreachable");
-    expect(out.value).toEqual({ revoked: true });
+    expect(out.value).toEqual({ revoked: true, savedRemoved: false });
     expect(ctx.removeScriptCalls).toEqual(["tg_ghost"]);
     expect(ctx.revokeCredentialsForToolCalls).toEqual(["tg_ghost"]);
+    // The saved drop is attempted unconditionally too -- probing first would make a saved tool
+    // that failed verification (and is therefore absent from the registry) unrevokable.
+    expect(ctx.removeSavedDirCalls).toEqual(["tg_ghost"]);
+  });
+
+  // The withdrawal path for this codebase's FIRST standing approval. The save prompt tells the
+  // owner the tool runs unattended in every future session "until you `nimbus tool revoke` it";
+  // before this, revoke touched only the ephemeral halves and the tool came back at the next boot.
+  // End-to-end proof over a real database, a real `saved/` directory and a real second boot lives
+  // in `test/integration/toolgen/toolgen-revoke-withdraws-standing-approval.test.ts`.
+  test("toolgen.revoke drops the generated_tool ROW and evicts the registry's saved entry", async () => {
+    const ctx = makeCtx();
+    ctx.gateDeps.registry.registerSaved(makeSavedEnvelope("tg_saved"));
+    insertGeneratedToolRow(ctx.gateDeps.db, "tg_saved");
+
+    const out = await dispatchToolgenRpc("toolgen.revoke", { toolId: "tg_saved" }, ctx);
+
+    if (out.kind !== "hit") throw new Error("unreachable");
+    expect(out.value).toEqual({ revoked: true, savedRemoved: true });
+    expect(getSavedTool(ctx.gateDeps.db, "tg_saved")).toBeNull();
+    expect(ctx.gateDeps.registry.savedTools()).toEqual([]);
+    // Model visibility is gone THIS session, not merely after a restart.
+    expect(ctx.gateDeps.registry.forSession("s1")).toEqual([]);
+    expect(ctx.removeSavedDirCalls).toEqual(["tg_saved"]);
+  });
+
+  test("toolgen.revoke deletes the saved DIRECTORY from disk, not just the row", async () => {
+    const ctx = makeCtx();
+    insertGeneratedToolRow(ctx.gateDeps.db, "tg_dir");
+    // A real directory, removed by the real `removeSavedTool` the ctx is wired to -- a call
+    // counter alone would pass while the files survived.
+    await Bun.write(join(savedToolDir(ctx.configDir, "tg_dir"), "artifact.json"), "{}");
+    expect(
+      await Bun.file(join(savedToolDir(ctx.configDir, "tg_dir"), "artifact.json")).exists(),
+    ).toBe(true);
+
+    await dispatchToolgenRpc("toolgen.revoke", { toolId: "tg_dir" }, ctx);
+
+    expect(
+      await Bun.file(join(savedToolDir(ctx.configDir, "tg_dir"), "artifact.json")).exists(),
+    ).toBe(false);
+  });
+
+  test("toolgen.revoke reports savedRemoved for a row the registry never loaded", async () => {
+    // The tool most likely to be revoked: saved on disk, but skipped at load because it failed
+    // verification, so it is absent from `#saved` entirely. Deriving the disclosure from registry
+    // membership alone would report `false` here and read as "there was nothing to revoke".
+    const ctx = makeCtx();
+    insertGeneratedToolRow(ctx.gateDeps.db, "tg_broken", { disabledReason: "signature_mismatch" });
+
+    const out = await dispatchToolgenRpc("toolgen.revoke", { toolId: "tg_broken" }, ctx);
+
+    if (out.kind !== "hit") throw new Error("unreachable");
+    expect(out.value).toEqual({ revoked: true, savedRemoved: true });
+    expect(getSavedTool(ctx.gateDeps.db, "tg_broken")).toBeNull();
+  });
+
+  test("toolgen.revoke leaves a NEIGHBOURING saved tool completely alone", async () => {
+    const ctx = makeCtx();
+    ctx.gateDeps.registry.registerSaved(makeSavedEnvelope("keep"));
+    ctx.gateDeps.registry.registerSaved(makeSavedEnvelope("drop"));
+    insertGeneratedToolRow(ctx.gateDeps.db, "keep");
+    insertGeneratedToolRow(ctx.gateDeps.db, "drop");
+
+    await dispatchToolgenRpc("toolgen.revoke", { toolId: "drop" }, ctx);
+
+    expect(getSavedTool(ctx.gateDeps.db, "keep")).not.toBeNull();
+    expect(ctx.gateDeps.registry.savedTools().map((t) => t.toolId)).toEqual(["keep"]);
+  });
+
+  // `deleteCredentialsForTool` deletes `toolgen.<toolId>.*` by PREFIX, and `signing` is a
+  // well-formed tool id whose prefix is byte-for-byte the artifact-signing keypair's. Losing that
+  // keypair makes every saved tool on the machine permanently `pubkey_unavailable` -- and, before
+  // the revoke fix above, unclearable as well. Two independent checks: this boundary refusal, and
+  // the prefix exclusion inside `deleteCredentialsForTool` itself
+  // (`toolgen-credentials.test.ts`), so neither one alone carries the keyspace.
+  test("toolgen.revoke REFUSES the reserved `signing` tool id and touches no Vault key", async () => {
+    const ctx = makeCtx();
+    await ctx.vault.set("toolgen.signing.privkey", "priv-seed");
+    await ctx.vault.set("toolgen.signing.pubkey", "pub-key");
+
+    await expect(dispatchToolgenRpc("toolgen.revoke", { toolId: "signing" }, ctx)).rejects.toThrow(
+      ToolgenError,
+    );
+
+    expect(await ctx.vault.get("toolgen.signing.privkey")).toBe("priv-seed");
+    expect(await ctx.vault.get("toolgen.signing.pubkey")).toBe("pub-key");
+    // Refused BEFORE anything ran -- not "ran and happened to skip the keys".
+    expect(ctx.revokeCredentialsForToolCalls).toEqual([]);
+    expect(ctx.removeScriptCalls).toEqual([]);
+    expect(ctx.removeSavedDirCalls).toEqual([]);
+  });
+
+  test("the `signing` refusal carries its own named code, distinct from a malformed id", async () => {
+    const ctx = makeCtx();
+    // Callers branch on `.code`, never on message text (`ToolgenError`'s docstring).
+    await expect(
+      dispatchToolgenRpc("toolgen.revoke", { toolId: "signing" }, ctx),
+    ).rejects.toMatchObject({ code: ERR_TOOLGEN_TOOL_ID_RESERVED });
+    await expect(
+      dispatchToolgenRpc("toolgen.revoke", { toolId: "../../etc/passwd" }, ctx),
+    ).rejects.toMatchObject({ code: ERR_TOOLGEN_TOOL_ID_INVALID });
+  });
+
+  test("toolgen.credentialSet refuses the reserved id too, before composing a Vault key", async () => {
+    // `toolgen.credentialSet` is the OTHER method whose caller-supplied id becomes part of a Vault
+    // key. Its `credentialHosts` membership check already fails closed for an unknown tool, but
+    // that puts the keyspace boundary two steps away from the string that addresses it.
+    const ctx = makeCtx();
+    await expect(
+      dispatchToolgenRpc(
+        "toolgen.credentialSet",
+        { toolId: "signing", host: "privkey", binding: { type: "bearer", token: "t" } },
+        ctx,
+      ),
+    ).rejects.toMatchObject({ code: ERR_TOOLGEN_TOOL_ID_RESERVED });
   });
 
   test("toolgen.revoke without toolId is an invalid-params error", async () => {

@@ -2,6 +2,7 @@ import type { Database } from "bun:sqlite";
 import type { Logger } from "pino";
 import type { NimbusVault } from "../vault/nimbus-vault.ts";
 import { digestOfCanonicalBytes } from "./toolgen-artifact.ts";
+import { isToolgenCapabilityEnabled, type ToolgenCapabilityState } from "./toolgen-capability.ts";
 import { TOOLGEN_SIGNING_PUBKEY } from "./toolgen-keypair.ts";
 import {
   listSavedTools,
@@ -29,7 +30,7 @@ import {
  * owner re-saves. Do not "fix" this by adopting signed directories.
  */
 
-export interface ReconcileSavedToolsDeps {
+export interface ReconcileSavedToolsDeps extends ToolgenCapabilityState {
   readonly db: Database;
   /** Where `saved/<toolId>` lives — the same root `toolgen-saved-store.ts`'s `savedToolDir` uses. */
   readonly configDir: string;
@@ -41,6 +42,14 @@ export interface ReconcileSavedToolsResult {
   readonly verified: number;
   readonly disabled: number;
   readonly sweptOrphans: number;
+  /**
+   * True when the capability is off (`[tool_generation] enabled = false`, an org-policy lock-off,
+   * or an absent policy accessor) and the whole pass was skipped. Reported rather than left to be
+   * inferred from three zeroes, which is also what a machine with no saved tools at all looks
+   * like — an owner reading a health report deserves to be told the difference between "nothing to
+   * check" and "not checked".
+   */
+  readonly skipped: boolean;
 }
 
 /**
@@ -67,6 +76,17 @@ export async function reconcileSavedTools(
   deps: ReconcileSavedToolsDeps,
 ): Promise<ReconcileSavedToolsResult> {
   const { db, configDir, vault, logger } = deps;
+
+  // The kill switch, checked FIRST — before any database read, any Vault read and the orphan
+  // sweep. `[tool_generation] enabled = false`, an org-policy lock-off, or an absent policy
+  // accessor (fail-closed, I22) all mean the same thing here: nothing about saved generated tools
+  // runs this boot. Durable state is left EXACTLY as it is — disabling is not revoking, and
+  // re-enabling must restore what the owner already approved rather than find it swept. That is
+  // also why the orphan sweep sits behind this gate rather than in front of it: a sweep is a
+  // destructive act, and a disabled capability is the last state in which to perform one.
+  if (!isToolgenCapabilityEnabled(deps)) {
+    return { verified: 0, disabled: 0, sweptOrphans: 0, skipped: true };
+  }
 
   const currentPubkeyB64 = await vault.get(TOOLGEN_SIGNING_PUBKEY);
 
@@ -154,7 +174,7 @@ export async function reconcileSavedTools(
     );
   }
 
-  return { verified, disabled, sweptOrphans };
+  return { verified, disabled, sweptOrphans, skipped: false };
 }
 
 /**

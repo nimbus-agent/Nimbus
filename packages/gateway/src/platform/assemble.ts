@@ -308,6 +308,7 @@ import { createEndpointFinder } from "../toolgen/toolgen-grounding.ts";
 import { ToolgenRegistry } from "../toolgen/toolgen-registry.ts";
 import type { ToolgenSaveDeps } from "../toolgen/toolgen-save-gate.ts";
 import { loadSavedToolsIntoRegistry } from "../toolgen/toolgen-saved-spawn.ts";
+import { removeSavedTool } from "../toolgen/toolgen-saved-store.ts";
 import {
   removeToolScript,
   toolScriptDir,
@@ -3834,11 +3835,23 @@ export async function assemblePlatformServices(
   //
   // `...OrWarn`, matching `sweepToolgenCredentialsOrWarn` immediately above: a database or
   // filesystem failure here must not abort gateway boot over a health-check pass.
+  //
+  // Loaded HERE rather than at `toolgenRegistry` below, because both boot passes now read it: the
+  // `[tool_generation] enabled` kill switch and the org-policy lock-off have to reach the DURABLE
+  // half (reconcile + load), not only creation and saving, or turning the capability off leaves
+  // every already-approved saved tool loading and model-visible in every future session.
+  const toolGenerationCfg = loadNimbusToolGenerationFromConfigDir(paths.configDir);
   await reconcileSavedToolsOrWarn({
     db,
     configDir: paths.configDir,
     vault,
     logger: syncLogger,
+    config: toolGenerationCfg,
+    // Read through `policyGate.enforced()` at the moment of the pass, the same lazy shape
+    // `toolgenGateDeps`/`toolgenSaveDeps` use below. `isToolgenCapabilityEnabled` fails CLOSED if
+    // this is ever `undefined`, so a policy layer that could not resolve disables the durable half
+    // rather than defaulting it on.
+    enforced: policyGate.enforced(),
   });
 
   // `toolgenRegistry` is the ONE registry instance shared by three places: the gate (counts a
@@ -3846,7 +3859,6 @@ export async function assemblePlatformServices(
   // `credentialHostsFor` (both read back the same artifact the owner approved -- fail-closed
   // `?? []` for an unknown/revoked toolId), and `PlatformServices.toolgenRegistry`, which
   // `gateway-main.ts`'s shutdown drains.
-  const toolGenerationCfg = loadNimbusToolGenerationFromConfigDir(paths.configDir);
   const toolgenRegistry = new ToolgenRegistry();
 
   // Populate the registry's SAVED collection (Task 9, spec § 7.2) so a persisted tool is visible
@@ -3864,7 +3876,16 @@ export async function assemblePlatformServices(
   // immediately above.
   try {
     await loadSavedToolsIntoRegistry(
-      { db, configDir: paths.configDir, vault, runtime: resolveRuntimeById("bun") },
+      {
+        db,
+        configDir: paths.configDir,
+        vault,
+        runtime: resolveRuntimeById("bun"),
+        // The same kill switch the reconcile pass above reads, for the same reason: this load is
+        // what makes a saved tool visible to `forSession` and therefore OFFERED to the model.
+        config: toolGenerationCfg,
+        enforced: policyGate.enforced(),
+      },
       toolgenRegistry,
     );
   } catch (err) {
@@ -4005,9 +4026,14 @@ export async function assemblePlatformServices(
     saveDeps: toolgenSaveDeps,
     saveConsent: toolgenSaveConsent,
     removeScript: (toolId) => removeToolScript(paths.configDir, toolId),
-    // The THIRD half of `toolgen.revoke` (Task 5): deletes every `toolgen.<toolId>.*` Vault key
-    // by prefix, closing the leak where a revoked tool's per-host credential outlived both the
-    // tool and the gateway.
+    // The DURABLE half of `toolgen.revoke`: `saved/<toolId>` -- body, artifact and signature. The
+    // matching `generated_tool` row is dropped by the handler itself, which already holds `db`.
+    // Without this pair, a revoked SAVED tool came straight back at the next boot and the standing
+    // approval the save prompt promised was revocable had no withdrawal path at all.
+    removeSavedDir: (toolId) => removeSavedTool(paths.configDir, toolId),
+    // Deletes every `toolgen.<toolId>.*` Vault key by prefix -- excluding the signing keypair's own
+    // `toolgen.signing.` prefix -- closing the leak where a revoked tool's per-host credential
+    // outlived both the tool and the gateway.
     revokeCredentialsForTool: (toolId) => deleteCredentialsForTool(vault, toolId),
   };
 

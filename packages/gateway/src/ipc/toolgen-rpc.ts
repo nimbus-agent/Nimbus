@@ -11,10 +11,17 @@ import {
 } from "../toolgen/toolgen-gate.ts";
 import type { SavedToolEnvelope } from "../toolgen/toolgen-registry.ts";
 import { saveGeneratedTool, type ToolgenSaveDeps } from "../toolgen/toolgen-save-gate.ts";
-import { listSavedTools, type SavedToolRow } from "../toolgen/toolgen-saved-repo.ts";
+import {
+  deleteSavedTool,
+  listSavedTools,
+  type SavedToolRow,
+} from "../toolgen/toolgen-saved-repo.ts";
 import { parseCanonicalArtifact } from "../toolgen/toolgen-saved-store.ts";
+import { assertSafeToolId } from "../toolgen/toolgen-script-store.ts";
 import {
   ERR_TOOLGEN_CREDENTIAL_HOST_UNKNOWN,
+  ERR_TOOLGEN_TOOL_ID_INVALID,
+  ERR_TOOLGEN_TOOL_ID_RESERVED,
   type ToolCredentialBinding,
   type ToolCredentialParam,
   type ToolgenEnvelope,
@@ -59,22 +66,74 @@ export interface ToolgenRpcCtx {
    */
   readonly saveConsent: ToolgenSaveConsentBroker;
   /**
-   * Task 11's `removeToolScript`, bound to the config dir. `toolgen.revoke` must drop THREE halves
-   * -- the live child (`registry.revoke`, closes the spawned process), the approved body on disk
-   * (this), and the Vault credential (`revokeCredentialsForTool` below) -- a revoked tool that
-   * leaves its script behind is a tool the next session could still be pointed at. The CLI cannot
-   * do this itself: it never touches the gateway's config dir directly, only IPC, so the drop has
-   * to happen on this side of the wire.
+   * Task 11's `removeToolScript`, bound to the config dir — the EPHEMERAL script store
+   * (`toolgen/ephemeral/<toolId>`) only, never `saved/`. A revoked tool that leaves its script
+   * behind is a tool the next session could still be pointed at. The CLI cannot do this itself: it
+   * never touches the gateway's config dir directly, only IPC, so the drop has to happen on this
+   * side of the wire.
    */
   readonly removeScript: (toolId: string) => Promise<void>;
   /**
-   * The THIRD half of `toolgen.revoke`. Backed by `deleteCredentialsForTool`
-   * (`toolgen-credentials.ts`), which deletes every `toolgen.<toolId>.*` Vault key by PREFIX --
-   * no host list, so it also catches a credential for a host no longer in the tool's current
-   * envelope. Until this existed, a revoked tool's per-host Vault bindings outlived both the tool
-   * and the gateway, keyed to a toolId nothing would ever call again.
+   * `removeSavedTool` (`toolgen-saved-store.ts`), bound to the config dir: the `saved/<toolId>`
+   * directory — script, artifact and signature together. Injected rather than imported for the
+   * same reason `removeScript` is: this module holds no config dir of its own, and a test drives
+   * the revoke sequence without a real filesystem.
+   *
+   * Idempotent by contract (`rm(..., { force: true })`), so revoking an ephemeral-only tool that
+   * never had a saved directory is a no-op rather than a failure.
+   */
+  readonly removeSavedDir: (toolId: string) => Promise<void>;
+  /**
+   * Backed by `deleteCredentialsForTool` (`toolgen-credentials.ts`), which deletes every
+   * `toolgen.<toolId>.*` Vault key by PREFIX -- no host list, so it also catches a credential for a
+   * host no longer in the tool's current envelope, while excluding the signing keypair's own
+   * `toolgen.signing.` prefix. Until this existed, a revoked tool's per-host Vault bindings
+   * outlived both the tool and the gateway, keyed to a toolId nothing would ever call again.
    */
   readonly revokeCredentialsForTool: (toolId: string) => Promise<void>;
+}
+
+/**
+ * The one tool id this surface will never act on. `signing` is a perfectly well-formed tool id by
+ * `assertSafeToolId`'s regex, and its per-tool Vault prefix `toolgen.signing.` is byte-for-byte the
+ * prefix the artifact-signing keypair lives under (`TOOLGEN_SIGNING_KEY_PREFIX`) — so a
+ * `toolgen.revoke` for it used to delete `toolgen.signing.privkey` and `toolgen.signing.pubkey`,
+ * making every saved tool on the machine permanently `pubkey_unavailable`.
+ *
+ * `deleteCredentialsForTool` now skips that prefix itself, which is the fix that actually protects
+ * the keyspace. This constant is the SECOND check, at the boundary where the caller's string
+ * arrives: a caller-supplied value that can name the Vault's own keyspace should fail twice, and
+ * the boundary is also the only place that can answer with a NAMED refusal rather than silently
+ * doing nothing.
+ */
+const RESERVED_TOOL_ID = "signing";
+
+/**
+ * Validate a caller-supplied `toolId` before any of it reaches a filesystem path or a Vault key
+ * prefix. Two refusals, distinguished by code (see `toolgen-types.ts`):
+ *
+ * - shape — `assertSafeToolId` throws a plain `Error` (it is a programmer-facing assertion at the
+ *   MINT site, where an unsafe id is a bug rather than input). Over IPC the same condition is
+ *   ordinary bad input, so it is re-thrown as a coded `ToolgenError` a caller can branch on.
+ * - reserved — the shape check passes and the id must still be refused; see `RESERVED_TOOL_ID`.
+ *
+ * Applied to the two methods that let a caller's string address the Vault keyspace or the saved
+ * store: `toolgen.revoke` (deletes by prefix / by path) and `toolgen.credentialSet` (writes a key
+ * composed from it). `toolgen.save` needs no such guard — it resolves the id against the LIVE
+ * registry first and refuses an unknown one, so an arbitrary string never reaches anything.
+ */
+function assertCallerToolId(toolId: string): void {
+  try {
+    assertSafeToolId(toolId);
+  } catch {
+    throw new ToolgenError(ERR_TOOLGEN_TOOL_ID_INVALID, "toolId must match ^[A-Za-z0-9_-]{1,64}$");
+  }
+  if (toolId === RESERVED_TOOL_ID) {
+    throw new ToolgenError(
+      ERR_TOOLGEN_TOOL_ID_RESERVED,
+      `toolId "${RESERVED_TOOL_ID}" is reserved and is never minted as a tool`,
+    );
+  }
 }
 
 /**
@@ -363,6 +422,12 @@ const HANDLERS: RpcMethodHandlerMap<ToolgenRpcCtx> = {
   // host the owner never consented to.
   "toolgen.credentialSet": async (params, ctx) => {
     const toolId = requireString(params, "toolId");
+    // The other method whose caller-supplied id becomes part of a Vault key
+    // (`toolgen.<toolId>.<hostSlug>`). The `credentialHosts` membership check below already fails
+    // closed for an id no tool bears -- an unknown tool resolves to an EMPTY host list -- but that
+    // makes the keyspace boundary depend on a lookup two steps away rather than on the id itself,
+    // which is the shape that let `toolgen.revoke` reach `toolgen.signing.`.
+    assertCallerToolId(toolId);
     const rawHost = requireString(params, "host");
     const binding = parseCredentialBinding(asRecord(params)?.["binding"]);
     // Normalised ONCE, then used for BOTH the membership check and the Vault key -- see
@@ -390,19 +455,56 @@ const HANDLERS: RpcMethodHandlerMap<ToolgenRpcCtx> = {
     return { bound: true };
   },
 
+  /**
+   * The WITHDRAWAL PATH for both kinds of generated tool — and, for a SAVED one, the withdrawal
+   * path for a STANDING approval (I40). The save prompt tells the owner in as many words that the
+   * tool "will run, unattended, in every future gateway session until you `nimbus tool revoke`
+   * it", so this handler is the sentence that obtains that consent. It must be true.
+   *
+   * It was not. Revoke used to drop only the EPHEMERAL halves — `registry.revoke` touches the
+   * registry's `#byId` map, and `removeScript` touches `toolgen/ephemeral/<toolId>` — leaving the
+   * `generated_tool` row and the `saved/<toolId>` directory intact, so the tool stayed in `#saved`
+   * for the rest of the session and the next boot reconciled it healthy and loaded it straight
+   * back in. There was no way to withdraw a standing approval at all.
+   *
+   * FIVE drops, in this order, all idempotent, all attempted unconditionally rather than probed
+   * for first (revoking a tool that is saved-only, ephemeral-only, or both must behave the same):
+   *
+   * 1. `registry.revoke` — the live child process, if this session has one. Closes it.
+   * 2. `registry.unregisterSaved` — the in-memory saved entry, so the tool stops being offered to
+   *    the model and to `nimbus tool list` THIS session, without waiting for a restart.
+   * 3. `deleteSavedTool` — the `generated_tool` row. This goes FIRST of the two durable drops on
+   *    purpose: the row is the root of existence (`toolgen-saved-repo.ts`), so a crash between
+   *    steps 3 and 4 leaves a directory with no row — precisely the orphan state boot
+   *    reconciliation already sweeps (`toolgen-boot-reconcile.ts`, which never ADOPTS a signed
+   *    directory, because a valid signature proves an artifact was approved ONCE, not that it is
+   *    approved NOW). Reversing the order would leave a row with no artifact, which reconciliation
+   *    would report as `artifact_missing` and keep forever.
+   * 4. `removeSavedDir` — `saved/<toolId>`: body, artifact and signature together.
+   * 5. `removeScript` + `revokeCredentialsForTool` — the ephemeral script and every
+   *    `toolgen.<toolId>.*` Vault credential (never the signing keypair; see `assertCallerToolId`).
+   *
+   * `revoked: true` is unconditional and says only that the withdrawal ran to completion, not that
+   * anything was found — an idempotent second revoke is a success, not a lie. `savedRemoved`
+   * discloses whether the SAVED half was actually present, which is the part an owner withdrawing
+   * a standing approval cares about.
+   */
   "toolgen.revoke": async (params, ctx) => {
     const toolId = requireString(params, "toolId");
-    // THREE halves, always -- see `ToolgenRpcCtx.removeScript`'s doc comment. `registry.revoke` on
-    // an unknown toolId is a no-op (Task 10), `removeScript` on one that never wrote a script is
-    // idempotent (Task 11), and `revokeCredentialsForTool` on one that never bound a credential
-    // deletes nothing (Task 5) -- so this is safe to call unconditionally rather than probing
-    // first.
+    assertCallerToolId(toolId);
+
     await ctx.gateDeps.registry.revoke(toolId);
+    const wasLoadedSaved = ctx.gateDeps.registry.unregisterSaved(toolId);
+    // Read before the delete, so the disclosure covers a saved tool that is on disk but was NOT
+    // loaded into the registry this boot (it failed verification and was skipped) -- exactly the
+    // tool an owner is most likely to be revoking.
+    const hadSavedRow = listSavedTools(ctx.gateDeps.db).some((r) => r.toolId === toolId);
+    deleteSavedTool(ctx.gateDeps.db, toolId);
+    await ctx.removeSavedDir(toolId);
+
     await ctx.removeScript(toolId);
-    // The THIRD half. Until this landed, a revoked tool's per-host Vault bindings outlived both
-    // the tool and the gateway, keyed to a toolId nothing would ever call again.
     await ctx.revokeCredentialsForTool(toolId);
-    return { revoked: true };
+    return { revoked: true, savedRemoved: wasLoadedSaved || hadSavedRow };
   },
 };
 

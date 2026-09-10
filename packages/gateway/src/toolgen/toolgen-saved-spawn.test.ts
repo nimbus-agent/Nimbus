@@ -64,6 +64,17 @@ function tmpConfigDir(): string {
 
 const RUNTIME_READ_PATHS = ["/opt/bun/bin"];
 
+/**
+ * The capability ENABLED. Required rather than defaulted, because the durable half fails CLOSED:
+ * see `toolgen-capability.ts`. Every construction site therefore states which state it drives.
+ */
+function enabledCapability() {
+  return {
+    config: { enabled: true },
+    enforced: { capabilitiesDisabled: new Set<string>() },
+  };
+}
+
 function defaultManifest(toolId: string): ExtensionManifest {
   return {
     id: `toolgen.${toolId}`,
@@ -237,8 +248,9 @@ describe("spawnSavedTool", () => {
       configDir,
       vault,
       logger: fakeLogger(),
+      ...enabledCapability(),
     });
-    expect(bootResult).toEqual({ verified: 1, disabled: 0, sweptOrphans: 0 });
+    expect(bootResult).toEqual({ verified: 1, disabled: 0, sweptOrphans: 0, skipped: false });
 
     // Tampered AFTER boot verified it -- this is the case the boot pass, by design, cannot catch:
     // it already ran and will not run again until the next restart.
@@ -306,7 +318,13 @@ describe("spawnSavedTool", () => {
 
 describe("loadSavedToolsIntoRegistry", () => {
   function loadDeps(db: Database, configDir: string, vault: NimbusVault) {
-    return { db, configDir, vault, runtime: { requiredReadPaths: () => RUNTIME_READ_PATHS } };
+    return {
+      db,
+      configDir,
+      vault,
+      runtime: { requiredReadPaths: () => RUNTIME_READ_PATHS },
+      ...enabledCapability(),
+    };
   }
 
   test("a healthy saved tool becomes visible to every session via forSession", async () => {
@@ -402,5 +420,63 @@ describe("loadSavedToolsIntoRegistry", () => {
     }
 
     expect(spawnCalls).toBe(0);
+  });
+
+  /**
+   * The kill switch reaching the DURABLE half. This load is what makes a saved tool visible to
+   * `ToolgenRegistry.forSession` and therefore OFFERED to the model by `buildGeneratedTools` — so
+   * `[tool_generation] enabled = false` and an org-policy lock-off have to stop it HERE or they do
+   * not stop it at all. Before this, they reached creation and saving only, and every
+   * already-approved saved tool kept loading into model visibility with the capability off.
+   */
+  describe("the capability kill switch", () => {
+    async function loadsNothing(over: {
+      config: { enabled: boolean };
+      enforced?: { capabilitiesDisabled: Set<string> } | undefined;
+    }) {
+      const db = migratedDb();
+      const configDir = tmpConfigDir();
+      const vault = new FakeVault();
+      await createSavedTool(db, configDir, vault, "t1");
+      const registry = new ToolgenRegistry();
+
+      // Premise check: the SAME fixture loads fine when the capability is on, so a green assertion
+      // below cannot be an artefact of the tool never having been saveable in the first place.
+      const control = new ToolgenRegistry();
+      await loadSavedToolsIntoRegistry(loadDeps(db, configDir, vault), control);
+      expect(control.savedTools().map((t) => t.toolId)).toEqual(["t1"]);
+
+      await loadSavedToolsIntoRegistry(
+        {
+          db,
+          configDir,
+          vault,
+          runtime: { requiredReadPaths: () => RUNTIME_READ_PATHS },
+          ...over,
+        },
+        registry,
+      );
+
+      expect(registry.savedTools()).toEqual([]);
+      expect(registry.forSession("any-session")).toEqual([]);
+    }
+
+    test("config-disabled loads nothing", async () => {
+      await loadsNothing({
+        config: { enabled: false },
+        enforced: { capabilitiesDisabled: new Set<string>() },
+      });
+    });
+
+    test("policy-disabled loads nothing", async () => {
+      await loadsNothing({
+        config: { enabled: true },
+        enforced: { capabilitiesDisabled: new Set(["tool_generation"]) },
+      });
+    });
+
+    test("accessor-absent loads nothing — fail-CLOSED, never defaulting to enabled", async () => {
+      await loadsNothing({ config: { enabled: true } });
+    });
   });
 });

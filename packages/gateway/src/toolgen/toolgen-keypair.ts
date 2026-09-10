@@ -24,6 +24,26 @@ export const TOOLGEN_SIGNING_PRIVKEY = "toolgen.signing.privkey";
  */
 export const TOOLGEN_SIGNING_PUBKEY = "toolgen.signing.pubkey";
 
+/**
+ * The Vault-key prefix the two signing keys above share, and the ONE prefix under `toolgen.` that
+ * is NOT a per-host generated-tool credential.
+ *
+ * Exported, and defined HERE rather than in either consumer, because two different deletion paths
+ * must both skip it and a second copy is a second place for one of them to lose the exclusion:
+ *
+ * - `sweepToolgenCredentials` (`toolgen-credential-sweep.ts`) — the TOTAL boot/shutdown/revoke
+ *   sweep over `toolgen.`, which has always skipped it.
+ * - `deleteCredentialsForTool` (`toolgen-credentials.ts`) — the per-tool prefix delete behind
+ *   `toolgen.revoke`, which did NOT, and could therefore be aimed at this keyspace by a caller
+ *   supplying the tool id `signing`: `toolgen.${"signing"}.` IS this prefix, exactly.
+ *
+ * Losing the signing keypair is not a recoverable inconvenience: every already-saved tool on the
+ * machine reports `pubkey_unavailable` at the next boot and can never verify again, because the
+ * seed that signed it is gone from the OS keychain and nothing else holds a copy (see
+ * `TOOLGEN_SIGNING_PRIVKEY` above — Vault-only, never on disk, never in the database).
+ */
+export const TOOLGEN_SIGNING_KEY_PREFIX = "toolgen.signing.";
+
 /** True only if `b64` decodes from base64 to exactly `len` bytes (Ed25519 seed/pubkey = 32). */
 function isValidB64Len(b64: string, len: number): boolean {
   try {

@@ -101,6 +101,17 @@ if (process.platform === "win32" && process.env["NIMBUS_SANDBOX_HELPER_PATH"] ==
   process.env["NIMBUS_SANDBOX_HELPER_PATH"] = WIN_HELPER;
 }
 
+/**
+ * The capability ENABLED, as both boot passes now require. `[tool_generation] enabled` and the
+ * org-policy lock-off reach the DURABLE half (`toolgen-capability.ts`), so a real gateway boot
+ * supplies these and a test that models one must too — they are REQUIRED rather than defaulted
+ * precisely so a caller cannot get an enabled pass by forgetting them.
+ */
+const CAPABILITY_ON = {
+  config: { enabled: true },
+  enforced: { capabilitiesDisabled: new Set<string>() },
+} as const;
+
 const STUB_HOST = "api.example.com";
 const STUB_PAYLOAD = { ok: true, value: 7 };
 
@@ -392,8 +403,14 @@ describe("a saved tool spawns and answers in a gateway that never saw its create
         configDir: fixture.configDir,
         vault: gwB.vault,
         logger: fakeLogger(),
+        ...CAPABILITY_ON,
       });
-      expect(reconcileResult).toEqual({ verified: 1, disabled: 0, sweptOrphans: 0 });
+      expect(reconcileResult).toEqual({
+        verified: 1,
+        disabled: 0,
+        sweptOrphans: 0,
+        skipped: false,
+      });
 
       // A BRAND NEW `ToolgenRegistry` populated purely from the signed files on disk and the
       // `generated_tool` row -- `createGeneratedTool`/`saveGeneratedTool` never touched this object.
@@ -403,6 +420,7 @@ describe("a saved tool spawns and answers in a gateway that never saw its create
           configDir: fixture.configDir,
           vault: gwB.vault,
           runtime: resolveRuntimeById("bun"),
+          ...CAPABILITY_ON,
         },
         gwB.registry,
       );
@@ -472,6 +490,7 @@ describe("REGRESSION: a changed runtime read path does not break a saved tool", 
         configDir: fixture.configDir,
         vault: gwB.vault,
         logger: fakeLogger(),
+        ...CAPABILITY_ON,
       });
 
       await loadSavedToolsIntoRegistry(
@@ -480,6 +499,7 @@ describe("REGRESSION: a changed runtime read path does not break a saved tool", 
           configDir: fixture.configDir,
           vault: gwB.vault,
           runtime: { requiredReadPaths: changedReadPaths },
+          ...CAPABILITY_ON,
         },
         gwB.registry,
       );
@@ -528,6 +548,7 @@ describe("the saved script never carries a network grant", () => {
         configDir: fixture.configDir,
         vault: gwB.vault,
         logger: fakeLogger(),
+        ...CAPABILITY_ON,
       });
       await loadSavedToolsIntoRegistry(
         {
@@ -535,6 +556,7 @@ describe("the saved script never carries a network grant", () => {
           configDir: fixture.configDir,
           vault: gwB.vault,
           runtime: resolveRuntimeById("bun"),
+          ...CAPABILITY_ON,
         },
         gwB.registry,
       );

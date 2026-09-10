@@ -721,15 +721,25 @@ async function runRevokeCmd(
   deps: RunToolDeps,
 ): Promise<void> {
   try {
-    // `toolgen.revoke` drops BOTH halves server-side -- `registry.revoke` (closes the live child)
-    // AND `removeScript` (drops the approved body from disk) -- see `ipc/toolgen-rpc.ts`'s
-    // `ToolgenRpcCtx.removeScript` doc comment. This command's job is only to call the one RPC that
-    // does both; there is no separate "drop the script" step for the CLI to forget, because the CLI
-    // never touches the gateway's config dir directly.
-    await deps.runWithClient(async (c) => {
-      await c.call("toolgen.revoke", { toolId: parsed.toolId });
+    // `toolgen.revoke` drops EVERY half server-side in one call -- the live child
+    // (`registry.revoke`), the registry's saved entry, the `generated_tool` row, the
+    // `saved/<toolId>` directory, the approved ephemeral script, and every Vault credential bound
+    // to the tool -- see `ipc/toolgen-rpc.ts`'s `toolgen.revoke` doc comment. This command's job is
+    // only to call that one RPC; there is no separate step for the CLI to forget, because the CLI
+    // never touches the gateway's config dir or database directly.
+    //
+    // `savedRemoved` is surfaced because this command is the WITHDRAWAL PATH the save prompt names
+    // ("...until you `nimbus tool revoke` it"). An owner withdrawing a standing approval should be
+    // told that a durable one was actually found and dropped, not just that a call succeeded.
+    const savedRemoved = await deps.runWithClient(async (c) => {
+      const res = await c.call("toolgen.revoke", { toolId: parsed.toolId });
+      return (res as { savedRemoved?: unknown } | null)?.savedRemoved === true;
     });
-    deps.sink.out(`Revoked ${parsed.toolId}.\n`);
+    deps.sink.out(
+      savedRemoved === true
+        ? `Revoked ${parsed.toolId}. Its saved copy is gone; it will not return after a restart.\n`
+        : `Revoked ${parsed.toolId}.\n`,
+    );
   } catch (e) {
     deps.sink.err(`${e instanceof Error ? e.message : String(e)}\n`);
     deps.setExitCode(TOOL_EXIT_CODES.refused);

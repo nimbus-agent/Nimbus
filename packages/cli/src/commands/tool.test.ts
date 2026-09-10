@@ -1320,4 +1320,33 @@ describe("runTool revoke -- the success path reports the id it dropped", () => {
     expect(h.out.join("")).toContain("Revoked tg_a.");
     expect(h.codes).toHaveLength(0);
   });
+
+  // This command is the WITHDRAWAL PATH the save prompt names by name ("...until you
+  // `nimbus tool revoke` it"). An owner withdrawing a STANDING approval is told that a durable
+  // copy was actually found and dropped -- not merely that a call returned.
+  test("discloses that a SAVED copy was dropped, when the gateway says one was", async () => {
+    const h = fakeDeps({
+      runWithClient: async (fn) =>
+        fn({
+          onNotification: () => {},
+          call: async () => ({ revoked: true, savedRemoved: true }),
+        }),
+    });
+    await runTool(["revoke", "tg_a"], h.d);
+    expect(h.out.join("")).toContain("Revoked tg_a.");
+    expect(h.out.join("")).toContain("saved copy is gone");
+    expect(h.codes).toHaveLength(0);
+  });
+
+  test("does NOT claim a saved copy was dropped when the gateway did not say so", async () => {
+    // Fail-quiet on the disclosure specifically: an ephemeral-only revoke, and any gateway whose
+    // response shape this CLI does not recognise, must not assert something durable was removed.
+    const h = fakeDeps({
+      runWithClient: async (fn) =>
+        fn({ onNotification: () => {}, call: async () => ({ revoked: true }) }),
+    });
+    await runTool(["revoke", "tg_a"], h.d);
+    expect(h.out.join("")).toContain("Revoked tg_a.");
+    expect(h.out.join("")).not.toContain("saved copy");
+  });
 });

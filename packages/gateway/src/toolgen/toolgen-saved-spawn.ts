@@ -1,6 +1,7 @@
 import type { Database } from "bun:sqlite";
 import type { ExtensionManifest } from "../extensions/manifest.ts";
 import type { NimbusVault } from "../vault/nimbus-vault.ts";
+import { isToolgenCapabilityEnabled, type ToolgenCapabilityState } from "./toolgen-capability.ts";
 import type { GeneratedToolHandle } from "./toolgen-client.ts";
 import { TOOLGEN_SIGNING_PUBKEY } from "./toolgen-keypair.ts";
 import { assertConcreteManifestMatches } from "./toolgen-portable-manifest.ts";
@@ -73,7 +74,7 @@ function toArtifact(
   };
 }
 
-export interface LoadSavedToolsDeps {
+export interface LoadSavedToolsDeps extends ToolgenCapabilityState {
   readonly db: Database;
   /** Where `saved/<toolId>` lives — the same root `toolgen-saved-store.ts`'s `savedToolDir` uses. */
   readonly configDir: string;
@@ -109,6 +110,14 @@ export async function loadSavedToolsIntoRegistry(
   deps: LoadSavedToolsDeps,
   registry: ToolgenRegistry,
 ): Promise<void> {
+  // The kill switch, checked before anything is read. A saved tool loaded here becomes visible to
+  // `ToolgenRegistry.forSession` and therefore to `buildGeneratedTools` — i.e. it is OFFERED to the
+  // model — so `[tool_generation] enabled = false` and an org-policy lock-off have to stop it here
+  // or they do not stop it at all. Fail-closed on an absent policy accessor (I22), matching
+  // `assertSaveEnabled`. Nothing durable is touched: the rows and directories stay, and
+  // re-enabling restores visibility at the next boot.
+  if (!isToolgenCapabilityEnabled(deps)) return;
+
   const pubkeyB64 = await deps.vault.get(TOOLGEN_SIGNING_PUBKEY);
   if (pubkeyB64 === null) return;
 

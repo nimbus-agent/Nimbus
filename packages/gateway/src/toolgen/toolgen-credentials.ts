@@ -1,4 +1,5 @@
 import type { VaultDeleter, VaultLister, VaultReader, VaultWriter } from "../vault/nimbus-vault.ts";
+import { TOOLGEN_SIGNING_KEY_PREFIX } from "./toolgen-keypair.ts";
 import type { ToolCredentialBinding } from "./toolgen-types.ts";
 
 /**
@@ -94,6 +95,18 @@ export async function deleteToolCredential(
  * to `[A-Za-z0-9_-]{1,64}` — an id can never contain a `.`, so the trailing dot makes the prefix
  * unambiguous: `toolgen.abc.` cannot match a differently-named tool id like `abcd`.
  *
+ * **The signing keypair is excluded, unconditionally.** `toolId` reaches this function from a
+ * CALLER — `toolgen.revoke`'s `toolId` param — and `signing` satisfies `assertSafeToolId`'s regex
+ * perfectly, so `toolgen.${"signing"}.` is byte-for-byte `TOOLGEN_SIGNING_KEY_PREFIX` and a prefix
+ * delete would take `toolgen.signing.privkey` and `toolgen.signing.pubkey` with it. That is not a
+ * recoverable loss: the seed lives only in the OS keychain, so every saved tool on the machine
+ * becomes permanently `pubkey_unavailable` at the next boot. The exclusion is shared with
+ * `sweepToolgenCredentials`, which has always had it — this function's docstring used to lean on
+ * that sweep's premise ("tool ids are minted by the gateway, not chosen by a caller"), which is
+ * true of the sweep and was never true here. `ipc/toolgen-rpc.ts` refuses the reserved id at the
+ * boundary as well; a caller-supplied string that can address the Vault's own keyspace fails
+ * twice, deliberately, rather than resting on one check.
+ *
  * This is the mechanism `toolgen.revoke` uses to close a shipped credential leak: a revoked tool
  * used to drop its live child and its on-disk script but never its Vault binding, leaving
  * `toolgen.<toolId>.<hostSlug>` in the OS keychain indefinitely, keyed to a tool id nothing will
@@ -109,6 +122,7 @@ export async function deleteCredentialsForTool(
 ): Promise<void> {
   const keys = await vault.listKeys(`toolgen.${toolId}.`);
   for (const key of keys) {
+    if (key.startsWith(TOOLGEN_SIGNING_KEY_PREFIX)) continue;
     await vault.delete(key);
   }
 }

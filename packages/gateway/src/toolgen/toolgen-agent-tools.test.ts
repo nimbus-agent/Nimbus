@@ -255,7 +255,14 @@ describe("buildGeneratedTools", () => {
 
     const registry = new ToolgenRegistry();
     await loadSavedToolsIntoRegistry(
-      { db, configDir, vault, runtime: { requiredReadPaths: () => [] } },
+      {
+        db,
+        configDir,
+        vault,
+        runtime: { requiredReadPaths: () => [] },
+        config: { enabled: true },
+        enforced: { capabilitiesDisabled: new Set<string>() },
+      },
       registry,
     );
 
