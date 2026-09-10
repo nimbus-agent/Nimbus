@@ -90,7 +90,7 @@ tree:
 
 **Shape:**
 
-```
+```text
 <configDir>/toolgen/
   ephemeral/<toolId>/index.ts        # unchanged, wiped at shutdown
   saved/<toolId>/
@@ -446,7 +446,7 @@ PR 1. Neither addition changes that, and the `ALLOWED_METHODS` count assertion m
 
 **CLI** —
 
-```
+```text
 nimbus tool save <tool-id>
 nimbus tool list [--json]              # saved | ephemeral, plus health / needs-credentials
 nimbus tool revoke <tool-id>           # now drops all three halves, saved or ephemeral

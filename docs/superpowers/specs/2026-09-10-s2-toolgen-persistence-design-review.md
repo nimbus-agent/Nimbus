@@ -36,12 +36,14 @@ The design specification for **PR 3: Persistence + Signing** completes the runti
 
 - **Context in Spec (§ 3, § 6, § 7) & Substrate (`toolgen-stub.ts`, `toolgen-artifact.ts`):**  
   In PR 1/2, when an ephemeral tool is created:
+
   ```ts
   const manifest = buildGeneratedManifest(toolId, {
     scriptDir: deps.scriptDir(toolId), // -> <configDir>/toolgen/ephemeral/<toolId>
     runtimeReadPaths: runtime.requiredReadPaths(),
   });
   ```
+
   `manifest.permissions.filesystem.read` contains `[ "<configDir>/toolgen/ephemeral/<toolId>", ...runtimeReadPaths ]`.  
   `artifact.manifest` is hashed as part of `canonicalArtifactBytes(artifact)` and signed into `artifact.sig`.
 
@@ -86,6 +88,7 @@ export function buildSavedToolArtifact(
 
 - **The Code-Level Gap in `ToolgenBroker` (`packages/gateway/src/toolgen/toolgen-broker.ts`):**  
   In the current implementation of `ToolgenBroker.handleFetch`:
+
   ```ts
   let binding: ToolCredentialBinding | null;
   try {
@@ -95,6 +98,7 @@ export function buildSavedToolArtifact(
   }
   if (binding !== null) applyCredential(headers, binding);
   ```
+
   If `host` was declared in `artifact.credentialHosts`, but no credential has been bound yet in the Vault (or was wiped on reboot), `readCredential(toolId, host)` returns `null` (not a throw).  
   As a result, the current broker silently skips `applyCredential` and proceeds with an **unauthenticated request**, violating the security invariant and leaking request data to endpoints expecting authentication!
 
@@ -140,6 +144,7 @@ if (isCredentialHost && binding === null) {
 
 - **Context in `ToolgenRegistry` (`toolgen-registry.ts`) & CLI:**  
   `ToolgenRegistry` is currently session-scoped:
+
   ```ts
   forSession(sessionId: string): ToolgenEnvelope[] {
     return [...this.#byId.values()]
@@ -147,6 +152,7 @@ if (isCredentialHost && binding === null) {
       .map((e) => e.envelope);
   }
   ```
+
   CLI commands use `CLI_TOOLGEN_SESSION_ID = "cli"`. Agent workflow sessions use unique UUIDs.
 
 - **The Conflict:**  
@@ -155,6 +161,7 @@ if (isCredentialHost && binding === null) {
 
 - **Required Resolution:**  
   Support global registration in `ToolgenRegistry`:
+
   ```ts
   export interface ToolgenEnvelope {
     readonly artifact: GeneratedToolArtifact;
@@ -164,6 +171,7 @@ if (isCredentialHost && binding === null) {
     readonly isSaved?: boolean;
   }
   ```
+
   And update `forSession(sessionId)` to return:
   `[...this.#byId.values()].filter(e => !e.terminated && (e.envelope.isSaved || e.envelope.sessionId === sessionId))`
 
@@ -174,6 +182,7 @@ if (isCredentialHost && binding === null) {
 ### 3.1 Schema V61 & Migration Design (§ 4)
 
 The table schema is clean and minimal:
+
 ```sql
 CREATE TABLE generated_tool (
   tool_id          TEXT PRIMARY KEY,
@@ -191,6 +200,7 @@ CREATE TABLE generated_tool (
 ```
 
 #### Verification & Best Practices
+
 1. **Migration Runner Integration:**  
    - Add `GENERATED_TOOL_V61_SQL` in `packages/gateway/src/index/generated-tool-v61-sql.ts`.
    - Register step `simpleStep(60, 61, "generated_tool (runtime tool persistence v61)", GENERATED_TOOL_V61_SQL)` in `packages/gateway/src/index/migrations/runner.ts`.
@@ -202,6 +212,7 @@ CREATE TABLE generated_tool (
 ### 3.2 Vault Keypair & Signing Engine (§ 5)
 
 The keypair management mirrors `share/share-keypair.ts`:
+
 - Vault Keys:
   - `toolgen.signing.privkey` (32-byte Ed25519 seed, base64)
   - `toolgen.signing.pubkey` (32-byte Ed25519 public key, base64)

@@ -83,6 +83,7 @@ If you disagree with this refinement, stop and raise it before Task 1; it is loa
 Spec § 3.1. **This must be first.** Every later task signs on top of `canonicalArtifactBytes`, and changing it is free only until signed artifacts exist on disk.
 
 **Files:**
+
 - Create: `packages/gateway/src/toolgen/toolgen-portable-manifest.ts`
 - Create: `packages/gateway/src/toolgen/toolgen-portable-manifest.test.ts`
 - Modify: `packages/gateway/src/toolgen/toolgen-artifact.ts`
@@ -90,6 +91,7 @@ Spec § 3.1. **This must be first.** Every later task signs on top of `canonical
 - Test: `packages/gateway/src/toolgen/toolgen-artifact.test.ts`
 
 **Interfaces:**
+
 - Consumes: `GeneratedToolArtifact`, `ExtensionManifest`, `canonicalize` (`extensions/canonical-json.ts`).
 - Produces:
   - `toPortableManifest(m: ExtensionManifest): PortableToolManifest`
@@ -290,11 +292,13 @@ git commit -m "feat(toolgen): sign the portable manifest, not machine-derived pa
 ## Task 2: Schema V61 — `generated_tool`
 
 **Files:**
+
 - Create: `packages/gateway/src/index/generated-tool-v61-sql.ts`
 - Create: `packages/gateway/src/toolgen/toolgen-saved-repo.ts`, `toolgen-saved-repo.test.ts`
 - Modify: `packages/gateway/src/index/migrations/runner.ts`, `packages/gateway/src/index/local-index.ts`
 
 **Interfaces:**
+
 - Produces:
   - `GENERATED_TOOL_V61_SQL: string`
   - `SavedToolRow` — `{ toolId, toolName, description, artifactJson, artifactDigest, signature, pubkey, approvedAt, savedAt, lastLoadedAt: number | null, disabledReason: SavedToolDisabledReason | null }`
@@ -304,7 +308,8 @@ git commit -m "feat(toolgen): sign the portable manifest, not machine-derived pa
 > were not tampered with; it proves nothing about their *shape*. An artifact written by a different
 > build of Nimbus verifies perfectly and may still be missing a field this version requires.
 > Signature verification is not schema validation, and the parse must guard (Task 4).
-  - `insertSavedTool(db, row): void` · `listSavedTools(db): SavedToolRow[]` · `getSavedTool(db, toolId): SavedToolRow | null` · `deleteSavedTool(db, toolId): void` · `setSavedToolDisabled(db, toolId, reason: SavedToolDisabledReason | null): void` · `touchSavedToolLoaded(db, toolId, now): void` · `repairSavedToolCache(db, toolId, { artifactJson, artifactDigest }): void`
+
+- `insertSavedTool(db, row): void` · `listSavedTools(db): SavedToolRow[]` · `getSavedTool(db, toolId): SavedToolRow | null` · `deleteSavedTool(db, toolId): void` · `setSavedToolDisabled(db, toolId, reason: SavedToolDisabledReason | null): void` · `touchSavedToolLoaded(db, toolId, now): void` · `repairSavedToolCache(db, toolId, { artifactJson, artifactDigest }): void`
 
 > **Note:** `body_missing` from the spec's § 4 list is **dropped** — under the plan-level refinement `index.ts` is derived, so its absence is not a failure state. Keep the other five.
 
@@ -418,10 +423,12 @@ git commit -m "feat(toolgen): schema V61 generated_tool + saved-tool repository"
 ## Task 3: Vault Ed25519 keypair + detached signing
 
 **Files:**
+
 - Create: `packages/gateway/src/toolgen/toolgen-keypair.ts`, `toolgen-keypair.test.ts`
 - Modify: `scripts/structure-audit/check-nimbus-invariants.ts` (`VAULT_KEY_ALLOW_LIST`, `PLATFORM_VAULT_KEYS`)
 
 **Interfaces:**
+
 - Consumes: `NimbusVault`; `generateEd25519Keypair`, `decodeBase64`, `encodeBase64` from `@nimbus-dev/sdk`; `nacl` from `tweetnacl`.
 - Produces:
   - `TOOLGEN_SIGNING_PRIVKEY = "toolgen.signing.privkey"` · `TOOLGEN_SIGNING_PUBKEY = "toolgen.signing.pubkey"`
@@ -546,9 +553,11 @@ git commit -m "feat(toolgen): Vault-only Ed25519 signing keypair"
 D29(d)'s home. Spec § 3, § 7.
 
 **Files:**
+
 - Create: `packages/gateway/src/toolgen/toolgen-saved-store.ts`, `toolgen-saved-store.test.ts`
 
 **Interfaces:**
+
 - Consumes: `assertSafeToolId` (`toolgen-script-store.ts`), `verifyArtifactSignature` (Task 3).
 - Produces:
   - `savedToolDir(configDir, toolId): string`
@@ -650,11 +659,13 @@ git commit -m "feat(toolgen): saved-tool store with a single verifying accessor"
 Spec § 8.1–8.2. **Independently valuable — it fixes a shipped defect and does not depend on save existing.**
 
 **Files:**
+
 - Create: `packages/gateway/src/toolgen/toolgen-credential-sweep.ts`, `toolgen-credential-sweep.test.ts`
 - Modify: `packages/gateway/src/ipc/toolgen-rpc.ts`, `packages/gateway/src/gateway-main.ts`, `packages/gateway/src/platform/assemble.ts`
 - Test: `packages/gateway/src/ipc/toolgen-rpc.test.ts`, `packages/gateway/src/gateway-main.test.ts`
 
 **Interfaces:**
+
 - Consumes: `VaultLister`/`VaultDeleter`; `toolCredentialKey` (`toolgen-credentials.ts`).
 - Produces:
   - `sweepToolgenCredentials(vault: NimbusVault): Promise<number>` — deletes every `toolgen.`-prefixed key except `toolgen.signing.*`; returns the count.
@@ -742,11 +753,12 @@ export async function sweepToolgenCredentials(vault: NimbusVault): Promise<numbe
     // outlived both the tool and the gateway, keyed to a toolId nothing would ever call again.
     await ctx.revokeCredentialsForTool(toolId);
 ```
+
 Resolve the tool's hosts from the registry envelope **before** `registry.revoke` removes it.
 
-2. `gateway-main.ts` — after `removeAllToolScripts`, add `await deps.sweepToolgenCredentials()`. Follow the existing dep-injection shape; `gateway-main.test.ts` already asserts call **order**, so extend that assertion rather than adding a parallel one.
+1. `gateway-main.ts` — after `removeAllToolScripts`, add `await deps.sweepToolgenCredentials()`. Follow the existing dep-injection shape; `gateway-main.test.ts` already asserts call **order**, so extend that assertion rather than adding a parallel one.
 
-3. `platform/assemble.ts` — call the sweep once at boot, before the registry is populated.
+2. `platform/assemble.ts` — call the sweep once at boot, before the registry is populated.
 
 - [ ] **Step 5: Run — expect pass**
 
@@ -768,9 +780,11 @@ git commit -m "fix(toolgen): sweep per-host Vault credentials on revoke, boot an
 Spec § 8.3. Also a shipped-defect fix: `handleFetch` currently proceeds unauthenticated on a `null` binding, which the file's own comment already argues it must not do.
 
 **Files:**
+
 - Modify: `packages/gateway/src/toolgen/toolgen-broker.ts`, `toolgen-broker.test.ts`, `platform/assemble.ts`
 
 **Interfaces:**
+
 - Produces: `ToolgenBrokerDeps.credentialHostsFor: (toolId: string) => readonly string[]` — same shape as the existing `approvedHostsFor`.
 
 - [ ] **Step 1: Write the failing test**
@@ -862,10 +876,12 @@ git commit -m "fix(toolgen): refuse a brokered fetch to an unbound credentialed 
 Spec § 6, § 6.1.
 
 **Files:**
+
 - Create: `packages/gateway/src/toolgen/toolgen-save-gate.ts`, `toolgen-save-gate.test.ts`
 - Modify: `toolgen-consent-broker.ts`, `engine/executor.ts` (`HITL_REQUIRED_BACKING`)
 
 **Interfaces:**
+
 - Consumes: Tasks 1–4.
 - Produces:
   - `ToolgenSaveApprovalInput` = `ToolgenApprovalInput` fields **plus** `readonly persistence: true`
@@ -977,7 +993,7 @@ unrepairable through any user-facing path and the failure is invisible from ever
 
 Follow `createGeneratedTool`'s existing structure in `toolgen-gate.ts`. Exact order:
 
-```
+```text
 1. config enabled?            -> ERR_TOOLGEN_SAVE_DISABLED   (before consent)
 2. policy allows?             -> ERR_TOOLGEN_SAVE_DISABLED   (before consent; fail-closed if accessor absent)
 3. live + non-terminated?     -> ERR_TOOLGEN_SAVE_NOT_LIVE
@@ -1021,10 +1037,12 @@ git commit -m "feat(toolgen): the save gate — refusals before consent, persist
 Spec § 7.1.
 
 **Files:**
+
 - Create: `packages/gateway/src/toolgen/toolgen-boot-reconcile.ts`, `toolgen-boot-reconcile.test.ts`
 - Modify: `packages/gateway/src/platform/assemble.ts`
 
 **Interfaces:**
+
 - Produces: `reconcileSavedTools(deps: { db; configDir; vault; logger }): Promise<{ verified: number; disabled: number; sweptOrphans: number }>`
 
 - [ ] **Step 1: Write the failing test**
@@ -1082,7 +1100,7 @@ The orphan test is the one that must not be softened: it writes a **valid** sign
 
 - [ ] **Step 3: Implement**
 
-```
+```text
 pass 1 — rows:
   read the current Vault pubkey once
   for each row:
@@ -1135,9 +1153,11 @@ git commit -m "feat(toolgen): boot reconciliation — verify rows, sweep orphan 
 Spec § 7, § 7.2.
 
 **Files:**
+
 - Modify: `toolgen-registry.ts`, `toolgen-registry.test.ts`, `toolgen-agent-tools.ts`, `platform/assemble.ts`
 
 **Interfaces:**
+
 - Produces:
   - `ToolgenRegistry.registerSaved(envelope: SavedToolEnvelope): void`
   - `ToolgenRegistry.savedTools(): SavedToolEnvelope[]`
@@ -1249,9 +1269,11 @@ git commit -m "feat(toolgen): saved tools visible to every session; verify and r
 Spec § 9.
 
 **Files:**
+
 - Modify: `ipc/toolgen-rpc.ts`, `toolgen-rpc.test.ts`, `packages/cli/src/commands/tool.ts`, `tool.test.ts`
 
 **Interfaces:**
+
 - Produces: `toolgen.save({ toolId })` → `ToolgenSaveOutcome`; `toolgen.list` entries gain `{ saved: boolean; needsCredentials: boolean; disabledReason: string | null }`; `toolgen.credentialSet({ toolId, host, binding })`.
 
 - [ ] **Step 1: Write the failing tests**
@@ -1294,6 +1316,7 @@ if (!credentialHosts.includes(host)) {
 ```
 
   Test both the refusal **and** that `API.EXAMPLE.COM` is *accepted* for a tool whose `credentialHosts` holds `api.example.com` — without that positive control, "refuses unknown hosts" passes for an implementation that refuses everything.
+
 - CLI: extend `ParsedToolArgs` with `{ sub: "save"; toolId: string }`; add the `case "save":` branch; update `USAGE`. Unknown subcommands must keep **throwing** (existing behaviour, deliberate).
 - Replace `credential set`'s refusal stub with a real call. Its `--bearer` / `--header` / `--basic` parser already exists — this is what puts `header` and `basic` on a user-facing path for the first time.
 
@@ -1313,6 +1336,7 @@ git commit -m "feat(toolgen): nimbus tool save + a real credential set"
 The triple rule: wiring + docs + enforcement test together.
 
 **Files:**
+
 - Modify: `scripts/structure-audit/check-nimbus-invariants.ts`, `packages/gateway/src/security-invariants.test.ts`, `docs/SECURITY-INVARIANTS.md`
 
 - [ ] **Step 1: Write the D29(d) rule**
@@ -1365,6 +1389,7 @@ git commit -m "feat(toolgen): invariant I40 + static rule D29(d)"
 ## Task 12: Cross-platform integration test + ledger correction
 
 **Files:**
+
 - Create: `packages/gateway/test/integration/toolgen/toolgen-saved-spawn.test.ts`
 - Modify: `docs/roadmap.md`, `CLAUDE.md`, `GEMINI.md`, `docs/CHANGELOG.md`, the parent spec's § 10
 
@@ -1426,6 +1451,7 @@ PR title carries the conventional-commit type — release-please parses the **ti
 **Spec coverage** — every section maps to a task: § 2 → 11 · § 3 → 4 · § 3.1 → 1, 9, 12 · § 4 → 2, 8 · § 5 → 3 · § 6/6.1 → 7 · § 7 → 9 · § 7.1 → 8 · § 7.2 → 9 · § 8.1/8.2 → 5 · § 8.3 → 6 · § 9 → 10 · § 10 → 11 · § 11 → spread, with the per-platform half in 12 · § 12 → 12.
 
 **Deviations from the spec, both deliberate and flagged above:**
+
 1. `index.ts` is derived and re-emitted at spawn; the "byte flip in index.ts → refuses" test becomes "→ overwritten, approved bytes execute". Raise before Task 1 if unwanted.
 2. `body_missing` dropped from `SavedToolDisabledReason` — it cannot occur once the script is derived.
 

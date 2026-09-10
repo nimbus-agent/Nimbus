@@ -133,6 +133,7 @@ if (
   return { status: "already_saved", toolId };
 }
 ```
+
 If `existingRow.disabledReason !== null`, proceed through approval (or repair write) to re-sign, rewrite disk files, and reset `disabledReason` to `null`.
 
 ---
