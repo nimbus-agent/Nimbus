@@ -1427,7 +1427,15 @@ Correct in all four places — `CLAUDE.md` and `GEMINI.md` are mirrors and must 
 - The parent spec's § 10: PR 2 shipped **drafting**, not agent-initiated.
 - `docs/roadmap.md`'s toolgen row: closes on **owner-initiated** persistence; agent-initiated becomes a named, reason-recorded deferral, the treatment fleet PR 2b and the screen lane received.
 - `CLAUDE.md` + `GEMINI.md`: invariants now run **through I40** (I28 still reserved); schema **V61**; the S2 toolgen row.
+- **`docs/architecture.md`: schema `V61`.** Added after Task 5 found `audit:status-drift` red on
+  THREE surfaces, not two — that audit derives the canonical schema number from code and checks
+  `CLAUDE.md`, `GEMINI.md`, `docs/architecture.md` and `docs/SECURITY-INVARIANTS.md`. The first
+  draft of this step named only the two mirrors.
 - `docs/CHANGELOG.md`.
+
+**This step must end with `bun run audit:status-drift` exiting 0.** It has been red since Task 2
+bumped `CURRENT_SCHEMA_VERSION` to 61 — expected mid-branch, since the schema lands before its
+documentation — but it is a real gate and this is the task that closes it. Run it, do not assume it.
 
 - [ ] **Step 4: Full preflight**
 
