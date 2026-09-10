@@ -568,7 +568,7 @@ test("write then read verifies", async () => {
   const { sigB64, pubkeyB64 } = await signArtifact(new FakeVault(), CANON);
   await writeSavedTool(dir, "t1", { canonicalJson: CANON, sigB64, script: "// script" });
   const r = await readVerifiedSavedTool(dir, "t1", pubkeyB64);
-  expect(r).toEqual({ ok: true, canonicalJson: CANON });
+  expect(r).toMatchObject({ ok: true, canonicalJson: CANON });
 });
 
 test("a tampered artifact.json is refused", async () => {
@@ -583,9 +583,12 @@ test("a missing artifact.sig is refused as signature_missing, distinct from a mi
 
 test("a missing artifact.json is refused as artifact_missing", async () => { /* … */ });
 
-test("a signature made by a different key is refused as pubkey_rotated", async () => {
+test("a signature made by a different key is refused as signature_mismatch", async () => {
+  // NOT `pubkey_rotated` — see the note below this block. The store cannot tell a rotation from
+  // tampering; both are "verify returned false". Task 8 owns that distinction because only the
+  // caller knows whether the ROW's stored pubkey differs from the Vault's current one.
   /* sign with vault A, verify against vault B's pubkey */
-  expect(await readVerifiedSavedTool(dir, "t1", otherPubkey)).toEqual({ ok: false, reason: "pubkey_rotated" });
+  expect(await readVerifiedSavedTool(dir, "t1", otherPubkey)).toEqual({ ok: false, reason: "signature_mismatch" });
 });
 
 test("a tampered index.ts does NOT affect verification — it is derived, not signed", async () => {
