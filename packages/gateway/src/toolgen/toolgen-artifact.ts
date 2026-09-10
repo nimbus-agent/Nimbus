@@ -1,6 +1,7 @@
 import { blake3 } from "@noble/hashes/blake3.js";
 import { bytesToHex } from "@noble/hashes/utils.js";
 import { canonicalize } from "../extensions/canonical-json.ts";
+import { toPortableManifest } from "./toolgen-portable-manifest.ts";
 import type { GeneratedToolArtifact } from "./toolgen-types.ts";
 
 /**
@@ -29,7 +30,12 @@ export function canonicalArtifactBytes(artifact: GeneratedToolArtifact): string 
     approvedHosts: [...artifact.approvedHosts],
     credentialHosts: [...artifact.credentialHosts],
     inputSchema: artifact.inputSchema,
-    manifest: artifact.manifest,
+    // PORTABLE projection, not the concrete manifest (spec § 3.1). The concrete manifest's
+    // `filesystem.read` holds machine-derived absolute paths — the ephemeral script dir and
+    // `dirname(process.execPath)` — so signing it would bind the artifact to one machine, one Bun
+    // install and one OS. The spawn path rebuilds the concrete manifest and asserts it against this
+    // shape instead (`assertConcreteManifestMatches`).
+    manifest: toPortableManifest(artifact.manifest),
   });
 }
 

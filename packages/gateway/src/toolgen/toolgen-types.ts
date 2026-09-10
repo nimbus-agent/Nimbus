@@ -128,3 +128,28 @@ export interface DraftGeneration {
   readonly text: string;
   readonly isLocal: boolean;
 }
+
+/**
+ * The manifest fields that are SIGNED. Deliberately excludes `filesystem.read`, whose entries are
+ * machine-derived absolute paths (`dirname(process.execPath)`, plus its parent on macOS) — signing
+ * those makes a Bun upgrade indistinguishable from tampering (spec § 3.1). The read set is instead
+ * reconstructed at spawn and asserted against this shape.
+ */
+export interface PortableToolManifest {
+  readonly id: string;
+  readonly version: string;
+  readonly updateChannel: string;
+  /** Empty by construction — I39. Signed so a non-empty value cannot ride in unnoticed. */
+  readonly network: readonly string[];
+  /** Empty by construction. Signed for the same reason. */
+  readonly filesystemWrite: readonly string[];
+}
+
+/** Added in PR 3; see spec § 9's error table. */
+export const ERR_TOOLGEN_MANIFEST_SHAPE_INVALID = "ERR_TOOLGEN_MANIFEST_SHAPE_INVALID";
+export const ERR_TOOLGEN_CREDENTIAL_REQUIRED = "ERR_TOOLGEN_CREDENTIAL_REQUIRED";
+export const ERR_TOOLGEN_CREDENTIAL_HOST_UNKNOWN = "ERR_TOOLGEN_CREDENTIAL_HOST_UNKNOWN";
+export const ERR_TOOLGEN_SIGNATURE_INVALID = "ERR_TOOLGEN_SIGNATURE_INVALID";
+export const ERR_TOOLGEN_SAVE_DISABLED = "ERR_TOOLGEN_SAVE_DISABLED";
+export const ERR_TOOLGEN_SAVE_NOT_LIVE = "ERR_TOOLGEN_SAVE_NOT_LIVE";
+export const ERR_TOOLGEN_SAVE_DENIED = "ERR_TOOLGEN_SAVE_DENIED";
