@@ -1,3 +1,4 @@
+import type { Logger } from "pino";
 import type { NimbusVault } from "../vault/nimbus-vault.ts";
 
 /**
@@ -39,4 +40,37 @@ export async function sweepToolgenCredentials(vault: NimbusVault): Promise<numbe
     n++;
   }
   return n;
+}
+
+/**
+ * Boot-time wrapper around `sweepToolgenCredentials`: a Vault I/O failure here — a locked or
+ * temporarily inaccessible OS keychain (DPAPI / macOS Keychain / libsecret, the exact three
+ * backends this feature depends on) — must NOT abort gateway startup. This is bookkeeping: nothing
+ * downstream depends on the sweep having completed, and skipping it for one boot leaves exactly
+ * the stale keys that were already there, which the NEXT successful boot (or a `toolgen.revoke`,
+ * or shutdown) will still catch. Denying the user their whole local index over a credential-hygiene
+ * pass that failed to run would be a badly wrong trade.
+ *
+ * Mirrors `assemble.ts`'s `appendBootMarkerOrWarn` / `reconcileOrphanedCuSessionsOrWarn`: swallow
+ * on failure, but never SILENTLY — log a warning naming what failed. On success, log the swept
+ * count only when it is non-zero (an owner reading gateway logs cares that N stale credentials
+ * were found and removed; zero is the steady-state case and would just be noise every boot).
+ */
+export async function sweepToolgenCredentialsOrWarn(
+  vault: NimbusVault,
+  logger: Pick<Logger, "warn" | "info">,
+): Promise<void> {
+  try {
+    const swept = await sweepToolgenCredentials(vault);
+    if (swept > 0) {
+      logger.info({ swept }, `toolgen: swept ${swept} stale generated-tool credential(s) at boot`);
+    }
+  } catch (err) {
+    logger.warn(
+      { err },
+      "toolgen: could not sweep stale generated-tool Vault credentials at boot; a credential " +
+        "left behind by a previous process may remain until the next successful boot, " +
+        "`toolgen.revoke`, or shutdown",
+    );
+  }
 }

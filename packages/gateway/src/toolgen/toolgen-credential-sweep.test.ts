@@ -1,6 +1,9 @@
 import { describe, expect, test } from "bun:test";
 import type { NimbusVault } from "../vault/nimbus-vault.ts";
-import { sweepToolgenCredentials } from "./toolgen-credential-sweep.ts";
+import {
+  sweepToolgenCredentials,
+  sweepToolgenCredentialsOrWarn,
+} from "./toolgen-credential-sweep.ts";
 import { toolCredentialKey } from "./toolgen-credentials.ts";
 import {
   ensureToolgenKeypair,
@@ -27,6 +30,42 @@ class FakeVault implements NimbusVault {
   async listKeys(prefix?: string): Promise<string[]> {
     return [...this.store.keys()].filter((k) => !prefix || k.startsWith(prefix));
   }
+}
+
+/**
+ * Simulates a locked/temporarily-inaccessible OS keychain (DPAPI / macOS Keychain / libsecret) —
+ * the exact condition `sweepToolgenCredentialsOrWarn` exists to survive at boot.
+ */
+class ThrowingVault implements NimbusVault {
+  async get(): Promise<string | null> {
+    throw new Error("keychain locked");
+  }
+  async set(): Promise<void> {
+    throw new Error("keychain locked");
+  }
+  async delete(): Promise<void> {
+    throw new Error("keychain locked");
+  }
+  async listKeys(): Promise<string[]> {
+    throw new Error("keychain locked");
+  }
+}
+
+function fakeLogger(): {
+  logger: { warn: (...a: unknown[]) => void; info: (...a: unknown[]) => void };
+  warnCalls: unknown[][];
+  infoCalls: unknown[][];
+} {
+  const warnCalls: unknown[][] = [];
+  const infoCalls: unknown[][] = [];
+  return {
+    logger: {
+      warn: (...a: unknown[]) => void warnCalls.push(a),
+      info: (...a: unknown[]) => void infoCalls.push(a),
+    },
+    warnCalls,
+    infoCalls,
+  };
 }
 
 describe("sweepToolgenCredentials", () => {
@@ -84,5 +123,53 @@ describe("sweepToolgenCredentials", () => {
     await vault.set(toolCredentialKey("t1", "api.example.com"), "{}");
     await sweepToolgenCredentials(vault);
     expect(await sweepToolgenCredentials(vault)).toBe(0);
+  });
+});
+
+// Fix round 1: the boot call site (`platform/assemble.ts`) awaits `createPlatformServices()`
+// unguarded, so a bare `sweepToolgenCredentials` throwing here would abort the ENTIRE gateway boot
+// over a bookkeeping pass. `sweepToolgenCredentialsOrWarn` is the guard, mirroring
+// `assemble.ts`'s `appendBootMarkerOrWarn` / `reconcileOrphanedCuSessionsOrWarn`.
+describe("sweepToolgenCredentialsOrWarn", () => {
+  test("a throwing Vault (locked/inaccessible OS keychain) does not propagate — it warns instead", async () => {
+    const { logger, warnCalls } = fakeLogger();
+
+    await expect(
+      sweepToolgenCredentialsOrWarn(new ThrowingVault(), logger),
+    ).resolves.toBeUndefined();
+
+    expect(warnCalls).toHaveLength(1);
+    const [meta, message] = warnCalls[0] as [{ err: unknown }, string];
+    expect(meta.err).toBeDefined();
+    expect(message).toMatch(/toolgen/i);
+    expect(message).toMatch(/sweep/i);
+  });
+
+  test("logs the swept count when it is non-zero", async () => {
+    const vault = new FakeVault();
+    await vault.set(toolCredentialKey("t1", "api.example.com"), "{}");
+    await vault.set(toolCredentialKey("t2", "other.example.com"), "{}");
+    const { logger, infoCalls, warnCalls } = fakeLogger();
+
+    await sweepToolgenCredentialsOrWarn(vault, logger);
+
+    expect(warnCalls).toHaveLength(0);
+    expect(infoCalls).toHaveLength(1);
+    const [meta, message] = infoCalls[0] as [{ swept: number }, string];
+    expect(meta.swept).toBe(2);
+    expect(message).toContain("2");
+    // The credentials are actually gone, not just counted -- the wrapper delegates to the real
+    // sweep rather than reimplementing it.
+    expect(await vault.get(toolCredentialKey("t1", "api.example.com"))).toBeNull();
+  });
+
+  test("logs nothing when there is nothing to sweep — a clean boot is not noise", async () => {
+    const vault = new FakeVault();
+    const { logger, infoCalls, warnCalls } = fakeLogger();
+
+    await sweepToolgenCredentialsOrWarn(vault, logger);
+
+    expect(infoCalls).toHaveLength(0);
+    expect(warnCalls).toHaveLength(0);
   });
 });

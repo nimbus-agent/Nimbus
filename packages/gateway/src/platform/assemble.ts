@@ -289,7 +289,7 @@ import { ToolgenBroker } from "../toolgen/toolgen-broker.ts";
 import { spawnGeneratedTool } from "../toolgen/toolgen-client.ts";
 import { assertToolConfinement } from "../toolgen/toolgen-confinement.ts";
 import { toolgenConsent } from "../toolgen/toolgen-consent-broker.ts";
-import { sweepToolgenCredentials } from "../toolgen/toolgen-credential-sweep.ts";
+import { sweepToolgenCredentialsOrWarn } from "../toolgen/toolgen-credential-sweep.ts";
 import {
   deleteCredentialsForTool,
   deleteToolCredential,
@@ -3813,7 +3813,12 @@ export async function assemblePlatformServices(
   // (belt-and-suspenders) a `toolgen.revoke`/shutdown sweep that itself failed partway. Nothing in
   // this process could have written a `toolgen.`-prefixed credential yet at this point, so there
   // is no live credential this can race.
-  await sweepToolgenCredentials(vault);
+  //
+  // `...OrWarn`, not the bare sweep: `createPlatformServices()` is awaited unguarded at
+  // `gateway-main.ts`'s call site, so an unguarded Vault I/O failure here (a locked/temporarily
+  // inaccessible OS keychain) would abort the ENTIRE gateway boot over a bookkeeping pass --
+  // matching `appendBootMarkerOrWarn`/`reconcileOrphanedCuSessionsOrWarn` above.
+  await sweepToolgenCredentialsOrWarn(vault, syncLogger);
 
   // `toolgenRegistry` is the ONE registry instance shared by three places: the gate (counts a
   // session's budget and registers a live tool), the broker's `approvedHostsFor` (reads back the
