@@ -120,6 +120,18 @@ describe("parseToolArgs", () => {
     expect(() => parseToolArgs(["revoke"])).toThrow(/tool id/);
   });
 
+  test("save requires a tool id", () => {
+    expect(() => parseToolArgs(["save"])).toThrow(/tool id/);
+  });
+
+  test("save parses a tool id", () => {
+    expect(parseToolArgs(["save", "tg_a"])).toEqual({ sub: "save", toolId: "tg_a" });
+  });
+
+  test("save with a flag where the tool id belongs is refused, not read as an id", () => {
+    expect(() => parseToolArgs(["save", "--force"])).toThrow(/tool id is required/);
+  });
+
   test("an unknown subcommand is refused, not defaulted", () => {
     expect(() => parseToolArgs(["frobnicate"])).toThrow(/Usage/);
   });
@@ -540,6 +552,9 @@ describe("renderToolList", () => {
         approvedHosts: ["a.example.com"],
         credentialHosts: ["a.example.com"],
         approvedAt: 0,
+        saved: false,
+        needsCredentials: false,
+        disabledReason: null,
       },
     ]);
     expect(text).toContain("credential hosts: a.example.com");
@@ -547,6 +562,70 @@ describe("renderToolList", () => {
 
   test("an empty list says so rather than printing nothing", () => {
     expect(renderToolList([])).toContain("No active generated tools");
+  });
+
+  test("marks a saved tool as saved and an ephemeral one as ephemeral", () => {
+    const text = renderToolList([
+      {
+        toolId: "tg_saved",
+        toolName: "generated_tg_saved",
+        description: "d",
+        approvedHosts: [],
+        credentialHosts: [],
+        approvedAt: 0,
+        saved: true,
+        needsCredentials: false,
+        disabledReason: null,
+      },
+      {
+        toolId: "tg_eph",
+        toolName: "generated_tg_eph",
+        description: "d",
+        approvedHosts: [],
+        credentialHosts: [],
+        approvedAt: 0,
+        saved: false,
+        needsCredentials: false,
+        disabledReason: null,
+      },
+    ]);
+    expect(text).toContain("tg_saved  generated_tg_saved — d  (saved)");
+    expect(text).toContain("tg_eph  generated_tg_eph — d  (ephemeral)");
+  });
+
+  test("shows a needs-credentials hint for a saved tool that lost its Vault binding", () => {
+    const text = renderToolList([
+      {
+        toolId: "tg_a",
+        toolName: "t",
+        description: "d",
+        approvedHosts: ["api.example.com"],
+        credentialHosts: ["api.example.com"],
+        approvedAt: 0,
+        saved: true,
+        needsCredentials: true,
+        disabledReason: null,
+      },
+    ]);
+    expect(text).toContain("needs credentials");
+    expect(text).toContain("nimbus tool credential set");
+  });
+
+  test("shows a saved tool's disabledReason rather than hiding a broken one", () => {
+    const text = renderToolList([
+      {
+        toolId: "tg_a",
+        toolName: "t",
+        description: "d",
+        approvedHosts: [],
+        credentialHosts: [],
+        approvedAt: 0,
+        saved: true,
+        needsCredentials: false,
+        disabledReason: "signature_mismatch",
+      },
+    ]);
+    expect(text).toContain("DISABLED: signature_mismatch");
   });
 });
 
@@ -564,6 +643,9 @@ function fakeDeps(over: Partial<RunToolDeps> = {}) {
       calls.push({ method, params });
       if (method === "toolgen.create") {
         return { status: "refused", code: "ERR_TOOLGEN_DISABLED" };
+      }
+      if (method === "toolgen.save") {
+        return { status: "refused", code: "ERR_TOOLGEN_SAVE_DISABLED" };
       }
       if (method === "toolgen.list") {
         return { tools: [] };
@@ -655,7 +737,7 @@ describe("runTool create — credentials never echoed (load-bearing #2)", () => 
     expect(everything).not.toContain(SECRET);
   });
 
-  test("a --bearer token given to credential set never appears in the refusal output", async () => {
+  test("a --bearer token given to credential set never appears in any rendered output", async () => {
     const SECRET = "sk_live_another_secret_value";
     const h = fakeDeps();
     await runTool(["credential", "set", "tg_a", "a.example.com", "--bearer", SECRET], h.d);
@@ -701,14 +783,190 @@ describe("runTool revoke — drops both halves via one RPC call (load-bearing #3
   });
 });
 
-describe("runTool credential set — always refuses a live tool", () => {
-  test("never calls the gateway, and tells the owner to revoke and recreate", async () => {
+describe("runTool credential set — a real gateway call (no longer a permanent refusal stub)", () => {
+  test("calls toolgen.credentialSet with the tool id, host, and a bearer binding", async () => {
     const h = fakeDeps();
     await runTool(["credential", "set", "tg_a", "a.example.com", "--bearer", "t"], h.d);
+    expect(h.calls).toEqual([
+      {
+        method: "toolgen.credentialSet",
+        params: {
+          toolId: "tg_a",
+          host: "a.example.com",
+          binding: { type: "bearer", token: "t" },
+        },
+      },
+    ]);
+    expect(h.out.join("")).toContain("Credential bound for tg_a @ a.example.com");
+  });
+
+  test("sends a header binding as {type, headerName, value}", async () => {
+    const h = fakeDeps();
+    await runTool(
+      ["credential", "set", "tg_a", "a.example.com", "--header", "X-Api-Key", "v"],
+      h.d,
+    );
+    const call = h.calls.find((c) => c.method === "toolgen.credentialSet");
+    expect((call?.params as { binding: unknown })?.binding).toEqual({
+      type: "header",
+      headerName: "X-Api-Key",
+      value: "v",
+    });
+  });
+
+  test("sends a basic binding as {type, username, password}", async () => {
+    const h = fakeDeps();
+    await runTool(["credential", "set", "tg_a", "a.example.com", "--basic", "u", "p"], h.d);
+    const call = h.calls.find((c) => c.method === "toolgen.credentialSet");
+    expect((call?.params as { binding: unknown })?.binding).toEqual({
+      type: "basic",
+      username: "u",
+      password: "p",
+    });
+  });
+
+  test("a gateway refusal (e.g. an unknown credential host) is reported and exits refused", async () => {
+    const h = fakeDeps({
+      runWithClient: async (fn) =>
+        fn({
+          onNotification: () => {},
+          call: async () => {
+            throw new Error(
+              'ERR_TOOLGEN_CREDENTIAL_HOST_UNKNOWN: host "evil.com" is not among this tool\'s approved credential hosts: []',
+            );
+          },
+        }),
+    });
+    await runTool(["credential", "set", "tg_a", "evil.com", "--bearer", "t"], h.d);
+    expect(h.err.join("")).toContain("ERR_TOOLGEN_CREDENTIAL_HOST_UNKNOWN");
+    expect(h.codes).toEqual([TOOL_EXIT_CODES.refused]);
+  });
+});
+
+describe("runTool save — non-TTY refusal, mirroring create", () => {
+  test("a non-interactive stdin refuses BEFORE any gateway call is made", async () => {
+    const h = fakeDeps({ isInteractiveTty: () => false });
+    await runTool(["save", "tg_a"], h.d);
     expect(h.calls).toEqual([]);
     expect(h.codes).toEqual([TOOL_EXIT_CODES.refused]);
-    expect(h.err.join("")).toContain("revoke");
-    expect(h.err.join("")).toContain("tg_a");
+    expect(h.err.join("")).toContain("interactive TTY");
+    expect(h.err.join("")).toContain("LAN-forbidden and local-only");
+  });
+});
+
+describe("runTool save — calls toolgen.save and renders every outcome", () => {
+  test("nimbus tool save <id> calls toolgen.save with the tool id", async () => {
+    const h = fakeDeps({
+      runWithClient: async (fn) =>
+        fn({
+          onNotification: () => {},
+          call: async (method, params) => {
+            h.calls.push({ method, params });
+            if (method === "toolgen.save") return { status: "saved", toolId: "tg_a" };
+            return { matched: true };
+          },
+        }),
+    });
+    await runTool(["save", "tg_a"], h.d);
+    expect(h.calls).toEqual([{ method: "toolgen.save", params: { toolId: "tg_a" } }]);
+    expect(h.out.join("")).toContain("Tool saved: tg_a");
+    // `runSaveCmd` always calls `setExitCode`, mirroring `runCreateCmd` -- a success still sets 0
+    // explicitly rather than leaving the process's ambient default to do it.
+    expect(h.codes).toEqual([0]);
+  });
+
+  test("with no id exits non-zero with usage", async () => {
+    const h = fakeDeps();
+    await runTool(["save"], h.d);
+    expect(h.calls).toEqual([]);
+    expect(h.codes).toEqual([TOOL_EXIT_CODES.refused]);
+    expect(h.err.join("")).toContain("a tool id is required");
+    expect(h.err.join("")).toContain("Usage");
+  });
+
+  test("already_saved and repaired both exit 0 -- neither is an error", async () => {
+    for (const status of ["already_saved", "repaired"] as const) {
+      const h = fakeDeps({
+        runWithClient: async (fn) =>
+          fn({ onNotification: () => {}, call: async () => ({ status, toolId: "tg_a" }) }),
+      });
+      await runTool(["save", "tg_a"], h.d);
+      expect(h.codes).toEqual([0]);
+      expect(h.out.join("")).toContain("tg_a");
+    }
+  });
+
+  test("a denial is reported on stderr with the DENIED exit code, not confused with a refusal", async () => {
+    const h = fakeDeps({
+      runWithClient: async (fn) =>
+        fn({ onNotification: () => {}, call: async () => ({ status: "denied" }) }),
+    });
+    await runTool(["save", "tg_a"], h.d);
+    expect(h.codes).toEqual([TOOL_EXIT_CODES.denied]);
+    expect(h.err.join("")).toContain("denied");
+  });
+
+  test("a refusal reports the code and exits refused", async () => {
+    const h = fakeDeps({
+      runWithClient: async (fn) =>
+        fn({
+          onNotification: () => {},
+          call: async () => ({ status: "refused", code: "ERR_TOOLGEN_SAVE_NOT_LIVE" }),
+        }),
+    });
+    await runTool(["save", "tg_a"], h.d);
+    expect(h.codes).toEqual([TOOL_EXIT_CODES.refused]);
+    expect(h.err.join("")).toContain("ERR_TOOLGEN_SAVE_NOT_LIVE");
+  });
+});
+
+describe("runTool save — the save approval prompt discloses PERSISTENCE, and answers over its OWN broker", () => {
+  test("registers toolgen.saveApprovalRequest and answers via toolgen.saveApprovalRespond -- never the create pair", async () => {
+    const calls: Array<{ method: string; params: unknown }> = [];
+    let notify: ((params: unknown) => unknown) | undefined;
+    const client: ToolClient = {
+      onNotification: (method, h) => {
+        // Only the SAVE method may be registered on this call -- registering
+        // `toolgen.approvalRequest` here would mean `runSaveCmd` wired the wrong broker's prompt.
+        expect(method).toBe("toolgen.saveApprovalRequest");
+        notify = h;
+      },
+      call: async (method, params) => {
+        calls.push({ method, params });
+        if (method === "toolgen.save") {
+          // Simulate the gateway broadcasting mid-call, the way `ConsentBroker.request` does.
+          await notify?.({
+            requestId: "r1",
+            toolId: "tg_a",
+            toolName: "generated_tg_a",
+            description: "d",
+            body: "return 1;",
+            approvedHosts: ["a.example.com"],
+            credentialHosts: [],
+            initiator: "owner",
+            persistence: true,
+          });
+          return { status: "saved", toolId: "tg_a" };
+        }
+        return { matched: true };
+      },
+    };
+    const shown: string[] = [];
+    const h = fakeDeps({
+      runWithClient: async (fn) => fn(client),
+      ask: async (message: string) => {
+        shown.push(message);
+        return true;
+      },
+    });
+    await runTool(["save", "tg_a"], h.d);
+    // The prompt discloses that this is a STANDING approval, distinct from create's copy.
+    expect(shown[0]).toContain("EVERY future session");
+    expect(shown[0]).toContain("STANDING APPROVAL");
+    // Answered via the SAVE broker's own respond method, never `toolgen.approvalRespond`.
+    const respond = calls.find((c) => c.method.endsWith("ApprovalRespond"));
+    expect(respond?.method).toBe("toolgen.saveApprovalRespond");
+    expect(respond?.params).toEqual({ requestId: "r1", approved: true });
   });
 });
 
@@ -926,6 +1184,9 @@ describe("renderToolList -- a nonsensical approvedAt is disclosed, not rendered 
         approvedHosts: ["api.example.com"],
         credentialHosts: [],
         approvedAt: Number.NaN,
+        saved: false,
+        needsCredentials: false,
+        disabledReason: null,
       },
     ]);
     expect(rendered).toContain("unknown (NaN)");
@@ -1015,6 +1276,8 @@ describe("runTool -- a transport failure is reported and sets the refused exit c
     ["list", ["list"]],
     ["revoke", ["revoke", "tg_a"]],
     ["create", ["create", "--description", "d", "--host", "api.example.com"]],
+    ["save", ["save", "tg_a"]],
+    ["credential set", ["credential", "set", "tg_a", "api.example.com", "--bearer", "t"]],
   ])("%s surfaces an Error's message", async (_label, argv) => {
     const h = throwing(new Error("gateway is not running"));
     await runTool(argv, h.d);
@@ -1026,6 +1289,8 @@ describe("runTool -- a transport failure is reported and sets the refused exit c
     ["list", ["list"]],
     ["revoke", ["revoke", "tg_a"]],
     ["create", ["create", "--description", "d", "--host", "api.example.com"]],
+    ["save", ["save", "tg_a"]],
+    ["credential set", ["credential", "set", "tg_a", "api.example.com", "--bearer", "t"]],
   ])("%s surfaces a NON-Error throw rather than printing nothing", async (_label, argv) => {
     // A rejected promise carrying a bare string is the shape that would otherwise render as
     // "undefined" and leave the operator with no idea what failed.

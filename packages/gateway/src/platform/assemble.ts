@@ -290,7 +290,7 @@ import { reconcileSavedToolsOrWarn } from "../toolgen/toolgen-boot-reconcile.ts"
 import { ToolgenBroker } from "../toolgen/toolgen-broker.ts";
 import { spawnGeneratedTool } from "../toolgen/toolgen-client.ts";
 import { assertToolConfinement } from "../toolgen/toolgen-confinement.ts";
-import { toolgenConsent } from "../toolgen/toolgen-consent-broker.ts";
+import { toolgenConsent, toolgenSaveConsent } from "../toolgen/toolgen-consent-broker.ts";
 import { sweepToolgenCredentialsOrWarn } from "../toolgen/toolgen-credential-sweep.ts";
 import {
   deleteCredentialsForTool,
@@ -306,6 +306,7 @@ import {
 import type { ToolgenGateDeps } from "../toolgen/toolgen-gate.ts";
 import { createEndpointFinder } from "../toolgen/toolgen-grounding.ts";
 import { ToolgenRegistry } from "../toolgen/toolgen-registry.ts";
+import type { ToolgenSaveDeps } from "../toolgen/toolgen-save-gate.ts";
 import { loadSavedToolsIntoRegistry } from "../toolgen/toolgen-saved-spawn.ts";
 import {
   removeToolScript,
@@ -3977,9 +3978,28 @@ export async function assemblePlatformServices(
     now: () => Date.now(),
     newId: () => randomUUID(),
   };
+  // Task 10's persistence surface. Shares `db` and `toolgenRegistry` with `toolgenGateDeps` above
+  // (a saved tool a session just created must be visible to a same-process `toolgen.save` call
+  // without a second lookup path) but owns its OWN approval broker (`toolgenSaveConsent`, never
+  // `toolgenConsent`) -- see `ToolgenRpcCtx.saveConsent`'s docstring for why reusing the create
+  // broker here would silently defeat the standing-approval distinction I40 exists to draw.
+  const toolgenSaveDeps: ToolgenSaveDeps = {
+    db,
+    configDir: paths.configDir,
+    config: toolGenerationCfg,
+    get enforced() {
+      return policyGate.enforced();
+    },
+    registry: toolgenRegistry,
+    vault,
+    requestApproval: (input, ttlMs) => toolgenSaveConsent.request(input, ttlMs),
+    now: () => Date.now(),
+  };
   ipcOpts.toolgenRpcCtx = {
     consent: toolgenConsent,
     gateDeps: toolgenGateDeps,
+    saveDeps: toolgenSaveDeps,
+    saveConsent: toolgenSaveConsent,
     removeScript: (toolId) => removeToolScript(paths.configDir, toolId),
     // The THIRD half of `toolgen.revoke` (Task 5): deletes every `toolgen.<toolId>.*` Vault key
     // by prefix, closing the leak where a revoked tool's per-host credential outlived both the
@@ -4013,6 +4033,15 @@ export async function assemblePlatformServices(
   // owner via the same broadcast channel; they answer through toolgen.approvalRespond.
   // UNCONDITIONAL for the same reason as share/exec above.
   toolgenConsent.setBroadcast((method, params) => ipc.broadcast(method, asBroadcastParams(params)));
+
+  // I40 (S2 toolgen persistence): the SEPARATE tool-SAVE approval prompt reaches the local owner
+  // via the same broadcast channel; they answer through toolgen.saveApprovalRespond. Without this
+  // binding `toolgenSaveConsent.request(...)` broadcasts to nobody and every `toolgen.save` call
+  // times out and is denied -- identical failure mode to the missing bindings share/exec/toolgen
+  // above already call out, on a SEPARATE broker instance from `toolgenConsent` immediately above.
+  toolgenSaveConsent.setBroadcast((method, params) =>
+    ipc.broadcast(method, asBroadcastParams(params)),
+  );
 
   // I35 (S2 slice 2): the computer-use approval prompts (session-open envelope + per-action) reach
   // the local owner via the same broadcast channel; they answer through computer.approvalRespond.
