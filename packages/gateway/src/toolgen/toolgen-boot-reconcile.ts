@@ -75,40 +75,54 @@ export async function reconcileSavedTools(
   let disabled = 0;
 
   for (const row of rows) {
-    if (currentPubkeyB64 === null) {
-      setSavedToolDisabled(db, row.toolId, "pubkey_unavailable");
-      disabled++;
-      continue;
-    }
-
-    const result = await readVerifiedSavedTool(configDir, row.toolId, currentPubkeyB64);
-    if (result.ok) {
-      // Content axis: disk (once verified) wins over the cached row. This also RE-ENABLES a tool a
-      // previous boot disabled — `disabled_reason` is a cache of a past verification, not a
-      // terminal state, so a healthy verify here always clears it.
-      setSavedToolDisabled(db, row.toolId, null);
-      const digest = digestOfCanonicalBytes(result.canonicalJson);
-      if (digest !== row.artifactDigest || result.canonicalJson !== row.artifactJson) {
-        repairSavedToolCache(db, row.toolId, {
-          artifactJson: result.canonicalJson,
-          artifactDigest: digest,
-        });
+    // Per-row isolation: one row's DB write throwing (the realistic case is `SQLITE_BUSY` from a
+    // concurrent process, plausible on Windows) must not strand every row after it, and — the
+    // consequence that actually matters — must not skip pass 2 below, which has nothing to do with
+    // this row's failure. A caught row is neither `verified` nor `disabled`: nothing was
+    // established about it this boot, so it is simply left as it was and picked up next boot. It
+    // is NOT counted as `disabled` — that would assert a verification outcome that never happened.
+    try {
+      if (currentPubkeyB64 === null) {
+        setSavedToolDisabled(db, row.toolId, "pubkey_unavailable");
+        disabled++;
+        continue;
       }
-      verified++;
-    } else {
-      // Cryptography alone cannot tell a key rotation from tampering — both verify as `false`, so
-      // `readVerifiedSavedTool` always reports the conservative `signature_mismatch`. Only a
-      // caller holding the ROW's stored pubkey alongside the Vault's CURRENT one can tell them
-      // apart: when they differ, the artifact almost certainly verified fine under the key that
-      // actually signed it, so report the disclosed, non-alarming `pubkey_rotated` instead. Every
-      // other reason (`signature_missing`, `artifact_missing`, `schema_invalid`) passes through
-      // unchanged — a rotated key cannot explain a missing file or an unparseable shape.
-      const reason =
-        result.reason === "signature_mismatch" && row.pubkey !== currentPubkeyB64
-          ? "pubkey_rotated"
-          : result.reason;
-      setSavedToolDisabled(db, row.toolId, reason);
-      disabled++;
+
+      const result = await readVerifiedSavedTool(configDir, row.toolId, currentPubkeyB64);
+      if (result.ok) {
+        // Content axis: disk (once verified) wins over the cached row. This also RE-ENABLES a
+        // tool a previous boot disabled — `disabled_reason` is a cache of a past verification, not
+        // a terminal state, so a healthy verify here always clears it.
+        setSavedToolDisabled(db, row.toolId, null);
+        const digest = digestOfCanonicalBytes(result.canonicalJson);
+        if (digest !== row.artifactDigest || result.canonicalJson !== row.artifactJson) {
+          repairSavedToolCache(db, row.toolId, {
+            artifactJson: result.canonicalJson,
+            artifactDigest: digest,
+          });
+        }
+        verified++;
+      } else {
+        // Cryptography alone cannot tell a key rotation from tampering — both verify as `false`,
+        // so `readVerifiedSavedTool` always reports the conservative `signature_mismatch`. Only a
+        // caller holding the ROW's stored pubkey alongside the Vault's CURRENT one can tell them
+        // apart: when they differ, the artifact almost certainly verified fine under the key that
+        // actually signed it, so report the disclosed, non-alarming `pubkey_rotated` instead.
+        // Every other reason (`signature_missing`, `artifact_missing`, `schema_invalid`) passes
+        // through unchanged — a rotated key cannot explain a missing file or an unparseable shape.
+        const reason =
+          result.reason === "signature_mismatch" && row.pubkey !== currentPubkeyB64
+            ? "pubkey_rotated"
+            : result.reason;
+        setSavedToolDisabled(db, row.toolId, reason);
+        disabled++;
+      }
+    } catch (err) {
+      logger.warn(
+        { err, toolId: row.toolId },
+        `toolgen: could not reconcile saved tool "${row.toolId}" this boot (a transient DB or ` +
+          "filesystem error); it is left as-is and will be retried next boot",
+      );
     }
   }
 

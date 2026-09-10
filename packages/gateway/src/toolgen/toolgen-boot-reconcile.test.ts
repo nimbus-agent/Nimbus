@@ -312,6 +312,58 @@ describe("reconcileSavedTools — row pass", () => {
     expect(r).toEqual({ verified: 0, disabled: 1, sweptOrphans: 0 });
     expect(getSavedTool(db, "t1")?.disabledReason).toBe("schema_invalid");
   });
+
+  test("one row's DB write throwing does not strand LATER rows or skip the orphan sweep", async () => {
+    const db = migratedDb();
+    const configDir = tmpConfigDir();
+    const vault = new FakeVault();
+    // "boom" sorts before "z2" under `listSavedTools`'s `ORDER BY tool_id`, so it is the row this
+    // failure hits mid-loop, and "z2" is the LATER row that must still get processed.
+    await createSavedTool(db, configDir, vault, "boom");
+    await createSavedTool(db, configDir, vault, "z2");
+    // A validly-signed orphan too, so pass 2 has real work to prove it still ran.
+    const orphanArtifact = artifact("orphan");
+    const orphanCanonical = canonicalArtifactBytes(orphanArtifact);
+    const { sigB64: orphanSig } = await signArtifact(vault, orphanCanonical);
+    await writeSavedTool(configDir, "orphan", {
+      canonicalJson: orphanCanonical,
+      sigB64: orphanSig,
+      script: emitToolScript(orphanArtifact),
+    });
+
+    // Simulate the realistic transient failure (SQLITE_BUSY from a concurrent process, plausible
+    // on Windows) for exactly ONE row's write, by shadowing this Database INSTANCE's `run` method
+    // -- every other row's write goes through the real implementation untouched.
+    const originalRun = db.run.bind(db);
+    // biome-ignore lint/suspicious/noExplicitAny: instance-level monkeypatch of a native binding
+    (db as any).run = (sql: string, params?: unknown[]) => {
+      if (Array.isArray(params) && params.includes("boom")) {
+        throw new Error("SQLITE_BUSY (simulated)");
+      }
+      return originalRun(sql, params as never);
+    };
+
+    const { logger, warnCalls } = fakeLogger();
+    let r: Awaited<ReturnType<typeof reconcileSavedTools>>;
+    try {
+      r = await reconcileSavedTools({ db, configDir, vault, logger });
+    } finally {
+      db.run = originalRun;
+    }
+
+    // "boom" is neither verified nor disabled -- nothing was established about it this boot, so it
+    // must NOT be counted as `disabled` (that would assert a verification outcome that never
+    // happened). "z2" (the later row) and the orphan sweep both still ran.
+    expect(r).toEqual({ verified: 1, disabled: 0, sweptOrphans: 1 });
+    expect(getSavedTool(db, "z2")?.disabledReason).toBeNull();
+    expect(getSavedTool(db, "boom")).not.toBeNull(); // the row itself is untouched, not deleted
+    expect(existsSync(savedToolDir(configDir, "orphan"))).toBe(false);
+
+    expect(warnCalls).toHaveLength(1);
+    const [meta, message] = warnCalls[0] as [{ err: unknown; toolId: string }, string];
+    expect(meta.toolId).toBe("boom");
+    expect(message).toContain("boom");
+  });
 });
 
 describe("reconcileSavedTools — orphan sweep", () => {
