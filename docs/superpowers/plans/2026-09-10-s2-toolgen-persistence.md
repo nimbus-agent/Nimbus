@@ -298,7 +298,12 @@ git commit -m "feat(toolgen): sign the portable manifest, not machine-derived pa
 - Produces:
   - `GENERATED_TOOL_V61_SQL: string`
   - `SavedToolRow` — `{ toolId, toolName, description, artifactJson, artifactDigest, signature, pubkey, approvedAt, savedAt, lastLoadedAt: number | null, disabledReason: SavedToolDisabledReason | null }`
-  - `type SavedToolDisabledReason = "signature_mismatch" | "signature_missing" | "artifact_missing" | "pubkey_rotated" | "pubkey_unavailable"`
+  - `type SavedToolDisabledReason = "signature_mismatch" | "signature_missing" | "artifact_missing" | "pubkey_rotated" | "pubkey_unavailable" | "schema_invalid"`
+
+> **`schema_invalid` is not redundant with `signature_mismatch`.** A valid signature proves the bytes
+> were not tampered with; it proves nothing about their *shape*. An artifact written by a different
+> build of Nimbus verifies perfectly and may still be missing a field this version requires.
+> Signature verification is not schema validation, and the parse must guard (Task 4).
   - `insertSavedTool(db, row): void` · `listSavedTools(db): SavedToolRow[]` · `getSavedTool(db, toolId): SavedToolRow | null` · `deleteSavedTool(db, toolId): void` · `setSavedToolDisabled(db, toolId, reason: SavedToolDisabledReason | null): void` · `touchSavedToolLoaded(db, toolId, now): void` · `repairSavedToolCache(db, toolId, { artifactJson, artifactDigest }): void`
 
 > **Note:** `body_missing` from the spec's § 4 list is **dropped** — under the plan-level refinement `index.ts` is derived, so its absence is not a failure state. Keep the other five.
@@ -548,7 +553,9 @@ D29(d)'s home. Spec § 3, § 7.
 - Produces:
   - `savedToolDir(configDir, toolId): string`
   - `writeSavedTool(configDir, toolId, { canonicalJson, sigB64, script }): Promise<void>`
-  - `readVerifiedSavedTool(configDir, toolId, pubkeyB64): Promise<{ ok: true; canonicalJson: string } | { ok: false; reason: SavedToolDisabledReason }>` — **the only accessor**
+  - `parseCanonicalArtifact(json: string): SavedArtifactFields | null` — a real guard, no type assertion
+  - `SavedArtifactFields = { toolId: string; toolName: string; description: string; body: string; approvedHosts: readonly string[]; credentialHosts: readonly string[]; inputSchema: ToolInputSchema; manifest: PortableToolManifest }`
+  - `readVerifiedSavedTool(configDir, toolId, pubkeyB64): Promise<{ ok: true; canonicalJson: string; artifact: SavedArtifactFields } | { ok: false; reason: SavedToolDisabledReason }>` — **the only accessor**, and it returns data that is both verified *and* well-formed
   - `removeSavedTool(configDir, toolId): Promise<void>`
   - `listSavedToolDirs(configDir): Promise<string[]>` — directory names only, for the orphan sweep
   - `rewriteSavedToolScript(configDir, toolId, script): Promise<string>` — re-emits the derived `index.ts`, returns its path
@@ -583,7 +590,25 @@ test("a signature made by a different key is refused as pubkey_rotated", async (
 
 test("a tampered index.ts does NOT affect verification — it is derived, not signed", async () => {
   /* …write, then overwrite index.ts with "malicious()"… */
-  expect(await readVerifiedSavedTool(dir, "t1", pubkeyB64)).toEqual({ ok: true, canonicalJson: CANON });
+  expect(await readVerifiedSavedTool(dir, "t1", pubkeyB64)).toMatchObject({ ok: true, canonicalJson: CANON });
+});
+
+test("a VALIDLY SIGNED artifact with the wrong shape is refused as schema_invalid", async () => {
+  // The signature verifies — this is a real artifact from a different build, not an attack.
+  // Verification proves the bytes were not altered; it says nothing about their shape.
+  const wrongShape = JSON.stringify({ toolId: "t1", body: "x" }); // no approvedHosts, no manifest
+  const { sigB64, pubkeyB64 } = await signArtifact(new FakeVault(), wrongShape);
+  await writeSavedTool(dir, "t1", { canonicalJson: wrongShape, sigB64, script: "//" });
+  expect(await readVerifiedSavedTool(dir, "t1", pubkeyB64)).toEqual({ ok: false, reason: "schema_invalid" });
+});
+
+test("parseCanonicalArtifact rejects a wrong-typed field rather than coercing it", () => {
+  expect(parseCanonicalArtifact(JSON.stringify({ ...VALID_FIELDS, approvedHosts: "api.example.com" }))).toBeNull();
+  expect(parseCanonicalArtifact(JSON.stringify({ ...VALID_FIELDS, body: 42 }))).toBeNull();
+});
+
+test("POSITIVE CONTROL — parseCanonicalArtifact accepts a well-formed artifact", () => {
+  expect(parseCanonicalArtifact(JSON.stringify(VALID_FIELDS))).not.toBeNull();
 });
 
 test("removeSavedTool is idempotent", async () => { /* remove twice, no throw */ });
@@ -842,7 +867,7 @@ Spec § 6, § 6.1.
 - Produces:
   - `ToolgenSaveApprovalInput` = `ToolgenApprovalInput` fields **plus** `readonly persistence: true`
   - `saveGeneratedTool(req: { toolId: string }, deps: ToolgenSaveDeps): Promise<ToolgenSaveOutcome>`
-  - `type ToolgenSaveOutcome = { status: "saved"; toolId: string } | { status: "already_saved"; toolId: string } | { status: "denied" } | { status: "refused"; code: string }`
+  - `type ToolgenSaveOutcome = { status: "saved"; toolId: string } | { status: "already_saved"; toolId: string } | { status: "repaired"; toolId: string } | { status: "denied" } | { status: "refused"; code: string }`
 
 - [ ] **Step 1: Add `tool.save` to the HITL frozen set**
 
@@ -924,7 +949,24 @@ test("a save does NOT kill the running child", async () => {
   await saveGeneratedTool({ toolId: "t1" }, d);
   expect(closed).toBe(0);
 });
+
+test("a DISABLED row with a matching digest is REPAIRED, not reported already_saved", async () => {
+  let prompts = 0;
+  const d = deps({ requestApproval: async () => { prompts++; return true; } });
+  await saveGeneratedTool({ toolId: "t1" }, d);
+  await rm(join(savedToolDir(cfg, "t1"), "artifact.sig"));       // corrupt the disk
+  await reconcileSavedTools(d);                                   // boot disables it
+  expect(getSavedTool(db, "t1")?.disabledReason).toBe("signature_missing");
+
+  expect(await saveGeneratedTool({ toolId: "t1" }, d)).toEqual({ status: "repaired", toolId: "t1" });
+  expect(getSavedTool(db, "t1")?.disabledReason).toBeNull();
+  expect(await readVerifiedSavedTool(cfg, "t1", pub)).toMatchObject({ ok: true });
+  expect(prompts).toBe(1); // the bytes were already approved; a second prompt buys nothing
+});
 ```
+
+That last test is the one this task exists to keep honest: without it, a disabled tool is
+unrepairable through any user-facing path and the failure is invisible from every unit test above.
 
 - [ ] **Step 3: Run — expect failure**
 
@@ -938,11 +980,25 @@ Follow `createGeneratedTool`'s existing structure in `toolgen-gate.ts`. Exact or
 3. live + non-terminated?     -> ERR_TOOLGEN_SAVE_NOT_LIVE
 4. artifact from the ENVELOPE (never re-read from disk)
 5. canonical = canonicalArtifactBytes(artifact); digest = artifactDigest(artifact)
-6. existing row with the same digest? -> { status: "already_saved" }, no prompt
+6. existing row, same digest, AND disabled_reason IS NULL? -> { status: "already_saved" }, no prompt
+   existing row, same digest, but DISABLED?               -> repair: re-sign, rewrite disk, clear
+                                                             disabled_reason. NO re-prompt.
 7. approval (persistence: true)       -> denied/TTL => { status: "denied" }, write nothing
 8. signArtifact -> writeSavedTool -> insertSavedTool (in that order)
 9. audit `tool.save` on EVERY outcome
 ```
+
+**Why the disabled branch repairs without re-prompting.** The digest matching means the live
+artifact is byte-identical to what the owner already approved for persistence. The prompt exists to
+bind an approval to specific bytes; those bytes have not changed, so a second prompt buys no
+security and spends the owner's attention — which is the resource every HITL gate is really
+rationing. What it *must* do is disclose: the CLI reports `repaired` rather than silently reporting
+success, so an owner whose tool was disabled learns that it was.
+
+Without the `disabled_reason IS NULL` clause, a tool disabled at boot by a corrupt or missing
+artifact is **permanently unrepairable through the UI** — `nimbus tool save` would return
+`already_saved` forever while the tool stays dead. Add `{ status: "repaired", toolId }` to
+`ToolgenSaveOutcome`.
 
 Keep the ordered list readable as an ordered list at the call site — split by phase into named steps if it grows, never by hiding a check in a helper a reader has to go find (the I35 complexity lesson).
 
@@ -1041,6 +1097,25 @@ pass 2 — orphans:
 
 Wire into `platform/assemble.ts` at boot, **after** the credential sweep (Task 5) and before the registry is populated.
 
+Give `toolgen-boot-reconcile.ts` a file-level docstring recording the authority split and its cost, so pass 2 does not read as an over-eager cleanup to someone finding it later:
+
+```ts
+/**
+ * Boot reconciliation for saved generated tools (spec § 7.1).
+ *
+ * The `generated_tool` ROW is the root of existence: it is the durable record that an owner
+ * approved persistence for this tool. Pass 2 therefore sweeps any `saved/<toolId>` directory with
+ * no row, mirroring `extensions/verify-extensions.ts`'s `sweepOrphanActiveDirsBestEffort` — a
+ * directory is never adopted, because a valid signature proves an artifact was approved ONCE, not
+ * that it is approved NOW. Adopting orphans would let a restored backup, or a copy of a tool the
+ * owner deliberately revoked, silently re-register a standing execution capability.
+ *
+ * STATED COST: losing the database sweeps every saved tool. That is correct rather than
+ * unfortunate — what was lost is the record of approval, so the approval is gone with it and the
+ * owner re-saves. Do not "fix" this by adopting signed directories.
+ */
+```
+
 - [ ] **Step 4: Run — expect pass**
 
 - [ ] **Step 5: Commit**
@@ -1117,7 +1192,42 @@ test("spawn asserts the reconstructed manifest against the signed shape", async 
 - [ ] **Step 3: Implement**
 
 - A second private map `#saved` on the registry; `forSession` concatenates; `countForSession` untouched.
-- A spawn path that, in order: `readVerifiedSavedTool` → parse the canonical JSON → `rewriteSavedToolScript` from `artifact.body` → `buildGeneratedManifest` with the **saved** dir and live `runtime.requiredReadPaths()` → `assertConcreteManifestMatches` → spawn via PR 1's existing confinement path.
+- A spawn path in `toolgen-saved-spawn.ts`. **The envelope it hands to `buildToolSpawnSpec` must carry the CONCRETE manifest**, not the portable one from the artifact — `buildToolSpawnSpec` passes `envelope.artifact.manifest` straight into `wrapServerSpec` (`toolgen-client.ts:48-56`), and a `PortableToolManifest` has no `permissions` at all, so the sandbox would be configured from `undefined`:
+
+```ts
+export async function spawnSavedTool(toolId: string, deps: SavedSpawnDeps): Promise<GeneratedToolHandle> {
+  const verified = await deps.readVerifiedSavedTool(deps.configDir, toolId, deps.pubkeyB64);
+  if (!verified.ok) {
+    throw new ToolgenError(ERR_TOOLGEN_SIGNATURE_INVALID, `saved tool ${toolId} failed verification: ${verified.reason}`);
+  }
+  const fields = verified.artifact; // already schema-guarded by the store — never JSON.parse here
+
+  const savedDir = deps.savedToolDir(deps.configDir, toolId);
+  const runtimeReadPaths = deps.runtime.requiredReadPaths();
+
+  // Rebuild the CONCRETE manifest from code, then prove it still satisfies what was signed.
+  const manifest = buildGeneratedManifest(toolId, { scriptDir: savedDir, runtimeReadPaths });
+  assertConcreteManifestMatches(manifest, fields.manifest, [savedDir, ...runtimeReadPaths]);
+
+  // Re-emit the derived script from the VERIFIED body — never read index.ts back and trust it.
+  const scriptPath = await deps.rewriteSavedToolScript(deps.configDir, toolId, emitToolScript({
+    toolId, toolName: fields.toolName, description: fields.description,
+    body: fields.body, inputSchema: fields.inputSchema,
+  }));
+
+  return deps.spawn({
+    artifact: { ...fields, manifest },   // concrete manifest, for wrapServerSpec
+    sessionId: deps.sessionId,           // the CALLER's session — see below
+    scriptPath,
+    approvedAt: deps.row.approvedAt,     // from generated_tool, not invented
+  });
+}
+```
+
+Two details the review's sketch got wrong, both worth stating so they are not reintroduced:
+
+- **No `sessionId: "saved"` sentinel.** A magic session string collides with `forSession`'s filter and would make the saved tool visible to exactly one fictional session. `ToolgenEnvelope.sessionId` here is the *spawning caller's* session — the registry's `#saved` map is what makes the tool globally visible, not a value smuggled into this field.
+- **`approvedAt` comes from the row, not the artifact.** It lives on `ToolgenEnvelope`, not on `GeneratedToolArtifact`, and is therefore not in the canonical JSON at all — so `rawArtifact.approvedAt ?? now()` would silently stamp every spawn with the current time and quietly destroy the record of when the owner actually approved it.
 - `buildGeneratedTools` (`toolgen-agent-tools.ts`) needs no change if `forSession` unions — but **assert that**, since it is the surface the model sees. A saved tool that fails verification must be absent from the returned object entirely, not present-and-erroring.
 
 - [ ] **Step 4: Run — expect pass**
@@ -1168,6 +1278,19 @@ test("nimbus tool list marks saved vs ephemeral and shows needs-credentials", as
 - [ ] **Step 3: Implement**
 
 - IPC handlers follow the existing `toolgen.*` shape in `ipc/toolgen-rpc.ts`. **Do not** add these to the Tauri allowlist; **do not** change the `ALLOWED_METHODS` count.
+- **`toolgen.credentialSet` must run its host through `normalizeHost`** (exported from `toolgen-gate.ts:40`) *before* testing membership of `credentialHosts` **and** before composing the Vault key — one normalisation, used for both. `credentialHosts` holds normalised names, so a user typing `API.example.com`, `https://api.example.com/v1` or `api.example.com:443` would otherwise be refused for a host they legitimately own.
+
+  This exact mismatch has already cost this file once: `toolgen-gate.ts:293-294` records that normalising in one place while forwarding the raw value in another "split one host into two names and broke three things at once." Normalise once, then use only the normalised value. The error message should name **both** forms, so a refused owner can see what their input became:
+
+```ts
+const host = normalizeHost(requireString(params, "host"));
+if (!credentialHosts.includes(host)) {
+  throw new ToolgenError(ERR_TOOLGEN_CREDENTIAL_HOST_UNKNOWN,
+    `host "${raw}" (normalised: ${host}) is not among this tool's approved credential hosts: [${credentialHosts.join(", ")}]`);
+}
+```
+
+  Test both the refusal **and** that `API.EXAMPLE.COM` is *accepted* for a tool whose `credentialHosts` holds `api.example.com` — without that positive control, "refuses unknown hosts" passes for an implementation that refuses everything.
 - CLI: extend `ParsedToolArgs` with `{ sub: "save"; toolId: string }`; add the `case "save":` branch; update `USAGE`. Unknown subcommands must keep **throwing** (existing behaviour, deliberate).
 - Replace `credential set`'s refusal stub with a real call. Its `--bearer` / `--header` / `--basic` parser already exists — this is what puts `header` and `basic` on a user-facing path for the first time.
 
@@ -1306,3 +1429,26 @@ PR title carries the conventional-commit type — release-please parses the **ti
 **Known open item carried from spec § 13:** whether `extensions/verify-signature.ts` is reusable. Task 3 resolves it by writing a small detached verifier, since that module is shaped around a manifest with an embedded signature field rather than a detached signature over canonical bytes.
 
 **Type consistency:** `SavedToolDisabledReason` (Task 2) is the single union used by Tasks 4 and 8. `PortableToolManifest` (Task 1) is consumed by 9. `credentialHostsFor` (Task 6) matches the existing `approvedHostsFor` shape. `ToolgenEnvelope.sessionId` stays required throughout; saved tools use `SavedToolEnvelope` (Task 9).
+
+---
+
+## Review Disposition (2026-09-10)
+
+Against [`2026-09-10-s2-toolgen-persistence-review.md`](./2026-09-10-s2-toolgen-persistence-review.md).
+Each item was checked against the tree before disposition.
+
+| # | Item | Disposition | Note |
+|---|---|---|---|
+| 2.1 | Reconstruct `ExtensionManifest` at spawn | **Accepted — real gap in the plan; sketch corrected** | Verified: `buildToolSpawnSpec` passes `envelope.artifact.manifest` into `wrapServerSpec`, and a portable manifest has no `permissions`. Task 9 now specifies the envelope. Two details in the sketch rejected: the `sessionId: "saved"` sentinel (collides with `forSession`'s filter), and `rawArtifact.approvedAt ?? now()` (`approvedAt` is on the envelope, not the artifact, so it is never in the canonical JSON — that fallback would silently stamp every spawn with the current time). |
+| 2.2 | Self-heal a disabled row | **Accepted in full** | Real: the short-circuit made a disabled tool unrepairable through any user-facing path. Task 7 now gates on `disabled_reason IS NULL` and adds a `repaired` outcome. Repair does **not** re-prompt — the digest matching means the bytes were already approved — but it does disclose, so an owner learns their tool had been disabled. |
+| 2.3 | `normalizeHost` in `credentialSet` | **Accepted, strengthened** | Verified `normalizeHost` is exported from `toolgen-gate.ts:40`, and the same file's lines 293–294 record this exact mismatch already causing a bug once. Task 10 normalises once and uses only the normalised value, names both forms in the error, and adds the positive control the review omitted (`API.EXAMPLE.COM` must be **accepted**, or "refuses unknown hosts" passes for an implementation that refuses everything). |
+| 2.4 | Docstring for the authority split | **Accepted** | Added to Task 8 verbatim in the implementation, including the stated cost, so pass 2 does not read as over-eager cleanup to a later reader. |
+
+**Added beyond the review — signature verification is not schema validation.** The review's sketch
+did `JSON.parse(verified.canonicalJson)` into an untyped value, which violates the no-`any`
+non-negotiable and, more importantly, assumes that a verified artifact is a *well-formed* one. It is
+not: an artifact written by a different build of Nimbus verifies perfectly and can still be missing a
+field this version requires. Task 4 now owns `parseCanonicalArtifact`, a real guard; the single
+verifying accessor returns data that is verified **and** well-formed; and `schema_invalid` joins
+`SavedToolDisabledReason` so the two failure modes are distinguishable in `nimbus tool list` rather
+than a valid-but-unusable artifact being reported as tampering.
