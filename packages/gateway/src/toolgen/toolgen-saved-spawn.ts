@@ -27,7 +27,10 @@ import {
  *
  * These two entry points share one property and nothing else: neither ever trusts a value read
  * back from disk without re-verifying it against the Vault's CURRENT signing pubkey first, via
- * `readVerifiedSavedTool` — the ONE accessor for a saved artifact's body/fields (D29(d)). Boot
+ * `readVerifiedSavedTool` — the ONE accessor for a saved artifact's ON-DISK body/fields (D29(d)).
+ * `parseCanonicalArtifact` is exported from that module too but is NOT a second on-disk accessor:
+ * it reads the `generated_tool` row's cached `artifact_json` COLUMN, display-only, for a disabled
+ * row that by definition cannot verify. See that module's own narrowing paragraph. Boot
  * reconciliation (`toolgen-boot-reconcile.ts`, Task 8) ALSO calls that same function, over the same
  * files, and this module calls it again rather than trusting reconciliation's cached
  * `disabled_reason` column — that column is a health-report CACHE for `nimbus tool list`, never an

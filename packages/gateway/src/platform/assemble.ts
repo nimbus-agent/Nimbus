@@ -3847,8 +3847,10 @@ export async function assemblePlatformServices(
     vault,
     logger: syncLogger,
     config: toolGenerationCfg,
-    // Read through `policyGate.enforced()` at the moment of the pass, the same lazy shape
-    // `toolgenGateDeps`/`toolgenSaveDeps` use below. `isToolgenCapabilityEnabled` fails CLOSED if
+    // An EAGER snapshot of `policyGate.enforced()`, deliberately NOT the lazy getter
+    // `toolgenGateDeps`/`toolgenSaveDeps` use below: both boot passes run synchronously right here,
+    // so "at the moment of the pass" and "at the moment of construction" are the same instant, and
+    // a getter would imply a re-read that never happens. `isToolgenCapabilityEnabled` fails CLOSED if
     // this is ever `undefined`, so a policy layer that could not resolve disables the durable half
     // rather than defaulting it on.
     enforced: policyGate.enforced(),

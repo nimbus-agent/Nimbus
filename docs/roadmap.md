@@ -1055,9 +1055,11 @@ multimodal row; it is not a spine row and is not counted in either half.
   therefore reaches the embedding vendor (ledgered `model`-class) on a remote-embedder install;
   `drafting = "off"` and a routeless machine refuse before that search runs — and the approval
   prompt discloses when nothing matched. `nimbus tool create --credential <host>=<token>` now actually transmits and
-  binds a BEARER credential per host at create time; `header`/`basic` bindings exist in the broker
-  but are reachable from no user-facing path this release, and `nimbus tool credential set` remains
-  a permanent refusal stub. No schema migration, no new invariant — PR 2 builds entirely on PR 1's
+  binds a BEARER credential per host at create time; `header`/`basic` bindings existed in the broker
+  but were reachable from no user-facing path *as of PR 2*, and `nimbus tool credential set` was a
+  refusal stub. **Both were superseded by PR 3 (above), which made `credential set` real and put all
+  three binding schemes on a user-facing path** — read this paragraph as the PR 2 record, not as
+  current state. No schema migration, no new invariant — PR 2 builds entirely on PR 1's
   I39 substrate. **The pre-consent confinement probe was rewritten in the same PR, and platform
   equality (non-negotiable #5) HOLDS.** The earlier probe made `nimbus tool create` refuse
   (`ERR_TOOLGEN_CONFINEMENT_FAILED`) before the owner was ever prompted on ALL THREE platforms, not
