@@ -1364,7 +1364,10 @@ Assert the rule reports a violation for a synthetic file containing a forbidden 
 test("I40: readVerifiedSavedTool is the ONLY exported accessor for a saved artifact", () => { /* … */ });
 test("I40: a saved artifact failing verification is not offered to the model", () => { /* … */ });
 test("I40: tool.save is in the HITL frozen set", () => {
-  expect(HITL_REQUIRED_BACKING.has("tool.save")).toBe(true);
+  // `HITL_REQUIRED_BACKING` is module-PRIVATE (I2 asserts it is never exported), so assert through
+  // the frozen `HITL_REQUIRED` facade, which is exported. Importing the backing set would not
+  // compile, and a source-regex check would pass on a commented-out entry.
+  expect(HITL_REQUIRED.has("tool.save")).toBe(true);
 });
 test("I40: no saved tool retains a credential across a sweep", async () => { /* … */ });
 ```
