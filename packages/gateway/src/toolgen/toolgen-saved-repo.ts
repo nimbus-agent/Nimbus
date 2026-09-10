@@ -85,6 +85,11 @@ function toDisabledReason(value: string | null): SavedToolDisabledReason | null 
     case "schema_invalid":
       return value;
     default:
+      // Fails OPEN (unrecognised -> "healthy"), unlike most guards in this codebase. Deliberate
+      // here: this column is a CACHE/HINT written only by this module, not an authority a later
+      // reader may trust on its own -- the real gate is the signature (and, later, schema)
+      // verification a loader performs at load time. Do not treat this default as a precedent for
+      // fail-open elsewhere.
       return null;
   }
 }
