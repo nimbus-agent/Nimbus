@@ -68,9 +68,9 @@ describe("writeSavedTool / readVerifiedSavedTool", () => {
     expect(r).toMatchObject({ ok: true, canonicalJson: CANON });
   });
 
-  test("artifact.sig is written LAST — the crash-mid-write ordering (§ step order)", async () => {
-    // Not directly observable from outside without fault injection, but we can at least assert
-    // all three files exist afterwards, in the directory the store owns.
+  test("writeSavedTool creates all three files", async () => {
+    // Ordering (artifact.sig written LAST) is a crash-safety property, not one this test can
+    // observe without fault injection or a writeFile spy — it only confirms the end state.
     const dir = cfg();
     const { sigB64 } = await signArtifact(new FakeVault(), CANON);
     await writeSavedTool(dir, "t1", { canonicalJson: CANON, sigB64, script: "// script" });
@@ -218,6 +218,10 @@ describe("parseCanonicalArtifact", () => {
     const { manifest, ...rest } = VALID_FIELDS;
     expect(parseCanonicalArtifact(JSON.stringify(rest))).toBeNull();
   });
+
+  test("rejects null where the manifest object belongs", () => {
+    expect(parseCanonicalArtifact(JSON.stringify({ ...VALID_FIELDS, manifest: null }))).toBeNull();
+  });
 });
 
 describe("removeSavedTool", () => {
@@ -249,6 +253,19 @@ describe("listSavedToolDirs", () => {
   test("returns an empty array when nothing has ever been saved", async () => {
     const dir = cfg();
     expect(await listSavedToolDirs(dir)).toEqual([]);
+  });
+
+  test("excludes a non-directory entry sitting in saved/ (e.g. a stray .DS_Store)", async () => {
+    // macOS Finder drops a .DS_Store into any directory it has viewed. Task 8's orphan sweep feeds
+    // every returned name straight into removeSavedTool -> assertSafeToolId, whose regex
+    // (^[A-Za-z0-9_-]{1,64}$) rejects a dot and throws — so a file here must never be reported as
+    // a tool id. This test fails against a plain `readdir(dir)` call, which returns file names
+    // indiscriminately.
+    const dir = cfg();
+    const { sigB64 } = await signArtifact(new FakeVault(), CANON);
+    await writeSavedTool(dir, "t1", { canonicalJson: CANON, sigB64, script: "//" });
+    writeFileSync(join(savedToolDir(dir, "t1"), "..", ".DS_Store"), "");
+    expect(await listSavedToolDirs(dir)).toEqual(["t1"]);
   });
 });
 

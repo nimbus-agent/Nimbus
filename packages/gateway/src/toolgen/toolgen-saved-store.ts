@@ -249,10 +249,19 @@ export async function removeSavedTool(configDir: string, toolId: string): Promis
  * Directory NAMES only (not paths) under `saved/`, for the boot-time orphan sweep (spec § 7.1) —
  * the caller joins them itself. Best-effort: an unreadable or absent `saved/` directory (nothing
  * has ever been persisted) reports no entries rather than throwing.
+ *
+ * Filtered to `isDirectory()` entries — a stray FILE under `saved/` (macOS Finder drops a
+ * `.DS_Store` into any directory it has viewed; nothing else writes into `saved/` today, but that
+ * is exactly why this cannot be assumed) must not reach a caller that treats every name as a tool
+ * id. Task 8's orphan sweep feeds each name straight into `removeSavedTool`, whose
+ * `assertSafeToolId` regex (`^[A-Za-z0-9_-]{1,64}$`) rejects a dot and throws — so an unfiltered
+ * `.DS_Store` would crash boot reconciliation on macOS only, never on Windows/Linux, which is
+ * precisely the kind of platform inequality this codebase treats as a non-negotiable.
  */
 export async function listSavedToolDirs(configDir: string): Promise<string[]> {
   try {
-    return await readdir(join(configDir, STORE_DIR, SAVED_DIR));
+    const entries = await readdir(join(configDir, STORE_DIR, SAVED_DIR), { withFileTypes: true });
+    return entries.filter((e) => e.isDirectory()).map((e) => e.name);
   } catch {
     return [];
   }
