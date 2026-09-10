@@ -4,11 +4,34 @@ import { DEFAULT_NIMBUS_TOOL_GENERATION_TOML } from "../config/nimbus-toml.ts";
 import { CURRENT_SCHEMA_VERSION } from "../index/local-index.ts";
 import { runIndexedSchemaMigrations } from "../index/migrations/runner.ts";
 import { ToolgenConsentBroker } from "../toolgen/toolgen-consent-broker.ts";
+import { deleteCredentialsForTool, writeToolCredential } from "../toolgen/toolgen-credentials.ts";
 import type { ToolgenGateDeps } from "../toolgen/toolgen-gate.ts";
 import { ToolgenRegistry } from "../toolgen/toolgen-registry.ts";
 import { type ToolgenEnvelope, ToolgenError } from "../toolgen/toolgen-types.ts";
+import type { NimbusVault } from "../vault/nimbus-vault.ts";
 import { checkLanMethodAllowed, LanError } from "./lan-rpc.ts";
 import { dispatchToolgenRpc, type ToolgenRpcCtx } from "./toolgen-rpc.ts";
+
+/** Minimal in-memory `NimbusVault` fake — no real Vault/OS keychain involved. */
+class FakeVault implements NimbusVault {
+  private readonly store = new Map<string, string>();
+
+  async get(key: string): Promise<string | null> {
+    return this.store.get(key) ?? null;
+  }
+
+  async set(key: string, value: string): Promise<void> {
+    this.store.set(key, value);
+  }
+
+  async delete(key: string): Promise<void> {
+    this.store.delete(key);
+  }
+
+  async listKeys(prefix?: string): Promise<string[]> {
+    return [...this.store.keys()].filter((k) => !prefix || k.startsWith(prefix));
+  }
+}
 
 describe("toolgen is LAN-forbidden as a WHOLE namespace", () => {
   test.each([
@@ -56,6 +79,11 @@ function makeEnvelope(toolId: string, sessionId: string): ToolgenEnvelope {
 interface TestCtx extends ToolgenRpcCtx {
   broadcasts: Array<Record<string, unknown>>;
   removeScriptCalls: string[];
+  /** Backs the default `revokeCredentialsForTool` -- a REAL Vault, not a call-count stub, so the
+   * "the credential is actually gone" tests exercise `deleteCredentialsForTool` for real rather
+   * than trusting a mock that only records it was asked. */
+  vault: NimbusVault;
+  revokeCredentialsForToolCalls: string[];
 }
 
 function makeCtx(over: Partial<ToolgenGateDeps> = {}): TestCtx {
@@ -69,12 +97,20 @@ function makeCtx(over: Partial<ToolgenGateDeps> = {}): TestCtx {
   });
   const registry = new ToolgenRegistry();
   const removeScriptCalls: string[] = [];
+  const vault = new FakeVault();
+  const revokeCredentialsForToolCalls: string[] = [];
   return {
     consent,
     broadcasts,
     removeScriptCalls,
+    vault,
+    revokeCredentialsForToolCalls,
     removeScript: async (toolId: string) => {
       removeScriptCalls.push(toolId);
+    },
+    revokeCredentialsForTool: async (toolId: string) => {
+      revokeCredentialsForToolCalls.push(toolId);
+      await deleteCredentialsForTool(vault, toolId);
     },
     gateDeps: {
       db,
@@ -235,7 +271,7 @@ describe("toolgen RPC", () => {
     await expect(dispatchToolgenRpc("toolgen.list", {}, makeCtx())).rejects.toThrow();
   });
 
-  test("toolgen.revoke drops BOTH the live registry entry and the on-disk script", async () => {
+  test("toolgen.revoke drops THREE things: the live registry entry, the on-disk script, and the Vault credential", async () => {
     const ctx = makeCtx();
     let closed = false;
     ctx.gateDeps.registry.register(makeEnvelope("tg_a", "s1"), async () => {
@@ -249,6 +285,44 @@ describe("toolgen RPC", () => {
     // The failure worth catching: a drain that clears the registry but leaves the script behind
     // looks identical to success unless this call is independently asserted.
     expect(ctx.removeScriptCalls).toEqual(["tg_a"]);
+    expect(ctx.revokeCredentialsForToolCalls).toEqual(["tg_a"]);
+  });
+
+  // This is the defect Task 5 exists to close. `toolgen.revoke` used to drop only the live child
+  // and the on-disk script -- the Vault binding outlived both, keyed to a toolId nothing would
+  // ever call again. Reverting the `revokeCredentialsForTool` call in `toolgen-rpc.ts`'s handler
+  // reproduces the failure this test proves is fixed.
+  test("toolgen.revoke deletes the Vault credential, not just the child and the script", async () => {
+    const ctx = makeCtx();
+    ctx.gateDeps.registry.register(makeEnvelope("t1", "s1"), async () => {});
+    await writeToolCredential(ctx.vault, "t1", "api.example.com", {
+      type: "bearer",
+      token: "s3cret",
+    });
+    expect(await ctx.vault.get("toolgen.t1.api_pexample_pcom")).not.toBeNull();
+
+    const out = await dispatchToolgenRpc("toolgen.revoke", { toolId: "t1" }, ctx);
+
+    if (out.kind !== "hit") throw new Error("unreachable");
+    expect(out.value).toEqual({ revoked: true });
+    expect(await ctx.vault.get("toolgen.t1.api_pexample_pcom")).toBeNull();
+  });
+
+  // The prefix-based delete (not a host-list delete resolved from the registry envelope) is what
+  // makes this pass: a credential for a host no longer in the tool's CURRENT envelope is still
+  // deleted, because it shares the tool's `toolgen.<toolId>.` prefix regardless of what the
+  // envelope says today.
+  test("toolgen.revoke also deletes a credential for a host outside the tool's current envelope", async () => {
+    const ctx = makeCtx();
+    ctx.gateDeps.registry.register(makeEnvelope("t1", "s1"), async () => {});
+    await writeToolCredential(ctx.vault, "t1", "stale.example.com", {
+      type: "bearer",
+      token: "old",
+    });
+
+    await dispatchToolgenRpc("toolgen.revoke", { toolId: "t1" }, ctx);
+
+    expect(await ctx.vault.get("toolgen.t1.stale_pexample_pcom")).toBeNull();
   });
 
   test("toolgen.revoke on an unknown toolId still calls removeScript (idempotent, no probe-first)", async () => {
@@ -257,6 +331,7 @@ describe("toolgen RPC", () => {
     if (out.kind !== "hit") throw new Error("unreachable");
     expect(out.value).toEqual({ revoked: true });
     expect(ctx.removeScriptCalls).toEqual(["tg_ghost"]);
+    expect(ctx.revokeCredentialsForToolCalls).toEqual(["tg_ghost"]);
   });
 
   test("toolgen.revoke without toolId is an invalid-params error", async () => {

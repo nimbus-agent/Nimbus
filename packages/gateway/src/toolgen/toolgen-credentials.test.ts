@@ -1,18 +1,20 @@
 import { describe, expect, test } from "bun:test";
-import type { VaultDeleter, VaultReader, VaultWriter } from "../vault/nimbus-vault.ts";
+import type { VaultDeleter, VaultLister, VaultReader, VaultWriter } from "../vault/nimbus-vault.ts";
 import {
+  deleteCredentialsForTool,
   deleteToolCredential,
   readToolCredential,
   toolCredentialKey,
   writeToolCredential,
 } from "./toolgen-credentials.ts";
 
-function memoryVault(): VaultReader & VaultWriter & VaultDeleter {
+function memoryVault(): VaultReader & VaultWriter & VaultDeleter & VaultLister {
   const store = new Map<string, string>();
   return {
     get: async (k) => store.get(k) ?? null,
     set: async (k, v) => void store.set(k, v),
     delete: async (k) => void store.delete(k),
+    listKeys: async (prefix) => [...store.keys()].filter((k) => !prefix || k.startsWith(prefix)),
   };
 }
 
@@ -168,6 +170,55 @@ describe("deleteToolCredential", () => {
     expect(await readToolCredential(vault, "t2", "api.github.com")).toEqual({
       type: "bearer",
       token: "b",
+    });
+  });
+});
+
+describe("deleteCredentialsForTool", () => {
+  test("removes every host bound to the tool, by prefix, without a host list", async () => {
+    const vault = memoryVault();
+    await writeToolCredential(vault, "t1", "api.example.com", { type: "bearer", token: "a" });
+    await writeToolCredential(vault, "t1", "other.example.com", { type: "bearer", token: "b" });
+    await deleteCredentialsForTool(vault, "t1");
+    expect(await readToolCredential(vault, "t1", "api.example.com")).toBeNull();
+    expect(await readToolCredential(vault, "t1", "other.example.com")).toBeNull();
+  });
+
+  test("leaves another tool's credentials untouched, even under the same host", async () => {
+    const vault = memoryVault();
+    await writeToolCredential(vault, "t1", "api.example.com", { type: "bearer", token: "a" });
+    await writeToolCredential(vault, "t2", "api.example.com", { type: "bearer", token: "b" });
+    await deleteCredentialsForTool(vault, "t1");
+    expect(await readToolCredential(vault, "t2", "api.example.com")).toEqual({
+      type: "bearer",
+      token: "b",
+    });
+  });
+
+  test("also catches a credential for a host no longer in the tool's current envelope", async () => {
+    // A host-list delete (resolve `credentialHosts` from the envelope, then delete each) would
+    // strand this one in the keychain forever, since it isn't in any host list a caller could
+    // supply. The prefix-based approach has no such blind spot.
+    const vault = memoryVault();
+    await writeToolCredential(vault, "t1", "stale.example.com", { type: "bearer", token: "old" });
+    await deleteCredentialsForTool(vault, "t1");
+    expect(await readToolCredential(vault, "t1", "stale.example.com")).toBeNull();
+  });
+
+  test("tolerates a tool with no credentials at all", async () => {
+    const vault = memoryVault();
+    await expect(deleteCredentialsForTool(vault, "never-had-one")).resolves.toBeUndefined();
+  });
+
+  test("a tool id that is a prefix of another tool id does not collide (trailing dot disambiguates)", async () => {
+    const vault = memoryVault();
+    await writeToolCredential(vault, "abc", "api.example.com", { type: "bearer", token: "short" });
+    await writeToolCredential(vault, "abcd", "api.example.com", { type: "bearer", token: "long" });
+    await deleteCredentialsForTool(vault, "abc");
+    expect(await readToolCredential(vault, "abc", "api.example.com")).toBeNull();
+    expect(await readToolCredential(vault, "abcd", "api.example.com")).toEqual({
+      type: "bearer",
+      token: "long",
     });
   });
 });

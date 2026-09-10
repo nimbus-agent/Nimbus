@@ -25,13 +25,22 @@ export interface ToolgenRpcCtx {
   /** The owner-approval broker this surface answers into. */
   readonly consent: ToolgenConsentBroker;
   /**
-   * Task 11's `removeToolScript`, bound to the config dir. `toolgen.revoke` must drop BOTH halves
-   * -- the live child (`registry.revoke`, closes the spawned process) AND the approved body on
-   * disk (this) -- a revoked tool that leaves its script behind is a tool the next session could
-   * still be pointed at. The CLI cannot do this itself: it never touches the gateway's config dir
-   * directly, only IPC, so the drop has to happen on this side of the wire.
+   * Task 11's `removeToolScript`, bound to the config dir. `toolgen.revoke` must drop THREE halves
+   * -- the live child (`registry.revoke`, closes the spawned process), the approved body on disk
+   * (this), and the Vault credential (`revokeCredentialsForTool` below) -- a revoked tool that
+   * leaves its script behind is a tool the next session could still be pointed at. The CLI cannot
+   * do this itself: it never touches the gateway's config dir directly, only IPC, so the drop has
+   * to happen on this side of the wire.
    */
   readonly removeScript: (toolId: string) => Promise<void>;
+  /**
+   * The THIRD half of `toolgen.revoke`. Backed by `deleteCredentialsForTool`
+   * (`toolgen-credentials.ts`), which deletes every `toolgen.<toolId>.*` Vault key by PREFIX --
+   * no host list, so it also catches a credential for a host no longer in the tool's current
+   * envelope. Until this existed, a revoked tool's per-host Vault bindings outlived both the tool
+   * and the gateway, keyed to a toolId nothing would ever call again.
+   */
+  readonly revokeCredentialsForTool: (toolId: string) => Promise<void>;
 }
 
 /**
@@ -134,11 +143,16 @@ const HANDLERS: RpcMethodHandlerMap<ToolgenRpcCtx> = {
 
   "toolgen.revoke": async (params, ctx) => {
     const toolId = requireString(params, "toolId");
-    // BOTH halves, always -- see `ToolgenRpcCtx.removeScript`'s doc comment. `registry.revoke` on
-    // an unknown toolId is a no-op (Task 10), and `removeScript` on one that never wrote a script
-    // is idempotent (Task 11), so this is safe to call unconditionally rather than probing first.
+    // THREE halves, always -- see `ToolgenRpcCtx.removeScript`'s doc comment. `registry.revoke` on
+    // an unknown toolId is a no-op (Task 10), `removeScript` on one that never wrote a script is
+    // idempotent (Task 11), and `revokeCredentialsForTool` on one that never bound a credential
+    // deletes nothing (Task 5) -- so this is safe to call unconditionally rather than probing
+    // first.
     await ctx.gateDeps.registry.revoke(toolId);
     await ctx.removeScript(toolId);
+    // The THIRD half. Until this landed, a revoked tool's per-host Vault bindings outlived both
+    // the tool and the gateway, keyed to a toolId nothing would ever call again.
+    await ctx.revokeCredentialsForTool(toolId);
     return { revoked: true };
   },
 };

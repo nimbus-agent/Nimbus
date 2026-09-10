@@ -1,4 +1,4 @@
-import type { VaultDeleter, VaultReader, VaultWriter } from "../vault/nimbus-vault.ts";
+import type { VaultDeleter, VaultLister, VaultReader, VaultWriter } from "../vault/nimbus-vault.ts";
 import type { ToolCredentialBinding } from "./toolgen-types.ts";
 
 /**
@@ -84,4 +84,31 @@ export async function deleteToolCredential(
   host: string,
 ): Promise<void> {
   await vault.delete(toolCredentialKey(toolId, host));
+}
+
+/**
+ * Delete every Vault credential bound to one tool, by PREFIX rather than a per-host list.
+ *
+ * Every credential belonging to `toolId` shares the prefix `toolgen.<toolId>.` (see
+ * `toolCredentialKey` above), and `assertSafeToolId` (`toolgen-script-store.ts`) confines a tool id
+ * to `[A-Za-z0-9_-]{1,64}` — an id can never contain a `.`, so the trailing dot makes the prefix
+ * unambiguous: `toolgen.abc.` cannot match a differently-named tool id like `abcd`.
+ *
+ * This is the mechanism `toolgen.revoke` uses to close a shipped credential leak: a revoked tool
+ * used to drop its live child and its on-disk script but never its Vault binding, leaving
+ * `toolgen.<toolId>.<hostSlug>` in the OS keychain indefinitely, keyed to a tool id nothing will
+ * ever call again. Listing by prefix needs no host list and no ordering dependency on when the
+ * registry entry is removed, and it is STRICTLY safer than resolving the tool's currently-approved
+ * hosts first: it also catches a credential for a host that fell out of the tool's envelope (e.g.
+ * left behind by an earlier partial `bindCredentials` write), which a host-list delete would strand
+ * in the keychain permanently — precisely the kind of leak this function exists to close.
+ */
+export async function deleteCredentialsForTool(
+  vault: VaultLister & VaultDeleter,
+  toolId: string,
+): Promise<void> {
+  const keys = await vault.listKeys(`toolgen.${toolId}.`);
+  for (const key of keys) {
+    await vault.delete(key);
+  }
 }

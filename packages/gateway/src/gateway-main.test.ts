@@ -70,10 +70,11 @@ describe("createChatOpsAskEngine", () => {
 });
 
 // S2 runtime tool generation (I39): "ephemeral means ephemeral" has two halves -- the in-memory
-// registry and the on-disk script store -- and a drain that clears only one LOOKS identical to
-// success when all you can see is that the process exited cleanly.
+// registry, the on-disk script store, and (Task 5) the Vault credential sweep -- and a drain that
+// clears only some of them LOOKS identical to success when all you can see is that the process
+// exited cleanly.
 describe("drainToolgenOnShutdown", () => {
-  test("calls BOTH the registry revoke and the on-disk script removal", async () => {
+  test("calls all THREE, in order: registry revoke, on-disk script removal, Vault credential sweep", async () => {
     const calls: string[] = [];
     await drainToolgenOnShutdown({
       revokeAllToolgenRegistrations: async () => {
@@ -82,13 +83,22 @@ describe("drainToolgenOnShutdown", () => {
       removeAllToolScripts: async (configDir) => {
         calls.push(`removeAllToolScripts:${configDir}`);
       },
+      sweepToolgenCredentials: async () => {
+        calls.push("sweepCredentials");
+        return 0;
+      },
       configDir: "/tmp/nimbus-config",
     });
-    expect(calls).toEqual(["revokeAll", "removeAllToolScripts:/tmp/nimbus-config"]);
+    expect(calls).toEqual([
+      "revokeAll",
+      "removeAllToolScripts:/tmp/nimbus-config",
+      "sweepCredentials",
+    ]);
   });
 
-  test("propagates a failure from removeAllToolScripts rather than swallowing it silently", async () => {
+  test("propagates a failure from removeAllToolScripts rather than swallowing it silently, and never reaches the credential sweep", async () => {
     let revoked = false;
+    let swept = false;
     await expect(
       drainToolgenOnShutdown({
         revokeAllToolgenRegistrations: async () => {
@@ -97,16 +107,22 @@ describe("drainToolgenOnShutdown", () => {
         removeAllToolScripts: async () => {
           throw new Error("disk error");
         },
+        sweepToolgenCredentials: async () => {
+          swept = true;
+          return 0;
+        },
         configDir: "/tmp/nimbus-config",
       }),
     ).rejects.toThrow("disk error");
     // The registry half still ran before the failing half -- shutdown's own try/catch is what
     // makes the overall drain best-effort, not this function.
     expect(revoked).toBe(true);
+    expect(swept).toBe(false);
   });
 
-  test("propagates a failure from the registry revoke, and never reaches removeAllToolScripts", async () => {
+  test("propagates a failure from the registry revoke, and never reaches removeAllToolScripts or the credential sweep", async () => {
     let scriptsRemoved = false;
+    let swept = false;
     await expect(
       drainToolgenOnShutdown({
         revokeAllToolgenRegistrations: async () => {
@@ -115,9 +131,35 @@ describe("drainToolgenOnShutdown", () => {
         removeAllToolScripts: async () => {
           scriptsRemoved = true;
         },
+        sweepToolgenCredentials: async () => {
+          swept = true;
+          return 0;
+        },
         configDir: "/tmp/nimbus-config",
       }),
     ).rejects.toThrow("registry error");
     expect(scriptsRemoved).toBe(false);
+    expect(swept).toBe(false);
+  });
+
+  test("propagates a failure from the credential sweep itself, after both earlier steps completed", async () => {
+    let revoked = false;
+    let scriptsRemoved = false;
+    await expect(
+      drainToolgenOnShutdown({
+        revokeAllToolgenRegistrations: async () => {
+          revoked = true;
+        },
+        removeAllToolScripts: async () => {
+          scriptsRemoved = true;
+        },
+        sweepToolgenCredentials: async () => {
+          throw new Error("vault error");
+        },
+        configDir: "/tmp/nimbus-config",
+      }),
+    ).rejects.toThrow("vault error");
+    expect(revoked).toBe(true);
+    expect(scriptsRemoved).toBe(true);
   });
 });

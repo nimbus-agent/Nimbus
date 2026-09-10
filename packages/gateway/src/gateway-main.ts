@@ -13,6 +13,7 @@ import { armGatewayLifecycleDiagnostics } from "./platform/exit-diagnostics.ts";
 import { removeGatewayStateFile, writeGatewayStateFile } from "./platform/gateway-state-file.ts";
 import { createPlatformServices } from "./platform/index.ts";
 import type { SandboxRunner } from "./platform/sandbox/sandbox-runner.ts";
+import { sweepToolgenCredentials } from "./toolgen/toolgen-credential-sweep.ts";
 import { removeAllToolScripts } from "./toolgen/toolgen-script-store.ts";
 import { GATEWAY_VERSION } from "./version.ts";
 
@@ -68,18 +69,24 @@ export function createChatOpsAskEngine(
  * unit-testable independent of `main()`'s process.exit/signal-handler machinery, the same reason
  * `createChatOpsAskEngine` above is not inlined either.
  *
- * BOTH halves matter, in order: `revokeAllToolgenRegistrations` clears the in-memory registry
+ * THREE parts matter, in order: `revokeAllToolgenRegistrations` clears the in-memory registry
  * (closing every live generated-tool child process); `removeAllToolScripts` clears the on-disk
- * ephemeral script store under the config dir. A drain that runs only the first LOOKS identical
- * to success from memory alone — the on-disk half is what a restart would otherwise still see.
+ * ephemeral script store under the config dir; `sweepToolgenCredentials` (Task 5) deletes every
+ * per-host generated-tool Vault credential still live at shutdown, retaining only the signing
+ * keypair. A drain that runs only the first two LOOKS identical to success from memory and disk
+ * alone — the Vault half is what a revoked-but-never-cleaned-up credential, or a tool that was
+ * simply still live when the process exited, would otherwise leave behind indefinitely in the OS
+ * keychain.
  */
 export async function drainToolgenOnShutdown(deps: {
   readonly revokeAllToolgenRegistrations: () => Promise<void>;
   readonly removeAllToolScripts: (configDir: string) => Promise<void>;
+  readonly sweepToolgenCredentials: () => Promise<number>;
   readonly configDir: string;
 }): Promise<void> {
   await deps.revokeAllToolgenRegistrations();
   await deps.removeAllToolScripts(deps.configDir);
+  await deps.sweepToolgenCredentials();
 }
 
 export async function main(): Promise<void> {
@@ -261,6 +268,7 @@ export async function main(): Promise<void> {
       await drainToolgenOnShutdown({
         revokeAllToolgenRegistrations: () => platform.toolgenRegistry.revokeAll(),
         removeAllToolScripts,
+        sweepToolgenCredentials: () => sweepToolgenCredentials(platform.vault),
         configDir: platform.paths.configDir,
       });
     } catch {

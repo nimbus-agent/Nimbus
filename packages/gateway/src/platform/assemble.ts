@@ -289,7 +289,9 @@ import { ToolgenBroker } from "../toolgen/toolgen-broker.ts";
 import { spawnGeneratedTool } from "../toolgen/toolgen-client.ts";
 import { assertToolConfinement } from "../toolgen/toolgen-confinement.ts";
 import { toolgenConsent } from "../toolgen/toolgen-consent-broker.ts";
+import { sweepToolgenCredentials } from "../toolgen/toolgen-credential-sweep.ts";
 import {
+  deleteCredentialsForTool,
   deleteToolCredential,
   readToolCredential,
   writeToolCredential,
@@ -3804,6 +3806,15 @@ export async function assemblePlatformServices(
   // tightens the next registration rather than the next restart -- the same shape as execRpcCtx
   // and computerRpcCtx above.
   //
+  // Boot-time sweep (Task 5): a generated tool is ephemeral by construction, and its Vault
+  // credential must be too. Run this BEFORE `toolgenRegistry` below is populated by anything, so
+  // it only ever cleans up what a PREVIOUS process left behind -- a crash between approval and
+  // registration, a kill signal that skipped the shutdown drain in `gateway-main.ts` entirely, or
+  // (belt-and-suspenders) a `toolgen.revoke`/shutdown sweep that itself failed partway. Nothing in
+  // this process could have written a `toolgen.`-prefixed credential yet at this point, so there
+  // is no live credential this can race.
+  await sweepToolgenCredentials(vault);
+
   // `toolgenRegistry` is the ONE registry instance shared by three places: the gate (counts a
   // session's budget and registers a live tool), the broker's `approvedHostsFor` (reads back the
   // artifact the owner approved -- fail-closed `?? []` for an unknown/revoked toolId), and
@@ -3913,6 +3924,10 @@ export async function assemblePlatformServices(
     consent: toolgenConsent,
     gateDeps: toolgenGateDeps,
     removeScript: (toolId) => removeToolScript(paths.configDir, toolId),
+    // The THIRD half of `toolgen.revoke` (Task 5): deletes every `toolgen.<toolId>.*` Vault key
+    // by prefix, closing the leak where a revoked tool's per-host credential outlived both the
+    // tool and the gateway.
+    revokeCredentialsForTool: (toolId) => deleteCredentialsForTool(vault, toolId),
   };
 
   ipcOpts.glossaryRefresher = glossaryRefresher;
