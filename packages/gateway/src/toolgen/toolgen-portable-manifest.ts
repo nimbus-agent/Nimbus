@@ -41,7 +41,7 @@ export function assertConcreteManifestMatches(
   const refuse = (why: string): never => {
     throw new ToolgenError(
       ERR_TOOLGEN_MANIFEST_SHAPE_INVALID,
-      `${ERR_TOOLGEN_MANIFEST_SHAPE_INVALID}: reconstructed manifest does not match the signed shape: ${why}`,
+      `reconstructed manifest does not match the signed shape: ${why}`,
     );
   };
 
@@ -51,6 +51,8 @@ export function assertConcreteManifestMatches(
   if (actual.network.length > 0) refuse("network grant is non-empty");
   if (portable.network.length > 0) refuse("signed manifest carries a network grant");
   if (actual.filesystemWrite.length > 0) refuse("filesystem write grant is non-empty");
+  if (portable.filesystemWrite.length > 0)
+    refuse("signed manifest carries a filesystem write grant");
 
   const got = new Set(concrete.permissions?.filesystem?.read ?? []);
   const want = new Set(expectedRead);
