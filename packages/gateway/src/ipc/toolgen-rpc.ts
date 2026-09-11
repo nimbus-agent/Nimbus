@@ -1,7 +1,32 @@
 import { asRecord } from "../connectors/unknown-record.ts";
-import type { ToolgenConsentBroker } from "../toolgen/toolgen-consent-broker.ts";
-import { createGeneratedTool, type ToolgenGateDeps } from "../toolgen/toolgen-gate.ts";
-import type { ToolCredentialParam, ToolgenEnvelope } from "../toolgen/toolgen-types.ts";
+import type {
+  ToolgenConsentBroker,
+  ToolgenSaveConsentBroker,
+} from "../toolgen/toolgen-consent-broker.ts";
+import { writeToolCredential } from "../toolgen/toolgen-credentials.ts";
+import {
+  createGeneratedTool,
+  normalizeHost,
+  type ToolgenGateDeps,
+} from "../toolgen/toolgen-gate.ts";
+import type { SavedToolEnvelope } from "../toolgen/toolgen-registry.ts";
+import { saveGeneratedTool, type ToolgenSaveDeps } from "../toolgen/toolgen-save-gate.ts";
+import {
+  deleteSavedTool,
+  listSavedTools,
+  type SavedToolRow,
+} from "../toolgen/toolgen-saved-repo.ts";
+import { parseCanonicalArtifact } from "../toolgen/toolgen-saved-store.ts";
+import { assertSafeToolId } from "../toolgen/toolgen-script-store.ts";
+import {
+  ERR_TOOLGEN_CREDENTIAL_HOST_UNKNOWN,
+  ERR_TOOLGEN_TOOL_ID_INVALID,
+  ERR_TOOLGEN_TOOL_ID_RESERVED,
+  type ToolCredentialBinding,
+  type ToolCredentialParam,
+  type ToolgenEnvelope,
+  ToolgenError,
+} from "../toolgen/toolgen-types.ts";
 import {
   dispatchByMethod,
   type RpcMethodHandlerMap,
@@ -25,13 +50,90 @@ export interface ToolgenRpcCtx {
   /** The owner-approval broker this surface answers into. */
   readonly consent: ToolgenConsentBroker;
   /**
-   * Task 11's `removeToolScript`, bound to the config dir. `toolgen.revoke` must drop BOTH halves
-   * -- the live child (`registry.revoke`, closes the spawned process) AND the approved body on
-   * disk (this) -- a revoked tool that leaves its script behind is a tool the next session could
-   * still be pointed at. The CLI cannot do this itself: it never touches the gateway's config dir
-   * directly, only IPC, so the drop has to happen on this side of the wire.
+   * Everything `saveGeneratedTool` needs; assembled once at boot. Carries the SAME `registry` and
+   * `db` instances `gateDeps` does -- a saved tool a session just created must be visible to a
+   * `toolgen.save` call in the same process without a second lookup path.
+   */
+  readonly saveDeps: ToolgenSaveDeps;
+  /**
+   * The owner-approval broker `toolgen.save` answers into -- a SEPARATE instance from `consent`
+   * above, deliberately. `ToolgenSaveConsentBroker` broadcasts under its own method name
+   * (`toolgen.saveApprovalRequest`, never `toolgen.approvalRequest`), so a save prompt cannot be
+   * rendered with the create prompt's copy (`toolgen-consent-broker.ts`'s docstring). Wiring THIS
+   * field to the same instance as `consent` would make that distinction exist only in the type
+   * system: every existing test for `toolgen.approvalRespond` would keep passing while a save
+   * approval silently answered on the wrong broker.
+   */
+  readonly saveConsent: ToolgenSaveConsentBroker;
+  /**
+   * Task 11's `removeToolScript`, bound to the config dir — the EPHEMERAL script store
+   * (`toolgen/ephemeral/<toolId>`) only, never `saved/`. A revoked tool that leaves its script
+   * behind is a tool the next session could still be pointed at. The CLI cannot do this itself: it
+   * never touches the gateway's config dir directly, only IPC, so the drop has to happen on this
+   * side of the wire.
    */
   readonly removeScript: (toolId: string) => Promise<void>;
+  /**
+   * `removeSavedTool` (`toolgen-saved-store.ts`), bound to the config dir: the `saved/<toolId>`
+   * directory — script, artifact and signature together. Injected rather than imported for the
+   * same reason `removeScript` is: this module holds no config dir of its own, and a test drives
+   * the revoke sequence without a real filesystem.
+   *
+   * Idempotent by contract (`rm(..., { force: true })`), so revoking an ephemeral-only tool that
+   * never had a saved directory is a no-op rather than a failure.
+   */
+  readonly removeSavedDir: (toolId: string) => Promise<void>;
+  /**
+   * Backed by `deleteCredentialsForTool` (`toolgen-credentials.ts`), which deletes every
+   * `toolgen.<toolId>.*` Vault key by PREFIX -- no host list, so it also catches a credential for a
+   * host no longer in the tool's current envelope, while excluding the signing keypair's own
+   * `toolgen.signing.` prefix. Until this existed, a revoked tool's per-host Vault bindings
+   * outlived both the tool and the gateway, keyed to a toolId nothing would ever call again.
+   */
+  readonly revokeCredentialsForTool: (toolId: string) => Promise<void>;
+}
+
+/**
+ * The one tool id this surface will never act on. `signing` is a perfectly well-formed tool id by
+ * `assertSafeToolId`'s regex, and its per-tool Vault prefix `toolgen.signing.` is byte-for-byte the
+ * prefix the artifact-signing keypair lives under (`TOOLGEN_SIGNING_KEY_PREFIX`) — so a
+ * `toolgen.revoke` for it used to delete `toolgen.signing.privkey` and `toolgen.signing.pubkey`,
+ * making every saved tool on the machine permanently `pubkey_unavailable`.
+ *
+ * `deleteCredentialsForTool` now skips that prefix itself, which is the fix that actually protects
+ * the keyspace. This constant is the SECOND check, at the boundary where the caller's string
+ * arrives: a caller-supplied value that can name the Vault's own keyspace should fail twice, and
+ * the boundary is also the only place that can answer with a NAMED refusal rather than silently
+ * doing nothing.
+ */
+const RESERVED_TOOL_ID = "signing";
+
+/**
+ * Validate a caller-supplied `toolId` before any of it reaches a filesystem path or a Vault key
+ * prefix. Two refusals, distinguished by code (see `toolgen-types.ts`):
+ *
+ * - shape — `assertSafeToolId` throws a plain `Error` (it is a programmer-facing assertion at the
+ *   MINT site, where an unsafe id is a bug rather than input). Over IPC the same condition is
+ *   ordinary bad input, so it is re-thrown as a coded `ToolgenError` a caller can branch on.
+ * - reserved — the shape check passes and the id must still be refused; see `RESERVED_TOOL_ID`.
+ *
+ * Applied to the two methods that let a caller's string address the Vault keyspace or the saved
+ * store: `toolgen.revoke` (deletes by prefix / by path) and `toolgen.credentialSet` (writes a key
+ * composed from it). `toolgen.save` needs no such guard — it resolves the id against the LIVE
+ * registry first and refuses an unknown one, so an arbitrary string never reaches anything.
+ */
+function assertCallerToolId(toolId: string): void {
+  try {
+    assertSafeToolId(toolId);
+  } catch {
+    throw new ToolgenError(ERR_TOOLGEN_TOOL_ID_INVALID, "toolId must match ^[A-Za-z0-9_-]{1,64}$");
+  }
+  if (toolId === RESERVED_TOOL_ID) {
+    throw new ToolgenError(
+      ERR_TOOLGEN_TOOL_ID_RESERVED,
+      `toolId "${RESERVED_TOOL_ID}" is reserved and is never minted as a tool`,
+    );
+  }
 }
 
 /**
@@ -87,9 +189,28 @@ function parseCredentials(raw: unknown): ToolCredentialParam[] {
 }
 
 /**
- * The `toolgen.list` wire shape: enough for an owner to recognise and manage a tool (I don't
- * return `body`/`manifest`/`scriptPath` here — those are plumbing, not a listing). The full
- * artifact the owner approved is `toolgen.approvalRequest`'s payload, not this one.
+ * `ToolgenRegistry.forSession` unions in the SAVED collection, which is not a `ToolgenEnvelope` at
+ * all -- it has no live `sessionId`/`scriptPath`/`approvedAt` (see `SavedToolEnvelope`'s docstring
+ * for why those are not fabricated). This is the discriminator `toolgen.list` uses to pull the
+ * EPHEMERAL half out of `forSession`'s union -- the SAVED half of the listing is built separately,
+ * from `listSavedTools(db)` below, because that DB read is the only way to see a saved tool that
+ * failed verification and is therefore absent from `registry.savedTools()` entirely (see
+ * `toSavedListEntry`'s docstring).
+ */
+function isEphemeralEnvelope(entry: ToolgenEnvelope | SavedToolEnvelope): entry is ToolgenEnvelope {
+  return "sessionId" in entry;
+}
+
+/**
+ * The `toolgen.list` wire shape for a live, ephemeral tool (I don't return `body`/`manifest`/
+ * `scriptPath` here — those are plumbing, not a listing). The full artifact the owner approved is
+ * `toolgen.approvalRequest`'s payload, not this one.
+ *
+ * `saved`/`needsCredentials`/`disabledReason` are fixed values, not fields read off the envelope:
+ * an EPHEMERAL tool is by definition not saved, its credentials were bound live at create time (an
+ * ephemeral tool that lost its binding would simply fail its next request, never sit around
+ * "needing" one -- there is no restart in between), and it has no `generated_tool` row to carry a
+ * `disabledReason` at all.
  */
 function toListEntry(envelope: ToolgenEnvelope): Record<string, unknown> {
   return {
@@ -100,7 +221,139 @@ function toListEntry(envelope: ToolgenEnvelope): Record<string, unknown> {
     credentialHosts: envelope.artifact.credentialHosts,
     sessionId: envelope.sessionId,
     approvedAt: envelope.approvedAt,
+    saved: false,
+    needsCredentials: false,
+    disabledReason: null,
   };
+}
+
+/**
+ * The `toolgen.list` wire shape for a SAVED (persisted) tool -- built from the `generated_tool` DB
+ * row, not from `registry.savedTools()` alone, because that registry collection holds ONLY tools
+ * that verified cleanly at load (`loadSavedToolsIntoRegistry`'s docstring: a tool that fails
+ * verification is "absent from the registry entirely, never registered as a tool that then errors
+ * when the model tries to call it"). That is the right call for the MODEL-facing surface
+ * (`buildGeneratedTools`) and the wrong one for `nimbus tool list`: an owner who saved a tool and
+ * comes back to a `signature_mismatch` row deserves to see it, with a reason, not silence. Every
+ * `generated_tool` row is therefore listed here, healthy or not.
+ *
+ * For a HEALTHY row (present in `healthyById`), every field comes from the verified, in-memory
+ * artifact -- the same source `buildGeneratedTools` reads from.
+ *
+ * For a row with no healthy match, `approvedHosts`/`credentialHosts` fall back to a best-effort,
+ * UNVERIFIED parse of the row's cached `artifact_json` column, for DISPLAY only. This never
+ * touches the on-disk `saved/<toolId>/artifact.json` file `readVerifiedSavedTool` guards (D29(d))
+ * -- it reads a plain SQLite column already loaded by `listSavedTools`, which this module's own
+ * comments describe as "a health-report CACHE for `nimbus tool list`, never an authority a loader
+ * or a spawn may rely on" (`toolgen-saved-spawn.ts`). A row whose JSON does not even parse against
+ * this build's shape shows empty host lists rather than throwing -- the row is disabled either
+ * way, and a broken listing helper must not stop `nimbus tool list` from working for every OTHER
+ * tool.
+ */
+function toSavedListEntry(
+  row: SavedToolRow,
+  healthyById: ReadonlyMap<string, SavedToolEnvelope>,
+): Record<string, unknown> {
+  const healthy = healthyById.get(row.toolId);
+  if (healthy !== undefined) {
+    return {
+      toolId: row.toolId,
+      toolName: healthy.artifact.toolName,
+      description: healthy.artifact.description,
+      approvedHosts: healthy.artifact.approvedHosts,
+      credentialHosts: healthy.artifact.credentialHosts,
+      approvedAt: row.approvedAt,
+      saved: true,
+      needsCredentials: healthy.needsCredentials,
+      disabledReason: null,
+    };
+  }
+  const parsed = parseCanonicalArtifact(row.artifactJson);
+  return {
+    toolId: row.toolId,
+    toolName: row.toolName,
+    description: row.description,
+    approvedHosts: parsed?.approvedHosts ?? [],
+    credentialHosts: parsed?.credentialHosts ?? [],
+    approvedAt: row.approvedAt,
+    saved: true,
+    needsCredentials: (parsed?.credentialHosts.length ?? 0) > 0,
+    disabledReason: row.disabledReason,
+  };
+}
+
+/**
+ * Every host `toolgen.credentialSet` may bind a credential for: the LIVE ephemeral envelope's
+ * signed `credentialHosts` if the tool is still running this session, else the HEALTHY saved
+ * envelope's -- the exact same signed list the create/save gate already put in front of the owner.
+ * An unknown or unhealthy-saved toolId resolves to an EMPTY list, so binding a credential for it
+ * refuses the same way a genuinely-out-of-scope host would (`credentialHostsFor`'s `?? []` in
+ * `platform/assemble.ts` is the identical fail-closed shape at the broker).
+ */
+function credentialHostsForTool(ctx: ToolgenRpcCtx, toolId: string): readonly string[] {
+  const live = ctx.gateDeps.registry.get(toolId);
+  if (live !== undefined) return live.artifact.credentialHosts;
+  const saved = ctx.gateDeps.registry.savedTools().find((s) => s.toolId === toolId);
+  return saved?.artifact.credentialHosts ?? [];
+}
+
+/**
+ * Narrow `params.binding` into a `ToolCredentialBinding`, matching the CLI's `CredentialSchemeArg`
+ * shape field-for-field. Every failure message names only FIELD NAMES, never a value -- a
+ * malformed binding must not echo the secret the owner is trying to set back into an error.
+ */
+function parseCredentialBinding(raw: unknown): ToolCredentialBinding {
+  const rec = asRecord(raw);
+  if (rec === undefined) {
+    throw new ToolgenRpcError(-32602, "ERR_INVALID_PARAMS: binding (object) required");
+  }
+  const type = rec["type"];
+  if (type === "bearer") {
+    const token = rec["token"];
+    if (typeof token !== "string" || token === "") {
+      throw new ToolgenRpcError(
+        -32602,
+        "ERR_INVALID_PARAMS: binding.token (non-empty string) required",
+      );
+    }
+    return { type: "bearer", token };
+  }
+  if (type === "header") {
+    const headerName = rec["headerName"];
+    const value = rec["value"];
+    if (
+      typeof headerName !== "string" ||
+      headerName === "" ||
+      typeof value !== "string" ||
+      value === ""
+    ) {
+      throw new ToolgenRpcError(
+        -32602,
+        "ERR_INVALID_PARAMS: binding.headerName and binding.value (non-empty strings) required",
+      );
+    }
+    return { type: "header", headerName, value };
+  }
+  if (type === "basic") {
+    const username = rec["username"];
+    const password = rec["password"];
+    if (
+      typeof username !== "string" ||
+      username === "" ||
+      typeof password !== "string" ||
+      password === ""
+    ) {
+      throw new ToolgenRpcError(
+        -32602,
+        "ERR_INVALID_PARAMS: binding.username and binding.password (non-empty strings) required",
+      );
+    }
+    return { type: "basic", username, password };
+  }
+  throw new ToolgenRpcError(
+    -32602,
+    'ERR_INVALID_PARAMS: binding.type must be "bearer", "header", or "basic"',
+  );
 }
 
 const HANDLERS: RpcMethodHandlerMap<ToolgenRpcCtx> = {
@@ -125,21 +378,174 @@ const HANDLERS: RpcMethodHandlerMap<ToolgenRpcCtx> = {
     return { matched: ctx.consent.respond(requestId, approved) };
   },
 
-  // Live tools only (a terminated tool is not offered back to a caller as though it still
-  // worked) -- `ToolgenRegistry.forSession` already applies that filter.
+  // Live ephemeral tools for THIS session (a terminated one is not offered back to a caller as
+  // though it still worked -- `ToolgenRegistry.forSession` already applies that filter), UNION
+  // every SAVED tool regardless of session or health -- see `toSavedListEntry`'s docstring for why
+  // that second half is read from the DB rather than `registry.savedTools()` alone.
   "toolgen.list": (params, ctx) => {
     const sessionId = requireString(params, "sessionId");
-    return { tools: ctx.gateDeps.registry.forSession(sessionId).map(toListEntry) };
+    const ephemeral = ctx.gateDeps.registry
+      .forSession(sessionId)
+      .filter(isEphemeralEnvelope)
+      .map(toListEntry);
+    const healthyById = new Map(
+      ctx.gateDeps.registry.savedTools().map((e) => [e.toolId, e] as const),
+    );
+    const saved = listSavedTools(ctx.gateDeps.db).map((row) => toSavedListEntry(row, healthyById));
+    return { tools: [...ephemeral, ...saved] };
   },
 
+  // The SECOND standing-approval prompt in this codebase (I40 / spec § 6.1) -- see `saveGeneratedTool`'s
+  // own docstring for why persisting a tool is a fact create-time consent never covered. Routed
+  // through `ctx.saveDeps`, never `ctx.gateDeps`: they share ONE registry and db instance, but the
+  // save gate's approval broker, org-policy read and Vault access are its own dependency set.
+  "toolgen.save": async (params, ctx) => {
+    const toolId = requireString(params, "toolId");
+    return saveGeneratedTool({ toolId }, ctx.saveDeps);
+  },
+
+  // Answers a `toolgen.saveApprovalRequest` broadcast -- the SAVE broker's own respond channel,
+  // deliberately never `ctx.consent` (the create broker). Mirrors `toolgen.approvalRespond` above
+  // field-for-field; the only difference is which `ConsentBroker` instance owns the pending
+  // request, and getting that wrong would make a save prompt silently unanswerable (it would time
+  // out, fail-closed, rather than throwing -- see `saveConsent`'s docstring on `ToolgenRpcCtx`).
+  "toolgen.saveApprovalRespond": (params, ctx) => {
+    const requestId = requireString(params, "requestId");
+    const approved = asRecord(params)?.["approved"] === true;
+    return { matched: ctx.saveConsent.respond(requestId, approved) };
+  },
+
+  // Binds a credential to a host the tool was ALREADY approved to reach -- the fix for a saved
+  // tool that lost its Vault binding across a restart (spec § 8.3/8.4), and the first user-facing
+  // path for `header`/`basic` bindings. Never widens `credentialHosts`: that list is part of the
+  // signed artifact, so admitting a new host here would let a standing approval quietly cover a
+  // host the owner never consented to.
+  "toolgen.credentialSet": async (params, ctx) => {
+    const toolId = requireString(params, "toolId");
+    // The other method whose caller-supplied id becomes part of a Vault key
+    // (`toolgen.<toolId>.<hostSlug>`). The `credentialHosts` membership check below already fails
+    // closed for an id no tool bears -- an unknown tool resolves to an EMPTY host list -- but that
+    // makes the keyspace boundary depend on a lookup two steps away rather than on the id itself,
+    // which is the shape that let `toolgen.revoke` reach `toolgen.signing.`.
+    assertCallerToolId(toolId);
+    const rawHost = requireString(params, "host");
+    const binding = parseCredentialBinding(asRecord(params)?.["binding"]);
+    // Normalised ONCE, then used for BOTH the membership check and the Vault key -- see
+    // `toolgen-gate.ts:293-294`'s postmortem on what happens when those two uses see different
+    // spellings of the same host.
+    const host = normalizeHost(rawHost);
+    const credentialHosts = credentialHostsForTool(ctx, toolId);
+    if (!credentialHosts.includes(host)) {
+      // Named codes exist so a caller distinguishes refusals via `.code`, never by matching on
+      // message text (`ToolgenError`'s own docstring) -- no other `ToolgenError` site in
+      // `toolgen/` embeds its code into the message, and Task 1 of this branch reverted the same
+      // pattern on `toolgen-portable-manifest.ts` for the identical reason. The message still
+      // names BOTH host spellings, which is the part that actually helps a refused owner.
+      throw new ToolgenError(
+        ERR_TOOLGEN_CREDENTIAL_HOST_UNKNOWN,
+        `host "${rawHost}" (normalised: "${host}") is not among tool "${toolId}"'s approved ` +
+          `credential hosts: [${credentialHosts.join(", ")}]`,
+      );
+    }
+    // The Vault only -- never a log line, never the response. `ToolgenSaveDeps.vault` is reused
+    // rather than adding a second Vault reference to this ctx: `toolgen.save` and
+    // `toolgen.credentialSet` are the two write paths this surface adds, and both reach the same
+    // Vault instance the gateway constructed once at boot.
+    await writeToolCredential(ctx.saveDeps.vault, toolId, host, binding);
+    return { bound: true };
+  },
+
+  /**
+   * The WITHDRAWAL PATH for both kinds of generated tool — and, for a SAVED one, the withdrawal
+   * path for a STANDING approval (I40). The save prompt tells the owner in as many words that the
+   * tool "will run, unattended, in every future gateway session until you `nimbus tool revoke`
+   * it", so this handler is the sentence that obtains that consent. It must be true.
+   *
+   * It was not. Revoke used to drop only the EPHEMERAL halves — `registry.revoke` touches the
+   * registry's `#byId` map, and `removeScript` touches `toolgen/ephemeral/<toolId>` — leaving the
+   * `generated_tool` row and the `saved/<toolId>` directory intact, so the tool stayed in `#saved`
+   * for the rest of the session and the next boot reconciled it healthy and loaded it straight
+   * back in. There was no way to withdraw a standing approval at all.
+   *
+   * FIVE drops, in this order, all idempotent, all attempted unconditionally rather than probed
+   * for first (revoking a tool that is saved-only, ephemeral-only, or both must behave the same):
+   *
+   * 1. `registry.revoke` — the live child process, if this session has one. Closes it.
+   * 2. `registry.unregisterSaved` — the in-memory saved entry, so the tool stops being offered to
+   *    the model and to `nimbus tool list` THIS session, without waiting for a restart.
+   * 3. `deleteSavedTool` — the `generated_tool` row. This goes FIRST of the two durable drops on
+   *    purpose: the row is the root of existence (`toolgen-saved-repo.ts`), so a crash between
+   *    steps 3 and 4 leaves a directory with no row — precisely the orphan state boot
+   *    reconciliation already sweeps (`toolgen-boot-reconcile.ts`, which never ADOPTS a signed
+   *    directory, because a valid signature proves an artifact was approved ONCE, not that it is
+   *    approved NOW). Reversing the order would leave a row with no artifact, which reconciliation
+   *    would report as `artifact_missing` and keep forever.
+   * 4. `removeSavedDir` — `saved/<toolId>`: body, artifact and signature together.
+   * 5. `removeScript` + `revokeCredentialsForTool` — the ephemeral script and every
+   *    `toolgen.<toolId>.*` Vault credential (never the signing keypair; see `assertCallerToolId`).
+   *
+   * "All attempted unconditionally" is a structural claim, not a hope, and a sequential `await`
+   * chain did not deliver it: a rejection from ANY drop stranded every drop after it. The
+   * consequence was worst at exactly the point the ordering above is designed around — a
+   * `removeSavedDir` rejection (a locked `saved/<toolId>/index.ts` on Windows) arrives AFTER the
+   * `generated_tool` row is already deleted, so the tool's `toolgen.<toolId>.*` Vault credentials
+   * survived a revoke the owner believes completed, with no row left to show anything is
+   * outstanding. Each drop is therefore attempted in its own try/catch, failures are collected,
+   * and the FIRST is re-thrown once every drop has had its turn (the first is the diagnosis; a
+   * keychain or filesystem fault makes the later ones echoes of it). The error is re-thrown with
+   * its identity intact — never wrapped into a string — so a caller can still branch on a
+   * `ToolgenError`'s `.code`.
+   *
+   * Re-thrown, never swallowed: the owner asked for a withdrawal, and reporting success on a
+   * withdrawal that did not complete would be a worse defect than the one this ordering fixes.
+   *
+   * `revoked: true` is unconditional and says only that the withdrawal ran to completion, not that
+   * anything was found — an idempotent second revoke is a success, not a lie. `savedRemoved`
+   * discloses whether the SAVED half was actually present, which is the part an owner withdrawing
+   * a standing approval cares about. Both are returned ONLY on the path where every drop
+   * succeeded, which is what keeps `savedRemoved: true` from ever describing a directory that is
+   * still on disk.
+   */
   "toolgen.revoke": async (params, ctx) => {
     const toolId = requireString(params, "toolId");
-    // BOTH halves, always -- see `ToolgenRpcCtx.removeScript`'s doc comment. `registry.revoke` on
-    // an unknown toolId is a no-op (Task 10), and `removeScript` on one that never wrote a script
-    // is idempotent (Task 11), so this is safe to call unconditionally rather than probing first.
-    await ctx.gateDeps.registry.revoke(toolId);
-    await ctx.removeScript(toolId);
-    return { revoked: true };
+    assertCallerToolId(toolId);
+
+    let firstError: unknown;
+    let failed = false;
+    // Takes a `void | Promise<void>` step so the SYNCHRONOUS drops (the registry eviction, the row
+    // read, the row delete -- `SQLITE_BUSY` from a concurrent process is the realistic throw) are
+    // isolated by the same construct as the asynchronous ones, rather than a second, subtly
+    // different one alongside it.
+    const drop = async (step: () => void | Promise<void>): Promise<void> => {
+      try {
+        await step();
+      } catch (err) {
+        if (!failed) {
+          failed = true;
+          firstError = err;
+        }
+      }
+    };
+
+    await drop(() => ctx.gateDeps.registry.revoke(toolId));
+    let wasLoadedSaved = false;
+    await drop(() => {
+      wasLoadedSaved = ctx.gateDeps.registry.unregisterSaved(toolId);
+    });
+    // Read before the delete, so the disclosure covers a saved tool that is on disk but was NOT
+    // loaded into the registry this boot (it failed verification and was skipped) -- exactly the
+    // tool an owner is most likely to be revoking.
+    let hadSavedRow = false;
+    await drop(() => {
+      hadSavedRow = listSavedTools(ctx.gateDeps.db).some((r) => r.toolId === toolId);
+    });
+    await drop(() => deleteSavedTool(ctx.gateDeps.db, toolId));
+    await drop(() => ctx.removeSavedDir(toolId));
+    await drop(() => ctx.removeScript(toolId));
+    await drop(() => ctx.revokeCredentialsForTool(toolId));
+
+    if (failed) throw firstError;
+    return { revoked: true, savedRemoved: wasLoadedSaved || hadSavedRow };
   },
 };
 

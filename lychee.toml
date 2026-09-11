@@ -30,6 +30,12 @@ exclude = [
   "asciinema\\.org/a/",    # cast pages also time out under load from runner egress; verified live (200)
   "nimbus-agent\\.dev",    # exclude until PR 1 DNS propagates
   "glama\\.ai",            # 525/403 to scripted UAs due to Cloudflare
+  # 403 from GitHub runner egress only. Checked rather than assumed: from a dev
+  # machine it returns 200 to BOTH a browser UA and curl's default UA, so this is
+  # origin/IP-based blocking, not the scripted-UA kind the entries above describe.
+  # Pre-existing link (the Ramp connector CHANGELOG entry), unrelated to the PR
+  # that had to exclude it.
+  "ramp\\.com",
   # github-action-benchmark dashboard on the perf-data orphan branch — the branch
   # and dev/bench dir are created by the first post-merge push, so the link 404s
   # while the PR documenting it is open. Resolves automatically post-merge.

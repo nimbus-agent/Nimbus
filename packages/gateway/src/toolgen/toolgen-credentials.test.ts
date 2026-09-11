@@ -1,18 +1,21 @@
 import { describe, expect, test } from "bun:test";
-import type { VaultDeleter, VaultReader, VaultWriter } from "../vault/nimbus-vault.ts";
+import type { VaultDeleter, VaultLister, VaultReader, VaultWriter } from "../vault/nimbus-vault.ts";
 import {
+  deleteCredentialsForTool,
   deleteToolCredential,
   readToolCredential,
   toolCredentialKey,
   writeToolCredential,
 } from "./toolgen-credentials.ts";
+import { TOOLGEN_SIGNING_PRIVKEY, TOOLGEN_SIGNING_PUBKEY } from "./toolgen-keypair.ts";
 
-function memoryVault(): VaultReader & VaultWriter & VaultDeleter {
+function memoryVault(): VaultReader & VaultWriter & VaultDeleter & VaultLister {
   const store = new Map<string, string>();
   return {
     get: async (k) => store.get(k) ?? null,
     set: async (k, v) => void store.set(k, v),
     delete: async (k) => void store.delete(k),
+    listKeys: async (prefix) => [...store.keys()].filter((k) => !prefix || k.startsWith(prefix)),
   };
 }
 
@@ -169,5 +172,146 @@ describe("deleteToolCredential", () => {
       type: "bearer",
       token: "b",
     });
+  });
+});
+
+describe("deleteCredentialsForTool", () => {
+  test("removes every host bound to the tool, by prefix, without a host list", async () => {
+    const vault = memoryVault();
+    await writeToolCredential(vault, "t1", "api.example.com", { type: "bearer", token: "a" });
+    await writeToolCredential(vault, "t1", "other.example.com", { type: "bearer", token: "b" });
+    await deleteCredentialsForTool(vault, "t1");
+    expect(await readToolCredential(vault, "t1", "api.example.com")).toBeNull();
+    expect(await readToolCredential(vault, "t1", "other.example.com")).toBeNull();
+  });
+
+  test("leaves another tool's credentials untouched, even under the same host", async () => {
+    const vault = memoryVault();
+    await writeToolCredential(vault, "t1", "api.example.com", { type: "bearer", token: "a" });
+    await writeToolCredential(vault, "t2", "api.example.com", { type: "bearer", token: "b" });
+    await deleteCredentialsForTool(vault, "t1");
+    expect(await readToolCredential(vault, "t2", "api.example.com")).toEqual({
+      type: "bearer",
+      token: "b",
+    });
+  });
+
+  test("also catches a credential for a host no longer in the tool's current envelope", async () => {
+    // A host-list delete (resolve `credentialHosts` from the envelope, then delete each) would
+    // strand this one in the keychain forever, since it isn't in any host list a caller could
+    // supply. The prefix-based approach has no such blind spot.
+    const vault = memoryVault();
+    await writeToolCredential(vault, "t1", "stale.example.com", { type: "bearer", token: "old" });
+    await deleteCredentialsForTool(vault, "t1");
+    expect(await readToolCredential(vault, "t1", "stale.example.com")).toBeNull();
+  });
+
+  test("tolerates a tool with no credentials at all", async () => {
+    const vault = memoryVault();
+    await expect(deleteCredentialsForTool(vault, "never-had-one")).resolves.toBeUndefined();
+  });
+
+  test("a tool id that is a prefix of another tool id does not collide (trailing dot disambiguates)", async () => {
+    const vault = memoryVault();
+    await writeToolCredential(vault, "abc", "api.example.com", { type: "bearer", token: "short" });
+    await writeToolCredential(vault, "abcd", "api.example.com", { type: "bearer", token: "long" });
+    await deleteCredentialsForTool(vault, "abc");
+    expect(await readToolCredential(vault, "abc", "api.example.com")).toBeNull();
+    expect(await readToolCredential(vault, "abcd", "api.example.com")).toEqual({
+      type: "bearer",
+      token: "long",
+    });
+  });
+
+  test("the RESERVED tool id `signing` cannot delete the artifact-signing keypair", async () => {
+    // `signing` satisfies `assertSafeToolId`'s `^[A-Za-z0-9_-]{1,64}$` perfectly, and
+    // `toolgen.${"signing"}.` is byte-for-byte the prefix the Ed25519 signing keypair lives under.
+    // Before the exclusion, `nimbus tool revoke signing` -- a caller-supplied id over
+    // `toolgen.revoke` -- deleted both Vault entries, after which EVERY saved tool on the machine
+    // reported `pubkey_unavailable` at the next boot and could never verify again: the seed lives
+    // only in the OS keychain, so nothing else holds a copy.
+    const vault = memoryVault();
+    await vault.set(TOOLGEN_SIGNING_PRIVKEY, "priv-seed");
+    await vault.set(TOOLGEN_SIGNING_PUBKEY, "pub-key");
+
+    await deleteCredentialsForTool(vault, "signing");
+
+    expect(await vault.get(TOOLGEN_SIGNING_PRIVKEY)).toBe("priv-seed");
+    expect(await vault.get(TOOLGEN_SIGNING_PUBKEY)).toBe("pub-key");
+  });
+
+  test("the signing exclusion is by PREFIX, so it survives a third signing key being added", async () => {
+    // Keyed on `TOOLGEN_SIGNING_KEY_PREFIX`, not on the two key names -- a future
+    // `toolgen.signing.<anything>` is protected without this test or that function changing.
+    const vault = memoryVault();
+    await vault.set("toolgen.signing.future_key", "whatever");
+    await deleteCredentialsForTool(vault, "signing");
+    expect(await vault.get("toolgen.signing.future_key")).toBe("whatever");
+  });
+
+  test("excluding `signing` does not exempt a genuine credential under a DIFFERENT tool id", async () => {
+    // The exclusion must be exactly as narrow as the signing prefix -- a `startsWith("toolgen.s")`
+    // style over-match would silently strand real credentials in the keychain.
+    const vault = memoryVault();
+    await writeToolCredential(vault, "signing_tool", "api.example.com", {
+      type: "bearer",
+      token: "t",
+    });
+    await deleteCredentialsForTool(vault, "signing_tool");
+    expect(await readToolCredential(vault, "signing_tool", "api.example.com")).toBeNull();
+  });
+
+  // `vault.delete` rejects for causes that have nothing to do with the key it was handed -- a
+  // locked keychain, a libsecret error, a DPAPI failure. Aborting the loop on the first such
+  // rejection left every REMAINING bearer token in the keychain under a tool id that had just
+  // been revoked: the exact leak this function exists to close, reintroduced by a transient
+  // error. Same guarantee, and the same rationale, as the `revokeCredentials` closure in
+  // `platform/assemble.ts`. Reverting the per-key try/catch reproduces it: "b" and "c" survive.
+  test("one key's delete REJECTING does not strand the keys after it", async () => {
+    const base = memoryVault();
+    const attempted: string[] = [];
+    const vault: VaultLister & VaultDeleter = {
+      ...base,
+      delete: async (k: string) => {
+        attempted.push(k);
+        // The FIRST host attempted fails -- `listKeys` is insertion-ordered here, so "a" is the
+        // key the abort would have happened on.
+        if (k === toolCredentialKey("t1", "a.example.com")) {
+          throw new Error("keychain is locked");
+        }
+        await base.delete(k);
+      },
+    };
+    for (const host of ["a.example.com", "b.example.com", "c.example.com"]) {
+      await writeToolCredential(base, "t1", host, { type: "bearer", token: `tok-${host}` });
+    }
+
+    // Still surfaced: the caller (`toolgen.revoke`) must learn that cleanup did not complete,
+    // rather than telling an owner their withdrawal was clean while a credential survived it.
+    await expect(deleteCredentialsForTool(vault, "t1")).rejects.toThrow("keychain is locked");
+
+    expect(attempted).toHaveLength(3);
+    expect(await readToolCredential(base, "t1", "b.example.com")).toBeNull();
+    expect(await readToolCredential(base, "t1", "c.example.com")).toBeNull();
+    // The one that genuinely failed is still there -- nothing pretends otherwise.
+    expect(await readToolCredential(base, "t1", "a.example.com")).not.toBeNull();
+  });
+
+  test("with TWO failing deletes, the FIRST failure is the one re-thrown", async () => {
+    const base = memoryVault();
+    const vault: VaultLister & VaultDeleter = {
+      ...base,
+      delete: async (k: string) => {
+        if (k === toolCredentialKey("t1", "a.example.com")) throw new Error("first-failure");
+        if (k === toolCredentialKey("t1", "b.example.com")) throw new Error("second-failure");
+        await base.delete(k);
+      },
+    };
+    for (const host of ["a.example.com", "b.example.com", "c.example.com"]) {
+      await writeToolCredential(base, "t1", host, { type: "bearer", token: "t" });
+    }
+
+    await expect(deleteCredentialsForTool(vault, "t1")).rejects.toThrow("first-failure");
+    expect(await readToolCredential(base, "t1", "c.example.com")).toBeNull();
   });
 });

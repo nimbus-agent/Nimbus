@@ -16,6 +16,7 @@ function deps(over: Partial<ConstructorParameters<typeof ToolgenBroker>[0]> = {}
     resolveHost: async () => ["93.184.216.34"],
     readCredential: async () => null,
     approvedHostsFor: () => ["api.example.com"],
+    credentialHostsFor: () => [],
     doFetch: async () => new Response("ok", { status: 200 }),
     ...over,
   };
@@ -406,5 +407,73 @@ describe("a Vault failure reading the bound credential is REFUSED, and ledgered"
       new ToolgenBroker(d).handleFetch("tg_a", { url: "https://api.example.com/v1" }),
     ).resolves.toMatchObject({ status: 200 });
     expect(rows(d.db)).toEqual([{ destination: "api.example.com", result_status: "authorized" }]);
+  });
+});
+
+describe("a credentialHosts host with no binding is refused, never sent uncredentialed", () => {
+  // Before this fix, `null` fell straight through to `if (binding !== null) applyCredential(...)`
+  // and the request went out unauthenticated -- the shipped defect Task 6 closes. Task 5's
+  // boot/shutdown sweep is what makes this routine rather than rare: a saved tool's credentialed
+  // hosts have no binding at all on the first request after every restart.
+  test("refuses a fetch to a credentialHosts host with no binding, and makes NO request", async () => {
+    let fetched = 0;
+    const d = deps({
+      credentialHostsFor: () => ["api.example.com"],
+      readCredential: async () => null,
+      doFetch: async () => {
+        fetched++;
+        return new Response("{}");
+      },
+    });
+    await expect(
+      new ToolgenBroker(d).handleFetch("tg_a", { url: "https://api.example.com/v1" }),
+    ).rejects.toMatchObject({ code: "ERR_TOOLGEN_CREDENTIAL_REQUIRED" });
+    // A refusal that still hits the network is the original bug wearing a different exit code.
+    expect(fetched).toBe(0);
+  });
+
+  test("the refusal appends a blocked tool-class egress row", async () => {
+    const d = deps({
+      credentialHostsFor: () => ["api.example.com"],
+      readCredential: async () => null,
+    });
+    await expect(
+      new ToolgenBroker(d).handleFetch("tg_a", { url: "https://api.example.com/v1" }),
+    ).rejects.toMatchObject({ code: "ERR_TOOLGEN_CREDENTIAL_REQUIRED" });
+    expect(rows(d.db)).toEqual([{ destination: "api.example.com", result_status: "blocked" }]);
+  });
+
+  test("POSITIVE CONTROL -- the same host WITH a binding succeeds and carries the header", async () => {
+    let seen: Headers | undefined;
+    const d = deps({
+      credentialHostsFor: () => ["api.example.com"],
+      readCredential: async () => ({ type: "bearer" as const, token: "tok" }),
+      doFetch: async (_u: string, init: RequestInit) => {
+        seen = new Headers(init.headers);
+        return new Response("{}");
+      },
+    });
+    await new ToolgenBroker(d).handleFetch("tg_a", { url: "https://api.example.com/v1" });
+    expect(seen?.get("authorization")).toBe("Bearer tok");
+  });
+
+  test("a host NOT in credentialHosts with no binding proceeds uncredentialed -- the deliberate asymmetry", async () => {
+    // A blanket "no binding, no request" rule would break every tool that talks to a public API
+    // needing no credential at all -- this pins that the refusal is scoped to `credentialHosts`
+    // and does not widen into that blanket rule.
+    let fetched = 0;
+    const d = deps({
+      approvedHostsFor: () => ["public.example.com"],
+      credentialHostsFor: () => [],
+      readCredential: async () => null,
+      doFetch: async () => {
+        fetched++;
+        return new Response("{}");
+      },
+    });
+    await expect(
+      new ToolgenBroker(d).handleFetch("tg_a", { url: "https://public.example.com/v1" }),
+    ).resolves.toMatchObject({ status: 200 });
+    expect(fetched).toBe(1);
   });
 });

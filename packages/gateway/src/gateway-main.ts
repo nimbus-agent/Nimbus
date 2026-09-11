@@ -13,6 +13,7 @@ import { armGatewayLifecycleDiagnostics } from "./platform/exit-diagnostics.ts";
 import { removeGatewayStateFile, writeGatewayStateFile } from "./platform/gateway-state-file.ts";
 import { createPlatformServices } from "./platform/index.ts";
 import type { SandboxRunner } from "./platform/sandbox/sandbox-runner.ts";
+import { sweepToolgenCredentials } from "./toolgen/toolgen-credential-sweep.ts";
 import { removeAllToolScripts } from "./toolgen/toolgen-script-store.ts";
 import { GATEWAY_VERSION } from "./version.ts";
 
@@ -68,18 +69,52 @@ export function createChatOpsAskEngine(
  * unit-testable independent of `main()`'s process.exit/signal-handler machinery, the same reason
  * `createChatOpsAskEngine` above is not inlined either.
  *
- * BOTH halves matter, in order: `revokeAllToolgenRegistrations` clears the in-memory registry
+ * THREE parts matter, in order: `revokeAllToolgenRegistrations` clears the in-memory registry
  * (closing every live generated-tool child process); `removeAllToolScripts` clears the on-disk
- * ephemeral script store under the config dir. A drain that runs only the first LOOKS identical
- * to success from memory alone — the on-disk half is what a restart would otherwise still see.
+ * ephemeral script store under the config dir; `sweepToolgenCredentials` (Task 5) deletes every
+ * per-host generated-tool Vault credential still live at shutdown, retaining only the signing
+ * keypair. A drain that runs only the first two LOOKS identical to success from memory and disk
+ * alone — the Vault half is what a revoked-but-never-cleaned-up credential, or a tool that was
+ * simply still live when the process exited, would otherwise leave behind indefinitely in the OS
+ * keychain.
+ *
+ * **All THREE are attempted even when an earlier one rejects**, and the first failure is re-thrown
+ * only once the credential sweep has had its turn. A plain sequential `await` chain made the
+ * WEAKEST step decide the fate of the strongest: a `removeAllToolScripts` rejection — a locked
+ * `toolgen/ephemeral/<toolId>/index.ts` on Windows is the realistic trigger — skipped the Vault
+ * sweep, and the caller in `main()` swallows the rejection and exits, so generated-tool
+ * credentials stayed in the OS keychain until some later boot's sweep happened to succeed. The
+ * three drops are independent (memory, disk, keychain); nothing about one failing makes the next
+ * one wrong to attempt, and the keychain is the half whose residue outlives the process.
+ *
+ * Re-thrown, never swallowed: this function stays honest about failing and `main()`'s own
+ * try/catch is the single place that decides a shutdown drain is best-effort — one place, so the
+ * decision to ignore a cleanup failure cannot be made twice and drift.
  */
 export async function drainToolgenOnShutdown(deps: {
   readonly revokeAllToolgenRegistrations: () => Promise<void>;
   readonly removeAllToolScripts: (configDir: string) => Promise<void>;
+  readonly sweepToolgenCredentials: () => Promise<number>;
   readonly configDir: string;
 }): Promise<void> {
-  await deps.revokeAllToolgenRegistrations();
-  await deps.removeAllToolScripts(deps.configDir);
+  let firstError: unknown;
+  let failed = false;
+  const attempt = async (step: () => Promise<unknown>): Promise<void> => {
+    try {
+      await step();
+    } catch (err) {
+      if (!failed) {
+        failed = true;
+        firstError = err;
+      }
+    }
+  };
+
+  await attempt(() => deps.revokeAllToolgenRegistrations());
+  await attempt(() => deps.removeAllToolScripts(deps.configDir));
+  await attempt(() => deps.sweepToolgenCredentials());
+
+  if (failed) throw firstError;
 }
 
 export async function main(): Promise<void> {
@@ -261,6 +296,7 @@ export async function main(): Promise<void> {
       await drainToolgenOnShutdown({
         revokeAllToolgenRegistrations: () => platform.toolgenRegistry.revokeAll(),
         removeAllToolScripts,
+        sweepToolgenCredentials: () => sweepToolgenCredentials(platform.vault),
         configDir: platform.paths.configDir,
       });
     } catch {

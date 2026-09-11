@@ -169,6 +169,7 @@ import {
 import { quorumCoordinator } from "../engine/quorum/quorum-singleton.ts";
 import type { ConnectorDispatcher } from "../engine/types.ts";
 import { execConsent } from "../exec/exec-consent-broker.ts";
+import { resolveRuntimeById } from "../exec/exec-runtimes.ts";
 import { type AutoUpdateRuntime, createAutoUpdateRuntime } from "../extensions/auto-update-init.ts";
 import { verifyExtensionsBestEffort } from "../extensions/verify-extensions.ts";
 import { federationConsent } from "../federation/consent-broker.ts";
@@ -285,11 +286,14 @@ import {
 import { spawnTeamToolAndCall } from "../teamvault/team-tool-spawn.ts";
 import { TeamVaultStore } from "../teamvault/team-vault-store.ts";
 import { startTelemetryFlushScheduler } from "../telemetry/flush-scheduler.ts";
+import { reconcileSavedToolsOrWarn } from "../toolgen/toolgen-boot-reconcile.ts";
 import { ToolgenBroker } from "../toolgen/toolgen-broker.ts";
 import { spawnGeneratedTool } from "../toolgen/toolgen-client.ts";
 import { assertToolConfinement } from "../toolgen/toolgen-confinement.ts";
-import { toolgenConsent } from "../toolgen/toolgen-consent-broker.ts";
+import { toolgenConsent, toolgenSaveConsent } from "../toolgen/toolgen-consent-broker.ts";
+import { sweepToolgenCredentialsOrWarn } from "../toolgen/toolgen-credential-sweep.ts";
 import {
+  deleteCredentialsForTool,
   deleteToolCredential,
   readToolCredential,
   writeToolCredential,
@@ -302,6 +306,9 @@ import {
 import type { ToolgenGateDeps } from "../toolgen/toolgen-gate.ts";
 import { createEndpointFinder } from "../toolgen/toolgen-grounding.ts";
 import { ToolgenRegistry } from "../toolgen/toolgen-registry.ts";
+import type { ToolgenSaveDeps } from "../toolgen/toolgen-save-gate.ts";
+import { loadSavedToolsIntoRegistry } from "../toolgen/toolgen-saved-spawn.ts";
+import { removeSavedTool } from "../toolgen/toolgen-saved-store.ts";
 import {
   removeToolScript,
   toolScriptDir,
@@ -3804,12 +3811,93 @@ export async function assemblePlatformServices(
   // tightens the next registration rather than the next restart -- the same shape as execRpcCtx
   // and computerRpcCtx above.
   //
-  // `toolgenRegistry` is the ONE registry instance shared by three places: the gate (counts a
-  // session's budget and registers a live tool), the broker's `approvedHostsFor` (reads back the
-  // artifact the owner approved -- fail-closed `?? []` for an unknown/revoked toolId), and
-  // `PlatformServices.toolgenRegistry`, which `gateway-main.ts`'s shutdown drains.
+  // Boot-time sweep (Task 5): a generated tool is ephemeral by construction, and its Vault
+  // credential must be too. Run this BEFORE `toolgenRegistry` below is populated by anything, so
+  // it only ever cleans up what a PREVIOUS process left behind -- a crash between approval and
+  // registration, a kill signal that skipped the shutdown drain in `gateway-main.ts` entirely, or
+  // (belt-and-suspenders) a `toolgen.revoke`/shutdown sweep that itself failed partway. Nothing in
+  // this process could have written a `toolgen.`-prefixed credential yet at this point, so there
+  // is no live credential this can race.
+  //
+  // `...OrWarn`, not the bare sweep: `createPlatformServices()` is awaited unguarded at
+  // `gateway-main.ts`'s call site, so an unguarded Vault I/O failure here (a locked/temporarily
+  // inaccessible OS keychain) would abort the ENTIRE gateway boot over a bookkeeping pass --
+  // matching `appendBootMarkerOrWarn`/`reconcileOrphanedCuSessionsOrWarn` above.
+  await sweepToolgenCredentialsOrWarn(vault, syncLogger);
+
+  // Boot reconciliation for SAVED (persisted) generated tools (spec § 7.1, Task 8): re-verify every
+  // `generated_tool` row against the Vault's current signing pubkey, repairing/re-enabling what
+  // still verifies and disabling what does not, then sweep any `saved/<toolId>` directory with no
+  // row. Run AFTER the credential sweep above (so a stale credential is gone before anything reads
+  // saved-tool state) and BEFORE `toolgenRegistry` below is populated by anything -- this pass never
+  // spawns a child process and never registers a tool itself, it only updates the database and the
+  // `saved/` directory a later load reads from.
+  //
+  // `...OrWarn`, matching `sweepToolgenCredentialsOrWarn` immediately above: a database or
+  // filesystem failure here must not abort gateway boot over a health-check pass.
+  //
+  // Loaded HERE rather than at `toolgenRegistry` below, because both boot passes now read it: the
+  // `[tool_generation] enabled` kill switch and the org-policy lock-off have to reach the DURABLE
+  // half (reconcile + load), not only creation and saving, or turning the capability off leaves
+  // every already-approved saved tool loading and model-visible in every future session.
   const toolGenerationCfg = loadNimbusToolGenerationFromConfigDir(paths.configDir);
+  await reconcileSavedToolsOrWarn({
+    db,
+    configDir: paths.configDir,
+    vault,
+    logger: syncLogger,
+    config: toolGenerationCfg,
+    // An EAGER snapshot of `policyGate.enforced()`, deliberately NOT the lazy getter
+    // `toolgenGateDeps`/`toolgenSaveDeps` use below: both boot passes run synchronously right here,
+    // so "at the moment of the pass" and "at the moment of construction" are the same instant, and
+    // a getter would imply a re-read that never happens. `isToolgenCapabilityEnabled` fails CLOSED if
+    // this is ever `undefined`, so a policy layer that could not resolve disables the durable half
+    // rather than defaulting it on.
+    enforced: policyGate.enforced(),
+  });
+
+  // `toolgenRegistry` is the ONE registry instance shared by three places: the gate (counts a
+  // session's budget and registers a live tool), the broker's `approvedHostsFor` AND
+  // `credentialHostsFor` (both read back the same artifact the owner approved -- fail-closed
+  // `?? []` for an unknown/revoked toolId), and `PlatformServices.toolgenRegistry`, which
+  // `gateway-main.ts`'s shutdown drains.
   const toolgenRegistry = new ToolgenRegistry();
+
+  // Populate the registry's SAVED collection (Task 9, spec § 7.2) so a persisted tool is visible
+  // to every session, not only demonstrable in a unit test that calls `registerSaved` by hand.
+  // This RE-VERIFIES every row against the Vault's CURRENT pubkey rather than trusting
+  // `reconcileSavedToolsOrWarn`'s cached `disabled_reason` column -- see
+  // `loadSavedToolsIntoRegistry`'s docstring for why a health-report cache is never an authority a
+  // loader may rely on. It is still not the security GATE: `spawnSavedTool` (invoked wherever a
+  // saved tool is actually called) verifies a THIRD time before anything runs, and re-checks the
+  // reconstructed manifest against the signed shape besides -- this load only decides what the
+  // model and `nimbus tool list` are OFFERED.
+  //
+  // Wrapped, not `...OrWarn`-style delegated: a Vault or filesystem failure here must not abort
+  // gateway boot over saved-tool visibility, matching the credential sweep and reconciliation pass
+  // immediately above.
+  try {
+    await loadSavedToolsIntoRegistry(
+      {
+        db,
+        configDir: paths.configDir,
+        vault,
+        runtime: resolveRuntimeById("bun"),
+        // The same kill switch the reconcile pass above reads, for the same reason: this load is
+        // what makes a saved tool visible to `forSession` and therefore OFFERED to the model.
+        config: toolGenerationCfg,
+        enforced: policyGate.enforced(),
+      },
+      toolgenRegistry,
+    );
+  } catch (err) {
+    syncLogger.warn(
+      { err },
+      "toolgen: could not load saved tools into the registry this boot; they remain saved but " +
+        "are not visible until the next successful boot",
+    );
+  }
+
   const toolgenBroker = new ToolgenBroker({
     db,
     now: () => Date.now(),
@@ -3820,7 +3908,15 @@ export async function assemblePlatformServices(
     // The artifact the owner approved IS the source of truth for this list -- an unknown or
     // revoked toolId gets NO approved hosts (the `?? []`), so every request from it is refused
     // and ledgered `blocked` rather than falling back to some other notion of "approved".
-    approvedHostsFor: (toolId) => toolgenRegistry.get(toolId)?.artifact.approvedHosts ?? [],
+    // `findArtifact`, not `get`: a request may come from a SPAWNED SAVED tool (Task 12's
+    // `spawnSavedTool`), which lives in the registry's saved collection, not its ephemeral one --
+    // `get`'s `?? []` would refuse every host for such a tool regardless of what was approved.
+    approvedHostsFor: (toolId) => toolgenRegistry.findArtifact(toolId)?.approvedHosts ?? [],
+    // Mirrors `approvedHostsFor` immediately above: the SAME signed artifact (ephemeral or saved),
+    // the same fail-closed `?? []` for an unknown/revoked toolId, so an unregistered tool is
+    // refused for both reasons at once rather than being treated as "no credential was ever
+    // promised".
+    credentialHostsFor: (toolId) => toolgenRegistry.findArtifact(toolId)?.credentialHosts ?? [],
     // A bare pass-through, deliberately -- `redirect: "error"` is set by `toolgen-broker.ts`
     // itself on the `init` it builds, not here, so the guarantee travels with the broker's checks
     // rather than living in this one wiring site (see `ToolgenBroker.handleFetch`'s docstring).
@@ -3909,10 +4005,38 @@ export async function assemblePlatformServices(
     now: () => Date.now(),
     newId: () => randomUUID(),
   };
+  // Task 10's persistence surface. Shares `db` and `toolgenRegistry` with `toolgenGateDeps` above
+  // (a saved tool a session just created must be visible to a same-process `toolgen.save` call
+  // without a second lookup path) but owns its OWN approval broker (`toolgenSaveConsent`, never
+  // `toolgenConsent`) -- see `ToolgenRpcCtx.saveConsent`'s docstring for why reusing the create
+  // broker here would silently defeat the standing-approval distinction I40 exists to draw.
+  const toolgenSaveDeps: ToolgenSaveDeps = {
+    db,
+    configDir: paths.configDir,
+    config: toolGenerationCfg,
+    get enforced() {
+      return policyGate.enforced();
+    },
+    registry: toolgenRegistry,
+    vault,
+    requestApproval: (input, ttlMs) => toolgenSaveConsent.request(input, ttlMs),
+    now: () => Date.now(),
+  };
   ipcOpts.toolgenRpcCtx = {
     consent: toolgenConsent,
     gateDeps: toolgenGateDeps,
+    saveDeps: toolgenSaveDeps,
+    saveConsent: toolgenSaveConsent,
     removeScript: (toolId) => removeToolScript(paths.configDir, toolId),
+    // The DURABLE half of `toolgen.revoke`: `saved/<toolId>` -- body, artifact and signature. The
+    // matching `generated_tool` row is dropped by the handler itself, which already holds `db`.
+    // Without this pair, a revoked SAVED tool came straight back at the next boot and the standing
+    // approval the save prompt promised was revocable had no withdrawal path at all.
+    removeSavedDir: (toolId) => removeSavedTool(paths.configDir, toolId),
+    // Deletes every `toolgen.<toolId>.*` Vault key by prefix -- excluding the signing keypair's own
+    // `toolgen.signing.` prefix -- closing the leak where a revoked tool's per-host credential
+    // outlived both the tool and the gateway.
+    revokeCredentialsForTool: (toolId) => deleteCredentialsForTool(vault, toolId),
   };
 
   ipcOpts.glossaryRefresher = glossaryRefresher;
@@ -3941,6 +4065,15 @@ export async function assemblePlatformServices(
   // owner via the same broadcast channel; they answer through toolgen.approvalRespond.
   // UNCONDITIONAL for the same reason as share/exec above.
   toolgenConsent.setBroadcast((method, params) => ipc.broadcast(method, asBroadcastParams(params)));
+
+  // I40 (S2 toolgen persistence): the SEPARATE tool-SAVE approval prompt reaches the local owner
+  // via the same broadcast channel; they answer through toolgen.saveApprovalRespond. Without this
+  // binding `toolgenSaveConsent.request(...)` broadcasts to nobody and every `toolgen.save` call
+  // times out and is denied -- identical failure mode to the missing bindings share/exec/toolgen
+  // above already call out, on a SEPARATE broker instance from `toolgenConsent` immediately above.
+  toolgenSaveConsent.setBroadcast((method, params) =>
+    ipc.broadcast(method, asBroadcastParams(params)),
+  );
 
   // I35 (S2 slice 2): the computer-use approval prompts (session-open envelope + per-action) reach
   // the local owner via the same broadcast channel; they answer through computer.approvalRespond.

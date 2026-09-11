@@ -28,6 +28,16 @@ export interface ToolgenBrokerDeps {
   readonly resolveHost: (host: string) => Promise<readonly string[]>;
   readonly readCredential: (toolId: string, host: string) => Promise<ToolCredentialBinding | null>;
   readonly approvedHostsFor: (toolId: string) => readonly string[];
+  /**
+   * Hosts the owner was TOLD, at approval time, would carry a credential (the artifact's own
+   * `credentialHosts` — see `toolgen-types.ts`). Resolved from the SIGNED artifact, the same way
+   * `approvedHostsFor` is, and never from anything the tool itself supplies: the tool picks the
+   * URL, not which hosts are credentialed. A host on this list with no binding at request time
+   * (swept, revoked, never set) is refused rather than sent uncredentialed — see the `binding ===
+   * null` check in `handleFetch`. A host NOT on this list is unaffected either way: it was never
+   * promised a credential, so sending it without one is the design working, not a gap.
+   */
+  readonly credentialHostsFor: (toolId: string) => readonly string[];
   readonly doFetch: (url: string, init: RequestInit) => Promise<Response>;
 }
 
@@ -85,7 +95,8 @@ function applyCredential(headers: Record<string, string>, binding: ToolCredentia
  * The ONLY site that performs a generated tool's outbound request (invariant I39).
  *
  * Order is load-bearing: parse, then budget, then scheme, then approved-host match, then RESOLVE,
- * then the address check, then attach a credential, then LEDGER, then fetch. Every refusal past
+ * then the address check, then read the credential, then REFUSE if a promised one is missing,
+ * then attach it, then LEDGER, then fetch. Every refusal past
  * URL parsing appends a `blocked` row before throwing, so a refused destination is as visible in
  * `nimbus prove` as a successful one — a tool probing for reachable internal hosts leaves a trail
  * rather than silence. (A malformed URL itself appends nothing — the host isn't known yet, so
@@ -206,6 +217,22 @@ export class ToolgenBroker {
       return refuse(
         "ERR_TOOLGEN_CREDENTIAL_UNAVAILABLE",
         `failed to read the credential bound to ${host}: ${(err as Error).message}`,
+      );
+    }
+    // A host the owner was TOLD would carry a credential must never be reached without one. Before
+    // this check, a `null` binding fell straight through to `if (binding !== null)` below and the
+    // request went out unauthenticated -- reachable on every restart now that a saved tool's
+    // credentials no longer survive one (Task 5's boot/shutdown sweep). The asymmetry below is
+    // deliberate, not an oversight: a host OUTSIDE `credentialHosts` is uncredentialed BY DESIGN
+    // (a public API a tool talks to needs no binding at all) and must still proceed -- only a host
+    // the owner was explicitly told would carry one is refused for lacking it.
+    if (
+      binding === null &&
+      this.#deps.credentialHostsFor(toolId).some((h) => h.toLowerCase() === host)
+    ) {
+      return refuse(
+        "ERR_TOOLGEN_CREDENTIAL_REQUIRED",
+        `${host} requires a credential binding and none is set; run: nimbus tool credential set ${toolId} ${host} --bearer <token>`,
       );
     }
     if (binding !== null) applyCredential(headers, binding);

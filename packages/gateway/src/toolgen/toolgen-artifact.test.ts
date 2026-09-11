@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { artifactDigest, canonicalArtifactBytes } from "./toolgen-artifact.ts";
 import { validateInputSchema } from "./toolgen-schema.ts";
+import { buildGeneratedManifest } from "./toolgen-stub.ts";
 import type { GeneratedToolArtifact } from "./toolgen-types.ts";
 
 function artifact(overrides: Partial<GeneratedToolArtifact> = {}): GeneratedToolArtifact {
@@ -91,5 +92,53 @@ describe("canonical artifact", () => {
       inputSchema: validateInputSchema({ type: "object", properties: {}, required: [] }),
     });
     expect(artifactDigest(explicitEmpty)).toBe(artifactDigest(omitted));
+  });
+
+  test("artifact digest is stable across a change of script dir and runtime read paths", () => {
+    const base = {
+      toolId: "t1",
+      toolName: "t",
+      description: "d",
+      body: "return 1;",
+      approvedHosts: ["api.example.com"],
+      credentialHosts: [],
+      inputSchema: { type: "object", properties: {} },
+    } as const;
+    const a = {
+      ...base,
+      manifest: buildGeneratedManifest("t1", {
+        scriptDir: "/cfg/toolgen/ephemeral/t1",
+        runtimeReadPaths: ["/opt/bun/bin"],
+      }),
+    };
+    const b = {
+      ...base,
+      manifest: buildGeneratedManifest("t1", {
+        scriptDir: "/cfg/toolgen/saved/t1",
+        runtimeReadPaths: ["/usr/local/bun/bin", "/usr/local"],
+      }),
+    };
+    expect(artifactDigest(a)).toBe(artifactDigest(b));
+  });
+
+  test("digest still changes when a security-relevant field changes", () => {
+    const m = buildGeneratedManifest("t1", { scriptDir: "/cfg/x", runtimeReadPaths: [] });
+    const base = {
+      toolId: "t1",
+      toolName: "t",
+      description: "d",
+      body: "return 1;",
+      approvedHosts: ["api.example.com"],
+      credentialHosts: [],
+      inputSchema: { type: "object", properties: {} },
+      manifest: m,
+    } as const;
+    expect(artifactDigest(base)).not.toBe(artifactDigest({ ...base, body: "return 2;" }));
+    expect(artifactDigest(base)).not.toBe(
+      artifactDigest({ ...base, approvedHosts: ["evil.example.com"] }),
+    );
+    expect(artifactDigest(base)).not.toBe(
+      artifactDigest({ ...base, credentialHosts: ["api.example.com"] }),
+    );
   });
 });

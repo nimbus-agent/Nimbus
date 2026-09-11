@@ -953,8 +953,9 @@ The count is re-derived, not carried forward — and the denominator is the **sp
 rows, not the checkbox count below, which is six. **Shipped (5):** sandboxed code execution (the
 computer-use lanes are folded into that row rather than being a row of their own), multimodal I/O,
 bring-your-own-frontier-model routing, overnight sub-agent fleets (as of 2026-09-07, for **PR 1 of
-2**), and — as of 2026-09-10, for **PR 2 of 3** (drafting) — runtime tool generation. Every spine
-row has now shipped at least its first functional slice; none remain unstarted. The sixth checkbox, *Zoom recording frame captions*, is a recorded deferral belonging to the
+2**), and — as of 2026-09-10, closing at **PR 3 of 3** (persistence) — runtime tool generation.
+Every spine row has now shipped at least its first functional slice; none remain unstarted. The
+sixth checkbox, *Zoom recording frame captions*, is a recorded deferral belonging to the
 multimodal row; it is not a spine row and is not counted in either half.
 
 - [x] **Sandboxed code execution** — ✅ **shipped 2026-08-23** (`nimbus exec`, invariant **I33** + static **D23**, no schema change). The owner runs code inside the existing three-OS sandbox behind a HITL prompt showing the verbatim body; standing approvals remain unsupported. Delivered: the `exec/exec-gate.ts` chokepoint, a pluggable `ExecRuntime` registry, per-execution fs grants, wall-clock + output-cap kills, a `code.execute` audit row per outcome, `exec.run`/`exec.approvalRespond` over local IPC (whole namespace LAN-forbidden, absent from the Tauri allowlist), the default-off `[code_execution]` config, and the `[policy.capabilities.ai_v2]` org lockoff as a tighten-only disabled set serving every `ai_v2` capability (five at the time; six since `agent_fleet` landed 2026-09-07 — the set is derived from `AI_V2_CAPABILITIES`, so this row does not need editing again when a seventh arrives).
@@ -964,7 +965,79 @@ multimodal row; it is not a spine row and is not counted in either half.
   **Read the confinement claim narrowly — the browser does NOT spawn through `SandboxRunner`, and that is a deviation from the design spec's § 3.5 rather than an omission.** No PAL runner can carry a CDP control channel: a loopback debugging port needs `network-bind`, which macOS's `(deny default)` SBPL profile denies (it emits only `(remote …)` filters); the fd-pipe transport needs descriptors 3/4 forwarded, which the Windows AppContainer helper does not do; and Linux and Windows both additionally require `nimbus-sandbox-helper` for any network-bearing policy, a binary CI does not install. Making it work would mean widening the PAL profile for EVERY sandboxed connector, or passing Chromium `--no-sandbox` — disabling the renderer sandbox of the one process in this codebase that renders attacker-controlled content. The lane is confined instead by **Chromium's own multi-process sandbox** (a pre-consent assertion over the EXACT argv that spawns refuses `--no-sandbox` and its siblings), a **Nimbus-owned `--user-data-dir`** (an empty or relative profile directory is refused, because Chromium with no `--user-data-dir` runs against the owner's real profile), the **§ 3.5.1 CDP request policy**, and **headless + `Browser.setDownloadBehavior: deny`**. The former `browserLanePolicy` is gone: it was asserted against `canConfine` and never used to launch anything, and its `network: []` would have meant `--unshare-net` — no network at all, and no route to the browser's own CDP endpoint.
 
   **What still has NOT shipped.** The **terminal** lane shipped on 2026-09-01 as slice 2 — a sandboxed, line-oriented shell with no network at all and no egress class. The **screen** lane did not ship (slice 3), nor did its `opaque` egress marker or the `nimbus prove` indeterminacy verdict it requires. The capability remains **DEFAULT OFF with an EMPTY `allowed_lanes`** — `enabled = true` alone grants no lane, so a real user still hits `ERR_CU_DISABLED` then `ERR_CU_LANE_NOT_ALLOWED` before anything can run. Invariant **I11**'s screenshot bound is still **anticipated, not live**: bytes are hashed and discarded, the model receives only an outcome and a digest, and no vision-capable model is wired into the agent, so there is nothing on this path for an envelope to protect — the taint latch nonetheless taints by KIND rather than by content, in advance of a channel that does not exist yet. And § 3.5.1's own bound survives untouched: `script` and `image` subresources load from ANY origin (blocking either breaks the real web), so a `<script src>` or `<img src>` carrying a payload in its URL still exfiltrates — it is rowed by origin in the ledger, which makes it visible after the fact, not prevented. Detail: [Phase 14 § Stretch — Computer Use](#phase-14--agent-evolution--ai-v2).
-- [x] **Runtime tool generation** — **PR 2 of 3 shipped 2026-09-10: drafting.** `nimbus tool
+- [x] **Runtime tool generation** — **PR 3 of 3 shipped 2026-09-10: persistence, closing this row.**
+  `nimbus tool save <tool-id>` promotes a live, owner-approved generated tool to one that survives a
+  gateway restart. The owner's STANDING approval — a fact distinct from the ephemeral create-time
+  one (I39) — is captured through a SEPARATE consent broker (`toolgen.saveApprovalRequest`, never
+  the create-time `toolgen.approvalRequest`) over the verbatim body, then the § 4.5 canonical
+  artifact is signed with a Vault-only Ed25519 seed (`toolgen.signing.privkey`/`.pubkey`, generated
+  on first use) and written to `<configDir>/toolgen/saved/<toolId>/`. New invariant **I40** and
+  static rule **D29(d)**: `toolgen-saved-store.ts`'s `readVerifiedSavedTool` is the ONE accessor for
+  a saved artifact's ON-DISK bytes, and it re-verifies the live signature THREE times independently
+  — at boot (`toolgen-boot-reconcile.ts`, a health-report pass that also sweeps `saved/` directories
+  with no database row), when the registry loads saved tools into visibility
+  (`loadSavedToolsIntoRegistry`), and again immediately before the tool actually runs
+  (`spawnSavedTool` — implemented and integration-tested, but with NO production caller this
+  release, for the same reason `deps.toolgen` is unwired) — never trusting an earlier
+  pass's result or the `disabled_reason` column, which is a cache. New schema **V61**
+  (`generated_tool`): existence only, never content — the signed `artifact.json` plus its signature
+  is what proves the persisted bytes are the exact ones approved. **What signing defends, and does
+  not, stated plainly:** it defends the filesystem-write attacker (forging a signature needs the
+  Vault-held seed, which never touches disk or the database), not the Vault-read attacker, who can
+  forge one — a narrower, precise claim, not a restatement of `extensions/verify-extensions.ts`'s
+  existing hash-based tamper detection, which already covers every extension including this one.
+  **No saved tool's credential outlives it:** `sweepToolgenCredentials` deletes every per-host
+  generated-tool Vault credential (never the signing keypair) on shutdown AND boot — total by
+  design, since there is no "keep the saved ones" set to compute; a saved tool re-acquires what it
+  needs via `nimbus tool credential set`. Revoke closes the third window through the SIBLING
+  `deleteCredentialsForTool`, a per-tool prefix delete — the two now share one signing-prefix
+  exclusion (`TOOLGEN_SIGNING_KEY_PREFIX`), and `toolgen.revoke` also refuses the reserved tool id
+  `signing`, whose prefix IS that keypair's. **Revocation is the standing approval's withdrawal
+  path** and drops all four halves — live child, registry saved entry, `generated_tool` row,
+  `saved/<toolId>` directory — plus the ephemeral script and the Vault credentials, idempotently and
+  identically for a saved-only, ephemeral-only or both-halves tool; the save prompt promises exactly
+  this. **The `[tool_generation] enabled` kill switch and the org-policy lock-off reach the DURABLE
+  half too** (`toolgen-capability.ts`): both boot passes skip when the capability is off and
+  fail-closed when the policy accessor is absent, so no saved tool loads or is offered. The concrete
+  manifest's
+  `filesystem.read` (machine-derived, ephemeral paths) is deliberately dropped from what gets SIGNED
+  (`toolgen-portable-manifest.ts`) and is rebuilt fresh from code on every load/spawn instead —
+  proven end to end by an integration test that saves a tool in one gateway process, boots a SECOND,
+  wholly independent one against the same disk state, and spawns it there, plus a regression test
+  that a Bun-upgrade-shaped change to the runtime's required read paths between save and spawn does
+  not break the saved tool (it would under the REJECTED "sign the concrete manifest" design named in
+  the parent design spec's § 10, which this shipped design avoided precisely because a Bun upgrade
+  or a moved config directory must not present as tampering).
+
+  **Structurally offered, not model-reachable yet.** `toolgen-agent-tools.ts`'s `buildGeneratedTools`
+  — the function that would put a generated (ephemeral or saved) tool in front of the conversational
+  model — exists and is tested, but `engine/agent.ts`'s `NimbusEngineAgentDeps.toolgen` is optional
+  and its one production caller, `gateway-main.ts`'s `createNimbusEngineAgent(...)` call, never
+  supplies it. `nimbus tool create`/`save`/`list`/`revoke`/`credential set` therefore work end to
+  end, and a saved tool survives a restart and is spawnable IN-PROCESS (`spawnSavedTool`, exercised
+  end to end by this closing PR's own integration test across two independent gateway processes).
+  **No path INVOKES a generated tool this release** — there is no `toolgen.invoke` IPC method and no
+  CLI subcommand that calls one, and with `deps.toolgen` unwired the model cannot either; the cited
+  proof is an in-process test call, not a shipped surface. Same disclosure shape
+  `deps.computerUse` already carries for the identical reason.
+  Wiring `deps.toolgen` is a deliberate, undone decision, not an oversight: it would activate a
+  dormant capability (model-authored code becoming model-invocable) and is left for a human to
+  schedule.
+
+  **Agent-initiated proposal did not ship in this slice and is a named, reason-recorded deferral** —
+  the same treatment fleet's subject-enumeration PR 2b and the computer-use screen lane received,
+  not a middle PR that quietly evaporated. Every capability that DID ship across PR 1–3 is
+  OWNER-initiated (`nimbus tool create`, `nimbus tool save`); letting the MODEL itself propose a
+  network-reaching tool mid-conversation (`allow_agent_initiated` + `allowed_hosts`, a mid-turn
+  consent pause, an approval prompt disclosing the AGENT rather than the owner initiated it) is a
+  materially larger trust boundary and deserves its own consent-UX design pass — doubly so while
+  `deps.toolgen` above stays unwired, since an agent-proposed tool would otherwise have no
+  model-facing caller to reach anyway. See the parent design spec's § 10 for the corrected
+  delivery-split record (that section originally numbered this PR 2; it shipped as neither PR 2 nor
+  any other number in this slice). PR 3 design:
+  [`2026-09-10-s2-toolgen-persistence-design.md`](./superpowers/specs/2026-09-10-s2-toolgen-persistence-design.md).
+
+  **PR 2 — drafting — shipped 2026-09-10, ahead of this closing PR.** `nimbus tool
   create` now actually drafts a tool body via a model instead of refusing —
   `ERR_TOOLGEN_DRAFT_NOT_IMPLEMENTED` is gone. The model returns a body AND an input schema in one
   structured reply; the schema is INSIDE the artifact the owner approves (covered by the artifact
@@ -982,9 +1055,11 @@ multimodal row; it is not a spine row and is not counted in either half.
   therefore reaches the embedding vendor (ledgered `model`-class) on a remote-embedder install;
   `drafting = "off"` and a routeless machine refuse before that search runs — and the approval
   prompt discloses when nothing matched. `nimbus tool create --credential <host>=<token>` now actually transmits and
-  binds a BEARER credential per host at create time; `header`/`basic` bindings exist in the broker
-  but are reachable from no user-facing path this release, and `nimbus tool credential set` remains
-  a permanent refusal stub. No schema migration, no new invariant — PR 2 builds entirely on PR 1's
+  binds a BEARER credential per host at create time; `header`/`basic` bindings existed in the broker
+  but were reachable from no user-facing path *as of PR 2*, and `nimbus tool credential set` was a
+  refusal stub. **Both were superseded by PR 3 (above), which made `credential set` real and put all
+  three binding schemes on a user-facing path** — read this paragraph as the PR 2 record, not as
+  current state. No schema migration, no new invariant — PR 2 builds entirely on PR 1's
   I39 substrate. **The pre-consent confinement probe was rewritten in the same PR, and platform
   equality (non-negotiable #5) HOLDS.** The earlier probe made `nimbus tool create` refuse
   (`ERR_TOOLGEN_CONFINEMENT_FAILED`) before the owner was ever prompted on ALL THREE platforms, not
@@ -1004,9 +1079,10 @@ multimodal row; it is not a spine row and is not counted in either half.
   0.11.1, where the two toolgen integration cases failed before the change and pass after it; macOS
   is not verified on hardware and is the stated residual, though the sentinel shape is the one
   `test/integration/platform/sandbox/sandbox-wrapper-spawn.test.ts` already uses and passes with
-  there. **Not shipped:** agent-initiated tool proposal
-  (`allow_agent_initiated` + `allowed_hosts`) and persistence via `nimbus tool save` (PR 3, which
-  must resolve how I16's Ed25519 verification applies to a tool with no publisher). PR 2 design:
+  there. **Not shipped by PR 2** (both closed by PR 3 above, or recorded as a deferral there):
+  agent-initiated tool proposal, and persistence via `nimbus tool save` — which had to resolve how
+  I16's Ed25519 verification applies to a tool with no publisher, and did so with its own signing
+  scheme (I40) rather than reusing `verify-extensions.ts`'s `publisher` path. PR 2 design:
   [`2026-09-09-s2-toolgen-drafting-design.md`](./superpowers/specs/2026-09-09-s2-toolgen-drafting-design.md).
   **PR 1 detail follows.** ✅ **PR 1 of 3 shipped 2026-09-09: the SUBSTRATE.** Delivered: invariant
   **I39** + static rule **D29**, the tenth I29 coverage class `tool` at `per-call`, default-off

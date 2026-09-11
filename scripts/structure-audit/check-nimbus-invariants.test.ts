@@ -21,6 +21,7 @@ import {
   checkMediaGrantStoreConfinement,
   checkRemoteVlmConfinement,
   checkRunConfinedConfinement,
+  checkSavedToolAccessorConfinement,
   checkShareConsentBrokerConfinement,
   checkSharePublishConfinement,
   checkSpawnInvariant,
@@ -235,15 +236,19 @@ describe("D11 — checkVaultKeyAllowList", () => {
 });
 
 describe("D11 — VAULT_KEY_ALLOW_LIST is frozen at structural entries", () => {
-  test("VAULT_KEY_ALLOW_LIST has exactly 11 entries", () => {
+  test("VAULT_KEY_ALLOW_LIST has exactly 12 entries", () => {
     // 9 → 10: slice 2b adds ONLY `llm/vendor-vault-keys.ts`, which owns the vendor keyspace. The
     // `<vendor>.api_key` when resolving the credential per call. 10 → 11: the toolgen credential
     // store (`toolgen-credentials.ts`) composes the DYNAMIC `toolgen.<toolId>.<hostSlug>` keyspace
     // (D29(c)'s stated bound — a text scan cannot see it, capability confinement is the real
-    // defense, and this entry documents the keyspace). The count is frozen ON PURPOSE — a file
-    // gaining permission to construct a vault key is a decision, so it must be made deliberately in
-    // a commit that also explains it, never absorbed silently.
-    expect(VAULT_KEY_ALLOW_LIST).toHaveLength(11);
+    // defense, and this entry documents the keyspace). 11 → 12: `toolgen-keypair.ts` (I40) holds
+    // the STATIC `toolgen.signing.privkey` / `toolgen.signing.pubkey` literals — unlike
+    // `toolgen-credentials.ts`'s dynamic per-host keys directly above, the audit's literal scan
+    // genuinely sees these, so this entry is real enforcement rather than keyspace documentation.
+    // The count is frozen ON PURPOSE — a file gaining permission to construct a vault key is a
+    // decision, so it must be made deliberately in a commit that also explains it, never absorbed
+    // silently.
+    expect(VAULT_KEY_ALLOW_LIST).toHaveLength(12);
   });
 });
 
@@ -2116,6 +2121,81 @@ describe("D29(c) — toolgen. Vault-key prefix confinement (I39)", () => {
           // biome-ignore lint/suspicious/noTemplateCurlyInString: source-text fixture under audit
           "id: `toolgen.${toolId}`,",
         ),
+      ]),
+    ).toEqual([]);
+  });
+});
+
+describe("D29(d) — saved-tool accessor confinement (I40)", () => {
+  const file = (relPath: string, contents: string): FileEntry => ({ relPath, contents });
+  const store = "packages/gateway/src/toolgen/toolgen-saved-store.ts";
+  const elsewhere = "packages/gateway/src/toolgen/toolgen-rogue.ts";
+
+  test("allows the store defining and using its own private directory constant", () => {
+    expect(
+      checkSavedToolAccessorConfinement([
+        file(
+          store,
+          'const SAVED_DIR = "saved";\n' +
+            "export function savedToolDir(configDir, toolId) {\n" +
+            "  return join(configDir, STORE_DIR, SAVED_DIR, toolId);\n" +
+            "}",
+        ),
+      ]),
+    ).toEqual([]);
+  });
+
+  test("does NOT trip on the sanctioned accessor itself", () => {
+    expect(
+      checkSavedToolAccessorConfinement([
+        file(
+          elsewhere,
+          'import { readVerifiedSavedTool } from "./toolgen-saved-store.ts";\n' +
+            "const r = await readVerifiedSavedTool(configDir, toolId, pubkeyB64);",
+        ),
+      ]),
+    ).toEqual([]);
+  });
+
+  /**
+   * The must-fail fixture (task brief step 2): without this, the rule's green is
+   * indistinguishable from a rule that matches nothing at all — precisely the failure mode a
+   * `/toolgen[\\/]saved/` path-text form would have shipped silently, since zero such literals
+   * exist anywhere in this tree.
+   */
+  test("FAILS when the store's private directory constant is named outside the store", () => {
+    expect(
+      checkSavedToolAccessorConfinement([
+        file(elsewhere, 'const dir = join(configDir, "toolgen", SAVED_DIR, toolId);'),
+      ]),
+    ).toHaveLength(1);
+  });
+
+  test("FAILS on a hypothetical non-verifying accessor name", () => {
+    expect(
+      checkSavedToolAccessorConfinement([
+        file(
+          elsewhere,
+          "export function readSavedToolUnverified(dir) {\n" +
+            '  return JSON.parse(readFileSync(join(dir, "artifact.json"), "utf8"));\n' +
+            "}",
+        ),
+      ]),
+    ).toHaveLength(1);
+  });
+
+  test("FAILS on a hypothetical raw-artifact accessor name", () => {
+    expect(
+      checkSavedToolAccessorConfinement([
+        file(elsewhere, "export function rawSavedArtifact(dir) { return readFileSync(dir); }"),
+      ]),
+    ).toHaveLength(1);
+  });
+
+  test("a mention inside a comment does not trip it", () => {
+    expect(
+      checkSavedToolAccessorConfinement([
+        file(elsewhere, "// never add a rawSavedArtifact or readSavedToolUnverified helper here"),
       ]),
     ).toEqual([]);
   });

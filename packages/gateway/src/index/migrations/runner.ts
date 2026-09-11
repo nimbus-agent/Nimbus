@@ -32,6 +32,7 @@ import {
 import { V33_FEDERATION_SQL } from "../federation-v33-sql.ts";
 import { FLEET_V60_SQL } from "../fleet-v60-sql.ts";
 import { GDPR_V37_SQL } from "../gdpr-v37-sql.ts";
+import { GENERATED_TOOL_V61_SQL } from "../generated-tool-v61-sql.ts";
 import { V32_GIT_BLAME_LINE_SQL } from "../git-blame-line-v32-sql.ts";
 import { GLOSSARY_MANUAL_V46_SQL } from "../glossary-manual-v46-sql.ts";
 import { GLOSSARY_V45_SQL } from "../glossary-v45-sql.ts";
@@ -565,6 +566,7 @@ const INDEXED_SCHEMA_STEPS: readonly IndexedSchemaStep[] = [
   simpleStep(57, 58, "multimodal understanding pass cursor", MEDIA_PASS_V58_SQL),
   simpleStep(58, 59, "multimodal remote-model grants", MEDIA_GRANT_V59_SQL),
   simpleStep(59, 60, "agent fleet scheduling", FLEET_V60_SQL),
+  simpleStep(60, 61, "saved generated tools (persistence + signing)", GENERATED_TOOL_V61_SQL),
 ];
 
 /**

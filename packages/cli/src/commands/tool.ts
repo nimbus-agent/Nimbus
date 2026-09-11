@@ -35,6 +35,7 @@ export type ParsedToolArgs =
     }
   | { readonly sub: "list"; readonly json: boolean }
   | { readonly sub: "revoke"; readonly toolId: string }
+  | { readonly sub: "save"; readonly toolId: string }
   | {
       readonly sub: "credential-set";
       readonly toolId: string;
@@ -47,6 +48,7 @@ const USAGE = [
   "                           [--credential <host>=<token>]...",
   "       nimbus tool list [--json]",
   "       nimbus tool revoke <tool-id>",
+  "       nimbus tool save <tool-id>",
   "       nimbus tool credential set <tool-id> <host>",
   "                           (--bearer <token> | --header <name> <value> | --basic <user> <pass>)",
 ].join("\n");
@@ -136,6 +138,14 @@ function parseRevokeArgs(rest: readonly string[]): Extract<ParsedToolArgs, { sub
     throw new Error(`nimbus tool revoke: a tool id is required\n${USAGE}`);
   }
   return { sub: "revoke", toolId };
+}
+
+function parseSaveArgs(rest: readonly string[]): Extract<ParsedToolArgs, { sub: "save" }> {
+  const toolId = rest[0];
+  if (toolId === undefined || toolId.startsWith("--")) {
+    throw new Error(`nimbus tool save: a tool id is required\n${USAGE}`);
+  }
+  return { sub: "save", toolId };
 }
 
 /**
@@ -231,6 +241,8 @@ export function parseToolArgs(argv: readonly string[]): ParsedToolArgs {
       return parseListArgs(rest);
     case "revoke":
       return parseRevokeArgs(rest);
+    case "save":
+      return parseSaveArgs(rest);
     case "credential": {
       const [action, ...credRest] = rest;
       if (action !== "set") {
@@ -610,6 +622,15 @@ export interface ToolListEntry {
   readonly approvedHosts: readonly string[];
   readonly credentialHosts: readonly string[];
   readonly approvedAt: number;
+  /** Whether this is a PERSISTED tool (survives a gateway restart) vs an ephemeral one. */
+  readonly saved: boolean;
+  /** A saved tool whose credentialed hosts have no CURRENT Vault binding -- true after every
+   * restart until the owner re-binds with `nimbus tool credential set` (spec § 8.3/8.4). Always
+   * `false` for an ephemeral tool. */
+  readonly needsCredentials: boolean;
+  /** Why a SAVED tool is not currently loadable (`signature_mismatch`, `pubkey_rotated`, ...) --
+   * `null` for a healthy saved tool and for every ephemeral one. */
+  readonly disabledReason: string | null;
 }
 
 function toToolListEntry(raw: unknown): ToolListEntry | undefined {
@@ -630,6 +651,12 @@ function toToolListEntry(raw: unknown): ToolListEntry | undefined {
     approvedHosts: strs(r["approvedHosts"]),
     credentialHosts: strs(r["credentialHosts"]),
     approvedAt,
+    // Malformed/absent degrades to the SAFER, less-alarming reading for each field: not saved,
+    // not needing a credential, no disabled reason -- an older or malformed gateway response must
+    // not manufacture a health warning nobody sent.
+    saved: r["saved"] === true,
+    needsCredentials: r["needsCredentials"] === true,
+    disabledReason: typeof r["disabledReason"] === "string" ? r["disabledReason"] : null,
   };
 }
 
@@ -647,8 +674,15 @@ export function renderToolList(entries: readonly ToolListEntry[]): string {
       const when = Number.isFinite(approvedAt.getTime())
         ? approvedAt.toISOString()
         : `unknown (${String(e.approvedAt)})`;
+      const kind = e.saved ? "saved" : "ephemeral";
+      const health =
+        e.disabledReason !== null
+          ? `  [DISABLED: ${e.disabledReason}]`
+          : e.needsCredentials
+            ? "  [needs credentials -- nimbus tool credential set]"
+            : "";
       return (
-        `  ${e.toolId}  ${e.toolName} — ${e.description}\n` +
+        `  ${e.toolId}  ${e.toolName} — ${e.description}  (${kind})${health}\n` +
         `      hosts: ${list(e.approvedHosts)}  credential hosts: ${list(e.credentialHosts)}  approved: ${when}`
       );
     })
@@ -687,15 +721,173 @@ async function runRevokeCmd(
   deps: RunToolDeps,
 ): Promise<void> {
   try {
-    // `toolgen.revoke` drops BOTH halves server-side -- `registry.revoke` (closes the live child)
-    // AND `removeScript` (drops the approved body from disk) -- see `ipc/toolgen-rpc.ts`'s
-    // `ToolgenRpcCtx.removeScript` doc comment. This command's job is only to call the one RPC that
-    // does both; there is no separate "drop the script" step for the CLI to forget, because the CLI
-    // never touches the gateway's config dir directly.
-    await deps.runWithClient(async (c) => {
-      await c.call("toolgen.revoke", { toolId: parsed.toolId });
+    // `toolgen.revoke` drops EVERY half server-side in one call -- the live child
+    // (`registry.revoke`), the registry's saved entry, the `generated_tool` row, the
+    // `saved/<toolId>` directory, the approved ephemeral script, and every Vault credential bound
+    // to the tool -- see `ipc/toolgen-rpc.ts`'s `toolgen.revoke` doc comment. This command's job is
+    // only to call that one RPC; there is no separate step for the CLI to forget, because the CLI
+    // never touches the gateway's config dir or database directly.
+    //
+    // `savedRemoved` is surfaced because this command is the WITHDRAWAL PATH the save prompt names
+    // ("...until you `nimbus tool revoke` it"). An owner withdrawing a standing approval should be
+    // told that a durable one was actually found and dropped, not just that a call succeeded.
+    const savedRemoved = await deps.runWithClient(async (c) => {
+      const res = await c.call("toolgen.revoke", { toolId: parsed.toolId });
+      return (res as { savedRemoved?: unknown } | null)?.savedRemoved === true;
     });
-    deps.sink.out(`Revoked ${parsed.toolId}.\n`);
+    deps.sink.out(
+      savedRemoved === true
+        ? `Revoked ${parsed.toolId}. Its saved copy is gone; it will not return after a restart.\n`
+        : `Revoked ${parsed.toolId}.\n`,
+    );
+  } catch (e) {
+    deps.sink.err(`${e instanceof Error ? e.message : String(e)}\n`);
+    deps.setExitCode(TOOL_EXIT_CODES.refused);
+  }
+}
+
+/** What `toolgen.save` resolves to, mirroring the gateway's `ToolgenSaveOutcome`. */
+export interface ToolSaveOutcomeShape {
+  readonly status: string;
+  readonly code?: string;
+  readonly toolId?: string;
+}
+
+/**
+ * Map a `toolgen.save` outcome to a process exit code. `already_saved` and `repaired` are BOTH
+ * success -- neither made a fresh consent decision (`toolgen-save-gate.ts`'s `hitlStatusFor`
+ * docstring), but from the owner's point of view nothing went wrong either time: the tool is
+ * durably saved either way. An unrecognised status maps to `refused`, never 0, matching
+ * `exitCodeForTool`'s identical rule.
+ */
+export function exitCodeForSave(outcome: ToolSaveOutcomeShape): number {
+  if (
+    outcome.status === "saved" ||
+    outcome.status === "already_saved" ||
+    outcome.status === "repaired"
+  ) {
+    return 0;
+  }
+  if (outcome.status === "denied") return TOOL_EXIT_CODES.denied;
+  return TOOL_EXIT_CODES.refused;
+}
+
+/** Write a `toolgen.save` outcome to the user. Pure over an injected sink, matching
+ * `renderToolOutcome`'s split. */
+export function renderToolSaveOutcome(outcome: ToolSaveOutcomeShape, sink: OutcomeSink): void {
+  switch (outcome.status) {
+    case "saved":
+      sink.out(
+        `Tool saved: ${outcome.toolId ?? "(unknown id)"}. It will now survive a gateway restart.\n`,
+      );
+      return;
+    case "already_saved":
+      sink.out(
+        `Tool ${outcome.toolId ?? "(unknown id)"} is already saved with these exact contents; nothing to do.\n`,
+      );
+      return;
+    case "repaired":
+      sink.out(
+        `Tool ${outcome.toolId ?? "(unknown id)"}'s saved copy was repaired -- its content was already approved.\n`,
+      );
+      return;
+    case "denied":
+      sink.err("nimbus: tool save denied\n");
+      return;
+    default:
+      sink.err(`nimbus: save refused (${outcome.code ?? "unknown"})\n`);
+      return;
+  }
+}
+
+/**
+ * What a `toolgen.saveApprovalRequest` broadcast asks the owner to approve. Reuses
+ * `ToolApprovalPrompt`'s shape (the fields are identical -- `persistence` adds no new datum to
+ * DISPLAY, only a different meaning for the same body/hosts/schema) but renders under a DIFFERENT
+ * title and with an EXTRA disclosure: this is a STANDING approval, not a one-off run, and
+ * under-showing that distinction here would defeat the whole reason `toolgen.save` uses its own
+ * broker and broadcast method rather than reusing `toolgen.create`'s (spec § 6.1).
+ */
+export function formatToolSaveApprovalPrompt(p: ToolApprovalPrompt): string {
+  return [
+    `Persist the generated tool "${p.toolName}" so it runs in EVERY future session --`,
+    "without being asked again?",
+    "",
+    `  description: ${p.description}`,
+    "",
+    p.body,
+    "",
+    `  parameters:       ${formatParams(p.inputSchema)}`,
+    `  grounding:        ${formatGrounding(p.grounding)}`,
+    "",
+    `  hosts:            ${list(p.approvedHosts)}`,
+    `  credential hosts: ${list(p.credentialHosts)}`,
+    "",
+    "  note: an approved host may receive anything this tool can compute. The host list bounds",
+    "        WHERE it may send, never WHAT.",
+    "",
+    "  note: THIS IS A STANDING APPROVAL, different from running the tool once. Approving means",
+    "        it will run, unattended, in every future gateway session until you",
+    "        `nimbus tool revoke` it. Its Vault credentials do NOT survive a restart -- re-bind",
+    "        them with `nimbus tool credential set` when this tool needs one again.",
+  ].join("\n");
+}
+
+/**
+ * Answer one `toolgen.saveApprovalRequest` broadcast. Mirrors `handleToolApprovalBroadcast` field
+ * for field, over the SAVE prompt's renderer and the SAVE broker's own respond method
+ * (`toolgen.saveApprovalRespond`, wired by the caller) -- never `toolgen.approvalRespond`.
+ */
+export async function handleToolSaveApprovalBroadcast(
+  params: unknown,
+  ask: (message: string) => Promise<unknown>,
+  respond: (requestId: string, approved: boolean) => Promise<unknown>,
+): Promise<void> {
+  const p = (params ?? {}) as ToolApprovalBroadcast;
+  if (typeof p.requestId !== "string" || p.requestId === "") return;
+
+  const strs = (v: unknown): string[] =>
+    Array.isArray(v) && v.every((e) => typeof e === "string") ? [...(v as string[])] : [];
+
+  const answer = await ask(
+    formatToolSaveApprovalPrompt({
+      toolName: typeof p.toolName === "string" ? p.toolName : "unknown",
+      description: typeof p.description === "string" ? p.description : "",
+      body: typeof p.body === "string" ? p.body : "",
+      approvedHosts: strs(p.approvedHosts),
+      credentialHosts: strs(p.credentialHosts),
+      inputSchema: toToolInputSchema(p.inputSchema),
+      grounding: toDraftGrounding(p.grounding),
+    }),
+  );
+  await respond(p.requestId, !isCancel(answer) && answer === true);
+}
+
+async function runSaveCmd(
+  parsed: Extract<ParsedToolArgs, { sub: "save" }>,
+  deps: RunToolDeps,
+): Promise<void> {
+  // Same posture as create: `toolgen.save` is LAN-forbidden and local-only, and a STANDING
+  // approval is not something a piped "y" may ever grant.
+  if (!deps.isInteractiveTty()) {
+    deps.sink.err("error: nimbus tool save needs an interactive TTY for owner approval.\n");
+    deps.sink.err("There is no headless path: toolgen.save is LAN-forbidden and local-only.\n");
+    deps.setExitCode(TOOL_EXIT_CODES.refused);
+    return;
+  }
+
+  try {
+    const outcome = await deps.runWithClient(async (c) => {
+      c.onNotification("toolgen.saveApprovalRequest", (params: unknown) =>
+        handleToolSaveApprovalBroadcast(params, deps.ask, (requestId, approved) =>
+          c.call("toolgen.saveApprovalRespond", { requestId, approved }),
+        ),
+      );
+      return (await c.call("toolgen.save", { toolId: parsed.toolId })) as ToolSaveOutcomeShape;
+    });
+
+    renderToolSaveOutcome(outcome, deps.sink);
+    deps.setExitCode(exitCodeForSave(outcome));
   } catch (e) {
     deps.sink.err(`${e instanceof Error ? e.message : String(e)}\n`);
     deps.setExitCode(TOOL_EXIT_CODES.refused);
@@ -703,25 +895,33 @@ async function runRevokeCmd(
 }
 
 /**
- * `nimbus tool credential set` REFUSES a live tool, unconditionally and without contacting the
- * gateway. `toolgen.create`'s wire contract binds credentials at CREATE time, before the toolId
- * exists (so the approval prompt can name a real `credentialHosts` list) -- there is no gateway
- * method that adds one to an already-registered tool. Even if there were, doing so would change the
- * artifact the owner already approved (`credentialHosts` sits inside the hashed/signed object
- * precisely so a change invalidates the approval), which is the exact widening this whole gate
- * exists to prevent. The fix is always the same: revoke and recreate with the credential included.
+ * Binds a credential to a host the named tool was ALREADY approved to reach (spec § 8.3) -- the
+ * fix for a saved tool that lost its Vault binding across a restart, and the first user-facing
+ * path for `header`/`basic` bindings (their parser has existed since PR 1; only `bearer` had
+ * anywhere to go). Never widens the tool's approved scope from here: `credentialHosts` lives
+ * inside the signed artifact, so a host outside it is refused server-side
+ * (`ERR_TOOLGEN_CREDENTIAL_HOST_UNKNOWN`) rather than silently accepted.
+ *
+ * This REPLACES the permanent refusal stub that shipped in PR 1/2 -- there is no live tool this
+ * command cannot reach anymore; "revoke and recreate" is no longer the only path.
  */
-function runCredentialSetCmd(
+async function runCredentialSetCmd(
   parsed: Extract<ParsedToolArgs, { sub: "credential-set" }>,
   deps: RunToolDeps,
-): void {
-  deps.sink.err("error: cannot add a credential to an already-approved (live) tool.\n");
-  deps.sink.err(
-    "       Credentials are bound only at create time: nimbus tool create --credential\n" +
-      "       <host>=<token>. Revoke this tool and recreate it with the credential included:\n" +
-      `       nimbus tool revoke ${parsed.toolId}\n`,
-  );
-  deps.setExitCode(TOOL_EXIT_CODES.refused);
+): Promise<void> {
+  try {
+    await deps.runWithClient(async (c) => {
+      await c.call("toolgen.credentialSet", {
+        toolId: parsed.toolId,
+        host: parsed.host,
+        binding: parsed.scheme,
+      });
+    });
+    deps.sink.out(`Credential bound for ${parsed.toolId} @ ${parsed.host}.\n`);
+  } catch (e) {
+    deps.sink.err(`${e instanceof Error ? e.message : String(e)}\n`);
+    deps.setExitCode(TOOL_EXIT_CODES.refused);
+  }
 }
 
 export async function runTool(args: string[], deps: RunToolDeps = defaultDeps): Promise<void> {
@@ -744,8 +944,11 @@ export async function runTool(args: string[], deps: RunToolDeps = defaultDeps): 
     case "revoke":
       await runRevokeCmd(parsed, deps);
       return;
+    case "save":
+      await runSaveCmd(parsed, deps);
+      return;
     case "credential-set":
-      runCredentialSetCmd(parsed, deps);
+      await runCredentialSetCmd(parsed, deps);
       return;
   }
 }

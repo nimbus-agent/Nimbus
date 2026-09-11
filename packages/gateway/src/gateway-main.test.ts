@@ -70,10 +70,11 @@ describe("createChatOpsAskEngine", () => {
 });
 
 // S2 runtime tool generation (I39): "ephemeral means ephemeral" has two halves -- the in-memory
-// registry and the on-disk script store -- and a drain that clears only one LOOKS identical to
-// success when all you can see is that the process exited cleanly.
+// registry, the on-disk script store, and (Task 5) the Vault credential sweep -- and a drain that
+// clears only some of them LOOKS identical to success when all you can see is that the process
+// exited cleanly.
 describe("drainToolgenOnShutdown", () => {
-  test("calls BOTH the registry revoke and the on-disk script removal", async () => {
+  test("calls all THREE, in order: registry revoke, on-disk script removal, Vault credential sweep", async () => {
     const calls: string[] = [];
     await drainToolgenOnShutdown({
       revokeAllToolgenRegistrations: async () => {
@@ -82,13 +83,27 @@ describe("drainToolgenOnShutdown", () => {
       removeAllToolScripts: async (configDir) => {
         calls.push(`removeAllToolScripts:${configDir}`);
       },
+      sweepToolgenCredentials: async () => {
+        calls.push("sweepCredentials");
+        return 0;
+      },
       configDir: "/tmp/nimbus-config",
     });
-    expect(calls).toEqual(["revokeAll", "removeAllToolScripts:/tmp/nimbus-config"]);
+    expect(calls).toEqual([
+      "revokeAll",
+      "removeAllToolScripts:/tmp/nimbus-config",
+      "sweepCredentials",
+    ]);
   });
 
-  test("propagates a failure from removeAllToolScripts rather than swallowing it silently", async () => {
+  // The three drops are independent (memory, disk, keychain), and the keychain is the one whose
+  // residue OUTLIVES the process. A sequential `await` chain let the weakest step decide the fate
+  // of the strongest: a locked ephemeral script on Windows skipped the Vault sweep entirely, and
+  // `main()`'s own try/catch then swallowed the rejection and exited, so every generated-tool
+  // credential stayed in the OS keychain until some later boot's sweep happened to succeed.
+  test("a failure in removeAllToolScripts STILL reaches the credential sweep, and is surfaced afterwards", async () => {
     let revoked = false;
+    let swept = false;
     await expect(
       drainToolgenOnShutdown({
         revokeAllToolgenRegistrations: async () => {
@@ -97,16 +112,23 @@ describe("drainToolgenOnShutdown", () => {
         removeAllToolScripts: async () => {
           throw new Error("disk error");
         },
+        sweepToolgenCredentials: async () => {
+          swept = true;
+          return 0;
+        },
         configDir: "/tmp/nimbus-config",
       }),
     ).rejects.toThrow("disk error");
     // The registry half still ran before the failing half -- shutdown's own try/catch is what
     // makes the overall drain best-effort, not this function.
     expect(revoked).toBe(true);
+    // The half that matters: the keychain is swept even though the disk half failed.
+    expect(swept).toBe(true);
   });
 
-  test("propagates a failure from the registry revoke, and never reaches removeAllToolScripts", async () => {
+  test("a failure in the registry revoke STILL reaches removeAllToolScripts and the credential sweep", async () => {
     let scriptsRemoved = false;
+    let swept = false;
     await expect(
       drainToolgenOnShutdown({
         revokeAllToolgenRegistrations: async () => {
@@ -115,9 +137,57 @@ describe("drainToolgenOnShutdown", () => {
         removeAllToolScripts: async () => {
           scriptsRemoved = true;
         },
+        sweepToolgenCredentials: async () => {
+          swept = true;
+          return 0;
+        },
         configDir: "/tmp/nimbus-config",
       }),
     ).rejects.toThrow("registry error");
-    expect(scriptsRemoved).toBe(false);
+    expect(scriptsRemoved).toBe(true);
+    expect(swept).toBe(true);
+  });
+
+  // Two failures at once: the caller must see the FIRST one (the diagnosis), not whichever
+  // happened to fail last -- and the sweep between them must still have run.
+  test("with TWO failing steps, the FIRST failure is the one surfaced and the sweep still ran", async () => {
+    let swept = false;
+    await expect(
+      drainToolgenOnShutdown({
+        revokeAllToolgenRegistrations: async () => {
+          throw new Error("first-failure");
+        },
+        removeAllToolScripts: async () => {
+          throw new Error("second-failure");
+        },
+        sweepToolgenCredentials: async () => {
+          swept = true;
+          return 0;
+        },
+        configDir: "/tmp/nimbus-config",
+      }),
+    ).rejects.toThrow("first-failure");
+    expect(swept).toBe(true);
+  });
+
+  test("propagates a failure from the credential sweep itself, after both earlier steps completed", async () => {
+    let revoked = false;
+    let scriptsRemoved = false;
+    await expect(
+      drainToolgenOnShutdown({
+        revokeAllToolgenRegistrations: async () => {
+          revoked = true;
+        },
+        removeAllToolScripts: async () => {
+          scriptsRemoved = true;
+        },
+        sweepToolgenCredentials: async () => {
+          throw new Error("vault error");
+        },
+        configDir: "/tmp/nimbus-config",
+      }),
+    ).rejects.toThrow("vault error");
+    expect(revoked).toBe(true);
+    expect(scriptsRemoved).toBe(true);
   });
 });

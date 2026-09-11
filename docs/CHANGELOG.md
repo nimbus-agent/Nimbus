@@ -8,6 +8,127 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
 
 ## Post-Phase-6 deliveries
 
+- **2026-09-10 — Runtime tool generation, PR 3 of 3: persistence, closing the row.**
+  `nimbus tool save <tool-id>` promotes a live, owner-approved generated tool (created via PR 2's
+  drafting, below) to one that survives a gateway restart. Persisting is a STANDING approval,
+  distinct from PR 1's ephemeral create-time one: it consents to "run this in every future session,
+  unattended, without being asked again," which create-time consent never covered, so it prompts
+  fresh — over the VERBATIM body, never a digest — through a SEPARATE consent broker
+  (`ToolgenSaveConsentBroker`'s `toolgen.saveApprovalRequest`, never PR 1's
+  `toolgen.approvalRequest`), skipped only for a digest-matching REPAIR of bytes already approved
+  once.
+
+  **New invariant I40 and static rule D29(d).** The canonical artifact (§ 4.5's shape) is signed
+  with a Vault-only Ed25519 seed (`toolgen.signing.privkey` / `.pubkey`, generated on first use,
+  never returned over IPC/HTTP or logged) and written — script, then artifact, then signature LAST
+  — to `<configDir>/toolgen/saved/<toolId>/`. `toolgen-saved-store.ts`'s `readVerifiedSavedTool` is
+  the ONE accessor in the codebase for a saved tool's ON-DISK artifact bytes
+  (D29(d) — `parseCanonicalArtifact` reads the row's cached `artifact_json` COLUMN unverified for
+  DISPLAY of a disabled row that by definition cannot verify, which is stated at both the store and
+  in I40 rather than left as an exception to an absolute claim), and it re-verifies the LIVE
+  signature independently at three points, never trusting an
+  earlier pass or the `generated_tool.disabled_reason` column (a health-report cache for
+  `nimbus tool list`, never an authority): at boot (`toolgen-boot-reconcile.ts`, which also sweeps
+  `saved/<toolId>` directories with no database row — a directory is never adopted, since a valid
+  signature proves an artifact was approved ONCE, not that it is approved NOW), when the registry
+  loads saved tools into visibility (`loadSavedToolsIntoRegistry` — visibility only; this pass
+  spawns NOTHING, so N saved tools never means N child processes at login), and a third time
+  immediately before the tool actually runs (`spawnSavedTool`, which also re-emits `index.ts` from
+  the VERIFIED body — the on-disk script is never read, hashed or trusted, so tampering with it is
+  irrelevant rather than merely detected; note that `spawnSavedTool` has no production caller this
+  release, for the same reason `deps.toolgen` is unwired, so the third verify is implemented and
+  integration-tested rather than live). **What signing defends, stated narrowly, not softened:**
+  the gateway already re-hashes every extension's bytes at startup and disables one whose bytes
+  changed (`extensions/verify-extensions.ts`), so on-disk tamper detection between sessions is NOT
+  new here. The real, narrower claim: hash verification trusts the database, a signature trusts
+  only the Vault — an attacker with filesystem write access holds both the artifact and the DB and
+  rewrites both consistently, but forging the signature needs the seed, which never touches disk or
+  the DB. **This defends the filesystem-write attacker, not the Vault-read attacker — anyone who
+  can read the Vault can forge a signature, and this invariant claims nothing against them.**
+
+  **New schema V61** (`generated_tool`): governs EXISTENCE only, never content — `artifact_json`
+  plus `signature` is what proves the persisted bytes are exactly the ones approved, and that
+  verification happens at the store, not the row. `pubkey` is stored per row (not read from current
+  Vault state at load time) so a Vault key rotation reports as the disclosed `pubkey_rotated`
+  reason rather than masquerading as tampering (`signature_mismatch`).
+
+  **The concrete manifest's `filesystem.read` is deliberately dropped from what gets signed**
+  (`toolgen-portable-manifest.ts`'s `toPortableManifest`) and is rebuilt fresh from code on every
+  load and spawn instead, because those paths are machine-derived (the ephemeral script directory,
+  the Bun install location) — signing them would make a Bun upgrade, a moved config directory, or
+  simply a different OS present as a signature mismatch, a tampering warning for an event that is
+  not tampering. `assertConcreteManifestMatches` proves the rebuild did not WIDEN anything the
+  signature actually covers (network and filesystem-write must both still be empty) without
+  freezing the read set to whatever it happened to be at save time. Proven end to end, not merely
+  argued: an integration test saves a tool in one gateway process (its own `Database`,
+  `ToolgenRegistry`, `ToolgenBroker`, `SandboxRunner`), shuts it down completely, then boots a
+  SECOND, wholly independent gateway against the same `configDir`/database file, reconciles, loads,
+  spawns, and gets a real answer back through its own broker — plus a REGRESSION test that a
+  Bun-upgrade-shaped change to the runtime's required read paths between save and spawn does not
+  break the saved tool (it would under the REJECTED "sign the concrete manifest" design this PR's
+  parent design spec named and rejected — demonstrated by temporarily reverting the shipped
+  behavior and confirming that exact test then fails).
+
+  **No saved tool's credential outlives it.** `sweepToolgenCredentials` deletes every per-host
+  generated-tool Vault credential (never the signing keypair) on gateway shutdown AND gateway boot
+  — total by design rather than selective, since there is no "keep the saved ones" set to compute:
+  a saved tool's APPROVAL persists across a restart, its per-host CREDENTIAL never does, and it
+  re-acquires whatever it needs via `nimbus tool credential set`. `toolgen.revoke` closes the third
+  window through the SIBLING `deleteCredentialsForTool`, a per-tool prefix delete rather than the
+  total sweep — a distinction worth naming, because the two once differed on whether they excluded
+  the signing keypair's own `toolgen.signing.` prefix. They now share one constant
+  (`TOOLGEN_SIGNING_KEY_PREFIX`), and `toolgen.revoke` additionally refuses the reserved tool id
+  `signing` at the IPC boundary: it satisfies the tool-id regex exactly, so revoking it used to
+  delete the signing keypair and leave every saved tool on the machine permanently
+  `pubkey_unavailable`.
+
+  **Revocation is the standing approval's withdrawal path, and drops all four halves.**
+  `toolgen.revoke` ends the live child, evicts the registry's saved entry, deletes the
+  `generated_tool` row and then the `saved/<toolId>` directory (row first: the row is the root of
+  existence, so a crash between the two leaves an orphan the boot sweep already handles), then the
+  ephemeral script and the Vault credentials. It is idempotent and behaves identically for a
+  saved-only, ephemeral-only or both-halves tool. This matters because the save prompt tells the
+  owner the tool runs unattended in every future session "until you `nimbus tool revoke` it" — the
+  sentence that obtains the consent.
+
+  **The `[tool_generation] enabled` kill switch and the org-policy lock-off reach the DURABLE
+  half.** `toolgen-capability.ts`'s `isToolgenCapabilityEnabled` gates both boot passes:
+  `reconcileSavedTools` skips entirely (running no orphan sweep — a destructive pass is the last
+  thing to run with the capability off) and `loadSavedToolsIntoRegistry` loads nothing, so no saved
+  tool is visible to `forSession` or offered by `buildGeneratedTools`. Fail-closed when the policy
+  accessor is absent, matching `assertSaveEnabled` and `media.understand`. Disabling is not
+  revoking: rows and directories are untouched and re-enabling restores visibility at the next boot.
+
+  **Structurally offered to the model, not actually reachable by it.** `toolgen-agent-tools.ts`'s
+  `buildGeneratedTools` — the function that would put a generated (ephemeral or saved) tool in
+  front of the conversational model — exists and is fully tested, but `engine/agent.ts`'s
+  `NimbusEngineAgentDeps.toolgen` is optional and its one production caller,
+  `gateway-main.ts`'s `createNimbusEngineAgent(...)` call, never supplies it. `nimbus tool
+  create`/`save`/`list`/`revoke`/`credential set` therefore work end to end, and a saved tool
+  survives a restart and is spawnable IN-PROCESS — `spawnSavedTool`, exercised end to end by this
+  PR's own integration test across two independent gateway processes. **No path INVOKES a generated
+  tool this release:** there is no `toolgen.invoke` IPC method and no CLI subcommand that calls one,
+  and with `deps.toolgen` unwired the model cannot either. The cited proof is an in-process test
+  call, not a shipped surface — the same disclosure shape `deps.computerUse` already carries for
+  the identical reason. This is a
+  deliberate, undone decision, not an oversight or a bug: wiring `deps.toolgen` activates a dormant
+  capability (model-authored code becoming model-invocable) and is left for a human to schedule.
+
+  **Not shipped, and recorded here as a named deferral rather than a gap:** agent-initiated tool
+  proposal (`allow_agent_initiated` + `allowed_hosts`, the agent-facing proposal tool, the mid-turn
+  consent pause, an approval prompt disclosing the AGENT rather than the owner initiated it). Every
+  capability that DID ship across PR 1–3 is OWNER-initiated; a model proposing its own
+  network-reaching tool mid-conversation is a materially larger trust boundary and gets its own
+  consent-UX design pass, the same treatment fleet's subject-enumeration PR 2b and the computer-use
+  screen lane received — doubly appropriate while `deps.toolgen` above stays unwired, since an
+  agent-proposed tool would otherwise have no model-facing caller to reach anyway. The parent
+  design spec's § 10 originally numbered this capability "PR 2"; it shipped as neither PR 2 nor any
+  other number in this slice, and that section has been corrected to say so. `header`/`basic`
+  credential bindings — recorded as unshipped through PR 2 — DID ship here: `nimbus tool credential
+  set` now reaches `toolgen.credentialSet`, which narrows all three schemes and writes the binding,
+  and it is the documented recovery path for a saved tool whose per-host secret the boot sweep took.
+  It never widens the signed `credentialHosts`. Design:
+  [`2026-09-10-s2-toolgen-persistence-design.md`](./superpowers/specs/2026-09-10-s2-toolgen-persistence-design.md).
 - **2026-09-10 — Runtime tool generation, PR 2 of 3: drafting.** `nimbus tool create` now actually
   drafts a tool body via a model instead of refusing — `ERR_TOOLGEN_DRAFT_NOT_IMPLEMENTED` is gone.
   **No schema migration, no new invariant** — PR 2 builds entirely on I39's substrate (PR 1,
@@ -44,9 +165,13 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
   credential per host,** written to a per-host Vault entry before the owner is prompted. `header`
   and `basic` bindings exist in the broker and are applied correctly, but are reachable from no
   user-facing path this release — no CLI flag constructs one. `nimbus tool credential set` remains
-  a permanent refusal stub: credentials bind only at create time, so adding one to a live tool
+  a refusal stub: credentials bind only at create time, so adding one to a live tool
   would change an artifact the owner already approved; the refusal names the fix (revoke, then
-  recreate with `--credential`).
+  recreate with `--credential`). *(Superseded by PR 3, above: persistence made a post-create bind
+  necessary — a saved tool's approval survives a restart while its secret deliberately does not —
+  so `credential set` now writes all three schemes, for an already-approved host only. The word
+  "permanent" stood here and was wrong within a day; the rest of this paragraph was accurate on its
+  date and is left as the dated record.)*
 
   **The approval prompt now shows the drafted parameters and the grounding provenance,** alongside
   the tool's still-verbatim body and host/credential lists — never a digest, never a credential
