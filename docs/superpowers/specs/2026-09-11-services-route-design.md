@@ -178,6 +178,64 @@ matching. Named here so the reviewer sees that "list every service" is a choice
 and not the only way to close the gap, and placed first because a mount decision
 for the list form is wasted attention if the resolve form is the one that lands.
 
+### 5.1 One repo can be claimed by several services, and the gateway already decided what happens
+
+Raised in PR review: the resolve form returns a single `service`, and the client
+feeds that id straight into `preflight/deploy` — so "which service" is not a
+cosmetic question, and this document did not answer it.
+
+**Nothing rejects an overlapping claim at config load.** Two `[[metrics.dora.*]]`
+entries may both list `github:acme/payments-api`, and no validation refuses it.
+So the ambiguity is reachable, not theoretical.
+
+**But the behaviour is not undefined — it is already implemented and shipped.**
+`metrics/service-identity.ts`'s `indexAmbiguousBindings` precomputes, from the
+configs alone, every binding key claimed by more than one service. For such a key
+it takes `claimants[0]` — **first claimant wins** — and records an
+`AmbiguousBindingWarning` carrying both `chosenServiceId` and the full
+`candidateServiceIds`. `reportAmbiguityIfBound` then emits it at most once, and
+only for a resolution that actually bound, precisely so a warning never asserts a
+`chosenServiceId` for a resolve that returned nothing.
+
+That has two consequences for this proposal, and the second is the open one:
+
+1. **This route must not invent a precedence rule.** A route that picked, say,
+   the alphabetically-first service would disagree with the binding the rest of
+   the DORA pipeline already made for the same repo, and the client would gate a
+   deploy against one service while the metrics behind it belong to another. The
+   resolve form's whole argument in §5 is that the matching rules stay on the
+   gateway side; a second precedence rule here would be the third matcher that
+   argument exists to prevent. Reuse the existing index.
+
+2. **Whether the route DISCLOSES the ambiguity is still open, and is a real
+   choice.** Returning a bare `{ "service": "payment-service" }` is honest about
+   the binding and silent about its being contested — the caller cannot tell a
+   sole claim from a coin-toss among three, and it is about to gate a deployment
+   on the answer. Adding the candidates the warning already carries costs one
+   field:
+
+   ```text
+   GET /v1/services/resolve?repo=github:acme/payments-api
+   → { "service": "payment-service", "ambiguous": false }
+   → { "service": "payment-service", "ambiguous": true,
+       "candidates": ["payment-service", "billing-service"] }
+   ```
+
+   The gateway already computes every value in that second shape; not returning
+   them is a decision to withhold, not an absence of data. **Recommended:** return
+   them, on the same reasoning `nimbus prove` applies to its own scope label — a
+   consumer that cannot see a qualification cannot account for it.
+
+**For the list form**, the same question appears as: does a repo URN appear under
+every service that claims it, or only under the winner? It should appear under
+each — the list form's purpose is for the client to see the configuration, and a
+list that silently drops the losing claimant hides exactly the misconfiguration a
+reader would want to find.
+
+**Whichever shape lands needs a test for the contract chosen**, including the
+multi-claimant case. There is no such test today because there is no such route;
+this paragraph exists so that "no test" is a known cost rather than an oversight.
+
 ## 6. Where it mounts, and under what scope — the gateway's call
 
 **This document does not decide this.** It states the two coherent options and

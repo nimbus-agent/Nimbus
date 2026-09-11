@@ -2,7 +2,7 @@
 
 **Date:** 2026-09-11  
 **Reviewer:** Claude Opus 5 (AI Coding Assistant)  
-**Status:** Review Complete — sound as a proposal; four corrections before it opens. **Addressed:** C3.1–C3.4 applied, plus R4.1 (§6 promoted ahead of the mount question), R4.2, R4.3, R4.4 and §2's bulk-vs-probe promotion.  
+**Status:** Review Complete — sound as a proposal. All four corrections are applied: C3.1–C3.4, plus R4.1 (the alternative-shape section promoted ahead of the mount question — it was §6 when this review was written and is **§5** in the spec now, with the mount decision at §6), R4.2, R4.3, R4.4 and §2's bulk-vs-probe promotion. A later PR review added a fifth, **C5 — repository-to-service cardinality**, now answered in the spec at §5.1.  
 **Target Spec:** [`2026-09-11-services-route-design.md`](./2026-09-11-services-route-design.md)  
 **Slot:** HTTP Client Surfaces / Web Clipper (`nimbus-web-clipper` integration)  
 **Related Routes:** `GET /v1/metrics/dora`, `GET /v1/preflight/deploy`, `POST /v1/deployments`, `GET /v1/items/resolve-file`, `GET /v1/items/resolve-ids`  
@@ -12,6 +12,13 @@
 
 > **This is a review note, not guidance. Where it disagrees with the design
 > spec, the spec wins.**
+>
+> **Section numbers below are the spec's numbering AS REVIEWED**, before R4.1 was
+> applied. The alternative-shape section was **§6** then and is **§5** now; the
+> mount decision moved from §5 to §6. They are deliberately not renumbered: R4.1
+> is the correction "move §6 ahead of §5", which becomes incoherent if rewritten
+> to the numbering it produced. Read a `§` here as "in the spec as it stood on
+> 2026-09-11", and follow the status line above for where a section lives now.
 >
 > It is committed because this repo keeps review notes beside their specs, and
 > it is pruned when the feature ships — or when the proposal is declined.
