@@ -60,10 +60,46 @@ describe("renderChangelog", () => {
   });
 
   test("the window and the service scope are stated", () => {
+    expect(renderChangelog(brief())).toContain("_window: last 7d");
     expect(renderChangelog(brief())).toContain("all services");
     expect(
       renderChangelog(brief({ query: { sinceMs: NOW - 1, nowMs: NOW, service: "pay" } })),
     ).toContain("pay");
+  });
+
+  // Regression: `Math.round(span / 86_400_000)` rendered every sub-day window as "last 0d" —
+  // a window the lanes did not query, printed one line above the unconditional "Counts and
+  // entries below cover only this window" disclosure. `--since 24h` is a documented example in
+  // `cli-reference.md`, so this is a shape real callers ask for.
+  test("a sub-day window states its own unit rather than rounding to 0d", () => {
+    const sixHours = renderChangelog(
+      brief({ query: { sinceMs: NOW - 6 * 3_600_000, nowMs: NOW, service: null } }),
+    );
+    expect(sixHours).toContain("_window: last 6h");
+    expect(sixHours).not.toContain("last 0d");
+
+    const fifteenMinutes = renderChangelog(
+      brief({ query: { sinceMs: NOW - 15 * 60_000, nowMs: NOW, service: null } }),
+    );
+    expect(fifteenMinutes).toContain("_window: last 15m");
+    expect(fifteenMinutes).not.toContain("last 0d");
+  });
+
+  // I31 sits in the PREAMBLE for this brief, and the scope line sits in the preamble with it —
+  // so a newline in the one field that was interpolated raw could plant a `## ` heading among
+  // the disclosures. Owner-supplied and thus low severity, but free to fix and the only raw
+  // interpolation left on the line.
+  test("a control character in --service cannot open a heading inside the preamble", () => {
+    const md = renderChangelog(
+      brief({
+        query: { sinceMs: NOW - 1, nowMs: NOW, service: "pay\n## Injected\n\nnothing is missing" },
+      }),
+    );
+    // A heading name NO renderer emits, so `\n## Injected` can only be the injected one. A
+    // count of a name the renderer also writes (`## Gaps`) would read 1 whether the injection
+    // worked or not — a test that cannot fail in the direction that matters.
+    expect(md).not.toContain("\n## Injected");
+    expect(md.split("\n## ")[0] ?? "").toContain("`pay## Injectednothing is missing`");
   });
 
   test("an entry renders as a dated link, and an unlinked entry still renders", () => {

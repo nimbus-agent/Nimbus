@@ -66,7 +66,9 @@ function seedOneOfEach(db: Database): void {
     metadata: { opened_at_ms: NOW - DAY, status: "triggered", pagerduty_service_id: "PD1" },
   });
 
-  // Incident resolved — windows on `modified_at` with `metadata.status === "resolved"`.
+  // Incident resolved — windows on `modified_at` with `metadata.status === "resolved"`. Its
+  // `opened_at_ms` is inside the window too, so it legitimately appears under BOTH "Incidents
+  // Opened" and "Incidents Resolved"; the count assertion below pins that at 2 deliberately.
   upsertIndexedItem(db, {
     service: "pagerduty",
     type: "incident",
@@ -115,7 +117,14 @@ describe("nimbus changelog (e2e, in-process)", () => {
 
     const ready = seen.find((s) => s.method === "changelog.briefReady");
     expect(ready).toBeDefined();
-    const params = ready?.params as { brief: string; findings: { kind: string; gaps: unknown[] } };
+    const params = ready?.params as {
+      brief: string;
+      findings: {
+        kind: string;
+        gaps: unknown[];
+        counts: Record<string, number>;
+      };
+    };
 
     expect(params.brief.length).toBeGreaterThan(0);
     expect(params.findings.kind).toBe("changelog");
@@ -133,6 +142,39 @@ describe("nimbus changelog (e2e, in-process)", () => {
     ]) {
       expect(params.brief).toContain(heading);
     }
+
+    // The headings above are NOT evidence that anything was found: `renderChangelogSection`
+    // emits every heading unconditionally, by design, so all five are present over a completely
+    // empty index. Until these assertions existed, a broken `deployment_items` JOIN, a dropped
+    // `opened_at_ms` lane or an inverted resolved-status filter passed this file untouched —
+    // which is the whole point of it being the branch's only end-to-end proof.
+    for (const title of [
+      "Ship faster retry backoff",
+      "Deploy payments-api",
+      "Elevated 5xx on checkout",
+      "Database failover completed",
+    ]) {
+      expect(params.brief).toContain(title);
+    }
+    // One row per category was seeded, so the placeholder must appear NOWHERE. This is the
+    // assertion that fails if a single lane goes silent while the other three still populate.
+    expect(params.brief).not.toContain("_None in this window._");
+    // The typed counts, on the same evidence: exact equality rather than `> 0`, so a lane that
+    // double-counts (the annotated deploy is both an `item` row and a `deployment_items` row)
+    // is caught as surely as one that returns nothing.
+    //
+    // `incidentsOpened` is 2, not 1, and that is correct rather than a fixture slip: PD-2 was
+    // OPENED two days ago and RESOLVED one day ago, so both events fall inside this seven-day
+    // window and it belongs in both categories. The two lanes are independent by design —
+    // `selectIncidentsOpened` windows on `metadata.opened_at_ms` and never reads `status`.
+    // Pinned at the real value rather than reshaping the seed to a rounder one, since the
+    // overlap is exactly what a weekly changelog of a short-lived incident looks like.
+    expect(params.findings.counts).toEqual({
+      mergedPrs: 1,
+      deployments: 1,
+      incidentsOpened: 2,
+      incidentsResolved: 1,
+    });
   });
 
   test("zero HITL actions fired (structural)", () => {

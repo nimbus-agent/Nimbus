@@ -61,7 +61,8 @@ const USAGE =
   "Usage: nimbus changelog [--service <name>] [--since <duration>] " +
   "[--format markdown|slack|plain] [--json]\n" +
   "  --service    a [ci.service.<id>] service id to scope the window to\n" +
-  "  --since      lookback duration, e.g. 7d, 24h (default: 7d)\n" +
+  "  --since      lookback duration, e.g. 7d, 24h (default: 7d; max 90d — the gateway\n" +
+  "               refuses a longer window)\n" +
   "  --format     markdown (default) | slack | plain — a text transform over the\n" +
   "               brief's Markdown, never a re-render from findings\n" +
   "  --json       print structured findings instead of the brief";

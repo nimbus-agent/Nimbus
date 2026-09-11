@@ -58,6 +58,27 @@ function insertPr(
   );
 }
 
+/**
+ * A successful CI run inside the `emitChangelogBrief` window.
+ *
+ * Timed off `Date.now()`, not this file's fixed `NOW`: the emitter reads the real clock, so a
+ * row placed relative to `NOW` would sit decades outside the window it computes.
+ */
+function insertCiRun(db: Database, row: { id: string; title: string; repo: string }): void {
+  db.run(
+    `INSERT INTO item (id, service, type, external_id, title, url, modified_at, metadata, synced_at)
+     VALUES (?, 'github_actions', 'ci_run', ?, ?, NULL, ?, ?, ?)`,
+    [
+      row.id,
+      row.id,
+      row.title,
+      Date.now() - DAY,
+      JSON.stringify({ conclusion: "success", repo: row.repo }),
+      Date.now(),
+    ],
+  );
+}
+
 describe("buildChangelogBrief", () => {
   test("always carries the unconditional missing-categories gap", () => {
     // Unconditional by design, following `ownership`: a conditional note would be absent
@@ -296,18 +317,55 @@ describe("emitChangelogBrief", () => {
   });
 
   test("a configured --service uses that service's own deploy pattern", async () => {
+    // Previously this asserted only `query.service === "payments"` — byte-identical to the
+    // unconfigured-service test above it, and true whichever pattern `resolveDeployPattern`
+    // handed the builder. The run below is titled so that ONLY the configured pattern can
+    // match it: `Release to prod` fails `^[Dd]eploy` (the project default), so its presence
+    // is evidence the service's own `deployWorkflowPattern` reached the query.
+    const db = emptyDb();
+    insertCiRun(db, { id: "gha:77", title: "Release to prod", repo: "org/payments" });
+
     const cap = captureBriefReady();
     await emitChangelogBrief({
-      db: emptyDb(),
+      db,
       sessionId: "s3",
+      lookbackMs: 7 * DAY,
+      service: "payments",
+      serviceConfigs: [serviceConfig({ deployWorkflowPattern: /^Release/ })],
+      notify: cap.notify,
+    });
+    const ready = await cap.ready;
+    expect(ready.method).toBe("changelog.briefReady");
+    const params = ready.params as {
+      brief: string;
+      findings: { query: { service: string | null }; counts: { deployments: number } };
+    };
+    expect(params.findings.query.service).toBe("payments");
+    expect(params.findings.counts.deployments).toBe(1);
+    expect(params.brief).toContain("Release to prod");
+  });
+
+  test("the same run is NOT a deployment under the default pattern", async () => {
+    // The negative half, without which the test above passes for a lane that ignores the
+    // pattern entirely and returns every successful `ci_run`.
+    const db = emptyDb();
+    insertCiRun(db, { id: "gha:77", title: "Release to prod", repo: "org/payments" });
+
+    const cap = captureBriefReady();
+    await emitChangelogBrief({
+      db,
+      sessionId: "s5",
       lookbackMs: 7 * DAY,
       service: "payments",
       serviceConfigs: [serviceConfig()],
       notify: cap.notify,
     });
     const ready = await cap.ready;
-    expect(ready.method).toBe("changelog.briefReady");
-    const params = ready.params as { findings: { query: { service: string | null } } };
-    expect(params.findings.query.service).toBe("payments");
+    const params = ready.params as {
+      brief: string;
+      findings: { counts: { deployments: number } };
+    };
+    expect(params.findings.counts.deployments).toBe(0);
+    expect(params.brief).not.toContain("Release to prod");
   });
 });

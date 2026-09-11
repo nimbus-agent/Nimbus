@@ -12,6 +12,7 @@ import {
   negotiateSubjectVoice,
   negotiateWindowDisclosure,
   whyChangeSubjectDisclosure,
+  windowLabel,
 } from "./brief-disclosures.ts";
 import type { ChangelogBrief } from "./changelog-types.ts";
 import type { DecisionsBrief, DecisionsEntry } from "./decisions-types.ts";
@@ -1011,19 +1012,6 @@ function renderIgnoredPersonalSources(unrecognised: readonly string[]): string {
 }
 
 /**
- * The window label, at the coarsest unit that does not LOSE the caller's precision.
- *
- * `Math.round(sinceMs / 86_400_000)` alone rendered every sub-day window as "last 0d":
- * `--since 1h` is a valid request (`parseDurationToMs` accepts `ms|s|m|h|d|w`, and the IPC
- * bound is an upper one only), and "0d" states a window the lanes did not query. That is the
- * same class of misstatement the window clause exists to prevent — the clause is a
- * disclosure, so it cannot itself be wrong about the window.
- *
- * Rounding WITHIN a unit is fine (90d, 36h); collapsing to zero is not, hence the unit step
- * down rather than a wider `toFixed`. A zero window renders `0ms`, which is accurate: it
- * selects nothing.
- */
-/**
  * Task 1's version rendered only the subject, the window and generation time, the gap
  * notes, and the unconditional `unavailableEvidence` list. Task 2 added the authored/
  * reviewed PR lane sections; Task 3 adds the tickets lane; Task 4 adds ownership; Task 5
@@ -1117,9 +1105,23 @@ function renderChangelogSection(heading: string, rows: readonly ChangelogRow[]):
   return ["", `## ${heading}`, "", body].join("\n");
 }
 
-/** Whole days the window spans, for the header — the same arithmetic `renderDecisions` uses. */
-function changelogWindowDays(brief: ChangelogBrief): number {
-  return Math.max(0, Math.round((brief.query.nowMs - brief.query.sinceMs) / 86_400_000));
+/**
+ * The `--service` the owner asked for, as it appears inside an inline-code span in the PREAMBLE.
+ *
+ * Interpolating it raw was the odd one out on this brief: the entry title and href beside it are
+ * both hardened. The value is owner-supplied and bounded (`ipc/agents-rpc.ts` trims it and caps
+ * it at `MAX_SERVICE_LEN`), and `agents.changelog` is not on the Tauri allowlist, so the only
+ * reachable case is an owner injecting into their own brief. But that validator rejects no
+ * CONTROL character: a newline would end the preamble line and let the remainder render as a
+ * `## ` heading of its own — inside the exact region the I31 disclosures live in, where a
+ * fabricated section is the failure this brief's whole disclosure design exists to prevent.
+ * Backticks go for the reason one level down: either of them closes the code span early.
+ *
+ * Dropped rather than substituted: a replacement character would be a second thing the reader
+ * has to interpret, and nothing legitimate reaches here carrying one.
+ */
+function changelogScopeLabel(service: string): string {
+  return service.replace(/[`\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/gu, "");
 }
 
 export function renderChangelog(brief: ChangelogBrief, opts?: RenderOpts): string {
@@ -1127,14 +1129,18 @@ export function renderChangelog(brief: ChangelogBrief, opts?: RenderOpts): strin
   const scope =
     brief.query.service === null
       ? "_scope: all services_"
-      : `_scope: service \`${brief.query.service}\`_`;
+      : `_scope: service \`${changelogScopeLabel(brief.query.service)}\`_`;
   // The disclosures sit in the PREAMBLE — above the first `##` — because each one qualifies
   // every category section below it. `preambleBody` (`markdown-sections.ts`) stops at the first
   // LEVEL-2 heading, which is why this brief's title is `#` and not `##`: under a level-2 title
   // the preamble would be empty and `contractViolations` could never reach these sentences.
   const preamble = [
     "",
-    `_window: last ${String(changelogWindowDays(brief))}d (${isoDay(brief.query.sinceMs)} → ${isoDay(brief.query.nowMs)})_`,
+    // `windowLabel`, not `Math.round(span / 86_400_000)`: `--since 6h` is a documented example
+    // in `cli-reference.md`, and a day-only label renders it as "last 0d" — a window the lanes
+    // did not query, stated one line above the unconditional "Counts and entries below cover
+    // only this window" disclosure. The dates keep the absolute bounds visible either way.
+    `_window: last ${windowLabel(brief.query.nowMs - brief.query.sinceMs)} (${isoDay(brief.query.sinceMs)} → ${isoDay(brief.query.nowMs)})_`,
     scope,
     ...changelogDisclosures(brief).map((d) => d.line),
   ].join("\n");

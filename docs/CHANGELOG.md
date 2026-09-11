@@ -37,8 +37,13 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
   successful `ci_run` whose title matches the deploy pattern (`DEFAULT_DEPLOY_WORKFLOW_PATTERN`,
   `^[Dd]eploy`, when `--service` names nothing configured) and annotated deploys joined through
   `deployment_items`, timed from `COALESCE(finished_at_ms, started_at_ms)` — the typed, nullable
-  `finished_at_ms` column once a deploy has finished, falling back to `started_at_ms` while it is
-  still running — better than `dora.ts` does for the same rows, which windows on `modified_at` and
+  `finished_at_ms` column, falling back to `started_at_ms` for a row that has none. **The
+  fallback is not about an in-progress deploy:** the query requires `d.conclusion = 'success'`
+  and `in_progress` is a distinct CHECK value (`index/deployment-v28-sql.ts`), so a running
+  deploy is filtered out before the `COALESCE` is ever evaluated. It is reachable because
+  `finished_at_ms` is optional INDEPENDENTLY of `conclusion` — `deployment/annotate.ts` returns
+  early when it is omitted — so a `success` row carrying no finish time is a legal thing to
+  post — better than `dora.ts` does for the same rows, which windows on `modified_at` and
   never reads the deployment's own timestamps at all. Every lane scopes through `ServiceConfig`,
   never `item.service` (the CONNECTOR id, not a business service name, and would match zero rows).
   **Two of the five categories the original roadmap row promised have no substrate at all** —

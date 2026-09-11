@@ -95,19 +95,43 @@ export function negotiateNotComputedDisclosure(heading: string): Disclosure {
 }
 
 // ---------------------------------------------------------------------------
-// negotiate — interleaved
+// shared — window labelling
 // ---------------------------------------------------------------------------
 
-/** `90d` / `4h` / `30m`, the window as the brief states it. */
-export function negotiateWindowLabel(sinceMs: number): string {
+/**
+ * `90d` / `4h` / `30m` — a window DURATION, at the coarsest unit that does not LOSE the
+ * caller's precision.
+ *
+ * `Math.round(durationMs / 86_400_000)` alone rendered every sub-day window as "last 0d":
+ * `--since 1h` is a valid request (`parseDurationToMs` accepts `ms|s|m|h|d|w`, and the IPC
+ * bound is an upper one only), and "0d" states a window the lanes did not query. That is the
+ * same class of misstatement the window clause exists to prevent — the clause is a
+ * disclosure, so it cannot itself be wrong about the window.
+ *
+ * Rounding WITHIN a unit is fine (90d, 36h); collapsing to zero is not, hence the unit step
+ * down rather than a wider `toFixed`. A zero window renders `0ms`, which is accurate: it
+ * selects nothing.
+ *
+ * Shared rather than `negotiate`-specific, and named for the general case: `renderChangelog`
+ * shipped its own `Math.round(... / 86_400_000)` and reproduced the exact defect this function
+ * was written to fix, one section above the unconditional "Counts and entries below cover only
+ * this window" disclosure.
+ *
+ * Takes a DURATION, never bounds — a caller holding absolute bounds subtracts first.
+ */
+export function windowLabel(durationMs: number): string {
   const MINUTE = 60_000;
   const HOUR = 3_600_000;
   const DAY = 86_400_000;
-  if (sinceMs >= DAY) return `${String(Math.round(sinceMs / DAY))}d`;
-  if (sinceMs >= HOUR) return `${String(Math.round(sinceMs / HOUR))}h`;
-  if (sinceMs >= MINUTE) return `${String(Math.round(sinceMs / MINUTE))}m`;
-  return `${String(sinceMs)}ms`;
+  if (durationMs >= DAY) return `${String(Math.round(durationMs / DAY))}d`;
+  if (durationMs >= HOUR) return `${String(Math.round(durationMs / HOUR))}h`;
+  if (durationMs >= MINUTE) return `${String(Math.round(durationMs / MINUTE))}m`;
+  return `${String(durationMs)}ms`;
 }
+
+// ---------------------------------------------------------------------------
+// negotiate — interleaved
+// ---------------------------------------------------------------------------
 
 /**
  * The window clause, which qualifies EVERY headline count in the brief.
@@ -125,7 +149,7 @@ export function negotiateWindowDisclosure(sinceMs: number, generatedAt: number):
   return {
     scope: { kind: "preamble" },
     line:
-      `_window: last ${negotiateWindowLabel(sinceMs)} — items authored by the subject that ` +
+      `_window: last ${windowLabel(sinceMs)} — items authored by the subject that ` +
       "were ACTIVE in this window; the index records last-modified, not created. Two lanes " +
       "sit outside it: decisions windows on its recorded decision date, and ownership is not " +
       `windowed at all (it is an all-time snapshot) · generated ${new Date(

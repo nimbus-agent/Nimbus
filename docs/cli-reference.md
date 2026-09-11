@@ -731,7 +731,7 @@ nimbus changelog --json
 
 | Flag | Description |
 |---|---|
-| `--since <duration>` | Lookback window (default: `7d`); accepts `<n>d` / `<n>h`, etc. |
+| `--since <duration>` | Lookback window (default: `7d`); accepts `<n>d` / `<n>h`, etc. Capped at **90 days** by `agents.changelog` — a longer window parses locally and is then refused by the gateway. |
 | `--service <id>` | Restrict to one `[ci.service.<id>]` service (repos + PagerDuty ids + deploy pattern). Naming a service `nimbus.toml` does not define is not an error — every scoped query correctly matches nothing, and the brief says so in `## Gaps` rather than reading as a quiet week. Omitted: every service, using the shipped default deploy pattern `^[Dd]eploy`. |
 | `--format <markdown\|slack\|plain>` | A text transform over the brief's own Markdown (default `markdown`) — never a re-render from the typed findings, so a synthesized rewrite's prose survives the transform. |
 | `--json` | Print the typed findings instead of the brief. |
@@ -740,7 +740,7 @@ nimbus changelog --json
 
 **Entry lists are capped at 50 per category**, so a 500-PR window is not handed wholesale to the synthesis model. `counts` (visible via `--json`) always carries the true pre-cap total per category, so the truncation is recoverable — a window with 53 merged PRs and a 50-entry list means 3 were dropped, not lost.
 
-**Read-only:** never triggers HITL, never makes a live connector API call. Not reachable over the local HTTP API, nor as an MCP tool, nor from ChatOps — `agents.changelog` is served on the CLI/Tauri socket only, a sequencing decision (letting the shape settle against one consumer before it is committed across every external surface) rather than a side-effect or dossier concern like the other excluded agents. It **is** eligible for `nimbus fleet` — an unattended weekly changelog produced on idle hardware is close to the feature's own stated purpose, and it is a pure read with no side effects.
+**Read-only:** never triggers HITL, never makes a live connector API call. Not reachable over the local HTTP API, nor as an MCP tool, nor from ChatOps, nor from the desktop renderer — `agents.changelog` is served on the local IPC socket and is **not** on the Tauri `ALLOWED_METHODS` allowlist (I7), so the CLI is its only caller today; a sequencing decision (letting the shape settle against one consumer before it is committed across every external surface) rather than a side-effect or dossier concern like the other excluded agents. It **is** eligible for `nimbus fleet` — an unattended weekly changelog produced on idle hardware is close to the feature's own stated purpose, and it is a pure read with no side effects.
 
 ---
 

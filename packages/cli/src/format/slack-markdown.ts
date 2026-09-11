@@ -8,8 +8,44 @@
  * Neither function reads `findings`; both are pure string → string.
  */
 
-const LINK_RE = /\[([^\]]*)\]\(([^)]+)\)/g;
+/**
+ * A Markdown inline link whose TITLE may contain BACKSLASH-ESCAPED brackets.
+ *
+ * The naive title class `[^\]]*` is wrong against the briefs this tool actually consumes: the
+ * gateway renderer hardens every entry title through `escapeMarkdownLinkText`
+ * (`agents/_lib/render.ts`), which turns `[` into `\[`, `]` into `\]` and `\` into `\\`. A class
+ * that stops at the `]` CHARACTER stops at the `\]` too, so the whole link fails to match and
+ * ships unconverted — a raw `[title](url)` posted into Slack, and a bare URL in the plain-text
+ * output this module's own contract says must not carry one. `[WIP]`, `[RFC]`, `[hotfix]`,
+ * `[P1]` and `[PROJ-123]` are routine PR/incident title prefixes, so it fails silently on real
+ * changelogs rather than on a contrived one.
+ *
+ * The two branches are UNAMBIGUOUS — `\\[\s\S]` can only start at a backslash and
+ * `[^\\\]]` can only start at a non-backslash — so no input can be split between them two ways
+ * and there is no backtracking blow-up. `slack-markdown.test.ts` pins that with a time-bounded
+ * case, because "this alternation is disjoint" is exactly the claim a future edit breaks
+ * silently.
+ */
+const LINK_RE = /\[((?:\\[\s\S]|[^\\\]])*)\]\(([^)]+)\)/g;
 const BOLD_RE = /\*\*(.+?)\*\*/g;
+
+/**
+ * Undoes `escapeMarkdownLinkText`: `\\` → `\`, `\[` → `[`, `\]` → `]`.
+ *
+ * This is needed INDEPENDENTLY of {@link LINK_RE}, and that is why it is a whole-line pass
+ * rather than something {@link convertLink} does to the title it captured. The renderer escapes
+ * an entry title whether or not a link ends up wrapping it — an item with no renderable
+ * permalink renders as bare escaped text — so a title-only unescape would still ship
+ * `\[WIP\] Fix auth` to a reader. Running it once, LAST, also keeps it from double-unescaping:
+ * a title carrying a literal backslash arrives as `\\\[` and must become `\[`, not `[`.
+ *
+ * It must stay last for a second reason: it is the inverse of the escaping {@link LINK_RE}
+ * reads, so unescaping first would hand the link matcher live brackets and reintroduce the
+ * truncation the escaping exists to prevent.
+ */
+function unescapeMarkdown(text: string): string {
+  return text.replace(/\\([\\[\]])/g, "$1");
+}
 
 /**
  * Underscore italic requires a word boundary on both sides of the delimiter pair, mirroring
@@ -93,9 +129,13 @@ function convertStrike(text: string, mode: InlineMode): string {
   return text.replace(STRIKE_RE, (_m, x: string) => (mode === "slack" ? `~${x}~` : x));
 }
 
-/** The shared inline pipeline, run once per ordinary line and once per table cell. */
+/**
+ * The shared inline pipeline, run once per ordinary line and once per table cell.
+ *
+ * {@link unescapeMarkdown} is last by requirement, not by taste — see its doc comment.
+ */
 function convertInline(text: string, mode: InlineMode): string {
-  return convertStrike(convertBoldItalic(convertLink(text, mode), mode), mode);
+  return unescapeMarkdown(convertStrike(convertBoldItalic(convertLink(text, mode), mode), mode));
 }
 
 /**
