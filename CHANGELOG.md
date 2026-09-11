@@ -2,6 +2,14 @@
 
 All notable changes to the `nimbus` core (headless Gateway + CLI binary + first-party MCP connectors) are documented in this file. release-please appends new entries between this header and the most recent version below when a release PR merges.
 
+## [7.19.0](https://github.com/nimbus-agent/Nimbus/compare/v7.18.0...v7.19.0) (2026-09-11)
+
+
+### Features
+
+* **http:** GET /v1/metrics/stats — the bucketed DORA series, plus the change-failure-rate attribution fix ([#1493](https://github.com/nimbus-agent/Nimbus/issues/1493)) ([f6e852a](https://github.com/nimbus-agent/Nimbus/commit/f6e852a13fb81450a6952ce4817acffb1b3dcfbf))
+* **http:** GET /v1/services/resolve — repo-URN-to-service resolution ([#1491](https://github.com/nimbus-agent/Nimbus/issues/1491)) ([7da3b84](https://github.com/nimbus-agent/Nimbus/commit/7da3b84dda806f712d1ca7753dc28da580a5eb67))
+
 ## [7.18.0](https://github.com/nimbus-agent/Nimbus/compare/v7.17.0...v7.18.0) (2026-09-11)
 
 
