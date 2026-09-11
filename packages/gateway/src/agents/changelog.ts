@@ -43,15 +43,36 @@ export type BuildChangelogArgs = {
    * builder stays free of config loading and is trivially testable.
    */
   readonly deployPattern: RegExp;
-  readonly latencyMs: number;
+  /**
+   * A `performance.now()` ORIGIN, not an elapsed duration — `latencyMs` is computed at the END
+   * of `buildChangelogBrief`, after the five queries have run, exactly as `ownership.ts:331`,
+   * `decisions.ts:279` and `glossary.ts:205` do.
+   *
+   * Taking the elapsed time as an INPUT is the defect this shape exists to prevent: an
+   * `latencyMs: Date.now() - started` written in the caller's object literal is evaluated
+   * BEFORE the function body runs, so it times argument resolution and reports ~0 ms in a
+   * footer the reader sees.
+   */
+  readonly startedAtMs: number;
 };
 
-function cap(rows: readonly ChangelogRow[]): { kept: readonly ChangelogRow[]; dropped: number } {
+/**
+ * Split a category's rows into the ones that will be LISTED and the ones the display cap drops,
+ * keeping the true total so `counts` can report what the window actually held.
+ *
+ * `total` is not `kept.length` — that difference is the whole point. See `ChangelogCounts`.
+ */
+function cap(rows: readonly ChangelogRow[]): {
+  kept: readonly ChangelogRow[];
+  dropped: number;
+  total: number;
+} {
   return rows.length <= CHANGELOG_CATEGORY_CAP
-    ? { kept: rows, dropped: 0 }
+    ? { kept: rows, dropped: 0, total: rows.length }
     : {
         kept: rows.slice(0, CHANGELOG_CATEGORY_CAP),
         dropped: rows.length - CHANGELOG_CATEGORY_CAP,
+        total: rows.length,
       };
 }
 
@@ -97,13 +118,23 @@ export function buildChangelogBrief(args: BuildChangelogArgs): ChangelogBrief {
     scope: args.scope,
   };
 
-  const merged = cap(selectMergedPrs(args.db, w));
-  const deploys = cap(selectDeployments(args.db, w, args.deployPattern));
-  const opened = cap(selectIncidentsOpened(args.db, w));
-  const resolved = cap(selectIncidentsResolved(args.db, w));
+  const mergedRows = selectMergedPrs(args.db, w);
+  const deployRows = selectDeployments(args.db, w, args.deployPattern);
+  const openedRows = selectIncidentsOpened(args.db, w);
+  const resolvedRows = selectIncidentsResolved(args.db, w);
   const nonGithub = nonGithubMergedPrCount(args.db, w);
 
-  const all = [...merged.kept, ...deploys.kept, ...opened.kept, ...resolved.kept];
+  const merged = cap(mergedRows);
+  const deploys = cap(deployRows);
+  const opened = cap(openedRows);
+  const resolved = cap(resolvedRows);
+
+  // EVERY matched row, not just the listed ones — `indexTimedCount` is a claim about what the
+  // WINDOW held, on the same basis as `counts`. Counting only the kept rows would make the
+  // time-basis disclosure quietly mean "of the entries shown", the same ambiguity `counts`
+  // carried before the pre-cap fix, and the two numbers would then be on different bases in
+  // one brief.
+  const allRows = [...mergedRows, ...deployRows, ...openedRows, ...resolvedRows];
   const gaps: GapNote[] = [];
 
   // UNCONDITIONAL, following `ownership`'s standing-disclaimer precedent.
@@ -136,20 +167,23 @@ export function buildChangelogBrief(args: BuildChangelogArgs): ChangelogBrief {
     kind: "changelog",
     agentVersion: 1,
     generatedAt: args.nowMs,
-    latencyMs: args.latencyMs,
+    // Computed HERE, after the five queries above, never taken as an input — see
+    // `BuildChangelogArgs.startedAtMs`.
+    latencyMs: Math.round(performance.now() - args.startedAtMs),
     gaps,
     query: { sinceMs: w.fromMs, nowMs: args.nowMs, service: scopedServiceId(args.scope) },
     mergedPrs: merged.kept,
     deployments: deploys.kept,
     incidentsOpened: opened.kept,
     incidentsResolved: resolved.kept,
+    // TRUE, pre-cap totals — deliberately NOT `kept.length`. See `ChangelogCounts`.
     counts: {
-      mergedPrs: merged.kept.length,
-      deployments: deploys.kept.length,
-      incidentsOpened: opened.kept.length,
-      incidentsResolved: resolved.kept.length,
+      mergedPrs: merged.total,
+      deployments: deploys.total,
+      incidentsOpened: opened.total,
+      incidentsResolved: resolved.total,
     },
-    indexTimedCount: all.filter((r) => r.timeSource === "index").length,
+    indexTimedCount: allRows.filter((r) => r.timeSource === "index").length,
     nonGithubMergedPrs: nonGithub,
     truncatedCount: merged.dropped + deploys.dropped + opened.dropped + resolved.dropped,
   };
@@ -167,7 +201,10 @@ export async function emitChangelogBrief(opts: {
   readonly notify: (method: string, params: unknown) => void;
   readonly runner?: SynthesisRunner;
 }): Promise<{ sessionId: string }> {
-  const started = Date.now();
+  // The ORIGIN the builder measures against, taken before any work begins. `performance.now()`
+  // rather than `Date.now()`, matching `ownership.ts` / `decisions.ts` / `glossary.ts`: a
+  // monotonic clock cannot be walked backwards by an NTP step mid-brief.
+  const startedAtMs = performance.now();
   return await emitBriefWithSynthesis<ChangelogBrief>({
     sessionId: opts.sessionId,
     briefReadyMethod: "changelog.briefReady",
@@ -182,7 +219,7 @@ export async function emitChangelogBrief(opts: {
         lookbackMs: opts.lookbackMs,
         scope: resolveScope(opts.service, opts.serviceConfigs),
         deployPattern: resolveDeployPattern(opts.service, opts.serviceConfigs),
-        latencyMs: Date.now() - started,
+        startedAtMs,
       }),
   });
 }

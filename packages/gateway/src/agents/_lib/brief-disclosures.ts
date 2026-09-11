@@ -308,6 +308,17 @@ export function whyChangeSubjectDisclosure(): Disclosure {
  * (the leading count), and every independent sentence in a `line` carries its own anchor —
  * `disclosure-anchor-coverage.test.ts` pins that for the two-sentence entry below.
  *
+ * **Length is calibrated, not incidental.** Every anchor here is 2–7 words, matching this
+ * module's existing ones, because `synthesize.ts`'s instructions ask the model to REWRITE this
+ * prose. A near-verbatim 12-word clause would make ordinary paraphrase a `contract_violation`,
+ * so changelog synthesis would fail closed on every run and the feature would ship inert — a
+ * defect that merely happens to be a safe one. Each anchor is instead the shortest fragment that
+ * cannot survive the disclosure's removal.
+ *
+ * **All three are scoped to the preamble, so no anchor may be satisfiable by a SIBLING's line.**
+ * If disclosure 2's anchors also occurred in disclosure 1's text, a rewrite could drop 2 entirely
+ * and still pass. `disclosure-anchor-coverage.test.ts` checks that cross-satisfaction directly.
+ *
  * The first entry is UNCONDITIONAL: it states what the numbers MEAN, and a reader who is told
  * nothing reads a windowed, event-timed count as an all-time one.
  */
@@ -321,7 +332,11 @@ export function changelogDisclosures(b: {
     line:
       "Counts and entries below cover only this window, and each entry is placed by when it " +
       "happened rather than when the index last touched it.",
-    anchors: ["cover only this window", "when it happened rather than when the index last touched"],
+    // Sentence 1: the window bound. Sentence 2: the time BASIS — its factual core is that the
+    // placement is not the index's last touch, which is the half a paraphrase cannot drop
+    // without losing the meaning. Deliberately NOT the full "when it happened rather than when
+    // the index last touched" clause: 12 near-verbatim words is a rewrite ban, not an anchor.
+    anchors: ["cover only this window", "the index last touched"],
   });
   if (b.indexTimedCount > 0) {
     out.push({
@@ -331,7 +346,12 @@ export function changelogDisclosures(b: {
         "rather than an event field — deployments and incident resolutions, on the same basis " +
         "`nimbus metrics dora` uses. A resolved incident whose row has not been re-synced still " +
         "reads as unresolved, so resolutions under-report by sync lag.",
-      anchors: ["same basis", "under-report by sync lag"],
+      // NOT `"same basis"`, which this sentence's earlier draft used: that is ordinary English a
+      // rewrite could produce with the disclosure gone, and it rested entirely on the second
+      // anchor to stay honest. `"rather than an event field"` is the contrast being disclosed —
+      // it cannot occur unless the sentence is still making its point — and it does not appear
+      // in the sibling disclosure's line, so dropping this one cannot be masked by keeping that.
+      anchors: ["rather than an event field", "under-report by sync lag"],
     });
   }
   if (b.truncatedCount > 0) {

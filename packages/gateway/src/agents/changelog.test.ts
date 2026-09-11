@@ -40,7 +40,10 @@ function build(opts: { db?: Database; scope?: ChangelogScope } = {}) {
     lookbackMs: 7 * DAY,
     scope: opts.scope ?? { kind: "all" },
     deployPattern: new RegExp(DEFAULT_DEPLOY_WORKFLOW_PATTERN),
-    latencyMs: 1,
+    // A `performance.now()` ORIGIN, not an elapsed duration: the builder measures against it
+    // AFTER running its queries. Passing a pre-computed elapsed time is the defect
+    // `BuildChangelogArgs.startedAtMs` exists to make impossible.
+    startedAtMs: performance.now(),
   });
 }
 
@@ -134,9 +137,41 @@ describe("buildChangelogBrief", () => {
       });
     }
     const brief = build({ db });
-    expect(brief.counts.mergedPrs).toBe(CHANGELOG_CATEGORY_CAP);
+    // `counts` is the TRUE window total; the LIST is what the cap allows. The per-category
+    // truncation is recoverable from the pair, which is the property the cross-category
+    // `truncatedCount` alone cannot provide — on a window with 53 PRs and 52 deployments it
+    // says only "5 further entries", from which neither true number can be recovered.
+    expect(brief.counts.mergedPrs).toBe(CHANGELOG_CATEGORY_CAP + 3);
     expect(brief.mergedPrs).toHaveLength(CHANGELOG_CATEGORY_CAP);
+    expect(brief.counts.mergedPrs - brief.mergedPrs.length).toBe(3);
     expect(brief.truncatedCount).toBe(3);
+  });
+
+  test("latencyMs is measured against the caller's origin, not computed by the caller", () => {
+    // The defect this pins: `latencyMs: Date.now() - started` written in the CALLER's object
+    // literal is evaluated before the builder body runs, so it times argument resolution and
+    // every brief reports ~0 ms in a footer a user reads.
+    //
+    // Proven with a SYNTHETIC origin five seconds in the past rather than by timing real work.
+    // A builder that honours the origin must report >= 5000; one that reports elapsed work (or
+    // a constant, or the caller's own number) reports single digits. No wall-clock assumption
+    // is involved, so this cannot flake on a slow runner — the opposite failure of a test that
+    // asserts "at least 1 ms" and passes for any implementation on a fast machine.
+    const SYNTHETIC_AGE_MS = 5000;
+    const brief = buildChangelogBrief({
+      db: emptyDb(),
+      nowMs: NOW,
+      lookbackMs: 7 * DAY,
+      scope: { kind: "all" },
+      deployPattern: new RegExp(DEFAULT_DEPLOY_WORKFLOW_PATTERN),
+      startedAtMs: performance.now() - SYNTHETIC_AGE_MS,
+    });
+    // Finite: NaN is what an origin that never reached the builder produces.
+    expect(Number.isFinite(brief.latencyMs)).toBe(true);
+    expect(brief.latencyMs).toBeGreaterThanOrEqual(SYNTHETIC_AGE_MS);
+    // Generous upper bound — present only so "some absurd number" cannot pass; the real
+    // discrimination is the lower bound above.
+    expect(brief.latencyMs).toBeLessThan(SYNTHETIC_AGE_MS + 60_000);
   });
 
   test("a service with nothing bound to it is disclosed, not silently empty", () => {

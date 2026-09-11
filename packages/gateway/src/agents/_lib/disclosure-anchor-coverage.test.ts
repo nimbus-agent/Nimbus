@@ -92,6 +92,34 @@ describe("every sentence of a disclosure is anchored (F27)", () => {
     expect(d.anchors.some((a) => a.includes("CODEOWNERS"))).toBe(true);
   });
 
+  test("changelog's preamble anchors are not satisfiable by a sibling disclosure's line", () => {
+    // All three changelog disclosures share ONE scope (the preamble), so `contractViolations`
+    // searches the same text for every anchor. An anchor that also occurs in a sibling's line
+    // would let a rewrite drop its own disclosure entirely and still pass — an honesty guard
+    // failing in the false-negative direction, which is the one that matters.
+    const all = changelogDisclosures({ indexTimedCount: 3, truncatedCount: 4 });
+    expect(all).toHaveLength(3);
+    for (const [i, d] of all.entries()) {
+      const siblings = all.filter((_, j) => j !== i).map((s) => s.line);
+      for (const anchor of d.anchors) {
+        expect(d.line).toContain(anchor);
+        for (const sibling of siblings) expect(sibling).not.toContain(anchor);
+      }
+    }
+  });
+
+  test("changelog's anchors stay in the 2-7 word band its neighbours use", () => {
+    // A near-verbatim clause is a rewrite BAN, not an anchor: it makes ordinary paraphrase a
+    // contract violation, so synthesis fails closed on every run and the feature ships inert.
+    for (const d of changelogDisclosures({ indexTimedCount: 3, truncatedCount: 4 })) {
+      for (const anchor of d.anchors) {
+        const words = anchor.trim().split(/\s+/).length;
+        expect(words).toBeGreaterThanOrEqual(2);
+        expect(words).toBeLessThanOrEqual(7);
+      }
+    }
+  });
+
   test("the changelog time-basis disclosure anchors its sync-lag sentence", () => {
     // Sentence 2 is the one that says resolutions UNDER-REPORT. A rewrite keeping only sentence 1
     // ("timed from the index's last-touch column") would leave the reader with the mechanism and
