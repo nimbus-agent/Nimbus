@@ -54,6 +54,12 @@ export const HTTP_ROUTE_AUTH: Readonly<Record<string, RouteAuth>> = Object.freez
   "GET /v1/people/*": { kind: "public" },
   "GET /v1/audit": { kind: "public" },
   "GET /v1/metrics/dora": { kind: "public" },
+  // The same four metrics as the line above, over the same config, for the same service, at a
+  // different resolution — so it inherits that route's mount rather than choosing a new one.
+  // Scoping the series while the scalar beside it stays public would be a seam no caller could
+  // explain, and `/v1/metrics/dora`'s own `since` already lets a caller walk nested windows.
+  // Contrast `GET /v1/services/resolve` below, which is scoped for the opposite reason.
+  "GET /v1/metrics/stats": { kind: "public" },
   "GET /v1/preflight/deploy": { kind: "public" },
   "GET /v1/openapi.json": { kind: "public" },
 
