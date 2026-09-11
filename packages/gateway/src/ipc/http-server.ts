@@ -26,6 +26,12 @@ import { buildItemListSql, parseRelativeSinceToWindowMs } from "../index/item-li
 import { resolveItemByUrl } from "../index/resolve-by-url.ts";
 import { resolveFileByRemote } from "../index/resolve-file-by-remote.ts";
 import { RESOLVE_IDS_MAX_BATCH, resolveItemsByIds } from "../index/resolve-ids.ts";
+import {
+  type ParsedDoraRepoUrn,
+  parseDoraRepoUrn,
+  type ServiceConfig,
+} from "../metrics/dora-config.ts";
+import { resolveServicesByRepoUrn } from "../metrics/service-identity.ts";
 import { ftsMatchQuery } from "../search/hybrid-internal.ts";
 import { formatPrometheus } from "../status/prometheus-format.ts";
 import type { TargetedFetchOutcome } from "../sync/targeted-fetch.ts";
@@ -51,6 +57,7 @@ import {
   ROUTE_KEY_ITEMS_RESOLVE,
   ROUTE_KEY_ITEMS_RESOLVE_FILE,
   ROUTE_KEY_ITEMS_RESOLVE_IDS,
+  ROUTE_KEY_SERVICES_RESOLVE,
 } from "./http-route-auth.ts";
 import {
   dispatchWriteRoute,
@@ -754,6 +761,81 @@ async function handleItemsResolveIds(
   return json({ items });
 }
 
+// GET /v1/services/resolve?repo=github:acme/web — bearer-authed read under the `resolve` scope,
+// mounted inline for exactly the reason the three reads above are: the "/v1/items/*" entry in
+// dispatchReadOnlyDataGet's table is PUBLIC, so routing this through it would serve scoped output
+// to any local process on the machine. Why this route is scoped at all — rather than public beside
+// the two routes it feeds — is argued in full at its HTTP_ROUTE_AUTH entry.
+//
+// Appends NO egress row. Nothing leaves the machine: it parses one URN and reads local config.
+async function handleServicesResolve(
+  req: Request,
+  url: URL,
+  opts: ReadOnlyHttpServerOptions,
+): Promise<Response> {
+  const clipsVault = opts.clipsVault;
+  if (clipsVault === undefined) {
+    // Before the auth check, like every other inline read. NAMING THE GATE, because none of the
+    // others do: what this actually tests is that the clips surface is mounted, NOT that this
+    // route exists. So a gateway new enough to carry the route but with no paired-client surface
+    // answers the same 404 as one too old to have it, and a client cannot tell those apart. Benign
+    // here — both readings lead the client to the same per-repo fallback — but it is a property of
+    // the gate rather than of this route, and it should be read rather than rediscovered.
+    return json({ error: "services_disabled" }, 404);
+  }
+  const auth = await requireScopedClipToken(req, clipsVault, ROUTE_KEY_SERVICES_RESOLVE);
+  if (!auth.ok) return auth.response;
+
+  const raw = coordinateParam(url, "repo");
+  if (raw === null) return json({ error: "missing_repo" }, 400);
+
+  // Parsed with the SAME parser that produced the config's own URNs. That is what makes this an
+  // exact config-vocabulary comparison rather than a third item-matcher (see
+  // `resolveServicesByRepoUrn`), and it is why a malformed URN is refused here rather than
+  // resolving to a confident null — "no service claims `githu:acme/web`" would be true and useless.
+  let query: ParsedDoraRepoUrn;
+  try {
+    query = parseDoraRepoUrn(raw.trim());
+  } catch {
+    // The parser's own message names the offending value; this one deliberately does not echo it
+    // back. The caller supplied it and already has it.
+    return json({ error: "invalid_repo_urn" }, 400);
+  }
+
+  if (opts.configDir === undefined) {
+    // No config dir wired: nothing is configured, which is an ANSWER, not a failure. Matches
+    // resolveKnownServices, which returns [] for the same condition.
+    return json({ service: null, ambiguous: false, candidates: [] });
+  }
+
+  let configs: ReadonlyMap<string, ServiceConfig>;
+  try {
+    configs = loadNimbusServiceConfigsFromConfigDir(opts.configDir);
+  } catch {
+    // SURFACED, not degraded — and this is a decision, since the existing callers disagree:
+    // agents-rpc.ts degrades, assemble.ts try/catches at startup, and handleMetricsDora does
+    // neither and 500s. Degrading here would answer `service: null`, which the client cannot
+    // distinguish from "no service claims this repo" — a confident wrong answer about the owner's
+    // configuration, on the one surface where they might have noticed it was broken.
+    //
+    // The body names only THAT parsing failed. These messages embed the service id and the
+    // offending config value verbatim (config/service-config-toml.ts), and while this route is
+    // scoped, a client token is not the owner and has no business reading their config.
+    return json({ error: "config_unreadable" }, 500);
+  }
+
+  const res = resolveServicesByRepoUrn(configs, query);
+  // Field by field, and a TOTAL key set: `ambiguous` and `candidates` are present on every answer,
+  // including the null one, so a client cannot mistake "this gateway does not disclose ambiguity"
+  // for "this binding is uncontested". `ambiguous` is derived from the candidate count rather than
+  // passed in, so the two can never disagree.
+  return json({
+    service: res.serviceId,
+    ambiguous: res.candidateServiceIds.length > 1,
+    candidates: res.candidateServiceIds,
+  });
+}
+
 /**
  * `?name=` as a non-negative integer, or undefined.
  *
@@ -1197,6 +1279,7 @@ async function tryBearerAuthedGet(
     return await handleItemsResolveFile(req, url, db, opts);
   if (url.pathname === "/v1/items/resolve-ids")
     return await handleItemsResolveIds(req, url, db, opts);
+  if (url.pathname === "/v1/services/resolve") return await handleServicesResolve(req, url, opts);
   if (url.pathname === "/v1/egress") return await handleEgressList(req, url, db, opts);
   if (url.pathname === "/v1/egress/head") return await handleEgressHead(req, db, opts);
   if (url.pathname === "/v1/egress/verify") return await handleEgressVerify(req, db, opts);

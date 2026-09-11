@@ -3843,7 +3843,7 @@ from six names:
 | `clip` | `POST /v1/clips` (save a clip) and `POST /v1/clips/related` (related-items read) |
 | `briefs` | The research-briefs write routes (`POST /v1/briefs`, `.../sources`, `.../run`, `.../save`) and `GET /v1/briefs/*` |
 | `agents` | The browser-reachable agent-invocation route: `POST /v1/agents/{agent}`, `GET /v1/agents/runs/{id}`, `GET /v1/agents` |
-| `resolve` | The local-index reads: `GET /v1/items/resolve` (resolve-by-URL), `GET /v1/items/resolve-file` (resolve a forge file coordinate to a local checkout path), and `GET /v1/items/resolve-ids` (resolve item ids back to their references) |
+| `resolve` | The local reads: `GET /v1/items/resolve` (resolve-by-URL), `GET /v1/items/resolve-file` (resolve a forge file coordinate to a local checkout path), `GET /v1/items/resolve-ids` (resolve item ids back to their references), and `GET /v1/services/resolve` (resolve a repo URN to the configured service that claims it — the only one of the four that reads `nimbus.toml` rather than the index) |
 | `fetch` | The targeted fetch-on-miss write: `POST /v1/items/fetch` — makes an outbound request through a configured connector, so it is a separate scope from `resolve`'s local-index-only reads |
 | `egress` | The egress-ledger reads: `GET /v1/egress`, `GET /v1/egress/head`, `GET /v1/egress/verify`, `GET /v1/egress/prove` |
 
