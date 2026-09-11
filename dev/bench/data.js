@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1789123929699,
+  "lastUpdate": 1789137497840,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "d337167e6e461645526525167ed6acf77396f4e2",
-          "message": "fix(gateway): report real version in `nimbus status` + stamp Windows exe metadata (#762)\n\n## Why\n\nTwo related version-reporting fixes, both surfaced from a user noticing\n`nimbus status` reported `0.1.0` while their installed release was much\nnewer, and the Windows `.exe` Details tab showing Bun's version.\n\n### 1. `nimbus status` reported a stale hardcoded version\n\n`GATEWAY_VERSION` in `packages/gateway/src/version.ts` was a\nhand-maintained constant frozen at `\"0.1.0\"` since the first GA.\n`gateway.ping` (and therefore `nimbus status` / `nimbus --version`)\nechoed it verbatim, so every release reported `0.1.0` regardless of what\nwas actually installed — it had drifted ~20 minor releases.\n\n**Fix:** wire the constant to release-please via the generic updater:\n- annotate the line with `x-release-please-version` and register\n`packages/gateway/src/version.ts` in the config's `extra-files`, so\nevery release rewrites it in lockstep with the package version;\n- set the current value to `0.21.0` to clear the existing drift now.\n\nThis is cross-platform — it fixes the reported version on\nLinux/macOS/Windows alike.\n\n### 2. Windows `.exe` Details tab showed Bun's metadata\n\nThe gateway/CLI Windows binaries are single-file `bun build --compile`\nexecutables that embed the Bun runtime, so Properties → Details showed\nBun's Product name / File version.\n\n**Fix:** pass Bun's `--windows-*` metadata flags on the Windows matrix\nlegs of `build-gateway` / `build-cli` (product name, publisher, version,\ndescription, copyright). The build step is split into a non-Windows step\n(unchanged) and a pwsh Windows step so the flags apply only where valid.\nThe version is derived from the release tag, prerelease suffix stripped\nand padded to the numeric 4-part form Windows requires (e.g.\n`0.21.1.0`). Publisher/product naming matches the existing WiX installer\n(`Nimbus Contributors`).\n\n> Linux/macOS need no equivalent: ELF and bare Mach-O have no embedded\nproduct-version resource a file manager reads. Version there comes from\nthe package metadata (`.deb`/`.rpm`/`.pkg`, already stamped from the\ntag) and from `nimbus --version`, which fix #1 corrects.\n\n## Verification\n\n- `version.ts` + config: biome clean, config is valid JSON,\n`gateway.ping`/dispatcher tests pass. No test asserted the old `\"0.1.0\"`\nvalue.\n- Windows flags: compiled a test exe locally on Windows with the exact\nflags — resulting exe reports `ProductName: Nimbus CLI`, `CompanyName:\nNimbus Contributors`, `FileVersion: 0.21.1.0`, description + copyright\ncorrect. Version-munging verified for normal and prerelease tags.\n- `release.yml` parses as valid YAML.\n\n## Publishing note\n\nThe `fix:` commit means release-please will cut a new release (→\n`0.21.1`) after this merges, which rewrites `version.ts` to match and —\nbeing a fresh tag — builds the Windows binaries with the new metadata.\nNote the repo currently has a phantom `0.21.0` (manifest/CHANGELOG\nbumped, but no `v0.21.0` git tag or published assets); the next release\nshould supersede it.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n---------\n\nCo-authored-by: Claude Opus 4.8 (1M context) <noreply@anthropic.com>",
-          "timestamp": "2026-07-17T19:44:44Z",
-          "tree_id": "217564cd9b991fd20086863c5d90bf054975d1fc",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/d337167e6e461645526525167ed6acf77396f4e2"
-        },
-        "date": 1784318117587,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 288.0433927499977,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 293.3572675499956,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 312.6547257499995,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "63bbdd920343b92f48952b71f6197f2de0a4bf94",
+          "message": "fix(quality): clear the SonarCloud board, prune the delivered plans and specs, and fix what that exposed (#1497)\n\nThree things, in one branch because they are the same sweep: clear the\nSonarCloud board, prune the\ndelivered plans and specs now that S2 has shipped, and fix what those\ntwo exposed as stale in the\ndocs.\n\n## 1. SonarCloud — 160 open issues → 0\n\nThe gate was already green (it measures NEW code); this clears the\n**board**. Every issue is\naddressed by a code change except one, which is marked Accepted with a\njustification because there\nis no fix that does not remove the hardening.\n\n### The deprecation cluster — 98 of the 160\n\n`@nimbus-dev/sdk` 1.32.0 deprecated its entire flat manifest-signature\nsurface — `signManifest`,\n`verifyManifestSignature`, `errorToHardDisableReason`,\n`generateEd25519Keypair`, the base64 codec\nand `SignatureDisableReason` — in favour of a detached-JWS envelope\nunder `@nimbus-dev/sdk/signing`.\n**That envelope has not shipped**: the subpath exports canonicalization\nand nothing else. So the\nwarnings are real (removal is slated for SDK 2.0.0) and there was no\nmigration target, while the\ngateway must keep verifying the flat shape every already-installed\nextension carries.\n\nSplit by what each symbol actually is:\n\n- **Not part of the envelope being replaced → owned outright.** The\nbase64 codec (60 issues),\nEd25519 keygen (8) and the `SignatureDisableReason` union (12) now live\nin\n`gateway/src/util/{base64,ed25519}.ts` and\n`extensions/verify-signature.ts`, byte- and\nshape-identical to the SDK's. Nothing about signing depends on the SDK\nowning a base64 codec.\n- **IS the contract → wrapped, not re-exported.** Sign, verify and the\nerror-to-reason mapping must\nstay the SDK's, because a connector author signs with the SDK and the\ngateway has to verify what\n  they produced. They are now imported in exactly one file per package —\n`gateway/src/extensions/verify-signature.ts` and\n`cli/src/lib/extension-signing.ts` — and wrapped\nin live functions, so consumers bind a non-deprecated symbol and the\nmigration is a one-file\nchange when the envelope lands. (Re-exporting does **not** work: a\nconsumer importing a\nre-exported deprecated symbol is still flagged, which is why the\nexisting `verify-signature.ts`\n  re-export shed nothing.)\n- **`canonicalize` is the interesting one.** Its replacement exists —\nand produces *different bytes*.\nThe deprecated rules NFC-normalize string values; the spec binding\ndeliberately does not, because\nGo publishes no importable normalization. Those bytes are load-bearing\nfor every installed\nextension signature (I16) and every saved-tool signature (I40) already\non disk, so migrating is a\nre-signing exercise, not an import swap. Documented in\n`extensions/canonical-json.ts`.\n\nThe residual ~12 findings inside those three seam files carry `//\nNOSONAR S1874: <reason>` — the\nconvention this repo already uses in 17 files — so the justification\ntravels with the line rather\nthan living only on a dashboard.\n\nAlso in this cluster: `z.ZodTypeAny` → `z.ZodType` (3, unrelated zod-4\ndeprecation).\n\n### Cognitive complexity — 15 functions\n\nSplit **by phase**, never by extracting a check into a helper a reader\nhas to go and find — the rule\nCLAUDE.md states for exactly these functions. `toolgen-gate.ts`'s\n`createGeneratedTool` keeps its\nnumbered 1→9 order readable at the call site, with steps 1-3 as\n`assertCreateAllowedBeforeConsent` and step 4 as `resolveEnvelope`; its\ntwo loose cleanup locals\nbecame one `CredentialCleanup` record, since both non-registering exits\nmust read the same state and\na per-arm copy is how one of them stops being updated. Same treatment\nfor `media-pass.ts`'s\n`runMediaPass` (one `PassAccumulator`, shared `recordSkip`),\n`toolgen-broker.ts`'s `handleFetch`,\n`fleet-scheduler.ts`'s `execute`, `multimodal-config.ts`'s\n`parseSection` (a total key-parser table),\nboth `fleet-toml.ts` parsers, `toolgen-boot-reconcile.ts` (its two\npasses are now two functions),\n`toolgen-address-guard.ts`'s IPv6 parser and address classifier, and\nthree argv parsers.\n\n### The rest\n\nNested ternaries → named helpers; two inline code-point comparators →\nthe existing shared\n`codeUnitCompare` (which `agents-rpc.ts` already has a comment insisting\non); `S107` parameter counts\n→ deps bags; optional chains; nested template literals; `replaceAll`;\n`.at(-1)`; `new Array()`;\n`String.fromCodePoint`; `TypeError`; a `Set` for a repeated `includes`;\nconsecutive `Array#push`\nmerged; `toHaveLength`; two `if (…) return` platform skips →\n`test.skipIf` (an early return reports a\n**pass** for a test that made no assertion); two test groups\nparameterized; and a super-linear regex\nin `toolgen-draft.ts`: the fenced-JSON matcher ran a `\\s*` immediately\nbefore a `\\n`, and since\n`\\s` includes `\\n` that gave the engine two ways to match every newline\nin a run — so a model reply\nopening a fence it never closes cost quadratic backtracking instead of\nfailing at once. The run is\nnow non-newline whitespace.\n\n### Two that are more than lint\n\n- **`c:S5849` (the only VULNERABILITY) is marked Accepted, not fixed.**\nThe flagged\n`cap_set_proc()` in `sandbox-helper/main.c` *drops* every capability\nimmediately before `execv`.\nThe rule fires on any `cap_set_proc` regardless of direction; there is\nno change that clears it\n  without removing the hardening. Justification recorded on the issue.\n- **`S9379` (`autoFocus`) turned up a real latent bug.** `HitlPopupPage`\nused\n`autoFocus={!isDestructive(action)}`, but React honours that attribute\nonly at **mount**, and the\npopup does not remount between queued requests — it re-renders with\n`pending[0]` replaced. So the\ndeny-list applied to the *first* request only: a safe request followed\nby a destructive one left\nfocus sitting on **Approve**, which is the keystroke the deny-list\nexists to prevent. Now focused\nimperatively, keyed on the action, and a destructive action moves focus\n**to Reject** rather than\nmerely declining to focus Approve. Covered by a new test that is\n**red-proven** — it fails against\n  the old component and passes against the new one.\n\n## 2. The delivered plans and specs are pruned — 136 files, 88k lines\n\nS2 has now shipped all six of its capabilities, so its design documents\nhave done their job. This is\nthe same prune `plans/` had once before, on 2026-05-28.\n\n**The durable content moved first, not after.** `architecture.md` gained\na\n**§ Spine S2 Subsystems — Local Compute Fleet** section covering the\nshared gate shape (and *why not\n`ToolExecutor.gate()`*), the ordered-refusal sequence all four gates\nshare, and the per-capability\ndesign with its rejected alternatives: exec's three-mechanism loopback\ndenial, computer-use's two\nlanes diverging in opposite directions on confinement, multimodal's\ngate-before-the-thing-it-gates\nrule, toolgen's brokered-egress boundary and its two stated residuals,\nand fleet's three deliberate\nnon-reuses plus the fire-and-forget dispatch seam that makes `await\ndispatchAgentsRpc(...)` await the\n*scheduling* of the work rather than the work.\n\nThe invariant rationale stays in `SECURITY-INVARIANTS.md`, the command\nsurface in `cli-reference.md`,\nacceptance criteria in `roadmap.md`. Design docs are still *named* in\nthe CHANGELOG and roadmap, now\nas file names rather than links, with one note at the top of each saying\nhow to read them from git\nhistory.\n\nEvery dangling reference is cleaned up rather than left to rot:\n`cli-reference.md` repointed at the\nnew architecture section, a `ci.yml` comment, and — the one that matters\n—\n**`DOCS_EXCLUDED_PREFIXES` dropped its `docs/superpowers/` entry**,\nbecause a gate exclusion naming a\ndirectory that no longer exists silences nothing and misleads the next\nreader about what the gate\ncovers. Its test now asserts the prefix is *not* excluded.\n`.gitleaks.toml` keeps its allowlist\npath, with the comment updated: gitleaks scans full history, so the\nfiles still exist in past\ncommits.\n\n## 3. Doc accuracy pass\n\nFound while writing the above, each a claim the code had outgrown:\n\n- `architecture.md` said *\"`packages/gateway/src/llm/` ships only\n`OllamaProvider` and\n`LlamaCppProvider` today, so a remote route is not yet reachable in\nproduction.\"* Four cloud\n  adapters shipped on 2026-08-28.\n- `docs/README.md` said **thirty-six** invariants, `I1`–`I27` and\n`I29`–`I37`. It is thirty-nine,\n  `I1`–`I27` and `I29`–`I40` (counted from `SECURITY-INVARIANTS.md`).\n- `docs/README.md` said *\"Still ahead in S2: runtime tool generation and\novernight sub-agent\nfleets.\"* Both shipped; replaced with what they actually do, and how\ntheir consent differs.\n- `architecture.md`'s Phase 4 section still read *\"active development\"*,\nand its directory tree\npredated `exec/`, `computer-use/`, `toolgen/`, `fleet/`, `egress/`,\n`briefs/` and five more.\n- The roadmap banner was three deliveries behind.\n\n`CLAUDE.md` and `GEMINI.md` are updated together, including the\n2026-09-11 HTTP routes and #1494's\n`status = 'resolved'` follow-up, which landed on `main` mid-branch.\n\n**One thing I want to flag rather than bury:** writing the S2 section\nsurfaced that **cloud model\nrouting is the only S2 capability an org administrator cannot lock off\nfrom the policy anchor** —\n`[policy.capabilities.ai_v2]` has no name for it, so it is governed only\nby the per-vendor opt-in\nand the local `[llm] enforce_air_gap`. That is recorded in the new\nsection as a gap, not softened\ninto a design choice. It is not fixed here.\n\n## Verification\n\n`bun run preflight` (full), whole-repo `bun test`, and the UI Vitest\nsuite all green. The six\ntoolgen integration failures on the first run were the git-ignored\n`nimbus-sandbox-helper.exe` a\nfresh worktree lacks, not this branch — green after `bun run\nbuild:sandbox-helper:win32`.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nhttps://claude.ai/code/session_01ERHDjDEr3NYVo64cagY2H5\n\n---------\n\nCo-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>",
+          "timestamp": "2026-09-11T17:26:14+03:00",
+          "tree_id": "616716059c1f0a5ce2d07c186ede0947d26bf618",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/63bbdd920343b92f48952b71f6197f2de0a4bf94"
+        },
+        "date": 1789137495167,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 334.313403650001,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 336.37262830000327,
             "unit": "ms"
           }
         ]
