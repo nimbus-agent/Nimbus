@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1789026522421,
+  "lastUpdate": 1789102157000,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "5eec16c118e94667ddccc0ebb0e122f0bc31f136",
-          "message": "feat(cli): add `nimbus --version` / `-v` / `version` (#753)\n\n## Why\n\nDiagnosing why `nimbus clip pair` printed the help menu on a Windows\ninstall, the root cause was a **stale binary** (pre-v0.18.0, before the\n`clip` command existed) — and the CLI had **no way to report its own\nversion**, so there was no quick way to confirm that. `nimbus --version`\ncloses that gap.\n\n## What\n\nAdds `--version`, `-v`, and bareword `version`, all printing just the\nrelease version string (e.g. `0.20.0`):\n\n- **`version.ts`** — single source of truth: imports the monorepo\n**root** `package.json` version (the one release-please bumps;\nper-package files stay at `0.1.0`). Bun inlines the JSON at `--compile`\ntime, so the shipped binary needs no runtime file access.\n- **`index.ts`** — `VERSION_ALIASES` handled in `dispatchCommand`,\nbefore the unknown-command → help fallback.\n- **`help.ts`** — documents `nimbus version`.\n- **`version.test.ts`** — asserts semver shape + exact match against\nroot `package.json`.\n\n## Verification\n\n- `bun test packages/cli/src/version.test.ts` → 2 pass\n- `biome check` on the 4 files → clean\n- `tsc --noEmit` (cli) → clean\n- Compiled a standalone binary and ran `--version` from an unrelated cwd\n→ prints the version (confirms build-time inlining, no runtime file\naccess)\n\n```\n$ nimbus --version → 0.20.0\n$ nimbus version   → 0.20.0\n$ nimbus -v        → 0.20.0\n```\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n\n## Summary by CodeRabbit\n\n* **New Features**\n* Added `nimbus version`, `--version`, and `-v` commands to display the\ninstalled Nimbus version.\n  * Updated CLI help text to document the new version options.\n\n* **Tests**\n* Added validation to ensure the reported version is present, correctly\nformatted, and matches the release version.\n\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\nCo-authored-by: Claude Opus 4.8 (1M context) <noreply@anthropic.com>",
-          "timestamp": "2026-07-14T22:46:21+03:00",
-          "tree_id": "7752f608419e03094d23331c8372aab83e482aab",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/5eec16c118e94667ddccc0ebb0e122f0bc31f136"
-        },
-        "date": 1784059125165,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 316.805221649996,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 322.2006229999912,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 337.7794343499994,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "52644cef588e44f3d82621a4589ca682787bafba",
+          "message": "feat(toolgen): runtime tool generation PR 3 of 3 — persistence + signing (#1487)\n\nCloses S2's runtime-tool-generation row. `nimbus tool save` promotes a\nlive generated tool to a durable one, bound by an Ed25519 signature to\nthe exact bytes the owner approved.\n\nDesign:\n`docs/superpowers/specs/2026-09-10-s2-toolgen-persistence-design.md` ·\nPlan: `docs/superpowers/plans/2026-09-10-s2-toolgen-persistence.md`\n\n## Two defects already shipped in `main`, fixed here\n\n**An ephemeral tool's credential was durable.** `toolgen.revoke` dropped\nthe live child and the on-disk script but never the Vault binding, and\nshutdown swept no key at all. A revoked tool left\n`toolgen.<toolId>.<hostSlug>` in the keychain indefinitely, keyed to a\ntool id nothing would ever call again. The capability was ephemeral by\nconstruction; the secret it was handed was not.\n\n**The broker sent unauthenticated requests.** `handleFetch` ended its\ncredential step with `if (binding !== null) applyCredential(...)`, so a\nnull binding fell through to an outbound request — to a host the owner\nhad been told would carry a credential. The file's own comment three\nlines above already argued this must not happen; the reasoning had been\napplied to the throw case and not the null case. Rare before this\nbranch, routine after, because credentials are now swept on every\nrestart. The two fixes ship together or the pair is worse than neither.\n\n## Why signing, stated narrowly\n\nThe parent spec justified signing by claiming that without it \"nothing\ndetects on-disk tampering between sessions.\" That is false —\n`runHashVerification` already re-hashes every enabled extension at\nstartup. The real argument is narrower:\n\n> Hash verification trusts the database. A signature trusts only the\nVault.\n\nThe expected hash lives in `nimbus.db`, so an attacker with filesystem\nwrite access rewrites artifact and hash together and the check reports\ngreen. Forging an Ed25519 signature needs the private seed in DPAPI /\nKeychain / libsecret.\n\n**Residual, stated in I40 rather than softened: this defends the\nfilesystem-write attacker, not the Vault-read attacker.** Anyone who can\nread the Vault can forge a signature, and I40 claims nothing against\nthem.\n\n## Design decisions worth knowing\n\n- **Machine-derived paths are not signed.** `requiredReadPaths()` is the\nBun binary's directory (plus its parent on macOS), so signing the\nconcrete sandbox manifest would make a Bun upgrade indistinguishable\nfrom tampering. The portable shape is signed; the concrete manifest is\nrebuilt at spawn and asserted against it. A regression test simulates\nthe upgrade.\n- **The row governs existence; disk-plus-signature governs content.** A\n`saved/<toolId>/` directory with no row is swept, never adopted — a\nvalid signature proves an artifact was approved *once*, not that it is\napproved *now*. Stated cost: losing the database sweeps every saved\ntool, which is correct, because what was lost is the record of approval.\n- **Persistence gets its own HITL approval.** At create the owner\napproved \"run this now\"; persistence is a new fact about the same bytes.\nReusing the create approval would be a privilege escalation requiring no\nprivilege.\n- **The approval persists; the secret does not.** A saved tool carries\nno credential across sessions and refuses credentialed hosts until the\nowner re-binds.\n- **`pubkey_rotated` is distinguished from `signature_mismatch`.**\nCryptography cannot tell them apart; only the boot pass holds the row's\nstored pubkey to compare. An owner told their tool was tampered with\nwhen their keychain was merely reset will not trust the next warning.\n\n## Disclosed, not fixed\n\n**A generated tool is never offered to the model.** `deps.toolgen` is\nnever wired into `createNimbusEngineAgent` — pre-existing on `main`\n(`gateway-main.ts` and main@`483071d9` both omit the key), so\n`buildGeneratedTools` never runs with real data. `nimbus tool\ncreate`/`save` work end to end and a saved tool is spawnable in-process,\nbut no CLI or IPC path invokes one.\n\nNot fixed here on purpose: wiring it activates a dormant capability —\nmodel-authored code becoming model-invocable — which deserves its own\nsecurity review, not a line in an unrelated branch. Disclosed in\n`docs/roadmap.md` and `docs/CHANGELOG.md` instead.\n\n`spawnSavedTool` is likewise implemented and tested but has no\nproduction caller, and I40 says so rather than inventing one to make the\nsentence true.\n\n## Verification\n\n- `bun test packages/gateway packages/cli scripts` — **22,535 pass / 70\nskip / 0 fail** across 1,511 files\n- `preflight:fast` — 34 gates, PASSED\n- `typecheck`, `typecheck:tests` (0 new), `lint`, `lint:markdown`,\n`audit:invariants`, `audit:status-drift`, `audit:doc-refs` — all exit 0\n- **Not verified locally: `audit:coverage-floor`.** `bunfig.toml`'s\n`[test] coverage = false` suppresses collection, so `test:coverage`\nexits 0 producing no lcov; the gate is CI-Linux-authoritative anyway.\nThe one in-scope file was fixed and confirmed via a scoped istanbul run.\nCI is the first end-to-end observation.\n\n## Process notes\n\nBuilt with subagent-driven development: 12 tasks, each with its own\nreview and fix loop, then a whole-branch review that found three\nCriticals no task-scoped review could see — two of them requirements\ndropped between spec and plan.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nhttps://claude.ai/code/session_018rxsSAxvmoVXew4KoXfFmT\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n## Summary by CodeRabbit\n\n* **New Features**\n* Added durable saving, listing, credential binding, verification,\nspawning, and revocation for generated tools.\n* Added owner approval and support for bearer, header, and basic\ncredentials.\n* Added persistence across gateway restarts with integrity checks,\norphan cleanup, and credential cleanup.\n  * Added schema support for persisted generated tools.\n\n* **Security**\n* Added fail-closed capability enforcement, signed artifact validation,\nand signing-key protection.\n\n* **Documentation**\n* Updated CLI, architecture, roadmap, changelog, and security\ndocumentation.\n\n* **Tests**\n* Expanded coverage for persistence, approval, verification, cleanup,\nrevocation, and restart workflows.\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>",
+          "timestamp": "2026-09-11T04:37:41Z",
+          "tree_id": "de0d42fa70cf8c7faaabacd70d74b36e45682557",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/52644cef588e44f3d82621a4589ca682787bafba"
+        },
+        "date": 1789102153744,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 310.2054195000022,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 309.9598029499968,
             "unit": "ms"
           }
         ]
