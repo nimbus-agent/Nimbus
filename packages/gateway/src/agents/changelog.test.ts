@@ -162,38 +162,60 @@ describe("buildChangelogBrief", () => {
 });
 
 describe("emitChangelogBrief", () => {
+  /**
+   * The emit is fire-and-forget, so the test must wait for the notification rather than for a
+   * duration. A `setTimeout` here would be a wall-clock assumption on a CI runner that is
+   * 13-18x slower than a dev machine at temp-dir SQLite work — the largest single source of
+   * cross-platform flakes in this repo. The notify callback IS the completion signal.
+   */
+  function captureBriefReady(): {
+    notify: (method: string, params: unknown) => void;
+    ready: Promise<{ method: string; params: unknown }>;
+  } {
+    let resolve: (v: { method: string; params: unknown }) => void = () => {};
+    const ready = new Promise<{ method: string; params: unknown }>((r) => {
+      resolve = r;
+    });
+    return {
+      notify: (method, params) => {
+        // `briefError` resolves it too: a rejected build must fail the assertion below with the
+        // error it carries, not by timing out with no explanation.
+        if (method.startsWith("changelog.brief")) resolve({ method, params });
+      },
+      ready,
+    };
+  }
+
   test("emits changelog.briefReady with markdown and the typed findings", async () => {
-    const seen: Array<{ method: string; params: unknown }> = [];
+    const cap = captureBriefReady();
     await emitChangelogBrief({
       db: emptyDb(),
       sessionId: "s1",
       lookbackMs: 7 * DAY,
       service: null,
       serviceConfigs: [],
-      notify: (method, params) => seen.push({ method, params }),
+      notify: cap.notify,
     });
-    // The emit is fire-and-forget: let its async IIFE settle.
-    await new Promise((r) => setTimeout(r, 20));
-    const ready = seen.find((e) => e.method === "changelog.briefReady");
-    expect(ready).toBeDefined();
-    const params = ready?.params as { brief: string; findings: { kind: string } };
+    const ready = await cap.ready;
+    expect(ready.method).toBe("changelog.briefReady");
+    const params = ready.params as { brief: string; findings: { kind: string } };
     expect(params.findings.kind).toBe("changelog");
     expect(params.brief).toContain("## Merged Pull Requests");
   });
 
   test("an unconfigured --service still scopes, using the default deploy pattern", async () => {
-    const seen: Array<{ method: string; params: unknown }> = [];
+    const cap = captureBriefReady();
     await emitChangelogBrief({
       db: emptyDb(),
       sessionId: "s2",
       lookbackMs: 7 * DAY,
       service: "not-in-config",
       serviceConfigs: [],
-      notify: (method, params) => seen.push({ method, params }),
+      notify: cap.notify,
     });
-    await new Promise((r) => setTimeout(r, 20));
-    const ready = seen.find((e) => e.method === "changelog.briefReady");
-    const params = ready?.params as { findings: { query: { service: string | null } } };
+    const ready = await cap.ready;
+    expect(ready.method).toBe("changelog.briefReady");
+    const params = ready.params as { findings: { query: { service: string | null } } };
     expect(params.findings.query.service).toBe("not-in-config");
   });
 
@@ -201,7 +223,7 @@ describe("emitChangelogBrief", () => {
     // The whole I31 chain for this kind, end to end: the model never sees `## Gaps` (it is
     // withheld and re-attached verbatim), and a rewrite that drops the interleaved preamble
     // sentence is discarded by the contract guard rather than shipped.
-    const seen: Array<{ method: string; params: unknown }> = [];
+    const cap = captureBriefReady();
     let promptSeen = "";
     await emitChangelogBrief({
       db: emptyDb(),
@@ -209,7 +231,7 @@ describe("emitChangelogBrief", () => {
       lookbackMs: 7 * DAY,
       service: null,
       serviceConfigs: [],
-      notify: (method, params) => seen.push({ method, params }),
+      notify: cap.notify,
       runner: {
         run: async (prompt: string) => {
           promptSeen = prompt;
@@ -222,9 +244,9 @@ describe("emitChangelogBrief", () => {
         },
       },
     });
-    await new Promise((r) => setTimeout(r, 20));
-    const ready = seen.find((e) => e.method === "changelog.briefReady");
-    const params = ready?.params as {
+    const ready = await cap.ready;
+    expect(ready.method).toBe("changelog.briefReady");
+    const params = ready.params as {
       brief: string;
       synthesis: { attempted: boolean; used?: boolean; reason?: string };
     };
@@ -239,18 +261,18 @@ describe("emitChangelogBrief", () => {
   });
 
   test("a configured --service uses that service's own deploy pattern", async () => {
-    const seen: Array<{ method: string; params: unknown }> = [];
+    const cap = captureBriefReady();
     await emitChangelogBrief({
       db: emptyDb(),
       sessionId: "s3",
       lookbackMs: 7 * DAY,
       service: "payments",
       serviceConfigs: [serviceConfig()],
-      notify: (method, params) => seen.push({ method, params }),
+      notify: cap.notify,
     });
-    await new Promise((r) => setTimeout(r, 20));
-    const ready = seen.find((e) => e.method === "changelog.briefReady");
-    const params = ready?.params as { findings: { query: { service: string | null } } };
+    const ready = await cap.ready;
+    expect(ready.method).toBe("changelog.briefReady");
+    const params = ready.params as { findings: { query: { service: string | null } } };
     expect(params.findings.query.service).toBe("payments");
   });
 });
