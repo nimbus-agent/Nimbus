@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1789112450926,
+  "lastUpdate": 1789116835708,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "bc53aaa79efd2c3dcd97860bab078046d4a81c13",
-          "message": "refactor: extract @nimbus-dev/client to standalone repo; consume published 0.5.0 (#758)\n\n## Summary\n\nPhase 2 (Plan B) of the poly-repo platform extraction: make the monorepo\nconsume the **published** `@nimbus-dev/client` and remove\n`packages/client` entirely. Companion to the sdk extraction (Plan A).\n\n`@nimbus-dev/client` now lives in its own repo —\n[nimbus-agent/nimbus-client](https://github.com/nimbus-agent/nimbus-client)\n— and publishes to npm on its own clock via release-please + OIDC\ntrusted-publisher (no npm token). First standalone release:\n**`@nimbus-dev/client@0.5.0`** (0.4.0 was the last version published\nfrom the monorepo).\n\n## Changes\n\n- **cli consumes the published package** — `packages/cli` dep\n`@nimbus-dev/client` `workspace:*` → `^0.5.0`; removed the dangling\n`packages/cli/tsconfig.json` paths mapping to `../client/src/index.ts`.\n`packages/cli` was the only internal consumer.\n- **Removed `packages/client`** — deleted the package tree; dropped it\nfrom root `workspaces`, the combined `test` script, and the\n`test:coverage:client` gate.\n- **Stopped publishing client from the monorepo** — removed the\n`packages/client` release-please component (config + manifest) and\n**deleted `.github/workflows/publish-client.yml`** (client\nself-publishes now).\n- **CI/coverage/tooling de-integration** — removed client build steps\nfrom `ci.yml` / `release.yml` / `_test-suite.yml` / `docs-quality.yml`;\nremoved the `client-node-compat` job from `_test-suite.yml`; removed\nclient from the coverage-floor (globs + exclusions + `build-lcov.sh` /\n`reseed-docker.sh`), `knip.json`, `ci-tests.ts`, `package-readmes`\naudit, `build-debug.ts`, `strip-comments` prefixes, and root\n`sonar-project.properties` coverage exclusions.\n- **Docs** — reframed skill docs, `architecture.md` / `README.md` trees,\n`ci-secrets.md`, security docs, the docs-site package table, the\nlabeler, and the issue template so `@nimbus-dev/client` reads as an\nexternal published package. Historical records (CHANGELOG, completed\nroadmap phases, superpowers plans) left intact.\n- **Guard** — new `scripts/structure-audit/no-workspace-client.test.ts`\nfails if any package reintroduces `@nimbus-dev/client: workspace:*`.\n\n## Verification\n\nGreen locally: full workspace `bun run typecheck`, `bunx biome check\npackages scripts`, `audit:invariants`, `audit:doc-refs` (603 refs\nresolve), `audit:status-drift`, `audit:package-readmes`,\n`audit:cross-platform`, all `scripts/structure-audit` tests, the\npreflight-gates drift test, the workspace-client guard, and cli's\nruntime import of the published `@nimbus-dev/client@0.5.0`. The external\nconsumer `nimbus-agent/nimbus-vscode` (`^0.4.0`) builds green against\n`0.5.0`. `audit:coverage-floor` runs on CI (its changes are pure\nremovals of deleted-file references — coverage-neutral for remaining\nfiles).\n\n## Notes\n\n- Depends on Plan A (sdk) being merged and `@nimbus-dev/sdk@1.3.0`\npublished — already done.\n- Pre-existing `packages/sdk` doc drift (leftover from the earlier sdk\nextraction) is **not** touched here — out of scope; worth a small\nfollow-up.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n\n## Summary by CodeRabbit\n\n* **Documentation**\n* Updated project and contributor guidance to reflect the client\npackage’s standalone repository and independent publishing.\n* Revised architecture, security, licensing, CI, and release\ndocumentation.\n\n* **Chores**\n* Removed the client package from the monorepo, workspace configuration,\nrelease management, and publishing workflow.\n  * Updated CLI consumption to use the published client package.\n\n* **Tests**\n  * Removed monorepo client tests and coverage gates.\n* Added validation ensuring the client is not referenced as a workspace\ndependency.\n\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->",
-          "timestamp": "2026-07-16T11:07:02Z",
-          "tree_id": "9b86f83914707a3caafe70edfa934e15839b817b",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/bc53aaa79efd2c3dcd97860bab078046d4a81c13"
-        },
-        "date": 1784201220371,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 282.43911449999797,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 289.8514635000021,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 274.11865519999776,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "7da3b84dda806f712d1ca7753dc28da580a5eb67",
+          "message": "feat(http): GET /v1/services/resolve — repo-URN-to-service resolution (#1491)\n\nAnswers [#1489](https://github.com/nimbus-agent/Nimbus/pull/1489),\nmerged this morning. The **resolve form** of its §5 — not the §7 list\nform, which stays compatible and unbuilt.\n\nA browser sitting on a repository knows the repository and nothing else.\nThe two routes that would tell its reader anything — `/v1/metrics/dora`\nand `/v1/preflight/deploy` — both take a `service` it has no way to\nobtain, so the consumer ships a hand-typed per-repository binding\ninstead. This removes that gesture.\n\n```text\nGET /v1/services/resolve?repo=github:acme/payments-api\n→ { \"service\": \"payment-service\", \"ambiguous\": false, \"candidates\": [\"payment-service\"] }\n```\n\n## The decisions, and why\n\n**§11 Q1 — resolve form.** It discloses one answer about one repository\nthe caller already named rather than the owner's whole service-to-repo\ngrouping, and the matching rules stay gateway-side.\n\n**Q2/Q3 — scoped, reusing `resolve`.** This is a decision, not an\ninheritance: both routes it feeds are `{ kind: \"public\" }`, so public\nwas the consistent-looking choice. The reason it is not is recorded at\nthe `HTTP_ROUTE_AUTH` entry, because the next proposal will copy it —\n**a public mount would not preserve this route's own narrowing.** `GET\n/v1/items` is public and projects `metadata`, so repo names are already\nenumerable unauthenticated; with that list in hand, N cheap calls here\nwould rebuild exactly the grouping the resolve form claims not to\nexpose. The scope is what makes \"strictly less disclosure\" true rather\nthan nominal. It reuses `resolve` because it *is* a resolution —\ncoordinate in, identity out — so no re-pairing, no fourth scope, and it\nstays off `HTTP_ROUTES`/`openapi/v1.yaml` like every other clip-scoped\nread.\n\n**Q4 — malformed `nimbus.toml` is surfaced (`500 config_unreadable`),\nnot degraded.** `service: null` is indistinguishable from \"no service\nclaims this repo\" — a confident wrong answer about the owner's own\nconfiguration. The body names only that parsing failed; those messages\nembed the service id and offending value verbatim, and a client token is\nnot the owner.\n\n**Q5 — cardinality discloses.** First claimant wins, matching the M-2\nrule the rest of the DORA pipeline already applies, so the route cannot\ndisagree with the binding the metrics behind it used. Every claimant is\nreturned, because the caller is about to gate a deployment and cannot\nsee the resolver's stderr warning. The key set is **total** —\n`ambiguous` and `candidates` are on every answer including the null one,\nso their absence can never be misread as \"uncontested\", and `ambiguous`\nis derived from the candidate count so the two cannot disagree.\n\n## C6, and where the spec was wrong\n\n§5.1 called a URN-to-URN entry point \"the third matcher §5 warns about\nunless the other two are refactored onto it\". **It is not, and it needed\nno refactor** — corrected in place in the spec rather than quietly\nfixed.\n\nThe three do not answer the same question. `repoMetadataMatchesUrn` and\n`repoLikeMatchesUrn` ask *does this **indexed item** belong to this\nservice*, matching heterogeneous item metadata\n(`repo`/`project`/`jobName`/an external id) against a config URN — which\nis why they need provider-specific arms. `resolveServicesByRepoUrn` asks\n*does this **config URN** name this service*, where both sides are\nconfig vocabulary from the same `parseDoraRepoUrn`. Exact comparison, no\nprovider rules.\n\nThat is also the real reason **`circleci` resolves here** while the\nitem-shaped matcher returns `false` for every circleci URN: that arm is\n`false` because an indexed item carries no external id — a fact about\n*items*, not about URNs — so there was never a gap for this route to\ninherit. The synthesised-item alternative was rejected on all three of\n§5.1's counts: it would have inherited that `false`, forced a `type`\nchoice that silently decides the answer, and left\n`bound`/`excluded`/`unknown` with no honest projection onto `service |\nnull`.\n\n## Verification\n\n- `resolveServicesByRepoUrn` was written test-first (6 cases, red\nfirst).\n- The route-auth completeness gate was **red-proved by removing the\ntable entry** — it fails with `+ \"/v1/services/resolve\"`, so the entry\nis genuinely enforced rather than merely present.\n- The disclosure and malformed-config tests were **mutation-checked**:\nmaking `ambiguous` constant and degrading the config error fails exactly\nthose two tests and no others.\n- 16 integration cases (incl. 401/403/404-precedence, wire-key pinning,\nand that the malformed-config body echoes no config value); 2535 tests\ngreen across `ipc`/`metrics`/`egress`/`test/integration/http`.\n- `bun run preflight` green **except `audit:coverage-floor`**, which is\nthe documented Windows false violation, not a regression here. Its 7\nviolations are in five files this branch does not touch —\n`ipc/server/dispatchers.ts`, `ipc/server/socket-listeners.ts`,\n`platform/linux.ts`, `platform/sandbox/win32-reap.ts`,\n`platform/sandbox/win32.ts` — while the two source files this branch\n*does* change clear both floors even on this platform.\n`docs/CONTRIBUTING.md` states the gate is CI-Linux-authoritative and\nthat other platforms produce false violations; the coverage baseline is\nempty, so main clears these on Linux. The Ubuntu leg is the authority\nand settles it on this PR.\n\nNo migration, no invariant, no new egress class — it reads one local\nfile and appends no row, recorded in `egress-coverage.ts`'s `http`\nnarrowing.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nhttps://claude.ai/code/session_01QHGHyesmwAiDZEDrZBTYu1\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n\n## Summary by CodeRabbit\n\n* **New Features**\n* Added an authenticated `GET /v1/services/resolve?repo=...` endpoint to\nmap repository URNs to configured services.\n* Responses identify the selected service, indicate ambiguity, and list\nall matching candidates.\n* Added support for provider-specific repository matching, including\nCircleCI URNs.\n\n* **Bug Fixes**\n* Added clear handling for invalid, missing, unavailable, or malformed\nservice configuration.\n\n* **Documentation**\n* Documented the endpoint, authentication scope, resolution behavior,\nand error responses.\n\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>",
+          "timestamp": "2026-09-11T11:40:38+03:00",
+          "tree_id": "29bcaac3cad1b552b422d8164d40afb6b1237d69",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/7da3b84dda806f712d1ca7753dc28da580a5eb67"
+        },
+        "date": 1789116833602,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 333.79571320000434,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 326.40608815000377,
             "unit": "ms"
           }
         ]
