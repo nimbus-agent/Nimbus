@@ -211,7 +211,34 @@ That has two consequences for this proposal, and the second is the open one:
    deploy against one service while the metrics behind it belong to another. The
    resolve form's whole argument in §5 is that the matching rules stay on the
    gateway side; a second precedence rule here would be the third matcher that
-   argument exists to prevent. Reuse the existing index.
+   argument exists to prevent. Reuse the gateway's own binding rather than
+   inventing a second one.
+
+   **Which entry point that is, this proposal deliberately leaves to Q1 — but
+   it is not a free choice, because neither existing matcher takes the shape a
+   resolve route is handed.** `buildServiceIdentityResolver` resolves a
+   `ServiceIdentityItem` — `{ service, type, metadata }`, an *indexed item* —
+   whereas `GET /v1/services/resolve?repo=…` is handed a bare URN and has no
+   item to match. Answering it means either synthesising a metadata record to
+   feed the item-shaped matcher, or adding a URN-to-URN entry point beside it,
+   and both have consequences worth naming before either is picked:
+
+   - **Synthesising** inherits `repoMetadataMatchesUrn`'s
+     `case "circleci": return false`, so `repo=circleci:…` answers `null` for a
+     service that `repoLikeMatchesUrn` *would* have matched on its
+     `externalId`. It also forces a choice of `type`, which is load-bearing:
+     the resolver returns `bound` outright for a non-`deployment` item but runs
+     the `deployEnvironments` gate for a `deployment` one, so the synthesised
+     type decides the answer. Its three-way `bound` / `excluded` / `unknown`
+     result has no natural projection onto `service | null` either — `excluded`
+     means a config *did* claim the repo, which is not `null` in any useful
+     sense.
+   - **A URN-to-URN entry point** sidesteps all of that, and is the third
+     matcher §5 warns about unless it becomes the one the other two are
+     refactored onto.
+
+   So the CircleCI answer is a decision, not a default, and the resolve form's
+   viability partly rests on it.
 
 2. **Whether the route DISCLOSES the ambiguity is still open, and is a real
    choice.** Returning a bare `{ "service": "payment-service" }` is honest about
@@ -509,7 +536,8 @@ too sensitive for either mount, this is the outcome and the consumer is fine.
    services do?** §5.1. Three answers, and the third is the gateway's to prefer
    if it wants it:
    - **Resolve as the gateway already does** (first claimant wins,
-     `service-identity.ts:36-44`) and stay silent about the contest.
+     `packages/gateway/src/metrics/service-identity.ts:36-44`) and stay silent
+     about the contest.
    - **Resolve the same way and disclose the candidates.** The consumer's
      recommendation, for the reason §5.1 gives.
    - **Reject duplicate claims at config-validation time**, as the PR review

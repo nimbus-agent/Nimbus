@@ -2,7 +2,7 @@
 
 **Date:** 2026-09-11  
 **Reviewer:** Claude Opus 5 (AI Coding Assistant)  
-**Status:** Review Complete — sound as a proposal. All four corrections are applied: C3.1–C3.4, plus R4.1 (the alternative-shape section promoted ahead of the mount question — it was §6 when this review was written and is **§5** in the spec now, with the mount decision at §6), R4.2, R4.3, R4.4 and §2's bulk-vs-probe promotion. A later PR review added a fifth, **C5 — repository-to-service cardinality**, now answered in the spec at §5.1.  
+**Status:** Review Complete — sound as a proposal. All four corrections are applied: C3.1–C3.4, plus R4.1 (the alternative-shape section promoted ahead of the mount question — it was §6 when this review was written and is **§5** in the spec now, with the mount decision at §6), R4.2, R4.3, R4.4 and §2's bulk-vs-probe promotion. A later PR review added a fifth, **C5 — repository-to-service cardinality**, now answered in the spec at §5.1, and a sixth, **C6 — the resolver entry point for a repository-only query**, answered in the second half of that same section.  
 **Target Spec:** [`2026-09-11-services-route-design.md`](./2026-09-11-services-route-design.md)  
 **Slot:** HTTP Client Surfaces / Web Clipper (`nimbus-web-clipper` integration)  
 **Related Routes:** `GET /v1/metrics/dora`, `GET /v1/preflight/deploy`, `POST /v1/deployments`, `GET /v1/items/resolve-file`, `GET /v1/items/resolve-ids`  
@@ -228,3 +228,8 @@ more than its size suggests.
   one, matching `loadNimbusServiceConfigsFromConfigDir`'s documented precedence.
 - **Auth.** Option A: reachable with no bearer, and present in `HTTP_ROUTE_AUTH` (C3.1).
   Option B: 403 for a `LEGACY_SCOPES` token, `404 services_disabled` with no clips vault.
+- **Resolve form, if that is the shape that lands.** A repository-only
+  `repo=circleci:…` query, pinned against whichever entry point §5.1's second half
+  settles on — the two available matchers disagree about exactly this provider, so the
+  answer has to be asserted rather than inherited from whichever one the handler happens
+  to call. Pair it with the multi-claimant case §5.1 already asks for.
