@@ -18,7 +18,6 @@ import { rmSync } from "node:fs";
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { encodeBase64, generateEd25519Keypair } from "@nimbus-dev/sdk";
 import { runIndexedSchemaMigrations } from "../../src/index/migrations/runner.ts";
 import { startReadOnlyHttpServer } from "../../src/ipc/http-server.ts";
 import { partitionByAllowlist } from "../../src/policy/connector-allowlist.ts";
@@ -30,6 +29,8 @@ import type { LocalBaseline } from "../../src/policy/policy-gate.ts";
 import { PolicyGate } from "../../src/policy/policy-gate.ts";
 import { refreshPolicy } from "../../src/policy/policy-runtime.ts";
 import { PolicyStore } from "../../src/policy/policy-store.ts";
+import { encodeBase64 } from "../../src/util/base64.ts";
+import { generateEd25519Keypair } from "../../src/util/ed25519.ts";
 
 const BASELINE = (retentionDays: number): LocalBaseline => ({
   retentionDays,

@@ -219,6 +219,69 @@ function clampFrames(n: number): number {
   return Math.min(MAX_FRAMES_CEILING, Math.max(MIN_FRAMES, n));
 }
 
+/**
+ * TOML booleans, strictly: `true` or `false` and nothing else. `undefined` means the value is
+ * malformed for a boolean key, which the caller turns into a whole-section fail-off.
+ */
+function parseBool(raw: string): boolean | undefined {
+  const v = raw.trim().toLowerCase();
+  if (v === "true") return true;
+  if (v === "false") return false;
+  return undefined;
+}
+
+/**
+ * One handler per recognised key, each returning the updated draft — or `undefined`, meaning
+ * "this value is malformed TOML for this key", which `parseSection` turns into the whole-section
+ * fail-off this file's header contract promises. Rejecting a value the parser cannot trust at all
+ * is the shared rule: a non-boolean `enabled`, a non-integer `max_frames`, an unquoted or
+ * unbalanced string, a negative budget.
+ *
+ * A key ABSENT from this map is deliberately IGNORED rather than failing the section off — the
+ * opposite direction, chosen for forward-compatibility: a newer `nimbus.toml` written by (or
+ * shared with) a newer gateway must not silently disable this default-off, privacy-sensitive
+ * capability on an older binary just because it carries one extra key. An unknown key carries no
+ * ambiguity about what was meant; a malformed value does.
+ */
+const KEY_PARSERS: Record<
+  string,
+  (value: string, out: MultimodalConfigDraft) => MultimodalConfigDraft | undefined
+> = {
+  enabled: (value, out) => {
+    const b = parseBool(value);
+    return b === undefined ? undefined : { ...out, enabled: b };
+  },
+  vlm_base_url: (value, out) => {
+    const v = unquote(value);
+    return v === undefined ? undefined : { ...out, vlmBaseUrl: v };
+  },
+  vlm_model: (value, out) => {
+    const v = unquote(value);
+    return v === undefined ? undefined : { ...out, vlmModel: v };
+  },
+  // The VENDOR check (unknown/unsupported) is deliberately NOT here: it happens after parsing,
+  // loudly, in `assertRemoteVlmSupported` — see that function and this file's header comment.
+  remote_vlm: (value, out) => {
+    const v = unquote(value);
+    return v === undefined ? undefined : { ...out, remoteVlmRaw: v };
+  },
+  max_frames: (value, out) => {
+    const n = parseStrictInt(value);
+    return n === undefined ? undefined : { ...out, maxFrames: clampFrames(n) };
+  },
+  // A negative value is semantically malformed: a value this file cannot honour turns the section
+  // off rather than silently substituting one the user did not ask for. Zero IS accepted and means
+  // "no cloud bytes may be fetched this run".
+  fetch_budget_bytes: (value, out) => {
+    const n = parseStrictInt(value);
+    return n === undefined || n < 0 ? undefined : { ...out, fetchBudgetBytes: n };
+  },
+  prefer_renditions: (value, out) => {
+    const b = parseBool(value);
+    return b === undefined ? undefined : { ...out, preferRenditions: b };
+  },
+};
+
 function parseSection(raw: string): MultimodalConfigDraft {
   let inSection = false;
   let out: MultimodalConfigDraft = defaults();
@@ -242,63 +305,11 @@ function parseSection(raw: string): MultimodalConfigDraft {
       // an operator who cannot trust the file to parse should not get a half-applied result.
       return defaults();
     }
-    const key = line.slice(0, eq).trim();
-    const value = line.slice(eq + 1);
-    if (key === "enabled") {
-      const v = value.trim().toLowerCase();
-      if (v === "true") out = { ...out, enabled: true };
-      else if (v === "false") out = { ...out, enabled: false };
-      // Neither: a malformed boolean (`enabled = maybe`) is malformed TOML, same fail-off
-      // direction as the unstructured-line case above.
-      else return defaults();
-    } else if (key === "vlm_base_url") {
-      const v = unquote(value);
-      // An unquoted, unbalanced, or empty value is malformed TOML for this key — same fail-off
-      // direction as the unstructured-line and non-boolean-`enabled` cases above.
-      if (v === undefined) return defaults();
-      out = { ...out, vlmBaseUrl: v };
-    } else if (key === "vlm_model") {
-      const v = unquote(value);
-      if (v === undefined) return defaults();
-      out = { ...out, vlmModel: v };
-    } else if (key === "remote_vlm") {
-      const v = unquote(value);
-      // An unquoted, unbalanced, or empty value is malformed TOML for this key — same fail-off
-      // direction as the other quoted-string keys above. The VENDOR check (unknown/unsupported)
-      // is deliberately NOT here: it happens after parsing, loudly, in `assertRemoteVlmSupported`
-      // — see that function and this file's header comment for why.
-      if (v === undefined) return defaults();
-      out = { ...out, remoteVlmRaw: v };
-    } else if (key === "max_frames") {
-      const n = parseStrictInt(value);
-      // A non-integer value (`8junk`, `nonsense`) is malformed TOML for this key — same fail-off
-      // direction, not a silent fallback to the default frame count.
-      if (n === undefined) return defaults();
-      out = { ...out, maxFrames: clampFrames(n) };
-    } else if (key === "fetch_budget_bytes") {
-      const n = parseStrictInt(value);
-      // A non-integer value is malformed TOML for this key — same fail-off direction as
-      // `max_frames` and `enabled`. A negative value is semantically malformed: this file's
-      // contract is that a value it cannot honour turns the section off rather than silently
-      // substituting one the user did not ask for. Zero is accepted and means "no cloud bytes
-      // may be fetched this run".
-      if (n === undefined || n < 0) return defaults();
-      out = { ...out, fetchBudgetBytes: n };
-    } else if (key === "prefer_renditions") {
-      const v = value.trim().toLowerCase();
-      if (v === "true") out = { ...out, preferRenditions: true };
-      else if (v === "false") out = { ...out, preferRenditions: false };
-      // Neither: a malformed boolean is malformed TOML, same fail-off direction as
-      // non-boolean `enabled`.
-      else return defaults();
-    }
-    // An unrecognised but well-formed key (e.g. a future `vlm_prompt` this binary predates) is
-    // deliberately IGNORED rather than failing the section off. Chosen over the stricter
-    // alternative for forward-compatibility: a newer `nimbus.toml` written by (or shared with) a
-    // newer gateway must not silently disable this default-off, privacy-sensitive capability on
-    // an older binary just because it doesn't recognise one extra key. Contrast with the two
-    // guards above, which reject a value this parser cannot trust at all (a non-boolean
-    // `enabled`, a non-integer `max_frames`) — an unknown key carries no such ambiguity.
+    const parse = KEY_PARSERS[line.slice(0, eq).trim()];
+    if (parse === undefined) continue;
+    const next = parse(line.slice(eq + 1), out);
+    if (next === undefined) return defaults();
+    out = next;
   }
   return out;
 }

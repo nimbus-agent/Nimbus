@@ -211,6 +211,33 @@ export function wireToolProtocol(
     pending.clear();
   };
 
+  /** Dispatch one parsed line: a brokered fetch, an unrecognized request, or a reply to ours. */
+  const handleInbound = (msg: InboundMessage): void => {
+    // The tool asking US to make a request — the only route out of that process.
+    if (msg.method === BROKERED_FETCH_METHOD) {
+      const id = msg.id;
+      void broker
+        .handleFetch(envelope.artifact.toolId, msg.params)
+        .then((result) => send({ id, result }))
+        .catch((err: unknown) => send({ id, error: errorMessageOf(err) }));
+      return;
+    }
+
+    // Any other message carrying a `method` is an inbound request we do not recognize —
+    // never treated as a reply, so it cannot spuriously resolve a pending call sharing its id.
+    if (msg.method !== undefined) return;
+
+    // A reply to one of OUR requests.
+    const p = pending.get(msg.id);
+    if (p === undefined) return;
+    pending.delete(msg.id);
+    if (msg.error !== undefined) {
+      p.reject(new Error(typeof msg.error === "string" ? msg.error : JSON.stringify(msg.error)));
+      return;
+    }
+    p.resolve(msg.result);
+  };
+
   io.onStdoutData((chunk) => {
     buf += decoder.decode(chunk, { stream: true });
     let nl = buf.indexOf("\n");
@@ -220,31 +247,7 @@ export function wireToolProtocol(
       nl = buf.indexOf("\n");
       if (line.trim() === "") continue;
       const msg = parseInboundLine(line);
-      if (msg === null) continue;
-
-      // The tool asking US to make a request — the only route out of that process.
-      if (msg.method === BROKERED_FETCH_METHOD) {
-        const id = msg.id;
-        void broker
-          .handleFetch(envelope.artifact.toolId, msg.params)
-          .then((result) => send({ id, result }))
-          .catch((err: unknown) => send({ id, error: errorMessageOf(err) }));
-        continue;
-      }
-
-      // Any other message carrying a `method` is an inbound request we do not recognize —
-      // never treated as a reply, so it cannot spuriously resolve a pending call sharing its id.
-      if (msg.method !== undefined) continue;
-
-      // A reply to one of OUR requests.
-      const p = pending.get(msg.id);
-      if (p === undefined) continue;
-      pending.delete(msg.id);
-      if (msg.error !== undefined) {
-        p.reject(new Error(typeof msg.error === "string" ? msg.error : JSON.stringify(msg.error)));
-      } else {
-        p.resolve(msg.result);
-      }
+      if (msg !== null) handleInbound(msg);
     }
   });
 

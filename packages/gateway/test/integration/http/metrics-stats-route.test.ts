@@ -3,7 +3,8 @@
  * series, so a client can draw a line rather than three overlapping windows.
  *
  * Sibling of `metrics-dora-route.test.ts`: same fixture, same public mount, same config seam.
- * Design: `docs/superpowers/specs/2026-09-11-metrics-series-route-design.md`.
+ * The design doc was pruned with the rest of the delivered set; the shipped behaviour is described
+ * in `docs/CHANGELOG.md`'s 2026-09-11 entry.
  */
 
 import { Database } from "bun:sqlite";

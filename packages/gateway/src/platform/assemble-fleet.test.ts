@@ -108,7 +108,7 @@ describe("assembleFleetRuntime", () => {
     const before = stops.length;
     const scheduler = assembleFleetRuntime(deps(gate)).scheduler;
     expect(scheduler).toBeDefined();
-    expect(stops.length).toBe(before + 1);
+    expect(stops).toHaveLength(before + 1);
   });
 
   /**
@@ -159,7 +159,7 @@ interval_seconds = 3600
   test("exactly ONE FleetRemoteBudget is constructed in assemble.ts — the run boundary and the cap are one object", async () => {
     const src = await readFile(join(import.meta.dir, "assemble.ts").replaceAll("\\", "/"), "utf8");
     const calls = src.match(/createFleetRemoteBudget\s*\(/g) ?? [];
-    expect(calls.length).toBe(1);
+    expect(calls).toHaveLength(1);
   });
 
   test("enabled but with NO job constructs nothing — an empty fleet is not a running one", () => {

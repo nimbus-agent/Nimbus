@@ -217,6 +217,46 @@ export class FleetScheduler {
     });
   }
 
+  /**
+   * Re-probe BETWEEN jobs, not only at the start. Stopping at a boundary rather than mid-brief is
+   * why the boundary exists: a half-written brief is worse than an absent one. The first job of a
+   * run is exempt — `execute` already probed for it — and `--force` skips the check entirely.
+   */
+  private async stillAdmitted(attempted: number, force: boolean): Promise<boolean> {
+    if (attempted === 0 || force) return true;
+    const again = await this.deps.hostActivity.probe();
+    return this.admit(again).admitted;
+  }
+
+  /**
+   * One job's turn. Returns whether it COMPLETED — a failure is isolated, not fatal: a run that
+   * aborted on the first bad config line would let one stale entry silence every other brief
+   * indefinitely, and overnight nobody notices.
+   */
+  private async runOneJob(
+    job: NimbusFleetJobToml,
+    runId: string,
+    expiresAt: number,
+  ): Promise<boolean> {
+    const outcome = await this.deps.invoke(job);
+    if (outcome.status !== "done") {
+      this.deps.store.recordJobFailure(job.name, this.deps.now(), outcome.error);
+      return false;
+    }
+    this.deps.store.recordBrief({
+      runId,
+      jobId: job.name,
+      agentMethod: `agents.${job.agent}`,
+      briefMarkdown: outcome.briefMarkdown,
+      findingsJson: outcome.findingsJson,
+      synthesisJson: outcome.synthesisJson,
+      createdAt: this.deps.now(),
+      expiresAt,
+    });
+    this.deps.store.recordJobSuccess(job.name, this.deps.now());
+    return true;
+  }
+
   private async execute(
     jobs: readonly NimbusFleetJobToml[],
     force: boolean,
@@ -297,12 +337,7 @@ export class FleetScheduler {
 
     try {
       for (const job of jobs) {
-        // Re-probe BETWEEN jobs, not only at the start. Stopping at a boundary rather than
-        // mid-brief is why the boundary exists: a half-written brief is worse than an absent one.
-        if (tally.attempted > 0 && !force) {
-          const again = await this.deps.hostActivity.probe();
-          if (!this.admit(again).admitted) return close("yielded");
-        }
+        if (!(await this.stillAdmitted(tally.attempted, force))) return close("yielded");
 
         // Due check AND backoff, both inside `isJobDue`. NAMING a job (not `--force`) is what
         // overrides the schedule: an owner asking for one job by name has made the decision this
@@ -315,25 +350,7 @@ export class FleetScheduler {
         }
 
         tally.attempted += 1;
-        const outcome = await this.deps.invoke(job);
-        if (outcome.status === "done") {
-          this.deps.store.recordBrief({
-            runId,
-            jobId: job.name,
-            agentMethod: `agents.${job.agent}`,
-            briefMarkdown: outcome.briefMarkdown,
-            findingsJson: outcome.findingsJson,
-            synthesisJson: outcome.synthesisJson,
-            createdAt: this.deps.now(),
-            expiresAt,
-          });
-          this.deps.store.recordJobSuccess(job.name, this.deps.now());
-          tally.completed += 1;
-        } else {
-          // Isolated, not fatal. A run that aborted on the first bad config line would let one
-          // stale entry silence every other brief indefinitely — and overnight, nobody notices.
-          this.deps.store.recordJobFailure(job.name, this.deps.now(), outcome.error);
-        }
+        if (await this.runOneJob(job, runId, expiresAt)) tally.completed += 1;
       }
     } catch (err) {
       // The invoker CONTRACT returns `{ status: "failed" }` rather than throwing, so reaching here

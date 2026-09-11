@@ -41,7 +41,7 @@ async function main() {
     }
     out.push("");
   }
-  const target = `${REPO_ROOT}/docs/superpowers/specs/punchlist/01-load-bearing-comments.md`;
+  const target = `${REPO_ROOT}/docs/structure-audit/punchlist/01-load-bearing-comments.md`;
   await mkdir(dirname(target), { recursive: true });
   await writeFile(target, out.join("\n"), "utf8");
   console.log(`Wrote ${allHits.length} hits to ${relPath(target)}`);

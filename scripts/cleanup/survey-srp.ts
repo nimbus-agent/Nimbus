@@ -48,7 +48,7 @@ async function main() {
     "- LOC>500 + one cohesive exported class/function → keep but audit for internal SRP.",
     "- LOC>500 in a test file → ignore for pass 5 (tests are frozen).",
   );
-  const target = `${REPO_ROOT}/docs/superpowers/specs/punchlist/03-srp-offenders.md`;
+  const target = `${REPO_ROOT}/docs/structure-audit/punchlist/03-srp-offenders.md`;
   await mkdir(dirname(target), { recursive: true });
   await writeFile(target, out.join("\n"), "utf8");
   console.log(`Wrote ${rows.length} SRP candidates to ${relPath(target)}`);

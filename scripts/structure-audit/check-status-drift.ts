@@ -59,18 +59,19 @@ function readAll(repoRoot: string, rels: readonly string[]): string[] | undefine
  * than about the claims. The header's warning about ambiguity still holds and is why this stays a
  * RANGE check — a bare count like "32 live security invariants" is deliberately NOT matched, since
  * the live count is not the ceiling whenever a number is reserved. I28 is reserved today, so the
- * count is 37 while the ceiling is I38, and a naive comparison would read a correct 37 as stale.
+ * count is 39 while the ceiling is I40, and a naive comparison would read a correct 39 as stale.
  *
  * The list is an ALLOW-list, so anything absent is simply unscanned rather than actively
  * excluded. These are the ones deliberately left off, because rewriting them would falsify a
  * record rather than de-rot a claim:
- *   - `docs/superpowers/**` — dated design and plan documents describing what a past change did.
- *   - `docs/CHANGELOG.md` — same, per release.
+ *   - `docs/CHANGELOG.md` — a dated record, per release. (`docs/superpowers/**` was listed here
+ *     for the same reason until 2026-09-11, when the delivered plans and specs were pruned from
+ *     HEAD; the entry went with them rather than staying behind naming nothing.)
  *   - `*.test.ts` — fixtures that assert on stale values on purpose.
  *   - `scripts/structure-audit/check-nimbus-invariants.ts` — the D-rule source of truth itself.
  *
- * Only the HIGHEST range in a file is compared, so a file carrying a correct `I1-I38` and a
- * stale `I1-I25` elsewhere passes. That is the cost of accepting the split form `I1-I27, I29-I38`,
+ * Only the HIGHEST range in a file is compared, so a file carrying a correct `I1-I40` and a
+ * stale `I1-I25` elsewhere passes. That is the cost of accepting the split form `I1-I27, I29-I40`,
  * where flagging a lower bound would make the honest phrasing unwritable.
  *
  * A listed file that does not exist is skipped rather than reported: unlike the three required

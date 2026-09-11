@@ -176,7 +176,7 @@ bun scripts/structure-audit/count-any-usage.ts --update    # rewrite docs/struct
 bun run audit:doc-refs                  # doc-ref drift (broken markdown links + backtick paths) across
                                         # CLAUDE/GEMINI, all of docs/ and .claude/{commands,agents}/*.md.
                                         # Excluded, each with a reason in the script: docs/CHANGELOG.md,
-                                        # docs/roadmap.md, docs/superpowers/, docs/ci-secrets.md,
+                                        # docs/roadmap.md, docs/ci-secrets.md,
                                         # docs/structure-audit/baseline.md
 bun run audit:workflow-run-triggers      # workflow_run upstreams must be write-access-only (pwn-request premise)
 bun run audit:workflow-lint              # workflow YAML validity + column-0 heredoc escapes + `bash -n` on every

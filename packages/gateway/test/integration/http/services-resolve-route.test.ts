@@ -3,8 +3,9 @@
  * client uses to learn which service id to pass `/v1/metrics/dora` and `/v1/preflight/deploy`.
  *
  * Sibling of `items-resolve-ids-route.test.ts`: same harness, same inline-bearer-read seam, same
- * `resolve` scope. Design: `docs/superpowers/specs/2026-09-11-services-route-design.md` (the
- * resolve form of §5, the cardinality rule of §5.1).
+ * `resolve` scope. The design doc was pruned with the rest of the delivered set; the shipped
+ * behaviour — the resolve form and its cardinality rule — is described in `docs/CHANGELOG.md`'s
+ * 2026-09-11 entry.
  */
 
 import { describe, expect, test } from "bun:test";

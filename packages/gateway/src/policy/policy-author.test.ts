@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
-import { encodeBase64, generateEd25519Keypair } from "@nimbus-dev/sdk";
 import { openSeededInMemoryDb } from "../../test/helpers/migrated-db-seed.ts";
+import { encodeBase64 } from "../util/base64.ts";
+import { generateEd25519Keypair } from "../util/ed25519.ts";
 import { type AuthorDeps, authorPolicy } from "./policy-author.ts";
 import { buildPolicyGate } from "./policy-gate.ts";
 import { verifyPolicy } from "./policy-signing.ts";

@@ -4,6 +4,16 @@ Reverse-chronological log of dated deliveries. This file is the **single source*
 
 Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` § Shipped](./roadmap.md#shipped); this file tracks the Phase 5 (Extended Surface) delivery cadence and later releases.
 
+> **Design docs named below are file names, not links.** Every delivered plan, spec and design review
+> under `docs/superpowers/` was pruned from `HEAD` on 2026-09-11 once the work had shipped, the same
+> way `plans/` was pruned once before on 2026-05-28. The durable design content moved into
+> [`architecture.md`](./architecture.md) (subsystem design and the decisions behind it),
+> [`SECURITY-INVARIANTS.md`](./SECURITY-INVARIANTS.md) (invariant rationale and anti-patterns),
+> [`cli-reference.md`](./cli-reference.md) (every command, flag and config key) and
+> [`roadmap.md`](./roadmap.md) (acceptance criteria and what did NOT ship). The originals are still
+> in git history — `git log --diff-filter=D -- docs/superpowers/` finds the prune commit, and
+> `git show <sha>^:docs/superpowers/specs/<name>` reads any one of them.
+
 ---
 
 ## Post-Phase-6 deliveries
@@ -61,7 +71,7 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
   asked. That differs from `/v1/metrics/dora` beside it, which still 500s with the parser's message
   intact; pre-existing, out of scope, and named so the difference reads as deliberate.
   No migration, no invariant, no new egress class.
-  Design: [`2026-09-11-metrics-series-route-design.md`](./superpowers/specs/2026-09-11-metrics-series-route-design.md).
+  Design: `2026-09-11-metrics-series-route-design.md`.
 
 - **2026-09-11 — `GET /v1/services/resolve`: repo-URN-to-service resolution, answering the
   proposal merged hours earlier.** A browser client sitting on a repository knows the repository
@@ -107,7 +117,7 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
   (recorded in the `http` narrowing in `egress/egress-coverage.ts`).
   **NOT shipped:** the list form (`GET /v1/services`), which stays compatible and unbuilt, and with
   it §11 Q2/Q3, which only ever applied to it.
-  Design: [`2026-09-11-services-route-design.md`](./superpowers/specs/2026-09-11-services-route-design.md).
+  Design: `2026-09-11-services-route-design.md`.
 
 - **2026-09-10 — Runtime tool generation, PR 3 of 3: persistence, closing the row.**
   `nimbus tool save <tool-id>` promotes a live, owner-approved generated tool (created via PR 2's
@@ -229,7 +239,7 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
   set` now reaches `toolgen.credentialSet`, which narrows all three schemes and writes the binding,
   and it is the documented recovery path for a saved tool whose per-host secret the boot sweep took.
   It never widens the signed `credentialHosts`. Design:
-  [`2026-09-10-s2-toolgen-persistence-design.md`](./superpowers/specs/2026-09-10-s2-toolgen-persistence-design.md).
+  `2026-09-10-s2-toolgen-persistence-design.md`.
 - **2026-09-10 — Runtime tool generation, PR 2 of 3: drafting.** `nimbus tool create` now actually
   drafts a tool body via a model instead of refusing — `ERR_TOOLGEN_DRAFT_NOT_IMPLEMENTED` is gone.
   **No schema migration, no new invariant** — PR 2 builds entirely on I39's substrate (PR 1,
@@ -298,7 +308,7 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
 
   **Not shipped:** agent-initiated tool proposal (`allow_agent_initiated` + `allowed_hosts`),
   persistence via `nimbus tool save`, and the `header`/`basic` credential bindings above. Design:
-  [`2026-09-09-s2-toolgen-drafting-design.md`](./superpowers/specs/2026-09-09-s2-toolgen-drafting-design.md).
+  `2026-09-09-s2-toolgen-drafting-design.md`.
 - **2026-09-10 - `nimbus index health`, the first of the v0.1.1 CLI batch.** Index QUALITY, as
   opposed to `diag.snapshot`'s size gauge: per-connector embedding coverage, stale connectors, item
   types with sparse metadata, and a 0-100 confidence score. New CLI-only IPC method `index.health`
@@ -472,7 +482,7 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
   **`digest_min_delta`** (per job, default 1, refused below 1) bounds numeric movement only — a
   finding appearing or resolving is never suppressed, and a metric withheld by the threshold is
   counted and named rather than silently dropped.
-  Design: [`2026-09-07-fleet-change-digest-design.md`](./superpowers/specs/2026-09-07-fleet-change-digest-design.md).
+  Design: `2026-09-07-fleet-change-digest-design.md`.
   **NOT shipped:** subject enumeration (PR 2b) — the owner still names each job's subject in config.
 
 - **2026-09-07 — `GET /v1/items/resolve-ids`: batch id-to-reference lookup for an agent brief's
@@ -548,7 +558,7 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
   test block that claimed more coverage than they delivered; and assertions that could not fail.
   Described by class rather than counted: an earlier draft gave a `fix`/`test` commit tally, and the
   review round that read it added the commits that made it wrong. Design:
-  [`2026-09-06-s2-overnight-agent-fleets-design.md`](./superpowers/specs/2026-09-06-s2-overnight-agent-fleets-design.md).
+  `2026-09-06-s2-overnight-agent-fleets-design.md`.
 - **2026-09-06 — the multimodal remote arm was answered by a real vendor for the first time.**
   Not a delivery — an acceptance run, recorded because it retires a claim the entry below could
   only state as open. PR 4's three vendor request shapes were written from each vendor's own
@@ -574,8 +584,8 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
   grant preview prints `(size unknown)` for an artifact whose size the index holds, because Google
   Drive serialises `size` as a **string** and the CLI preview does not parse that form — small,
   but it lands on the consent surface, which exists so an owner can see what they are approving.
-  Full record: [`2026-09-02-s2-multimodal-io-design.md` §
-  21](./superpowers/specs/2026-09-02-s2-multimodal-io-design.md).
+  Full record: `2026-09-02-s2-multimodal-io-design.md` §
+  21.
 - **2026-09-05 — Multimodal I/O, PR 4 of 4: a per-artifact, revocable grant lets a remote vision model describe ONE still image, closing the slice.** `nimbus media allow-remote <itemId>... --vendor <name>` (explicit form) or `nimbus media allow-remote --service <name> --limit N --vendor <name> [--since <days>]` (selector form — `--limit` MANDATORY and capped at 500, refused rather than clamped above it) writes a durable `media_grant` row (schema **V59**, `media-grant-v59-sql.ts`) via `media-grant-store.ts`'s `createGrant`, the table's sole writer. `nimbus media grants list` enumerates active grants; `nimbus media grants revoke <itemId> [--vendor <name>]` always requires an item id — there is no "revoke everything" form. Every grant surface prints an enumerated, dual-ended preview before acting — every matching artifact BY TITLE, naming both the source service and the destination vendor, never just a count — and refuses outright in non-interactive mode rather than defaulting to "no". **Images only, by two independent mechanisms:** `media-grant-store.ts` refuses to write an `av`-modality grant row at all, and `build-media-pass-deps.ts`'s `buildRemoteFor` separately returns `undefined` for any non-`"image"` candidate regardless of what the store holds, so audio and video have no remote tier at any level — **remote STT does not exist in this release and is refused by construction**, unchanged from PR 1–3. The new `[multimodal] remote_vlm` config key names the ONE vendor a grant may authorize — `anthropic`, `openai` or `gemini`, narrower than `[llm.remote.*]`'s four text vendors since `xai` ships no vision adapter here; an unsupported or misspelled name **refuses to load `[multimodal]` at all**, the same loud-refusal posture as a non-loopback `vlm_base_url`. The vendor's API key is **reused** from the existing `[llm.remote.<vendor>]` Vault entry rather than minting a second secret surface, but the CAPABILITY is not inherited — a key that already authorizes `nimbus ask` grants nothing here on its own. `build-media-pass-deps.ts`'s `buildRemoteFor` builds ONE remote `VlmProvider` instance per pass (`multimodal/vlm/remote/remote-vlm-shared.ts`'s single factory for all three vendors — one name, not three, so static rule D27(a) stays a single allow-list entry — wrapped in `wrapLedgeredVlm`) and resolves it per candidate against `hasActiveGrant`; the pass never prompts on its own — granting is a separate, deliberate act, and a batch that prompted once per artifact would produce one real decision followed by hundreds of reflexes, the same failure I33's docs guard against by showing the verbatim body rather than a digest. A grant on an artifact already understood locally is not inert: `media-discovery.ts` re-offers a row whose existing understanding is LOCAL but which now carries an active grant for the configured vendor, so the pass following a grant re-describes it through the granted vendor rather than waiting for an unrelated re-index. **New invariant I37** — a media body reaches a non-local model only through this durable, artifact-scoped grant, fail-closed the same way `enforce_air_gap` is — **and static rule D27**, two rules: the non-local `VlmProvider` constructor (`createRemoteVlm`) is confined to one wiring site (`build-media-pass-deps.ts`) inside a `wrapLedgeredVlm(...)` argument list, and the `media_grant` table is confined to its store (sole writer), one correlated read in `media-discovery.ts`, and its own migration DDL. **No new egress coverage class:** the existing `model`-class appender (`egress/vlm-egress.ts`'s `wrapLedgeredVlm`, D22(g)) already covered a remote `describe` call before PR 4 shipped a real one to wrap; PR 4 is simply the first time that appender decorates a request that actually leaves the machine, so the `model` class's "no named exclusions" claim — re-checked against PR 4 rather than assumed — survives unchanged. **Not verified against a live vendor endpoint.** The three vendor request shapes (`multimodal/vlm/remote/remote-vlm-shared.ts`) were written from each vendor's own documented image API and are tested only against fakes — proof of the shape this code sends, not that any vendor accepts it, the same gap PR 3's own acceptance run existed to close for the cloud-fetch arm — and an acceptance run against at least one real vendor key remained open work at the time of this entry. **Superseded on 2026-09-06 (see the entry above): the Gemini adapter has since been answered by the live vendor; Anthropic and OpenAI have not**. **DEFAULT OFF unchanged, now three gates deep for a remote describe specifically:** `[multimodal] enabled` and per-root `media_index` still gate the pass at all (unchanged since PR 1), and an explicit per-artifact grant gates the remote arm on top of both. No schema change beyond **V59**; the whole `media` namespace stays LAN-forbidden and absent from the Tauri allowlist, unchanged.
 - **2026-09-04 — `GET /v1/items/resolve-file`: the forge-file read the browser client already
   calls.** `nimbus-web-clipper` shipped C7.1 — *what breaks if this changes*, *who knows this
@@ -598,7 +608,7 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
   resolve — `parseRemoteUrl` accepts no other host and no deeper path, so a self-hosted forge or a
   GitLab subgroup project answers `remote_not_tracked` even with the checkout genuinely present.
   Design:
-  [`docs/superpowers/specs/2026-09-04-resolve-file-route-design.md`](./superpowers/specs/2026-09-04-resolve-file-route-design.md).
+  `2026-09-04-resolve-file-route-design.md`.
 - **2026-09-03 — Multimodal I/O, PR 2 of 4: image understanding and sampled frame captions via a local Ollama VLM.** A new `VlmProvider` seam (`multimodal/vlm/vlm-types.ts`) — deliberately NOT a widened `LlmProvider`, since `LlmGenerateOptions` is text-only and pushing image bytes through it would reach every text caller, the same fork that produced `wrapLedgeredMastraModel` as its own decorator. `multimodal/vlm/ollama-vlm.ts`'s `createOllamaVlm` probes `POST /api/show` for a `capabilities` array containing `"vision"` (with a `families`/`clip`/`mllama` fallback for legacy daemons) rather than name-matching over `/api/tags`. Still images caption through the existing `media-gate.ts` chokepoint as `nimbus:image_understanding` rows. Video artifacts gain `multimodal/frames/av-understander.ts`, a composite understander that transcribes first (unchanged from PR 1) and then samples up to `[multimodal] max_frames` (default 8, density-capped at one per 2 seconds of video) keyframes via `multimodal/frames/frame-extract.ts` — one `ffmpeg -ss <t> -frames:v 1` spawn per frame, JPEG bytes read off stdout, **nothing written to disk**; the audio transcode's one 0600 scratch WAV remains the only file this subsystem writes. `UNDERSTANDING_VERSION` bumped to **2**, so a video already transcribed under PR 1 is re-offered once and gains frame captions. The GPU lease is taken **once per artifact, not per frame**, with a heartbeat well inside `GpuArbiter`'s 30s idle bound — re-acquiring per frame risked a half-captioned video nothing recorded as partial. A row with no speech AND no captions is not written at all: the gate throws, and the pass records a retryable failure rather than an artifact whose entire body is disclosure notes. **Egress:** vision's own I29 `model`-class decorator, `egress/vlm-egress.ts`'s `wrapLedgeredVlm`, ships ahead of any remote `VlmProvider` in production (the shipped Ollama adapter is local BY DEFAULT — `isLocal` derived from its resolved base URL, I34 — not by construction); static rule **D22(g)** confines `wrapLedgeredVlm` to its egress module plus `multimodal/build-media-pass-deps.ts`, and separately confines every `createOllamaVlm(...)` call to a `wrapLedgeredVlm(...)` argument list. **The org-policy lockoff PR 1 left inert is now real:** `media.understand` reads the live `EnforcedPolicy.capabilitiesDisabled` accessor (I22) and refuses `multimodal_input` fail-closed, and refuses fail-closed when that accessor itself is absent rather than defaulting to enabled. **`nimbus media understand --modality image` is now accepted** (PR 1 hard-refused it at the CLI even though the registry entry existed). **Phase 14 Core acceptance is now structurally satisfiable, not yet verified end-to-end:** a `video_understanding` row CAN carry both a non-empty transcript and at least one frame caption, but no live recording has been run through this code — the one test that talks to a real daemon (`test/integration/multimodal/vlm-live.test.ts`) is opt-in-only (`NIMBUS_TEST_VLM=1`), never run in CI, and exercises the Ollama adapter directly rather than a full pass over a real file. **Bounds, stated rather than glossed:** no dedicated OCR engine (a VLM's extraction on a dense screenshot is worse than a purpose-built OCR pass); a sampled video is not a watched video — anything between sampled frames is invisible; a caption is a model's guess, not an observation, and no confidence number is stored; frame captions need BOTH a vision model AND a working `ffprobe` duration probe, and a machine with either missing still gets a transcript-only row with the absence stated in the body; still no cloud byte-fetch (PR 3) and no remote model of any kind including remote STT (PR 4); still no diarization, which `whisper-cli` cannot do. DEFAULT OFF, unchanged: `[multimodal] enabled` and per-root `media_index` both stay `false`. No new invariant (I29/D22(g) rides the existing egress-ledger invariant) and no new schema version — **V58**, unchanged.
 - **2026-09-02 — Multimodal I/O, PR 1 of 4: local audio/video transcription, indexed as searchable derived items.** `nimbus media understand` runs a budgeted, resumable pass (V58 `media_pass_cursor`) over media files under `[[filesystem.roots]]`, discovered behind a new per-root `media_index` toggle. Transcription is local `whisper-cli` over an `ffmpeg` transcode; the decoded WAV is one 0600 gateway-owned scratch file deleted in a `finally`, with a start-of-pass sweep for files a dead process left behind — `finally` does not survive a SIGINT, and on Windows a SIGTERM is `TerminateProcess`. Output is a derived `nimbus:video_understanding` item whose external id is STABLE (the version lives in metadata, so a better model later replaces rather than accumulates duplicate rows in FTS and agent context) and which carries `modelDerived: true` — a transcript is a model'"'"'s assertion, not an observation. The pass reports skips BY REASON rather than a bare total. **DEFAULT OFF twice over:** `[multimodal] enabled` and `media_index`, both false. **Two structural properties:** both understanding types sit in `LOCAL_ONLY_PROSE_TYPES`, so IF this derived text is ever embedded, it is guaranteed to route through the local embedder even when a remote embedder is configured — a SET-MEMBERSHIP guarantee, correct as far as it goes, but not yet an exercised behavior: `buildMediaPassDeps` never supplies `runMediaPass`'s optional `scheduleEmbedding` seam (unlike `clip-ingest.ts` and `brief-save.ts`, which do), so today a derived row is FTS-searchable but not semantically (vector) retrievable — that wiring gap is pre-existing and tracked separately. And the whole `media` namespace is LAN-denied alongside `exec` and `computer`, since the method reads local files and spawns subprocesses. **NOT shipped:** image understanding (no vision model), cloud byte-fetch, any remote model including remote STT, and diarization. **Phase 14 Core acceptance is NOT met** — it wants a frame caption, which needs PR 2. **Known bound:** org policy `multimodal_input` is currently INERT against this capability (no IPC-reachable `EnforcedPolicy` accessor); only the local kill switch is real. Schema **V58**; no new invariant.
 - **2026-09-02 — `GET /v1/agents` publishes the gateway's version alongside the names, because a
@@ -722,7 +732,7 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
   two rules, because one does not carry the property: `performActuation` confinement to
   `cu-gate.ts`/`cu-actuate.ts` (mirrors I33's D23), and driver-import confinement — no file outside
   `computer-use/cu-lanes/` may import a browser driver, in either import form (mirrors D22(d)).
-  Design: [`docs/superpowers/specs/2026-08-30-s2-computer-use-design.md`](./superpowers/specs/2026-08-30-s2-computer-use-design.md).
+  Design: `2026-08-30-s2-computer-use-design.md`.
 
   **What did NOT ship, so this is not read as a working capability.** The browser **driver does
   not exist**: `playwright-core@1.62.1` fails a `bun build --compile` gate — a statically-resolved,
@@ -1083,7 +1093,7 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
   string is not an identity claim. One inherited behaviour is worth knowing rather than
   discovering: a re-clip that sends no `source` **clears** a stored one, because
   `upsertIndexedItem` replaces metadata wholesale — exactly as `tags` already behave.
-  Design: [clip source metadata](./superpowers/specs/2026-08-20-clip-source-metadata-design.md).
+  Design: clip source metadata.
 - **2026-08-21 — The Windows extension sandbox is real: an unprivileged native helper replaces
   the permanently-throwing stub.** `nimbus-sandbox-helper.exe` — AppContainer profile
   creation/derivation, per-spawn ACL grants (leaf `--cwd` plus explicit policy
@@ -1114,7 +1124,7 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
   `io.github.nimbus-agent/nimbus@0.2.0` is live at
   [registry.modelcontextprotocol.io](https://registry.modelcontextprotocol.io), pointing at
   `npm:@nimbus-dev/mcp@0.2.0` — the last blocker in
-  [the distribution program](./superpowers/specs/2026-08-19-nimbus-distribution-program-design.md),
+  the distribution program,
   which had carried it as "blocked — needs a packaging decision" since 2026-08-19. Any MCP client
   can now discover and run the local index and the fourteen agents via `npx -y @nimbus-dev/mcp`.
   The satellite's `release.yml` gained a third job that republishes the registry entry from CI on
@@ -1220,7 +1230,7 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
   briefs, are — and the three new tools serve index rows, so they join `INDEX_TOOL_SPECS` and
   append nothing, exactly like the six index tools already there. Closes both W6-B rows (Remaining
   in S1, and the Phase 7 Wave 6 row) — Wave 6 is now complete. Design:
-  [`docs/superpowers/specs/2026-08-20-negation-in-ask-design.md`](./superpowers/specs/2026-08-20-negation-in-ask-design.md).
+  `2026-08-20-negation-in-ask-design.md`.
 
 - **2026-08-20 — `@nimbus-dev/mcp` extracted to its own repo and published to npm.**
   `packages/mcp-launcher` moved to
@@ -1230,11 +1240,11 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
   provenance predicate (independently verified with `npm audit signatures`). This unblocks the
   official MCP Registry listing, which was the point: any MCP client can now reach the local index
   and the fourteen agents through `npx -y @nimbus-dev/mcp`. Branch B of
-  [`docs/superpowers/specs/2026-08-19-mcp-launcher-publish-route.md`](./superpowers/specs/2026-08-19-mcp-launcher-publish-route.md);
+  `2026-08-19-mcp-launcher-publish-route.md`;
   the executed plan and the verified publish precedent are
-  [`docs/superpowers/plans/2026-08-20-mcp-launcher-satellite-extraction.md`](./superpowers/plans/2026-08-20-mcp-launcher-satellite-extraction.md)
+  `2026-08-20-mcp-launcher-satellite-extraction.md`
   and
-  [`docs/superpowers/specs/2026-08-20-satellite-publish-precedent.md`](./superpowers/specs/2026-08-20-satellite-publish-precedent.md).
+  `2026-08-20-satellite-publish-precedent.md`.
   **`0.1.0` is the one exception to the provenance claim** and is documented as such in the
   satellite's `SECURITY.md`: npm refuses to configure a trusted publisher until a package has at
   least one published version, so it had to be published by hand and carries no attestation.

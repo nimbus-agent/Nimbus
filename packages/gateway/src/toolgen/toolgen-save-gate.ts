@@ -153,7 +153,7 @@ function classifyExisting(
   digest: string,
 ): ExistingClassification {
   const existing = getSavedTool(deps.db, toolId);
-  if (existing === null || existing.artifactDigest !== digest) {
+  if (existing?.artifactDigest !== digest) {
     return { kind: "absent_or_changed" };
   }
   return existing.disabledReason === null ? { kind: "healthy_match" } : { kind: "disabled_match" };

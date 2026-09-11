@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from "bun:test";
-import { decodeBase64, encodeBase64 } from "@nimbus-dev/sdk";
+import { decodeBase64, encodeBase64 } from "../util/base64.ts";
 import type { NimbusVault } from "../vault/nimbus-vault.ts";
 import {
   ensureAnchorKeypair,

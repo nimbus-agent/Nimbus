@@ -129,9 +129,11 @@ function makeHarness(opts: { migrateTo: number; setApiKey: boolean }): Harness {
 
 type RoutingFactory = typeof import("./create-routing-runtime.ts").tryCreateRoutingEmbeddingRuntime;
 
+type RoutingDeps = NonNullable<Parameters<RoutingFactory>[5]>;
+
 async function importFactory(
-  createEmbedder: Parameters<RoutingFactory>[5] = fakeLocalEmbedder,
-  checkVec: Parameters<RoutingFactory>[6] | undefined = undefined,
+  createEmbedder: RoutingDeps["createEmbedder"] = fakeLocalEmbedder,
+  checkVec: RoutingDeps["checkVec"] = undefined,
 ): Promise<
   (
     db: Parameters<RoutingFactory>[0],
@@ -142,20 +144,10 @@ async function importFactory(
   ) => ReturnType<RoutingFactory>
 > {
   const mod = await import(resolve(import.meta.dir, "create-routing-runtime.ts"));
-  if (checkVec !== undefined) {
-    return (db, paths, logger, toml, vault) =>
-      mod.tryCreateRoutingEmbeddingRuntime(
-        db,
-        paths,
-        logger,
-        toml,
-        vault,
-        createEmbedder,
-        checkVec,
-      );
-  }
+  const deps: RoutingDeps =
+    checkVec === undefined ? { createEmbedder } : { createEmbedder, checkVec };
   return (db, paths, logger, toml, vault) =>
-    mod.tryCreateRoutingEmbeddingRuntime(db, paths, logger, toml, vault, createEmbedder);
+    mod.tryCreateRoutingEmbeddingRuntime(db, paths, logger, toml, vault, deps);
 }
 
 const silentLogger = pino({ level: "silent" });

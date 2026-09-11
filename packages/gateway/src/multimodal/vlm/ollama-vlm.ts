@@ -81,7 +81,7 @@ function responseText(payload: unknown): string {
   const root = asRecord(payload);
   const text = root?.["response"];
   if (typeof text !== "string") {
-    throw new Error("ollama vlm: response body has no string `response` field");
+    throw new TypeError("ollama vlm: response body has no string `response` field");
   }
   return text;
 }

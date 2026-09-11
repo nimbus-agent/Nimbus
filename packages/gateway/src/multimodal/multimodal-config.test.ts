@@ -54,10 +54,39 @@ describe("loadMultimodalConfig", () => {
     expect(cfg.maxFrames).toBe(4);
   });
 
-  test("a later section ends the block", () => {
-    const dir = withToml("[multimodal]\nenabled = true\n\n[llm]\nmax_frames = 99\n");
-    const cfg = loadMultimodalConfig(dir);
-    expect(cfg.enabled).toBe(true);
+  // Section-scope and fail-off behaviour: same body every time, so the cases are a table. What
+  // differs is only WHICH malformation is fed in and whether the section survives it — and the
+  // whole point of several of these rows is that `enabled` must come back `false`, so the expected
+  // value is part of the table rather than assumed.
+  test.each([
+    [
+      "a later section ends the block",
+      "[multimodal]\nenabled = true\n\n[llm]\nmax_frames = 99\n",
+      true,
+    ],
+    [
+      // Pre-fix, a garbage line with no `=` was `continue`d past, silently, leaving the
+      // already-parsed `enabled = true` above it in effect — verified empirically before this fix.
+      "malformed TOML INSIDE a valid section fails the whole load off, not just the one line",
+      "[multimodal]\nenabled = true\nnot valid toml\n",
+      false,
+    ],
+    [
+      // Pre-fix, `Number.parseInt("8junk", 10)` returned 8 — verified empirically before this fix.
+      // Trailing garbage on a value is malformed TOML, so the whole load fails off, same as the
+      // no-`=` case above.
+      "max_frames with trailing garbage does not parse as its numeric prefix",
+      "[multimodal]\nenabled = true\nmax_frames = 8junk\n",
+      false,
+    ],
+    [
+      "an unrecognised but well-formed key is ignored (forward-compatibility), not a fail-off",
+      "[multimodal]\nenabled = true\nfuture_key = 1\n",
+      true,
+    ],
+  ] as const)("%s", (_name, toml, enabled) => {
+    const cfg = loadMultimodalConfig(withToml(toml));
+    expect(cfg.enabled).toBe(enabled);
     expect(cfg.maxFrames).toBe(DEFAULT_MAX_FRAMES);
   });
 
@@ -72,32 +101,6 @@ describe("loadMultimodalConfig", () => {
   test("a malformed file reads as OFF, never as on", () => {
     const dir = withToml("[multimodal\nenabled = true\n");
     expect(loadMultimodalConfig(dir).enabled).toBe(false);
-  });
-
-  test("malformed TOML INSIDE a valid section fails the whole load off, not just the one line", () => {
-    // Pre-fix, a garbage line with no `=` was `continue`d past, silently, leaving the
-    // already-parsed `enabled = true` above it in effect — verified empirically before this fix.
-    const dir = withToml("[multimodal]\nenabled = true\nnot valid toml\n");
-    const cfg = loadMultimodalConfig(dir);
-    expect(cfg.enabled).toBe(false);
-    expect(cfg.maxFrames).toBe(DEFAULT_MAX_FRAMES);
-  });
-
-  test("max_frames with trailing garbage does not parse as its numeric prefix", () => {
-    // Pre-fix, `Number.parseInt("8junk", 10)` returned 8 — verified empirically before this fix.
-    // Trailing garbage on a value is malformed TOML, so the whole load fails off, same as the
-    // no-`=` case above.
-    const dir = withToml("[multimodal]\nenabled = true\nmax_frames = 8junk\n");
-    const cfg = loadMultimodalConfig(dir);
-    expect(cfg.enabled).toBe(false);
-    expect(cfg.maxFrames).toBe(DEFAULT_MAX_FRAMES);
-  });
-
-  test("an unrecognised but well-formed key is ignored (forward-compatibility), not a fail-off", () => {
-    const dir = withToml("[multimodal]\nenabled = true\nfuture_key = 1\n");
-    const cfg = loadMultimodalConfig(dir);
-    expect(cfg.enabled).toBe(true);
-    expect(cfg.maxFrames).toBe(DEFAULT_MAX_FRAMES);
   });
 
   test("a malformed line OUTSIDE the multimodal section never affects it", () => {
@@ -160,43 +163,32 @@ describe("loadMultimodalConfig", () => {
     expect(loadMultimodalConfig(dir).vlmBaseUrl).toBe(DEFAULT_VLM_BASE_URL);
   });
 
-  test("an unquoted vlm_model value fails the whole load off, never accepted as the literal string", () => {
-    // TOML requires string values to be quoted. `unquote` used to fall back to the raw trimmed
-    // text for anything that wasn't a clean `"..."`/`'...'` pair, so this malformed line was
-    // silently accepted as the model id `llava-unquoted` instead of failing the section off —
-    // verified empirically before this fix.
-    const dir = withToml("[multimodal]\nenabled = true\nvlm_model = llava-unquoted\n");
-    const cfg = loadMultimodalConfig(dir);
+  // Every way a quoted string value can be malformed. TOML requires string values to be quoted;
+  // `unquote` used to fall back to the raw trimmed text for anything that wasn't a clean
+  // `"..."`/`'...'` pair, so the first row here was silently accepted as the model id
+  // `llava-unquoted` instead of failing the section off — verified empirically before that fix.
+  //
+  // Both assertions matter on every row: the section must fail OFF, and the affected key must read
+  // its default rather than the malformed text. `key` names which default to check, because a
+  // `vlm_base_url` malformation must not be checked against the model default and pass vacuously.
+  test.each([
+    ["an unquoted value, never accepted as the literal string", "vlm_model = llava-unquoted"],
+    ["an unbalanced (never-closed) quote", 'vlm_model = "unterminated'],
+    ["a mismatched quote pair (opens double, closes single)", "vlm_model = \"mismatched'"],
+    [
+      "an explicitly empty quoted value, rather than keeping the default silently",
+      'vlm_model = ""',
+    ],
+  ] as const)("%s fails the whole vlm_model load off", (_label, line) => {
+    const cfg = loadFrom(`[multimodal]\nenabled = true\n${line}\n`);
     expect(cfg.enabled).toBe(false);
     expect(cfg.vlmModel).toBe(DEFAULT_VLM_MODEL);
   });
 
   test("an unquoted vlm_base_url value fails the whole load off", () => {
-    const dir = withToml("[multimodal]\nenabled = true\nvlm_base_url = 127.0.0.1:11434\n");
-    const cfg = loadMultimodalConfig(dir);
+    const cfg = loadFrom("[multimodal]\nenabled = true\nvlm_base_url = 127.0.0.1:11434\n");
     expect(cfg.enabled).toBe(false);
     expect(cfg.vlmBaseUrl).toBe(DEFAULT_VLM_BASE_URL);
-  });
-
-  test("an unbalanced (never-closed) quote fails the whole load off", () => {
-    const dir = withToml('[multimodal]\nenabled = true\nvlm_model = "unterminated\n');
-    const cfg = loadMultimodalConfig(dir);
-    expect(cfg.enabled).toBe(false);
-    expect(cfg.vlmModel).toBe(DEFAULT_VLM_MODEL);
-  });
-
-  test("a mismatched quote pair (opens double, closes single) fails the whole load off", () => {
-    const dir = withToml("[multimodal]\nenabled = true\nvlm_model = \"mismatched'\n");
-    const cfg = loadMultimodalConfig(dir);
-    expect(cfg.enabled).toBe(false);
-    expect(cfg.vlmModel).toBe(DEFAULT_VLM_MODEL);
-  });
-
-  test("an explicitly empty quoted value fails the whole load off rather than keeping the default silently", () => {
-    const dir = withToml('[multimodal]\nenabled = true\nvlm_model = ""\n');
-    const cfg = loadMultimodalConfig(dir);
-    expect(cfg.enabled).toBe(false);
-    expect(cfg.vlmModel).toBe(DEFAULT_VLM_MODEL);
   });
 
   test("correctly double- or single-quoted values still parse", () => {

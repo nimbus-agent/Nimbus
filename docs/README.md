@@ -186,7 +186,7 @@ Nimbus maintains a local SQLite metadata index. Searching across 50,000 indexed 
 - **The HITL consent gate** is implemented in the executor, not the prompt. A model that generates a plan to skip confirmation produces a plan that simply does not execute.
 - **Extensions** run in sandboxed child processes. They receive only credentials for their declared service and cannot enumerate Vault keys or access other connectors.
 - **Prompt injection** is mitigated by injecting file content and API responses as typed `<tool_output>` data blocks, never as instructions.
-- **Every authorized outbound action is ledgered.** An append-only, BLAKE3-chained egress ledger records what left the machine, and `nimbus prove` reports it. The structural rules behind all of this are enumerated in [`SECURITY-INVARIANTS.md`](./SECURITY-INVARIANTS.md); each of the thirty-six LIVE invariants — `I1`–`I27` and `I29`–`I37` — has a production wiring site *and* an enforcement test. `I28` is a reserved number with neither.
+- **Every authorized outbound action is ledgered.** An append-only, BLAKE3-chained egress ledger records what left the machine, and `nimbus prove` reports it. The structural rules behind all of this are enumerated in [`SECURITY-INVARIANTS.md`](./SECURITY-INVARIANTS.md); each of the thirty-nine LIVE invariants — `I1`–`I27` and `I29`–`I40` — has a production wiring site *and* an enforcement test. `I28` is a reserved number with neither.
 
 ### True Cross-Platform
 
@@ -423,7 +423,10 @@ Nimbus uses phases, not calendar dates. A phase completes when its acceptance cr
 - **A HITL-gated computer-use loop** (2026-08-31 → 2026-09-01, invariant `I35`) — the `browser` lane drives a confined headless Chromium whose screenshots are BLAKE3-digested and never written to disk, and the `terminal` lane is a sandboxed line-oriented shell in which no byte reaches the child process before you have approved the complete command. The `screen` lane is deferred.
 - **Multimodal I/O, all 4 slices** (2026-09-02 → 2026-09-05, invariant `I37`) — `nimbus media understand` transcribes local audio and video with `whisper-cli`, captions still images and sampled video frames with a local Ollama-served vision model, and indexes the result as a searchable derived item. Derived text is pinned to the local embedder, so nothing extracted from a file can reach a remote one by the embedding path. A cloud-backed artifact's bytes can be fetched under a byte budget (Google Photos, Google Drive, OneDrive), and a **still image** — never audio, never video — can be described by one configured remote vendor, but only after you grant that one artifact to that one vendor with `nimbus media allow-remote`. Absent a grant it is captioned locally exactly as before. The Gemini adapter has been exercised end to end against a live endpoint; Anthropic and OpenAI have not.
 
-Still ahead in S2: runtime tool generation and overnight sub-agent fleets on compute you already own.
+- **Overnight sub-agent fleets** (2026-09-07 → 2026-09-08, invariant `I38`) — `nimbus fleet` runs standing, owner-configured read-only agent jobs on idle local hardware and keeps their briefs durably, so a question you would have asked at 09:00 is already answered. An unattended run's synthesis is pinned to a LOCAL model unless `[fleet] allow_remote` **and** a per-run call budget both cover it: a frontier key you configured for `nimbus ask` grants the fleet nothing on its own. `nimbus fleet digest` then reports what moved between each job's newest brief and its predecessor, deterministically and with no model call at any point.
+- **Runtime tool generation** (2026-09-09 → 2026-09-10, invariants `I39` and `I40`) — `nimbus tool create` has a model draft a tool body and input schema into a Nimbus-authored skeleton, which you approve verbatim before anything reaches disk. The tool process gets **no network at all**; its one door out is a gateway-side broker that enforces the approved host list against the *resolved* address, attaches only the credential bound to that host, and ledgers every request. `nimbus tool save` promotes a tool to one that survives a restart — a separate, stronger consent, backed by a Vault-only Ed25519 signature re-verified live at boot, at load and before every spawn.
+
+That closes S2's shipped set. A generated tool is reachable only from the CLI this release: the agent is not offered one, and agent-initiated tool proposal is a recorded deferral rather than an oversight — a model proposing its own network-reaching tool mid-conversation is a materially larger trust boundary, and it gets its own consent-UX pass. The design of all six capabilities is in [`architecture.md` § Spine S2 Subsystems](./architecture.md#spine-s2-subsystems).
 
 **Recorded direction — not built, and not in the current slot.** The agents are the product; a client is only a context-aware way to reach them without leaving where you already are. The browser extension is a web clipper today and the recorded direction is a browser-side gateway client; the editor extension gets the same treatment. Two things were considered and deliberately **rejected**: shipping a Nimbus fork of VS Code, and letting an agent write your source code. The reasoning and the conditions that would reopen either are recorded in [`roadmap.md` § Rejected Directions](./roadmap.md#rejected-directions) — read that before proposing them again.
 
@@ -598,8 +601,13 @@ local pass is governed by configuration alone (`[multimodal] enabled` plus a per
 `media_index`, both false by default), so enabling it is the whole of the decision. Its *remote*
 arm is gated differently again — the decision is made once, up front, per artifact, by
 `nimbus media allow-remote`, and the pass never prompts on its own: an artifact you have not
-granted is understood locally, silently. Full detail, including what each sandbox does and does
-not confine, is in [`cli-reference.md`](./cli-reference.md).
+granted is understood locally, silently. `nimbus tool` splits the difference again: creating a tool
+is approved verbatim once, and *saving* one takes a second, stronger approval, because persisting a
+tool consents to running it in every future session, unattended. `nimbus fleet` asks for nothing at
+run time at all — a fleet job is read-only, so configuring it *is* the decision. Full detail,
+including what each sandbox does and does not confine, is in
+[`cli-reference.md`](./cli-reference.md); the design behind all of it is in
+[`architecture.md` § Spine S2 Subsystems](./architecture.md#spine-s2-subsystems).
 
 ```bash
 # Run code in the platform sandbox, with no network at all — loopback included.
@@ -621,6 +629,20 @@ nimbus media understand --limit 10
 nimbus media allow-remote <itemId> --vendor gemini
 nimbus media grants list
 nimbus media grants revoke <itemId>
+
+# Have a model draft a tool into a Nimbus-authored skeleton you approve verbatim. The tool
+# process gets NO network; its one door out is a host-checked, ledgered gateway broker.
+# [tool_generation] enabled = true
+nimbus tool create --description "look up a package on npm" --host registry.npmjs.org
+nimbus tool list
+nimbus tool save <tool-id>       # a SECOND, standing approval — survives a restart
+nimbus tool revoke <tool-id>     # its withdrawal path; drops all four halves together
+
+# Standing read-only agent jobs on idle local hardware, with durable briefs.
+# [fleet] enabled = true + at least one [[fleet.job]]
+nimbus fleet status
+nimbus fleet run <job> --force
+nimbus fleet digest --since 7d   # what moved since each job's previous brief
 ```
 
 ### Metrics and proof
@@ -644,6 +666,10 @@ nimbus query --sql "SELECT title FROM items WHERE pinned = 1" --pretty
 # Diagnostics and slow queries
 nimbus diag
 nimbus diag slow-queries --limit 10
+
+# Index QUALITY, not size: per-connector embedding coverage, stale connectors with the
+# reason distinguished, and a 0-100 confidence score. `nimbus doctor` warns below 60.
+nimbus index health
 
 # Connector health history
 nimbus connector history github
@@ -763,7 +789,7 @@ The complete command reference — every subcommand, flag, exit code, and the fu
 - **Extension isolation** — third-party extensions run as sandboxed child processes (bwrap + seccomp on Linux, `sandbox-exec` on macOS, AppContainer on Windows), receive only their declared service's credentials, and cannot reach the Vault or other connectors. Publisher manifests are Ed25519-verified at install and on every Gateway startup.
 - **Full audit log** — every action, including every HITL decision, is recorded in a local BLAKE3-chained SQLite table before the action executes; `nimbus audit verify` proves the chain.
 - **Egress ledger** — every authorized outbound action is appended to an append-only, BLAKE3-chained ledger before dispatch, and a failed append aborts the action. `nimbus prove` reports what left the machine.
-- **Thirty-six enumerated invariants** — `I1`–`I27` and `I29`–`I37`, each with a production wiring site, a section in [`SECURITY-INVARIANTS.md`](./SECURITY-INVARIANTS.md), and an enforcement test. `I28` is a reserved number, deliberately skipped: it has no wiring, no section and no test, so it is not one of the thirty-six. A static audit runs before the test suite; the runtime tests stay authoritative.
+- **Thirty-nine enumerated invariants** — `I1`–`I27` and `I29`–`I40`, each with a production wiring site, a section in [`SECURITY-INVARIANTS.md`](./SECURITY-INVARIANTS.md), and an enforcement test. `I28` is a reserved number, deliberately skipped: it has no wiring, no section and no test, so it is not one of the thirty-nine. A static audit runs before the test suite; the runtime tests stay authoritative.
 - **Internal security audit (B1, 2026-04-25)** — 8 trust surfaces reviewed; 78 unique findings filed (0 Critical); all High and Medium items closed pre-`v0.1.0`. One Low item (`S6-F1`) closed in `v0.1.0`, and the two Tauri-specific Low items (`S4-F6`, `S4-F8`) are deferred to Phase 13 (`desktop-v0.1.0`); see [SECURITY.md](./SECURITY.md#security-audits) for the full record. A formal third-party penetration test is scheduled for Phase 12.
 
 > **Note:** Nimbus's guarantees hold at the process boundary. It is not a firewall, antivirus, or VPN application; endpoint protection (AV/EDR), network security (VPN/Firewall), and OS-level hardening are your responsibility. See [SECURITY.md](./SECURITY.md) for the full boundary definition.
@@ -838,6 +864,10 @@ nimbus/
 │   │       ├── exec/         # Sandboxed code execution gate (I33)
 │   │       ├── computer-use/ # HITL-gated browser + terminal lanes (I35)
 │   │       ├── multimodal/   # Media understanding pass + per-artifact remote grants (I37)
+│   │       ├── toolgen/      # Runtime tool generation: create gate + broker (I39), saved
+│   │       │                 #   tools under a live Ed25519 signature (I40)
+│   │       ├── fleet/        # Overnight sub-agent fleets: scheduler, invoker, digest (I38)
+│   │       ├── briefs/       # Owner-triggered multi-source research pass (default off)
 │   │       ├── glossary/     # Implicit-knowledge terminology extraction
 │   │       ├── decisions/    # Implicit ADR extraction
 │   │       ├── ownership/    # Ownership graph
@@ -853,13 +883,14 @@ nimbus/
 │   │       ├── extensions/   # Extension registry, manifest validator, sandbox
 │   │       ├── telemetry/    # Opt-in aggregate telemetry collector
 │   │       ├── config/       # Config loader, profiles, env-var overrides, persona
-│   │       ├── llm/          # Ollama + llama.cpp providers, router, registry, GPU arbiter
+│   │       ├── llm/          # Ollama + llama.cpp providers, the four cloud adapters
+│   │       │                 #   (Anthropic/OpenAI/Gemini/xAI), router, registry, GPU arbiter
 │   │       ├── voice/        # STT (whisper-cli), TTS (NativeTtsProvider), wake-word
 │   │       └── ipc/          # JSON-RPC 2.0 server, HTTP API, Prometheus endpoint
 │   ├── cli/                  # nimbus CLI (+ Ink TUI)
 │   │   └── src/commands/     # ask, search, query, why, prove, stats, glossary, decisions,
-│   │                         # exec, computer, media, config, profile, diag, doctor, db,
-│   │                         # connector, extension, …
+│   │                         # exec, computer, media, tool, fleet, index, config, profile,
+│   │                         # diag, doctor, db, connector, extension, …
 │   ├── ui/                   # Tauri 2.0 desktop app (Phase 4; release vehicle in Phase 13)
 │   ├── docs/                 # Astro Starlight documentation site
 │   ├── admin-console/        # Static admin console served at /admin/*

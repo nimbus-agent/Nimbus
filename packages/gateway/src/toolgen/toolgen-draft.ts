@@ -1,6 +1,5 @@
 import { scanBodyForForbiddenGlobals, verifyBodySyntax } from "./toolgen-body-checks.ts";
-import type { GroundedEndpoint } from "./toolgen-grounding.ts";
-import { type DraftGrounding, groundingOf } from "./toolgen-grounding.ts";
+import { type DraftGrounding, type GroundedEndpoint, groundingOf } from "./toolgen-grounding.ts";
 import { buildDraftPrompt, buildRedraftPrompt } from "./toolgen-prompt.ts";
 import { validateInputSchema } from "./toolgen-schema.ts";
 import {
@@ -68,8 +67,11 @@ export function extractJsonPayload(raw: string): string {
   } catch {
     // Not bare JSON — fall through to the wrapped forms.
   }
-  // Unanchored, so surrounding prose does not defeat it.
-  const fenced = /```(?:json)?\s*\n([\s\S]*?)\n?```/.exec(trimmed);
+  // Unanchored, so surrounding prose does not defeat it. The run before the newline is
+  // non-newline whitespace (`[^\S\n]*`) and NOT `\s*`: `\s` includes `\n`, so `\s*\n` gives the
+  // engine two ways to match every newline in a run, and a reply that opens a fence it never
+  // closes then costs quadratic backtracking instead of failing at once.
+  const fenced = /```(?:json)?[^\S\n]*\n([\s\S]*?)\n?```/.exec(trimmed);
   if (fenced?.[1] !== undefined) return fenced[1].trim();
 
   // Outermost braces. `lastIndexOf` and not the first closing brace, so a `}` inside the body

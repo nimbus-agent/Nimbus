@@ -14,7 +14,8 @@
  * only checked-in files, mints no token, and touches no network — so it runs on
  * every PR from the preflight fast tier rather than the scheduled sweep.
  *
- * See docs/superpowers/specs/2026-07-26-p5-p3-infra-batch-design.md.
+ * Design of record, pruned from HEAD on delivery — read it with
+ * `git show dd98484b:docs/superpowers/specs/2026-07-26-p5-p3-infra-batch-design.md`.
  */
 
 import { readdirSync, readFileSync } from "node:fs";

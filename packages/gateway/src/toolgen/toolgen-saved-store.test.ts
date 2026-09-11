@@ -80,8 +80,9 @@ describe("writeSavedTool / readVerifiedSavedTool", () => {
     expect(existsSync(join(toolDir, "artifact.sig"))).toBe(true);
   });
 
-  test("written files are owner-only on POSIX", async () => {
-    if (process.platform === "win32") return; // ACLs are asserted by the Windows integration leg
+  // ACLs are asserted by the Windows integration leg, so this one is SKIPPED there rather than
+  // returning early — an early return reports a pass for a test that made no assertion.
+  test.skipIf(process.platform === "win32")("written files are owner-only on POSIX", async () => {
     const dir = cfg();
     const { sigB64 } = await signArtifact(new FakeVault(), CANON);
     await writeSavedTool(dir, "t1", { canonicalJson: CANON, sigB64, script: "// script" });
