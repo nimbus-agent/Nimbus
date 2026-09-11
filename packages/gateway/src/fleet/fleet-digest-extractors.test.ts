@@ -512,4 +512,71 @@ describe("gateway-local briefs", () => {
       summarizeBrief("agents.changelog", JSON.stringify({ kind: "ownership" })),
     ).toBeUndefined();
   });
+
+  /**
+   * The four shape guards, each exercised on its own.
+   *
+   * `summarizeBrief` answers `undefined` for both "this JSON did not parse" and "this JSON is
+   * not the shape I expect" because the caller's response to either is identical — disclose the
+   * brief as not summarizable rather than drop it. That makes the guards easy to leave untested:
+   * every one of them returns the same value the happy path returns on malformed input, so a
+   * regression that removed one would not change any existing assertion here. Each case below
+   * is a `changelog` brief that is well-formed EXCEPT for one field, so it can only fail for
+   * the reason it names.
+   */
+  const changelogBrief = (over: Record<string, unknown>): string =>
+    JSON.stringify({
+      ...base,
+      kind: "changelog",
+      query: { sinceMs: 0, nowMs: 0, service: null },
+      counts: { mergedPrs: 1, deployments: 0, incidentsOpened: 0, incidentsResolved: 0 },
+      mergedPrs: [{ id: "github:1" }],
+      deployments: [],
+      incidentsOpened: [],
+      incidentsResolved: [],
+      indexTimedCount: 0,
+      nonGithubMergedPrs: 0,
+      truncatedCount: 0,
+      ...over,
+    });
+
+  test("the control: the brief this suite mutates IS summarizable when untouched", () => {
+    // Without this, a typo in `changelogBrief` would make all four guard tests below pass for
+    // the wrong reason — they would be rejecting a brief that was malformed to begin with.
+    expect(summarizeBrief("agents.changelog", changelogBrief({}))?.metrics).toEqual({
+      mergedPrs: 1,
+      deployments: 0,
+      incidentsOpened: 0,
+      incidentsResolved: 0,
+    });
+  });
+
+  test("a missing `counts` object is not summarizable", () => {
+    expect(summarizeBrief("agents.changelog", changelogBrief({ counts: null }))).toBeUndefined();
+  });
+
+  test("a `counts` field that is not a number is not summarizable", () => {
+    // A string where a number belongs is the shape connector-written JSON actually produces;
+    // reporting it as a metric would put a non-numeric value into a delta comparison.
+    expect(
+      summarizeBrief(
+        "agents.changelog",
+        changelogBrief({
+          counts: { mergedPrs: "1", deployments: 0, incidentsOpened: 0, incidentsResolved: 0 },
+        }),
+      ),
+    ).toBeUndefined();
+  });
+
+  test("an entry field that is not an array is not summarizable", () => {
+    expect(
+      summarizeBrief("agents.changelog", changelogBrief({ deployments: { id: "gha:9" } })),
+    ).toBeUndefined();
+  });
+
+  test("an entry whose `id` is not a string is not summarizable", () => {
+    expect(
+      summarizeBrief("agents.changelog", changelogBrief({ mergedPrs: [{ id: 42 }] })),
+    ).toBeUndefined();
+  });
 });
