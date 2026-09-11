@@ -1,4 +1,4 @@
-import { decodeBase64 } from "@nimbus-dev/sdk";
+import { decodeBase64 } from "../util/base64.ts";
 import type { PolicyStore } from "./policy-store.ts";
 
 /** Manually pin an org policy pubkey (the `nimbus policy trust` fallback). */

@@ -2,10 +2,13 @@ import { chmodSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { confirm, isCancel } from "@clack/prompts";
-
-import { decodeBase64, encodeBase64, generateEd25519Keypair, signManifest } from "@nimbus-dev/sdk";
-
 import { IPCClient } from "../ipc-client/index.ts";
+import {
+  decodeBase64,
+  encodeBase64,
+  generateEd25519Keypair,
+  signManifest,
+} from "../lib/extension-signing.ts";
 import { readGatewayState } from "../lib/gateway-process.ts";
 import { getCliPlatformPaths } from "../paths.ts";
 import {

@@ -58,6 +58,19 @@ export type EmbeddingRuntimeOverrides = {
   lazyRuntimeFactory?: LazyRuntimeFactory;
 };
 
+/**
+ * Everything the two public entry points take beyond their six required arguments, in one bag.
+ *
+ * `overrides` and `backfillGate` are deliberately NOT merged into a single flat object: the first
+ * is test-only DI, the second is production wiring `platform/assemble.ts` builds because it owns
+ * the teardown for the gate's poll timer. Flattening them would invite a test to pass the gate and
+ * production to pass an override.
+ */
+export type EmbeddingRuntimeDeps = {
+  overrides?: EmbeddingRuntimeOverrides | undefined;
+  backfillGate?: BackfillGate | undefined;
+};
+
 async function tryCreateOpenAIEmbeddingRuntime(
   db: Database,
   paths: PlatformPaths,
@@ -65,10 +78,15 @@ async function tryCreateOpenAIEmbeddingRuntime(
   slice: EmbeddingSlice,
   tomlEmbedding: NimbusEmbeddingToml,
   vault: NimbusVault,
-  openaiEmbedderFactory: OpenAIEmbedderFactory = createOpenAIEmbedder,
-  backfillGate?: BackfillGate,
-  lazyFactory: LazyRuntimeFactory = createLazyEmbeddingRuntime,
+  deps: {
+    openaiEmbedderFactory?: OpenAIEmbedderFactory | undefined;
+    backfillGate?: BackfillGate | undefined;
+    lazyFactory?: LazyRuntimeFactory | undefined;
+  } = {},
 ): Promise<EmbeddingRuntime | null> {
+  const openaiEmbedderFactory = deps.openaiEmbedderFactory ?? createOpenAIEmbedder;
+  const lazyFactory = deps.lazyFactory ?? createLazyEmbeddingRuntime;
+  const backfillGate = deps.backfillGate;
   let apiKey = processEnvGet("OPENAI_API_KEY")?.trim() ?? "";
   if (apiKey === "") {
     const v = await vault.get("openai.api_key");
@@ -143,24 +161,14 @@ export function createEmbeddingRuntimeNonBlocking(
   tomlEmbedding: NimbusEmbeddingToml,
   envAllowsEmbeddings: boolean,
   vault: NimbusVault,
-  overrides?: EmbeddingRuntimeOverrides,
-  backfillGate?: BackfillGate,
+  deps: EmbeddingRuntimeDeps = {},
 ): EmbeddingRuntime | null {
   if (!embeddingRuntimeWanted(db, tomlEmbedding, envAllowsEmbeddings)) {
     return null;
   }
   return createDeferredEmbeddingRuntime({
     init: () =>
-      createEmbeddingRuntime(
-        db,
-        paths,
-        logger,
-        tomlEmbedding,
-        envAllowsEmbeddings,
-        vault,
-        overrides,
-        backfillGate,
-      ),
+      createEmbeddingRuntime(db, paths, logger, tomlEmbedding, envAllowsEmbeddings, vault, deps),
     fallbackModel: LOCAL_EMBEDDING_MODEL_ID,
     fallbackDims: 384,
     onStateChange: (readiness) => {
@@ -179,12 +187,12 @@ export async function createEmbeddingRuntime(
   tomlEmbedding: NimbusEmbeddingToml,
   envAllowsEmbeddings: boolean,
   vault: NimbusVault,
-  overrides?: EmbeddingRuntimeOverrides,
-  backfillGate?: BackfillGate,
+  deps: EmbeddingRuntimeDeps = {},
 ): Promise<EmbeddingRuntime | null> {
   if (!embeddingRuntimeWanted(db, tomlEmbedding, envAllowsEmbeddings)) {
     return null;
   }
+  const { overrides, backfillGate } = deps;
 
   const slice: EmbeddingSlice = {
     chunkTokens: tomlEmbedding.chunkTokens,
@@ -206,25 +214,17 @@ export async function createEmbeddingRuntime(
   const lazyFactory = overrides?.["lazyRuntimeFactory"] ?? createLazyEmbeddingRuntime;
 
   if (tomlEmbedding.provider === "hybrid") {
-    const hybrid = await routingFactory(db, paths, logger, slice, vault, undefined, undefined, {
-      backfillGate,
-    });
+    const hybrid = await routingFactory(db, paths, logger, slice, vault, { backfillGate });
     if (hybrid !== null) {
       return hybrid;
     }
     // Fall through to the local path below if hybrid setup failed.
   } else if (tomlEmbedding.provider === "openai") {
-    return tryCreateOpenAIEmbeddingRuntime(
-      db,
-      paths,
-      logger,
-      slice,
-      tomlEmbedding,
-      vault,
-      openaiFactory,
+    return tryCreateOpenAIEmbeddingRuntime(db, paths, logger, slice, tomlEmbedding, vault, {
+      openaiEmbedderFactory: openaiFactory,
       backfillGate,
       lazyFactory,
-    );
+    });
   }
 
   const dbPath = join(paths.dataDir, "nimbus.db");

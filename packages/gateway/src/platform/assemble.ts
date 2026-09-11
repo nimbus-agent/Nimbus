@@ -450,8 +450,7 @@ function createLocalIndexWithEmbeddingRuntime(
     tomlEmbedding,
     Config.embeddingsEnabled,
     vault,
-    undefined,
-    backfill.gate,
+    { backfillGate: backfill.gate },
   );
   let scheduleItemEmbedding: ((itemId: string) => void) | undefined;
   let semanticSearch: SemanticSearchDeps | undefined;

@@ -1,13 +1,11 @@
 import { Database } from "bun:sqlite";
 import { afterEach, beforeEach, expect, test } from "bun:test";
-import { encodeBase64, generateEd25519Keypair } from "@nimbus-dev/sdk";
 import { bytesToHex } from "@noble/hashes/utils.js";
 import { appendAuditEntry } from "../db/audit-chain.ts";
 import { federationConsent } from "../federation/consent-broker.ts";
 import { InMemoryDiscoveryProvider } from "../federation/discovery.ts";
 import { buildFederationLanServer } from "../federation/federation-server.ts";
 import { PeerPairing } from "../federation/peer-pairing.ts";
-
 import { LocalIndex } from "../index/local-index.ts";
 import { runIndexedSchemaMigrations } from "../index/migrations/runner.ts";
 import { type DeletionRecord, verifyDeletionRecord } from "../policy/deletion-record.ts";
@@ -15,6 +13,8 @@ import { signPolicy } from "../policy/policy-signing.ts";
 import { PolicyStore } from "../policy/policy-store.ts";
 import { buildShareFile } from "../share/share-format.ts";
 import type { ForwardShareDeps } from "../share/share-forward.ts";
+import { encodeBase64 } from "../util/base64.ts";
+import { generateEd25519Keypair } from "../util/ed25519.ts";
 import type { FederationRpcContext } from "./federation-rpc.ts";
 import { dispatchFederationRpc } from "./federation-rpc.ts";
 import { generateBoxKeypair } from "./lan-crypto.ts";

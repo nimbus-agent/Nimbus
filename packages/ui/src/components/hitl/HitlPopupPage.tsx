@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import { type ReactNode, useEffect, useState } from "react";
+import { type ReactNode, useEffect, useRef, useState } from "react";
 import { createIpcClient } from "../../ipc/client";
 import { useNimbusStore } from "../../store";
 import { StructuredPreview } from "./StructuredPreview";
@@ -34,6 +34,27 @@ export function HitlPopupPage(): ReactNode {
 
   const head = pending[0];
   const more = pending.length > 1 ? pending.length - 1 : 0;
+  const approveRef = useRef<HTMLButtonElement>(null);
+  const rejectRef = useRef<HTMLButtonElement>(null);
+
+  const action =
+    head?.details && typeof head.details["action"] === "string"
+      ? head.details["action"]
+      : ((head as unknown as { action?: string } | undefined)?.action ?? undefined);
+
+  // Focus is placed imperatively, keyed on the action, NOT via the `autoFocus` attribute. React
+  // honours `autoFocus` only at mount, and this popup does not remount between queued requests —
+  // it re-renders with `pending[0]` replaced. So `autoFocus={!isDestructive(action)}` applied the
+  // deny-list to the FIRST request only: a safe request followed by a destructive one left focus
+  // sitting on Approve, which is exactly the keystroke the deny-list exists to prevent.
+  //
+  // A destructive action moves focus to Reject rather than merely declining to focus Approve.
+  // Leaving it where it was is the same failure one step removed.
+  useEffect(() => {
+    if (head === undefined) return;
+    const target = isDestructive(action) ? rejectRef.current : approveRef.current;
+    target?.focus();
+  }, [action, head]);
 
   useEffect(() => {
     if (pending.length === 0) {
@@ -63,11 +84,6 @@ export function HitlPopupPage(): ReactNode {
     return <div className="p-5 text-[var(--color-fg-muted)] text-sm">No pending requests.</div>;
   }
 
-  const action =
-    head.details && typeof head.details["action"] === "string"
-      ? head.details["action"]
-      : ((head as unknown as { action?: string }).action ?? undefined);
-
   return (
     <div className="p-5 space-y-4">
       <header>
@@ -81,6 +97,7 @@ export function HitlPopupPage(): ReactNode {
       )}
       <footer className="flex justify-end gap-2">
         <button
+          ref={rejectRef}
           type="button"
           className="px-3 py-1 border border-[var(--color-border)] rounded text-[var(--color-fg-muted)]"
           disabled={busy}
@@ -89,10 +106,9 @@ export function HitlPopupPage(): ReactNode {
           Reject
         </button>
         <button
+          ref={approveRef}
           type="button"
           className="px-3 py-1 bg-[var(--color-accent)] text-white rounded"
-          // biome-ignore lint/a11y/noAutofocus: deliberate UX; deny-list gates it for destructive actions
-          autoFocus={!isDestructive(action)}
           disabled={busy}
           onClick={() => decide(true)}
         >

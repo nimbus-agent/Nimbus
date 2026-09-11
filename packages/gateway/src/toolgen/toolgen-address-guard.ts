@@ -39,71 +39,72 @@ function parseIpv4(ip: string): readonly number[] | null {
  * Handles `::` compression, full 8-group form, and trailing dotted-quad for IPv4-mapped/compatible.
  * Returns null if the address is malformed.
  */
-function parseIpv6(
-  ip: string,
-): readonly [number, number, number, number, number, number, number, number] | null {
-  // Strip surrounding brackets
-  let addr = ip.toLowerCase().replace(/^\[|\]$/g, "");
+type Hextets = readonly [number, number, number, number, number, number, number, number];
 
-  // Handle IPv4-mapped (::ffff:x.x.x.x) and IPv4-compatible (::x.x.x.x) forms
-  let groups = addr.split(":");
-  const lastGroup = groups[groups.length - 1];
-  if (lastGroup?.includes(".")) {
-    // Parse the dotted-quad
-    const v4 = parseIpv4(lastGroup);
-    if (v4 === null) return null;
-    const [a, b, c, d] = v4 as [number, number, number, number];
-    // Replace the last group with its hex representation
-    const hexHigh = ((a << 8) | b).toString(16);
-    const hexLow = ((c << 8) | d).toString(16);
-    groups[groups.length - 1] = hexHigh;
-    groups.push(hexLow);
-    addr = groups.join(":");
-    groups = addr.split(":");
+/** A hextet group is 1-4 hex digits; `Number.parseInt` then cannot exceed 0xffff, but check anyway. */
+function isHextetGroup(g: string): boolean {
+  return /^[0-9a-f]{1,4}$/.test(g) && Number.parseInt(g, 16) <= 0xffff;
+}
+
+/**
+ * Rewrite a trailing dotted-quad (IPv4-mapped `::ffff:1.2.3.4`, IPv4-compatible `::1.2.3.4`) into
+ * the two hextets it encodes, so the rest of the parser sees one uniform colon-separated form.
+ * Returns the address unchanged when there is no dotted-quad, or `null` when there is one and it
+ * does not parse.
+ */
+function expandIpv4Suffix(addr: string): string | null {
+  const groups = addr.split(":");
+  const lastGroup = groups.at(-1);
+  if (lastGroup?.includes(".") !== true) return addr;
+  const v4 = parseIpv4(lastGroup);
+  if (v4 === null) return null;
+  const [a, b, c, d] = v4 as [number, number, number, number];
+  groups[groups.length - 1] = ((a << 8) | b).toString(16);
+  groups.push(((c << 8) | d).toString(16));
+  return groups.join(":");
+}
+
+/** The `::`-compressed form: validate both sides, then pad the middle back out to 8 hextets. */
+function parseCompressed(addr: string): number[] | null {
+  const [before, after] = addr.split("::");
+  const beforeGroups = before ? before.split(":") : [];
+  const afterGroups = after ? after.split(":") : [];
+  for (const g of [...beforeGroups, ...afterGroups]) {
+    if (g && !isHextetGroup(g)) return null;
   }
+  const beforeHex = beforeGroups.map((g) => Number.parseInt(g, 16));
+  const afterHex = afterGroups.map((g) => Number.parseInt(g, 16));
+  const totalGroups = beforeHex.length + afterHex.length;
+  // 8 or more groups leaves `::` standing for zero hextets, which is not what it means.
+  if (totalGroups >= 8) return null;
+  return [...beforeHex, ...new Array(8 - totalGroups).fill(0), ...afterHex];
+}
 
-  // Check for more than one `::`
-  const doubleColonCount = (addr.match(/::/g) || []).length;
-  if (doubleColonCount > 1) return null;
-
-  let hextets: number[] = [];
-
-  if (addr.includes("::")) {
-    // Handle `::` compression
-    const [before, after] = addr.split("::");
-    const beforeGroups = before ? before.split(":") : [];
-    const afterGroups = after ? after.split(":") : [];
-
-    // Validate before and after groups
-    for (const g of [...beforeGroups, ...afterGroups]) {
-      if (g && (!/^[0-9a-f]{1,4}$/.test(g) || Number.parseInt(g, 16) > 0xffff)) {
-        return null;
-      }
-    }
-
-    const beforeHex = beforeGroups.map((g) => Number.parseInt(g, 16));
-    const afterHex = afterGroups.map((g) => Number.parseInt(g, 16));
-    const totalGroups = beforeHex.length + afterHex.length;
-
-    if (totalGroups >= 8) return null; // Can't have 8+ groups with compression
-
-    const zerosPadding = 8 - totalGroups;
-    hextets = [...beforeHex, ...Array(zerosPadding).fill(0), ...afterHex];
-  } else {
-    // Full 8-group form
-    if (groups.length !== 8) return null;
-
-    for (const g of groups) {
-      if (!/^[0-9a-f]{1,4}$/.test(g) || Number.parseInt(g, 16) > 0xffff) {
-        return null;
-      }
-    }
-
-    hextets = groups.map((g) => Number.parseInt(g, 16));
+/** The uncompressed form: exactly 8 groups, every one of them a valid hextet. */
+function parseFull(groups: readonly string[]): number[] | null {
+  if (groups.length !== 8) return null;
+  for (const g of groups) {
+    if (!isHextetGroup(g)) return null;
   }
+  return groups.map((g) => Number.parseInt(g, 16));
+}
 
-  if (hextets.length !== 8) return null;
-  return hextets as [number, number, number, number, number, number, number, number];
+/**
+ * Parse an IPv6 address string into an array of 8 hextets (16-bit values).
+ * Handles `::` compression, full 8-group form, and trailing dotted-quad for IPv4-mapped/compatible.
+ * Returns null if the address is malformed.
+ */
+function parseIpv6(ip: string): Hextets | null {
+  // Strip surrounding brackets, then fold any trailing dotted-quad into hextets.
+  const addr = expandIpv4Suffix(ip.toLowerCase().replace(/^\[|\]$/g, ""));
+  if (addr === null) return null;
+
+  // More than one `::` is ambiguous about how many zero hextets each stands for.
+  if ((addr.match(/::/g) ?? []).length > 1) return null;
+
+  const hextets = addr.includes("::") ? parseCompressed(addr) : parseFull(addr.split(":"));
+  if (hextets?.length !== 8) return null;
+  return hextets as unknown as Hextets;
 }
 
 /**
@@ -118,95 +119,69 @@ function parseIpv6(
  * Called on the RESOLVED address, never the hostname: a name that resolves to `127.0.0.1` defeats
  * a hostname check completely.
  */
-export function isForbiddenAddress(ip: string): boolean {
-  const v4 = parseIpv4(ip);
-  if (v4 !== null) {
-    const [a, b] = v4 as [number, number, number, number];
-    if (a === 127 || a === 0) return true; // loopback + unspecified
-    if (a === 10) return true; // RFC 1918
-    if (a === 192 && b === 168) return true; // RFC 1918
-    if (a === 172 && b >= 16 && b <= 31) return true; // RFC 1918 — 172.16/12, NOT all of 172
-    if (a === 169 && b === 254) return true; // link-local, incl. 169.254.169.254 cloud metadata
-    return false;
+/** True when hextets `0 .. n-1` are all zero — the shared prefix test every special form below needs. */
+function zerosThrough(h: Hextets, n: number): boolean {
+  for (let i = 0; i < n; i++) {
+    if (h[i] !== 0) return false;
   }
+  return true;
+}
 
-  const h = parseIpv6(ip);
-  if (h === null) return false; // Unparseable string is not an address we can judge
+/** The dotted-quad an IPv6 form embeds in its low 32 bits. */
+function embeddedIpv4(h: Hextets): string {
+  const a = (h[6] >> 8) & 0xff;
+  const b = h[6] & 0xff;
+  const c = (h[7] >> 8) & 0xff;
+  const d = h[7] & 0xff;
+  return `${a}.${b}.${c}.${d}`;
+}
 
-  // All 8 zero → unspecified `::`
-  if (
-    h[0] === 0 &&
-    h[1] === 0 &&
-    h[2] === 0 &&
-    h[3] === 0 &&
-    h[4] === 0 &&
-    h[5] === 0 &&
-    h[6] === 0 &&
-    h[7] === 0
-  ) {
-    return true;
-  }
+function isForbiddenIpv4(v4: readonly number[]): boolean {
+  const [a, b] = v4 as [number, number, number, number];
+  if (a === 127 || a === 0) return true; // loopback + unspecified
+  if (a === 10) return true; // RFC 1918
+  if (a === 192 && b === 168) return true; // RFC 1918
+  if (a === 172 && b >= 16 && b <= 31) return true; // RFC 1918 — 172.16/12, NOT all of 172
+  if (a === 169 && b === 254) return true; // link-local, incl. 169.254.169.254 cloud metadata
+  return false;
+}
 
-  // h[0..6] zero and h[7] === 1 → loopback `::1`
-  if (
-    h[0] === 0 &&
-    h[1] === 0 &&
-    h[2] === 0 &&
-    h[3] === 0 &&
-    h[4] === 0 &&
-    h[5] === 0 &&
-    h[6] === 0 &&
-    h[7] === 1
-  ) {
-    return true;
-  }
+/**
+ * The IPv6 half. Three forms EMBED an IPv4 address in their low 32 bits, and all three are judged
+ * on what a caller actually reaches — the embedded address — rather than on the wrapper.
+ */
+function isForbiddenIpv6(h: Hextets): boolean {
+  if (zerosThrough(h, 7) && h[7] === 0) return true; // unspecified `::`
+  if (zerosThrough(h, 7) && h[7] === 1) return true; // loopback `::1`
+  if ((h[0] & 0xffc0) === 0xfe80) return true; // link-local fe80::/10 (fe80–febf)
+  if ((h[0] & 0xfe00) === 0xfc00) return true; // unique-local fc00::/7
 
-  // (h[0] & 0xffc0) === 0xfe80 → link-local fe80::/10 (fe80–febf)
-  if ((h[0] & 0xffc0) === 0xfe80) {
-    return true;
-  }
-
-  // (h[0] & 0xfe00) === 0xfc00 → unique-local fc00::/7
-  if ((h[0] & 0xfe00) === 0xfc00) {
-    return true;
-  }
-
-  // h[0..4] zero and h[5] === 0xffff → IPv4-mapped ::ffff:x.x.x.x
-  if (h[0] === 0 && h[1] === 0 && h[2] === 0 && h[3] === 0 && h[4] === 0 && h[5] === 0xffff) {
-    const a = (h[6] >> 8) & 0xff;
-    const b = h[6] & 0xff;
-    const c = (h[7] >> 8) & 0xff;
-    const d = h[7] & 0xff;
-    return isForbiddenAddress(`${a}.${b}.${c}.${d}`);
-  }
-
-  // h[0..5] all zero and not already matched → IPv4-compatible ::x.x.x.x
-  if (h[0] === 0 && h[1] === 0 && h[2] === 0 && h[3] === 0 && h[4] === 0 && h[5] === 0) {
-    const a = (h[6] >> 8) & 0xff;
-    const b = h[6] & 0xff;
-    const c = (h[7] >> 8) & 0xff;
-    const d = h[7] & 0xff;
-    return isForbiddenAddress(`${a}.${b}.${c}.${d}`);
-  }
+  // IPv4-mapped `::ffff:x.x.x.x`.
+  if (zerosThrough(h, 5) && h[5] === 0xffff) return isForbiddenAddress(embeddedIpv4(h));
+  // IPv4-compatible `::x.x.x.x` — everything above already matched what it could.
+  if (zerosThrough(h, 6)) return isForbiddenAddress(embeddedIpv4(h));
 
   // NAT64 well-known prefix `64:ff9b::/96` (RFC 6052 § 2.1) → h[0]=0x0064, h[1]=0xff9b, h[2..5]=0,
   // with the translated IPv4 in the low 32 bits. The prefix itself is NOT a private range — it is a
   // real, routable prefix a NAT64 gateway assigns — so nothing above catches it, and without this
   // branch `64:ff9b::a9fe:a9fe` reaches the cloud metadata endpoint through a translating gateway
-  // while every check upstream reports the destination as public. What a caller actually reaches is
-  // the EMBEDDED address, so that is what gets judged, exactly as for `::ffff:` above.
+  // while every check upstream reports the destination as public.
   //
   // `util/safe-fetch.ts` already saw through this shape (`extractNat64V4`); this is the same policy
   // in the hextet form this file parses to. Stated bound, matching safe-fetch rather than widening
   // past it: RFC 6052 also permits network-specific prefixes (/32 … /64), which are not recognised
   // here because they are not identifiable from the address alone.
   if (h[0] === 0x0064 && h[1] === 0xff9b && h[2] === 0 && h[3] === 0 && h[4] === 0 && h[5] === 0) {
-    const a = (h[6] >> 8) & 0xff;
-    const b = h[6] & 0xff;
-    const c = (h[7] >> 8) & 0xff;
-    const d = h[7] & 0xff;
-    return isForbiddenAddress(`${a}.${b}.${c}.${d}`);
+    return isForbiddenAddress(embeddedIpv4(h));
   }
 
   return false;
+}
+
+export function isForbiddenAddress(ip: string): boolean {
+  const v4 = parseIpv4(ip);
+  if (v4 !== null) return isForbiddenIpv4(v4);
+  const h = parseIpv6(ip);
+  // An unparseable string is not an address we can judge.
+  return h === null ? false : isForbiddenIpv6(h);
 }

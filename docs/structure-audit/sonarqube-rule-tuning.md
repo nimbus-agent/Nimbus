@@ -83,6 +83,66 @@ breaking compilation, so the original is kept with an inline `// NOSONAR`.
 | `great-expectations/src/gx-parse.ts` `clampId()` (now in nimbus-mcp-servers) | `typescript:S7767` | `(… ) \| 0` is a deliberate 32-bit wraparound (Java-style `hashCode`), not a truncation; `Math.trunc` would let the accumulator exceed 2^53 and corrupt the hash. |
 | `sdk/src/testing/sandbox-probe.ts` | `typescript:S7787` | The specifier-less `export {}` is the module marker required by the top-level `await main()` below it; removing it makes the top-level await a compile error (TS1375). |
 
+## 2026-09-11 — the SDK signing-surface deprecation, and one native-helper vulnerability
+
+### `typescript:S1874` — three seam files, ~12 markers
+
+`@nimbus-dev/sdk` 1.32.0 deprecated its whole flat manifest-signature surface in favour of a
+detached-JWS envelope under `@nimbus-dev/sdk/signing`. **That envelope has not shipped** — the
+subpath exports canonicalization and nothing else — so the warnings are real (removal is slated for
+SDK 2.0.0) and there is nothing to migrate to, while the gateway must keep verifying the flat shape
+every already-installed extension carries.
+
+**Most of the cluster was FIXED rather than suppressed**, by splitting on what each symbol actually
+is. The base64 codec, Ed25519 keygen and the `SignatureDisableReason` union are not part of the
+envelope being replaced, so the gateway and CLI own them outright now
+(`gateway/src/util/{base64,ed25519}.ts`, `cli/src/lib/extension-signing.ts`) — 80 of the 98
+findings. What remains is only the contract itself, confined to one seam file per package:
+
+| Site | Rule | Why it's suppressed |
+|---|---|---|
+| `gateway/src/extensions/verify-signature.ts` | `typescript:S1874` | `signManifest` / `verifyManifestSignature` / `errorToHardDisableReason` ARE the contract: a connector author signs with the SDK and the gateway must verify what they produced, so a local reimplementation would be a second, drifting copy on a signature-critical path. Wrapped rather than re-exported, so the deprecation stops at this file — a consumer importing a RE-EXPORTED deprecated symbol is still flagged, which is why the pre-existing re-export shed nothing. |
+| `gateway/src/extensions/canonical-json.ts` | `typescript:S1874` | Here the replacement EXISTS and produces **different bytes**: the deprecated rules NFC-normalize string VALUES, the spec binding deliberately does not (Go publishes no importable normalization). Those bytes are load-bearing for every installed extension signature (`I16`) and every saved-tool signature (`I40`) already on disk, so migrating is a re-signing exercise, not an import swap. |
+| `cli/src/lib/extension-signing.ts` | `typescript:S1874` | The CLI's own copy of the seam — `packages/cli` may not import gateway source. Keygen and base64 are owned here; only `signManifest` is the SDK's, for the reason above. |
+
+Each marker is a **trailing** comment on the reported line (a marker in a block above the statement
+is silently ignored). **Retire all three when the JWS envelope ships**: the migration is then a
+three-file change plus a re-sign, and these rows should be deleted, not amended.
+
+### `typescript:S7780` — `fleet-digest.ts`'s `mdSafe`, where two rules contradict each other
+
+`mdSafe` neutralises a pipe and a backslash so an indexed PR title cannot break out of a Markdown
+table cell. Two Sonar rules disagree about how to write that, and **there is no form that
+satisfies both**:
+
+| Written as | Cleared | Tripped |
+|---|---|---|
+| `.replaceAll("\\", "\\\\")` — an escaped string | S7781 | **S7780** ("use `String.raw`") |
+| `.replaceAll(/\\/g, String.raw`\\`)` — a regex needle | S7780 | **S7781** ("this pattern can be replaced with a string") |
+| `String.raw` for the needle itself | — | **does not compile** |
+
+The third is the interesting one: a `String.raw` template holding a single backslash is a syntax
+error, because that backslash escapes the closing backtick. A template literal can never end in a
+lone backslash, so S7780's advice is simply not expressible for this value. Both forms were tried
+on PR #1497 and each produced the other rule's finding.
+
+Kept as the escaped-string form — the readable one, and the one that shipped — with a trailing
+`// NOSONAR S7780` on each affected line. Behaviour is not taken on trust: the
+`a BACKSLASH before a pipe does not smuggle a live delimiter through the escape` test pins it, and
+the rendered row was additionally checked end-to-end (`a\|b` → `a\\\|b`, still four data
+columns).
+
+**Retire when** either rule stops firing on the other's remedy, or the function gains the wider
+escape set its own docstring anticipates for a Markdown-rendering sink.
+
+### `c:S5849` — `sandbox-helper/main.c` `drop_all_caps()`
+
+Marked **Accepted** on the SonarCloud board rather than suppressed in code (it is C, and the rule is
+reported as a VULNERABILITY). The flagged `cap_set_proc()` installs an EMPTY capability set
+immediately before `execv`, so it _drops_ every capability rather than acquiring one — the rule
+fires on any `cap_set_proc` regardless of direction. There is no code change that clears it without
+removing the hardening. Issue key `AaCHEeXpGOMqvmq55deI`.
+
 If you disable a rule, record:
 
 - Rule key (e.g., `typescript:S1135`)

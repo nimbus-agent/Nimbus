@@ -3,6 +3,7 @@ import type { NimbusToolGenerationToml } from "../config/nimbus-toml.ts";
 import { appendAuditEntry } from "../db/audit-chain.ts";
 import { resolveRuntimeById } from "../exec/exec-runtimes.ts";
 import type { EnforcedPolicy } from "../policy/policy-gate.ts";
+import { codeUnitCompare } from "../util/code-unit-compare.ts";
 import { artifactDigest } from "./toolgen-artifact.ts";
 import type { GeneratedToolHandle } from "./toolgen-client.ts";
 import type { ToolgenApprovalInput } from "./toolgen-consent-broker.ts";
@@ -94,8 +95,7 @@ export interface ToolgenGateDeps {
    * non-registering exit: a real implementation is not required to be atomic (Task 11's is a
    * sequential per-host write loop), so a throw partway through can leave a real Vault write behind
    * with no return value to report it. The gate therefore tracks its own ATTEMPTED host list, set
-   * before this is even called, and revokes THAT on cleanup -- see `createGeneratedTool`'s
-   * `attemptedCredentialHosts`.
+   * before this is even called, and revokes THAT on cleanup -- see {@link CredentialCleanup}.
    */
   readonly bindCredentials: (
     toolId: string,
@@ -196,6 +196,143 @@ async function safeRevokeCredentials(
 }
 
 /**
+ * Steps 1-3 of the gate's order: every refusal decidable WITHOUT the owner, and therefore BEFORE
+ * the consent prompt, so a capability disabled by config or org policy never advertises its own
+ * existence by prompting. Throws; returns nothing.
+ *
+ * Extracted as one named phase rather than inlined, and invoked first at the call site, so the
+ * gate's ordering rule stays readable as an ordered list — never by moving a check somewhere a
+ * reader has to go and find.
+ */
+function assertCreateAllowedBeforeConsent(
+  req: CreateGeneratedToolRequest,
+  deps: ToolgenGateDeps,
+): void {
+  // 1. Local kill-switch.
+  if (!deps.config.enabled) {
+    throw new ToolgenError("ERR_TOOLGEN_DISABLED", "tool generation is disabled");
+  }
+  // 2. Org policy (I22). An ABSENT accessor refuses fail-closed rather than defaulting to
+  //    enabled -- the gap multimodal PR 1 left open and PR 2 closed.
+  if (deps.enforced === undefined) {
+    throw new ToolgenError("ERR_TOOLGEN_POLICY_DISABLED", "org policy unavailable; refusing");
+  }
+  if (deps.enforced.capabilitiesDisabled.has(CAPABILITY)) {
+    throw new ToolgenError("ERR_TOOLGEN_POLICY_DISABLED", "disabled by org policy");
+  }
+  // 3. Session budget.
+  if (deps.registry.countForSession(req.sessionId) >= deps.config.maxToolsPerSession) {
+    throw new ToolgenError(
+      "ERR_TOOLGEN_SESSION_BUDGET_EXCEEDED",
+      `session already holds ${deps.config.maxToolsPerSession} generated tools`,
+    );
+  }
+}
+
+/** The envelope's host list plus the credential bindings that survive filtering against it. */
+type ResolvedEnvelope = {
+  readonly hosts: readonly string[];
+  readonly forApprovedHosts: readonly ToolCredentialParam[];
+  readonly forApprovedHostNames: readonly string[];
+};
+
+/**
+ * Step 4 of the gate's order, still pre-consent: normalise the requested hosts and filter the
+ * supplied credentials down to them.
+ *
+ * Runs ABOVE the draft: the drafting prompt must name the hosts the broker will actually match,
+ * and refusing a malformed host before a model call is even attempted beats refusing after.
+ */
+function resolveEnvelope(
+  req: CreateGeneratedToolRequest,
+  credentials: readonly ToolCredentialParam[],
+): ResolvedEnvelope {
+  // Normalised, not trusted as typed: a user will paste `https://api.example.com/v1` or
+  // `api.example.com:443`, and an unnormalised entry would never match the broker's
+  // `url.hostname` comparison — silently producing a tool that can reach nothing.
+  // Sorted with an EXPLICIT code-point comparator, deliberately not `localeCompare`. This list
+  // is rendered verbatim in the owner's approval prompt and stored in the artifact they approve,
+  // so the ordering has to be identical on every machine; `localeCompare` is locale-dependent by
+  // definition and would let two installs show the same envelope in two different orders. Host
+  // names are already lowercased ASCII by `normalizeHost`, so code-point order IS alphabetical
+  // here — the comparator makes that a property of the code rather than of the default sort.
+  const hosts = [...new Set(req.hosts.map(normalizeHost))].sort(codeUnitCompare);
+  if (hosts.length === 0) {
+    throw new ToolgenError("ERR_TOOLGEN_HOST_NOT_ALLOWED", "at least one --host is required");
+  }
+  // Only hosts the owner also granted via --host. The CLI already enforces this, but the gate is
+  // the boundary: the prompt and the artifact must never name a host the tool cannot reach.
+  //
+  // The `host` is REWRITTEN to its normalised form, not merely tested against one. Filtering on
+  // `normalizeHost(c.host)` while forwarding `c.host` untouched split one host into two names and
+  // broke three things at once, because `normalizeHost` accepts what a user actually types
+  // (`https://API.example.com/v1`, `api.example.com:443`) while the Vault key, the approval
+  // prompt and the broker each saw a different one of them:
+  //   * `bindCredentials` wrote `toolgen.<id>.https://api_pexample_pcom` while
+  //     `ToolgenBroker.handleFetch` reads under `url.hostname.toLowerCase()` — the lookup missed
+  //     and the tool made UNAUTHENTICATED requests at runtime, after the owner had approved it;
+  //   * `credentialHosts` in the artifact and the prompt disagreed with `approvedHosts`, so the
+  //     owner approved an envelope that contradicted itself;
+  //   * on a DENIAL the revoke targeted a key that was never written, leaving the bearer token in
+  //     the Vault under a toolId that will never register — the exact property this gate
+  //     otherwise guarantees (a credential bound before consent is revoked on every path that
+  //     does not end in registration).
+  // One normalised name, everywhere.
+  //
+  // DE-DUPLICATED by host at the same time, keeping the LAST entry for a repeated host. Two
+  // `--credential` entries can name one host after normalisation (`api.example.com=a` and
+  // `API.example.com:443=b`), and without this the tool would take two Vault writes for one key
+  // and name that host TWICE in the artifact and the approval prompt. LAST rather than first
+  // because that is what the Vault would end up holding anyway: `bindCredentials` is a sequential
+  // per-host write loop, so the later token overwrites the earlier one. De-duplicating here makes
+  // the disclosed list agree with the stored value instead of merely being shorter.
+  const byHost = new Map<string, ToolCredentialParam>();
+  for (const c of credentials) {
+    const host = normalizeHost(c.host);
+    if (!hosts.includes(host)) continue;
+    byHost.set(host, { host, binding: c.binding });
+  }
+  const forApprovedHosts = [...byHost.values()];
+  // NAMES ONLY -- computed once and reused below both to tell the draft what will be sent, and
+  // (after `bindCredentials` is about to be called) as the ATTEMPTED cleanup set. See
+  // `CredentialCleanup` for why cleanup needs this rather than `bindCredentials`'s return value.
+  // Already unique — `forApprovedHosts` is keyed by host above.
+  return { hosts, forApprovedHosts, forApprovedHostNames: forApprovedHosts.map((c) => c.host) };
+}
+
+/**
+ * What the two non-registering exits (the denial arm and the outer `catch`) need in order to undo
+ * a credential bound before consent. ONE mutable record rather than two loose locals, because both
+ * arms must read exactly the same state and a per-arm copy is how one of them stops being updated.
+ *
+ * `bound` means "`bindCredentials` is ABOUT TO BE called", set together with `attemptedHosts`
+ * immediately BEFORE the await — not after it resolves. `bindCredentials` is a sequential per-host
+ * write loop, so a throw on host B can follow a successful write for host A; unless the flag is
+ * already true and `attemptedHosts` already names host A, that secret survives in the Vault
+ * forever under a toolId that will never register.
+ *
+ * `attemptedHosts` is deliberately NOT `bindCredentials`'s return value, which is only observable
+ * if the call resolves. `revokeCredentials` is idempotent by its own contract, so revoking a host
+ * that was never written — or revoking it twice — is a safe no-op, which makes the ATTEMPTED
+ * superset the safe choice for cleanup. The RETURN value stays authoritative for the artifact and
+ * the approval prompt, which answer a different question: what will actually be sent.
+ */
+type CredentialCleanup = {
+  bound: boolean;
+  attemptedHosts: readonly string[];
+};
+
+/** Undo a pre-consent credential bind, if one was attempted. Returns whether the revoke FAILED. */
+async function revokeIfBound(
+  deps: ToolgenGateDeps,
+  toolId: string,
+  cleanup: CredentialCleanup,
+): Promise<boolean> {
+  if (!cleanup.bound) return false;
+  return !(await safeRevokeCredentials(deps, toolId, cleanup.attemptedHosts));
+}
+
+/**
  * The ONE path from a model-authored body to a registered, callable tool (invariant I39).
  *
  * The ORDER is load-bearing and mirrors `runExecution`: every refusal decidable WITHOUT the owner
@@ -213,31 +350,13 @@ export async function createGeneratedTool(
 ): Promise<ToolgenOutcome> {
   const toolId = deps.newId();
   let approved = false;
-  // Whether `bindCredentials` is ABOUT TO BE (not "has been") called. Set TRUE together with
-  // `attemptedCredentialHosts` immediately BEFORE the `await deps.bindCredentials(...)` below --
-  // not after it resolves. If it throws partway through -- Task 11's real implementation is a
-  // sequential write loop, so a throw on host B can follow a successful write for host A -- the
-  // flag must already be `true` and `attemptedCredentialHosts` must already name host A, or the
-  // outer `catch` has no way to know a write may have happened and that secret survives in the
-  // Vault forever under a toolId that will never register (fix round 1 finding 1). Tracked
-  // separately from `approved` so a pre-consent refusal that never got this far (the common case)
-  // does not call revoke for nothing.
-  let credentialsBound = false;
-  // NAMES ONLY, and the ATTEMPTED set -- assigned right before `bindCredentials` is awaited, from
-  // the same normalised list the draft's subject was given, and used for CLEANUP on both
-  // non-registering exits (the denial branch and the outer `catch`). Deliberately NOT
-  // `bindCredentials`'s return value: that return is only observable if the call resolves, and a
-  // throw partway through a multi-host write must still be cleaned up. `revokeCredentials` is
-  // idempotent by its own contract, so revoking a host that was never actually written -- or
-  // revoking it twice -- is a safe no-op, which makes the ATTEMPTED (superset) list the safe
-  // choice here. Function-scoped, not `const` inside the `try`, so BOTH non-registering exits below
-  // can read it (Task 9 controller ruling 3 -- never looked up from `registry.get(toolId)`, which
-  // returns `undefined` on exactly the calls that matter).
-  let attemptedCredentialHosts: readonly string[] = [];
+  // Function-scoped, not `const` inside the `try`, so BOTH non-registering exits below can read it
+  // (Task 9 controller ruling 3 -- never looked up from `registry.get(toolId)`, which returns
+  // `undefined` on exactly the calls that matter). See {@link CredentialCleanup}.
+  const cleanup: CredentialCleanup = { bound: false, attemptedHosts: [] };
   // The hosts `bindCredentials` actually reports as bound -- its own return value. Authoritative
   // for the ARTIFACT and the approval prompt (disclosing what will actually be sent), which is a
-  // DIFFERENT question from what needs cleaning up on a non-registering exit -- see
-  // `attemptedCredentialHosts` above for that.
+  // DIFFERENT question from what needs cleaning up on a non-registering exit.
   let credentialHosts: readonly string[] = [];
   try {
     // The id is minted by the gateway, never supplied by a caller -- but it is validated anyway,
@@ -246,84 +365,12 @@ export async function createGeneratedTool(
     // to run first, so a bad `newId` is refused before anything -- including approval -- happens.
     assertSafeToolId(toolId);
 
-    // 1. Local kill-switch.
-    if (!deps.config.enabled) {
-      throw new ToolgenError("ERR_TOOLGEN_DISABLED", "tool generation is disabled");
-    }
-    // 2. Org policy (I22). An ABSENT accessor refuses fail-closed rather than defaulting to
-    //    enabled -- the gap multimodal PR 1 left open and PR 2 closed.
-    if (deps.enforced === undefined) {
-      throw new ToolgenError("ERR_TOOLGEN_POLICY_DISABLED", "org policy unavailable; refusing");
-    }
-    if (deps.enforced.capabilitiesDisabled.has(CAPABILITY)) {
-      throw new ToolgenError("ERR_TOOLGEN_POLICY_DISABLED", "disabled by org policy");
-    }
-    // 3. Session budget.
-    if (deps.registry.countForSession(req.sessionId) >= deps.config.maxToolsPerSession) {
-      throw new ToolgenError(
-        "ERR_TOOLGEN_SESSION_BUDGET_EXCEEDED",
-        `session already holds ${deps.config.maxToolsPerSession} generated tools`,
-      );
-    }
-    // 4. Normalise the requested hosts -- moved ABOVE the draft (Task 9): the drafting prompt must
-    //    name the hosts the broker will actually match, and the credential filter below must run
-    //    before drafting. Refusing a malformed host here, before a model call is even attempted,
-    //    also beats refusing after -- `normalizeHost` throws `ERR_TOOLGEN_HOST_NOT_ALLOWED`.
-    //    Everything here stays pre-consent, so the gate's ordering rule is untouched.
-    //
-    // Normalised, not trusted as typed: a user will paste `https://api.example.com/v1` or
-    // `api.example.com:443`, and an unnormalised entry would never match the broker's
-    // `url.hostname` comparison — silently producing a tool that can reach nothing.
-    // Sorted with an EXPLICIT code-point comparator, deliberately not `localeCompare`. This list
-    // is rendered verbatim in the owner's approval prompt and stored in the artifact they approve,
-    // so the ordering has to be identical on every machine; `localeCompare` is locale-dependent by
-    // definition and would let two installs show the same envelope in two different orders. Host
-    // names are already lowercased ASCII by `normalizeHost`, so code-point order IS alphabetical
-    // here — the comparator makes that a property of the code rather than of the default sort.
-    const hosts = [...new Set(req.hosts.map(normalizeHost))].sort((a, b) =>
-      a < b ? -1 : a > b ? 1 : 0,
-    );
-    if (hosts.length === 0) {
-      throw new ToolgenError("ERR_TOOLGEN_HOST_NOT_ALLOWED", "at least one --host is required");
-    }
-    // Only hosts the owner also granted via --host. The CLI already enforces this, but the gate is
-    // the boundary: the prompt and the artifact must never name a host the tool cannot reach.
-    //
-    // The `host` is REWRITTEN to its normalised form, not merely tested against one. Filtering on
-    // `normalizeHost(c.host)` while forwarding `c.host` untouched split one host into two names and
-    // broke three things at once, because `normalizeHost` accepts what a user actually types
-    // (`https://API.example.com/v1`, `api.example.com:443`) while the Vault key, the approval
-    // prompt and the broker each saw a different one of them:
-    //   * `bindCredentials` wrote `toolgen.<id>.https://api_pexample_pcom` while
-    //     `ToolgenBroker.handleFetch` reads under `url.hostname.toLowerCase()` — the lookup missed
-    //     and the tool made UNAUTHENTICATED requests at runtime, after the owner had approved it;
-    //   * `credentialHosts` in the artifact and the prompt disagreed with `approvedHosts`, so the
-    //     owner approved an envelope that contradicted itself;
-    //   * on a DENIAL the revoke targeted a key that was never written, leaving the bearer token in
-    //     the Vault under a toolId that will never register — the exact property this gate
-    //     otherwise guarantees (a credential bound before consent is revoked on every path that
-    //     does not end in registration).
-    // One normalised name, everywhere.
-    //
-    // DE-DUPLICATED by host at the same time, keeping the LAST entry for a repeated host. Two
-    // `--credential` entries can name one host after normalisation (`api.example.com=a` and
-    // `API.example.com:443=b`), and without this the tool would take two Vault writes for one key
-    // and name that host TWICE in the artifact and the approval prompt. LAST rather than first
-    // because that is what the Vault would end up holding anyway: `bindCredentials` is a sequential
-    // per-host write loop, so the later token overwrites the earlier one. De-duplicating here makes
-    // the disclosed list agree with the stored value instead of merely being shorter.
-    const byHost = new Map<string, ToolCredentialParam>();
-    for (const c of credentials) {
-      const host = normalizeHost(c.host);
-      if (!hosts.includes(host)) continue;
-      byHost.set(host, { host, binding: c.binding });
-    }
-    const forApprovedHosts = [...byHost.values()];
-    // NAMES ONLY -- computed once and reused below both to tell the draft what will be sent, and
-    // (after `bindCredentials` is about to be called) as the ATTEMPTED cleanup set. See
-    // `attemptedCredentialHosts`'s declaration above for why cleanup needs this rather than
-    // `bindCredentials`'s return value. Already unique — `forApprovedHosts` is keyed by host above.
-    const forApprovedHostNames = forApprovedHosts.map((c) => c.host);
+    // 1-3. Every refusal decidable without the owner, before the consent prompt.
+    assertCreateAllowedBeforeConsent(req, deps);
+
+    // 4. Normalise the requested hosts and filter the credentials down to them. Still pre-consent,
+    //    so the gate's ordering rule is untouched.
+    const { hosts, forApprovedHosts, forApprovedHostNames } = resolveEnvelope(req, credentials);
 
     // 5. Draft, then build the manifest -- network EMPTY by construction.
     const draft = await deps.draftTool(req, {
@@ -362,8 +409,8 @@ export async function createGeneratedTool(
     //    accurate cleanup set behind for the outer `catch`. `bindCredentials`'s RETURN stays
     //    authoritative for the artifact: it reports what a write actually succeeded for, which the
     //    pre-draft `forApprovedHosts` list cannot -- a different question from what to clean up.
-    attemptedCredentialHosts = forApprovedHostNames;
-    credentialsBound = true;
+    cleanup.attemptedHosts = forApprovedHostNames;
+    cleanup.bound = true;
     credentialHosts = await deps.bindCredentials(toolId, forApprovedHosts);
     const artifact: GeneratedToolArtifact = {
       toolId,
@@ -395,11 +442,8 @@ export async function createGeneratedTool(
       // A denial must not leave a credential behind under a toolId nothing will ever call again.
       // Guarded via `safeRevokeCredentials` -- see its docstring for why an unguarded revoke here
       // could take out the `audit()` call below with it. Revokes the ATTEMPTED set, not
-      // `bindCredentials`'s return value -- see `attemptedCredentialHosts`'s declaration above.
-      let revokeFailed = false;
-      if (credentialsBound) {
-        revokeFailed = !(await safeRevokeCredentials(deps, toolId, attemptedCredentialHosts));
-      }
+      // `bindCredentials`'s return value -- see {@link CredentialCleanup}.
+      const revokeFailed = await revokeIfBound(deps, toolId, cleanup);
       audit(deps, "rejected", "denied_by_owner", {
         // Only present when TRUE, so its absence is not read as a claim that cleanup succeeded on
         // a run where nothing was bound. When present it means a bearer token may still sit in the
@@ -414,7 +458,7 @@ export async function createGeneratedTool(
         // is what undoes it; this field is what makes the attempt visible if the revoke failed
         // (it is swallowed by `safeRevokeCredentials` by design). Harmless to omit while binding
         // was a no-op stub; not harmless now.
-        credentialHosts: attemptedCredentialHosts,
+        credentialHosts: cleanup.attemptedHosts,
         draftAttempts: draft.attempts,
         draftGrounding: draft.grounding,
         draftLocality: draft.locality,
@@ -454,10 +498,7 @@ export async function createGeneratedTool(
     // is. All three clean up the same way, against the ATTEMPTED set. Guarded for the identical
     // reason as the denial path above: this IS the outer catch, so an unguarded revoke failure here
     // would escape `createGeneratedTool` outright and neither `audit()` call below would ever run.
-    let revokeFailed = false;
-    if (credentialsBound) {
-      revokeFailed = !(await safeRevokeCredentials(deps, toolId, attemptedCredentialHosts));
-    }
+    const revokeFailed = await revokeIfBound(deps, toolId, cleanup);
     const code = err instanceof ToolgenError ? err.code : "ERR_TOOLGEN_INTERNAL";
     // Present only when the caught error is a `ToolgenError` that actually carried one (today,
     // only `ERR_TOOLGEN_DRAFT_INVALID` does) -- diagnostic about which route FAILED, never part of

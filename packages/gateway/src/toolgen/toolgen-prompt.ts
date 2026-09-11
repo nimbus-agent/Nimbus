@@ -12,10 +12,11 @@ function groundingBlock(endpoints: readonly GroundedEndpoint[]): string {
   if (endpoints.length === 0) {
     return "No indexed API specification matched this description. Draft from the description and standard REST conventions, and prefer conservative assumptions.";
   }
-  const lines = endpoints.map(
-    (e) =>
-      `- [${e.serviceName}] ${e.method} ${e.path}${e.operationId === null ? "" : ` (operationId: ${e.operationId})`}${e.summary === "" ? "" : `\n  ${e.summary}`}`,
-  );
+  const lines = endpoints.map((e) => {
+    const opId = e.operationId === null ? "" : ` (operationId: ${e.operationId})`;
+    const summary = e.summary === "" ? "" : `\n  ${e.summary}`;
+    return `- [${e.serviceName}] ${e.method} ${e.path}${opId}${summary}`;
+  });
   return `These endpoints come from OpenAPI specifications indexed on this machine. Prefer them over guessed paths:\n${lines.join("\n")}`;
 }
 

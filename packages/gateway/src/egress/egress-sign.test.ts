@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { decodeBase64 } from "@nimbus-dev/sdk";
 import nacl from "tweetnacl";
+import { decodeBase64 } from "../util/base64.ts";
 import type { NimbusVault } from "../vault/nimbus-vault.ts";
 import { digestEgressWindow, signWindowDigest } from "./egress-sign.ts";
 

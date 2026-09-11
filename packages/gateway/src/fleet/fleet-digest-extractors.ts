@@ -276,7 +276,7 @@ function stringsAt(v: unknown, field: string): string[] | undefined {
 
 const glossary: FleetDigestExtractor = (f) => {
   const o = rec(f);
-  if (o === undefined || o["kind"] !== "glossary") return undefined;
+  if (o?.["kind"] !== "glossary") return undefined;
   const terms = stringsAt(o["entries"], "term");
   const stats = rec(o["stats"]);
   if (terms === undefined || stats === undefined) return undefined;
@@ -287,7 +287,7 @@ const glossary: FleetDigestExtractor = (f) => {
 
 const decisions: FleetDigestExtractor = (f) => {
   const o = rec(f);
-  if (o === undefined || o["kind"] !== "decisions") return undefined;
+  if (o?.["kind"] !== "decisions") return undefined;
   const ids = stringsAt(o["entries"], "id");
   const stats = rec(o["stats"]);
   if (ids === undefined || stats === undefined) return undefined;
@@ -305,7 +305,7 @@ const decisions: FleetDigestExtractor = (f) => {
 
 const ownership: FleetDigestExtractor = (f) => {
   const o = rec(f);
-  if (o === undefined || o["kind"] !== "ownership") return undefined;
+  if (o?.["kind"] !== "ownership") return undefined;
   const coverage = rec(o["coverage"]);
   if (coverage === undefined) return undefined;
   const n = numbers(coverage, [

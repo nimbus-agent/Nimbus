@@ -149,7 +149,7 @@ async function main() {
     "- Discriminator is a tagged-union state field (`status`, `state`) → leave as switch; that's idiomatic.",
     "- Discriminator is a config flag (`mode`, `level`) → registry only if open to extension; otherwise keep.",
   );
-  const target = `${REPO_ROOT}/docs/superpowers/specs/punchlist/04-oc-violations.md`;
+  const target = `${REPO_ROOT}/docs/structure-audit/punchlist/04-oc-violations.md`;
   await mkdir(dirname(target), { recursive: true });
   await writeFile(target, `${out.join("\n")}\n`, "utf8");
   console.log(`Wrote ${all.length} OC candidates to ${relPath(target)}`);

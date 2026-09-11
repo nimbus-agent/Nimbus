@@ -91,6 +91,33 @@ describe("HitlPopupPage", () => {
     expect(document.activeElement).not.toBe(approve);
   });
 
+  it("focuses Approve for a safe action", () => {
+    storeState.pending = [{ requestId: "s", prompt: "Read file?", receivedAtMs: 1 }];
+    render(<HitlPopupPage />);
+    expect(document.activeElement).toBe(screen.getByRole("button", { name: /Approve/i }));
+  });
+
+  /**
+   * The popup does NOT remount between queued requests — it re-renders with `pending[0]` replaced.
+   * React honours the `autoFocus` ATTRIBUTE only at mount, so the conditional this component used
+   * to carry (`autoFocus={!isDestructive(action)}`) applied the deny-list to the FIRST request
+   * only: a safe request followed by a destructive one left focus sitting on Approve, which is
+   * exactly the keystroke the deny-list exists to prevent. Fails against that implementation.
+   */
+  it("moves focus OFF Approve when a destructive action replaces a safe one without remounting", () => {
+    storeState.pending = [{ requestId: "safe", prompt: "Read file?", receivedAtMs: 1 }];
+    const { rerender } = render(<HitlPopupPage />);
+    expect(document.activeElement).toBe(screen.getByRole("button", { name: /Approve/i }));
+
+    storeState.pending = [
+      { requestId: "boom", prompt: "Delete file?", receivedAtMs: 2, action: "file.delete" },
+    ];
+    rerender(<HitlPopupPage />);
+
+    expect(document.activeElement).not.toBe(screen.getByRole("button", { name: /Approve/i }));
+    expect(document.activeElement).toBe(screen.getByRole("button", { name: /Reject/i }));
+  });
+
   it("keeps popup open and shows inline error on consentRespond failure", async () => {
     storeState.pending = [{ requestId: "e", prompt: "p", receivedAtMs: 1 }];
     consentRespond.mockRejectedValueOnce(new Error("socket closed"));

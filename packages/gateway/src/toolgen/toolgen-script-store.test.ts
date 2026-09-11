@@ -66,8 +66,9 @@ describe("writeToolScript", () => {
     expect(await readFile(p, "utf8")).toBe("export const x = 1;");
   });
 
-  test("the file is owner-only on POSIX", async () => {
-    if (process.platform === "win32") return; // ACLs are asserted by the Windows integration leg
+  // ACLs are asserted by the Windows integration leg, so this one is SKIPPED there rather than
+  // returning early — an early return reports a pass for a test that made no assertion.
+  test.skipIf(process.platform === "win32")("the file is owner-only on POSIX", async () => {
     const c = cfg();
     const p = await writeToolScript(c, "tg_a", "x");
     expect(statSync(p).mode & 0o777).toBe(0o600);

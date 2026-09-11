@@ -766,7 +766,7 @@ describe("toolgen RPC", () => {
     );
     // Let the gate reach `bindCredentials` (step 7, before consent) and the approval broadcast.
     await Bun.sleep(1);
-    expect(bound.length).toBe(1);
+    expect(bound).toHaveLength(1);
     expect(bound[0]?.[1]).toEqual([
       { host: "api.github.com", binding: { type: "bearer", token: "s3cret" } },
     ]);

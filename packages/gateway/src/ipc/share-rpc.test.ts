@@ -4,7 +4,6 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { encodeBase64 } from "@nimbus-dev/sdk";
 import nacl from "tweetnacl";
 import { writeToolCallLog } from "../db/tool-call-log.ts";
 import { LocalIndex } from "../index/local-index.ts";
@@ -12,6 +11,7 @@ import { buildShareFile, type ShareFile } from "../share/share-format.ts";
 import { insertReceivedShare } from "../share/share-inbox-store.ts";
 import { ensureShareKeypair } from "../share/share-keypair.ts";
 import { getShareRecord, listShareRecords } from "../share/share-store.ts";
+import { encodeBase64 } from "../util/base64.ts";
 import { dispatchShareRpc, type ShareHttpSinkConfig, type ShareRpcCtx } from "./share-rpc.ts";
 
 function fakeVault() {

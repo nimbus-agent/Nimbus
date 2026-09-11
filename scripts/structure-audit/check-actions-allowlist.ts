@@ -17,7 +17,8 @@
  * cannot see that the control is structurally unable to EXECUTE — absence of a
  * red signal was indistinguishable from absence of the signal entirely.
  *
- * See docs/superpowers/specs/2026-07-26-p5-p3-infra-batch-design.md.
+ * Design of record, pruned from HEAD on delivery — read it with
+ * `git show dd98484b:docs/superpowers/specs/2026-07-26-p5-p3-infra-batch-design.md`.
  */
 
 import { readdirSync, readFileSync } from "node:fs";

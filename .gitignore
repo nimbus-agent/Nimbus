@@ -154,6 +154,10 @@ docs/structure-audit/knip-report.json
 docs/structure-audit/risky-assertions.json
 docs/structure-audit/file-loc.json
 docs/structure-audit/db-run-census.json
+# scripts/cleanup/'s four on-demand surveys write here (see that directory's README).
+# Generated analysis output, never committed — and deliberately NOT under a docs tree the
+# link/markdown gates walk, which is what it used to be before docs/superpowers/ was pruned.
+docs/structure-audit/punchlist/
 
 packages/docs/src/assets/nimbus-wordmark-*.svg
 packages/docs/src/assets/architecture-*.svg

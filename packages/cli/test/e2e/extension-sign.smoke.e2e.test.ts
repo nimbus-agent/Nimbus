@@ -3,7 +3,7 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "nod
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { encodeBase64, generateEd25519Keypair } from "@nimbus-dev/sdk";
+import { encodeBase64, generateEd25519Keypair } from "../../src/lib/extension-signing.ts";
 
 import { runCli } from "./helpers.ts";
 

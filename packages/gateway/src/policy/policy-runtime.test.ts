@@ -1,7 +1,8 @@
 import { Database } from "bun:sqlite";
 import { describe, expect, test } from "bun:test";
-import { encodeBase64, generateEd25519Keypair } from "@nimbus-dev/sdk";
 import { runIndexedSchemaMigrations } from "../index/migrations/runner.ts";
+import { encodeBase64 } from "../util/base64.ts";
+import { generateEd25519Keypair } from "../util/ed25519.ts";
 import { type LocalBaseline, PolicyGate } from "./policy-gate.ts";
 import { refreshPolicy } from "./policy-runtime.ts";
 import { signPolicy } from "./policy-signing.ts";

@@ -7,6 +7,7 @@ import { TOOLGEN_SIGNING_PUBKEY } from "./toolgen-keypair.ts";
 import {
   listSavedTools,
   repairSavedToolCache,
+  type SavedToolRow,
   setSavedToolDisabled,
 } from "./toolgen-saved-repo.ts";
 import {
@@ -52,48 +53,21 @@ export interface ReconcileSavedToolsResult {
   readonly skipped: boolean;
 }
 
+/** What pass 1 established about the rows it walked. */
+type VerifyPassResult = { readonly verified: number; readonly disabled: number };
+
 /**
- * Row pass + orphan sweep, in that order (spec § 7.1). **Reconciliation spawns NOTHING** — it only
- * reads `generated_tool` rows, re-verifies each saved artifact against the Vault's CURRENT signing
- * pubkey, and writes back `disabled_reason` / repaired cache columns. N saved tools must never mean
- * N child processes at login: that is a resource cost the owner never approved, and a crash loop in
- * one saved tool's body would become a boot problem rather than a spawn-time one. Loading a tool
- * for actual use re-verifies again at spawn time (a later task) — this pass is a health report for
- * `nimbus tool list`, never the gate.
- *
- * The Vault pubkey is read exactly ONCE for the whole pass via a plain `vault.get`, never
- * `ensureToolgenKeypair` — that helper MINTS a fresh keypair when the Vault holds none, and calling
- * it here would generate signing material during a read-only health check, making every existing
- * saved tool permanently unverifiable against a key that never signed anything. A `null` read means
- * the Vault has no toolgen pubkey at all (a fresh machine, a cleared keychain): every row is marked
- * `pubkey_unavailable` rather than silently skipped or misreported as tampered.
- *
- * `readVerifiedSavedTool` is pure and synchronous per artifact once the pubkey is in hand
- * (`toolgen-keypair.ts`'s `verifyArtifactSignature` docstring), so N rows cost one keychain read,
- * not N.
+ * Pass 1: re-verify every saved tool's ON-DISK signature (I40) and reconcile the row's cached
+ * `disabled_reason` and artifact columns against what the disk actually holds.
  */
-export async function reconcileSavedTools(
+async function verifySavedToolRows(
   deps: ReconcileSavedToolsDeps,
-): Promise<ReconcileSavedToolsResult> {
-  const { db, configDir, vault, logger } = deps;
-
-  // The kill switch, checked FIRST — before any database read, any Vault read and the orphan
-  // sweep. `[tool_generation] enabled = false`, an org-policy lock-off, or an absent policy
-  // accessor (fail-closed, I22) all mean the same thing here: nothing about saved generated tools
-  // runs this boot. Durable state is left EXACTLY as it is — disabling is not revoking, and
-  // re-enabling must restore what the owner already approved rather than find it swept. That is
-  // also why the orphan sweep sits behind this gate rather than in front of it: a sweep is a
-  // destructive act, and a disabled capability is the last state in which to perform one.
-  if (!isToolgenCapabilityEnabled(deps)) {
-    return { verified: 0, disabled: 0, sweptOrphans: 0, skipped: true };
-  }
-
-  const currentPubkeyB64 = await vault.get(TOOLGEN_SIGNING_PUBKEY);
-
-  const rows = listSavedTools(db);
+  rows: readonly SavedToolRow[],
+  currentPubkeyB64: string | null,
+): Promise<VerifyPassResult> {
+  const { db, configDir, logger } = deps;
   let verified = 0;
   let disabled = 0;
-
   for (const row of rows) {
     // Per-row isolation: one row's DB write throwing (the realistic case is `SQLITE_BUSY` from a
     // concurrent process, plausible on Windows) must not strand every row after it, and — the
@@ -146,17 +120,29 @@ export async function reconcileSavedTools(
     }
   }
 
-  // Pass 2: orphan sweep. A directory the row pass above never saw (because no row named it) is
-  // swept, never adopted — see the file-level docstring. `rows` (fetched before pass 1 ran) is
-  // still the authoritative set of known tool ids: pass 1 only ever updates existing rows, it never
-  // inserts or deletes one, so re-querying here would answer the identical question a second time.
+  return { verified, disabled };
+}
+
+/**
+ * Pass 2: orphan sweep. A directory pass 1 never saw (because no row named it) is swept, never
+ * adopted — see the file-level docstring. Returns how many directories were actually removed.
+ */
+async function sweepOrphanSavedToolDirs(
+  deps: ReconcileSavedToolsDeps,
+  rows: readonly SavedToolRow[],
+): Promise<number> {
+  const { configDir, logger } = deps;
+  // `rows` (fetched before pass 1 ran) is still the authoritative set of known tool ids: pass 1 only
+  // ever updates existing rows, it never inserts or deletes one, so re-querying here would answer
+  // the identical question a second time.
   const knownToolIds = new Set(rows.map((r) => r.toolId));
   const dirs = await listSavedToolDirs(configDir);
   let sweptOrphans = 0;
   for (const dir of dirs) {
     if (knownToolIds.has(dir)) continue;
     // Per-DIRECTORY isolation, for the same reason pass 1 has per-ROW isolation: one orphan's
-    // removal throwing must not strand every orphan after it, nor skip the summary logging below.
+    // removal throwing must not strand every orphan after it, nor skip the caller's summary
+    // logging.
     // Two realistic causes, and neither is hypothetical. (1) `listSavedToolDirs` filters to
     // directories but does NOT validate their names, so a directory whose name fails
     // `assertSafeToolId` (`^[A-Za-z0-9_-]{1,64}$`) — a copied or renamed `t1.bak`, an editor's
@@ -179,6 +165,51 @@ export async function reconcileSavedTools(
       );
     }
   }
+
+  return sweptOrphans;
+}
+
+/**
+ * Row pass + orphan sweep, in that order (spec § 7.1). **Reconciliation spawns NOTHING** — it only
+ * reads `generated_tool` rows, re-verifies each saved artifact against the Vault's CURRENT signing
+ * pubkey, and writes back `disabled_reason` / repaired cache columns. N saved tools must never mean
+ * N child processes at login: that is a resource cost the owner never approved, and a crash loop in
+ * one saved tool's body would become a boot problem rather than a spawn-time one. Loading a tool
+ * for actual use re-verifies again at spawn time (a later task) — this pass is a health report for
+ * `nimbus tool list`, never the gate.
+ *
+ * The Vault pubkey is read exactly ONCE for the whole pass via a plain `vault.get`, never
+ * `ensureToolgenKeypair` — that helper MINTS a fresh keypair when the Vault holds none, and calling
+ * it here would generate signing material during a read-only health check, making every existing
+ * saved tool permanently unverifiable against a key that never signed anything. A `null` read means
+ * the Vault has no toolgen pubkey at all (a fresh machine, a cleared keychain): every row is marked
+ * `pubkey_unavailable` rather than silently skipped or misreported as tampered.
+ *
+ * `readVerifiedSavedTool` is pure and synchronous per artifact once the pubkey is in hand
+ * (`toolgen-keypair.ts`'s `verifyArtifactSignature` docstring), so N rows cost one keychain read,
+ * not N.
+ */
+export async function reconcileSavedTools(
+  deps: ReconcileSavedToolsDeps,
+): Promise<ReconcileSavedToolsResult> {
+  const { db, vault, logger } = deps;
+
+  // The kill switch, checked FIRST — before any database read, any Vault read and the orphan
+  // sweep. `[tool_generation] enabled = false`, an org-policy lock-off, or an absent policy
+  // accessor (fail-closed, I22) all mean the same thing here: nothing about saved generated tools
+  // runs this boot. Durable state is left EXACTLY as it is — disabling is not revoking, and
+  // re-enabling must restore what the owner already approved rather than find it swept. That is
+  // also why the orphan sweep sits behind this gate rather than in front of it: a sweep is a
+  // destructive act, and a disabled capability is the last state in which to perform one.
+  if (!isToolgenCapabilityEnabled(deps)) {
+    return { verified: 0, disabled: 0, sweptOrphans: 0, skipped: true };
+  }
+
+  const currentPubkeyB64 = await vault.get(TOOLGEN_SIGNING_PUBKEY);
+
+  const rows = listSavedTools(db);
+  const { verified, disabled } = await verifySavedToolRows(deps, rows, currentPubkeyB64);
+  const sweptOrphans = await sweepOrphanSavedToolDirs(deps, rows);
 
   if (disabled > 0) {
     logger.warn(

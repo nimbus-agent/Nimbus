@@ -2,12 +2,10 @@ import { afterAll, afterEach, beforeEach, describe, expect, test } from "bun:tes
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-
-import { encodeBase64, generateEd25519Keypair } from "@nimbus-dev/sdk";
-
 import { CLACK_CANCEL, clearFixture, setFixture } from "../../test/helpers/cli-mocks.ts";
 import { captureOutput } from "../../test/helpers/cli-output.ts";
 import { createMockIpcClient } from "../../test/helpers/mock-ipc-client.ts";
+import { encodeBase64, generateEd25519Keypair } from "../lib/extension-signing.ts";
 import type { AvailableUpdateCli, SyncResult, UpdateApplyResultCli } from "./extension.ts";
 
 const extensionMod = await import("./extension.ts");

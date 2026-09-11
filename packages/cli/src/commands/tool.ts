@@ -53,19 +53,44 @@ const USAGE = [
   "                           (--bearer <token> | --header <name> <value> | --basic <user> <pass>)",
 ].join("\n");
 
+/**
+ * A cursor over an argv tail, shared by the two flag parsers below. Both walk one flag at a time
+ * and pull that flag's value(s) while keeping the index in step; they carried two byte-identical
+ * copies of that closure before, which is two places for the same off-by-one to come back.
+ *
+ * The cursor never decides what a flag MEANS — `valueFor` takes the flag only so the "requires a
+ * value" message can name it.
+ */
+function flagCursor(rest: readonly string[]): {
+  more: () => boolean;
+  peek: () => string | undefined;
+  valueFor: (flag: string | undefined) => string;
+  step: () => void;
+} {
+  let i = 0;
+  return {
+    more: () => i < rest.length,
+    peek: () => rest[i],
+    valueFor: (flag) => {
+      const v = rest[++i];
+      if (v === undefined) throw new Error(`${flag} requires a value\n${USAGE}`);
+      return v;
+    },
+    step: () => {
+      i += 1;
+    },
+  };
+}
+
 function parseCreateArgs(rest: readonly string[]): Extract<ParsedToolArgs, { sub: "create" }> {
   let description: string | undefined;
   const hosts: string[] = [];
   const credentials: CredentialBindingArg[] = [];
 
-  let i = 0;
-  while (i < rest.length) {
-    const flag = rest[i];
-    const next = (): string => {
-      const v = rest[++i];
-      if (v === undefined) throw new Error(`${flag} requires a value\n${USAGE}`);
-      return v;
-    };
+  const cur = flagCursor(rest);
+  while (cur.more()) {
+    const flag = cur.peek();
+    const next = (): string => cur.valueFor(flag);
     switch (flag) {
       case "--description":
         description = next();
@@ -87,7 +112,7 @@ function parseCreateArgs(rest: readonly string[]): Extract<ParsedToolArgs, { sub
       default:
         throw new Error(`Unknown flag: ${flag}\n${USAGE}`);
     }
-    i += 1;
+    cur.step();
   }
 
   if (description === undefined) {
@@ -109,9 +134,9 @@ function parseCreateArgs(rest: readonly string[]): Extract<ParsedToolArgs, { sub
   // `--credential https://api.example.com/v1=…` against `--host api.example.com` is still refused
   // even though the gateway would accept it: an over-refusal in the safe direction, with a message
   // that names both spellings.
-  const hostsLower = hosts.map((h) => h.trim().toLowerCase());
+  const hostsLower = new Set(hosts.map((h) => h.trim().toLowerCase()));
   for (const cred of credentials) {
-    if (!hostsLower.includes(cred.host.trim().toLowerCase())) {
+    if (!hostsLower.has(cred.host.trim().toLowerCase())) {
       throw new Error(
         `nimbus tool create: --credential names host "${cred.host}", which is not in --host\n${USAGE}`,
       );
@@ -164,14 +189,10 @@ function parseCredentialSetArgs(
   let basic: { user: string; pass: string } | undefined;
   let schemeCount = 0;
 
-  let i = 0;
-  while (i < rest.length) {
-    const flag = rest[i];
-    const next = (): string => {
-      const v = rest[++i];
-      if (v === undefined) throw new Error(`${flag} requires a value\n${USAGE}`);
-      return v;
-    };
+  const cur = flagCursor(rest);
+  while (cur.more()) {
+    const flag = cur.peek();
+    const next = (): string => cur.valueFor(flag);
     switch (flag) {
       case "--bearer":
         bearer = next();
@@ -192,7 +213,7 @@ function parseCredentialSetArgs(
         if (flag !== undefined) positional.push(flag);
         break;
     }
-    i += 1;
+    cur.step();
   }
 
   const toolId = positional[0];
@@ -212,18 +233,24 @@ function parseCredentialSetArgs(
         `--header <name> <value>, or --basic <user> <pass>\n${USAGE}`,
     );
   }
-  let scheme: CredentialSchemeArg;
-  if (bearer !== undefined) {
-    scheme = { type: "bearer", token: bearer };
-  } else if (header !== undefined) {
-    scheme = { type: "header", headerName: header.name, value: header.value };
-  } else if (basic !== undefined) {
-    scheme = { type: "basic", username: basic.user, password: basic.pass };
-  } else {
-    // Unreachable: `schemeCount === 1` above guarantees exactly one of the three is set.
-    throw new Error(`internal: no credential scheme captured\n${USAGE}`);
-  }
-  return { sub: "credential-set", toolId, host, scheme };
+  return { sub: "credential-set", toolId, host, scheme: toScheme({ bearer, header, basic }) };
+}
+
+/**
+ * Exactly one of the three is set by the time this runs — `schemeCount !== 1` has already been
+ * refused above. The final `throw` is therefore unreachable and exists so the function has a
+ * return type rather than a possibly-undefined one.
+ */
+function toScheme(captured: {
+  bearer: string | undefined;
+  header: { name: string; value: string } | undefined;
+  basic: { user: string; pass: string } | undefined;
+}): CredentialSchemeArg {
+  const { bearer, header, basic } = captured;
+  if (bearer !== undefined) return { type: "bearer", token: bearer };
+  if (header !== undefined) return { type: "header", headerName: header.name, value: header.value };
+  if (basic !== undefined) return { type: "basic", username: basic.user, password: basic.pass };
+  throw new Error(`internal: no credential scheme captured\n${USAGE}`);
 }
 
 /**
@@ -661,6 +688,17 @@ function toToolListEntry(raw: unknown): ToolListEntry | undefined {
 }
 
 /**
+ * The one-line health annotation a listed tool carries, or the empty string when it is healthy.
+ * Disabled outranks needs-credentials: a disabled tool cannot run whatever its credentials say, so
+ * naming the recoverable problem first would point the reader at the wrong fix.
+ */
+function healthSuffix(e: ToolListEntry): string {
+  if (e.disabledReason !== null) return `  [DISABLED: ${e.disabledReason}]`;
+  if (e.needsCredentials) return "  [needs credentials -- nimbus tool credential set]";
+  return "";
+}
+
+/**
  * Render `nimbus tool list`'s plain-text form. Never renders a credential VALUE — the wire shape
  * this reads from carries only host names for `credentialHosts`, never a token/header/password.
  */
@@ -675,12 +713,7 @@ export function renderToolList(entries: readonly ToolListEntry[]): string {
         ? approvedAt.toISOString()
         : `unknown (${String(e.approvedAt)})`;
       const kind = e.saved ? "saved" : "ephemeral";
-      const health =
-        e.disabledReason !== null
-          ? `  [DISABLED: ${e.disabledReason}]`
-          : e.needsCredentials
-            ? "  [needs credentials -- nimbus tool credential set]"
-            : "";
+      const health = healthSuffix(e);
       return (
         `  ${e.toolId}  ${e.toolName} — ${e.description}  (${kind})${health}\n` +
         `      hosts: ${list(e.approvedHosts)}  credential hosts: ${list(e.credentialHosts)}  approved: ${when}`

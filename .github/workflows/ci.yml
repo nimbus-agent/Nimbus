@@ -535,7 +535,6 @@ jobs:
         # which matters, because the token figure (4.19%) is ABOVE the threshold
         # and reading the wrong column suggests this job should be failing.
         # Verified by bisecting the config: threshold 3.6 passes, 3.4 fails.
-        # See docs/superpowers/specs/2026-06-17-jscpd-big-dedup-design.md.
         run: bunx jscpd packages
 
   # Structure audit — D1/D2/D3 boundaries, D8 any-count ratchet, D10/D11

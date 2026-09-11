@@ -1,4 +1,4 @@
-/** Caps and bounds for research briefs. See docs/superpowers/specs/2026-07-21-research-briefs-design.md. */
+/** Caps and bounds for research briefs. See `docs/architecture.md` § Phase 6+ Subsystems. */
 
 /**
  * Live runs held in memory at once, counting only `collecting`/`running`.
