@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1789116835708,
+  "lastUpdate": 1789121832908,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "579e209ecc5e5850a74e2ad74379b30fbf65f0e4",
-          "message": "docs: clean up leftover packages/sdk references (poly-repo consistency) (#759)\n\nFollow-up to the client extraction (#758). Removes the last stale\n`packages/sdk` references left behind when the SDK was extracted, so the\nmonorepo docs/config consistently reflect that **both**\n`@nimbus-dev/sdk` and `@nimbus-dev/client` are external published\npackages.\n\n- Skill docs (`nimbus-architecture`, `nimbus-file-map`) point at the\nstandalone repos instead of deleted `packages/sdk/src` files\n- `docs/contributors/coverage.md`, `docs/sonar-local.md`, docs-site\n`getting-started.mdx` — drop `packages/sdk` from package lists\n- `README.md` — reword so sdk/client read as external npm packages\n- `knip.json` — drop the dead `packages/sdk` workspace entry\n- `.dependency-cruiser.cjs` — remove the `sdk-no-import-core` rule +\n`client` alternation (neither package is in the tree)\n\nVerified: `audit:doc-refs` (603 refs), `audit:boundaries`\n(dependency-cruiser, 0 violations), biome lint, `audit:status-drift` all\ngreen.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n## Summary by CodeRabbit\n\n- **Documentation**\n- Updated architecture and file-map guidance to point SDK users to the\nstandalone `@nimbus-dev/sdk` location.\n- Adjusted contributor/getting-started docs to remove legacy monorepo\nSDK references.\n  - Refreshed README license wording to use linked package references.\n\n- **Chores**\n  - Tightened allowed SDK import targets for MCP connectors.\n  - Updated coverage and local analysis to exclude `packages/sdk`.\n  - Removed the SDK from workspace/coverage gate configuration.\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->",
-          "timestamp": "2026-07-16T15:20:28+03:00",
-          "tree_id": "01d6af8e9e0abb7a1a2ab0d9892f81a7009311a4",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/579e209ecc5e5850a74e2ad74379b30fbf65f0e4"
-        },
-        "date": 1784205043998,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 235.2963079500001,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 238.27779035000313,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 326.40608815000377,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "f6e852a13fb81450a6952ce4817acffb1b3dcfbf",
+          "message": "feat(http): GET /v1/metrics/stats — the bucketed DORA series, plus the change-failure-rate attribution fix (#1493)\n\nAnswers [#1490](https://github.com/nimbus-agent/Nimbus/pull/1490),\nmerged this morning. Two commits, landing together because the design\nargues they must.\n\n```text\nGET /v1/metrics/stats?service=payment-service&metric=mttr&window_ms=7776000000&bucket_ms=604800000\n→ { \"metric\": \"mttr\", \"service\": \"…\", \"window\": {…}, \"bucket_ms\": …, \"points\": [ … ] }\n```\n\n## 1. The attribution fix, first — it changes numbers that already ship\n\n`changeFailureRate` selected its incident candidates through\n`selectResolvedIncidents`, which bounds on `i.modified_at` — for a\nresolved incident, effectively **resolution** time — while the\nattribution loop compares `opened_at_ms`. An incident opened inside the\nwindow moments after a deploy, but resolved after the window's upper\nedge, was never a candidate, and its deploy was reported **clean**.\n\nNot a corner case: `mttr` exists precisely because resolution lag runs\nto hours and days, so this is the normal shape near any upper edge.\n\nThe obvious fix — widen the lookup by `incidentWindowMinutes` — **does\nnot work**, and an implementer applying it would believe the hole\nclosed: the widening would be in resolution time, and an incident opened\na minute before the edge may resolve days later. The column had to\nchange, not the bound. So `selectAttributionIncidents` selects on\n`opened_at_ms` over `[start, until + incidentWindowMinutes]`.\n`selectResolvedIncidents` is untouched and still serves `mttr`, where\nwindowing on resolution time is correct — that is why this is a second\nfunction, not an edit to the shared one.\n\nTwo bounds, both deliberate and both tested: the **deploy selection is\nnot widened** (`deploys.length` is the denominator, so widening it would\nchange the number rather than correct it), and the upper bound extends\npast the edge by exactly `incidentWindowMinutes` and no further.\n\nIt also drops the `synced_at` fallback for attribution — that is our\n*indexing* time, so it blamed whichever deploy happened to precede the\nmoment we indexed the row. **One existing test asserted that fallback as\nintended behaviour; it is rewritten to the new contract rather than\ndeleted**, and keeps its three-deploy setup so it also proves no other\ndeploy inherits the blame.\n\n**Known residual, disclosed rather than fixed:** `status = 'resolved'`\nis still required, so a still-burning incident is invisible to\nattribution at any bound and a historical rate under-reports for that\nsecond, independent reason. Dropping that predicate would close it *and*\nraise reported failure rates — a separate decision, and I did not take\nit unilaterally.\n\n**Why it matters more for a series:** a `/v1/metrics/dora` window has\none upper edge, `now`, where the incident genuinely has not happened yet\nand no contract can do better. A series has N upper edges and every one\nis in the past, with the incident sitting in the index, readable, and\nignored. Every bucket `nimbus stats` printed already had this hole.\n\n## 2. The route\n\n**Public**, beside `/v1/metrics/dora` — a decision, and deliberately the\n**opposite** of `GET /v1/services/resolve` from an hour ago. Both\nreasons now sit at their `HTTP_ROUTE_AUTH` entries, because the next\nproposal will copy one:\n\n- *stats* is the same data, same config, same service, different\nresolution. `/v1/metrics/dora`'s own `since` already lets a caller walk\nnested windows and difference them, so the series reaches nothing new.\nScoping it while the scalar beside it stayed public would be a seam no\ncaller could explain.\n- *services/resolve* is scoped because it **claims** narrowness, and a\npublic mount would have let N cheap calls rebuild the grouping it exists\nnot to expose.\n\nPublic also means published: `HTTP_ROUTES` + a `paths:` entry with\n`StatsSeries`/`StatsPoint` schemas, which `audit:openapi-drift` enforces\nas a pair.\n\nTwo error decisions, both the design's open questions:\n\n- **Unknown service is refused (400), not answered softly** as\n`/v1/metrics/dora` does. A series whose bucket count and unit depend on\nconfig it lacks has nothing honest to place-hold, and N empty buckets\nread as thin data rather than a typo. The client's binding validation\nleans on *preflight*'s soft answer and is unaffected.\n- **Malformed `nimbus.toml` → `500 config_unreadable`, echoing no config\nvalue** — the same answer `/v1/services/resolve` gives, as the design\nasked. Config is loaded in the handler rather than the dispatcher's\nthunk so the parser's message cannot escape. `/v1/metrics/dora` beside\nit still 500s with that message intact: pre-existing, out of scope, and\nnamed in the comment so the difference reads as deliberate.\n\n## Verification\n\n- The attribution fix was written **test-first**: 6 new cases, 4 red\nbefore the change, and the 2 that passed from the start are the\nover-correction guards (denominator not widened; nothing attributed\nbeyond the incident window).\n- `audit:openapi-drift` **red-proved** by deleting the `HTTP_ROUTES`\nentry — it fails with `schema_without_handler`.\n- 10 integration tests against the real seeded fixture: buckets\ndisjoint, contiguous and spanning the window exactly; wire key sets of\nseries and point pinned; every advertised metric id served; reachable\nwith no bearer; malformed-config body contains neither the service id\nnor the offending value.\n- 2365 tests green across\n`ipc`/`metrics`/`test/integration/http`/`test/integration/metrics`; `bun\nrun preflight:fast` green.\n\n**No disclosure added to the wire.** The design left open whether the\nstill-burning residual should become a new `DoraGap`/`StatsGap` member;\nI did not add one — that union is consumed by two other repos, and\ndocumentation carries the residual instead. Easy to add later if you\nwant it on the wire.\n\nNo migration, no invariant, no new egress class.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nhttps://claude.ai/code/session_01QHGHyesmwAiDZEDrZBTYu1\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n## Summary by CodeRabbit\n\n* **New Features**\n* Added a public `GET /v1/metrics/stats` endpoint for bucketed metric\ntime series.\n* Added support for four DORA metrics plus `pr-merges` and\n`incidents-opened`.\n* Added validation for service, metric, time-window, and bucket\nparameters, with sanitized configuration errors.\n\n* **Bug Fixes**\n* Corrected change-failure-rate attribution to use incident opening\ntimes while preserving existing MTTR behavior.\n\n* **Documentation**\n* Updated API and changelog documentation with the expanded metric set\nand parameter requirements.\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>",
+          "timestamp": "2026-09-11T13:04:26+03:00",
+          "tree_id": "010c5d90bb34e9ed7ec841119740e835d90d8caf",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/f6e852a13fb81450a6952ce4817acffb1b3dcfbf"
+        },
+        "date": 1789121829849,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 326.1170104499968,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 322.7522248500045,
             "unit": "ms"
           }
         ]
