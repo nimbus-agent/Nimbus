@@ -184,18 +184,24 @@ Raised in PR review: the resolve form returns a single `service`, and the client
 feeds that id straight into `preflight/deploy` — so "which service" is not a
 cosmetic question, and this document did not answer it.
 
-**Nothing rejects an overlapping claim at config load.** Two `[[metrics.dora.*]]`
-entries may both list `github:acme/payments-api`, and no validation refuses it.
+**Nothing rejects an overlapping claim at config load.** Two `[metrics.dora.<id>]`
+blocks may both list `github:acme/payments-api`, and no validation refuses it.
 So the ambiguity is reachable, not theoretical.
 
-**But the behaviour is not undefined — it is already implemented and shipped.**
-`metrics/service-identity.ts`'s `indexAmbiguousBindings` precomputes, from the
-configs alone, every binding key claimed by more than one service. For such a key
-it takes `claimants[0]` — **first claimant wins** — and records an
-`AmbiguousBindingWarning` carrying both `chosenServiceId` and the full
-`candidateServiceIds`. `reportAmbiguityIfBound` then emits it at most once, and
-only for a resolution that actually bound, precisely so a warning never asserts a
-`chosenServiceId` for a resolve that returned nothing.
+**But the behaviour is not undefined — it is already decided, implemented and
+shipped**, at `packages/gateway/src/metrics/service-identity.ts:36-44`:
+
+> M-2: reported when two `ServiceConfig`s both claim the same binding key — the
+> resolver still picks deterministically (first by config-map iteration order,
+> same as before), this only makes the ambiguity observable.
+
+`indexAmbiguousBindings` precomputes, from the configs alone, every binding key
+claimed by more than one service. For such a key it takes `claimants[0]` —
+**first claimant wins** — and records an `AmbiguousBindingWarning` carrying both
+`chosenServiceId` and the full `candidateServiceIds`. `reportAmbiguityIfBound`
+then emits it at most once, and only for a resolution that actually bound,
+precisely so a warning never asserts a `chosenServiceId` for a resolve that
+returned nothing.
 
 That has two consequences for this proposal, and the second is the open one:
 
@@ -222,9 +228,25 @@ That has two consequences for this proposal, and the second is the open one:
    ```
 
    The gateway already computes every value in that second shape; not returning
-   them is a decision to withhold, not an absence of data. **Recommended:** return
-   them, on the same reasoning `nimbus prove` applies to its own scope label — a
-   consumer that cannot see a qualification cannot account for it.
+   them is a decision to withhold, not an absence of data.
+
+   **Recommended: return them — and this is a consumer need rather than a
+   preference.** The whole design of the client feature behind this proposal is
+   that it must never silently answer about the wrong service. Its deploy
+   verdict is a claim about *this* repository; answering it from a service the
+   user never chose, with nothing on the wire to say a second service also
+   claimed the repo, is exactly the defect that cost a fix round during the
+   client's own implementation. Being handed one arbitrary id with no ambiguity
+   signal would reintroduce it at the contract level, where the client cannot
+   detect it at all.
+
+   Worth saying plainly, because it bounds the ask: **the client's fallback does
+   not have this problem.** Its local binding is per repository and the user
+   typed the service id explicitly, so there is no ambiguity to disclose. The
+   candidates matter precisely when the gateway resolves *for* the client —
+   which is the case this route exists to create. The gateway may reasonably
+   decide a warning on stderr is disclosure enough; the consumer's position is
+   only that a browser never sees stderr.
 
 **For the list form**, the same question appears as: does a repo URN appear under
 every service that claims it, or only under the winner? It should appear under
@@ -483,7 +505,24 @@ too sensitive for either mount, this is the outcome and the consumer is fine.
 4. What does the route do when `nimbus.toml` does not parse — degrade to an
    empty list, or surface the error? §7. Under Option A the message is public
    and embeds config values.
-5. Should `[ci.service.<id>]` and `[metrics.dora.<id>]` services be
+5. **Repository-to-service cardinality — what should one repo claimed by two
+   services do?** §5.1. Three answers, and the third is the gateway's to prefer
+   if it wants it:
+   - **Resolve as the gateway already does** (first claimant wins,
+     `service-identity.ts:36-44`) and stay silent about the contest.
+   - **Resolve the same way and disclose the candidates.** The consumer's
+     recommendation, for the reason §5.1 gives.
+   - **Reject duplicate claims at config-validation time**, as the PR review
+     offered as its first option. This is a legitimate answer and it is not the
+     consumer's call: it makes the ambiguity unrepresentable rather than
+     disclosed, at the cost of turning a config that loads today into one that
+     does not. If it is chosen, the route needs no ambiguity field at all and
+     `indexAmbiguousBindings` becomes dead code — which is a reason to prefer
+     it, not an objection to it.
+
+   Whichever is chosen needs a test for the multi-claimant case; there is none
+   today because there is no route.
+6. Should `[ci.service.<id>]` and `[metrics.dora.<id>]` services be
    distinguishable in the response? They are merged into one `Map` today, with a
    stderr warning on collision, and the consumer does not care — but a future
    one might.

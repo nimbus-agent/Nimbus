@@ -13,12 +13,13 @@
 > **This is a review note, not guidance. Where it disagrees with the design
 > spec, the spec wins.**
 >
-> **Section numbers below are the spec's numbering AS REVIEWED**, before R4.1 was
-> applied. The alternative-shape section was **§6** then and is **§5** now; the
-> mount decision moved from §5 to §6. They are deliberately not renumbered: R4.1
-> is the correction "move §6 ahead of §5", which becomes incoherent if rewritten
-> to the numbering it produced. Read a `§` here as "in the spec as it stood on
-> 2026-09-11", and follow the status line above for where a section lives now.
+> **Every `§` below points at the spec as it stands now.** R4.1 was applied, and
+> it swapped two sections: the alternative-shape/matcher discussion was §6 when
+> this review was written and is **§5** now, while the mount decision moved from
+> §5 to **§6**. The references here have been updated to match, so a reader can
+> follow any one of them without holding a second numbering in their head. R4.1
+> itself is restated in the past tense for the same reason — the instruction
+> "move §6 ahead of §5" cannot survive its own application unedited.
 >
 > It is committed because this repo keeps review notes beside their specs, and
 > it is pruned when the feature ships — or when the proposal is declined.
@@ -31,7 +32,7 @@ services and the repo URNs each claims — so a browser that knows it is looking
 
 **Verdict: ready to open with the four corrections in §3 applied.** It argues a real gap,
 it declines to decide the question it does not own (mount point and scope), it names the
-cheaper alternative shape against its own ask (§6), and it states the do-nothing baseline
+cheaper alternative shape against its own ask (§5), and it states the do-nothing baseline
 as an acceptable outcome (§10). The disclosure analysis in §4 is the strongest part of the
 document and is, as far as this review can establish, correct.
 
@@ -45,7 +46,7 @@ hold:
 | `checkServiceAllowlist` returns `known_services: known.slice(0, 25)` in a 400, after `recordRejection` | `packages/gateway/src/ipc/http-write-routes.ts` |
 | `buildServiceIdentityResolver` matches `metadata.repo` / `.project` / `.jobName` against parsed URNs | `packages/gateway/src/metrics/service-identity.ts` |
 | `dispatchReadOnlyDataGet` is "no bearer gate, never fall through"; `/v1/connectors`, `/v1/metrics/dora`, `/v1/preflight/deploy` live in it | `packages/gateway/src/ipc/http-server.ts` |
-| `handleItemsResolveFile`'s comment, quoted in §5, is verbatim | `packages/gateway/src/ipc/http-server.ts` |
+| `handleItemsResolveFile`'s comment, quoted in §6, is verbatim | `packages/gateway/src/ipc/http-server.ts` |
 | Three `resolve` reads + four `egress` reads mounted inline in `tryBearerAuthedGet`, which runs before the public dispatcher | `packages/gateway/src/ipc/http-server.ts` |
 | `unconfiguredEnvelope` answers an unknown service with `gap: "unknown_service"` on all three checks | `packages/gateway/src/ipc/preflight-rpc.ts` |
 | `GET /v1/items` is `{ kind: "public" }` and its projection includes `metadata` | `packages/gateway/src/ipc/http-route-auth.ts`, `packages/gateway/src/index/item-list-query.ts` |
@@ -72,9 +73,9 @@ enumeration that costs one request total — and the same distinction is why
 promoting it from a trailing sentence to its own short paragraph, because a reviewer who
 is going to object will object there.
 
-**The question is properly left open.** §5 states the constraint that kills the third
+**The question is properly left open.** §6 states the constraint that kills the third
 option, lays out two coherent ones, declines to pick, and §11 asks. That is the right
-register for a consumer proposing against a contract it does not own. §5's one request —
+register for a consumer proposing against a contract it does not own. §6's one request —
 that whichever choice is made be stated in the route's own comment — is the correct thing
 to ask for, and the only thing asked for.
 
@@ -82,7 +83,7 @@ to ask for, and the only thing asked for.
 
 ### C3.1 — Option A also needs an `HTTP_ROUTE_AUTH` entry (factual)
 
-§5's Option A costs list names `HTTP_ROUTES` and a `paths:` entry in
+§6's Option A costs list names `HTTP_ROUTES` and a `paths:` entry in
 `packages/gateway/openapi/v1.yaml`, and names `HTTP_ROUTE_AUTH` only under Option B. That
 is wrong. The table's own header states it is **total over the surface**:
 
@@ -119,9 +120,9 @@ Two sub-questions the spec should raise, not answer:
 This belongs in §4 as well as §7: the honest-disclosure section currently reasons only
 about the success body.
 
-### C3.3 — §6 names the wrong matcher for the CircleCI behaviour (factual)
+### C3.3 — §5 names the wrong matcher for the CircleCI behaviour (factual)
 
-§6 says `repoMetadataMatchesUrn` is provider-specific and that "CircleCI matches on an
+§5 says `repoMetadataMatchesUrn` is provider-specific and that "CircleCI matches on an
 external id the resolver's item shape does not even carry". `repoMetadataMatchesUrn`
 returns `false` for `circleci` — it never matches. The external-id branch lives in
 `repoLikeMatchesUrn` in `packages/gateway/src/metrics/dora.ts`, and
@@ -132,7 +133,7 @@ The correction **strengthens** the argument it was making. There are two matcher
 already disagree with each other about one provider, and a client doing string equality
 against a URN list would be a third. "A client cannot see the matcher" becomes "there is
 no single matcher to see" — which is the best reason in the document to prefer the resolve
-form of §6 over the list form.
+form of §5 over the list form.
 
 ### C3.4 — "whole item rows" overstates `GET /v1/items` (precision)
 
@@ -143,13 +144,18 @@ load-bearing claim — `metadata.repo` is readable unauthenticated — survives 
 
 ## 4. Recommendations (non-blocking)
 
-### R4.1 — Move §6 ahead of §5
+### R4.1 — Put the alternative shape ahead of the mount decision (applied)
+
+*As written: "move §6 ahead of §5". Applied, which is why those two numbers now mean the
+opposite of what they meant here — the alternative shape is §5 and the mount decision is
+§6. Restated below in the numbering the spec actually has.*
 
 The resolve form is argued on two grounds, and the second one (the matching rules stay on
 the gateway side) is independent of the disclosure debate and, after C3.3, stronger than
-the spec realises. A reviewer who reads §5 first spends their attention on a mount decision
-for a shape §6 may talk them out of. §11's Q3 already ranks the questions in the better
-order; the body should match it.
+the spec realises. A reviewer who reads the mount decision first spends their attention on
+a choice the alternative shape may talk them out of. The spec's §11 already ranks the
+questions in the better order — the list-versus-resolve question is now Q1, ahead of the
+two mount questions, which apply only to the list form — and the body should match it.
 
 ### R4.2 — Name the mount gate under Option B
 
