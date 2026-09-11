@@ -579,4 +579,54 @@ describe("gateway-local briefs", () => {
       summarizeBrief("agents.changelog", changelogBrief({ mergedPrs: [{ id: 42 }] })),
     ).toBeUndefined();
   });
+
+  // `Number.isFinite` alone admitted the whole real line. Every value these extractors read is a
+  // COUNT, so -1 and 1.5 are as unreadable as "1" — and a count is the one thing a digest
+  // compares between runs, so publishing an impossible one is worse than declining the brief.
+  test("a negative count is not summarizable", () => {
+    expect(
+      summarizeBrief(
+        "agents.changelog",
+        changelogBrief({
+          counts: { mergedPrs: -1, deployments: 0, incidentsOpened: 0, incidentsResolved: 0 },
+          mergedPrs: [],
+        }),
+      ),
+    ).toBeUndefined();
+  });
+
+  test("a fractional count is not summarizable", () => {
+    expect(
+      summarizeBrief(
+        "agents.changelog",
+        changelogBrief({
+          counts: { mergedPrs: 1, deployments: 1.5, incidentsOpened: 0, incidentsResolved: 0 },
+        }),
+      ),
+    ).toBeUndefined();
+  });
+
+  test("a count below its own listed entry count is not summarizable", () => {
+    // The display cap makes a listed array SHORTER than its count, never longer — `counts` is
+    // the pre-cap total. A brief claiming 1 merged PR while listing 2 contradicts itself, and
+    // digesting it would publish a number its own entry list disproves.
+    expect(
+      summarizeBrief(
+        "agents.changelog",
+        changelogBrief({ mergedPrs: [{ id: "github:1" }, { id: "github:2" }] }),
+      ),
+    ).toBeUndefined();
+  });
+
+  test("a count ABOVE its listed entry count is still summarizable — that is the cap", () => {
+    // The positive control for the check above: truncation is the normal case, not an error.
+    const s = summarizeBrief(
+      "agents.changelog",
+      changelogBrief({
+        counts: { mergedPrs: 53, deployments: 0, incidentsOpened: 0, incidentsResolved: 0 },
+      }),
+    );
+    expect(s?.metrics["mergedPrs"]).toBe(53);
+    expect(s?.keys).toEqual(["github:1"]);
+  });
 });

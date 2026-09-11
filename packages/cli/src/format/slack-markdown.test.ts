@@ -42,6 +42,32 @@ describe("toSlackMrkdwn", () => {
     // `\\\[a\\\]`. Unescaping it twice would yield `[a]` and silently lose both backslashes.
     expect(toSlackMrkdwn("[\\\\\\[a\\\\\\]](https://x/1)")).toBe("<https://x/1|\\[a\\]>");
   });
+  // Regression: bold used to be parked between two Private Use Area sentinels (U+E000/U+E001)
+  // until the italic pass had run, then `replaceAll`-ed back to `*`. The premise ("cannot occur
+  // in Markdown source") did not hold — the input is a brief assembled from connector-supplied
+  // titles, not hand-written Markdown — so a PR title carrying a literal U+E000 had it rewritten
+  // into a live Slack emphasis delimiter.
+  test("a literal private-use sentinel character in the input is left untouched", () => {
+    expect(toSlackMrkdwn("a  b  c")).toBe("a  b  c");
+    expect(toSlackMrkdwn("[WIP fix](https://x/1)")).toBe("<https://x/1|WIP fix>");
+  });
+  test("bold and italic on one line still convert independently", () => {
+    expect(toSlackMrkdwn("**b** and *i*")).toBe("*b* and _i_");
+  });
+  test("bold nested inside an italic run survives both passes", () => {
+    expect(toSlackMrkdwn("*a **b** c*")).toBe("_a *b* c_");
+  });
+  // Regression: `split("|")` split `\|` as well, so a cell holding an escaped pipe produced an
+  // extra column. Reachable through SYNTHESIS — a model rewriting a brief into a GFM table
+  // escapes an in-cell pipe exactly this way.
+  test("an escaped pipe stays inside its cell rather than opening a new one", () => {
+    expect(toSlackMrkdwn("| A \\| B | merged |")).toBe("• A | B | merged");
+  });
+  test("an escaped backslash before a real pipe still separates two cells", () => {
+    // The `(?<!\\)\|` one-liner gets this wrong: the lookbehind sees the second backslash of an
+    // escaped BACKSLASH and calls the following pipe escaped, merging two real cells into one.
+    expect(toSlackMrkdwn("| a \\\\| b |")).toBe("• a \\ | b");
+  });
 });
 
 describe("toPlainText", () => {
@@ -83,6 +109,12 @@ describe("toPlainText", () => {
   // wraps it, so an item with no renderable permalink reached the reader as `\[WIP\] Fix auth`.
   test("a bare escaped title with no link is unescaped too", () => {
     expect(toPlainText("- \\[WIP\\] Fix auth — 2027-01-14")).toBe("- [WIP] Fix auth — 2027-01-14");
+  });
+  test("an escaped pipe stays inside its cell in plain text too", () => {
+    expect(toPlainText("| A \\| B | merged |")).toBe("A | B | merged");
+  });
+  test("a literal private-use sentinel character survives the plain-text pass", () => {
+    expect(toPlainText("a  b")).toBe("a  b");
   });
   // The alternation inside `LINK_RE`'s title class is unambiguous (one branch starts at a
   // backslash, the other cannot), so a long unterminated title is linear, not exponential.

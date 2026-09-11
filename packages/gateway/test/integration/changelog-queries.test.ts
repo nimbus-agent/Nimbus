@@ -383,4 +383,51 @@ describe("changelog queries against the real migrated schema", () => {
     const rows = selectIncidentsResolved(db, scopedWindow(cfg));
     expect(rows.map((r) => r.id)).toEqual(["pagerduty:7"]);
   });
+
+  test("rows sharing a timestamp come back in a stable, id-ordered sequence", () => {
+    // The comparator sorted on `atMs` alone, so a tie left the order to SQLite's unspecified
+    // `SELECT` sequence — and `changelog.ts`'s `cap()` keeps the FIRST 50 rows of a category, so
+    // with more than 50 sharing a timestamp (a bulk backfill, one pipeline's batch of deploys)
+    // which entries a reader sees was arbitrary. `nimbus fleet digest` compares `findings_json`
+    // between runs, so that instability surfaces as a change that never happened.
+    const db = createMemoryIndexDb();
+    const mergedAt = NOW - DAY;
+    // Inserted in an order that is neither the id order nor its reverse, so a comparator
+    // ignoring `id` cannot produce the expected sequence by accident.
+    for (const id of ["github:c", "github:a", "github:d", "github:b"]) {
+      insertItem(db, {
+        id,
+        service: "github",
+        type: "pr",
+        title: id,
+        modifiedAt: NOW,
+        meta: { merged_at: mergedAt },
+      });
+    }
+    const ids = selectMergedPrs(db, W).map((r) => r.id);
+    expect(ids).toEqual(["github:a", "github:b", "github:c", "github:d"]);
+  });
+
+  test("the id tiebreak never outranks recency", () => {
+    // The tiebreak must be exactly that. If `id` were compared first — or the subtraction were
+    // dropped — the newest entry would stop being the first one listed.
+    const db = createMemoryIndexDb();
+    insertItem(db, {
+      id: "github:z",
+      service: "github",
+      type: "pr",
+      title: "newest",
+      modifiedAt: NOW,
+      meta: { merged_at: NOW - DAY },
+    });
+    insertItem(db, {
+      id: "github:a",
+      service: "github",
+      type: "pr",
+      title: "older",
+      modifiedAt: NOW,
+      meta: { merged_at: NOW - 2 * DAY },
+    });
+    expect(selectMergedPrs(db, W).map((r) => r.id)).toEqual(["github:z", "github:a"]);
+  });
 });

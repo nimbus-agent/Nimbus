@@ -86,9 +86,19 @@ function scopedServiceId(scope: ChangelogScope): string | null {
 }
 
 /**
- * A `--service` with nothing bound to it matches nothing in EVERY lane — `repos` decides PR and
- * CI membership, `pagerdutyServices` decides incidents — so its changelog is empty for a reason
- * the reader must be told. An empty changelog and a quiet week are otherwise indistinguishable.
+ * A `--service` with nothing bound to it reaches no rows in THREE of the four lanes — `repos`
+ * decides merged-PR and CI-run-deployment membership, `pagerdutyServices` decides both incident
+ * lanes — so those sections are empty for a reason the reader must be told. An empty changelog
+ * and a quiet week are otherwise indistinguishable.
+ *
+ * **Three, not four.** The fourth lane is ANNOTATED deployments, which
+ * `selectAnnotatedDeployments` scopes on `deployment_items.nimbus_service_id = cfg.serviceId` —
+ * the service id ITSELF, needing no `repos` and no `pagerduty_services` entry. An earlier draft
+ * said "every entry below is empty because nothing can match it", which a brief listing an
+ * annotated deploy contradicts on its own face: the section above the gap note holds an entry
+ * the note says cannot exist. Narrowed by WORDING rather than by pre-checking the deploy rows,
+ * so the note stays a statement about the BINDINGS (which is what the remediation acts on) and
+ * cannot disagree with a lane it does not query.
  *
  * Keyed on the BINDINGS, not on whether `nimbus.toml` defines the service, so it stays true for
  * a service that is configured but bound to nothing. `missing_entity_type` matches
@@ -101,8 +111,11 @@ function unboundServiceGap(scope: ChangelogScope): GapNote | undefined {
   return {
     category: "missing_entity_type",
     detail:
-      `\`${cfg.serviceId}\` has no repositories and no PagerDuty services bound to it, so every ` +
-      "entry below is empty because nothing can match it — not because nothing happened.",
+      `\`${cfg.serviceId}\` has no repositories and no PagerDuty services bound to it, so no ` +
+      "merged pull request, CI-run deployment or incident can match it — those sections are " +
+      "empty because nothing can match, not because nothing happened. Deployments annotated " +
+      "through `POST /v1/deployments` are unaffected: they match on the service id itself, so " +
+      "any entry under Deployments came from that route.",
     remediation:
       "Add `repos` and `pagerduty_services` to a `[ci.service.<id>]` block in `nimbus.toml`, or " +
       "run without `--service`.",
@@ -157,7 +170,10 @@ export function buildChangelogBrief(args: BuildChangelogArgs): ChangelogBrief {
       detail:
         `${String(nonGithub)} merged pull request(s) on a non-GitHub forge are not listed: ` +
         "`merged_at` is written by the GitHub connector alone, so GitLab and Bitbucket merges " +
-        "carry no merge timestamp to window on.",
+        "carry no merge timestamp to window on. That count is itself an estimate for the same " +
+        "reason — with no merge timestamp it windows on when the index last touched the row, so " +
+        "it omits a merge whose row has not been re-synced and includes an older merge that was " +
+        "touched during the window.",
       remediation:
         "Track this as the same substrate gap `nimbus stats` reports as `github_only_merge_data`.",
     });

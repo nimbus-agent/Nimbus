@@ -30,7 +30,10 @@ const LINK_RE = /\[((?:\\[\s\S]|[^\\\]])*)\]\(([^)]+)\)/g;
 const BOLD_RE = /\*\*(.+?)\*\*/g;
 
 /**
- * Undoes `escapeMarkdownLinkText`: `\\` → `\`, `\[` → `[`, `\]` → `]`.
+ * Undoes `escapeMarkdownLinkText`: `\\` → `\`, `\[` → `[`, `\]` → `]`. `\|` → `|` rides along:
+ * the renderer never emits it, but a SYNTHESIZED rewrite writing a GFM table escapes a pipe
+ * inside a cell that way, and {@link splitUnescapedPipes} preserves the sequence through the
+ * cell split precisely so this pass can resolve it to the character the reader should see.
  *
  * This is needed INDEPENDENTLY of {@link LINK_RE}, and that is why it is a whole-line pass
  * rather than something {@link convertLink} does to the title it captured. The renderer escapes
@@ -44,7 +47,7 @@ const BOLD_RE = /\*\*(.+?)\*\*/g;
  * truncation the escaping exists to prevent.
  */
 function unescapeMarkdown(text: string): string {
-  return text.replace(/\\([\\[\]])/g, "$1");
+  return text.replace(/\\([\\[\]|])/g, "$1");
 }
 
 /**
@@ -64,34 +67,63 @@ const HEADING_RE = /^#{1,6}[ \t]+(.*)$/;
 const STRIKE_RE = /~~(.+?)~~/g;
 
 /**
- * Sentinel wrapper for a converted bold run: two DISTINCT Unicode Private Use Area code points
- * (U+E000 / U+E001). The PUA is reserved by the Unicode standard for private application use and
- * is never assigned a character meaning, a glyph a keyboard can type, or a sequence that would
- * appear in real Markdown/prose — so the claim "cannot occur in Markdown source" holds. Earlier
- * revisions of this sentinel used NUL bytes (U+0000), which are equally impossible to type but
- * make the FILE ITSELF register as binary to git/GitHub (confirmed: `git diff` showed "Bin file
- * changed" instead of a readable diff, and `file` reported "data" instead of "UTF-8 text") —
- * exactly the kind of tooling trap that cost a reviewer time reading this file's raw bytes to
- * confirm what the sentinel actually was. PUA code points are ordinary (if unassigned) Unicode
- * text, so the source file stays plain UTF-8 and diffs normally.
+ * Single-asterisk italic that is NOT half of a `**bold**` run: a delimiter with no asterisk on
+ * its outer side, on both ends.
  *
- * Bold is converted to Slack's SINGLE-asterisk syntax, but the italic pass that follows also
- * matches single asterisks — running it straight after bold would immediately re-match `*b*` as
- * an italic run and corrupt it back down to `_b_`. Parking the converted run behind a sentinel
- * until AFTER the italic pass runs is what keeps the two passes from interleaving; see the "bold
- * nested inside a link title" test, which is the case this exists for.
+ * This exists so bold can be converted LAST. Bold becomes Slack's SINGLE-asterisk syntax, so a
+ * naive italic pass running after it re-matches `*b*` and corrupts it back to `_b_`; an earlier
+ * revision solved that by parking each converted bold run between two Unicode Private Use Area
+ * sentinels (U+E000 / U+E001) and `replaceAll`-ing them back to `*` at the end. That was wrong
+ * in a way "cannot occur in Markdown source" concealed: the input is not Markdown SOURCE, it is a
+ * brief built from connector-supplied text — a PR or incident title anyone can write — so a
+ * literal U+E000 arriving in a title was rewritten to a `*` that Slack then reads as a live
+ * emphasis delimiter. Ordering the passes so no placeholder is needed removes the collision
+ * rather than picking a rarer character to collide on.
  */
-const BOLD_OPEN = "";
-const BOLD_CLOSE = "";
+const ASTERISK_ITALIC_NOT_BOLD_RE = /(?<!\*)\*(?!\*)(.+?)(?<!\*)\*(?!\*)/g;
 
 const TABLE_ROW_RE = /^\s*\|(.*)\|\s*$/;
 const DELIMITER_CELL_RE = /^:?-+:?$/;
+
+/**
+ * Cell boundaries, honouring GFM's `\|` escape.
+ *
+ * A plain `.split("|")` also splits an ESCAPED pipe, so `| A \| B | merged |` divides into three
+ * cells instead of two and the row ships with a fabricated column. A `(?<!\\)\|` lookbehind is
+ * the obvious one-liner and is wrong on `\\|` — an escaped BACKSLASH followed by a real
+ * separator — because the lookbehind sees the second backslash and calls the pipe escaped. A
+ * left-to-right scan that consumes each `\x` pair as a unit is the only shape that gets both
+ * cases right, so this is a loop rather than a regex.
+ *
+ * The `\|` sequence is left INTACT in the returned cell; {@link unescapeMarkdown}, which already
+ * runs last on every cell, resolves it to `|`.
+ */
+function splitUnescapedPipes(row: string): string[] {
+  const cells: string[] = [];
+  let cur = "";
+  for (let i = 0; i < row.length; i++) {
+    const c = row[i] ?? "";
+    if (c === "\\" && i + 1 < row.length) {
+      cur += c + (row[i + 1] ?? "");
+      i++;
+      continue;
+    }
+    if (c === "|") {
+      cells.push(cur);
+      cur = "";
+      continue;
+    }
+    cur += c;
+  }
+  cells.push(cur);
+  return cells;
+}
 
 /** `undefined` when `line` is not a pipe-delimited table row at all (not just an empty table). */
 function tableRowCells(line: string): string[] | undefined {
   const m = TABLE_ROW_RE.exec(line);
   if (m === null) return undefined;
-  return (m[1] ?? "").split("|").map((c) => c.trim());
+  return splitUnescapedPipes(m[1] ?? "").map((c) => c.trim());
 }
 
 function isDelimiterRow(cells: string[]): boolean {
@@ -107,11 +139,21 @@ function convertLink(text: string, mode: InlineMode): string {
 }
 
 /**
- * Bold before italic is the one load-bearing order in this pipeline (see {@link BOLD_OPEN}).
+ * The one load-bearing order in this pipeline, and it differs by mode.
+ *
+ * PLAIN strips every marker, so nothing a pass emits can be re-matched by the next; bold runs
+ * first only because `**b**` must not be seen as two adjacent empty italic runs.
+ *
+ * SLACK converts italic FIRST — with {@link ASTERISK_ITALIC_NOT_BOLD_RE}, which steps over a
+ * `**` delimiter rather than consuming half of one — and bold second. Bold's output (`*b*`) is
+ * then never offered to the italic pass, which is the collision the PUA sentinels used to
+ * absorb. Hand-traced against `[**hot**fix](url)`, `*a **b** c*` and `**b** and *i*`, all three
+ * byte-identical to the sentinel version.
+ *
  * Link conversion is NOT order-dependent against this pair: `[t](u)` and `**b**`/`*i*`/`_i_`
  * match independently of each other (`LINK_RE` cares about `[`/`]`/`(`/`)`, the emphasis regexes
  * care about `*`/`_`), so converting links before or after this step produces byte-identical
- * output either way — hand-traced against `[**hot**fix](url)` and `[a **b** c](url)`.
+ * output either way.
  */
 function convertBoldItalic(text: string, mode: InlineMode): string {
   if (mode === "plain") {
@@ -120,9 +162,8 @@ function convertBoldItalic(text: string, mode: InlineMode): string {
     s = s.replace(ASTERISK_ITALIC_RE, (_m, i: string) => i);
     return s;
   }
-  let s = text.replace(BOLD_RE, (_m, b: string) => `${BOLD_OPEN}${b}${BOLD_CLOSE}`);
-  s = s.replace(ASTERISK_ITALIC_RE, (_m, i: string) => `_${i}_`);
-  return s.replaceAll(BOLD_OPEN, "*").replaceAll(BOLD_CLOSE, "*");
+  const s = text.replace(ASTERISK_ITALIC_NOT_BOLD_RE, (_m, i: string) => `_${i}_`);
+  return s.replace(BOLD_RE, (_m, b: string) => `*${b}*`);
 }
 
 function convertStrike(text: string, mode: InlineMode): string {

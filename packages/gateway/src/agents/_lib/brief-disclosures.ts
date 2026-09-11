@@ -108,9 +108,11 @@ export function negotiateNotComputedDisclosure(heading: string): Disclosure {
  * same class of misstatement the window clause exists to prevent — the clause is a
  * disclosure, so it cannot itself be wrong about the window.
  *
- * Rounding WITHIN a unit is fine (90d, 36h); collapsing to zero is not, hence the unit step
- * down rather than a wider `toFixed`. A zero window renders `0ms`, which is accurate: it
- * selects nothing.
+ * A larger unit is chosen ONLY when the duration divides evenly by it. Rounding within the unit
+ * looked harmless and is the same defect one magnitude up: `Math.round` turned `--since 36h`
+ * into "2d" and `--since 90m` into "2h", each stating bounds a third wider than the query the
+ * lanes actually ran. A duration that divides evenly by nothing falls all the way through to
+ * `ms`, which is exact; a zero window renders `0ms`, which is accurate — it selects nothing.
  *
  * Shared rather than `negotiate`-specific, and named for the general case: `renderChangelog`
  * shipped its own `Math.round(... / 86_400_000)` and reproduced the exact defect this function
@@ -123,9 +125,11 @@ export function windowLabel(durationMs: number): string {
   const MINUTE = 60_000;
   const HOUR = 3_600_000;
   const DAY = 86_400_000;
-  if (durationMs >= DAY) return `${String(Math.round(durationMs / DAY))}d`;
-  if (durationMs >= HOUR) return `${String(Math.round(durationMs / HOUR))}h`;
-  if (durationMs >= MINUTE) return `${String(Math.round(durationMs / MINUTE))}m`;
+  if (durationMs >= DAY && durationMs % DAY === 0) return `${String(durationMs / DAY)}d`;
+  if (durationMs >= HOUR && durationMs % HOUR === 0) return `${String(durationMs / HOUR)}h`;
+  if (durationMs >= MINUTE && durationMs % MINUTE === 0) {
+    return `${String(durationMs / MINUTE)}m`;
+  }
   return `${String(durationMs)}ms`;
 }
 
@@ -344,8 +348,27 @@ export function whyChangeSubjectDisclosure(): Disclosure {
  * and still pass. `disclosure-anchor-coverage.test.ts` checks that cross-satisfaction directly.
  *
  * The first entry is UNCONDITIONAL: it states what the numbers MEAN, and a reader who is told
- * nothing reads a windowed, event-timed count as an all-time one.
+ * nothing reads a windowed, event-timed count as an all-time one. It is careful to claim event
+ * timing only WHERE AN EVENT FIELD EXISTS: an earlier draft said each entry is placed by when it
+ * happened "rather than when the index last touched it", full stop, which the second disclosure
+ * then contradicts on any brief with `indexTimedCount > 0` — two adjacent preamble sentences
+ * making opposite claims about the same entries. A disclosure that is wrong is worse than one
+ * that is absent, because the reader has no reason to look further.
  */
+/**
+ * `entry is` / `entries are` — the SUBJECT and its verb together, because English agreement runs
+ * across both and picking the noun alone still ships "1 entry are timed from…".
+ *
+ * These sentences are read by a human, and `entr(y/ies)` was appearing verbatim in the rendered
+ * brief: a source-side shorthand that escaped into the artifact. Not a disclosure-integrity
+ * failure — the claim was intact — but the preamble is where this brief asks to be trusted, and
+ * a placeholder printed there reads as an unfinished one.
+ */
+function entryClause(n: number, verb: "be" | "wasWere"): string {
+  if (verb === "be") return n === 1 ? "entry is" : "entries are";
+  return n === 1 ? "entry was" : "entries were";
+}
+
 export function changelogDisclosures(b: {
   readonly indexTimedCount: number;
   readonly truncatedCount: number;
@@ -355,18 +378,20 @@ export function changelogDisclosures(b: {
     scope: { kind: "preamble" },
     line:
       "Counts and entries below cover only this window, and each entry is placed by when it " +
-      "happened rather than when the index last touched it.",
-    // Sentence 1: the window bound. Sentence 2: the time BASIS — its factual core is that the
-    // placement is not the index's last touch, which is the half a paraphrase cannot drop
-    // without losing the meaning. Deliberately NOT the full "when it happened rather than when
-    // the index last touched" clause: 12 near-verbatim words is a rewrite ban, not an anchor.
+      "happened wherever an event field carries that time — an entry timed instead from when " +
+      "the index last touched it is disclosed below.",
+    // Clause 1: the window bound. Clause 2: the time BASIS — its factual core is that the
+    // placement is not (unconditionally) the index's last touch, which is the half a paraphrase
+    // cannot drop without losing the meaning. Deliberately NOT the full clause: a dozen
+    // near-verbatim words is a rewrite ban, not an anchor.
     anchors: ["cover only this window", "the index last touched"],
   });
   if (b.indexTimedCount > 0) {
     out.push({
       scope: { kind: "preamble" },
       line:
-        `${String(b.indexTimedCount)} entr(y/ies) are timed from the index's last-touch column ` +
+        `${String(b.indexTimedCount)} ${entryClause(b.indexTimedCount, "be")} timed from the ` +
+        "index's last-touch column " +
         "rather than an event field — deployments and incident resolutions, on the same basis " +
         "`nimbus metrics dora` uses. A resolved incident whose row has not been re-synced still " +
         "reads as unresolved, so resolutions under-report by sync lag.",
@@ -381,7 +406,9 @@ export function changelogDisclosures(b: {
   if (b.truncatedCount > 0) {
     out.push({
       scope: { kind: "preamble" },
-      line: `${String(b.truncatedCount)} further entr(y/ies) were truncated at the display limit.`,
+      line:
+        `${String(b.truncatedCount)} further ` +
+        `${entryClause(b.truncatedCount, "wasWere")} truncated at the display limit.`,
       anchors: ["truncated at the display limit"],
     });
   }

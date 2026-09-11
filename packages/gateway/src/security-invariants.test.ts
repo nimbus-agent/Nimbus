@@ -2748,10 +2748,16 @@ describe("I31 — disclosure integrity: a synthesized brief never says less than
       d.glossaryProvenanceDisclosure("CDR", "snippet"),
       d.glossaryProvenanceDisclosure("CDR", "manual"),
       d.whyChangeSubjectDisclosure(),
+      // `changelog` is the fifteenth brief kind and the third with interleaved disclosures. Its
+      // three preamble sentences were guarded only by the per-kind tests under `agents/_lib/`
+      // until this line: the loop below claims to check "every disclosure at once", and a
+      // builder missing from the fixture makes that claim false without turning anything red.
+      // Built at counts > 0 so all three fire — the two conditional ones are absent at zero.
+      ...d.changelogDisclosures({ indexTimedCount: 3, truncatedCount: 4 }),
     ].filter((x) => x !== undefined);
     // Fixture integrity: a builder whose predicate stops firing would drop out of this list
     // silently and the loop below would assert over fewer disclosures, still green.
-    expect(disclosures).toHaveLength(9);
+    expect(disclosures).toHaveLength(12);
     for (const disclosure of disclosures) {
       // EVERY anchor must occur in its own line, not just the first (F27). An entry carrying two
       // sentences and one anchor was how a rewrite kept sentence 1, dropped sentence 2 and
@@ -2761,6 +2767,21 @@ describe("I31 — disclosure integrity: a synthesized brief never says less than
         expect(normalizeSectionText(disclosure.line)).toContain(normalizeSectionText(anchor));
       }
     }
+  });
+
+  test("I31: the renderer and the guard both CALL the one changelog disclosure builder", async () => {
+    // The invariant's single-definition property is a claim about PRODUCTION WIRING, and an
+    // import assertion cannot see it: `brief-contract.ts` could import `changelogDisclosures`
+    // and return `[]` for the kind, or `render.ts` could import it and inline its own prose,
+    // and every unit test over the builder would stay green while the brief shipped an
+    // unguarded — or a second, drifting — disclosure. So this asserts the CALL on both sides.
+    const render = await read("packages/gateway/src/agents/_lib/render.ts");
+    const contract = await read("packages/gateway/src/agents/_lib/brief-contract.ts");
+    expect(render).toContain("changelogDisclosures(");
+    expect(contract).toContain("changelogDisclosures(");
+    // And that the guard reaches it on the changelog kind specifically, rather than through a
+    // branch changelog never takes.
+    expect(contract).toContain('brief.kind === "changelog"');
   });
 
   test("I31: reserved blocks are constructed, never recovered by parsing the render", async () => {

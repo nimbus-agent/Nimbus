@@ -215,6 +215,62 @@ describe("buildChangelogBrief", () => {
       false,
     );
   });
+
+  test("the unbound-service gap does not contradict an annotated deployment listed above it", () => {
+    // `selectAnnotatedDeployments` scopes on `deployment_items.nimbus_service_id = serviceId` —
+    // the service id ITSELF — so it needs neither `repos` nor `pagerduty_services`. The gap note
+    // used to say "every entry below is empty because nothing can match it", which a brief
+    // holding an annotated deploy disproves on its own face: the section above the note carries
+    // an entry the note says cannot exist.
+    const db = emptyDb();
+    db.run(
+      `INSERT INTO item (id, service, type, external_id, title, url, modified_at, metadata, synced_at)
+       VALUES ('dep:9','github_actions','deployment','dep:9','payments',NULL,?,'{}',?)`,
+      [NOW, NOW],
+    );
+    db.run(
+      `INSERT INTO deployment_items (id, provider, nimbus_service_id, environment, sha, ref,
+        started_at_ms, finished_at_ms, conclusion, created_at)
+       VALUES ('dep:9','github-actions','payments','prod','abc','main',?,?,'success',?)`,
+      [NOW - 2 * DAY, NOW - DAY, NOW],
+    );
+
+    const brief = build({
+      db,
+      scope: { kind: "service", cfg: serviceConfig({ repos: [], pagerdutyServices: [] }) },
+    });
+
+    // The premise: the unbound service DID reach a deployment row. Without this the assertion
+    // below would pass on an empty brief, for which the old wording was accurate.
+    expect(brief.deployments).toHaveLength(1);
+    expect(brief.counts.deployments).toBe(1);
+
+    const gap = brief.gaps.find((g) => g.detail.includes("no repositories and no PagerDuty"));
+    expect(gap).toBeDefined();
+    expect(gap?.detail).not.toContain("every entry below is empty");
+    expect(gap?.detail).toContain("merged pull request, CI-run deployment or incident");
+    expect(gap?.detail).toContain("annotated");
+  });
+
+  test("the non-GitHub merged-PR gap discloses that its own count is last-touch derived", () => {
+    // The count windows on `i.modified_at` BECAUSE `merged_at` is absent — which is the very
+    // gap being disclosed — so it both omits an un-resynced merge and includes an older one a
+    // comment touched during the window. Stating it as a flat count beside four event-windowed
+    // ones would read as the same kind of number.
+    const db = emptyDb();
+    insertPr(db, {
+      id: "gitlab:1",
+      service: "gitlab",
+      title: "Merged MR",
+      meta: { state: "merged" },
+    });
+
+    const brief = build({ db });
+    expect(brief.nonGithubMergedPrs).toBe(1);
+    const gap = brief.gaps.find((g) => g.detail.includes("non-GitHub forge"));
+    expect(gap?.detail).toContain("itself an estimate");
+    expect(gap?.detail).toContain("when the index last touched the row");
+  });
 });
 
 describe("emitChangelogBrief", () => {

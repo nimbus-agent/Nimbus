@@ -1073,6 +1073,28 @@ export function renderNegotiate(brief: NegotiateBrief, opts?: RenderOpts): strin
 }
 
 /**
+ * Every character that can END A LINE (or reorder one) inside a Markdown document, dropped.
+ *
+ * `escapeMarkdownLinkText` hardens brackets and backslashes and nothing else, which is correct
+ * for its own job and insufficient on its own here: a title is arbitrary connector-supplied text
+ * (`index/item-store.ts` stores `item.title` verbatim — no connector or writer strips control
+ * characters from it), so a PR or incident subject containing `\n## Gaps` ends the entry's list
+ * item and renders the remainder as a LEVEL-2 HEADING of its own. That plants a fabricated
+ * section — potentially a reserved one — in the deterministic render, which is the artifact I31
+ * exists to keep honest. `changelogScopeLabel` below already makes this exact argument for
+ * `--service`, which is merely OWNER-supplied; the entry title is the stronger case, not the
+ * weaker one.
+ *
+ * Dropped rather than substituted, for `changelogScopeLabel`'s reason: a replacement character
+ * is a second thing the reader has to interpret, and nothing legitimate arrives carrying one.
+ * `\p{Cc}` covers CR/LF and the C0/C1 controls, `\p{Cf}` the bidi overrides and zero-width
+ * joiners, `\p{Zl}`/`\p{Zp}` U+2028 and U+2029.
+ */
+function stripLineStructureChars(text: string): string {
+  return text.replace(/[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/gu, "");
+}
+
+/**
  * One changelog entry. Linked when the indexed item carried a permalink that can be rendered
  * safely, plain otherwise — never a link to nowhere.
  *
@@ -1085,7 +1107,7 @@ export function renderNegotiate(brief: NegotiateBrief, opts?: RenderOpts): strin
  * the one to copy.
  */
 function renderChangelogEntry(r: ChangelogRow): string {
-  const title = escapeMarkdownLinkText(r.title);
+  const title = escapeMarkdownLinkText(stripLineStructureChars(r.title));
   const href = r.url === null ? null : safeEvidenceHref(r.url);
   const head = href === null ? title : `[${title}](${href})`;
   return `- ${head} — ${isoDay(r.atMs)}`;
@@ -1119,9 +1141,13 @@ function renderChangelogSection(heading: string, rows: readonly ChangelogRow[]):
  *
  * Dropped rather than substituted: a replacement character would be a second thing the reader
  * has to interpret, and nothing legitimate reaches here carrying one.
+ *
+ * Shares {@link stripLineStructureChars} with the entry title rather than repeating its class:
+ * the backtick is the ONLY difference, and it matters here alone because this value sits inside
+ * an inline-code span that a backtick would close early.
  */
 function changelogScopeLabel(service: string): string {
-  return service.replace(/[`\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/gu, "");
+  return stripLineStructureChars(service).replaceAll("`", "");
 }
 
 export function renderChangelog(brief: ChangelogBrief, opts?: RenderOpts): string {

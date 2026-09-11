@@ -3,6 +3,7 @@ import type { Database } from "bun:sqlite";
 // two definitions would let a service mean one thing here and another in `metrics dora`.
 import { repoLikeMatchesUrn } from "../metrics/dora.ts";
 import type { ServiceConfig } from "../metrics/dora-config.ts";
+import { codeUnitCompare } from "../util/code-unit-compare.ts";
 import { type ChangelogCategory, eventTimeFor } from "./_lib/changelog-event-time.ts";
 
 /**
@@ -168,8 +169,23 @@ function toRows(rows: RawRow[], category: ChangelogCategory): ChangelogRow[] {
       timeSource: t.source,
     });
   }
-  out.sort((a, b) => b.atMs - a.atMs);
+  out.sort(byRecencyThenId);
   return out;
+}
+
+/**
+ * Newest first, ties broken by `id`.
+ *
+ * The tiebreak is not cosmetic: `changelog.ts`'s `cap()` keeps the FIRST 50 rows of each
+ * category, so with more than 50 rows sharing a timestamp — a bulk backfill, a batch of deploys
+ * from one pipeline run — SQLite's unspecified `SELECT` order would decide which entries a reader
+ * sees, and two runs over an unchanged index could list different ones. `nimbus fleet digest`
+ * compares `findings_json` between runs to report what moved, so that instability would surface
+ * as a fabricated change. `codeUnitCompare`, never `localeCompare`: the latter is locale-
+ * dependent and would order the same index differently on two machines.
+ */
+function byRecencyThenId(a: ChangelogRow, b: ChangelogRow): number {
+  return b.atMs - a.atMs || codeUnitCompare(a.id, b.id);
 }
 
 /** The indexed type is `pr`. Never `pull_request` — no connector writes that. */
@@ -201,7 +217,7 @@ export function selectDeployments(db: Database, w: Window, pattern: RegExp): Cha
       " AND json_valid(i.metadata) AND json_extract(i.metadata, '$.conclusion') = 'success'",
   });
   const fromCi = keepByRepo(rows, raw, w.scope).filter((r) => pattern.test(r.title));
-  return [...fromCi, ...selectAnnotatedDeployments(db, w)].sort((a, b) => b.atMs - a.atMs);
+  return [...fromCi, ...selectAnnotatedDeployments(db, w)].sort(byRecencyThenId);
 }
 
 /**
@@ -286,6 +302,13 @@ export function selectIncidentsResolved(db: Database, w: Window): ChangelogRow[]
  * Bitbucket PR is invisible to `selectMergedPrs`. Counting them is what turns a silent
  * substrate hole into a disclosed one. `metrics/stats.ts` ships the same gap as
  * `github_only_merge_data`.
+ *
+ * **This is an ESTIMATE, and its caller must say so.** The absence of `merged_at` is the whole
+ * reason this function exists, so there is no merge timestamp to window on and it falls back to
+ * `i.modified_at` — last touch. That misses in BOTH directions: a PR merged inside the window
+ * whose row has not been re-synced since is not counted, and one merged months ago that a
+ * comment or label touched during the window IS. `changelog.ts`'s gap note discloses that; a
+ * bare count presented beside four event-windowed ones would read as the same kind of number.
  */
 export function nonGithubMergedPrCount(db: Database, w: Window): number {
   const raw = db

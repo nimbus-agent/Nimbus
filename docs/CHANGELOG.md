@@ -51,7 +51,20 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
   are disclosed unconditionally in `## Gaps`, following `ownership`'s standing-disclaimer
   precedent, rather than silently absent. Merged GitLab/Bitbucket PRs are invisible for the same
   reason `nimbus stats` already discloses as `github_only_merge_data`: `metadata.merged_at` is
-  written by the GitHub connector alone.
+  written by the GitHub connector alone — and that gap note also states that its OWN count is an
+  estimate, since with no merge timestamp it windows on `i.modified_at` and therefore misses in
+  both directions (an un-resynced merge is omitted; an older merge touched in the window is
+  counted). Two further disclosure corrections landed in review, both of the same class — a
+  disclosure that was WRONG rather than absent, which is worse, because a reader who believes it
+  has no reason to look further. The unconditional preamble sentence claimed each entry is placed
+  by when it happened "rather than when the index last touched it", full stop, which the very next
+  sentence contradicts on any brief with `indexTimedCount > 0`; it now claims event timing only
+  where an event field carries the time. And the unbound-`--service` gap said "every entry below
+  is empty because nothing can match it" — false for ANNOTATED deployments, which
+  `selectAnnotatedDeployments` matches on `deployment_items.nimbus_service_id` and which need
+  neither `repos` nor `pagerduty_services`, so a brief could list a deploy directly above a note
+  saying no entry could exist. The note is now scoped to the three lanes the bindings actually
+  decide.
   **Entry lists are capped at `CHANGELOG_CATEGORY_CAP = 50` per category**, so a 500-PR window is
   never handed wholesale to the synthesis model; `counts` keeps the true PRE-CAP total per
   category regardless, so the truncation is recoverable (`counts.mergedPrs - mergedPrs.length`),

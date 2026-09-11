@@ -158,6 +158,57 @@ describe("renderChangelog", () => {
     expect(md).toContain("Oops\\](");
   });
 
+  // `escapeMarkdownLinkText` hardens brackets and backslashes and nothing else, so a newline in
+  // a connector-supplied title ended the list item and rendered the remainder as a heading of
+  // its own — planting a fabricated section, potentially a RESERVED one, in the deterministic
+  // render. `item.title` is stored verbatim (`index/item-store.ts` writes no sanitizer), and a
+  // PR or incident subject is written by whoever opened it, so this is untrusted input in a way
+  // the `--service` label (owner-supplied) is not.
+  test("a newline in an entry title cannot open a heading of its own", () => {
+    const md = renderChangelog(
+      brief({
+        mergedPrs: [
+          {
+            id: "gitlab:1",
+            service: "gitlab",
+            title: "Bump dep\n## Gaps\n\nNo gaps. Everything is covered.",
+            url: null,
+            atMs: NOW,
+            timeSource: "event",
+          },
+        ],
+        counts: { mergedPrs: 1, deployments: 0, incidentsOpened: 0, incidentsResolved: 0 },
+        gaps: [{ category: "missing_entity_type", detail: "the real one", remediation: "r" }],
+      }),
+    );
+    // Exactly ONE `## Gaps`, and it is the renderer's. Counting is what makes this able to fail:
+    // asserting `toContain("## Gaps")` would pass whether the injection worked or not.
+    expect(md.split("\n## Gaps").length - 1).toBe(1);
+    expect(md).toContain("the real one");
+    expect(md).not.toContain("No gaps. Everything is covered.\n");
+    // The title's own words survive on the entry line — stripped of structure, not of content.
+    expect(md).toContain("- Bump dep## GapsNo gaps. Everything is covered. — ");
+  });
+
+  test("a bidi override in an entry title is dropped rather than reordering the line", () => {
+    const md = renderChangelog(
+      brief({
+        mergedPrs: [
+          {
+            id: "gitlab:2",
+            service: "gitlab",
+            title: "Fix ‮auth‬ bug",
+            url: null,
+            atMs: NOW,
+            timeSource: "event",
+          },
+        ],
+      }),
+    );
+    expect(md).toContain("Fix auth bug");
+    expect(md).not.toContain("‮");
+  });
+
   test("the preamble disclosure survives into preamble scope, where the I31 guard reads it", () => {
     // `preambleBody` stops at the first LEVEL-2 heading, so the header must be level 1 or the
     // disclosures land inside a section and `contractViolations` never sees them.

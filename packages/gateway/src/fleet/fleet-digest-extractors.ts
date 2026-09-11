@@ -235,9 +235,19 @@ function rec(v: unknown): Record<string, unknown> | undefined {
     : undefined;
 }
 
+/**
+ * Every value read through here is a COUNT — `rootsTotal`, `pending`, `mergedPrs`, and the nine
+ * others — so the domain is the non-negative integers, and `Number.isFinite` alone let `-1` and
+ * `1.5` through as valid fleet metrics. A count is the one thing a digest compares between runs;
+ * an impossible one is an unreadable brief, and this file's doctrine is to report that as not
+ * summarizable rather than to publish a number it cannot stand behind.
+ *
+ * `Number.isInteger` SUBSUMES `Number.isFinite` (`NaN` and both infinities are non-integers), so
+ * this is the same three conditions it replaced, not a fourth one bolted on.
+ */
 function numAt(o: Record<string, unknown>, k: string): number | undefined {
   const v = o[k];
-  return typeof v === "number" && Number.isFinite(v) ? v : undefined;
+  return typeof v === "number" && Number.isInteger(v) && v >= 0 ? v : undefined;
 }
 
 /**
@@ -359,9 +369,18 @@ const changelog: FleetDigestExtractor = (f) => {
   const m = numbers(counts, ["mergedPrs", "deployments", "incidentsOpened", "incidentsResolved"]);
   if (m === undefined) return undefined;
   const keys: string[] = [];
-  for (const field of ["mergedPrs", "deployments", "incidentsOpened", "incidentsResolved"]) {
+  for (const field of [
+    "mergedPrs",
+    "deployments",
+    "incidentsOpened",
+    "incidentsResolved",
+  ] as const) {
     const arr = o[field];
     if (!Array.isArray(arr)) return undefined;
+    // The cap makes a listed array SHORTER than its count, never longer — `counts` is the
+    // pre-cap total for the window. A count BELOW its own listed length is a brief contradicting
+    // itself, and digesting it would publish a `mergedPrs` the entry list visibly disproves.
+    if (m[field] < arr.length) return undefined;
     for (const e of arr) {
       const id = rec(e)?.["id"];
       if (typeof id !== "string") return undefined;
