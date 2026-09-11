@@ -1,6 +1,5 @@
 import { Database } from "bun:sqlite";
 import { afterEach, expect, test } from "bun:test";
-import { encodeBase64, generateEd25519Keypair } from "@nimbus-dev/sdk";
 import { bytesToHex } from "@noble/hashes/utils.js";
 import type { PreflightCommandConfig } from "../config/nimbus-toml.ts";
 import { LocalIndex } from "../index/local-index.ts";
@@ -10,6 +9,8 @@ import { outboundPairHandshake, sendFederatedOverWire } from "../ipc/lan-client.
 import { generateBoxKeypair } from "../ipc/lan-crypto.ts";
 import { generatePairingCode, PairingWindow } from "../ipc/lan-pairing.ts";
 import { type DeletionRecord, verifyDeletionRecord } from "../policy/deletion-record.ts";
+import { encodeBase64 } from "../util/base64.ts";
+import { generateEd25519Keypair } from "../util/ed25519.ts";
 import { federationConsent } from "./consent-broker.ts";
 import { InMemoryDiscoveryProvider } from "./discovery.ts";
 import {

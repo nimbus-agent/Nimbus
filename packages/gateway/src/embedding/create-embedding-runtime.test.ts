@@ -450,7 +450,7 @@ describe("createEmbeddingRuntime — hybrid returns non-null (DI seam)", () => {
         defaultToml("hybrid"),
         true,
         h.vault,
-        overrides,
+        { overrides },
       );
       expect(rt).toBe(fakeRuntime);
     } finally {
@@ -492,7 +492,7 @@ describe("createEmbeddingRuntime — worker bridge null → lazy fallback (DI se
         defaultToml("local"),
         true,
         h.vault,
-        overrides,
+        { overrides },
       );
       // The lazy runtime is returned even when worker fails
       expect(rt).not.toBeNull();
@@ -517,7 +517,7 @@ describe("createEmbeddingRuntime — worker bridge null → lazy fallback (DI se
         defaultToml("hybrid"),
         true,
         h.vault,
-        overrides,
+        { overrides },
       );
       expect(rt).not.toBeNull();
     } finally {
@@ -571,7 +571,7 @@ describe("createEmbeddingRuntime — openai embedder factory throws (DI seam)", 
         defaultToml("openai"),
         true,
         h.vault,
-        overrides,
+        { overrides },
       );
       expect(rt).toBeNull();
       const found = warnings.find(
@@ -614,7 +614,7 @@ describe("createEmbeddingRuntime — openai embedder factory throws (DI seam)", 
         defaultToml("openai"),
         true,
         h.vault,
-        overrides,
+        { overrides },
       );
       expect(rt).toBeNull();
       const found = warnings.find(
@@ -643,7 +643,7 @@ describe("createEmbeddingRuntime — openai embedder factory throws (DI seam)", 
         defaultToml("openai"),
         true,
         h.vault,
-        overrides,
+        { overrides },
       );
       expect(rt).not.toBeNull();
       // The lazy runtime's model comes from the preloaded embedder
@@ -664,7 +664,7 @@ describe("createEmbeddingRuntime — openai embedder factory throws (DI seam)", 
     const h = makeHarness({ migrateTo: 30 });
     try {
       const toml = { ...defaultToml("openai"), model: "   " };
-      await createEmbeddingRuntime(h.db, h.paths, silentLogger, toml, true, h.vault, overrides);
+      await createEmbeddingRuntime(h.db, h.paths, silentLogger, toml, true, h.vault, { overrides });
       expect(capturedModel).toBe("text-embedding-3-small");
     } finally {
       h.cleanup();
@@ -689,12 +689,14 @@ describe("createEmbeddingRuntimeNonBlocking", () => {
         true,
         h.vault,
         {
-          // Hybrid awaits the local model load; a never-settling routing factory reproduces
-          // a cold MiniLM fetch exactly, without touching the network.
-          routingRuntimeFactory: () => new Promise<EmbeddingRuntime | null>(() => {}),
-          workerBridgeFactory: () => {
-            workerFactoryCalls += 1;
-            return null;
+          overrides: {
+            // Hybrid awaits the local model load; a never-settling routing factory reproduces
+            // a cold MiniLM fetch exactly, without touching the network.
+            routingRuntimeFactory: () => new Promise<EmbeddingRuntime | null>(() => {}),
+            workerBridgeFactory: () => {
+              workerFactoryCalls += 1;
+              return null;
+            },
           },
         },
       );
@@ -718,7 +720,11 @@ describe("createEmbeddingRuntimeNonBlocking", () => {
         defaultToml("hybrid"),
         true,
         h.vault,
-        { routingRuntimeFactory: () => new Promise<EmbeddingRuntime | null>(() => {}) },
+        {
+          overrides: {
+            routingRuntimeFactory: () => new Promise<EmbeddingRuntime | null>(() => {}),
+          },
+        },
       );
       expect(rt).not.toBeNull();
       await expect(rt?.embedQuery("anything")).rejects.toThrow(/warming up/);
@@ -738,9 +744,11 @@ describe("createEmbeddingRuntimeNonBlocking", () => {
         true,
         h.vault,
         {
-          routingRuntimeFactory: () => Promise.reject(new Error("ENOTFOUND huggingface.co")),
-          workerBridgeFactory: () => {
-            throw new Error("ENOTFOUND huggingface.co");
+          overrides: {
+            routingRuntimeFactory: () => Promise.reject(new Error("ENOTFOUND huggingface.co")),
+            workerBridgeFactory: () => {
+              throw new Error("ENOTFOUND huggingface.co");
+            },
           },
         },
       );
@@ -846,9 +854,11 @@ describe("createEmbeddingRuntime — pause_on_battery wiring", () => {
         true,
         h.vault,
         {
-          workerBridgeFactory: (_dbPath, _dataDir, slice) => {
-            seen = slice.pauseOnBattery;
-            return { terminate: () => {} } as unknown as EmbeddingRuntime;
+          overrides: {
+            workerBridgeFactory: (_dbPath, _dataDir, slice) => {
+              seen = slice.pauseOnBattery;
+              return { terminate: () => {} } as unknown as EmbeddingRuntime;
+            },
           },
         },
       );
@@ -866,9 +876,11 @@ describe("createEmbeddingRuntime — pause_on_battery wiring", () => {
       let seen: boolean | undefined;
       const toml = { ...defaultToml("local"), pauseOnBattery: false };
       await createEmbeddingRuntime(h.db, h.paths, silentLogger, toml, true, h.vault, {
-        workerBridgeFactory: (_dbPath, _dataDir, slice) => {
-          seen = slice.pauseOnBattery;
-          return { terminate: () => {} } as unknown as EmbeddingRuntime;
+        overrides: {
+          workerBridgeFactory: (_dbPath, _dataDir, slice) => {
+            seen = slice.pauseOnBattery;
+            return { terminate: () => {} } as unknown as EmbeddingRuntime;
+          },
         },
       });
       expect(seen).toBe(false);
@@ -890,12 +902,14 @@ describe("createEmbeddingRuntime — pause_on_battery wiring", () => {
         true,
         h.vault,
         {
-          routingRuntimeFactory: async (_db, _paths, _logger, _slice, _vault, _ce, _cv, opts) => {
-            seenGate = opts?.backfillGate;
-            return { terminate: () => {} } as unknown as EmbeddingRuntime;
+          overrides: {
+            routingRuntimeFactory: async (_db, _paths, _logger, _slice, _vault, deps) => {
+              seenGate = deps?.backfillGate;
+              return { terminate: () => {} } as unknown as EmbeddingRuntime;
+            },
           },
+          backfillGate: gate,
         },
-        gate,
       );
       expect(seenGate).toBe(gate);
     } finally {
@@ -916,13 +930,15 @@ describe("createEmbeddingRuntime — pause_on_battery wiring", () => {
         true,
         h.vault,
         {
-          openaiEmbedderFactory: async () => makeFakeEmbedder(),
-          lazyRuntimeFactory: (_db, _dataDir, _logger, _slice, _pre, _create, opts) => {
-            seenGate = opts?.backfillGate;
-            return { terminate: () => {} } as unknown as EmbeddingRuntime;
+          overrides: {
+            openaiEmbedderFactory: async () => makeFakeEmbedder(),
+            lazyRuntimeFactory: (_db, _dataDir, _logger, _slice, _pre, _create, opts) => {
+              seenGate = opts?.backfillGate;
+              return { terminate: () => {} } as unknown as EmbeddingRuntime;
+            },
           },
+          backfillGate: gate,
         },
-        gate,
       );
       expect(seenGate).toBe(gate);
     } finally {
@@ -943,16 +959,18 @@ describe("createEmbeddingRuntime — pause_on_battery wiring", () => {
         true,
         h.vault,
         {
-          // No worker: `provider = "local"` then falls through to the lazy runtime, which is a
-          // DIFFERENT `createLazyEmbeddingRuntime(...)` literal from the openai one above. One
-          // test covering the other literal would prove nothing about this one.
-          workerBridgeFactory: () => null,
-          lazyRuntimeFactory: (_db, _dataDir, _logger, _slice, _pre, _create, opts) => {
-            seenGate = opts?.backfillGate;
-            return { terminate: () => {} } as unknown as EmbeddingRuntime;
+          overrides: {
+            // No worker: `provider = "local"` then falls through to the lazy runtime, which is a
+            // DIFFERENT `createLazyEmbeddingRuntime(...)` literal from the openai one above. One
+            // test covering the other literal would prove nothing about this one.
+            workerBridgeFactory: () => null,
+            lazyRuntimeFactory: (_db, _dataDir, _logger, _slice, _pre, _create, opts) => {
+              seenGate = opts?.backfillGate;
+              return { terminate: () => {} } as unknown as EmbeddingRuntime;
+            },
           },
+          backfillGate: gate,
         },
-        gate,
       );
       expect(seenGate).toBe(gate);
     } finally {
@@ -972,9 +990,11 @@ describe("createEmbeddingRuntime — pause_on_battery wiring", () => {
         true,
         h.vault,
         {
-          routingRuntimeFactory: async (_db, _paths, _logger, _slice, _vault, _ce, _cv, opts) => {
-            seenGate = opts?.backfillGate;
-            return { terminate: () => {} } as unknown as EmbeddingRuntime;
+          overrides: {
+            routingRuntimeFactory: async (_db, _paths, _logger, _slice, _vault, deps) => {
+              seenGate = deps?.backfillGate;
+              return { terminate: () => {} } as unknown as EmbeddingRuntime;
+            },
           },
         },
       );
@@ -996,10 +1016,12 @@ describe("createEmbeddingRuntime — pause_on_battery wiring", () => {
         true,
         h.vault,
         {
-          workerBridgeFactory: () => null,
-          lazyRuntimeFactory: (_db, _dataDir, _logger, _slice, _pre, _create, opts) => {
-            seenGate = opts?.backfillGate;
-            return { terminate: () => {} } as unknown as EmbeddingRuntime;
+          overrides: {
+            workerBridgeFactory: () => null,
+            lazyRuntimeFactory: (_db, _dataDir, _logger, _slice, _pre, _create, opts) => {
+              seenGate = opts?.backfillGate;
+              return { terminate: () => {} } as unknown as EmbeddingRuntime;
+            },
           },
         },
       );

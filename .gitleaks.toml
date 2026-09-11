@@ -20,7 +20,8 @@
 #      — historical implementation-plan docs frequently quoted test source
 #        verbatim, so several plans covering security-adjacent work
 #        reproduced the same fixture strings. The plans/ tree was pruned
-#        from HEAD on 2026-05-28, but **gitleaks scans full git history**:
+#        from HEAD on 2026-05-28 and the whole of docs/superpowers/ was
+#        removed on 2026-09-11, but **gitleaks scans full git history**:
 #        the files still exist in past commits, and a path-based allowlist
 #        is the only durable suppression. Plans never carried real
 #        credentials.

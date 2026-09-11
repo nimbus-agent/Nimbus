@@ -178,9 +178,9 @@ const HITL_REQUIRED_BACKING = new Set<string>([
   // executor. Nothing constructs an executor action of type `tool.save`, so this membership is
   // currently inert: removing it changes no behaviour, and I40's guarantee does not rest on it.
   //
-  // It is kept rather than deleted because the design spec reserves the name
-  // (`docs/superpowers/specs/2026-09-10-s2-toolgen-persistence-design.md` § "Reserves"), so this
-  // is where an executor-routed save would belong if one is ever built. Note that the three
+  // It is kept rather than deleted because the design reserved the name, so this is where an
+  // executor-routed save would belong if one is ever built. (That spec was pruned with the rest of
+  // the delivered set once I40 shipped; `git log --diff-filter=D -- docs/superpowers/` finds it.) Note that the three
   // sibling capability gates — `code.execute` (I33), `computer.action` (I35) and `tool.generate`
   // (I39) — are all deliberately ABSENT from this set for the same structural reason: they too
   // prompt through their own brokers. Do not read this entry as "the save gate consults

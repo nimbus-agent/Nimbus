@@ -91,7 +91,45 @@ export interface GrantsRevokeArgs {
  * precedence, and a selector with no `--limit` is refused rather than defaulted — see
  * `MAX_GRANT_LIMIT`'s doc comment.
  */
-export function parseAllowRemoteArgs(argv: readonly string[]): AllowRemoteArgs {
+/** The raw shape `scanAllowRemoteArgs` reads off argv, before any cross-flag rule is applied. */
+type AllowRemoteScan = {
+  itemIds: string[];
+  service: string | undefined;
+  sinceDays: number | undefined;
+  limit: number | undefined;
+  /** Whether ANY selector flag appeared — the signal that decides which of the two forms this is. */
+  sawSelectorFlag: boolean;
+};
+
+function requireValue(argv: readonly string[], i: number, flag: string): string {
+  const value = argv[i + 1];
+  if (value === undefined) {
+    throw new Error(`nimbus media allow-remote: ${flag} requires a value`);
+  }
+  return value;
+}
+
+function parseSinceDays(value: string): number {
+  const n = Number(value);
+  if (!Number.isFinite(n) || n < 0) {
+    throw new Error("nimbus media allow-remote: --since must be a non-negative number of days");
+  }
+  return n;
+}
+
+function parseLimit(value: string): number {
+  const n = Number(value);
+  if (!Number.isInteger(n) || n <= 0) {
+    throw new Error("nimbus media allow-remote: --limit must be a positive integer");
+  }
+  return n;
+}
+
+/**
+ * Phase 1: read argv. Each flag's OWN value is validated here (a `--limit` that is not a positive
+ * integer is wrong however it is combined); rules that span flags are phase 2's, below.
+ */
+function scanAllowRemoteArgs(argv: readonly string[]): AllowRemoteScan {
   const itemIds: string[] = [];
   let service: string | undefined;
   let sinceDays: number | undefined;
@@ -102,39 +140,19 @@ export function parseAllowRemoteArgs(argv: readonly string[]): AllowRemoteArgs {
   while (i < argv.length) {
     const arg = argv[i];
     if (arg === "--service") {
-      const value = argv[i + 1];
-      if (value === undefined) {
-        throw new Error("nimbus media allow-remote: --service requires a value");
-      }
-      service = value;
+      service = requireValue(argv, i, "--service");
       sawSelectorFlag = true;
       i += 2;
       continue;
     }
     if (arg === "--since") {
-      const value = argv[i + 1];
-      if (value === undefined) {
-        throw new Error("nimbus media allow-remote: --since requires a value");
-      }
-      const n = Number(value);
-      if (!Number.isFinite(n) || n < 0) {
-        throw new Error("nimbus media allow-remote: --since must be a non-negative number of days");
-      }
-      sinceDays = n;
+      sinceDays = parseSinceDays(requireValue(argv, i, "--since"));
       sawSelectorFlag = true;
       i += 2;
       continue;
     }
     if (arg === "--limit") {
-      const value = argv[i + 1];
-      if (value === undefined) {
-        throw new Error("nimbus media allow-remote: --limit requires a value");
-      }
-      const n = Number(value);
-      if (!Number.isInteger(n) || n <= 0) {
-        throw new Error("nimbus media allow-remote: --limit must be a positive integer");
-      }
-      limit = n;
+      limit = parseLimit(requireValue(argv, i, "--limit"));
       sawSelectorFlag = true;
       i += 2;
       continue;
@@ -147,6 +165,12 @@ export function parseAllowRemoteArgs(argv: readonly string[]): AllowRemoteArgs {
     }
     i += 1;
   }
+
+  return { itemIds, service, sinceDays, limit, sawSelectorFlag };
+}
+
+export function parseAllowRemoteArgs(argv: readonly string[]): AllowRemoteArgs {
+  const { itemIds, service, sinceDays, limit, sawSelectorFlag } = scanAllowRemoteArgs(argv);
 
   if (itemIds.length > 0 && sawSelectorFlag) {
     throw new Error(
@@ -313,6 +337,18 @@ export interface CandidateRow {
 }
 
 /**
+ * The first of `keys` present on `r` as a string, in preference order; `undefined` when none is.
+ * Preference order matters: `indexPrimaryKey` before `id`, `name` before `title`.
+ */
+function firstStringField(r: Record<string, unknown>, keys: readonly string[]): string | undefined {
+  for (const k of keys) {
+    const v = r[k];
+    if (typeof v === "string") return v;
+  }
+  return undefined;
+}
+
+/**
  * `index.queryItems`'s items arrive as `Array<Record<string, unknown>>` (see `commands/query.ts`)
  * -- an indexed item's shape varies by connector/type, so every field is individually guarded
  * rather than cast. `indexPrimaryKey` (added by the gateway's `IndexedItem`) is the id
@@ -321,19 +357,9 @@ export interface CandidateRow {
  */
 function toCandidateRow(raw: unknown): CandidateRow | undefined {
   const r = asRecord(raw);
-  const itemId =
-    typeof r["indexPrimaryKey"] === "string"
-      ? r["indexPrimaryKey"]
-      : typeof r["id"] === "string"
-        ? r["id"]
-        : undefined;
-  const title =
-    typeof r["name"] === "string"
-      ? r["name"]
-      : typeof r["title"] === "string"
-        ? r["title"]
-        : undefined;
-  const service = typeof r["service"] === "string" ? r["service"] : undefined;
+  const itemId = firstStringField(r, ["indexPrimaryKey", "id"]);
+  const title = firstStringField(r, ["name", "title"]);
+  const service = firstStringField(r, ["service"]);
   if (itemId === undefined || title === undefined || service === undefined) {
     return undefined;
   }

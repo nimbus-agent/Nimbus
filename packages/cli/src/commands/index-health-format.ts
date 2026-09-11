@@ -51,9 +51,9 @@ export interface IndexHealthReport {
 /** Mirrors `LOW_CONFIDENCE_THRESHOLD` in the gateway; the doctor warning uses the same number. */
 export const LOW_CONFIDENCE_THRESHOLD = 60;
 
-// Built from a char code on purpose: this file is mostly ANSI plumbing, and neither a raw
+// Built from a code point on purpose: this file is mostly ANSI plumbing, and neither a raw
 // control byte nor a backslash escape survives every editor and diff tool intact.
-const ESC = String.fromCharCode(27);
+const ESC = String.fromCodePoint(27);
 const RED = `${ESC}[1;31m`;
 const YELLOW = `${ESC}[33m`;
 const RESET = `${ESC}[0m`;
@@ -143,8 +143,8 @@ function confidenceBlock(r: IndexHealthReport, opts: FormatOptions): string[] {
 
 export function formatIndexHealth(r: IndexHealthReport, opts: FormatOptions): string {
   const lines: string[] = ["", "Index health", ""];
-  lines.push(...confidenceBlock(r, opts));
   lines.push(
+    ...confidenceBlock(r, opts),
     `  Items        ${num(r.totalItems)} across ${num(r.connectors.length)} connector(s)`,
     "",
   );
@@ -158,9 +158,10 @@ export function formatIndexHealth(r: IndexHealthReport, opts: FormatOptions): st
     for (const c of shown) {
       const flag = c.stale ? "  STALE" : "";
       const staleMark = opts.noColor || !c.stale ? flag : `  ${YELLOW}STALE${RESET}`;
+      const coverage = padStart(`${c.embeddingCoveragePercent}%`, 9);
       lines.push(
         `  ${pad(c.service, w)}  ${padStart(num(c.items), 9)}  ` +
-          `${padStart(`${c.embeddingCoveragePercent}%`, 9)}  ${ageLabel(c, opts.nowMs)}${staleMark}`,
+          `${coverage}  ${ageLabel(c, opts.nowMs)}${staleMark}`,
       );
     }
     lines.push("");
@@ -187,10 +188,9 @@ export function formatIndexHealth(r: IndexHealthReport, opts: FormatOptions): st
       );
     }
   }
-  lines.push("");
-
-  // Always disclosed: without it "12d ago STALE" is unfalsifiable, because the reader cannot tell
-  // whether the verdict came from the 7-day default or a tighter `--stale-days`.
-  lines.push(`  Stale threshold: ${r.staleThresholdDays} days.`, "");
+  // The stale threshold is always disclosed: without it "12d ago STALE" is unfalsifiable, because
+  // the reader cannot tell whether the verdict came from the 7-day default or a tighter
+  // `--stale-days`.
+  lines.push("", `  Stale threshold: ${r.staleThresholdDays} days.`, "");
   return `${lines.join("\n")}\n`;
 }

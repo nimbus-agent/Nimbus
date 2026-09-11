@@ -28,16 +28,31 @@ async function resolveOpenAIApiKey(vault: NimbusVault): Promise<string> {
   return typeof v === "string" ? v.trim() : "";
 }
 
+/**
+ * The seams and the one piece of production wiring this factory takes beyond its five required
+ * arguments. One bag rather than three trailing positionals: a caller that wanted only the LAST of
+ * them had to spell `undefined, undefined, { backfillGate }`, which is both unreadable and a place
+ * for an argument to quietly stop travelling.
+ */
+export type RoutingRuntimeDeps = {
+  /** Test seam. */
+  createEmbedder?: ((options: CreateLocalEmbedderOptions) => Promise<Embedder>) | undefined;
+  /** Test seam. */
+  checkVec?: ((db: Database, uv: number) => boolean) | undefined;
+  /** Production wiring: `[embedding] pause_on_battery`'s consumer, built by `assemble.ts`. */
+  backfillGate?: BackfillGate | undefined;
+};
+
 export async function tryCreateRoutingEmbeddingRuntime(
   db: Database,
   paths: PlatformPaths,
   logger: Logger,
   toml: Pick<NimbusEmbeddingToml, "chunkTokens" | "chunkOverlapTokens" | "backfillBatchSize">,
   vault: NimbusVault,
-  createEmbedder: (options: CreateLocalEmbedderOptions) => Promise<Embedder> = createLocalEmbedder,
-  checkVec: (db: Database, uv: number) => boolean = ensureSqliteVecForConnection,
-  opts?: { backfillGate?: BackfillGate | undefined },
+  deps: RoutingRuntimeDeps = {},
 ): Promise<EmbeddingRuntime | null> {
+  const createEmbedder = deps.createEmbedder ?? createLocalEmbedder;
+  const checkVec = deps.checkVec ?? ensureSqliteVecForConnection;
   const apiKey = await resolveOpenAIApiKey(vault);
   if (apiKey === "") {
     logger.warn("Hybrid embedding: openai.api_key missing; routing falls back to MiniLM-only");
@@ -78,7 +93,7 @@ export async function tryCreateRoutingEmbeddingRuntime(
   // OpenAI-routed keys first and the MiniLM-routed keys second, so gating only one would leave
   // half of a hybrid install's backfill running on battery.
   let stopped = false;
-  const outerGate = opts?.backfillGate;
+  const outerGate = deps.backfillGate;
   const backfillGate: BackfillGate | undefined =
     outerGate === undefined ? undefined : async () => (stopped ? false : outerGate());
   const gateOpt = backfillGate === undefined ? {} : { backfillGate };

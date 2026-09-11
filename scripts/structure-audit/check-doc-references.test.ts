@@ -68,9 +68,12 @@ describe("DOCS_TREE_GLOBS — the rest of docs/", () => {
 
   test("excludes exactly the reasoned set, by exact path or directory prefix", () => {
     expect(isExcludedDoc("docs/CHANGELOG.md")).toBe(true);
-    expect(isExcludedDoc("docs/superpowers/plans/anything.md")).toBe(true);
     expect(isExcludedDoc("docs/roadmap.md")).toBe(true);
     expect(isExcludedDoc("docs/structure-audit/baseline.md")).toBe(true);
+    // The delivered plans and specs were pruned from HEAD on 2026-09-11, and the exclusion went
+    // with them: a prefix naming a directory that does not exist silences nothing and misleads
+    // the next reader about what this gate covers.
+    expect(isExcludedDoc("docs/superpowers/plans/anything.md")).toBe(false);
     // Not excluded: a sibling of an excluded file must not be swept in with it.
     expect(isExcludedDoc("docs/structure-audit/sonarqube-rule-tuning.md")).toBe(false);
     expect(isExcludedDoc("docs/testing.md")).toBe(false);

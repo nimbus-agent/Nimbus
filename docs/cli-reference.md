@@ -1697,7 +1697,7 @@ is JSON; the schema fits the restricted input-schema subset; the body parses as 
 the body contains no construct the sandbox would refuse — with exactly ONE bounded redraft on
 failure, and only then prompts the owner to approve the verbatim body, the drafted parameters, and
 the grounding provenance. `ERR_TOOLGEN_DRAFT_NOT_IMPLEMENTED` is gone. Design:
-[`docs/superpowers/specs/2026-09-09-s2-toolgen-drafting-design.md`](./superpowers/specs/2026-09-09-s2-toolgen-drafting-design.md).
+[`architecture.md` § Runtime tool generation](./architecture.md#runtime-tool-generation-toolgen-nimbus-tool).
 
 **Persistence shipped as PR 3 of 3 (invariant I40, schema V61).** `nimbus tool save <tool-id>`
 promotes a live, session-only generated tool to a DURABLE one: the artifact is signed with a
@@ -1708,7 +1708,7 @@ a separate broker: approving a save consents to "run this in every future sessio
 which the create-time approval never covered. `nimbus tool revoke` is its withdrawal path and drops
 the row, the `saved/` directory, the registry entry, the ephemeral script and the Vault credential
 together. Design:
-[`docs/superpowers/specs/2026-09-10-s2-toolgen-persistence-design.md`](./superpowers/specs/2026-09-10-s2-toolgen-persistence-design.md).
+[`architecture.md` § Runtime tool generation](./architecture.md#runtime-tool-generation-toolgen-nimbus-tool).
 
 **Not shipped:** agent-initiated tool proposal (`allow_agent_initiated` + `allowed_hosts`), and any
 path that INVOKES a generated tool — neither an IPC method nor a CLI subcommand calls one, and the

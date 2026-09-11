@@ -15,7 +15,8 @@
  * offline, so it stays in the local fast tier. Freshness is a MAINTENANCE
  * property needing network, so it runs in the scheduled sweep.
  *
- * See docs/superpowers/specs/2026-07-26-p5-p3-infra-batch-design.md.
+ * Design of record, pruned from HEAD on delivery — read it with
+ * `git show dd98484b:docs/superpowers/specs/2026-07-26-p5-p3-infra-batch-design.md`.
  */
 
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";

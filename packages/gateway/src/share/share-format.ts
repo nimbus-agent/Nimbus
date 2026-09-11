@@ -1,7 +1,7 @@
-import { decodeBase64 } from "@nimbus-dev/sdk";
 import { blake3 } from "@noble/hashes/blake3.js";
 import { bytesToHex } from "@noble/hashes/utils.js";
 import nacl from "tweetnacl";
+import { decodeBase64 } from "../util/base64.ts";
 import { codeUnitCompare } from "../util/code-unit-compare.ts";
 import { constantTimeStringEqual } from "../util/timing-safe-compare.ts";
 

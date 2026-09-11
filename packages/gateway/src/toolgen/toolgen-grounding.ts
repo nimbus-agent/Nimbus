@@ -1,5 +1,6 @@
 import type { LocalIndex } from "../index/local-index.ts";
 import type { RankedIndexItem } from "../index/ranked-item.ts";
+import { codeUnitCompare } from "../util/code-unit-compare.ts";
 
 export interface GroundedEndpoint {
   readonly serviceName: string;
@@ -91,8 +92,6 @@ export function groundingOf(endpoints: readonly GroundedEndpoint[]): DraftGround
   return {
     kind: "endpoints",
     count: endpoints.length,
-    services: [...new Set(endpoints.map((e) => e.serviceName))].sort((a, b) =>
-      a < b ? -1 : a > b ? 1 : 0,
-    ),
+    services: [...new Set(endpoints.map((e) => e.serviceName))].sort(codeUnitCompare),
   };
 }

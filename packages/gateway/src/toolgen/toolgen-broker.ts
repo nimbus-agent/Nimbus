@@ -48,6 +48,23 @@ interface ParsedRequest {
   readonly body?: string | undefined;
 }
 
+const ALLOWED_REQUEST_METHODS = new Set(["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD"]);
+
+/** The tool-supplied headers, minus the ones a generated body may never set for itself. */
+function parseRequestHeaders(raw: unknown): Record<string, string> {
+  const headers: Record<string, string> = {};
+  if (raw === undefined || raw === null) return headers;
+  if (typeof raw !== "object" || Array.isArray(raw)) {
+    throw new ToolgenError("ERR_TOOLGEN_BAD_REQUEST", "fetch params.headers must be an object");
+  }
+  for (const [k, v] of Object.entries(raw as Record<string, unknown>)) {
+    // Silently DROPPED rather than refused: a stripped auth header is the design working, not a
+    // caller error, and refusing would tell a hostile body which header names are interesting.
+    if (typeof v === "string" && !STRIPPED_REQUEST_HEADERS.has(k.toLowerCase())) headers[k] = v;
+  }
+  return headers;
+}
+
 function parseParams(params: unknown): ParsedRequest {
   if (params === null || typeof params !== "object" || Array.isArray(params)) {
     throw new ToolgenError("ERR_TOOLGEN_BAD_REQUEST", "fetch params must be an object");
@@ -57,21 +74,10 @@ function parseParams(params: unknown): ParsedRequest {
     throw new ToolgenError("ERR_TOOLGEN_BAD_REQUEST", "fetch params.url must be a string");
   }
   const method = typeof o["method"] === "string" ? o["method"].toUpperCase() : "GET";
-  if (!["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD"].includes(method)) {
+  if (!ALLOWED_REQUEST_METHODS.has(method)) {
     throw new ToolgenError("ERR_TOOLGEN_BAD_REQUEST", `unsupported method: ${method}`);
   }
-  const headers: Record<string, string> = {};
-  const rawHeaders = o["headers"];
-  if (rawHeaders !== undefined && rawHeaders !== null) {
-    if (typeof rawHeaders !== "object" || Array.isArray(rawHeaders)) {
-      throw new ToolgenError("ERR_TOOLGEN_BAD_REQUEST", "fetch params.headers must be an object");
-    }
-    for (const [k, v] of Object.entries(rawHeaders as Record<string, unknown>)) {
-      // Silently DROPPED rather than refused: a stripped auth header is the design working, not a
-      // caller error, and refusing would tell a hostile body which header names are interesting.
-      if (typeof v === "string" && !STRIPPED_REQUEST_HEADERS.has(k.toLowerCase())) headers[k] = v;
-    }
-  }
+  const headers = parseRequestHeaders(o["headers"]);
   const body = typeof o["body"] === "string" ? o["body"] : undefined;
   return { url: o["url"], method, headers, ...(body === undefined ? {} : { body }) };
 }
@@ -84,10 +90,11 @@ function applyCredential(headers: Record<string, string>, binding: ToolCredentia
     case "header":
       headers[binding.headerName] = binding.value;
       break;
-    case "basic":
-      headers["Authorization"] =
-        `Basic ${Buffer.from(`${binding.username}:${binding.password}`).toString("base64")}`;
+    case "basic": {
+      const encoded = Buffer.from(`${binding.username}:${binding.password}`).toString("base64");
+      headers["Authorization"] = `Basic ${encoded}`;
       break;
+    }
   }
 }
 
@@ -118,6 +125,107 @@ export class ToolgenBroker {
 
   constructor(deps: ToolgenBrokerDeps) {
     this.#deps = deps;
+  }
+
+  /**
+   * The destination phase of the order in the class docstring: scheme, approved-host match,
+   * RESOLVE, then the resolved-address check. Every refusal goes through `refuse`, so a blocked
+   * destination is ledgered before it throws. Returns only when the destination is allowed.
+   */
+  async #assertDestinationAllowed(
+    toolId: string,
+    url: URL,
+    host: string,
+    refuse: (code: string, message: string) => never,
+  ): Promise<void> {
+    try {
+      assertAllowedScheme(url);
+    } catch (err) {
+      refuse("ERR_TOOLGEN_HOST_NOT_ALLOWED", (err as Error).message);
+    }
+
+    // Exact match only. A suffix match would let `evil-api.example.com` satisfy `api.example.com`.
+    if (!this.#deps.approvedHostsFor(toolId).some((h) => h.toLowerCase() === host)) {
+      refuse("ERR_TOOLGEN_HOST_NOT_ALLOWED", `host not on the approved envelope: ${host}`);
+    }
+
+    // Validate EVERY address the name answers with, not just the first: a name returning one
+    // private record among several public ones must be refused outright.
+    //
+    // STATED RESIDUAL — this is check-then-connect, not connect-to-checked. `doFetch` is issued
+    // against the hostname and the runtime resolves again independently; Bun's fetch exposes no
+    // connection-pinning or custom-resolver hook. Someone controlling the DNS for a host the owner
+    // ALREADY approved can answer this lookup with a public address and the connection's lookup
+    // with loopback. Validating all records narrows that; it does not close it. Closing it needs a
+    // custom HTTP client that connects to a pinned address. See the design spec § 6.2.1.
+    //
+    // The resolve is inside the try because a REJECTION here (ENOTFOUND, offline, a DNS timeout)
+    // would otherwise escape `handleFetch` with no row appended — and a resolver lookup is itself
+    // traffic the tool caused, so it belongs in the ledger like any other refused destination.
+    let addresses: readonly string[];
+    try {
+      addresses = await this.#deps.resolveHost(host);
+    } catch (err) {
+      refuse(
+        "ERR_TOOLGEN_HOST_NOT_ALLOWED",
+        `failed to resolve ${host}: ${(err as Error).message}`,
+      );
+    }
+    if (addresses.length === 0) {
+      refuse("ERR_TOOLGEN_HOST_NOT_ALLOWED", `${host} resolved to no addresses`);
+    }
+    const forbidden = addresses.find((a) => isForbiddenAddress(a));
+    if (forbidden !== undefined) {
+      refuse(
+        "ERR_TOOLGEN_HOST_NOT_ALLOWED",
+        `${host} resolves to a forbidden address (${forbidden})`,
+      );
+    }
+  }
+
+  /**
+   * The credential phase: the binding for THIS host, or `null` when the host legitimately carries
+   * none. Refuses fail-closed in two cases — an unreadable Vault, and a host the owner was TOLD
+   * would carry a credential that does not have one.
+   */
+  async #resolveCredential(
+    toolId: string,
+    host: string,
+    refuse: (code: string, message: string) => never,
+  ): Promise<ToolCredentialBinding | null> {
+    // Inside a try because `readCredential` reads the VAULT, so it can reject for reasons that have
+    // nothing to do with the tool -- a locked keychain, a libsecret failure, a Vault IPC error. An
+    // escaping rejection here would leave `handleFetch` with ZERO rows for a destination that is
+    // already known, contradicting this class's own contract that every refusal past URL parsing
+    // appends a `blocked` row first. Refusing rather than continuing uncredentialed is the
+    // fail-closed half: a tool whose credential could not be read must not silently send the
+    // request without it.
+    let binding: ToolCredentialBinding | null;
+    try {
+      binding = await this.#deps.readCredential(toolId, host);
+    } catch (err) {
+      refuse(
+        "ERR_TOOLGEN_CREDENTIAL_UNAVAILABLE",
+        `failed to read the credential bound to ${host}: ${(err as Error).message}`,
+      );
+    }
+    // A host the owner was TOLD would carry a credential must never be reached without one. Before
+    // this check, a `null` binding fell straight through to the caller's `if (binding !== null)`
+    // and the request went out unauthenticated -- reachable on every restart now that a saved
+    // tool's credentials no longer survive one (Task 5's boot/shutdown sweep). The asymmetry is
+    // deliberate, not an oversight: a host OUTSIDE `credentialHosts` is uncredentialed BY DESIGN
+    // (a public API a tool talks to needs no binding at all) and must still proceed -- only a host
+    // the owner was explicitly told would carry one is refused for lacking it.
+    if (
+      binding === null &&
+      this.#deps.credentialHostsFor(toolId).some((h) => h.toLowerCase() === host)
+    ) {
+      refuse(
+        "ERR_TOOLGEN_CREDENTIAL_REQUIRED",
+        `${host} requires a credential binding and none is set; run: nimbus tool credential set ${toolId} ${host} --bearer <token>`,
+      );
+    }
+    return binding;
   }
 
   async handleFetch(toolId: string, params: unknown): Promise<BrokeredFetchResponse> {
@@ -158,83 +266,10 @@ export class ToolgenBroker {
       );
     }
 
-    try {
-      assertAllowedScheme(url);
-    } catch (err) {
-      return refuse("ERR_TOOLGEN_HOST_NOT_ALLOWED", (err as Error).message);
-    }
-
-    // Exact match only. A suffix match would let `evil-api.example.com` satisfy `api.example.com`.
-    if (!this.#deps.approvedHostsFor(toolId).some((h) => h.toLowerCase() === host)) {
-      return refuse("ERR_TOOLGEN_HOST_NOT_ALLOWED", `host not on the approved envelope: ${host}`);
-    }
-
-    // Validate EVERY address the name answers with, not just the first: a name returning one
-    // private record among several public ones must be refused outright.
-    //
-    // STATED RESIDUAL — this is check-then-connect, not connect-to-checked. `doFetch` is issued
-    // against the hostname and the runtime resolves again independently; Bun's fetch exposes no
-    // connection-pinning or custom-resolver hook. Someone controlling the DNS for a host the owner
-    // ALREADY approved can answer this lookup with a public address and the connection's lookup
-    // with loopback. Validating all records narrows that; it does not close it. Closing it needs a
-    // custom HTTP client that connects to a pinned address. See the design spec § 6.2.1.
-    //
-    // The resolve is inside the try because a REJECTION here (ENOTFOUND, offline, a DNS timeout)
-    // would otherwise escape `handleFetch` with no row appended — and a resolver lookup is itself
-    // traffic the tool caused, so it belongs in the ledger like any other refused destination.
-    let addresses: readonly string[];
-    try {
-      addresses = await this.#deps.resolveHost(host);
-    } catch (err) {
-      return refuse(
-        "ERR_TOOLGEN_HOST_NOT_ALLOWED",
-        `failed to resolve ${host}: ${(err as Error).message}`,
-      );
-    }
-    if (addresses.length === 0) {
-      return refuse("ERR_TOOLGEN_HOST_NOT_ALLOWED", `${host} resolved to no addresses`);
-    }
-    const forbidden = addresses.find((a) => isForbiddenAddress(a));
-    if (forbidden !== undefined) {
-      return refuse(
-        "ERR_TOOLGEN_HOST_NOT_ALLOWED",
-        `${host} resolves to a forbidden address (${forbidden})`,
-      );
-    }
+    await this.#assertDestinationAllowed(toolId, url, host, refuse);
 
     const headers = { ...req.headers };
-    // Inside a try for the same reason the resolve above is: `readCredential` reads the VAULT, so
-    // it can reject for reasons that have nothing to do with the tool -- a locked keychain, a
-    // libsecret failure, a Vault IPC error. An escaping rejection here would leave `handleFetch`
-    // with ZERO rows for a destination that is already known, contradicting this class's own
-    // contract that every refusal past URL parsing appends a `blocked` row first. Refusing rather
-    // than continuing uncredentialed is the fail-closed half: a tool whose credential could not be
-    // read must not silently send the request without it.
-    let binding: ToolCredentialBinding | null;
-    try {
-      binding = await this.#deps.readCredential(toolId, host);
-    } catch (err) {
-      return refuse(
-        "ERR_TOOLGEN_CREDENTIAL_UNAVAILABLE",
-        `failed to read the credential bound to ${host}: ${(err as Error).message}`,
-      );
-    }
-    // A host the owner was TOLD would carry a credential must never be reached without one. Before
-    // this check, a `null` binding fell straight through to `if (binding !== null)` below and the
-    // request went out unauthenticated -- reachable on every restart now that a saved tool's
-    // credentials no longer survive one (Task 5's boot/shutdown sweep). The asymmetry below is
-    // deliberate, not an oversight: a host OUTSIDE `credentialHosts` is uncredentialed BY DESIGN
-    // (a public API a tool talks to needs no binding at all) and must still proceed -- only a host
-    // the owner was explicitly told would carry one is refused for lacking it.
-    if (
-      binding === null &&
-      this.#deps.credentialHostsFor(toolId).some((h) => h.toLowerCase() === host)
-    ) {
-      return refuse(
-        "ERR_TOOLGEN_CREDENTIAL_REQUIRED",
-        `${host} requires a credential binding and none is set; run: nimbus tool credential set ${toolId} ${host} --bearer <token>`,
-      );
-    }
+    const binding = await this.#resolveCredential(toolId, host, refuse);
     if (binding !== null) applyCredential(headers, binding);
 
     // Ledger BEFORE the request. A throw here aborts without fetching — fail-closed.

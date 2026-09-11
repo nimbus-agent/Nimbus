@@ -16,6 +16,23 @@ type Compared = Pick<
 >;
 
 /**
+ * Spec § 6.3: a change withheld by `minDelta` must not read as "nothing happened". Three outcomes,
+ * not two — `unchanged_within_threshold` is what tells a reader the threshold was involved.
+ */
+function digestStatus(changed: boolean, metricsSuppressed: number): Compared["status"] {
+  if (changed) return "changed";
+  if (metricsSuppressed > 0) return "unchanged_within_threshold";
+  return "unchanged";
+}
+
+/** Why a metric row shows no delta: it exists on only one side of the comparison. */
+function oneSidedNote(d: FleetMetricDelta): string {
+  if (d.before === null) return " (new metric)";
+  if (d.after === null) return " (no longer reported)";
+  return "";
+}
+
+/**
  * Pure comparison of two brief summaries into the diff fields of a `FleetJobDigest`. No I/O, no
  * database — the caller (Task 8) supplies the identity fields (job id, brief ids, timestamps).
  *
@@ -72,11 +89,7 @@ export function compareSummaries(
   return {
     // A suppressed metric must not read as "nothing happened": the status names the threshold's
     // involvement so a reader cannot mistake a hidden change for no change.
-    status: changed
-      ? "changed"
-      : metricsSuppressed > 0
-        ? "unchanged_within_threshold"
-        : "unchanged",
+    status: digestStatus(changed, metricsSuppressed),
     metrics: Object.freeze(metrics),
     metricsSuppressed,
     keysAppeared,
@@ -271,15 +284,14 @@ function mdSafe(s: string): string {
   // content, so `[click](http://…)` in a PR title becomes a live link the moment something
   // renders it, and that is the point at which this function needs the wider escape set.
   return s
-    .replace(/\r\n|\r|\n/g, " ")
-    .replace(/\\/g, "\\\\")
-    .replace(/\|/g, "\\|");
+    .replaceAll(/\r\n|\r|\n/g, " ")
+    .replaceAll("\\", "\\\\")
+    .replaceAll("|", "\\|");
 }
 
 function metricRow(name: string, d: FleetMetricDelta): string {
   // A one-sided metric names WHY it is one-sided rather than showing a delta it does not have.
-  const note =
-    d.before === null ? " (new metric)" : d.after === null ? " (no longer reported)" : "";
+  const note = oneSidedNote(d);
   return `| ${mdSafe(name)}${note} | ${cell(d.before)} | ${cell(d.after)} | ${cell(d.delta)} |`;
 }
 
@@ -298,81 +310,87 @@ export function renderFleetDigest(d: Omit<FleetDigestResult, "markdown">): strin
     "",
   );
 
-  for (const j of d.jobs) {
-    out.push(`## ${mdSafe(j.jobId)}${unconfiguredMarker(j.configured)}`, "");
-    const status =
-      j.status === "unchanged_within_threshold"
-        ? `unchanged within threshold (digest_min_delta = ${String(j.minDelta)})`
-        : j.status;
-    out.push(
-      `${mdSafe(j.agentMethod)} · compared over ${humanDuration(j.comparisonSpanMs)} · ${status}`,
-      "",
-    );
-    if (j.metricsSuppressed > 0) {
-      // Distinct from `status`: a job reported "changed" can STILL have withheld a metric below
-      // the threshold, and that must not vanish just because something else cleared the bar
-      // (spec § 6). Reads alongside `unchanged_within_threshold` too, without repeating it — that
-      // status names the threshold's involvement in general; this line names how many metrics and
-      // the same threshold value, which the status text alone does not disclose.
-      const n = j.metricsSuppressed;
-      out.push(
-        `${String(n)} metric${n === 1 ? "" : "s"} withheld below digest_min_delta = ${String(j.minDelta)}`,
-        "",
-      );
-    }
-
-    if (Object.keys(j.metrics).length > 0) {
-      out.push("| metric | before | after | delta |", "| --- | --- | --- | --- |");
-      // `Object.entries`, not `names[i]`: indexing a Record under noUncheckedIndexedAccess yields
-      // `FleetMetricDelta | undefined` and would need a cast that hides a real absence. Sorted
-      // explicitly rather than trusted from insertion order: `compareSummaries` inserts in
-      // `codeUnitCompare` order today, but JS objects hoist integer-like string keys ahead of
-      // insertion order, so a metric literally named `"5"` would silently defeat that guarantee.
-      const entries = Object.entries(j.metrics).sort((a, b) => codeUnitCompare(a[0], b[0]));
-      for (const [n, delta] of entries) out.push(metricRow(n, delta));
-      out.push("");
-    }
-    if (j.keysAppeared.length > 0) {
-      out.push(
-        `Appeared (${String(j.keysAppeared.length)}):`,
-        ...j.keysAppeared.map((k) => `- ${mdSafe(k)}`),
-        "",
-      );
-    }
-    if (j.keysResolved.length > 0) {
-      out.push(
-        `Resolved (${String(j.keysResolved.length)}):`,
-        ...j.keysResolved.map((k) => `- ${mdSafe(k)}`),
-        "",
-      );
-    }
-  }
-
-  // All four subsections are ALWAYS written, including as an explicit zero: a section that
-  // vanishes when it has nothing to say trains a reader to stop looking for it.
-  const nc = d.notCompared;
-  out.push("## Not compared", "");
-  out.push(`First observation: ${String(nc.firstObservation.length)}`);
-  for (const e of nc.firstObservation)
-    out.push(
-      `- ${mdSafe(e.jobId)}${unconfiguredMarker(e.configured)} — one brief so far, nothing to compare`,
-    );
-  out.push(`Not summarizable: ${String(nc.notSummarizable.length)}`);
-  for (const e of nc.notSummarizable)
-    out.push(
-      `- ${mdSafe(e.jobId)}${unconfiguredMarker(e.configured)} (${e.role}) — ${mdSafe(e.reason)}`,
-    );
-  out.push(`No brief in window: ${String(nc.noBriefInWindow.length)}`);
-  for (const e of nc.noBriefInWindow)
-    out.push(
-      `- ${mdSafe(e.jobId)}${unconfiguredMarker(e.configured)} (${mdSafe(e.agent)}) — configured, produced nothing`,
-    );
-  out.push(`Agent changed: ${String(nc.agentChanged.length)}`);
-  for (const e of nc.agentChanged)
-    out.push(
-      `- ${mdSafe(e.jobId)}${unconfiguredMarker(e.configured)} — ${mdSafe(e.from)} → ${mdSafe(e.to)}, not comparable`,
-    );
-  out.push("");
+  for (const j of d.jobs) out.push(...jobSection(j));
+  out.push(...notComparedSection(d.notCompared));
 
   return out.join("\n");
+}
+
+/** `Appeared (n):` / `Resolved (n):` and their bullets — omitted entirely when the list is empty. */
+function keyChurnLines(label: string, keys: readonly string[]): string[] {
+  if (keys.length === 0) return [];
+  return [`${label} (${String(keys.length)}):`, ...keys.map((k) => `- ${mdSafe(k)}`), ""];
+}
+
+/** One job's `## <id>` section: header line, withheld-metric disclosure, table, key churn. */
+function jobSection(j: FleetJobDigest): string[] {
+  const status =
+    j.status === "unchanged_within_threshold"
+      ? `unchanged within threshold (digest_min_delta = ${String(j.minDelta)})`
+      : j.status;
+  const out: string[] = [
+    `## ${mdSafe(j.jobId)}${unconfiguredMarker(j.configured)}`,
+    "",
+    `${mdSafe(j.agentMethod)} · compared over ${humanDuration(j.comparisonSpanMs)} · ${status}`,
+    "",
+  ];
+  if (j.metricsSuppressed > 0) {
+    // Distinct from `status`: a job reported "changed" can STILL have withheld a metric below
+    // the threshold, and that must not vanish just because something else cleared the bar
+    // (spec § 6). Reads alongside `unchanged_within_threshold` too, without repeating it — that
+    // status names the threshold's involvement in general; this line names how many metrics and
+    // the same threshold value, which the status text alone does not disclose.
+    const n = j.metricsSuppressed;
+    out.push(
+      `${String(n)} metric${n === 1 ? "" : "s"} withheld below digest_min_delta = ${String(j.minDelta)}`,
+      "",
+    );
+  }
+
+  if (Object.keys(j.metrics).length > 0) {
+    out.push("| metric | before | after | delta |", "| --- | --- | --- | --- |");
+    // `Object.entries`, not `names[i]`: indexing a Record under noUncheckedIndexedAccess yields
+    // `FleetMetricDelta | undefined` and would need a cast that hides a real absence. Sorted
+    // explicitly rather than trusted from insertion order: `compareSummaries` inserts in
+    // `codeUnitCompare` order today, but JS objects hoist integer-like string keys ahead of
+    // insertion order, so a metric literally named `"5"` would silently defeat that guarantee.
+    const entries = Object.entries(j.metrics).sort((a, b) => codeUnitCompare(a[0], b[0]));
+    for (const [n, delta] of entries) out.push(metricRow(n, delta));
+    out.push("");
+  }
+  out.push(...keyChurnLines("Appeared", j.keysAppeared));
+  out.push(...keyChurnLines("Resolved", j.keysResolved));
+  return out;
+}
+
+/**
+ * All four subsections are ALWAYS written, including as an explicit zero: a section that vanishes
+ * when it has nothing to say trains a reader to stop looking for it.
+ */
+function notComparedSection(nc: FleetDigestNotCompared): string[] {
+  return [
+    "## Not compared",
+    "",
+    `First observation: ${String(nc.firstObservation.length)}`,
+    ...nc.firstObservation.map(
+      (e) =>
+        `- ${mdSafe(e.jobId)}${unconfiguredMarker(e.configured)} — one brief so far, nothing to compare`,
+    ),
+    `Not summarizable: ${String(nc.notSummarizable.length)}`,
+    ...nc.notSummarizable.map(
+      (e) =>
+        `- ${mdSafe(e.jobId)}${unconfiguredMarker(e.configured)} (${e.role}) — ${mdSafe(e.reason)}`,
+    ),
+    `No brief in window: ${String(nc.noBriefInWindow.length)}`,
+    ...nc.noBriefInWindow.map(
+      (e) =>
+        `- ${mdSafe(e.jobId)}${unconfiguredMarker(e.configured)} (${mdSafe(e.agent)}) — configured, produced nothing`,
+    ),
+    `Agent changed: ${String(nc.agentChanged.length)}`,
+    ...nc.agentChanged.map(
+      (e) =>
+        `- ${mdSafe(e.jobId)}${unconfiguredMarker(e.configured)} — ${mdSafe(e.from)} → ${mdSafe(e.to)}, not comparable`,
+    ),
+    "",
+  ];
 }

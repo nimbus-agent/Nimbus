@@ -321,6 +321,101 @@ async function resolveCloudSource(
   };
 }
 
+/**
+ * Pre-flight pricing (spec § 16.9): refuse the WHOLE batch before fetching a single byte when its
+ * known cost already exceeds the run budget, or `null` to proceed. Scoped to the cloud-backed
+ * subset only — a local-only batch has nothing to price against a byte budget that exists to bound
+ * cloud transfer, and must never be refused for one. Returning a summary here returns before the
+ * cursor is touched at all, and an untouched cursor is not a cleared one.
+ */
+function refuseOnPreflight(
+  candidates: readonly MediaCandidate[],
+  fetchBudgetBytes: number,
+): MediaPassSummary | null {
+  const cloudCandidates = candidates.filter((c) => c.sourcePath === null);
+  if (cloudCandidates.length === 0) return null;
+  const priced = priceRun(cloudCandidates);
+  if (priced.knownBytes <= fetchBudgetBytes) return null;
+  return {
+    understood: 0,
+    skipped: 0,
+    skippedByReason: emptyReasons(),
+    lastItemId: null,
+    stopReason: "budget_exhausted",
+    cloudBytesFetched: 0,
+    // Carried out, not discarded. See {@link PreflightRefusal}: this refusal repeats every run
+    // until a human acts, and these are the numbers that say which knob to move.
+    preflightRefusal: {
+      candidateCount: candidates.length,
+      cloudCount: cloudCandidates.length,
+      knownBytes: priced.knownBytes,
+      knownCount: priced.knownCount,
+      unknownCount: priced.unknownCount,
+      budgetBytes: fetchBudgetBytes,
+    },
+  };
+}
+
+/**
+ * Everything one candidate's processing may change, in ONE mutable record rather than seven
+ * closures. The `finally` that unlinks a cloud scratch file must run whichever arm the candidate
+ * took, and a per-arm copy of this bookkeeping is how one arm quietly stops updating it.
+ */
+type PassAccumulator = {
+  reasons: Record<SkipReason, number>;
+  understood: number;
+  skipped: number;
+  lastItemId: string | null;
+  cloudBytesFetched: number;
+  remainingBudget: number;
+  stopReason: MediaPassStopReason;
+};
+
+/**
+ * The cursor advances on a SKIP as well as a success (see {@link advance}), so every skip arm goes
+ * through here rather than repeating the same four lines — which is how one of them ends up
+ * forgetting the advance and pinning the next resume on the same unprocessable artifact.
+ */
+function recordSkip(
+  acc: PassAccumulator,
+  deps: MediaPassDeps,
+  candidate: MediaCandidate,
+  reason: SkipReason,
+): void {
+  acc.reasons[reason] += 1;
+  acc.skipped += 1;
+  acc.lastItemId = candidate.itemId;
+  advance(deps, acc.lastItemId, acc.understood + acc.skipped);
+}
+
+/**
+ * Phase 2 of one candidate: where its bytes come from. The cloud and local arms answer the same
+ * three-way question — a source, a per-item skip, or a run-ending stop — so they share one return
+ * shape and the caller branches once instead of twice.
+ */
+async function resolveCandidateSource(
+  candidate: MediaCandidate,
+  deps: MediaPassDeps,
+  acc: PassAccumulator,
+): Promise<CloudResolution> {
+  if (candidate.sourcePath !== null) {
+    const resolved = resolveLocalMediaPath(candidate, deps.roots, deps.maxBytes);
+    return resolved.ok
+      ? { kind: "source", source: resolved.source, rendition: "original" }
+      : { kind: "skip", reason: resolved.reason };
+  }
+  const budget = {
+    remainingBudget: acc.remainingBudget,
+    cloudBytesFetched: acc.cloudBytesFetched,
+  };
+  const resolution = await resolveCloudSource(candidate, deps, budget);
+  // Debited from EVERY arm — ok, per-item skip, AND run-stop alike — by resolveCloudSource
+  // itself; copy its result back regardless of which arm this turned out to be.
+  acc.remainingBudget = budget.remainingBudget;
+  acc.cloudBytesFetched = budget.cloudBytesFetched;
+  return resolution;
+}
+
 export async function runMediaPass(deps: MediaPassDeps): Promise<MediaPassSummary> {
   // Reclaim scratch WAVs a previous gateway process died mid-write and never unwound (spec § 5.4).
   // Age-bounded, so a concurrently running pass's file is never removed under it.
@@ -345,43 +440,18 @@ export async function runMediaPass(deps: MediaPassDeps): Promise<MediaPassSummar
     ...(deps.remoteVendor === undefined ? {} : { remoteVendor: deps.remoteVendor }),
   });
 
-  // Pre-flight pricing (spec § 16.9): refuse the WHOLE batch before fetching a single byte when
-  // its known cost already exceeds the run budget. Scoped to the cloud-backed subset only — a
-  // local-only batch has nothing to price against a byte budget that exists to bound cloud
-  // transfer, and must never be refused for one. Nothing was fetched and nothing was attempted, so
-  // this returns before the cursor is touched at all — an untouched cursor is not a cleared one.
-  const cloudCandidates = candidates.filter((c) => c.sourcePath === null);
-  if (cloudCandidates.length > 0) {
-    const priced = priceRun(cloudCandidates);
-    if (priced.knownBytes > deps.fetchBudgetBytes) {
-      return {
-        understood: 0,
-        skipped: 0,
-        skippedByReason: emptyReasons(),
-        lastItemId: null,
-        stopReason: "budget_exhausted",
-        cloudBytesFetched: 0,
-        // Carried out, not discarded. See {@link PreflightRefusal}: this refusal repeats every run
-        // until a human acts, and these are the numbers that say which knob to move.
-        preflightRefusal: {
-          candidateCount: candidates.length,
-          cloudCount: cloudCandidates.length,
-          knownBytes: priced.knownBytes,
-          knownCount: priced.knownCount,
-          unknownCount: priced.unknownCount,
-          budgetBytes: deps.fetchBudgetBytes,
-        },
-      };
-    }
-  }
+  const refused = refuseOnPreflight(candidates, deps.fetchBudgetBytes);
+  if (refused !== null) return refused;
 
-  const reasons = emptyReasons();
-  let understood = 0;
-  let skipped = 0;
-  let lastItemId: string | null = null;
-  let cloudBytesFetched = 0;
-  let remainingBudget = deps.fetchBudgetBytes;
-  let stopReason: MediaPassStopReason = "completed";
+  const acc: PassAccumulator = {
+    reasons: emptyReasons(),
+    understood: 0,
+    skipped: 0,
+    lastItemId: null,
+    cloudBytesFetched: 0,
+    remainingBudget: deps.fetchBudgetBytes,
+    stopReason: "completed",
+  };
 
   for (const candidate of candidates) {
     // Ownership of a cloud scratch file passes to THIS loop on success: `fetchCloudBytes` removes
@@ -392,53 +462,24 @@ export async function runMediaPass(deps: MediaPassDeps): Promise<MediaPassSummar
     // just `continue`/`break`: a `finally` always runs before control leaves the `try`.
     let cloudScratch: string | undefined;
     try {
-      let source: MediaSource;
-      let rendition: RenditionMode = "original";
-
-      if (candidate.sourcePath === null) {
-        const budget = { remainingBudget, cloudBytesFetched };
-        const resolution = await resolveCloudSource(candidate, deps, budget);
-        // Debited from EVERY arm — ok, per-item skip, AND run-stop alike — by resolveCloudSource
-        // itself; copy its result back regardless of which arm this turned out to be.
-        remainingBudget = budget.remainingBudget;
-        cloudBytesFetched = budget.cloudBytesFetched;
-
-        if (resolution.kind === "stop") {
-          stopReason = resolution.reason;
-          // The STOPPING candidate was never fetched to completion — it must be RETRIED on the
-          // next run, not skipped past. So `lastItemId`/the cursor are deliberately left at
-          // whatever the previous iteration (or the resumed-from cursor, if this was the first
-          // candidate this run) already set them to; neither is advanced onto this candidate.
-          break;
-        }
-        if (resolution.kind === "skip") {
-          reasons[resolution.reason] += 1;
-          skipped += 1;
-          lastItemId = candidate.itemId;
-          advance(deps, lastItemId, understood + skipped);
-          continue;
-        }
-        source = resolution.source;
-        rendition = resolution.rendition;
-        cloudScratch = resolution.cloudScratch;
-      } else {
-        const resolved = resolveLocalMediaPath(candidate, deps.roots, deps.maxBytes);
-        if (!resolved.ok) {
-          reasons[resolved.reason] += 1;
-          skipped += 1;
-          lastItemId = candidate.itemId;
-          advance(deps, lastItemId, understood + skipped);
-          continue;
-        }
-        source = resolved.source;
+      const resolution = await resolveCandidateSource(candidate, deps, acc);
+      if (resolution.kind === "stop") {
+        acc.stopReason = resolution.reason;
+        // The STOPPING candidate was never fetched to completion — it must be RETRIED on the next
+        // run, not skipped past. So `lastItemId`/the cursor are deliberately left at whatever the
+        // previous iteration (or the resumed-from cursor, if this was the first candidate this
+        // run) already set them to; neither is advanced onto this candidate.
+        break;
       }
+      if (resolution.kind === "skip") {
+        recordSkip(acc, deps, candidate, resolution.reason);
+        continue;
+      }
+      cloudScratch = resolution.cloudScratch;
 
-      const result = await understandArtifact(candidate, source, deps.gate);
+      const result = await understandArtifact(candidate, resolution.source, deps.gate);
       if (!result.ok) {
-        reasons[result.reason] += 1;
-        skipped += 1;
-        lastItemId = candidate.itemId;
-        advance(deps, lastItemId, understood + skipped);
+        recordSkip(acc, deps, candidate, result.reason);
         continue;
       }
 
@@ -448,11 +489,11 @@ export async function runMediaPass(deps: MediaPassDeps): Promise<MediaPassSummar
         result.outcome,
         deps.nowMs(),
         deps.scheduleEmbedding,
-        rendition,
+        resolution.rendition,
       );
-      understood += 1;
-      lastItemId = candidate.itemId;
-      advance(deps, lastItemId, understood + skipped);
+      acc.understood += 1;
+      acc.lastItemId = candidate.itemId;
+      advance(deps, acc.lastItemId, acc.understood + acc.skipped);
     } finally {
       if (cloudScratch !== undefined) {
         try {
@@ -476,17 +517,17 @@ export async function runMediaPass(deps: MediaPassDeps): Promise<MediaPassSummar
   // clearing here would restart the next run from the top and re-fetch everything this run already
   // understood, even though a short page (fewer candidates than the limit) can coincide with an
   // early stop when the stopping item is near the end of what discovery returned.
-  if (stopReason === "completed" && candidates.length < deps.limit) {
+  if (acc.stopReason === "completed" && candidates.length < deps.limit) {
     clearCursor(deps.db, deps.passId);
   }
 
   return {
-    understood,
-    skipped,
-    skippedByReason: reasons,
-    lastItemId,
-    stopReason,
-    cloudBytesFetched,
+    understood: acc.understood,
+    skipped: acc.skipped,
+    skippedByReason: acc.reasons,
+    lastItemId: acc.lastItemId,
+    stopReason: acc.stopReason,
+    cloudBytesFetched: acc.cloudBytesFetched,
     // A run that actually ran was not refused up front, whatever else stopped it — a MID-RUN
     // `budget_exhausted` has different guidance (it leaves the cursor on the last completed item
     // and resumes) and must not borrow the pre-flight refusal's numbers.

@@ -139,7 +139,7 @@ export function validateInputSchema(raw: unknown): ToolInputSchema {
     : { type: "object", properties: safeProperties, required };
 }
 
-function zodForProperty(prop: ToolInputProperty): z.ZodTypeAny {
+function zodForProperty(prop: ToolInputProperty): z.ZodType {
   switch (prop.type) {
     case "string":
       return z.string();
@@ -178,9 +178,9 @@ function zodForProperty(prop: ToolInputProperty): z.ZodTypeAny {
  */
 export function zodSchemaFromInputSchema(
   schema: ToolInputSchema,
-): z.ZodObject<Record<string, z.ZodTypeAny>> {
+): z.ZodObject<Record<string, z.ZodType>> {
   const required = new Set(schema.required ?? []);
-  const shape: Record<string, z.ZodTypeAny> = {};
+  const shape: Record<string, z.ZodType> = {};
   for (const [name, prop] of Object.entries(schema.properties)) {
     let field = zodForProperty(prop);
     if (prop.description !== undefined) field = field.describe(prop.description);

@@ -32,6 +32,7 @@
 - [Phase 4 Subsystems](#phase-4-subsystems)
 - [Built-in Agents Pattern](#built-in-agents-pattern)
 - [Phase 6+ Subsystems](#phase-6-subsystems)
+- [Spine S2 Subsystems — Local Compute Fleet](#spine-s2-subsystems)
 - [Nimbus Gateway: Process Lifecycle](#nimbus-gateway-process-lifecycle)
 - [Local Database Schema](#local-database-schema)
 - [Testing Architecture](#testing-architecture)
@@ -952,7 +953,7 @@ The `persistPartialize` function enforces Spec §2.1: exactly three slice surfac
 
 ## Phase 4 Subsystems
 
-These subsystems are active development in Phase 4 (Presence). They extend the existing architecture without replacing it — all Phase 4 clients connect over the existing IPC socket; no new Gateway protocol is required.
+These subsystems arrived in Phase 4 (Presence), which is ✅ complete. They extend the existing architecture without replacing it — all Phase 4 clients connect over the existing IPC socket; no new Gateway protocol is required.
 
 ### Model Router (Local LLM)
 
@@ -976,7 +977,7 @@ Route selection walks an ordered list — an optional explicit `[llm].route_prio
 | Ollama | Default `http://127.0.0.1:11434` | `[llm].local_model`, or one or more `[llm.local.<name>]` entries, set to a pulled Ollama model name; `prefer_local = true` to route to it |
 | llama.cpp (GGUF) | `llama-server` HTTP endpoint, default `http://127.0.0.1:8080` | `[llm].llamacpp_server_path` stores the HTTP base URL, not the binary path |
 
-Anthropic and OpenAI rows do **not** appear above: `packages/gateway/src/llm/` ships only `OllamaProvider` and `LlamaCppProvider` today, so a remote route is not yet reachable in production — the open `ProviderId` string and the route-keyed registry above are the precondition for a remote provider, not the provider itself. See `docs/CHANGELOG.md`'s 2026-08-27 entry and `docs/roadmap.md` § Active (Spine S2) for what a remote route still needs before it ships.
+**Cloud routes ship too, as of 2026-08-28 (S2 slice 2b).** `packages/gateway/src/llm/` carries four cloud adapters alongside the two local ones — Anthropic, OpenAI, Gemini and xAI — each behind a default-off per-vendor `[llm.remote.<vendor>] enabled` opt-in whose `model` names the route. **The key is read from the Vault and never from the environment**, so no environment variable can enable a vendor the owner did not name in `nimbus.toml`; a stored key alone does nothing. They are omitted from the backend table above because they are not discovered — there is no endpoint to probe, only a credential to hold. A registered non-local route is wrapped by `wrapLedgeredProvider` at `LlmRegistry.addRoute`, so it appends one `model`-class `egress_ledger` row before every generate (`I29`); locality is derived from `provider.isLocal` (`I34`), never from the vendor id.
 
 Model lifecycle (list, pull, load, unload, status) is managed via the `llm.*` IPC method namespace. `llm.status` returns every registered route (`routeId`, `providerId`, `modelName`, `isLocal`, `available`, `reason`, and an optional `contextWindow`) with its own live availability — not a single per-task decision. `llm.getRouterStatus` is kept for the older per-task-type decision payload (`{ decisions: {...} }`, one entry per `LlmTaskType`) that predates the route list; the two shapes have diverged and are not interchangeable. `llm.listModels`, `llm.pullModel`, `llm.loadModel`, `llm.unloadModel`, and `llm.setDefault` round out the namespace. The router dispatches to a resolved route's provider or falls back per the priority walk above; it never calls an LLM provider API directly.
 
@@ -1176,6 +1177,309 @@ All built-in agents follow the pattern above. The IPC handlers live in `packages
 The phases beyond Phase 5 each introduce subsystems that **extend, not replace**, the Phase 4 multi-agent + connector-mesh foundation: no new Gateway IPC transport, no new process model. New work surfaces as new item types + new connectors + new built-in agents that follow the existing patterns ([Built-in Agents Pattern](#built-in-agents-pattern), [Connector Tool Contract](#connector-tool-contract)).
 
 Phase 6 (Team) is ✅ complete (2026-06-18); its subsystems live under `packages/gateway/src/`: **federation + identity** (Slices 1 & 3, shipped 2026-06-05), **team-vault + quorum HITL** (Slice 2, shipped 2026-06-07), **org policy + admin console + observability + GDPR purge** (Slice 4, shipped 2026-06-07), **chatops** (Slice 5, shipped 2026-06-09), **cross-colleague intelligence — ghost/conflicts/huddle agents + V38 known-namespaces cache** (Slice 6a, shipped 2026-06-11), **federated action requests — cloud janitor + blast-radius preflight** (Slice 6b, shipped 2026-06-12; invariant `I24` / static `D18`, `federation/preflight-gate.ts`), and **tribal-knowledge extraction — repeat-question detection + owner-HITL KB capture** (Slice 6c, shipped 2026-06-12; invariant `I25` / static `D19`, `tribal/tribal-write-gate.ts`, V39 `tribal_clusters` ledger), and **data-warehouse/BI connectors + cross-warehouse lineage** (Slice 7 Wave 7a, shipped 2026-06-13; Snowflake/Tableau/Looker/Power BI/Monte Carlo/Bigeye read-only connectors feeding V40 `graph_relation_type` lineage edges — `derived_from`/`upstream_refs`/`monitors`), and **share & virality** (Slice 8, shipped 2026-06-15 → 2026-06-18): an outbound share leaves the machine only through `share/share-gate.ts` `createShare()` — default + caller redaction applied, the LOCAL owner approves the exact redacted preview via the `share.publish` HITL action, the body is signed with the Vault-only `share.signing.privkey` keypair (`share/share-keypair.ts`), and the record is persisted to the V41 `share_records` ledger (invariant `I27` / static `D21`); Slice 8b adds declarative-recipe shares (`--as-recipe`) backed by the V42 `tool_call_log.params_json` column, Slice 8c adds read-only local replay (`nimbus verify-share --replay`), and Slice 8d adds peer-to-peer forwarding with an immutable provenance hop-chain into the inert V43 `share_inbox` (`share/share-forward.ts`, `D21` extended). **Slice 9** (the deferred-from-Phase-5 backlog, 2026-06-14 → 2026-07-19) added the Mendeley, Workday, and Apple Mail/iCloud-Calendar connectors, the HITL-gated ArgoCD/Flux/MLflow writes (`I26`/`D20`), and the web-clipper surface under `clips/` (invariant `I30`). Post-phase, the always-on **egress ledger** (`egress/`, invariant `I29` / static `D22`, V44 `egress_ledger`) opened Spine slot S1, joined by **research briefs** (`briefs/`) — an owner-triggered multi-source research pass over the local index: in-memory-only run state (`BriefRunController`; source bodies never touch disk, a restart drops in-flight runs), citation-validated synthesis (`brief-synthesis.ts` + `quote-verify.ts`, typed `synthesis: { model, remote, disclosure? }` provenance), and saved reports as `nimbus:research_brief` items (joining `PROSE_HEAVY_TYPES`); default-off via `[briefs]` in `nimbus.toml`, no new invariant, no migration — see [`roadmap.md`](./roadmap.md#spine-s1). The **`teamvault/`** subsystem owns the team-scoped credential storage and access control (`TeamVaultStore`, `team-vault-keys.ts`, `federation/invoke-gate.ts`); the **`chatops/`** subsystem owns the bidirectional Slack/Teams `@nimbus` bot surfaces (`identity-mapper.ts`, `command-parser.ts`, `reply-dispatcher.ts`, transports). **Its intent surface is three-wide** — `intent-router.ts`'s `IntentRouter.handle` resolves an inbound message to a channel binding (an unbound channel is silently ignored — fail-closed), maps the sender's identity, and then dispatches on one of three `parseCommand` outcomes: `read`, which calls `askEngine(query, namespace)`; `write`, which calls `runGatedWrite(...)` so the action lands on the resource owner's `I2` HITL gate rather than the requester's say-so; or, shipped 2026-08-30, `agent`, parsed from an `agent <name> k=v …` line **ahead of** the `read` fallthrough (`command-parser.ts`'s `parseAgentCommand` runs first; `agent`/`run` share a leading keyword with `read`'s free text, so `@nimbus why is checkout slow?` still parses as `read`) and dispatched in-process through `dispatchAgentsRpc` — never a bypass emitter (`D22(d)`). The permitted set is **eleven, not fourteen**: `AGENTS_RPC_HANDLERS` carries fifteen entries (the fourteen built-in agents plus `whyPeek`, a companion sharing `why`'s dispatch rather than a fifteenth agent), and `EXTERNAL_EXCLUDED_AGENT_METHODS` — the same set the HTTP/MCP surfaces already exclude, generalized from `HTTP_EXCLUDED_AGENT_METHODS` so ChatOps inherits it rather than re-deciding it — drops `preflight`/`premortem` for their side effects, `negotiate` because its `--person` argument turns it into a dossier-builder for anyone who can read the channel, and `whyPeek` as a companion rather than an agent; every one of those reasons is stronger in a shared room. Params are **coerced, not validated** (`ipc/agent-param-kinds.ts`) — `ipc/agents-rpc.ts` keeps sole ownership of every bound and every `-32602` message, and a non-finite number is refused before dispatch. **An agent intent requires a mapped identity**: `binding.unmapped === "public-read"` admits an unmapped user to `read` only, so the same person gets an answer to `@nimbus why is checkout slow?` and a refusal for `@nimbus agent why ref=…` in the same channel — a real, deliberate inconsistency (the free-text path's permissiveness is the older decision, not the better one), not an oversight. **A brief is not filtered by channel or namespace**: it is synthesized from the owner's whole local index, exactly as a `read` answer already is, and posted into a room that may include people with no Nimbus identity — there is no filter to apply, rather than one that was skipped (`roadmap.md`'s messaging-surface block corrects the earlier `I17` claim). Rendering caps the brief at a per-platform byte budget and **always binds it**: ordinary body content is dropped from the end first, at ANY heading level (not only `##` — a model rewrite does not reliably match the renderer's own level-2 convention, so a `##`-only split would let a `#`- or `###`-headed section survive untouched over the cap), and a reserved section is touched only once that is exhausted — glossary's synthesis-reserved `## Terms` table (held back for synthesis integrity, not disclosure) is shrunk first, with an honest count, and an `I31` disclosure section (`## Gaps`, plus `negotiate`'s two, moot here since `negotiate` is excluded) has its own bytes cut only as the absolute last resort, always with an unambiguous "content was cut" notice rather than a silent overflow — the truncator reuses `agents/_lib/`'s own section machinery (`sectionBody`/`stripSections`/`joinReserved`/`topLevelSections`) rather than a second markdown parser, so it cannot disagree with the invariant at the boundary. The reply goes out through a second `ReplyDispatcher` bound to `posts.agentBrief`, keeping `I23`'s "sole operational post path" claim intact, and — since every outbound ChatOps post already appends one `egress_ledger` row under the `chatops` `I29` coverage class (`egress/chatops-egress.ts`) — that post appends exactly one row per brief with `method='chatops.agentBrief'`, from the post appender, never the invoker. It works with **no LLM configured**, which is the point: a brief renders deterministically under `[agents].synthesis = "off"` while `ask` in the same channel would refuse. Four of the eleven — `ghost`, `conflicts`, `huddle`, `janitor` — are `federatedAgentBase` callers and fan out to paired peers carrying the **gateway owner's** federation identity, never the chat user's (only the first three of those four accept a `namespaces` parameter selecting which peers to ask; `janitor` does not); the peer sees no indication the request came from a channel, so a mapped chat user borrows the owner's identity for the call, exactly as any `agents`-scoped HTTP bearer token already does. See [`roadmap.md` § Track 2 → Client surfaces](./roadmap.md#client-surfaces). Forking VS Code to build an editor around these surfaces was considered and rejected — see [`roadmap.md` § Rejected Directions](./roadmap.md#rejected-directions). The **`policy/`** subsystem owns the signed `nimbus.policy.toml` lifecycle — schema+parser, Ed25519 sign/verify over canonical bytes, the `PolicyStore`, and the `PolicyGate` that resolves a monotonic-stricter `EnforcedPolicy` (tighten-only, fail-closed to the last-valid/baseline; invariant `I22`, static `D16`) feeding connector-allowlist / retention-floor / quorum-HITL enforcement, peer distribution (`federation.policy` serve + pubkey pinning + `nimbus policy trust`), the audit-log shipper, and GDPR purge (orchestration + HITL-gated `federation.purge` serve + signed deletion records). The **`status/`** subsystem produces a `GatewayStatus` snapshot and its Prometheus exposition (`GET /metrics`), surfaced through the dependency-free static admin console in **`packages/admin-console`** (served at `/admin/*`). The Phase 6 breakdown and its acceptance criteria live in **[`roadmap.md` § Phase 6 — Team](./roadmap.md#phase-6-team)**; the per-phase breakdown and links to each canonical design spec for forward-looking phases live in **[`roadmap.md` § Planned](./roadmap.md#planned)** (Phases 7–27) — that's the single source of truth for forward-looking scope, so it isn't duplicated here. In brief: Phase 7 (Engineering Excellence — service catalog, DORA, `nimbus excellence`), 8 (Security Engineering — `security_finding` / `posture_finding` / four agents), 9 (AI Engineering Loop — `llm_trace` / `ml_model` / `vector_index`), 10 (Autonomous Agent — standing approvals, scheduled workflows), 11 (Sovereign Mesh), 12 (Enterprise), 13 (Desktop Distribution), 14 (Agent Evolution / AI v2 — multimodal + code-exec sandbox), 15 (Cross-Organizational Federation), 16 (The Platform Layer — fleet config-as-code, paved roads, lead's-eye intelligence), 17 (The On-Call Copilot — predict/understand/mitigate/coordinate), 18 (Vertical Personas), 19 (Ambient Surfaces), 20 (Personal & Household Federation), 21 (Sovereign Trust Substrate), 22 (The Proof Layer — verifiable negatives), 23 (Inert to Injection — the unexfiltratable agent), 24 (Agent Archaeology), 25 (Confidential Mesh Compute), 26 (Provable Governance), 27 (The Agent Society). Plus cross-phase North-Star capabilities + a near-term First-Run/Time-to-Wow initiative (incl. `nimbus demo`) + the killer-demo milestone.
+
+---
+
+<a id="spine-s2-subsystems"></a>
+
+## Spine S2 Subsystems — Local Compute Fleet
+
+From Phase 7 onward the build order is the **Sequencing Spine overlay (S1 → S5)**, not the phase
+numbers — see [`roadmap.md`](./roadmap.md). S1 (Local Brain) made the local index answerable and
+shipped the egress ledger, the fourteen read-only agents and the answer-quality set; those live in
+the sections above. **S2 (Local Compute Fleet)** makes local compute *usable*: six capabilities
+that let the gateway run code, drive a browser or a shell, understand media, author its own tools,
+work overnight, and — the one that reaches outward rather than inward — route to a frontier model
+you bring yourself.
+
+Everything in S2 is **default off**. Not one of these capabilities does anything on a stock
+install; each needs an explicit `nimbus.toml` opt-in.
+
+Five of the six can additionally be locked off org-wide by signed policy (`I22`,
+`EnforcedPolicy.capabilitiesDisabled`), through the `[policy.capabilities.ai_v2]` names
+`code_execution`, `computer_use`, `tool_generation`, `multimodal_input` and `agent_fleet`. (The
+sixth of those names, `local_finetuning`, is config-forward and gates nothing yet.) **Cloud model
+routing is the exception and has no lockoff name of its own** — it is governed by the per-vendor
+`[llm.remote.<vendor>] enabled` opt-in and, gateway-wide, by the local `[llm] enforce_air_gap`,
+which refuses every non-local route rather than one named capability. A signed org policy cannot
+reach it today; that is a real gap in the lockoff surface, not a design choice, and it is the one
+S2 capability an org administrator cannot turn off from the policy anchor.
+
+### The shared gate shape
+
+Every S2 capability that reaches outside the gateway ships a **dedicated gate module** rather than
+an executor action type, and they are deliberately the same shape so a reader who knows one knows
+the rest. (Fleet is the exception and has none: a fleet job is read-only, so configuring it IS the
+decision — what it needs instead is `I38`'s locality decorator, below.)
+
+| Subsystem | Gate | Invariant | Static rule |
+|---|---|---|---|
+| Sandboxed code execution | `exec/exec-gate.ts` `runExecution()` | `I33` | `D23` |
+| Computer use (browser · terminal) | `computer-use/cu-gate.ts` `runAction()` / `openSession()` | `I35` | `D26` (3 rules) |
+| Media understanding | `multimodal/media-gate.ts` `understandArtifact()` | `I37` | `D27` (2 rules) |
+| Runtime tool generation | `toolgen/toolgen-gate.ts` `createGeneratedTool()` | `I39` | `D29` (4 rules) |
+| Saved-tool durability | `toolgen/toolgen-saved-store.ts` `readVerifiedSavedTool()` | `I40` | `D29(d)` |
+
+**Why not `ToolExecutor.gate()`.** The executor's HITL gate (`I2`) is shaped around **connector
+dispatch**: it pairs every gated action with a dispatcher and an `EgressSink`, and its frozen
+`HITL_REQUIRED_BACKING` set is forty-odd members that all mean "call a cloud API". Not one of the
+gates above guards a connector call — they guard a local OS surface, a local model, a local
+filesystem artifact, or a Nimbus-brokered request. Routing them through the executor would need either a widened `PlannedAction` or a
+synthetic action type that dispatches to nothing, and it would put arbitrary code execution inside a
+frozen set whose meaning is the opposite. The dedicated gate is also the established pattern for
+high-blast-radius **local** capabilities — `share/share-gate.ts` (`I27`),
+`tribal/tribal-write-gate.ts` (`I25`), `federation/preflight-gate.ts` (`I24`) — each one greppable
+chokepoint that a static `D`-rule confines, each taking approval as an injected dependency so it is
+unit-testable without the engine.
+
+**The order inside a gate is itself the invariant.** All four run the same sequence, and the
+sequence is what the enforcement test pins:
+
+1. Refuse when the capability is off by **local config**. Before consent, so a disabled capability
+   never advertises its own existence by prompting.
+2. Refuse when off by **resolved org policy** (`I22`). Also before consent — and fail *closed* when
+   the policy accessor is absent, rather than defaulting to enabled.
+3. For a gate that SPAWNS, assert the **sandbox will confine this exact policy**, still before
+   consent, via `SandboxRunner.canConfine(policy)` — never `degradedReason() === null` (non-null on
+   Windows even when the runner is fully active) and never `isFullyActive()` (reports a Linux helper
+   used solely for per-host network filtering that a no-network policy never touches, and that CI
+   does not install). Both are fail-closed bugs `I33` already paid for. This step is where the four
+   gates differ most: `exec` and the computer-use **terminal** lane assert `canConfine` directly;
+   `toolgen` asserts it AND then runs a live probe, spawning a nine-line inline child against a
+   sentinel the gate wrote outside every manifest grant and proved readable from the parent first,
+   with any read failure counting as denial; the computer-use **browser** lane cannot use
+   `SandboxRunner` at all and asserts its exact launch policy instead (below); and `media-gate`
+   spawns nothing, so it has no analogue.
+4. Read the subject **once** — the script body, the buffered command line, the drafted tool. Re-read
+   at spawn time is a TOCTOU that defeats the gate, because here the human *is* the boundary.
+5. Obtain the **local owner's approval of the verbatim subject**, never a digest — a digest is a
+   rubber stamp with extra steps — over a per-capability `ConsentBroker` binding, fail-closed on TTL.
+6. Only then act.
+
+Every outcome appends one audit row whether it ran or not. `audit_log.hitl_status` is
+CHECK-constrained to `approved` / `rejected` / `not_required`, so a refusal-before-consent and an
+owner denial both record `rejected` and are told apart by `outcome` in the payload;
+`not_required` is deliberately never used for an actuating outcome, where it would read as "ran
+without needing approval".
+
+### Sandboxed code execution (`exec/`, `nimbus exec`)
+
+`nimbus exec` runs a script the owner has approved verbatim, inside the platform sandbox, with
+`permissions.network` **empty by construction** — a requested net grant is rejected with a named
+error, never silently dropped.
+
+"No network" **includes loopback**, and loopback is the property that matters. The interesting
+target is not the internet; it is the Gateway's own surfaces — the JSON-RPC IPC socket and the
+`127.0.0.1` HTTP API with its `agents` / `resolve` scopes and its `I13` write surface. A sandbox
+that blocked the internet and allowed loopback would be a privilege-escalation path out of the very
+confinement the owner consented to. It holds today through three unrelated mechanisms:
+
+| Platform | Mechanism with an empty `permissions.network` | Loopback reachable? |
+|---|---|---|
+| Linux | `--unshare-net` | No — a fresh netns has its *own* loopback; the host's `127.0.0.1` is not in it. |
+| macOS | SBPL `(deny default)` with no `(allow network*)` block emitted at all | No — with no hosts there is no network allow rule, so the default denial covers loopback. |
+| Windows | AppContainer with no `internetClient` capability | No — AppContainer blocks loopback absent an explicit `CheckNetIsolation` exemption. |
+
+Three independent implementation accidents is the most fragile way for a property to be true, which
+is why it carries a named per-platform integration test rather than a comment.
+
+**Scope bound:** CLI/owner-only. The LLM cannot invoke an execution, so no indexed untrusted text
+reaches the prompt — that is what makes one human approval a sufficient boundary here, and it is the
+assumption to re-examine first when an agent-callable path lands. `I11` is correspondingly not
+exercised and no `egress_ledger` row is appended, by construction rather than by omission.
+
+### Computer use (`computer-use/`, `nimbus computer`)
+
+A HITL-gated loop over two lanes, laid out deliberately parallel to `exec/` — `cu-gate.ts` to
+`exec-gate.ts`, `cu-actuate.ts` to `exec-run.ts`, `cu-consent-broker.ts` to
+`exec-consent-broker.ts` — plus what the lane model adds: `cu-session.ts` (the envelope),
+`cu-classify.ts` (structural classification), `cu-terminal-buffer.ts`, `cu-boot-reconcile.ts`, and
+the drivers under `cu-lanes/`. The whole `computer.*` IPC namespace is LAN-forbidden (`I5`) and
+absent from the Tauri allowlist (`I7`), for the same reason `exec.*` is: `computer.act` is
+RCE-class and `computer.approvalRespond` is the owner answering a prompt, which no remote peer may
+answer on their behalf.
+
+**Two approvals, not one.** The owner approves a **session envelope** up front — lane, target, the
+full origin list, the action budget, the wall clock — and that envelope is immutable: widening it is
+unrepresentable rather than merely disallowed. Then every *actuating* step takes its own single-use
+approval. The HITL class is derived **structurally from the gateway-observed target**, never from
+the model's own description of what it is about to do.
+
+**The two lanes diverge on confinement, and the difference is stated rather than smoothed over:**
+
+- The **browser** lane is *not* `SandboxRunner`-confined. `SandboxRunner` cannot carry a CDP control
+  channel on any of the three platforms (macOS `(deny default)` denies `network-bind`; the Windows
+  AppContainer helper forwards no fds 3/4; Linux and Windows both need `nimbus-sandbox-helper` for
+  any network-bearing policy, which CI does not install). It is confined instead by Chromium's own
+  sandbox — the launch assertion refuses `--no-sandbox` and its siblings — a Nimbus-owned
+  `--user-data-dir`, the CDP request policy, and headless plus `Browser.setDownloadBehavior: deny`.
+  Its outbound requests are ledgered per `(origin, verdict)` by the live `browser` egress class.
+- The **terminal** lane *is* `SandboxRunner`-confined: its only channel is stdio, so the CDP
+  objection does not apply, and `canConfine(policy)` is asserted before consent over the policy that
+  actually spawns. It adds **no egress class at all**, because `permissions.network` is `[]` by
+  construction — proven per platform by a test that first runs the same `curl` through an
+  unconfined shell as a positive control, without which "zero server hits" would pass for any
+  reason at all.
+
+The terminal lane's own clause: **no byte reaches the shell before the owner has approved the
+complete line.** Bytes accumulate in a gateway-side buffer; a per-keystroke write path violates this
+even if every keystroke is individually classified, because inside `vi` or `fzf` a single character
+*is* the destructive action. `classifyTerminalAction` returns `actuating` unconditionally and takes
+exactly one parameter, so the model's description cannot reach it — enforced by arity, not
+convention. The buffer also refuses what the shell would happily ignore: bidirectional overrides,
+zero-width characters, U+2028/9 and the BOM (Trojan Source, CVE-2021-42574), because on this lane
+the rendered prompt *is* the boundary and a right-to-left override makes what the owner reads differ
+from the bytes that run. Homoglyphs remain out of reach and are the stated residual.
+
+Screenshot pixels are BLAKE3-digested and never written to disk. The **screen** lane is a
+config-forward name only: `KINDS_BY_LANE.screen` is an empty set, total over `CuLane`, so every kind
+proposed against it is refused out of envelope and a third lane is a compile error rather than a
+silent gap.
+
+### Multimodal I/O (`multimodal/`, `nimbus media`)
+
+A budgeted, resumable pass that turns local and cloud-backed media into searchable derived items.
+Audio and video are transcribed by a local `whisper-cli` after an `ffmpeg` transcode; still images
+and a small number of uniformly sampled video frames are captioned by a local Ollama-served VLM. The
+result is stored as **derived items** (`nimbus:video_understanding`, `nimbus:image_understanding`)
+rather than a new table, so it joins the existing index, embedding and search paths unchanged — and
+its text is pinned to the LOCAL embedder, so nothing extracted from a file can reach a remote one by
+the embedding path.
+
+**The gate shipped before the thing it gates.** `media-gate.ts` landed in PR 1 carrying only its
+local arm, when there was not yet a remote path to gate. That is the browser lane's lesson stated as
+a rule: retrofitting a chokepoint onto code that already reaches the resource is how a bypass gets
+built. PR 4 added an *arm* to an existing gate rather than a gate.
+
+Order inside the gate:
+
+1. Resolve modality from `media-source-registry.ts` plus mime and extension. An unresolvable
+   artifact is **skipped with a reason**, never guessed at.
+2. Resolve the provider. Locality is **derived** from `provider.isLocal` (`I34`), never passed in.
+3. A non-local provider requires a durable, artifact-scoped grant for **this** artifact. No grant
+   means **refuse** — never fall back to remote, and never prompt from inside a pass.
+4. A local provider that is unavailable means **refuse**, not degrade to remote. Same fail-closed
+   posture as `enforce_air_gap`.
+5. Only then hand bytes to a model.
+
+**Images are the only modality with a remote tier**, and it is closed by two independent mechanisms:
+`media-grant-store.ts` refuses to *write* a grant row whose modality is `av`, and
+`build-media-pass-deps.ts` resolves every non-image candidate to the local composite regardless of
+what the store holds. Remote STT is therefore refused by construction, not by check. A grant WIDENS
+what may happen and never narrows what an artifact could already do locally.
+
+The remote arm reuses the vendor's existing `[llm.remote.<vendor>]` Vault credential **without
+inheriting its capability**: a key that already works for `nimbus ask` grants nothing here on its
+own. Consent lives in the CLI (`nimbus media allow-remote`'s enumerated preview and `[y/N]`
+confirmation), not a gateway-side broker — a broker with no in-pass caller would be a module that
+only ever answers "no".
+
+### Runtime tool generation (`toolgen/`, `nimbus tool`)
+
+The owner describes a capability; a model drafts a tool **body and input schema** into a
+Nimbus-authored skeleton; the owner approves the verbatim artifact; the tool runs sandboxed.
+
+**The model's cooperation is not required, which is what makes one human approval sufficient here.**
+The manifest is Nimbus-constructed with `permissions.network: []` **by construction** (a requested
+grant is rejected, never dropped), so a body that ignores the supplied helper and calls raw
+`fetch()` simply fails at the OS on all three platforms. The transport, the request-issuing helper
+and the manifest are all Nimbus-authored; the model fills a hole in a template it does not control.
+
+The one door out is the **broker**, `toolgen-broker.ts`, reached over a custom `nimbus/fetch` method
+on the MCP stdio channel — stdio being the one channel every sandbox forwards on all three
+platforms. (fd 3/4 is not forwarded by the Windows AppContainer helper, and a loopback socket cannot
+reach the gateway anyway, for exactly the reason `exec` relies on above.) The broker is the SSRF
+boundary: `https:` only, exact host match against the approved envelope, the **resolved address**
+checked — not just the hostname — against loopback / link-local / RFC 1918 / `169.254.169.254` even
+for an approved host, tool-supplied `Authorization` / `Cookie` headers stripped, redirects refused
+rather than followed, and a resolution failure itself refused *and* ledgered. One `tool`-class
+egress row is appended before every brokered request; an append failure aborts it.
+
+**Two residuals, stated rather than softened:** the allow-list bounds *where* a tool may send, never
+*what* — an approved host may receive anything the tool can compute; and the destination check is
+check-then-connect, not connect-to-checked, because Bun's `fetch` offers no connection pinning.
+
+**Persistence is a separate, stronger consent.** `nimbus tool save` promotes a live tool to one that
+survives a restart, and that is a different promise from create-time approval — it consents to "run
+this in every future session, unattended". It therefore prompts through its own broker
+(`toolgen.saveApprovalRequest`, never create-time's `toolgen.approvalRequest`) over the verbatim
+body. The canonical artifact is then signed with a Vault-only Ed25519 seed and written to
+`<configDir>/toolgen/saved/<toolId>/`, and `readVerifiedSavedTool` re-verifies that signature
+**live, every time** — at boot, at registry load, and again immediately before every spawn — never
+trusting an earlier pass or the cached `disabled_reason` column.
+
+What signing adds over the hash check extensions already carry is narrow and worth stating
+precisely: **hash verification trusts the database, a signature trusts only the Vault.** An attacker
+with filesystem write access holds both the artifact and the DB and can rewrite them consistently;
+forging the signature needs the Vault-held seed, which never touches disk or the DB. This defends
+the filesystem-write attacker and claims nothing against the Vault-read one.
+
+**Structurally offered, not model-reachable.** `buildGeneratedTools` exists and is tested, but
+`engine/agent.ts`'s optional `NimbusEngineAgentDeps.toolgen` is not supplied by its one production
+caller, and there is no `toolgen.invoke` IPC method — so a generated tool is reachable only via the
+CLI this release. Agent-initiated tool proposal is a recorded **deferral**, not a gap: every
+capability that shipped is owner-initiated, and a model proposing its own network-reaching tool
+mid-conversation is a materially larger trust boundary that gets its own consent-UX pass.
+
+### Overnight sub-agent fleets (`fleet/`, `nimbus fleet`)
+
+A sequential scheduler that runs configured read-only agents on idle local hardware and stores their
+briefs durably, laid out like `sync/`: `fleet-scheduler.ts` (the loop), `fleet-invoker.ts` (dispatch
+of one job), `fleet-store.ts` (sole writer of the V60 tables), `fleet-synthesis-router.ts` (the
+`I38` decorator), `config/fleet-toml.ts` (parsing).
+
+**Three things it deliberately does not reuse**, each for a stated reason:
+
+- **`AgentRunController`** is ephemeral by design — a 10-minute TTL, three concurrent runs, sixteen
+  retained terminal runs — all tuned for an HTTP client polling `{runId}`. An overnight run read at
+  09:00 wants the opposite of every one of those numbers, and changing them reaches into the live
+  HTTP path. The fleet owns its own durability instead.
+- **`SyncScheduler`** would supply timing and backoff for free, but it is load-bearing for the whole
+  of `I29`'s `sync` coverage class. Adding a second, differently-classified job kind means every
+  future reader holds two egress stories at once in the file where that must not be ambiguous. The
+  saving is timer code; the cost is muddying a chokepoint.
+- **An `agents/<name>.ts` emitter.** `D22(d)` forbids importing one outside `ipc/agents-rpc.ts`, so
+  the invoker reaches agents through `dispatchAgentsRpc` exactly as `agent-http-invoke.ts` does.
+
+**`await dispatchAgentsRpc(...)` awaits the *scheduling* of the work, not the work.**
+`emitBriefWithSynthesis` is fire-and-forget by design — it builds and synthesises on a detached
+promise and returns `{ sessionId }` in about a millisecond. That is correct for the socket client
+(which waits for a `briefReady` notification) and the HTTP client (which polls), but a scheduler
+looping over jobs awaiting that call would launch every configured job **concurrently**, saturating
+the very CPU and GPU it exists to use gently, making the between-jobs re-probe meaningless, and
+making yield-at-job-boundary unreachable because there would be no boundaries. So `fleet-invoker.ts`
+returns a promise that settles on the *completion* notification, with a per-job timeout — without
+which a hung synthesis would wedge the fleet until the process restarts, and the detached promise
+means nothing else would notice.
+
+**Attribution is a fact, not a claim.** The `fleet` `ClientKind` is set by the gateway's own
+scheduler and is absent from `RECOGNISED`, so no socket client can declare it — the same reasoning
+`http` and `chatops` already carry. Because `egress/egress-bearing-kinds.ts` is total over
+`ClientKind`, adding the member did not compile until its egress status was decided.
+
+The synthesis of an unattended run is **pinned local** unless `[fleet] allow_remote` *and* a per-run
+call budget both cover it (`I38`). A frontier key configured under `[llm.remote.<vendor>]` for
+interactive use grants the fleet nothing on its own. The enforcement point is a decorator over
+`SynthesisRouter` guarding **both** methods — `resolveForSynthesis` withholding a remote provider is
+the graceful normal path, and `generateMarkdown` refusing is the second door for a caller that
+obtained a provider some other way. Rejected alternatives: `LlmRouter.setTaskPin` (router-wide, so a
+background run would re-route a concurrent interactive `nimbus ask`) and `enforce_air_gap`
+(gateway-wide).
+
+`nimbus fleet digest` reports what moved between each job's newest brief and its predecessor. It
+compares the deterministic `findings_json`, **never** the synthesised markdown — a rewrite differs
+run to run on an unchanged index — through per-agent extractors whose map is compiler-enforced total
+over the eligible set, so flipping a twelfth agent to eligible fails the build until its extractor
+exists. It makes **no model call at any point**, which is what keeps it outside `I38` by
+construction rather than by check.
+
+### Bring-your-own-frontier-model routing (`llm/`)
+
+S2 also made the `model` egress class live rather than latent. `packages/gateway/src/llm/` carries
+four cloud adapters — Anthropic, OpenAI, Gemini and xAI — each behind a default-off per-vendor
+`[llm.remote.<vendor>] enabled` opt-in with its key read from the **Vault and never the
+environment**. See [Model Router](#model-router-local-llm) above for how a route is selected, and
+`I29`'s `model` coverage class for how every non-local call is ledgered before it is made.
 
 ---
 
@@ -2038,7 +2342,9 @@ nimbus/
 │   │       ├── config/         ← Config loader, schema versioning, profiles, env-var overrides
 │   │       ├── telemetry/      ← Opt-in aggregate telemetry collector (no content, configurable endpoint)
 │   │       ├── extensions/     ← Extension Registry, manifest validator, child process manager
-│   │       ├── llm/            ← Ollama + llama.cpp providers, router, registry, GPU arbiter (Phase 4)
+│   │       ├── llm/            ← Ollama + llama.cpp providers (Phase 4) + the four cloud
+│   │       │                      adapters (S2 slice 2b: Anthropic/OpenAI/Gemini/xAI), router,
+│   │       │                      registry, GPU arbiter
 │   │       ├── voice/          ← STT (whisper-cli), TTS, wake-word (Phase 4)
 │   │       ├── updater/        ← Auto-update state machine, manifest fetcher, Ed25519 verifier (Phase 4)
 │   │       ├── automation/     ← Watcher engine, graph-predicate evaluator
@@ -2050,6 +2356,21 @@ nimbus/
 │   │       ├── chatops/         ← Bidirectional Slack/Teams @nimbus bot (I23) (Phase 6)
 │   │       ├── tribal/          ← Repeat-question detection + owner-HITL KB capture (I25) (Phase 6)
 │   │       ├── share/           ← Outbound share gate (I27), keypair, redaction, recipes (Phase 6)
+│   │       ├── clips/           ← Web-clipper surface + pairing window (I30) (Phase 6 Slice 9)
+│   │       ├── egress/          ← Append-only BLAKE3 egress ledger (I29) + the per-class
+│   │       │                      appenders it is built from (S1)
+│   │       ├── briefs/          ← Owner-triggered multi-source research pass (S1, default-off)
+│   │       ├── glossary/        ← Implicit-knowledge terminology extraction (S1)
+│   │       ├── decisions/       ← Implicit ADR extraction (S1)
+│   │       ├── ownership/       ← Ownership graph (S1)
+│   │       ├── premortem/       ← Comparable-history risk themes (S1)
+│   │       ├── metrics/         ← DORA calculators + bucketed time series (`nimbus stats`)
+│   │       ├── exec/            ← Sandboxed code-execution gate (I33) (S2)
+│   │       ├── computer-use/    ← HITL-gated browser + terminal lanes (I35), cu-lanes/ drivers (S2)
+│   │       ├── toolgen/         ← Runtime tool generation: create gate (I39), brokered egress,
+│   │       │                      signed saved-tool persistence (I40) (S2)
+│   │       ├── fleet/           ← Overnight sub-agent fleets: scheduler, invoker, store,
+│   │       │                      the I38 synthesis decorator, change digest (S2)
 │   │       ├── multimodal/      ← Media understanding (S2): media-gate.ts (the chokepoint every
 │   │       │                      understander goes through, and the local-vs-remote decision,
 │   │       │                      I37), multimodal-config.ts (the [multimodal] section), vlm/

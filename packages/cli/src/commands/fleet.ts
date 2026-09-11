@@ -91,56 +91,61 @@ function flagValue(args: readonly string[], name: string): string | undefined {
  * (print USAGE, exit 1) instead of a try/catch, since none of these failures need a distinct
  * message beyond "here is how the command works".
  */
+function parseBriefsArgs(rest: readonly string[], json: boolean): ParsedFleetArgs | undefined {
+  const limitRaw = flagValue(rest, "--limit");
+  const job = flagValue(rest, "--job");
+  let limit: number | undefined;
+  if (limitRaw !== undefined) {
+    const n = Number.parseInt(limitRaw, 10);
+    if (!Number.isFinite(n) || n <= 0) return undefined;
+    limit = n;
+  }
+  return {
+    sub: "briefs",
+    ...(limit === undefined ? {} : { limit }),
+    ...(job === undefined ? {} : { job }),
+    json,
+  };
+}
+
+/** `--since` is optional; absent means the 24h default the digest has always used. */
+function parseDigestArgs(rest: readonly string[], json: boolean): ParsedFleetArgs | undefined {
+  const i = rest.indexOf("--since");
+  if (i === -1) return { sub: "digest", windowMs: 86_400_000, json };
+  const raw = rest[i + 1];
+  if (raw === undefined) return undefined;
+  let windowMs: number;
+  try {
+    windowMs = parseDurationToMs(raw);
+  } catch {
+    // Returning undefined routes to the existing print-USAGE-and-exit-1 path rather than
+    // inventing a second failure vocabulary for this one subcommand.
+    return undefined;
+  }
+  if (!Number.isInteger(windowMs) || windowMs <= 0) return undefined;
+  return { sub: "digest", windowMs, json };
+}
+
 export function parseFleetArgs(argv: readonly string[]): ParsedFleetArgs | undefined {
   const [sub, ...rest] = argv;
   const json = rest.includes("--json");
+  // A leading `--` means the positional argument is missing and a flag was read as one.
+  const positional = rest[0]?.startsWith("--") === true ? undefined : rest[0];
   switch (sub) {
     case "status":
       return { sub: "status", json };
     case "list":
       return { sub: "list", json };
-    case "briefs": {
-      const limitRaw = flagValue(rest, "--limit");
-      const job = flagValue(rest, "--job");
-      let limit: number | undefined;
-      if (limitRaw !== undefined) {
-        const n = Number.parseInt(limitRaw, 10);
-        if (!Number.isFinite(n) || n <= 0) return undefined;
-        limit = n;
-      }
-      return {
-        sub: "briefs",
-        ...(limit === undefined ? {} : { limit }),
-        ...(job === undefined ? {} : { job }),
-        json,
-      };
-    }
-    case "show": {
-      const id = rest[0];
-      if (id === undefined || id.startsWith("--")) return undefined;
-      return { sub: "show", id, json };
-    }
-    case "run": {
-      const job = rest[0];
-      if (job === undefined || job.startsWith("--")) return undefined;
-      return { sub: "run", job, force: rest.includes("--force"), json };
-    }
-    case "digest": {
-      const i = rest.indexOf("--since");
-      if (i === -1) return { sub: "digest", windowMs: 86_400_000, json };
-      const raw = rest[i + 1];
-      if (raw === undefined) return undefined;
-      let windowMs: number;
-      try {
-        windowMs = parseDurationToMs(raw);
-      } catch {
-        // Returning undefined routes to the existing print-USAGE-and-exit-1 path rather than
-        // inventing a second failure vocabulary for this one subcommand.
-        return undefined;
-      }
-      if (!Number.isInteger(windowMs) || windowMs <= 0) return undefined;
-      return { sub: "digest", windowMs, json };
-    }
+    case "briefs":
+      return parseBriefsArgs(rest, json);
+    case "show":
+      return positional === undefined ? undefined : { sub: "show", id: positional, json };
+    case "run":
+      return positional === undefined
+        ? undefined
+        : { sub: "run", job: positional, force: rest.includes("--force"), json };
+    case "digest":
+      return parseDigestArgs(rest, json);
     default:
       return undefined;
   }

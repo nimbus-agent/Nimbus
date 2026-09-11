@@ -1,8 +1,8 @@
-import { decodeBase64, encodeBase64 } from "@nimbus-dev/sdk";
 import { blake3 } from "@noble/hashes/blake3.js";
 import { bytesToHex } from "@noble/hashes/utils.js";
 import nacl from "tweetnacl";
 import { ensureShareKeypair } from "../share/share-keypair.ts";
+import { decodeBase64, encodeBase64 } from "../util/base64.ts";
 import type { NimbusVault } from "../vault/nimbus-vault.ts";
 
 /**

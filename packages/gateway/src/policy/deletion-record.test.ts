@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { encodeBase64, generateEd25519Keypair } from "@nimbus-dev/sdk";
+import { encodeBase64 } from "../util/base64.ts";
+import { generateEd25519Keypair } from "../util/ed25519.ts";
 import { signDeletionRecord, verifyDeletionRecord } from "./deletion-record.ts";
 
 describe("deletion record", () => {

@@ -25,6 +25,15 @@ export function QuickQuery() {
   const markDone = useNimbusStore((s) => s.markDone);
 
   const unsubRef = useRef<(() => void) | null>(null);
+  const promptRef = useRef<HTMLInputElement>(null);
+
+  // Focused imperatively rather than with the `autoFocus` attribute. This window exists only to
+  // take one question, so the caret belongs in the box the moment it opens -- but `autoFocus`
+  // is an accessibility smell precisely because it steals focus from wherever the reader was, and
+  // that objection does not apply to a spotlight window that just appeared with nothing else in it.
+  useEffect(() => {
+    promptRef.current?.focus();
+  }, []);
 
   useEffect(() => {
     const onKey = async (e: KeyboardEvent) => {
@@ -87,7 +96,7 @@ export function QuickQuery() {
     >
       <form onSubmit={onSubmit} style={{ borderBottom: "1px solid var(--color-border)" }}>
         <input
-          autoFocus
+          ref={promptRef}
           value={prompt}
           onChange={(e) => setPrompt(e.target.value)}
           placeholder="Ask Nimbus…"

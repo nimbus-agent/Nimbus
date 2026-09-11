@@ -130,10 +130,12 @@ export const DOCS_TREE_GLOBS = ["docs/**/*.md"];
  * skipped when its path references are legitimately expected not to resolve
  * against the CURRENT tree:
  *
- * - `docs/CHANGELOG.md` and `docs/superpowers/` — dated records. Every path in
- *   them was true on the day it was written; `packages/mcp-launcher` really did
- *   exist before the satellite extraction, and rewriting history to keep a
- *   link-checker happy would be the actual error.
+ * - `docs/CHANGELOG.md` — a dated record. Every path in it was true on the day
+ *   it was written; `packages/mcp-launcher` really did exist before the
+ *   satellite extraction, and rewriting history to keep a link-checker happy
+ *   would be the actual error. (`docs/superpowers/` sat here for the same
+ *   reason until 2026-09-11, when the delivered plans and specs were pruned
+ *   from HEAD; the prefix is gone rather than left behind naming nothing.)
  * - `docs/roadmap.md` — forward-looking. Naming `docs/compliance/samples/` in an
  *   acceptance criterion for unbuilt work is the criterion doing its job.
  * - `docs/ci-secrets.md` — its workflow paths are inside the upstream
@@ -146,7 +148,6 @@ export const DOCS_TREE_GLOBS = ["docs/**/*.md"];
  */
 export const DOCS_EXCLUDED_PREFIXES = [
   "docs/CHANGELOG.md",
-  "docs/superpowers/",
   "docs/roadmap.md",
   "docs/ci-secrets.md",
   "docs/structure-audit/baseline.md",

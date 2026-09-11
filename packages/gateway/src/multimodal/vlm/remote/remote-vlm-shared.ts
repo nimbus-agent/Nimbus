@@ -76,7 +76,7 @@ function firstAnthropicText(payload: unknown): string | null {
   if (!Array.isArray(content)) return null;
   for (const block of content) {
     const rec = asRecord(block);
-    if (rec !== undefined && rec["type"] === "text" && typeof rec["text"] === "string") {
+    if (rec?.["type"] === "text" && typeof rec["text"] === "string") {
       return rec["text"];
     }
   }
@@ -145,13 +145,18 @@ function buildRequest(
   }
 }
 
+/**
+ * Where each vendor puts the caption. Total over `RemoteVlmVendor`, so adding a fourth vendor is a
+ * compile error here rather than a silent fall-through to whichever branch happened to be last.
+ */
+const CAPTION_READERS: Record<RemoteVlmVendor, (payload: unknown) => string | null> = {
+  anthropic: (payload) => firstAnthropicText(payload),
+  openai: (payload) => firstString(payload, ["choices", 0, "message", "content"]),
+  gemini: (payload) => firstString(payload, ["candidates", 0, "content", "parts", 0, "text"]),
+};
+
 function readCaption(vendor: RemoteVlmVendor, payload: unknown): string {
-  const text =
-    vendor === "anthropic"
-      ? firstAnthropicText(payload)
-      : vendor === "openai"
-        ? firstString(payload, ["choices", 0, "message", "content"])
-        : firstString(payload, ["candidates", 0, "content", "parts", 0, "text"]);
+  const text = CAPTION_READERS[vendor](payload);
   // `null` (field absent/wrong-shaped) AND `""`/whitespace-only are both rejected here, for the
   // same reason `image-understander.ts` trims and rejects an empty caption on the local path:
   // writing an empty-bodied row would claim an understanding that never happened. Classified

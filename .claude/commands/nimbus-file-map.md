@@ -24,6 +24,10 @@ Curated pointer index. Source of truth is the working tree — verify a path wit
 | `packages/gateway/src/db/tool-call-log.ts` | `writeToolCallLog` + `readToolCallLog` + `MAX_ENVELOPE_BYTES` — forensic complement to `I11` (V29) |
 | `packages/gateway/src/index/tool-call-log-v29-sql.ts` | V29 — `tool_call_log` table + 3 indexes |
 | `packages/gateway/src/ipc/audit-rpc.ts` | `dispatchAuditRpc` — `audit.verify/exportAll/getSummary/toolCalls`; CLI-only (NOT LAN, NOT Tauri) |
+| `packages/gateway/src/util/{base64,ed25519}.ts` | Gateway-owned base64 codec + Ed25519 keygen. Byte-identical to the SDK's, owned here because SDK 1.32.0 deprecated the whole flat-signature surface pointing at a `@nimbus-dev/sdk/signing` JWS envelope **that has not shipped** — neither codec nor keygen is part of the envelope being replaced |
+| `packages/gateway/src/extensions/verify-signature.ts` | The gateway's ONE seam onto the SDK's deprecated manifest-signature contract (`signManifest` / `verifyManifestSignature` / `errorToHardDisableReason`). Wrapped, not re-exported, so the deprecation stops here; when the JWS envelope ships, this is the file that changes |
+| `packages/gateway/src/extensions/canonical-json.ts` | Same seam for canonicalization — and the gateway **cannot** migrate: the spec binding does NOT NFC-normalize string values while this one does, so the two disagree on bytes for any non-ASCII string, and those bytes are load-bearing for every installed extension signature (`I16`) and every saved-tool signature (`I40`) already on disk |
+| `packages/cli/src/lib/extension-signing.ts` | The CLI's own copy of that seam (`nimbus extension keygen` / `sign`). A separate copy because `cli` may not import gateway source — they are IPC-only neighbours |
 
 ## Platform Abstraction Layer
 

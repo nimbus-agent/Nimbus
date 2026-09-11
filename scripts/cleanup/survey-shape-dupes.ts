@@ -61,7 +61,7 @@ async function main() {
     "- `registerReadOnlyConnectorTools` — `@nimbus-dev/sdk`",
   );
 
-  const target = `${REPO_ROOT}/docs/superpowers/specs/punchlist/02b-shape-dupes.md`;
+  const target = `${REPO_ROOT}/docs/structure-audit/punchlist/02b-shape-dupes.md`;
   await mkdir(dirname(target), { recursive: true });
   await writeFile(target, `${out.join("\n")}\n`, "utf8");
   console.log(`Wrote shape-dupe survey to ${relPath(target)}`);
