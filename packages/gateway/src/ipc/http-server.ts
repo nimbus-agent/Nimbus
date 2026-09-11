@@ -793,6 +793,12 @@ async function handleServicesResolve(
   // exact config-vocabulary comparison rather than a third item-matcher (see
   // `resolveServicesByRepoUrn`), and it is why a malformed URN is refused here rather than
   // resolving to a confident null — "no service claims `githu:acme/web`" would be true and useless.
+  //
+  // TRIMMED, unlike `handleItemsResolveFile`'s use of the same helper, and the divergence is
+  // deliberate: that route's `refAndPath` is a path whose own whitespace is real and not ours to
+  // edit, whereas a URN has no meaningful leading or trailing space in either the query or the
+  // TOML it is compared against. `coordinateParam` still decides blankness, so " " is a
+  // `missing_repo` 400 rather than an empty URN reaching the parser.
   let query: ParsedDoraRepoUrn;
   try {
     query = parseDoraRepoUrn(raw.trim());
@@ -808,6 +814,12 @@ async function handleServicesResolve(
     return json({ service: null, ambiguous: false, candidates: [] });
   }
 
+  // Reads and parses nimbus.toml on EVERY call, like every other caller of this loader. Left
+  // uncached deliberately: the design flagged a per-call file read as something a reviewer might
+  // want a cheap guard around, but that was argued for the PUBLIC mount, where any local process
+  // could spin it. Behind a token the cost is the same one `handleMetricsDora` already pays per
+  // request, and a cache here would answer from a config the owner had since fixed — which is the
+  // worse failure for a route whose whole job is to not be stale.
   let configs: ReadonlyMap<string, ServiceConfig>;
   try {
     configs = loadNimbusServiceConfigsFromConfigDir(opts.configDir);
