@@ -109,6 +109,32 @@ Each marker is a **trailing** comment on the reported line (a marker in a block 
 is silently ignored). **Retire all three when the JWS envelope ships**: the migration is then a
 three-file change plus a re-sign, and these rows should be deleted, not amended.
 
+### `typescript:S7780` — `fleet-digest.ts`'s `mdSafe`, where two rules contradict each other
+
+`mdSafe` neutralises a pipe and a backslash so an indexed PR title cannot break out of a Markdown
+table cell. Two Sonar rules disagree about how to write that, and **there is no form that
+satisfies both**:
+
+| Written as | Cleared | Tripped |
+|---|---|---|
+| `.replaceAll("\\", "\\\\")` — an escaped string | S7781 | **S7780** ("use `String.raw`") |
+| `.replaceAll(/\\/g, String.raw`\\`)` — a regex needle | S7780 | **S7781** ("this pattern can be replaced with a string") |
+| `String.raw` for the needle itself | — | **does not compile** |
+
+The third is the interesting one: a `String.raw` template holding a single backslash is a syntax
+error, because that backslash escapes the closing backtick. A template literal can never end in a
+lone backslash, so S7780's advice is simply not expressible for this value. Both forms were tried
+on PR #1497 and each produced the other rule's finding.
+
+Kept as the escaped-string form — the readable one, and the one that shipped — with a trailing
+`// NOSONAR S7780` on each affected line. Behaviour is not taken on trust: the
+`a BACKSLASH before a pipe does not smuggle a live delimiter through the escape` test pins it, and
+the rendered row was additionally checked end-to-end (`a\|b` → `a\\\|b`, still four data
+columns).
+
+**Retire when** either rule stops firing on the other's remedy, or the function gains the wider
+escape set its own docstring anticipates for a Markdown-rendering sink.
+
 ### `c:S5849` — `sandbox-helper/main.c` `drop_all_caps()`
 
 Marked **Accepted** on the SonarCloud board rather than suppressed in code (it is C, and the rule is

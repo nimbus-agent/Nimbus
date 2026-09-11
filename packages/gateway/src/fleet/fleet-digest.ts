@@ -283,17 +283,21 @@ function mdSafe(s: string): string {
   // the design spec puts out of scope is the likely one. Finding keys embed titles from indexed
   // content, so `[click](http://…)` in a PR title becomes a live link the moment something
   // renders it, and that is the point at which this function needs the wider escape set.
-  // The backslash pass uses a regex needle and a `String.raw` replacement: a template literal
-  // cannot end in a lone backslash (the escape swallows the closing backtick), so `String.raw`
-  // can express the DOUBLED replacement but never the single-character needle.
-  //
   // Order is load-bearing. Backslash FIRST: escaping the pipe first would put a backslash into
   // the string that the backslash pass would then double, turning `\|` into `\\|` — an escaped
   // backslash followed by a LIVE pipe, which is the cell break this function exists to prevent.
+  //
+  // NOSONAR S7780/S7781 below: the two rules have NO common solution for this value. S7780 asks
+  // for `String.raw`, which cannot express a LONE backslash at all — the backslash escapes the
+  // closing backtick, so a one-character raw template does not parse. Rewriting the needle as the
+  // regex `/\\/g` clears S7780 and immediately trips S7781 ("this pattern can be replaced with
+  // a string"), which is how this landed here in the first place. The escaped string form below
+  // is the readable one, and it is pinned by the `a BACKSLASH before a pipe does not smuggle a
+  // live delimiter through the escape` test — behaviour is verified, not assumed.
   return s
     .replaceAll(/\r\n|\r|\n/g, " ")
-    .replaceAll(/\\/g, String.raw`\\`)
-    .replaceAll("|", "\\|");
+    .replaceAll("\\", "\\\\") // NOSONAR S7780
+    .replaceAll("|", "\\|"); // NOSONAR S7780
 }
 
 function metricRow(name: string, d: FleetMetricDelta): string {
