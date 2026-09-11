@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1789111839013,
+  "lastUpdate": 1789112450926,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "7bb0ec7eea52c08bbe25d9146e6ef43ea9e17ad1",
-          "message": "chore: release main (#757)\n\n:robot: I have created a release *beep* *boop*\n---\n\n\n<details><summary>0.21.0</summary>\n\n##\n[0.21.0](https://github.com/nimbus-agent/Nimbus/compare/v0.20.0...v0.21.0)\n(2026-07-16)\n\n\n### Features\n\n* **cli:** add `nimbus --version` / `-v` / `version`\n([#753](https://github.com/nimbus-agent/Nimbus/issues/753))\n([5eec16c](https://github.com/nimbus-agent/Nimbus/commit/5eec16c118e94667ddccc0ebb0e122f0bc31f136))\n</details>\n\n---\nThis PR was generated with [Release\nPlease](https://github.com/googleapis/release-please). See\n[documentation](https://github.com/googleapis/release-please#release-please).\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n\n## Summary by CodeRabbit\n\n* **New Features**\n* Added `nimbus --version` to display the CLI version, with `-v` and\n`version` aliases.\n\n* **Documentation**\n  * Updated the changelog with release information for version 0.21.0.\n\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->",
-          "timestamp": "2026-07-16T04:31:30Z",
-          "tree_id": "b869a414ea2dd6dd95dcfe39edc5d064da3c867c",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/7bb0ec7eea52c08bbe25d9146e6ef43ea9e17ad1"
-        },
-        "date": 1784177147790,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 304.481351900001,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 303.2251550500041,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 228.69427684999752,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "806bf0c532911d0330845e060e5ac51e338d2776",
+          "message": "docs(spec): propose an HTTP route for the bucketed DORA series (#1490)\n\n## Summary\n\nProposes exposing the **bucketed DORA series** the gateway already\ncomputes — `computeStatsSeries` / `metrics.stats` — over HTTP, with\n`until_ms` on `GET /v1/metrics/dora` as the named fallback. **Design\nonly, no implementation**, in the shape of #1464.\n\nSibling proposal: `GET /v1/services` — #1489. Neither is a blocker; the\nclient ships and works without both.\n\n## The ask started out wrong, and the spec says so\n\nThe original draft proposed adding `until` to `GET /v1/metrics/dora`,\nbecause every window that route answers ends at *now* — 7d/30d/90d are\n**nested**, sharing an end point, not consecutive, so a disjoint series\nis not expressible and a consumer cannot honestly draw a trend.\n\nReviewing it against your source changed the ask. `computeStatsSeries`\nalready walks `splitBuckets(untilMs, windowMs, bucketMs)` and evaluates\nthe DORA metrics per bucket, with `window.since_ms` / `until_ms` already\nabsolute. **The series exists; it has no HTTP route.** Asking for a new\nparameter on a different route, when an existing computation answers the\nquestion, is the worse request — so the spec now leads with the stats\nroute and keeps `until_ms` as the fallback for the case where you would\nrather not expose stats.\n\n## The part we think matters most\n\nWhile establishing that, we found what looks like a live attribution\ndefect, and it is **not** something either proposal would introduce:\n\n`changeFailureRate` selects deploys and incidents over the same window,\nbut `selectResolvedIncidents` bounds on `modified_at` — *resolution*\ntime — while attribution compares against `inc.opened` (`dora.ts:347`).\nAn incident that opens inside a window and resolves after it falls out\nof the selection, so its deploy is reported clean.\n\nToday the upper bound is always *now*, which makes this a single edge\nnobody hits. Under a series it becomes **one edge per bucket** — and\n`computeStatsSeries` binds `nowMs` to each bucket's end, so `nimbus\nstats` has this now.\n\nOur first attempt at a fix was also wrong: widening by\n`incidentWindowMinutes` does not work, because it widens the\n*resolution* bound while attribution reads *opened*. The spec's §5\nproposes selecting on `opened_at_ms` instead. We would rather hand you a\ndefect we found honestly, with a first fix that turned out to be wrong\nand why, than a clean-looking proposal that quietly ships a metric wrong\nat every boundary.\n\nThis is your call to make in whichever register you prefer — the spec\nframes it as a condition of shipping a series, not a demand.\n\n## What it leaves to you\n\nMounting and scoping, response shape, whether the IPC verb changes, and\nwhether the attribution correction lands with a route or separately. The\nspec records what we established from source and flags where we are\nguessing.\n\n## If you say no\n\nThe consumer renders three nested windows side by side, each labelled as\nending now — directional and honest, without implying a trend the\ncontract cannot back. That is already shipped and documented in the\nclient's `architecture.md` as a property of the route, so a \"no\" costs\nus nothing but a nicer page.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nhttps://claude.ai/code/session_01SdWmqLJUG2mXevhr31o9dG\n\nCo-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>",
+          "timestamp": "2026-09-11T10:31:09+03:00",
+          "tree_id": "4ef2e647e30c2ea0da5ec5d63a4c8da9db804813",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/806bf0c532911d0330845e060e5ac51e338d2776"
+        },
+        "date": 1789112448375,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 271.6567342500002,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 274.11865519999776,
             "unit": "ms"
           }
         ]
