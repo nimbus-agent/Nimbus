@@ -197,7 +197,7 @@ describe("renderChangelog", () => {
           {
             id: "gitlab:2",
             service: "gitlab",
-            title: "Fix ‮auth‬ bug",
+            title: "Fix \u202eauth\u202c bug",
             url: null,
             atMs: NOW,
             timeSource: "event",
@@ -206,7 +206,7 @@ describe("renderChangelog", () => {
       }),
     );
     expect(md).toContain("Fix auth bug");
-    expect(md).not.toContain("‮");
+    expect(md).not.toContain("\u202e");
   });
 
   test("the preamble disclosure survives into preamble scope, where the I31 guard reads it", () => {
