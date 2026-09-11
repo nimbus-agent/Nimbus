@@ -3,15 +3,46 @@ import {
   nonGithubMergedPrCount,
   selectDeployments,
   selectIncidentsOpened,
+  selectIncidentsResolved,
   selectMergedPrs,
 } from "../../src/agents/changelog-queries.ts";
 import { createMemoryIndexDb } from "../../src/connectors/connector-sync-test-helpers.ts";
-import { DEFAULT_DEPLOY_WORKFLOW_PATTERN } from "../../src/metrics/dora-config.ts";
+import {
+  DEFAULT_DEPLOY_WORKFLOW_PATTERN,
+  type ServiceConfig,
+} from "../../src/metrics/dora-config.ts";
 
 const NOW = 1_800_000_000_000;
 const DAY = 86_400_000;
 // ABSOLUTE bounds. `sinceMs` as an agent INPUT is a duration repo-wide; `Window` is not an input.
 const W = { fromMs: NOW - 7 * DAY, toMs: NOW, scope: { kind: "all" as const } };
+
+/**
+ * A fully-populated `ServiceConfig` fixture, all fields required per the real type — repo scoped
+ * to `github:org/web` and PagerDuty scoped to `PD123` by default so most scoped tests need only
+ * override the one field they're exercising.
+ */
+function serviceConfig(overrides: Partial<ServiceConfig> = {}): ServiceConfig {
+  return {
+    serviceId: "web",
+    repos: [{ provider: "github", providerId: "org/web" }],
+    pagerdutyServices: ["PD123"],
+    deployWorkflowPattern: new RegExp(DEFAULT_DEPLOY_WORKFLOW_PATTERN),
+    incidentWindowMinutes: 60,
+    excludePrLabels: [],
+    deployEnvironments: ["prod"],
+    severityP1Aliases: [],
+    ...overrides,
+  };
+}
+
+function scopedWindow(cfg: ServiceConfig): {
+  fromMs: number;
+  toMs: number;
+  scope: { kind: "service"; cfg: ServiceConfig };
+} {
+  return { fromMs: W.fromMs, toMs: W.toMs, scope: { kind: "service", cfg } };
+}
 
 function insertItem(
   db: ReturnType<typeof createMemoryIndexDb>,
@@ -178,5 +209,178 @@ describe("changelog queries against the real migrated schema", () => {
       meta: {},
     });
     expect(selectIncidentsOpened(db, W)).toEqual([]);
+  });
+
+  test("selectMergedPrs scopes to the configured repo URN; a different repo's merged PR is excluded", () => {
+    const db = createMemoryIndexDb();
+    const cfg = serviceConfig();
+    insertItem(db, {
+      id: "github:10",
+      service: "github",
+      type: "pr",
+      title: "In scope",
+      modifiedAt: NOW,
+      meta: { merged_at: NOW - DAY, repo: "org/web" },
+    });
+    insertItem(db, {
+      id: "github:11",
+      service: "github",
+      type: "pr",
+      title: "Other repo",
+      modifiedAt: NOW,
+      meta: { merged_at: NOW - DAY, repo: "org/other" },
+    });
+
+    const rows = selectMergedPrs(db, scopedWindow(cfg));
+    expect(rows.map((r) => r.title)).toEqual(["In scope"]);
+  });
+
+  test("selectDeployments' CI-run leg scopes to the configured repo URN", () => {
+    const db = createMemoryIndexDb();
+    const cfg = serviceConfig();
+    insertItem(db, {
+      id: "gha:10",
+      service: "github_actions",
+      type: "ci_run",
+      title: "Deploy to prod",
+      modifiedAt: NOW - DAY,
+      meta: { conclusion: "success", repo: "org/web" },
+    });
+    insertItem(db, {
+      id: "gha:11",
+      service: "github_actions",
+      type: "ci_run",
+      title: "Deploy to prod",
+      modifiedAt: NOW - DAY,
+      meta: { conclusion: "success", repo: "org/other" },
+    });
+
+    const rows = selectDeployments(db, scopedWindow(cfg), cfg.deployWorkflowPattern);
+    expect(rows.map((r) => r.id)).toEqual(["gha:10"]);
+  });
+
+  test("selectDeployments' annotated leg scopes to nimbus_service_id, not the CI connector's item.service", () => {
+    const db = createMemoryIndexDb();
+    const cfg = serviceConfig(); // serviceId: "web"
+    insertItem(db, {
+      id: "dep:2",
+      service: "github_actions",
+      type: "deployment",
+      title: "web",
+      modifiedAt: NOW,
+      meta: {},
+    });
+    db.run(
+      `INSERT INTO deployment_items (id, provider, nimbus_service_id, environment, sha, ref,
+        started_at_ms, finished_at_ms, conclusion, created_at)
+       VALUES ('dep:2','github-actions','web','prod','abc','main',?,?,'success',?)`,
+      [NOW - 2 * DAY, NOW - DAY, NOW],
+    );
+    insertItem(db, {
+      id: "dep:3",
+      service: "github_actions",
+      type: "deployment",
+      title: "other",
+      modifiedAt: NOW,
+      meta: {},
+    });
+    db.run(
+      `INSERT INTO deployment_items (id, provider, nimbus_service_id, environment, sha, ref,
+        started_at_ms, finished_at_ms, conclusion, created_at)
+       VALUES ('dep:3','github-actions','other-service','prod','def','main',?,?,'success',?)`,
+      [NOW - 2 * DAY, NOW - DAY, NOW],
+    );
+
+    const rows = selectDeployments(db, scopedWindow(cfg), cfg.deployWorkflowPattern);
+    expect(rows.map((r) => r.id)).toEqual(["dep:2"]);
+  });
+
+  test("selectIncidentsOpened scopes to the configured pagerduty_service_id", () => {
+    const db = createMemoryIndexDb();
+    const cfg = serviceConfig(); // pagerdutyServices: ["PD123"]
+    insertItem(db, {
+      id: "pagerduty:2",
+      service: "pagerduty",
+      type: "incident",
+      title: "In scope",
+      modifiedAt: NOW - DAY,
+      meta: { opened_at_ms: NOW - DAY, pagerduty_service_id: "PD123" },
+    });
+    insertItem(db, {
+      id: "pagerduty:3",
+      service: "pagerduty",
+      type: "incident",
+      title: "Other service",
+      modifiedAt: NOW - DAY,
+      meta: { opened_at_ms: NOW - DAY, pagerduty_service_id: "PD999" },
+    });
+
+    const rows = selectIncidentsOpened(db, scopedWindow(cfg));
+    expect(rows.map((r) => r.id)).toEqual(["pagerduty:2"]);
+  });
+
+  test("a scoped service with no PagerDuty services mapped matches nothing, not everything", () => {
+    // The fail-closed case: an empty `IN ()` list is a SQL syntax error, and omitting the
+    // clause entirely would silently widen a scoped query back to every service's incidents.
+    const db = createMemoryIndexDb();
+    const cfg = serviceConfig({ pagerdutyServices: [] });
+    insertItem(db, {
+      id: "pagerduty:4",
+      service: "pagerduty",
+      type: "incident",
+      title: "Any incident",
+      modifiedAt: NOW - DAY,
+      meta: { opened_at_ms: NOW - DAY, pagerduty_service_id: "PD123" },
+    });
+
+    expect(selectIncidentsOpened(db, scopedWindow(cfg))).toEqual([]);
+  });
+
+  test("selectIncidentsResolved returns a resolved incident and excludes one that is not resolved", () => {
+    const db = createMemoryIndexDb();
+    insertItem(db, {
+      id: "pagerduty:5",
+      service: "pagerduty",
+      type: "incident",
+      title: "Resolved",
+      modifiedAt: NOW - DAY,
+      meta: { status: "resolved" },
+    });
+    insertItem(db, {
+      id: "pagerduty:6",
+      service: "pagerduty",
+      type: "incident",
+      title: "Still open",
+      modifiedAt: NOW - DAY,
+      meta: { status: "triggered" },
+    });
+
+    const rows = selectIncidentsResolved(db, W);
+    expect(rows.map((r) => r.title)).toEqual(["Resolved"]);
+    expect(rows[0]?.timeSource).toBe("index");
+  });
+
+  test("selectIncidentsResolved scopes to the configured pagerduty_service_id", () => {
+    const db = createMemoryIndexDb();
+    const cfg = serviceConfig(); // pagerdutyServices: ["PD123"]
+    insertItem(db, {
+      id: "pagerduty:7",
+      service: "pagerduty",
+      type: "incident",
+      title: "In scope",
+      modifiedAt: NOW - DAY,
+      meta: { status: "resolved", pagerduty_service_id: "PD123" },
+    });
+    insertItem(db, {
+      id: "pagerduty:8",
+      service: "pagerduty",
+      type: "incident",
+      title: "Other service",
+      modifiedAt: NOW - DAY,
+      meta: { status: "resolved", pagerduty_service_id: "PD999" },
+    });
+
+    const rows = selectIncidentsResolved(db, scopedWindow(cfg));
+    expect(rows.map((r) => r.id)).toEqual(["pagerduty:7"]);
   });
 });
