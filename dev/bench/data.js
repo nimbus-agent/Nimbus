@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1789137497840,
+  "lastUpdate": 1789138713912,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "dfd27aba74cd3581f3aebd2ac554953e507f5823",
-          "message": "chore: release main (#763)\n\n:robot: I have created a release *beep* *boop*\n---\n\n\n<details><summary>0.22.0</summary>\n\n##\n[0.22.0](https://github.com/nimbus-agent/Nimbus/compare/v0.21.0...v0.22.0)\n(2026-07-18)\n\n\n### Features\n\n* **cli:** nimbus clip list + clip delete (+ clip-scoped tags)\n([#760](https://github.com/nimbus-agent/Nimbus/issues/760))\n([65e8857](https://github.com/nimbus-agent/Nimbus/commit/65e8857a27dff10ac85f9c3e63c2fd2a21628bb2))\n* **cli:** print the gateway URL from `nimbus clip pair`\n([#761](https://github.com/nimbus-agent/Nimbus/issues/761))\n([b72f96d](https://github.com/nimbus-agent/Nimbus/commit/b72f96dcb862f54084927d8542edce9e0e795ad7))\n\n\n### Bug Fixes\n\n* **gateway:** report real version in `nimbus status` + stamp Windows\nexe metadata ([#762](https://github.com/nimbus-agent/Nimbus/issues/762))\n([d337167](https://github.com/nimbus-agent/Nimbus/commit/d337167e6e461645526525167ed6acf77396f4e2))\n</details>\n\n---\nThis PR was generated with [Release\nPlease](https://github.com/googleapis/release-please). See\n[documentation](https://github.com/googleapis/release-please#release-please).\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n\n## Summary by CodeRabbit\n\n* **New Features**\n* Added `nimbus clip list` and `nimbus clip delete`, including support\nfor clip-scoped tags.\n  * `nimbus clip pair` now displays the gateway URL.\n\n* **Bug Fixes**\n  * Improved `nimbus status` to report the gateway’s actual version.\n  * Windows executables now include version metadata.\n\n* **Release**\n  * Released version 0.22.0.\n\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->",
-          "timestamp": "2026-07-18T06:29:19+03:00",
-          "tree_id": "28cddf14d33d5160bc005695f86b1a786a87befe",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/dfd27aba74cd3581f3aebd2ac554953e507f5823"
-        },
-        "date": 1784346072758,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 310.64510609999707,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 312.74840835,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 336.37262830000327,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "306811640+nimbus-release-bot[bot]@users.noreply.github.com",
+            "name": "nimbus-release-bot[bot]",
+            "username": "nimbus-release-bot[bot]"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "a85373b0c23d4f98d42ce01e4cb589eef36e07ce",
+          "message": "chore: release main (#1495)\n\n:robot: I have created a release *beep* *boop*\n---\n\n\n<details><summary>7.19.1</summary>\n\n##\n[7.19.1](https://github.com/nimbus-agent/Nimbus/compare/v7.19.0...v7.19.1)\n(2026-09-11)\n\n\n### Bug Fixes\n\n* **metrics:** stop requiring a resolved status to attribute a change\nfailure ([#1494](https://github.com/nimbus-agent/Nimbus/issues/1494))\n([011cbf7](https://github.com/nimbus-agent/Nimbus/commit/011cbf74a03164e4eb4b3b21a67661d33c557b91))\n</details>\n\n---\nThis PR was generated with [Release\nPlease](https://github.com/googleapis/release-please). See\n[documentation](https://github.com/googleapis/release-please#release-please).\n\nCo-authored-by: nimbus-release-bot[bot] <306811640+nimbus-release-bot[bot]@users.noreply.github.com>",
+          "timestamp": "2026-09-11T14:44:32Z",
+          "tree_id": "b980b1f67b2b9a5ec784594664f2ce2d33cb4c52",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/a85373b0c23d4f98d42ce01e4cb589eef36e07ce"
+        },
+        "date": 1789138711381,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 323.2470942999968,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 324.90795770000113,
             "unit": "ms"
           }
         ]
