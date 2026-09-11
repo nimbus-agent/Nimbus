@@ -104,8 +104,14 @@ paths = [
 #    and a path allowlist would blind it to a genuine leak forever in exchange
 #    for silencing one known-fake historical literal. The six entries above are
 #    files whose PURPOSE is to carry secret-shaped fixtures; this one is not.
-[allowlist.regexes]
-description = "A single historical fake-credential literal; the current tree no longer contains it"
+#
+#    NOTE ON SHAPE: `regexes` is a key on the SINGLE `[allowlist]` table above,
+#    not a sub-table. Writing it as `[allowlist.regexes]` makes gitleaks refuse
+#    the whole config — "'AllowList.Regexes[0]' expected type 'string', got
+#    unconvertible type 'map[string]interface {}'" — and a config that fails to
+#    load scans nothing at all, which reads as a scanner failure rather than a
+#    clean repo. That mistake shipped once here; this note is so it does not
+#    ship twice.
 regexes = [
   '''sk_live_never_echoed_9f8e7d''',
 ]
