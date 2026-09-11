@@ -906,7 +906,12 @@ describe("toolgen.credentialSet", () => {
   });
 
   test("writes the credential to the Vault and never echoes its value back on the wire", async () => {
-    const SECRET = "sk_live_never_echoed_9f8e7d";
+    // Distinctive enough for the never-echoed assertions below to be meaningful, and deliberately
+    // NOT secret-SHAPED: the first version of this fixture was `sk_live_…`, Stripe's real live-key
+    // prefix, and gitleaks flagged it as a `generic-api-key` — correctly, since a scanner cannot
+    // know a money-moving credential is fake. A fixture proving a secret is never echoed does not
+    // need to look like a real one.
+    const SECRET = "nimbus-test-credential-value-DO-NOT-USE";
     const ctx = makeCtx();
     registerCredentialedLiveTool(ctx);
     const out = await dispatchToolgenRpc(

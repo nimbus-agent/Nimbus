@@ -87,3 +87,25 @@ paths = [
   '''\.claude/agents/.*\.md''',
   '''scripts/install/windows/signature-verdict\.test\.ts''',
 ]
+
+# 7. One HISTORICAL literal, suppressed by VALUE rather than by path.
+#
+#    `packages/gateway/src/ipc/toolgen-rpc.test.ts` briefly carried a fixture
+#    written as `sk_live_never_echoed_9f8e7d` — Stripe's real live-key prefix
+#    on a fake value — to prove `toolgen.credentialSet` never echoes a
+#    credential back on the wire. gitleaks flagged it as `generic-api-key`,
+#    correctly: a scanner cannot know a money-moving credential is synthetic.
+#    The fixture itself was rewritten to a value that is not secret-shaped, so
+#    the working tree is clean; this entry exists solely because the string
+#    survives in commit 7a89a24d and `gitleaks detect` scans history.
+#
+#    Suppressed by REGEX, not by adding the file to `paths` above, and that is
+#    deliberate: `toolgen-rpc.test.ts` is a large, actively growing test file,
+#    and a path allowlist would blind it to a genuine leak forever in exchange
+#    for silencing one known-fake historical literal. The six entries above are
+#    files whose PURPOSE is to carry secret-shaped fixtures; this one is not.
+[allowlist.regexes]
+description = "A single historical fake-credential literal; the current tree no longer contains it"
+regexes = [
+  '''sk_live_never_echoed_9f8e7d''',
+]

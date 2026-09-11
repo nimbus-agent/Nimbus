@@ -4,7 +4,7 @@
 - **Spine slot:** S2 — Local Compute Fleet, the runtime-tool-generation row
 - **Parent spec:** [`2026-09-09-s2-runtime-tool-generation-design.md`](./2026-09-09-s2-runtime-tool-generation-design.md)
 - **Sibling spec:** [`2026-09-09-s2-toolgen-drafting-design.md`](./2026-09-09-s2-toolgen-drafting-design.md)
-- **Status:** designed, not implemented
+- **Status:** implemented and shipped on this branch (12 tasks; see the plan and its review)
 - **Reserves:** invariant **I40**, static rule **D29(d)**, schema **V61**, HITL action type `tool.save`
 
 ---

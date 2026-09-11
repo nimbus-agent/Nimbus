@@ -3,9 +3,9 @@
 **Date:** 2026-09-10  
 **Reviewer:** Antigravity (AI Coding Assistant)  
 **Status:** Review Complete — Approved with Critical Implementation & Architectural Resolutions  
-**Target Spec:** [`2026-09-10-s2-toolgen-persistence-design.md`](file:///C:/gitrep/Nimbus/docs/superpowers/specs/2026-09-10-s2-toolgen-persistence-design.md)  
-**Parent Spec:** [`2026-09-09-s2-runtime-tool-generation-design.md`](file:///C:/gitrep/Nimbus/docs/superpowers/specs/2026-09-09-s2-runtime-tool-generation-design.md)  
-**Sibling Spec:** [`2026-09-09-s2-toolgen-drafting-design.md`](file:///C:/gitrep/Nimbus/docs/superpowers/specs/2026-09-09-s2-toolgen-drafting-design.md)  
+**Target Spec:** [`2026-09-10-s2-toolgen-persistence-design.md`](./2026-09-10-s2-toolgen-persistence-design.md)  
+**Parent Spec:** [`2026-09-09-s2-runtime-tool-generation-design.md`](./2026-09-09-s2-runtime-tool-generation-design.md)  
+**Sibling Spec:** [`2026-09-09-s2-toolgen-drafting-design.md`](./2026-09-09-s2-toolgen-drafting-design.md)  
 **Spine Slot:** [Spine S2 — Local Compute Fleet](../../roadmap.md#active)  
 **Relevant Invariants & Rules:** Invariant **I40** (Saved Tool Integrity & Keypair Verification), Invariant **I39** (Runtime Tool Generation Gate & Confinement), Invariant **I2** (HITL Frozen Set), Invariant **I10** (Constant-time Comparison), Static Rules **D29(a–d)**, Schema **V61** (`generated_tool`)
 
