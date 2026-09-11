@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1789138713912,
+  "lastUpdate": 1789158268027,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "9fe045c350bd1ec4e1e3712d2a44021aedfed1a1",
-          "message": "ci: enforce Conventional Commit PR titles (#764)\n\n## Enforce Conventional Commit PR titles\n\nThis repo squash-merges, so the **PR title becomes the commit on\n`main`** that Release Please reads to compute the version bump and\nchangelog. A non-conforming title (e.g. `update stuff`) silently\nproduces no release / miscategorized notes.\n\nAdds a lightweight `pull_request` workflow that validates the PR title\nwith\n[`amannn/action-semantic-pull-request`](https://github.com/amannn/action-semantic-pull-request)\n— matching repo conventions (harden-runner, `ubuntu-24.04`, SHA-pinned\naction). Default Conventional Commit type set; no scope required.\n\nPrompted by adding the same guard to the `nimbus-vscode` repo's new\nRelease Please setup — surfacing that Nimbus main has the same latent\ngap.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n\n## Summary by CodeRabbit\n\n* **Chores**\n* Added automated validation to ensure pull request titles follow\nconsistent, standardized formatting.\n  * Improved project maintenance checks for incoming changes.\n\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude Opus 4.8 (1M context) <noreply@anthropic.com>",
-          "timestamp": "2026-07-18T07:46:45Z",
-          "tree_id": "cbe5893ff9ef4d6b1d02d5d3fcd4d6cf9911cdcb",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/9fe045c350bd1ec4e1e3712d2a44021aedfed1a1"
-        },
-        "date": 1784361335407,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 235.58106515000108,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 240.0610665000044,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 324.90795770000113,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "bc1139b813040248de0a594de07a04a62a57bb61",
+          "message": "feat(agents): nimbus changelog — the fifteenth built-in agent (#1496)\n\nSecond row of the v0.1.1 CLI batch, after `nimbus index health`. A\nMarkdown changelog assembled from the local index over a window: merged\nPRs, deployments, incidents opened and resolved.\n\n```\nnimbus changelog --service payment-service --since 7d\nnimbus changelog --since 30d --format slack\n```\n\n**No migration, no new security invariant, no new egress coverage class,\nno new HITL action type.** It is a fifteenth instance of a shape that\nalready ships fourteen times.\n\n## Why an agent rather than a command\n\n`nimbus index health` and `nimbus stats` are CLI-plus-IPC commands. This\nis a built-in agent because the output is a brief, it wants `[agents]\nsynthesis` for prose release notes, and it wants to be fleet-eligible —\nwhich a non-agent command cannot be, since fleet jobs invoke `agents.*`\nmethods.\n\n## The load-bearing correctness decision\n\n**`item.modified_at` means \"last touched\", not \"when it happened.\"** A\nPR merged in June that got a comment yesterday windows as yesterday, so\na changelog keyed on that column reports what *moved in the index*\nrather than what *happened*. Every category therefore windows on its own\nevent time, half-open `[from, to)`:\n\n| Category | Time source |\n|---|---|\n| Merged PRs | `metadata.merged_at` — a real event field |\n| Incidents opened | `metadata.opened_at_ms` — a real event field |\n| Annotated deploys | `COALESCE(finished_at_ms, started_at_ms)` — a\ntyped V28 column |\n| CI-run deploys, incident resolution | `modified_at`, the same basis\n`nimbus metrics dora` ships |\n\nThe obvious optimisation — pre-filter on the indexed `modified_at` and\nrefine in TypeScript — is **unsound**: `item-store.ts` writes a\nwholesale replacement rather than a `MAX()`, so monotonicity is an\nupstream property and the failure mode is a merged PR silently missing.\nEach lane filters on its event field directly, as `dora.ts` already\ndoes, guarded by `json_valid` with values re-checked in TypeScript.\n\n## What it will not tell you, and says so\n\n- **Dependency updates and config changes have no indexed item type.**\nDisclosed unconditionally, following `ownership`'s precedent — a\nconditional note is absent exactly when a reader needs it.\n- **`metadata.merged_at` is written by the GitHub connector alone**, so\nmerged GitLab MRs and Bitbucket PRs are invisible. Counted and\ndisclosed, reusing the `github_only_merge_data` gap name `nimbus stats`\nalready ships.\n- **`counts` are TRUE PRE-CAP totals** while entry lists cap at 50, so\n`counts.mergedPrs` can exceed `mergedPrs.length` — that difference is\nhow a reader recovers what was truncated.\n- A `--service` that reaches no rows gets its own gap, so an empty\nchangelog is distinguishable from a quiet week.\n\n## Surface\n\nSix registration sites are compiler-forced — `SynthInput`,\n`RESERVED_HEADINGS_BY_KIND`, `AGENTS_RPC_HANDLERS`, `FLEET_ELIGIBILITY`,\n`FLEET_DIGEST_EXTRACTORS`, and `brief-contract.ts`, the sixth found\nduring implementation whose arm returning `[]` would have compiled while\nleaving every interleaved I31 disclosure unguarded.\n\nExternally excluded (not on HTTP/MCP/ChatOps, not on the Tauri\nallowlist) for sequencing — the brief's shape settles against one\nconsumer first. Fleet-eligible, reasoned independently, since\n`agents-rpc.ts` records that the external set \"was reasoned about for an\narbitrary network caller; a fleet is a different principal.\"\n\n`--format slack|plain` are text transforms over the Markdown, never a\nre-render from `findings` — a re-render would silently discard\nsynthesized prose.\n\n## Review\n\nSeven task reviews, a whole-branch review, and a fix wave. Defects\ncaught that tests alone would not have:\n\n- **A cross-task seam no per-task review could see:** the gateway\nescapes `[` → `\\[` in entry titles, and the CLI's link regex could not\ncross the escaped bracket — so both non-default formats shipped links\nunconverted, dumping raw URLs in the one output path whose doc comment\npromises not to. `[WIP]` and `[PROJ-123]` prefixes trigger it, silently.\n- `latencyMs` was evaluated before any work ran, publishing a fabricated\nnumber.\n- A sub-day `--since` rendered `last 0d` directly above the disclosure\n\"counts below cover only this window\".\n- The e2e seeded one row per category and asserted only that headings\nexisted — true of an empty index.\n- `counts` initially meant \"entries shown\", reaching the synthesis\nprompt as authoritative.\n- The PR item type is `pr`; `pull_request` exists here only as an API\npayload key, so a query on it returns zero rows silently.\n\n## Verification\n\n`preflight:fast` PASSED · `typecheck` clean · 5959 tests green across\nevery touched suite, 0 fail · `audit:doc-refs` 1515 refs resolve ·\n`audit:agent-param-kinds` and `audit:invariants` pass.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nhttps://claude.ai/code/session_01XtDxpJSXKwXKMWQnaRsLee\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n\n## Summary by CodeRabbit\n\n* **New Features**\n* Added the `nimbus changelog` command to generate service-specific or\nfleet-wide changelogs from pull requests, deployments, and incidents.\n* Supports configurable lookback periods, Markdown, Slack, plain-text,\nand JSON output.\n* Includes category totals, truncation notices, timestamp details, and\nunsupported-data disclosures.\n  * Changelogs are available through the CLI and configured fleet runs.\n\n* **Documentation**\n* Documented changelog usage, output formats, service filters,\nlimitations, and availability.\n* Updated agent and security documentation for the fifteenth built-in\nbrief type.\n\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>",
+          "timestamp": "2026-09-11T20:14:18Z",
+          "tree_id": "f9de15187231d4b16b2f878627f2f43831a2e985",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/bc1139b813040248de0a594de07a04a62a57bb61"
+        },
+        "date": 1789158264367,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 249.67453860000094,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 251.34687965000157,
             "unit": "ms"
           }
         ]
