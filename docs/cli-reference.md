@@ -718,7 +718,7 @@ nimbus catchup --since 24h --service payment-service --json
 
 ### `nimbus changelog`
 
-The fifteenth built-in agent: a Markdown changelog assembled entirely from the local index over a time window, for a single configured service or across all of them. Four categories, each windowed on its own real event field rather than `item.modified_at` ("last touched", not "when it happened"): merged pull requests (`metadata.merged_at`), deployments (a successful CI run whose title matches the deploy pattern, unioned with annotated deploys from `POST /v1/deployments`), incidents opened (`metadata.opened_at_ms`), and incidents resolved (`item.modified_at`, on the same basis `nimbus metrics dora` already uses for resolution time). Dependency updates and configuration changes have no indexed item type and are disclosed unconditionally in `## Gaps` rather than silently omitted.
+The fifteenth built-in agent: a Markdown changelog assembled entirely from the local index over a time window, for a single configured service or across all of them. Four categories: merged pull requests and incidents opened window on real event fields (`metadata.merged_at`, `metadata.opened_at_ms`) rather than `item.modified_at` ("last touched", not "when it happened"); deployments (a successful CI run whose title matches the deploy pattern, unioned with annotated deploys from `POST /v1/deployments`) and incidents resolved use `item.modified_at` deliberately, on the same basis `nimbus metrics dora` already uses for resolution time. Dependency updates and configuration changes have no indexed item type and are disclosed unconditionally in `## Gaps` rather than silently omitted.
 
 ```bash
 nimbus changelog

@@ -26,17 +26,21 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
   the output is a brief, it wants `[agents] synthesis` for prose release notes, and it wants to be
   fleet-eligible, which a non-agent command cannot be. No migration, no new invariant, no new
   egress class.
-  **Every category windows on its own real event field, never `item.modified_at`.**
+  **Merged PRs and incidents opened window on real event fields; deployments and
+  incident-resolution use `modified_at` deliberately, matching `dora.ts`.**
   `item.modified_at` is "last touched", not "when it happened" — a PR merged in June that got a
-  comment yesterday windows as yesterday if keyed on that column. `metadata.merged_at` covers
-  merged PRs, `metadata.opened_at_ms` covers incidents opened, and deployments/incident-resolution
-  use `modified_at` deliberately, on the same basis `nimbus metrics dora` already ships. Deploys
+  comment yesterday windows as yesterday if keyed on that column, which is why `metadata.merged_at`
+  covers merged PRs and `metadata.opened_at_ms` covers incidents opened. Deployments and
+  incident-resolution use `modified_at` on purpose instead, on the same basis `nimbus metrics dora`
+  already ships — for a resolved incident, `modified_at` is effectively resolution time. Deploys
   come from two UNIONED sources, mirroring `dora.ts` rather than inventing a new definition: a
   successful `ci_run` whose title matches the deploy pattern (`DEFAULT_DEPLOY_WORKFLOW_PATTERN`,
   `^[Dd]eploy`, when `--service` names nothing configured) and annotated deploys joined through
-  `deployment_items`, timed from the typed `finished_at_ms` column rather than `modified_at` —
-  better than `dora.ts` does for the same rows. Every lane scopes through `ServiceConfig`, never
-  `item.service` (the CONNECTOR id, not a business service name, and would match zero rows).
+  `deployment_items`, timed from `COALESCE(finished_at_ms, started_at_ms)` — the typed, nullable
+  `finished_at_ms` column once a deploy has finished, falling back to `started_at_ms` while it is
+  still running — better than `dora.ts` does for the same rows, which windows on `modified_at` and
+  never reads the deployment's own timestamps at all. Every lane scopes through `ServiceConfig`,
+  never `item.service` (the CONNECTOR id, not a business service name, and would match zero rows).
   **Two of the five categories the original roadmap row promised have no substrate at all** —
   dependency updates and configuration changes are not indexed as their own item type — so they
   are disclosed unconditionally in `## Gaps`, following `ownership`'s standing-disclaimer
