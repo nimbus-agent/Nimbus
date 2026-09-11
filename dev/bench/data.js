@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1789104048014,
+  "lastUpdate": 1789111839013,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "49699333+dependabot[bot]@users.noreply.github.com",
-            "name": "dependabot[bot]",
-            "username": "dependabot[bot]"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "f5983566836ac81ce48ed0430a3826e54274c457",
-          "message": "chore(deps): bump serde_with from 3.20.0 to 3.21.0 in /packages/ui/src-tauri (#755)\n\nBumps [serde_with](https://github.com/jonasbb/serde_with) from 3.20.0 to\n3.21.0.\n<details>\n<summary>Release notes</summary>\n<p><em>Sourced from <a\nhref=\"https://github.com/jonasbb/serde_with/releases\">serde_with's\nreleases</a>.</em></p>\n<blockquote>\n<h2>serde_with v3.21.0</h2>\n<h3>Security</h3>\n<ul>\n<li>\n<p><a\nhref=\"https://github.com/jonasbb/serde_with/security/advisories/GHSA-7gcf-g7xr-8hxj\">GHSA-7gcf-g7xr-8hxj</a>:\nKeyValueMap serialization panics on empty sequence or map entries\nBad or attacker controlled values could cause a panic while allocating\ntoo large values.\nFixed in <a\nhref=\"https://redirect.github.com/jonasbb/serde_with/issues/966\">#966</a>\nby setting a maximum allocation size during the creation of collections\nlike <code>Vec</code> or sets.</p>\n<p>Thanks to <a\nhref=\"https://github.com/7thParkk\"><code>@​7thParkk</code></a> for\nreporting the issue.</p>\n</li>\n</ul>\n<h3>Added</h3>\n<ul>\n<li>Add <code>NoneAsZero</code> adapter that maps\n<code>Option&lt;NonZero*&gt;</code> to a plain integer, encoding\n<code>None</code> as <code>0</code> by <a\nhref=\"https://github.com/SAY-5\"><code>@​SAY-5</code></a> (<a\nhref=\"https://redirect.github.com/jonasbb/serde_with/issues/486\">#486</a>)</li>\n</ul>\n<h3>Changed</h3>\n<ul>\n<li>Re-enable link-to-definition on docs.rs (<a\nhref=\"https://redirect.github.com/jonasbb/serde_with/issues/964\">#964</a>)</li>\n</ul>\n<h3>Fixed</h3>\n<ul>\n<li>Fix some doc links to point to the correct types (<a\nhref=\"https://redirect.github.com/jonasbb/serde_with/issues/963\">#963</a>)</li>\n<li>Re-enable <code>unused_qualifications</code> and fix the resulting\nfindings by <a\nhref=\"https://github.com/lms0806\"><code>@​lms0806</code></a> (<a\nhref=\"https://redirect.github.com/jonasbb/serde_with/issues/962\">#962</a>)</li>\n</ul>\n</blockquote>\n</details>\n<details>\n<summary>Commits</summary>\n<ul>\n<li><a\nhref=\"https://github.com/jonasbb/serde_with/commit/0f4ca67e1f8fc4679e850f3a566d454fb30953c1\"><code>0f4ca67</code></a>\nUpdate changelog for 3.21.0 (<a\nhref=\"https://redirect.github.com/jonasbb/serde_with/issues/967\">#967</a>)</li>\n<li><a\nhref=\"https://github.com/jonasbb/serde_with/commit/7654841be1d1702a65afc0f839c67c36563c8188\"><code>7654841</code></a>\nUpdate changelog for 3.21.0</li>\n<li><a\nhref=\"https://github.com/jonasbb/serde_with/commit/c8a1d820ea25df01692b367058d587343e199389\"><code>c8a1d82</code></a>\nProtect all collection creations against capacity overflow by using\n`size_hin...</li>\n<li><a\nhref=\"https://github.com/jonasbb/serde_with/commit/6ad5fa5b474270f50016b4cc983e37f25f097ba4\"><code>6ad5fa5</code></a>\nProperly feature gate the <code>vec_with_capacity_cautious</code>\nfunction</li>\n<li><a\nhref=\"https://github.com/jonasbb/serde_with/commit/ef7d1417e3eacd0077f029763109368ee05c1c22\"><code>ef7d141</code></a>\nProtect all collection creations against capacity overflow by using\n`size_hin...</li>\n<li><a\nhref=\"https://github.com/jonasbb/serde_with/commit/a348da35fe808852a1b7e6fa890b425ad001d3f1\"><code>a348da3</code></a>\nAdd serde_as deserialize_as explain (<a\nhref=\"https://redirect.github.com/jonasbb/serde_with/issues/958\">#958</a>)</li>\n<li><a\nhref=\"https://github.com/jonasbb/serde_with/commit/2e5bc20e29e1d42eb9c85ab503964130eb1ea62e\"><code>2e5bc20</code></a>\nBump the github-actions group with 3 updates (<a\nhref=\"https://redirect.github.com/jonasbb/serde_with/issues/965\">#965</a>)</li>\n<li><a\nhref=\"https://github.com/jonasbb/serde_with/commit/927a3d69c3cecdf415f7d7662a0521894d313261\"><code>927a3d6</code></a>\nBump the github-actions group with 3 updates</li>\n<li><a\nhref=\"https://github.com/jonasbb/serde_with/commit/62d14ec637834259e0fab59ea84b87ca329e81c1\"><code>62d14ec</code></a>\nEnable link-to-definition on docs.rs again, after the upstream issue was\nreso...</li>\n<li><a\nhref=\"https://github.com/jonasbb/serde_with/commit/4584d94f685b66b96bdcf07bffe76e5df0819ea2\"><code>4584d94</code></a>\nEnable link-to-definition on docs.rs again, after the upstream issue was\nreso...</li>\n<li>Additional commits viewable in <a\nhref=\"https://github.com/jonasbb/serde_with/compare/v3.20.0...v3.21.0\">compare\nview</a></li>\n</ul>\n</details>\n<br />\n\n\n[![Dependabot compatibility\nscore](https://dependabot-badges.githubapp.com/badges/compatibility_score?dependency-name=serde_with&package-manager=cargo&previous-version=3.20.0&new-version=3.21.0)](https://docs.github.com/en/github/managing-security-vulnerabilities/about-dependabot-security-updates#about-compatibility-scores)\n\nDependabot will resolve any conflicts with this PR as long as you don't\nalter it yourself. You can also trigger a rebase manually by commenting\n`@dependabot rebase`.\n\n[//]: # (dependabot-automerge-start)\n[//]: # (dependabot-automerge-end)\n\n---\n\n<details>\n<summary>Dependabot commands and options</summary>\n<br />\n\nYou can trigger Dependabot actions by commenting on this PR:\n- `@dependabot rebase` will rebase this PR\n- `@dependabot recreate` will recreate this PR, overwriting any edits\nthat have been made to it\n- `@dependabot show <dependency name> ignore conditions` will show all\nof the ignore conditions of the specified dependency\n- `@dependabot ignore this major version` will close this PR and stop\nDependabot creating any more for this major version (unless you reopen\nthe PR or upgrade to it yourself)\n- `@dependabot ignore this minor version` will close this PR and stop\nDependabot creating any more for this minor version (unless you reopen\nthe PR or upgrade to it yourself)\n- `@dependabot ignore this dependency` will close this PR and stop\nDependabot creating any more for this dependency (unless you reopen the\nPR or upgrade to it yourself)\nYou can disable automated security fix PRs for this repo from the\n[Security Alerts\npage](https://github.com/nimbus-agent/Nimbus/network/alerts).\n\n</details>\n\nSigned-off-by: dependabot[bot] <support@github.com>\nCo-authored-by: dependabot[bot] <49699333+dependabot[bot]@users.noreply.github.com>",
-          "timestamp": "2026-07-16T07:15:35+03:00",
-          "tree_id": "e092f9d96f48e3664ac39b3ce3bcb007e9d3c2ff",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/f5983566836ac81ce48ed0430a3826e54274c457"
-        },
-        "date": 1784176431820,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 313.07383290000143,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 314.9359865000024,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 313.904605250006,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "6c56cb21ed74b70354d0a2959b0bf0978cbd8931",
+          "message": "docs(spec): propose GET /v1/services — repo-to-service resolution for clients (#1489)\n\n## Summary\n\nProposes `GET /v1/services` — a read over the service ids in\n`[metrics.dora.*]` / `[ci.service.*]` and the repo URNs bound to them.\n**Design only, no implementation**, following the shape of #1464.\n\n**This is not a blocker.** The consumer already ships and works without\nit; the proposal is about removing a gesture, not unblocking a feature.\n\n## Why a client wants it\n\nThe `nimbus-web-clipper` extension just shipped a deploy-readiness panel\nthat calls `GET /v1/preflight/deploy`. That route needs a `service`, and\nthe client has no way to learn which service a repository is: a service\nis a `[metrics.dora.<id>]` block carrying `repos = [...]`, and while the\ngateway holds the reverse map internally\n(`buildServiceIdentityResolver`) and assembles `knownServices`\n(`resolveKnownServices`), both are reachable only from the I13 write\ndispatcher. No GET exposes either.\n\nSo the client stores a **local binding**: the user types a service id\nonce per repository, seeded with a guess, and it is validated by asking\npreflight — an id the gateway does not know comes back reporting\n`unknown_service` on every check, so an unknown id is refused rather\nthan saved. That works. It costs a gesture per repo, and it can drift\nfrom `nimbus.toml` when a service is renamed.\n\nWith this read, repo→service resolves with no gesture, and the local\nbinding survives as an override for repos the config does not claim.\n\n## What the spec settles, and what it leaves to you\n\nSettled by reading the source: where the config is already loaded, what\n`resolveKnownServices` already returns, that `HTTP_ROUTE_AUTH` is total\nover the surface so **either** mounting option needs an entry there, and\nthat `loadNimbusServiceConfigsFromConfigDir` **throws** on a malformed\n`nimbus.toml` — a path whose message would be public under the\npublic-table option and can embed config values.\n\nLeft open, deliberately, because they are yours to decide:\n\n- **Public table or scoped.** `dispatchReadOnlyDataGet` is public by\nconstruction, which is exactly why `handleItemsResolve` and its siblings\nmount separately. Service *ids* are already probe-confirmable\nunauthenticated via preflight, and repo *names* already appear in `GET\n/v1/items`' projection — so the new disclosure is the **grouping**, not\nthe values. Whether that warrants a scope is a judgment about your\nthreat model, not ours.\n- Whether the IPC verb gains a matching shape.\n- Response shape details, naming, and pagination.\n\n## If you say no\n\nThe client keeps its local binding and nothing regresses. A \"no\" with a\nreason is genuinely useful to us — it tells the next surface not to ask\nagain.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nhttps://claude.ai/code/session_01SdWmqLJUG2mXevhr31o9dG\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n## Summary by CodeRabbit\n\n- **Documentation**\n- Expanded the service-resolution proposal with incompatibilities\nbetween bare URN resolution and item-based matching, including CircleCI\nbehavior, deployment-type effects, and result-shape considerations.\n- Added coverage for repository-only queries, service identity\nreferences, overlapping repository claims, first-claimant resolution,\nlist-form responses, and ambiguity disclosure.\n- Updated the design review to record the resolved correction and\ndocument testing for repository queries, matcher selection, and multiple\nclaimants.\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>",
+          "timestamp": "2026-09-11T07:21:22Z",
+          "tree_id": "0a437b0407dfd8b0b141377a481ddb33dd87a931",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/6c56cb21ed74b70354d0a2959b0bf0978cbd8931"
+        },
+        "date": 1789111836887,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 222.5030180499998,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 228.69427684999752,
             "unit": "ms"
           }
         ]
