@@ -77,6 +77,19 @@ export function createChatOpsAskEngine(
  * alone — the Vault half is what a revoked-but-never-cleaned-up credential, or a tool that was
  * simply still live when the process exited, would otherwise leave behind indefinitely in the OS
  * keychain.
+ *
+ * **All THREE are attempted even when an earlier one rejects**, and the first failure is re-thrown
+ * only once the credential sweep has had its turn. A plain sequential `await` chain made the
+ * WEAKEST step decide the fate of the strongest: a `removeAllToolScripts` rejection — a locked
+ * `toolgen/ephemeral/<toolId>/index.ts` on Windows is the realistic trigger — skipped the Vault
+ * sweep, and the caller in `main()` swallows the rejection and exits, so generated-tool
+ * credentials stayed in the OS keychain until some later boot's sweep happened to succeed. The
+ * three drops are independent (memory, disk, keychain); nothing about one failing makes the next
+ * one wrong to attempt, and the keychain is the half whose residue outlives the process.
+ *
+ * Re-thrown, never swallowed: this function stays honest about failing and `main()`'s own
+ * try/catch is the single place that decides a shutdown drain is best-effort — one place, so the
+ * decision to ignore a cleanup failure cannot be made twice and drift.
  */
 export async function drainToolgenOnShutdown(deps: {
   readonly revokeAllToolgenRegistrations: () => Promise<void>;
@@ -84,9 +97,24 @@ export async function drainToolgenOnShutdown(deps: {
   readonly sweepToolgenCredentials: () => Promise<number>;
   readonly configDir: string;
 }): Promise<void> {
-  await deps.revokeAllToolgenRegistrations();
-  await deps.removeAllToolScripts(deps.configDir);
-  await deps.sweepToolgenCredentials();
+  let firstError: unknown;
+  let failed = false;
+  const attempt = async (step: () => Promise<unknown>): Promise<void> => {
+    try {
+      await step();
+    } catch (err) {
+      if (!failed) {
+        failed = true;
+        firstError = err;
+      }
+    }
+  };
+
+  await attempt(() => deps.revokeAllToolgenRegistrations());
+  await attempt(() => deps.removeAllToolScripts(deps.configDir));
+  await attempt(() => deps.sweepToolgenCredentials());
+
+  if (failed) throw firstError;
 }
 
 export async function main(): Promise<void> {

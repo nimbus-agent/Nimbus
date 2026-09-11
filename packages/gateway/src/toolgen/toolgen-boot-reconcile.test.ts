@@ -1,6 +1,6 @@
 import { Database } from "bun:sqlite";
 import { describe, expect, test } from "bun:test";
-import { existsSync, mkdtempSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -431,6 +431,52 @@ describe("reconcileSavedTools — orphan sweep", () => {
     expect(r).toEqual({ verified: 1, disabled: 0, sweptOrphans: 1, skipped: false });
     expect(existsSync(savedToolDir(configDir, "t1"))).toBe(true);
     expect(existsSync(savedToolDir(configDir, "orphan2"))).toBe(false);
+  });
+
+  // `listSavedToolDirs` filters to DIRECTORIES but does not validate their NAMES, so a copied or
+  // renamed directory (`t1.bak`) reaches `removeSavedTool`, whose `assertSafeToolId` regex
+  // (`^[A-Za-z0-9_-]{1,64}$`) rejects the dot and throws. Unhandled, that throw escaped the loop
+  // AND `reconcileSavedTools` itself: `reconcileSavedToolsOrWarn` caught it so boot survived, but
+  // every remaining orphan was left on disk and the same directory blocked the sweep again on
+  // EVERY subsequent boot. Reverting the per-directory try/catch reproduces it -- this call
+  // rejects outright, whichever order `readdir` happens to return the two directories in.
+  test("an unsafely-named directory does not strand the REST of the orphan sweep", async () => {
+    const db = migratedDb();
+    const configDir = tmpConfigDir();
+    const vault = new FakeVault();
+    // A genuine orphan that must still be swept...
+    const orphanArtifact = artifact("orphan3");
+    const orphanCanonical = canonicalArtifactBytes(orphanArtifact);
+    const { sigB64: orphanSig } = await signArtifact(vault, orphanCanonical);
+    await writeSavedTool(configDir, "orphan3", {
+      canonicalJson: orphanCanonical,
+      sigB64: orphanSig,
+      script: emitToolScript(orphanArtifact),
+    });
+    // ...alongside a directory whose name `savedToolDir` refuses. Created with a raw `mkdir`
+    // precisely because every production writer would have refused this name too.
+    const badDir = join(configDir, "toolgen", "saved", "t1.bak");
+    mkdirSync(badDir, { recursive: true });
+
+    const { logger, warnCalls } = fakeLogger();
+    const r = await reconcileSavedTools({
+      db,
+      configDir,
+      vault,
+      logger,
+      ...enabledCapability(),
+    });
+
+    // The unsafe directory is NOT counted as swept -- it is still on disk, and a count including
+    // it would report a cleanup that never happened.
+    expect(r).toEqual({ verified: 0, disabled: 0, sweptOrphans: 1, skipped: false });
+    expect(existsSync(savedToolDir(configDir, "orphan3"))).toBe(false);
+    expect(existsSync(badDir)).toBe(true);
+
+    expect(warnCalls).toHaveLength(1);
+    const [meta, message] = warnCalls[0] as [{ err: unknown; dir: string }, string];
+    expect(meta.dir).toBe("t1.bak");
+    expect(message).toContain("t1.bak");
   });
 });
 

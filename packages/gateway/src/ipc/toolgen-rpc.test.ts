@@ -612,6 +612,82 @@ describe("toolgen RPC", () => {
     expect(ctx.gateDeps.registry.savedTools().map((t) => t.toolId)).toEqual(["keep"]);
   });
 
+  // The handler's docstring has always claimed the drops are "all attempted unconditionally". A
+  // sequential `await` chain does not deliver that, and the gap bit hardest exactly where the
+  // ordering is most deliberate: the `generated_tool` ROW is deleted BEFORE `removeSavedDir` runs,
+  // so a rejection there -- a locked `saved/<toolId>/index.ts` on Windows is the realistic
+  // trigger -- skipped BOTH remaining drops, leaving every `toolgen.<toolId>.*` Vault credential
+  // in the OS keychain with no row left to show anything was outstanding, after a revoke the owner
+  // was told had completed. Replacing the handler's `drop()` isolation with a plain `await` chain
+  // reproduces it: `revokeCredentialsForToolCalls` comes back empty.
+  test("toolgen.revoke still drops the script and the Vault credentials when removeSavedDir REJECTS", async () => {
+    const base = makeCtx();
+    const ctx: TestCtx = {
+      ...base,
+      removeSavedDir: async (toolId: string) => {
+        base.removeSavedDirCalls.push(toolId);
+        throw new Error("EBUSY: saved/tg_locked/index.ts is locked by another process");
+      },
+    };
+    ctx.gateDeps.registry.registerSaved(makeSavedEnvelope("tg_locked"));
+    insertGeneratedToolRow(ctx.gateDeps.db, "tg_locked");
+    await writeToolCredential(ctx.vault, "tg_locked", "api.example.com", {
+      type: "bearer",
+      token: "s3cret",
+    });
+
+    // Still surfaced, not swallowed: reporting a clean withdrawal that did not happen would be a
+    // worse defect than the one this test covers.
+    await expect(
+      dispatchToolgenRpc("toolgen.revoke", { toolId: "tg_locked" }, ctx),
+    ).rejects.toThrow("EBUSY");
+
+    expect(ctx.removeSavedDirCalls).toEqual(["tg_locked"]);
+    // The point of the fix: the two drops AFTER the failing one still ran, and the credential is
+    // really gone from the Vault -- not merely requested via a call counter.
+    expect(ctx.removeScriptCalls).toEqual(["tg_locked"]);
+    expect(ctx.revokeCredentialsForToolCalls).toEqual(["tg_locked"]);
+    expect(await ctx.vault.get("toolgen.tg_locked.api_pexample_pcom")).toBeNull();
+    // And the drops BEFORE it are unaffected -- the row is gone, so nothing is left claiming the
+    // standing approval still stands.
+    expect(getSavedTool(ctx.gateDeps.db, "tg_locked")).toBeNull();
+    expect(ctx.gateDeps.registry.savedTools()).toEqual([]);
+  });
+
+  // Failure at the very FIRST drop, plus a second failure later, so this pins two things at once:
+  // every later drop still runs, and the error the caller sees is the FIRST one (the diagnosis),
+  // not whichever happened to fail last.
+  test("toolgen.revoke attempts every drop when the FIRST one rejects, and surfaces the first failure", async () => {
+    const base = makeCtx();
+    const ctx: TestCtx = {
+      ...base,
+      removeSavedDir: async (toolId: string) => {
+        base.removeSavedDirCalls.push(toolId);
+        throw new Error("second-failure");
+      },
+    };
+    // A live child whose close() rejects -- `ToolgenRegistry.revoke` awaits it, so this is drop 1
+    // rejecting for real rather than a stubbed registry.
+    ctx.gateDeps.registry.register(makeEnvelope("tg_first", "s1"), async () => {
+      throw new Error("first-failure: child would not close");
+    });
+    insertGeneratedToolRow(ctx.gateDeps.db, "tg_first");
+    await writeToolCredential(ctx.vault, "tg_first", "api.example.com", {
+      type: "bearer",
+      token: "s3cret",
+    });
+
+    await expect(dispatchToolgenRpc("toolgen.revoke", { toolId: "tg_first" }, ctx)).rejects.toThrow(
+      "first-failure",
+    );
+
+    expect(getSavedTool(ctx.gateDeps.db, "tg_first")).toBeNull();
+    expect(ctx.removeSavedDirCalls).toEqual(["tg_first"]);
+    expect(ctx.removeScriptCalls).toEqual(["tg_first"]);
+    expect(ctx.revokeCredentialsForToolCalls).toEqual(["tg_first"]);
+    expect(await ctx.vault.get("toolgen.tg_first.api_pexample_pcom")).toBeNull();
+  });
+
   // `deleteCredentialsForTool` deletes `toolgen.<toolId>.*` by PREFIX, and `signing` is a
   // well-formed tool id whose prefix is byte-for-byte the artifact-signing keypair's. Losing that
   // keypair makes every saved tool on the machine permanently `pubkey_unavailable` -- and, before

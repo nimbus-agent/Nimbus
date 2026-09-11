@@ -484,26 +484,67 @@ const HANDLERS: RpcMethodHandlerMap<ToolgenRpcCtx> = {
    * 5. `removeScript` + `revokeCredentialsForTool` — the ephemeral script and every
    *    `toolgen.<toolId>.*` Vault credential (never the signing keypair; see `assertCallerToolId`).
    *
+   * "All attempted unconditionally" is a structural claim, not a hope, and a sequential `await`
+   * chain did not deliver it: a rejection from ANY drop stranded every drop after it. The
+   * consequence was worst at exactly the point the ordering above is designed around — a
+   * `removeSavedDir` rejection (a locked `saved/<toolId>/index.ts` on Windows) arrives AFTER the
+   * `generated_tool` row is already deleted, so the tool's `toolgen.<toolId>.*` Vault credentials
+   * survived a revoke the owner believes completed, with no row left to show anything is
+   * outstanding. Each drop is therefore attempted in its own try/catch, failures are collected,
+   * and the FIRST is re-thrown once every drop has had its turn (the first is the diagnosis; a
+   * keychain or filesystem fault makes the later ones echoes of it). The error is re-thrown with
+   * its identity intact — never wrapped into a string — so a caller can still branch on a
+   * `ToolgenError`'s `.code`.
+   *
+   * Re-thrown, never swallowed: the owner asked for a withdrawal, and reporting success on a
+   * withdrawal that did not complete would be a worse defect than the one this ordering fixes.
+   *
    * `revoked: true` is unconditional and says only that the withdrawal ran to completion, not that
    * anything was found — an idempotent second revoke is a success, not a lie. `savedRemoved`
    * discloses whether the SAVED half was actually present, which is the part an owner withdrawing
-   * a standing approval cares about.
+   * a standing approval cares about. Both are returned ONLY on the path where every drop
+   * succeeded, which is what keeps `savedRemoved: true` from ever describing a directory that is
+   * still on disk.
    */
   "toolgen.revoke": async (params, ctx) => {
     const toolId = requireString(params, "toolId");
     assertCallerToolId(toolId);
 
-    await ctx.gateDeps.registry.revoke(toolId);
-    const wasLoadedSaved = ctx.gateDeps.registry.unregisterSaved(toolId);
+    let firstError: unknown;
+    let failed = false;
+    // Takes a `void | Promise<void>` step so the SYNCHRONOUS drops (the registry eviction, the row
+    // read, the row delete -- `SQLITE_BUSY` from a concurrent process is the realistic throw) are
+    // isolated by the same construct as the asynchronous ones, rather than a second, subtly
+    // different one alongside it.
+    const drop = async (step: () => void | Promise<void>): Promise<void> => {
+      try {
+        await step();
+      } catch (err) {
+        if (!failed) {
+          failed = true;
+          firstError = err;
+        }
+      }
+    };
+
+    await drop(() => ctx.gateDeps.registry.revoke(toolId));
+    let wasLoadedSaved = false;
+    await drop(() => {
+      wasLoadedSaved = ctx.gateDeps.registry.unregisterSaved(toolId);
+    });
     // Read before the delete, so the disclosure covers a saved tool that is on disk but was NOT
     // loaded into the registry this boot (it failed verification and was skipped) -- exactly the
     // tool an owner is most likely to be revoking.
-    const hadSavedRow = listSavedTools(ctx.gateDeps.db).some((r) => r.toolId === toolId);
-    deleteSavedTool(ctx.gateDeps.db, toolId);
-    await ctx.removeSavedDir(toolId);
+    let hadSavedRow = false;
+    await drop(() => {
+      hadSavedRow = listSavedTools(ctx.gateDeps.db).some((r) => r.toolId === toolId);
+    });
+    await drop(() => deleteSavedTool(ctx.gateDeps.db, toolId));
+    await drop(() => ctx.removeSavedDir(toolId));
+    await drop(() => ctx.removeScript(toolId));
+    await drop(() => ctx.revokeCredentialsForTool(toolId));
 
-    await ctx.removeScript(toolId);
-    await ctx.revokeCredentialsForTool(toolId);
+    if (failed) throw firstError;
     return { revoked: true, savedRemoved: wasLoadedSaved || hadSavedRow };
   },
 };

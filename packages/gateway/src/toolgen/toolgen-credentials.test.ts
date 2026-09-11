@@ -260,4 +260,58 @@ describe("deleteCredentialsForTool", () => {
     await deleteCredentialsForTool(vault, "signing_tool");
     expect(await readToolCredential(vault, "signing_tool", "api.example.com")).toBeNull();
   });
+
+  // `vault.delete` rejects for causes that have nothing to do with the key it was handed -- a
+  // locked keychain, a libsecret error, a DPAPI failure. Aborting the loop on the first such
+  // rejection left every REMAINING bearer token in the keychain under a tool id that had just
+  // been revoked: the exact leak this function exists to close, reintroduced by a transient
+  // error. Same guarantee, and the same rationale, as the `revokeCredentials` closure in
+  // `platform/assemble.ts`. Reverting the per-key try/catch reproduces it: "b" and "c" survive.
+  test("one key's delete REJECTING does not strand the keys after it", async () => {
+    const base = memoryVault();
+    const attempted: string[] = [];
+    const vault: VaultLister & VaultDeleter = {
+      ...base,
+      delete: async (k: string) => {
+        attempted.push(k);
+        // The FIRST host attempted fails -- `listKeys` is insertion-ordered here, so "a" is the
+        // key the abort would have happened on.
+        if (k === toolCredentialKey("t1", "a.example.com")) {
+          throw new Error("keychain is locked");
+        }
+        await base.delete(k);
+      },
+    };
+    for (const host of ["a.example.com", "b.example.com", "c.example.com"]) {
+      await writeToolCredential(base, "t1", host, { type: "bearer", token: `tok-${host}` });
+    }
+
+    // Still surfaced: the caller (`toolgen.revoke`) must learn that cleanup did not complete,
+    // rather than telling an owner their withdrawal was clean while a credential survived it.
+    await expect(deleteCredentialsForTool(vault, "t1")).rejects.toThrow("keychain is locked");
+
+    expect(attempted).toHaveLength(3);
+    expect(await readToolCredential(base, "t1", "b.example.com")).toBeNull();
+    expect(await readToolCredential(base, "t1", "c.example.com")).toBeNull();
+    // The one that genuinely failed is still there -- nothing pretends otherwise.
+    expect(await readToolCredential(base, "t1", "a.example.com")).not.toBeNull();
+  });
+
+  test("with TWO failing deletes, the FIRST failure is the one re-thrown", async () => {
+    const base = memoryVault();
+    const vault: VaultLister & VaultDeleter = {
+      ...base,
+      delete: async (k: string) => {
+        if (k === toolCredentialKey("t1", "a.example.com")) throw new Error("first-failure");
+        if (k === toolCredentialKey("t1", "b.example.com")) throw new Error("second-failure");
+        await base.delete(k);
+      },
+    };
+    for (const host of ["a.example.com", "b.example.com", "c.example.com"]) {
+      await writeToolCredential(base, "t1", host, { type: "bearer", token: "t" });
+    }
+
+    await expect(deleteCredentialsForTool(vault, "t1")).rejects.toThrow("first-failure");
+    expect(await readToolCredential(base, "t1", "c.example.com")).toBeNull();
+  });
 });

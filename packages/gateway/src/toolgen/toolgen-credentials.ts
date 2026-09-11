@@ -115,14 +115,36 @@ export async function deleteToolCredential(
  * hosts first: it also catches a credential for a host that fell out of the tool's envelope (e.g.
  * left behind by an earlier partial `bindCredentials` write), which a host-list delete would strand
  * in the keychain permanently — precisely the kind of leak this function exists to close.
+ *
+ * **EVERY key is attempted even when one delete rejects**, mirroring the `revokeCredentials`
+ * closure in `platform/assemble.ts` and for the identical reason stated there: `vault.delete` can
+ * reject for a cause that has nothing to do with the key it was handed (a locked keychain, a
+ * libsecret error, a DPAPI failure), and an abort on the first such rejection leaves every
+ * REMAINING `toolgen.<toolId>.<hostSlug>` bearer token in the OS keychain under a tool id that has
+ * just been revoked — the exact leak this function exists to close, reintroduced by a transient
+ * error. The failure is re-thrown AFTER the loop, never swallowed: the caller
+ * (`toolgen.revoke`) must still learn that cleanup did not complete, because a silent success
+ * there tells an owner their standing approval was withdrawn cleanly when a credential survived
+ * it. The FIRST failure is the one re-thrown — when the keychain itself is the cause every
+ * subsequent key fails the same way, so the first carries the diagnosis and the rest are echoes.
  */
 export async function deleteCredentialsForTool(
   vault: VaultLister & VaultDeleter,
   toolId: string,
 ): Promise<void> {
   const keys = await vault.listKeys(`toolgen.${toolId}.`);
+  let firstError: unknown;
+  let failed = false;
   for (const key of keys) {
     if (key.startsWith(TOOLGEN_SIGNING_KEY_PREFIX)) continue;
-    await vault.delete(key);
+    try {
+      await vault.delete(key);
+    } catch (err) {
+      if (!failed) {
+        failed = true;
+        firstError = err;
+      }
+    }
   }
+  if (failed) throw firstError;
 }

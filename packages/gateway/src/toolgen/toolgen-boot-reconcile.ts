@@ -154,9 +154,29 @@ export async function reconcileSavedTools(
   const dirs = await listSavedToolDirs(configDir);
   let sweptOrphans = 0;
   for (const dir of dirs) {
-    if (!knownToolIds.has(dir)) {
+    if (knownToolIds.has(dir)) continue;
+    // Per-DIRECTORY isolation, for the same reason pass 1 has per-ROW isolation: one orphan's
+    // removal throwing must not strand every orphan after it, nor skip the summary logging below.
+    // Two realistic causes, and neither is hypothetical. (1) `listSavedToolDirs` filters to
+    // directories but does NOT validate their names, so a directory whose name fails
+    // `assertSafeToolId` (`^[A-Za-z0-9_-]{1,64}$`) — a copied or renamed `t1.bak`, an editor's
+    // backup directory — reaches `removeSavedTool`, which throws before deleting anything.
+    // (2) a locked file under `saved/<dir>` on Windows fails the `rm` outright. Unhandled, either
+    // one escapes `reconcileSavedTools` entirely: `reconcileSavedToolsOrWarn` catches it so boot
+    // survives, but the SAME directory then blocks the sweep on every subsequent boot, and every
+    // orphan ordered after it stays on disk forever.
+    //
+    // A failed removal is NOT counted in `sweptOrphans`: the directory is still there, and a count
+    // that included it would report a cleanup that did not happen.
+    try {
       await removeSavedTool(configDir, dir);
       sweptOrphans++;
+    } catch (err) {
+      logger.warn(
+        { err, dir },
+        `toolgen: could not sweep orphaned saved-tool directory "${dir}" this boot (an unsafe ` +
+          "directory name, or a filesystem error); it is left in place and will be retried next boot",
+      );
     }
   }
 
