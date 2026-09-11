@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1789121832908,
+  "lastUpdate": 1789123169365,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "b72f96dcb862f54084927d8542edce9e0e795ad7",
-          "message": "feat(cli): print the gateway URL from `nimbus clip pair` (#761)\n\n## What\n\n`nimbus clip pair` now prints the **gateway URL** next to the one-time\ncode, so the owner can copy both into the web-clipper extension's\nOptions page from a single command — instead of hunting for the URL in\nthe earlier `nimbus serve` output.\n\n```\n$ nimbus clip pair --label my-chrome\nPairing \"my-chrome\" — in the browser extension's Options page, enter:\n  Gateway URL:  http://127.0.0.1:7474\n  Pairing code: 429040\nEnter it within 2 minutes.\n```\n\nWhen the gateway runs without the HTTP surface, the command warns to\nrestart with `nimbus serve --port` — otherwise the extension has nothing\nto reach.\n\n## How\n\n- `clip.pair` echoes a new optional `gatewayUrl` field, set at boot in\n`assemble.ts` → the `clipHttpBaseUrl` IPC option →\n`ClipRpcDeps.httpBaseUrl`, derived from `NIMBUS_HTTP_PORT` (host is\nalways `127.0.0.1`, I6).\n- No new invariant, no migration, and no change to the extension's wire\ncontract (the URL is owner-facing CLI output).\n\n## Companion\n\nPairs with the web-clipper `web-clipper-ux-fixes` PR, which fixes the\nextension's Options placeholder to the matching default port (`7474`).\n\n## Verification\n\n- 32 clip tests (gateway + CLI), gateway + CLI typecheck, Biome lint,\nmarkdownlint, lychee — all green. Static invariant audit + 92\nsecurity-invariant tests passed at build time.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nCo-authored-by: Claude Opus 4.8 (1M context) <noreply@anthropic.com>",
-          "timestamp": "2026-07-16T17:59:46Z",
-          "tree_id": "09df3a11d973a84745ad922da39403b5ae84bf64",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/b72f96dcb862f54084927d8542edce9e0e795ad7"
-        },
-        "date": 1784225505306,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 314.37637314999773,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 316.17949129999835,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 322.7522248500045,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "306811640+nimbus-release-bot[bot]@users.noreply.github.com",
+            "name": "nimbus-release-bot[bot]",
+            "username": "nimbus-release-bot[bot]"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "5ddf170438287d082f3afcc55d5603ea4cd9b575",
+          "message": "chore: release main (#1492)\n\n:robot: I have created a release *beep* *boop*\n---\n\n\n<details><summary>7.19.0</summary>\n\n##\n[7.19.0](https://github.com/nimbus-agent/Nimbus/compare/v7.18.0...v7.19.0)\n(2026-09-11)\n\n\n### Features\n\n* **http:** GET /v1/metrics/stats — the bucketed DORA series, plus the\nchange-failure-rate attribution fix\n([#1493](https://github.com/nimbus-agent/Nimbus/issues/1493))\n([f6e852a](https://github.com/nimbus-agent/Nimbus/commit/f6e852a13fb81450a6952ce4817acffb1b3dcfbf))\n* **http:** GET /v1/services/resolve — repo-URN-to-service resolution\n([#1491](https://github.com/nimbus-agent/Nimbus/issues/1491))\n([7da3b84](https://github.com/nimbus-agent/Nimbus/commit/7da3b84dda806f712d1ca7753dc28da580a5eb67))\n</details>\n\n---\nThis PR was generated with [Release\nPlease](https://github.com/googleapis/release-please). See\n[documentation](https://github.com/googleapis/release-please#release-please).\n\nCo-authored-by: nimbus-release-bot[bot] <306811640+nimbus-release-bot[bot]@users.noreply.github.com>",
+          "timestamp": "2026-09-11T10:25:53Z",
+          "tree_id": "1efe1ef4937593bb1e38d70f07032bf2aae6564c",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/5ddf170438287d082f3afcc55d5603ea4cd9b575"
+        },
+        "date": 1789123166882,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 329.1091442500052,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 332.2651244999943,
             "unit": "ms"
           }
         ]
