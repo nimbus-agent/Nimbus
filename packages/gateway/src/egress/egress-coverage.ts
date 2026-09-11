@@ -87,7 +87,9 @@ export type CoverageVector = Readonly<Record<CoverageClass, Granularity>>;
  * takes item ids from an external caller — ids that appear inside an agent brief — and answers
  * entirely from the LOCAL index, with no outbound request at all. `GET /v1/items/resolve-file`
  * beside it does the same with a forge coordinate — a `github.com` repository and a ref — and
- * `GET /v1/items/resolve` does the same with a URL. `POST /v1/items/fetch` on the same port DOES
+ * `GET /v1/items/resolve` does the same with a URL. `GET /v1/services/resolve` is narrower than all
+ * of them: it reads no index row at all, only the owner's local `nimbus.toml`, answering which
+ * configured service claims a repo URN. `POST /v1/items/fetch` on the same port DOES
  * make an outbound request and WILL append — but under `sync`, not `http`: the class tracks the
  * KIND of egress (a connector call), not the transport port it arrived on.
  *

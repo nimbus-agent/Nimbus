@@ -1,6 +1,18 @@
 # `GET /v1/services` — the configured services, and the repos they claim
 
-> **Status:** proposal. No code in this branch — this is the contract, argued
+> **Status: ANSWERED — the resolve form of §5 shipped 2026-09-11.** This
+> document is kept as the argument, not as a description of the surface; where
+> it and the code disagree, the code is right and `docs/CHANGELOG.md` records
+> why. What landed: `GET /v1/services/resolve`, bearer-authed under the existing
+> `resolve` scope, returning a total `{ service, ambiguous, candidates }`. The
+> answers to every question in §11, and the one place this document turned out
+> to be wrong (§5.1's guess about the entry point), are recorded inline below.
+>
+> **The list form of §7 did NOT ship** and stays compatible and unbuilt, so §7
+> and §11's list-form questions — Q2, Q6, and Q3 as it applies to that form —
+> remain live proposals rather than closed ones.
+>
+> Originally filed as: proposal, no code in the branch — the contract argued
 > before it is built, per the satellite-repo convention that the gateway owns
 > the wire and consumers propose against it (#1464 established the shape).
 >
@@ -146,6 +158,10 @@ GET /v1/services/resolve?repo=github:acme/payments-api
 → { "service": "payment-service" }   // or { "service": null }
 ```
 
+*This is the sketch as proposed. What shipped carries a third key as well —
+`{ service, ambiguous, candidates }`, per §5.1's second consequence, which was
+answered in favour of disclosing the contest.*
+
 This is strictly less disclosure — one answer about one repository the caller
 already named — and it has a second advantage that is independent of the
 disclosure debate and is the stronger of the two: **the matching rules stay on
@@ -239,6 +255,23 @@ That has two consequences for this proposal, and the second is the open one:
 
    So the CircleCI answer is a decision, not a default, and the resolve form's
    viability partly rests on it.
+
+   > **ANSWERED 2026-09-11: the URN-to-URN entry point
+   > (`resolveServicesByRepoUrn`), and the second bullet above is WRONG about
+   > it.** It is not a third matcher and needed no refactor of the other two.
+   > The three do not answer the same question: `repoMetadataMatchesUrn` and
+   > `repoLikeMatchesUrn` ask *does this **indexed item** belong to this
+   > service*, matching heterogeneous item metadata — `repo` / `project` /
+   > `jobName` / an external id — against a config URN, which is why they need
+   > provider-specific arms at all. The new one asks *does this **config URN**
+   > name this service*, where both sides are config vocabulary produced by the
+   > same `parseDoraRepoUrn`, so the comparison is exact and no provider rule
+   > enters. That is also the real reason `circleci` resolves here while the
+   > item-shaped matcher returns `false` for it: that arm is `false` because an
+   > indexed item carries no external id — a fact about **items**, not about
+   > URNs — so there was never a gap for this route to inherit. The
+   > synthesised-item alternative is rejected on all three counts in the first
+   > bullet, which stand.
 
 2. **Whether the route DISCLOSES the ambiguity is still open, and is a real
    choice.** Returning a bare `{ "service": "payment-service" }` is honest about
@@ -519,7 +552,13 @@ too sensitive for either mount, this is the outcome and the consumer is fine.
 
 ## 11. Open questions for the gateway
 
-1. List form, resolve form, or both? §5 — the resolve form keeps the
+> **Answered 2026-09-11.** Q1, Q4 and Q5 are settled and shipped; Q2, Q3 and Q6
+> applied only to the list form, which did not ship, so they stay open against
+> it. Each answer is marked in place below rather than summarised here, so a
+> reader following a cross-reference lands on the decision itself.
+
+1. **ANSWERED: the resolve form, and only it.** List form, resolve form, or
+   both? §5 — the resolve form keeps the
    provider-specific matching on the gateway side, and there is no single
    matcher for a client to copy even if it wanted to. This is the question to
    answer first, because the next two only apply to the list form.
@@ -536,17 +575,29 @@ too sensitive for either mount, this is the outcome and the consumer is fine.
    point avoids both but is a third matcher unless the other two are refactored
    onto it. The consumer has no preference here and could not implement either;
    it is named so that the choice is made rather than fallen into.
-2. Public (Option A) or scoped (Option B)? §6 — and note Option A publishes the
+2. **STILL OPEN, and now list-form-only** — the resolve form shipped scoped,
+   inline in `tryBearerAuthedGet`, for a reason particular to it: it is the one
+   argued at its `HTTP_ROUTE_AUTH` entry, that a public mount would not preserve
+   the narrowing the resolve form claims, since `GET /v1/items` already makes
+   repo names enumerable unauthenticated. Public (Option A) or scoped (Option B)? §6 — and note Option A publishes the
    route in `openapi/v1.yaml`, which is a longer-lived commitment than the
    handler.
-3. If scoped: reuse `resolve`, or a new `services` scope? §6. Reusing `resolve`
+3. **ANSWERED for the resolve form: reuse `resolve`.** It is a resolution —
+   coordinate in, identity out — and a fourth scope naming the same capability
+   would split `resolve` on no principle a caller can see. Still open for the
+   list form, which is not a resolution. If scoped: reuse `resolve`, or a new `services` scope? §6. Reusing `resolve`
    widens the reach of every token that already holds it, including tokens
    paired for `resolve-file` alone; a new scope grants nothing retroactively.
-4. What does the route do when `nimbus.toml` does not parse — degrade to an
+4. **ANSWERED: surface it**, as `500 config_unreadable`, with a body that names
+   only that parsing failed. Degrading would answer `service: null`, which the
+   caller cannot distinguish from "no service claims this repo" — a confident
+   wrong answer about the owner's own configuration. What does the route do when `nimbus.toml` does not parse — degrade to an
    empty list, or surface the error? §7. Under Option A the message is public
    and embeds config values.
-5. **Repository-to-service cardinality — what should one repo claimed by two
-   services do?** §5.1. Three answers, and the third is the gateway's to prefer
+5. **ANSWERED: the second option — resolve as the gateway already does, and
+   disclose the candidates.** Config validation was not tightened, so a config
+   that loads today still loads. Repository-to-service cardinality — what should one repo claimed by two
+   services do? §5.1. Three answers, and the third is the gateway's to prefer
    if it wants it:
    - **Resolve as the gateway already does** (first claimant wins,
      `packages/gateway/src/metrics/service-identity.ts:36-44`) and stay silent
@@ -563,7 +614,8 @@ too sensitive for either mount, this is the outcome and the consumer is fine.
 
    Whichever is chosen needs a test for the multi-claimant case; there is none
    today because there is no route.
-6. Should `[ci.service.<id>]` and `[metrics.dora.<id>]` services be
+6. **STILL OPEN — list-form-only.** The resolve form returns service ids, which
+   carry no provenance either way. Should `[ci.service.<id>]` and `[metrics.dora.<id>]` services be
    distinguishable in the response? They are merged into one `Map` today, with a
    stderr warning on collision, and the consumer does not care — but a future
    one might.

@@ -8,6 +8,52 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
 
 ## Post-Phase-6 deliveries
 
+- **2026-09-11 — `GET /v1/services/resolve`: repo-URN-to-service resolution, answering the
+  proposal merged hours earlier.** A browser client sitting on a repository knows the repository
+  and nothing else; the two routes that would tell its reader anything — `GET /v1/metrics/dora`
+  and `GET /v1/preflight/deploy` — both take a `service` it has no way to obtain, so it shipped a
+  hand-typed per-repository binding instead. This is the read that removes that gesture:
+  `?repo=github:acme/payments-api` in, `{ service, ambiguous, candidates }` out.
+  **The RESOLVE form, not the list form** — §11 Q1 of the design, decided for the reason §5 argues:
+  it discloses one answer about one repository the caller already named rather than the owner's
+  whole service-to-repo grouping, and the matching rules stay on the gateway side.
+  **Under the existing `resolve` scope**, the same one `resolve`/`resolve-file`/`resolve-ids` use,
+  so **no re-pairing** — and scoped rather than public **by decision**, though the two routes it
+  feeds are both public. The reason is recorded at its `HTTP_ROUTE_AUTH` entry because the next
+  proposal will copy it: a public mount would not preserve this route's own narrowing, since
+  `GET /v1/items` is public and projects `metadata`, so repo names are already enumerable
+  unauthenticated and N cheap calls would rebuild exactly the grouping the resolve form claims not
+  to expose. The scope is what makes "strictly less disclosure" true rather than nominal. It
+  therefore stays off `HTTP_ROUTES` and `openapi/v1.yaml` like every other clip-scoped read.
+  **C6 — the resolver entry point — is answered, and the spec's own speculation about it was
+  wrong.** §5.1 framed a URN-to-URN entry point as "the third matcher §5 warns about unless the
+  other two are refactored onto it". It is not: `repoMetadataMatchesUrn` and `repoLikeMatchesUrn`
+  answer "does this INDEXED ITEM belong to this service", matching heterogeneous item metadata
+  (`repo` / `project` / `jobName` / an external id) against a config URN, while
+  `resolveServicesByRepoUrn` answers "does this CONFIG URN name this service", where both sides are
+  config vocabulary produced by the same `parseDoraRepoUrn`. Different question, exact comparison,
+  no refactor, and **`circleci` resolves here** even though the item-shaped matcher returns `false`
+  for every circleci URN — that arm is `false` because an indexed item carries no external id,
+  which is a fact about items, not about URNs. The synthesised-item alternative was rejected: it
+  would have inherited that `false`, forced a `type` choice that silently decides the answer, and
+  left the resolver's three-way `bound`/`excluded`/`unknown` with no honest projection onto
+  `service | null`.
+  **Cardinality (Q5) discloses.** First claimant wins — the same M-2 rule the rest of the DORA
+  pipeline already applies, so the route cannot disagree with the binding the metrics behind it
+  used — and every claimant is returned, because the caller is about to gate a deployment on the
+  answer and cannot see the stderr ambiguity warning the resolver emits. The key set is **total**:
+  `ambiguous` and `candidates` are present on every answer including the null one, so a client can
+  never read their absence as "uncontested".
+  **Malformed `nimbus.toml` (Q4) is surfaced, not degraded** — `500 config_unreadable` — because
+  `service: null` is indistinguishable from "no service claims this repo", a confident wrong answer
+  about the owner's own configuration. The body names only that parsing failed: those messages
+  embed the service id and the offending value verbatim, and a client token is not the owner.
+  No migration, no invariant, no new egress class — it reads one local file and appends no row
+  (recorded in the `http` narrowing in `egress/egress-coverage.ts`).
+  **NOT shipped:** the list form (`GET /v1/services`), which stays compatible and unbuilt, and with
+  it §11 Q2/Q3, which only ever applied to it.
+  Design: [`2026-09-11-services-route-design.md`](./superpowers/specs/2026-09-11-services-route-design.md).
+
 - **2026-09-10 — Runtime tool generation, PR 3 of 3: persistence, closing the row.**
   `nimbus tool save <tool-id>` promotes a live, owner-approved generated tool (created via PR 2's
   drafting, below) to one that survives a gateway restart. Persisting is a STANDING approval,

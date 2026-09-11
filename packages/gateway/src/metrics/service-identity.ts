@@ -316,3 +316,41 @@ export function buildServiceIdentityResolver(
     return { kind: "unknown" };
   };
 }
+
+/**
+ * Which services claim a given repo URN, in config order.
+ *
+ * `serviceId` is the FIRST claimant and `candidateServiceIds` is every one of them, so a caller
+ * can tell a sole claim from a contested one. Both are needed: the first-claimant pick keeps this
+ * route agreeing with the binding the rest of the DORA pipeline already made for the same repo
+ * (M-2 above, and `AmbiguousBindingWarning`'s `chosenServiceId`/`candidateServiceIds` pair), while
+ * the full list is the only thing on the wire that says the pick was contested at all — a caller
+ * about to gate a deployment on the answer cannot see the stderr warning the resolver emits.
+ *
+ * This is deliberately NOT a third copy of `repoMetadataMatchesUrn` / `repoLikeMatchesUrn`, and it
+ * needs no refactor of either. Those two answer "does this INDEXED ITEM belong to this service",
+ * matching heterogeneous item metadata (`repo` / `project` / `jobName` / an external id) against a
+ * config URN. This answers a different question — "does this CONFIG URN name this service" — where
+ * both sides are config vocabulary produced by the same `parseDoraRepoUrn`, so the comparison is
+ * exact and provider-specific metadata rules never enter. That is also why `circleci` resolves
+ * here while `repoMetadataMatchesUrn` returns `false` for it: that arm is `false` because an
+ * indexed item carries no external id, which is a fact about items, not about URNs.
+ */
+export type RepoUrnResolution = {
+  readonly serviceId: string | null;
+  readonly candidateServiceIds: readonly string[];
+};
+
+export function resolveServicesByRepoUrn(
+  configs: ReadonlyMap<string, ServiceConfig>,
+  query: ParsedDoraRepoUrn,
+): RepoUrnResolution {
+  const claimants: string[] = [];
+  for (const cfg of configs.values()) {
+    // `some`, so a config naming the same repo twice is one claimant, not two.
+    if (cfg.repos.some((u) => u.provider === query.provider && u.providerId === query.providerId)) {
+      claimants.push(cfg.serviceId);
+    }
+  }
+  return { serviceId: claimants[0] ?? null, candidateServiceIds: claimants };
+}

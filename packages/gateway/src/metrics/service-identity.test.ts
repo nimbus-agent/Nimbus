@@ -1,6 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import type { ServiceConfig } from "./dora-config.ts";
-import { buildServiceIdentityResolver } from "./service-identity.ts";
+import { buildServiceIdentityResolver, resolveServicesByRepoUrn } from "./service-identity.ts";
 
 function baseConfig(overrides?: Partial<ServiceConfig>): ServiceConfig {
   return {
@@ -447,5 +447,68 @@ describe("buildServiceIdentityResolver", () => {
         }),
       ).toEqual({ kind: "unknown" });
     });
+  });
+});
+
+describe("resolveServicesByRepoUrn", () => {
+  it("resolves a repo URN to the service that claims it", () => {
+    const res = resolveServicesByRepoUrn(configs(baseConfig()), {
+      provider: "github",
+      providerId: "acme/checkout",
+    });
+    expect(res.serviceId).toBe("checkout");
+    expect(res.candidateServiceIds).toEqual(["checkout"]);
+  });
+
+  it("answers null for a URN no config claims", () => {
+    const res = resolveServicesByRepoUrn(configs(baseConfig()), {
+      provider: "github",
+      providerId: "acme/unclaimed",
+    });
+    expect(res.serviceId).toBeNull();
+    expect(res.candidateServiceIds).toEqual([]);
+  });
+
+  it("does not match the same providerId under a different provider", () => {
+    const res = resolveServicesByRepoUrn(configs(baseConfig()), {
+      provider: "gitlab",
+      providerId: "acme/checkout",
+    });
+    expect(res.serviceId).toBeNull();
+  });
+
+  // C6: the item-shaped matcher returns false for every circleci URN because its item shape
+  // carries no external id. A URN-to-URN query has no such gap — both sides are config
+  // vocabulary, parsed by the same parser — so circleci resolves like any other provider.
+  it("resolves a circleci URN, which the item-shaped matcher cannot", () => {
+    const res = resolveServicesByRepoUrn(
+      configs(baseConfig({ repos: [{ provider: "circleci", providerId: "gh/acme/checkout" }] })),
+      { provider: "circleci", providerId: "gh/acme/checkout" },
+    );
+    expect(res.serviceId).toBe("checkout");
+  });
+
+  // §5.1: first claimant wins, matching buildServiceIdentityResolver's M-2 rule, and every
+  // claimant is disclosed so the caller can tell a sole claim from a contested one.
+  it("picks the first claimant by config order and discloses every candidate", () => {
+    const shared = { provider: "github", providerId: "acme/shared" } as const;
+    const res = resolveServicesByRepoUrn(
+      configs(
+        baseConfig({ serviceId: "payments", repos: [shared] }),
+        baseConfig({ serviceId: "billing", repos: [shared] }),
+      ),
+      shared,
+    );
+    expect(res.serviceId).toBe("payments");
+    expect(res.candidateServiceIds).toEqual(["payments", "billing"]);
+  });
+
+  it("lists a claimant once even when it names the same repo twice", () => {
+    const urn = { provider: "github", providerId: "acme/dup" } as const;
+    const res = resolveServicesByRepoUrn(
+      configs(baseConfig({ serviceId: "dup", repos: [urn, urn] })),
+      urn,
+    );
+    expect(res.candidateServiceIds).toEqual(["dup"]);
   });
 });

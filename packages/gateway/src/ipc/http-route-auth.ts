@@ -22,6 +22,7 @@ export const ROUTE_KEY_AGENT_RUN_GET = "GET /v1/agents/runs/*";
 export const ROUTE_KEY_ITEMS_RESOLVE = "GET /v1/items/resolve";
 export const ROUTE_KEY_ITEMS_RESOLVE_FILE = "GET /v1/items/resolve-file";
 export const ROUTE_KEY_ITEMS_RESOLVE_IDS = "GET /v1/items/resolve-ids";
+export const ROUTE_KEY_SERVICES_RESOLVE = "GET /v1/services/resolve";
 export const ROUTE_KEY_EGRESS_LIST = "GET /v1/egress";
 export const ROUTE_KEY_EGRESS_HEAD = "GET /v1/egress/head";
 export const ROUTE_KEY_EGRESS_VERIFY = "GET /v1/egress/verify";
@@ -82,6 +83,30 @@ export const HTTP_ROUTE_AUTH: Readonly<Record<string, RouteAuth>> = Object.freez
   // Maps indexed item ids back to their references. Same `resolve` scope as the two reads
   // above and for the same reason: it reads, it runs nothing, and it appends NO egress row.
   [ROUTE_KEY_ITEMS_RESOLVE_IDS]: { kind: "clip", scope: "resolve" },
+  // Maps a repo URN to the service that claims it. Same `resolve` scope as the three reads above,
+  // and for the same three sentences: it reads, it runs nothing, and it appends NO egress row.
+  //
+  // SCOPED rather than public, which is a decision and not an inheritance — `/v1/metrics/dora` and
+  // `/v1/preflight/deploy`, the two routes this exists to feed, are both `{ kind: "public" }`, so
+  // the consistent-looking choice was public. Stated here because the next proposal will copy it:
+  //
+  //   1. A public mount would NOT preserve this route's own narrowing. Its whole argument over a
+  //      `GET /v1/services` list form is that it discloses one answer about one repository the
+  //      caller already named, rather than the owner's whole service-to-repo grouping. But
+  //      `GET /v1/items` is public and projects `metadata`, so repo names are already enumerable
+  //      unauthenticated — and with the repo list in hand, N cheap calls here would rebuild exactly
+  //      the grouping the resolve form claims not to expose. The scope is what makes "strictly less
+  //      disclosure" true rather than nominal.
+  //   2. It costs the consumer nothing. A browser client holding `resolve` for `resolve-file` /
+  //      `resolve-ids` already has this; no re-pairing, no new scope, no owner gesture.
+  //   3. It stays off HTTP_ROUTES and `openapi/v1.yaml`, like every other clip-scoped read. A
+  //      public mount would publish it in a schema other tools generate clients from, which is a
+  //      longer-lived commitment than a handler — and this route's shape is still settling (the
+  //      list form remains unbuilt and compatible).
+  //
+  // A new `services` scope was rejected: this IS a resolution — coordinate in, identity out — and a
+  // fourth scope naming the same capability would split `resolve` on no principle a caller can see.
+  [ROUTE_KEY_SERVICES_RESOLVE]: { kind: "clip", scope: "resolve" },
   // The egress-ledger reads. Bearer reads under their own scope, appending no egress row of their
   // own — they READ the record, and a read that ledgered itself would inflate the number it exists
   // to report. `egress.prune`, the ledger's one sanctioned mutation, has no HTTP surface at all and
@@ -163,6 +188,7 @@ export type ClipReadRouteKey =
   | typeof ROUTE_KEY_ITEMS_RESOLVE
   | typeof ROUTE_KEY_ITEMS_RESOLVE_FILE
   | typeof ROUTE_KEY_ITEMS_RESOLVE_IDS
+  | typeof ROUTE_KEY_SERVICES_RESOLVE
   | typeof ROUTE_KEY_EGRESS_LIST
   | typeof ROUTE_KEY_EGRESS_HEAD
   | typeof ROUTE_KEY_EGRESS_VERIFY
