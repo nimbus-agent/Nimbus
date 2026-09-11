@@ -319,6 +319,76 @@ function selectResolvedIncidents(
   return out;
 }
 
+type AttributionIncident = {
+  opened: number;
+};
+
+/**
+ * Incidents that could be ATTRIBUTED to a deploy inside `[startMs, endMs]`.
+ *
+ * Deliberately NOT `selectResolvedIncidents`, which is correct for `mttr` and wrong here, for
+ * one reason: **the column it windows on is not the column attribution reads.** It bounds on
+ * `i.modified_at` — for a resolved incident, effectively RESOLUTION time — while the
+ * attribution loop compares `opened_at_ms`. An incident opened inside the window moments after
+ * a deploy, but resolved after the window's upper edge, was therefore never a candidate and its
+ * deploy was reported CLEAN. That is not a corner case: `mttr` exists precisely because
+ * resolution lag runs to hours and days, so it is the normal shape near any upper edge.
+ *
+ * It matters far more for a SERIES than for the single scalar this originally served. A
+ * `GET /v1/metrics/dora` window has exactly one upper edge, `now`, where the incident genuinely
+ * has not happened yet and no contract can do better. A series has N upper edges and every one
+ * of them is in the past, with the incident sitting in the index, readable, and ignored.
+ *
+ * Two bounds, both deliberate:
+ *  - The upper bound extends past `endMs` by `incidentWindowMs` and no further, because a deploy
+ *    just inside the edge can still be blamed for an incident opening just outside it. The
+ *    DEPLOY selection is NOT widened to match — `deploys.length` is the denominator, so widening
+ *    it would change the number the metric reports rather than correct it.
+ *  - There is no `synced_at` fallback. `selectResolvedIncidents` has one, and it is indefensible
+ *    for attribution specifically: `synced_at` is our INDEXING time, so falling back to it blames
+ *    whichever deploy happened to precede the moment we happened to index the row. An incident
+ *    with no real opened timestamp is excluded from attribution instead, matching the rule
+ *    `stats.ts`'s `incidentsOpened` already states for the same reason.
+ *
+ * `json_valid` guards every `json_extract`, which RAISES on malformed JSON in this position.
+ *
+ * KNOWN RESIDUAL, unchanged here and disclosed rather than fixed: `status = 'resolved'` is still
+ * required, so an incident that is still burning is invisible to attribution at any bound, and a
+ * historical `change_failure_rate` under-reports for that second, independent reason. Dropping
+ * the predicate would close it and would also raise reported failure rates, which is a separate
+ * decision from this one.
+ */
+function selectAttributionIncidents(
+  db: Database,
+  cfg: ServiceConfig,
+  startMs: number,
+  endMs: number,
+  incidentWindowMs: number,
+): AttributionIncident[] {
+  if (cfg.pagerdutyServices.length === 0) return [];
+  const placeholders = cfg.pagerdutyServices.map(() => "?").join(",");
+  const rows = db
+    .query(
+      `SELECT json_extract(i.metadata, '$.opened_at_ms') AS opened
+       FROM item i
+       WHERE i.service = 'pagerduty'
+         AND i.type = 'incident'
+         AND json_valid(i.metadata)
+         AND json_extract(i.metadata, '$.pagerduty_service_id') IN (${placeholders})
+         AND json_extract(i.metadata, '$.status') = 'resolved'
+         AND json_extract(i.metadata, '$.opened_at_ms') >= ?
+         AND json_extract(i.metadata, '$.opened_at_ms') <= ?`,
+    )
+    .all(...cfg.pagerdutyServices, startMs, endMs + incidentWindowMs) as { opened: unknown }[];
+  const out: AttributionIncident[] = [];
+  for (const r of rows) {
+    // Re-checked in TypeScript rather than trusted from SQL: `opened_at_ms` is connector-written
+    // metadata, and a string there would compare by SQLite's type ordering rather than numerically.
+    if (typeof r.opened === "number") out.push({ opened: r.opened });
+  }
+  return out;
+}
+
 export function changeFailureRate(
   db: Database,
   cfg: ServiceConfig,
@@ -335,8 +405,8 @@ export function changeFailureRate(
   if (cfg.pagerdutyServices.length === 0) {
     return { value: null, unit: "ratio", sample: deploys.length, gap: "no_pagerduty_mapping" };
   }
-  const incidents = selectResolvedIncidents(db, cfg, nowMs, sinceMs);
   const windowMs = cfg.incidentWindowMinutes * 60_000;
+  const incidents = selectAttributionIncidents(db, cfg, nowMs - sinceMs, nowMs, windowMs);
   const sortedDeploys = deploys
     .map((d) => ({ id: d.id, t: d.modified_at }))
     .sort((a, b) => a.t - b.t);
