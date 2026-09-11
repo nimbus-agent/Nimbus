@@ -8,12 +8,14 @@
 > recommended), returning `StatsSeries` unchanged; and §5's attribution fix, as
 > `selectAttributionIncidents` in `metrics/dora.ts`.
 >
-> **The disclosure question §5 left open was answered by documentation, not by
-> the wire.** No new `DoraGap`/`StatsGap` member was added — the union is
-> consumed by two other repos, and the residual it would announce (a
-> still-burning incident is invisible because `status = 'resolved'` is required)
-> is recorded in `selectAttributionIncidents`' own comment and in the CHANGELOG
-> instead. That residual is NOT fixed; only the window-column defect is.
+> **The disclosure question §5 left open was answered by FIXING the thing it
+> would have disclosed.** No new `DoraGap`/`StatsGap` member was added, and none
+> is needed: the residual it would have announced — a still-burning incident
+> being invisible because `status = 'resolved'` was required — was itself closed
+> shortly after this route shipped. The predicate is gone from
+> `selectAttributionIncidents`, so there is nothing left to disclose. §5's two
+> options turned out to be alternatives rather than complements, and the cheaper
+> one was the fix.
 >
 > **§6's `until_ms` fallback did NOT ship** and was not needed, since §4 landed.
 > It stays as a live alternative if the anchor ever has to move.
@@ -285,6 +287,15 @@ Two riders:
   problem — a series-level probe that reports what the buckets could not see —
   and is the precedent for disclosing this one.
 
+  > **RESOLVED 2026-09-11, and not by disclosing it.** The predicate was dropped
+  > instead. It belongs to MTTR, which needs a resolution timestamp to compute a
+  > duration; attribution reads only `opened`, so the filter answered a question
+  > this metric does not ask — and `stats.ts`'s `incidentsOpened`, which asks the
+  > same shape of question, never carried it. It also made the metric depend on
+  > something nobody chose: a resolved incident whose row has not been re-synced
+  > still reads `triggered` locally, so the answer moved with sync freshness.
+  > `change_failure_rate` can therefore only move UP; MTTR is untouched.
+
 ### What changes when a series goes on the wire
 
 **Nothing about the defect. Everything about how often it fires.**
@@ -480,8 +491,12 @@ merely inheriting it.
 4. **Does §5's correction land with whichever route lands?** The consumer's
    position is yes — and note the defect is live in `nimbus stats` today, so
    this question outlives this proposal either way.
-5. Should the still-burning-incident and `modified_at` caveats be disclosed on
-   the wire (a new `DoraGap` / `StatsGap` member), or only in documentation? §5.
+5. **ANSWERED: neither — both were fixed instead.** The `modified_at` caveat
+   was the window-column defect the route shipped with, and the
+   still-burning-incident caveat was closed hours later by dropping the
+   `resolved` predicate. No `DoraGap` / `StatsGap` member was added, and none is
+   needed. Originally: should the still-burning-incident and `modified_at`
+   caveats be disclosed on the wire, or only in documentation? §5.
 6. If §6: which of the three answers to the `since_ms` collision? Option 2 is
    recommended, and is the only one that survives §4 landing later.
 7. If §6: does `metrics.dora` the IPC verb, and `nimbus metrics dora --until`,

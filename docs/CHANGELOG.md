@@ -26,9 +26,16 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
   selection is deliberately NOT widened — `deploys.length` is the denominator. The `synced_at`
   fallback is dropped for attribution: that is our INDEXING time, so it blamed whichever deploy
   happened to precede the moment we indexed the row. **One existing test asserted that fallback as
-  intended behaviour and is rewritten to the new contract rather than deleted.** KNOWN RESIDUAL,
-  disclosed not fixed: `status = 'resolved'` is still required, so a still-burning incident is
-  invisible at any bound and a historical rate under-reports for that second, independent reason.
+  intended behaviour and is rewritten to the new contract rather than deleted.**
+  **The `status = 'resolved'` predicate is dropped too** — recorded here as a known residual when
+  this first shipped, and closed hours later in the same day rather than disclosed. It exists for
+  MTTR, which needs a resolution timestamp to compute a duration; attribution reads only `opened`,
+  so inheriting it answered a question CFR is not asking. While it stood, a deploy that caused an
+  outage read CLEAN for as long as the outage was still burning, and the metric silently depended
+  on sync freshness — a resolved incident whose row has not been re-synced still reads `triggered`
+  locally. `stats.ts`'s `incidentsOpened`, which asks the same shape of question, never had the
+  predicate and is the precedent. **`change_failure_rate` can only move UP as a result**, never
+  down. MTTR is untouched and keeps the filter, now pinned by its own divergence test.
   **This matters far more for a series than for the scalar it also corrects:** a
   `/v1/metrics/dora` window has one upper edge, `now`, where the incident genuinely has not
   happened yet; a series has N upper edges and every one is in the past, with the incident sitting

@@ -149,6 +149,14 @@ is **still burning** is invisible at any bound, so a historical `change_failure_
 reports for that reason as well. (`computeStatsSeries`'s own `discloseUntimedIncidents` seam
 exists for a neighbouring version of this problem, which is a useful precedent to cite.)
 
+> **Both halves are now FIXED, 2026-09-11 — the second one was not disclosed, it was closed.**
+> The window-column defect shipped as `selectAttributionIncidents`; the `status === "resolved"`
+> half was dropped hours later. The `discloseUntimedIncidents` precedent cited above turned out
+> to be the wrong model for it: that seam exists because an untimestamped row *cannot* be placed
+> in any bucket, so disclosure is the only honest answer. A still-burning incident can be placed
+> perfectly well — it has an `opened_at_ms` — so there was nothing to disclose, only a filter
+> that belonged to MTTR and had been inherited by a metric that never reads `resolved`.
+
 Also delete, or qualify, the parenthetical "(and deploy)". Widening the **deploy** selection
 changes `deploys.length`, which is the denominator. The next clause does say the denominator
 stays the requested window, but the parenthetical is what an implementer will copy.

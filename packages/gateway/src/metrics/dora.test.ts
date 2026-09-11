@@ -798,20 +798,61 @@ describe("changeFailureRate", () => {
     expect(result.gap).toBe("low_sample");
   });
 
-  test("incident without resolved status is excluded", () => {
+  // BEHAVIOUR CHANGED, deliberately. This asserted `0` until the `resolved` predicate was
+  // dropped: a deploy that caused an outage was reported CLEAN for as long as the outage was
+  // still burning, and only became a change failure once somebody closed the ticket. Whether an
+  // incident has been fixed says nothing about whether a deploy caused it — `resolved` is
+  // MTTR's requirement, inherited here from a shared helper and never CFR's own.
+  test("attributes a still-burning incident, which resolution status does not bear on", () => {
     const cfg = baseConfig({ deployEnvironments: [], pagerdutyServices: ["pd-svc-1"] });
     const deployAt = NOW - 2 * ONE_DAY;
     insertCiRun(db, "github_actions", "Deploy main", deployAt, "org/repo");
     insertCiRun(db, "github_actions", "Deploy main", NOW - ONE_DAY, "org/repo");
     insertCiRun(db, "github_actions", "Deploy main", NOW - 3 * ONE_DAY, "org/repo");
-    // Active incident (not resolved)
     insertItem(db, "pagerduty", "incident", "Active Incident", NOW - ONE_DAY - 100_000, {
       status: "acknowledged",
       pagerduty_service_id: "pd-svc-1",
       opened_at_ms: deployAt + 1_000_000,
     });
     const result = changeFailureRate(db, cfg, NOW, SINCE);
-    expect(result.value).toBe(0);
+    // One of three deploys blamed — and the value proves it is the RIGHT one, since a wrong
+    // attribution would give the same ratio only by coincidence at this sample size.
+    expect(result.value).toBeCloseTo(1 / 3, 10);
+    expect(result.sample).toBe(3);
+  });
+
+  test("attributes a triggered incident too, not only an acknowledged one", () => {
+    const cfg = baseConfig({ deployEnvironments: [], pagerdutyServices: ["pd-svc-1"] });
+    const deployAt = NOW - 2 * ONE_DAY;
+    insertCiRun(db, "github_actions", "Deploy main", deployAt, "org/repo");
+    insertItem(db, "pagerduty", "incident", "Firing", NOW - ONE_DAY, {
+      status: "triggered",
+      pagerduty_service_id: "pd-svc-1",
+      opened_at_ms: deployAt + 600_000,
+    });
+    expect(changeFailureRate(db, cfg, NOW, SINCE).value).toBe(1);
+  });
+
+  // The reason this is more than a corner case. A resolved incident whose row we have not
+  // re-synced still reads `triggered` here, so while status gated attribution, CFR silently
+  // depended on how fresh the PagerDuty sync happened to be — which nobody chose.
+  test("does not depend on sync freshness: same answer whatever the stored status", () => {
+    const cfg = baseConfig({ deployEnvironments: [], pagerdutyServices: ["pd-svc-1"] });
+    const deployAt = NOW - 2 * ONE_DAY;
+    const values: (number | null)[] = [];
+    for (const status of ["triggered", "acknowledged", "resolved"]) {
+      const fresh = freshDb();
+      resetSeq();
+      insertCiRun(fresh, "github_actions", "Deploy main", deployAt, "org/repo");
+      insertItem(fresh, "pagerduty", "incident", "Incident", NOW - ONE_DAY, {
+        status,
+        pagerduty_service_id: "pd-svc-1",
+        opened_at_ms: deployAt + 600_000,
+      });
+      values.push(changeFailureRate(fresh, cfg, NOW, SINCE).value);
+      fresh.close();
+    }
+    expect(values).toEqual([1, 1, 1]);
   });
 
   // BEHAVIOUR CHANGED, deliberately. This test asserted the opposite until 2026-09-11: an
@@ -860,6 +901,24 @@ describe("mttr", () => {
   });
   afterEach(() => {
     db.close();
+  });
+
+  // The divergence guard. `changeFailureRate` deliberately attributes a still-burning incident,
+  // because resolution status says nothing about whether a deploy caused one. MTTR is the
+  // opposite case and must keep its `resolved` filter: it measures time-to-RESTORE, so an
+  // unresolved incident has no duration to contribute and counting one would report a recovery
+  // that has not happened. Nothing pinned this until the two selectors were split, which is
+  // exactly when it became possible to break by accident.
+  test("ignores a still-burning incident, unlike changeFailureRate", () => {
+    const cfg = baseConfig({ pagerdutyServices: ["pd-svc-1"] });
+    insertItem(db, "pagerduty", "incident", "Still burning", NOW - ONE_DAY, {
+      status: "acknowledged",
+      pagerduty_service_id: "pd-svc-1",
+      opened_at_ms: NOW - 2 * ONE_DAY,
+    });
+    const result = mttr(db, cfg, NOW, SINCE);
+    expect(result.value).toBeNull();
+    expect(result.sample).toBe(0);
   });
 
   test("returns no_pagerduty_mapping when pagerdutyServices is empty", () => {
