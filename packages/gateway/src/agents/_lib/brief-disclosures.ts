@@ -295,3 +295,51 @@ export function whyChangeSubjectDisclosure(): Disclosure {
     anchors: ["authorship needs a line"],
   };
 }
+
+// ---------------------------------------------------------------------------
+// changelog
+// ---------------------------------------------------------------------------
+
+/**
+ * `nimbus changelog`'s interleaved disclosures — all three in the PREAMBLE, because each
+ * qualifies every category section below it and no section scope could reach them all.
+ *
+ * Anchors are drawn from each sentence's FACTUAL clause and stop short of its variable tail
+ * (the leading count), and every independent sentence in a `line` carries its own anchor —
+ * `disclosure-anchor-coverage.test.ts` pins that for the two-sentence entry below.
+ *
+ * The first entry is UNCONDITIONAL: it states what the numbers MEAN, and a reader who is told
+ * nothing reads a windowed, event-timed count as an all-time one.
+ */
+export function changelogDisclosures(b: {
+  readonly indexTimedCount: number;
+  readonly truncatedCount: number;
+}): readonly Disclosure[] {
+  const out: Disclosure[] = [];
+  out.push({
+    scope: { kind: "preamble" },
+    line:
+      "Counts and entries below cover only this window, and each entry is placed by when it " +
+      "happened rather than when the index last touched it.",
+    anchors: ["cover only this window", "when it happened rather than when the index last touched"],
+  });
+  if (b.indexTimedCount > 0) {
+    out.push({
+      scope: { kind: "preamble" },
+      line:
+        `${String(b.indexTimedCount)} entr(y/ies) are timed from the index's last-touch column ` +
+        "rather than an event field — deployments and incident resolutions, on the same basis " +
+        "`nimbus metrics dora` uses. A resolved incident whose row has not been re-synced still " +
+        "reads as unresolved, so resolutions under-report by sync lag.",
+      anchors: ["same basis", "under-report by sync lag"],
+    });
+  }
+  if (b.truncatedCount > 0) {
+    out.push({
+      scope: { kind: "preamble" },
+      line: `${String(b.truncatedCount)} further entr(y/ies) were truncated at the display limit.`,
+      anchors: ["truncated at the display limit"],
+    });
+  }
+  return out;
+}

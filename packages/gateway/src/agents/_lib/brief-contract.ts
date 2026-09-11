@@ -1,5 +1,6 @@
 import type { Disclosure } from "./brief-disclosures.ts";
 import {
+  changelogDisclosures,
   glossaryProvenanceDisclosure,
   negotiateDecisionsDisclosure,
   negotiateIncidentsDisclosure,
@@ -95,8 +96,13 @@ export function requiredPhrases(brief: SynthInput): readonly Disclosure[] {
   if (brief.kind === "negotiate") return negotiateRequiredPhrases(brief);
   if (brief.kind === "glossary") return glossaryRequiredPhrases(brief);
   if (brief.kind === "why") return whyRequiredPhrases(brief);
+  // Every changelog disclosure is interleaved PREAMBLE prose the model is asked to rewrite, so
+  // none of them can be withheld as a reserved section the way `## Gaps` is. Built from the SAME
+  // function and the SAME predicates the renderer calls, so the guard can neither require a
+  // sentence the brief never rendered nor miss one it did.
+  if (brief.kind === "changelog") return changelogDisclosures(brief);
   // Every other brief kind returns [] until its contractual strings are added.
-  // Listed explicitly so a fifteenth kind is a COMPILE error, not a silent [].
+  // Listed explicitly so a sixteenth kind is a COMPILE error, not a silent [].
   if (
     brief.kind === "expert" ||
     brief.kind === "impact" ||

@@ -1,7 +1,9 @@
 import type { DecisionEvidence } from "../../decisions/decision-types.ts";
 import type { Risk } from "../../premortem/risks.ts";
 import type { WatcherProposal } from "../../premortem/watcher-proposals.ts";
+import type { ChangelogRow } from "../changelog-queries.ts";
 import {
+  changelogDisclosures,
   glossaryProvenanceDisclosure,
   negotiateDecisionsDisclosure,
   negotiateIncidentsDisclosure,
@@ -11,6 +13,7 @@ import {
   negotiateWindowDisclosure,
   whyChangeSubjectDisclosure,
 } from "./brief-disclosures.ts";
+import type { ChangelogBrief } from "./changelog-types.ts";
 import type { DecisionsBrief, DecisionsEntry } from "./decisions-types.ts";
 import type {
   CatchupBrief,
@@ -91,7 +94,7 @@ function renderLatency(ms: number): string {
  * a renderer that could forget to, or could order Gaps after the footer, and the guard in
  * `brief-contract.ts` would then be checking a document the renderer never promised. Keeping the
  * shape in one place is what makes "every brief ends with its Gaps, and honours `omitReserved`"
- * true by construction rather than by fourteen agreeing copies.
+ * true by construction rather than by fifteen agreeing copies.
  *
  * Briefs with additional reserved sections of their own — `negotiate`'s `## Sources` and
  * `## Evidence not available from the index` — deliberately do NOT use this helper: their tail is
@@ -1079,4 +1082,67 @@ export function renderNegotiate(brief: NegotiateBrief, opts?: RenderOpts): strin
   ]
     .filter((s) => s !== "")
     .join("\n");
+}
+
+/**
+ * One changelog entry. Linked when the indexed item carried a permalink that can be rendered
+ * safely, plain otherwise — never a link to nowhere.
+ *
+ * Both halves go through `negotiate`'s hardened helpers rather than being interpolated raw,
+ * because BOTH halves are connector-supplied: the title is a pull-request or incident subject
+ * written by whoever opened it, and the url is a connector's `canonical_url`. A title
+ * containing `](` closes the link early and takes the rest of the line with it, and a
+ * `javascript:` target is live in the Tauri renderer with only the CSP (I8) behind it.
+ * `renderWhy` and `renderDecisionsEvidenceItem` interpolate raw; that is the older shape, not
+ * the one to copy.
+ */
+function renderChangelogEntry(r: ChangelogRow): string {
+  const title = escapeMarkdownLinkText(r.title);
+  const href = r.url === null ? null : safeEvidenceHref(r.url);
+  const head = href === null ? title : `[${title}](${href})`;
+  return `- ${head} — ${isoDay(r.atMs)}`;
+}
+
+/**
+ * A category section, rendered whether or not it has entries.
+ *
+ * The empty case prints its heading and `_None in this window._` rather than being omitted:
+ * a missing heading and an empty one say different things — "this changelog does not cover
+ * deployments" versus "no deployment happened in this window" — and the reader cannot tell
+ * them apart from an absence. The whole point of this brief is that silence is never evidence.
+ */
+function renderChangelogSection(heading: string, rows: readonly ChangelogRow[]): string {
+  const body =
+    rows.length === 0 ? "_None in this window._" : rows.map(renderChangelogEntry).join("\n");
+  return ["", `## ${heading}`, "", body].join("\n");
+}
+
+/** Whole days the window spans, for the header — the same arithmetic `renderDecisions` uses. */
+function changelogWindowDays(brief: ChangelogBrief): number {
+  return Math.max(0, Math.round((brief.query.nowMs - brief.query.sinceMs) / 86_400_000));
+}
+
+export function renderChangelog(brief: ChangelogBrief, opts?: RenderOpts): string {
+  const header = "# Changelog";
+  const scope =
+    brief.query.service === null
+      ? "_scope: all services_"
+      : `_scope: service \`${brief.query.service}\`_`;
+  // The disclosures sit in the PREAMBLE — above the first `##` — because each one qualifies
+  // every category section below it. `preambleBody` (`markdown-sections.ts`) stops at the first
+  // LEVEL-2 heading, which is why this brief's title is `#` and not `##`: under a level-2 title
+  // the preamble would be empty and `contractViolations` could never reach these sentences.
+  const preamble = [
+    "",
+    `_window: last ${String(changelogWindowDays(brief))}d (${isoDay(brief.query.sinceMs)} → ${isoDay(brief.query.nowMs)})_`,
+    scope,
+    ...changelogDisclosures(brief).map((d) => d.line),
+  ].join("\n");
+  const sections = [
+    renderChangelogSection("Merged Pull Requests", brief.mergedPrs),
+    renderChangelogSection("Deployments", brief.deployments),
+    renderChangelogSection("Incidents Opened", brief.incidentsOpened),
+    renderChangelogSection("Incidents Resolved", brief.incidentsResolved),
+  ].join("\n");
+  return assembleBrief(header, [preamble, sections], brief, opts);
 }

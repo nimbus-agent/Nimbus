@@ -29,7 +29,7 @@ export const NEGOTIATE_EVIDENCE_HEADING = "## Evidence not available from the in
  * Which sections are disclosure-only, per brief kind.
  *
  * Typed as a TOTAL `Record` over the union's `kind` literals, not a lookup with a default:
- * a fifteenth brief kind is then a COMPILE error here rather than a silent empty list that
+ * a sixteenth brief kind is then a COMPILE error here rather than a silent empty list that
  * would hand that kind's gap notes to the model with nothing said about it.
  *
  * Per-kind rather than one global list so a future kind that legitimately wants a `##
@@ -51,6 +51,7 @@ export const RESERVED_HEADINGS_BY_KIND: Readonly<Record<SynthInput["kind"], read
     ownership: [GAPS_HEADING],
     premortem: [GAPS_HEADING],
     negotiate: [NEGOTIATE_SOURCES_HEADING, NEGOTIATE_EVIDENCE_HEADING, GAPS_HEADING],
+    changelog: [GAPS_HEADING],
   });
 
 export function reservedHeadingsFor(brief: SynthInput): readonly string[] {

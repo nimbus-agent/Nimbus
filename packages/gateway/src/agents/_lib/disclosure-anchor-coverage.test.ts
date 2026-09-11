@@ -1,6 +1,10 @@
 import { describe, expect, test } from "bun:test";
 import type { Disclosure } from "./brief-disclosures.ts";
-import { negotiateOwnershipDisclosures, negotiateWindowDisclosure } from "./brief-disclosures.ts";
+import {
+  changelogDisclosures,
+  negotiateOwnershipDisclosures,
+  negotiateWindowDisclosure,
+} from "./brief-disclosures.ts";
 import type { NegotiateOwnership } from "./negotiate-types.ts";
 
 /**
@@ -41,9 +45,22 @@ function sentenceCount(line: string): number {
   return withoutTail.split(/\.\s+(?=[A-Z])/).filter((s) => s.trim().length > 0).length;
 }
 
+/**
+ * The changelog time-basis entry, which exists only when something WAS index-timed — the same
+ * condition its renderer applies. Indexed by position because that is how `changelogDisclosures`
+ * orders them: the unconditional meaning-of-the-numbers line, then this one.
+ */
+function changelogTimeBasis(): Disclosure {
+  const d = changelogDisclosures({ indexTimedCount: 3, truncatedCount: 0 })[1];
+  if (d === undefined)
+    throw new Error("changelog time-basis disclosure missing at indexTimedCount > 0");
+  return d;
+}
+
 const TWO_SENTENCE_ENTRIES: ReadonlyArray<readonly [string, Disclosure]> = [
   ["negotiate window", negotiateWindowDisclosure(WINDOW_MS, GENERATED_AT)],
   ["negotiate ownership accountability", negotiateOwnershipDisclosures(ownership()).accountability],
+  ["changelog time basis", changelogTimeBasis()],
 ];
 
 describe("every sentence of a disclosure is anchored (F27)", () => {
@@ -73,5 +90,13 @@ describe("every sentence of a disclosure is anchored (F27)", () => {
     // factored in. Sentence 1 ("authorship-derived") was the only anchored half.
     const d = negotiateOwnershipDisclosures(ownership()).accountability;
     expect(d.anchors.some((a) => a.includes("CODEOWNERS"))).toBe(true);
+  });
+
+  test("the changelog time-basis disclosure anchors its sync-lag sentence", () => {
+    // Sentence 2 is the one that says resolutions UNDER-REPORT. A rewrite keeping only sentence 1
+    // ("timed from the index's last-touch column") would leave the reader with the mechanism and
+    // none of the consequence — the exact shape F27 was opened for.
+    const d = changelogTimeBasis();
+    expect(d.anchors.some((a) => a.includes("under-report by sync lag"))).toBe(true);
   });
 });

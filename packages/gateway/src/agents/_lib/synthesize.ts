@@ -11,6 +11,7 @@ import {
 import {
   type RenderOpts,
   renderCatchup,
+  renderChangelog,
   renderConflict,
   renderDecisions,
   renderExpert,
@@ -102,6 +103,7 @@ function deterministicRender(brief: SynthInput, opts?: RenderOpts): string {
   if (brief.kind === "huddle") return renderHuddle(brief, opts);
   if (brief.kind === "premortem") return renderPremortem(brief, opts);
   if (brief.kind === "negotiate") return renderNegotiate(brief, opts);
+  if (brief.kind === "changelog") return renderChangelog(brief, opts);
   return assertNeverBrief(brief);
 }
 
@@ -124,6 +126,7 @@ function toolNameFor(brief: SynthInput): string {
   if (brief.kind === "huddle") return "agents.huddle";
   if (brief.kind === "premortem") return "agents.premortem";
   if (brief.kind === "negotiate") return "agents.negotiate";
+  if (brief.kind === "changelog") return "agents.changelog";
   return assertNeverBrief(brief);
 }
 
@@ -417,7 +420,7 @@ function bareHeading(heading: string): string {
 
 /**
  * Join heading names into "`A`, `B`, or `C`" (Oxford-comma-free, matching this file's existing
- * prose style) — or just "`A`" for the common one-heading case (thirteen of fourteen kinds).
+ * prose style) — or just "`A`" for the common one-heading case (fourteen of fifteen kinds).
  */
 function formatHeadingList(names: readonly string[]): string {
   const quoted = names.map((n) => `\`${n}\``);
