@@ -8,6 +8,54 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
 
 ## Post-Phase-6 deliveries
 
+- **2026-09-11 — `GET /v1/metrics/stats`, and the change-failure-rate attribution hole it
+  made worth fixing.** Two things, landing together because the design argued they must: a route
+  over `computeStatsSeries` (already shipped behind `nimbus stats`, with no HTTP surface), and a
+  correctness fix to `changeFailureRate` without which the series would publish a metric known to
+  read systematically low.
+  **The fix first, because it changes numbers that already ship.** `changeFailureRate` selected
+  its incident candidates through `selectResolvedIncidents`, which bounds on `i.modified_at` — for
+  a resolved incident, effectively RESOLUTION time — while the attribution loop compares
+  `opened_at_ms`. An incident opened inside the window moments after a deploy but resolved after
+  the window's upper edge was never a candidate, and its deploy was reported CLEAN. Not a corner
+  case: `mttr` exists precisely because resolution lag runs to hours and days. The obvious fix —
+  widen the lookup by `incidentWindowMinutes` — does NOT work, because the widening would be in
+  resolution time; the COLUMN had to change. New `selectAttributionIncidents` selects on
+  `opened_at_ms` over `[start, until + incidentWindowMinutes]`; `selectResolvedIncidents` is
+  untouched and still serves `mttr`, where windowing on resolution time is correct. The deploy
+  selection is deliberately NOT widened — `deploys.length` is the denominator. The `synced_at`
+  fallback is dropped for attribution: that is our INDEXING time, so it blamed whichever deploy
+  happened to precede the moment we indexed the row. **One existing test asserted that fallback as
+  intended behaviour and is rewritten to the new contract rather than deleted.** KNOWN RESIDUAL,
+  disclosed not fixed: `status = 'resolved'` is still required, so a still-burning incident is
+  invisible at any bound and a historical rate under-reports for that second, independent reason.
+  **This matters far more for a series than for the scalar it also corrects:** a
+  `/v1/metrics/dora` window has one upper edge, `now`, where the incident genuinely has not
+  happened yet; a series has N upper edges and every one is in the past, with the incident sitting
+  in the index, readable, and ignored. Every bucket `nimbus stats` printed already had the hole.
+  **The route is PUBLIC**, beside `/v1/metrics/dora` and `/v1/preflight/deploy` — a decision, and
+  deliberately the OPPOSITE of `GET /v1/services/resolve` below, with both reasons recorded at
+  their `HTTP_ROUTE_AUTH` entries. It is the same config and the same service at a different
+  resolution, and `/v1/metrics/dora`'s own `since` already lets a caller walk nested windows, so
+  the series reaches nothing new. Its metric SET is wider than that route's — `pr-merges` and
+  `incidents-opened` have no scalar equivalent — but both merely count `item` rows the public
+  `GET /v1/items` already serves unaggregated; scoping it while the scalar beside it
+  stayed public would be a seam no caller could explain. `services/resolve` is scoped for the
+  opposite reason — it CLAIMS narrowness, and a public mount would have let N cheap calls rebuild
+  the grouping it exists not to expose. Public also means published: `HTTP_ROUTES` plus a `paths:`
+  entry in `openapi/v1.yaml` (`StatsSeries` + `StatsPoint` schemas), which `audit:openapi-drift`
+  enforces as a pair.
+  Params mirror the IPC one-for-one (`service`, `metric`, `window_ms`, `bucket_ms`), snake_case
+  and integer milliseconds — the CLI parses `--window 90d` at its own edge. An **unknown service
+  is refused (400), not answered softly**, unlike `/v1/metrics/dora`: a series whose bucket count
+  and unit depend on config it does not have has nothing honest to place-hold, and N empty buckets
+  read as thin data rather than a typo. A malformed `nimbus.toml` answers `500 config_unreadable`
+  with **no config value echoed** — the same answer `GET /v1/services/resolve` gives, as the design
+  asked. That differs from `/v1/metrics/dora` beside it, which still 500s with the parser's message
+  intact; pre-existing, out of scope, and named so the difference reads as deliberate.
+  No migration, no invariant, no new egress class.
+  Design: [`2026-09-11-metrics-series-route-design.md`](./superpowers/specs/2026-09-11-metrics-series-route-design.md).
+
 - **2026-09-11 — `GET /v1/services/resolve`: repo-URN-to-service resolution, answering the
   proposal merged hours earlier.** A browser client sitting on a repository knows the repository
   and nothing else; the two routes that would tell its reader anything — `GET /v1/metrics/dora`

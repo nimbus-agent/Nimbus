@@ -1,6 +1,24 @@
 # `GET /v1/metrics/stats` — putting the series the gateway already computes on the wire
 
-> **Status:** proposal. No code in this branch — this is the contract, argued
+> **Status: ANSWERED — the §4 route shipped 2026-09-11, together with §5's
+> correction.** This document is kept as the argument, not as a description of
+> the surface; where it and the code disagree, the code is right and
+> `docs/CHANGELOG.md` records why. What landed: `GET /v1/metrics/stats`, PUBLIC
+> in `dispatchReadOnlyDataGet` (§4's "Mount and scope" answered as it
+> recommended), returning `StatsSeries` unchanged; and §5's attribution fix, as
+> `selectAttributionIncidents` in `metrics/dora.ts`.
+>
+> **The disclosure question §5 left open was answered by documentation, not by
+> the wire.** No new `DoraGap`/`StatsGap` member was added — the union is
+> consumed by two other repos, and the residual it would announce (a
+> still-burning incident is invisible because `status = 'resolved'` is required)
+> is recorded in `selectAttributionIncidents`' own comment and in the CHANGELOG
+> instead. That residual is NOT fixed; only the window-column defect is.
+>
+> **§6's `until_ms` fallback did NOT ship** and was not needed, since §4 landed.
+> It stays as a live alternative if the anchor ever has to move.
+>
+> Originally filed as: proposal, no code in the branch — the contract argued
 > before it is built, per the satellite-repo convention that the gateway owns
 > the wire and consumers propose against it (#1464 established the shape).
 >

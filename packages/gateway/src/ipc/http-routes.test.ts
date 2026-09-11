@@ -12,6 +12,7 @@ describe("HTTP_ROUTES", () => {
       "GET /v1/items",
       "GET /v1/items/{id}",
       "GET /v1/metrics/dora",
+      "GET /v1/metrics/stats",
       "GET /v1/openapi.json",
       "GET /v1/people",
       "GET /v1/people/{id}",

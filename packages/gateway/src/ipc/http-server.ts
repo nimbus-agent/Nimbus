@@ -281,6 +281,114 @@ function handleOpenApiJson(): Response {
   });
 }
 
+/**
+ * GET /v1/metrics/stats — one DORA-family metric as a bucketed TIME SERIES.
+ *
+ * PUBLIC, beside `/v1/metrics/dora` and `/v1/preflight/deploy`. That is a decision and not an
+ * inheritance, and it lands the opposite way from `GET /v1/services/resolve`, which is scoped —
+ * so the difference is worth stating, because the next proposal will copy one of them:
+ *
+ *   - It is the same config and the same service at a different resolution. `/v1/metrics/dora`
+ *     already answers the four DORA metrics publicly over an arbitrary `since`, so a caller can
+ *     already walk nested windows and difference them; this route makes that cheaper and
+ *     disjoint. Its metric set is WIDER than that route's — `pr-merges` and `incidents-opened`
+ *     have no scalar equivalent — but neither reaches anything new either: both count rows in
+ *     `item` that the public `GET /v1/items` already serves unaggregated.
+ *   - Scoping the series while the scalar beside it stays public would be a seam no caller could
+ *     explain, and the client that needs it is the same unauthenticated reader.
+ *
+ * `/v1/services/resolve` is scoped for the opposite reason: it CLAIMS narrowness (one repo the
+ * caller already named), and a public mount would have let N cheap calls rebuild the whole
+ * service-to-repo grouping it exists not to expose.
+ *
+ * Public therefore also means published: `HTTP_ROUTES` plus a `paths:` entry in
+ * `openapi/v1.yaml`, which `audit:openapi-drift` enforces as a pair.
+ *
+ * Appends NO egress row — it reads the local index and the owner's config, and makes no
+ * outbound request (the `http` narrowing in `egress/egress-coverage.ts`).
+ */
+async function handleMetricsStats(
+  url: URL,
+  db: Database,
+  opts: ReadOnlyHttpServerOptions,
+): Promise<Response> {
+  // Params mirror the IPC one-for-one, snake_case included: the CLI parses `--window 90d` at its
+  // own edge and the IPC layer takes milliseconds, so integer ms keeps this route on the same
+  // side of that line as the method it wraps. `requireStatsParams` does the real validation and
+  // its messages are actionable, so bare presence is all that is checked here.
+  const service = url.searchParams.get("service");
+  if (service === null || service === "") {
+    return json({ error: "missing required query param: service" }, 400);
+  }
+  const metric = url.searchParams.get("metric");
+  if (metric === null || metric === "") {
+    return json({ error: "missing required query param: metric" }, 400);
+  }
+  const windowMs = url.searchParams.get("window_ms");
+  if (windowMs === null) {
+    return json({ error: "missing required query param: window_ms" }, 400);
+  }
+  // Checked SEPARATELY from `window_ms`, not as one combined `||`. A combined check names both
+  // params whatever the caller omitted, so someone who sent `window_ms` and forgot `bucket_ms`
+  // is told `window_ms` is missing too — and then goes looking at the one param they got right.
+  const bucketMs = url.searchParams.get("bucket_ms");
+  if (bucketMs === null) {
+    return json({ error: "missing required query param: bucket_ms" }, 400);
+  }
+  let loaded: Map<string, ServiceConfig>;
+  try {
+    loaded =
+      opts.configDir === undefined
+        ? new Map()
+        : loadNimbusServiceConfigsFromConfigDir(opts.configDir);
+  } catch {
+    // Loaded HERE rather than inside the dispatcher's `loadConfig` thunk, so a malformed
+    // `nimbus.toml` is caught rather than escaping as a 500 with the parser's message intact —
+    // which is what `/v1/metrics/dora` beside it still does today. Those messages embed the
+    // service id AND the offending config value, and on a PUBLIC route that is readable by any
+    // local process on the machine. Same answer as `GET /v1/services/resolve` gives, deliberately:
+    // the design asked that both routes answer this seam the same way.
+    //
+    // Not a fix for the sibling route. That is pre-existing and out of scope here; it is named so
+    // the next reader knows the two differ on purpose rather than by oversight.
+    return json({ error: "config_unreadable" }, 500);
+  }
+  let out: Awaited<ReturnType<typeof dispatchMetricsRpc>>;
+  try {
+    out = await dispatchMetricsRpc(
+      "metrics.stats",
+      {
+        service,
+        metric,
+        // `requireStatsParams` demands real integers (`Number.isInteger`), so the query
+        // string's values must be converted here — but deliberately NOT validated here.
+        // `Number("abc")` is `NaN`, which fails that check and produces the dispatcher's own
+        // message naming both params; a second, blander rejection at this layer would only
+        // shadow it. `Number("")` is 0, which the bucket-shape check refuses as non-positive.
+        window_ms: Number(windowMs),
+        bucket_ms: Number(bucketMs),
+      },
+      {
+        db,
+        loadConfig: () => loaded,
+        ...(opts.nowMs === undefined ? {} : { nowMs: opts.nowMs }),
+      },
+    );
+  } catch (e) {
+    if (e instanceof MetricsRpcError) {
+      // Covers the unknown-service refusal AND every `StatsBucketError` the dispatcher already
+      // maps here — non-positive or inverted bounds, and the MAX_BUCKETS ceiling. Those messages
+      // are actionable ("widen the bucket or narrow the window") and reach the client verbatim.
+      return json({ error: e.message }, 400);
+    }
+    throw e;
+  }
+  if (out.kind === "miss") {
+    throw new Error("metrics.stats dispatcher returned miss");
+  }
+  return json(out.value);
+}
+
 async function handleMetricsDora(
   url: URL,
   db: Database,
@@ -472,6 +580,9 @@ function dispatchReadOnlyDataGet(
   }
   if (path === "/v1/metrics/dora") {
     return handleMetricsDora(url, db, opts);
+  }
+  if (path === "/v1/metrics/stats") {
+    return handleMetricsStats(url, db, opts);
   }
   if (path === "/v1/preflight/deploy") {
     return handleDeployPreflight(url, db, opts);

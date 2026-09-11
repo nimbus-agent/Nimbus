@@ -687,6 +687,68 @@ describe("changeFailureRate", () => {
     expect(result.sample).toBe(3);
   });
 
+  // The attribution hole (metrics-series design § 5). `selectResolvedIncidents` windows on
+  // `modified_at` — RESOLUTION time for a resolved incident — while attribution compares
+  // `opened_at_ms`. An incident opened inside the window right after a deploy, but resolved
+  // after the window's upper edge, was therefore never even a candidate, and its deploy was
+  // reported CLEAN. `mttr` exists because resolution lag runs to days, so this is the normal
+  // case near any upper edge, not a corner.
+  test("counts an incident opened in-window but resolved after the upper edge", () => {
+    const cfg = baseConfig({ deployEnvironments: [], pagerdutyServices: ["pd-svc-1"] });
+    const deployAt = NOW - 30 * 60_000; // 30 min before the upper edge
+    insertCiRun(db, "github_actions", "Deploy main", deployAt, "org/repo");
+    // Opened 10 min after the deploy (inside the 60-min incident window, and inside the
+    // metric window); resolved THREE DAYS after the upper edge, so `modified_at` is far
+    // outside [NOW - SINCE, NOW].
+    insertIncident(db, "pd-svc-1", NOW + 3 * ONE_DAY, deployAt + 600_000);
+    const result = changeFailureRate(db, cfg, NOW, SINCE);
+    expect(result.value).toBe(1);
+    expect(result.sample).toBe(1);
+  });
+
+  // The rider the design names: only the INCIDENT lookup widens. `deploys.length` is the
+  // denominator, so widening the deploy selection would change the number the metric reports.
+  test("does not widen the deploy denominator past the upper edge", () => {
+    const cfg = baseConfig({ deployEnvironments: [], pagerdutyServices: ["pd-svc-1"] });
+    insertCiRun(db, "github_actions", "Deploy main", NOW - ONE_DAY, "org/repo");
+    insertCiRun(db, "github_actions", "Deploy main", NOW + ONE_DAY, "org/repo"); // future
+    const result = changeFailureRate(db, cfg, NOW, SINCE);
+    expect(result.sample).toBe(1);
+  });
+
+  // An incident opened AFTER the upper edge can still belong to an in-window deploy, if it
+  // opened within `incidentWindowMinutes` of it — which is why the candidate window extends
+  // past the edge by exactly that much, and no further.
+  test("attributes an incident opened just past the edge, within the incident window", () => {
+    const cfg = baseConfig({ deployEnvironments: [], pagerdutyServices: ["pd-svc-1"] });
+    const deployAt = NOW - 10 * 60_000; // 10 min before the edge
+    insertCiRun(db, "github_actions", "Deploy main", deployAt, "org/repo");
+    insertIncident(db, "pd-svc-1", NOW + ONE_DAY, NOW + 20 * 60_000); // 30 min after deploy
+    expect(changeFailureRate(db, cfg, NOW, SINCE).value).toBe(1);
+  });
+
+  test("ignores an incident opened beyond the incident window past the edge", () => {
+    const cfg = baseConfig({ deployEnvironments: [], pagerdutyServices: ["pd-svc-1"] });
+    const deployAt = NOW - 10 * 60_000;
+    insertCiRun(db, "github_actions", "Deploy main", deployAt, "org/repo");
+    // Opened 2h after the deploy — outside the 60-min incident window.
+    insertIncident(db, "pd-svc-1", NOW + ONE_DAY, NOW + 110 * 60_000);
+    expect(changeFailureRate(db, cfg, NOW, SINCE).value).toBe(0);
+  });
+
+  test("survives an incident row whose metadata is not valid JSON", () => {
+    const cfg = baseConfig({ deployEnvironments: [], pagerdutyServices: ["pd-svc-1"] });
+    const deployAt = NOW - ONE_DAY;
+    insertCiRun(db, "github_actions", "Deploy main", deployAt, "org/repo");
+    db.run(
+      `INSERT INTO item (id, service, type, external_id, title, modified_at, metadata, synced_at)
+       VALUES ('bad-json', 'pagerduty', 'incident', 'ext-bad', 'Incident', ?, '{not json', ?)`,
+      [NOW - ONE_DAY, NOW - ONE_DAY],
+    );
+    insertIncident(db, "pd-svc-1", NOW - ONE_DAY + 700_000, deployAt + 600_000);
+    expect(changeFailureRate(db, cfg, NOW, SINCE).value).toBe(1);
+  });
+
   test("attributes incident to the most-recent deploy before the incident", () => {
     const cfg = baseConfig({ deployEnvironments: [], pagerdutyServices: ["pd-svc-1"] });
     const deployAt1 = NOW - 3 * ONE_DAY;
@@ -752,7 +814,13 @@ describe("changeFailureRate", () => {
     expect(result.value).toBe(0);
   });
 
-  test("incident with no opened_at_ms falls back to synced_at", () => {
+  // BEHAVIOUR CHANGED, deliberately. This test asserted the opposite until 2026-09-11: an
+  // incident carrying no `opened_at_ms` was attributed via its `synced_at`. That is our INDEXING
+  // time, so it blamed whichever deploy happened to precede the moment we happened to index the
+  // row — a number with no relationship to what occurred. Such an incident is now excluded from
+  // attribution, matching the rule `stats.ts`'s `incidentsOpened` already states. Three deploys,
+  // so the assertion also proves no OTHER deploy inherits the blame.
+  test("incident with no opened_at_ms is excluded rather than attributed via synced_at", () => {
     const cfg = baseConfig({ deployEnvironments: [], pagerdutyServices: ["pd-svc-1"] });
     const deployAt = NOW - 2 * ONE_DAY;
     insertCiRun(db, "github_actions", "Deploy main", deployAt, "org/repo");
@@ -775,8 +843,9 @@ describe("changeFailureRate", () => {
       ],
     );
     const result = changeFailureRate(db, cfg, NOW, SINCE);
-    // synced_at = deployAt + 30min → within window → attributed
-    expect(result.value).toBeGreaterThan(0);
+    // synced_at = deployAt + 30min, which the old fallback treated as the open time.
+    expect(result.value).toBe(0);
+    expect(result.sample).toBe(3);
   });
 });
 

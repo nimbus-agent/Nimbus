@@ -232,6 +232,66 @@ paths:
         "400":
           description: Bad request (missing/invalid service, malformed since).
 
+  /v1/metrics/stats:
+    get:
+      operationId: getMetricsStatsSeries
+      summary: One DORA-family metric as a bucketed time series
+      description: >
+        DORA-family and related operational metrics over the same service config, one value per
+        disjoint bucket, so a line between points is meaningful. The metric set is WIDER than
+        /v1/metrics/dora's: the same four DORA metrics, plus pr-merges and incidents-opened,
+        which that route does not return. Buckets end at the present. Millisecond params mirror
+        the IPC method this wraps; duration strings are parsed at the CLI's edge, not here.
+      parameters:
+        - in: query
+          name: service
+          required: true
+          schema:
+            type: string
+        - in: query
+          name: metric
+          required: true
+          schema:
+            type: string
+            enum:
+              [
+                deployment-frequency,
+                lead-time,
+                change-failure-rate,
+                mttr,
+                pr-merges,
+                incidents-opened,
+              ]
+        - in: query
+          name: window_ms
+          required: true
+          schema:
+            type: integer
+            minimum: 1
+          description: Total span of the series, in milliseconds. Must be positive.
+        - in: query
+          name: bucket_ms
+          required: true
+          schema:
+            type: integer
+            minimum: 1
+          description: >
+            Width of one bucket, in milliseconds. Must be positive, must not exceed window_ms,
+            and must not yield more than 400 buckets.
+      responses:
+        "200":
+          description: The bucketed series.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StatsSeries"
+        "400":
+          description: >
+            Missing or invalid params, an unknown service, or an unusable bucket shape
+            (non-positive bounds, bucket wider than the window, or over 400 buckets).
+        "500":
+          description: nimbus.toml could not be parsed. The body names no config value.
+
   /v1/preflight/deploy:
     get:
       operationId: getDeployPreflight
@@ -324,6 +384,51 @@ components:
               low_sample,
               approximate_lead_time,
               mixed_source,
+            ]
+    StatsSeries:
+      type: object
+      required: [metric, service, window, bucket_ms, points]
+      properties:
+        metric: { type: string }
+        service: { type: string }
+        window:
+          type: object
+          required: [since_ms, until_ms]
+          properties:
+            since_ms: { type: integer }
+            until_ms: { type: integer }
+        bucket_ms: { type: integer }
+        points:
+          type: array
+          items: { $ref: "#/components/schemas/StatsPoint" }
+    StatsPoint:
+      type: object
+      required: [start_ms, end_ms, value, unit, sample, gap]
+      properties:
+        start_ms: { type: integer }
+        end_ms: { type: integer }
+        value:
+          type: number
+          nullable: true
+        unit: { type: string }
+        sample: { type: integer }
+        gap:
+          nullable: true
+          type: string
+          # Mirrors `StatsGap` in src/metrics/stats.ts: every `DoraGap` member above, plus the
+          # two this surface adds. A client should render an unrecognised value rather than
+          # drop the point — the union is open in practice, since a gap is a disclosure.
+          enum:
+            [
+              unknown_service,
+              no_pagerduty_mapping,
+              no_repos,
+              no_deployment_data,
+              low_sample,
+              approximate_lead_time,
+              mixed_source,
+              github_only_merge_data,
+              incidents_missing_opened_at,
             ]
     DeployPreflightResult:
       type: object
