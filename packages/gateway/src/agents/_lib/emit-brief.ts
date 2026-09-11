@@ -1,3 +1,4 @@
+import type { ChangelogBrief } from "./changelog-types.ts";
 import type { DecisionsBrief } from "./decisions-types.ts";
 import type {
   CatchupBrief,
@@ -31,7 +32,8 @@ type AnyBrief =
   | DecisionsBrief
   | OwnershipBrief
   | PremortemBrief
-  | NegotiateBrief;
+  | NegotiateBrief
+  | ChangelogBrief;
 
 export interface EmitBriefWithSynthesisOpts<B extends AnyBrief> {
   readonly sessionId: string;

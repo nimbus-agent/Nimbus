@@ -11,6 +11,7 @@ import {
   type WhyRefInput,
 } from "../agents/_lib/why-types.ts";
 import { emitCatchupBrief } from "../agents/catchup.ts";
+import { emitChangelogBrief } from "../agents/changelog.ts";
 import { emitConflictsBrief } from "../agents/conflicts.ts";
 import { emitDecisionsBrief } from "../agents/decisions.ts";
 import { emitExpertBrief } from "../agents/expert.ts";
@@ -37,6 +38,7 @@ import { egressSourceTypeForClientKind } from "../egress/egress-bearing-kinds.ts
 import { KnownNamespaceStore } from "../index/known-namespace-store.ts";
 import { LocalIndex } from "../index/local-index.ts";
 import { resolveFileByRemote } from "../index/resolve-file-by-remote.ts";
+import type { ServiceConfig } from "../metrics/dora-config.ts";
 import { buildServiceIdentityResolver } from "../metrics/service-identity.ts";
 import { ownershipRoots } from "../ownership/ownership-target.ts";
 import { codeUnitCompare } from "../util/code-unit-compare.ts";
@@ -236,6 +238,7 @@ function newSessionId(
     | "expert"
     | "impact"
     | "catchup"
+    | "changelog"
     | "ghost"
     | "glossary"
     | "conflicts"
@@ -429,6 +432,96 @@ async function handleCatchup(params: unknown, ctx: AgentsRpcContext): Promise<un
       ? { db: ctx.db, notify: ctx.notify, sessionId }
       : { db: ctx.db, runner: ctx.runner, notify: ctx.notify, sessionId };
   return await emitCatchupBrief(catchupInput, catchupCtx);
+}
+
+function requireChangelogParams(params: unknown): { sinceMs?: number; service?: string } {
+  if (params === null || typeof params !== "object" || Array.isArray(params)) {
+    throw new AgentsRpcError(-32602, "agents.changelog requires an object payload");
+  }
+  const p = params as { sinceMs?: unknown; service?: unknown };
+  const out: { sinceMs?: number; service?: string } = {};
+  if (p.sinceMs !== undefined) {
+    if (
+      typeof p.sinceMs !== "number" ||
+      !Number.isInteger(p.sinceMs) ||
+      p.sinceMs < 0 ||
+      p.sinceMs > MAX_SINCE_MS
+    ) {
+      throw new AgentsRpcError(
+        -32602,
+        `sinceMs must be a non-negative integer up to ${MAX_SINCE_MS} ms (90 days)`,
+      );
+    }
+    out.sinceMs = p.sinceMs;
+  }
+  if (p.service !== undefined) {
+    if (
+      typeof p.service !== "string" ||
+      p.service.trim().length === 0 ||
+      p.service.length > MAX_SERVICE_LEN
+    ) {
+      throw new AgentsRpcError(
+        -32602,
+        `service must be a non-empty string up to ${MAX_SERVICE_LEN} chars`,
+      );
+    }
+    out.service = p.service.trim();
+  }
+  return out;
+}
+
+/**
+ * The fallback window when a caller omits `sinceMs` — matches the CLI's own `--since 7d` default
+ * (`packages/cli/src/commands/changelog.ts`) and the `7 * DAY` fixtures `agents/changelog.test.ts`
+ * uses throughout. Needed HERE, unlike `catchup`'s/`decisions`' own `input.sinceMs ?? DEFAULT`
+ * inside the agent itself, because `emitChangelogBrief`'s `lookbackMs` is a REQUIRED field with no
+ * internal fallback — see `BuildChangelogArgs.lookbackMs`'s own doc comment on why this carries a
+ * DURATION, never an absolute cutoff.
+ */
+const CHANGELOG_DEFAULT_SINCE_MS = 7 * 24 * 60 * 60 * 1000;
+
+/**
+ * `[metrics.dora.*]`/`[ci.service.*]` service configs, converted from the loader's `Map` to the
+ * `readonly ServiceConfig[]` `emitChangelogBrief` expects (`resolveScope`/`resolveDeployPattern`
+ * in `agents/changelog.ts` both `.find()` an array). Resolved HERE, not in the agent, mirroring
+ * `handleOwnership`'s root-resolution rule — `agents/changelog.ts` keeps no config-file
+ * dependency — and re-read per call so a `[ci.service.*]` edit applies without a gateway restart.
+ *
+ * DEGRADES rather than throws, the same call `premortemResolveServiceId` makes against the same
+ * loader: a malformed block would otherwise take the WHOLE brief down before any of its four
+ * lanes ran, since this runs before `emitChangelogBrief`. With no `configDir` — the test/embedded
+ * shape — this is the empty array, which `resolveScope`/`resolveDeployPattern` already treat as
+ * "no configured services" rather than an error.
+ */
+function changelogServiceConfigs(ctx: AgentsRpcContext): readonly ServiceConfig[] {
+  const { configDir } = ctx;
+  if (configDir === undefined) return [];
+  try {
+    return [...loadNimbusServiceConfigsFromConfigDir(configDir).values()];
+  } catch (err) {
+    process.stderr.write(
+      `agents.changelog: failed to load [metrics.dora.*]/[ci.service.*] from nimbus.toml ` +
+        `(${err instanceof Error ? err.message : String(err)}); service scoping will be ` +
+        `unavailable until this is fixed.\n`,
+    );
+    return [];
+  }
+}
+
+async function handleChangelog(
+  params: unknown,
+  ctx: AgentsRpcContext,
+): Promise<{ sessionId: string }> {
+  const input = requireChangelogParams(params);
+  return await emitChangelogBrief({
+    db: ctx.db,
+    sessionId: newSessionId("changelog"),
+    lookbackMs: input.sinceMs ?? CHANGELOG_DEFAULT_SINCE_MS,
+    service: input.service ?? null,
+    serviceConfigs: changelogServiceConfigs(ctx),
+    notify: ctx.notify,
+    ...(ctx.runner === undefined ? {} : { runner: ctx.runner }),
+  });
 }
 
 async function handleGhost(params: unknown, ctx: AgentsRpcContext): Promise<unknown> {
@@ -1032,6 +1125,7 @@ const AGENTS_RPC_HANDLERS = {
   "agents.expert": handleExpert,
   "agents.impact": handleImpact,
   "agents.catchup": handleCatchup,
+  "agents.changelog": handleChangelog,
   "agents.ghost": handleGhost,
   "agents.conflicts": handleConflicts,
   "agents.huddle": handleHuddle,
@@ -1093,12 +1187,20 @@ const AGENTS_METHOD_PREFIX = "agents.";
  * anything on the loopback/LAN boundary that surface trusts. A shared ChatOps channel makes this
  * exclusion's reasoning *stronger*, not weaker: `negotiate --person` is a dossier-builder for
  * anyone who can read the room, not just a single token holder.
+ *
+ * `agents.changelog` — excluded for a SEQUENCING reason, not a subject-matter objection like the
+ * three above or `negotiate`'s dossier concern: it is a pure read with no side effects and its
+ * response shape fits the runId+poll contract fine. Shape is settling against ONE consumer (the
+ * CLI) before it is committed across HTTP, MCP and ChatOps, each of which carries its own count
+ * assertion. Revisit once the brief has been read in anger.
  */
 const EXTERNAL_EXCLUDED_AGENT_METHODS: ReadonlySet<string> = new Set([
   "agents.preflight",
   "agents.premortem",
   "agents.whyPeek",
   "agents.negotiate",
+  // Sequencing, not subject-matter — see the doc comment above.
+  "agents.changelog",
 ]);
 
 /**
@@ -1142,6 +1244,12 @@ export const FLEET_ELIGIBILITY = Object.freeze({
   // alongside subject enumeration.
   "agents.negotiate": "deferred",
   "agents.catchup": "eligible",
+  // Reasoned about INDEPENDENTLY of `agents.changelog`'s external exclusion above — that set was
+  // reasoned about for an ARBITRARY NETWORK CALLER; a fleet is a different principal,
+  // owner-configured in advance and absent when it fires. A weekly changelog produced overnight
+  // on idle hardware is close to the feature's stated purpose, and the agent is a pure read with
+  // no side effects.
+  "agents.changelog": "eligible",
   "agents.huddle": "eligible",
   "agents.glossary": "eligible",
   "agents.decisions": "eligible",

@@ -95,19 +95,47 @@ export function negotiateNotComputedDisclosure(heading: string): Disclosure {
 }
 
 // ---------------------------------------------------------------------------
-// negotiate — interleaved
+// shared — window labelling
 // ---------------------------------------------------------------------------
 
-/** `90d` / `4h` / `30m`, the window as the brief states it. */
-export function negotiateWindowLabel(sinceMs: number): string {
+/**
+ * `90d` / `4h` / `30m` — a window DURATION, at the coarsest unit that does not LOSE the
+ * caller's precision.
+ *
+ * `Math.round(durationMs / 86_400_000)` alone rendered every sub-day window as "last 0d":
+ * `--since 1h` is a valid request (`parseDurationToMs` accepts `ms|s|m|h|d|w`, and the IPC
+ * bound is an upper one only), and "0d" states a window the lanes did not query. That is the
+ * same class of misstatement the window clause exists to prevent — the clause is a
+ * disclosure, so it cannot itself be wrong about the window.
+ *
+ * A larger unit is chosen ONLY when the duration divides evenly by it. Rounding within the unit
+ * looked harmless and is the same defect one magnitude up: `Math.round` turned `--since 36h`
+ * into "2d" and `--since 90m` into "2h", each stating bounds a third wider than the query the
+ * lanes actually ran. A duration that divides evenly by nothing falls all the way through to
+ * `ms`, which is exact; a zero window renders `0ms`, which is accurate — it selects nothing.
+ *
+ * Shared rather than `negotiate`-specific, and named for the general case: `renderChangelog`
+ * shipped its own `Math.round(... / 86_400_000)` and reproduced the exact defect this function
+ * was written to fix, one section above the unconditional "Counts and entries below cover only
+ * this window" disclosure.
+ *
+ * Takes a DURATION, never bounds — a caller holding absolute bounds subtracts first.
+ */
+export function windowLabel(durationMs: number): string {
   const MINUTE = 60_000;
   const HOUR = 3_600_000;
   const DAY = 86_400_000;
-  if (sinceMs >= DAY) return `${String(Math.round(sinceMs / DAY))}d`;
-  if (sinceMs >= HOUR) return `${String(Math.round(sinceMs / HOUR))}h`;
-  if (sinceMs >= MINUTE) return `${String(Math.round(sinceMs / MINUTE))}m`;
-  return `${String(sinceMs)}ms`;
+  if (durationMs >= DAY && durationMs % DAY === 0) return `${String(durationMs / DAY)}d`;
+  if (durationMs >= HOUR && durationMs % HOUR === 0) return `${String(durationMs / HOUR)}h`;
+  if (durationMs >= MINUTE && durationMs % MINUTE === 0) {
+    return `${String(durationMs / MINUTE)}m`;
+  }
+  return `${String(durationMs)}ms`;
 }
+
+// ---------------------------------------------------------------------------
+// negotiate — interleaved
+// ---------------------------------------------------------------------------
 
 /**
  * The window clause, which qualifies EVERY headline count in the brief.
@@ -125,7 +153,7 @@ export function negotiateWindowDisclosure(sinceMs: number, generatedAt: number):
   return {
     scope: { kind: "preamble" },
     line:
-      `_window: last ${negotiateWindowLabel(sinceMs)} — items authored by the subject that ` +
+      `_window: last ${windowLabel(sinceMs)} — items authored by the subject that ` +
       "were ACTIVE in this window; the index records last-modified, not created. Two lanes " +
       "sit outside it: decisions windows on its recorded decision date, and ownership is not " +
       `windowed at all (it is an all-time snapshot) · generated ${new Date(
@@ -294,4 +322,95 @@ export function whyChangeSubjectDisclosure(): Disclosure {
       "and downstream impact is `nimbus impact <url>`._",
     anchors: ["authorship needs a line"],
   };
+}
+
+// ---------------------------------------------------------------------------
+// changelog
+// ---------------------------------------------------------------------------
+
+/**
+ * `nimbus changelog`'s interleaved disclosures — all three in the PREAMBLE, because each
+ * qualifies every category section below it and no section scope could reach them all.
+ *
+ * Anchors are drawn from each sentence's FACTUAL clause and stop short of its variable tail
+ * (the leading count), and every independent sentence in a `line` carries its own anchor —
+ * `disclosure-anchor-coverage.test.ts` pins that for the two-sentence entry below.
+ *
+ * **Length is calibrated, not incidental.** Every anchor here is 2–7 words, matching this
+ * module's existing ones, because `synthesize.ts`'s instructions ask the model to REWRITE this
+ * prose. A near-verbatim 12-word clause would make ordinary paraphrase a `contract_violation`,
+ * so changelog synthesis would fail closed on every run and the feature would ship inert — a
+ * defect that merely happens to be a safe one. Each anchor is instead the shortest fragment that
+ * cannot survive the disclosure's removal.
+ *
+ * **All three are scoped to the preamble, so no anchor may be satisfiable by a SIBLING's line.**
+ * If disclosure 2's anchors also occurred in disclosure 1's text, a rewrite could drop 2 entirely
+ * and still pass. `disclosure-anchor-coverage.test.ts` checks that cross-satisfaction directly.
+ *
+ * The first entry is UNCONDITIONAL: it states what the numbers MEAN, and a reader who is told
+ * nothing reads a windowed, event-timed count as an all-time one. It is careful to claim event
+ * timing only WHERE AN EVENT FIELD EXISTS: an earlier draft said each entry is placed by when it
+ * happened "rather than when the index last touched it", full stop, which the second disclosure
+ * then contradicts on any brief with `indexTimedCount > 0` — two adjacent preamble sentences
+ * making opposite claims about the same entries. A disclosure that is wrong is worse than one
+ * that is absent, because the reader has no reason to look further.
+ */
+/**
+ * `entry is` / `entries are` — the SUBJECT and its verb together, because English agreement runs
+ * across both and picking the noun alone still ships "1 entry are timed from…".
+ *
+ * These sentences are read by a human, and `entr(y/ies)` was appearing verbatim in the rendered
+ * brief: a source-side shorthand that escaped into the artifact. Not a disclosure-integrity
+ * failure — the claim was intact — but the preamble is where this brief asks to be trusted, and
+ * a placeholder printed there reads as an unfinished one.
+ */
+function entryClause(n: number, verb: "be" | "wasWere"): string {
+  if (verb === "be") return n === 1 ? "entry is" : "entries are";
+  return n === 1 ? "entry was" : "entries were";
+}
+
+export function changelogDisclosures(b: {
+  readonly indexTimedCount: number;
+  readonly truncatedCount: number;
+}): readonly Disclosure[] {
+  const out: Disclosure[] = [];
+  out.push({
+    scope: { kind: "preamble" },
+    line:
+      "Counts and entries below cover only this window, and each entry is placed by when it " +
+      "happened wherever an event field carries that time — an entry timed instead from when " +
+      "the index last touched it is disclosed below.",
+    // Clause 1: the window bound. Clause 2: the time BASIS — its factual core is that the
+    // placement is not (unconditionally) the index's last touch, which is the half a paraphrase
+    // cannot drop without losing the meaning. Deliberately NOT the full clause: a dozen
+    // near-verbatim words is a rewrite ban, not an anchor.
+    anchors: ["cover only this window", "the index last touched"],
+  });
+  if (b.indexTimedCount > 0) {
+    out.push({
+      scope: { kind: "preamble" },
+      line:
+        `${String(b.indexTimedCount)} ${entryClause(b.indexTimedCount, "be")} timed from the ` +
+        "index's last-touch column " +
+        "rather than an event field — deployments and incident resolutions, on the same basis " +
+        "`nimbus metrics dora` uses. A resolved incident whose row has not been re-synced still " +
+        "reads as unresolved, so resolutions under-report by sync lag.",
+      // NOT `"same basis"`, which this sentence's earlier draft used: that is ordinary English a
+      // rewrite could produce with the disclosure gone, and it rested entirely on the second
+      // anchor to stay honest. `"rather than an event field"` is the contrast being disclosed —
+      // it cannot occur unless the sentence is still making its point — and it does not appear
+      // in the sibling disclosure's line, so dropping this one cannot be masked by keeping that.
+      anchors: ["rather than an event field", "under-report by sync lag"],
+    });
+  }
+  if (b.truncatedCount > 0) {
+    out.push({
+      scope: { kind: "preamble" },
+      line:
+        `${String(b.truncatedCount)} further ` +
+        `${entryClause(b.truncatedCount, "wasWere")} truncated at the display limit.`,
+      anchors: ["truncated at the display limit"],
+    });
+  }
+  return out;
 }

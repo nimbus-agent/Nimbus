@@ -1,3 +1,4 @@
+import type { ChangelogBrief } from "./changelog-types.ts";
 import type { DecisionsBrief } from "./decisions-types.ts";
 import type {
   CatchupBrief,
@@ -29,7 +30,8 @@ export type SynthInput =
   | DecisionsBrief
   | OwnershipBrief
   | PremortemBrief
-  | NegotiateBrief;
+  | NegotiateBrief
+  | ChangelogBrief;
 
 /**
  * Turns a missing dispatch arm into a COMPILE error.

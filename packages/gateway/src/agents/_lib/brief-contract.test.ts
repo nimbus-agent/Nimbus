@@ -1,7 +1,9 @@
 import { describe, expect, test } from "bun:test";
 import { contractViolations, requiredPhrases } from "./brief-contract.ts";
 import type { SynthInput } from "./brief-kinds.ts";
+import type { ChangelogBrief } from "./changelog-types.ts";
 import type { NegotiateBrief } from "./negotiate-types.ts";
+import { renderChangelog } from "./render.ts";
 
 // ALL SEVEN nullable lanes null. NegotiateBrief has seven (negotiate-types.ts:103-109),
 // each rendering its own "_could not be computed_" (render.ts:662,690,716,743,764,841,865).
@@ -226,4 +228,52 @@ describe("requiredPhrases — non-negotiate kinds", () => {
       expect(requiredPhrases(brief)).toEqual([]);
     });
   }
+});
+
+describe("requiredPhrases — changelog", () => {
+  const NOW = 1_800_000_000_000;
+
+  function changelog(over: Partial<ChangelogBrief> = {}): ChangelogBrief {
+    return {
+      kind: "changelog",
+      agentVersion: 1,
+      generatedAt: NOW,
+      latencyMs: 1,
+      gaps: [],
+      query: { sinceMs: NOW - 604_800_000, nowMs: NOW, service: null },
+      mergedPrs: [],
+      deployments: [],
+      incidentsOpened: [],
+      incidentsResolved: [],
+      counts: { mergedPrs: 0, deployments: 0, incidentsOpened: 0, incidentsResolved: 0 },
+      indexTimedCount: 0,
+      nonGithubMergedPrs: 0,
+      truncatedCount: 0,
+      ...over,
+    };
+  }
+
+  test("the renderer's own output satisfies the guard", () => {
+    // The half that matters: guard and renderer must be built from the SAME sentences. A guard
+    // requiring a phrase the renderer never writes would reject every synthesis silently.
+    const brief = changelog({ indexTimedCount: 2, truncatedCount: 3 });
+    expect(contractViolations(brief, renderChangelog(brief))).toEqual([]);
+  });
+
+  test("a rewrite that drops the window sentence is rejected", () => {
+    const brief = changelog();
+    const rewritten = ["# Changelog", "", "## Deployments", "", "- shipped", ""].join("\n");
+    const violations = contractViolations(brief, rewritten);
+    expect(violations.length).toBeGreaterThan(0);
+    expect(violations.join(" ")).toContain("preamble");
+  });
+
+  test("the time-basis and truncation clauses are required only when they applied", () => {
+    // Requiring a conditional disclosure on a brief that never rendered it would reject every
+    // synthesis of the ordinary case — the failure direction the predicate lives in one place
+    // (`changelogDisclosures`) to prevent.
+    expect(requiredPhrases(changelog())).toHaveLength(1);
+    expect(requiredPhrases(changelog({ indexTimedCount: 1 }))).toHaveLength(2);
+    expect(requiredPhrases(changelog({ indexTimedCount: 1, truncatedCount: 1 }))).toHaveLength(3);
+  });
 });

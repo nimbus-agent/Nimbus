@@ -18,6 +18,78 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
 
 ## Post-Phase-6 deliveries
 
+- **2026-09-11 — `nimbus changelog`, the fifteenth built-in agent, closing the v0.1.1 CLI batch
+  row.** A Markdown changelog assembled entirely from the local index over a time window, for one
+  configured service or across all of them: merged pull requests, deployments, incidents opened,
+  and incidents resolved. Shipped as an agent (`agents/changelog.ts`, `agents.changelog`,
+  `changelog.briefReady`) rather than a plain CLI-plus-IPC command like `nimbus index health` —
+  the output is a brief, it wants `[agents] synthesis` for prose release notes, and it wants to be
+  fleet-eligible, which a non-agent command cannot be. No migration, no new invariant, no new
+  egress class.
+  **Merged PRs and incidents opened window on real event fields; deployments and
+  incident-resolution use `modified_at` deliberately, matching `dora.ts`.**
+  `item.modified_at` is "last touched", not "when it happened" — a PR merged in June that got a
+  comment yesterday windows as yesterday if keyed on that column, which is why `metadata.merged_at`
+  covers merged PRs and `metadata.opened_at_ms` covers incidents opened. Deployments and
+  incident-resolution use `modified_at` on purpose instead, on the same basis `nimbus metrics dora`
+  already ships — for a resolved incident, `modified_at` is effectively resolution time. Deploys
+  come from two UNIONED sources, mirroring `dora.ts` rather than inventing a new definition: a
+  successful `ci_run` whose title matches the deploy pattern (`DEFAULT_DEPLOY_WORKFLOW_PATTERN`,
+  `^[Dd]eploy`, when `--service` names nothing configured) and annotated deploys joined through
+  `deployment_items`, timed from `COALESCE(finished_at_ms, started_at_ms)` — the typed, nullable
+  `finished_at_ms` column, falling back to `started_at_ms` for a row that has none. **The
+  fallback is not about an in-progress deploy:** the query requires `d.conclusion = 'success'`
+  and `in_progress` is a distinct CHECK value (`index/deployment-v28-sql.ts`), so a running
+  deploy is filtered out before the `COALESCE` is ever evaluated. It is reachable because
+  `finished_at_ms` is optional INDEPENDENTLY of `conclusion` — `deployment/annotate.ts` returns
+  early when it is omitted — so a `success` row carrying no finish time is a legal thing to
+  post — better than `dora.ts` does for the same rows, which windows on `modified_at` and
+  never reads the deployment's own timestamps at all. Every lane scopes through `ServiceConfig`,
+  never `item.service` (the CONNECTOR id, not a business service name, and would match zero rows).
+  **Two of the five categories the original roadmap row promised have no substrate at all** —
+  dependency updates and configuration changes are not indexed as their own item type — so they
+  are disclosed unconditionally in `## Gaps`, following `ownership`'s standing-disclaimer
+  precedent, rather than silently absent. Merged GitLab/Bitbucket PRs are invisible for the same
+  reason `nimbus stats` already discloses as `github_only_merge_data`: `metadata.merged_at` is
+  written by the GitHub connector alone — and that gap note also states that its OWN count is an
+  estimate, since with no merge timestamp it windows on `i.modified_at` and therefore misses in
+  both directions (an un-resynced merge is omitted; an older merge touched in the window is
+  counted). Two further disclosure corrections landed in review, both of the same class — a
+  disclosure that was WRONG rather than absent, which is worse, because a reader who believes it
+  has no reason to look further. The unconditional preamble sentence claimed each entry is placed
+  by when it happened "rather than when the index last touched it", full stop, which the very next
+  sentence contradicts on any brief with `indexTimedCount > 0`; it now claims event timing only
+  where an event field carries the time. And the unbound-`--service` gap said "every entry below
+  is empty because nothing can match it" — false for ANNOTATED deployments, which
+  `selectAnnotatedDeployments` matches on `deployment_items.nimbus_service_id` and which need
+  neither `repos` nor `pagerduty_services`, so a brief could list a deploy directly above a note
+  saying no entry could exist. The note is now scoped to the three lanes the bindings actually
+  decide.
+  **Entry lists are capped at `CHANGELOG_CATEGORY_CAP = 50` per category**, so a 500-PR window is
+  never handed wholesale to the synthesis model; `counts` keeps the true PRE-CAP total per
+  category regardless, so the truncation is recoverable (`counts.mergedPrs - mergedPrs.length`),
+  and `truncatedCount` sums it across all four.
+  **Six registration sites are compiler-forced**, one more than planned: `SynthInput`,
+  `RESERVED_HEADINGS_BY_KIND`, `AGENTS_RPC_HANDLERS`, `FLEET_ELIGIBILITY`,
+  `FLEET_DIGEST_EXTRACTORS`, and — found during implementation —
+  `agents/_lib/brief-contract.ts`'s `requiredPhrases`, whose exhaustive `brief.kind` dispatch
+  would otherwise have let a missing `changelog` arm compile down to `[]` and leave every one of
+  this brief's interleaved I31 disclosures unguarded. `CLAUDE.md`, `GEMINI.md` and
+  `docs/SECURITY-INVARIANTS.md` are NOT compiler-forced and each said I31 covers "all fourteen
+  brief kinds" — corrected to fifteen in this same change, since no gate catches a mirrored prose
+  count going stale.
+  **Externally excluded, but fleet-eligible** — `agents.changelog` is served on the CLI/Tauri
+  socket only (not HTTP, not MCP, not ChatOps), a sequencing decision rather than a side-effect or
+  dossier concern like the other excluded agents: the shape is settling against one consumer
+  before being committed across every external surface. It IS `nimbus fleet`-eligible — a weekly
+  changelog produced overnight on idle hardware is close to the feature's own stated purpose, and
+  it is a pure read with no side effects, reasoned about independently of the external exclusion
+  above (a fleet run is an owner-configured principal, absent when it fires — not an arbitrary
+  network caller).
+  CLI: `nimbus changelog [--service <id>] [--since 7d] [--format markdown\|slack\|plain] [--json]`
+  — `--format` is a text transform over the brief's own rendered Markdown, never a re-render from
+  the typed findings, so a synthesized rewrite's prose survives the transform.
+
 - **2026-09-11 — `GET /v1/metrics/stats`, and the change-failure-rate attribution hole it
   made worth fixing.** Two things, landing together because the design argued they must: a route
   over `computeStatsSeries` (already shipped behind `nimbus stats`, with no HTTP surface), and a

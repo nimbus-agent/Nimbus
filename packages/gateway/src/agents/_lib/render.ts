@@ -1,7 +1,9 @@
 import type { DecisionEvidence } from "../../decisions/decision-types.ts";
 import type { Risk } from "../../premortem/risks.ts";
 import type { WatcherProposal } from "../../premortem/watcher-proposals.ts";
+import type { ChangelogRow } from "../changelog-queries.ts";
 import {
+  changelogDisclosures,
   glossaryProvenanceDisclosure,
   negotiateDecisionsDisclosure,
   negotiateIncidentsDisclosure,
@@ -10,7 +12,9 @@ import {
   negotiateSubjectVoice,
   negotiateWindowDisclosure,
   whyChangeSubjectDisclosure,
+  windowLabel,
 } from "./brief-disclosures.ts";
+import type { ChangelogBrief } from "./changelog-types.ts";
 import type { DecisionsBrief, DecisionsEntry } from "./decisions-types.ts";
 import type {
   CatchupBrief,
@@ -91,7 +95,7 @@ function renderLatency(ms: number): string {
  * a renderer that could forget to, or could order Gaps after the footer, and the guard in
  * `brief-contract.ts` would then be checking a document the renderer never promised. Keeping the
  * shape in one place is what makes "every brief ends with its Gaps, and honours `omitReserved`"
- * true by construction rather than by fourteen agreeing copies.
+ * true by construction rather than by fifteen agreeing copies.
  *
  * Briefs with additional reserved sections of their own — `negotiate`'s `## Sources` and
  * `## Evidence not available from the index` — deliberately do NOT use this helper: their tail is
@@ -1008,19 +1012,6 @@ function renderIgnoredPersonalSources(unrecognised: readonly string[]): string {
 }
 
 /**
- * The window label, at the coarsest unit that does not LOSE the caller's precision.
- *
- * `Math.round(sinceMs / 86_400_000)` alone rendered every sub-day window as "last 0d":
- * `--since 1h` is a valid request (`parseDurationToMs` accepts `ms|s|m|h|d|w`, and the IPC
- * bound is an upper one only), and "0d" states a window the lanes did not query. That is the
- * same class of misstatement the window clause exists to prevent — the clause is a
- * disclosure, so it cannot itself be wrong about the window.
- *
- * Rounding WITHIN a unit is fine (90d, 36h); collapsing to zero is not, hence the unit step
- * down rather than a wider `toFixed`. A zero window renders `0ms`, which is accurate: it
- * selects nothing.
- */
-/**
  * Task 1's version rendered only the subject, the window and generation time, the gap
  * notes, and the unconditional `unavailableEvidence` list. Task 2 added the authored/
  * reviewed PR lane sections; Task 3 adds the tickets lane; Task 4 adds ownership; Task 5
@@ -1079,4 +1070,111 @@ export function renderNegotiate(brief: NegotiateBrief, opts?: RenderOpts): strin
   ]
     .filter((s) => s !== "")
     .join("\n");
+}
+
+/**
+ * Every character that can END A LINE (or reorder one) inside a Markdown document, dropped.
+ *
+ * `escapeMarkdownLinkText` hardens brackets and backslashes and nothing else, which is correct
+ * for its own job and insufficient on its own here: a title is arbitrary connector-supplied text
+ * (`index/item-store.ts` stores `item.title` verbatim — no connector or writer strips control
+ * characters from it), so a PR or incident subject containing `\n## Gaps` ends the entry's list
+ * item and renders the remainder as a LEVEL-2 HEADING of its own. That plants a fabricated
+ * section — potentially a reserved one — in the deterministic render, which is the artifact I31
+ * exists to keep honest. `changelogScopeLabel` below already makes this exact argument for
+ * `--service`, which is merely OWNER-supplied; the entry title is the stronger case, not the
+ * weaker one.
+ *
+ * Dropped rather than substituted, for `changelogScopeLabel`'s reason: a replacement character
+ * is a second thing the reader has to interpret, and nothing legitimate arrives carrying one.
+ * `\p{Cc}` covers CR/LF and the C0/C1 controls, `\p{Cf}` the bidi overrides and zero-width
+ * joiners, `\p{Zl}`/`\p{Zp}` U+2028 and U+2029.
+ */
+function stripLineStructureChars(text: string): string {
+  return text.replace(/[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/gu, "");
+}
+
+/**
+ * One changelog entry. Linked when the indexed item carried a permalink that can be rendered
+ * safely, plain otherwise — never a link to nowhere.
+ *
+ * Both halves go through `negotiate`'s hardened helpers rather than being interpolated raw,
+ * because BOTH halves are connector-supplied: the title is a pull-request or incident subject
+ * written by whoever opened it, and the url is a connector's `canonical_url`. A title
+ * containing `](` closes the link early and takes the rest of the line with it, and a
+ * `javascript:` target is live in the Tauri renderer with only the CSP (I8) behind it.
+ * `renderWhy` and `renderDecisionsEvidenceItem` interpolate raw; that is the older shape, not
+ * the one to copy.
+ */
+function renderChangelogEntry(r: ChangelogRow): string {
+  const title = escapeMarkdownLinkText(stripLineStructureChars(r.title));
+  const href = r.url === null ? null : safeEvidenceHref(r.url);
+  const head = href === null ? title : `[${title}](${href})`;
+  return `- ${head} — ${isoDay(r.atMs)}`;
+}
+
+/**
+ * A category section, rendered whether or not it has entries.
+ *
+ * The empty case prints its heading and `_None in this window._` rather than being omitted:
+ * a missing heading and an empty one say different things — "this changelog does not cover
+ * deployments" versus "no deployment happened in this window" — and the reader cannot tell
+ * them apart from an absence. The whole point of this brief is that silence is never evidence.
+ */
+function renderChangelogSection(heading: string, rows: readonly ChangelogRow[]): string {
+  const body =
+    rows.length === 0 ? "_None in this window._" : rows.map(renderChangelogEntry).join("\n");
+  return ["", `## ${heading}`, "", body].join("\n");
+}
+
+/**
+ * The `--service` the owner asked for, as it appears inside an inline-code span in the PREAMBLE.
+ *
+ * Interpolating it raw was the odd one out on this brief: the entry title and href beside it are
+ * both hardened. The value is owner-supplied and bounded (`ipc/agents-rpc.ts` trims it and caps
+ * it at `MAX_SERVICE_LEN`), and `agents.changelog` is not on the Tauri allowlist, so the only
+ * reachable case is an owner injecting into their own brief. But that validator rejects no
+ * CONTROL character: a newline would end the preamble line and let the remainder render as a
+ * `## ` heading of its own — inside the exact region the I31 disclosures live in, where a
+ * fabricated section is the failure this brief's whole disclosure design exists to prevent.
+ * Backticks go for the reason one level down: either of them closes the code span early.
+ *
+ * Dropped rather than substituted: a replacement character would be a second thing the reader
+ * has to interpret, and nothing legitimate reaches here carrying one.
+ *
+ * Shares {@link stripLineStructureChars} with the entry title rather than repeating its class:
+ * the backtick is the ONLY difference, and it matters here alone because this value sits inside
+ * an inline-code span that a backtick would close early.
+ */
+function changelogScopeLabel(service: string): string {
+  return stripLineStructureChars(service).replaceAll("`", "");
+}
+
+export function renderChangelog(brief: ChangelogBrief, opts?: RenderOpts): string {
+  const header = "# Changelog";
+  const scope =
+    brief.query.service === null
+      ? "_scope: all services_"
+      : `_scope: service \`${changelogScopeLabel(brief.query.service)}\`_`;
+  // The disclosures sit in the PREAMBLE — above the first `##` — because each one qualifies
+  // every category section below it. `preambleBody` (`markdown-sections.ts`) stops at the first
+  // LEVEL-2 heading, which is why this brief's title is `#` and not `##`: under a level-2 title
+  // the preamble would be empty and `contractViolations` could never reach these sentences.
+  const preamble = [
+    "",
+    // `windowLabel`, not `Math.round(span / 86_400_000)`: `--since 6h` is a documented example
+    // in `cli-reference.md`, and a day-only label renders it as "last 0d" — a window the lanes
+    // did not query, stated one line above the unconditional "Counts and entries below cover
+    // only this window" disclosure. The dates keep the absolute bounds visible either way.
+    `_window: last ${windowLabel(brief.query.nowMs - brief.query.sinceMs)} (${isoDay(brief.query.sinceMs)} → ${isoDay(brief.query.nowMs)})_`,
+    scope,
+    ...changelogDisclosures(brief).map((d) => d.line),
+  ].join("\n");
+  const sections = [
+    renderChangelogSection("Merged Pull Requests", brief.mergedPrs),
+    renderChangelogSection("Deployments", brief.deployments),
+    renderChangelogSection("Incidents Opened", brief.incidentsOpened),
+    renderChangelogSection("Incidents Resolved", brief.incidentsResolved),
+  ].join("\n");
+  return assembleBrief(header, [preamble, sections], brief, opts);
 }

@@ -22,7 +22,7 @@ function isSynthKind(kind: string): kind is SynthInput["kind"] {
 
 /**
  * The disclosure-only headings for `kind`, falling back to `[GAPS_HEADING]` — every one of the
- * fourteen brief kinds' actual reserved set, `glossary` and `negotiate` alone excepted — when
+ * fifteen brief kinds' actual reserved set, `glossary` and `negotiate` alone excepted — when
  * `kind` is not a `SynthInput["kind"]` literal at all. That fallback covers a real mismatch, not
  * just a hypothetical one: the external ChatOps agent name for the `conflict` brief kind is
  * `"conflicts"` (`ipc/agents-rpc.ts`'s `EXTERNAL_AGENT_NAMES`), so the lookup below misses by

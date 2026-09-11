@@ -57,7 +57,7 @@ function medianOfSorted(sorted: readonly number[]): number {
   return Math.floor((a + b) / 2);
 }
 
-function repoLikeMatchesUrn(
+export function repoLikeMatchesUrn(
   metadata: Record<string, unknown> | null,
   externalId: string,
   urn: ParsedDoraRepoUrn,

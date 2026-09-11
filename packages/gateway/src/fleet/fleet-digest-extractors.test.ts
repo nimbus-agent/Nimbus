@@ -476,4 +476,157 @@ describe("gateway-local briefs", () => {
     const json = JSON.stringify({ ...base, kind: "glossary", entries: [] });
     expect(summarizeBrief("agents.glossary", json)).toBeUndefined();
   });
+
+  test("the changelog extractor tracks entry identities and per-category counts", () => {
+    // `counts` is the TRUE pre-cap total for the window (`ChangelogCounts`'s own doc comment);
+    // the entry arrays are capped at `CHANGELOG_CATEGORY_CAP` and can legitimately be shorter.
+    // `mergedPrs: 53` here vs. two LISTED entries below is that gap, deliberately reproduced
+    // rather than "fixed" by making the two agree — metrics must come from `counts`, never from
+    // `.length`.
+    const json = JSON.stringify({
+      ...base,
+      kind: "changelog",
+      query: { sinceMs: 0, nowMs: 0, service: null },
+      counts: { mergedPrs: 53, deployments: 1, incidentsOpened: 0, incidentsResolved: 2 },
+      mergedPrs: [{ id: "github:1" }, { id: "github:2" }],
+      deployments: [{ id: "gha:9" }],
+      incidentsOpened: [],
+      incidentsResolved: [{ id: "pd:1" }],
+      indexTimedCount: 0,
+      nonGithubMergedPrs: 0,
+      truncatedCount: 51,
+    });
+    const s = summarizeBrief("agents.changelog", json);
+    // `summary()` sorts with `codeUnitCompare` — NOT insertion order.
+    expect(s?.keys).toEqual(["gha:9", "github:1", "github:2", "pd:1"]);
+    expect(s?.metrics).toEqual({
+      mergedPrs: 53,
+      deployments: 1,
+      incidentsOpened: 0,
+      incidentsResolved: 2,
+    });
+  });
+
+  test("a brief of the wrong kind is not summarizable", () => {
+    expect(
+      summarizeBrief("agents.changelog", JSON.stringify({ kind: "ownership" })),
+    ).toBeUndefined();
+  });
+
+  /**
+   * The four shape guards, each exercised on its own.
+   *
+   * `summarizeBrief` answers `undefined` for both "this JSON did not parse" and "this JSON is
+   * not the shape I expect" because the caller's response to either is identical — disclose the
+   * brief as not summarizable rather than drop it. That makes the guards easy to leave untested:
+   * every one of them returns the same value the happy path returns on malformed input, so a
+   * regression that removed one would not change any existing assertion here. Each case below
+   * is a `changelog` brief that is well-formed EXCEPT for one field, so it can only fail for
+   * the reason it names.
+   */
+  const changelogBrief = (over: Record<string, unknown>): string =>
+    JSON.stringify({
+      ...base,
+      kind: "changelog",
+      query: { sinceMs: 0, nowMs: 0, service: null },
+      counts: { mergedPrs: 1, deployments: 0, incidentsOpened: 0, incidentsResolved: 0 },
+      mergedPrs: [{ id: "github:1" }],
+      deployments: [],
+      incidentsOpened: [],
+      incidentsResolved: [],
+      indexTimedCount: 0,
+      nonGithubMergedPrs: 0,
+      truncatedCount: 0,
+      ...over,
+    });
+
+  test("the control: the brief this suite mutates IS summarizable when untouched", () => {
+    // Without this, a typo in `changelogBrief` would make all four guard tests below pass for
+    // the wrong reason — they would be rejecting a brief that was malformed to begin with.
+    expect(summarizeBrief("agents.changelog", changelogBrief({}))?.metrics).toEqual({
+      mergedPrs: 1,
+      deployments: 0,
+      incidentsOpened: 0,
+      incidentsResolved: 0,
+    });
+  });
+
+  test("a missing `counts` object is not summarizable", () => {
+    expect(summarizeBrief("agents.changelog", changelogBrief({ counts: null }))).toBeUndefined();
+  });
+
+  test("a `counts` field that is not a number is not summarizable", () => {
+    // A string where a number belongs is the shape connector-written JSON actually produces;
+    // reporting it as a metric would put a non-numeric value into a delta comparison.
+    expect(
+      summarizeBrief(
+        "agents.changelog",
+        changelogBrief({
+          counts: { mergedPrs: "1", deployments: 0, incidentsOpened: 0, incidentsResolved: 0 },
+        }),
+      ),
+    ).toBeUndefined();
+  });
+
+  test("an entry field that is not an array is not summarizable", () => {
+    expect(
+      summarizeBrief("agents.changelog", changelogBrief({ deployments: { id: "gha:9" } })),
+    ).toBeUndefined();
+  });
+
+  test("an entry whose `id` is not a string is not summarizable", () => {
+    expect(
+      summarizeBrief("agents.changelog", changelogBrief({ mergedPrs: [{ id: 42 }] })),
+    ).toBeUndefined();
+  });
+
+  // `Number.isFinite` alone admitted the whole real line. Every value these extractors read is a
+  // COUNT, so -1 and 1.5 are as unreadable as "1" — and a count is the one thing a digest
+  // compares between runs, so publishing an impossible one is worse than declining the brief.
+  test("a negative count is not summarizable", () => {
+    expect(
+      summarizeBrief(
+        "agents.changelog",
+        changelogBrief({
+          counts: { mergedPrs: -1, deployments: 0, incidentsOpened: 0, incidentsResolved: 0 },
+          mergedPrs: [],
+        }),
+      ),
+    ).toBeUndefined();
+  });
+
+  test("a fractional count is not summarizable", () => {
+    expect(
+      summarizeBrief(
+        "agents.changelog",
+        changelogBrief({
+          counts: { mergedPrs: 1, deployments: 1.5, incidentsOpened: 0, incidentsResolved: 0 },
+        }),
+      ),
+    ).toBeUndefined();
+  });
+
+  test("a count below its own listed entry count is not summarizable", () => {
+    // The display cap makes a listed array SHORTER than its count, never longer — `counts` is
+    // the pre-cap total. A brief claiming 1 merged PR while listing 2 contradicts itself, and
+    // digesting it would publish a number its own entry list disproves.
+    expect(
+      summarizeBrief(
+        "agents.changelog",
+        changelogBrief({ mergedPrs: [{ id: "github:1" }, { id: "github:2" }] }),
+      ),
+    ).toBeUndefined();
+  });
+
+  test("a count ABOVE its listed entry count is still summarizable — that is the cap", () => {
+    // The positive control for the check above: truncation is the normal case, not an error.
+    const s = summarizeBrief(
+      "agents.changelog",
+      changelogBrief({
+        counts: { mergedPrs: 53, deployments: 0, incidentsOpened: 0, incidentsResolved: 0 },
+      }),
+    );
+    expect(s?.metrics["mergedPrs"]).toBe(53);
+    expect(s?.keys).toEqual(["github:1"]);
+  });
 });

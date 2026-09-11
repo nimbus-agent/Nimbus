@@ -716,6 +716,34 @@ nimbus catchup --since 24h --service payment-service --json
 
 ---
 
+### `nimbus changelog`
+
+The fifteenth built-in agent: a Markdown changelog assembled entirely from the local index over a time window, for a single configured service or across all of them. Four categories: merged pull requests and incidents opened window on real event fields (`metadata.merged_at`, `metadata.opened_at_ms`) rather than `item.modified_at` ("last touched", not "when it happened"); deployments (a successful CI run whose title matches the deploy pattern, unioned with annotated deploys from `POST /v1/deployments`) and incidents resolved use `item.modified_at` deliberately, on the same basis `nimbus metrics dora` already uses for resolution time. Dependency updates and configuration changes have no indexed item type and are disclosed unconditionally in `## Gaps` rather than silently omitted.
+
+```bash
+nimbus changelog
+nimbus changelog --since 14d
+nimbus changelog --service payments --format slack
+nimbus changelog --json
+```
+
+**Options:**
+
+| Flag | Description |
+|---|---|
+| `--since <duration>` | Lookback window (default: `7d`); accepts `<n>d` / `<n>h`, etc. Capped at **90 days** by `agents.changelog` — a longer window parses locally and is then refused by the gateway. |
+| `--service <id>` | Restrict to one `[ci.service.<id>]` service (repos + PagerDuty ids + deploy pattern). Naming a service `nimbus.toml` does not define is not an error — every scoped query correctly matches nothing, and the brief says so in `## Gaps` rather than reading as a quiet week. Omitted: every service, using the shipped default deploy pattern `^[Dd]eploy`. |
+| `--format <markdown\|slack\|plain>` | A text transform over the brief's own Markdown (default `markdown`) — never a re-render from the typed findings, so a synthesized rewrite's prose survives the transform. |
+| `--json` | Print the typed findings instead of the brief. |
+
+**Output (Markdown):** `# Changelog`, a preamble stating the window and the scoped service (or "all services"), then `## Merged Pull Requests`, `## Deployments`, `## Incidents Opened`, `## Incidents Resolved` — each rendered even when empty (`_None in this window._`), because a missing heading and an empty one say different things — followed by the reserved `## Gaps` section, which is never empty: it always carries the unconditional dependency-updates/config-changes disclosure, and additionally names any merged pull request on a non-GitHub forge (`metadata.merged_at` is written by the GitHub connector alone, so GitLab/Bitbucket merges are invisible — the same substrate gap `nimbus stats` reports as `github_only_merge_data`), and any `--service` bound to no repos and no PagerDuty ids.
+
+**Entry lists are capped at 50 per category**, so a 500-PR window is not handed wholesale to the synthesis model. `counts` (visible via `--json`) always carries the true pre-cap total per category, so the truncation is recoverable — a window with 53 merged PRs and a 50-entry list means 3 were dropped, not lost.
+
+**Read-only:** never triggers HITL, never makes a live connector API call. Not reachable over the local HTTP API, nor as an MCP tool, nor from ChatOps, nor from the desktop renderer — `agents.changelog` is served on the local IPC socket and is **not** on the Tauri `ALLOWED_METHODS` allowlist (I7), so the CLI is the only surface a *user* can reach it from today; a sequencing decision (letting the shape settle against one consumer before it is committed across every external surface) rather than a side-effect or dossier concern like the other excluded agents. The gateway's own `nimbus fleet` scheduler is the one other caller, and it is not an exception to that reasoning: a fleet job is owner-configured in advance and runs in-process, never an arbitrary network caller. It **is** therefore eligible for `nimbus fleet` — an unattended weekly changelog produced on idle hardware is close to the feature's own stated purpose, and it is a pure read with no side effects.
+
+---
+
 ### `nimbus ghost`
 
 Surface ambient teammate context for a file by querying paired peers' expertise across the federation mesh. Returns a ranked list of teammates with recent PRs, issues, and commits touching the file — helping you identify who to consult before starting work. No message is ever sent automatically; this is a read-only suggestion surface.

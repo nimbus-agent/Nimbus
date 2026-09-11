@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { contractViolations, requiredPhrases } from "./brief-contract.ts";
+import { changelogDisclosures, windowLabel } from "./brief-disclosures.ts";
 import type { GlossaryBrief, GlossaryEntry } from "./glossary-types.ts";
 import type { NegotiateBrief } from "./negotiate-types.ts";
 import { renderGlossary, renderNegotiate, renderWhy } from "./render.ts";
@@ -336,5 +337,73 @@ describe("a rewrite that drops only sentence 2 is rejected (F27)", () => {
 
     const violations = contractViolations(brief, truncated);
     expect(violations.some((v) => v.includes("CODEOWNERS"))).toBe(true);
+  });
+});
+
+describe("windowLabel states the window that was actually queried", () => {
+  // Regression: the unit was chosen by MAGNITUDE and then rounded within it, so `--since 36h`
+  // printed "2d" and `--since 90m` printed "2h" — bounds a third wider than the lanes queried,
+  // stated one line above the unconditional "Counts and entries below cover only this window"
+  // disclosure. The window clause cannot itself be wrong about the window; that is the whole
+  // reason this helper replaced `Math.round(span / 86_400_000)`.
+  test("a duration that does not divide evenly steps down rather than rounding up", () => {
+    expect(windowLabel(36 * 3_600_000)).toBe("36h");
+    expect(windowLabel(90 * 60_000)).toBe("90m");
+  });
+
+  test("an evenly-divisible duration still uses the coarsest unit", () => {
+    expect(windowLabel(7 * 86_400_000)).toBe("7d");
+    expect(windowLabel(6 * 3_600_000)).toBe("6h");
+    expect(windowLabel(15 * 60_000)).toBe("15m");
+  });
+
+  test("a duration divisible by nothing falls through to exact milliseconds", () => {
+    // Exact, not pretty: "2m" for 90 seconds would be the same misstatement one unit down.
+    expect(windowLabel(90_000)).toBe("90000ms");
+    expect(windowLabel(0)).toBe("0ms");
+    expect(windowLabel(1)).toBe("1ms");
+  });
+});
+
+describe("changelog's unconditional disclosure does not contradict its sibling", () => {
+  // It used to say each entry is placed by when it happened "rather than when the index last
+  // touched it", full stop. The very next preamble sentence then discloses that N entries ARE
+  // timed from the index's last-touch column — two adjacent claims about the same entries, one
+  // of them false. A wrong disclosure is the failure I31 names, not a wording preference: the
+  // reader who believes the first sentence has no reason to read the second.
+  test("it claims event timing only where an event field carries the time", () => {
+    const [first] = changelogDisclosures({ indexTimedCount: 3, truncatedCount: 0 });
+    if (first === undefined) throw new Error("the unconditional disclosure is missing");
+    expect(first.line).toContain("wherever an event field carries that time");
+    expect(first.line).not.toContain("happened rather than when the index last touched it");
+  });
+
+  test("both of its anchors still occur in the line they guard", () => {
+    const [first] = changelogDisclosures({ indexTimedCount: 0, truncatedCount: 0 });
+    if (first === undefined) throw new Error("the unconditional disclosure is missing");
+    expect(first.anchors).toHaveLength(2);
+    for (const anchor of first.anchors) expect(first.line).toContain(anchor);
+  });
+});
+
+describe("changelog's counted disclosures agree with their own number", () => {
+  // `entr(y/ies)` was reaching the reader verbatim — a source-side shorthand that escaped into
+  // the artifact, in the preamble where this brief asks to be trusted.
+  test("a count of one renders a singular noun AND a singular verb", () => {
+    const one = changelogDisclosures({ indexTimedCount: 1, truncatedCount: 1 });
+    expect(one[1]?.line).toContain("1 entry is timed from");
+    expect(one[2]?.line).toContain("1 further entry was truncated");
+  });
+
+  test("a count above one renders the plural", () => {
+    const many = changelogDisclosures({ indexTimedCount: 3, truncatedCount: 4 });
+    expect(many[1]?.line).toContain("3 entries are timed from");
+    expect(many[2]?.line).toContain("4 further entries were truncated");
+  });
+
+  test("no disclosure ships the source-side placeholder", () => {
+    for (const d of changelogDisclosures({ indexTimedCount: 2, truncatedCount: 2 })) {
+      expect(d.line).not.toContain("entr(y/ies)");
+    }
   });
 });

@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import type { SynthInput } from "./brief-kinds.ts";
+import type { ChangelogBrief } from "./changelog-types.ts";
 import type { DecisionsBrief } from "./decisions-types.ts";
 import type {
   CatchupBrief,
@@ -334,6 +335,23 @@ const NEGOTIATE: NegotiateBrief = {
   writing: null,
 };
 
+const CHANGELOG: ChangelogBrief = {
+  kind: "changelog",
+  agentVersion: 1,
+  generatedAt: 0,
+  latencyMs: 0,
+  gaps: [GAP],
+  query: { sinceMs: -604_800_000, nowMs: 0, service: null },
+  mergedPrs: [],
+  deployments: [],
+  incidentsOpened: [],
+  incidentsResolved: [],
+  counts: { mergedPrs: 0, deployments: 0, incidentsOpened: 0, incidentsResolved: 0 },
+  indexTimedCount: 0,
+  nonGithubMergedPrs: 0,
+  truncatedCount: 0,
+};
+
 const ALL_KINDS: readonly SynthInput[] = [
   EXPERT,
   IMPACT,
@@ -349,12 +367,13 @@ const ALL_KINDS: readonly SynthInput[] = [
   OWNERSHIP,
   PREMORTEM,
   NEGOTIATE,
+  CHANGELOG,
 ];
 
 describe("every renderer honours omitReserved", () => {
-  test("the table covers all fourteen kinds exactly once", () => {
-    expect(ALL_KINDS).toHaveLength(14);
-    expect(new Set(ALL_KINDS.map((b) => b.kind)).size).toBe(14);
+  test("the table covers all fifteen kinds exactly once", () => {
+    expect(ALL_KINDS).toHaveLength(15);
+    expect(new Set(ALL_KINDS.map((b) => b.kind)).size).toBe(15);
   });
 
   for (const brief of ALL_KINDS) {
