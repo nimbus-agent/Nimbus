@@ -476,4 +476,40 @@ describe("gateway-local briefs", () => {
     const json = JSON.stringify({ ...base, kind: "glossary", entries: [] });
     expect(summarizeBrief("agents.glossary", json)).toBeUndefined();
   });
+
+  test("the changelog extractor tracks entry identities and per-category counts", () => {
+    // `counts` is the TRUE pre-cap total for the window (`ChangelogCounts`'s own doc comment);
+    // the entry arrays are capped at `CHANGELOG_CATEGORY_CAP` and can legitimately be shorter.
+    // `mergedPrs: 53` here vs. two LISTED entries below is that gap, deliberately reproduced
+    // rather than "fixed" by making the two agree — metrics must come from `counts`, never from
+    // `.length`.
+    const json = JSON.stringify({
+      ...base,
+      kind: "changelog",
+      query: { sinceMs: 0, nowMs: 0, service: null },
+      counts: { mergedPrs: 53, deployments: 1, incidentsOpened: 0, incidentsResolved: 2 },
+      mergedPrs: [{ id: "github:1" }, { id: "github:2" }],
+      deployments: [{ id: "gha:9" }],
+      incidentsOpened: [],
+      incidentsResolved: [{ id: "pd:1" }],
+      indexTimedCount: 0,
+      nonGithubMergedPrs: 0,
+      truncatedCount: 51,
+    });
+    const s = summarizeBrief("agents.changelog", json);
+    // `summary()` sorts with `codeUnitCompare` — NOT insertion order.
+    expect(s?.keys).toEqual(["gha:9", "github:1", "github:2", "pd:1"]);
+    expect(s?.metrics).toEqual({
+      mergedPrs: 53,
+      deployments: 1,
+      incidentsOpened: 0,
+      incidentsResolved: 2,
+    });
+  });
+
+  test("a brief of the wrong kind is not summarizable", () => {
+    expect(
+      summarizeBrief("agents.changelog", JSON.stringify({ kind: "ownership" })),
+    ).toBeUndefined();
+  });
 });

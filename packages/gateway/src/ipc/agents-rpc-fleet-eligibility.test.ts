@@ -20,6 +20,7 @@ describe("fleet eligibility", () => {
   test("the pure-read agents are eligible", () => {
     for (const m of [
       "agents.catchup",
+      "agents.changelog",
       "agents.huddle",
       "agents.glossary",
       "agents.decisions",
