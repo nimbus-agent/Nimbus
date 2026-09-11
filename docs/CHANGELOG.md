@@ -35,9 +35,11 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
   in the index, readable, and ignored. Every bucket `nimbus stats` printed already had the hole.
   **The route is PUBLIC**, beside `/v1/metrics/dora` and `/v1/preflight/deploy` — a decision, and
   deliberately the OPPOSITE of `GET /v1/services/resolve` below, with both reasons recorded at
-  their `HTTP_ROUTE_AUTH` entries. It is the same data, over the same config, for the same
-  service, at a different resolution, and `/v1/metrics/dora`'s own `since` already lets a caller
-  walk nested windows, so the series reaches nothing new; scoping it while the scalar beside it
+  their `HTTP_ROUTE_AUTH` entries. It is the same config and the same service at a different
+  resolution, and `/v1/metrics/dora`'s own `since` already lets a caller walk nested windows, so
+  the series reaches nothing new. Its metric SET is wider than that route's — `pr-merges` and
+  `incidents-opened` have no scalar equivalent — but both merely count `item` rows the public
+  `GET /v1/items` already serves unaggregated; scoping it while the scalar beside it
   stayed public would be a seam no caller could explain. `services/resolve` is scoped for the
   opposite reason — it CLAIMS narrowness, and a public mount would have let N cheap calls rebuild
   the grouping it exists not to expose. Public also means published: `HTTP_ROUTES` plus a `paths:`

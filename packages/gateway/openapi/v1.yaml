@@ -237,10 +237,11 @@ paths:
       operationId: getMetricsStatsSeries
       summary: One DORA-family metric as a bucketed time series
       description: >
-        The same metrics as /v1/metrics/dora, over the same service config, at a different
-        resolution: one value per disjoint bucket, so a line between points is meaningful.
-        Buckets end at the present. Millisecond params mirror the IPC method this wraps;
-        duration strings are parsed at the CLI's edge, not here.
+        DORA-family and related operational metrics over the same service config, one value per
+        disjoint bucket, so a line between points is meaningful. The metric set is WIDER than
+        /v1/metrics/dora's: the same four DORA metrics, plus pr-merges and incidents-opened,
+        which that route does not return. Buckets end at the present. Millisecond params mirror
+        the IPC method this wraps; duration strings are parsed at the CLI's edge, not here.
       parameters:
         - in: query
           name: service
@@ -266,13 +267,17 @@ paths:
           required: true
           schema:
             type: integer
-          description: Total span of the series, in milliseconds.
+            minimum: 1
+          description: Total span of the series, in milliseconds. Must be positive.
         - in: query
           name: bucket_ms
           required: true
           schema:
             type: integer
-          description: Width of one bucket, in milliseconds. At most 400 buckets per series.
+            minimum: 1
+          description: >
+            Width of one bucket, in milliseconds. Must be positive, must not exceed window_ms,
+            and must not yield more than 400 buckets.
       responses:
         "200":
           description: The bucketed series.

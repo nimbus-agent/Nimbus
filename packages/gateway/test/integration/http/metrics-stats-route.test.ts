@@ -161,18 +161,31 @@ describe("GET /v1/metrics/stats", () => {
     expect(((await res.json()) as { error: string }).error).toContain("nope");
   });
 
-  it("refuses each missing required param by name", async () => {
+  it("refuses each missing required param, naming ONLY the one that is missing", async () => {
     await start(VALID_TOML);
-    const cases: readonly [string, string][] = [
+    // The negative half is the point. `window_ms` and `bucket_ms` were originally checked with
+    // one combined `||` whose message named BOTH, so a caller who omitted only `bucket_ms` was
+    // told `window_ms` was missing too. A `toContain(named)` assertion passes against that
+    // message for every case — it is a test that cannot fail. Asserting the OTHER params are
+    // absent from the message is what catches it.
+    const all = ["service", "metric", "window_ms", "bucket_ms"] as const;
+    const cases: readonly [string, (typeof all)[number]][] = [
       [`metric=mttr&window_ms=${14 * DAY}&bucket_ms=${7 * DAY}`, "service"],
       [`service=payment-service&window_ms=${14 * DAY}&bucket_ms=${7 * DAY}`, "metric"],
       [`service=payment-service&metric=mttr&bucket_ms=${7 * DAY}`, "window_ms"],
       [`service=payment-service&metric=mttr&window_ms=${14 * DAY}`, "bucket_ms"],
     ];
-    for (const [query, named] of cases) {
+    for (const [query, missing] of cases) {
       const res = await get(query);
       expect(res.status).toBe(400);
-      expect(((await res.json()) as { error: string }).error).toContain(named);
+      const { error } = (await res.json()) as { error: string };
+      expect(error).toContain(missing);
+      for (const other of all) {
+        if (other === missing) continue;
+        // No name in this set is a substring of another, so plain containment is a sound
+        // negative check.
+        expect(error).not.toContain(other);
+      }
     }
   });
 

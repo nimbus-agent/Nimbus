@@ -3243,7 +3243,7 @@ nimbus serve --port 7474        # Default port: 7474
 | `GET /v1/items` | List indexed items (supports `service`, `type`, `since`, `until`, `limit` query params) |
 | `GET /v1/items/:id` | Get a single item by ID |
 | `GET /v1/metrics/dora` | DORA metrics for a service (supports `service`, `since` query params) |
-| `GET /v1/metrics/stats` | One DORA-family metric as a bucketed time series — the same data as `/v1/metrics/dora` at a different resolution (`service`, `metric`, `window_ms`, `bucket_ms`; at most 400 buckets). Buckets are disjoint, so a line between points is meaningful; an unknown service is **refused** rather than answered softly, because a series has nothing honest to place-hold |
+| `GET /v1/metrics/stats` | One DORA-family or related operational metric as a bucketed time series, over the same service config as `/v1/metrics/dora` at a different resolution (`service`, `metric`, `window_ms`, `bucket_ms`; all positive, at most 400 buckets). Its metric set is **wider** than that route's: the same four DORA metrics plus `pr-merges` and `incidents-opened`. Buckets are disjoint, so a line between points is meaningful; an unknown service is **refused** rather than answered softly, because a series has nothing honest to place-hold |
 | `GET /v1/openapi.json` | Machine-readable OpenAPI 3.1 schema for this API |
 | `GET /v1/people` | List people graph entries |
 | `GET /v1/people/:id` | Get a single person record |

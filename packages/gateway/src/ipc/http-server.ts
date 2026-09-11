@@ -288,10 +288,12 @@ function handleOpenApiJson(): Response {
  * inheritance, and it lands the opposite way from `GET /v1/services/resolve`, which is scoped —
  * so the difference is worth stating, because the next proposal will copy one of them:
  *
- *   - It is the same data, over the same config, for the same service, at a different
- *     resolution. `/v1/metrics/dora` already answers all four of these metrics publicly for an
- *     arbitrary `since` window, so a caller can already walk nested windows and difference them.
- *     This route makes that cheaper and disjoint; it does not reach anything new.
+ *   - It is the same config and the same service at a different resolution. `/v1/metrics/dora`
+ *     already answers the four DORA metrics publicly over an arbitrary `since`, so a caller can
+ *     already walk nested windows and difference them; this route makes that cheaper and
+ *     disjoint. Its metric set is WIDER than that route's — `pr-merges` and `incidents-opened`
+ *     have no scalar equivalent — but neither reaches anything new either: both count rows in
+ *     `item` that the public `GET /v1/items` already serves unaggregated.
  *   - Scoping the series while the scalar beside it stays public would be a seam no caller could
  *     explain, and the client that needs it is the same unauthenticated reader.
  *
@@ -323,9 +325,15 @@ async function handleMetricsStats(
     return json({ error: "missing required query param: metric" }, 400);
   }
   const windowMs = url.searchParams.get("window_ms");
+  if (windowMs === null) {
+    return json({ error: "missing required query param: window_ms" }, 400);
+  }
+  // Checked SEPARATELY from `window_ms`, not as one combined `||`. A combined check names both
+  // params whatever the caller omitted, so someone who sent `window_ms` and forgot `bucket_ms`
+  // is told `window_ms` is missing too — and then goes looking at the one param they got right.
   const bucketMs = url.searchParams.get("bucket_ms");
-  if (windowMs === null || bucketMs === null) {
-    return json({ error: "missing required query params: window_ms, bucket_ms" }, 400);
+  if (bucketMs === null) {
+    return json({ error: "missing required query param: bucket_ms" }, 400);
   }
   let loaded: Map<string, ServiceConfig>;
   try {
