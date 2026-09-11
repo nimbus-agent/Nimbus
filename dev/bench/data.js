@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1789123169365,
+  "lastUpdate": 1789123929699,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "65e8857a27dff10ac85f9c3e63c2fd2a21628bb2",
-          "message": "feat(cli): nimbus clip list + clip delete (+ clip-scoped tags) (#760)\n\n## What\n\nAdds two web-clip management commands so a user can **see** and\n**remove** their clips — previously there was no way to list clips (only\n`clip status` for paired browsers) and the only delete was the\nservice-wide `data delete --service nimbus`.\n\n- **`nimbus clip list [--tag <t>] [--limit N] [--json]`** — lists\n`web_clip` items newest-first, with a clip-scoped `--tag` filter (SQL\n`json_each`, so `--limit` is honored), and `--json` (incl. `wordCount`)\nfor scripting.\n- **`nimbus clip delete <id|url>` / `--all [--yes]`** — deletes by clip\nID (`nimbus:`-prefixed) or by page URL (the article + all its\ntext-selections, sharing a canonical URL); `--all` is guarded (reports\nthe count unless `--yes`).\n\nTwo new local-index IPC methods back these: `clip.list` and\n`clip.delete`.\n\n## How\n\n- Threads the local-index DB into `ClipRpcDeps` via\n`ctx.options.localIndex.getDatabase()` (same pattern as the `agents`\ndispatcher).\n- Deletes route **only** through `deleteItemByPrimaryKey` (graph + FTS +\nembedding/vec cascade cleanup) and are strictly `type =\n'web_clip'`-scoped — a `nimbus:` id for a non-clip item is not\ndeletable.\n- The `--tag` query is guarded with `json_valid(...)` so a\nmalformed-metadata row can't abort the listing.\n- Bound-param SQL throughout (I9). **No new invariant, no migration**\n(read + local delete is not outbound egress).\n\n## Verification\n\n- 60 tests (22 gateway `clip-rpc`, 38 CLI `clip`), gateway + CLI\ntypecheck, Biome lint, static invariant audit — all green.\n- **Linux coverage-floor** (Docker) gate: `ok`.\n- Design + plan + two review passes:\n`docs/superpowers/{specs,plans}/2026-07-16-clip-list-delete*`.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n---------\n\nCo-authored-by: Claude Opus 4.8 (1M context) <noreply@anthropic.com>",
-          "timestamp": "2026-07-16T18:40:10Z",
-          "tree_id": "eebd9040b09fef6c652a2b5fd823b1bf076167aa",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/65e8857a27dff10ac85f9c3e63c2fd2a21628bb2"
-        },
-        "date": 1784227922074,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 296.0638243500049,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 298.8321568499923,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 332.2651244999943,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "011cbf74a03164e4eb4b3b21a67661d33c557b91",
+          "message": "fix(metrics): stop requiring a resolved status to attribute a change failure (#1494)\n\nCloses the residual\n[#1493](https://github.com/nimbus-agent/Nimbus/pull/1493) disclosed\nrather than fixed. One line removed from `selectAttributionIncidents`:\n\n```sql\nAND json_extract(i.metadata, '$.status') = 'resolved'\n```\n\n## Why it was wrong\n\nPure inheritance. That predicate exists for **MTTR**, which needs a\nresolution timestamp to compute a duration. Attribution reads only\n`opened`, so carrying it over answered a question `change_failure_rate`\ndoes not ask.\n\nThe codebase already disagreed with it: `stats.ts`'s `incidentsOpened`\nasks the same *shape* of question — what opened in this window — and its\n`incidentScopeSql` has no status predicate at all.\n\nTwo things were wrong while it stood, and the second is what makes this\nmore than a corner case:\n\n1. **A deploy that caused an outage read CLEAN while the outage was\nstill burning**, and became a change failure only once somebody closed\nthe ticket. Whether an incident has been fixed says nothing about\nwhether a deploy caused it.\n2. **The metric silently depended on sync freshness.** A resolved\nincident whose row we have not re-synced still reads `triggered`\nlocally, so the answer moved with how recently the PagerDuty connector\nlast ran — which nobody chose.\n\n## What changes\n\n`change_failure_rate` can only move **up**, never down. Users may see it\nrise; that is the metric becoming correct, not a regression. Recorded in\nthe CHANGELOG in those words.\n\n**MTTR is untouched** and keeps its filter — it measures\ntime-to-restore, so an unresolved incident has no duration to\ncontribute.\n\n## The divergence is now deliberate, so it is pinned\n\nSplitting the two selectors made it possible to break MTTR by accident,\nand **nothing pinned that before**. Added: `mttr > ignores a\nstill-burning incident, unlike changeFailureRate`.\n\n## Verification\n\n- Written **test-first**: 3 new CFR cases, all red before the change.\n- **Both directions red-proved.** Restoring the predicate fails exactly\nthe three new CFR tests; removing MTTR's filter fails exactly the new\ndivergence guard. Neither mutation disturbs the other's tests.\n- One existing test (`\"incident without resolved status is excluded\"`)\nasserted the old behaviour and is **rewritten to the new contract rather\nthan deleted**, keeping its three-deploy setup so the ratio proves the\n*right* deploy is blamed.\n- 2368 tests green across\n`metrics`/`ipc`/`test/integration/{metrics,http}`; `preflight:fast`\ngreen.\n\n## Docs corrected at every restatement\n\nNot just the nearest one — the claim had been stated in five places: the\nCHANGELOG entry recording it as a known residual, the design spec's\nstatus block, its §5 bullet, its §11 Q5 open question, and the **review\ncompanion's C3.2**.\n\nThat last one is worth a look: it had cited `discloseUntimedIncidents`\nas the precedent for *disclosing* this. That turned out to be the wrong\nmodel, and the note now says so — that seam exists because an\nuntimestamped row **cannot** be bucketed, so disclosure is the only\nhonest answer available. A still-burning incident has an `opened_at_ms`\nand buckets perfectly well, so there was nothing to disclose, only a\nfilter that belonged to another metric.\n\nNo migration, no invariant, no new egress class, no wire change.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nhttps://claude.ai/code/session_01QHGHyesmwAiDZEDrZBTYu1\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n\n## Summary by CodeRabbit\n\n* **Bug Fixes**\n* Change failure rate (CFR) attribution now includes incidents based on\ntheir opening time, regardless of whether they are acknowledged,\ntriggered, or resolved.\n* Ongoing incidents can now contribute to CFR, including when\nsynchronization is stale.\n* Incidents without an opening timestamp remain excluded from\nattribution.\n* Mean time to recovery (MTTR) continues to exclude unresolved\nincidents.\n\n* **Documentation**\n* Updated metric documentation and release records to reflect the\ncorrected attribution behavior.\n\n* **Tests**\n* Added coverage for active incidents, stale synchronization, missing\ntimestamps, and MTTR regression scenarios.\n\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\nCo-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>",
+          "timestamp": "2026-09-11T13:31:13+03:00",
+          "tree_id": "bbc79ffab145c17782e44bfa7425b71977c3190e",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/011cbf74a03164e4eb4b3b21a67661d33c557b91"
+        },
+        "date": 1789123927394,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 311.6374918500002,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 312.6547257499995,
             "unit": "ms"
           }
         ]
