@@ -352,11 +352,16 @@ type AttributionIncident = {
  *
  * `json_valid` guards every `json_extract`, which RAISES on malformed JSON in this position.
  *
- * KNOWN RESIDUAL, unchanged here and disclosed rather than fixed: `status = 'resolved'` is still
- * required, so an incident that is still burning is invisible to attribution at any bound, and a
- * historical `change_failure_rate` under-reports for that second, independent reason. Dropping
- * the predicate would close it and would also raise reported failure rates, which is a separate
- * decision from this one.
+ * There is deliberately NO `status = 'resolved'` predicate, which is the second half of the same
+ * defect and was closed a step later. `selectResolvedIncidents` requires it because MTTR needs a
+ * resolution timestamp to compute a duration; attribution reads only `opened`, so inheriting that
+ * filter answered a question this function is not asking. While it stood, a deploy that caused an
+ * outage was reported CLEAN for as long as the outage was still burning, and became a change
+ * failure only once somebody closed the ticket. Worse, it made the metric depend on something
+ * nobody chose: a resolved incident whose row has not been re-synced still reads `triggered` here,
+ * so the answer moved with how fresh the PagerDuty sync happened to be. `stats.ts`'s
+ * `incidentsOpened` — which asks the same shape of question, what opened in this window — has no
+ * status predicate either, and is the precedent.
  */
 function selectAttributionIncidents(
   db: Database,
@@ -375,7 +380,6 @@ function selectAttributionIncidents(
          AND i.type = 'incident'
          AND json_valid(i.metadata)
          AND json_extract(i.metadata, '$.pagerduty_service_id') IN (${placeholders})
-         AND json_extract(i.metadata, '$.status') = 'resolved'
          AND json_extract(i.metadata, '$.opened_at_ms') >= ?
          AND json_extract(i.metadata, '$.opened_at_ms') <= ?`,
     )
