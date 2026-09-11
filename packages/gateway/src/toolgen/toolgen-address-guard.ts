@@ -103,7 +103,7 @@ function parseIpv6(ip: string): Hextets | null {
   if ((addr.match(/::/g) ?? []).length > 1) return null;
 
   const hextets = addr.includes("::") ? parseCompressed(addr) : parseFull(addr.split(":"));
-  if (hextets === null || hextets.length !== 8) return null;
+  if (hextets?.length !== 8) return null;
   return hextets as unknown as Hextets;
 }
 

@@ -283,9 +283,16 @@ function mdSafe(s: string): string {
   // the design spec puts out of scope is the likely one. Finding keys embed titles from indexed
   // content, so `[click](http://…)` in a PR title becomes a live link the moment something
   // renders it, and that is the point at which this function needs the wider escape set.
+  // The backslash pass uses a regex needle and a `String.raw` replacement: a template literal
+  // cannot end in a lone backslash (the escape swallows the closing backtick), so `String.raw`
+  // can express the DOUBLED replacement but never the single-character needle.
+  //
+  // Order is load-bearing. Backslash FIRST: escaping the pipe first would put a backslash into
+  // the string that the backslash pass would then double, turning `\|` into `\\|` — an escaped
+  // backslash followed by a LIVE pipe, which is the cell break this function exists to prevent.
   return s
     .replaceAll(/\r\n|\r|\n/g, " ")
-    .replaceAll("\\", "\\\\")
+    .replaceAll(/\\/g, String.raw`\\`)
     .replaceAll("|", "\\|");
 }
 
@@ -358,8 +365,10 @@ function jobSection(j: FleetJobDigest): string[] {
     for (const [n, delta] of entries) out.push(metricRow(n, delta));
     out.push("");
   }
-  out.push(...keyChurnLines("Appeared", j.keysAppeared));
-  out.push(...keyChurnLines("Resolved", j.keysResolved));
+  out.push(
+    ...keyChurnLines("Appeared", j.keysAppeared),
+    ...keyChurnLines("Resolved", j.keysResolved),
+  );
   return out;
 }
 
