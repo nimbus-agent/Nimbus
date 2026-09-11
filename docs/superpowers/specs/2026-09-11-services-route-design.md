@@ -523,6 +523,19 @@ too sensitive for either mount, this is the outcome and the consumer is fine.
    provider-specific matching on the gateway side, and there is no single
    matcher for a client to copy even if it wanted to. This is the question to
    answer first, because the next two only apply to the list form.
+
+   **If the resolve form is chosen, it carries a second decision that is not
+   optional** (§5.1): which entry point answers a repository-only query, given
+   that neither existing matcher takes a bare URN. Choosing to synthesise an
+   item for `buildServiceIdentityResolver` settles two things by side effect
+   that should be settled deliberately — whether `repo=circleci:…` answers
+   `null` (it would, via `repoMetadataMatchesUrn`'s `circleci` arm, for a
+   service `repoLikeMatchesUrn` would have matched), and how the resolver's
+   three-way `bound` / `excluded` / `unknown` projects onto `service | null`
+   (`excluded` is not `null` in any useful sense). Choosing a URN-to-URN entry
+   point avoids both but is a third matcher unless the other two are refactored
+   onto it. The consumer has no preference here and could not implement either;
+   it is named so that the choice is made rather than fallen into.
 2. Public (Option A) or scoped (Option B)? §6 — and note Option A publishes the
    route in `openapi/v1.yaml`, which is a longer-lived commitment than the
    handler.

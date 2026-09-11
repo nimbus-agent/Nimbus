@@ -2,7 +2,7 @@
 
 **Date:** 2026-09-11  
 **Reviewer:** Claude Opus 5 (AI Coding Assistant)  
-**Status:** Review Complete — sound as a proposal. All four corrections are applied: C3.1–C3.4, plus R4.1 (the alternative-shape section promoted ahead of the mount question — it was §6 when this review was written and is **§5** in the spec now, with the mount decision at §6), R4.2, R4.3, R4.4 and §2's bulk-vs-probe promotion. A later PR review added a fifth, **C5 — repository-to-service cardinality**, now answered in the spec at §5.1, and a sixth, **C6 — the resolver entry point for a repository-only query**, answered in the second half of that same section.  
+**Status:** Review Complete — sound as a proposal. All four corrections are applied: C3.1–C3.4, plus R4.1 (the alternative-shape section promoted ahead of the mount question — it was §6 when this review was written and is **§5** in the spec now, with the mount decision at §6), R4.2, R4.3, R4.4 and §2's bulk-vs-probe promotion. A later PR review added a fifth, **C5 — repository-to-service cardinality**, now answered in the spec at §5.1, and a sixth, **C6 — the resolver entry point for a repository-only query**. C6 is **raised and scoped, not answered, and deliberately so**: §5.1's second half shows that neither existing matcher takes a bare URN and names what each way out costs, and §11 Q1 now carries the choice itself. Selecting an entry point here would be the consumer settling the gateway's own matching — the same reason C5's cardinality question was answered by *citing* the existing rule rather than by proposing a new one.  
 **Target Spec:** [`2026-09-11-services-route-design.md`](./2026-09-11-services-route-design.md)  
 **Slot:** HTTP Client Surfaces / Web Clipper (`nimbus-web-clipper` integration)  
 **Related Routes:** `GET /v1/metrics/dora`, `GET /v1/preflight/deploy`, `POST /v1/deployments`, `GET /v1/items/resolve-file`, `GET /v1/items/resolve-ids`  
@@ -229,7 +229,10 @@ more than its size suggests.
 - **Auth.** Option A: reachable with no bearer, and present in `HTTP_ROUTE_AUTH` (C3.1).
   Option B: 403 for a `LEGACY_SCOPES` token, `404 services_disabled` with no clips vault.
 - **Resolve form, if that is the shape that lands.** A repository-only
-  `repo=circleci:…` query, pinned against whichever entry point §5.1's second half
+  `repo=circleci:…` query, pinned against whichever entry point §11 Q1's second half
   settles on — the two available matchers disagree about exactly this provider, so the
   answer has to be asserted rather than inherited from whichever one the handler happens
-  to call. Pair it with the multi-claimant case §5.1 already asks for.
+  to call. If the chosen entry point is the item-shaped resolver, the `excluded` →
+  `service | null` projection needs its own case: a repo a config *does* claim, whose
+  deployment environment the gate excludes, must not be indistinguishable from a repo no
+  config claims at all. Pair both with the multi-claimant case §5.1 already asks for.
