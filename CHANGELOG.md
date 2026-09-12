@@ -2,6 +2,18 @@
 
 All notable changes to the `nimbus` core (headless Gateway + CLI binary + first-party MCP connectors) are documented in this file. release-please appends new entries between this header and the most recent version below when a release PR merges.
 
+## [7.21.0](https://github.com/nimbus-agent/Nimbus/compare/v7.20.1...v7.21.0) (2026-09-12)
+
+
+### Features
+
+* **agents:** nimbus standup — the sixteenth built-in agent ([#1502](https://github.com/nimbus-agent/Nimbus/issues/1502)) ([3101702](https://github.com/nimbus-agent/Nimbus/commit/310170239b4a9ed4be1cb9092223dc1d64cc3cd7))
+
+
+### Bug Fixes
+
+* **platform:** load a full SQLite on macOS so sqlite-vec can load ([#1503](https://github.com/nimbus-agent/Nimbus/issues/1503)) ([107bf08](https://github.com/nimbus-agent/Nimbus/commit/107bf084021bfc7dbd08fae0e42d3d2690f5b7ed))
+
 ## [7.20.1](https://github.com/nimbus-agent/Nimbus/compare/v7.20.0...v7.20.1) (2026-09-12)
 
 
