@@ -98,15 +98,61 @@ export function matchSkipSite(
   return null;
 }
 
-/** Scan one file's source for platform-gated sites that are skipped on `onPlatform`. */
+/**
+ * A `const NAME = <platform comparison>` hoisted to the top of a file.
+ *
+ * Only the comparison forms {@link matchSkipSite} already understands qualify, so an alias for
+ * anything else (`const ready = cache.size > 0`) stays invisible rather than being guessed at.
+ */
+const PLATFORM_ALIAS =
+  /^\s*const\s+(\w+)\s*=\s*((?:process\.)?platform(?:\(\))?\s*[!=]==\s*["']\w+["'])\s*;/;
+
+/**
+ * Scan one file's source for platform-gated sites that are skipped on `onPlatform`.
+ *
+ * Resolves hoisted aliases before matching, because {@link matchSkipSite} reads ONE line and the
+ * condition is routinely not on it. `const isDarwin = process.platform === "darwin"` followed by
+ * `skipIf(!isDarwin)` is the shape that motivated this: a file of five darwin-only tests written
+ * that way was reported as "every test in them runs on win32" — a false all-clear from the one tool
+ * whose job is to deny exactly that.
+ *
+ * Substitution is textual and deliberately shallow. `!NAME` becomes the inverted comparison and
+ * `NAME` the comparison itself; anything more (a reassigned alias, a compound condition, an alias
+ * for an alias) is left alone and simply not reported, which is the same silence as before rather
+ * than a new wrong answer.
+ */
 export function scanSource(file: string, source: string, onPlatform: string): SkipSite[] {
   const out: SkipSite[] = [];
   const lines = source.split("\n");
+
+  const aliases = new Map<string, string>();
+  for (const text of lines) {
+    const m = PLATFORM_ALIAS.exec(text);
+    if (m?.[1] !== undefined && m[2] !== undefined) aliases.set(m[1], m[2]);
+  }
+
   for (const [i, text] of lines.entries()) {
-    const site = matchSkipSite(file, i + 1, text, onPlatform);
-    if (site?.skipped === true) out.push(site);
+    const site = matchSkipSite(file, i + 1, expandAliases(text, aliases), onPlatform);
+    if (site?.skipped === true) out.push({ ...site, text: text.trim() });
   }
   return out;
+}
+
+/** Replace `!NAME` / `NAME` inside a `skipIf(...)` argument with the comparison the alias holds. */
+function expandAliases(text: string, aliases: ReadonlyMap<string, string>): string {
+  if (aliases.size === 0 || !text.includes("skipIf(")) return text;
+  let out = text;
+  for (const [name, cmp] of aliases) {
+    // `!alias` first: inverting the comparison is what makes the negated form report the right
+    // platform, and replacing the bare name first would leave a stray `!` in front of it.
+    out = out.replace(new RegExp(`!\\s*\\b${name}\\b`, "g"), invertComparison(cmp));
+    out = out.replace(new RegExp(`\\b${name}\\b`, "g"), cmp);
+  }
+  return out;
+}
+
+function invertComparison(cmp: string): string {
+  return cmp.includes("!==") ? cmp.replace("!==", "===") : cmp.replace("===", "!==");
 }
 
 /**

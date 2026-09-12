@@ -427,6 +427,17 @@ for cand in "${SCRIPT_DIR}/vec0.so" "${SCRIPT_DIR}/vec0.dylib" \
   fi
 done
 
+# The full SQLite build that extension needs in order to load on macOS (#1505). Same rule, same
+# directory, same reason — the gateway resolves it beside its own executable — and the same
+# optionality: absent, the user keeps everything except semantic search, and `nimbus doctor` says
+# which. Present only in the macOS archives; the loop is a no-op elsewhere.
+for cand in "${SCRIPT_DIR}/libsqlite3.dylib" "${SCRIPT_DIR}/bin/libsqlite3.dylib"; do
+  if [ -f "$cand" ]; then
+    cp "$cand" "${INSTALL_DIR}/libsqlite3.dylib"
+    break
+  fi
+done
+
 # Append marker block to rc files (idempotent — strip first if present).
 BLOCK="${BEGIN_MARKER}
 export PATH=\"${INSTALL_DIR}:\$PATH\"

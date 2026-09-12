@@ -507,6 +507,14 @@ jobs:
           fi
           cp "$VEC0_SRC" "$PAYLOAD/bin/$(basename "$VEC0_SRC")"
 
+          # The full SQLite that sidecar needs to load on macOS (#1505). Real macOS archives ship
+          # one; this job builds the same artifact so the assertion below proves install.sh's own
+          # copy loop ran, not that a file we placed by hand survived a tar round-trip.
+          if [ "$RUNNER_OS" = "macOS" ]; then
+            bun scripts/build-sqlite-darwin.ts --dest "$RUNNER_TEMP/sqlite" --work "$RUNNER_TEMP/sqlite"
+            cp "$RUNNER_TEMP/sqlite/libsqlite3.dylib" "$PAYLOAD/bin/libsqlite3.dylib"
+          fi
+
           # Names + layout MUST match scripts/install/lib/release-assets.ts's
           # assetNameFor() and the real release.yml packaging: the Linux
           # tarball is versioned and nests binaries under bin/; the macOS
@@ -583,6 +591,14 @@ jobs:
           if [ "$RUNNER_OS" = "Linux" ]; then VEC0_NAME="vec0.so"; else VEC0_NAME="vec0.dylib"; fi
           test -f "$HOME/.local/bin/$VEC0_NAME" || {
             echo "::error::remote install did not place the sqlite-vec sidecar ($VEC0_NAME) — the sidecar-copy path in install.sh did not run"; exit 1; }
+
+          # Same proof for the full SQLite build (#1505). On macOS the sidecar above is INERT
+          # without it, so an install that placed one and not the other is an install with no
+          # vector search — which is exactly the state this pair of files exists to end.
+          if [ "$RUNNER_OS" = "macOS" ]; then
+            test -f "$HOME/.local/bin/libsqlite3.dylib" || {
+              echo "::error::remote install did not place libsqlite3.dylib — the sqlite-copy path in install.sh did not run, and vec0.dylib cannot load without it"; exit 1; }
+          fi
 
           "$HOME/.local/bin/nimbus" --version
 

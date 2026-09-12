@@ -18,6 +18,59 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
 
 ## Post-Phase-6 deliveries
 
+- **2026-09-12 — macOS releases ship their own full SQLite, so semantic search no longer needs
+  Homebrew.** Closes #1505, the half of #1029 that #1503 deliberately left open. #1503 made
+  `sqlite-vec` load for **developers and CI** by calling `Database.setCustomSQLite()` against a
+  Homebrew build; it changed nothing for a macOS **end user** who installs the binary on a machine
+  with no `brew install sqlite`, because Apple's system SQLite has extension loading compiled out
+  and the packaged `vec0.dylib` sidecar goes through the same failing call. That user had no vector
+  search, no hybrid ranking and no session-memory recall — a break of **non-negotiable #5**, since
+  Linux and Windows get all three from Bun's own build with no prerequisite at all.
+
+  `scripts/build-sqlite-darwin.ts` now compiles a **pinned** SQLite amalgamation (3.53.4, verified
+  against the SHA3-256 sqlite.org itself publishes — size checked first, so a truncated download
+  reports as a size rather than as an unreadable hash mismatch) and the macOS `.pkg` and both
+  `tar.gz` archives carry the result beside the binaries, on the same rails `vec0.dylib` already
+  travelled. `platform/sqlite-runtime.ts` resolves it ahead of the Homebrew prefixes;
+  `NIMBUS_SQLITE_PATH` still outranks everything. ~1.5 MB per macOS artifact, no license obligation
+  (SQLite is public domain) and no change to signing — payload libraries are not individually
+  codesigned today, `vec0.dylib` included, and the `.pkg` they ride in is `productsign`ed and
+  notarized as a unit. **No migration, no new security invariant, no new egress coverage class, no
+  new HITL action type.**
+
+  **The compile flags are the part worth reviewing, not the plumbing.** `setCustomSQLite` repoints
+  the WHOLE process, and this library is now preferred over a user's own Homebrew build — so a
+  build missing FTS5 would take keyword search AWAY from every macOS user in the act of giving them
+  vector search, and every unit test in the tree would still pass. The flag set is therefore an
+  explicit superset of Homebrew's, asserted in `build-sqlite-darwin.test.ts` (including the ABSENCE
+  of `SQLITE_OMIT_LOAD_EXTENSION`, since extension loading has no positive flag to assert instead),
+  and proved end to end on the macOS leg by `test/integration/platform/bundled-sqlite.test.ts` —
+  which checks that the library loads sqlite-vec, answers an FTS5 `MATCH`, has the JSON functions
+  **and reports the pinned version**, that last assertion being what stops the other three from
+  passing just as well against Apple's build.
+
+  **CI now builds and tests the bytes the release ships.** `setup-nimbus-ci`'s `brew install sqlite`
+  is replaced by this same script, exporting `NIMBUS_SQLITE_PATH` to the result, so the 54
+  `skipIf(!VEC_AVAILABLE)` sites and the sqlite-vec canary exercise the shipped artifact instead of
+  a library that merely resembles it. That step also changed from deliberately non-fatal to fatal,
+  and both halves of the old reasoning are why: a brew hiccup used to be cosmetic, but the library
+  is now a PAYLOAD COMPONENT, so a release that cannot build it must not publish a package silently
+  missing it — and a tolerant failure would leave the variable unset, let the resolver fall through
+  to whatever the runner image happened to carry, and go green against something we do not ship.
+
+  **Two things stated rather than softened.** We now own the macOS SQLite version and feature set,
+  so the pin needs bumping deliberately (take a whole `PRODUCT` line; the zip name is asserted
+  against the version encoding, so a half-edit fails the tests). And `sqlite-runtime.ts`'s own
+  header notes Apple's build is a ~50% throughput win: Homebrew users already paid that, and a
+  no-brew user now pays it in exchange for having semantic search at all. **Not measured here** —
+  no escape hatch was added for a number nobody has produced yet.
+
+  Incidental, and found by this change rather than sought: `audit:platform-test-gaps` reported
+  "every test in them runs on win32" for a file containing five darwin-only tests, because its
+  matcher reads ONE line and the condition was hoisted (`const isDarwin = …` then
+  `skipIf(!isDarwin)`). It now resolves that alias — a false all-clear from the one tool whose job
+  is to deny exactly that.
+
 - **2026-09-12 — `nimbus standup`, the sixteenth built-in agent.** Third row of the v0.1.1 CLI
   batch, after `nimbus index health` and `nimbus changelog`. Your own activity over a window
   (default `24h`), assembled entirely from the local index and formatted as copy-pasteable

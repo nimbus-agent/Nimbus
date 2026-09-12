@@ -23,46 +23,60 @@ runs:
       with:
         bun-version: ${{ inputs.bun-version }}
 
-    # macOS ONLY, and required for sqlite-vec to load at all (issue #1029).
+    # macOS ONLY, and required for sqlite-vec to load at all (issues #1029, #1505).
     #
     # Bun links Apple's system libsqlite3 on macOS for the throughput, and that build has
     # extension loading COMPILED OUT — so `db.loadExtension()` fails until
     # `Database.setCustomSQLite()` points the process at a vanilla build.
-    # `packages/gateway/src/platform/sqlite-runtime.ts` makes that call and looks for the library
-    # at the Homebrew `opt/` prefixes; this step is what puts one there.
+    # `packages/gateway/src/platform/sqlite-runtime.ts` makes that call and resolves the library
+    # beside the executable first, then at the Homebrew `opt/` prefixes.
     #
     # Lives in the shared setup action rather than in each macOS job, for the same reason
     # `ensureFullSqlite()` is called at every entry point rather than the three someone thought
     # of: a leg that misses it looks fine and silently skips every vec-dependent test.
     #
-    # Deliberately NOT fatal. The authoritative gate is the canary in
-    # `packages/gateway/src/connectors/reindex-vector-erasure.test.ts`, which fails the run on
-    # every CI platform where sqlite-vec did not load — so a brew hiccup here surfaces as a real
-    # test failure with a real message, and cannot red a release build (this action is shared with
-    # release.yml, which needs no SQLite extension at all).
-    - name: macOS — Ensure a full SQLite build (sqlite-vec needs one)
+    # THIS BUILDS THE LIBRARY THE RELEASE SHIPS, rather than installing Homebrew's. That is the
+    # point: `scripts/build-sqlite-darwin.ts` produces the same bytes the macOS `.pkg` and archives
+    # carry (#1505), so the 54 `skipIf(!VEC_AVAILABLE)` sites and the sqlite-vec canary exercise the
+    # artifact users get. `brew install sqlite` tested one library and shipped another.
+    #
+    # THE POSTURE CHANGED FROM NON-FATAL TO FATAL when it did, and the earlier reasoning no longer
+    # applies. It used to be tolerant because a brew hiccup was cosmetic — the canary in
+    # `packages/gateway/src/connectors/reindex-vector-erasure.test.ts` was the authoritative gate,
+    # and this action is shared with release.yml, which then needed no SQLite extension at all. Both
+    # halves are now false: the library is a PAYLOAD COMPONENT of the macOS package, so a release
+    # that could not build it must not proceed to publish one silently missing it; and a tolerant
+    # failure here would leave `NIMBUS_SQLITE_PATH` unset, the resolver would fall through to
+    # whatever Homebrew build the runner image happens to carry, and the suite would go green
+    # against a library we do not ship. That is the silent divergence this step exists to remove.
+    - name: macOS — Cache the bundled SQLite build
+      if: runner.os == 'macOS'
+      uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: ~/.cache/nimbus-sqlite
+        # Keyed on the BUILD SCRIPT, not on a version string: the pinned release, the compile flags
+        # and the deployment target all live in that one file, so any change to what the library IS
+        # misses the cache. A key naming only the version would serve a stale dylib after a flag
+        # change — the exact failure the flag tests exist to prevent.
+        key: nimbus-sqlite-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('scripts/build-sqlite-darwin.ts') }}
+
+    - name: macOS — Build the full SQLite the release ships (sqlite-vec needs one)
       if: runner.os == 'macOS'
       shell: bash
       run: |
-        set -uo pipefail
-        found=""
-        for p in /opt/homebrew/opt/sqlite/lib/libsqlite3.dylib /usr/local/opt/sqlite/lib/libsqlite3.dylib; do
-          if [ -f "$p" ]; then found="$p"; break; fi
-        done
-        if [ -z "$found" ]; then
-          echo "No full SQLite on the runner image; installing."
-          brew install sqlite || echo "::warning title=brew install sqlite failed::sqlite-vec will not load on this leg"
-          for p in /opt/homebrew/opt/sqlite/lib/libsqlite3.dylib /usr/local/opt/sqlite/lib/libsqlite3.dylib; do
-            if [ -f "$p" ]; then found="$p"; break; fi
-          done
+        set -euo pipefail
+        dir="$HOME/.cache/nimbus-sqlite"
+        lib="$dir/libsqlite3.dylib"
+        if [ -f "$lib" ]; then
+          echo "Reusing cached $lib"
         else
-          echo "Runner image already ships a full SQLite."
+          bun scripts/build-sqlite-darwin.ts --dest "$dir" --work "$dir"
         fi
-        if [ -z "$found" ]; then
-          echo "::warning title=No full SQLite available::db.loadExtension() cannot work on this leg; the sqlite-vec canary will fail the run"
-        else
-          echo "Full SQLite: $found"
-        fi
+        echo "NIMBUS_SQLITE_PATH=$lib" >> "$GITHUB_ENV"
+        echo "Full SQLite: $lib"
+        # No inline smoke check here on purpose: proving the library loads sqlite-vec, speaks FTS5
+        # and is the pinned version is `packages/gateway/test/integration/platform/bundled-sqlite.test.ts`,
+        # which runs in this same workflow and says what it checked when it fails.
 
     - name: Cache Bun package download cache
       uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0

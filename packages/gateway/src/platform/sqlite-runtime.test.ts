@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { load as loadSqliteVec } from "sqlite-vec";
 
 import {
+  bundledSqlitePath,
   DARWIN_SQLITE_CANDIDATES,
   DEFAULT_FULL_SQLITE_DEPS,
   type ExtensionProbeResult,
@@ -36,6 +37,15 @@ import {
  */
 type Calls = { warn: string[]; debug: string[]; set: string[]; probes: number };
 
+/**
+ * A stand-in for `process.execPath` inside a real install.
+ *
+ * POSIX-shaped on purpose and on every host: the candidate it produces is a macOS path, so a
+ * Windows dev box must not be allowed to assert against a backslash-joined one. `bundledSqlitePath`
+ * takes the platform for the same reason.
+ */
+const EXEC = "/Applications/nimbus/bin/nimbus-gateway";
+
 function makeDeps(
   over: Partial<FullSqliteDeps> & {
     existing?: readonly string[];
@@ -48,6 +58,7 @@ function makeDeps(
   const deps: FullSqliteDeps = {
     platform: over.platform ?? "darwin",
     env: over.env ?? ((): undefined => undefined),
+    execPath: over.execPath ?? EXEC,
     exists: over.exists ?? ((p: string): boolean => existing.has(p)),
     setCustomSQLite:
       over.setCustomSQLite ??
@@ -70,32 +81,72 @@ function makeDeps(
 describe("fullSqliteCandidates", () => {
   test("is empty off darwin, on every non-darwin platform", () => {
     for (const p of ["win32", "linux", "freebsd"] as const) {
-      expect(fullSqliteCandidates(p, () => "/anything")).toEqual([]);
+      expect(fullSqliteCandidates(p, () => "/anything", EXEC)).toEqual([]);
     }
   });
 
   test("on darwin, Apple Silicon before Intel", () => {
-    expect(fullSqliteCandidates("darwin", () => undefined)).toEqual([...DARWIN_SQLITE_CANDIDATES]);
+    const homebrew = fullSqliteCandidates("darwin", () => undefined, EXEC).slice(1);
+    expect(homebrew).toEqual([...DARWIN_SQLITE_CANDIDATES]);
     expect(DARWIN_SQLITE_CANDIDATES[0]).toContain("/opt/homebrew/");
     expect(DARWIN_SQLITE_CANDIDATES[1]).toContain("/usr/local/");
   });
 
   test(`${SQLITE_PATH_ENV} takes precedence over both Homebrew prefixes`, () => {
-    const got = fullSqliteCandidates("darwin", (n) =>
-      n === SQLITE_PATH_ENV ? "/custom/libsqlite3.dylib" : undefined,
+    const got = fullSqliteCandidates(
+      "darwin",
+      (n) => (n === SQLITE_PATH_ENV ? "/custom/libsqlite3.dylib" : undefined),
+      EXEC,
     );
     expect(got[0]).toBe("/custom/libsqlite3.dylib");
-    expect(got).toHaveLength(DARWIN_SQLITE_CANDIDATES.length + 1);
+    expect(got).toHaveLength(DARWIN_SQLITE_CANDIDATES.length + 2);
   });
 
   test("a blank or whitespace override is ignored, not treated as a path", () => {
     for (const v of ["", "   "]) {
-      expect(fullSqliteCandidates("darwin", () => v)).toEqual([...DARWIN_SQLITE_CANDIDATES]);
+      expect(fullSqliteCandidates("darwin", () => v, EXEC).slice(1)).toEqual([
+        ...DARWIN_SQLITE_CANDIDATES,
+      ]);
     }
   });
 
   test("a padded override is trimmed", () => {
-    expect(fullSqliteCandidates("darwin", () => "  /padded.dylib  ")[0]).toBe("/padded.dylib");
+    expect(fullSqliteCandidates("darwin", () => "  /padded.dylib  ", EXEC)[0]).toBe(
+      "/padded.dylib",
+    );
+  });
+
+  test("the library bundled beside the binary comes before both Homebrew prefixes", () => {
+    // The one we ship is the one CI tested. A stale or differently-configured Homebrew build must
+    // not shadow it — that is the whole reason this entry is ordered ahead of them rather than
+    // appended as a last resort.
+    const got = fullSqliteCandidates("darwin", () => undefined, EXEC);
+    expect(got[0]).toBe("/Applications/nimbus/bin/libsqlite3.dylib");
+    expect(got.slice(1)).toEqual([...DARWIN_SQLITE_CANDIDATES]);
+  });
+
+  test(`${SQLITE_PATH_ENV} still outranks the bundled library`, () => {
+    const got = fullSqliteCandidates(
+      "darwin",
+      (n) => (n === SQLITE_PATH_ENV ? "/custom/libsqlite3.dylib" : undefined),
+      EXEC,
+    );
+    expect(got[0]).toBe("/custom/libsqlite3.dylib");
+    expect(got[1]).toBe(bundledSqlitePath(EXEC, "darwin"));
+  });
+
+  test("off darwin the bundled entry is absent too, not merely the Homebrew ones", () => {
+    for (const p of ["win32", "linux"] as const) {
+      expect(fullSqliteCandidates(p, () => undefined, EXEC)).toEqual([]);
+    }
+  });
+});
+
+describe("bundledSqlitePath", () => {
+  test("sits beside the executable, exactly as the vec0 sidecar does", () => {
+    expect(bundledSqlitePath("/Applications/nimbus/bin/nimbus-gateway", "darwin")).toBe(
+      "/Applications/nimbus/bin/libsqlite3.dylib",
+    );
   });
 });
 

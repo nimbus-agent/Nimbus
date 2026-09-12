@@ -81,6 +81,33 @@ describe("scanSource", () => {
       for (const s of scanSource("a.test.ts", source, p)) expect(s.skipped).toBe(true);
     }
   });
+
+  // A per-line matcher cannot see a condition hoisted to the top of the file, and that form is
+  // common enough to matter: a file with five darwin-only tests behind `skipIf(!isDarwin)` reported
+  // "every test in them runs on win32", which is the exact reassurance this audit exists to refuse.
+  const aliased = [
+    'const isDarwin = process.platform === "darwin";', // line 1
+    'it.skipIf(!isDarwin)("darwin only", () => {});', // line 2
+    'it.skipIf(isDarwin)("everywhere but darwin", () => {});', // line 3
+    'describe.skipIf(!isDarwin)("darwin only group", () => {});', // line 4
+  ].join("\n");
+
+  it("resolves a platform condition hoisted into a const, negated", () => {
+    const sites = scanSource("a.test.ts", aliased, "win32");
+    expect(sites.map((s) => s.line)).toEqual([2, 4]);
+    expect(sites[0]?.namedPlatform).toBe("darwin");
+  });
+
+  it("resolves the same alias un-negated, which skips on the named platform instead", () => {
+    expect(scanSource("a.test.ts", aliased, "darwin").map((s) => s.line)).toEqual([3]);
+  });
+
+  it("ignores an alias that is not a platform comparison at all", () => {
+    const source2 = ["const ready = cache.size > 0;", 'it.skipIf(!ready)("x", () => {});'].join(
+      "\n",
+    );
+    expect(scanSource("a.test.ts", source2, "win32")).toHaveLength(0);
+  });
 });
 
 describe("insideStringLiteral — the false-positive guard", () => {
