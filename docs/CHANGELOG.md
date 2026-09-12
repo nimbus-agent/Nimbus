@@ -36,10 +36,23 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
   own and is fixed transitively; those are the only three KNN join sites in the repository.
   **The fix is two halves and neither works alone.** `CROSS JOIN` in place of `INNER JOIN` removes
   the planner's freedom to reorder, pinning the KNN as the outer loop — semantically identical in
-  SQLite, same rows in the same order. New schema **V62** (`vec-join-index-v62-sql.ts`) adds
+  SQLite, returning the same rows. New schema **V62** (`vec-join-index-v62-sql.ts`) adds
   `idx_embedding_chunk_vec_rowid` and `idx_session_memory_vec_rowid`, which turn the per-KNN-row
   probe into a point lookup. The index ALONE changes nothing — verified rather than assumed: at
   8,000 items the pre-fix query took 49.3 s without it and 83.4 s with it, on an identical plan.
+  **Both `ORDER BY` clauses also gained a `, <table>.vec_rowid ASC` tiebreak, and it is not
+  cosmetic.** "Same rows" is what `CROSS JOIN` guarantees; "same order" it does not — rows of
+  EXACTLY equal distance came back in whatever order the join emitted them, and the join order is
+  what changed. Measured on a fixture whose chunks share embeddings in groups of three: pre-fix
+  returned vec_rowids `1,2,3,4,5,6,…`, the un-tiebroken CROSS-JOIN query returned `3,2,1,6,5,4,…`
+  — same set, every tie group reversed. Exact ties are ordinary (duplicate chunk text produces
+  byte-identical embeddings) and the reordering is user-visible: `hybrid-internal.ts` derives an
+  RRF rank from the ARRAY INDEX and keeps the FIRST chunk per item as the displayed snippet, and
+  `dual-search.ts` sorts then slices to `limit`, so a tie group straddling the boundary changes
+  WHICH row is returned. Ascending `vec_rowid` is the PRE-FIX order rather than a new one — the
+  old plan walked `idx_embedding_chunk_model` and both writers allocate `MAX(rowid) + 1` and write
+  the owning row in the same transaction — so results stay identical INCLUDING ties, proved by a
+  tie-bearing equivalence case in each of the two join-order test files.
   **Measured:** the vector query went 86,063 ms → 6 ms at 8,000 items, and
   `LocalIndex.searchRankedAsync` end to end went 69,896 ms → 28 ms on the same harness and machine
   that produced the original number; post-fix growth is linear in corpus size (×8.17 across an ×8

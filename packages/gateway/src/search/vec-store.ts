@@ -95,7 +95,26 @@ export function buildVectorChunkQuery(options: VectorSearchChunkOptions): {
     sql += ` AND json_extract(i.metadata, '$.channel') IN (${placeholders})`;
     for (const ch of options.metadataChannelIn) params.push(ch);
   }
-  sql += ` ORDER BY knn.distance`;
+  // The `, ec.vec_rowid ASC` tiebreak is NOT decoration and NOT a behaviour change — it is what
+  // keeps "results identical" literally true. `ORDER BY knn.distance` alone leaves rows with an
+  // EXACTLY equal distance in whatever order the join emitted them, and the join order is the
+  // thing this fix changed: measured on a fixture whose chunks share embeddings in groups of
+  // three, the pre-fix query returned vec_rowids 1,2,3,4,5,6,… and the CROSS-JOIN query returned
+  // 3,2,1,6,5,4,… — same set, every tie group reversed. Exact ties are not exotic: duplicate
+  // chunk text produces byte-identical embeddings and therefore identical distances.
+  //
+  // That reordering is user-visible through three order-dependent consumers, none of which
+  // re-sorts by anything else: `hybrid-internal.ts`'s `bestVectorRanksByItem` derives a rank from
+  // the ARRAY INDEX and feeds it to the RRF score, its `firstChunkByItem` keeps the FIRST chunk
+  // per item (so the snippet shown to the user changes), and `dual-search.ts` stable-sorts then
+  // slices to `limit` (so a tie group straddling the boundary changes WHICH row is returned).
+  //
+  // Ascending `vec_rowid` is the pre-fix order, not a newly invented one: the old plan walked
+  // `idx_embedding_chunk_model`, i.e. ascending `embedding_chunk` rowid, and the pipeline writes
+  // each vec row and its chunk row together with monotonically increasing ids, so the two agree
+  // on every database this code creates. Verified against the pre-fix query rather than assumed
+  // — see the tie-bearing equivalence case in vec-store-join-order.test.ts.
+  sql += ` ORDER BY knn.distance, ec.vec_rowid ASC`;
   return { sql, params };
 }
 

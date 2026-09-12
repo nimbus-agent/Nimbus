@@ -138,8 +138,8 @@ USE TEMP B-TREE FOR ORDER BY
 ```
 
 **The fix is two halves, and neither works alone.** `CROSS JOIN` in place of `INNER JOIN`
-removes the planner's freedom to reorder, pinning the KNN as the outer loop (semantically
-identical in SQLite — same rows, same order). Schema **V62**
+removes the planner's freedom to reorder, pinning the KNN as the outer loop — semantically
+identical in SQLite, returning the same rows. Schema **V62**
 (`packages/gateway/src/index/vec-join-index-v62-sql.ts`) adds
 `idx_embedding_chunk_vec_rowid` and `idx_session_memory_vec_rowid`, which turn the per-KNN-row
 probe into a point lookup rather than a range scan over the `model` index. Task 1b's
@@ -157,6 +157,37 @@ multiplied by the length of the conversation.
 `search/dual-search.ts` (`vectorSearchChunksDual`) holds no SQL of its own — it calls
 `vectorSearchChunks` twice — so it is fixed transitively. Those three are the only KNN join
 sites in the repository (`grep -rn "embedding MATCH"`).
+
+**A third change, small in the diff and not optional: `, <table>.vec_rowid ASC` on both
+`ORDER BY` clauses.** "Same rows" is what `CROSS JOIN` guarantees; "same order" it does not.
+`ORDER BY knn.distance` alone leaves rows of EXACTLY equal distance in whatever order the join
+emitted them — and the join order is precisely what this fix changed. Measured on a fixture
+whose chunks share embeddings in groups of three, the pre-fix query returned vec_rowids
+`1,2,3,4,5,6,…` and the CROSS-JOIN query returned `3,2,1,6,5,4,…`: same set, every tie group
+reversed. Exact ties are not exotic — duplicate chunk text produces byte-identical embeddings
+and therefore identical distances, which any index carrying boilerplate or re-posted content
+will have.
+
+That reordering is user-visible through three order-dependent consumers, none of which re-sorts
+by anything else: `hybrid-internal.ts`'s `bestVectorRanksByItem` derives a rank from the ARRAY
+INDEX and feeds it to the RRF score; its `firstChunkByItem` keeps the FIRST chunk per item, so
+the snippet a user sees changes; and `dual-search.ts` stable-sorts then slices to `limit`, so a
+tie group straddling that boundary changes WHICH row is returned. `SessionMemoryStore.recall`
+carries its own `LIMIT`, where the same applies to which turns are recalled.
+
+**Ascending `vec_rowid` is the pre-fix order, not a newly imposed one**, which is what keeps
+"results identical" true rather than merely narrowed: the old plan walked
+`idx_embedding_chunk_model`, i.e. ascending `embedding_chunk` rowid, and both writers
+(`embedding/pipeline.ts` and `SessionMemoryStore.append`) allocate `MAX(vec rowid) + 1` and
+write the owning row in the same transaction, so the two ids ascend together on every database
+this code creates. Verified against the pre-fix query rather than assumed — see the two
+`EXACT TIES` cases in each join-order test file, one asserting order equality and one asserting
+that pre-fix tie order really was ascending `vec_rowid`. **Stated bound:** what the pre-fix plan
+actually ordered ties by was ascending `embedding_chunk.id`; the two coincide because of how the
+pipeline writes, and a hand-built database that inserted every vec row before its chunk rows in
+reverse would separate them. No code path produces that layout, and pre-fix tie order was an
+artifact of an index walk plus an unstable sort rather than a contract — the tiebreak makes it
+one.
 
 **Measured, same machine as Tasks 1 and 1b (Windows 11, Bun 1.3.14):**
 
@@ -178,9 +209,11 @@ End to end through `LocalIndex.searchRankedAsync`, on Task 1b's own harness at 8
 
 Guards, so this cannot come back silently: `packages/gateway/src/search/vec-store-join-order.test.ts`
 and `packages/gateway/src/memory/session-memory-join-order.test.ts` assert both that the row
-set and its order are byte-identical to the verbatim pre-fix query and that the vec table is
-entered exactly once as the outer loop — each with a red-proving case that runs the pre-fix
-SQL through the same assertion and requires it to fail. The scaling evidence is
+set and its order are byte-identical to the verbatim pre-fix query — over distinct-distance
+fixtures AND over deliberately tie-bearing ones, each with a positive control proving the ties
+are really there — and that the vec table is entered exactly once as the outer loop. Each file
+carries red-proving cases that run the pre-fix SQL, and the fix with its tiebreak removed,
+through the same assertions and require them to fail. The scaling evidence is
 `packages/gateway/test/integration/embedding/vector-search-scaling.harness.test.ts`, opt-in on
 `NIMBUS_RUN_EMBED_HARNESS=1`.
 

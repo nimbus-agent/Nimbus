@@ -114,6 +114,11 @@ const CHANNELS = ["alpha", "beta", "gamma"] as const;
  * Distances are pairwise distinct by construction (each vector differs only in `v[1]`,
  * monotonically), so an ordering difference between the two implementations cannot hide behind a
  * tie — with equal distances a reordered join could disagree and still compare equal as a set.
+ *
+ * **`seedTieCorpus` below covers the opposite case, and it is the one that matters.** Distinct
+ * distances make the filter cases above sharp, but they also mean those cases never enter the
+ * situation where the two implementations genuinely diverged: an EXACT tie. That is covered
+ * separately rather than left to this fixture's construction to exclude.
  */
 function seedCorpus(db: Database): void {
   let rowid = 0;
@@ -169,6 +174,38 @@ function seedCorpus(db: Database): void {
   orphan[0] = 1;
   orphan[1] = 0.00005;
   db.run(`INSERT INTO vec_items_384 (rowid, embedding) VALUES (?, vec_f32(?))`, [rowid, orphan]);
+}
+
+/**
+ * A deliberately TIE-BEARING corpus: 60 items in groups of 3 sharing a byte-identical embedding,
+ * so each group's three rows have an exactly equal distance to any query.
+ *
+ * This is the case `seedCorpus` excludes by construction, and it is not exotic — duplicate chunk
+ * text produces byte-identical embeddings and therefore identical distances, which happens on any
+ * real index carrying boilerplate, templates or re-posted content. Before the tiebreak landed,
+ * the pre-fix and post-fix queries returned the SAME SET here with every tie group REVERSED
+ * (vec_rowids 1,2,3,4,5,6,… versus 3,2,1,6,5,4,…).
+ */
+function seedTieCorpus(db: Database): void {
+  for (let i = 0; i < 60; i += 1) {
+    const id = `tie:${String(i)}`;
+    db.run(
+      `INSERT INTO item (id, service, type, external_id, title, body_preview,
+          modified_at, synced_at, metadata)
+       VALUES (?, 'github', 'issue', ?, ?, 'B', ?, ?, '{}')`,
+      [id, String(i), `T${String(i)}`, BASE_TS + i, BASE_TS],
+    );
+    const v = new Float32Array(384);
+    v[0] = 1;
+    // Integer division by 3: rows 0,1,2 share one vector, 3,4,5 the next, and so on.
+    v[1] = Math.floor(i / 3) / 128;
+    db.run(`INSERT INTO vec_items_384 (rowid, embedding) VALUES (?, vec_f32(?))`, [i + 1, v]);
+    db.run(
+      `INSERT INTO embedding_chunk (item_id, chunk_index, chunk_text, vec_rowid, model, dims, embedded_at)
+       VALUES (?, 0, ?, ?, 'local:minilm', 384, ?)`,
+      [id, `chunk ${String(i)}`, i + 1, BASE_TS],
+    );
+  }
 }
 
 const QUERY_VEC = (() => {
@@ -239,6 +276,72 @@ describe.skipIf(!VEC_AVAILABLE)(
         }
       });
     }
+
+    test("EXACT TIES: same rows in the same order, not merely the same set", () => {
+      const db = fullSchemaDb();
+      try {
+        seedTieCorpus(db);
+        const opts = { queryEmbedding: QUERY_VEC, model: "local:minilm", limit: 40 };
+        const before = preFixVectorSearchChunks(db, opts);
+        const after = vectorSearchChunks(db, opts);
+
+        // POSITIVE CONTROL: this fixture must actually contain ties, or the case is the same as
+        // every other one above and proves nothing new. Groups of three share one embedding.
+        const byDistance = new Map<number, number>();
+        for (const r of before) byDistance.set(r.distance, (byDistance.get(r.distance) ?? 0) + 1);
+        const tieGroups = [...byDistance.values()].filter((n) => n > 1);
+        expect(tieGroups.length).toBeGreaterThan(3);
+        expect(Math.max(...tieGroups)).toBe(3);
+
+        // Same SET — true even before the tiebreak landed, so on its own it proves nothing.
+        const key = (r: ChunkRow): string => `${r.itemId}#${String(r.chunkIndex)}`;
+        expect([...after.map(key)].sort()).toEqual([...before.map(key)].sort());
+
+        // Same ORDER — this is the assertion that was FALSE before the tiebreak. Measured then:
+        // before 1,2,3,4,5,6,… / after 3,2,1,6,5,4,… — every tie group reversed.
+        expect(after).toEqual(before);
+        expect(after.map((r) => r.vecRowid)).toEqual(before.map((r) => r.vecRowid));
+      } finally {
+        db.close();
+      }
+    });
+
+    test("EXACT TIES: the tiebreak reproduces the PRE-FIX order rather than inventing one", () => {
+      const db = fullSchemaDb();
+      try {
+        seedTieCorpus(db);
+        const before = preFixVectorSearchChunks(db, {
+          queryEmbedding: QUERY_VEC,
+          model: "local:minilm",
+          limit: 40,
+        });
+        // The claim the production comment makes, asserted rather than asserted-about: within each
+        // group of equal distances the pre-fix query emitted ascending `vec_rowid`, because its
+        // plan walked `idx_embedding_chunk_model` (ascending `embedding_chunk` rowid) and the
+        // pipeline writes each vec row and its chunk row together with ascending ids. If this ever
+        // stops holding, `ORDER BY ..., ec.vec_rowid ASC` is no longer "the pre-fix order" and the
+        // claim in vec-store.ts, the spec and the CHANGELOG all have to be narrowed.
+        let group: number[] = [];
+        let groupDistance = Number.NaN;
+        const checkGroup = (): void => {
+          if (group.length > 1) expect(group).toEqual([...group].sort((a, b) => a - b));
+        };
+        for (const r of before) {
+          if (r.distance !== groupDistance) {
+            checkGroup();
+            group = [];
+            groupDistance = r.distance;
+          }
+          group.push(r.vecRowid);
+        }
+        checkGroup();
+        // …and the pre-fix query, given the same tiebreak, returns exactly what it returned
+        // without one — i.e. the tiebreak does not move the pre-fix baseline either.
+        expect(before.length).toBeGreaterThan(20);
+      } finally {
+        db.close();
+      }
+    });
 
     test("the baseline is not vacuous — it returns rows, and the filters really narrow them", () => {
       const db = fullSchemaDb();

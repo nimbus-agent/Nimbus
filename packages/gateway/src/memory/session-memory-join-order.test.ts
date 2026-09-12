@@ -76,6 +76,29 @@ function seed(db: Database): void {
   }
 }
 
+/**
+ * A deliberately TIE-BEARING session: 45 turns in groups of 3 sharing a byte-identical embedding,
+ * so each group's three rows have an exactly equal distance to any query.
+ *
+ * The case `seed()` above excludes by construction, and the one where the two implementations
+ * genuinely diverged. It matters MORE here than for `vectorSearchChunks` because `recall()`
+ * applies a `LIMIT`: a tie group straddling the limit boundary changes WHICH turns come back,
+ * not merely their order.
+ */
+function seedTieSession(db: Database): void {
+  for (let t = 0; t < 45; t += 1) {
+    const v = new Float32Array(384);
+    v[0] = 1;
+    v[1] = Math.floor(t / 3) / 128;
+    db.run(`INSERT INTO vec_items_384 (rowid, embedding) VALUES (?, vec_f32(?))`, [t + 1, v]);
+    db.run(
+      `INSERT INTO session_memory (session_id, chunk_text, vec_rowid, role, created_at)
+       VALUES ('sess-tie', ?, ?, 'user', ?)`,
+      [`tie turn ${String(t)}`, t + 1, BASE_TS + t],
+    );
+  }
+}
+
 function freshDb(): Database {
   const db = new Database(":memory:");
   tryLoadSqliteVec(db);
@@ -117,6 +140,68 @@ describe.skipIf(!VEC_AVAILABLE)("SessionMemoryStore.recall — results unchanged
       }
     });
   }
+
+  test("EXACT TIES: same rows in the same order, not merely the same set", () => {
+    const db = freshDb();
+    try {
+      seedTieSession(db);
+      // `lim` deliberately lands INSIDE a tie group (32 is not a multiple of 3) and `k` bounds
+      // the result below the corpus, so a reordered tie group changes WHICH turns come back.
+      const before = db.query(PRE_FIX_RECALL_SQL).all(QUERY_VEC, 32, "sess-tie", 8) as Array<{
+        chunkText: string;
+        distance: number;
+      }>;
+      const after = db.query(SESSION_RECALL_SQL).all(QUERY_VEC, 32, "sess-tie", 8) as Array<{
+        chunkText: string;
+        distance: number;
+      }>;
+
+      // POSITIVE CONTROL: the fixture must actually contain ties inside the returned window.
+      const counts = new Map<number, number>();
+      for (const r of before) counts.set(r.distance, (counts.get(r.distance) ?? 0) + 1);
+      expect([...counts.values()].filter((n) => n > 1).length).toBeGreaterThan(0);
+
+      expect([...after.map((r) => r.chunkText)].sort()).toEqual(
+        [...before.map((r) => r.chunkText)].sort(),
+      );
+      // The assertion that was FALSE before the `, sm.vec_rowid ASC` tiebreak landed.
+      expect(after).toEqual(before);
+    } finally {
+      db.close();
+    }
+  });
+
+  test("EXACT TIES: the tiebreak reproduces the PRE-FIX order rather than inventing one", () => {
+    const db = freshDb();
+    try {
+      seedTieSession(db);
+      const before = db.query(PRE_FIX_RECALL_SQL).all(QUERY_VEC, 64, "sess-tie", 32) as Array<{
+        chunkText: string;
+        distance: number;
+      }>;
+      // Within each group of equal distances the pre-fix query emitted turns in ascending
+      // `vec_rowid`, which for this store is ascending insertion order — `append()` allocates
+      // `MAX(rowid) + 1` and writes the row in the same transaction. `tie turn <n>` encodes it.
+      const turn = (t: string): number => Number.parseInt(t.replace("tie turn ", ""), 10);
+      let group: number[] = [];
+      let groupDistance = Number.NaN;
+      const checkGroup = (): void => {
+        if (group.length > 1) expect(group).toEqual([...group].sort((a, b) => a - b));
+      };
+      for (const r of before) {
+        if (r.distance !== groupDistance) {
+          checkGroup();
+          group = [];
+          groupDistance = r.distance;
+        }
+        group.push(turn(r.chunkText));
+      }
+      checkGroup();
+      expect(before.length).toBeGreaterThan(20);
+    } finally {
+      db.close();
+    }
+  });
 
   test("the baseline is not vacuous, and the session filter really discriminates", () => {
     const db = freshDb();

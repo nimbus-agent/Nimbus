@@ -41,8 +41,17 @@ export type SessionMemoryStoreDeps = {
  * before, 27.8ms after. The V62 `idx_session_memory_vec_rowid` index then makes each per-KNN-row
  * probe a point lookup instead of a range scan over `idx_session_memory_session`.
  *
+ * The `, sm.vec_rowid ASC` tiebreak is what keeps "results identical" literally true, and it
+ * matters MORE here than in `vec-store.ts` because of the `LIMIT ?`: `ORDER BY knn.distance`
+ * alone leaves exactly-equal distances in whatever order the join emitted them, the join order is
+ * what changed, and a tie group straddling the limit boundary would change WHICH turns are
+ * recalled — not merely their order. Ascending `vec_rowid` is the pre-fix order rather than a new
+ * one: `append()` allocates `MAX(rowid) + 1` and writes the `session_memory` row in the same
+ * transaction, so vec rowid and row id ascend together.
+ *
  * Guarded by session-memory-join-order.test.ts: a plan case that fails if `CROSS` is relaxed, and
- * equivalence cases proving the row set and its order are unchanged against the pre-fix query.
+ * equivalence cases — including a deliberately tie-bearing one — proving the row set and its
+ * order are unchanged against the pre-fix query.
  */
 export const SESSION_RECALL_SQL = `
       SELECT sm.chunk_text AS chunkText, sm.role AS role, sm.created_at AS createdAt, knn.distance AS distance
@@ -51,7 +60,7 @@ export const SESSION_RECALL_SQL = `
       ) knn
       CROSS JOIN session_memory sm ON sm.vec_rowid = knn.rowid
       WHERE sm.session_id = ?
-      ORDER BY knn.distance
+      ORDER BY knn.distance, sm.vec_rowid ASC
       LIMIT ?
 `;
 
