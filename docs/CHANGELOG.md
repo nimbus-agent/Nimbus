@@ -20,7 +20,11 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
 
 - **2026-09-12 — semantic search stops re-running the KNN once per chunk row (schema V62).**
   `IPC request timed out after 30000ms: index.searchRanked` (issue #1396) had been read as
-  embedding-backfill contention. It was not. Measured with zero concurrent writers, at idle, a
+  embedding-backfill contention. It was not — though contention is real and was measured rather
+  than dismissed: over four clean runs it slowed a query embed alone by 2.9x-4.8x (7-9 ms under
+  load vs 2-3 ms idle), with a full observed range of 1.0x-4.8x across six trials on this
+  hardware. A priority gate for that contention was deliberately DEFERRED as immaterial next to
+  what follows, not ruled out. Measured with zero concurrent writers, at idle, a
   single `LocalIndex.searchRankedAsync` call took **26.7 s at 4,000 indexed items and 69.9 s at
   8,000**, with query-embed time under 6 ms throughout — so essentially all of it was SQL, and
   semantic search was unusable above a few thousand items on ANY install, not only a cold-starting
@@ -34,12 +38,22 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
   `embedding_chunk`, one recall's cost scaled with the whole index multiplied by the length of the
   conversation (8,000 vectors × 2,000 turns: 42.4 s). `search/dual-search.ts` holds no SQL of its
   own and is fixed transitively; those are the only three KNN join sites in the repository.
-  **The fix is two halves and neither works alone.** `CROSS JOIN` in place of `INNER JOIN` removes
-  the planner's freedom to reorder, pinning the KNN as the outer loop — semantically identical in
-  SQLite, returning the same rows. New schema **V62** (`vec-join-index-v62-sql.ts`) adds
-  `idx_embedding_chunk_vec_rowid` and `idx_session_memory_vec_rowid`, which turn the per-KNN-row
-  probe into a point lookup. The index ALONE changes nothing — verified rather than assumed: at
-  8,000 items the pre-fix query took 49.3 s without it and 83.4 s with it, on an identical plan.
+  **The fix is two halves, and they are not symmetric.** `CROSS JOIN` in place of `INNER JOIN`
+  removes the planner's freedom to reorder, pinning the KNN as the outer loop — semantically
+  identical in SQLite, returning the same rows — and this alone removes the quadratic term: on a
+  20,000-item synthetic corpus, `CROSS JOIN` with the V62 index dropped measured 33.3 ms at limit
+  20 and 432.4 ms at limit 500, against the tens of SECONDS the pre-fix plan takes at that scale.
+  New schema **V62** (`vec-join-index-v62-sql.ts`) adds `idx_embedding_chunk_vec_rowid` and
+  `idx_session_memory_vec_rowid`, which remove the RESIDUAL cost that outer loop leaves behind:
+  without them, each per-KNN-row probe is still a range scan over `idx_embedding_chunk_model` /
+  `idx_session_memory_session` — an `O(k·N)` cost growing with both the result limit and corpus
+  size — which on the same 20,000-item corpus is a 2x gap at limit 20 (16.9 ms with the index)
+  widening to 19x at limit 500 (22.1 ms with the index), and would keep widening with corpus size.
+  The index ALONE changes nothing — verified separately rather than assumed, on the pre-fix
+  (`INNER JOIN`) plan: at 8,000 items on the pre-V62 schema the query took 49.3 s without the
+  index and 83.4 s with it added (a V62 schema whose join order is still unfixed), on an
+  identical plan — the planner drives the join from `embedding_chunk` regardless and never
+  reaches this index at all.
   **Both `ORDER BY` clauses also gained a `, <table>.vec_rowid ASC` tiebreak, and it is not
   cosmetic.** "Same rows" is what `CROSS JOIN` guarantees; "same order" it does not — rows of
   EXACTLY equal distance came back in whatever order the join emitted them, and the join order is
@@ -51,9 +65,15 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
   `dual-search.ts` sorts then slices to `limit`, so a tie group straddling the boundary changes
   WHICH row is returned. Ascending `vec_rowid` is the PRE-FIX order rather than a new one — the
   old plan walked `idx_embedding_chunk_model` and both writers allocate `MAX(rowid) + 1` and write
-  the owning row in the same transaction — so results stay identical INCLUDING ties, proved by a
-  tie-bearing equivalence case in each of the two join-order test files.
-  **Measured:** the vector query went 86,063 ms → 6 ms at 8,000 items, and
+  the owning row in the same transaction — so results stay identical including ties ON THE PLAN
+  THE PRE-FIX QUERY ACTUALLY CHOSE on these fixtures (the pre-fix tie order was itself emergent
+  from whichever index the old planner picked, not a contract — a `service` filter could in
+  principle have driven the old query from `item` and ordered ties by `item_id` instead), proved
+  by a tie-bearing equivalence case in each of the two join-order test files. The new ordering is
+  deterministic BY CONTRACT where the old one was not, which is strictly an improvement.
+  **Measured:** on a V62 schema (the harness builds its database via `LocalIndex.ensureSchema`, so
+  the index is present throughout and only the pre-fix `INNER JOIN` query text is verbatim), the
+  vector query went 86,063 ms → 6 ms at 8,000 items, and
   `LocalIndex.searchRankedAsync` end to end went 69,896 ms → 28 ms on the same harness and machine
   that produced the original number; post-fix growth is linear in corpus size (×8.17 across an ×8
   corpus increase, where quadratic would be ×64). No new invariant, no new egress class, no IPC or
@@ -65,7 +85,11 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
   SQLite version. Each carries a red-proving case that runs the pre-fix SQL through the same
   assertion and requires it to fail. **Residual, stated rather than softened:** the remedy is a
   planner hint plus an index, so it is defended by a plan assertion rather than by construction, and
-  issue #1396's own 60,000-item scale was extrapolated, not run.
+  issue #1396's own 60,000-item scale was extrapolated, not run. **The write side pays for this
+  too:** `idx_embedding_chunk_vec_rowid` sits on `embedding_chunk`, the hottest write table in the
+  backfill path (one row per chunk), and `idx_session_memory_vec_rowid` on `session_memory` (one
+  row per turn) — a small, clearly-worth-it cost given this fix's own origin was backfill
+  contention, but a real one on every insert to either table from here on.
 - **2026-09-11 — `nimbus changelog`, the fifteenth built-in agent, closing the v0.1.1 CLI batch
   row.** A Markdown changelog assembled entirely from the local index over a time window, for one
   configured service or across all of them: merged pull requests, deployments, incidents opened,

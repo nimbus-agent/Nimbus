@@ -61,12 +61,22 @@ export function buildVectorChunkQuery(options: VectorSearchChunkOptions): {
   // cannot estimate a vec0 KNN subquery's cardinality, assumes it is large, and so drives the join
   // from `embedding_chunk` filtered on `model` — which on an install with one local embedder
   // matches every row — re-executing the brute-force KNN scan once per chunk. Measured on this
-  // query at 8,000 items: 49.3s before, 8.5ms after (issue #1396; task 1c report).
+  // query at 8,000 items, on the pre-V62 schema (no `vec_rowid` index at all — the full "before"
+  // this fix starts from): 49.3s before, 8.5ms after (issue #1396; task 1c report).
   //
-  // The V62 `idx_embedding_chunk_vec_rowid` index is the other half: once the KNN drives, that
-  // index turns each per-KNN-row probe into a point lookup instead of a range scan over the whole
-  // `model` index. Neither half works alone — the index by itself does not change the plan at all
-  // (verified: 49.3s without it, 83.4s with it, same plan).
+  // CROSS JOIN alone removes the quadratic term outright: on a 20,000-item synthetic corpus,
+  // pinning the KNN as the outer loop with no V62 index at all took 33.3ms at limit 20 and
+  // 432.4ms at limit 500 — tens of seconds down to tens of milliseconds. What the V62
+  // `idx_embedding_chunk_vec_rowid` index removes is the RESIDUAL cost that outer loop leaves
+  // behind: without it, each of the KNN's k rows still does a range scan over
+  // `idx_embedding_chunk_model`, an O(k·N) cost that widens with both k and corpus size; with
+  // it, that scan becomes an O(log n) point lookup, landing at 16.9ms / 22.1ms on the same
+  // corpus — a 2x gap at limit 20 that widens to 19x at limit 500. The index CANNOT do this on
+  // its own: verified separately, at 8,000 items the pre-fix (INNER JOIN) plan took 49.3s
+  // without the index and 83.4s with it, on an identical plan — a query the planner still drives
+  // from `embedding_chunk` never reaches this index at all. So the two halves are not
+  // symmetric: `CROSS JOIN` is what fixes the defect, and the index is what keeps the fixed
+  // query fast as `limit` and corpus size grow.
   let sql = `
     SELECT ec.item_id AS itemId, ec.chunk_index AS chunkIndex, ec.chunk_text AS chunkText,
            ec.vec_rowid AS vecRowid, knn.distance AS distance

@@ -335,8 +335,8 @@ describe.skipIf(!VEC_AVAILABLE)(
           group.push(r.vecRowid);
         }
         checkGroup();
-        // …and the pre-fix query, given the same tiebreak, returns exactly what it returned
-        // without one — i.e. the tiebreak does not move the pre-fix baseline either.
+        // POSITIVE CONTROL: a fixture with too few ties would let the ascending-group loop above
+        // pass vacuously.
         expect(before.length).toBeGreaterThan(20);
       } finally {
         db.close();

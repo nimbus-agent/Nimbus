@@ -13,6 +13,20 @@ import { LocalIndex } from "../../../src/index/local-index.ts";
  *
  * Never runs in CI, for two independent reasons: it downloads/loads the real MiniLM model,
  * and it asserts wall-clock latency on a machine whose speed CI does not control.
+ *
+ * **This measures backfill contention, which is real but is NOT the cause of issue #1396.**
+ * `docs/CHANGELOG.md`'s 2026-09-12 entry is explicit: the `index.searchRanked` timeout had been
+ * read as embedding-backfill contention, and it was not — the actual defect was a quadratic SQL
+ * join plan (fixed by schema V62 + `CROSS JOIN` in `search/vec-store.ts`), which dwarfed
+ * contention by four to five orders of magnitude (tens of SECONDS vs single-digit milliseconds).
+ * Contention on a query embed alone was measured separately at 2.9x-4.8x over four clean runs
+ * (7-9 ms under load vs 2-3 ms idle), but the full observed range across six trials on this
+ * hardware was 1.0x-4.8x — machine-dependent. A priority gate for it was deliberately DEFERRED
+ * as immaterial beside the SQL defect, not shipped.
+ *
+ * So the `underLoadMs > idleMs * 2` assertion below can legitimately fail on some hardware — a
+ * sub-2x run here is expected on some machines, not a regression, and not evidence that
+ * contention "isn't real" (it is; it's just small next to what #1396 actually was).
  */
 const RUN = process.env["NIMBUS_RUN_EMBED_HARNESS"] === "1";
 
