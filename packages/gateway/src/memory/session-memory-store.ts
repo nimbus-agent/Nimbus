@@ -26,6 +26,44 @@ export type SessionMemoryStoreDeps = {
   embedText: (text: string) => Promise<Float32Array | null>;
 };
 
+/**
+ * The recall query, at module scope so the query-plan regression test can `EXPLAIN QUERY PLAN` the
+ * string PRODUCTION runs rather than a transcription of it that could stay green while this file
+ * regressed.
+ *
+ * CROSS JOIN, not INNER JOIN — the same defect and the same fix as `search/vec-store.ts`, measured
+ * separately here rather than assumed to transfer. `WHERE sm.session_id = ?` makes the planner's
+ * wrong choice look MORE attractive, not less: `idx_session_memory_session` is selective, so left
+ * to itself SQLite drives from `session_memory` and re-runs the brute-force KNN once per turn in
+ * the session — over the WHOLE `vec_items_384` table, which this store SHARES with
+ * `embedding_chunk`, so the per-turn cost scales with the size of the user's entire index rather
+ * than with the conversation. Measured at 8,000 indexed vectors and 2,000 session turns: 42.4s
+ * before, 27.8ms after. The V62 `idx_session_memory_vec_rowid` index then makes each per-KNN-row
+ * probe a point lookup instead of a range scan over `idx_session_memory_session`.
+ *
+ * The `, sm.vec_rowid ASC` tiebreak is what keeps "results identical" literally true, and it
+ * matters MORE here than in `vec-store.ts` because of the `LIMIT ?`: `ORDER BY knn.distance`
+ * alone leaves exactly-equal distances in whatever order the join emitted them, the join order is
+ * what changed, and a tie group straddling the limit boundary would change WHICH turns are
+ * recalled — not merely their order. Ascending `vec_rowid` is the pre-fix order rather than a new
+ * one: `append()` allocates `MAX(rowid) + 1` and writes the `session_memory` row in the same
+ * transaction, so vec rowid and row id ascend together.
+ *
+ * Guarded by session-memory-join-order.test.ts: a plan case that fails if `CROSS` is relaxed, and
+ * equivalence cases — including a deliberately tie-bearing one — proving the row set and its
+ * order are unchanged against the pre-fix query.
+ */
+export const SESSION_RECALL_SQL = `
+      SELECT sm.chunk_text AS chunkText, sm.role AS role, sm.created_at AS createdAt, knn.distance AS distance
+      FROM (
+        SELECT rowid, distance FROM vec_items_384 WHERE embedding MATCH ? AND k = ?
+      ) knn
+      CROSS JOIN session_memory sm ON sm.vec_rowid = knn.rowid
+      WHERE sm.session_id = ?
+      ORDER BY knn.distance, sm.vec_rowid ASC
+      LIMIT ?
+`;
+
 export class SessionMemoryStore {
   private readonly db: Database;
   private readonly dims: number;
@@ -90,17 +128,7 @@ export class SessionMemoryStore {
     const k = Math.min(32, Math.max(1, Math.floor(topK)));
     const lim = Math.min(200, k * 4);
     const q = new Float32Array(qVec);
-    const sql = `
-      SELECT sm.chunk_text AS chunkText, sm.role AS role, sm.created_at AS createdAt, knn.distance AS distance
-      FROM (
-        SELECT rowid, distance FROM vec_items_384 WHERE embedding MATCH ? AND k = ?
-      ) knn
-      INNER JOIN session_memory sm ON sm.vec_rowid = knn.rowid
-      WHERE sm.session_id = ?
-      ORDER BY knn.distance
-      LIMIT ?
-    `;
-    const rows = this.db.query(sql).all(q, lim, sessionId, k) as Array<{
+    const rows = this.db.query(SESSION_RECALL_SQL).all(q, lim, sessionId, k) as Array<{
       chunkText: string;
       role: string;
       createdAt: number;
