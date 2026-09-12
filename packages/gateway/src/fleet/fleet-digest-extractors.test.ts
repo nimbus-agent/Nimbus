@@ -630,3 +630,252 @@ describe("gateway-local briefs", () => {
     expect(s?.keys).toEqual(["github:1"]);
   });
 });
+
+/**
+ * `standup`'s extractor, guard by guard.
+ *
+ * Every guard here returns `undefined` — the same value the "not summarizable" outcome already
+ * uses — so a regression removing one changes no other assertion in this file. That is what
+ * makes them easy to leave untested, and `coverage-floor` caught this file at 73.4% branch
+ * before this block existed. Each case below is a well-formed standup brief EXCEPT for one
+ * field, so it can only fail for the reason it names.
+ */
+describe("standup extractor", () => {
+  const standupBrief = (over: Record<string, unknown> = {}): string =>
+    JSON.stringify({
+      ...base,
+      kind: "standup",
+      query: { sinceMs: 0, nowMs: 86_400_000 },
+      identity: { personId: "person-me", source: "git", displayName: "Ada" },
+      prsActive: [{ id: "github:acme/web#901" }],
+      prsMerged: [{ id: "github:acme/web#900" }],
+      reviews: [{ id: "github:acme/web#880#1" }],
+      ticketsOpened: [{ id: "jira:PAY-412" }],
+      incidents: [{ id: "pagerduty:PD-7" }],
+      messages: [{ id: "slack:C1:1.0" }, { id: "slack:C1:2.0" }],
+      counts: {
+        prsActive: 1,
+        prsMerged: 1,
+        reviews: 1,
+        ticketsOpened: 1,
+        incidents: 1,
+        messages: 61,
+      },
+      threadCount: 7,
+      approximateCount: 2,
+      nonGithubMergedPrs: 0,
+      truncatedCount: 59,
+      ...over,
+    });
+
+  test("keys on every lane's item ids, sorted, with counts and threadCount as metrics", () => {
+    const s = summarizeBrief("agents.standup", standupBrief());
+    // `summary()` sorts with `codeUnitCompare` — NOT insertion order, and not per-lane order.
+    // Without that, two runs over an unchanged index could diff as changed.
+    expect(s?.keys).toEqual([
+      "github:acme/web#880#1",
+      "github:acme/web#900",
+      "github:acme/web#901",
+      "jira:PAY-412",
+      "pagerduty:PD-7",
+      "slack:C1:1.0",
+      "slack:C1:2.0",
+    ]);
+    // `messages: 61` comes from `counts`, NOT from the two-entry list — the pre-cap total is
+    // what a digest must compare, or a chatty day reads as capped at the display limit.
+    expect(s?.metrics).toEqual({
+      prsActive: 1,
+      prsMerged: 1,
+      reviews: 1,
+      ticketsOpened: 1,
+      incidents: 1,
+      messages: 61,
+      threadCount: 7,
+    });
+  });
+
+  test("identity.personId is NOT a metric and NOT a key", () => {
+    // Deliberate: the id changing means the resolver landed on a different person, not that work
+    // happened. Folding it in would digest a re-resolution as a day's activity. Asserted as an
+    // ABSENCE, because that is the whole claim.
+    const s = summarizeBrief("agents.standup", standupBrief());
+    expect(Object.keys(s?.metrics ?? {})).not.toContain("personId");
+    expect(s?.keys).not.toContain("person-me");
+    // And two briefs differing ONLY in who they resolved to must summarize identically.
+    const other = summarizeBrief(
+      "agents.standup",
+      standupBrief({ identity: { personId: "person-other", source: "os", displayName: "B" } }),
+    );
+    expect(other).toEqual(s);
+  });
+
+  test("a brief of the wrong kind is not summarizable", () => {
+    expect(
+      summarizeBrief("agents.standup", JSON.stringify({ ...base, kind: "changelog" })),
+    ).toBeUndefined();
+  });
+
+  test("a missing or non-object counts block is not summarizable", () => {
+    expect(summarizeBrief("agents.standup", standupBrief({ counts: undefined }))).toBeUndefined();
+    expect(summarizeBrief("agents.standup", standupBrief({ counts: 7 }))).toBeUndefined();
+  });
+
+  test("a non-numeric count is not summarizable — checked on EVERY lane", () => {
+    // Per-lane rather than one representative: a `numbers()` call that dropped a field from its
+    // list would still pass a single-lane test, and that lane's count would then be published
+    // unvalidated.
+    for (const field of [
+      "prsActive",
+      "prsMerged",
+      "reviews",
+      "ticketsOpened",
+      "incidents",
+      "messages",
+    ] as const) {
+      const counts = {
+        prsActive: 1,
+        prsMerged: 1,
+        reviews: 1,
+        ticketsOpened: 1,
+        incidents: 1,
+        messages: 61,
+        [field]: "1",
+      };
+      expect(summarizeBrief("agents.standup", standupBrief({ counts }))).toBeUndefined();
+    }
+  });
+
+  test("a missing or non-numeric threadCount is not summarizable", () => {
+    expect(
+      summarizeBrief("agents.standup", standupBrief({ threadCount: undefined })),
+    ).toBeUndefined();
+    expect(summarizeBrief("agents.standup", standupBrief({ threadCount: "7" }))).toBeUndefined();
+  });
+
+  test("a non-array lane is not summarizable — checked on EVERY lane", () => {
+    for (const field of [
+      "prsActive",
+      "prsMerged",
+      "reviews",
+      "ticketsOpened",
+      "incidents",
+      "messages",
+    ] as const) {
+      expect(
+        summarizeBrief("agents.standup", standupBrief({ [field]: { id: "x" } })),
+      ).toBeUndefined();
+    }
+  });
+
+  test("a count BELOW its own listed length is a brief contradicting itself", () => {
+    // The cap makes a listed array SHORTER than its count, never longer. Digesting the other way
+    // round would publish a number the entry list visibly disproves.
+    expect(
+      summarizeBrief(
+        "agents.standup",
+        standupBrief({
+          messages: [{ id: "slack:1" }, { id: "slack:2" }, { id: "slack:3" }],
+          counts: {
+            prsActive: 1,
+            prsMerged: 1,
+            reviews: 1,
+            ticketsOpened: 1,
+            incidents: 1,
+            messages: 2,
+          },
+        }),
+      ),
+    ).toBeUndefined();
+  });
+
+  test("a count EQUAL to its listed length is fine — the guard is strict, not off-by-one", () => {
+    const s = summarizeBrief(
+      "agents.standup",
+      standupBrief({
+        messages: [{ id: "slack:C1:1.0" }, { id: "slack:C1:2.0" }],
+        counts: {
+          prsActive: 1,
+          prsMerged: 1,
+          reviews: 1,
+          ticketsOpened: 1,
+          incidents: 1,
+          messages: 2,
+        },
+      }),
+    );
+    expect(s?.metrics["messages"]).toBe(2);
+  });
+
+  test("an entry with a missing or non-string id is not summarizable", () => {
+    expect(
+      summarizeBrief("agents.standup", standupBrief({ prsActive: [{ id: 901 }] })),
+    ).toBeUndefined();
+    expect(summarizeBrief("agents.standup", standupBrief({ prsActive: [{}] }))).toBeUndefined();
+    expect(
+      summarizeBrief("agents.standup", standupBrief({ prsActive: ["not-an-object"] })),
+    ).toBeUndefined();
+  });
+
+  test("an entirely empty day summarizes to no keys and all-zero metrics", () => {
+    // Not the same as "not summarizable": a quiet day is a real, diffable observation, and
+    // returning `undefined` here would report it as `not summarizable` in the digest.
+    const s = summarizeBrief(
+      "agents.standup",
+      standupBrief({
+        prsActive: [],
+        prsMerged: [],
+        reviews: [],
+        ticketsOpened: [],
+        incidents: [],
+        messages: [],
+        counts: {
+          prsActive: 0,
+          prsMerged: 0,
+          reviews: 0,
+          ticketsOpened: 0,
+          incidents: 0,
+          messages: 0,
+        },
+        threadCount: 0,
+      }),
+    );
+    expect(s).toBeDefined();
+    expect(s?.keys).toEqual([]);
+    expect(s?.metrics).toEqual({
+      prsActive: 0,
+      prsMerged: 0,
+      reviews: 0,
+      ticketsOpened: 0,
+      incidents: 0,
+      messages: 0,
+      threadCount: 0,
+    });
+  });
+
+  test("two standups differing by one message diff as changed", () => {
+    // The end-to-end point of the extractor: `compareSummaries` must see the movement.
+    const a = summarizeBrief("agents.standup", standupBrief());
+    const b = summarizeBrief(
+      "agents.standup",
+      standupBrief({
+        messages: [{ id: "slack:C1:1.0" }, { id: "slack:C1:2.0" }, { id: "slack:C1:3.0" }],
+        counts: {
+          prsActive: 1,
+          prsMerged: 1,
+          reviews: 1,
+          ticketsOpened: 1,
+          incidents: 1,
+          messages: 62,
+        },
+      }),
+    );
+    if (a === undefined || b === undefined) throw new Error("both summaries must be defined");
+    const d = compareSummaries(a, b, 1);
+    expect(d.keysAppeared).toEqual(["slack:C1:3.0"]);
+    expect(d.keysResolved).toEqual([]);
+    expect(d.metrics["messages"]).toEqual({ before: 61, after: 62, delta: 1 });
+    // The unmoved lanes must be ABSENT rather than reported as zero-delta rows — otherwise every
+    // digest lists all seven metrics every night and the ones that moved stop standing out.
+    expect(Object.keys(d.metrics)).toEqual(["messages"]);
+  });
+});
