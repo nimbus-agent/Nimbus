@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1789235846042,
+  "lastUpdate": 1789236934414,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "86dd22066d14b31274131a854fea1e20bd7f711c",
-          "message": "Per-route body cap so /v1/clips accepts real articles, with a matching rate-limit tightening (#771) (#773)\n\nFixes #771.\n\n## The bug\n\n`POST /v1/clips` — the web-clipper ingest surface — shared the I13 write\ndispatcher's single `MAX_BODY_BYTES = 8 * 1024` cap. Any clip whose body\nexceeded 8 KiB (i.e. most real articles) was rejected with `413\npayload_too_large`, so **the web clipper could not perform its primary\nfunction**. Found by a user clipping an ordinary article.\n\n## Why it happened\n\nThe cap predates the clip route. It was introduced 2026-05-14 in\n`59c4fce1` — a commit with **zero** clip references — when the allowlist\nheld six small control-plane JSON routes (deploy annotations, 3× SCIM,\nadmin policy, Teams events). 8 KiB is a sensible anti-abuse bound for\nthose. Slice 9 later grew the allowlist 6 → 8 to add the clip routes,\ncorrectly reusing the dispatcher for auth/rate-limit/audit — but\n`/v1/clips`, the one route whose purpose is carrying article prose,\nsilently inherited a cap sized for config payloads.\n\nNothing suggests this was deliberate: the clipper design spec never\nspecifies a size limit, and the clip E2E round-tripped a **44-byte**\nbody, so it never approached the cap it was subject to.\n\n## The change\n\n**Per-route caps** — `ResolvedRoute` gains `maxBodyBytes`, set\nexplicitly by every resolver. Both enforcement sites (the\n`content-length` pre-check and the post-read `byteLength` check) use\n`route.maxBodyBytes`.\n\n| Route | Body cap | Rate limit |\n|---|---|---|\n| `POST /v1/clips` | **1 MiB** | **20/min** |\n| everything else (deployments, SCIM ×3, admin policy, Teams events,\n`clips/pair/confirm`) | 8 KiB | 60/min |\n\n**Matching rate-limit tightening.**\n`.claude/commands/nimbus-http-write-surface.md` requires that loosening\nthe cap come with \"justification in the PR and a corresponding\nrate-limit tightening\" — so `/v1/clips` drops to 20/min, cutting\nworst-case throughput from ~60 MiB/min to ~20 MiB/min.\n`HttpWriteRateLimiter.check(fp, max?)` applies the override as\n`Math.min(configured, override)`, so a route can only ever **tighten**,\nnever raise, and the `X-RateLimit-*` headers report the effective limit.\n\n**Playbook updated.** That file is a live checklist for route authors,\nand it documented the cap as globally 8 KiB. Its request-flow steps,\nnew-route checklist, and anti-pattern row now describe the per-route\nmodel, with `/v1/clips` recorded as the sanctioned exception.\n\nThe rejection path is otherwise unchanged: both sites still\n`recordRejection({ resultCode: 413, reason: \"payload_too_large\" })` and\nreturn the identical `jsonResponse`. Only the threshold became\nper-route.\n\n## Honest note on auth ordering\n\nA comment at the constants now records something a review caught:\n`checkAuth` returns a constant fingerprint for `clipIngest` **without\nverifying the token** — verification happens in `runClipIngestRoute`,\ni.e. *after* `parseBody`. So an unauthenticated loopback caller can make\nthe gateway buffer and parse up to 1 MiB before any token check. That is\nacceptable at this size on a loopback-only, owner-paired surface, and 1\nMiB is well short of needing streaming — but it is documented rather\nthan assumed away.\n\n**Follow-up (deliberately not in this PR):** verify the clip token\nbefore `parseBody`, which would also replace the shared constant\n`\"clip\"` bucket with per-token limiting. It touches `checkAuth` ordering\nand carries its own regression risk on a security path.\n\n## Verification\n\n- 205 pass / 0 fail across `http-write-routes.test.ts`,\n`security-invariants.test.ts`, and `clips/` (baseline 201). Typecheck\nand lint clean.\n- New tests: a clip over 8 KiB now succeeds (**red before this fix**);\nthe 1 MiB boundary is pinned exactly (1 MiB → 200, 1 MiB + 1 → 413); a\ncontrol-plane route still rejects at 8 KiB; `pair/confirm` still rejects\nat 8 KiB; and 20-vs-60/min is asserted per route, proving the tightening\nis real and didn't leak globally.\n- **No existing assertion was weakened.** Nothing encoded a uniform cap;\nthe pre-existing SCIM `ReadableStream` 8 KiB test now serves as the\ncontrol-plane guard, unmodified. One assertion was corrected\ndeliberately: a clip 413 now reports `X-RateLimit-Limit: 20`.\n- The clip E2E now round-trips a realistically-sized (~40 KiB) article\nthrough a real server and verifies via FTS that the **whole** body was\nindexed — the regression guard that would have caught this originally.\n\n## Downstream\n\nThe extension side is already fixed and merged\n(`nimbus-agent/nimbus-web-clipper#17`): it now treats 413 as a terminal\n`payload_too_large` instead of a retryable `server_error`, which had\nqueued oversized clips and retried them forever behind a misleading\n\"Saved offline — will sync when Nimbus is back.\" That fix is correct\nindependently of this one — retrying a 413 is always pointless.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n---------\n\nCo-authored-by: Claude Opus 4.8 (1M context) <noreply@anthropic.com>",
-          "timestamp": "2026-07-19T18:13:51+03:00",
-          "tree_id": "14bca438b411df7d560dedbc4bc604c3c8aa323d",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/86dd22066d14b31274131a854fea1e20bd7f711c"
-        },
-        "date": 1784474741006,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 300.4653618999979,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 300.97053289999315,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 332.9538792999927,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "306811640+nimbus-release-bot[bot]@users.noreply.github.com",
+            "name": "nimbus-release-bot[bot]",
+            "username": "nimbus-release-bot[bot]"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "a80670679e197e11e32b2c624436bef9b89a7159",
+          "message": "chore: release main (#1504)\n\n:robot: I have created a release *beep* *boop*\n---\n\n\n<details><summary>7.21.0</summary>\n\n##\n[7.21.0](https://github.com/nimbus-agent/Nimbus/compare/v7.20.1...v7.21.0)\n(2026-09-12)\n\n\n### Features\n\n* **agents:** nimbus standup — the sixteenth built-in agent\n([#1502](https://github.com/nimbus-agent/Nimbus/issues/1502))\n([3101702](https://github.com/nimbus-agent/Nimbus/commit/310170239b4a9ed4be1cb9092223dc1d64cc3cd7))\n\n\n### Bug Fixes\n\n* **platform:** load a full SQLite on macOS so sqlite-vec can load\n([#1503](https://github.com/nimbus-agent/Nimbus/issues/1503))\n([107bf08](https://github.com/nimbus-agent/Nimbus/commit/107bf084021bfc7dbd08fae0e42d3d2690f5b7ed))\n</details>\n\n---\nThis PR was generated with [Release\nPlease](https://github.com/googleapis/release-please). See\n[documentation](https://github.com/googleapis/release-please#release-please).\n\nCo-authored-by: nimbus-release-bot[bot] <306811640+nimbus-release-bot[bot]@users.noreply.github.com>",
+          "timestamp": "2026-09-12T18:02:17Z",
+          "tree_id": "c5de1b5be1315814b2d9dc68760838eccd1ac1a2",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/a80670679e197e11e32b2c624436bef9b89a7159"
+        },
+        "date": 1789236930655,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 327.1389665000006,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 330.4487705000014,
             "unit": "ms"
           }
         ]
