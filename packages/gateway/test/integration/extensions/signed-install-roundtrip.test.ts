@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -16,11 +16,13 @@ import {
   signManifest,
 } from "../../../src/extensions/verify-signature.ts";
 import { MockVault } from "../../../src/vault/mock.ts";
-import { setupFreshExtensionDb } from "../../fixtures/extension.ts";
+import { cleanupExtensionTestDirs, setupFreshExtensionDb } from "../../fixtures/extension.ts";
 
 const silentLogger = pino({ level: "silent" });
 
 describe("Signed install round-trip integration (T2 PR 2 Task 22)", () => {
+  afterEach(cleanupExtensionTestDirs);
+
   test("keygen → sign → install --publisher-key → startup verify → list shows publisher", async () => {
     signatureDisabledRegistry.reset();
     const { db, extensionsDir } = setupFreshExtensionDb();

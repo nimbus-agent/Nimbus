@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import pino from "pino";
 import {
+  cleanupExtensionTestDirs,
   setupFreshExtensionDb,
   stageSignedExtensionOnDisk,
 } from "../../test/fixtures/extension.ts";
@@ -18,6 +19,8 @@ import { upsertGraphEntity, upsertGraphRelation } from "../graph/relationship-gr
 import { LocalIndex } from "../index/local-index.ts";
 import { MockVault } from "../vault/mock.ts";
 import { AutomationRpcError, dispatchAutomationRpc } from "./automation-rpc.ts";
+
+afterEach(cleanupExtensionTestDirs);
 
 function seededDb(): Database {
   const db = new Database(":memory:");
