@@ -108,14 +108,36 @@ dishonesty in place.
 
 ### 4.1 Worker: admission control
 
-`EmbeddingWorkerCore` gains a permit lane. Backfill acquires one permit per item — the
-existing `backfillConcurrency` becomes the permit count rather than a bare
-`mapWithConcurrency` argument. An arriving `embed_texts` raises an interactive flag:
-backfill stops acquiring new permits, in-flight ones drain, the query embeds, permits
-resume.
+A permit gate mediates every embedding job in the worker. `backfillConcurrency` becomes the
+permit count rather than a bare `mapWithConcurrency` argument. An arriving `embed_texts`
+raises an interactive flag: background work stops acquiring **new** permits and the query
+is admitted ahead of everything queued.
+
+**It is INJECTED, not reached for.** `SqliteEmbeddingPipeline` has no visibility into worker
+IPC — it cannot know an `embed_texts` arrived. So the gate is constructed in
+`EmbeddingWorkerCore` and passed down through `SqliteEmbeddingPipelineOptions`; `embedBatch`
+acquires a background permit per item and releases it in a `finally`. A pipeline built
+without a gate behaves exactly as today, which keeps every non-worker construction site
+(`create-routing-runtime.ts`, `ipc/index-reembed-rpc.ts`) unchanged.
 
 **It lives in the worker, not the bridge**, because the bridge cannot see the backfill
 at all — the loop runs inside the worker realm, reached only from `runInit`.
+
+**Both background producers are gated, not just backfill.** `embed_item` is the second one
+and it is easy to miss: `scheduleItemEmbedding` fires from `index/item-store.ts` on **every
+item upsert**, wired through `sync/scheduler.ts`, so a first sync of a large mailbox posts
+one message per item. Its `embedChain` is SERIAL — a single promise chain, concurrency 1 —
+so the hazard is not a flood running in parallel but **one continuously-occupied inference
+slot for the whole duration of the sync**, which OUTLIVES the backfill that this section is
+named for. Gating `backfillAll` alone would fix the cold-start window and leave a permanent
+one behind it.
+
+**Interactive admission does NOT wait for a full drain.** The obvious implementation — block
+the query until `inFlightBackground` reaches zero — makes its latency the time for all N
+in-flight items to finish, which at `backfillConcurrency = 8` is roughly 8× the intended
+bound and defeats the purpose. Interactive work instead jumps the QUEUE: no new background
+permit is granted while it is pending, and it runs alongside whatever is already in flight.
+The bound is then one item's remaining time, not eight items' total.
 
 **It stays separate from `BackfillGate`** (`packages/gateway/src/embedding/backfill-gate.ts`).
 That gate answers *may backfill proceed at all* (battery); this one answers *should it
@@ -131,10 +153,16 @@ rather than eight. The measurement determines the residual latency, not the desi
 
 ### 4.2 Error contract: kill the false green
 
-`embedQuery`'s timeout arm throws a typed error carrying readiness instead of resolving
-`null`, mirroring the `warming` arm directly above it. The budget drops from 60 s to a
-few seconds: under contention the correct behaviour is to *fail to BM25 fast and say
-so*, not to make a person wait.
+`embedQuery`'s timeout arm throws `EmbeddingTimeoutError` — carrying readiness, defined
+beside `EmbeddingWarmingError` in `embedding-readiness.ts` with the same brand-check guard —
+instead of resolving `null`. RPC code **-32022**, verified free (`EMBEDDING_WARMING_RPC_CODE`
+is -32021).
+
+The budget drops from 60 s to **5 s** by default, overridable with
+`NIMBUS_EMBEDDING_QUERY_TIMEOUT_MS` for the same reason `NIMBUS_EMBEDDING_INIT_TIMEOUT_MS`
+exists. Under contention the correct behaviour is to *fail to BM25 fast and say so*, not to
+make a person wait. A `[embedding] query_timeout_ms` TOML key is **deferred** — the env
+override covers diagnosis, and no user has needed to tune this; add it when one does.
 
 The stacked bounds become deliberately ordered, innermost tightest — embed budget well
 under the CLI's 30 s — so the inner bound is the one that fires and the user gets a
@@ -160,10 +188,25 @@ anything that could drop it. This is deliberately the shape invariant **I31** us
 brief disclosures, for the same reason: a disclosure a renderer must remember to add is
 a disclosure that will eventually go missing.
 
-**Coverage is read, not recomputed.** `nimbus index health` already computes
-per-connector embedding coverage; this block must agree with it rather than derive a
-second number that can disagree. The shared derivation is the deliverable, not the two
-call sites.
+**Coverage must NOT be computed per query.** `nimbus index health`'s figure comes from
+`db/index-health.ts`'s `readPerService`, a `LEFT JOIN` over `SELECT DISTINCT item_id FROM
+embedding_chunk` grouped across the whole `item` table. That is the right shape for a report
+run on demand and the wrong shape for something on the path of every search: it is a full
+scan of both tables, paid on a keystroke, against an index this design assumes is large.
+
+So the per-query figure comes from the **O(1) in-memory counter that already exists** —
+`EmbeddingWorkerBridge.getBackfillProgress()`, fed by `backfill_progress` messages. When no
+backfill is running the block reports coverage as **absent** rather than paying for a scan
+to say "probably complete".
+
+**The two numbers are therefore different by construction, and the disclosure says so.**
+`index health` stays the authoritative full computation; the search-time figure is a live
+progress counter that can lag it and does not account for items that failed to embed. Naming
+one as authoritative and the other as an indicator is honest; quietly presenting a cheap
+approximation as the real coverage would not be. Rejected: caching `readPerService` behind a
+TTL — it buys a number that is neither live nor authoritative, and adds an invalidation bug
+surface for a figure that only matters while backfill is running, which is exactly when the
+free counter is available.
 
 ### 4.4 Wire compatibility — opt-in, not a break
 
@@ -181,30 +224,59 @@ the currently published version. Changing the shape unconditionally fails CLAUDE
 breaking-change test — *what must an existing user change to keep working?* — with the
 strongest possible answer: upgrade their client or the call stops working entirely.
 
-So the envelope is **opt-in**. A request without the flag gets a byte-identical response
-to today; a request with it gets the envelope. Every first-party surface passes it.
+**The split is at the IPC boundary, not inside the gateway.** `searchRankedAsync` ALWAYS
+returns `{ items, retrieval }` to its in-process callers; only `rpcSearchRanked` unwraps to
+a bare array unless the request passes `envelope: true`. Every gateway subsystem therefore
+gets the disclosure whether or not it asked, and the opt-in exists solely to keep the
+published wire contract intact.
 
-**Stated cost, not softened:** this makes the disclosure structural *for callers who
-ask*, which is weaker than I31's guarantee. The alternative is burning a major on a
-satellite contract for a non-security disclosure, which is the worse trade. Revisit if
-the client contract breaks for an unrelated reason.
+That recovers most of what an opt-in would otherwise cost. The residual is narrow and real:
+**a third-party IPC client that never passes the flag still receives undisclosed partial
+results.** First-party surfaces all pass it. The alternative is burning a major on a
+satellite contract for a non-security disclosure, which is the worse trade. Revisit if the
+client contract breaks for an unrelated reason.
 
 ### 4.5 Consumers — enumerated
 
-"Every consumer" is only meaningful as a list. Derived, not assumed:
+"Every consumer" is only meaningful as an enumeration of CALL SITES. An earlier draft of this
+section listed capabilities instead — "agent briefs", "`nimbus ask`" — which reads like a list
+and is not one; it named no file and would not have caught an omission. Derived with
+`grep -rn searchRankedAsync`:
 
-| Surface | Status |
+| Call site | Note |
 |---|---|
-| `nimbus search` (CLI) | in scope — the surface that fails today |
-| `nimbus ask` | in scope — same engine path |
-| MCP server index tools (`packages/cli/src/mcp/adapter.ts`) | in scope — rides `wrapToolOutput` (I11) |
-| Agent briefs | in scope — retrieval-backed |
-| `nimbus doctor` / `nimbus index health` | in scope — must agree, per §4.3 |
-| HTTP API | **no route exists** — verified, there is no `/v1/search` |
-| Tauri renderer | **not exposed** — the `index.` namespace allows only `index.metrics` (I7) |
+| `index/local-index.ts` | the definition — constructs the block (§4.3) |
+| `ipc/server/inline-handlers.ts` | `rpcSearchRanked` — unwraps unless `envelope: true` (§4.4) |
+| `engine/run-ask.ts` | `nimbus ask` |
+| `engine/agent.ts` | the Mastra engine agent's index tool |
+| `briefs/brief-index-search.ts` | agent briefs |
+| `toolgen/toolgen-grounding.ts` | `api_endpoint` grounding for `nimbus tool create` |
 
-The last two rows are the reason the blast radius is smaller than "every consumer"
-first sounds.
+Downstream of `rpcSearchRanked`: `nimbus search` (CLI) and the MCP adapter
+(`packages/cli/src/mcp/adapter.ts`, rides `wrapToolOutput`, I11). `nimbus doctor` /
+`nimbus index health` are not callers — they keep their own authoritative computation and
+this design deliberately does not converge them (§4.3).
+
+**Out of reach, verified rather than assumed:** there is **no HTTP route** — no `/v1/search`
+of any kind — and the Tauri renderer cannot reach it either, since the `index.` namespace
+allows only `index.metrics` (I7). Those two are why the blast radius is smaller than "every
+consumer" first sounds.
+
+**CLI output contract.** `nimbus search` currently does
+`console.log(JSON.stringify(rows, null, 2))` on a bare array, and the command is meant to
+pipe: `nimbus search q | jq '.[0]'`. Printing `{ items, retrieval }` to stdout would break
+every such script. So the CLI passes `envelope: true`, prints **`items` as an array on
+stdout, unchanged**, and writes the disclosure to **stderr**:
+
+```text
+[stderr] note: semantic ranking unavailable (timed out under load) — showing keyword-only results.
+[stderr] note: embedding coverage 8,400/60,000 items. Run 'nimbus index health' for detail.
+[stdout] [ { "id": "…", "title": "…" }, … ]
+```
+
+A `--json-envelope` flag putting the whole structure on stdout is **deferred**: no consumer
+has asked for it, gateway-internal callers already get the envelope by default (§4.4), and
+the MCP adapter reaches it through IPC rather than the CLI. Add it on demand.
 
 ## 5. Rejected alternatives
 
@@ -240,6 +312,19 @@ first sounds.
 - **Unmeasured:** whether ONNX inference blocks the worker's JS thread or is offloaded.
   Resolved by the §6 reproduction before any fix lands. Per §4.1 it changes the residual
   latency, not the design shape — but the spec should not pretend it is known.
+
+  **This survived a review that claimed to close it.** The 2026-09-12 review's § 5.1 offers
+  a "Finding" that tokenization runs in JS and tensor math on native threadpools, with a
+  latency bound of 50–250 ms. No measurement backs it — it is the same inference this
+  residual already records, restated with more confidence and unsourced numbers (its § 2.3
+  likewise asserts a 20–150 ms scan penalty). Adopting it would convert an honest unknown
+  into a false attestation, which is the specific failure this repo keeps re-learning. The
+  reproduction produces the number; until then the entry stands.
+
+- **Deferred, with reasons** (all from the same review): a `[embedding] query_timeout_ms`
+  TOML key (§4.2 — the env override covers diagnosis), a `--json-envelope` CLI flag (§4.5 —
+  no consumer), and converging `nimbus index health` onto the search-time coverage figure
+  (§4.3 — they are deliberately different numbers).
 - **The disclosure is opt-in** (§4.4), so a third-party client that does not pass the
   flag still receives undisclosed partial results. Stated, not designed away.
 - **The client-validator finding is version-pinned.** §4.4 was verified against
@@ -253,6 +338,19 @@ first sounds.
 ## 8. Scope
 
 No new security invariant — this is not a structural defense, and inventing one would
-dilute the I-series. No schema migration. At most one new config key. Delivery splits
-along §4.1 / §4.2 / §4.3 + §4.5, each independently shippable, with §6's reproduction
-landing before all of them.
+dilute the I-series. No schema migration. **No new config key** — the timeout takes an env
+override only, and the TOML key is deferred (§7).
+
+Delivery, three PRs, each independently shippable:
+
+1. **Reproduction + admission control** (§4.1) — the self-validating reproduction lands
+   FIRST and red-proves the starvation with a measured number, which also resolves §7's
+   open question. Then the gate, covering `backfillAll` **and** `embed_item`.
+2. **Error contract + timeout ordering** (§4.2) — `EmbeddingTimeoutError`, 60 s → 5 s, and
+   the `*BestEffort` wrappers recording what they swallow.
+3. **Disclosure + consumers** (§4.3–§4.5) — the envelope, the IPC unwrap, and the six call
+   sites plus the CLI stdout/stderr contract.
+
+**Neither this spec nor its review reaches `main`.** Both are deleted from the branch before
+PR 1 opens; squash takes the net tree diff, so nothing lands. Anything durable goes to
+`docs/architecture.md` first.
