@@ -309,17 +309,33 @@ the MCP adapter reaches it through IPC rather than the CLI. Add it on demand.
 
 ## 7. Open questions and residuals
 
-- **Unmeasured:** whether ONNX inference blocks the worker's JS thread or is offloaded.
-  Resolved by the §6 reproduction before any fix lands. Per §4.1 it changes the residual
-  latency, not the design shape — but the spec should not pretend it is known.
+- **Measured:** whether ONNX inference blocks the worker's JS thread or is offloaded, via
+  `packages/gateway/test/integration/embedding/query-under-backfill.harness.test.ts`
+  (`NIMBUS_RUN_EMBED_HARNESS=1`). Machine: Windows 11, Intel Core i9-14900F (32 logical
+  cores), Bun 1.3.14. Across four consecutive runs of the committed harness (5,000 seeded
+  items, `backfillConcurrency: 8`, query issued 2 s into the backfill), a loaded query embed
+  took 7–9 ms against an idle baseline of 2–3 ms on the same machine — ratios of 3.0×, 2.9×,
+  4.6×, 4.8×. Absolute latency stays single-digit-milliseconds even under load, which
+  supports "largely offloaded" over "blocks the thread": a fully-synchronous WASM fallback
+  would show seconds, not milliseconds, of queueing behind eight in-flight items.
 
-  **This survived a review that claimed to close it.** The 2026-09-12 review's § 5.1 offers
-  a "Finding" that tokenization runs in JS and tensor math on native threadpools, with a
-  latency bound of 50–250 ms. No measurement backs it — it is the same inference this
-  residual already records, restated with more confidence and unsourced numbers (its § 2.3
-  likewise asserts a 20–150 ms scan penalty). Adopting it would convert an honest unknown
-  into a false attestation, which is the specific failure this repo keeps re-learning. The
-  reproduction produces the number; until then the entry stands.
+  **The margin is thin and machine-dependent — this is not a clean confirmation.** The
+  very first run (before a temp-dir-cleanup ordering bugfix described in the harness's PR)
+  measured 2 ms vs 1 ms, a 1.5× ratio *below* the harness's own 2× sanity bar. A separate,
+  uncommitted diagnostic — this process's CPU affinity pinned to 4 cores via .NET's
+  `ProcessorAffinity`, approximating a modest laptop rather than this workstation's 32 cores
+  — measured 5 ms vs 5 ms, a 1.0× ratio, i.e. no observable contention even with the core
+  count much closer to `backfillConcurrency`. At these millisecond magnitudes the ratio is
+  noisy: six trials on one machine ranged 1.0×–4.8×, straddling the 2× bar rather than
+  sitting cleanly above it. None of the six showed the seconds-scale delay a genuinely
+  blocking inference call would produce, which is the load-bearing part of the answer — but
+  the number was NOT reliably reproduced at high confidence, and this harness's 5,000 items
+  over ~44 s of backfill does not attempt to reproduce issue #1396's scale (60,000 items,
+  hours). §4.1's admission-control design is unaffected either way, per its own "robust to
+  the one thing not yet measured" argument — this residual narrows the blocking-vs-offloaded
+  question without fully closing it, and a second measurement on different hardware (fewer
+  cores, or a machine using the pure-WASM ONNX backend) would be worth taking before treating
+  "offloaded" as settled.
 
 - **Deferred, with reasons** (all from the same review): a `[embedding] query_timeout_ms`
   TOML key (§4.2 — the env override covers diagnosis), a `--json-envelope` CLI flag (§4.5 —
