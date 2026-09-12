@@ -370,7 +370,7 @@ either package is the first live exercise.
 | Secret | Repo | Owner | Notes |
 | --- | --- | --- | --- |
 | `VSCE_PAT` | `nimbus-vscode` | @AsafGolombek | Azure DevOps PAT, **org-scoped to `asafgolombek`** (confirmed in the ADO portal 2026-07-22, nimbus-vscode#34) — the 2026-12-01 *global*-PAT decommission does **not** apply, and no Entra/OIDC migration is needed. ⚠️ The binding date is the token's **own expiry, 2026-09-20**: publishing breaks then unless it is regenerated, which is routine because it is org-scoped. Marketplace trusted publishing is unshipped (microsoft/vsmarketplace#1422). |
-| `OVSX_PAT` | `nimbus-vscode` | @AsafGolombek | Open VSX token. No OIDC path exists (eclipse-openvsx/openvsx#1534); rotation is the only mitigation. |
+| `OVSX_PAT` | `nimbus-vscode` | @AsafGolombek | Open VSX token. **Retireable once open-vsx.org upgrades** (re-checked 2026-09-12): Trusted Publishing landed in server v1.2.0 (eclipse-openvsx/openvsx#1534, COMPLETED 2026-08-21) and in `ovsx` CLI v1.2.0, but `https://open-vsx.org/api/version` still reports `v1.1.2`, so the registration UI does not exist on the instance we publish to and switching would break the next release. Trigger + migration steps: `docs/credential-hygiene.md`. Rotation on the 180-day age policy until then. |
 
 Both are probed weekly for liveness by `nimbus-vscode`'s own `secret-health.yml`
 ([PR #35](https://github.com/nimbus-agent/nimbus-vscode/pull/35), merged

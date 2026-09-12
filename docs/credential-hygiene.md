@@ -126,6 +126,36 @@ token renewal.
 
 Revisit when Marketplace **Trusted Publishing** ships
 ([microsoft/vsmarketplace#1422](https://github.com/microsoft/vsmarketplace/issues/1422),
-still open as of 2026-08-12). `OVSX_PAT` has no OIDC path either and never will
-until [eclipse-openvsx/openvsx#1534](https://github.com/eclipse-openvsx/openvsx/issues/1534)
-lands, so rotation remains the only mitigation for the Open VSX half regardless.
+still open as of 2026-09-12, though actively discussed — 9 comments, last touched
+2026-09-10).
+
+**The Open VSX half is no longer indefinite (re-checked 2026-09-12).** This paragraph used to say
+`OVSX_PAT` "has no OIDC path either and never will until
+[eclipse-openvsx/openvsx#1534](https://github.com/eclipse-openvsx/openvsx/issues/1534) lands".
+That issue **closed COMPLETED on 2026-08-21** — nine days after this section was written — and
+Trusted Publishing shipped in server **v1.2.0** (PR
+[#2000](https://github.com/eclipse-openvsx/openvsx/pull/2000), commit `d5a01c83`), with CLI support
+in `ovsx` v1.2.0 (`cli/src/oidc.ts`, `cli/src/trusted-publishing.ts`). Usage is a `--trusted-publishing`
+flag plus the `id-token: write` permission `publish.yml` already grants.
+
+**It is nevertheless NOT actionable yet, for a reason that is easy to miss: merged upstream is not
+deployed here.** `https://open-vsx.org/api/version` reports **`v1.1.2`** — the release immediately
+BEFORE the feature (v1.1.2 shipped 2026-08-20, the merge landed 2026-08-21), confirmed by
+`gh api repos/eclipse-openvsx/openvsx/compare/v1.1.1...v1.1.2` containing no such commit. So the
+trusted-publisher registration UI does not exist on the instance we publish to, and switching
+`publish.yml` today would fail the next release rather than remove a secret.
+
+**The trigger is therefore a one-line check, not more research:**
+
+```bash
+curl -s https://open-vsx.org/api/version   # retire OVSX_PAT once this reports v1.2.0 or later
+```
+
+When it does, the migration is small and is written down here so it does not need re-deriving:
+register the workflow under [trusted publishers](https://open-vsx.org/user-settings/trusted-publishers)
+(namespace-owner action, web UI only), add `--trusted-publishing` to the `ovsx publish` call, then
+**remove the `OVSX_PAT` secret** — `--pat`/`OVSX_PAT` takes PRECEDENCE over trusted publishing, so
+leaving it in place silently keeps the old path and the migration looks done while nothing changed.
+Follow the configure-then-revoke ordering at the top of this page: prove the first trusted publish
+before deleting the token. Until then rotation on the 180-day age policy remains the only
+mitigation for this half.
