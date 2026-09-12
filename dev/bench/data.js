@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1789219211113,
+  "lastUpdate": 1789221165410,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "b529258f393b1eba4696439d641e4b662a295990",
-          "message": "docs: prune shipped plans/specs + refresh stale status/version surfaces (#766)\n\n## What\n\nAn audit-verified documentation & tooling staleness sweep. The automated\ndrift gates (`doc-refs`, `status-drift`, `readme-cli`) were already\ngreen, so this targets **free-text staleness** the audits don't pin plus\n**obsolete planning artifacts**.\n\n### Deletions — 21 obsolete plan/spec docs (`docs/superpowers/`)\nAll describe shipped work; `docs/CHANGELOG.md` remains the historical\nrecord. Removed: clip-list-delete, web-clipper,\nvscode-extension-extraction, slice-9 apple-mail / gitops-ml / workday\nconnectors, dedup-wave-c (each design + plan + reviews).\n\n**Kept** the still-load-bearing forward designs (would have orphaned\nlive references):\n- `phase7-plus-resequence-design` — the current sequencing anchor,\nreferenced by 5 active specs + roadmap.\n- `true-coverage-program-design` (+ review) — linked from `coverage.md`;\nsub-projects C/D unshipped.\n\n### Status/version refresh (`v0.13.1` → `v0.22.0`, the real release)\n- `CLAUDE.md` + `GEMINI.md` status lines.\n- `docs/roadmap.md` header: last-updated → 2026-07-18, added\npost-Phase-6 deliveries (web clipper/I30, sdk+client extractions, clip\nCLI).\n\n### Factual fixes\n- **`architecture.md` + `nimbus-http-write-surface` skill:**\n`WRITE_ROUTE_ALLOWLIST` **6 → 8** routes — the two web-clip routes were\nmissing (verified against `http-write-routes.ts`).\n- **`nimbus-security-invariants` skill:** I29 no longer labelled\n\"(latest)\"; added the **I30** section (current highest invariant).\n- **`nimbus-commands` skill:** removed the non-existent\n`test:coverage:sdk` gate.\n- **`nimbus-testing` skill:** `MockVault` is gateway-internal, not\n`@nimbus-dev/sdk`.\n- **`nimbus-architecture` skill:** package tree drops the extracted\n`packages/sdk`, adds `admin-console` + `github-actions`.\n- **`nimbus-tool-output-envelope` + `nimbus-file-map` skills:** `I1–I29`\n→ `I1–I30`.\n- **`nimbus-coverage-floor` + `nimbus-preflight-guard` agents:** ratchet\nglob `packages/{gateway,cli,sdk,client}` →\n`{gateway,cli,mcp-connectors}` (sdk/client extracted).\n- **`.github/workflows/ci.yml`:** dropped the dead `packages/sdk` path\nalternation in the changed-path detector + corrected a stale shared-deps\ncomment.\n\n## Not changed (verified already current)\n`README.md`, `cli-reference.md` (all recent commands present),\n`scripts/` (all `packages/sdk`/`client` refs are intentional\npost-extraction guards), and 14 skills / 2 agents that carried no stale\nclaims.\n\n## Verification\n`audit:doc-refs` (603/603 resolve) · `audit:status-drift` OK ·\n`audit:readme-cli` (31/31) · `lychee --offline` (0 errors, 528 links) ·\n`markdownlint-cli2` (0 errors, 74 files) · `ci.yml` valid YAML.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nCo-authored-by: Claude Opus 4.8 (1M context) <noreply@anthropic.com>",
-          "timestamp": "2026-07-18T16:56:22+03:00",
-          "tree_id": "6d57cc4ebe5d8ebe8f57c8736cdac1bc2e8c4243",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/b529258f393b1eba4696439d641e4b662a295990"
-        },
-        "date": 1784383581278,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 284.2824865999977,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 285.21115115000174,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 326.9385631499914,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "1ac89f6808c5ed51f39fb8ea5d9ca8c42d3afc62",
+          "message": "fix(search): stop the vector KNN re-running once per chunk row (#1500)\n\n## The defect\n\nSemantic search was **quadratic in index size**. `vectorSearchChunks`\njoined the sqlite-vec KNN subquery to `embedding_chunk` on `vec_rowid`,\nand SQLite put the vec0 virtual table in the **innermost** loop, driven\nby `embedding_chunk` filtered on `model` — non-selective when you have\none local embedder, so it matches every row. The brute-force KNN\ntherefore re-executed once per chunk.\n\nMeasured at idle, with **zero concurrent writers**:\n\n| Items | `searchRankedAsync`, end to end |\n|---|---|\n| 4,000 | 26.7 s |\n| 8,000 | 69.9 s |\n\nEmbed time stayed under 6 ms throughout. Essentially all of it was SQL.\n\nThis is what produced `IPC request timed out after 30000ms:\nindex.searchRanked` in #1396. It is **not** a cold-start problem:\n`nimbus search` has been failing by construction on any install past a\nfew thousand indexed items. `memory/session-memory-store.ts` carried the\nidentical defect.\n\n## The fix\n\n`CROSS JOIN` to pin join order, plus schema **V62** adding\n`idx_embedding_chunk_vec_rowid` and `idx_session_memory_vec_rowid`. The\nplan inverts:\n\n```text\nbefore:  SEARCH ec USING INDEX idx_embedding_chunk_model      <- drives\n         SCAN vec_items_384 VIRTUAL TABLE                     <- inner, re-run per row\nafter:   SCAN vec_items_384 VIRTUAL TABLE                     <- drives, scanned once\n         SEARCH ec USING INDEX idx_embedding_chunk_vec_rowid\n```\n\n**The two halves are not symmetric**, and the first draft of this PR\nclaimed they were. The index alone changes nothing — same plan, 49.3 s\nto 83.4 s. The `CROSS JOIN` alone removes the quadratic term outright;\nwhat the index removes is the residual `k x N` range scan the now-outer\nloop leaves behind, which is why the gap widens with `k`. At 20,000\nitems: 33.3 ms / 432.4 ms at limits 20 / 500 without the index, against\n16.9 ms / 22.1 ms with it.\n\n**Result:** 69,896 ms to 28 ms end to end at 8,000 items. Growth is\nlinear — x8.17 for an x8 corpus, where quadratic would be x64.\nSession-memory recall: 42,424 ms to 27.8 ms.\n\n## Ordering is preserved, including ties\n\nChanging join order changed tie order — same rows, tie groups reversed.\nThat is user-visible through three order-dependent consumers:\n`bestVectorRanksByItem` derives rank from array index and feeds the RRF\nscore, `firstChunkByItem` picks which snippet is shown, and\n`dual-search`'s sort-then-slice decides which row survives at the limit\nboundary.\n\n`ORDER BY ..., vec_rowid ASC` restores the pre-fix order exactly rather\nthan imposing a new one, and is a no-op on the pre-fix query, so the\nbaseline does not move. Verified against a tie-bearing fixture, and\nred-proved: removing only the tiebreak reds exactly the two tie cases.\n\nStated bound: pre-fix ties were really ordered by ascending\n`embedding_chunk.id`, which merely **coincides** with `vec_rowid`\nbecause both writers allocate `MAX(rowid)+1` inside one transaction. No\ncode path produces a layout that separates them; a hand-built database\ncould.\n\n## How this was found\n\nThe original diagnosis was wrong and two measurement tasks corrected it.\nThe first measured embedding contention under backfill at 7-9 ms against\n2-3 ms idle — real, but four orders of magnitude too small to explain a\n30-second timeout. The second measured the layer nobody had, and found\nthe cause at idle with no writers at all.\n\nBoth harnesses ship, opt-in via `NIMBUS_RUN_EMBED_HARNESS=1` and never\nrun in CI, alongside an `EXPLAIN QUERY PLAN` regression test. **The fix\nis a planner hint, not a property true by construction** — a SQLite\nupgrade could re-plan it, and that test is what stands in the way. It is\nred-proved: reverting `CROSS` to `INNER` fails exactly the two plan\ncases.\n\n## Not in this PR\n\n- **The priority gate** for backfill-vs-query contention, deferred with\nits measurement attached. 7-9 ms is immaterial beside a 26,700 ms SQL\ndefect, and it would have added a concurrency primitive inside the\nembedding worker for no user-visible gain.\n- **A typed embedding-timeout error and a retrieval-quality\ndisclosure**, both real honesty defects, split to a follow-up branch so\nthis fix is not delayed behind them.\n\n## Verification\n\nFull suite in the exact CI shape: **22,754 pass / 75 skip / 0 fail**\nacross 1,528 files. `preflight:fast` green; `verify:docker --full` green\non Linux, which is the authority for the coverage floor.\n\n## Residuals, stated\n\n- The 60,000-item scale is extrapolated, not measured. The largest\ncompleted run anywhere in this branch is 8,000; post-fix growth is\nlinear and the plan is size-stable, but it is extrapolation.\n- Plan assertions cover the 384-dim leg only. The 1536 leg shares one\nbuilder and one SQL string, so the property transfers by argument rather\nthan by assertion.\n- The V62 migration has not been run against a\nmulti-hundred-thousand-chunk production database.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nhttps://claude.ai/code/session_01JfjtCEdFCQR848FKP34HFC\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n## Summary by CodeRabbit\n\n- **Performance**\n- Improved semantic and session-memory search performance through\noptimized vector query execution and lookup indexing.\n- Reduced repeated scans, including during searches performed while\nembeddings are being backfilled.\n\n- **Search Quality**\n- Search results now use consistent ordering when matches have equal\nrelevance.\n\n- **Maintenance**\n  - Added an automatic database migration to schema version 62.\n\n- **Documentation**\n- Updated architecture, schema references, project status, and changelog\ndocumentation.\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>",
+          "timestamp": "2026-09-12T16:40:22+03:00",
+          "tree_id": "1b5e606f7c02adb8e6c652d7ee247f057e1296ac",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/1ac89f6808c5ed51f39fb8ea5d9ca8c42d3afc62"
+        },
+        "date": 1789221161678,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 325.2360549999947,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 328.57376240001287,
             "unit": "ms"
           }
         ]
