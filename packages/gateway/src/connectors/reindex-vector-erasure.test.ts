@@ -27,38 +27,28 @@ const VEC_AVAILABLE = vecAvailable();
 // than let a downstream check read a false, unearned pass). This is an
 // always-running (never skipIf'd) canary.
 //
-// Scoped to Linux CI after the canary's first real run (PR #1026): it fired
-// on `macos-15` because sqlite-vec does not currently load there — a CI
-// install/lockfile gap, NOT a platform limitation (index/sqlite-vec-load.ts
-// explicitly supports darwin via vec0.dylib; see the redaction-fix report for
-// the standalone follow-up). This repo's authoritative gate is Linux CI
-// (`audit:coverage-floor` is documented CI-Linux-authoritative in
-// CLAUDE.md), so the hard guarantee narrows to there: if sqlite-vec ever
-// stops loading on the platform that actually gates merges, the build must
-// go red. On any OTHER CI platform where it's unavailable today, failing
-// here would just be noise blocking merges on a separately-tracked infra gap
-// — so it stays LOUD (an stderr warning naming what silently didn't run)
-// rather than fatal. This is a deliberate narrowing of WHERE the guarantee is
-// enforced, not a weakening of WHETHER the absence gets observed.
-test("CI-Linux must have sqlite-vec available; other CI platforms warn instead of failing", () => {
-  const inCI = process.env["CI"] === "true";
-  if (!inCI) {
+// FATAL ON ALL THREE CI PLATFORMS. It was scoped to Linux from #1026 until the
+// macOS root cause was found, because it fired on `macos-15` and the note here
+// recorded that as "a CI install/lockfile gap". That diagnosis was WRONG:
+// `bun.lock` carries both darwin sqlite-vec binaries and always did. The real
+// cause is that Bun links Apple's system libsqlite3 on macOS, which has
+// extension loading compiled out, so `db.loadExtension()` — the call BOTH load
+// paths bottom out in — could never succeed until something called
+// `Database.setCustomSQLite()`, and nothing in the repo did. That is now
+// `platform/sqlite-runtime.ts`, called at every entry point, with the Homebrew
+// library installed by `.github/actions/setup-nimbus-ci`.
+//
+// So the narrowing has no remaining justification, and keeping it would hide
+// the very regression this change exists to prevent — including a regression
+// in the fix itself, since a macOS-only warning is exactly what let the
+// original defect sit unread for five weeks. Platform equality is
+// non-negotiable #5: a platform where semantic search does not work is a
+// broken platform, not a tolerated one.
+test("CI must have sqlite-vec available on every platform", () => {
+  if (process.env["CI"] !== "true") {
     return;
   }
-  if (process.platform === "linux") {
-    expect(VEC_AVAILABLE).toBe(true);
-    return;
-  }
-  if (!VEC_AVAILABLE) {
-    console.error(
-      `WARNING: sqlite-vec did not load on this CI platform (${process.platform}); ` +
-        `the metadata_only erasure-completeness suites in ` +
-        `reindex-vector-erasure.test.ts (embedding_chunk + vec_items_* cleanup) ` +
-        `did NOT run here. This is non-fatal on this platform (Linux CI is ` +
-        `authoritative — see CLAUDE.md), but the absence is real: treat this ` +
-        `platform's run as unverified for erasure, not passing.`,
-    );
-  }
+  expect(VEC_AVAILABLE).toBe(true);
 });
 
 function makeIdx(): LocalIndex {

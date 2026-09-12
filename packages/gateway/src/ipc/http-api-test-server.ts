@@ -26,6 +26,7 @@ import { addApiToken, generateClipToken } from "../clips/clip-token-store.ts";
 import { applyWritablePragmas } from "../db/writable-pragmas.ts";
 import { CURRENT_SCHEMA_VERSION } from "../index/local-index.ts";
 import { runIndexedSchemaMigrations } from "../index/migrations/runner.ts";
+import { ensureFullSqlite } from "../platform/sqlite-runtime.ts";
 import { runQuietly } from "../testing/harness-teardown.ts";
 import type { ReadOnlyHttpServerHandle, ReadOnlyHttpServerOptions } from "./http-server.ts";
 import { startReadOnlyHttpServer } from "./http-server.ts";
@@ -53,6 +54,7 @@ export async function startServerWithClipToken(
   // Migrate + close, then reopen writable — the server opens its own readonly + (conditionally)
   // writable handles on `dbPath`, so the setup connection must not linger (same pattern as
   // agent-runs/agent-test-server.ts / briefs/brief-test-server.ts).
+  ensureFullSqlite();
   const setupDb = new Database(dbPath);
   applyWritablePragmas(setupDb);
   runIndexedSchemaMigrations(setupDb, CURRENT_SCHEMA_VERSION);
@@ -96,6 +98,7 @@ export async function startServerWithoutClipsVault(
 ): Promise<Omit<ClipTestServer, "token">> {
   const tmpDir = realpathSync(mkdtempSync(join(tmpdir(), "nimbus-http-api-e2e-unmounted-")));
   const dbPath = join(tmpDir, "nimbus.db");
+  ensureFullSqlite();
   const setupDb = new Database(dbPath);
   applyWritablePragmas(setupDb);
   runIndexedSchemaMigrations(setupDb, CURRENT_SCHEMA_VERSION);

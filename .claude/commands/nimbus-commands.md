@@ -167,7 +167,7 @@ bun run audit:dead-code                 # knip unused exports / orphan files (D7
 bun run audit:duplication               # jscpd token duplication (D6)
 bun run audit:exclusion-parity               # sonar.coverage.exclusions <-> local registry drift check
 bun run audit:any                       # D8 any-count print
-bun run audit:invariants                # static invariant complement D10–D29 (spawn rule, vault-key allow-list, SQL writes, federation/identity/team-vault gates, policy, chatops, preflight, tribal, connector writes, share, egress dispatch chokepoint, exec runConfined, computer-use actuation/driver/lane, remote-VLM constructor + media_grant table, fleet ClientKind, toolgen brokered-fetch literal/generated-manifest/vault-key-prefix confinement) — derive the range from `check-nimbus-invariants.ts`; see CLAUDE.md § Security Invariants
+bun run audit:invariants                # static invariant complement D10–D30 (spawn rule, vault-key allow-list, SQL writes, federation/identity/team-vault gates, policy, chatops, preflight, tribal, connector writes, share, egress dispatch chokepoint, exec runConfined, computer-use actuation/driver/lane, remote-VLM constructor + media_grant table, fleet ClientKind, toolgen brokered-fetch literal/generated-manifest/vault-key-prefix confinement, full-SQLite init before any bun:sqlite Database construction) — derive the range from `check-nimbus-invariants.ts`; see CLAUDE.md § Security Invariants
 bun run audit:openapi-drift             # OpenAPI ↔ HTTP_ROUTES drift (Phase 5 T4 PR 1)
 
 bun scripts/structure-audit/count-any-usage.ts --check     # D8 CI gate (fails on regression OR reduction without --update)

@@ -1925,6 +1925,90 @@ export function checkSavedToolAccessorConfinement(files: readonly FileEntry[]): 
   return out;
 }
 
+// D30: a file that can OPEN a SQLite database reaches the full-SQLite install first.
+//
+// `Database.setCustomSQLite(path)` is what makes `db.loadExtension()` — and therefore sqlite-vec,
+// and therefore vector search, hybrid ranking and session-memory recall — work at all on macOS,
+// where Bun links Apple's extension-less system SQLite. It is process-wide, it only works before
+// the first database is opened, and a Bun `Worker` is a separate realm with its own `bun:sqlite`.
+// So the install has to happen in EVERY process and realm that opens a database, ahead of the
+// open. `platform/sqlite-runtime.ts`'s `ensureFullSqlite()` is that install (a no-op off darwin,
+// and idempotent, so calling it in a realm that has already installed one costs nothing).
+//
+// Issue #1029 is what a missed call looks like: nobody ever made ONE of these calls, sqlite-vec
+// has never loaded on macOS in CI or on a user's machine, and the symptom was 54 test sites
+// quietly skipping themselves. A partial fix has the same shape and is harder to see, because the
+// three entry points that WERE wired make the product look fixed.
+//
+// WRITTEN AS WHAT CANNOT PASS, not as an allow-list of what may. There is no allow-list at all:
+// every file in the scanned set that can construct a `Database` names `ensureFullSqlite`. A new
+// entry point added tomorrow is a violation on the day it is written, with no list for anyone to
+// forget to update — this repo's recorded lesson is that allow-list guards fail silently.
+//
+// WHAT COUNTS AS "can open one": a VALUE import from `bun:sqlite`. `import type { Database }` is
+// the overwhelmingly common form here (~200 files receive a handle they did not open) and binds
+// nothing at runtime, so it is correctly invisible to this rule. Everything that DOES bind the
+// constructor is caught, including the forms a `new Database(` text scan misses and that are
+// already present in this tree: the alias (`db/snapshot.ts`'s
+// `import { Database as BunDatabase, type Database }`) and the static factory
+// (`index/migrated-db-template.ts`'s `Database.deserialize`). A namespace or default import is
+// caught for the same reason.
+//
+// STATED BOUND: this proves the call is PRESENT in the file, never that it happens before the
+// open — a text scan cannot order two statements, and a caller could always reach a database
+// through a helper in another module. It is the backstop for the failure that actually happened
+// (a whole entry point with no call at all), and the primary defense is the same one D27(b) and
+// D29(c)/(d) rest on: only these files are ever handed the ability to open a connection.
+const D30_INIT = "ensureFullSqlite";
+/**
+ * One `… from "bun:sqlite"` import statement, clause captured.
+ *
+ * `[^;]` cannot cross a statement terminator, so a lazy match anchored on the module specifier
+ * cannot start at an earlier import and swallow it; `m` anchors the keyword at a line start, and
+ * newlines inside the clause are fine because a multi-line import contains no `;`.
+ */
+const D30_IMPORT_RE = /^import\s+([^;]*?)\s*from\s*["']bun:sqlite["']/gm;
+
+/** Does this `bun:sqlite` import clause bind anything at RUNTIME (as opposed to types only)? */
+export function bunSqliteImportBindsValue(clause: string): boolean {
+  const trimmed = clause.trim();
+  // `import type { … } from "bun:sqlite"` — the whole statement is erased.
+  if (/^type\b/.test(trimmed)) return false;
+  const braces = /\{([\s\S]*)\}/.exec(trimmed);
+  // No braces: a default or namespace import (`import sqlite from`, `import * as sqlite from`),
+  // both of which hand the caller the constructor.
+  if (braces === null) return true;
+  // A side-effect-only import (`import "bun:sqlite"`) never reaches here — it has no clause and
+  // so no ` from `. Anything before the braces (a default binding) is a value.
+  if (trimmed.slice(0, trimmed.indexOf("{")).trim() !== "") return true;
+  return (braces[1] ?? "")
+    .split(",")
+    .map((sp) => sp.trim())
+    .filter((sp) => sp !== "")
+    .some((sp) => !/^type\s/.test(sp));
+}
+
+export function checkSqliteRuntimeInit(files: readonly FileEntry[]): Violation[] {
+  const out: Violation[] = [];
+  for (const f of files) {
+    if (f.relPath.endsWith(".test.ts")) continue;
+    const code = stripComments(f.contents);
+    if (code.includes(D30_INIT)) continue;
+    const original = f.contents.split("\n");
+    for (const m of code.matchAll(new RegExp(D30_IMPORT_RE.source, "gm"))) {
+      if (!bunSqliteImportBindsValue(m[1] ?? "")) continue;
+      const line = code.slice(0, m.index).split("\n").length;
+      out.push({
+        rule: "D30-sqlite-runtime-init",
+        file: f.relPath,
+        line,
+        snippet: (original[line - 1] ?? "").trim(),
+      });
+    }
+  }
+  return out;
+}
+
 export function checkEgressChokepointConfinement(files: readonly FileEntry[]): Violation[] {
   const out: Violation[] = [];
   for (const f of files) {
@@ -2193,6 +2277,13 @@ export const RULE_ANCHORS: readonly string[] = [
   // while scanning nothing the moment `iterateSourceFiles()` stopped reaching `toolgen/` — the same
   // inert-guard failure mode D23/D28 exist to catch.
   "packages/gateway/src/toolgen/toolgen-broker.ts",
+  // D30 — anchored on the embedding worker, the entry point whose absence would be least visible
+  // (a separate Bun `Worker` realm with its own connection, and the one that WRITES the vectors)
+  // and a file the rule SCANS: it carries a real value-import of `Database`, so the rule has to
+  // read it and check the init is there. Not `platform/sqlite-runtime.ts`, which the rule permits
+  // by virtue of defining `ensureFullSqlite` and whose presence would therefore prove nothing.
+  // Same shape as the D23/D28/D29 anchors above.
+  "packages/gateway/src/embedding/embedding-worker.ts",
 ];
 
 /** Fail loudly when the scanned set cannot support the rules about to run. */
@@ -2510,6 +2601,15 @@ async function run(): Promise<void> {
     for (const e of v) {
       console.error(
         `::error file=${e.file},line=${e.line}::D29(d) a saved-tool private accessor/constant is named outside toolgen-saved-store.ts — a second, unverified read path for a saved artifact; I40 regression: ${e.snippet}`,
+      );
+    }
+    if (v.length > 0) exit = 1;
+  }
+  if (mode === "binary-only" || mode === "all") {
+    const v = checkSqliteRuntimeInit(files);
+    for (const e of v) {
+      console.error(
+        `::error file=${e.file},line=${e.line}::D30 a file that can open a SQLite database does not call ensureFullSqlite() (platform/sqlite-runtime.ts). Database.setCustomSQLite is process-wide and only works before the first open, and a Worker is a separate realm — without the call, sqlite-vec cannot load on macOS and this process has no vector search, hybrid ranking or session-memory recall (issue #1029). Add the call before the open; in packages/cli or packages/ui the answer is that no database should be opened there at all: ${e.snippet}`,
       );
     }
     if (v.length > 0) exit = 1;

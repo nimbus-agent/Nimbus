@@ -6,6 +6,7 @@ import { LocalIndex } from "../index/local-index.ts";
 import { readIndexedUserVersion, runIndexedSchemaMigrations } from "../index/migrations/runner.ts";
 import { ensureSqliteVecForConnection } from "../index/sqlite-vec-load.ts";
 import { createHostActivity } from "../platform/host-activity.ts";
+import { ensureFullSqlite } from "../platform/sqlite-runtime.ts";
 import { isAcceptableWorkerOrigin } from "../platform/worker-security.ts";
 import { createBatteryBackfillGate } from "./backfill-gate.ts";
 import { EmbeddingWorkerCore, type InitMsg } from "./embedding-worker-core.ts";
@@ -18,6 +19,10 @@ function sendToMain(data: unknown): void {
 }
 
 function setupDb(dbPath: string): Database {
+  // A Worker is its own realm with its own `bun:sqlite`, so the main thread having installed a
+  // full SQLite proves nothing here — and THIS is the connection that writes vectors. Must run
+  // before the open below. No-op off darwin. See platform/sqlite-runtime.ts.
+  ensureFullSqlite();
   // Named `db`, not `d`: D12's receiver pattern keys on the `db` suffix this repo uses for a
   // `Database` handle, so a one-letter binding is a handle the rule cannot see. Same shape as
   // `index/local-index.ts:279`, which routes the identical PRAGMA through `dbRun`.

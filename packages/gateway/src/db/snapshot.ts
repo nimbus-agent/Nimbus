@@ -2,6 +2,7 @@ import { Database as BunDatabase, type Database } from "bun:sqlite";
 import { randomUUID } from "node:crypto";
 import { mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
+import { ensureFullSqlite } from "../platform/sqlite-runtime.ts";
 import { vacuumAndGzip } from "./vacuum-gzip.ts";
 
 export type SnapshotEntry = {
@@ -96,6 +97,10 @@ export function previewRestore(db: Database, snapshotPath: string): RestorePrevi
   const tmpPath = join(dirname(snapshotPath), `.restore-preview-${randomUUID()}.tmp`);
   try {
     writeFileSync(tmpPath, raw, { mode: 0o600, flag: "wx" });
+    // Reached from the gateway process (already installed) and from `nimbus db restore --preview`
+    // paths; called here so the file is honest on its own rather than by inheritance. No-op off
+    // darwin. See platform/sqlite-runtime.ts.
+    ensureFullSqlite();
     const snapDb = new BunDatabase(tmpPath, { readonly: true });
     let snapCount = 0;
     try {

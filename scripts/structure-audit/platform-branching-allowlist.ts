@@ -132,6 +132,12 @@ export const PLATFORM_BRANCHING_ALLOWLIST: readonly PlatformFileEntry[] = [
     why: "selects the per-OS sandbox implementation",
   },
   {
+    file: "packages/gateway/src/platform/sqlite-runtime.ts",
+    gate: "Embedding",
+    coGates: ["DB layer", "Perf"],
+    why: "installs a full SQLite on darwin so `loadExtension` (sqlite-vec) can work; branches on `process.platform` in its production deps binding only, so `installFullSqlite(deps)` is PURE over its arguments and every platform's branch is exercised on every runner (same shape as computer-use/cu-lanes/chromium-path.ts above). Reaches THREE gates through static imports: embedding/embedding-worker.ts (Embedding), db/query-guard-worker.ts + db/snapshot.ts (DB layer), and perf/perf-fixture.ts + perf/surfaces/* (Perf). All three are checked identically by rule 3, so demoting any of them is caught",
+  },
+  {
     file: "packages/gateway/src/index/sqlite-vec-load.ts",
     gate: "Embedding",
     coGates: ["DB layer"],
