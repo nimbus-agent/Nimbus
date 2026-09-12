@@ -7,6 +7,7 @@ import pino from "pino";
 import { OAUTH_PROVIDERS } from "../auth/oauth-registry.ts";
 import type { ConnectorServiceId } from "../connectors/connector-catalog.ts";
 import { LocalIndex } from "../index/local-index.ts";
+import { ensureFullSqlite } from "../platform/sqlite-runtime.ts";
 import { ProviderRateLimiter } from "../sync/rate-limiter.ts";
 import { buildSyncCapabilities, unboundSyncCapabilities } from "../sync/sync-capabilities.ts";
 import type { SyncContext } from "../sync/types.ts";
@@ -35,6 +36,10 @@ export function createMemoryVault(): NimbusVault {
 }
 
 export function openMemoryIndexDatabase(): Database {
+  // Redundant in practice — `bunfig.toml`'s test preload already installed a full SQLite for this
+  // process — and present anyway, because `/testing/` is excluded from the D30 static rule's scan
+  // set, so nothing would catch its absence. No-op off darwin. See platform/sqlite-runtime.ts.
+  ensureFullSqlite();
   const db = new Database(":memory:");
   LocalIndex.ensureSchema(db);
   return db;

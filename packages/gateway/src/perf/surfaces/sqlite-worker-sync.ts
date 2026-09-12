@@ -4,6 +4,7 @@ import { Database } from "bun:sqlite";
 
 import { dbRun } from "../../db/write.ts";
 import { LocalIndex } from "../../index/local-index.ts";
+import { ensureFullSqlite } from "../../platform/sqlite-runtime.ts";
 import { runWorkerEntry } from "./sqlite-worker-shared.ts";
 
 declare const self: Worker;
@@ -33,6 +34,7 @@ ON CONFLICT(id) DO UPDATE SET
 
 runWorkerEntry<SyncConfig>(self, {
   init: (config, dbPath) => {
+    ensureFullSqlite();
     const db = new Database(dbPath);
     LocalIndex.ensureSchema(db);
     const idPrefix = config.idPrefix ?? "sync";

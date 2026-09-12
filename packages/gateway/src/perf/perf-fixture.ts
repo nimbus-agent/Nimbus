@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { dbExec, dbRun, dbStmtRun } from "../db/write.ts";
+import { ensureFullSqlite } from "../platform/sqlite-runtime.ts";
 import type { CorpusTier } from "./types.ts";
 
 export const FIXTURE_TIER_SIZES = {
@@ -69,6 +70,7 @@ export async function buildSyntheticIndex(
   }
 
   const rows = FIXTURE_TIER_SIZES[tier];
+  ensureFullSqlite();
   const db = new Database(path);
   try {
     dbExec(db, FIXTURE_SCHEMA_SQL);

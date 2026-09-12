@@ -32,6 +32,7 @@ import {
   type ServiceConfig,
 } from "../metrics/dora-config.ts";
 import { resolveServicesByRepoUrn } from "../metrics/service-identity.ts";
+import { ensureFullSqlite } from "../platform/sqlite-runtime.ts";
 import { ftsMatchQuery } from "../search/hybrid-internal.ts";
 import { formatPrometheus } from "../status/prometheus-format.ts";
 import type { TargetedFetchOutcome } from "../sync/targeted-fetch.ts";
@@ -1373,6 +1374,7 @@ async function handleGet(
  * read-only connection, so a read handle inherits whatever the file already is.
  */
 function openI13WriteHandle(dbPath: string): Database {
+  ensureFullSqlite();
   const db = new Database(dbPath, { create: false, readwrite: true });
   applyWritablePragmas(db);
   return db;
@@ -1421,6 +1423,10 @@ export function startReadOnlyHttpServer(
   port: number,
   opts: ReadOnlyHttpServerOptions = {},
 ): ReadOnlyHttpServerHandle {
+  // In the gateway process this is a memoised no-op — `assemble.ts` got here first. It is called
+  // anyway because this function is also the entry point of the standalone brief/agent test
+  // servers, which open their own databases in their own processes. No-op off darwin.
+  ensureFullSqlite();
   const db = new Database(dbPath, { readonly: true, create: false });
   dbRun(db, "PRAGMA query_only = ON");
 

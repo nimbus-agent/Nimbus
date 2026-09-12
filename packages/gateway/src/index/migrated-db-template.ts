@@ -3,6 +3,7 @@ import { copyFileSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { dbRun } from "../db/write.ts";
+import { ensureFullSqlite } from "../platform/sqlite-runtime.ts";
 import { LocalIndex } from "./local-index.ts";
 import { readIndexedUserVersion } from "./migrations/runner.ts";
 import { ensureSqliteVecForConnection } from "./sqlite-vec-load.ts";
@@ -44,6 +45,10 @@ function templatePath(): string {
   const dir = mkdtempSync(join(tmpdir(), "nimbus-schema-tpl-"));
   const file = join(dir, "template.db");
 
+  // First open in this realm on every path through this module — `materializeMigratedDb`,
+  // `openMigratedDb` and `openMigratedMemoryDb` all reach it through `templatePath()`. No-op off
+  // darwin. See platform/sqlite-runtime.ts.
+  ensureFullSqlite();
   const db = new Database(file);
   try {
     LocalIndex.ensureSchema(db);

@@ -5,6 +5,7 @@ import { Database } from "bun:sqlite";
 import { computeAuditRowHash, GENESIS_HASH } from "../../db/audit-chain.ts";
 import { dbRun } from "../../db/write.ts";
 import { LocalIndex } from "../../index/local-index.ts";
+import { ensureFullSqlite } from "../../platform/sqlite-runtime.ts";
 import { runWorkerEntry } from "./sqlite-worker-shared.ts";
 
 declare const self: Worker;
@@ -15,6 +16,7 @@ const AUDIT_INSERT_SQL = `INSERT INTO audit_log (
 
 runWorkerEntry<Record<string, unknown>>(self, {
   init: (_config, dbPath) => {
+    ensureFullSqlite();
     const db = new Database(dbPath);
     LocalIndex.ensureSchema(db);
     let counter = 0;

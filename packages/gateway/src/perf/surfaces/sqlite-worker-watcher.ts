@@ -4,6 +4,7 @@ import { Database } from "bun:sqlite";
 
 import { dbRun } from "../../db/write.ts";
 import { LocalIndex } from "../../index/local-index.ts";
+import { ensureFullSqlite } from "../../platform/sqlite-runtime.ts";
 import { runWorkerEntry } from "./sqlite-worker-shared.ts";
 
 declare const self: Worker;
@@ -20,6 +21,7 @@ const WATCHER_EVENT_INSERT_SQL = `INSERT INTO watcher_event (
 
 runWorkerEntry<Record<string, unknown>>(self, {
   init: (_config, dbPath) => {
+    ensureFullSqlite();
     const db = new Database(dbPath);
     LocalIndex.ensureSchema(db);
     dbRun(db, WATCHER_SEED_SQL, [WATCHER_ID, "bench-s10", Date.now()]);

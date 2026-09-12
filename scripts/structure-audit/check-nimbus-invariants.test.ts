@@ -25,6 +25,7 @@ import {
   checkShareConsentBrokerConfinement,
   checkSharePublishConfinement,
   checkSpawnInvariant,
+  checkSqliteRuntimeInit,
   checkSyncContextNoRawHandles,
   checkToolgenVaultKeyConfinement,
   checkTribalKbWriteInvariant,
@@ -2345,5 +2346,138 @@ describe("D28 — fleet ClientKind confinement (I38)", () => {
     expect(
       flagged([file(ROGUE, `// the invoker sets kind: "fleet" on its caller\nconst x = 1;`)]),
     ).toBe(false);
+  });
+});
+
+describe("D30-sqlite-runtime-init — a file that can open a database reaches the full-SQLite install", () => {
+  const file = (relPath: string, contents: string): FileEntry => ({ relPath, contents });
+  const ROGUE = "packages/gateway/src/index/rogue-opener.ts";
+  const flagged = (files: readonly FileEntry[]): boolean =>
+    checkSqliteRuntimeInit(files).length > 0;
+
+  // ---- positive: what CANNOT pass -----------------------------------------------------------
+
+  test("flags a NEW entry point that value-imports Database and never calls the init", () => {
+    // The regression this rule exists for: issue #1029 was one missing call, and the way it comes
+    // back is a fifth entry point added by someone who wired the four that already existed.
+    expect(
+      flagged([
+        file(
+          ROGUE,
+          'import { Database } from "bun:sqlite";\n' +
+            "export function open(p: string) {\n  return new Database(p);\n}",
+        ),
+      ]),
+    ).toBe(true);
+  });
+
+  test("flags the ALIASED value import a `new Database(` text scan would miss", () => {
+    // Not hypothetical: `db/snapshot.ts` ships exactly this shape.
+    expect(
+      flagged([
+        file(
+          ROGUE,
+          'import { Database as BunDatabase, type Database } from "bun:sqlite";\n' +
+            "export function open(p: string): Database {\n  return new BunDatabase(p);\n}",
+        ),
+      ]),
+    ).toBe(true);
+  });
+
+  test("flags a namespace and a default import", () => {
+    expect(flagged([file(ROGUE, 'import * as sqlite from "bun:sqlite";')])).toBe(true);
+    expect(flagged([file(ROGUE, 'import sqlite from "bun:sqlite";')])).toBe(true);
+  });
+
+  test("flags a multi-line import clause", () => {
+    expect(
+      flagged([
+        file(ROGUE, 'import {\n  Database,\n  type SQLQueryBindings,\n} from "bun:sqlite";'),
+      ]),
+    ).toBe(true);
+  });
+
+  test("the violation names the file and the import line", () => {
+    const v = checkSqliteRuntimeInit([
+      file(ROGUE, 'const x = 1;\nimport { Database } from "bun:sqlite";'),
+    ]);
+    expect(v).toHaveLength(1);
+    expect(v[0]?.rule).toBe("D30-sqlite-runtime-init");
+    expect(v[0]?.file).toBe(ROGUE);
+    expect(v[0]?.line).toBe(2);
+    expect(v[0]?.snippet).toBe('import { Database } from "bun:sqlite";');
+  });
+
+  // ---- negative: what legitimately passes ----------------------------------------------------
+
+  test("accepts a value import when the file calls the init", () => {
+    expect(
+      flagged([
+        file(
+          ROGUE,
+          'import { Database } from "bun:sqlite";\n' +
+            'import { ensureFullSqlite } from "../platform/sqlite-runtime.ts";\n' +
+            "export function open(p: string) {\n  ensureFullSqlite();\n  return new Database(p);\n}",
+        ),
+      ]),
+    ).toBe(false);
+  });
+
+  test("ignores `import type` — ~200 files receive a handle they did not open", () => {
+    expect(flagged([file(ROGUE, 'import type { Database } from "bun:sqlite";')])).toBe(false);
+  });
+
+  test("ignores an inline type-only specifier, which binds nothing at runtime", () => {
+    expect(flagged([file(ROGUE, 'import { type Database } from "bun:sqlite";')])).toBe(false);
+  });
+
+  test("ignores .test.ts — the bunfig preload installs once for the whole test process", () => {
+    expect(
+      flagged([
+        file("packages/gateway/src/index/thing.test.ts", 'import { Database } from "bun:sqlite";'),
+      ]),
+    ).toBe(false);
+  });
+
+  /** Proves stripComments is exercised for THIS rule, not merely shared and untested here. */
+  test("does not flag a mention inside a comment", () => {
+    expect(flagged([file(ROGUE, '// import { Database } from "bun:sqlite";\nconst x = 1;')])).toBe(
+      false,
+    );
+  });
+
+  test("an import from a DIFFERENT module is not this rule's business", () => {
+    expect(flagged([file(ROGUE, 'import { Database } from "node:sqlite";')])).toBe(false);
+  });
+
+  test("a lazy clause match cannot start at an earlier import and swallow it", () => {
+    // `[^;]` cannot cross a statement terminator, so the type-only bun:sqlite import below is
+    // still read as type-only even with a value import of something else immediately above it.
+    expect(
+      flagged([
+        file(
+          ROGUE,
+          'import { readFileSync } from "node:fs";\nimport type { Database } from "bun:sqlite";',
+        ),
+      ]),
+    ).toBe(false);
+  });
+
+  // ---- the rule is live against the real tree ------------------------------------------------
+
+  test("every real gateway entry point is wired (no violations in the scanned tree)", async () => {
+    const files: FileEntry[] = [];
+    for await (const f of iterateSourceFiles()) {
+      files.push({ relPath: f.relPath, contents: f.contents });
+    }
+    expect(checkSqliteRuntimeInit(files)).toEqual([]);
+    // Red-proof for the assertion above: the scan really did read files that carry the shape this
+    // rule polices, so the empty result is enforcement rather than an empty input.
+    const openers = files.filter(
+      (f) =>
+        /^import\s+([^;]*?)\s*from\s*["']bun:sqlite["']/m.test(f.contents) &&
+        f.contents.includes("ensureFullSqlite"),
+    );
+    expect(openers.length).toBeGreaterThanOrEqual(10);
   });
 });

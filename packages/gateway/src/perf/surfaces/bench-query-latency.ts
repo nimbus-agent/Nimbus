@@ -1,6 +1,7 @@
 import { Database } from "bun:sqlite";
 
 import { buildItemListSql } from "../../index/item-list-query.ts";
+import { ensureFullSqlite } from "../../platform/sqlite-runtime.ts";
 import { buildSyntheticIndex, FIXTURE_TIMESTAMP } from "../perf-fixture.ts";
 import type { BenchRunOptions } from "../types.ts";
 
@@ -17,6 +18,7 @@ export async function runQueryLatencyOnce(
   const tier = opts.corpus ?? "small";
   const fixturePath = await buildSyntheticIndex(tier, runOpts);
 
+  ensureFullSqlite();
   const db = new Database(fixturePath, { readonly: true });
   const { sql, vals } = buildItemListSql({
     services: ["github"],
