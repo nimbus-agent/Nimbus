@@ -151,11 +151,36 @@ trusted-publisher registration UI does not exist on the instance we publish to, 
 curl -s https://open-vsx.org/api/version   # retire OVSX_PAT once this reports v1.2.0 or later
 ```
 
-When it does, the migration is small and is written down here so it does not need re-deriving:
-register the workflow under [trusted publishers](https://open-vsx.org/user-settings/trusted-publishers)
-(namespace-owner action, web UI only), add `--trusted-publishing` to the `ovsx publish` call, then
-**remove the `OVSX_PAT` secret** — `--pat`/`OVSX_PAT` takes PRECEDENCE over trusted publishing, so
-leaving it in place silently keeps the old path and the migration looks done while nothing changed.
-Follow the configure-then-revoke ordering at the top of this page: prove the first trusted publish
-before deleting the token. Until then rotation on the 180-day age policy remains the only
-mitigation for this half.
+When it does, the migration is written out below so it does not need re-deriving. It is ordered
+configure-then-revoke, per the rule at the top of this page: **nothing is deleted until a trusted
+publish has actually succeeded.**
+
+1. **Register the publisher.** [open-vsx.org trusted publishers](https://open-vsx.org/user-settings/trusted-publishers)
+   — namespace-owner action, web UI only, no API. Pin it to the `nimbus-agent` namespace and the
+   `nimbus-vscode` publish workflow.
+2. **Add a controlled-publish mode to `publish.yml` that OMITS `OVSX_PAT` without deleting it.**
+   This step exists because the obvious order does not work: the publish job currently *hard-fails
+   on an empty* `OVSX_PAT` (`if [ -z "$OVSX_PAT" ]; then echo "::error::..."`), so simply deleting
+   the secret aborts at that guard before `ovsx` ever runs — and you would be testing trusted
+   publishing for the first time with the old credential already gone. Gate the guard and the
+   `OVSX_PAT:` env line on an input (a `workflow_dispatch` boolean, say) so a dry run can take the
+   trusted-publishing branch while the secret is still sitting there as the rollback.
+3. **Add `--trusted-publishing` to the `ovsx publish` call.** With the flag, the run FAILS rather
+   than silently falling back if no ID token can be obtained — which is what you want for a
+   verification run. Note the precedence trap it guards against: `--pat` / `OVSX_PAT` always wins
+   over trusted publishing, so with the secret still exported the migration looks done while
+   nothing has changed.
+4. **Prove it** — one dispatch of the controlled mode, publishing a real version, succeeding.
+5. **Only then delete the secret** from `nimbus-vscode` → *Settings* → *Environments* → **release**,
+   and drop `OVSX_PAT` from both `publish.yml` and `secret-health.yml` (including its
+   `probe-publish-token` step, which has nothing left to probe).
+6. **Flip the registry entry, or you trade one alert for another.** In
+   `scripts/release/credential-registry.ts`, set the `OVSX_PAT` entry to `state: "forbidden"`,
+   `consumedBy: []`, `maxAgeDays: null`. A deleted secret left at `state: "required"` is reported
+   by `auditCredentials` as a hard `missing` every week — the same permanently-open-alert failure
+   this page warns about elsewhere — and `forbidden` is the state that says *deliberately deleted;
+   must not come back*, which is exactly the claim being made. This is this migration's equivalent
+   of step 5 in the `VSCE_PAT` runbook above: the one that gets forgotten.
+
+Until open-vsx.org upgrades, rotation on the 180-day age policy remains the only mitigation for
+this half.
