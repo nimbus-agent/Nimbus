@@ -1,5 +1,5 @@
 import { Database } from "bun:sqlite";
-import { describe, expect, test } from "bun:test";
+import { afterAll, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, posix as posixPath, win32 as winPath } from "node:path";
@@ -9,11 +9,14 @@ import { load as loadSqliteVec } from "sqlite-vec";
 import {
   ensureSqliteVecForConnection,
   isVecLoaded,
+  lastVecLoadFailure,
   loadSqliteVecOrThrow,
+  resetVecLoadFailureForTest,
   sidecarFilename,
   sidecarPath,
   tryLoadFromSidecar,
   tryLoadSqliteVec,
+  vecLoadWarnCountForTest,
 } from "./sqlite-vec-load.ts";
 
 const upstreamSqliteVecLoadable = ((): boolean => {
@@ -27,6 +30,10 @@ const upstreamSqliteVecLoadable = ((): boolean => {
   }
 })();
 
+// `sidecarFilename` / `sidecarPath` are DEFINED in platform/sqlite-runtime.ts and re-exported
+// here: they are per-OS filename logic, so they belong in the PAL, and the extension-load probe
+// over there needs them without importing this module (which would be a cycle). Deliberately still
+// tested through this import — it is the surface every other consumer uses.
 describe("sidecarFilename", () => {
   test("win32 → vec0.dll", () => {
     expect(sidecarFilename("win32")).toBe("vec0.dll");
@@ -273,5 +280,61 @@ describe("ensureSqliteVecForConnection", () => {
     const result = ensureSqliteVecForConnection(db, 6);
     expect(typeof result).toBe("boolean");
     db.close();
+  });
+});
+
+describe("the final failure is recorded and surfaced, not swallowed", () => {
+  // Issue #1029's real cost was not that sqlite-vec failed — it was that NOTHING SAID SO. The
+  // reason lived only in `log.debug` on a logger built at `NIMBUS_LOG_LEVEL ?? "info"`, so the
+  // default level suppressed it and the first person to see the underlying error saw it five
+  // weeks after the report.
+  function throwingDb(message: string): Database {
+    return {
+      loadExtension: (_p: string): void => {
+        throw new Error(message);
+      },
+    } as unknown as Database;
+  }
+
+  beforeEach(() => {
+    resetVecLoadFailureForTest();
+  });
+
+  afterAll(() => {
+    resetVecLoadFailureForTest();
+  });
+
+  test("records the upstream error, the sidecar path and the SQLite-runtime detail", () => {
+    expect(lastVecLoadFailure()).toBeUndefined();
+    expect(tryLoadSqliteVec(throwingDb("upstream boom"))).toBe(false);
+    const failure = lastVecLoadFailure();
+    expect(failure?.upstreamError).toBe("upstream boom");
+    expect(failure?.sidecarPath).toContain(sidecarFilename(process.platform));
+    expect(failure?.sidecarError).toBe("sidecar file not present");
+    // The PAL's verdict travels with it — this is what turns "loadExtension failed" into a
+    // sentence naming the cause and the remedy on macOS.
+    expect(failure?.sqliteRuntime.length).toBeGreaterThan(0);
+  });
+
+  test("warns ONCE per distinct reason, not once per connection", () => {
+    // A gateway opens dozens of connections. Warning on each would be noise, and noise is how a
+    // real signal gets filtered out — which is the failure mode this whole change is about.
+    expect(vecLoadWarnCountForTest()).toBe(0);
+    tryLoadSqliteVec(throwingDb("same reason"));
+    tryLoadSqliteVec(throwingDb("same reason"));
+    tryLoadSqliteVec(throwingDb("same reason"));
+    expect(vecLoadWarnCountForTest()).toBe(1);
+    // A genuinely DIFFERENT failure later in the run is new information and is still said aloud.
+    tryLoadSqliteVec(throwingDb("a different reason"));
+    expect(vecLoadWarnCountForTest()).toBe(2);
+  });
+
+  test("a successful load records nothing and warns nothing", () => {
+    if (!upstreamSqliteVecLoadable) return;
+    const db = new Database(":memory:");
+    expect(tryLoadSqliteVec(db)).toBe(true);
+    db.close();
+    expect(lastVecLoadFailure()).toBeUndefined();
+    expect(vecLoadWarnCountForTest()).toBe(0);
   });
 });

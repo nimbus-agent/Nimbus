@@ -4,6 +4,7 @@ import os from "node:os";
 import pino from "pino";
 
 import { LocalIndex } from "../index/local-index.ts";
+import { ensureFullSqlite } from "../platform/sqlite-runtime.ts";
 import { ProviderRateLimiter } from "../sync/rate-limiter.ts";
 import {
   buildLocalOnlySyncCapabilities,
@@ -35,6 +36,7 @@ export const EMPTY_NIMBUS_VAULT: NimbusVault = {
 };
 
 export function createMemoryIndexDb(): Database {
+  ensureFullSqlite();
   const db = new Database(":memory:");
   LocalIndex.ensureSchema(db);
   return db;

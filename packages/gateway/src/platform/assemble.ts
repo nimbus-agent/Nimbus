@@ -337,6 +337,7 @@ import type { PlatformPaths } from "./paths.ts";
 import { registerUserMcpSyncablesFromDatabase } from "./register-user-mcp-sync.ts";
 import { createSandboxRunner } from "./sandbox/sandbox-runner.ts";
 import { reapAppContainersAtBoot } from "./sandbox/win32-reap.ts";
+import { ensureFullSqlite } from "./sqlite-runtime.ts";
 import type { AutostartManager, NotificationService, PlatformServices } from "./types.ts";
 
 function createStubAutostart(): AutostartManager {
@@ -399,6 +400,10 @@ type EmbeddingRuntime = ConcreteEmbeddingRuntime | null;
 
 function openGatewaySqlite(dataDir: string, sidecarStops: Array<() => void>): Database {
   const dbPath = join(dataDir, "nimbus.db");
+  // Before the first `new Database(...)` in this process: on macOS `Database.setCustomSQLite`
+  // only works while no database is open, and without it `loadExtension` — and therefore
+  // sqlite-vec — cannot work at all. No-op off darwin. See platform/sqlite-runtime.ts.
+  ensureFullSqlite();
   const db = new Database(dbPath);
   // Before ensureSchema: migrations write, and this is the handle that converts
   // nimbus.db to WAL for every other connection (journal_mode is a file property).

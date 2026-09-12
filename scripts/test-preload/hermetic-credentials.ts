@@ -27,6 +27,8 @@
  * would already be failing there.
  */
 
+import { ensureFullSqlite } from "../../packages/gateway/src/platform/sqlite-runtime.ts";
+
 /** Prefixes we own, or that name a paid API a test must never reach for real. */
 const CREDENTIAL_PREFIXES = ["NIMBUS_", "OPENAI_", "ANTHROPIC_"] as const;
 
@@ -93,6 +95,17 @@ export function blankCredentialEnv(env: Record<string, string | undefined>): str
   }
   return blanked.sort();
 }
+
+// Every test process opens SQLite, and on macOS `Database.setCustomSQLite` only works before
+// the first one is opened — so the install has to happen ahead of every test file, which is
+// exactly what a preload is. Without it the whole macOS suite runs without sqlite-vec and the
+// ~54 vec-dependent test sites skip themselves silently (issue #1029). A no-op off darwin, and
+// idempotent, so a test that opens a database in a Worker and calls it again is fine.
+//
+// Imported for its side effect at preload time rather than left to each test file: "am I first?"
+// is not something a test file can know — the same argument the credential blanking below rests
+// on, and the reason both live here.
+ensureFullSqlite();
 
 const blanked = blankCredentialEnv(process.env);
 if (blanked.length > 0 && process.env["NIMBUS_TEST_PRELOAD_QUIET"] !== "1") {

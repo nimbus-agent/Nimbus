@@ -9,6 +9,7 @@
 import { Database } from "bun:sqlite";
 import { LocalIndex } from "../packages/gateway/src/index/local-index.ts";
 import { dispatchAgentsRpc } from "../packages/gateway/src/ipc/agents-rpc.ts";
+import { ensureFullSqlite } from "../packages/gateway/src/platform/sqlite-runtime.ts";
 
 const PARAMS: Record<string, Record<string, unknown>> = {
   expert: { topicOrFile: "src/payments/charge.ts" },
@@ -32,6 +33,7 @@ export async function generateAgentBriefFixtures(): Promise<Record<string, unkno
 
   for (const [agent, params] of Object.entries(PARAMS)) {
     // Same schema bootstrap the agents-rpc tests use (`freshDb()` in agents-rpc.test.ts).
+    ensureFullSqlite();
     const db = new Database(":memory:");
     LocalIndex.ensureSchema(db);
 

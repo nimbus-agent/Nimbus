@@ -17,6 +17,7 @@ import {
   doctorPrintHealthFromSnapshot,
   doctorPrintIndexConfidence,
   doctorPrintIndexFromSnapshot,
+  doctorPrintVectorSearchFromSnapshot,
   doctorVoiceLines,
   healthStateMark,
   runDoctor,
@@ -177,6 +178,95 @@ describe("doctorPrintIndexFromSnapshot", () => {
   it("returns 0 and prints the count when totalItems is positive", () => {
     expect(doctorPrintIndexFromSnapshot({ index: { totalItems: 1234 } })).toBe(0);
     expect(out.stdout).toContain("[ok] Index: 1234 items.");
+  });
+});
+
+describe("doctorPrintVectorSearchFromSnapshot", () => {
+  beforeEach(() => {
+    out.reset();
+  });
+
+  // Why this line exists: sqlite-vec has never loaded on macOS (issue #1029), and the only record
+  // of the failure was a `log.debug` call on a logger built at `NIMBUS_LOG_LEVEL ?? "info"` —
+  // suppressed by default. The diagnostic command that exists to answer "why is this not working"
+  // said nothing at all for five weeks.
+  it("returns 0 and reports [ok] when vec is loaded", () => {
+    expect(
+      doctorPrintVectorSearchFromSnapshot({
+        vectorSearch: { loaded: true, sqliteRuntimeState: "not-applicable" },
+      }),
+    ).toBe(0);
+    expect(out.stdout).toContain("[ok] Vector search: sqlite-vec loaded.");
+  });
+
+  it("returns 2 and FAILS when vec is not loaded, naming both the error and the cause", () => {
+    expect(
+      doctorPrintVectorSearchFromSnapshot({
+        vectorSearch: {
+          loaded: false,
+          sqliteRuntimeState: "not-found",
+          sqliteRuntimeDetail: "no full SQLite build found on this macOS host",
+          upstreamError: "dlopen(vec0.dylib) failed",
+        },
+      }),
+    ).toBe(2);
+    expect(out.stdout).toContain("[fail] Vector search:");
+    // Both halves. The upstream message alone says "loadExtension failed" and explains nothing;
+    // the PAL detail alone does not say what actually broke.
+    expect(out.stdout).toContain("dlopen(vec0.dylib) failed");
+    expect(out.stdout).toContain("no full SQLite build found");
+  });
+
+  it("prints the brew remedy only for the not-found state", () => {
+    doctorPrintVectorSearchFromSnapshot({
+      vectorSearch: { loaded: false, sqliteRuntimeState: "not-found" },
+    });
+    expect(out.stdout).toContain("brew install sqlite");
+    expect(out.stdout).toContain("NIMBUS_SQLITE_PATH");
+    out.reset();
+    // A Linux box whose sidecar is missing gets the failure, but NOT macOS advice it cannot use.
+    doctorPrintVectorSearchFromSnapshot({
+      vectorSearch: { loaded: false, sqliteRuntimeState: "not-applicable" },
+    });
+    expect(out.stdout).toContain("[fail] Vector search:");
+    expect(out.stdout).not.toContain("brew install sqlite");
+  });
+
+  it("gives `no-extensions` its own remedy — that state is our bug, not the user's", () => {
+    doctorPrintVectorSearchFromSnapshot({
+      vectorSearch: { loaded: false, sqliteRuntimeState: "no-extensions" },
+    });
+    expect(out.stdout).toContain("restart the gateway");
+    expect(out.stdout).toContain("please report it");
+    // Emphatically NOT the brew line: the library was found and installed; the ordering was wrong.
+    expect(out.stdout).not.toContain("brew install sqlite");
+  });
+
+  it("`unverified` states the failure without claiming a cause it does not know", () => {
+    doctorPrintVectorSearchFromSnapshot({
+      vectorSearch: {
+        loaded: false,
+        sqliteRuntimeState: "unverified",
+        sqliteRuntimeDetail: "could not be determined",
+      },
+    });
+    expect(out.stdout).toContain("[fail] Vector search:");
+    expect(out.stdout).toContain("could not be determined");
+    expect(out.stdout).not.toContain("brew install sqlite");
+    expect(out.stdout).not.toContain("please report it");
+  });
+
+  it("says nothing at all when the gateway predates the field", () => {
+    // Same rule as the embedding line below: no verdict beats a false green.
+    expect(doctorPrintVectorSearchFromSnapshot({})).toBe(0);
+    expect(doctorPrintVectorSearchFromSnapshot({ vectorSearch: null })).toBe(0);
+    expect(doctorPrintVectorSearchFromSnapshot({ vectorSearch: "yes" })).toBe(0);
+    expect(out.stdout).toBe("");
+  });
+
+  it("still fails when the gateway offers no reason detail at all", () => {
+    expect(doctorPrintVectorSearchFromSnapshot({ vectorSearch: { loaded: false } })).toBe(2);
+    expect(out.stdout).toContain("[fail] Vector search:");
   });
 });
 

@@ -586,6 +586,66 @@ export function doctorPrintEmbeddingFromSnapshot(snap: { embedding?: unknown }):
   }
 }
 
+/**
+ * Whether sqlite-vec is loaded, and — when it is not — WHY, in one actionable line.
+ *
+ * This exists because for five weeks nobody had it. sqlite-vec has never loaded on macOS
+ * (issue #1029), and the only record of the failure was a `log.debug` call on a logger built at
+ * `NIMBUS_LOG_LEVEL ?? "info"` — suppressed by default. The product silently had no vector search,
+ * no hybrid ranking and no session-memory recall, and the diagnostic command that exists to answer
+ * "why is this not working" said nothing at all.
+ *
+ * SCOPE: this reports the GATEWAY's own connection — `diag.snapshot` is served from the main realm
+ * only. A Worker realm that hits `no-extensions` or `unverified` warns to the gateway log and never
+ * appears here, so a green line means the main connection is fine, not that every realm is. Those
+ * two messages accordingly point at the log rather than at this command.
+ *
+ * `[fail]`, not `[warn]`: on the exit-code scale this file already uses, a warn means degraded and
+ * a fail means a capability is off. Semantic search being absent is the second, and it is the same
+ * severity the sibling "Embeddings: unavailable" line already carries for the other half of the
+ * same feature. Silent on a gateway too old to serve the field, for the reason stated on
+ * {@link doctorPrintEmbeddingFromSnapshot}: no verdict beats a false green.
+ */
+export function doctorPrintVectorSearchFromSnapshot(snap: { vectorSearch?: unknown }): number {
+  const vec = snap.vectorSearch;
+  if (vec === null || typeof vec !== "object") {
+    return 0;
+  }
+  const rec = vec as Record<string, unknown>;
+  const sqliteDetail = detailField(rec, "sqliteRuntimeDetail");
+  if (rec["loaded"] === true) {
+    console.log("[ok] Vector search: sqlite-vec loaded.");
+    return 0;
+  }
+  // The upstream package's message names the failure; the PAL's detail names the CAUSE and the
+  // remedy on the one platform where there is one. Both, because either alone has been the thing
+  // that made this hard to read: the upstream message alone says "loadExtension failed" and
+  // explains nothing.
+  const why = [detailField(rec, "upstreamError"), sqliteDetail]
+    .filter((x) => x !== null)
+    .join("; ");
+  console.log(
+    "[fail] Vector search: sqlite-vec is NOT loaded — semantic search, hybrid ranking and " +
+      `session-memory recall are unavailable; keyword search still works${colonSuffix(why === "" ? null : why)}`,
+  );
+  // Per state, because the remedies are genuinely different and a wrong one wastes the reader's
+  // time: `not-found` is the user's to fix, `no-extensions` is ours.
+  const runtimeState = rec["sqliteRuntimeState"];
+  if (runtimeState === "not-found") {
+    console.log(
+      "       Fix: `brew install sqlite`, then restart the gateway. (Bun links Apple's system " +
+        "SQLite on macOS, which has extension loading compiled out; set NIMBUS_SQLITE_PATH to " +
+        "point at a different libsqlite3.dylib.)",
+    );
+  } else if (runtimeState === "no-extensions") {
+    console.log(
+      "       Fix: restart the gateway. A database was opened before the SQLite install ran, " +
+        "which is a Nimbus bug — please report it with this output.",
+    );
+  }
+  return 2;
+}
+
 export function doctorPrintHealthFromSnapshot(snap: { connectorHealth?: unknown }): number {
   const healthRaw = snap.connectorHealth;
   const health: ConnectorHealthRow[] = Array.isArray(healthRaw)
@@ -621,6 +681,7 @@ async function doctorRunGatewayRpcs(client: IPCClient): Promise<number> {
     index?: { totalItems?: unknown };
     connectorHealth?: unknown;
     embedding?: unknown;
+    vectorSearch?: unknown;
   }>("diag.snapshot", {});
   exit = Math.max(exit, doctorPrintIndexFromSnapshot(snap));
   // A second call rather than a field on `diag.snapshot`: the health report is several GROUP BY
@@ -634,6 +695,10 @@ async function doctorRunGatewayRpcs(client: IPCClient): Promise<number> {
   // Reported BEFORE connector health: a dead embedding runtime disables semantic search for the
   // whole gateway run, which outranks any one connector being unreachable.
   exit = Math.max(exit, doctorPrintEmbeddingFromSnapshot(snap));
+  // Immediately after embeddings and before connector health, for the same reason: embeddings and
+  // sqlite-vec are the two halves of semantic search, and either one missing disables it for the
+  // whole gateway run — which outranks any single connector being unreachable.
+  exit = Math.max(exit, doctorPrintVectorSearchFromSnapshot(snap));
   exit = Math.max(exit, doctorPrintHealthFromSnapshot(snap));
   return exit;
 }

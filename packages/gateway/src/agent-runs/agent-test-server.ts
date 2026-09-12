@@ -16,6 +16,7 @@ import { materializeMigratedDb } from "../index/migrated-db-template.ts";
 import type { ReadOnlyHttpServerHandle } from "../ipc/http-server.ts";
 import { startReadOnlyHttpServer } from "../ipc/http-server.ts";
 import { createSeededTokenVault } from "../ipc/test-token-vault.ts";
+import { ensureFullSqlite } from "../platform/sqlite-runtime.ts";
 import { runQuietly } from "../testing/harness-teardown.ts";
 import type { NimbusVault } from "../vault/nimbus-vault.ts";
 import { buildAgentHttpInvoker } from "./agent-http-invoke.ts";
@@ -66,6 +67,7 @@ export async function startAgentTestServer(opts?: {
 
   // A separate writable handle held only by this harness, for asserting on ledger rows — distinct
   // from the server's own handles.
+  ensureFullSqlite();
   const db = new Database(dbPath, { create: false, readwrite: true });
 
   let clockMs = Date.now();

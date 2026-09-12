@@ -23,6 +23,47 @@ runs:
       with:
         bun-version: ${{ inputs.bun-version }}
 
+    # macOS ONLY, and required for sqlite-vec to load at all (issue #1029).
+    #
+    # Bun links Apple's system libsqlite3 on macOS for the throughput, and that build has
+    # extension loading COMPILED OUT — so `db.loadExtension()` fails until
+    # `Database.setCustomSQLite()` points the process at a vanilla build.
+    # `packages/gateway/src/platform/sqlite-runtime.ts` makes that call and looks for the library
+    # at the Homebrew `opt/` prefixes; this step is what puts one there.
+    #
+    # Lives in the shared setup action rather than in each macOS job, for the same reason
+    # `ensureFullSqlite()` is called at every entry point rather than the three someone thought
+    # of: a leg that misses it looks fine and silently skips every vec-dependent test.
+    #
+    # Deliberately NOT fatal. The authoritative gate is the canary in
+    # `packages/gateway/src/connectors/reindex-vector-erasure.test.ts`, which fails the run on
+    # every CI platform where sqlite-vec did not load — so a brew hiccup here surfaces as a real
+    # test failure with a real message, and cannot red a release build (this action is shared with
+    # release.yml, which needs no SQLite extension at all).
+    - name: macOS — Ensure a full SQLite build (sqlite-vec needs one)
+      if: runner.os == 'macOS'
+      shell: bash
+      run: |
+        set -uo pipefail
+        found=""
+        for p in /opt/homebrew/opt/sqlite/lib/libsqlite3.dylib /usr/local/opt/sqlite/lib/libsqlite3.dylib; do
+          if [ -f "$p" ]; then found="$p"; break; fi
+        done
+        if [ -z "$found" ]; then
+          echo "No full SQLite on the runner image; installing."
+          brew install sqlite || echo "::warning title=brew install sqlite failed::sqlite-vec will not load on this leg"
+          for p in /opt/homebrew/opt/sqlite/lib/libsqlite3.dylib /usr/local/opt/sqlite/lib/libsqlite3.dylib; do
+            if [ -f "$p" ]; then found="$p"; break; fi
+          done
+        else
+          echo "Runner image already ships a full SQLite."
+        fi
+        if [ -z "$found" ]; then
+          echo "::warning title=No full SQLite available::db.loadExtension() cannot work on this leg; the sqlite-vec canary will fail the run"
+        else
+          echo "Full SQLite: $found"
+        fi
+
     - name: Cache Bun package download cache
       uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       with:

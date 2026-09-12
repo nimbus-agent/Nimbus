@@ -31,7 +31,9 @@ import {
   runNoDownstreamIncidentQuery,
   runNotTouchingQuery,
 } from "../index/negation-query.ts";
+import { isVecLoaded, lastVecLoadFailure } from "../index/sqlite-vec-load.ts";
 import type { SandboxRunner } from "../platform/sandbox/sandbox-runner.ts";
+import { ensureFullSqlite } from "../platform/sqlite-runtime.ts";
 import { buildTelemetryPreview } from "../telemetry/collector.ts";
 import type { ConsentCoordinator } from "./consent.ts";
 
@@ -621,6 +623,36 @@ function rpcTelemetryPreview(ctx: DiagnosticsRpcContext): DiagnosticsRpcOutcome 
   };
 }
 
+/**
+ * Whether sqlite-vec is actually loaded on the gateway's own connection, and if not, why.
+ *
+ * Before this, the answer lived only in a `log.debug` line that the default logger suppresses —
+ * which is how issue #1029 stayed open for five weeks with nobody having seen the underlying
+ * error. `nimbus doctor` reads this field, so a user can ask instead of re-running the gateway
+ * with `NIMBUS_LOG_LEVEL=debug`.
+ *
+ * The probe is one prepared `SELECT vec_version()`; `diag.snapshot` is polled by the desktop, and
+ * that is orders of magnitude cheaper than the GROUP BY scans this same handler already runs for
+ * `index`. `ensureFullSqlite()` is memoised, so reading it here installs nothing.
+ */
+function buildVectorSearchDiag(db: Database): Record<string, unknown> {
+  const loaded = isVecLoaded(db);
+  const failure = lastVecLoadFailure();
+  const sqlite = ensureFullSqlite();
+  return {
+    loaded,
+    sqliteRuntimeState: sqlite.state,
+    sqliteRuntimeDetail: sqlite.detail,
+    ...(loaded || failure === undefined
+      ? {}
+      : {
+          upstreamError: failure.upstreamError,
+          sidecarPath: failure.sidecarPath,
+          sidecarError: failure.sidecarError,
+        }),
+  };
+}
+
 function rpcDiagSnapshot(ctx: DiagnosticsRpcContext): DiagnosticsRpcOutcome {
   const d = requireDb(ctx);
   const health = getAllConnectorHealth(d).map(serializeHealthSnapshot);
@@ -643,6 +675,7 @@ function rpcDiagSnapshot(ctx: DiagnosticsRpcContext): DiagnosticsRpcOutcome {
       connectorHealth: health,
       index: metrics,
       embedding: ctx.embeddingReadiness?.(),
+      vectorSearch: buildVectorSearchDiag(d),
       hitl: { pendingConsentRequests: pendingConsent },
       watchers,
       auditLogTail: audit,
