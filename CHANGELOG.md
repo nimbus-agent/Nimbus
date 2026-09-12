@@ -2,6 +2,13 @@
 
 All notable changes to the `nimbus` core (headless Gateway + CLI binary + first-party MCP connectors) are documented in this file. release-please appends new entries between this header and the most recent version below when a release PR merges.
 
+## [7.20.1](https://github.com/nimbus-agent/Nimbus/compare/v7.20.0...v7.20.1) (2026-09-12)
+
+
+### Bug Fixes
+
+* **search:** stop the vector KNN re-running once per chunk row ([#1500](https://github.com/nimbus-agent/Nimbus/issues/1500)) ([1ac89f6](https://github.com/nimbus-agent/Nimbus/commit/1ac89f6808c5ed51f39fb8ea5d9ca8c42d3afc62))
+
 ## [7.20.0](https://github.com/nimbus-agent/Nimbus/compare/v7.19.1...v7.20.0) (2026-09-11)
 
 
