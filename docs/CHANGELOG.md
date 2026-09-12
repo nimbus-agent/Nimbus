@@ -18,6 +18,121 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
 
 ## Post-Phase-6 deliveries
 
+- **2026-09-12 — `nimbus standup`, the sixteenth built-in agent.** Third row of the v0.1.1 CLI
+  batch, after `nimbus index health` and `nimbus changelog`. Your own activity over a window
+  (default `24h`), assembled entirely from the local index and formatted as copy-pasteable
+  Markdown: `nimbus standup [--since <duration>] [--format markdown|slack|plain] [--json]`. Six
+  lanes — pull requests active and merged, reviews given, tickets opened, incidents responded to,
+  Slack activity — five reading `item.author_id` and one (incidents) reading the relationship
+  graph, because an incident's `author_id` is its CREATOR and responder attribution exists only as
+  `person --assigned/resolves--> incident` edges. **No migration, no new security invariant, no new
+  egress coverage class, no new HITL action type.** Sixteenth instance of a shape that already
+  ships fifteen times, built as an agent rather than a CLI-plus-IPC command for `changelog`'s
+  reasons: the output is a brief, it wants `[agents] synthesis`, and it wants to be fleet-eligible,
+  which a non-agent command cannot be.
+
+  **The trigger column said "engineering work only — uses existing people graph." Half true, and
+  the half that was false is most of this entry.** **TWO of the five categories the roadmap row
+  promised have no substrate at all**, established against the connectors rather than the roadmap.
+  *Deployments triggered* is unattributable: `github-actions-sync.ts`, `circleci-sync.ts` and
+  `jenkins-sync.ts` each write `authorId: null` on their `ci_run` rows, `deployment/annotate.ts`
+  writes a literal `NULL` author for a deploy posted to `POST /v1/deployments`, and
+  `graph/graph-populator.ts` emits no person→deployment edge — there is no query that could
+  answer it. *Tickets moved or commented on* has nothing to read either: no connector indexes a
+  ticket comment as an item type, and Jira/Linear are indexed with only a ticket's CURRENT
+  `metadata.status` rather than its transitions; `assigned` edges exist for incidents and Sentry
+  issues only, never Jira or Linear tickets, so assignment is not a fallback. Both are disclosed
+  UNCONDITIONALLY in `## Gaps`, following `ownership`'s standing-disclaimer precedent — a
+  conditional note is absent exactly when the reader needs it, and a standup with no deploy line
+  must say that means "not indexed" rather than "I deployed nothing." The row's category list was
+  trimmed to match.
+
+  **`item.modified_at` is "last touched", not "when it happened" — and at 24 hours that bites
+  harder than at `changelog`'s 7 days.** A pull request opened in June that received one comment
+  yesterday has `modified_at` = yesterday. The answer here is THREE bases rather than `changelog`'s
+  two, because two lanes read that column and nonetheless hold the real event instant:
+
+  | Lane | Basis | Can it sit in the wrong window? |
+  |---|---|---|
+  | Pull requests merged | `metadata.merged_at` (`event_field`) | No |
+  | Tickets opened | `metadata.created_at_ms` (`event_field`, both ticket connectors) | No |
+  | Reviews given | `item.modified_at` on a row keyed `<repo>#<pr>#<reviewId>`, written once from its own `submitted_at` (`event_column`) | No, except where the payload carried no timestamp |
+  | Slack activity | `item.modified_at` on a row keyed `<channel>:<ts>`, set to `round(ts*1000)` (`event_column`) | No, same exception |
+  | Pull requests active | `item.modified_at` — GitHub's `updated_at` (`last_touch`) | **Yes** |
+  | Incidents responded to | `item.modified_at`, the basis `metrics/dora.ts` ships (`last_touch`) | **Yes** — under-reports by sync lag |
+
+  Folding the two `event_column` lanes in with `pr`/`incident` under one "index-timed" label would
+  state a caveat that does not apply to them; folding them in with `merged_at` would claim an event
+  field they do not have. Only `last_touch` rows are counted in the preamble's can-be-misplaced
+  disclosure, so that number means what its sentence says. Windows are half-open `[since, now)`,
+  matching `metrics/stats.ts` rather than `dora.ts`'s inclusive form — run daily over adjacent
+  windows, an inclusive upper bound puts a boundary event in two consecutive standups. Each lane
+  filters on its own event field directly in SQL rather than pre-filtering on the indexed
+  `modified_at` and refining in TypeScript: `index/item-store.ts` writes a wholesale replacement
+  rather than a `MAX()`, so monotonicity is an upstream property and the failure mode is a merged
+  PR silently missing.
+
+  **"PRs opened" is not answerable, and the heading says so.**
+  `github-sync.ts`'s `extractPrMetadataForIndex` writes `number`, `repo`, `state`, `draft`,
+  `merged`, `user`, `labels`, `mergeable`, `additions`, `deletions`, `changed_files`, `commits` and
+  the two merge fields — there is no `created_at` anywhere in PR metadata. The lane ships as
+  `## Pull requests active`, which is both honest and the better standup question: a pull request
+  of mine that moved yesterday is what I am working on, whenever I opened it. Merged PRs are
+  excluded from it on BOTH merge signals, since `merged_at` is GitHub-connector-only and
+  `state`/`merged` are the only evidence on GitLab and Bitbucket.
+
+  **An unresolvable identity REFUSES rather than emitting an empty standup.** Every lane keys on
+  the resolved person, so with no identity the brief is six empty sections — indistinguishable
+  from a quiet day, and a false claim about the author's work in output whose entire purpose is to
+  be pasted into a channel. `ERR_STANDUP_IDENTITY_UNRESOLVED` names the remediation. Identity
+  reuses `agents/_lib/self-person.ts`'s `resolveSelfPerson` UNCHANGED (`[user] mePersonId` →
+  `git config user.email` against indexed canonical emails → OS username against indexed GitHub
+  logins), so `standup` and `catchup` can never disagree about who "me" is, and `[user] mePersonId`
+  is read in `ipc/agents-rpc.ts` exactly as `handleCatchup` reads it. A weaker resolution is
+  disclosed rather than hidden: an OS-username match is a heuristic that can land on a colleague,
+  and an override names a person the store never validated, so each gets its own gap note.
+
+  **EIGHT registration sites are compiler-forced, not the six `changelog`'s row named.** Adding a
+  sixteenth kind found two more. `agents/_lib/emit-brief.ts` kept a hand-maintained DUPLICATE of
+  `SynthInput` as its `AnyBrief` constraint, so the new kind compiled at all six documented sites
+  and then failed *there*, with an error naming missing properties of `ChangelogBrief` that read as
+  though the new brief were malformed rather than unregistered; it now aliases `SynthInput`, so
+  there is nothing left to register. And `newSessionId`'s parameter is a literal union of agent
+  names. **Two test tables that could not fail for a new kind were made total in the same change:**
+  `reserved-sections.coverage.test.ts`'s `ALL_KINDS` was a hand-written array guarded by
+  `expect(ALL_KINDS).toHaveLength(15)`, so a sixteenth kind left the list and its own assertion
+  self-consistent and the kind simply ABSENT — every `omitReserved` assertion silently skipped
+  it, which is the one guarantee that file exists to prove. It is now a `Record` total over
+  `SynthInput["kind"]`, plus a per-entry key check so a mis-filed fixture cannot satisfy it either.
+  `disclosure-anchor-coverage.test.ts` had the same shape and gained standup arms.
+
+  **Disclosure placement was a design decision, not a default.** Three interleaved preamble
+  clauses carry I31 anchors (the window bound, the last-write-basis clause, the truncation count);
+  the two further standing notes this brief owes — single-identity attribution, and the
+  `event_column` sync-clock fallback — are `## Gaps` notes instead, which is STRONGER protection
+  (withheld from the model and re-attached verbatim, so a rewrite cannot drop them by construction)
+  as well as better placement, since five italic caveats stacked above six short sections is a
+  preamble that out-weighs its own content. A prose count in `synthesize.ts` was corrected rather
+  than incremented while updating these: "the common one-heading case (fourteen of fifteen kinds)"
+  was already wrong by one — `glossary` reserves two headings and `negotiate` three, so fifteen
+  kinds left thirteen — and a mechanical fifteen-to-sixteen sweep carried the error forward before
+  it was derived from `RESERVED_HEADINGS_BY_KIND` (fourteen of sixteen).
+
+  **Surface.** Externally excluded — not on HTTP, MCP or ChatOps, and absent from the Tauri
+  allowlist (`ALLOWED_METHODS` unchanged at 105). Unlike `changelog`'s sequencing exclusion this
+  one is structural: `requireStandupParams` accepts no person parameter, so a bearer token cannot
+  ask about *itself* and would instead receive the gateway owner's day — `negotiate --person`'s
+  dossier concern arriving with no parameter to pass. An external surface needs a way to establish
+  who is asking first. `nimbus fleet`-eligible with a digest extractor, reasoned independently:
+  `catchup` is already eligible on the same resolver, and a standup is about its own owner rather
+  than an arbitrary subject. The digest deliberately omits `identity.personId` from its metrics —
+  the id changing means the resolver landed on a different person, not that work happened, and
+  folding it in would digest a re-resolution as a day's activity. Entry lists cap at 50 per lane
+  while `counts` keeps the true pre-cap total, and Slack is summarised by THREAD as well as by
+  message, because eleven replies in one thread is one conversation. `--format slack|plain` are
+  text transforms over the brief's own Markdown, never a re-render from `findings`, which would
+  discard a synthesized rewrite.
+
 - **2026-09-12 — semantic search stops re-running the KNN once per chunk row (schema V62).**
   `IPC request timed out after 30000ms: index.searchRanked` (issue #1396) had been read as
   embedding-backfill contention. It was not — though contention is real and was measured rather

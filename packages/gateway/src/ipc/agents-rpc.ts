@@ -24,6 +24,7 @@ import { emitNegotiateBrief, MAX_SINCE_MS as MAX_NEGOTIATE_SINCE_MS } from "../a
 import { emitOwnershipBrief } from "../agents/ownership.ts";
 import { emitPreflightBrief } from "../agents/preflight.ts";
 import { emitPremortemBrief } from "../agents/premortem.ts";
+import { emitStandupBrief, StandupIdentityUnresolvedError } from "../agents/standup.ts";
 import { emitWhyBrief } from "../agents/why.ts";
 import { runWhyPeek } from "../agents/why-peek.ts";
 import { loadNimbusFilesystemRootsFromConfigDir } from "../config/filesystem-toml.ts";
@@ -239,6 +240,7 @@ function newSessionId(
     | "impact"
     | "catchup"
     | "changelog"
+    | "standup"
     | "ghost"
     | "glossary"
     | "conflicts"
@@ -522,6 +524,82 @@ async function handleChangelog(
     notify: ctx.notify,
     ...(ctx.runner === undefined ? {} : { runner: ctx.runner }),
   });
+}
+
+/**
+ * `agents.standup` takes only a window. There is deliberately no `--person`/`personId` parameter:
+ * the brief is scoped to the LOCAL OWNER, resolved from local state, and a caller-supplied person
+ * would turn a personal standup into `negotiate --person` — the dossier-builder shape that keeps
+ * `agents.negotiate` off every external surface and out of the fleet. `[user] mePersonId` is the
+ * one way to change who this is about, and it is owner-written config rather than a request field.
+ */
+function requireStandupParams(params: unknown): { sinceMs?: number } {
+  if (params === null || typeof params !== "object" || Array.isArray(params)) {
+    throw new AgentsRpcError(-32602, "agents.standup requires an object payload");
+  }
+  const p = params as { sinceMs?: unknown };
+  const out: { sinceMs?: number } = {};
+  if (p.sinceMs !== undefined) {
+    if (
+      typeof p.sinceMs !== "number" ||
+      !Number.isInteger(p.sinceMs) ||
+      p.sinceMs < 0 ||
+      p.sinceMs > MAX_SINCE_MS
+    ) {
+      throw new AgentsRpcError(
+        -32602,
+        `sinceMs must be a non-negative integer up to ${MAX_SINCE_MS} ms (90 days)`,
+      );
+    }
+    out.sinceMs = p.sinceMs;
+  }
+  return out;
+}
+
+/**
+ * The fallback window when a caller omits `sinceMs` — matches the CLI's own `--since 24h` default
+ * (`packages/cli/src/commands/standup.ts`). Needed HERE, like `changelog`'s and unlike
+ * `catchup`'s, because `emitStandupBrief`'s `lookbackMs` is a REQUIRED field with no internal
+ * fallback — see `BuildStandupArgs.lookbackMs` on why it carries a DURATION, never a cutoff.
+ *
+ * 24 hours rather than `changelog`'s 7 days: this answers "what did I do since yesterday's
+ * standup", which is the meeting the command is named for.
+ */
+const STANDUP_DEFAULT_SINCE_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * Resolves `[user] mePersonId` and delegates.
+ *
+ * Read HERE rather than inside the agent, mirroring `handleCatchup` exactly — `agents/standup.ts`
+ * keeps no config-file dependency, and re-reading per call means a `[user]` edit applies without
+ * a gateway restart.
+ *
+ * `StandupIdentityUnresolvedError` is translated to `-32000` rather than allowed to propagate raw:
+ * an unresolved identity is a REFUSAL the caller must act on, not an internal fault, and the CLI
+ * prints this message verbatim. `-32602` would be wrong — the caller's params are fine; it is the
+ * machine's state that cannot answer.
+ */
+async function handleStandup(
+  params: unknown,
+  ctx: AgentsRpcContext,
+): Promise<{ sessionId: string }> {
+  const input = requireStandupParams(params);
+  const userToml = ctx.configDir === undefined ? {} : loadNimbusUserFromConfigDir(ctx.configDir);
+  try {
+    return await emitStandupBrief({
+      db: ctx.db,
+      sessionId: newSessionId("standup"),
+      lookbackMs: input.sinceMs ?? STANDUP_DEFAULT_SINCE_MS,
+      ...(userToml.mePersonId === undefined ? {} : { mePersonIdOverride: userToml.mePersonId }),
+      notify: ctx.notify,
+      ...(ctx.runner === undefined ? {} : { runner: ctx.runner }),
+    });
+  } catch (err) {
+    if (err instanceof StandupIdentityUnresolvedError) {
+      throw new AgentsRpcError(-32000, err.message);
+    }
+    throw err;
+  }
 }
 
 async function handleGhost(params: unknown, ctx: AgentsRpcContext): Promise<unknown> {
@@ -1115,7 +1193,7 @@ async function handlePremortem(
  * The `agents.*` methods this module answers.
  *
  * Declared once and used for BOTH the egress-append test and the dispatch, so the ledgered set is
- * definitionally the served set. A second, hand-maintained list of the same fifteen strings is how
+ * definitionally the served set. A second, hand-maintained list of the same seventeen strings is how
  * the over-counting defect this replaces was introduced: `method.startsWith("agents.")` appended an
  * `authorized` row for `agents.<anything>`, which then failed `-32601` having done no work — so
  * `nimbus prove` over-counted, and an unbounded caller-supplied `method` reached a hashed,
@@ -1126,6 +1204,7 @@ const AGENTS_RPC_HANDLERS = {
   "agents.impact": handleImpact,
   "agents.catchup": handleCatchup,
   "agents.changelog": handleChangelog,
+  "agents.standup": handleStandup,
   "agents.ghost": handleGhost,
   "agents.conflicts": handleConflicts,
   "agents.huddle": handleHuddle,
@@ -1193,6 +1272,19 @@ const AGENTS_METHOD_PREFIX = "agents.";
  * response shape fits the runId+poll contract fine. Shape is settling against ONE consumer (the
  * CLI) before it is committed across HTTP, MCP and ChatOps, each of which carries its own count
  * assertion. Revisit once the brief has been read in anger.
+ *
+ * `agents.standup` — excluded because it is OWNER-SCOPED BY CONSTRUCTION, which makes it the one
+ * entry here whose reasoning is about what the brief IS rather than what a caller could do with
+ * it. Every section is the local owner's own activity, resolved from local state — `git config
+ * user.email`, the OS username, `[user] mePersonId` — and `requireStandupParams` accepts no
+ * person parameter at all. On the CLI and the Tauri renderer that is exactly right: the caller
+ * IS the owner. Over HTTP it is meaningless in one direction and leaky in the other — a bearer
+ * token cannot ask about itself, so it would receive the OWNER's day, which is `negotiate
+ * --person`'s dossier concern arriving without anyone having to pass a parameter. In a shared
+ * ChatOps channel it is worse still: whoever typed the command would get a report on the person
+ * running the gateway, posted where the room can read it. Unlike `changelog`'s, this exclusion is
+ * not waiting on a sequencing decision — an external surface for this brief needs a way to
+ * establish WHO IS ASKING first, which is a different feature.
  */
 const EXTERNAL_EXCLUDED_AGENT_METHODS: ReadonlySet<string> = new Set([
   "agents.preflight",
@@ -1201,6 +1293,8 @@ const EXTERNAL_EXCLUDED_AGENT_METHODS: ReadonlySet<string> = new Set([
   "agents.negotiate",
   // Sequencing, not subject-matter — see the doc comment above.
   "agents.changelog",
+  // Owner-scoped by construction, which is the reason — see the doc comment above.
+  "agents.standup",
 ]);
 
 /**
@@ -1244,6 +1338,16 @@ export const FLEET_ELIGIBILITY = Object.freeze({
   // alongside subject enumeration.
   "agents.negotiate": "deferred",
   "agents.catchup": "eligible",
+  // Eligible, and the identity question is what makes that a real decision rather than a
+  // default. A fleet run is unattended, so `resolveSelfPerson`'s git leg spawns `git config
+  // user.email` in the GATEWAY's working directory rather than a repo the owner is sitting in —
+  // but that leg reads a GLOBAL git config when no repo-local one applies, and the fallback order
+  // ends at a refusal rather than at a guess, so an unattended run either resolves the same
+  // person an interactive one would or refuses outright. It never silently profiles someone else.
+  // `agents.catchup` is already eligible on this exact resolver, so excluding this one would
+  // split a decision that has one answer. And unlike `negotiate`, there is no dossier concern to
+  // weigh: a standup is about its own owner, and no request field can point it at anyone else.
+  "agents.standup": "eligible",
   // Reasoned about INDEPENDENTLY of `agents.changelog`'s external exclusion above — that set was
   // reasoned about for an ARBITRARY NETWORK CALLER; a fleet is a different principal,
   // owner-configured in advance and absent when it fires. A weekly changelog produced overnight

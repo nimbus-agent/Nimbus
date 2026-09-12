@@ -19,9 +19,10 @@ describe("EligibleAgentMethod is derived, not restated", () => {
     const eligible = Object.entries(FLEET_ELIGIBILITY)
       .filter(([, v]) => v === "eligible")
       .map(([k]) => k);
-    expect(eligible).toHaveLength(12);
+    expect(eligible).toHaveLength(13);
     expect(eligible).toContain("agents.ghost");
     expect(eligible).toContain("agents.changelog");
+    expect(eligible).toContain("agents.standup");
     expect(eligible).not.toContain("agents.negotiate");
   });
 });

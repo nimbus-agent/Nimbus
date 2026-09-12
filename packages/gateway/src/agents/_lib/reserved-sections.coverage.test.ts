@@ -19,6 +19,7 @@ import type { OwnershipBrief } from "./ownership-types.ts";
 import type { PremortemBrief } from "./premortem-types.ts";
 import { renderGlossary } from "./render.ts";
 import { RESERVED_HEADINGS_BY_KIND, reservedBlocksFor } from "./reserved-sections.ts";
+import type { StandupBrief } from "./standup-types.ts";
 import type { SynthesisAttempt, SynthesisRunner } from "./synthesis-llm.ts";
 import { deterministicRenderForTest, synthesize } from "./synthesize.ts";
 import type { WhyBrief } from "./why-types.ts";
@@ -352,28 +353,80 @@ const CHANGELOG: ChangelogBrief = {
   truncatedCount: 0,
 };
 
-const ALL_KINDS: readonly SynthInput[] = [
-  EXPERT,
-  IMPACT,
-  CATCHUP,
-  GHOST,
-  CONFLICT,
-  HUDDLE,
-  JANITOR,
-  PREFLIGHT,
-  WHY,
-  GLOSSARY,
-  DECISIONS,
-  OWNERSHIP,
-  PREMORTEM,
-  NEGOTIATE,
-  CHANGELOG,
-];
+const STANDUP: StandupBrief = {
+  kind: "standup",
+  agentVersion: 1,
+  generatedAt: 0,
+  latencyMs: 0,
+  gaps: [GAP],
+  query: { sinceMs: -86_400_000, nowMs: 0 },
+  identity: { personId: "person-me", source: "git", displayName: "Me", personRowExists: true },
+  prsActive: [],
+  prsMerged: [],
+  reviews: [],
+  ticketsOpened: [],
+  incidents: [],
+  messages: [],
+  counts: {
+    prsActive: 0,
+    prsMerged: 0,
+    reviews: 0,
+    ticketsOpened: 0,
+    incidents: 0,
+    messages: 0,
+  },
+  threadCount: 0,
+  approximateCount: 0,
+  nonGithubMergedPrs: 0,
+  truncatedCount: 0,
+};
+
+/**
+ * Every brief kind, keyed by its own `kind` literal.
+ *
+ * A `Record` over `SynthInput["kind"]` rather than the hand-maintained ARRAY this was, because
+ * the array could not fail in the direction that mattered: it was guarded by
+ * `expect(ALL_KINDS).toHaveLength(15)`, so adding a sixteenth brief kind left both the list and
+ * its assertion self-consistent and the new kind simply absent — every `omitReserved` assertion
+ * below silently skipped it. That is precisely the guarantee this file exists to prove, and
+ * `standup` reached a passing suite with it unverified. As a total `Record` a new kind is a
+ * COMPILE error here, which is the same mechanism `RESERVED_HEADINGS_BY_KIND` itself uses.
+ */
+const BY_KIND: Readonly<Record<SynthInput["kind"], SynthInput>> = {
+  expert: EXPERT,
+  impact: IMPACT,
+  catchup: CATCHUP,
+  ghost: GHOST,
+  conflict: CONFLICT,
+  huddle: HUDDLE,
+  janitor: JANITOR,
+  preflight: PREFLIGHT,
+  why: WHY,
+  glossary: GLOSSARY,
+  decisions: DECISIONS,
+  ownership: OWNERSHIP,
+  premortem: PREMORTEM,
+  negotiate: NEGOTIATE,
+  changelog: CHANGELOG,
+  standup: STANDUP,
+};
+
+const ALL_KINDS: readonly SynthInput[] = Object.values(BY_KIND);
 
 describe("every renderer honours omitReserved", () => {
-  test("the table covers all fifteen kinds exactly once", () => {
-    expect(ALL_KINDS).toHaveLength(15);
-    expect(new Set(ALL_KINDS.map((b) => b.kind)).size).toBe(15);
+  test("the table covers every kind exactly once, with no fixture mis-keyed", () => {
+    // Derived from the Record, so this can no longer pass by a list and its own hard-coded
+    // length agreeing with each other while a kind is missing from both.
+    const kinds = Object.keys(BY_KIND);
+    expect(ALL_KINDS).toHaveLength(kinds.length);
+    expect(new Set(ALL_KINDS.map((b) => b.kind)).size).toBe(kinds.length);
+    // A fixture filed under the wrong key would still satisfy the two assertions above — the set
+    // would be the right SIZE with one kind duplicated and another absent. Checking each entry
+    // against its own key is what makes the Record's totality mean what it claims.
+    // `expect<string>`, because `Object.entries` widens the key to `string` while `brief.kind` is
+    // the narrow union — a bare `expect(brief.kind).toBe(key)` fails TYPECHECK while `bun test`
+    // runs it green, so the gate that catches it is `bun run typecheck`, not the suite.
+    for (const [key, brief] of Object.entries(BY_KIND)) expect<string>(brief.kind).toBe(key);
   });
 
   for (const brief of ALL_KINDS) {

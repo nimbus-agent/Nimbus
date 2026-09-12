@@ -1,7 +1,6 @@
 import type { DecisionEvidence } from "../../decisions/decision-types.ts";
 import type { Risk } from "../../premortem/risks.ts";
 import type { WatcherProposal } from "../../premortem/watcher-proposals.ts";
-import type { ChangelogRow } from "../changelog-queries.ts";
 import {
   changelogDisclosures,
   glossaryProvenanceDisclosure,
@@ -11,6 +10,7 @@ import {
   negotiateOwnershipDisclosures,
   negotiateSubjectVoice,
   negotiateWindowDisclosure,
+  standupDisclosures,
   whyChangeSubjectDisclosure,
   windowLabel,
 } from "./brief-disclosures.ts";
@@ -48,6 +48,7 @@ import type {
 } from "./negotiate-types.ts";
 import type { OwnershipBrief, OwnershipTargetView } from "./ownership-types.ts";
 import type { PremortemBrief } from "./premortem-types.ts";
+import type { StandupBrief } from "./standup-types.ts";
 import type { WhyBrief, WhyLane } from "./why-types.ts";
 
 /**
@@ -95,7 +96,7 @@ function renderLatency(ms: number): string {
  * a renderer that could forget to, or could order Gaps after the footer, and the guard in
  * `brief-contract.ts` would then be checking a document the renderer never promised. Keeping the
  * shape in one place is what makes "every brief ends with its Gaps, and honours `omitReserved`"
- * true by construction rather than by fifteen agreeing copies.
+ * true by construction rather than by sixteen agreeing copies.
  *
  * Briefs with additional reserved sections of their own — `negotiate`'s `## Sources` and
  * `## Evidence not available from the index` — deliberately do NOT use this helper: their tail is
@@ -1095,8 +1096,25 @@ function stripLineStructureChars(text: string): string {
 }
 
 /**
- * One changelog entry. Linked when the indexed item carried a permalink that can be rendered
- * safely, plain otherwise — never a link to nowhere.
+ * The fields an entry renderer reads, and nothing else.
+ *
+ * Structural rather than `ChangelogRow`, so `renderStandup` shares these two functions instead
+ * of copying them. That sharing is the point: the hardening below is security-relevant and was
+ * WRONG once already — the changelog PR shipped `--format slack|plain` with links unconverted
+ * because the escaping here and the CLI's link regex disagreed about an escaped bracket, a seam
+ * no per-file review saw. A second brief with its own copy is a second place for that to happen,
+ * and the two row types differ only in a field neither function reads (`timeSource` /
+ * `timeBasis`).
+ */
+type RenderableEntry = {
+  readonly title: string;
+  readonly url: string | null;
+  readonly atMs: number;
+};
+
+/**
+ * One entry. Linked when the indexed item carried a permalink that can be rendered safely,
+ * plain otherwise — never a link to nowhere.
  *
  * Both halves go through `negotiate`'s hardened helpers rather than being interpolated raw,
  * because BOTH halves are connector-supplied: the title is a pull-request or incident subject
@@ -1105,12 +1123,17 @@ function stripLineStructureChars(text: string): string {
  * `javascript:` target is live in the Tauri renderer with only the CSP (I8) behind it.
  * `renderWhy` and `renderDecisionsEvidenceItem` interpolate raw; that is the older shape, not
  * the one to copy.
+ *
+ * `stamp` is injected because the right precision is a property of the WINDOW, not of the
+ * renderer: a changelog over 7d wants the date, and a standup over 24h wants the time — every
+ * entry in it would otherwise read `2026-09-12`, collapsing the ordering information the reader
+ * came for into one indistinguishable value.
  */
-function renderChangelogEntry(r: ChangelogRow): string {
+function renderBriefEntry(r: RenderableEntry, stamp: (ms: number) => string): string {
   const title = escapeMarkdownLinkText(stripLineStructureChars(r.title));
   const href = r.url === null ? null : safeEvidenceHref(r.url);
   const head = href === null ? title : `[${title}](${href})`;
-  return `- ${head} — ${isoDay(r.atMs)}`;
+  return `- ${head} — ${stamp(r.atMs)}`;
 }
 
 /**
@@ -1119,11 +1142,17 @@ function renderChangelogEntry(r: ChangelogRow): string {
  * The empty case prints its heading and `_None in this window._` rather than being omitted:
  * a missing heading and an empty one say different things — "this changelog does not cover
  * deployments" versus "no deployment happened in this window" — and the reader cannot tell
- * them apart from an absence. The whole point of this brief is that silence is never evidence.
+ * them apart from an absence. The whole point of these briefs is that silence is never evidence.
  */
-function renderChangelogSection(heading: string, rows: readonly ChangelogRow[]): string {
+function renderEntrySection(
+  heading: string,
+  rows: readonly RenderableEntry[],
+  stamp: (ms: number) => string,
+): string {
   const body =
-    rows.length === 0 ? "_None in this window._" : rows.map(renderChangelogEntry).join("\n");
+    rows.length === 0
+      ? "_None in this window._"
+      : rows.map((r) => renderBriefEntry(r, stamp)).join("\n");
   return ["", `## ${heading}`, "", body].join("\n");
 }
 
@@ -1171,10 +1200,118 @@ export function renderChangelog(brief: ChangelogBrief, opts?: RenderOpts): strin
     ...changelogDisclosures(brief).map((d) => d.line),
   ].join("\n");
   const sections = [
-    renderChangelogSection("Merged Pull Requests", brief.mergedPrs),
-    renderChangelogSection("Deployments", brief.deployments),
-    renderChangelogSection("Incidents Opened", brief.incidentsOpened),
-    renderChangelogSection("Incidents Resolved", brief.incidentsResolved),
+    renderEntrySection("Merged Pull Requests", brief.mergedPrs, isoDay),
+    renderEntrySection("Deployments", brief.deployments, isoDay),
+    renderEntrySection("Incidents Opened", brief.incidentsOpened, isoDay),
+    renderEntrySection("Incidents Resolved", brief.incidentsResolved, isoDay),
   ].join("\n");
   return assembleBrief(header, [preamble, sections], brief, opts);
+}
+
+/**
+ * Minute precision, UTC, for standup entries.
+ *
+ * `isoDay` is wrong for this brief: the default window is 24 hours, so every entry would render
+ * as one of two dates and the ordering the reader came for — what I did this morning versus last
+ * night — would be invisible. Seconds are dropped as noise at this granularity.
+ *
+ * UTC rather than local time, and the `Z` says so. Local time would be friendlier to read and
+ * would make the render non-deterministic across machines, which `nimbus fleet digest` compares
+ * between runs — and a standup produced by an overnight fleet job on the same index would then
+ * differ from the one the owner runs at their desk.
+ */
+function isoMinuteUtc(ms: number): string {
+  return `${new Date(ms).toISOString().slice(0, 16).replace("T", " ")}Z`;
+}
+
+/**
+ * Who the standup is about, as it appears inside an inline-code span in the PREAMBLE.
+ *
+ * Hardened for `changelogScopeLabel`'s reason and then some: unlike `--service`, which is
+ * owner-supplied and length-capped by the RPC validator, a display name is CONNECTOR-supplied —
+ * it is whatever a Slack profile or Jira account claimed — so a newline in it would end the
+ * preamble line and let the remainder render as a `## ` heading of its own, inside the exact
+ * region the I31 disclosures live in. The person ID falls back the same way, since
+ * `[user] mePersonId` reaches here verbatim (`self-person.ts` short-circuits on it without
+ * validation) and the RPC validator caps its length but rejects no control character.
+ */
+function standupWhoLabel(identity: StandupBrief["identity"]): string {
+  const raw = identity.displayName ?? identity.personId;
+  return stripLineStructureChars(raw).replaceAll("`", "");
+}
+
+/**
+ * How the identity was decided, spelled out for the reader rather than left as a bare id.
+ *
+ * `source` changes how much an empty section is worth trusting, so it belongs on the page and
+ * not only in `findings`: `git` matched a configured email against an indexed person, `override`
+ * was taken from `nimbus.toml` and never checked against the index at all, and `os` is a
+ * heuristic that can land on a colleague whose GitHub login equals this machine's username.
+ * `unresolved` is unreachable — `emitStandupBrief` refuses before building a brief — but is
+ * rendered rather than omitted, because a `TIME_BASIS`-style total map is what keeps a future
+ * fourth source from silently rendering as nothing.
+ */
+const STANDUP_SOURCE_LABEL: Readonly<Record<StandupBrief["identity"]["source"], string>> =
+  Object.freeze({
+    override: "pinned by `[user] mePersonId`",
+    git: "matched from `git config user.email`",
+    os: "guessed from your OS username",
+    unresolved: "unresolved",
+  });
+
+export function renderStandup(brief: StandupBrief, opts?: RenderOpts): string {
+  const header = "# Standup";
+  // The disclosures sit in the PREAMBLE — above the first `##` — because each qualifies every
+  // section below it. `preambleBody` (`markdown-sections.ts`) stops at the first LEVEL-2
+  // heading, which is why this brief's title is `#` and not `##`: under a level-2 title the
+  // preamble would be empty and `contractViolations` could never reach these sentences.
+  const preamble = [
+    "",
+    // `windowLabel`, never `Math.round(span / 86_400_000)`: the DEFAULT window here is `24h` and
+    // `--since 6h` is an ordinary use, both of which a day-only label renders as "last 0d" or
+    // "last 1d" — a window the lanes did not query, printed one line above the unconditional
+    // "Counts and entries below cover only this window" disclosure. `renderChangelog` shipped
+    // exactly that defect; on this brief it would be the common case rather than the edge one.
+    `_window: last ${windowLabel(brief.query.nowMs - brief.query.sinceMs)} (${isoMinuteUtc(brief.query.sinceMs)} → ${isoMinuteUtc(brief.query.nowMs)})_`,
+    `_for: \`${standupWhoLabel(brief.identity)}\` (${STANDUP_SOURCE_LABEL[brief.identity.source]})_`,
+    ...standupDisclosures(brief).map((d) => d.line),
+  ].join("\n");
+  const sections = [
+    renderEntrySection("Pull requests active", brief.prsActive, isoMinuteUtc),
+    renderEntrySection("Pull requests merged", brief.prsMerged, isoMinuteUtc),
+    renderEntrySection("Reviews given", brief.reviews, isoMinuteUtc),
+    renderEntrySection("Tickets opened", brief.ticketsOpened, isoMinuteUtc),
+    renderEntrySection("Incidents responded to", brief.incidents, isoMinuteUtc),
+    renderStandupSlackSection(brief),
+  ].join("\n");
+  return assembleBrief(header, [preamble, sections], brief, opts);
+}
+
+/**
+ * Slack activity, headed by its THREAD count rather than only its message count.
+ *
+ * "Slack threads participated in" is the unit the roadmap names and the one a standup reader
+ * wants: eleven replies in one thread is one conversation, not eleven items of work. Both
+ * numbers are printed because neither alone is the answer — the thread count is the shape of the
+ * day and the message count is the volume — and printing the thread count while listing messages
+ * without saying which is which would leave the reader unable to reconcile a "3 threads" heading
+ * with eleven bullets beneath it.
+ *
+ * Reuses {@link renderEntrySection}'s empty-case wording via that function rather than
+ * hand-rolling this one: an empty Slack section must read `_None in this window._` exactly like
+ * every other lane, since the alternative is a section that looks omitted rather than empty.
+ */
+function renderStandupSlackSection(brief: StandupBrief): string {
+  const section = renderEntrySection("Slack activity", brief.messages, isoMinuteUtc);
+  if (brief.counts.messages === 0) return section;
+  const n = brief.counts.messages;
+  const t = brief.threadCount;
+  const summary =
+    `_${String(n)} message${n === 1 ? "" : "s"} across ` +
+    `${String(t)} thread${t === 1 ? "" : "s"}._`;
+  // Inserted after the heading's blank line rather than appended, so the summary is read before
+  // the bullets it counts. `renderEntrySection` returns `["", "## …", "", body]` joined, so
+  // splicing at index 3 puts this exactly where the body starts.
+  const parts = section.split("\n");
+  return [...parts.slice(0, 3), summary, "", ...parts.slice(3)].join("\n");
 }

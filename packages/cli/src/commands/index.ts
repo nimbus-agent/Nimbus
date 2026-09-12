@@ -52,6 +52,7 @@ export { runSecurity } from "./security.ts";
 export { runServe } from "./serve.ts";
 export { runSession } from "./session.ts";
 export { runShare, runVerifyShare } from "./share.ts";
+export { runStandupCommand } from "./standup.ts";
 export { runStart } from "./start.ts";
 export { runStats } from "./stats.ts";
 export { runStatus } from "./status.ts";

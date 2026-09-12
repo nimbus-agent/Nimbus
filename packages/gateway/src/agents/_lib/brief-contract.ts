@@ -7,6 +7,7 @@ import {
   negotiateNotComputedDisclosure,
   negotiateOwnershipDisclosures,
   negotiateWindowDisclosure,
+  standupDisclosures,
   whyChangeSubjectDisclosure,
 } from "./brief-disclosures.ts";
 import type { SynthInput } from "./brief-kinds.ts";
@@ -101,6 +102,9 @@ export function requiredPhrases(brief: SynthInput): readonly Disclosure[] {
   // function and the SAME predicates the renderer calls, so the guard can neither require a
   // sentence the brief never rendered nor miss one it did.
   if (brief.kind === "changelog") return changelogDisclosures(brief);
+  // Every standup disclosure is interleaved PREAMBLE prose the model is asked to rewrite; its
+  // two standing notes live in the reserved `## Gaps` section instead and need no anchor.
+  if (brief.kind === "standup") return standupDisclosures(brief);
   // Every other brief kind returns [] until its contractual strings are added.
   // Listed explicitly so a sixteenth kind is a COMPILE error, not a silent [].
   if (

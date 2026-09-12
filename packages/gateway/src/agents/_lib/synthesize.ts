@@ -24,6 +24,7 @@ import {
   renderOwnership,
   renderPreflight,
   renderPremortem,
+  renderStandup,
   renderWhy,
 } from "./render.ts";
 import {
@@ -104,6 +105,7 @@ function deterministicRender(brief: SynthInput, opts?: RenderOpts): string {
   if (brief.kind === "premortem") return renderPremortem(brief, opts);
   if (brief.kind === "negotiate") return renderNegotiate(brief, opts);
   if (brief.kind === "changelog") return renderChangelog(brief, opts);
+  if (brief.kind === "standup") return renderStandup(brief, opts);
   return assertNeverBrief(brief);
 }
 
@@ -127,6 +129,7 @@ function toolNameFor(brief: SynthInput): string {
   if (brief.kind === "premortem") return "agents.premortem";
   if (brief.kind === "negotiate") return "agents.negotiate";
   if (brief.kind === "changelog") return "agents.changelog";
+  if (brief.kind === "standup") return "agents.standup";
   return assertNeverBrief(brief);
 }
 
@@ -420,7 +423,14 @@ function bareHeading(heading: string): string {
 
 /**
  * Join heading names into "`A`, `B`, or `C`" (Oxford-comma-free, matching this file's existing
- * prose style) — or just "`A`" for the common one-heading case (fourteen of fifteen kinds).
+ * prose style) — or just "`A`" for the common one-heading case (fourteen of sixteen kinds;
+ * `glossary` reserves two and `negotiate` three).
+ *
+ * That parenthetical read "fourteen of fifteen" before `standup` landed, and was already wrong by
+ * one: with fifteen kinds, `glossary` and `negotiate` left THIRTEEN reserving exactly one heading.
+ * Derived from `RESERVED_HEADINGS_BY_KIND` rather than incremented, since bumping a number that
+ * was never right just carries the error forward — which is what a mechanical fifteen-to-sixteen
+ * sweep of this file's prose did on the first pass.
  */
 function formatHeadingList(names: readonly string[]): string {
   const quoted = names.map((n) => `\`${n}\``);

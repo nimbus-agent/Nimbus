@@ -414,3 +414,83 @@ export function changelogDisclosures(b: {
   }
   return out;
 }
+
+// ---------------------------------------------------------------------------
+// standup — interleaved
+// ---------------------------------------------------------------------------
+
+/**
+ * `nimbus standup`'s interleaved disclosures — all in the PREAMBLE, because each qualifies every
+ * section below it and no section scope could reach them all.
+ *
+ * **Only three, and that is a design decision rather than an omission.** Two further standing
+ * disclosures this brief owes its reader — that attribution runs through ONE resolved identity, so
+ * work recorded under another account is invisible; and that the review/message lanes read a
+ * column whose narrow fallback is the sync clock — are emitted as `## Gaps` notes by `standup.ts`
+ * instead. That is STRONGER protection, not weaker: a reserved section is withheld from the model
+ * and re-attached verbatim, so a rewrite cannot drop it BY CONSTRUCTION, where an anchor check
+ * only proves a fragment survived. It is also better placement. This brief exists to be pasted
+ * into a channel, and five italic caveats stacked above six short sections is a preamble that
+ * out-weighs its own content — which is how a reader learns to skip the part that matters. What
+ * stays here is exactly what qualifies the NUMBERS, which must be read before them.
+ *
+ * Anchors are 2–7 words, matching this module's existing ones, because `synthesize.ts` asks the
+ * model to REWRITE this prose: a near-verbatim twelve-word clause makes ordinary paraphrase a
+ * `contract_violation`, so synthesis would fail closed on every run and the feature would ship
+ * inert — a defect that merely happens to be a safe one. Each anchor is the shortest fragment
+ * that cannot survive its disclosure's removal.
+ *
+ * **No anchor may be satisfiable by a SIBLING's line** — if disclosure 2's anchors also occurred
+ * in disclosure 1's text, a rewrite could drop 2 entirely and still pass.
+ * `disclosure-anchor-coverage.test.ts` checks that cross-satisfaction directly.
+ */
+export function standupDisclosures(b: {
+  readonly approximateCount: number;
+  readonly truncatedCount: number;
+}): readonly Disclosure[] {
+  const out: Disclosure[] = [];
+  out.push({
+    scope: { kind: "preamble" },
+    line:
+      "Counts and entries below cover only this window, and each entry is placed by when it " +
+      "happened wherever the index records that time — an entry that may instead sit in the " +
+      "wrong window is disclosed below.",
+    // Clause 1: the window bound. Clause 2: the placement BASIS, whose factual core is that
+    // placement is not unconditionally trustworthy — the half a paraphrase cannot drop without
+    // losing the meaning. Deliberately NOT the full clause: a dozen near-verbatim words is a
+    // rewrite ban, not an anchor. Careful to claim event placement only WHERE THE INDEX HAS IT,
+    // so it cannot contradict the sibling below on a brief where `approximateCount > 0` — two
+    // adjacent preamble sentences making opposite claims about the same entries is worse than
+    // either alone, because the reader has no reason to look further.
+    anchors: ["cover only this window", "wherever the index records that time"],
+  });
+  if (b.approximateCount > 0) {
+    out.push({
+      scope: { kind: "preamble" },
+      line:
+        `${String(b.approximateCount)} ${entryClause(b.approximateCount, "be")} placed by when ` +
+        "the index last wrote the row rather than by a recorded event time — active pull " +
+        "requests and incidents, neither of which carries one. So a pull request of yours that " +
+        "was touched during the window is listed however long ago you opened it, and an " +
+        "incident you responded to whose row has not been re-synced since is missing entirely, " +
+        "which means incident response under-reports by sync lag.",
+      // `"rather than by a recorded event time"` is the contrast being disclosed — it cannot
+      // occur unless the sentence is still making its point, and it appears in no sibling line,
+      // so dropping this disclosure cannot be masked by keeping another. The second anchor
+      // guards the SECOND independent claim in this line (the direction of the error), which a
+      // single anchor drawn from the first sentence would leave free to be dropped — the exact
+      // failure observed on `negotiate`, where the dropped half was the load-bearing one.
+      anchors: ["rather than by a recorded event time", "under-reports by sync lag"],
+    });
+  }
+  if (b.truncatedCount > 0) {
+    out.push({
+      scope: { kind: "preamble" },
+      line:
+        `${String(b.truncatedCount)} further ` +
+        `${entryClause(b.truncatedCount, "wasWere")} truncated at the display limit.`,
+      anchors: ["truncated at the display limit"],
+    });
+  }
+  return out;
+}

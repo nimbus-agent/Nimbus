@@ -4,6 +4,7 @@ import {
   changelogDisclosures,
   negotiateOwnershipDisclosures,
   negotiateWindowDisclosure,
+  standupDisclosures,
 } from "./brief-disclosures.ts";
 import type { NegotiateOwnership } from "./negotiate-types.ts";
 
@@ -57,10 +58,23 @@ function changelogTimeBasis(): Disclosure {
   return d;
 }
 
+/**
+ * The standup time-basis entry, which exists only when something CAN be misplaced — the same
+ * condition its renderer applies. Indexed by position because that is how `standupDisclosures`
+ * orders them: the unconditional meaning-of-the-numbers line, then this one.
+ */
+function standupTimeBasis(): Disclosure {
+  const d = standupDisclosures({ approximateCount: 3, truncatedCount: 0 })[1];
+  if (d === undefined)
+    throw new Error("standup time-basis disclosure missing at approximateCount > 0");
+  return d;
+}
+
 const TWO_SENTENCE_ENTRIES: ReadonlyArray<readonly [string, Disclosure]> = [
   ["negotiate window", negotiateWindowDisclosure(WINDOW_MS, GENERATED_AT)],
   ["negotiate ownership accountability", negotiateOwnershipDisclosures(ownership()).accountability],
   ["changelog time basis", changelogTimeBasis()],
+  ["standup time basis", standupTimeBasis()],
 ];
 
 describe("every sentence of a disclosure is anchored (F27)", () => {
@@ -118,6 +132,51 @@ describe("every sentence of a disclosure is anchored (F27)", () => {
         expect(words).toBeLessThanOrEqual(7);
       }
     }
+  });
+
+  test("standup's preamble anchors are not satisfiable by a sibling disclosure's line", () => {
+    // All three standup disclosures share ONE scope (the preamble), so `contractViolations`
+    // searches the same text for every anchor. An anchor that also occurs in a sibling's line
+    // would let a rewrite drop its own disclosure entirely and still pass — an honesty guard
+    // failing in the false-negative direction, which is the one that matters.
+    const all = standupDisclosures({ approximateCount: 3, truncatedCount: 4 });
+    expect(all).toHaveLength(3);
+    for (const [i, d] of all.entries()) {
+      const siblings = all.filter((_, j) => j !== i).map((sib) => sib.line);
+      for (const anchor of d.anchors) {
+        expect(d.line).toContain(anchor);
+        for (const sibling of siblings) expect(sibling).not.toContain(anchor);
+      }
+    }
+  });
+
+  test("standup's anchors stay in the 2-7 word band its neighbours use", () => {
+    // A near-verbatim clause is a rewrite BAN, not an anchor: it makes ordinary paraphrase a
+    // contract violation, so synthesis fails closed on every run and the feature ships inert.
+    for (const d of standupDisclosures({ approximateCount: 3, truncatedCount: 4 })) {
+      for (const anchor of d.anchors) {
+        const words = anchor.trim().split(/\s+/).length;
+        expect(words).toBeGreaterThanOrEqual(2);
+        expect(words).toBeLessThanOrEqual(7);
+      }
+    }
+  });
+
+  test("the standup time-basis disclosure anchors its sync-lag sentence", () => {
+    // Sentence 2 is the one that says incident response UNDER-REPORTS. A rewrite keeping only
+    // sentence 1 ("placed by when the index last wrote the row") would leave the reader with the
+    // mechanism and none of its consequence — the same half-drop observed on `negotiate`.
+    const d = standupTimeBasis();
+    expect(d.anchors.some((a) => a.includes("under-reports by sync lag"))).toBe(true);
+  });
+
+  test("standup's unconditional disclosure is emitted even on an entirely empty day", () => {
+    // The conditional two drop out at zero. If the first were conditional too, a standup with no
+    // activity would carry NO window bound at all — and "nothing here" would read as a claim
+    // about all time rather than about the last 24 hours.
+    const all = standupDisclosures({ approximateCount: 0, truncatedCount: 0 });
+    expect(all).toHaveLength(1);
+    expect(all[0]?.line).toContain("cover only this window");
   });
 
   test("the changelog time-basis disclosure anchors its sync-lag sentence", () => {

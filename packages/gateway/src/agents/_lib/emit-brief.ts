@@ -1,39 +1,26 @@
-import type { ChangelogBrief } from "./changelog-types.ts";
-import type { DecisionsBrief } from "./decisions-types.ts";
-import type {
-  CatchupBrief,
-  ConflictBrief,
-  ExpertBrief,
-  GhostBrief,
-  HuddleBrief,
-  ImpactBrief,
-  JanitorBrief,
-  PreflightBrief,
-} from "./findings.ts";
-import type { GlossaryBrief } from "./glossary-types.ts";
-import type { NegotiateBrief } from "./negotiate-types.ts";
-import type { OwnershipBrief } from "./ownership-types.ts";
-import type { PremortemBrief } from "./premortem-types.ts";
+import type { SynthInput } from "./brief-kinds.ts";
 import type { SynthesisRunner } from "./synthesis-llm.ts";
 import { synthesize } from "./synthesize.ts";
-import type { WhyBrief } from "./why-types.ts";
 
-type AnyBrief =
-  | ExpertBrief
-  | ImpactBrief
-  | CatchupBrief
-  | GhostBrief
-  | ConflictBrief
-  | HuddleBrief
-  | JanitorBrief
-  | PreflightBrief
-  | WhyBrief
-  | GlossaryBrief
-  | DecisionsBrief
-  | OwnershipBrief
-  | PremortemBrief
-  | NegotiateBrief
-  | ChangelogBrief;
+/**
+ * The briefs this helper can emit: exactly `SynthInput`, aliased rather than re-listed.
+ *
+ * It WAS re-listed — a hand-maintained union naming all fifteen brief types, which is the
+ * "two independent copies free to drift" shape `brief-disclosures.ts` exists to eliminate one
+ * level down. The copy could never be WRONG in a dangerous direction, because `synthesize(brief)`
+ * below already requires assignability to `SynthInput`, so the two sets were identical by
+ * construction; what it could be, and was, is INCOMPLETE. Adding a sixteenth brief kind compiled
+ * everywhere the compiler was said to force a registration — `SynthInput`,
+ * `RESERVED_HEADINGS_BY_KIND`, `AGENTS_RPC_HANDLERS`, `FLEET_ELIGIBILITY`,
+ * `FLEET_DIGEST_EXTRACTORS`, `brief-contract.ts` — and then failed HERE, at a constraint whose
+ * error names missing properties of `ChangelogBrief` and reads as though the new brief were
+ * malformed rather than unregistered.
+ *
+ * As an alias there is nothing left to register: a new member of `SynthInput` is admitted here
+ * automatically, which is correct, since a brief `synthesize` can render is a brief this can
+ * emit.
+ */
+type AnyBrief = SynthInput;
 
 export interface EmitBriefWithSynthesisOpts<B extends AnyBrief> {
   readonly sessionId: string;

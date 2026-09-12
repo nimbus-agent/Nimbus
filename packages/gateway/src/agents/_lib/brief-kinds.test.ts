@@ -5,7 +5,7 @@ describe("assertNeverBrief", () => {
   // The runtime throw is unreachable while `SynthInput` and its dispatch arms agree — see
   // the docstring on `assertNeverBrief` itself. That "unreachable in production" status is
   // exactly why this must be tested directly rather than only exercised transitively: it is
-  // the error a future maintainer sees the moment they add a fifteenth brief kind and miss
+  // the error a future maintainer sees the moment they add a seventeenth brief kind and miss
   // an arm, and a `never`-typed parameter means the only way to call it is a deliberate
   // cast-through-`unknown`, same as a real future bug would produce at the call site.
   test("throws naming the unhandled kind", () => {
