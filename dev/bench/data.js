@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1789158268027,
+  "lastUpdate": 1789219211113,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "a0b6850d6221f1012bebd73a6144e2d8230abbaf",
-          "message": "refactor: clear all 128 open SonarCloud code smells (#765)\n\n## What\n\nClears **all 128 open SonarCloud code smells** on the board. The quality\ngate was already green (0 bugs, 0 vulnerabilities, 0 hotspots to review,\ncoverage 94.3%, duplication 0.2%); this drives the smell count to zero.\n126 of the 128 are mechanical test-file cleanups; only 2 touch\nproduction source.\n\n| Rule | Count | Fix |\n|---|---|---|\n| S9020 | 88 | UI/RTL `waitFor` + `getBy*` (element appearance) →\nawaited `findBy*` |\n| S8968 | 35 | gateway tests skipping via `if (cond) return;` →\n`test.skipIf(cond)` / `it.skipIf(cond)` |\n| S8980 | 3 | removed redundant `act()` wrappers around `fireEvent` |\n| S3776 | 1 | `ipc/clip-rpc.ts` `dispatchClipRpc` cognitive complexity\n21 → ~1, via the existing `dispatchByMethod` handler-map helper |\n| S8786 | 1 | `tribal/tribal-chat-capture.ts` ReDoS-prone regex\n(`(\\S+)(?:\\s+(.*))?`) → linear whitespace tokenize + a simple `--target`\nregex |\n\n## Notes\n\n- Both source refactors are **behavior-preserving** and covered by their\nexisting suites (clip-rpc 31 tests, tribal-chat-capture tests all pass).\n- A handful of Sonar-adjacent `waitFor`s that assert\n`toHaveTextContent`/state on an **already-mounted** element were\ndeliberately left as-is — `findBy*` retries on element existence only,\nso converting them would assert stale content and break the test. None\nwere in the flagged 128.\n- OnboardingConnect's fake-timer navigation test: removing the `act()`\naround the click required switching the timer advance to\n`vi.advanceTimersByTimeAsync` so the poll interval registers before the\ntimer fires.\n\n## Verification (local)\n\n- Full UI Vitest: **74 files / 506 tests, 0 fail**\n- All changed gateway suites: **138 pass / 26 platform-skip, 0 fail**\n- `tsc --noEmit`: **exit 0** for both `packages/ui` and\n`packages/gateway`\n- `biome check`: clean (84 files)\n- static invariant audit (`check-nimbus-invariants.ts`): **exit 0**\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n\n## Summary by CodeRabbit\n\n* **Refactor**\n* Streamlined clip RPC request dispatching while preserving existing\nvalidation and behavior.\n  * Simplified tribal capture command parsing.\n\n* **Tests**\n  * Improved asynchronous UI test reliability with direct async queries.\n  * Standardized platform- and environment-specific test skipping.\n* Preserved existing coverage and behavioral assertions across gateway,\nUI, and integration tests.\n\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\nCo-authored-by: Claude Opus 4.8 (1M context) <noreply@anthropic.com>",
-          "timestamp": "2026-07-18T13:18:38Z",
-          "tree_id": "f2e3404f96cf99535c374f05a281123189514515",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/a0b6850d6221f1012bebd73a6144e2d8230abbaf"
-        },
-        "date": 1784381355234,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 234.3098756000025,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 233.6090350500046,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 251.34687965000157,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "306811640+nimbus-release-bot[bot]@users.noreply.github.com",
+            "name": "nimbus-release-bot[bot]",
+            "username": "nimbus-release-bot[bot]"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "0a8917378d0eebc47d8091a48f0a253ad3ad12f3",
+          "message": "chore: release main (#1498)\n\n:robot: I have created a release *beep* *boop*\n---\n\n\n<details><summary>7.20.0</summary>\n\n##\n[7.20.0](https://github.com/nimbus-agent/Nimbus/compare/v7.19.1...v7.20.0)\n(2026-09-11)\n\n\n### Features\n\n* **agents:** nimbus changelog — the fifteenth built-in agent\n([#1496](https://github.com/nimbus-agent/Nimbus/issues/1496))\n([bc1139b](https://github.com/nimbus-agent/Nimbus/commit/bc1139b813040248de0a594de07a04a62a57bb61))\n</details>\n\n---\nThis PR was generated with [Release\nPlease](https://github.com/googleapis/release-please). See\n[documentation](https://github.com/googleapis/release-please#release-please).\n\nCo-authored-by: nimbus-release-bot[bot] <306811640+nimbus-release-bot[bot]@users.noreply.github.com>",
+          "timestamp": "2026-09-12T16:07:34+03:00",
+          "tree_id": "2fa68d255299e0c44d21fa67328b261c85558254",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/0a8917378d0eebc47d8091a48f0a253ad3ad12f3"
+        },
+        "date": 1789219207060,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 324.17332515000237,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 326.9385631499914,
             "unit": "ms"
           }
         ]
