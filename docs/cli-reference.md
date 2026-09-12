@@ -3189,8 +3189,18 @@ nimbus doctor
 - Index total item count (warns if zero — suggests connecting a service)
 - Per-connector health table
 - Voice (when `voice.enabled = true` in config): `whisper-cli` on PATH, `ffmpeg` on PATH, platform TTS available (`espeak-ng` on Linux, `say` on macOS, PowerShell SAPI on Windows)
+- Vector search: whether `sqlite-vec` actually loaded on the gateway's connection, and if not, why
 
 **Exit codes:** `0` = all healthy, `1` = warnings, `2` = hard failures.
+
+> **Exit code 2 when `sqlite-vec` is not loaded.** The vector-search check reports `[fail]`, not
+> `[warn]`, because semantic search, hybrid ranking and session-memory recall are all off when it
+> fires — the same severity the sibling `Embeddings: unavailable` line already carries. On **macOS
+> this is reachable on a normal install**: Bun links Apple's system SQLite, which has extension
+> loading compiled out, so a machine with no Homebrew SQLite (`brew install sqlite`, or
+> `NIMBUS_SQLITE_PATH`) makes `nimbus doctor` exit `2` where it previously exited `0` and said
+> nothing. Keyword search is unaffected. A gateway too old to report the field leaves the line out
+> entirely and the exit code unchanged.
 
 #### `nimbus doctor --fix-keyring`
 

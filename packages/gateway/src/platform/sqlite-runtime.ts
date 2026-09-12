@@ -29,8 +29,17 @@
  * SQLite is loaded, so the call has to happen in every process — and every Bun `Worker` realm —
  * that opens a database, ahead of the first open. A change landing in three of four entry points
  * looks fixed and stays broken in the fourth, so `scripts/structure-audit/check-nimbus-invariants.ts`
- * enforces the rule statically (`D30-sqlite-runtime-init`): a non-test source file that imports
- * the `Database` CONSTRUCTOR from `bun:sqlite` must also name `ensureFullSqlite`.
+ * enforces the rule statically (`D30-sqlite-runtime-init`): a file that value-imports the
+ * `Database` CONSTRUCTOR from `bun:sqlite` must also name `ensureFullSqlite`.
+ *
+ * D30's REACH IS NARROWER THAN THAT SENTENCE SOUNDS, and the gap is worth knowing before trusting
+ * it. `scripts/structure-audit/lib.ts`'s `iterateSourceFiles()` scans every workspace's `src` tree
+ * and skips `.test.ts`, `-sql.ts`, `.d.ts`, fixtures and anything under `/testing/`; `scripts/` is
+ * outside it entirely. So three callers were wired VOLUNTARILY and are not policed:
+ * `scripts/test-preload/hermetic-credentials.ts` (the bunfig preload — the one call that covers
+ * every test process), `packages/gateway/src/testing/bun-test-support.ts`, and
+ * `scripts/gen-agent-brief-fixtures.ts`. The helpers under `packages/gateway/test/` are unwired on
+ * purpose: they only ever execute inside `bun test`, where the preload has already installed.
  *
  * OUT OF SCOPE, deliberately: what ships to a macOS end user who has no Homebrew SQLite. That
  * needs a decision about bundling a `libsqlite3.dylib` in the macOS package versus degrading
@@ -41,6 +50,7 @@
 
 import { Database } from "bun:sqlite";
 import { existsSync } from "node:fs";
+import { getLoadablePath } from "sqlite-vec";
 
 /**
  * Plain `process.stderr.write`, not pino, and not `console` (which `noConsole` forbids in gateway
@@ -84,10 +94,32 @@ export type FullSqliteState =
   | "installed"
   /** darwin, and no candidate library exists. `loadExtension` will fail; the user must act. */
   | "not-found"
-  /** darwin, a library existed, and `setCustomSQLite` returned false. */
+  /**
+   * darwin, `setCustomSQLite` returned false, AND the discriminator probe proved this process can
+   * still load a SQLite extension. Benign: another realm got here first.
+   */
   | "rejected"
+  /**
+   * darwin, `setCustomSQLite` returned false, AND the probe proved this process CANNOT load a
+   * SQLite extension. Semantic search is off for this run and the install ran too late.
+   */
+  | "no-extensions"
+  /**
+   * darwin, `setCustomSQLite` returned false, and the probe could not run at all — so which of the
+   * two above holds is unknown. Reported loudly rather than assumed benign.
+   */
+  | "unverified"
   /** darwin, a library existed, and `setCustomSQLite` threw. */
   | "error";
+
+/**
+ * What {@link FullSqliteDeps.probeExtensionLoad} found.
+ *
+ * `"unverified"` is a real third answer, not a failure to try: it means the extension FILE could
+ * not be resolved, which says nothing about whether the SQLite build supports extensions.
+ * Collapsing it into `"broken"` would report a resolution problem as a build problem.
+ */
+export type ExtensionProbeResult = "works" | "broken" | "unverified";
 
 export interface FullSqliteStatus {
   readonly state: FullSqliteState;
@@ -105,6 +137,14 @@ export interface FullSqliteDeps {
   readonly exists: (path: string) => boolean;
   /** `Database.setCustomSQLite`. Returns false, or throws, when the library is unusable. */
   readonly setCustomSQLite: (path: string) => boolean;
+  /**
+   * Can THIS process load a SQLite extension right now?
+   *
+   * Called ONLY on darwin, and only after `setCustomSQLite` returned false — see
+   * {@link discriminateRejection}. It opens a throwaway `:memory:` database, so it never runs on
+   * a healthy path.
+   */
+  readonly probeExtensionLoad: () => ExtensionProbeResult;
   readonly warn: (fields: Record<string, unknown>, msg: string) => void;
   readonly debug: (fields: Record<string, unknown>, msg: string) => void;
 }
@@ -125,6 +165,69 @@ export function fullSqliteCandidates(
   const override = env(SQLITE_PATH_ENV);
   const overrides = override === undefined || override.trim() === "" ? [] : [override.trim()];
   return [...overrides, ...DARWIN_SQLITE_CANDIDATES];
+}
+
+/**
+ * `setCustomSQLite` returned `false`. Decide, by MEASUREMENT, whether that mattered.
+ *
+ * Bun's typedoc documents two preconditions — the call "only works before SQLite is loaded" and
+ * "can only be run once because it loads the SQLite library into the process" — and says nothing
+ * about what the return value means. So `false` covers two outcomes with opposite consequences:
+ *
+ *   BENIGN    another realm, or an earlier call, already installed a full SQLite for this process.
+ *             The gateway calls this from several Worker realms, so on a healthy macOS host this
+ *             is the EXPECTED answer for the second and later realms. Extensions still work.
+ *   TOO LATE  a database was already opened, so the process is stuck on Apple's extension-less
+ *             build. Semantic search is off for this run and nothing else will say so.
+ *
+ * An earlier revision logged the whole state at `debug` with a `detail` string naming both
+ * possibilities. The string was honest; the LEVEL was not — it acted on the benign reading only,
+ * and `debug` is the exact level that hid issue #1029 for five weeks. Shipping an indistinguishable
+ * state at `debug`, in the change whose whole purpose is to stop hiding this, would repeat the
+ * original mistake.
+ *
+ * So we stop inferring and measure: open a throwaway `:memory:` database and try to load an
+ * extension into it. That reads the only property anyone actually cares about, and it is cheap —
+ * it runs on darwin only, and only on a path that is already anomalous.
+ *
+ * STATED BOUND. The probe loads the extension the `sqlite-vec` NPM package resolves, NOT the
+ * packaged `vec0.dylib` sidecar that `index/sqlite-vec-load.ts` falls back to. Importing that
+ * module here would make `index/ -> platform/ -> index/` a cycle, and duplicating its path
+ * resolution is the drift this repo avoids. The consequence is bounded and one-directional: inside
+ * a compiled binary, where only the sidecar exists, `getLoadablePath()` throws and the probe
+ * answers `"unverified"` — reported LOUDLY rather than assumed benign, so the failure mode is a
+ * warning the operator may not have needed, never a silence they did need.
+ */
+function discriminateRejection(
+  deps: FullSqliteDeps,
+  found: string,
+  candidates: readonly string[],
+): FullSqliteStatus {
+  const prefix = `Database.setCustomSQLite(${found}) returned false`;
+  const probe = deps.probeExtensionLoad();
+  if (probe === "works") {
+    const detail =
+      `${prefix}, but this process CAN still load SQLite extensions — another realm, or an ` +
+      "earlier call, already installed one. Benign.";
+    // Debug is correct HERE, and only here, because it is now a measured fact rather than the
+    // charitable half of an ambiguity.
+    deps.debug({ path: found }, detail);
+    return { state: "rejected", path: found, candidates, detail };
+  }
+  if (probe === "broken") {
+    const detail =
+      `${prefix}, and this process CANNOT load SQLite extensions — a database was opened before ` +
+      "the install ran, so it is stuck on Apple's build. Semantic search is off for this run; " +
+      "restarting the gateway should clear it, and it is worth reporting.";
+    deps.warn({ path: found }, detail);
+    return { state: "no-extensions", path: found, candidates, detail };
+  }
+  const detail =
+    `${prefix}, and whether this process can load SQLite extensions could not be determined ` +
+    "(the sqlite-vec loadable path did not resolve). Treat semantic search as unproven for this " +
+    "run; `nimbus doctor` reports the same state.";
+  deps.warn({ path: found }, detail);
+  return { state: "unverified", path: found, candidates, detail };
 }
 
 /**
@@ -155,6 +258,13 @@ export function installFullSqlite(deps: FullSqliteDeps): FullSqliteStatus {
     // no vector search, no hybrid ranking and no session-memory recall, and until now nothing
     // told them. `index/sqlite-vec-load.ts` reports the resulting vec failure at warn too; this
     // line is the one that names the CAUSE and the remedy.
+    //
+    // EXPECT IT MORE THAN ONCE PER GATEWAY START, and do not read that as a bug. The memo below is
+    // MODULE state, so it is per REALM: on a bare macOS host the main realm, the embedding-worker
+    // realm and later the query-guard realm each emit this line, with `sqlite-vec-load`'s own warn
+    // on top. That is intended — each realm really did fail to install, independently — and
+    // deduplicating across realms would need cross-realm state this module deliberately does not
+    // have. The lines are identical, and the remedy is the same one.
     deps.warn({ candidates }, detail);
     return { state: "not-found", path: null, candidates, detail };
   }
@@ -170,18 +280,7 @@ export function installFullSqlite(deps: FullSqliteDeps): FullSqliteStatus {
   }
 
   if (!accepted) {
-    const detail =
-      `Database.setCustomSQLite(${found}) returned false — either a database was already ` +
-      "opened in this realm, or another realm already installed a custom SQLite for this process";
-    // DEBUG, not warn, and the reason is stated rather than assumed: `setCustomSQLite` "can only
-    // be run once because it loads the SQLite library into the process" (Bun's typedoc), and the
-    // gateway calls this from several Worker realms in one process. A false return is therefore
-    // the EXPECTED outcome of the second and later realms on a host where the first succeeded,
-    // and warning on it would train the user to ignore the line that matters. The authoritative
-    // signal is downstream and unambiguous: if extensions really cannot load, sqlite-vec's own
-    // load fails and `index/sqlite-vec-load.ts` warns, naming this detail.
-    deps.debug({ path: found }, detail);
-    return { state: "rejected", path: found, candidates, detail };
+    return discriminateRejection(deps, found, candidates);
   }
 
   const detail = `using full SQLite at ${found}`;
@@ -190,6 +289,42 @@ export function installFullSqlite(deps: FullSqliteDeps): FullSqliteStatus {
 }
 
 let cached: FullSqliteStatus | undefined;
+
+/**
+ * The real discriminator: open a throwaway database and try to load sqlite-vec into it.
+ *
+ * Resolution and loading are SEPARATE steps on purpose. `getLoadablePath()` throwing means the
+ * extension FILE could not be found (no platform package installed, or a compiled binary shipping
+ * only the sidecar) — which says nothing about whether SQLite supports extensions, so it answers
+ * `"unverified"`. Only a load that actually fails against a resolved file answers `"broken"`.
+ *
+ * `vec_version()` is queried after the load because `loadExtension` returning is not by itself
+ * proof the module registered. The statement is finalized before `close()`: an unfinalized
+ * `prepare()` makes `close()` a silent no-op in `bun:sqlite`.
+ */
+function defaultExtensionProbe(): ExtensionProbeResult {
+  let loadable: string;
+  try {
+    loadable = getLoadablePath();
+  } catch {
+    return "unverified";
+  }
+  const probe = new Database(":memory:");
+  try {
+    probe.loadExtension(loadable);
+    const stmt = probe.query("SELECT vec_version()");
+    try {
+      stmt.get();
+    } finally {
+      stmt.finalize();
+    }
+    return "works";
+  } catch {
+    return "broken";
+  } finally {
+    probe.close();
+  }
+}
 
 /**
  * The real bindings {@link ensureFullSqlite} uses when a caller passes nothing.
@@ -204,6 +339,7 @@ export const DEFAULT_FULL_SQLITE_DEPS: FullSqliteDeps = {
   env: (name) => process.env[name],
   exists: existsSync,
   setCustomSQLite: (path) => Database.setCustomSQLite(path),
+  probeExtensionLoad: defaultExtensionProbe,
   warn: (fields, msg) => writeStderr("nimbus:", fields, msg),
   debug: (fields, msg) => {
     if (debugEnabled()) writeStderr("nimbus [debug]:", fields, msg);

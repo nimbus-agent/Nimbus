@@ -1,11 +1,14 @@
+import { Database } from "bun:sqlite";
 import { describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { load as loadSqliteVec } from "sqlite-vec";
 
 import {
   DARWIN_SQLITE_CANDIDATES,
   DEFAULT_FULL_SQLITE_DEPS,
+  type ExtensionProbeResult,
   ensureFullSqlite,
   type FullSqliteDeps,
   fullSqliteCandidates,
@@ -23,12 +26,16 @@ import {
  * appears in exactly one place in the production module — the deps binding — so the logic under
  * test is pure over its arguments.
  */
-type Calls = { warn: string[]; debug: string[]; set: string[] };
+type Calls = { warn: string[]; debug: string[]; set: string[]; probes: number };
 
 function makeDeps(
-  over: Partial<FullSqliteDeps> & { existing?: readonly string[]; env?: FullSqliteDeps["env"] },
+  over: Partial<FullSqliteDeps> & {
+    existing?: readonly string[];
+    env?: FullSqliteDeps["env"];
+    probe?: ExtensionProbeResult;
+  },
 ): { deps: FullSqliteDeps; calls: Calls } {
-  const calls: Calls = { warn: [], debug: [], set: [] };
+  const calls: Calls = { warn: [], debug: [], set: [], probes: 0 };
   const existing = new Set(over.existing ?? []);
   const deps: FullSqliteDeps = {
     platform: over.platform ?? "darwin",
@@ -39,6 +46,12 @@ function makeDeps(
       ((p: string): boolean => {
         calls.set.push(p);
         return true;
+      }),
+    probeExtensionLoad:
+      over.probeExtensionLoad ??
+      ((): ExtensionProbeResult => {
+        calls.probes += 1;
+        return over.probe ?? "works";
       }),
     warn: over.warn ?? ((_f, m): void => void calls.warn.push(m)),
     debug: over.debug ?? ((_f, m): void => void calls.debug.push(m)),
@@ -91,6 +104,9 @@ describe("installFullSqlite — off darwin", () => {
         },
         setCustomSQLite: (): boolean => {
           throw new Error("must not call setCustomSQLite off darwin");
+        },
+        probeExtensionLoad: (): never => {
+          throw new Error("must not probe extension loading off darwin");
         },
       });
       const status = installFullSqlite(deps);
@@ -173,18 +189,62 @@ describe("installFullSqlite — darwin", () => {
     expect(calls.warn[0]).toContain("not an Error");
   });
 
-  test("a false return is DEBUG, not warn — a second realm in one process is the normal case", () => {
-    // `setCustomSQLite` can only run once per process, and the gateway calls this from several
-    // Worker realms. Warning on the expected outcome would train the reader to ignore the line
-    // that matters; the authoritative signal is sqlite-vec's own load failure, which warns.
+  // The discriminator. `false` from setCustomSQLite covers two outcomes with opposite
+  // consequences, and Bun documents nothing about the return value — so the level is decided by a
+  // measurement, never by the charitable reading. Logging an indistinguishable state at `debug`
+  // is precisely what hid issue #1029 for five weeks.
+  test("false + probe says extensions WORK: benign, debug, state `rejected`", () => {
     const { deps, calls } = makeDeps({
       existing: [DARWIN_SQLITE_CANDIDATES[0] as string],
       setCustomSQLite: (): boolean => false,
+      probe: "works",
     });
     const status = installFullSqlite(deps);
     expect(status.state).toBe("rejected");
+    expect(calls.probes).toBe(1);
     expect(calls.warn).toEqual([]);
     expect(calls.debug).toHaveLength(1);
+    expect(status.detail).toContain("CAN still load SQLite extensions");
+  });
+
+  test("false + probe says extensions are BROKEN: WARNS, state `no-extensions`", () => {
+    const { deps, calls } = makeDeps({
+      existing: [DARWIN_SQLITE_CANDIDATES[0] as string],
+      setCustomSQLite: (): boolean => false,
+      probe: "broken",
+    });
+    const status = installFullSqlite(deps);
+    expect(status.state).toBe("no-extensions");
+    expect(calls.debug).toEqual([]);
+    expect(calls.warn).toHaveLength(1);
+    expect(calls.warn[0]).toContain("CANNOT load SQLite extensions");
+    // Names the consequence, not just the mechanism.
+    expect(calls.warn[0]).toContain("Semantic search is off for this run");
+  });
+
+  test("false + probe could not run: WARNS, state `unverified` — never assumed benign", () => {
+    // The safe direction when we cannot tell. A warning the operator did not need beats a silence
+    // they did.
+    const { deps, calls } = makeDeps({
+      existing: [DARWIN_SQLITE_CANDIDATES[0] as string],
+      setCustomSQLite: (): boolean => false,
+      probe: "unverified",
+    });
+    const status = installFullSqlite(deps);
+    expect(status.state).toBe("unverified");
+    expect(calls.debug).toEqual([]);
+    expect(calls.warn).toHaveLength(1);
+    expect(calls.warn[0]).toContain("could not be determined");
+  });
+
+  test("the probe runs ONLY after a false return, never on a healthy install", () => {
+    const { deps, calls } = makeDeps({ existing: [DARWIN_SQLITE_CANDIDATES[0] as string] });
+    expect(installFullSqlite(deps).state).toBe("installed");
+    expect(calls.probes).toBe(0);
+    // Nor when there is nothing to install in the first place.
+    const missing = makeDeps({ existing: [] });
+    expect(installFullSqlite(missing.deps).state).toBe("not-found");
+    expect(missing.calls.probes).toBe(0);
   });
 });
 
@@ -214,14 +274,27 @@ describe("ensureFullSqlite memoisation", () => {
 
   test("the real, dependency-free call is safe on this host and reports a coherent status", () => {
     resetFullSqliteCacheForTest();
-    const status = ensureFullSqlite();
-    if (process.platform === "darwin") {
-      expect(["installed", "not-found", "rejected", "error"]).toContain(status.state);
-    } else {
-      expect(status.state).toBe("not-applicable");
-      expect(status.candidates).toEqual([]);
+    try {
+      const status = ensureFullSqlite();
+      if (process.platform === "darwin") {
+        expect([
+          "installed",
+          "not-found",
+          "rejected",
+          "no-extensions",
+          "unverified",
+          "error",
+        ]).toContain(status.state);
+      } else {
+        expect(status.state).toBe("not-applicable");
+        expect(status.candidates).toEqual([]);
+      }
+      expect(status.detail.length).toBeGreaterThan(0);
+    } finally {
+      // Same reason as the test above: leave the memo as this process found it, so a later file
+      // reading the status is not looking at whatever this test happened to install.
+      resetFullSqliteCacheForTest();
     }
-    expect(status.detail.length).toBeGreaterThan(0);
   });
 });
 
@@ -275,6 +348,33 @@ describe("DEFAULT_FULL_SQLITE_DEPS — the production bindings themselves", () =
       process.stderr.write = original;
       if (level === undefined) delete process.env["NIMBUS_LOG_LEVEL"];
       else process.env["NIMBUS_LOG_LEVEL"] = level;
+    }
+  });
+
+  test("`probeExtensionLoad` agrees with whether sqlite-vec really loads on this host", () => {
+    // A real cross-check, not a shape assertion: determine loadability independently, the way
+    // reindex-vector-erasure.test.ts's canary does, and require the production probe to agree.
+    // On Linux and Windows CI, where sqlite-vec does load, this pins the probe's POSITIVE answer —
+    // without which "works" could be returned for any reason at all.
+    let loadableHere: boolean;
+    const control = new Database(":memory:");
+    try {
+      loadSqliteVec(control);
+      control.query("SELECT vec_version()").get();
+      loadableHere = true;
+    } catch {
+      loadableHere = false;
+    } finally {
+      control.close();
+    }
+
+    const answer = DEFAULT_FULL_SQLITE_DEPS.probeExtensionLoad();
+    if (loadableHere) {
+      expect(answer).toBe("works");
+    } else {
+      // Which of the two negatives depends on whether the FILE resolved, which this control cannot
+      // separate — but it must not claim success.
+      expect(["broken", "unverified"]).toContain(answer);
     }
   });
 

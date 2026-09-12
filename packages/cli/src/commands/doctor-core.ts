@@ -623,11 +623,19 @@ export function doctorPrintVectorSearchFromSnapshot(snap: { vectorSearch?: unkno
     "[fail] Vector search: sqlite-vec is NOT loaded — semantic search, hybrid ranking and " +
       `session-memory recall are unavailable; keyword search still works${colonSuffix(why === "" ? null : why)}`,
   );
-  if (rec["sqliteRuntimeState"] === "not-found") {
+  // Per state, because the remedies are genuinely different and a wrong one wastes the reader's
+  // time: `not-found` is the user's to fix, `no-extensions` is ours.
+  const runtimeState = rec["sqliteRuntimeState"];
+  if (runtimeState === "not-found") {
     console.log(
       "       Fix: `brew install sqlite`, then restart the gateway. (Bun links Apple's system " +
         "SQLite on macOS, which has extension loading compiled out; set NIMBUS_SQLITE_PATH to " +
         "point at a different libsqlite3.dylib.)",
+    );
+  } else if (runtimeState === "no-extensions") {
+    console.log(
+      "       Fix: restart the gateway. A database was opened before the SQLite install ran, " +
+        "which is a Nimbus bug — please report it with this output.",
     );
   }
   return 2;

@@ -1966,6 +1966,14 @@ const D30_INIT = "ensureFullSqlite";
  * `[^;]` cannot cross a statement terminator, so a lazy match anchored on the module specifier
  * cannot start at an earlier import and swallow it; `m` anchors the keyword at a line start, and
  * newlines inside the clause are fine because a multi-line import contains no `;`.
+ *
+ * THAT SEPARATION IS ENFORCED BY BIOME, NOT BY THIS REGEX. It holds because `biome.json` sets
+ * `javascript.formatter.semicolons: "always"` and every file in the scanned set is formatted, so a
+ * preceding import always ends in `;`. In a semicolon-free tree an `import { Database } from
+ * "bun:sqlite"` on one line followed by a type-only import on the next would be captured as one
+ * clause, and the value binding would make the pair report a violation. That is the FAIL-SAFE
+ * direction — a false positive a reader can see, never a miss — but it is a property of the
+ * formatter, and a change to that setting would need this rule revisited.
  */
 const D30_IMPORT_RE = /^import\s+([^;]*?)\s*from\s*["']bun:sqlite["']/gm;
 

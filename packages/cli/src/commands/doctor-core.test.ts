@@ -232,6 +232,30 @@ describe("doctorPrintVectorSearchFromSnapshot", () => {
     expect(out.stdout).not.toContain("brew install sqlite");
   });
 
+  it("gives `no-extensions` its own remedy — that state is our bug, not the user's", () => {
+    doctorPrintVectorSearchFromSnapshot({
+      vectorSearch: { loaded: false, sqliteRuntimeState: "no-extensions" },
+    });
+    expect(out.stdout).toContain("restart the gateway");
+    expect(out.stdout).toContain("please report it");
+    // Emphatically NOT the brew line: the library was found and installed; the ordering was wrong.
+    expect(out.stdout).not.toContain("brew install sqlite");
+  });
+
+  it("`unverified` states the failure without claiming a cause it does not know", () => {
+    doctorPrintVectorSearchFromSnapshot({
+      vectorSearch: {
+        loaded: false,
+        sqliteRuntimeState: "unverified",
+        sqliteRuntimeDetail: "could not be determined",
+      },
+    });
+    expect(out.stdout).toContain("[fail] Vector search:");
+    expect(out.stdout).toContain("could not be determined");
+    expect(out.stdout).not.toContain("brew install sqlite");
+    expect(out.stdout).not.toContain("please report it");
+  });
+
   it("says nothing at all when the gateway predates the field", () => {
     // Same rule as the embedding line below: no verdict beats a false green.
     expect(doctorPrintVectorSearchFromSnapshot({})).toBe(0);

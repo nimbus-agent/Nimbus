@@ -11,12 +11,15 @@ self.onmessage = (e: MessageEvent<{ dbPath: string; sql: string }>): void => {
   }
   try {
     const { dbPath, sql } = e.data;
-    // Needed here too, and not only because the static rule says so. `nimbus query --sql` hands
-    // this worker an arbitrary owner-written SELECT, and a `vec0` virtual table is a legitimate
-    // thing for one to name — on a macOS host without a full SQLite, preparing that statement
-    // fails with "no such module: vec0" no matter what the main realm did, because a Worker is a
-    // separate realm with its own `bun:sqlite`. Read-only changes nothing: extension loading is a
-    // property of the SQLite build, not of the open mode. No-op off darwin.
+    // Required by the D30 static rule, which has no allow-list: this file value-imports the
+    // `Database` constructor, so it calls the install. Beyond that it is defence in depth, and the
+    // honest scope is narrow — this connection never loads an extension, so a query naming a
+    // `vec0` table fails here on EVERY platform, healthy Linux included, and `ensureFullSqlite()`
+    // alone does not change that. What the call does buy is that a realm which one day DOES load
+    // one is not stuck on Apple's extension-less SQLite because the install never ran: a Worker is
+    // a separate realm with its own `bun:sqlite`, so what the main thread did does not carry here.
+    // Read-only is irrelevant either way — extension support is a property of the SQLite build,
+    // not of the open mode. No-op off darwin. See platform/sqlite-runtime.ts.
     ensureFullSqlite();
     const ro = new Database(dbPath, { readonly: true, create: false });
     try {
