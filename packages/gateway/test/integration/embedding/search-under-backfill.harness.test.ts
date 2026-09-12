@@ -49,137 +49,161 @@ describe.skipIf(!RUN)("end-to-end search latency under a saturating backfill (me
     const dir = mkdtempSync(join(tmpdir(), "nimbus-search-harness-"));
     try {
       const db = new Database(join(dir, "index.db"));
-      // Matches production's `openGatewaySqlite` order exactly (platform/assemble.ts):
-      // pragmas BEFORE ensureSchema, since journal_mode is a persistent property of the
-      // file that migrations then inherit. Without this the harness measures the wrong
-      // regime -- the default rollback journal blocks readers behind writers outright,
-      // which no real gateway handle ever runs with.
-      applyWritablePragmas(db);
-      LocalIndex.ensureSchema(db);
-      seedItems(db, ITEM_COUNT);
+      let idx: LocalIndex | undefined;
+      try {
+        // Matches production's `openGatewaySqlite` order exactly (platform/assemble.ts):
+        // pragmas BEFORE ensureSchema, since journal_mode is a persistent property of the
+        // file that migrations then inherit. Without this the harness measures the wrong
+        // regime -- the default rollback journal blocks readers behind writers outright,
+        // which no real gateway handle ever runs with.
+        applyWritablePragmas(db);
+        LocalIndex.ensureSchema(db);
+        seedItems(db, ITEM_COUNT);
 
-      const embedder = await createLocalEmbedder({ cacheDir: join(dir, "models") });
-      const pipeline = new SqliteEmbeddingPipeline({ db, embedder, backfillConcurrency: 8 });
-      const model = pipeline.embeddingModel;
+        const embedder = await createLocalEmbedder({ cacheDir: join(dir, "models") });
+        const pipeline = new SqliteEmbeddingPipeline({ db, embedder, backfillConcurrency: 8 });
+        const model = pipeline.embeddingModel;
 
-      // The seam LocalIndex needs to take the hybrid path -- backed by the SAME
-      // pipeline instance the backfill drives, so one embedder answers both roles,
-      // exactly as the production embedding worker does for its own `embed_texts`
-      // request versus its own `backfillAll` loop.
-      const idx = new LocalIndex(db, {
-        semanticSearch: {
-          model,
-          embedQuery: async (text) => {
-            const [v] = await pipeline.embedTexts([text]);
-            return v ?? null;
+        // Captures the duration of the embed call `searchRankedAsync` makes INTERNALLY via
+        // this seam, updated on every `embedQueryDual` invocation. Reading it immediately
+        // after a `searchRankedAsync` call isolates the embed leg of THAT call, so
+        // `sqlMs = totalMs - lastEmbedMs` is an honest split rather than a subtraction of two
+        // separately-timed calls that concurrent backfill can skew apart (a prior version of
+        // this harness timed a SEPARATE post-hoc `embedTexts` call, which does not measure
+        // the embed the search itself performed and can make the derived SQL time go
+        // negative).
+        let lastEmbedMs = 0;
+
+        // The seam LocalIndex needs to take the hybrid path -- backed by the SAME
+        // pipeline instance the backfill drives, so one embedder answers both roles,
+        // exactly as the production embedding worker does for its own `embed_texts`
+        // request versus its own `backfillAll` loop.
+        idx = new LocalIndex(db, {
+          semanticSearch: {
+            model,
+            embedQuery: async (text) => {
+              const t0 = performance.now();
+              const [v] = await pipeline.embedTexts([text]);
+              lastEmbedMs = performance.now() - t0;
+              return v ?? null;
+            },
+            embedQueryDual: async (text) => {
+              const t0 = performance.now();
+              const [v] = await pipeline.embedTexts([text]);
+              lastEmbedMs = performance.now() - t0;
+              return {
+                vec384: v ?? null,
+                vec1536: null,
+                model384: v !== undefined ? model : null,
+                model1536: null,
+              };
+            },
           },
-          embedQueryDual: async (text) => {
-            const [v] = await pipeline.embedTexts([text]);
-            return {
-              vec384: v ?? null,
-              vec1536: null,
-              model384: v !== undefined ? model : null,
-              model1536: null,
-            };
-          },
-        },
-      });
+        });
 
-      let embedded = 0;
-      const backfill = pipeline.backfillAll((done) => {
-        embedded = done;
-      });
-      let backfillSettled = false;
-      void backfill.then(() => {
-        backfillSettled = true;
-      });
+        let embedded = 0;
+        const backfill = pipeline.backfillAll((done) => {
+          embedded = done;
+        });
+        let backfillSettled = false;
+        void backfill.then(() => {
+          backfillSettled = true;
+        });
 
-      // Capture the "still in progress" state IMMEDIATELY, with no warmup sleep at all --
-      // deliberately different from query-under-backfill.harness.test.ts's fixed 2s warmup,
-      // and from an earlier draft of this file that polled for 25% progress before
-      // measuring. Both fixed-delay and percentage-based warmups turned out to be unreliable
-      // here for the same underlying reason (see the task report): once the local embedder
-      // is warm, this codebase's measured throughput can finish embedding several thousand
-      // items in under a second, so ANY non-trivial warmup risks the backfill having ALREADY
-      // drained by the time this code samples it -- the report's `settledBeforeLoad` assert
-      // firing is exactly that failure mode, caught rather than papered over.
-      //
-      // No warmup is needed for correctness: `pipeline.backfillAll(cb)` runs SYNCHRONOUSLY
-      // up to its first real await (the native embed() call inside the first batch's
-      // workers), so at the instant this line runs, zero items have been embedded and the
-      // returned promise cannot have settled -- both true BY CONSTRUCTION, not by timing
-      // luck. What this trades away, and what the report states plainly: sampled this early,
-      // the vec table itself is still near-empty, so the "under load" number below measures
-      // a genuinely small index, not a large one under contention. The idle measurement --
-      // taken after a full drain, over the SAME fully-seeded database -- is the number that
-      // carries the corpus-scale story; see the report for why a large, mid-backfill,
-      // GENUINELY-contended search is not reproducible by simple polling on this machine.
-      const settledBeforeLoad = backfillSettled;
-      const embeddedBeforeLoad = embedded;
+        // Capture the "still in progress" state IMMEDIATELY, with no warmup sleep at all --
+        // deliberately different from query-under-backfill.harness.test.ts's fixed 2s
+        // warmup, and from an earlier draft of this file that polled for 25% progress
+        // before measuring. Both fixed-delay and percentage-based warmups turned out to be
+        // unreliable here for the same underlying reason (see the task report): once the
+        // local embedder is warm, this codebase's measured throughput can finish embedding
+        // several thousand items in under a second, so ANY non-trivial warmup risks the
+        // backfill having ALREADY drained by the time this code samples it -- the report's
+        // `settledBeforeLoad` assert firing is exactly that failure mode, caught rather than
+        // papered over.
+        //
+        // No warmup is needed for correctness: `pipeline.backfillAll(cb)` runs
+        // SYNCHRONOUSLY up to its first real await (the native embed() call inside the
+        // first batch's workers), so at the instant this line runs, zero items have been
+        // embedded and the returned promise cannot have settled -- both true BY
+        // CONSTRUCTION, not by timing luck. What this trades away, and what the report
+        // states plainly: sampled this early, the vec table itself is still near-empty, so
+        // the "under load" number below measures a genuinely small index, not a large one
+        // under contention. The idle measurement -- taken after a full drain, over the SAME
+        // fully-seeded database -- is the number that carries the corpus-scale story; see
+        // the report for why a large, mid-backfill, GENUINELY-contended search is not
+        // reproducible by simple polling on this machine.
+        const settledBeforeLoad = backfillSettled;
+        const embeddedBeforeLoad = embedded;
 
-      const loadT0 = performance.now();
-      const underLoadResults = await idx.searchRankedAsync(
-        { name: QUERY_TEXT, limit: 20 },
-        { semantic: true },
-      );
-      const underLoadTotalMs = performance.now() - loadT0;
+        const loadT0 = performance.now();
+        const underLoadResults = await idx.searchRankedAsync(
+          { name: QUERY_TEXT, limit: 20 },
+          { semantic: true },
+        );
+        const underLoadTotalMs = performance.now() - loadT0;
+        // Captured from the embed `searchRankedAsync` itself just performed via the seam
+        // above -- not a separate post-hoc call -- so it isolates THIS call's embed leg
+        // even though concurrent backfill can change embed latency between two calls made
+        // at different times.
+        const underLoadEmbedMs = lastEmbedMs;
 
-      const loadEmbedT0 = performance.now();
-      await pipeline.embedTexts([QUERY_TEXT]);
-      const underLoadEmbedMs = performance.now() - loadEmbedT0;
+        const embeddedAfterLoad = embedded;
 
-      const embeddedAfterLoad = embedded;
+        // ---- IDLE BASELINE ----
+        // POSITIVE CONTROL: without this, "slow" is unfalsifiable -- a big number could
+        // just be a slow machine, not contention.
+        await backfill;
 
-      // ---- IDLE BASELINE ----
-      // POSITIVE CONTROL: without this, "slow" is unfalsifiable -- a big number could
-      // just be a slow machine, not contention.
-      await backfill;
+        const idleT0 = performance.now();
+        const idleResults = await idx.searchRankedAsync(
+          { name: QUERY_TEXT, limit: 20 },
+          { semantic: true },
+        );
+        const idleTotalMs = performance.now() - idleT0;
+        const idleEmbedMs = lastEmbedMs;
 
-      const idleT0 = performance.now();
-      const idleResults = await idx.searchRankedAsync(
-        { name: QUERY_TEXT, limit: 20 },
-        { semantic: true },
-      );
-      const idleTotalMs = performance.now() - idleT0;
+        const underLoadSqlMs = underLoadTotalMs - underLoadEmbedMs;
+        const idleSqlMs = idleTotalMs - idleEmbedMs;
+        const journalMode = readJournalMode(db);
 
-      const idleEmbedT0 = performance.now();
-      await pipeline.embedTexts([QUERY_TEXT]);
-      const idleEmbedMs = performance.now() - idleEmbedT0;
+        console.log(
+          `[harness] items=${String(ITEM_COUNT)} search: under load ${underLoadTotalMs.toFixed(0)}ms ` +
+            `(embed ${underLoadEmbedMs.toFixed(0)}ms / sql ${underLoadSqlMs.toFixed(0)}ms), ` +
+            `idle ${idleTotalMs.toFixed(0)}ms (embed ${idleEmbedMs.toFixed(0)}ms / sql ${idleSqlMs.toFixed(0)}ms)`,
+        );
+        console.log(
+          `[harness] items=${String(ITEM_COUNT)} journal_mode=${journalMode}, ` +
+            `underLoadResults=${String(underLoadResults.length)}, idleResults=${String(idleResults.length)}`,
+        );
 
-      const underLoadSqlMs = underLoadTotalMs - underLoadEmbedMs;
-      const idleSqlMs = idleTotalMs - idleEmbedMs;
-      const journalMode = readJournalMode(db);
-
-      console.log(
-        `[harness] items=${String(ITEM_COUNT)} search: under load ${underLoadTotalMs.toFixed(0)}ms ` +
-          `(embed ${underLoadEmbedMs.toFixed(0)}ms / sql ${underLoadSqlMs.toFixed(0)}ms), ` +
-          `idle ${idleTotalMs.toFixed(0)}ms (embed ${idleEmbedMs.toFixed(0)}ms / sql ${idleSqlMs.toFixed(0)}ms)`,
-      );
-      console.log(
-        `[harness] items=${String(ITEM_COUNT)} journal_mode=${journalMode}, ` +
-          `underLoadResults=${String(underLoadResults.length)}, idleResults=${String(idleResults.length)}`,
-      );
-
-      // Close before asserting: an assertion failure must not leave the db file handle
-      // open, or the `finally` block's rmSync fails with EBUSY on Windows and masks the
-      // real result (query-under-backfill.harness.test.ts's own lesson).
-      idx.close();
-
-      // POSITIVE CONTROL -- this must fail if the harness did not actually create
-      // contention, rather than let a "no contention observed" result be
-      // indistinguishable from a harness that measured an idle system.
-      //
-      // The backfill must not have finished before the under-load measurement started...
-      expect(settledBeforeLoad).toBe(false);
-      // ...and the embedded-row count must have advanced strictly DURING the very calls
-      // being timed (searchRankedAsync + embedTexts), proving the backfill was actively
-      // writing to the database while the search was reading from it, not merely
-      // running before or after the measurement window.
-      expect(embeddedAfterLoad).toBeGreaterThan(embeddedBeforeLoad);
-      // Sanity: the query must have actually produced real hybrid results in both
-      // regimes, not an empty fallback that would make the timing meaningless.
-      expect(underLoadResults.length).toBeGreaterThan(0);
-      expect(idleResults.length).toBeGreaterThan(0);
+        // POSITIVE CONTROL -- this must fail if the harness did not actually create
+        // contention, rather than let a "no contention observed" result be
+        // indistinguishable from a harness that measured an idle system.
+        //
+        // The backfill must not have finished before the under-load measurement started...
+        expect(settledBeforeLoad).toBe(false);
+        // ...and the embedded-row count must have advanced strictly DURING the call being
+        // timed (searchRankedAsync, embed leg included via the seam above), proving the
+        // backfill was actively writing to the database while the search was reading from
+        // it, not merely running before or after the measurement window.
+        expect(embeddedAfterLoad).toBeGreaterThan(embeddedBeforeLoad);
+        // Sanity: the query must have actually produced real hybrid results in both
+        // regimes, not an empty fallback that would make the timing meaningless.
+        expect(underLoadResults.length).toBeGreaterThan(0);
+        expect(idleResults.length).toBeGreaterThan(0);
+      } finally {
+        // `close()` in a `finally` so a thrown await (searchRankedAsync, the backfill
+        // promise, embedTexts inside the seam) or a failed assertion above cannot leave the
+        // db file handle open -- an open handle makes the outer `finally`'s `rmSync` fail
+        // with EBUSY on Windows and masks the real error
+        // (query-under-backfill.harness.test.ts's own lesson). `idx` may not exist yet if
+        // schema setup or seeding itself threw, so fall back to closing the raw handle.
+        if (idx !== undefined) {
+          idx.close();
+        } else {
+          db.close();
+        }
+      }
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

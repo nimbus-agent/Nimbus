@@ -22,17 +22,33 @@ import { buildVectorChunkQuery, vectorSearchChunks } from "../../../src/search/v
  * is a query PLAN, so synthetic unit-ish vectors reproduce it exactly and deterministically, and
  * task 1b already established that embed time is under 6ms at every scale — a rounding error
  * beside the numbers below. Sizes come from `NIMBUS_HARNESS_SIZES` (comma-separated, default
- * `1000,4000`); `NIMBUS_HARNESS_SKIP_PREFIX=1` drops the slow before-leg when only the after
- * numbers are wanted.
+ * `1000,4000`), sorted ascending regardless of the order they were given in, since the growth
+ * math below compares the smallest measured size against the largest and assumes ascending
+ * order. **At least two distinct valid sizes are required** — the growth ratio is undefined for
+ * one — so a single size (e.g. `NIMBUS_HARNESS_SIZES=8000`) throws immediately rather than
+ * silently falling back to the default pair, which would silently measure `1000,4000` instead of
+ * what was asked for. `NIMBUS_HARNESS_SKIP_PREFIX=1` drops the slow before-leg when only the
+ * after numbers are wanted.
  */
 const RUN = process.env["NIMBUS_RUN_EMBED_HARNESS"] === "1";
 const SKIP_PREFIX = process.env["NIMBUS_HARNESS_SKIP_PREFIX"] === "1";
 const SIZES: readonly number[] = (() => {
-  const raw = (process.env["NIMBUS_HARNESS_SIZES"] ?? "1000,4000")
+  const envRaw = process.env["NIMBUS_HARNESS_SIZES"];
+  if (envRaw === undefined) return [1000, 4000];
+  const parsed = envRaw
     .split(",")
     .map((s) => Number.parseInt(s.trim(), 10))
-    .filter((n) => Number.isFinite(n) && n > 0);
-  return raw.length >= 2 ? raw : [1000, 4000];
+    .filter((n) => Number.isFinite(n) && n > 0)
+    .sort((a, b) => a - b);
+  // Fail loudly rather than silently substituting the default pair — only when the harness
+  // actually runs, so a stray env var does no harm while the suite is skipped.
+  if (RUN && parsed.length < 2) {
+    throw new Error(
+      `NIMBUS_HARNESS_SIZES must name at least two distinct positive sizes to compute a ` +
+        `growth ratio (got ${JSON.stringify(parsed)} from "${envRaw}"); e.g. "1000,4000".`,
+    );
+  }
+  return parsed.length >= 2 ? parsed : [1000, 4000];
 })();
 
 const DIMS = 384;
@@ -102,43 +118,51 @@ function measure(items: number): Measurement {
   const dir = mkdtempSync(join(tmpdir(), "nimbus-vecscale-"));
   try {
     const db = new Database(join(dir, "index.db"));
-    // Matches production's `openGatewaySqlite` order (platform/assemble.ts): pragmas BEFORE
-    // ensureSchema, since journal_mode is a persistent property of the FILE that the migrations
-    // then inherit.
-    applyWritablePragmas(db);
-    LocalIndex.ensureSchema(db);
-    seed(db, items);
-    expect(readJournalMode(db)).toBe("wal");
+    try {
+      // Matches production's `openGatewaySqlite` order (platform/assemble.ts): pragmas BEFORE
+      // ensureSchema, since journal_mode is a persistent property of the FILE that the
+      // migrations then inherit.
+      applyWritablePragmas(db);
+      LocalIndex.ensureSchema(db);
+      seed(db, items);
+      expect(readJournalMode(db)).toBe("wal");
 
-    const q = queryVector();
-    const opts = { queryEmbedding: q, model: MODEL, limit: 20 };
-    // Warm the page cache before timing either leg.
-    const hits = vectorSearchChunks(db, opts);
+      const q = queryVector();
+      const opts = { queryEmbedding: q, model: MODEL, limit: 20 };
+      // Warm the page cache before timing either leg.
+      const hits = vectorSearchChunks(db, opts);
 
-    // MEDIAN of five, not a single sample: the fixed query lands in low single-digit
-    // milliseconds, where one scheduler hiccup is a larger number than the whole measurement.
-    // The pre-fix leg below takes tens of seconds and is sampled once — at that magnitude
-    // jitter is irrelevant, and a second sample would double the harness's runtime.
-    const samples: number[] = [];
-    for (let s = 0; s < 5; s += 1) {
-      const t0 = performance.now();
-      vectorSearchChunks(db, opts);
-      samples.push(performance.now() - t0);
+      // MEDIAN of five, not a single sample: the fixed query lands in low single-digit
+      // milliseconds, where one scheduler hiccup is a larger number than the whole measurement.
+      // The pre-fix leg below takes tens of seconds and is sampled once — at that magnitude
+      // jitter is irrelevant, and a second sample would double the harness's runtime.
+      const samples: number[] = [];
+      for (let s = 0; s < 5; s += 1) {
+        const t0 = performance.now();
+        vectorSearchChunks(db, opts);
+        samples.push(performance.now() - t0);
+      }
+      samples.sort((a, b) => a - b);
+      const fixedMs = samples[2] ?? 0;
+
+      let preFixMs: number | null = null;
+      if (!SKIP_PREFIX) {
+        const { params } = buildVectorChunkQuery(opts);
+        const p0 = performance.now();
+        const preRows = db.query(PRE_FIX_SQL).all(...params) as unknown[];
+        preFixMs = performance.now() - p0;
+        // Same answer, four orders of magnitude apart — the whole claim of this fix in one line.
+        expect(preRows).toEqual(hits);
+      }
+      return { items, fixedMs, preFixMs, rows: hits.length };
+    } finally {
+      // `close()` in a `finally` so an assertion or query throwing above (readJournalMode,
+      // the row-equality check, vectorSearchChunks/buildVectorChunkQuery itself) cannot leave
+      // the handle open — an open handle makes the outer `finally`'s `rmSync` fail with EBUSY
+      // on Windows and masks the real error (the exact shape already fixed in
+      // query-under-backfill.harness.test.ts).
+      db.close();
     }
-    samples.sort((a, b) => a - b);
-    const fixedMs = samples[2] ?? 0;
-
-    let preFixMs: number | null = null;
-    if (!SKIP_PREFIX) {
-      const { params } = buildVectorChunkQuery(opts);
-      const p0 = performance.now();
-      const preRows = db.query(PRE_FIX_SQL).all(...params) as unknown[];
-      preFixMs = performance.now() - p0;
-      // Same answer, four orders of magnitude apart — the whole claim of this fix in one line.
-      expect(preRows).toEqual(hits);
-    }
-    db.close();
-    return { items, fixedMs, preFixMs, rows: hits.length };
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

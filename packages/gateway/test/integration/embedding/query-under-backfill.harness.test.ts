@@ -24,9 +24,22 @@ import { LocalIndex } from "../../../src/index/local-index.ts";
  * hardware was 1.0x-4.8x — machine-dependent. A priority gate for it was deliberately DEFERRED
  * as immaterial beside the SQL defect, not shipped.
  *
- * So the `underLoadMs > idleMs * 2` assertion below can legitimately fail on some hardware — a
- * sub-2x run here is expected on some machines, not a regression, and not evidence that
- * contention "isn't real" (it is; it's just small next to what #1396 actually was).
+ * So this harness asserts no fixed ratio threshold at all — that 1.0x-4.8x range makes any
+ * fixed bound (including the `> 2x` this file used to assert) flaky by construction, failing
+ * on a legitimately sub-2x machine. It instead records the ratio (logged, not asserted) and
+ * proves — the same way `search-under-backfill.harness.test.ts` does — that the backfill was
+ * GENUINELY active during the "under load" measurement: still unsettled, and the
+ * embedded-row count strictly advanced while the timed call was in flight. Those two checks
+ * are what stop this harness passing vacuously for a harness that measured an idle system by
+ * mistake; they must not be weakened or removed.
+ *
+ * There is deliberately NO warmup sleep before the "under load" sample (an earlier draft used
+ * a fixed 2-second sleep, which on a fast dev machine let a 5,000-item backfill finish draining
+ * before it — the exact `settledBeforeLoad` control above firing as a false negative, not a
+ * flaw in the control). `pipeline.backfillAll(cb)` runs SYNCHRONOUSLY up to its first real
+ * await, so at the instant this code samples it, zero items have been embedded and the returned
+ * promise cannot have settled — both true BY CONSTRUCTION, not by timing luck. See
+ * `search-under-backfill.harness.test.ts` for the fuller discussion of this exact tradeoff.
  */
 const RUN = process.env["NIMBUS_RUN_EMBED_HARNESS"] === "1";
 
@@ -35,38 +48,58 @@ describe.skipIf(!RUN)("query latency under a saturating backfill (measurement)",
     const dir = mkdtempSync(join(tmpdir(), "nimbus-embed-harness-"));
     try {
       const db = new Database(join(dir, "index.db"));
-      LocalIndex.ensureSchema(db);
-      seedItems(db, 5_000);
+      try {
+        LocalIndex.ensureSchema(db);
+        seedItems(db, 5_000);
 
-      const embedder = await createLocalEmbedder({ cacheDir: join(dir, "models") });
-      const pipeline = new SqliteEmbeddingPipeline({ db, embedder, backfillConcurrency: 8 });
+        const embedder = await createLocalEmbedder({ cacheDir: join(dir, "models") });
+        const pipeline = new SqliteEmbeddingPipeline({ db, embedder, backfillConcurrency: 8 });
 
-      // Start the backfill and let it reach steady state before measuring.
-      const backfill = pipeline.backfillAll();
-      await Bun.sleep(2_000);
+        let embedded = 0;
+        const backfill = pipeline.backfillAll((done) => {
+          embedded = done;
+        });
+        let backfillSettled = false;
+        void backfill.then(() => {
+          backfillSettled = true;
+        });
 
-      const t0 = performance.now();
-      await pipeline.embedTexts(["how does the deploy pipeline work"]);
-      const underLoadMs = performance.now() - t0;
+        // Capture the "still in progress" state IMMEDIATELY, with no warmup sleep — see the
+        // docblock above for why a fixed sleep is unreliable on fast hardware and why sampling
+        // here is safe by construction regardless.
+        const settledBeforeLoad = backfillSettled;
+        const embeddedBeforeLoad = embedded;
 
-      // POSITIVE CONTROL. Without an idle baseline from the SAME machine and model,
-      // "slow" is unfalsifiable — a big number could just be a slow laptop.
-      await backfill;
-      const t1 = performance.now();
-      await pipeline.embedTexts(["how does the deploy pipeline work"]);
-      const idleMs = performance.now() - t1;
+        const t0 = performance.now();
+        await pipeline.embedTexts(["how does the deploy pipeline work"]);
+        const underLoadMs = performance.now() - t0;
 
-      console.log(
-        `[harness] query embed: under load ${underLoadMs.toFixed(0)}ms, idle ${idleMs.toFixed(0)}ms, ratio ${(underLoadMs / idleMs).toFixed(1)}x`,
-      );
+        const embeddedAfterLoad = embedded;
 
-      // Close before asserting: an assertion failure must not leave the db file handle open,
-      // or the `finally` block's rmSync fails with EBUSY on Windows and masks the real result.
-      db.close();
+        // POSITIVE CONTROL. Without an idle baseline from the SAME machine and model,
+        // "slow" is unfalsifiable — a big number could just be a slow laptop.
+        await backfill;
+        const t1 = performance.now();
+        await pipeline.embedTexts(["how does the deploy pipeline work"]);
+        const idleMs = performance.now() - t1;
 
-      // The DEFECT assertion: today the loaded case is dramatically worse. This harness
-      // exists to make that number real, so it asserts only that the gap is observable.
-      expect(underLoadMs).toBeGreaterThan(idleMs * 2);
+        console.log(
+          `[harness] query embed: under load ${underLoadMs.toFixed(0)}ms, idle ${idleMs.toFixed(0)}ms, ratio ${(underLoadMs / idleMs).toFixed(1)}x`,
+        );
+
+        // POSITIVE CONTROL — this must fail if the harness did not actually create contention,
+        // rather than let "no contention observed" be indistinguishable from a harness that
+        // measured an idle system. No fixed ratio threshold: the ratio above is recorded for a
+        // human to read, not enforced, since the valid range spans 1.0x-4.8x on this hardware
+        // alone.
+        expect(settledBeforeLoad).toBe(false);
+        expect(embeddedAfterLoad).toBeGreaterThan(embeddedBeforeLoad);
+      } finally {
+        // `close()` in a `finally` so a thrown await (embedTexts, the backfill promise) or a
+        // failed assertion above cannot leave the db file handle open — an open handle makes
+        // the outer `finally`'s `rmSync` fail with EBUSY on Windows and masks the real error.
+        db.close();
+      }
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
