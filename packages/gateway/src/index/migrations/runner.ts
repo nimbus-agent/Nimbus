@@ -82,6 +82,7 @@ import {
   VEC_ITEMS_1536_V30_NO_VEC_SQL,
   VEC_ITEMS_1536_V30_SCHEMA_SQL,
 } from "../vec-items-1536-v30-sql.ts";
+import { VEC_JOIN_INDEX_V62_SQL } from "../vec-join-index-v62-sql.ts";
 import { WATCHER_GRAPH_V22_SQL } from "../watcher-graph-v22-sql.ts";
 import { WATCHER_V8_MIGRATION_SQL } from "../watcher-v8-sql.ts";
 import { WORKFLOW_RUN_COLUMNS_V23_SQL } from "../workflow-run-columns-v23-sql.ts";
@@ -567,6 +568,7 @@ const INDEXED_SCHEMA_STEPS: readonly IndexedSchemaStep[] = [
   simpleStep(58, 59, "multimodal remote-model grants", MEDIA_GRANT_V59_SQL),
   simpleStep(59, 60, "agent fleet scheduling", FLEET_V60_SQL),
   simpleStep(60, 61, "saved generated tools (persistence + signing)", GENERATED_TOOL_V61_SQL),
+  simpleStep(61, 62, "vec_rowid join indexes (KNN-driven vector search)", VEC_JOIN_INDEX_V62_SQL),
 ];
 
 /**

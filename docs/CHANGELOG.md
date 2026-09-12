@@ -18,6 +18,41 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
 
 ## Post-Phase-6 deliveries
 
+- **2026-09-12 — semantic search stops re-running the KNN once per chunk row (schema V62).**
+  `IPC request timed out after 30000ms: index.searchRanked` (issue #1396) had been read as
+  embedding-backfill contention. It was not. Measured with zero concurrent writers, at idle, a
+  single `LocalIndex.searchRankedAsync` call took **26.7 s at 4,000 indexed items and 69.9 s at
+  8,000**, with query-embed time under 6 ms throughout — so essentially all of it was SQL, and
+  semantic search was unusable above a few thousand items on ANY install, not only a cold-starting
+  one. `vectorSearchChunks` (`search/vec-store.ts`) joined the sqlite-vec KNN subquery to
+  `embedding_chunk` on `vec_rowid`; SQLite cannot estimate a `vec0` subquery's cardinality, assumes
+  it is large, and therefore drove the join from `embedding_chunk` — filtered only on `model`,
+  which on an install with one local embedder matches every row — re-executing the brute-force KNN
+  scan once per chunk. **`memory/session-memory-store.ts` carried the same defect and was measured
+  separately rather than assumed to match**: its `WHERE sm.session_id = ?` makes the planner's
+  wrong choice *more* attractive, and because that store shares `vec_items_384` with
+  `embedding_chunk`, one recall's cost scaled with the whole index multiplied by the length of the
+  conversation (8,000 vectors × 2,000 turns: 42.4 s). `search/dual-search.ts` holds no SQL of its
+  own and is fixed transitively; those are the only three KNN join sites in the repository.
+  **The fix is two halves and neither works alone.** `CROSS JOIN` in place of `INNER JOIN` removes
+  the planner's freedom to reorder, pinning the KNN as the outer loop — semantically identical in
+  SQLite, same rows in the same order. New schema **V62** (`vec-join-index-v62-sql.ts`) adds
+  `idx_embedding_chunk_vec_rowid` and `idx_session_memory_vec_rowid`, which turn the per-KNN-row
+  probe into a point lookup. The index ALONE changes nothing — verified rather than assumed: at
+  8,000 items the pre-fix query took 49.3 s without it and 83.4 s with it, on an identical plan.
+  **Measured:** the vector query went 86,063 ms → 6 ms at 8,000 items, and
+  `LocalIndex.searchRankedAsync` end to end went 69,896 ms → 28 ms on the same harness and machine
+  that produced the original number; post-fix growth is linear in corpus size (×8.17 across an ×8
+  corpus increase, where quadratic would be ×64). No new invariant, no new egress class, no IPC or
+  config surface — `vectorSearchChunks`'s signature and return shape are unchanged, so no caller
+  moved. **What defends it:** results-unchanged tests that recompute the expectation from the
+  VERBATIM pre-fix query at test time across every filter combination (not a literal captured from
+  the new code), plus `EXPLAIN QUERY PLAN` regression tests asserting the structural property — the
+  vec table entered exactly once, as the outer loop — rather than a `detail` string that varies by
+  SQLite version. Each carries a red-proving case that runs the pre-fix SQL through the same
+  assertion and requires it to fail. **Residual, stated rather than softened:** the remedy is a
+  planner hint plus an index, so it is defended by a plan assertion rather than by construction, and
+  issue #1396's own 60,000-item scale was extrapolated, not run.
 - **2026-09-11 — `nimbus changelog`, the fifteenth built-in agent, closing the v0.1.1 CLI batch
   row.** A Markdown changelog assembled entirely from the local index over a time window, for one
   configured service or across all of them: merged pull requests, deployments, incidents opened,

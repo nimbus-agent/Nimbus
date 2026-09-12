@@ -26,8 +26,13 @@ cold first run"* — so it blocks the distribution milestone, not merely a nice-
 
 ## 2. Traced mechanism
 
-Four independent defects compose into the observed timeout. Each is stated with the
-symbol that carries it, so the claim can be re-derived rather than trusted.
+Each defect below is stated with the symbol that carries it, so the claim can be
+re-derived rather than trusted.
+
+**Read §2.6 first.** §§2.1-2.5 were written before anything was measured, and they are all
+real defects — but the thing that actually produced `IPC request timed out after 30000ms` was
+a quadratic SQL query plan (§2.6), reproducible at idle with no backfill running at all. That
+section was added after Task 1b measured the path and Task 1c fixed it.
 
 ### 2.1 Backfill and query embedding share one worker, with no fairness
 
@@ -43,6 +48,15 @@ inferences are in flight continuously. An interactive `embed_texts` message is
 dispatched immediately by `handleMessage`, but it competes for the same finite
 inference capacity with no priority of any kind. On a 60,000-item index that window is
 hours.
+
+**Narrowed after measurement — this is real, but it is not the cause of the reported
+timeout.** Task 1 measured the contention directly (`query-under-backfill.harness.test.ts`):
+a query embed under a saturating backfill took 7-9 ms against a 2-3 ms idle baseline. That is
+a genuine 3-5x regression and the fairness gap that produces it is worth closing, but it is
+four orders of magnitude too small to explain a 30,000 ms timeout, and Task 1b then found the
+timeout reproduces at idle with zero writers present. See §2.6. §4.1's admission control
+remains justified on its own terms — an unfair worker is a defect whether or not it was this
+one — but it must no longer be described as the fix for issue #1396.
 
 ### 2.2 The stacked timeouts are misordered
 
@@ -92,6 +106,83 @@ becoming BM25 while still reporting itself as a hybrid result.
 
 That site is a few lines from where this design constructs the disclosure, which is why
 it is the right place to construct it.
+
+### 2.6 The vector-search join plan was quadratic — this, not §2.1, is what produced the 30-second timeout (FIXED)
+
+**Added after §§2.1–2.5 were written, and it displaces them as the cause.** Task 1b measured
+the end-to-end path and found the reported timeout reproduces with *zero* concurrent writers,
+at idle, purely in SQL. Task 1c fixed it. The four defects above are all real; none of them
+is why `index.searchRanked` took 30 seconds.
+
+`vectorSearchChunks` (`packages/gateway/src/search/vec-store.ts`) joined the sqlite-vec KNN
+subquery to `embedding_chunk` on `ec.vec_rowid = knn.rowid AND ec.model = ?`. SQLite cannot
+estimate a `vec0` virtual table's cardinality through a subquery, assumes it is large, and so
+chose `embedding_chunk` as the OUTER relation — filtered only on `model`, which on an install
+with one local embedder matches every row. The brute-force KNN then re-executed **once per
+chunk row**. `EXPLAIN QUERY PLAN` before the fix, on a fully migrated database:
+
+```text
+SEARCH ec USING INDEX idx_embedding_chunk_model (model=?)
+SEARCH i USING COVERING INDEX sqlite_autoindex_item_1 (id=?)
+SCAN vec_items_384 VIRTUAL TABLE INDEX 0:3{___}___
+USE TEMP B-TREE FOR ORDER BY
+```
+
+After:
+
+```text
+SCAN vec_items_384 VIRTUAL TABLE INDEX 0:3{___}___
+SEARCH ec USING INDEX idx_embedding_chunk_vec_rowid (vec_rowid=?)
+SEARCH i USING COVERING INDEX sqlite_autoindex_item_1 (id=?)
+USE TEMP B-TREE FOR ORDER BY
+```
+
+**The fix is two halves, and neither works alone.** `CROSS JOIN` in place of `INNER JOIN`
+removes the planner's freedom to reorder, pinning the KNN as the outer loop (semantically
+identical in SQLite — same rows, same order). Schema **V62**
+(`packages/gateway/src/index/vec-join-index-v62-sql.ts`) adds
+`idx_embedding_chunk_vec_rowid` and `idx_session_memory_vec_rowid`, which turn the per-KNN-row
+probe into a point lookup rather than a range scan over the `model` index. Task 1b's
+observation that the index alone changes nothing was re-verified here rather than taken on
+trust: at 8,000 items the pre-fix query took 49.3 s without the index and 83.4 s with it, on
+the identical plan.
+
+**`memory/session-memory-store.ts` had the same defect and is fixed the same way.** Its
+`WHERE sm.session_id = ?` makes the planner's wrong choice *more* attractive, not less:
+`idx_session_memory_session` is selective, so it drove from `session_memory` and re-ran the
+KNN once per turn — over the whole `vec_items_384` table, which this store shares with
+`embedding_chunk`, so one recall's cost scaled with the size of the user's entire index
+multiplied by the length of the conversation.
+
+`search/dual-search.ts` (`vectorSearchChunksDual`) holds no SQL of its own — it calls
+`vectorSearchChunks` twice — so it is fixed transitively. Those three are the only KNN join
+sites in the repository (`grep -rn "embedding MATCH"`).
+
+**Measured, same machine as Tasks 1 and 1b (Windows 11, Bun 1.3.14):**
+
+| items | pre-fix SQL | post-fix SQL | ratio |
+|---|---|---|---|
+| 1,000 | 683.5 ms | 0.7 ms | 977× |
+| 2,000 | 2,977.5 ms | 1.5 ms | 1,985× |
+| 4,000 | 18,925.3 ms | 3.0 ms | 6,308× |
+| 8,000 | 86,063.5 ms | 6.0 ms | 14,344× |
+
+Post-fix growth is linear (×8.17 across an ×8 corpus increase; quadratic would be ×64), which
+is the floor for a flat `vec0` index whose KNN is itself a full scan.
+
+End to end through `LocalIndex.searchRankedAsync`, on Task 1b's own harness at 8,000 items:
+**69,896 ms → 28 ms** (embed 2 ms / SQL 27 ms), unchanged in every other respect.
+
+**Session memory, measured separately** at 8,000 indexed vectors and 2,000 session turns:
+**42,423.9 ms → 27.8 ms**.
+
+Guards, so this cannot come back silently: `packages/gateway/src/search/vec-store-join-order.test.ts`
+and `packages/gateway/src/memory/session-memory-join-order.test.ts` assert both that the row
+set and its order are byte-identical to the verbatim pre-fix query and that the vec table is
+entered exactly once as the outer loop — each with a red-proving case that runs the pre-fix
+SQL through the same assertion and requires it to fail. The scaling evidence is
+`packages/gateway/test/integration/embedding/vector-search-scaling.harness.test.ts`, opt-in on
+`NIMBUS_RUN_EMBED_HARNESS=1`.
 
 ## 3. Two facts, deliberately not conflated
 
@@ -434,6 +525,18 @@ the MCP adapter reaches it through IPC rather than the CLI. Add it on demand.
   scale -- that requires fixing (or at minimum, disclosing) the query-plan defect above, which
   is outside this plan's current task list.
 
+- **Fixed (Task 1c):** the query-plan defect Task 1b found is closed — `CROSS JOIN` at both KNN
+  join sites plus schema **V62**'s two `vec_rowid` indexes. Full before/after plans, per-scale
+  numbers and the guards are in §2.6 rather than repeated here. Headline: at 8,000 items the SQL
+  half of a search went from 86,063 ms to 6 ms, and `LocalIndex.searchRankedAsync` end to end
+  from 69,896 ms to 28 ms on Task 1b's own harness. Growth is now linear in corpus size.
+  **Two residuals, stated rather than softened:** (a) issue #1396's own scale — 60,000 items —
+  was still not run end to end, here or in Task 1b; the post-fix curve is linear across
+  1,000-8,000 items and extrapolates to well under a second at 60,000, but that is an
+  extrapolation, not a measurement. (b) The remedy is a planner HINT plus an index, so it is
+  defended by an `EXPLAIN QUERY PLAN` assertion rather than by construction — a future SQLite
+  release could in principle reorder around `CROSS JOIN`, which is exactly what the two
+  join-order tests exist to catch.
 - **Deferred, with reasons** (all from the same review): a `[embedding] query_timeout_ms`
   TOML key (§4.2 — the env override covers diagnosis), a `--json-envelope` CLI flag (§4.5 —
   no consumer), and converging `nimbus index health` onto the search-time coverage figure

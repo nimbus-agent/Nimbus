@@ -239,6 +239,74 @@ git commit -m "test(embedding): measure end-to-end search latency under a satura
 
 ---
 
+## Task 1c: Fix the quadratic vector-search query plan
+
+**INSERTED by controller ruling after Task 1b, ahead of Task 2 — this is the head of the branch.**
+Not in the original plan. Task 1b falsified §2.1 as the cause and found the real one: a query PLAN
+defect that makes semantic search unusable above a few thousand items on ANY install, with no
+backfill running. Tasks 2-4 remain justified for the contention they target, but would not have
+moved the reported timeout.
+
+**Files:**
+
+- Modify: `packages/gateway/src/search/vec-store.ts` (`CROSS JOIN`; extract `buildVectorChunkQuery`
+  so the plan test can EXPLAIN the production string rather than a copy)
+- Modify: `packages/gateway/src/memory/session-memory-store.ts` (same fix; `SESSION_RECALL_SQL`
+  hoisted to module scope, same reason)
+- Create: `packages/gateway/src/index/vec-join-index-v62-sql.ts`
+- Modify: `packages/gateway/src/index/migrations/runner.ts`, `packages/gateway/src/index/local-index.ts`
+  (register V62, bump `CURRENT_SCHEMA_VERSION`)
+- Create: `packages/gateway/src/search/vec-store-join-order.test.ts`,
+  `packages/gateway/src/memory/session-memory-join-order.test.ts`,
+  `packages/gateway/test/integration/embedding/vector-search-scaling.harness.test.ts`
+- Modify: the spec (§2 intro, §2.1, new §2.6, §7), `docs/schema-reference.md`, `docs/CHANGELOG.md`,
+  `docs/architecture.md`, `CLAUDE.md`, `GEMINI.md`
+
+**Interfaces:**
+
+- Produces: `buildVectorChunkQuery` (exported for the plan test), `SESSION_RECALL_SQL`,
+  `VEC_JOIN_INDEX_V62_SQL`. No IPC, no config, no invariant, no new egress class.
+- `vectorSearchChunks`'s own signature and return shape are unchanged, so no caller moves.
+
+- [x] **Step 1: Reproduce the bad plan independently**
+
+Confirmed against a fully-migrated database before changing anything, and confirmed that an index
+on `embedding_chunk(vec_rowid)` alone does NOT change it (Task 1b's claim, re-verified not
+inherited).
+
+- [x] **Step 2: Evaluate the candidate mechanisms, then fix**
+
+`CROSS JOIN` + the V62 index was chosen over a `MATERIALIZED` CTE: measured, the CTE alone leaves
+`embedding_chunk` driving the main query's outer loop and never uses the new index. Both KNN join
+sites in the repository take the same change; `dual-search.ts` holds no SQL and is fixed
+transitively.
+
+- [x] **Step 3: Prove results are unchanged**
+
+Both new test files recompute the expectation with the VERBATIM pre-fix query at test time, over
+the same seeded database, across every filter combination — a genuine before/after comparison, not
+a restatement of the new behaviour.
+
+- [x] **Step 4: Pin the plan**
+
+Structural assertions (vec table entered once, as the outer loop; the joined table probed by an
+index), not literal `detail` strings. Each file carries a red-proving case that runs the pre-fix
+SQL through the same assertion and requires it to FAIL.
+
+- [x] **Step 5: Measure at two or more sizes**
+
+`vector-search-scaling.harness.test.ts`, opt-in on `NIMBUS_RUN_EMBED_HARNESS=1`. Numbers in spec
+§2.6.
+
+- [x] **Step 6: Commit**
+
+```bash
+git add packages/gateway docs CLAUDE.md GEMINI.md
+git commit -m "fix(search): stop the vector KNN re-running once per chunk row"
+```
+
+---
+
 ## Task 2: The priority gate
 
 Pure scheduling logic in its own file: no embedding knowledge, no I/O, so its semantics are testable without a model. **The behaviour that matters and is easy to get wrong: interactive work jumps the QUEUE, it does not wait for a full drain.** Blocking until `inFlightBackground === 0` makes a query wait for all 8 in-flight items — roughly 8× the intended bound.

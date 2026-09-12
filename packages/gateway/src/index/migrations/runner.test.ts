@@ -782,10 +782,10 @@ test("V52 leaves resolve_key NULL for a row with neither url", () => {
   db.close();
 });
 
-test("CURRENT_SCHEMA_VERSION is 61, so the newest step runs in production", () => {
+test("CURRENT_SCHEMA_VERSION is 62, so the newest step runs in production", () => {
   // Without this bump the step exists but never executes: runIndexedSchemaMigrations early-returns
   // once user_version >= targetVersion, and every production caller passes CURRENT_SCHEMA_VERSION.
-  expect(CURRENT_SCHEMA_VERSION).toBe(61);
+  expect(CURRENT_SCHEMA_VERSION).toBe(62);
   const db = freshDb();
   runIndexedSchemaMigrations(db, 53);
   expect(tableNames(db)).toContain("item");
@@ -817,6 +817,25 @@ test("CURRENT_SCHEMA_VERSION tracks the highest registered migration step", () =
     `registered steps reach V${String(maxStep)} but CURRENT_SCHEMA_VERSION is ` +
       `${String(CURRENT_SCHEMA_VERSION)}; bump it or the migration is inert`,
   ).toBe(maxStep);
+});
+
+test("V62 creates both vec_rowid join indexes through the runner", () => {
+  // Same reasoning as the V55 case below: the SQL constant being right does not prove the step is
+  // REGISTERED. An index registered under the wrong version, or not registered at all, still
+  // leaves every query returning correct rows — just thousands of times slower — so nothing else
+  // in this suite would go red. `search/vec-store-join-order.test.ts` owns the plan-level proof
+  // that the index actually changes what SQLite does with it.
+  const db = freshDb();
+  const indexNames = (rel: string): string[] =>
+    (db.query(`PRAGMA index_list(${rel})`).all() as Array<{ name: string }>).map((r) => r.name);
+  runIndexedSchemaMigrations(db, 61);
+  expect(indexNames("embedding_chunk")).not.toContain("idx_embedding_chunk_vec_rowid");
+  expect(indexNames("session_memory")).not.toContain("idx_session_memory_vec_rowid");
+  runIndexedSchemaMigrations(db, 62);
+  expect(indexNames("embedding_chunk")).toContain("idx_embedding_chunk_vec_rowid");
+  expect(indexNames("session_memory")).toContain("idx_session_memory_vec_rowid");
+  expect(userVersion(db)).toBe(62);
+  db.close();
 });
 
 test("V55 creates pr_changed_file and pr_files_state through the runner", () => {

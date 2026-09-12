@@ -146,6 +146,10 @@ test("repairDisabledSavedTool clears disabled_reason and updates signature/pubke
   expect(row?.description).toBe("d");
 });
 
-test("the migration actually ran — schema version is 61", () => {
-  expect(readIndexedUserVersion(migratedTestDb())).toBe(61);
+test("the migration actually ran — the V61 step is applied", () => {
+  // `>= 61` rather than a literal equality: V61 is the step that creates this file's table, and
+  // every later migration leaves it applied. Pinning the exact number made an unrelated
+  // migration (V62, two `vec_rowid` join indexes) turn this file red, which taught a reader
+  // nothing about `generated_tool` and is a tax on every future migration author.
+  expect(readIndexedUserVersion(migratedTestDb())).toBeGreaterThanOrEqual(61);
 });
