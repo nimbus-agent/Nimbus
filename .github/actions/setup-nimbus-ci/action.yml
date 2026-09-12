@@ -70,7 +70,10 @@ runs:
         if [ -f "$lib" ]; then
           echo "Reusing cached $lib"
         else
-          bun scripts/build-sqlite-darwin.ts --dest "$dir" --work "$dir"
+          # --work is OUTSIDE the cached directory on purpose: the amalgamation zip and the ~11 MB
+          # of C source it extracts to are build inputs, and caching them would store 14 MB to
+          # avoid re-fetching 3. Only the finished library is worth keeping between runs.
+          bun scripts/build-sqlite-darwin.ts --dest "$dir" --work "${RUNNER_TEMP}/sqlite-build"
         fi
         echo "NIMBUS_SQLITE_PATH=$lib" >> "$GITHUB_ENV"
         echo "Full SQLite: $lib"
