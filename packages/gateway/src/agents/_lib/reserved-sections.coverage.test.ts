@@ -360,7 +360,7 @@ const STANDUP: StandupBrief = {
   latencyMs: 0,
   gaps: [GAP],
   query: { sinceMs: -86_400_000, nowMs: 0 },
-  identity: { personId: "person-me", source: "git", displayName: "Me" },
+  identity: { personId: "person-me", source: "git", displayName: "Me", personRowExists: true },
   prsActive: [],
   prsMerged: [],
   reviews: [],

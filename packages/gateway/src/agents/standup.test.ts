@@ -28,7 +28,13 @@ function emptyDb(): Database {
 }
 
 function identity(overrides: Partial<StandupIdentity> = {}): StandupIdentity {
-  return { personId: ME, source: "git", displayName: "Ada Lovelace", ...overrides };
+  return {
+    personId: ME,
+    source: "git",
+    displayName: "Ada Lovelace",
+    personRowExists: true,
+    ...overrides,
+  };
 }
 
 function build(opts: { db?: Database; identity?: StandupIdentity; lookbackMs?: number } = {}) {
@@ -252,13 +258,50 @@ describe("buildStandupBrief", () => {
   test("an identity naming no person row gets its own gap explaining the empty brief", () => {
     const db = emptyDb();
     try {
-      const b = build({ db, identity: identity({ displayName: null, source: "override" }) });
+      const b = build({
+        db,
+        identity: identity({ displayName: null, personRowExists: false, source: "override" }),
+      });
       const gap = b.gaps.find((g) => g.detail.includes("No indexed person record"));
       expect(gap).toBeDefined();
       expect(gap?.detail).toContain(ME);
       // Remediation is source-specific: an override is taken verbatim and never validated, so
       // "confirm the id" is the action — not "check your connectors have synced".
       expect(gap?.remediation).toContain("verbatim");
+    } finally {
+      db.close();
+    }
+  });
+
+  test("an UNNAMED but REAL person gets no 'no record' gap — the lanes work fine", () => {
+    const db = emptyDb();
+    try {
+      // `person.display_name` is nullable and `person-store.ts` permits a row with no name, so a
+      // null name means either "no such person" OR "a person nobody named". Keying this gap on
+      // the NAME printed "every section below is empty because nothing can match it" directly
+      // above sections that had legitimately populated — a disclosure that is wrong, which this
+      // brief's own rules rank as worse than one that is absent.
+      insertItem(db, { id: "pr-1", type: "pr", meta: { state: "open" } });
+      const b = build({
+        db,
+        identity: identity({ displayName: null, personRowExists: true }),
+      });
+      expect(b.counts.prsActive).toBe(1);
+      expect(b.gaps.some((g) => g.detail.includes("No indexed person record"))).toBe(false);
+    } finally {
+      db.close();
+    }
+  });
+
+  test("a MISSING person row still gets the gap, even with a name somehow present", () => {
+    const db = emptyDb();
+    try {
+      // The inverse, pinning that the gap keys on existence and nothing else.
+      const b = build({
+        db,
+        identity: identity({ displayName: "Ada Lovelace", personRowExists: false }),
+      });
+      expect(b.gaps.some((g) => g.detail.includes("No indexed person record"))).toBe(true);
     } finally {
       db.close();
     }

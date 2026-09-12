@@ -7,6 +7,7 @@ import {
   selectMergedPrs,
   selectMessages,
   selectPersonDisplayName,
+  selectPersonExists,
   selectReviews,
   selectTicketsOpened,
 } from "../../src/agents/standup-queries.ts";
@@ -468,6 +469,77 @@ describe("standup queries against the real migrated schema", () => {
         });
       }
       expect(countMessageThreads(db, W, ME)).toBe(3);
+    } finally {
+      db.close();
+    }
+  });
+
+  test("threads: the same thread_ts in TWO channels is two threads, not one", () => {
+    const db = createMemoryIndexDb();
+    try {
+      // A thread's identity is `(channel, thread_ts)`, not `thread_ts` alone. Keying on the bare
+      // `thread_ts` collapsed these two into one — and left the two arms of the same `COALESCE`
+      // inconsistent, since the unthreaded arm already carries the channel via `external_id`
+      // (`<channel>:<ts>`). Slack `ts` values are microsecond timestamps so a real collision is
+      // unlikely rather than impossible, and "unlikely" is not a basis for a printed number.
+      for (const [i, ch] of ["C1", "C2"].entries()) {
+        insertItem(db, {
+          id: `msg-${ch}`,
+          service: "slack",
+          type: "message",
+          externalId: `${ch}:${String(500 + i)}.0`,
+          title: `reply in ${ch}`,
+          modifiedAt: NOW - (i + 1) * HOUR,
+          authorId: ME,
+          meta: { channel: ch, thread_ts: "111.000000" },
+        });
+      }
+      expect(countMessageThreads(db, W, ME)).toBe(2);
+    } finally {
+      db.close();
+    }
+  });
+
+  test("threads: two replies in ONE channel and thread are still one thread", () => {
+    const db = createMemoryIndexDb();
+    try {
+      // The channel-qualified key must not over-count in the other direction.
+      for (const [i, ts] of ["600.1", "600.2"].entries()) {
+        insertItem(db, {
+          id: `msg-${ts}`,
+          service: "slack",
+          type: "message",
+          externalId: `C1:${ts}`,
+          title: `reply ${ts}`,
+          modifiedAt: NOW - (i + 1) * HOUR,
+          authorId: ME,
+          meta: { channel: "C1", thread_ts: "111.000000" },
+        });
+      }
+      expect(countMessageThreads(db, W, ME)).toBe(1);
+    } finally {
+      db.close();
+    }
+  });
+
+  test("person existence is distinct from having a display name", () => {
+    const db = createMemoryIndexDb();
+    try {
+      // The distinction `identityGaps` keys on. `selectPersonDisplayName` returns null for BOTH
+      // an absent row and a real row with a blank name, so it cannot carry this — and gating the
+      // "no indexed person record" gap on the name printed that claim above sections an
+      // unnamed-but-real person had legitimately populated.
+      insertPerson(db, ME, "Ada Lovelace");
+      insertPerson(db, "person-unnamed", null);
+      insertPerson(db, "person-blank", "  ");
+      expect(selectPersonExists(db, ME)).toBe(true);
+      expect(selectPersonExists(db, "person-unnamed")).toBe(true);
+      expect(selectPersonExists(db, "person-blank")).toBe(true);
+      expect(selectPersonExists(db, "person-nonexistent")).toBe(false);
+      // …while the NAME is null for two of those three, which is exactly why it cannot stand in.
+      expect(selectPersonDisplayName(db, "person-unnamed")).toBeNull();
+      expect(selectPersonDisplayName(db, "person-blank")).toBeNull();
+      expect(selectPersonDisplayName(db, "person-nonexistent")).toBeNull();
     } finally {
       db.close();
     }

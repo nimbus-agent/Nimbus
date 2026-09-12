@@ -50,6 +50,16 @@ export type StandupIdentity = {
   readonly source: SelfPersonSource;
   /** `null` when no `person` row carries a name for this id — see `selectPersonDisplayName`. */
   readonly displayName: string | null;
+  /**
+   * Whether a `person` row exists for `personId` at all.
+   *
+   * Carried SEPARATELY from `displayName` rather than derived from it, because `display_name` is
+   * nullable: a null name means either "no such person" or "a person nobody named", and those
+   * need opposite disclosures. `standup.ts` keys its "no indexed person record" gap on this —
+   * keying it on the name printed that claim above sections an unnamed-but-real person had
+   * legitimately populated.
+   */
+  readonly personRowExists: boolean;
 };
 
 export type StandupBrief = {

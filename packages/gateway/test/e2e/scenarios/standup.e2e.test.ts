@@ -228,10 +228,15 @@ describe("nimbus standup (e2e, in-process)", () => {
     // Identity resolved end-to-end through the real `resolveSelfPerson` -> `person` lookup, not
     // injected: the git email matched the seeded `canonical_email` and the display name came off
     // that row.
+    // `toEqual`, not `toMatchObject`: the whole identity object, so a field added to
+    // `StandupIdentity` without a thought about what it should be end-to-end fails HERE. That is
+    // how `personRowExists` got its e2e value rather than defaulting past this assertion.
     expect(params.findings.identity).toEqual({
       personId: ME,
       source: "git",
       displayName: "Ada Lovelace",
+      // Resolved against the seeded `person` row by a real query, not asserted from the fixture.
+      personRowExists: true,
     });
     expect(params.brief).toContain("_for: `Ada Lovelace` (matched from");
 

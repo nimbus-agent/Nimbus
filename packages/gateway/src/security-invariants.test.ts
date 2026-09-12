@@ -2800,21 +2800,61 @@ describe("I31 — disclosure integrity: a synthesized brief never says less than
     expect(contract).toContain('brief.kind === "standup"');
   });
 
-  test("I31/agents: `standup` is scoped to the local owner with no person parameter", async () => {
+  test("I31/agents: `standup`'s accepted parameter set is EXACTLY sinceMs", async () => {
     // Not a disclosure check — a SURFACE check, and the reason `agents.standup` is excluded from
     // every external surface. The exclusion's whole premise is that no caller can aim this brief
-    // at someone else, so a `person`/`personId` parameter appearing in the validator would
-    // silently convert an owner-scoped brief into `negotiate --person`'s dossier shape while the
-    // external-exclusion comment still claimed it could not happen.
+    // at someone else: a targeting parameter reaching the validator would silently convert an
+    // owner-scoped brief into `negotiate --person`'s dossier shape while the external-exclusion
+    // comment still claimed it could not happen.
+    //
+    // **An ALLOW-LIST, because the first version of this test was a denylist** — it asserted the
+    // validator source did not contain `person`/`personId`, which a future `subject`, `userId` or
+    // `email` parameter would have sailed straight past while this test stayed green. A guard
+    // must say what CANNOT pass, and here that means enumerating what CAN: the validator may
+    // copy exactly one field onto its returned object.
     const rpc = await read("packages/gateway/src/ipc/agents-rpc.ts");
     const validator = rpc.slice(
       rpc.indexOf("function requireStandupParams"),
       rpc.indexOf("const STANDUP_DEFAULT_SINCE_MS"),
     );
     expect(validator.length).toBeGreaterThan(0);
-    expect(validator).toContain("sinceMs");
-    expect(validator).not.toContain("personId");
-    expect(validator).not.toContain("person");
+
+    // Every field the validator ASSIGNS onto its output. `out.<key> =` is the only way a value
+    // reaches `handleStandup`, so this set is the accepted parameter surface.
+    const assigned = [...validator.matchAll(/\bout\.([A-Za-z_$][\w$]*)\s*=/g)].map(
+      (m) => m[1] as string,
+    );
+    expect([...new Set(assigned)].sort()).toEqual(["sinceMs"]);
+
+    // And the declared return/param types name only that field, so a widened type cannot arrive
+    // ahead of the assignment that would have tripped the check above.
+    const declaredKeys = [...validator.matchAll(/\{\s*sinceMs\?:\s*(?:unknown|number)\s*\}/g)];
+    expect(declaredKeys.length).toBeGreaterThanOrEqual(2);
+    for (const forbidden of ["person", "personId", "subject", "userId", "email", "as"]) {
+      // Kept alongside the allow-list rather than in place of it: these are the names a reviewer
+      // would most expect to see if someone did widen the surface, and naming them makes the
+      // failure message say WHY rather than just "set mismatch".
+      expect(assigned).not.toContain(forbidden);
+    }
+  });
+
+  test("I31/agents: `handleStandup` forwards no caller-supplied identity to the agent", async () => {
+    // The companion to the allow-list above, one level down: even with a validator that copies
+    // only `sinceMs`, a handler that spread the RAW params into `emitStandupBrief` would
+    // reintroduce the whole surface. So the handler must pass the VALIDATED object's field, and
+    // its `mePersonIdOverride` must come from `nimbus.toml` rather than from `params`.
+    const rpc = await read("packages/gateway/src/ipc/agents-rpc.ts");
+    const handler = rpc.slice(
+      rpc.indexOf("async function handleStandup"),
+      rpc.indexOf("async function handleGhost"),
+    );
+    expect(handler.length).toBeGreaterThan(0);
+    // No spread of caller input anywhere in the handler.
+    expect(handler).not.toContain("...params");
+    expect(handler).not.toContain("...input");
+    // The override is read from config, never from the request.
+    expect(handler).toContain("userToml.mePersonId");
+    expect(handler).toContain("loadNimbusUserFromConfigDir");
   });
 
   test("I31: reserved blocks are constructed, never recovered by parsing the render", async () => {

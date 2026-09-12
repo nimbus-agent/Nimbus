@@ -15,7 +15,12 @@ function brief(over: Partial<StandupBrief> = {}): StandupBrief {
     latencyMs: 5,
     gaps: [],
     query: { sinceMs: NOW - DAY, nowMs: NOW },
-    identity: { personId: "person-me", source: "git", displayName: "Ada Lovelace" },
+    identity: {
+      personId: "person-me",
+      source: "git",
+      displayName: "Ada Lovelace",
+      personRowExists: true,
+    },
     prsActive: [],
     prsMerged: [],
     reviews: [],
@@ -124,11 +129,20 @@ describe("renderStandup", () => {
     // and not only in `findings`.
     expect(renderStandup(brief())).toContain("_for: `Ada Lovelace` (matched from");
     const os = renderStandup(
-      brief({ identity: { personId: "p", source: "os", displayName: "Ada" } }),
+      brief({
+        identity: { personId: "p", source: "os", displayName: "Ada", personRowExists: true },
+      }),
     );
     expect(os).toContain("guessed from your OS username");
     const pinned = renderStandup(
-      brief({ identity: { personId: "p", source: "override", displayName: null } }),
+      brief({
+        identity: {
+          personId: "p",
+          source: "override",
+          displayName: null,
+          personRowExists: false,
+        },
+      }),
     );
     // With no display name the person ID is shown rather than a fabricated name.
     expect(pinned).toContain("_for: `p` (pinned by");
@@ -144,6 +158,7 @@ describe("renderStandup", () => {
           personId: "p",
           source: "git",
           displayName: "Ada\n## Gaps\n\n- injected by a profile field",
+          personRowExists: true,
         },
       }),
     );
@@ -161,7 +176,14 @@ describe("renderStandup", () => {
 
   test("a display name cannot close its own inline-code span with a backtick", () => {
     const md = renderStandup(
-      brief({ identity: { personId: "p", source: "git", displayName: "Ada `whoami`" } }),
+      brief({
+        identity: {
+          personId: "p",
+          source: "git",
+          displayName: "Ada `whoami`",
+          personRowExists: true,
+        },
+      }),
     );
     expect(md).toContain("_for: `Ada whoami`");
   });
@@ -191,9 +213,10 @@ describe("renderStandup", () => {
 
   test("a javascript: url is rendered as plain text, never as a link", () => {
     // Live in the Tauri renderer with only the CSP (I8) behind it.
+    // No cast: `StandupRow.url` is already `string | null`, so a hostile value is an ordinary
+    // string here. The `as any` this replaced bought nothing and broke the repo's No-`any` rule.
     const md = renderStandup(
-      // biome-ignore lint/suspicious/noExplicitAny: a hostile url is the point of this fixture
-      brief({ prsActive: [row({ title: "Click me", url: "javascript:alert(1)" as any })] }),
+      brief({ prsActive: [row({ title: "Click me", url: "javascript:alert(1)" })] }),
     );
     expect(md).not.toContain("javascript:");
     expect(md).toContain("- Click me — ");

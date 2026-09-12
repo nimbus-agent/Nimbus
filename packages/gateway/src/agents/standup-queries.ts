@@ -254,13 +254,24 @@ export function selectMessages(db: Database, w: Window, personId: string): Stand
  * A top-level message has `thread_ts` NULL, and is its own thread — hence the `COALESCE` onto
  * `external_id`, which is `<channel>:<ts>` and therefore unique per message. Keying only on
  * `thread_ts` would collapse every unthreaded message in the window into a single bucket.
+ *
+ * **The threaded key is CHANNEL-QUALIFIED**, because a thread's identity is `(channel,
+ * thread_ts)` and not `thread_ts` alone. Keying on the bare `thread_ts` left the two arms of
+ * this one `COALESCE` inconsistent — the unthreaded arm already carries the channel, since
+ * `external_id` is `<channel>:<ts>` — and made the count rest on an unstated assumption that
+ * Slack `ts` values never repeat across channels. They are microsecond timestamps, so a
+ * collision is unlikely rather than impossible, and "unlikely" is not a basis for a number the
+ * brief prints. `service` is included too, since `thread_ts` is a Slack-shaped id and a second
+ * chat connector indexing `message` items would otherwise share the keyspace.
  */
 export function countMessageThreads(db: Database, w: Window, personId: string): number {
   const row = db
     .query(
       `SELECT COUNT(DISTINCT COALESCE(
                 CASE WHEN json_valid(i.metadata)
-                     THEN json_extract(i.metadata, '$.thread_ts')
+                          AND json_extract(i.metadata, '$.thread_ts') IS NOT NULL
+                     THEN i.service || ':' || json_extract(i.metadata, '$.channel')
+                          || ':' || json_extract(i.metadata, '$.thread_ts')
                      ELSE NULL END,
                 i.external_id)) AS n
          FROM item i
@@ -356,12 +367,34 @@ export function nonGithubMergedPrCount(db: Database, w: Window, personId: string
 }
 
 /**
+ * Whether a `person` row exists for this id at all.
+ *
+ * A SEPARATE query from {@link selectPersonDisplayName}, and the separation is the point:
+ * `display_name` is nullable (`unified-item-v3-sql.ts`) and `person-store.ts` permits a row with
+ * no name, so a null name CANNOT distinguish "no such person" from "a person nobody named".
+ * Those two cases need opposite disclosures — the first means every lane is empty because
+ * nothing can match, the second means the lanes work fine and only the header is unnamed — and
+ * keying the "no indexed person record" gap on the name would print that claim above populated
+ * sections. `standup.ts`'s `identityGaps` reads THIS.
+ */
+export function selectPersonExists(db: Database, personId: string): boolean {
+  const row = db.query(`SELECT 1 AS ok FROM person WHERE id = ? LIMIT 1`).get(personId) as {
+    ok: number;
+  } | null;
+  return row !== null;
+}
+
+/**
  * The resolved person's display name, for the brief header.
  *
- * `null` when the person row is absent, which is reachable: `resolveSelfPerson` returns the
- * `[user] mePersonId` override VERBATIM without checking that it names a real person
- * (`self-person.ts` short-circuits on it before either lookup). A brief headed by a raw person
- * id is the honest rendering of that; inventing a name from the id would not be.
+ * `null` when the row is absent OR when it exists with a null/blank name — deliberately
+ * conflated, because the HEADER's need is identical in both cases: fall back to the person id.
+ * Anything that must tell the two apart calls {@link selectPersonExists} instead.
+ *
+ * An absent row is reachable: `resolveSelfPerson` returns the `[user] mePersonId` override
+ * VERBATIM without checking that it names a real person (`self-person.ts` short-circuits on it
+ * before either lookup). A brief headed by a raw person id is the honest rendering of that;
+ * inventing a name from the id would not be.
  */
 export function selectPersonDisplayName(db: Database, personId: string): string | null {
   const row = db.query(`SELECT display_name FROM person WHERE id = ?`).get(personId) as {

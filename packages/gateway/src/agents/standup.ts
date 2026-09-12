@@ -15,6 +15,7 @@ import {
   selectMergedPrs,
   selectMessages,
   selectPersonDisplayName,
+  selectPersonExists,
   selectReviews,
   selectTicketsOpened,
   type Window,
@@ -185,7 +186,12 @@ function substrateGaps(): GapNote[] {
  */
 function identityGaps(identity: StandupIdentity): GapNote[] {
   const out: GapNote[] = [];
-  if (identity.displayName === null) {
+  // Keyed on ROW EXISTENCE, never on `displayName`. A `person` row may exist with a null or
+  // blank `display_name` (the column is nullable and `person-store.ts` permits it), and the
+  // lanes match on `personId` — so for an unnamed-but-real person every section populates
+  // normally and this note, keyed on the name, would have been a false claim printed directly
+  // above them. A disclosure that is wrong is worse than one that is absent.
+  if (!identity.personRowExists) {
     out.push({
       category: "missing_user_identity",
       detail:
@@ -378,6 +384,7 @@ export async function emitStandupBrief(opts: EmitStandupOpts): Promise<{ session
     personId: resolution.personId,
     source: resolution.source,
     displayName: selectPersonDisplayName(opts.db, resolution.personId),
+    personRowExists: selectPersonExists(opts.db, resolution.personId),
   };
 
   return await emitBriefWithSynthesis<StandupBrief>({

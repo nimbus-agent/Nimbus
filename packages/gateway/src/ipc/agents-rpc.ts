@@ -1193,7 +1193,7 @@ async function handlePremortem(
  * The `agents.*` methods this module answers.
  *
  * Declared once and used for BOTH the egress-append test and the dispatch, so the ledgered set is
- * definitionally the served set. A second, hand-maintained list of the same sixteen strings is how
+ * definitionally the served set. A second, hand-maintained list of the same seventeen strings is how
  * the over-counting defect this replaces was introduced: `method.startsWith("agents.")` appended an
  * `authorized` row for `agents.<anything>`, which then failed `-32601` having done no work — so
  * `nimbus prove` over-counted, and an unbounded caller-supplied `method` reached a hashed,
