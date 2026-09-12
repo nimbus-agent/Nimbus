@@ -1,5 +1,6 @@
 import { Database } from "bun:sqlite";
 import { describe, expect, test } from "bun:test";
+import type { StandupIdentity } from "../../../src/agents/_lib/standup-types.ts";
 import { emitStandupBrief } from "../../../src/agents/standup.ts";
 import { itemPrimaryKey } from "../../../src/index/item-key.ts";
 import { upsertIndexedItem } from "../../../src/index/item-store.ts";
@@ -217,7 +218,12 @@ describe("nimbus standup (e2e, in-process)", () => {
         counts: Record<string, number>;
         threadCount: number;
         approximateCount: number;
-        identity: { personId: string; source: string; displayName: string | null };
+        // The REAL type, not a hand-written stand-in. A local `{ personId; source; displayName }`
+        // is what let this drift: adding `personRowExists` to `StandupIdentity` left the
+        // stand-in behind, and the `toEqual` below then failed to typecheck (TS2769) — a gate
+        // that is ADVISORY on Windows and gating on Linux, so it read as green locally. This
+        // test already imports gateway source, so there is no reason to restate the type.
+        identity: StandupIdentity;
       };
     };
 
