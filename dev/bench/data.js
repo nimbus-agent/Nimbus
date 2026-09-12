@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1789222716630,
+  "lastUpdate": 1789233192751,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "241718962e707e4f236b457dc8bd2ff21a255c4c",
-          "message": "feat(release-health): loud release-asset gate + weekly secret-health monitor (#768)\n\n## What\n\nSub-project 1 of the org secrets-management program — the safety net\nthat de-risks the later GitHub-App migration. It closes the exact\nfailure class behind the phantom releases (v0.17–v0.21 shipped zero\nassets because `RELEASE_PAT` had silently expired while builds went\ngreen).\n\nThree capabilities, all logic in unit-tested Bun/TS under\n`scripts/release/` (thin YAML, no new dependency):\n\n1. **Asset-completeness gate** — a hard step at the end of\n`publish-release` diffs the release's actual assets against this run's\n`dist/stage/*` and fails if any are missing/zero-byte (catches\n`action-gh-release` soft-succeeding on a bad PAT against the\npre-existing release). Sanity-asserts `SHA256SUMS` + `.asc`.\n2. **Loud failure alerting** — a new `alert-on-failure` job (`if:\nfailure()`) files a de-duped `release-health` GitHub issue for any red\nrelease run. `publish-release` stays `contents: read`; only this job\nholds `issues: write`.\n3. **Weekly secret-health monitor** (`secret-health.yml`, cron +\ndispatch) — per-secret PAT probes (authorization, not just alive:\nrepo-write permission / classic-scope / rate-limit fallback) +\n`notAfter` decoders for the GPG subkey / Windows `.pfx` / Apple `.p12`.\nSurfaces via the same de-duped issue with a state-transition guard\n(comment only on change — no weekly spam). Explicitly documents the PAT\ndead/alive caveat.\n\nNew files:\n`scripts/release/{gh-api,verify-release-assets,open-health-issue,check-secret-health}.ts`\n(+ tests), `.github/workflows/secret-health.yml`. Wiring:\n`.github/workflows/release.yml`, `docs/ci-secrets.md`, `package.json`\naliases.\n\n## Security notes\n\n- Cert decoders **never pass secrets as argv** (password via `-passin\nenv:` / `--passphrase-fd`, key material via stdin; base64 → `0600` temp\nfile; `try/finally` cleanup of temp files + `GNUPGHOME`). The final\nreview reproduced both against real `gpg`/`openssl` to confirm.\n- Alerts are GitHub issues only (no new webhook/secret added to the\nsystem being hardened).\n\n## Verification\n\n`bun test scripts/release/` → 71 pass / 0 fail (6 skips are pre-existing\n`nimbus-verify` platform guards). biome clean. Both workflows valid\nYAML; `audit:action-sha-pins` + `audit:doc-refs` OK. Built via a 6-task\nTDD plan with per-task review + a final whole-branch review + a fix wave\n(dead const, `exactOptionalPropertyTypes`, a `thresholdDays` NaN guard\nthat would otherwise silently disable all cert warnings, p12 temp-file\nmode-at-creation, and added orchestration tests).\n\nDesign + plan (with review dispositions):\n`docs/superpowers/{specs,plans}/2026-07-18-release-health-verification*.md`.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n\n## Summary by CodeRabbit\n\n- **New Features**\n- Releases now verify that all expected downloads are present and\nnon-empty after publishing.\n- Failed releases automatically create or update a release-health issue.\n- Added scheduled and manually triggered checks for expiring or invalid\nrelease credentials.\n- Health issues update only when the reported status changes and close\nwhen checks recover.\n\n- **Documentation**\n- Added guidance for release-health monitoring and local verification\nchecks.\n\n- **Tests**\n- Added coverage for release asset verification, credential health\nchecks, and health issue updates.\n\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude Opus 4.8 (1M context) <noreply@anthropic.com>",
-          "timestamp": "2026-07-19T06:38:17Z",
-          "tree_id": "8e1f14b43e9d451390fa5bfd8ed0550ade5e4649",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/241718962e707e4f236b457dc8bd2ff21a255c4c"
-        },
-        "date": 1784444177998,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 275.03613804999986,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 280.64730049999815,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 322.73399419999475,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "107bf084021bfc7dbd08fae0e42d3d2690f5b7ed",
+          "message": "fix(platform): load a full SQLite on macOS so sqlite-vec can load (#1503)\n\nFixes #1029 — and the issue's own stated cause was wrong, which is why\nit sat for five weeks.\n\n## What was broken\n\n`sqlite-vec` has never loaded on macOS. #1029 scoped that as a CI\ncoverage gap: 54 `skipIf(!VEC_AVAILABLE)` sites across 12 files silently\nskip on the macOS leg, invisible in a green summary. Three more use `if\n(!tryLoadSqliteVec(db)) return;`, which registers as a **passing** test.\n\nBut the load path that fails in CI is the one the product uses at\nruntime, and the sidecar fallback shares the failing call — so on macOS\nthere is no vector search, no hybrid ranking and no session-memory\nrecall. That is a platform-equality break, not a testing problem. The\nmissing coverage is what concealed it.\n\n## The cause, and what it is not\n\n**Not** the optional-dependency lockfile gap the issue names: `bun.lock`\ncarries `sqlite-vec-darwin-arm64@0.1.9` and\n`sqlite-vec-darwin-x64@0.1.9`. **Not** a path or double-extension bug:\n`sqlite-vec`'s `load()` is four lines and resolves correctly. **Not** an\narchitecture mismatch.\n\nFrom Bun's own bundled docs:\n\n> On macOS, Bun uses the system `libsqlite3.dylib`. `loadExtension()`\nrequires a full SQLite build ... To use a full SQLite build, call\n`require(\"bun:sqlite\").Database.setCustomSQLite(path)` before opening a\ndatabase.\n\nApple's system SQLite is not a full build, and **nothing in this repo\ncalled `setCustomSQLite`**. Linux and Windows use Bun's own SQLite,\nwhich is why only macOS failed.\n\n## Why nobody diagnosed it\n\nThe error was thrown away. `tryLoadSqliteVec` reported it at `log.debug`\non a logger built at `level: NIMBUS_LOG_LEVEL ?? \"info\"`, so the message\nnever reached a CI log. Every piece of evidence on the issue is the\ncanary failing — the symptom. The cause was discarded one frame below\nit.\n\n## What this changes\n\n**A darwin-only PAL module** — `platform/sqlite-runtime.ts` — resolving\n`NIMBUS_SQLITE_PATH`, then the two Homebrew prefixes, checking the file\nexists before calling `setCustomSQLite`, never throwing. It sits under\n`platform/` but deliberately not as a `PlatformServices` member: the\ninstall must answer before the first `new Database`, and in a Worker\nrealm there is no service graph at all. `platform/runtime-layout.ts` is\nthe existing precedent.\n\n**Wired at 16 entry points.** Grepping for `new Database` is the wrong\npredicate — `db/snapshot.ts` aliases the import and\n`migrated-db-template.ts` uses `Database.deserialize`. The right one is\na *value* import of `Database` from `bun:sqlite`, since ~200 files use\n`import type` to receive a handle they never opened.\n\n**Static rule D30** enforces it, with no allow-list at all — every file\nin scope names the init, so there is no list to forget. It is\ndeliberately **not** tied to an invariant: claiming one with no threat\nmodel would be worse than the gap.\n\n**The load failure now speaks.** Warn-once after *both* paths fail,\nkeyed on the composed reason so a genuinely different failure still says\nso, plus a `nimbus doctor` line.\n\n**A discriminator, because `false` is ambiguous.** Bun's typedoc\ndocuments `setCustomSQLite`'s two preconditions and says nothing about\nits return value, so \"already installed\" and \"too late, the process is\nstuck on Apple's build\" are the same `false`. Rather than assume the\nbenign one at `debug` — the level that hid this for five weeks — the\ncode now measures: on darwin, after a `false`, it opens a throwaway\n`:memory:` database and attempts a real vec load. Three outcomes, three\nlevels. It resolves the npm package first and the packaged sidecar\nsecond, in the order the product itself tries them, so a compiled binary\nis measured rather than reported as unknown.\n\n**CI**: the shared composite action probes for a full SQLite before\ninstalling one, and the `VEC_AVAILABLE` canary is now fatal on all three\nlegs. The old macOS-only warning is exactly what let this sit unread.\n\n## Verification, stated precisely\n\nWindows: `preflight:fast` green, `bun test packages/gateway packages/cli\nscripts` 22,803 pass / 75 skip / 0 fail. D30 red-proved by writing an\nunwired probe file and watching it fail, then pass on removal. The\ncompiled-binary resolution chain was reproduced with `bun build\n--compile` outside the repo, both with and without the sidecar present.\n\n**Nothing here executed on macOS.** Every darwin branch is exercised\nthrough injected fakes. The macOS CI leg on this PR is the first real\nexecution, and it is the proof — if it stays red, the error this change\nnow surfaces is the deliverable, and the canary flip is the one commit\nto revert.\n\n## Not in this PR\n\nWhat ships to macOS end users who have no Homebrew SQLite. That needs a\ndecision about bundling a `libsqlite3.dylib` against degrading honestly,\nwith size, notarization and licensing consequences, and it should be\ninformed by what this PR proves. Also left alone: converting the three\n`if (!tryLoadSqliteVec(db)) return;` early-returns to `skipIf`, which is\n#1029 cleanup rather than this fix.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nhttps://claude.ai/code/session_01JfjtCEdFCQR848FKP34HFC\n\n---------\n\nCo-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>",
+          "timestamp": "2026-09-12T19:59:40+03:00",
+          "tree_id": "c1c6682b504cfa77d1d1a8c9fc326ed90363d4dd",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/107bf084021bfc7dbd08fae0e42d3d2690f5b7ed"
+        },
+        "date": 1789233189098,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 327.27545885000325,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 324.237371399995,
             "unit": "ms"
           }
         ]
