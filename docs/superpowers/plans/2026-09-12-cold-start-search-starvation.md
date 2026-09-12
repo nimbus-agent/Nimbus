@@ -105,7 +105,7 @@ describe.skipIf(!RUN)("query latency under a saturating backfill (measurement)",
       const db = new Database(join(dir, "index.db"));
       seedItems(db, 5_000);
 
-      const embedder = await createLocalEmbedder(join(dir, "models"));
+      const embedder = await createLocalEmbedder({ cacheDir: join(dir, "models") });
       const pipeline = new SqliteEmbeddingPipeline({ db, embedder, backfillConcurrency: 8 });
 
       // Start the backfill and let it reach steady state before measuring.
@@ -427,12 +427,32 @@ git commit -m "feat(embedding): add the interactive-priority admission gate"
 
 - [ ] **Step 1: Write the failing test**
 
-Append to `packages/gateway/src/embedding/pipeline.test.ts`. Follow the file's existing helpers for building a seeded in-memory DB and a fake `Embedder`; this test adds only the gate assertion.
+Append to `packages/gateway/src/embedding/pipeline.test.ts`.
+
+**Note the vec gate.** Every suite in that file is `describe.skipIf(!VEC_AVAILABLE)` and these
+must be too, since `embedItem` writes vectors. Consequence worth knowing before trusting a green
+run: sqlite-vec does not load on macOS CI (issue #1029), so these assertions **do not execute
+there**. The Linux and Windows legs are the ones that prove this task.
 
 ```typescript
-describe("backfill admission", () => {
-  it("acquires and releases one background permit per item", async () => {
-    const db = makeSeededDb(3); // existing helper in this file
+// `freshDb`, `mockEmbedder` and `VEC_AVAILABLE` already exist in this file — use them
+// rather than adding parallel helpers. Every suite here is vec-gated, and this one must be
+// too: `embedItem` writes to `vec_items_384`.
+function seed(db: Database, n: number): void {
+  for (let i = 0; i < n; i += 1) {
+    db.run(
+      `INSERT INTO item (id, service, type, external_id, title, body_preview,
+          modified_at, synced_at)
+       VALUES (?, 'slack', 'message', ?, 'hello world', 'body text', ?, ?)`,
+      [`slack:e${String(i)}`, `e${String(i)}`, Date.now(), Date.now()],
+    );
+  }
+}
+
+describe.skipIf(!VEC_AVAILABLE)("SqliteEmbeddingPipeline — backfill admission", () => {
+  test("acquires and releases one background permit per item", async () => {
+    const db = freshDb();
+    seed(db, 3);
     const acquired: string[] = [];
     const gate = {
       acquireBackground: async () => {
@@ -446,17 +466,19 @@ describe("backfill admission", () => {
 
     const pipeline = new SqliteEmbeddingPipeline({
       db,
-      embedder: makeFakeEmbedder(),
+      embedder: mockEmbedder(384, "m"),
       priorityGate: gate,
     });
     await pipeline.backfillAll();
 
     expect(acquired.filter((a) => a === "acquire")).toHaveLength(3);
     expect(acquired.filter((a) => a === "release")).toHaveLength(3);
+    db.close();
   });
 
-  it("releases the permit even when embedding an item throws", async () => {
-    const db = makeSeededDb(1);
+  test("releases the permit even when embedding an item throws", async () => {
+    const db = freshDb();
+    seed(db, 1);
     let released = 0;
     const gate = {
       acquireBackground: async () => () => {
@@ -480,13 +502,19 @@ describe("backfill admission", () => {
     // A permit leaked on the error path deadlocks the backfill after N failures —
     // the exact failure mode a `finally` exists to prevent.
     expect(released).toBe(1);
+    db.close();
   });
 
-  it("backfills unchanged when no gate is supplied", async () => {
-    const db = makeSeededDb(2);
-    const pipeline = new SqliteEmbeddingPipeline({ db, embedder: makeFakeEmbedder() });
+  test("backfills unchanged when no gate is supplied", async () => {
+    const db = freshDb();
+    seed(db, 2);
+    const pipeline = new SqliteEmbeddingPipeline({ db, embedder: mockEmbedder(384, "m") });
     await pipeline.backfillAll();
-    expect(embeddedCount(db)).toBe(2); // existing helper
+    const row = db.query("SELECT COUNT(DISTINCT item_id) AS c FROM embedding_chunk").get() as {
+      c: number;
+    };
+    expect(row.c).toBe(2);
+    db.close();
   });
 });
 ```
@@ -762,7 +790,7 @@ Wrap `embed_texts` — the interactive path:
       const vectors = await pipeline.embedTexts(texts);
       this.sendToMain({ type: "embed_texts_result", id, ok: true, vectors: vectors.map((v) => Array.from(v)) });
     } catch (err) {
-      this.sendToMain({ type: "embed_texts_result", id, ok: false, message: errMessage(err) });
+      this.sendToMain({ type: "embed_texts_result", id, ok: false, error: errMessage(err) });
     } finally {
       // A leaked interactive permit suppresses ALL background embedding for the life
       // of the worker, so this `finally` is load-bearing, not defensive.
@@ -771,7 +799,11 @@ Wrap `embed_texts` — the interactive path:
   }
 ```
 
-> Preserve the existing `embed_texts_result` payload shape exactly — `worker-bridge.ts`'s `handleEmbedTextsResultMessage` reads `ok` and `vectors`, and changing either silently breaks every query. Copy the shape from the current implementation rather than retyping it from this plan.
+> **The error key is `error`, not `message`.** An earlier draft of this plan wrote `message` here,
+> which would have broken `embedding-worker-core.test.ts`'s existing assertion
+> (`{ …, ok: false, error: "embed boom" }`) and any bridge-side reader. Preserve the
+> `embed_texts_result` payload shape byte for byte — `ok`, `vectors`, `error` — and copy it from
+> the current implementation rather than retyping it from this plan.
 
 Wrap `embed_item` — the background path — inside the existing chain:
 
@@ -979,21 +1011,37 @@ git commit -m "feat(embedding): add a typed query-timeout error"
 
 ```typescript
 describe("query timeout", () => {
-  it("throws EmbeddingTimeoutError instead of resolving null", async () => {
-    // A worker that accepts embed_texts and never answers.
-    const worker = makeSilentWorker(); // existing helper shape in this file
-    const bridge = makeReadyBridge(worker);
+  // 25ms, not the 5s default. The fake worker below never answers, so the test waits out
+  // the whole budget in real time — at the default that is a 5-second stall added to every
+  // run of the suite. Restore the previous value in `finally` so the ordering assertion
+  // below still measures the real default.
+  const BUDGET_ENV = "NIMBUS_EMBEDDING_QUERY_TIMEOUT_MS";
 
-    const promise = bridge.embedQuery("anything");
-    await advanceBeyondQueryBudget(); // see Step 3 note on the env override
+  test("throws EmbeddingTimeoutError instead of resolving null", async () => {
+    const prev = process.env[BUDGET_ENV];
+    process.env[BUDGET_ENV] = "25";
+    try {
+      installFakeWorker();
+      const bridge = makeBridge();
+      // The fake worker records postMessage and answers nothing, which is exactly the
+      // starved-worker case: `embed_texts` goes out, no `embed_texts_result` comes back.
+      currentHandle().fire({ type: "ready" });
 
-    expect(promise).rejects.toThrow(/did not answer within/);
-    await promise.catch((err: unknown) => {
-      expect(isEmbeddingTimeoutError(err)).toBe(true);
-    });
+      const promise = bridge.embedQuery("anything");
+      await expect(promise).rejects.toThrow(/did not answer within/);
+      await promise.catch((err: unknown) => {
+        expect(isEmbeddingTimeoutError(err)).toBe(true);
+      });
+    } finally {
+      if (prev === undefined) {
+        Reflect.deleteProperty(process.env, BUDGET_ENV);
+      } else {
+        process.env[BUDGET_ENV] = prev;
+      }
+    }
   });
 
-  it("defaults the budget well below the CLI's 30s transport bound", () => {
+  test("defaults the budget well below the CLI's 30s transport bound", () => {
     // The ordering IS the fix. At the previous 60s the inner bound was unreachable and
     // the user saw a transport error instead of a disclosed degradation.
     expect(resolveEmbeddingQueryTimeoutMs()).toBeLessThan(30_000);
@@ -1616,18 +1664,54 @@ In `packages/gateway/src/ipc/server/inline-handlers.ts`, replace the final retur
   return rec["envelope"] === true ? result : result.items;
 ```
 
-- [ ] **Step 8: Run the tests**
+- [ ] **Step 8: Update the test mocks that return a bare array**
+
+Several existing tests replace `searchRankedAsync` with one returning `[]`. They must return an
+envelope instead. **The typecheck finds some of them and not others**, which is the trap: the
+assignments in `run-ask.test.ts` are typed and fail compilation, but `agent.test.ts` goes through
+`as unknown as { searchRankedAsync: … }` casts, and a cast silences exactly the error that would
+have found it. Those surface only as a runtime `TypeError` on `.items` of `undefined`.
+
+So find them by grep, not by the compiler:
+
+```bash
+grep -rn "searchRankedAsync" packages/gateway/src --include=*.test.ts
+```
+
+Known sites at the time of writing — re-derive rather than trusting this list:
+`packages/gateway/src/engine/run-ask.test.ts` (four assignments), and
+`packages/gateway/src/engine/agent.test.ts` (two, both behind casts).
+
+Each becomes an envelope:
+
+```typescript
+localIndex.searchRankedAsync = async () => ({
+  items: [],
+  retrieval: { vectorRanked: false, unrankedReason: "disabled", coverage: null },
+});
+```
+
+**Do NOT make the production callers defensive instead.** Accepting either shape
+(`Array.isArray(res) ? res : res.items`) in `run-ask.ts` or `agent.ts` would make the old mocks
+pass untouched, and it is the wrong trade three times over: the array branch is unreachable in
+production, since `searchRankedAsync` always returns an envelope; it shapes shipping code around
+test fixtures; and it destroys the very property this task relies on, that a type change surfaces
+every caller. A mock that lies about its subject's shape is a defect in the mock.
+
+- [ ] **Step 9: Run the tests**
 
 Run: `bun test packages/gateway/test/integration/index/search-disclosure.integration.test.ts`
 Expected: PASS, 4 tests.
 
 Run: `bun run typecheck`
-Expected: clean. A red typecheck here is the mechanism that proves every caller was found — do not silence one with a cast.
+Expected: clean. A red typecheck here is the mechanism that proves every PRODUCTION caller was
+found — do not silence one with a cast.
 
 Run: `bun test packages/gateway/src packages/gateway/test`
-Expected: PASS. Tests asserting `searchRankedAsync` returns an array need `.items`.
+Expected: PASS. A `TypeError` reading `.items` of `undefined` means Step 8 missed a cast-hidden
+mock.
 
-- [ ] **Step 9: Commit**
+- [ ] **Step 10: Commit**
 
 ```bash
 bun run preflight:fast
@@ -1653,58 +1737,85 @@ git commit -m "feat(index): return search results with a retrieval-quality discl
 - [ ] **Step 1: Write the failing test**
 
 ```typescript
-describe("retrieval disclosure output", () => {
-  it("keeps stdout a bare JSON array so `| jq '.[0]'` still works", async () => {
-    const client = fakeClient({
-      "index.searchRanked": {
-        items: [{ id: "a", name: "Item A" }],
-        retrieval: { vectorRanked: false, unrankedReason: "timeout", coverage: null },
-      },
-    });
-    const { stdout } = await runSearchCapturingOutput(client, "deploy");
+// Harness note: this file already imports `setFixture` / `clearFixture` / `FAKE_SOCKET_PATH`
+// from `../../test/helpers/cli-mocks.ts`, `captureOutput` from `../../test/helpers/cli-output.ts`
+// (as the module-level `out`), and `createMockIpcClient` from
+// `../../test/helpers/mock-ipc-client.ts`. Reuse them. `out.stdout` and `out.stderr` are GETTER
+// PROPERTIES, not methods — `out.stdout()` throws.
 
-    const parsed: unknown = JSON.parse(stdout);
+function envelope(retrieval: unknown, items: unknown[] = [{ id: "github:pr_1", name: "My PR" }]) {
+  return { items, retrieval };
+}
+
+describe("runSearch — retrieval disclosure", () => {
+  beforeEach(() => {
+    out.reset();
+  });
+  afterEach(() => {
+    clearFixture();
+  });
+
+  it("keeps stdout a bare JSON array so `| jq '.[0]'` still works", async () => {
+    const mock = createMockIpcClient([
+      envelope({ vectorRanked: false, unrankedReason: "timeout", coverage: null }),
+    ]);
+    setFixture({ gatewayState: { socketPath: FAKE_SOCKET_PATH }, ipcClient: mock.client });
+    await runSearch(["deploy"]);
+
+    const parsed: unknown = JSON.parse(out.stdout);
     expect(Array.isArray(parsed)).toBe(true);
-    expect(stdout).not.toContain("retrieval");
+    expect(out.stdout).not.toContain("retrieval");
   });
 
   it("writes the degradation note to stderr", async () => {
-    const client = fakeClient({
-      "index.searchRanked": {
-        items: [],
-        retrieval: { vectorRanked: false, unrankedReason: "timeout", coverage: null },
-      },
-    });
-    const { stderr } = await runSearchCapturingOutput(client, "deploy");
-    expect(stderr).toContain("keyword-only");
+    const mock = createMockIpcClient([
+      envelope({ vectorRanked: false, unrankedReason: "timeout", coverage: null }, []),
+    ]);
+    setFixture({ gatewayState: { socketPath: FAKE_SOCKET_PATH }, ipcClient: mock.client });
+    await runSearch(["deploy"]);
+
+    expect(out.stderr).toContain("keyword-only");
   });
 
   it("writes a coverage note to stderr when the index is partial", async () => {
-    const client = fakeClient({
-      "index.searchRanked": {
-        items: [],
-        retrieval: {
+    const mock = createMockIpcClient([
+      envelope(
+        {
           vectorRanked: true,
           unrankedReason: null,
           coverage: { embeddedItems: 8_400, totalItems: 60_000, percent: 14 },
         },
-      },
-    });
-    const { stderr } = await runSearchCapturingOutput(client, "deploy");
-    expect(stderr).toContain("8,400");
-    expect(stderr).toContain("60,000");
+        [],
+      ),
+    ]);
+    setFixture({ gatewayState: { socketPath: FAKE_SOCKET_PATH }, ipcClient: mock.client });
+    await runSearch(["deploy"]);
+
+    expect(out.stderr).toContain("8,400");
+    expect(out.stderr).toContain("60,000");
   });
 
   it("says nothing on stderr for a fully-ranked, fully-covered query", async () => {
-    const client = fakeClient({
-      "index.searchRanked": {
-        items: [{ id: "a", name: "Item A" }],
-        retrieval: { vectorRanked: true, unrankedReason: null, coverage: null },
-      },
-    });
-    const { stderr } = await runSearchCapturingOutput(client, "deploy");
+    const mock = createMockIpcClient([
+      envelope({ vectorRanked: true, unrankedReason: null, coverage: null }),
+    ]);
+    setFixture({ gatewayState: { socketPath: FAKE_SOCKET_PATH }, ipcClient: mock.client });
+    await runSearch(["deploy"]);
+
     // Noise on every healthy search trains people to ignore the channel entirely.
-    expect(stderr).toBe("");
+    expect(out.stderr).toBe("");
+  });
+
+  it("still prints results when an OLDER gateway ignores `envelope` and returns an array", async () => {
+    // Not a test-fixture concession: `nimbus` talks to a RUNNING gateway process, so an
+    // upgraded CLI can meet a gateway that predates Task 9 and answers with a bare array.
+    const mock = createMockIpcClient([[{ id: "github:pr_1", name: "My PR" }]]);
+    setFixture({ gatewayState: { socketPath: FAKE_SOCKET_PATH }, ipcClient: mock.client });
+    await runSearch(["deploy"]);
+
+    const parsed: unknown = JSON.parse(out.stdout);
+    expect(Array.isArray(parsed)).toBe(true);
+    expect(out.stderr).toBe("");
   });
 });
 ```
@@ -1716,15 +1827,26 @@ Expected: FAIL — stdout contains the whole envelope.
 
 - [ ] **Step 3: Implement in `search.ts`**
 
-`searchWithWarmingFallback` currently returns `unknown[]`. Change it to return the envelope, add `envelope: true` to both of its `client.call` invocations, and print:
+`searchWithWarmingFallback` currently returns `unknown[]`. Widen it to
+`unknown[] | { items: unknown[]; retrieval?: RetrievalNote }`, add `envelope: true` to both of
+its `client.call` invocations (the fallback call included — a warming retry must disclose too),
+and print:
 
 ```typescript
-    const result = await searchWithWarmingFallback(client, { ...params, envelope: true }, semantic);
+    const raw = await searchWithWarmingFallback(client, { ...params, envelope: true }, semantic);
+    // Accept BOTH shapes. Not for the tests' benefit — for version skew: `nimbus` connects to a
+    // RUNNING gateway process, so an upgraded CLI can meet an older gateway that has never heard
+    // of `envelope` and answers with a bare array. Crashing there would make a CLI upgrade look
+    // like a broken install. This is the one place the tolerance is earned; the gateway-internal
+    // callers in Task 9 are in-process and must NOT do this.
+    const items = Array.isArray(raw) ? raw : raw.items;
+    const retrieval = Array.isArray(raw) ? undefined : raw.retrieval;
+
     // stdout stays a bare array. This command is documented as pipeable
     // (`nimbus search q | jq '.[0]'`), and the existing warming note two functions below
     // already established stderr as the channel for anything that is not the result.
-    console.log(JSON.stringify(result.items, null, 2));
-    printRetrievalNotes(result.retrieval);
+    console.log(JSON.stringify(items, null, 2));
+    printRetrievalNotes(retrieval);
 ```
 
 ```typescript
@@ -1848,7 +1970,19 @@ Then monitor CI to green.
 
 **Spec coverage.** §2.1 → Tasks 2–4 · §2.2 → Task 6 · §2.3 → Tasks 5–6 · §2.4 → Task 8 (coverage) + Task 9 (`disabled`/reason plumbing) · §2.5 → Task 9 Step 4 · §4.1 → Tasks 2–4, including the `embed_item` clause (Task 4 Step 1, third test) and the no-full-drain clause (Task 2 Step 1, second test, red-proved at Step 5) · §4.2 → Tasks 5–7 · §4.3 → Task 8, with the O(1)-counter decision in the constructor's docblock and the "coverage absent when idle" case tested · §4.4 → Task 9 Step 7 · §4.5 → Task 9 Step 6 (all four internal callers, `toolgen-grounding.ts` included) and Task 10 (CLI + MCP) · §5 rejected alternatives → Task 11 Step 1 · §6 → Task 1 (measurement), Task 2 Step 5 (red-prove by reverting), Task 3 (error-path permit release), Task 5 (typed throw, not truthiness) · §7 → Task 1 Step 3 resolves the ONNX residual; deferrals are simply not implemented · §8 → the three PR groupings, with Task 11 enforcing the strip.
 
-**Placeholders.** None: every code step carries the code, every test step carries the assertions, and the two "follow the file's existing helper" notes (Task 3 Step 1, Task 10 Step 4) point at named helpers in named files rather than deferring a decision.
+**Placeholders.** None now — but this section claimed that once already and was wrong, so the
+correction is recorded rather than quietly applied. A 2026-09-12 review of this plan found that
+Tasks 3, 6 and 10 cited test helpers that **do not exist**: `makeSeededDb` / `makeFakeEmbedder` /
+`embeddedCount` (the real ones are `freshDb` / `mockEmbedder`), `makeSilentWorker` /
+`makeReadyBridge` (`installFakeWorker` / `makeBridge` / `currentHandle`), and `fakeClient` /
+`runSearchCapturingOutput` (`setFixture` / `createMockIpcClient` / `captureOutput`). Task 6 also
+called an `advanceBeyondQueryBudget()` that was never defined anywhere. All are corrected against
+the real files.
+
+The class is worth naming because it recurs: **a plausible name written from memory reads exactly
+like a verified one.** It is the same defect as the spec's original §4.5, which listed capabilities
+that looked like an enumeration of call sites and named no file. The rule both times is the same —
+open the file and copy the identifier, never infer it.
 
 **Type consistency.** `EmbeddingPriorityGate` / `acquireBackground` / `acquireInteractive` identical across Tasks 2–4 · `priorityGate` is the option name in both `SqliteEmbeddingPipelineOptions` and `EmbeddingWorkerDeps` · `UnrankedReason` defined once in Task 7 and consumed unchanged by Task 8 · `ReportedDualVectors` produced in Task 7, consumed in Task 9 · `SearchRankedEnvelope<T>` produced in Task 8, used as `SearchRankedEnvelope<RankedIndexItem>` in Task 9 · `buildRetrievalDisclosure({ reason, backfill })` called with exactly those keys everywhere.
 
