@@ -337,6 +337,103 @@ the MCP adapter reaches it through IPC rather than the CLI. Add it on demand.
   cores, or a machine using the pure-WASM ONNX backend) would be worth taking before treating
   "offloaded" as settled.
 
+- **Measured (Task 1b):** the layer Task 1 did not measure -- `LocalIndex.searchRankedAsync`
+  end to end (query embed *plus* hybrid BM25 + vector search over the whole index) -- via
+  `packages/gateway/test/integration/embedding/search-under-backfill.harness.test.ts`
+  (`NIMBUS_RUN_EMBED_HARNESS=1`), same machine as Task 1. **Verdict: (a) the reported 30s
+  timeout reproduces, and the time is entirely in SQL -- but the traced mechanism in §2.1 is
+  NOT why.** The backfill-fairness story predicts a slow query only while a backfill is
+  actively writing; what was actually found is a query that is already catastrophically slow
+  at IDLE, with zero writers present, once the index reaches a few thousand items:
+
+  | items | idle end-to-end | idle embed | idle SQL |
+  |---|---|---|---|
+  | 500 | 768 ms | 1 ms | 766 ms |
+  | 2,000 | 3,975 ms | 1 ms | 3,974 ms |
+  | 4,000 | 26,707 ms | 6 ms | 26,702 ms |
+  | 8,000 | 69,896 ms | 1 ms | 69,894 ms |
+
+  Embed time is 1-6 ms throughout -- consistent with Task 1 -- so essentially 100% of the
+  idle latency is the SQL half, and it **already exceeds the CLI's 30,000 ms bound at 4,000
+  items**, before any concurrent backfill enters the picture at all.
+
+  **Root cause, confirmed by `EXPLAIN QUERY PLAN`, not inferred:** `vectorSearchChunks`
+  (`packages/gateway/src/search/vec-store.ts`) joins the sqlite-vec KNN subquery
+  (`SELECT rowid, distance FROM vec_items_384 WHERE embedding MATCH ? AND k = ?`) to
+  `embedding_chunk` on `ec.vec_rowid = knn.rowid AND ec.model = ?`. `embedding_chunk` carries
+  indexes on `item_id` and `model` (`packages/gateway/src/index/embedding-v6-sql.ts`) but
+  **none on `vec_rowid`**. With a single local embedder every row shares one `model` value, so
+  that index selects nothing; SQLite's planner responds by driving the join from
+  `embedding_chunk` (`SEARCH ec USING INDEX idx_embedding_chunk_model (model=?)`) as the OUTER
+  loop and re-executing the vec0 brute-force KNN scan (`SCAN vec_items_384 VIRTUAL TABLE`) as
+  the INNER loop -- once per outer row. A raw KNN query alone (`SELECT ... WHERE embedding
+  MATCH ? AND k=500`, no join) took 1-8 ms at every scale tested; adding the join to
+  `embedding_chunk` is what produces the numbers in the table above. **Adding an index on
+  `embedding_chunk(vec_rowid)` was tried as a diagnostic and did NOT change the plan or the
+  timing at all** -- the planner still drives from `embedding_chunk` -- so the fix is a
+  query-shape or materialization change (e.g. forcing the KNN subquery to evaluate once via a
+  `CROSS JOIN`/materialized-CTE hint, or a two-step rowid lookup), not an index. No fix is
+  implemented here; this is a measurement task.
+
+  Point-to-point growth between the four scales above is 1.2x-2.7x per doubling of items
+  (noisy on this machine -- a log-log regression across all four points gives an exponent of
+  roughly 1.7, while the mechanism above is theoretically O(items^2): an outer scan of size N
+  each re-running an O(N) brute-force KNN scan), so extrapolation below is given as a range
+  rather than a single figure, using both the regression exponent (conservative) and the
+  theoretical exponent 2 (aggressive), anchored on the real 8,000-item measurement:
+  - **20,000 items (this plan's default harness scale): ~5.4-7.3 minutes** per idle search
+    call -- 11x-15x the 30 s bound.
+  - **60,000 items (issue #1396's reported scale): ~34-66 minutes** per idle search call --
+    65x-130x the 30 s bound.
+
+  Neither of these was run to completion: at this growth rate a single 20,000-item search
+  call was still executing after 29 minutes of real wall-clock time (confirmed via
+  `Get-Process` CPU-time still climbing, not hung) before being abandoned, which is itself
+  data -- the extrapolation's low end is already a substantial underestimate of what an
+  impatient user would experience, let alone the high end. Per the task brief's explicit
+  budget guidance, a run this long is not worth completing for a measurement whose qualitative
+  answer (the bound is blown by 1-2 orders of magnitude) does not depend on the exact number.
+
+  **The under-load / idle framing this task inherited from Task 1 turned out to be the wrong
+  axis for this specific defect.** The cost above is a function of how many items are ALREADY
+  embedded at the moment a query runs, not of whether a backfill is concurrently writing --
+  so "under load, sampled early in a backfill" is actually the FAST case (a near-empty vec
+  table), and "idle, after a full drain" is the SLOW, representative case, exactly backwards
+  from Task 1's framing. Two designs were tried and both are recorded rather than only the one
+  that shipped: a fixed 2 s warmup (Task 1's own pattern) sometimes sampled a backfill that
+  had ALREADY fully drained -- once the local embedder is warm, this machine embeds several
+  thousand short items in under a second, faster than expected -- and a 25%-progress-gated
+  warmup failed the same way (the embedder's warm-up curve is front-loaded: the first items
+  are slow, then throughput jumps, so by the time 25% was reached the remaining 75% often
+  finished within one 20 ms poll tick). The committed harness instead samples the
+  "still-in-progress" state at the earliest possible instant -- immediately after starting
+  `backfillAll()`, before any `await` -- which is true by JS's synchronous-execution
+  semantics rather than by timing luck, and reports the resulting small "under load" numbers
+  honestly (31-47 ms end to end across the four scales) alongside an explanation of why they
+  are small: a genuinely large, mid-backfill, CONTENDED query was not reproducible by simple
+  polling on this machine, because once warm this codebase's embed throughput vastly outpaces
+  the query's own catastrophic cost -- backfill of even 8,000 items finishes in low single
+  digit seconds, while the query alone takes over a minute at that same scale. That gap only
+  widens with item count, so "genuine overlap throughout a multi-minute query" becomes LESS
+  reproducible, not more, exactly where it would matter most.
+
+  `PRAGMA journal_mode` read back `wal` at every scale tested (the harness calls
+  `applyWritablePragmas` before `ensureSchema`, matching `platform/assemble.ts`'s
+  `openGatewaySqlite` order exactly), so this is not a rollback-journal artifact -- it
+  reproduces under the same WAL configuration every real gateway runs with.
+
+  **What this means for §2.1 specifically, per this task's brief: do not delete it.** The
+  worker-fairness contention §2.1 describes is real (Task 1 measured it) and the admission
+  control designed in §4.1 is still worth having -- a starved query embed is still a real,
+  separate defect at the embedding-worker layer. What changes is the claim that §2.1 explains
+  the REPORTED 30,000 ms timeout: it cannot, since it is four orders of magnitude too small
+  (7-9 ms) to reach the bound at all, while this newly-found SQL defect reaches and vastly
+  exceeds it using nothing but index size, with no backfill required. Tasks 2-4 (the priority
+  gate) remain justified as a fix for the contention they target, but will not by themselves
+  make `index.searchRanked` return in under 30 s on an index anywhere near issue #1396's
+  scale -- that requires fixing (or at minimum, disclosing) the query-plan defect above, which
+  is outside this plan's current task list.
+
 - **Deferred, with reasons** (all from the same review): a `[embedding] query_timeout_ms`
   TOML key (§4.2 — the env override covers diagnosis), a `--json-envelope` CLI flag (§4.5 —
   no consumer), and converging `nimbus index health` onto the search-time coverage figure

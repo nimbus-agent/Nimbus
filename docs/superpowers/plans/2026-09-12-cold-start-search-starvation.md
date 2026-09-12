@@ -179,6 +179,66 @@ git commit -m "test(embedding): measure query latency under a saturating backfil
 
 ---
 
+## Task 1b: End-to-end search latency under an active backfill (measurement)
+
+**INSERTED by controller ruling after Task 1, ahead of Task 2.** Not in the original plan --
+Task 1's own absolute numbers (7-9ms under load) are four orders of magnitude away from the
+reported 30,000ms timeout, and Task 1 measured `pipeline.embedTexts()` alone, in-process. The
+failing path is `LocalIndex.searchRankedAsync` end to end -- query embed *plus* hybrid BM25 +
+vector search over the whole index -- concurrent with `backfillAll()` writing to the same
+database. That half is unmeasured and is the half that scales with index size. Tasks 2-4 (the
+priority gate) are gated on this task's outcome; Tasks 5-10 are unaffected, since they fix
+honesty defects (the false green, the missing disclosure) that are justified independently of
+whether this residual reproduces the timeout.
+
+**Files:**
+
+- Create: `packages/gateway/test/integration/embedding/search-under-backfill.harness.test.ts`
+- Modify: `docs/superpowers/specs/2026-09-12-cold-start-search-starvation-design.md` (§7)
+
+**Interfaces:**
+
+- Consumes: `LocalIndex.searchRankedAsync`, `SemanticSearchDeps`, `SqliteEmbeddingPipeline`
+  (all pre-existing; no new production interface).
+- Produces: no code other tasks import. Produces a measured end-to-end latency figure, split
+  into embed and SQL halves, that the report and spec §7 both cite.
+
+- [ ] **Step 1: Write the harness**
+
+Gated on `NIMBUS_RUN_EMBED_HARNESS=1` exactly like Task 1's harness, following its schema
+setup (`LocalIndex.ensureSchema`) and cleanup discipline (`insert.finalize()`, close the DB
+before asserting). Item count from `NIMBUS_HARNESS_ITEMS`, default 20000. Build a real
+`LocalIndex` whose `semanticSearch` seam is backed by the SAME `SqliteEmbeddingPipeline`
+instance the backfill drives (one embedder answers both roles, as production's embedding
+worker does). While `backfillAll()` is running, time `searchRankedAsync(...)` end to end and
+`embedTexts()` alone immediately alongside it, so the SQL half is the difference; repeat once
+idle after the backfill drains. Assert only that the backfill was genuinely still in progress
+at the moment of the under-load measurement (the embedded-row count must have advanced across
+the timed window) -- never a latency threshold, since this is a measurement.
+
+- [ ] **Step 2: Confirm it is skipped by default**
+
+Run: `bun test packages/gateway/test/integration/embedding/search-under-backfill.harness.test.ts`
+Expected: PASS with the test reported as skipped, 0 failures.
+
+- [ ] **Step 3: Run it for real at the default scale and at report scale**
+
+Run: `NIMBUS_RUN_EMBED_HARNESS=1 bun test packages/gateway/test/integration/embedding/search-under-backfill.harness.test.ts`
+(20,000 items), then again with `NIMBUS_HARNESS_ITEMS=60000` if wall-clock allows -- if not,
+extrapolate from the smaller runs and say so plainly. Write the observed numbers into spec §7,
+stating plainly which of (a) the 30s timeout reproduces (and where the time goes) or (b) it does
+not reproduce at this scale on this machine, the evidence supports. A negative result is an
+acceptable outcome and must not be softened or engineered around.
+
+- [ ] **Step 4: Commit**
+
+```bash
+git add packages/gateway/test/integration/embedding/search-under-backfill.harness.test.ts docs/superpowers
+git commit -m "test(embedding): measure end-to-end search latency under a saturating backfill"
+```
+
+---
+
 ## Task 2: The priority gate
 
 Pure scheduling logic in its own file: no embedding knowledge, no I/O, so its semantics are testable without a model. **The behaviour that matters and is easy to get wrong: interactive work jumps the QUEUE, it does not wait for a full drain.** Blocking until `inFlightBackground === 0` makes a query wait for all 8 in-flight items — roughly 8× the intended bound.
