@@ -744,6 +744,56 @@ nimbus changelog --json
 
 ---
 
+### `nimbus standup`
+
+The sixteenth built-in agent: your own activity over a window, assembled entirely from the local index and formatted as copy-pasteable Markdown. Six lanes — pull requests active and merged, reviews given, tickets opened, incidents responded to, and Slack activity — each windowed on its own timestamp and each labelled with where that timestamp came from. Scoped to **you**: the person the people graph resolves for this machine, via `git config user.email` matched against indexed canonical emails, then your OS username matched against indexed GitHub logins, or `[user] mePersonId` in `nimbus.toml` to pin it. There is no flag to run it for someone else.
+
+```bash
+nimbus standup
+nimbus standup --since 3d
+nimbus standup --format slack
+nimbus standup --json
+```
+
+**Options:**
+
+| Flag | Description |
+|---|---|
+| `--since <duration>` | Lookback window (default: `24h`); accepts `<n>h` / `<n>d`, etc. Capped at **90 days** by `agents.standup` — a longer window parses locally and is then refused by the gateway. |
+| `--format <markdown\|slack\|plain>` | A text transform over the brief's own Markdown (default `markdown`) — never a re-render from the typed findings, so a synthesized rewrite's prose survives the transform. |
+| `--json` | Print the typed findings instead of the brief. |
+
+**Output (Markdown):** `# Standup`, a preamble stating the window, who the brief is about and how that identity was decided, then `## Pull requests active`, `## Pull requests merged`, `## Reviews given`, `## Tickets opened`, `## Incidents responded to` and `## Slack activity` — each rendered even when empty (`_None in this window._`), because a missing heading and an empty one say different things — followed by the reserved `## Gaps` section. Entry timestamps carry the **time**, not just the date: over a 24-hour window a date-only stamp would render every entry identically.
+
+**An unresolvable identity REFUSES rather than printing an empty standup.** Every lane keys on the resolved person, so with no identity the brief would be six empty sections — indistinguishable from a quiet day, and a false claim about your work in output meant to be pasted into a channel. `nimbus standup` exits non-zero with `ERR_STANDUP_IDENTITY_UNRESOLVED` and names the fix (`nimbus people list` to find your id, then `[user] mePersonId`).
+
+**Three things it cannot tell you, and says so unconditionally in `## Gaps`:**
+
+- **Deployments you triggered.** No connector records who started one — every `ci_run` row is indexed with no author, an annotated deploy from `POST /v1/deployments` carries none either, and the relationship graph holds no person-to-deployment edge. `nimbus changelog` lists deployments without attributing them.
+- **Tickets you moved or commented on.** Ticket comments are not indexed as items, and Jira/Linear are indexed with only a ticket's current status rather than its transitions. Only tickets you **opened** appear.
+- **Work recorded under a different account.** Attribution runs through one resolved person id, so where one human appears in the index as two people (a work email on commits, a different address on tickets) this brief covers whichever half was resolved.
+
+**Where each lane's timestamp comes from** — the brief discloses this in its preamble, and the distinction is sharper here than on `nimbus changelog` because the default window is a single day:
+
+| Lane | Timestamp | Can it sit in the wrong window? |
+|---|---|---|
+| Pull requests merged | `metadata.merged_at` | No — a real event field |
+| Tickets opened | `metadata.created_at_ms` | No — a real event field, written by both ticket connectors |
+| Reviews given | `item.modified_at`, which for a `review` row **is** its `submitted_at` (one immutable row per review) | No, except where the source payload carried no timestamp |
+| Slack activity | `item.modified_at`, which for a `message` row **is** its Slack `ts` (one immutable row per message) | No, same exception |
+| Pull requests active | `item.modified_at` — GitHub's `updated_at` | **Yes** |
+| Incidents responded to | `item.modified_at`, the same basis `nimbus metrics dora` uses | **Yes** — under-reports by sync lag |
+
+`## Pull requests active` is deliberately not called "opened": a `pr` row carries no creation timestamp at all, so "pull requests I opened in the last 24 hours" is not a question this index can answer. What it can answer is which of your pull requests moved, which for a standup is the more useful one. Merged pull requests are excluded from that section, since they are reported under their own heading.
+
+**Slack activity is summarised by THREAD as well as by message** (`N messages across M threads`), because eleven replies in one thread is one conversation rather than eleven items of work.
+
+**Entry lists are capped at 50 per lane**, so a chatty day is not handed wholesale to the synthesis model. `counts` (visible via `--json`) always carries the true pre-cap total per lane, so the truncation is recoverable.
+
+**Read-only:** never triggers HITL, never makes a live connector API call. Not reachable over the local HTTP API, nor as an MCP tool, nor from ChatOps, nor from the desktop renderer — `agents.standup` is served on the local IPC socket and is **not** on the Tauri `ALLOWED_METHODS` allowlist (I7). Unlike `nimbus changelog`'s exclusion, that is not a sequencing decision: this brief is owner-scoped by construction, so an external caller cannot ask about *itself* and would instead receive the gateway owner's day. An external surface for it needs a way to establish who is asking first. It **is** eligible for `nimbus fleet`, which is a different principal — owner-configured in advance, running in-process, and about its own owner.
+
+---
+
 ### `nimbus ghost`
 
 Surface ambient teammate context for a file by querying paired peers' expertise across the federation mesh. Returns a ranked list of teammates with recent PRs, issues, and commits touching the file — helping you identify who to consult before starting work. No message is ever sent automatically; this is a read-only suggestion surface.

@@ -54,6 +54,7 @@ export const COMMAND_NAMES = [
   "serve",
   "session",
   "share",
+  "standup",
   "start",
   "stats",
   "status",

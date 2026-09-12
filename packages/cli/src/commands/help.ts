@@ -51,6 +51,7 @@ AGENTS — read-only briefs over the local index
   nimbus pre-mortem <epic>           Risk brief for a Jira epic, from comparable past epics
   nimbus negotiate [--since 90d]     Your own contribution record, for a compensation conversation
   nimbus changelog [--since 7d]      Merged PRs, deployments and incidents in one window, per service
+  nimbus standup [--since 24h]       What YOU did — PRs, reviews, tickets, incidents, Slack
 
 AGENTS THAT NEED PAIRED PEERS — see TEAM below; these query the federation mesh
   nimbus conflicts <file>            Teammates with an open PR, ticket or branch on the same file

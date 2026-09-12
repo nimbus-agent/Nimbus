@@ -395,6 +395,57 @@ const changelog: FleetDigestExtractor = (f) => {
 };
 
 /**
+ * `counts` carries the TRUE pre-cap total (`StandupCounts`'s own doc comment); the six entry
+ * arrays are capped at `STANDUP_CATEGORY_CAP` and can legitimately be SHORTER than their matching
+ * count. `metrics` therefore comes from `counts`, never from `.length`, for `changelog`'s reason.
+ *
+ * `threadCount` joins the metrics even though it is not a `counts` member: it is on the same
+ * pre-cap basis and it is the number a reader of a Slack-heavy standup actually watches move.
+ *
+ * **`identity.personId` is deliberately NOT a metric and not a key.** A digest reports what
+ * CHANGED between two runs, and the id changing is not activity — it means the resolver landed on
+ * a different person (a `[user] mePersonId` edit, a newly-indexed git email), at which point every
+ * count moving is explained by that and not by anything the owner did. Folding it in as a metric
+ * would digest a re-resolution as a day's work; leaving it out keeps the diff about activity. The
+ * `agent changed` outcome already covers the structural case this most resembles.
+ */
+const standup: FleetDigestExtractor = (f) => {
+  const o = rec(f);
+  if (o?.["kind"] !== "standup") return undefined;
+  const counts = rec(o["counts"]);
+  if (counts === undefined) return undefined;
+  const FIELDS = [
+    "prsActive",
+    "prsMerged",
+    "reviews",
+    "ticketsOpened",
+    "incidents",
+    "messages",
+  ] as const;
+  const m = numbers(counts, [...FIELDS]);
+  if (m === undefined) return undefined;
+  const threads = numbers(o, ["threadCount"]);
+  if (threads === undefined) return undefined;
+  const keys: string[] = [];
+  for (const field of FIELDS) {
+    const arr = o[field];
+    if (!Array.isArray(arr)) return undefined;
+    // The cap makes a listed array SHORTER than its count, never longer. A count BELOW its own
+    // listed length is a brief contradicting itself, and digesting it would publish a number the
+    // entry list visibly disproves.
+    if (m[field] < arr.length) return undefined;
+    for (const e of arr) {
+      const id = rec(e)?.["id"];
+      if (typeof id !== "string") return undefined;
+      keys.push(id);
+    }
+  }
+  // `summary()` — NOT a raw object literal — so `keys` is sorted with `codeUnitCompare` and
+  // `compareSummaries` cannot diff the same two briefs differently depending on row order.
+  return summary(keys, { ...m, threadCount: threads["threadCount"] });
+};
+
+/**
  * TOTAL over `EligibleAgentMethod`. Flipping an agent to `"eligible"` in `FLEET_ELIGIBILITY`
  * fails THIS declaration to compile until its extractor is written (spec § 4.2).
  */
@@ -410,6 +461,7 @@ export const FLEET_DIGEST_EXTRACTORS = {
   "agents.impact": impact,
   "agents.janitor": janitor,
   "agents.ownership": ownership,
+  "agents.standup": standup,
   "agents.why": why,
 } satisfies Readonly<Record<EligibleAgentMethod, FleetDigestExtractor>>;
 

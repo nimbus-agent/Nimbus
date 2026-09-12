@@ -52,6 +52,7 @@ export const RESERVED_HEADINGS_BY_KIND: Readonly<Record<SynthInput["kind"], read
     premortem: [GAPS_HEADING],
     negotiate: [NEGOTIATE_SOURCES_HEADING, NEGOTIATE_EVIDENCE_HEADING, GAPS_HEADING],
     changelog: [GAPS_HEADING],
+    standup: [GAPS_HEADING],
   });
 
 export function reservedHeadingsFor(brief: SynthInput): readonly string[] {
@@ -75,7 +76,7 @@ export function reservedHeadingsFor(brief: SynthInput): readonly string[] {
  * That direction is deliberate, and inverts an earlier version of this file that got it backwards
  * (whole-branch review, finding D1). The original shape was a `DISCLOSURE_ONLY_HEADINGS` set, and
  * `brief-truncate.ts` treated everything ABSENT from it as droppable — fail-OPEN: a future
- * disclosure-only heading added to `RESERVED_HEADINGS_BY_KIND` (a fifteenth brief kind, or a new
+ * disclosure-only heading added to `RESERVED_HEADINGS_BY_KIND` (a sixteenth brief kind, or a new
  * heading on an existing one) but never added to that set would silently become the FIRST thing
  * the chat-transport truncator cuts, whole, behind only a generic "content was cut" notice — I31's
  * failure mode, reintroduced one layer down. That version's own comment claimed the two sets

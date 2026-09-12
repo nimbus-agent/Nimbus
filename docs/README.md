@@ -854,7 +854,7 @@ nimbus/
 │   │   └── src/
 │   │       ├── platform/     # PAL: win32, darwin, linux implementations
 │   │       ├── engine/       # Mastra agent, router, planner, HITL executor, persona
-│   │       ├── agents/       # The fifteen built-in read-only brief agents
+│   │       ├── agents/       # The sixteen built-in read-only brief agents
 │   │       ├── vault/        # DPAPI, Keychain, libsecret
 │   │       ├── db/           # verify, repair, snapshot, health, metrics, latency ring buffer
 │   │       ├── index/        # SQLite schema + migrations, item store, body/depth

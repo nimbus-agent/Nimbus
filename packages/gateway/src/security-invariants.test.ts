@@ -2754,10 +2754,15 @@ describe("I31 — disclosure integrity: a synthesized brief never says less than
       // builder missing from the fixture makes that claim false without turning anything red.
       // Built at counts > 0 so all three fire — the two conditional ones are absent at zero.
       ...d.changelogDisclosures({ indexTimedCount: 3, truncatedCount: 4 }),
+      // `standup` is the sixteenth kind and the fourth with interleaved disclosures. Built at
+      // counts > 0 for the same reason. Note this brief's other two standing disclosures are
+      // NOT here and must not be: they are `## Gaps` notes, withheld and re-attached verbatim,
+      // so they are protected by construction and have no anchor to check.
+      ...d.standupDisclosures({ approximateCount: 3, truncatedCount: 4 }),
     ].filter((x) => x !== undefined);
     // Fixture integrity: a builder whose predicate stops firing would drop out of this list
     // silently and the loop below would assert over fewer disclosures, still green.
-    expect(disclosures).toHaveLength(12);
+    expect(disclosures).toHaveLength(15);
     for (const disclosure of disclosures) {
       // EVERY anchor must occur in its own line, not just the first (F27). An entry carrying two
       // sentences and one anchor was how a rewrite kept sentence 1, dropped sentence 2 and
@@ -2782,6 +2787,34 @@ describe("I31 — disclosure integrity: a synthesized brief never says less than
     // And that the guard reaches it on the changelog kind specifically, rather than through a
     // branch changelog never takes.
     expect(contract).toContain('brief.kind === "changelog"');
+  });
+
+  test("I31: the renderer and the guard both CALL the one standup disclosure builder", async () => {
+    // Same wiring claim as the changelog case above, for the same reason: an import assertion
+    // cannot tell a guard that CALLS the builder from one that imports it and returns `[]` for
+    // the kind, and every unit test over the builder stays green either way.
+    const render = await read("packages/gateway/src/agents/_lib/render.ts");
+    const contract = await read("packages/gateway/src/agents/_lib/brief-contract.ts");
+    expect(render).toContain("standupDisclosures(");
+    expect(contract).toContain("standupDisclosures(");
+    expect(contract).toContain('brief.kind === "standup"');
+  });
+
+  test("I31/agents: `standup` is scoped to the local owner with no person parameter", async () => {
+    // Not a disclosure check — a SURFACE check, and the reason `agents.standup` is excluded from
+    // every external surface. The exclusion's whole premise is that no caller can aim this brief
+    // at someone else, so a `person`/`personId` parameter appearing in the validator would
+    // silently convert an owner-scoped brief into `negotiate --person`'s dossier shape while the
+    // external-exclusion comment still claimed it could not happen.
+    const rpc = await read("packages/gateway/src/ipc/agents-rpc.ts");
+    const validator = rpc.slice(
+      rpc.indexOf("function requireStandupParams"),
+      rpc.indexOf("const STANDUP_DEFAULT_SINCE_MS"),
+    );
+    expect(validator.length).toBeGreaterThan(0);
+    expect(validator).toContain("sinceMs");
+    expect(validator).not.toContain("personId");
+    expect(validator).not.toContain("person");
   });
 
   test("I31: reserved blocks are constructed, never recovered by parsing the render", async () => {
