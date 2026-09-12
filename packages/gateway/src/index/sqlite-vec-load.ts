@@ -1,9 +1,17 @@
 import type { Database } from "bun:sqlite";
 import { existsSync } from "node:fs";
-import { dirname, join, posix as posixPath, win32 as winPath } from "node:path";
+import { dirname, join } from "node:path";
 import pino from "pino";
 import { load as loadSqliteVec } from "sqlite-vec";
-import { ensureFullSqlite } from "../platform/sqlite-runtime.ts";
+import { ensureFullSqlite, sidecarFilename, sidecarPath } from "../platform/sqlite-runtime.ts";
+
+/**
+ * Re-exported, not redefined. Both are per-OS filename logic, so they belong in the PAL — and
+ * `platform/sqlite-runtime.ts` needs them for its own extension-load probe, which cannot import
+ * this module without creating a cycle. Every existing importer (this module's tests, the
+ * packaging scripts' prose) keeps working unchanged.
+ */
+export { sidecarFilename, sidecarPath };
 
 const log = pino({
   name: "sqlite-vec-load",
@@ -170,17 +178,6 @@ export function ensureSqliteVecForConnection(db: Database, indexedUserVersion: n
   } catch {
     return tryLoadSqliteVec(db);
   }
-}
-
-export function sidecarFilename(platform: NodeJS.Platform): string {
-  if (platform === "win32") return "vec0.dll";
-  if (platform === "darwin") return "vec0.dylib";
-  return "vec0.so";
-}
-
-export function sidecarPath(execPath: string, platform: NodeJS.Platform): string {
-  const p = platform === "win32" ? winPath : posixPath;
-  return p.join(p.dirname(execPath), sidecarFilename(platform));
 }
 
 export function tryLoadFromSidecar(

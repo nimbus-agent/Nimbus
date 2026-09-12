@@ -595,6 +595,11 @@ export function doctorPrintEmbeddingFromSnapshot(snap: { embedding?: unknown }):
  * no hybrid ranking and no session-memory recall, and the diagnostic command that exists to answer
  * "why is this not working" said nothing at all.
  *
+ * SCOPE: this reports the GATEWAY's own connection — `diag.snapshot` is served from the main realm
+ * only. A Worker realm that hits `no-extensions` or `unverified` warns to the gateway log and never
+ * appears here, so a green line means the main connection is fine, not that every realm is. Those
+ * two messages accordingly point at the log rather than at this command.
+ *
  * `[fail]`, not `[warn]`: on the exit-code scale this file already uses, a warn means degraded and
  * a fail means a capability is off. Semantic search being absent is the second, and it is the same
  * severity the sibling "Embeddings: unavailable" line already carries for the other half of the

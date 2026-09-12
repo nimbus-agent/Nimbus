@@ -25,6 +25,14 @@ import {
  * macOS would have told us nothing on the two legs that actually gate merges. `process.platform`
  * appears in exactly one place in the production module — the deps binding — so the logic under
  * test is pure over its arguments.
+ *
+ * "Inert off darwin" below is a claim about BEHAVIOUR, and carries one qualifier worth stating: the
+ * module GRAPH grows everywhere. `sqlite-runtime.ts` has a top-level
+ * `import { getLoadablePath } from "sqlite-vec"`, so that 1.6 KB of resolver JS is linked into every
+ * platform's build and into both pre-bundled Worker entries, even though no line of it executes off
+ * darwin. Measured cost in the place it matters — `dist/workers/query-guard-worker.js`, which is
+ * embedded in the compiled binary — is single-digit KB; see the `writeStderr` note in the module for
+ * why that budget is watched at all.
  */
 type Calls = { warn: string[]; debug: string[]; set: string[]; probes: number };
 
@@ -348,6 +356,50 @@ describe("DEFAULT_FULL_SQLITE_DEPS — the production bindings themselves", () =
       process.stderr.write = original;
       if (level === undefined) delete process.env["NIMBUS_LOG_LEVEL"];
       else process.env["NIMBUS_LOG_LEVEL"] = level;
+    }
+  });
+
+  test("`probeExtensionLoad` falls back to the sidecar when NPM resolution fails", () => {
+    // The regression this closes. `sqlite-vec`'s getLoadablePath() is `import.meta.resolve`, which
+    // the worker pre-bundler inlines verbatim, so inside a COMPILED binary it resolves against
+    // Bun's virtual root and always throws. With only that branch, a healthy compiled macOS
+    // install — Homebrew SQLite present, semantic search working — warned "semantic search is
+    // unproven" on every boot from the embedding worker, while `nimbus doctor` said [ok].
+    //
+    // The production fallback looks beside `process.execPath`, which a test cannot write to, so
+    // this drives the same two-candidate ORDER through installFullSqlite's injected probe and
+    // pins the contract the fallback exists to satisfy: a resolvable extension anywhere means
+    // "works" and debug, and only NO candidate at all means "unverified" and warn.
+    const resolvable = makeDeps({
+      existing: [DARWIN_SQLITE_CANDIDATES[0] as string],
+      setCustomSQLite: (): boolean => false,
+      probe: "works",
+    });
+    expect(installFullSqlite(resolvable.deps).state).toBe("rejected");
+    expect(resolvable.calls.warn).toEqual([]);
+
+    const none = makeDeps({
+      existing: [DARWIN_SQLITE_CANDIDATES[0] as string],
+      setCustomSQLite: (): boolean => false,
+      probe: "unverified",
+    });
+    expect(installFullSqlite(none.deps).state).toBe("unverified");
+    expect(none.calls.warn).toHaveLength(1);
+  });
+
+  test("neither anomalous state points the reader at `nimbus doctor`", () => {
+    // Only the MAIN realm's status reaches diag.snapshot, so a Worker realm in either state warns
+    // to stderr while doctor prints whatever the main realm found — on a healthy install, [ok].
+    // Naming a surface that will disagree is worse than naming none.
+    for (const probe of ["broken", "unverified"] as const) {
+      const { deps, calls } = makeDeps({
+        existing: [DARWIN_SQLITE_CANDIDATES[0] as string],
+        setCustomSQLite: (): boolean => false,
+        probe,
+      });
+      installFullSqlite(deps);
+      expect(calls.warn).toHaveLength(1);
+      expect(calls.warn[0]).not.toContain("nimbus doctor");
     }
   });
 

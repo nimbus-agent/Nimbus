@@ -30,6 +30,10 @@ const upstreamSqliteVecLoadable = ((): boolean => {
   }
 })();
 
+// `sidecarFilename` / `sidecarPath` are DEFINED in platform/sqlite-runtime.ts and re-exported
+// here: they are per-OS filename logic, so they belong in the PAL, and the extension-load probe
+// over there needs them without importing this module (which would be a cycle). Deliberately still
+// tested through this import — it is the surface every other consumer uses.
 describe("sidecarFilename", () => {
   test("win32 → vec0.dll", () => {
     expect(sidecarFilename("win32")).toBe("vec0.dll");

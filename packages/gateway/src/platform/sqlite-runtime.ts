@@ -50,6 +50,7 @@
 
 import { Database } from "bun:sqlite";
 import { existsSync } from "node:fs";
+import { dirname, join, posix as posixPath, win32 as winPath } from "node:path";
 import { getLoadablePath } from "sqlite-vec";
 
 /**
@@ -71,6 +72,26 @@ function writeStderr(prefix: string, fields: Record<string, unknown>, msg: strin
 function debugEnabled(): boolean {
   const level = process.env["NIMBUS_LOG_LEVEL"];
   return level === "debug" || level === "trace";
+}
+
+/**
+ * The `sqlite-vec` loadable-extension filename for a platform.
+ *
+ * Lives in the PAL rather than in `index/` because it is per-OS logic and nothing else: it moved
+ * down here (with {@link sidecarPath}) so {@link resolveProbeExtension} could reach it without
+ * `platform/ -> index/ -> platform/`. `index/sqlite-vec-load.ts` re-exports both, so every existing
+ * importer — including the packaging scripts' prose and that module's own tests — is unchanged.
+ */
+export function sidecarFilename(platform: NodeJS.Platform): string {
+  if (platform === "win32") return "vec0.dll";
+  if (platform === "darwin") return "vec0.dylib";
+  return "vec0.so";
+}
+
+/** Where the packaged sidecar sits relative to an executable, on a given platform. */
+export function sidecarPath(execPath: string, platform: NodeJS.Platform): string {
+  const p = platform === "win32" ? winPath : posixPath;
+  return p.join(p.dirname(execPath), sidecarFilename(platform));
 }
 
 /** Environment override, checked before any built-in candidate. */
@@ -190,13 +211,19 @@ export function fullSqliteCandidates(
  * extension into it. That reads the only property anyone actually cares about, and it is cheap —
  * it runs on darwin only, and only on a path that is already anomalous.
  *
- * STATED BOUND. The probe loads the extension the `sqlite-vec` NPM package resolves, NOT the
- * packaged `vec0.dylib` sidecar that `index/sqlite-vec-load.ts` falls back to. Importing that
- * module here would make `index/ -> platform/ -> index/` a cycle, and duplicating its path
- * resolution is the drift this repo avoids. The consequence is bounded and one-directional: inside
- * a compiled binary, where only the sidecar exists, `getLoadablePath()` throws and the probe
- * answers `"unverified"` — reported LOUDLY rather than assumed benign, so the failure mode is a
- * warning the operator may not have needed, never a silence they did need.
+ * The probe resolves the SAME two candidates the product itself loads, in the same order — see
+ * {@link resolveProbeExtension}. An earlier revision used only the NPM-resolved path, and that was
+ * a real defect rather than an acceptable bound: `sqlite-vec`'s `getLoadablePath()` is
+ * `import.meta.resolve`, which the worker pre-bundler inlines VERBATIM, so inside a compiled binary
+ * it resolves against Bun's virtual root (`Cannot find module 'sqlite-vec-<plat>/vec0.<ext>' from
+ * 'B:\~BUN\root\...'`). On the HAPPY path of the only artifact end users have — a compiled macOS
+ * install with Homebrew SQLite present and semantic search working perfectly — the embedding worker
+ * spawns at every boot, gets `false`, failed to resolve, and warned "semantic search is unproven"
+ * on every gateway start, while `nimbus doctor` stayed green because it short-circuits on
+ * `loaded === true`. Two surfaces contradicting each other, and exactly the "train the reader to
+ * ignore the line that matters" failure this module invokes elsewhere. The sidecar fallback closes
+ * it with no duplication, because `sidecarFilename`/`sidecarPath` live HERE now and
+ * `index/sqlite-vec-load.ts` re-exports them — the dependency direction that already existed.
  */
 function discriminateRejection(
   deps: FullSqliteDeps,
@@ -214,18 +241,24 @@ function discriminateRejection(
     deps.debug({ path: found }, detail);
     return { state: "rejected", path: found, candidates, detail };
   }
+  // NEITHER message points the reader at `nimbus doctor`, and that is deliberate. Only the MAIN
+  // realm's status reaches `diag.snapshot` (`ipc/diagnostics-rpc.ts`), so a Worker realm that lands
+  // in either state below warns to stderr and the doctor line never mentions it — doctor would
+  // print whatever the main realm found, which on a healthy install is `[ok]`. Telling the user to
+  // check a surface that will disagree is worse than telling them nothing; the gateway log is the
+  // record for these two.
   if (probe === "broken") {
     const detail =
       `${prefix}, and this process CANNOT load SQLite extensions — a database was opened before ` +
       "the install ran, so it is stuck on Apple's build. Semantic search is off for this run; " +
-      "restarting the gateway should clear it, and it is worth reporting.";
+      "restarting the gateway should clear it, and the gateway log is worth attaching to a report.";
     deps.warn({ path: found }, detail);
     return { state: "no-extensions", path: found, candidates, detail };
   }
   const detail =
     `${prefix}, and whether this process can load SQLite extensions could not be determined ` +
-    "(the sqlite-vec loadable path did not resolve). Treat semantic search as unproven for this " +
-    "run; `nimbus doctor` reports the same state.";
+    "(no sqlite-vec extension file resolved, from the NPM package or beside the executable). " +
+    "Treat semantic search as unproven for this run.";
   deps.warn({ path: found }, detail);
   return { state: "unverified", path: found, candidates, detail };
 }
@@ -291,22 +324,45 @@ export function installFullSqlite(deps: FullSqliteDeps): FullSqliteStatus {
 let cached: FullSqliteStatus | undefined;
 
 /**
+ * The extension file the gateway would actually load, or `null` when there is none to try.
+ *
+ * Both candidates, in the order `index/sqlite-vec-load.ts` tries them: the NPM package first, then
+ * the packaged sidecar beside the executable. Covering only the first is what made a healthy
+ * compiled macOS install warn on every boot (see the header) — in a compiled binary the NPM branch
+ * CANNOT resolve, because the pre-bundler inlines `import.meta.resolve` and it evaluates against
+ * Bun's virtual root, so the sidecar is the only real answer there.
+ *
+ * The filename is pinned to darwin rather than read from `process.platform`, because the ONE
+ * production caller is the darwin-only rejection branch. A direct call from anywhere else (only the
+ * unit test does this) still resolves via the NPM branch on its own platform; if that branch also
+ * failed, the darwin filename would not exist and the honest answer is `"unverified"` — "we could
+ * not run the probe" — which is what the caller then reports.
+ */
+function resolveProbeExtension(): string | null {
+  try {
+    return getLoadablePath();
+  } catch {
+    // A compiled binary: no node_modules to resolve against, only the sidecar we shipped.
+  }
+  const sidecar = join(dirname(process.execPath), sidecarFilename("darwin"));
+  return existsSync(sidecar) ? sidecar : null;
+}
+
+/**
  * The real discriminator: open a throwaway database and try to load sqlite-vec into it.
  *
- * Resolution and loading are SEPARATE steps on purpose. `getLoadablePath()` throwing means the
- * extension FILE could not be found (no platform package installed, or a compiled binary shipping
- * only the sidecar) — which says nothing about whether SQLite supports extensions, so it answers
- * `"unverified"`. Only a load that actually fails against a resolved file answers `"broken"`.
+ * Resolution and loading are SEPARATE steps on purpose. No candidate existing at all means the
+ * extension FILE could not be found, which says nothing about whether SQLite supports extensions,
+ * so it answers `"unverified"`. Only a load that actually fails against a file that IS there
+ * answers `"broken"`.
  *
  * `vec_version()` is queried after the load because `loadExtension` returning is not by itself
  * proof the module registered. The statement is finalized before `close()`: an unfinalized
  * `prepare()` makes `close()` a silent no-op in `bun:sqlite`.
  */
 function defaultExtensionProbe(): ExtensionProbeResult {
-  let loadable: string;
-  try {
-    loadable = getLoadablePath();
-  } catch {
+  const loadable = resolveProbeExtension();
+  if (loadable === null) {
     return "unverified";
   }
   const probe = new Database(":memory:");
