@@ -2800,9 +2800,30 @@ describe("I31 — disclosure integrity: a synthesized brief never says less than
     expect(contract).toContain('brief.kind === "standup"');
   });
 
-  test("I31/agents: `standup`'s accepted parameter set is EXACTLY sinceMs", async () => {
-    // Not a disclosure check — a SURFACE check, and the reason `agents.standup` is excluded from
-    // every external surface. The exclusion's whole premise is that no caller can aim this brief
+  test("I31: reserved blocks are constructed, never recovered by parsing the render", async () => {
+    // The anti-pattern this invariant forbids. `reserved-sections.ts` must not scan rendered
+    // markdown for its own headings — that is what makes untrusted brief content harmless.
+    const src = await read("packages/gateway/src/agents/_lib/reserved-sections.ts");
+    expect(src).not.toContain("sectionBody");
+    expect(src).not.toContain("stripSections");
+  });
+});
+
+/**
+ * `agents.standup`'s owner-scoping.
+ *
+ * NOT an invariant of its own, and deliberately not filed under one — it is the PREMISE of that
+ * method's entry in `EXTERNAL_EXCLUDED_AGENT_METHODS`, which is itself covered by the I7 section
+ * of `docs/SECURITY-INVARIANTS.md`. These two tests lived inside the I31 describe and were named
+ * `I31/agents: …`, which was a misattribution: I31 is disclosure integrity, so a reader chasing
+ * that label found nothing about parameter surfaces, and the repo's same-commit triple rule had
+ * nothing to check them against. Kept in this file rather than beside the agent because what
+ * they guard is a SURFACE contract, which is what this file is for.
+ */
+describe("agents.standup is owner-scoped, which is why it is externally excluded", () => {
+  test("`standup`'s accepted parameter set is EXACTLY sinceMs", async () => {
+    // A SURFACE check, and the reason `agents.standup` is excluded from every external
+    // surface. The exclusion's whole premise is that no caller can aim this brief
     // at someone else: a targeting parameter reaching the validator would silently convert an
     // owner-scoped brief into `negotiate --person`'s dossier shape while the external-exclusion
     // comment still claimed it could not happen.
@@ -2812,7 +2833,10 @@ describe("I31 — disclosure integrity: a synthesized brief never says less than
     // `email` parameter would have sailed straight past while this test stayed green. A guard
     // must say what CANNOT pass, and here that means enumerating what CAN: the validator may
     // copy exactly one field onto its returned object.
-    const rpc = await read("packages/gateway/src/ipc/agents-rpc.ts");
+    // COMMENT-STRIPPED, like every other source-scanning invariant in this file. Without it a
+    // commented-out assignment counts as the real thing — the red-prove for the companion test
+    // below passed with its call sitting in a `//` comment until this was applied.
+    const rpc = stripComments(await read("packages/gateway/src/ipc/agents-rpc.ts"));
     const validator = rpc.slice(
       rpc.indexOf("function requireStandupParams"),
       rpc.indexOf("const STANDUP_DEFAULT_SINCE_MS"),
@@ -2838,12 +2862,12 @@ describe("I31 — disclosure integrity: a synthesized brief never says less than
     }
   });
 
-  test("I31/agents: `handleStandup` forwards no caller-supplied identity to the agent", async () => {
+  test("`handleStandup` forwards no caller-supplied identity to the agent", async () => {
     // The companion to the allow-list above, one level down: even with a validator that copies
     // only `sinceMs`, a handler that spread the RAW params into `emitStandupBrief` would
     // reintroduce the whole surface. So the handler must pass the VALIDATED object's field, and
     // its `mePersonIdOverride` must come from `nimbus.toml` rather than from `params`.
-    const rpc = await read("packages/gateway/src/ipc/agents-rpc.ts");
+    const rpc = stripComments(await read("packages/gateway/src/ipc/agents-rpc.ts"));
     const handler = rpc.slice(
       rpc.indexOf("async function handleStandup"),
       rpc.indexOf("async function handleGhost"),
@@ -2852,17 +2876,17 @@ describe("I31 — disclosure integrity: a synthesized brief never says less than
     // No spread of caller input anywhere in the handler.
     expect(handler).not.toContain("...params");
     expect(handler).not.toContain("...input");
-    // The override is read from config, never from the request.
-    expect(handler).toContain("userToml.mePersonId");
-    expect(handler).toContain("loadNimbusUserFromConfigDir");
-  });
 
-  test("I31: reserved blocks are constructed, never recovered by parsing the render", async () => {
-    // The anti-pattern this invariant forbids. `reserved-sections.ts` must not scan rendered
-    // markdown for its own headings — that is what makes untrusted brief content harmless.
-    const src = await read("packages/gateway/src/agents/_lib/reserved-sections.ts");
-    expect(src).not.toContain("sectionBody");
-    expect(src).not.toContain("stripSections");
+    // The CALL, not the identifier. `toContain("loadNimbusUserFromConfigDir")` passes while the
+    // handler merely mentions the loader — in a comment, or in dead code left after someone
+    // replaced the call — so it checks a token rather than a behaviour. Requiring the invocation
+    // with `ctx.configDir` is what pins that config is actually read.
+    expect(handler).toMatch(/loadNimbusUserFromConfigDir\(\s*ctx\.configDir\s*\)/);
+
+    // And that the override is ASSIGNED from the loaded config rather than from the request. A
+    // bare `toContain("userToml.mePersonId")` would be satisfied by a guard that reads the value
+    // and then passes something else, which is the shape that actually matters here.
+    expect(handler).toMatch(/mePersonIdOverride:\s*userToml\.mePersonId/);
   });
 });
 
