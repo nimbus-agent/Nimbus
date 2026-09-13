@@ -48,6 +48,28 @@ describe("parseTailArgs", () => {
   test("--help throws the usage text, which states follow-only", () => {
     expect(() => parseTailArgs(["--help"])).toThrow(/follow-only/);
   });
+
+  test("-h is a synonym for --help", () => {
+    expect(() => parseTailArgs(["-h"])).toThrow(/follow-only/);
+  });
+
+  test("--json sets the json flag without changing the default categories", () => {
+    const a = parseTailArgs(["--json"]);
+    expect(a.json).toBe(true);
+    expect(a.categories).toEqual(["connector", "watcher", "sync", "extension", "hitl"]);
+  });
+
+  test("an unknown --flag fails fast naming it", () => {
+    expect(() => parseTailArgs(["--foo"])).toThrow(/Unknown flag: --foo/);
+  });
+
+  test("a bare positional argument fails fast naming it", () => {
+    expect(() => parseTailArgs(["extra"])).toThrow(/Unexpected argument: extra/);
+  });
+
+  test("a duplicate category within one --filter value is deduped, not appended twice", () => {
+    expect(parseTailArgs(["--filter", "connector,connector"]).categories).toEqual(["connector"]);
+  });
 });
 
 describe("renderEvent", () => {
@@ -222,6 +244,64 @@ describe("renderEvent", () => {
   test("a malformed notification returns null instead of throwing", () => {
     expect(renderEvent("gateway.event", null)).toBeNull();
     expect(renderEvent("gateway.event", { kind: 7 })).toBeNull();
+  });
+
+  test("an unrecognised method (neither connector.healthChanged nor gateway.event) returns null", () => {
+    expect(renderEvent("some.other.method", {})).toBeNull();
+  });
+
+  test("connector.healthChanged with no name returns null", () => {
+    expect(renderEvent("connector.healthChanged", { health: "degraded" })).toBeNull();
+  });
+
+  test("connector.healthChanged with no health returns null", () => {
+    expect(renderEvent("connector.healthChanged", { name: "github" })).toBeNull();
+  });
+
+  test("connector.healthChanged falls back fromState to 'unknown', drops the reason suffix, and falls back the timestamp to now when all three are absent", () => {
+    const line = renderEvent("connector.healthChanged", { name: "gh", health: "ok" });
+    expect(line).not.toBeNull();
+    // `at` is the real current time (occurredAt was absent), so only its SHAPE is checked; the
+    // rest of the line is otherwise deterministic and asserted verbatim.
+    expect(line).toMatch(/^\S+ \[connector\] gh: unknown -> ok$/);
+  });
+
+  test("sync.completed with no payload at all falls every field back to its placeholder", () => {
+    const at = new Date(1).toISOString();
+    const line = renderEvent("gateway.event", { kind: "sync.completed", ts: 1 });
+    expect(line).toBe(`${at} [sync]      ?: +undefined items, -undefined (undefinedms)`);
+  });
+
+  test("watcher.fired with an empty payload falls name and summary back to their placeholders", () => {
+    const at = new Date(1).toISOString();
+    const line = renderEvent("gateway.event", { kind: "watcher.fired", ts: 1, payload: {} });
+    expect(line).toBe(`${at} [watcher]   ?: `);
+  });
+
+  test("extension.stateChanged with a bare payload falls extensionId and action back to their placeholders", () => {
+    const at = new Date(1).toISOString();
+    const line = renderEvent("gateway.event", {
+      kind: "extension.stateChanged",
+      ts: 1,
+      payload: { ok: true },
+    });
+    expect(line).toBe(`${at} [extension] ?: ?`);
+  });
+
+  test("hitl.requested with an empty payload falls requestId and prompt back to their placeholders", () => {
+    const at = new Date(1).toISOString();
+    const line = renderEvent("gateway.event", { kind: "hitl.requested", ts: 1, payload: {} });
+    expect(line).toBe(`${at} [hitl]      ?: requested — `);
+  });
+
+  test("hitl.resolved with no requestId falls back to the placeholder", () => {
+    const at = new Date(1).toISOString();
+    const line = renderEvent("gateway.event", {
+      kind: "hitl.resolved",
+      ts: 1,
+      payload: { approved: true },
+    });
+    expect(line).toBe(`${at} [hitl]      ?: approved`);
   });
 });
 
@@ -557,5 +637,55 @@ describe("runTailCommand lifecycle", () => {
     process.emit("SIGINT");
     await done;
     expect(process.listenerCount("SIGINT")).toBe(before);
+  });
+
+  test("--json emits the raw JSON-RPC notification as JSONL, exactly one line per event", async () => {
+    const h = harness();
+    const done = runTailCommand(["--json"], h.deps);
+    await nextMacrotask();
+    const evt = {
+      kind: "sync.completed",
+      ts: 1,
+      payload: {
+        serviceId: "slack",
+        itemsUpserted: 1,
+        itemsDeleted: 0,
+        durationMs: 1,
+        hasMore: false,
+      },
+    };
+    h.handlers["gateway.event"]?.(evt);
+    expect(h.out).toHaveLength(1);
+    expect(h.out[0]?.endsWith("\n")).toBe(true);
+    // The renderer is never invoked on this path: it's the raw notification, round-trippable.
+    expect(JSON.parse(h.out[0] ?? "")).toEqual({ method: "gateway.event", params: evt });
+    process.emit("SIGINT");
+    await done;
+  });
+
+  test("a malformed gateway.event notification (null params) produces no output but leaves the stream live", async () => {
+    const h = harness();
+    const done = runTailCommand([], h.deps);
+    await nextMacrotask();
+    h.handlers["gateway.event"]?.(null);
+    // POSITIVE CONTROL, as above: proves the handler is still correctly wired after the malformed
+    // event, not merely that nothing was ever listening in the first place.
+    h.handlers["gateway.event"]?.(syncControlEvent);
+    expect(h.out).toHaveLength(1);
+    expect(h.out[0]).toContain("[sync]");
+    process.emit("SIGINT");
+    await done;
+  });
+
+  test("an EPIPE on stdout exits cleanly via onExit(0); a non-EPIPE stdout error does not exit", async () => {
+    const h = harness();
+    const done = runTailCommand([], h.deps);
+    await nextMacrotask();
+    process.stdout.emit("error", Object.assign(new Error("boom"), { code: "ECONNRESET" }));
+    expect(h.exits).toEqual([]);
+    process.stdout.emit("error", Object.assign(new Error("EPIPE"), { code: "EPIPE" }));
+    expect(h.exits).toEqual([0]);
+    process.emit("SIGINT");
+    await done;
   });
 });
