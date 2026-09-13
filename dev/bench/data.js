@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1789236934414,
+  "lastUpdate": 1789274295357,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "28e66a6729a5d18924717a010cb5d4df7f41622d",
-          "message": "ci: migrate release automation from PATs to org GitHub App (#772)\n\n## What\n\nMigrates the org's CI release automation off three long-lived Personal\nAccess Tokens (`RELEASE_PAT`, `RELEASE_PLEASE_PAT`,\n`PACKAGE_MANAGER_PAT`) onto a single org-owned **GitHub App** (\"Nimbus\nRelease Bot\") that mints per-job, 1-hour, least-privilege installation\ntokens via `actions/create-github-app-token` (SHA-pinned `@bcd2ba49…`\nv3.2.0).\n\n`WINGET_PAT` intentionally **stays** a classic PAT — it targets the\nexternal `microsoft/winget-pkgs` fork, which the org App cannot be\ninstalled on.\n\n## Why\n\n- No more 1-year-lived, broadly-scoped PATs sitting in org secrets (the\nroot cause of the v0.17–v0.21 phantom-release outage was an expired\n`RELEASE_PAT`).\n- Tokens are minted per job, scoped to exactly the repos + permissions\nthat job needs, and expire in an hour.\n- The secret-health monitor now probes the App's mint path directly with\na **superset** of the permissions the individual release jobs request,\nso a permission downgrade on any repo is caught before a release needs\nit.\n\n## Changes (6 tasks, subagent-driven + reviewed)\n\n| Workflow | Mint scope | Perms |\n| --- | --- | --- |\n| `release-please.yml` | `Nimbus` | contents + PRs: write |\n| `release.yml` (publish-release + update-manifest) | `Nimbus` |\ncontents: write |\n| `publish-package-managers.yml` | `homebrew-tap`, `scoop-bucket` |\ncontents: write |\n| `publish-linux-repo.yml` | `linux-repo` | contents: write |\n| `secret-health.yml` | all 4 repos | contents + PRs: write (superset\nhealth probe) |\n\n- `scripts/release/check-secret-health.ts` — retired the 3 PAT probes;\nadded a fail-closed `classifyAppMint` (`success → ok`, else `dead`) fed\nfrom `steps.app-mint.outcome`; `RELEASE_BOT_APP` health row via new\n`extraRows` param. Tests updated.\n- `docs/ci-secrets.md` — replaced the 3 PAT rows with the App entry;\nkept `WINGET_PAT` + rationale; added the setup/migration runbook\n(below).\n\n## ⚠️ DO NOT MERGE until the App exists\n\nThis is a big-bang cutover. The mint steps reference\n`secrets.RELEASE_BOT_APP_ID` / `secrets.RELEASE_BOT_PRIVATE_KEY`, which\ndo not exist yet. **Human-only setup must land first**, or the next\nrelease's mint step fails (loudly, by design — but the release won't\nship):\n\n1. Create a GitHub App **\"Nimbus Release Bot\"** under the `nimbus-agent`\norg.\n- Permissions: **Contents: Read & write**, **Pull requests: Read &\nwrite**. No Pages perm (Pages is branch-served via `git push`).\n2. Install it on: `Nimbus`, `homebrew-tap`, `scoop-bucket`,\n`linux-repo`.\n3. Generate a private key; add org (or repo) secrets\n`RELEASE_BOT_APP_ID` and `RELEASE_BOT_PRIVATE_KEY`.\n4. Org **Settings → Actions → allowed actions**: ensure\n`actions/create-github-app-token@*` is permitted (SHA-pinned here).\n5. Merge this PR.\n6. Cut one release and confirm it ships assets green (asset-verify gate\npasses).\n7. **Only then** delete `RELEASE_PAT`, `RELEASE_PLEASE_PAT`,\n`PACKAGE_MANAGER_PAT` from org secrets (staged post-first-green-release\n— **not in this PR**).\n\nFull runbook is in `docs/ci-secrets.md`.\n\n## Deferred (non-blocking, post-App-live)\n\n`release-please.yml` job-level `permissions: contents/pull-requests:\nwrite` now govern only the automatic `GITHUB_TOKEN`, which the job no\nlonger uses for writes (release-please-action uses the minted App\ntoken). These could tighten to `contents: read`. Deferred pending live\nconfirmation the action never falls back to `GITHUB_TOKEN`; the current\nsuperset is safe.\n\n## Verification\n\n`bun test scripts/release/` 89/89 · biome clean · all 5 workflows valid\nYAML · `audit:action-sha-pins` OK · `lint:markdown` 0 · `audit:doc-refs`\nOK · 0 leftover retired-PAT references across workflows.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n---------\n\nCo-authored-by: Claude Opus 4.8 (1M context) <noreply@anthropic.com>",
-          "timestamp": "2026-07-19T18:14:44+03:00",
-          "tree_id": "e70c7f0beecdef5c81fc888655d263107365b479",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/28e66a6729a5d18924717a010cb5d4df7f41622d"
-        },
-        "date": 1784475264142,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 242.30129989999696,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 245.28334495000598,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 330.4487705000014,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "a3703cc0b63bf7b9de4efce67bae91a2e71831a2",
+          "message": "fix(platform): bundle a full SQLite with the macOS build so semantic search works without Homebrew (#1507)\n\nCloses #1505.\n\n#1503 made `sqlite-vec` load on macOS for **developers and CI**. It\nchanged nothing for a macOS **end user** who installs the binary on a\nmachine with no `brew install sqlite`: Apple's system SQLite has\nextension loading compiled out, and the packaged `vec0.dylib` sidecar\nbottoms out in the same failing `loadExtension()` call. That user has no\nvector search, no hybrid ranking and no session-memory recall — a break\nof **non-negotiable #5**, since Linux and Windows get all three from\nBun's own build with no prerequisite at all.\n\n`sqlite-runtime.ts`'s own header named the decision this PR makes: *\"a\ndecision about bundling a `libsqlite3.dylib` in the macOS package versus\ndegrading honestly (size, notarization and licensing consequences).\"* It\nbundles.\n\n## What ships\n\n`scripts/build-sqlite-darwin.ts` compiles a pinned SQLite amalgamation\n(3.53.4) and the macOS `.pkg` and both `tar.gz` archives carry the\nresult beside the binaries, on the rails `vec0.dylib` already travelled.\n`platform/sqlite-runtime.ts` resolves it ahead of the Homebrew prefixes;\n`NIMBUS_SQLITE_PATH` still outranks everything.\n\nThe three consequences that decision was waiting on, answered: **size**\n~1.5 MB per macOS artifact; **licensing** nil (SQLite is public domain);\n**notarization** unchanged — payload libraries are not individually\ncodesigned today, `vec0.dylib` included, and the `.pkg` they ride in is\n`productsign`ed and notarized as a unit.\n\nNo migration, no new security invariant, no new egress coverage class,\nno new HITL action type.\n\n## The compile flags are the part worth reviewing, not the plumbing\n\n`setCustomSQLite` repoints the **whole process**, and this library is\nnow preferred over a user's own Homebrew build. A build missing FTS5\nwould take keyword search **away** from every macOS user in the act of\ngiving them vector search — and every unit test in the tree would still\npass. So the flag set is an explicit superset of Homebrew's, asserted in\n`build-sqlite-darwin.test.ts`, including the **absence** of\n`SQLITE_OMIT_LOAD_EXTENSION` (extension loading has no positive flag to\nassert instead).\n\nThe pin is verified against the **SHA3-256 sqlite.org itself\npublishes**, so a reviewer can diff the constant against the download\npage rather than against a number I computed. Size is checked first, so\na truncated download reports as a size rather than as an unreadable hash\nmismatch.\n\n## CI now tests the bytes the release ships\n\n`setup-nimbus-ci`'s `brew install sqlite` is replaced by this same\nscript, exporting `NIMBUS_SQLITE_PATH` to its output — so the 54\n`skipIf(!VEC_AVAILABLE)` sites and the sqlite-vec canary exercise the\nshipped artifact rather than a library that merely resembles it.\n\nThat step also goes from deliberately non-fatal to **fatal**, and both\nhalves of the old reasoning are why it had to: a brew hiccup used to be\ncosmetic, but the library is now a payload component, so a release that\ncannot build it must not publish a package silently missing it — and a\ntolerant failure would leave the variable unset, let the resolver fall\nthrough to whatever the runner image carried, and go green against\nsomething we do not ship.\n\n## Verification, stated honestly\n\n- Whole suite in a clean worktree: **22,939 pass / 0 fail**.\n- `preflight` (full) green; `typecheck:tests` checked **alone** (it\nprints a green tick inside preflight while being advisory on win32).\n- `SQLITE_PIN` verified against the **real downloaded archive** — size,\nSHA3-256, the constructed URL, and the\n`sqlite-amalgamation-3530400/sqlite3.c` path the compile step assumes.\n- **The macOS path has never executed.** I develop on Windows; the five\ndarwin-gated tests in `bundled-sqlite.test.ts` have no local equivalent\nand **CI is their first execution**. `audit:platform-test-gaps` says so\nby name — after a fix in this PR, see below.\n\n## Residuals, not softened\n\n1. **We now own macOS users' SQLite version and feature set.** Bumping\nis deliberate: take a whole `PRODUCT` line; the zip name is asserted\nagainst the version encoding, so a half-edit fails the tests rather than\n404ing in a release job.\n2. **Throughput.** `sqlite-runtime.ts` notes Apple's build is a ~50%\nwin. Homebrew users already paid that; a no-brew user now pays it in\nexchange for having semantic search at all. **Not measured** — I added\nno escape hatch for a number nobody has produced.\n3. **Gatekeeper quarantine on the `tar.gz` path** is unverified. It is\nidentical for `vec0.dylib` today, so pre-existing rather than introduced\n— but `vec0.dylib` has never actually loaded on macOS, so nothing has\nexercised it.\n\n## Incidental, found rather than sought\n\n`audit:platform-test-gaps` reported *\"every test in them runs on win32\"*\nfor a file containing five darwin-only tests, because its matcher reads\none line and the condition was hoisted (`const isDarwin = …` then\n`skipIf(!isDarwin)`). It now resolves that alias — a false all-clear\nfrom the one tool whose job is to deny exactly that.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nhttps://claude.ai/code/session_018TS9ZL23nsgXfHWQK6mpTj\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n## Summary by CodeRabbit\n\n* **New Features**\n* macOS releases now bundle a full SQLite library supporting sqlite-vec,\nFTS5, JSON, and extension loading.\n* Installers and archives include the required SQLite runtime\nautomatically.\n  * `NIMBUS_SQLITE_PATH` can override the bundled library location.\n\n* **Bug Fixes**\n* macOS SQLite loading now uses a reliable priority order and avoids\nrunner-provided versions.\n\n* **Documentation**\n  * Updated macOS installation and troubleshooting guidance.\n\n* **Tests**\n* Added validation for bundled libraries, supported features, versions,\narchitectures, and installation workflows.\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>",
+          "timestamp": "2026-09-13T07:25:54+03:00",
+          "tree_id": "7e2b5fd4a04fbb02476ee41f94153efdc2075756",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/a3703cc0b63bf7b9de4efce67bae91a2e71831a2"
+        },
+        "date": 1789274291558,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 323.0504453999991,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 321.1721522000051,
             "unit": "ms"
           }
         ]
