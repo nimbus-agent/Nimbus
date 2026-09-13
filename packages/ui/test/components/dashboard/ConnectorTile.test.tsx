@@ -42,11 +42,27 @@ describe("ConnectorTile", () => {
     ["error", "color-error"],
     ["unauthenticated", "color-error"],
     ["paused", "color-fg-muted"],
+    ["not_configured", "color-fg-muted"],
   ])("dot colour for '%s' health maps to CSS var containing %s", (health, expectedClass) => {
     const c: ConnectorStatus = { name: "github", health };
     const { container } = render(<ConnectorTile status={c} highlighted={false} />);
     const dot = container.querySelector('[aria-hidden="true"]');
     expect(dot?.className).toMatch(new RegExp(expectedClass));
+  });
+
+  it("renders a 'Not configured' label for not_configured, NOT green and NOT the error colour", () => {
+    const c: ConnectorStatus = { name: "jira", health: "not_configured" };
+    const { container } = render(<ConnectorTile status={c} highlighted={false} />);
+    expect(screen.getByText("Not configured")).toBeInTheDocument();
+    const dot = container.querySelector('[aria-hidden="true"]');
+    expect(dot?.className).not.toMatch(/color-ok/);
+    expect(dot?.className).not.toMatch(/color-error/);
+  });
+
+  it("does not render the 'not synced yet' placeholder when not_configured — the label replaces it", () => {
+    const c: ConnectorStatus = { name: "jira", health: "not_configured" };
+    render(<ConnectorTile status={c} highlighted={false} />);
+    expect(screen.queryByText(/not synced yet/i)).not.toBeInTheDocument();
   });
 
   it("falls back to the raw name for unknown connector identifiers", () => {

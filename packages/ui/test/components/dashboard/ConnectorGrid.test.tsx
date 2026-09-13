@@ -176,4 +176,25 @@ describe("ConnectorGrid", () => {
     expect(patchConnectorSpy).toHaveBeenCalledWith("drive", { health: "degraded" });
     expect(store.connectors[0]?.health).toBe("degraded");
   });
+
+  it("maps a not_configured connector.listStatus row to not_configured, NOT healthy", () => {
+    // `toConnectorHealth` used to fold `not_configured` into the "healthy" fallback, which made a
+    // connector with no credential at all render as a green healthy tile — worse than the gap it
+    // replaced. `not_configured` must survive the mapping unchanged.
+    store.setConnectors = (c) => {
+      store.connectors = c;
+    };
+    wireListStatus = [{ serviceId: "jira", healthState: "not_configured" }];
+    store.connectors = [];
+
+    render(
+      <MemoryRouter>
+        <ConnectorGrid />
+      </MemoryRouter>,
+    );
+
+    expect(store.connectors).toEqual([
+      expect.objectContaining({ name: "jira", health: "not_configured" }),
+    ]);
+  });
 });

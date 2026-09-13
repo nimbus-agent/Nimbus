@@ -17,9 +17,22 @@ function dotColour(h: ConnectorStatus["health"]): string {
     case "error":
     case "unauthenticated":
       return "bg-[var(--color-error)]";
+    // Neither healthy (green) nor an error (red): nothing has failed, there is simply no
+    // credential configured yet. `default` still covers `paused` and any genuinely unknown
+    // future value with the same muted colour, but `not_configured` gets its own case so this
+    // mapping stays intentional rather than an accident of the fallback.
+    case "not_configured":
+      return "bg-[var(--color-fg-muted)]";
     default:
       return "bg-[var(--color-fg-muted)]";
   }
+}
+
+/** A short, explicit label for a health state whose dot colour alone would be ambiguous with
+ *  "healthy but never synced" — currently only `not_configured`. `null` for every other state,
+ *  which keeps the existing `lastSyncAt`/"not synced yet" line as the sole status text there. */
+function healthLabel(h: ConnectorStatus["health"]): string | null {
+  return h === "not_configured" ? "Not configured" : null;
 }
 
 const DISPLAY_NAMES: Record<string, string> = {
@@ -76,7 +89,8 @@ export function ConnectorTile({ status, highlighted }: Props): ReactNode {
         <span className="text-[var(--color-fg)] text-sm">{displayName(status.name)}</span>
       </div>
       <div className="text-[var(--color-fg-muted)] text-xs mt-1">
-        {status.lastSyncAt ? formatRelative(status.lastSyncAt) : "not synced yet"}
+        {healthLabel(status.health) ??
+          (status.lastSyncAt ? formatRelative(status.lastSyncAt) : "not synced yet")}
       </div>
       {status.degradationReason && (
         <div className="text-[var(--color-amber)] text-xs mt-1 truncate">

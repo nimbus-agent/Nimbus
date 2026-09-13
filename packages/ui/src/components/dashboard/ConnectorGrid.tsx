@@ -13,10 +13,10 @@ interface HealthChangedPayload {
   readonly degradationReason?: string;
 }
 
-// The dashboard's own health vocabulary — the six states `ConnectorTile`'s `dotColour` knows how
-// to render. `connector.listStatus` reports the gateway's wider `ConnectorHealthState`, which also
-// has `not_configured` (`packages/gateway/src/connectors/health.ts`); a raw `healthState` string is
-// checked against this allow-list before it is trusted as a `ConnectorHealth`.
+// The dashboard's own health vocabulary — the seven states `ConnectorTile`'s `dotColour` knows how
+// to render, matching the gateway's `ConnectorHealthState` (`packages/gateway/src/connectors/health.ts`)
+// exactly. A raw `healthState` string is checked against this allow-list before it is trusted as a
+// `ConnectorHealth`.
 const KNOWN_CONNECTOR_HEALTH: ReadonlySet<string> = new Set<ConnectorHealth>([
   "healthy",
   "degraded",
@@ -24,14 +24,16 @@ const KNOWN_CONNECTOR_HEALTH: ReadonlySet<string> = new Set<ConnectorHealth>([
   "rate_limited",
   "unauthenticated",
   "paused",
+  "not_configured",
 ]);
 
 function toConnectorHealth(healthState: unknown): ConnectorHealth {
   // `healthState` is optional on the wire (`SyncStatus.healthState?: string`, gateway
-  // `sync/types.ts`) — absent for a connector `getConnectorHealth` has never classified yet — and
-  // can carry `"not_configured"`, which this dashboard has no tile state for. Both fall back to
-  // "healthy": a connector nothing has flagged should not render as degraded/error before
-  // anything has happened to earn that badge.
+  // `sync/types.ts`) — absent for a connector `getConnectorHealth` has never classified yet.
+  // ONLY that absent/unrecognised case falls back to "healthy": a connector nothing has flagged
+  // should not render as degraded/error before anything has happened to earn that badge. A
+  // recognised `"not_configured"` is NOT folded into that fallback — it is a real, distinct state
+  // (`ConnectorTile` renders it with a muted dot and its own label), not the absence of one.
   return typeof healthState === "string" && KNOWN_CONNECTOR_HEALTH.has(healthState)
     ? (healthState as ConnectorHealth)
     : "healthy";

@@ -11,7 +11,8 @@ export type ConnectorHealth =
   | "error"
   | "rate_limited"
   | "unauthenticated"
-  | "paused";
+  | "paused"
+  | "not_configured";
 
 export interface ConnectorSummary {
   readonly name: string;

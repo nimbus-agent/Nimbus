@@ -51,14 +51,12 @@ describe("connector.healthChanged desktop contract", () => {
     expect(payload.health).not.toBeUndefined();
   });
 
-  test("the documented health value is one of the six ConnectorGrid renders", () => {
-    // NOT exhaustive over what the gateway can emit: `ConnectorHealthState` (gateway) has a
-    // SEVENTH member, `not_configured`, that `ConnectorStatus["health"]` (desktop) omits —
-    // `buildSnapshot` genuinely returns it (`health.ts:465`) and the `not_configured` emit path
-    // can send it. That is a pre-existing, known gap (`connector.listStatus` can already carry
-    // the value), deferred to the final review rather than widened here — this test only pins
-    // that the DOCUMENTED snapshot's value is one the desktop's narrower union already covers,
-    // not that every value the gateway can send is.
+  test("the documented health value is one of the seven ConnectorGrid renders", () => {
+    // Exhaustive over what the gateway can emit: `ConnectorHealthState` (gateway) and
+    // `ConnectorStatus["health"]` (desktop) now agree on all seven members, `not_configured`
+    // included (`buildSnapshot` genuinely returns it, `health.ts`, and the `not_configured`
+    // transition arm can emit it) — closing the gap this test used to document, where the desktop
+    // folded an unconfigured connector into "healthy" and rendered it as a green tile.
     const valid: ReadonlyArray<ConnectorStatus["health"]> = [
       "healthy",
       "degraded",
@@ -66,6 +64,7 @@ describe("connector.healthChanged desktop contract", () => {
       "rate_limited",
       "unauthenticated",
       "paused",
+      "not_configured",
     ];
     expect(valid).toContain(GATEWAY_PAYLOAD.health);
     expect(GATEWAY_PAYLOAD.health).not.toBe("persistent_error");
