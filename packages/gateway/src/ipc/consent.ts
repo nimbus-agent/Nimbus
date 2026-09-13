@@ -1,3 +1,4 @@
+import { emitGatewayEvent } from "./gateway-events.ts";
 import type { JsonRpcNotification } from "./jsonrpc.ts";
 
 export class ConsentDisconnectedError extends Error {
@@ -50,6 +51,10 @@ export class ConsentCoordinatorImpl implements ConsentCoordinator {
         params: details === undefined ? { requestId, prompt } : { requestId, prompt, details },
       };
       write(notif);
+      // OBSERVATION ONLY, and additive: `consent.request` above stays unicast to the acting
+      // client, so consent semantics (who is asked, who may answer) are untouched. `details` is
+      // deliberately withheld — it can carry action arguments, and this goes to every session.
+      emitGatewayEvent("hitl.requested", { requestId, prompt });
     });
   }
 
@@ -67,6 +72,7 @@ export class ConsentCoordinatorImpl implements ConsentCoordinator {
     }
     this.pending.delete(o["requestId"]);
     entry.resolve(o["approved"]);
+    emitGatewayEvent("hitl.resolved", { requestId: o["requestId"], approved: o["approved"] });
     return null;
   }
 
@@ -82,6 +88,11 @@ export class ConsentCoordinatorImpl implements ConsentCoordinator {
       if (entry !== undefined) {
         this.pending.delete(requestId);
         entry.reject(new ConsentDisconnectedError());
+        emitGatewayEvent("hitl.resolved", {
+          requestId,
+          approved: false,
+          reason: "client disconnected",
+        });
       }
     }
   }
@@ -90,8 +101,11 @@ export class ConsentCoordinatorImpl implements ConsentCoordinator {
     const err = new ConsentDisconnectedError(message, hitlAuditReason);
     const snapshot = new Map(this.pending);
     this.pending.clear();
-    for (const entry of snapshot.values()) {
+    // `.entries()`, not `.values()`: the key IS the requestId, and `hitl.resolved` is useless
+    // without it. The existing loop discarded it because nothing needed it before.
+    for (const [requestId, entry] of snapshot.entries()) {
       entry.reject(err);
+      emitGatewayEvent("hitl.resolved", { requestId, approved: false, reason: message });
     }
   }
 
