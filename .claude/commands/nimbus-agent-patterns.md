@@ -2,7 +2,8 @@
 name: nimbus-agent-patterns
 description: >
   Authoring built-in Nimbus agents (catchup, expert, impact, ghost, conflicts, huddle,
-  janitor, preflight, why, glossary, decisions, ownership, pre-mortem, negotiate, changelog):
+  janitor, preflight, why, glossary, decisions, ownership, pre-mortem, negotiate, changelog,
+  standup, oncall):
   file location, the read-only/HITL-free shape invariant (and pre-mortem's narrowly-bounded
   exception to it),
   parallel sub-agent decomposition via AgentCoordinator, tool-scope restriction, the briefReady
@@ -17,7 +18,7 @@ description: >
 
 ## Built-in Agent Location
 
-Currently implemented built-in agents live in `packages/gateway/src/agents/` as single files named after the command they serve: `catchup.ts`, `expert.ts`, `impact.ts`, `ghost.ts`, `conflicts.ts`, `huddle.ts`, `janitor.ts`, `preflight.ts`, `why.ts`, `why-peek.ts`, `glossary.ts`, `decisions.ts`, `ownership.ts`, `premortem.ts`, `negotiate.ts`, `changelog.ts` — **fifteen** agent kinds across sixteen files (`why-peek.ts` is a lightweight companion to `why.ts`, not a kind of its own). `changelog.ts` additionally carries a sibling query module, `changelog-queries.ts`, which is a lane implementation rather than an agent. Planning agents (`meeting-prep`, `oncall-brief`, `standup`) are deferred to a future phase per the roadmap.
+Currently implemented built-in agents live in `packages/gateway/src/agents/` as single files named after the command they serve: `catchup.ts`, `expert.ts`, `impact.ts`, `ghost.ts`, `conflicts.ts`, `huddle.ts`, `janitor.ts`, `preflight.ts`, `why.ts`, `why-peek.ts`, `glossary.ts`, `decisions.ts`, `ownership.ts`, `premortem.ts`, `negotiate.ts`, `changelog.ts`, `standup.ts`, `oncall.ts` — **seventeen** agent kinds across eighteen files (`why-peek.ts` is a lightweight companion to `why.ts`, not a kind of its own). `changelog.ts`, `standup.ts` and `oncall.ts` each additionally carry a sibling query module (`changelog-queries.ts`, `standup-queries.ts`, `oncall-queries.ts`), which is a lane implementation rather than an agent. `meeting-prep` remains deferred to a future phase per the roadmap; `standup` shipped 2026-09-12 and `oncall` followed it, so neither is deferred any more.
 
 ### Implicit-knowledge agents (Spine S1 — Local Brain)
 

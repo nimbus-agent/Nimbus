@@ -21,6 +21,7 @@ import {
   renderImpact,
   renderJanitor,
   renderNegotiate,
+  renderOncall,
   renderOwnership,
   renderPreflight,
   renderPremortem,
@@ -106,6 +107,7 @@ function deterministicRender(brief: SynthInput, opts?: RenderOpts): string {
   if (brief.kind === "negotiate") return renderNegotiate(brief, opts);
   if (brief.kind === "changelog") return renderChangelog(brief, opts);
   if (brief.kind === "standup") return renderStandup(brief, opts);
+  if (brief.kind === "oncall") return renderOncall(brief, opts);
   return assertNeverBrief(brief);
 }
 
@@ -130,6 +132,7 @@ function toolNameFor(brief: SynthInput): string {
   if (brief.kind === "negotiate") return "agents.negotiate";
   if (brief.kind === "changelog") return "agents.changelog";
   if (brief.kind === "standup") return "agents.standup";
+  if (brief.kind === "oncall") return "agents.oncall";
   return assertNeverBrief(brief);
 }
 

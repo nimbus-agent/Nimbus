@@ -446,6 +446,69 @@ const standup: FleetDigestExtractor = (f) => {
 };
 
 /**
+ * What moved for a service between two unattended `oncall` runs.
+ *
+ * **The metric that matters here is RECURRENCE, not the incident.** A nightly fleet run over a
+ * named service is not watching one page resolve — it is watching how often that service pages at
+ * all, so `priorIncidents` is the number a reader watches move and `messages` is the volume of
+ * talk around it. Both come from `counts`, which carries the TRUE pre-cap total (`OncallCounts`),
+ * never from `.length`, for `changelog`'s reason: the lists are capped and can legitimately be
+ * shorter than their matching count.
+ *
+ * **`priorIncidents` saturates and that is disclosed rather than hidden.** `buildOncallBrief`
+ * over-fetches by exactly one past the cap, so a service with forty earlier incidents reports
+ * eleven. The digest therefore reports "still at the cap" rather than a true delta once a service
+ * is above it — which is the honest reading, and better than a number that would look like it
+ * stopped moving.
+ *
+ * **The selected incident's id IS a key, and its identity is the point.** Unlike `standup`, where
+ * a changed `personId` means the resolver landed elsewhere and every count moving is explained by
+ * that, here a changed incident id is the single most informative thing a digest can report: the
+ * service is paging about something new. Keys are what `compareSummaries` diffs, so it surfaces
+ * exactly as an added/removed entry.
+ *
+ * **`syncFreshness` is deliberately NOT a metric.** It moves on every single run by construction —
+ * it is an age — so including it would make every digest report a change and train the reader to
+ * ignore the whole report. Its job is to qualify one brief, which it does in that brief's own
+ * preamble.
+ */
+const oncall: FleetDigestExtractor = (f) => {
+  const o = rec(f);
+  if (o?.["kind"] !== "oncall") return undefined;
+  const counts = rec(o["counts"]);
+  if (counts === undefined) return undefined;
+  const FIELDS = ["messages", "priorIncidents"] as const;
+  const m = numbers(counts, [...FIELDS]);
+  if (m === undefined) return undefined;
+
+  const keys: string[] = [];
+  const incident = rec(o["incident"]);
+  const incidentId = incident?.["id"];
+  // The selected incident is the brief's whole subject; a run whose subject cannot be read is not
+  // summarizable, exactly as a standup with an unreadable entry id is not.
+  if (typeof incidentId !== "string") return undefined;
+  keys.push(`incident:${incidentId}`);
+
+  for (const field of FIELDS) {
+    const arr = o[field];
+    if (!Array.isArray(arr)) return undefined;
+    // The cap makes a listed array SHORTER than its count, never longer. A count BELOW its own
+    // listed length is a brief contradicting itself, and digesting it would publish a number the
+    // entry list visibly disproves.
+    if (m[field] < arr.length) return undefined;
+    for (const e of arr) {
+      const id = rec(e)?.["id"];
+      if (typeof id !== "string") return undefined;
+      keys.push(id);
+    }
+  }
+
+  // `summary()` — NOT a raw object literal — so `keys` is sorted with `codeUnitCompare` and
+  // `compareSummaries` cannot diff the same two briefs differently depending on row order.
+  return summary(keys, m);
+};
+
+/**
  * TOTAL over `EligibleAgentMethod`. Flipping an agent to `"eligible"` in `FLEET_ELIGIBILITY`
  * fails THIS declaration to compile until its extractor is written (spec § 4.2).
  */
@@ -460,6 +523,7 @@ export const FLEET_DIGEST_EXTRACTORS = {
   "agents.huddle": huddle,
   "agents.impact": impact,
   "agents.janitor": janitor,
+  "agents.oncall": oncall,
   "agents.ownership": ownership,
   "agents.standup": standup,
   "agents.why": why,

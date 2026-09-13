@@ -318,12 +318,13 @@ describe("drift guard: every external agent name's real disclosures survive trun
     huddle: "huddle",
     impact: "impact",
     janitor: "janitor",
+    oncall: "oncall",
     ownership: "ownership",
     why: "why",
   });
 
   test("EXTERNAL_AGENT_NAMES has no name missing from the known name-to-kind map", () => {
-    // Fails the moment a twelfth agent is published without a matching entry above. A name
+    // Fails the moment a thirteenth agent is published without a matching entry above. A name
     // missing here is a name `truncateBrief`'s disclosure guarantee has never been checked for —
     // silent under-protection is exactly the failure mode this describe block exists to close.
     expect([...EXTERNAL_AGENT_NAMES].sort()).toEqual(Object.keys(KNOWN_EXTERNAL_TO_KIND).sort());

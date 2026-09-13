@@ -209,8 +209,12 @@ describe("agents over HTTP — end to end", () => {
       expect(agents).not.toContain("premortem");
       expect(agents).not.toContain("whyPeek");
       expect(agents).not.toContain("negotiate");
+      // Owner-scoped by construction and excluded outright, unlike `oncall`, whose
+      // owner-scoped SHAPE is refused while its explicit shapes are served.
+      expect(agents).not.toContain("standup");
       expect(agents).toContain("expert");
-      expect(agents).toHaveLength(11);
+      expect(agents).toContain("oncall");
+      expect(agents).toHaveLength(12);
     } finally {
       s.stop();
     }

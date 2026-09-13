@@ -14,9 +14,9 @@
  * can see must have a matching entry here — so a new validator param one line away is also a
  * build failure one line away if it never lands in this map.
  *
- * Only the ELEVEN externally-permitted agents appear. `preflight`, `premortem`, `whyPeek` and
- * `negotiate` are excluded from every external surface, so declaring their params here would
- * advertise a grammar nothing serves.
+ * Only the TWELVE externally-permitted agents appear. `preflight`, `premortem`, `whyPeek`,
+ * `negotiate`, `changelog` and `standup` are excluded from every external surface, so declaring
+ * their params here would advertise a grammar nothing serves.
  *
  * TWO boolean fields are in scope — `janitor.allowGaps` and `decisions.explain`. Note their
  * validators do NOT type-check them: `requireJanitorParams` reads `p["allowGaps"] === true` and
@@ -40,6 +40,12 @@ export const AGENT_PARAM_KINDS: Readonly<Record<string, Readonly<Record<string, 
       cleanupAction: "string",
       allowGaps: "boolean",
     }),
+    // `oncall` is externally permitted as a METHOD, but `requireOncallParams` refuses its
+    // zero-parameter owner-scoped shape for an external caller — so on this surface one of
+    // `incidentId`/`service` is effectively required even though neither is declared so here.
+    // This map is a COERCION table, not a validator; the requirement lives in `agents-rpc.ts`
+    // with every other bound, exactly as this file's own doc comment says.
+    oncall: Object.freeze({ incidentId: "string", service: "string", sinceMs: "number" }),
     ownership: Object.freeze({ path: "string", service: "string" }),
     why: Object.freeze({ ref: "string", line: "number", prUrl: "string" }),
     glossary: Object.freeze({ term: "string", limit: "number" }),

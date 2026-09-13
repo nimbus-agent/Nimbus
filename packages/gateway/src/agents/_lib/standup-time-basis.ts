@@ -55,36 +55,3 @@ export type StandupTimeBasis = "event_field" | "event_column" | "last_touch";
 export function basisCanBeMisplaced(basis: StandupTimeBasis): boolean {
   return basis === "last_touch";
 }
-
-/**
- * A finite number from connector-written JSON, or `null`.
- *
- * Re-checked in TypeScript even though the SQL already compared it: `json_extract` returns
- * whatever the JSON held, and SQLite would compare a STRING in this position by its own type
- * ordering rather than numerically — every text value sorts above every number, so a
- * `"2026-09-11T00:00:00Z"` in `merged_at` would pass `>= fromMs` for any window. The same guard
- * `changelog-event-time.ts` applies, for the same reason.
- */
-export function finiteNumberField(meta: Record<string, unknown>, key: string): number | null {
-  const v = meta[key];
-  return typeof v === "number" && Number.isFinite(v) ? v : null;
-}
-
-/**
- * Connector metadata as a plain record, or `null` when it is not a JSON object.
- *
- * An array is rejected as well as a non-object: `json_valid` accepts `[1,2]`, and indexing a
- * key on an array yields `undefined` rather than failing, so without this an array-valued
- * `metadata` would read as "the field is absent" instead of "this row is malformed".
- */
-export function metadataRecord(raw: string | null): Record<string, unknown> | null {
-  if (raw === null) return null;
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(raw);
-  } catch {
-    return null;
-  }
-  if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) return null;
-  return parsed as Record<string, unknown>;
-}

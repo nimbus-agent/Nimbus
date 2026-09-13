@@ -879,3 +879,110 @@ describe("standup extractor", () => {
     expect(Object.keys(d.metrics)).toEqual(["messages"]);
   });
 });
+
+/**
+ * `oncall`'s extractor, guard by guard.
+ *
+ * Every guard returns `undefined` — the same value the "not summarizable" outcome already uses —
+ * so a regression removing one changes no other assertion in this file. That is exactly what makes
+ * them easy to leave untested, and it is why `standup`'s equivalent block exists. Each case below
+ * is a well-formed oncall brief EXCEPT for one field, so it can only fail for the reason it names.
+ */
+describe("oncall extractor", () => {
+  const oncallBrief = (over: Record<string, unknown> = {}): string =>
+    JSON.stringify({
+      ...base,
+      kind: "oncall",
+      query: { sinceMs: 0, nowMs: 86_400_000 },
+      selection: "auto",
+      incident: { id: "pagerduty:PD-7", title: "Checkout 500s" },
+      otherActiveIncidents: [],
+      syncFreshness: { lastSyncMs: 1, ageMs: 2, reason: null },
+      binding: { nimbusServiceId: "checkout", pagerdutyServiceId: "PSERVICE1" },
+      deployment: null,
+      change: null,
+      ciRun: null,
+      messages: [{ id: "slack:C1:1.0" }, { id: "slack:C1:2.0" }],
+      priorIncidents: [{ id: "pagerduty:PD-1" }],
+      counts: { messages: 61, priorIncidents: 1 },
+      truncatedCount: 59,
+      ...over,
+    });
+
+  test("keys on the selected incident plus every lane id, sorted; counts are the metrics", () => {
+    const s = summarizeBrief("agents.oncall", oncallBrief());
+    // The selected incident is keyed with an `incident:` prefix so a service that starts paging
+    // about something NEW surfaces as an added/removed key rather than being invisible.
+    expect(s?.keys).toEqual([
+      "incident:pagerduty:PD-7",
+      "pagerduty:PD-1",
+      "slack:C1:1.0",
+      "slack:C1:2.0",
+    ]);
+    // `messages: 61` comes from `counts`, NOT from the two-entry list.
+    expect(s?.metrics).toEqual({ messages: 61, priorIncidents: 1 });
+  });
+
+  test("syncFreshness is NOT a metric", () => {
+    // It is an AGE: it moves on every single run by construction, so including it would make every
+    // digest report a change and train the reader to ignore the report. Asserted as an ABSENCE,
+    // because that is the whole claim.
+    const s = summarizeBrief("agents.oncall", oncallBrief());
+    expect(Object.keys(s?.metrics ?? {})).toEqual(["messages", "priorIncidents"]);
+    expect(s?.keys.some((k) => k.includes("sync"))).toBe(false);
+  });
+
+  test("a different selected incident changes the keys", () => {
+    const a = summarizeBrief("agents.oncall", oncallBrief());
+    const b = summarizeBrief(
+      "agents.oncall",
+      oncallBrief({ incident: { id: "pagerduty:PD-9", title: "Other" } }),
+    );
+    expect(a?.keys).not.toEqual(b?.keys);
+  });
+
+  test("a wrong kind is not summarizable", () => {
+    expect(summarizeBrief("agents.oncall", oncallBrief({ kind: "standup" }))).toBeUndefined();
+  });
+
+  test("a missing or unreadable incident id is not summarizable", () => {
+    // The incident is the brief's whole subject; a run whose subject cannot be read cannot be
+    // compared to another run at all.
+    expect(summarizeBrief("agents.oncall", oncallBrief({ incident: null }))).toBeUndefined();
+    expect(summarizeBrief("agents.oncall", oncallBrief({ incident: {} }))).toBeUndefined();
+    expect(summarizeBrief("agents.oncall", oncallBrief({ incident: { id: 7 } }))).toBeUndefined();
+  });
+
+  test("a missing or non-numeric counts object is not summarizable", () => {
+    expect(summarizeBrief("agents.oncall", oncallBrief({ counts: null }))).toBeUndefined();
+    expect(
+      summarizeBrief("agents.oncall", oncallBrief({ counts: { messages: 1 } })),
+    ).toBeUndefined();
+    expect(
+      summarizeBrief(
+        "agents.oncall",
+        oncallBrief({ counts: { messages: "61", priorIncidents: 1 } }),
+      ),
+    ).toBeUndefined();
+  });
+
+  test("a lane that is not an array is not summarizable", () => {
+    expect(summarizeBrief("agents.oncall", oncallBrief({ messages: null }))).toBeUndefined();
+    expect(summarizeBrief("agents.oncall", oncallBrief({ priorIncidents: 3 }))).toBeUndefined();
+  });
+
+  test("a lane entry with no string id is not summarizable", () => {
+    expect(summarizeBrief("agents.oncall", oncallBrief({ messages: [{}] }))).toBeUndefined();
+    expect(
+      summarizeBrief("agents.oncall", oncallBrief({ priorIncidents: [{ id: 7 }] })),
+    ).toBeUndefined();
+  });
+
+  test("a count BELOW its own listed length is a brief contradicting itself", () => {
+    // The cap makes a listed array SHORTER than its count, never longer. Digesting the reverse
+    // would publish a number the entry list visibly disproves.
+    expect(
+      summarizeBrief("agents.oncall", oncallBrief({ counts: { messages: 1, priorIncidents: 1 } })),
+    ).toBeUndefined();
+  });
+});

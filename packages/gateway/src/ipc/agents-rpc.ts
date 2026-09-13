@@ -21,6 +21,12 @@ import { emitHuddleBrief } from "../agents/huddle.ts";
 import { emitImpactBrief } from "../agents/impact.ts";
 import { emitJanitorBrief } from "../agents/janitor.ts";
 import { emitNegotiateBrief, MAX_SINCE_MS as MAX_NEGOTIATE_SINCE_MS } from "../agents/negotiate.ts";
+import {
+  emitOncallBrief,
+  OncallIdentityUnresolvedError,
+  OncallIncidentNotFoundError,
+  OncallNoActiveIncidentError,
+} from "../agents/oncall.ts";
 import { emitOwnershipBrief } from "../agents/ownership.ts";
 import { emitPreflightBrief } from "../agents/preflight.ts";
 import { emitPremortemBrief } from "../agents/premortem.ts";
@@ -241,6 +247,7 @@ function newSessionId(
     | "catchup"
     | "changelog"
     | "standup"
+    | "oncall"
     | "ghost"
     | "glossary"
     | "conflicts"
@@ -495,14 +502,14 @@ const CHANGELOG_DEFAULT_SINCE_MS = 7 * 24 * 60 * 60 * 1000;
  * shape — this is the empty array, which `resolveScope`/`resolveDeployPattern` already treat as
  * "no configured services" rather than an error.
  */
-function changelogServiceConfigs(ctx: AgentsRpcContext): readonly ServiceConfig[] {
+function agentServiceConfigs(ctx: AgentsRpcContext, method: string): readonly ServiceConfig[] {
   const { configDir } = ctx;
   if (configDir === undefined) return [];
   try {
     return [...loadNimbusServiceConfigsFromConfigDir(configDir).values()];
   } catch (err) {
     process.stderr.write(
-      `agents.changelog: failed to load [metrics.dora.*]/[ci.service.*] from nimbus.toml ` +
+      `${method}: failed to load [metrics.dora.*]/[ci.service.*] from nimbus.toml ` +
         `(${err instanceof Error ? err.message : String(err)}); service scoping will be ` +
         `unavailable until this is fixed.\n`,
     );
@@ -520,7 +527,7 @@ async function handleChangelog(
     sessionId: newSessionId("changelog"),
     lookbackMs: input.sinceMs ?? CHANGELOG_DEFAULT_SINCE_MS,
     service: input.service ?? null,
-    serviceConfigs: changelogServiceConfigs(ctx),
+    serviceConfigs: agentServiceConfigs(ctx, "agents.changelog"),
     notify: ctx.notify,
     ...(ctx.runner === undefined ? {} : { runner: ctx.runner }),
   });
@@ -596,6 +603,221 @@ async function handleStandup(
     });
   } catch (err) {
     if (err instanceof StandupIdentityUnresolvedError) {
+      throw new AgentsRpcError(-32000, err.message);
+    }
+    throw err;
+  }
+}
+
+/**
+ * Which caller kinds may use `agents.oncall`'s OWNER-SCOPED zero-parameter shape.
+ *
+ * TOTAL over `ClientKind` on purpose, for the reason `EGRESS_BEARING_CLIENT_KINDS` is: written as
+ * a `Partial` or a `Map`, a future transport would be an `undefined` lookup and would silently
+ * take whichever branch the `??` picked. As a total `Record`, adding a member to `ClientKind`
+ * without deciding its answer does not compile.
+ *
+ * **This is deliberately NOT `EGRESS_BEARING_CLIENT_KINDS` reused.** That map answers "do this
+ * kind's briefs leave the machine", and it maps `chatops` to `null` because a ChatOps post is
+ * ledgered at the post rather than at the brief. Here `chatops` must be FALSE: a ChatOps caller is
+ * a person in a shared room, and handing them the gateway owner's active incident is precisely the
+ * leak this table exists to prevent. Two questions that agree on six of seven members and differ
+ * on the one that matters are two tables, not one.
+ *
+ * **Why `unknown` is TRUE, which looks like a hole and is not.** `session.declareKind` is called by
+ * exactly one client in this repo — the MCP adapter (`packages/cli/src/mcp/adapter.ts`). The plain
+ * CLI declares nothing, so `nimbus oncall` from the owner's terminal arrives as `unknown`; making
+ * that false would refuse the command's primary use. What `unknown` actually means is "reached the
+ * gateway over the local socket without declaring", and the socket's access control is the
+ * filesystem — the same boundary the CLI already relies on for every other method. The three kinds
+ * that must be refused are all DERIVED and can never be declared: `http` is set by the route
+ * handler after checking a bearer token, `chatops` by the ChatOps subsystem, `fleet` by the
+ * scheduler. So an external caller cannot reach `unknown` by staying quiet — it would have to be
+ * on the socket already, which is the owner's machine.
+ *
+ * `mcp` is false even though it is also on that socket: an MCP client is a model with a tool loop,
+ * and `standup`'s exclusion reasoning applies unchanged — a caller that cannot establish who it is
+ * would receive the OWNER's incident. The shipped adapter disables its agent tools outright when
+ * `declareKind` is unsupported, so it cannot reach this by declining to declare.
+ *
+ * `fleet` is true: a fleet run is the gateway's own scheduler on the owner's machine, executing a
+ * job the owner wrote into their own config. In practice a fleet job names its service, so it
+ * takes the explicit shape anyway and never reaches this.
+ */
+const OWNER_SCOPED_ONCALL_ALLOWED: Readonly<Record<ClientKind, boolean>> = Object.freeze({
+  cli: true,
+  ui: true,
+  unknown: true,
+  fleet: true,
+  mcp: false,
+  http: false,
+  chatops: false,
+});
+
+/**
+ * Whether this caller may ask "which incident is mine" rather than naming one.
+ *
+ * `undefined` — no caller descriptor at all — is ALLOWED, and that is coherent rather than a
+ * fail-open gap: the socket dispatcher sets `caller` unconditionally
+ * (`ipc/server/dispatchers.ts`), so `undefined` is reachable only from an in-process caller or a
+ * unit test, which is strictly more local than the socket. Every kind that must be refused is
+ * derived by the gateway and therefore always present. Refusing `undefined` while allowing
+ * `unknown` would be the incoherent choice — both mean "no kind was declared" — and would buy
+ * nothing an attacker could not sidestep by connecting to the socket.
+ */
+function mayUseOwnerScopedOncall(caller: { kind: ClientKind } | undefined): boolean {
+  return caller === undefined ? true : OWNER_SCOPED_ONCALL_ALLOWED[caller.kind];
+}
+
+const MAX_INCIDENT_ID_LEN = 512;
+
+/**
+ * `agents.oncall` takes an OPTIONAL incident id, an OPTIONAL service, and an optional chat window.
+ *
+ * Three shapes, in a fixed precedence: `incidentId` names the incident outright, `service` narrows
+ * to one service's PagerDuty ids, and supplying neither resolves the LOCAL OWNER's identity and
+ * asks which incidents are assigned to them.
+ *
+ * **The third shape is refused for an external caller, and that refusal is invariant `I36`'s
+ * shape.** `agents.oncall` is externally permitted as a method, but its zero-parameter form
+ * resolves `[user] mePersonId` / `git config user.email` / the OS username — so over HTTP, MCP or
+ * ChatOps it is meaningless in one direction and leaky in the other: a bearer token cannot ask
+ * about itself, and would receive the OWNER's active incident, assignees included. That is exactly
+ * the concern that keeps `agents.standup` off every external surface entirely. The difference here
+ * is that `oncall` HAS an answerable external shape — name the service — so the bound goes on the
+ * SHAPE rather than on the method, the same way `requireFileParam` refuses federation alongside a
+ * forge coordinate rather than refusing `agents.ghost`.
+ *
+ * **Refused, never silently narrowed.** Answering an external zero-parameter call by returning
+ * nothing would tell a caller who asked "what is on fire" that the answer is "nothing" — which on
+ * this command is the one wrong answer that reads like a good one.
+ *
+ * `incidentId` and `service` are mutually exclusive, mirroring `ownership`'s `path` vs `service`:
+ * an explicit incident already determines its service, so accepting both invites a caller to pass
+ * a contradictory pair and get the incident's own service silently.
+ */
+function requireOncallParams(
+  params: unknown,
+  caller: { kind: ClientKind } | undefined,
+): { incidentId?: string; service?: string; sinceMs?: number } {
+  if (params === null || typeof params !== "object" || Array.isArray(params)) {
+    throw new AgentsRpcError(-32602, "agents.oncall requires an object payload");
+  }
+  const p = params as { incidentId?: unknown; service?: unknown; sinceMs?: unknown };
+  const out: { incidentId?: string; service?: string; sinceMs?: number } = {};
+
+  if (p.incidentId !== undefined) {
+    if (
+      typeof p.incidentId !== "string" ||
+      p.incidentId.trim() === "" ||
+      p.incidentId.length > MAX_INCIDENT_ID_LEN
+    ) {
+      throw new AgentsRpcError(
+        -32602,
+        `incidentId must be a non-empty string up to ${MAX_INCIDENT_ID_LEN} characters`,
+      );
+    }
+    out.incidentId = p.incidentId.trim();
+  }
+
+  if (p.service !== undefined) {
+    if (
+      typeof p.service !== "string" ||
+      p.service.trim() === "" ||
+      p.service.length > MAX_SERVICE_LEN
+    ) {
+      throw new AgentsRpcError(
+        -32602,
+        `service must be a non-empty string up to ${MAX_SERVICE_LEN} characters`,
+      );
+    }
+    out.service = p.service.trim();
+  }
+
+  if (out.incidentId !== undefined && out.service !== undefined) {
+    throw new AgentsRpcError(
+      -32602,
+      "agents.oncall accepts incidentId or service, not both — an explicit incident already " +
+        "determines its service",
+    );
+  }
+
+  if (p.sinceMs !== undefined) {
+    if (
+      typeof p.sinceMs !== "number" ||
+      !Number.isInteger(p.sinceMs) ||
+      p.sinceMs < 0 ||
+      p.sinceMs > MAX_SINCE_MS
+    ) {
+      throw new AgentsRpcError(
+        -32602,
+        `sinceMs must be a non-negative integer up to ${MAX_SINCE_MS} ms (90 days)`,
+      );
+    }
+    out.sinceMs = p.sinceMs;
+  }
+
+  if (
+    out.incidentId === undefined &&
+    out.service === undefined &&
+    !mayUseOwnerScopedOncall(caller)
+  ) {
+    throw new AgentsRpcError(
+      -32602,
+      "agents.oncall requires incidentId or service on this surface: without one it reports the " +
+        "incidents assigned to the gateway owner, which is not what a remote caller is asking for.",
+    );
+  }
+
+  return out;
+}
+
+/**
+ * The fallback CHAT window when a caller omits `sinceMs` — matches the CLI's own `--since 24h`
+ * default and the roadmap row's "Slack threads … in the last 24 h".
+ *
+ * Scoped to chat alone. The deploy, change and prior-incident lanes anchor on the incident's own
+ * open time and are not windowed by this at all — see `ONCALL_DEFAULT_CHAT_LOOKBACK_MS`.
+ */
+const ONCALL_DEFAULT_SINCE_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * Resolves `[user] mePersonId` and the DORA/CI service bindings, then delegates.
+ *
+ * Config is read HERE rather than inside the agent, mirroring `handleCatchup`/`handleStandup`:
+ * `agents/oncall.ts` keeps no config-file dependency, and re-reading per call means a `[user]` or
+ * `[metrics.dora.*]` edit applies without a gateway restart.
+ *
+ * All three refusals are translated to `-32000` rather than allowed to propagate raw. Each is a
+ * REFUSAL the caller must act on rather than an internal fault, and the CLI prints the message
+ * verbatim. `-32602` would be wrong for every one of them — the params are fine; it is the
+ * machine's state that cannot answer.
+ */
+async function handleOncall(
+  params: unknown,
+  ctx: AgentsRpcContext,
+): Promise<{ sessionId: string }> {
+  const input = requireOncallParams(params, ctx.caller);
+  const userToml = ctx.configDir === undefined ? {} : loadNimbusUserFromConfigDir(ctx.configDir);
+  const serviceConfigs = agentServiceConfigs(ctx, "agents.oncall");
+  try {
+    return await emitOncallBrief({
+      db: ctx.db,
+      sessionId: newSessionId("oncall"),
+      ...(input.incidentId === undefined ? {} : { incidentId: input.incidentId }),
+      ...(input.service === undefined ? {} : { serviceId: input.service }),
+      chatLookbackMs: input.sinceMs ?? ONCALL_DEFAULT_SINCE_MS,
+      serviceConfigs,
+      ...(userToml.mePersonId === undefined ? {} : { mePersonIdOverride: userToml.mePersonId }),
+      notify: ctx.notify,
+      ...(ctx.runner === undefined ? {} : { runner: ctx.runner }),
+    });
+  } catch (err) {
+    if (
+      err instanceof OncallNoActiveIncidentError ||
+      err instanceof OncallIncidentNotFoundError ||
+      err instanceof OncallIdentityUnresolvedError
+    ) {
       throw new AgentsRpcError(-32000, err.message);
     }
     throw err;
@@ -1205,6 +1427,7 @@ const AGENTS_RPC_HANDLERS = {
   "agents.catchup": handleCatchup,
   "agents.changelog": handleChangelog,
   "agents.standup": handleStandup,
+  "agents.oncall": handleOncall,
   "agents.ghost": handleGhost,
   "agents.conflicts": handleConflicts,
   "agents.huddle": handleHuddle,
@@ -1348,6 +1571,14 @@ export const FLEET_ELIGIBILITY = Object.freeze({
   // split a decision that has one answer. And unlike `negotiate`, there is no dossier concern to
   // weigh: a standup is about its own owner, and no request field can point it at anyone else.
   "agents.standup": "eligible",
+  // Eligible, and reasoned about INDEPENDENTLY of the shape bound `requireOncallParams`
+  // applies to external callers. A fleet job is owner-configured in advance and names its
+  // `service`, so it takes the explicit shape and never reaches the owner-scoped selection —
+  // and even if it did, `fleet` is the gateway's own scheduler on the owner's own machine,
+  // which is the one unattended principal for whom "the owner's incidents" is the right answer.
+  // Pure read, no side effects. What a nightly run is FOR here is recurrence: the prior-incident
+  // lane is the half that moves between runs, and `nimbus fleet digest` reports exactly that.
+  "agents.oncall": "eligible",
   // Reasoned about INDEPENDENTLY of `agents.changelog`'s external exclusion above — that set was
   // reasoned about for an ARBITRARY NETWORK CALLER; a fleet is a different principal,
   // owner-configured in advance and absent when it fires. A weekly changelog produced overnight

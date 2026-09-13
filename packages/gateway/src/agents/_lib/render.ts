@@ -10,6 +10,7 @@ import {
   negotiateOwnershipDisclosures,
   negotiateSubjectVoice,
   negotiateWindowDisclosure,
+  oncallDisclosures,
   standupDisclosures,
   whyChangeSubjectDisclosure,
   windowLabel,
@@ -46,6 +47,7 @@ import type {
   NegotiateTickets,
   NegotiateWriting,
 } from "./negotiate-types.ts";
+import type { OncallBrief, OncallIncident } from "./oncall-types.ts";
 import type { OwnershipBrief, OwnershipTargetView } from "./ownership-types.ts";
 import type { PremortemBrief } from "./premortem-types.ts";
 import type { StandupBrief } from "./standup-types.ts";
@@ -1314,4 +1316,201 @@ function renderStandupSlackSection(brief: StandupBrief): string {
   // splicing at index 3 puts this exactly where the body starts.
   const parts = section.split("\n");
   return [...parts.slice(0, 3), summary, "", ...parts.slice(3)].join("\n");
+}
+
+/**
+ * `nimbus oncall` — one incident, and what the index can say about the change around it.
+ *
+ * A `#` title rather than `##`, for the reason `renderStandup` documents: `preambleBody`
+ * (`markdown-sections.ts`) stops at the first LEVEL-2 heading, so under a level-2 title the
+ * preamble would be empty and `contractViolations` could never reach the I31 disclosures that
+ * live there — which on this brief includes the sync-freshness line qualifying the whole
+ * selection.
+ */
+export function renderOncall(brief: OncallBrief, opts?: RenderOpts): string {
+  const preamble = [
+    "",
+    `_incident: ${renderOncallIncidentLine(brief.incident)}_`,
+    `_chat window: last ${windowLabel(brief.query.nowMs - brief.query.sinceMs)} (${isoMinuteUtc(brief.query.sinceMs)} → ${isoMinuteUtc(brief.query.nowMs)})_`,
+    ...oncallDisclosures({
+      syncAgeMs: brief.syncFreshness.ageMs,
+      syncUnknown: brief.syncFreshness.reason !== null,
+      hasDeployment: brief.deployment !== null,
+      otherActiveCount: brief.otherActiveIncidents.length,
+      truncatedCount: brief.truncatedCount,
+    }).map((d) => d.line),
+  ].join("\n");
+
+  const sections = [
+    renderOncallIncidentSection(brief),
+    renderOncallDeploymentSection(brief),
+    renderOncallChangeSection(brief),
+    renderOncallCiSection(brief),
+    renderEntrySection("Chat", brief.messages, isoMinuteUtc),
+    renderOncallPriorSection(brief),
+  ].join("\n");
+
+  return assembleBrief("# On-call", [preamble, sections], brief, opts);
+}
+
+/** The incident as one preamble line: title, then the fact that decides how urgent it is. */
+function renderOncallIncidentLine(i: OncallIncident): string {
+  const title = escapeMarkdownLinkText(stripLineStructureChars(i.title));
+  const href = i.url === null ? null : safeEvidenceHref(i.url);
+  const head = href === null ? title : `[${title}](${href})`;
+  // `status unknown` rather than omitting the field: a missing status is WHY this incident counts
+  // as active at all (`isActiveStatus` treats absent as active), so hiding it would leave the
+  // reader unable to see why a row they do not recognise was selected.
+  return `${head} — ${i.status ?? "status unknown"}`;
+}
+
+function renderOncallIncidentSection(brief: OncallBrief): string {
+  const i = brief.incident;
+  const lines = [
+    `- **Status:** ${i.status ?? "_not recorded_"}`,
+    `- **Severity:** ${i.severity ?? "_not recorded_"}`,
+    `- **Urgency:** ${i.urgency ?? "_not recorded_"}`,
+    `- **Opened:** ${i.openedAtMs === null ? "_not recorded_" : isoMinuteUtc(i.openedAtMs)}`,
+    `- **Assigned to:** ${
+      i.assigneeEmails.length === 0
+        ? "_nobody recorded_"
+        : i.assigneeEmails.map((e) => stripLineStructureChars(e)).join(", ")
+    }`,
+    `- **Service:** ${oncallServiceLabel(brief)}`,
+  ];
+
+  // Named rather than only counted, so the reader can act on a runner-up without looking it up.
+  const others =
+    brief.otherActiveIncidents.length === 0
+      ? []
+      : [
+          "",
+          "Other active incidents assigned to you:",
+          ...brief.otherActiveIncidents.map(
+            (o) =>
+              `- \`${stripLineStructureChars(o.id)}\` — ${escapeMarkdownLinkText(stripLineStructureChars(o.title))}` +
+              `${o.openedAtMs === null ? "" : ` (opened ${isoMinuteUtc(o.openedAtMs)})`}`,
+          ),
+        ];
+
+  return ["", "## Incident", "", ...lines, ...others].join("\n");
+}
+
+/**
+ * The service this incident maps to — or the reason it maps to nothing.
+ *
+ * An unmapped PagerDuty id is printed rather than swallowed, because it is the value the reader
+ * has to paste into `nimbus.toml` to fix the four empty sections below, and `## Gaps` names the
+ * remedy but cannot name the id without duplicating this lookup.
+ */
+function oncallServiceLabel(brief: OncallBrief): string {
+  if (brief.binding.nimbusServiceId !== null) {
+    return stripLineStructureChars(brief.binding.nimbusServiceId);
+  }
+  if (brief.binding.pagerdutyServiceId === null) return "_not recorded_";
+  return `_unmapped (\`${stripLineStructureChars(brief.binding.pagerdutyServiceId)}\`)_`;
+}
+
+/**
+ * The heading is "Last deployment before the alert", never "the deployment that caused it".
+ *
+ * The roadmap row asked for "the last deployment before the alert fired" and then for "the
+ * triggering PR", and only the first is answerable: nothing in the index links a deployment to
+ * an incident. The heading states the temporal claim and the preamble disclosure states its
+ * limit; naming it a cause in either place would be the brief asserting a relationship it
+ * derived from two timestamps.
+ */
+function renderOncallDeploymentSection(brief: OncallBrief): string {
+  const d = brief.deployment;
+  if (d === null) {
+    return ["", "## Last deployment before the alert", "", "_None found._"].join("\n");
+  }
+  const title = escapeMarkdownLinkText(stripLineStructureChars(d.title));
+  const href = d.workflowUrl === null ? null : safeEvidenceHref(d.workflowUrl);
+  return [
+    "",
+    "## Last deployment before the alert",
+    "",
+    `- **Deployment:** ${href === null ? title : `[${title}](${href})`}`,
+    `- **Started:** ${isoMinuteUtc(d.startedAtMs)}`,
+    `- **Environment:** ${stripLineStructureChars(d.environment)}`,
+    `- **Result:** ${stripLineStructureChars(d.conclusion)}`,
+    `- **Commit:** \`${stripLineStructureChars(d.sha)}\``,
+  ].join("\n");
+}
+
+/**
+ * The change that shipped in that deployment — title and DIFFSTAT, never a diff.
+ *
+ * No connector indexes a patch, a changed-file list or a commit body, so three integers is the
+ * whole of what can be honestly reported here. `## Gaps` says so unconditionally rather than
+ * letting a size line read as a summary of what the change did.
+ */
+function renderOncallChangeSection(brief: OncallBrief): string {
+  const c = brief.change;
+  if (c === null) {
+    return ["", "## Change in that deployment", "", "_None found._"].join("\n");
+  }
+  const title = escapeMarkdownLinkText(stripLineStructureChars(c.title));
+  const href = c.url === null ? null : safeEvidenceHref(c.url);
+  // All three counts absent is a DIFFERENT statement from "+0 −0 across 0 files", which is a
+  // legitimate value for an empty-commit deploy. Only the all-absent case is reported as unknown.
+  const stat =
+    c.additions === null && c.deletions === null && c.changedFiles === null
+      ? "_line counts not recorded_"
+      : `+${String(c.additions ?? 0)} −${String(c.deletions ?? 0)} across ` +
+        `${String(c.changedFiles ?? 0)} file${(c.changedFiles ?? 0) === 1 ? "" : "s"}`;
+  return [
+    "",
+    "## Change in that deployment",
+    "",
+    `- **Pull request:** ${href === null ? title : `[${title}](${href})`}`,
+    `- **Merged:** ${c.mergedAtMs === null ? "_not recorded_" : isoMinuteUtc(c.mergedAtMs)}`,
+    `- **Size:** ${stat}`,
+  ].join("\n");
+}
+
+function renderOncallCiSection(brief: OncallBrief): string {
+  const r = brief.ciRun;
+  if (r === null) return ["", "## CI", "", "_None found._"].join("\n");
+  const title = escapeMarkdownLinkText(stripLineStructureChars(r.title));
+  const href = r.url === null ? null : safeEvidenceHref(r.url);
+  return [
+    "",
+    "## CI",
+    "",
+    `- **Run:** ${href === null ? title : `[${title}](${href})`}`,
+    `- **Result:** ${r.conclusion === null ? "_not recorded_" : stripLineStructureChars(r.conclusion)}`,
+    `- **At:** ${isoMinuteUtc(r.atMs)}`,
+  ].join("\n");
+}
+
+/**
+ * Earlier incidents on the same service — who closed each and when, never HOW.
+ *
+ * The resolution narrative does not exist in the index (an incident's body is its status string),
+ * so this lane's value is RECURRENCE: the count is the signal, and it is printed above the list
+ * for that reason. `## Gaps` states the missing narrative unconditionally.
+ */
+function renderOncallPriorSection(brief: OncallBrief): string {
+  const rows = brief.priorIncidents;
+  if (rows.length === 0) {
+    return ["", "## Prior incidents on this service", "", "_None found._"].join("\n");
+  }
+  const n = brief.counts.priorIncidents;
+  const summary = `_${String(n)} earlier incident${n === 1 ? "" : "s"} on this service._`;
+  const body = rows.map((p) => {
+    const title = escapeMarkdownLinkText(stripLineStructureChars(p.title));
+    const href = p.url === null ? null : safeEvidenceHref(p.url);
+    const head = href === null ? title : `[${title}](${href})`;
+    const opened = p.openedAtMs === null ? "date unknown" : isoMinuteUtc(p.openedAtMs);
+    const closed =
+      p.resolvedAtMs === null
+        ? "still open"
+        : `closed ${isoMinuteUtc(p.resolvedAtMs)}${
+            p.resolvedByEmail === null ? "" : ` by ${stripLineStructureChars(p.resolvedByEmail)}`
+          }`;
+    return `- ${head} — opened ${opened}, ${closed}`;
+  });
+  return ["", "## Prior incidents on this service", "", summary, "", ...body].join("\n");
 }

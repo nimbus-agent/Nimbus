@@ -41,7 +41,7 @@ describe("RESERVED_HEADINGS_BY_KIND", () => {
     ]);
   });
 
-  test("covers exactly the sixteen brief kinds", () => {
+  test("covers exactly the seventeen brief kinds", () => {
     expect(Object.keys(RESERVED_HEADINGS_BY_KIND).sort()).toEqual([
       "catchup",
       "changelog",
@@ -54,6 +54,7 @@ describe("RESERVED_HEADINGS_BY_KIND", () => {
       "impact",
       "janitor",
       "negotiate",
+      "oncall",
       "ownership",
       "preflight",
       "premortem",

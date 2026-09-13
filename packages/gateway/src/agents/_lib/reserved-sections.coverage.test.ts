@@ -15,6 +15,7 @@ import type {
 } from "./findings.ts";
 import type { GlossaryBrief } from "./glossary-types.ts";
 import type { NegotiateBrief } from "./negotiate-types.ts";
+import type { OncallBrief } from "./oncall-types.ts";
 import type { OwnershipBrief } from "./ownership-types.ts";
 import type { PremortemBrief } from "./premortem-types.ts";
 import { renderGlossary } from "./render.ts";
@@ -381,6 +382,37 @@ const STANDUP: StandupBrief = {
   truncatedCount: 0,
 };
 
+const ONCALL: OncallBrief = {
+  kind: "oncall",
+  agentVersion: 1,
+  generatedAt: 0,
+  latencyMs: 0,
+  gaps: [GAP],
+  query: { sinceMs: -86_400_000, nowMs: 0 },
+  selection: "auto",
+  incident: {
+    id: "pagerduty:inc-1",
+    title: "Checkout 500s",
+    url: null,
+    status: "triggered",
+    severity: "P1",
+    urgency: "high",
+    openedAtMs: -3_600_000,
+    pagerdutyServiceId: "PSERVICE1",
+    assigneeEmails: ["me@example.com"],
+  },
+  otherActiveIncidents: [],
+  syncFreshness: { lastSyncMs: -60_000, ageMs: 60_000, reason: null },
+  binding: { nimbusServiceId: "checkout", pagerdutyServiceId: "PSERVICE1" },
+  deployment: null,
+  change: null,
+  ciRun: null,
+  messages: [],
+  priorIncidents: [],
+  counts: { messages: 0, priorIncidents: 0 },
+  truncatedCount: 0,
+};
+
 /**
  * Every brief kind, keyed by its own `kind` literal.
  *
@@ -395,6 +427,7 @@ const STANDUP: StandupBrief = {
 const BY_KIND: Readonly<Record<SynthInput["kind"], SynthInput>> = {
   expert: EXPERT,
   impact: IMPACT,
+  oncall: ONCALL,
   catchup: CATCHUP,
   ghost: GHOST,
   conflict: CONFLICT,

@@ -1,10 +1,7 @@
 import type { Database } from "bun:sqlite";
 import { codeUnitCompare } from "../util/code-unit-compare.ts";
-import {
-  finiteNumberField,
-  metadataRecord,
-  type StandupTimeBasis,
-} from "./_lib/standup-time-basis.ts";
+import { finiteNumberField, metadataRecord } from "./_lib/item-metadata.ts";
+import type { StandupTimeBasis } from "./_lib/standup-time-basis.ts";
 
 /**
  * ABSOLUTE epoch bounds, half-open `[fromMs, toMs)`.

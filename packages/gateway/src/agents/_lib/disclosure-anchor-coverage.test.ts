@@ -4,6 +4,7 @@ import {
   changelogDisclosures,
   negotiateOwnershipDisclosures,
   negotiateWindowDisclosure,
+  oncallDisclosures,
   standupDisclosures,
 } from "./brief-disclosures.ts";
 import type { NegotiateOwnership } from "./negotiate-types.ts";
@@ -185,5 +186,115 @@ describe("every sentence of a disclosure is anchored (F27)", () => {
     // none of the consequence — the exact shape F27 was opened for.
     const d = changelogTimeBasis();
     expect(d.anchors.some((a) => a.includes("under-report by sync lag"))).toBe(true);
+  });
+});
+
+describe("oncall disclosure anchors", () => {
+  /** Every oncall disclosure, with each conditional one switched on. */
+  function allOncall(): readonly Disclosure[] {
+    return oncallDisclosures({
+      syncAgeMs: 7_200_000,
+      syncUnknown: false,
+      hasDeployment: true,
+      otherActiveCount: 2,
+      truncatedCount: 4,
+    });
+  }
+
+  test("preamble anchors are not satisfiable by a sibling disclosure's line", () => {
+    // All four oncall disclosures share ONE scope (the preamble), so `contractViolations`
+    // searches the same text for every anchor. An anchor that also occurs in a sibling's line
+    // would let a rewrite drop its own disclosure entirely and still pass — the false-negative
+    // direction, which is the one that matters for an honesty guard.
+    const all = allOncall();
+    expect(all).toHaveLength(4);
+    for (const [i, d] of all.entries()) {
+      const siblings = all.filter((_, j) => j !== i).map((s) => s.line);
+      for (const anchor of d.anchors) {
+        expect(d.line).toContain(anchor);
+        for (const sibling of siblings) expect(sibling).not.toContain(anchor);
+      }
+    }
+  });
+
+  test("anchors stay in the 2-7 word band its neighbours use", () => {
+    // A near-verbatim clause is a rewrite BAN, not an anchor: it makes ordinary paraphrase a
+    // contract violation, so synthesis fails closed on every run and the feature ships inert.
+    for (const d of allOncall()) {
+      for (const anchor of d.anchors) {
+        const words = anchor.trim().split(/\s+/).length;
+        expect(words).toBeGreaterThanOrEqual(2);
+        expect(words).toBeLessThanOrEqual(7);
+      }
+    }
+  });
+
+  test("the sync-freshness disclosure is emitted unconditionally, on every shape", () => {
+    // THE load-bearing one. It qualifies which INCIDENT was selected rather than a count, so a
+    // brief that dropped it would present a possibly-closed incident as live with nothing on the
+    // page saying so. Emitted even when the sync is seconds old, because a line the reader only
+    // ever sees when something is wrong gives them no way to calibrate what it means.
+    for (const opts of [
+      { syncAgeMs: 0, syncUnknown: false },
+      { syncAgeMs: 86_400_000, syncUnknown: false },
+      { syncAgeMs: null, syncUnknown: true },
+    ]) {
+      const all = oncallDisclosures({
+        ...opts,
+        hasDeployment: false,
+        otherActiveCount: 0,
+        truncatedCount: 0,
+      });
+      expect(all).toHaveLength(1);
+      expect(all[0]?.anchors).toContain("may have been closed");
+    }
+  });
+
+  test("the sync-freshness disclosure anchors BOTH its sentences", () => {
+    // Sentence 1 names the SOURCE of the status; sentence 2 the consequence. A single anchor
+    // drawn from sentence 1 would let a rewrite keep the fact and drop the caution — exactly the
+    // F27 failure observed on `negotiate`.
+    const d = allOncall()[0];
+    if (d === undefined) throw new Error("sync-freshness disclosure missing");
+    expect(d.anchors).toContain("from the last PagerDuty sync");
+    expect(d.anchors).toContain("may have been closed");
+    expect(d.anchors.length).toBeGreaterThanOrEqual(sentenceCount(d.line));
+  });
+
+  test("the correlation disclosure appears only when there is a deployment to qualify", () => {
+    // With no deploy found there is no causal claim on the page to walk back, and an
+    // inapplicable caveat is how a reader learns to skip the ones that do apply.
+    const withDeploy = oncallDisclosures({
+      syncAgeMs: 0,
+      syncUnknown: false,
+      hasDeployment: true,
+      otherActiveCount: 0,
+      truncatedCount: 0,
+    });
+    const without = oncallDisclosures({
+      syncAgeMs: 0,
+      syncUnknown: false,
+      hasDeployment: false,
+      otherActiveCount: 0,
+      truncatedCount: 0,
+    });
+    expect(withDeploy.some((d) => d.anchors.includes("timing alone"))).toBe(true);
+    expect(without.some((d) => d.anchors.includes("timing alone"))).toBe(false);
+  });
+
+  test("the correlation disclosure anchors its it-is-not-a-cause sentence", () => {
+    // Named explicitly rather than left to the count: this is the sentence standing between a
+    // timestamp comparison and a reader reading it as a root cause.
+    const d = allOncall().find((x) => x.anchors.includes("timing alone"));
+    if (d === undefined) throw new Error("correlation disclosure missing");
+    expect(d.anchors).toContain("a place to look");
+  });
+
+  test("every anchor actually occurs in its own line", () => {
+    // An anchor absent from the text it guards is inert — it would fail on every brief, and a
+    // guard that always fails gets removed rather than fixed.
+    for (const d of allOncall()) {
+      for (const anchor of d.anchors) expect(d.line).toContain(anchor);
+    }
   });
 });

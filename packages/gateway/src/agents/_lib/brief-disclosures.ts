@@ -494,3 +494,111 @@ export function standupDisclosures(b: {
   }
   return out;
 }
+
+// ---------------------------------------------------------------------------
+// oncall — interleaved
+// ---------------------------------------------------------------------------
+
+/**
+ * Human-readable age for the PagerDuty sync, coarse on purpose.
+ *
+ * Minutes under an hour, whole hours under a day, whole days above — an on-call reader is
+ * deciding "can I trust this status", and that decision does not change between 3 h 12 m and
+ * 3 h 40 m. Printing a precise duration would imply a precision the underlying
+ * `sync_state.last_sync_at` does not have, since it records when the run finished rather than
+ * when any particular incident was read.
+ */
+function syncAgeLabel(ageMs: number): string {
+  const mins = Math.floor(ageMs / 60_000);
+  if (mins < 1) return "less than a minute ago";
+  if (mins < 60) return `${String(mins)} minute${mins === 1 ? "" : "s"} ago`;
+  const hours = Math.floor(mins / 60);
+  if (hours < 24) return `${String(hours)} hour${hours === 1 ? "" : "s"} ago`;
+  const days = Math.floor(hours / 24);
+  return `${String(days)} day${days === 1 ? "" : "s"} ago`;
+}
+
+/**
+ * `nimbus oncall`'s interleaved disclosures — all in the PREAMBLE, because each qualifies the
+ * incident SELECTION and therefore every section beneath it.
+ *
+ * **The sync-freshness line is the load-bearing one and it is UNCONDITIONAL.** Every other brief
+ * in this repo can disclose staleness as a footnote about its counts; here staleness decides
+ * WHICH INCIDENT the brief is about. `metrics/dora.ts` already records the mechanism in its own
+ * comment — "a resolved incident whose row has not been re-synced still reads `triggered`" — and
+ * what that meant for DORA was a metric that moved with sync lag. What it means here is that an
+ * engineer can be handed a brief about an incident that closed an hour ago, with nothing on the
+ * page saying so. It is emitted even when the sync is seconds old, because a reader who only
+ * sees this line when something is wrong has no way to calibrate what it means when it appears.
+ *
+ * **The correlation line is conditional on there being a deployment to qualify.** With no deploy
+ * found there is no causal claim on the page to walk back, and an inapplicable caveat is how a
+ * reader learns to skip the ones that apply.
+ *
+ * Anchors are 2–7 words, matching this module's existing ones: `synthesize.ts` asks the model to
+ * REWRITE this prose, so a near-verbatim twelve-word clause makes ordinary paraphrase a
+ * `contract_violation` and synthesis would fail closed on every run — shipping the feature inert.
+ * Each anchor is the shortest fragment that cannot survive its disclosure's removal, and no
+ * anchor may be satisfiable by a SIBLING's line, which `disclosure-anchor-coverage.test.ts`
+ * checks directly.
+ */
+export function oncallDisclosures(b: {
+  readonly syncAgeMs: number | null;
+  readonly syncUnknown: boolean;
+  readonly hasDeployment: boolean;
+  readonly otherActiveCount: number;
+  readonly truncatedCount: number;
+}): readonly Disclosure[] {
+  const out: Disclosure[] = [];
+
+  out.push({
+    scope: { kind: "preamble" },
+    line: b.syncUnknown
+      ? "Incident status comes from the last PagerDuty sync, and this index has no record of one " +
+        "having completed — so an incident shown here as open may have been closed already."
+      : `Incident status comes from the last PagerDuty sync, which ran ${syncAgeLabel(b.syncAgeMs ?? 0)} — ` +
+        "so an incident shown here as open may have been closed since.",
+    // Clause 1 names the SOURCE of the status, clause 2 the consequence. The second anchor is the
+    // load-bearing half: a rewrite that keeps "comes from the last PagerDuty sync" and drops the
+    // "may have been closed" warning has kept a fact and lost the caution, which is the exact
+    // failure observed on `negotiate`. Neither fragment occurs in a sibling line below.
+    anchors: ["from the last PagerDuty sync", "may have been closed"],
+  });
+
+  if (b.hasDeployment) {
+    out.push({
+      scope: { kind: "preamble" },
+      line:
+        "The deployment below is the last one recorded before this incident opened. That is " +
+        "timing alone — nothing in the index links a deployment to an incident, so it is a place " +
+        "to look rather than a cause.",
+      // "timing alone" is the contrast being disclosed and cannot survive the sentence losing its
+      // point; "a place to look" guards the second independent claim, which a single anchor drawn
+      // from the first sentence would leave free to be dropped.
+      anchors: ["timing alone", "a place to look"],
+    });
+  }
+
+  if (b.otherActiveCount > 0) {
+    const n = b.otherActiveCount;
+    out.push({
+      scope: { kind: "preamble" },
+      line:
+        `${String(n)} other active incident${n === 1 ? " is" : "s are"} assigned to you and ` +
+        `${n === 1 ? "is" : "are"} named below; this brief covers the most recently opened one.`,
+      anchors: ["covers the most recently opened one"],
+    });
+  }
+
+  if (b.truncatedCount > 0) {
+    out.push({
+      scope: { kind: "preamble" },
+      line:
+        `${String(b.truncatedCount)} further ` +
+        `${entryClause(b.truncatedCount, "wasWere")} truncated at the display limit.`,
+      anchors: ["truncated at the display limit"],
+    });
+  }
+
+  return out;
+}

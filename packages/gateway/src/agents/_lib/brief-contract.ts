@@ -7,6 +7,7 @@ import {
   negotiateNotComputedDisclosure,
   negotiateOwnershipDisclosures,
   negotiateWindowDisclosure,
+  oncallDisclosures,
   standupDisclosures,
   whyChangeSubjectDisclosure,
 } from "./brief-disclosures.ts";
@@ -105,8 +106,23 @@ export function requiredPhrases(brief: SynthInput): readonly Disclosure[] {
   // Every standup disclosure is interleaved PREAMBLE prose the model is asked to rewrite; its
   // two standing notes live in the reserved `## Gaps` section instead and need no anchor.
   if (brief.kind === "standup") return standupDisclosures(brief);
+  // Every oncall disclosure is interleaved PREAMBLE prose the model is asked to rewrite — the
+  // sync-freshness line above all, which qualifies WHICH INCIDENT was selected rather than a
+  // count. Its three standing substrate notes live in the reserved `## Gaps` section instead
+  // and need no anchor. Built from the SAME function and the SAME predicates the renderer
+  // calls, so the guard can neither require a sentence the brief never rendered nor miss one
+  // it did.
+  if (brief.kind === "oncall") {
+    return oncallDisclosures({
+      syncAgeMs: brief.syncFreshness.ageMs,
+      syncUnknown: brief.syncFreshness.reason !== null,
+      hasDeployment: brief.deployment !== null,
+      otherActiveCount: brief.otherActiveIncidents.length,
+      truncatedCount: brief.truncatedCount,
+    });
+  }
   // Every other brief kind returns [] until its contractual strings are added.
-  // Listed explicitly so a sixteenth kind is a COMPILE error, not a silent [].
+  // Listed explicitly so a seventeenth kind is a COMPILE error, not a silent [].
   if (
     brief.kind === "expert" ||
     brief.kind === "impact" ||

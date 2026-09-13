@@ -18,6 +18,96 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
 
 ## Post-Phase-6 deliveries
 
+- **2026-09-13 — `nimbus oncall`, the seventeenth built-in agent.** Fourth row of the v0.1.1 CLI
+  batch, after `nimbus index health`, `nimbus changelog` and `nimbus standup`. Briefs ONE incident
+  and what the local index can honestly say about the change around it — the last deployment before
+  it opened, the pull request merged into that deployment, that deployment's CI run, chat naming the
+  affected service, and earlier incidents on the same service:
+  `nimbus oncall [--incident <item-id>] [--service <name>] [--since <duration>]
+  [--format markdown|slack|plain] [--json]`. With no flags it auto-selects the newest active
+  incident assigned to the local owner. Read-only, no HITL, no migration, no new invariant, no new
+  egress class. `agents/oncall.ts` + `agents/oncall-queries.ts`, `agents.oncall`,
+  `oncall.briefReady`.
+
+  **Its roadmap trigger said "engineering work only — depends on the Phase 3 PagerDuty connector
+  (already shipped)". True about the connector, half true about everything else — the same pattern
+  `index health`, `changelog` and `standup` each hit.** Two promised capabilities have NO substrate
+  and are disclosed unconditionally in `## Gaps` rather than approximated. *"…and how it was
+  resolved"* is unanswerable: `pagerduty-sync.ts` writes `bodyPreview: status ?? ""`, so an
+  incident's entire indexed body is its status string — no resolution note, no remediation step, no
+  postmortem link. `resolved_by_email` answers who and `modified_at` approximates when; the
+  narrative does not exist. *"commit diff summary"* is likewise absent — no connector indexes a
+  patch, a changed-file list or a commit message body, so a diffstat is the whole of what can be
+  reported. A third joins them: OpsGenie has no connector, so the row's "PagerDuty/OpsGenie" is
+  PagerDuty-only and the brief says so rather than letting its silence read as "nobody is paged".
+
+  **"The triggering PR" overclaims, and the headings were rewritten to match what is derivable.**
+  Nothing in the index links a deployment to an incident. What IS derivable is the deploy that most
+  recently started before the incident opened, and the PR whose `merge_commit_sha` equals that
+  deploy's `sha` — the join `metrics/dora.ts`'s `prLeadTime` already ships, reused rather than
+  re-derived so the two can never disagree about which change a deploy carried. The sections are
+  `## Last deployment before the alert` and `## Change in that deployment`, with a preamble
+  disclosure stating that this is timing alone and a place to look rather than a cause.
+  `merge_commit_sha` is written by `github-sync.ts` ALONE, so the change lane is structurally empty
+  on GitLab and Bitbucket — disclosed under the existing `github_only_merge_data` gap name rather
+  than a new one. "The last time a SIMILAR alert fired" ships as same-SERVICE recurrence: the index
+  holds no alert-rule id, fingerprint or dedup key, so similarity would be string overlap dressed as
+  a causal claim, where recurrence is a fact an on-call engineer can act on.
+
+  **`metadata.status` is sync-freshness-dependent, and on this command that decides WHICH INCIDENT
+  the brief is about.** `metrics/dora.ts` already records the mechanism in its own comment — "a
+  resolved incident whose row has not been re-synced still reads `triggered`". For DORA that made a
+  metric move with sync lag; here a stale sync puts an engineer in front of an incident that closed
+  an hour ago. `sync_state.last_sync_at` for `pagerduty` is read and its age printed in the preamble
+  UNCONDITIONALLY — including when the sync is seconds old, because a line seen only when something
+  is wrong gives the reader no way to calibrate what it means. It is an I31 anchored disclosure, and
+  both its sentences are anchored: a single anchor on the first would let a rewrite keep the fact
+  and drop the caution, the F27 failure observed on `negotiate`.
+
+  **Selecting nothing REFUSES** (`ERR_ONCALL_NO_ACTIVE_INCIDENT`) rather than emitting six empty
+  headings, which during an incident read as "you are clear" — the one wrong answer that looks like
+  a good one. Two sibling refusals stay deliberately distinct, because "nobody is paging you" and "I
+  cannot tell who you are" have opposite fixes: `ERR_ONCALL_IDENTITY_UNRESOLVED` and
+  `ERR_ONCALL_INCIDENT_NOT_FOUND`. Identity reuses `agents/_lib/self-person.ts`'s `resolveSelfPerson`
+  UNCHANGED, so `oncall`, `standup` and `catchup` cannot disagree about who "me" is.
+
+  **Externally PERMITTED but SHAPE-BOUNDED — the first agent to take that middle path.**
+  `agents.changelog` is externally excluded for sequencing and `agents.standup` structurally;
+  `agents.oncall` is served over HTTP/MCP/ChatOps on `--incident`/`--service` while
+  `requireOncallParams` REFUSES the zero-parameter owner-scoped form for an external caller, which
+  would otherwise hand any `agents`-scope bearer token the OWNER's active incident and its
+  assignees. That is invariant `I36`'s shape — bound the SHAPE, not the method — and it needed a
+  purpose-built total `Record` over `ClientKind`, NOT a reuse of `EGRESS_BEARING_CLIENT_KINDS`,
+  which maps `chatops` to `null` and would have classified a shared-room caller as the local owner.
+  **`unknown` is allowed there and that is not a hole:** `session.declareKind` is called by exactly
+  one client in this repo (the MCP adapter), so the plain CLI arrives as `unknown`, and the three
+  kinds that must be refused — `http`, `chatops`, `fleet` — are all DERIVED by the gateway and can
+  never be declared, so an external caller cannot reach `unknown` by staying quiet.
+
+  **The deploy, change, CI and chat lanes ALL scope through `ServiceConfig`**, so an incident whose
+  PagerDuty service maps to no configured Nimbus service leaves four sections structurally empty.
+  That is disclosed as its own conditional gap naming the unmapped PagerDuty id and the
+  `[metrics.dora.*]` / `[ci.service.*]` binding — the same one `nimbus metrics dora` uses — rather
+  than four quiet empties a reader would take for "nothing happened". `pre-mortem`'s
+  mapped-services-only bound, arrived at independently.
+
+  **Ten registration sites are compiler-forced, two more than `standup`'s eight** — the two extra
+  are `EXTERNAL_AGENT_NAMES` and `AGENT_PARAM_KINDS`, both consequences of going external. Flipping
+  `FLEET_ELIGIBILITY` to `"eligible"` failed the build until the digest extractor existed, exactly
+  as documented. **What is NOT compiler-forced and needed hand-correction:** `CLAUDE.md`,
+  `GEMINI.md` and `docs/SECURITY-INVARIANTS.md` each said I31 covers "all **sixteen** brief kinds"
+  (now seventeen); `docs/roadmap.md` said the externally permitted set is "eleven, not seventeen"
+  (now twelve of eighteen); and `disclosure-anchor-coverage.test.ts` is a HAND-MAINTAINED list
+  rather than a table total over kinds, so it silently skipped the new brief until oncall arms were
+  added — the same shape of gap `standup` had to close in `reserved-sections.coverage.test.ts`.
+
+  **Two pre-existing drifts fixed in passing.** `metadataRecord`/`finiteNumberField` lived in
+  `agents/_lib/standup-time-basis.ts` despite having nothing to do with a time basis; they moved to
+  a neutral `agents/_lib/item-metadata.ts` (with their tests) rather than being imported across from
+  another agent's windowing module or copied. And `.claude/commands/nimbus-agent-patterns.md` still
+  said "**fifteen** agent kinds" and listed `standup` among agents "deferred to a future phase" —
+  stale since 2026-09-12; it now reads seventeen and names both new agents.
+
 - **2026-09-12 — macOS releases ship their own full SQLite, so semantic search no longer needs
   Homebrew.** Closes #1505, the half of #1029 that #1503 deliberately left open. #1503 made
   `sqlite-vec` load for **developers and CI** by calling `Database.setCustomSQLite()` against a

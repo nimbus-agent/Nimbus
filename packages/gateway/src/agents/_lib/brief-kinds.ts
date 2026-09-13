@@ -12,6 +12,7 @@ import type {
 } from "./findings.ts";
 import type { GlossaryBrief } from "./glossary-types.ts";
 import type { NegotiateBrief } from "./negotiate-types.ts";
+import type { OncallBrief } from "./oncall-types.ts";
 import type { OwnershipBrief } from "./ownership-types.ts";
 import type { PremortemBrief } from "./premortem-types.ts";
 import type { StandupBrief } from "./standup-types.ts";
@@ -33,7 +34,8 @@ export type SynthInput =
   | PremortemBrief
   | NegotiateBrief
   | ChangelogBrief
-  | StandupBrief;
+  | StandupBrief
+  | OncallBrief;
 
 /**
  * Turns a missing dispatch arm into a COMPILE error.

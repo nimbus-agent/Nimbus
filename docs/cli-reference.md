@@ -794,6 +794,47 @@ nimbus standup --json
 
 ---
 
+### `nimbus oncall`
+
+The seventeenth built-in agent: **one incident, and everything the local index can honestly say about the change around it.** With no flags it briefs the newest active incident assigned to you; `--incident <item-id>` names one outright and `--service <name>` picks the newest active one on a configured service.
+
+```bash
+nimbus oncall
+nimbus oncall --service checkout
+nimbus oncall --incident "pagerduty:PXXXXX"
+nimbus oncall --since 3d --format slack
+```
+
+**Options:**
+
+| Flag | Description |
+|---|---|
+| `--incident <item-id>` | Brief this incident by its **index item id** (not its PagerDuty number — find one with `nimbus query --type incident`). Accepts a resolved incident, which is the postmortem case. Mutually exclusive with `--service`. |
+| `--service <name>` | Pick the newest active incident on this configured service. Mutually exclusive with `--incident`. |
+| `--since <duration>` | **Chat lookback only** (default: `24h`, capped at 90 days). The deployment, change and prior-incident lanes anchor on when the incident *opened* and are not affected by this flag. |
+| `--format <markdown\|slack\|plain>` | A text transform over the brief's own Markdown (default `markdown`) — never a re-render from the typed findings, so a synthesized rewrite's prose survives. |
+| `--json` | Print the typed findings instead of the brief. |
+
+**Output (Markdown):** `# On-call`, a preamble naming the incident and the chat window, then `## Incident`, `## Last deployment before the alert`, `## Change in that deployment`, `## CI`, `## Chat` and `## Prior incidents on this service` — each rendered even when empty (`_None found._`), because a missing heading and an empty one say different things — followed by the reserved `## Gaps` section.
+
+**Nothing with no incident is a REFUSAL, not an empty brief.** Every section anchors on a selected incident, so with none the brief would be six headings over nothing — which during an incident reads as *you are clear*, the one wrong answer that looks like a good one. `nimbus oncall` exits non-zero with `ERR_ONCALL_NO_ACTIVE_INCIDENT`, and names the two other shapes plus `nimbus index health`. Two sibling refusals exist and are deliberately distinct: `ERR_ONCALL_IDENTITY_UNRESOLVED` (Nimbus cannot tell who you are — a different fix entirely from "nobody is paging you", and collapsing the two would tell an on-call engineer they are clear when nothing was ever checked) and `ERR_ONCALL_INCIDENT_NOT_FOUND`.
+
+**The deployment is the one before the alert — that is timing, not cause.** Nothing in the index links a deployment to an incident. The heading says what the claim is and the preamble says what it is not; neither calls it a root cause.
+
+**Incident status is only as fresh as the last PagerDuty sync, and the preamble always says how stale that is.** This is the one disclosure that qualifies the *selection* rather than a count: a resolved incident whose row has not been re-synced still reads `triggered`, so a stale sync can put you in front of an incident that closed an hour ago. It is printed even when the sync is seconds old — a line you only ever see when something is wrong gives you no way to calibrate what it means.
+
+**Three things it cannot tell you, and says so unconditionally in `## Gaps`:**
+
+- **How any earlier incident was resolved.** An incident is indexed with its status as its entire body, so no resolution note, remediation step or postmortem link exists anywhere in the index. Prior incidents can say *who* closed one and *when*, never what they did — which is why that lane is framed around recurrence, the signal it can actually carry.
+- **What the change did.** No connector indexes a patch, a changed-file list or a commit message body, so a pull request is described by its title and its added/removed line counts and nothing more.
+- **Anything paged through OpsGenie.** There is no OpsGenie connector, so this brief has nothing to select from there and its silence is not evidence that nobody is paged.
+
+**A fourth gap is conditional and worth fixing when you see it:** an incident whose PagerDuty service maps to no configured Nimbus service leaves the deployment, change, CI and chat sections structurally empty. The brief names the unmapped PagerDuty id and points at the `[metrics.dora.<service>]` / `[ci.service.<service>]` binding — the same one `nimbus metrics dora` already uses.
+
+**Read-only:** never triggers HITL, never makes a live connector API call. Reachable over the local HTTP API, as an MCP tool and from ChatOps — but **only on its explicit shapes**. The zero-parameter owner-scoped form is refused for an external caller, because it resolves the *gateway owner's* identity: a bearer token cannot ask about itself and would receive the owner's active incident, assignees included. That is the concern that keeps `agents.standup` off every external surface entirely; the difference here is that `oncall` has an answerable external shape, so the bound sits on the **shape** rather than the method — the same split invariant `I36` applies to `agents.ghost` / `agents.conflicts`. Eligible for `nimbus fleet`, where a job names its service and the prior-incident lane is the half a nightly digest watches move.
+
+---
+
 ### `nimbus ghost`
 
 Surface ambient teammate context for a file by querying paired peers' expertise across the federation mesh. Returns a ranked list of teammates with recent PRs, issues, and commits touching the file — helping you identify who to consult before starting work. No message is ever sent automatically; this is a read-only suggestion surface.

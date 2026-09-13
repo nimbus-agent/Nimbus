@@ -12,6 +12,7 @@ import {
   EXTERNAL_AGENT_NAMES,
   resolveExternalAgentMethod,
 } from "./agents-rpc.ts";
+import type { ClientKind } from "./server/client-kind.ts";
 
 function makeCtx(db: Database, extras?: { runner?: SynthesisRunner; configDir?: string }) {
   return {
@@ -1042,9 +1043,16 @@ describe("dispatchAgentsRpc — agents.negotiate", () => {
 });
 
 describe("the externally-invokable agent set", () => {
-  test("the external agent set is exactly eleven and excludes the five", () => {
-    expect(EXTERNAL_AGENT_NAMES).toHaveLength(11);
-    for (const excluded of ["preflight", "premortem", "whyPeek", "negotiate", "changelog"]) {
+  test("the external agent set is exactly twelve and excludes the six", () => {
+    expect(EXTERNAL_AGENT_NAMES).toHaveLength(12);
+    for (const excluded of [
+      "preflight",
+      "premortem",
+      "whyPeek",
+      "negotiate",
+      "changelog",
+      "standup",
+    ]) {
       expect(EXTERNAL_AGENT_NAMES).not.toContain(excluded);
       expect(resolveExternalAgentMethod(excluded)).toBeNull();
     }
@@ -1055,7 +1063,7 @@ describe("the externally-invokable agent set", () => {
     expect(resolveExternalAgentMethod("toString")).toBeNull();
   });
 
-  test("is exactly the eleven asynchronous, non-preflight, non-premortem agents", () => {
+  test("is exactly the twelve asynchronous, non-preflight, non-premortem agents", () => {
     expect([...EXTERNAL_AGENT_NAMES]).toEqual([
       "catchup",
       "conflicts",
@@ -1066,6 +1074,7 @@ describe("the externally-invokable agent set", () => {
       "huddle",
       "impact",
       "janitor",
+      "oncall",
       "ownership",
       "why",
     ]);
@@ -1454,5 +1463,126 @@ describe("the forge-file arm", () => {
     await dispatchAgentsRpc("agents.ghost", COORD, ctx);
     await dispatchAgentsRpc("agents.conflicts", COORD, ctx);
     expect(sent).toBe(0);
+  });
+});
+
+/**
+ * The SHAPE bound on `agents.oncall`, which is invariant `I36`'s mechanism applied to a different
+ * leak.
+ *
+ * `agents.oncall` is externally PERMITTED — unlike `agents.standup`, which is excluded outright —
+ * but its zero-parameter form resolves the LOCAL OWNER's identity. Served to a bearer token over
+ * HTTP, an MCP client or a shared ChatOps room, that form is meaningless in one direction and
+ * leaky in the other: the caller cannot ask about itself, so it would receive the OWNER's active
+ * incident and its assignee list. These tests pin the bound on the SHAPE rather than the method,
+ * which is what lets the explicit shapes stay externally useful.
+ */
+describe("agents.oncall — the external shape bound", () => {
+  const EXTERNAL: readonly ClientKind[] = ["http", "mcp", "chatops"];
+  const LOCAL: readonly ClientKind[] = ["cli", "ui", "unknown", "fleet"];
+
+  function ctxAs(kind: ClientKind | undefined) {
+    const base = makeCtx(freshDb());
+    return kind === undefined ? base : { ...base, caller: { clientId: "c1", kind } };
+  }
+
+  test.each(EXTERNAL.map((k) => [k] as const))(
+    "%s: the zero-parameter owner-scoped shape is REFUSED",
+    async (kind) => {
+      const out = await dispatchAgentsRpc("agents.oncall", {}, ctxAs(kind)).catch(
+        (e: unknown) => e,
+      );
+      expect(out).toBeInstanceOf(AgentsRpcError);
+      expect((out as AgentsRpcError).message).toContain("requires incidentId or service");
+    },
+  );
+
+  test.each(EXTERNAL.map((k) => [k] as const))(
+    "%s: an explicit --service IS served (the bound is the shape, not the method)",
+    async (kind) => {
+      // Reaches the agent and refuses for the RIGHT reason — no incident in an empty index —
+      // rather than being turned away at the parameter gate.
+      const out = await dispatchAgentsRpc(
+        "agents.oncall",
+        { service: "checkout" },
+        ctxAs(kind),
+      ).catch((e: unknown) => e);
+      expect(out).toBeInstanceOf(AgentsRpcError);
+      expect((out as AgentsRpcError).message).toContain("ERR_ONCALL_NO_ACTIVE_INCIDENT");
+    },
+  );
+
+  test.each(LOCAL.map((k) => [k] as const))(
+    "%s: the owner-scoped shape is ALLOWED and reaches the agent",
+    async (kind) => {
+      // `unknown` is in this list deliberately: `session.declareKind` is called by exactly one
+      // client in this repo (the MCP adapter), so the plain CLI arrives undeclared. Refusing
+      // `unknown` would refuse the command's primary use, and every kind that MUST be refused is
+      // derived by the gateway and can never be declared.
+      const out = await dispatchAgentsRpc("agents.oncall", {}, ctxAs(kind)).catch(
+        (e: unknown) => e,
+      );
+      expect(out).toBeInstanceOf(AgentsRpcError);
+      // Reached identity resolution / selection rather than the parameter gate.
+      expect((out as AgentsRpcError).message).not.toContain("requires incidentId or service");
+    },
+  );
+
+  test("an ABSENT caller descriptor is allowed, coherently with `unknown`", async () => {
+    // The socket dispatcher sets `caller` unconditionally, so `undefined` is reachable only from
+    // an in-process caller or a unit test — strictly more local than the socket. Refusing it while
+    // allowing `unknown` would be incoherent (both mean "no kind declared") and would buy nothing
+    // an attacker could not sidestep by connecting to the socket.
+    const out = await dispatchAgentsRpc("agents.oncall", {}, ctxAs(undefined)).catch(
+      (e: unknown) => e,
+    );
+    expect((out as AgentsRpcError).message).not.toContain("requires incidentId or service");
+  });
+
+  test("incidentId and service together are rejected", async () => {
+    const out = await dispatchAgentsRpc(
+      "agents.oncall",
+      { incidentId: "a", service: "b" },
+      ctxAs("cli"),
+    ).catch((e: unknown) => e);
+    expect((out as AgentsRpcError).message).toContain("not both");
+  });
+
+  test("rejects malformed parameter types rather than coercing them", async () => {
+    for (const params of [
+      { incidentId: 7 },
+      { incidentId: "" },
+      { service: 7 },
+      { service: "" },
+      { sinceMs: -1 },
+      { sinceMs: 1.5 },
+      { sinceMs: "3d" },
+    ]) {
+      const out = await dispatchAgentsRpc("agents.oncall", params, ctxAs("cli")).catch(
+        (e: unknown) => e,
+      );
+      expect(out).toBeInstanceOf(AgentsRpcError);
+      expect((out as AgentsRpcError).rpcCode).toBe(-32602);
+    }
+  });
+
+  test("a non-object payload is rejected", async () => {
+    for (const params of [null, [], "x"]) {
+      const out = await dispatchAgentsRpc("agents.oncall", params, ctxAs("cli")).catch(
+        (e: unknown) => e,
+      );
+      expect(out).toBeInstanceOf(AgentsRpcError);
+    }
+  });
+
+  test("an unknown incident id refuses with its OWN error, not the no-incident one", async () => {
+    // "That id does not exist" and "nothing is assigned to you" have different fixes; collapsing
+    // them would send a user hunting for an incident when they mistyped an id.
+    const out = await dispatchAgentsRpc(
+      "agents.oncall",
+      { incidentId: "no-such-item" },
+      ctxAs("cli"),
+    ).catch((e: unknown) => e);
+    expect((out as AgentsRpcError).message).toContain("ERR_ONCALL_INCIDENT_NOT_FOUND");
   });
 });
