@@ -337,6 +337,30 @@ describe("connector.healthChanged", () => {
     expect(rowsAtEmit).toBe(1);
   });
 
+  test("a configured/not_configured change EMITS, despite the early return", () => {
+    // `transitionHealth` returns early for these two before ever reaching the main transaction,
+    // so an emit placed only after that transaction is unreachable for them — and these are the
+    // transitions `nimbus connector auth` produces, the ones a user is most likely watching for.
+    const db: Database = createMemoryIndexDb();
+    transitionHealth(db, "github", { type: "sync_success" }); // create the row, configured = 0
+    const seen = captured();
+    transitionHealth(db, "github", { type: "configured" });
+    expect(seen).toHaveLength(1);
+    const p = seen[0]?.params as Record<string, unknown>;
+    expect(p["name"]).toBe("github");
+    expect(p["reason"]).toBe("credential configured");
+  });
+
+  test("a configured event that changes NOTHING emits nothing", () => {
+    // `applyConfiguredFlag` no-ops when the flag already matches; the emit must respect that
+    // guard rather than firing on every auth check.
+    const db: Database = createMemoryIndexDb();
+    transitionHealth(db, "github", { type: "configured" });
+    const seen = captured();
+    transitionHealth(db, "github", { type: "configured" });
+    expect(seen).toEqual([]);
+  });
+
   test("a non-state-changing event type emits nothing", () => {
     // `skipped_offline` appends history but is explicitly not a health CHANGE.
     const db: Database = createMemoryIndexDb();
@@ -359,6 +383,71 @@ In `packages/gateway/src/connectors/health.ts`, add the import:
 ```ts
 import { emitConnectorHealthChanged } from "../ipc/gateway-events.ts";
 ```
+
+**First, make `applyConfiguredFlag` report what it recorded.** `transitionHealth` RETURNS EARLY for
+`configured` / `not_configured`, so an emit placed after the main `db.transaction(...)` never runs
+for them — and those are exactly the transitions `nimbus connector auth` produces. Rather than
+duplicating the derived-state ternary at a second site, have the function hand back the state it
+appended (or `null` when its no-op guard fired):
+
+```ts
+/** Returns the state it RECORDED, or `null` when nothing changed (the no-op guard). */
+function applyConfiguredFlag(
+  db: Database,
+  connectorId: string,
+  current: SyncStateHealthRow | null,
+  fromState: string | null,
+  nowConfigured: boolean,
+  now: number,
+): ConnectorHealthState | null {
+  if (current === null) return null;
+  if ((current.configured !== 0) === nowConfigured) return null;
+  dbRun(db, "UPDATE sync_state SET configured = ? WHERE connector_id = ?", [
+    nowConfigured ? 1 : 0,
+    connectorId,
+  ]);
+  // ONE derivation, reused by both the history row and the event — a second copy of this ternary
+  // is a second place for them to disagree about what the state became.
+  const recorded: ConnectorHealthState = nowConfigured
+    ? ((fromState as ConnectorHealthState | null) ?? "healthy")
+    : "not_configured";
+  appendHistory(
+    db,
+    connectorId,
+    fromState,
+    recorded,
+    nowConfigured ? "credential configured" : "no credential configured",
+    now,
+  );
+  return recorded;
+}
+```
+
+Then emit from the early-return branch, only when something actually changed:
+
+```ts
+  if (event.type === "not_configured" || event.type === "configured") {
+    const recorded = applyConfiguredFlag(
+      db, connectorId, current, fromState, event.type === "configured", now,
+    );
+    if (recorded !== null) {
+      emitConnectorHealthChanged({
+        name: connectorId,
+        health: recorded,
+        fromState: (fromState as ConnectorHealthState | null) ?? null,
+        reason: event.type === "configured" ? "credential configured" : "no credential configured",
+        occurredAt: now,
+      });
+    }
+    return buildSnapshot(connectorId, readHealthRow(db, connectorId));
+  }
+```
+
+**On the `as ConnectorHealthState` casts.** `SyncStateHealthRow.health_state` is typed `string`, so
+`fromState` is `string | null` and assigning it to the payload's `ConnectorHealthState | null` is a
+strict-mode error. The cast matches what this file already does at its snapshot builder —
+`((row.health_state as ConnectorHealthState) ?? "healthy")` — so it is the file's existing idiom,
+not a new one. The column is written only by this module, from that union.
 
 Then change the state-changing branch of `transitionHealth` so the emit happens **after** the transaction closure returns:
 
@@ -384,7 +473,8 @@ Then change the state-changing branch of `transitionHealth` so the emit happens 
     name: connectorId,
     health: effectiveState,
     ...(reason === null ? {} : { degradationReason: reason }),
-    fromState,
+    // `string | null` -> the payload's union; same cast idiom as this file's snapshot builder.
+    fromState: (fromState as ConnectorHealthState | null) ?? null,
     reason,
     occurredAt: now,
   });
@@ -419,7 +509,7 @@ git commit -m "feat(connectors): emit connector.healthChanged after the health t
 **Files:**
 
 - Modify: `packages/gateway/src/platform/assemble.ts:4112` (beside `bindLoginNotify`)
-- Test: packages/ui/src/components/dashboard/ConnectorGrid.health-contract.test.tsx _(new file)_
+- Test: packages/ui/test/components/dashboard/ConnectorGrid.health-contract.test.tsx _(new file)_
 
 **Interfaces:**
 
@@ -429,11 +519,15 @@ git commit -m "feat(connectors): emit connector.healthChanged after the health t
 - [ ] **Step 1: Write the failing desktop contract test**
 
 ```tsx
-// packages/ui/src/components/dashboard/ConnectorGrid.health-contract.test.tsx
+// packages/ui/test/components/dashboard/ConnectorGrid.health-contract.test.tsx
 import { describe, expect, test } from "bun:test";
-import type { ConnectorStatus } from "../../ipc/types";
+import type { ConnectorStatus } from "../../../src/ipc/types";
 
 /**
+ * Lives under `packages/ui/test/`, never `packages/ui/src/`: every UI test in this repo does
+ * (`packages/ui/test/components/dashboard/ConnectorGrid.test.tsx` is its neighbour), and a test
+ * file under `src/` risks landing in the Vite production bundle.
+ *
  * The guard for the defect the design review caught: the gateway and the desktop were each tested
  * against THEMSELVES, so a payload the desktop cannot read would have passed every gateway test
  * and still left the panel dead. This asserts the exact payload the gateway emits is one
@@ -496,7 +590,7 @@ describe("connector.healthChanged desktop contract", () => {
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `bun test packages/ui/src/components/dashboard/ConnectorGrid.health-contract.test.tsx`
+Run: `bun test packages/ui/test/components/dashboard/ConnectorGrid.health-contract.test.tsx`
 Expected: PASS immediately if Task 2 landed the correct shape. If it FAILS, Task 2's payload is
 wrong — fix Task 2, not this test. (This test is a contract pin, so a green first run is the
 correct outcome here; its value is that it goes red if either side drifts.)
@@ -527,7 +621,7 @@ Expected: PASS
 - [ ] **Step 5: Commit**
 
 ```bash
-git add packages/gateway/src/platform/assemble.ts packages/ui/src/components/dashboard/ConnectorGrid.health-contract.test.tsx
+git add packages/gateway/src/platform/assemble.ts packages/ui/test/components/dashboard/ConnectorGrid.health-contract.test.tsx
 git commit -m "feat(platform): bind the operational event broadcast; pin the desktop health contract"
 ```
 
@@ -875,15 +969,25 @@ known and the entry removed from `this.pending`):
       emitGatewayEvent("hitl.resolved", { requestId, approved });
 ```
 
-In the disconnect / reject-all paths, for each request being abandoned:
+In `rejectAllPending`, the existing loop iterates `snapshot.values()`, so the `requestId` is NOT
+in scope — it must become `snapshot.entries()`:
 
 ```ts
-        emitGatewayEvent("hitl.resolved", {
-          requestId,
-          approved: false,
-          reason: "client disconnected",
-        });
+  rejectAllPending(message: string, hitlAuditReason: string): void {
+    const err = new ConsentDisconnectedError(message, hitlAuditReason);
+    const snapshot = new Map(this.pending);
+    this.pending.clear();
+    // `.entries()`, not `.values()`: the key IS the requestId, and `hitl.resolved` is useless
+    // without it. The existing loop discarded it because nothing needed it before.
+    for (const [requestId, entry] of snapshot.entries()) {
+      entry.reject(err);
+      emitGatewayEvent("hitl.resolved", { requestId, approved: false, reason: message });
+    }
+  }
 ```
+
+Apply the same `.entries()` change to any per-client disconnect path that abandons pending
+requests, emitting `reason: "client disconnected"`.
 
 - [ ] **Step 4: Run test to verify it passes**
 
@@ -903,7 +1007,7 @@ git commit -m "feat(ipc): broadcast hitl.requested/hitl.resolved as observation 
 
 **Files:**
 
-- Modify: `packages/gateway/src/ipc/server/dispatchers.ts` (the `extension.install` / `enable` / `disable` / `remove` / `update` handlers)
+- Modify: `packages/gateway/src/ipc/automation-rpc.ts` (the `extension.*` handler map)
 - Test: packages/gateway/src/ipc/gateway-events.extension.test.ts _(new file)_
 
 **Interfaces:**
@@ -970,29 +1074,68 @@ Expected: PASS (exercises Task 1's emitter). If it fails, Task 1 is wrong.
 
 - [ ] **Step 3: Emit from each mutation handler**
 
-In `packages/gateway/src/ipc/server/dispatchers.ts`, for each of the five methods, after the
-mutation returns successfully, emit; and in the catch/failure path emit with `ok: false`. Example
-for `extension.enable` — repeat the identical shape for `install`, `disable`, `remove`, `update`,
-changing only the `action` literal:
+The handlers are a METHOD MAP in `packages/gateway/src/ipc/automation-rpc.ts` (around lines
+208–245), not individual functions in `dispatchers.ts` — that file only delegates the whole
+`extension.*` namespace via `dispatchAutomationRpc`. Each entry is an arrow returning
+`{ kind: "hit", value }`, so the emit goes inside the arrow, after the mutation call.
+
+`extension.enable` today:
 
 ```ts
+  "extension.enable": (rec, ctx) => ({
+    kind: "hit",
+    value: { ok: setExtensionEnabled(ctx.db, requireString(rec, "id"), true) },
+  }),
+```
+
+becomes:
+
+```ts
+  "extension.enable": (rec, ctx) => {
+    const id = requireString(rec, "id");
+    const ok = setExtensionEnabled(ctx.db, id, true);
+    emitGatewayEvent("extension.stateChanged", { extensionId: id, action: "enable", ok });
+    return { kind: "hit", value: { ok } };
+  },
+```
+
+`extension.disable` already destructures `id` and `ok`, so add one line before its return:
+
+```ts
+    emitGatewayEvent("extension.stateChanged", { extensionId: id, action: "disable", ok });
+```
+
+For `extension.install`, `extension.update` and `extension.remove`, emit after the delegated call
+returns, using the id each already resolves (`requireString(rec, "id")` for remove; the install and
+update handlers delegate to `handleExtensionInstall` / `handleAutoUpdateRpc`, so wrap the call:
+
+```ts
+  "extension.install": async (rec, ctx) => {
+    const id = requireString(rec, "id");
     try {
-      const out = await handleExtensionEnable(params, ctx);
-      emitGatewayEvent("extension.stateChanged", {
-        extensionId: id,
-        action: "enable",
-        ok: true,
-      });
+      const out = await handleExtensionInstall(rec, ctx);
+      emitGatewayEvent("extension.stateChanged", { extensionId: id, action: "install", ok: true });
       return out;
     } catch (e) {
       emitGatewayEvent("extension.stateChanged", {
         extensionId: id,
-        action: "enable",
+        action: "install",
         ok: false,
         error: e instanceof Error ? e.message : String(e),
       });
       throw e;
     }
+  },
+```
+
+**`extension.sync` is deliberately NOT emitted.** It syncs publisher keys, not extension state —
+internal maintenance rather than something whose change a reader is watching for. Neither are
+`extension.list`/`info`/`checkForUpdates`, which mutate nothing.
+
+Add the import at the top of `automation-rpc.ts`:
+
+```ts
+import { emitGatewayEvent } from "./gateway-events.ts";
 ```
 
 - [ ] **Step 4: Run the suite**
@@ -1003,7 +1146,7 @@ Expected: PASS
 - [ ] **Step 5: Commit**
 
 ```bash
-git add packages/gateway/src/ipc/server/dispatchers.ts packages/gateway/src/ipc/gateway-events.extension.test.ts
+git add packages/gateway/src/ipc/automation-rpc.ts packages/gateway/src/ipc/gateway-events.extension.test.ts
 git commit -m "feat(ipc): emit extension.stateChanged on runtime extension mutations"
 ```
 
@@ -1026,7 +1169,8 @@ git commit -m "feat(ipc): emit extension.stateChanged on runtime extension mutat
 ```ts
 // packages/cli/src/commands/tail.test.ts
 import { describe, expect, test } from "bun:test";
-import { parseTailArgs, renderEvent } from "./tail.ts";
+import type { IPCClient } from "../ipc-client/index.ts";
+import { parseTailArgs, renderEvent, runTailCommand, type TailCommandDeps } from "./tail.ts";
 
 describe("parseTailArgs", () => {
   test("defaults to every category and human output", () => {
@@ -1100,6 +1244,81 @@ describe("renderEvent", () => {
   test("a malformed notification returns null instead of throwing", () => {
     expect(renderEvent("gateway.event", null)).toBeNull();
     expect(renderEvent("gateway.event", { kind: 7 })).toBeNull();
+  });
+});
+
+describe("runTailCommand lifecycle", () => {
+  function harness(over: Partial<TailCommandDeps> = {}) {
+    const out: string[] = [];
+    const err: string[] = [];
+    const exits: number[] = [];
+    const handlers: Record<string, (p: unknown) => void> = {};
+    const client = {
+      onNotification: (m: string, h: (p: unknown) => void) => {
+        handlers[m] = h;
+      },
+      onClose: (_h: () => void) => {},
+      disconnect: async () => {},
+    } as unknown as IPCClient;
+    const deps: TailCommandDeps = {
+      connect: async () => client,
+      readState: async () => ({ socketPath: "/tmp/fake.sock" }),
+      writeOut: (l) => out.push(l),
+      writeErr: (l) => err.push(l),
+      onExit: (c) => exits.push(c),
+      ...over,
+    };
+    return { deps, out, err, exits, handlers };
+  }
+
+  test("a gateway that is not running writes the standard line and exits 1", async () => {
+    const h = harness({ readState: async () => undefined });
+    await runTailCommand([], h.deps);
+    expect(h.err.join("")).toContain("Gateway is not running");
+    expect(h.exits).toEqual([1]);
+  });
+
+  test("binds EXACTLY the two handlers, never a third", async () => {
+    // The count is the design's central claim: a future operational event must arrive with no CLI
+    // change. A third handler here means someone reintroduced a per-method list.
+    const h = harness();
+    const done = runTailCommand([], h.deps);
+    expect(Object.keys(h.handlers).sort()).toEqual(["connector.healthChanged", "gateway.event"]);
+    process.emit("SIGINT");
+    await done;
+  });
+
+  test("--filter excludes a known category it did not name", async () => {
+    const h = harness();
+    const done = runTailCommand(["--filter", "sync"], h.deps);
+    h.handlers["connector.healthChanged"]?.({
+      name: "github", health: "error", fromState: "healthy", reason: null, occurredAt: 1,
+    });
+    expect(h.out).toEqual([]);
+    process.emit("SIGINT");
+    await done;
+  });
+
+  test("an UNKNOWN kind is shown even under a filter", async () => {
+    // Deliberate: a stream that silently discards what it does not recognise is the failure this
+    // design rejects. The plan review read this as "filtered out" — it is not.
+    const h = harness();
+    const done = runTailCommand(["--filter", "sync"], h.deps);
+    h.handlers["gateway.event"]?.({ kind: "some.future.kind", ts: 1, payload: {} });
+    expect(h.out.join("")).toContain("unknown: some.future.kind");
+    process.emit("SIGINT");
+    await done;
+  });
+
+  test("SIGINT removes its own listeners", async () => {
+    // `process` outlives the promise; a leaked handler per invocation is invisible until a caller
+    // runs the command twice in one process.
+    const before = process.listenerCount("SIGINT");
+    const h = harness();
+    const done = runTailCommand([], h.deps);
+    process.emit("SIGINT");
+    await done;
+    expect(process.listenerCount("SIGINT")).toBe(before);
   });
 });
 ```
@@ -1257,8 +1476,18 @@ export function renderEvent(method: string, params: unknown): string | null {
   return `${at} [unknown: ${kind}] ${JSON.stringify(payload)}`;
 }
 
+/**
+ * Every side effect is injectable, so the command's LIFECYCLE is testable and not just its two
+ * pure functions. Without these seams the gateway-offline path, the filter predicate, the
+ * shutdown path and the EPIPE guard are all unreachable from a unit test — which is how a command
+ * ends up with green tests and an untested main path.
+ */
 export type TailCommandDeps = {
-  connect: (socketPath: string) => Promise<IPCClient>;
+  readonly connect: (socketPath: string) => Promise<IPCClient>;
+  readonly readState: () => Promise<{ socketPath: string } | undefined>;
+  readonly writeOut: (line: string) => void;
+  readonly writeErr: (line: string) => void;
+  readonly onExit: (code: number) => void;
 };
 
 const defaultTailDeps: TailCommandDeps = {
@@ -1266,6 +1495,16 @@ const defaultTailDeps: TailCommandDeps = {
     const client = new IPCClient(socketPath);
     await client.connect();
     return client;
+  },
+  readState: async () => await readGatewayState(getCliPlatformPaths()),
+  writeOut: (line) => {
+    process.stdout.write(line);
+  },
+  writeErr: (line) => {
+    process.stderr.write(line);
+  },
+  onExit: (code) => {
+    process.exit(code);
   },
 };
 
@@ -1275,29 +1514,37 @@ export async function runTailCommand(
 ): Promise<void> {
   const parsed = parseTailArgs(args);
 
-  const state = await readGatewayState(getCliPlatformPaths());
+  const state = await deps.readState();
   if (state === undefined) {
-    process.stderr.write("Gateway is not running. Start with: nimbus start\n");
-    process.exit(1);
+    deps.writeErr("Gateway is not running. Start with: nimbus start
+");
+    deps.onExit(1);
+    return;
   }
 
   // Piping into `head -n 5` closes stdout early. Without this the process dies with an unhandled
   // EPIPE stack trace, which is the first thing anyone does with a stream.
   process.stdout.on("error", (e: NodeJS.ErrnoException) => {
-    if (e.code === "EPIPE") process.exit(0);
+    if (e.code === "EPIPE") deps.onExit(0);
   });
 
   const client = await deps.connect(state.socketPath);
 
   const onEvent = (method: string) => (params: unknown) => {
     const category = categoryOf(method, params);
+    // An UNCATEGORISED event (a future `kind`) is shown even under a filter. A stream that
+    // silently drops what it does not recognise is the failure this design rejects; the cost is
+    // that `--filter sync` may show one unfamiliar line, which is strictly better than hiding a
+    // new event type from everyone who uses a filter.
     if (category !== null && !parsed.categories.includes(category)) return;
     if (parsed.json) {
-      process.stdout.write(`${JSON.stringify({ method, params })}\n`);
+      deps.writeOut(`${JSON.stringify({ method, params })}
+`);
       return;
     }
     const line = renderEvent(method, params);
-    if (line !== null) process.stdout.write(`${line}\n`);
+    if (line !== null) deps.writeOut(`${line}
+`);
   };
 
   // EXACTLY TWO handlers, forever. A future operational event picks a new `kind` and arrives here
@@ -1306,15 +1553,24 @@ export async function runTailCommand(
   client.onNotification("gateway.event", onEvent("gateway.event"));
 
   await new Promise<void>((resolve) => {
-    const shutdown = (): void => {
-      void client.disconnect().finally(() => resolve());
-    };
+    // Listeners are REMOVED on every exit path. `process` outlives this promise, so leaving them
+    // attached leaks one handler per invocation — invisible for a one-shot CLI, a real leak for
+    // any caller that runs the command twice in a process (tests included).
+    function shutdown(): void {
+      void client.disconnect().finally(() => finish(0));
+    }
+    function finish(code: number): void {
+      process.off("SIGINT", shutdown);
+      process.off("SIGTERM", shutdown);
+      process.exitCode = code;
+      resolve();
+    }
     process.on("SIGINT", shutdown);
     process.on("SIGTERM", shutdown);
     client.onClose(() => {
-      process.stderr.write("[nimbus tail] Gateway connection closed.\n");
-      process.exitCode = 1;
-      resolve();
+      deps.writeErr("[nimbus tail] Gateway connection closed.
+");
+      finish(1);
     });
   });
 }
@@ -1323,7 +1579,7 @@ export async function runTailCommand(
 - [ ] **Step 4: Run test to verify it passes**
 
 Run: `bun test packages/cli/src/commands/tail.test.ts`
-Expected: PASS (10 tests)
+Expected: PASS (15 tests)
 
 - [ ] **Step 5: Commit**
 
@@ -1334,7 +1590,109 @@ git commit -m "feat(cli): nimbus tail — follow the gateway operational event s
 
 ---
 
-### Task 9: Register the command, document it, strip the spec
+### Task 9: End-to-end over a real gateway socket
+
+**Files:**
+
+- Test: packages/gateway/test/integration/ipc/tail-stream.integration.test.ts _(new file)_
+
+**Interfaces:**
+
+- Consumes: everything from Tasks 1–7. No production code changes.
+- Produces: nothing.
+
+This was a NAMED GAP in the first draft of this plan — deferred as "a different harness". The plan
+review pushed back, correctly: without it, renaming `connector.healthChanged` silently re-orphans
+the desktop listener, which is the exact bug this whole feature exists to fix. Every other test in
+this plan asserts against an in-process sink, so none of them would notice.
+
+- [ ] **Step 1: Write the failing test**
+
+```ts
+// packages/gateway/test/integration/ipc/tail-stream.integration.test.ts
+import { describe, expect, test } from "bun:test";
+import { startTestGateway } from "../../helpers/test-gateway.ts";
+
+/**
+ * Real gateway, real socket, real client. The in-process tests prove the emitters CALL the sink;
+ * this proves the bytes reach a subscriber under the exact method names the desktop and the CLI
+ * bind to. A rename is caught here and nowhere else.
+ */
+describe("tail stream over a real socket", () => {
+  test("a health transition arrives as connector.healthChanged with the desktop's fields", async () => {
+    const gw = await startTestGateway();
+    try {
+      const client = await gw.connect();
+      const seen: Array<{ method: string; params: unknown }> = [];
+      client.onNotification("connector.healthChanged", (params) =>
+        seen.push({ method: "connector.healthChanged", params }),
+      );
+
+      await gw.transitionConnectorHealth("github", { type: "persistent_error", error: "boom" });
+      await gw.waitFor(() => seen.length > 0);
+
+      expect(seen).toHaveLength(1);
+      const p = seen[0]?.params as Record<string, unknown>;
+      // The two fields ConnectorGrid actually reads. A rename breaks HERE, loudly.
+      expect(p["name"]).toBe("github");
+      expect(p["health"]).toBe("error");
+      await client.disconnect();
+    } finally {
+      await gw.stop();
+    }
+  });
+
+  test("every connected client receives the same broadcast", async () => {
+    // `broadcastNotification` fans out per session. A second `tail` must not starve the first, and
+    // the desktop must not miss what the CLI saw.
+    const gw = await startTestGateway();
+    try {
+      const a = await gw.connect();
+      const b = await gw.connect();
+      const seenA: unknown[] = [];
+      const seenB: unknown[] = [];
+      a.onNotification("connector.healthChanged", (p) => seenA.push(p));
+      b.onNotification("connector.healthChanged", (p) => seenB.push(p));
+
+      await gw.transitionConnectorHealth("github", { type: "unauthenticated" });
+      await gw.waitFor(() => seenA.length > 0 && seenB.length > 0);
+
+      expect(seenA).toHaveLength(1);
+      expect(seenB).toHaveLength(1);
+      expect(seenA[0]).toEqual(seenB[0]);
+      await a.disconnect();
+      await b.disconnect();
+    } finally {
+      await gw.stop();
+    }
+  });
+});
+```
+
+- [ ] **Step 2: Run it and adapt to the real harness**
+
+Run: `bun test packages/gateway/test/integration/ipc/tail-stream.integration.test.ts`
+
+The helper names above (`startTestGateway`, `gw.connect`, `gw.transitionConnectorHealth`,
+`gw.waitFor`, `gw.stop`) are the SHAPE this test needs, not a promise that a helper with those
+exact names exists. Before writing the test, read the existing integration helpers under
+`packages/gateway/test/integration/` and use whatever this repo already provides for booting a
+gateway on a temp socket; if driving a health transition from outside needs a seam that does not
+exist, prefer triggering it through an existing IPC method over adding a test-only backdoor.
+
+Expected after adaptation: FAIL first (no emitter reaches the socket if Tasks 1–3 were skipped),
+then PASS.
+
+- [ ] **Step 3: Commit**
+
+```bash
+git add packages/gateway/test/integration/ipc/tail-stream.integration.test.ts
+git commit -m "test(ipc): end-to-end tail stream over a real gateway socket"
+```
+
+---
+
+### Task 10: Register the command, document it, strip the spec
 
 **Files:**
 
@@ -1437,15 +1795,35 @@ git commit -m "feat(cli): register nimbus tail, document it, strip the design do
 omission. § 5 (CLI) → Task 8. § 6 (error handling) → Task 8 steps 3. § 7 (testing) → each task's
 test step, plus the desktop contract test in Task 3. § 8 (invariants) → Global Constraints.
 
-**Known gap, stated rather than hidden.** The spec's § 7 asks for an **integration test over a real
-gateway subprocess** asserting a health transition produces exactly one `connector.healthChanged`
-with that exact method name, and a **multi-client** test. Neither is written as a task here: both
-need a running gateway plus two connected clients, which is a different harness from every unit
-test above. Add them under `packages/gateway/test/integration/` during Task 3 if the harness
-allows; if it does not, they are the first follow-up and the method-name rename risk stays open
-until they exist.
+**The gap the first draft deferred is now Task 9.** It named the integration and multi-client
+tests as "a different harness" and left them as a follow-up. The plan review pushed back and was
+right: every other test asserts against an in-process sink, so a rename of
+`connector.healthChanged` would pass all of them and silently re-orphan the desktop listener —
+the exact bug this feature exists to fix. Task 9's helper NAMES are a shape to adapt, not an
+assertion that those helpers exist; the task says so.
 
 **Type consistency.** `ConnectorHealthChangedPayload` uses `name`/`health` in Tasks 1, 2, 3 and 8.
 `WatcherFiredPayload` uses `watcherId`/`name`/`summary`/`firedAt` in Tasks 1, 5 and 8.
 `SyncCompletedPayload` uses `serviceId`/`itemsUpserted`/`itemsDeleted`/`durationMs`/`hasMore` in
 Tasks 1, 4 and 8. `setGatewayEventBroadcast` is the binder name in Tasks 1, 2, 3, 4, 6 and 7.
+
+## Review Dispositions
+
+All five defects from the plan review were verified against code and FIXED: the `automation-rpc.ts`
+retarget (Task 7), the `packages/ui/test/` path (Task 3), the `configured`/`not_configured` early
+return (Task 2), `rejectAllPending`'s `.entries()` (Task 6), and the `fromState` cast (Task 2,
+matching `health.ts`'s own existing idiom at its snapshot builder).
+
+Both improvements were taken: injectable IO on `TailCommandDeps` with five lifecycle tests, and
+`process.off` cleanup on every exit path (Task 8). The deferred integration test became Task 9.
+
+**One review statement corrected rather than implemented.** The review's open question 1 says that
+under `--filter sync`, "unknown kinds are filtered out". They are not: `categoryOf` returns `null`
+for an unrecognised `kind`, and the predicate is `category !== null && !categories.includes(...)`,
+so a `null` category is never excluded. That is deliberate — a stream that silently drops what it
+does not recognise is the failure this design rejects — and it is now pinned by a test and stated
+in the code comment. The cost (one unfamiliar line under a narrow filter) is strictly better than
+hiding a new event type from everyone who filters.
+
+**`extension.sync` stays unemitted**, per the review's open question 2: it syncs publisher keys, not
+extension state.
