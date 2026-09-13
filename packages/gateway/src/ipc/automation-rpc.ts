@@ -44,6 +44,7 @@ import { syncPublisherKeys } from "../extensions/sync.ts";
 import type { SignatureDisableReason } from "../extensions/verify-signature.ts";
 import type { NimbusVault } from "../vault/index.ts";
 import { asRecord } from "./connector-rpc-shared.ts";
+import { emitGatewayEvent } from "./gateway-events.ts";
 
 export class AutomationRpcError extends Error {
   readonly rpcCode: number;
@@ -209,19 +210,76 @@ const AUTOMATION_HANDLERS: Readonly<Record<string, AutomationHandler>> = {
 
   "extension.info": (rec, ctx) => handleExtensionInfo(rec, ctx),
 
-  "extension.install": (rec, ctx) => handleExtensionInstall(rec, ctx),
+  "extension.install": async (rec, ctx) => {
+    const sourcePath = requireString(rec, "sourcePath");
+    try {
+      const out = await handleExtensionInstall(rec, ctx);
+      const value = asRecord(out.value);
+      const installedId =
+        value !== undefined && typeof value["id"] === "string" ? value["id"] : sourcePath;
+      emitGatewayEvent("extension.stateChanged", {
+        extensionId: installedId,
+        action: "install",
+        ok: true,
+      });
+      return out;
+    } catch (e) {
+      emitGatewayEvent("extension.stateChanged", {
+        extensionId: sourcePath,
+        action: "install",
+        ok: false,
+        error: e instanceof Error ? e.message : String(e),
+      });
+      throw e;
+    }
+  },
 
   "extension.sync": async (rec, ctx) => handleExtensionSync(rec, ctx),
 
   "extension.checkForUpdates": async (rec, ctx) =>
     handleAutoUpdateRpc("extension.checkForUpdates", rec, ctx),
 
-  "extension.update": async (rec, ctx) => handleAutoUpdateRpc("extension.update", rec, ctx),
+  "extension.update": async (rec, ctx) => {
+    // Soft extraction, not `requireString`: a missing `id` is today a normal `cache_miss` result
+    // from `dispatchAutoUpdateRpc`, never a thrown error — throwing here on that same input would
+    // be a behaviour change this task must not make.
+    const id = rec !== undefined && typeof rec["id"] === "string" ? rec["id"] : "";
+    try {
+      const out = await handleAutoUpdateRpc("extension.update", rec, ctx);
+      const value = asRecord(out.value);
+      const applied = value !== undefined && value["applied"] === true;
+      // A non-applied outcome (`cache_miss`, `signature_failed`, `user_rejected`, …) never
+      // throws — it's a normal `{applied:false, reason}` result from `resolveUpdateTarget` /
+      // `applyUpdateUnderMutex` — so the reason has to be read off the success value here, not
+      // assumed to be absent because we're in the try branch rather than the catch.
+      const reason =
+        !applied && value !== undefined && typeof value["reason"] === "string"
+          ? value["reason"]
+          : undefined;
+      emitGatewayEvent("extension.stateChanged", {
+        extensionId: id,
+        action: "update",
+        ok: applied,
+        ...(reason !== undefined && { error: reason }),
+      });
+      return out;
+    } catch (e) {
+      emitGatewayEvent("extension.stateChanged", {
+        extensionId: id,
+        action: "update",
+        ok: false,
+        error: e instanceof Error ? e.message : String(e),
+      });
+      throw e;
+    }
+  },
 
-  "extension.enable": (rec, ctx) => ({
-    kind: "hit",
-    value: { ok: setExtensionEnabled(ctx.db, requireString(rec, "id"), true) },
-  }),
+  "extension.enable": (rec, ctx) => {
+    const id = requireString(rec, "id");
+    const ok = setExtensionEnabled(ctx.db, id, true);
+    emitGatewayEvent("extension.stateChanged", { extensionId: id, action: "enable", ok });
+    return { kind: "hit", value: { ok } };
+  },
 
   "extension.disable": (rec, ctx) => {
     const id = requireString(rec, "id");
@@ -229,6 +287,7 @@ const AUTOMATION_HANDLERS: Readonly<Record<string, AutomationHandler>> = {
     if (ok && ctx.mesh !== undefined) {
       void ctx.mesh.stopExtensionClient(id);
     }
+    emitGatewayEvent("extension.stateChanged", { extensionId: id, action: "disable", ok });
     return { kind: "hit", value: { ok } };
   },
 
@@ -236,29 +295,40 @@ const AUTOMATION_HANDLERS: Readonly<Record<string, AutomationHandler>> = {
     const id = requireString(rec, "id");
     const force = rec?.["force"] === true;
 
-    if (!force) {
-      const rdeps = reverseDeps(ctx.db, id);
-      if (rdeps.length > 0) {
-        const blockers = rdeps.map((r) => ({ id: r.extensionId, range: r.range }));
-        const blockerDesc = blockers.map((b) => `${b.id} (${b.range})`).join(", ");
-        throw new AutomationRpcError(
-          -32603,
-          `reverse_dep_blocked: Cannot remove ${id}: required by ${blockerDesc}. Pass --force to override.`,
-        );
-      }
-    }
-
-    const installPath = deleteExtensionById(ctx.db, id);
-    if (installPath === null) {
-      throw new AutomationRpcError(-32602, "Extension not found");
-    }
-    clearDeps(ctx.db, id);
     try {
-      rmSync(installPath, { recursive: true, force: true });
-    } catch {
-      /* row already removed; best-effort filesystem cleanup */
+      if (!force) {
+        const rdeps = reverseDeps(ctx.db, id);
+        if (rdeps.length > 0) {
+          const blockers = rdeps.map((r) => ({ id: r.extensionId, range: r.range }));
+          const blockerDesc = blockers.map((b) => `${b.id} (${b.range})`).join(", ");
+          throw new AutomationRpcError(
+            -32603,
+            `reverse_dep_blocked: Cannot remove ${id}: required by ${blockerDesc}. Pass --force to override.`,
+          );
+        }
+      }
+
+      const installPath = deleteExtensionById(ctx.db, id);
+      if (installPath === null) {
+        throw new AutomationRpcError(-32602, "Extension not found");
+      }
+      clearDeps(ctx.db, id);
+      try {
+        rmSync(installPath, { recursive: true, force: true });
+      } catch {
+        /* row already removed; best-effort filesystem cleanup */
+      }
+      emitGatewayEvent("extension.stateChanged", { extensionId: id, action: "remove", ok: true });
+      return { kind: "hit", value: { ok: true } };
+    } catch (e) {
+      emitGatewayEvent("extension.stateChanged", {
+        extensionId: id,
+        action: "remove",
+        ok: false,
+        error: e instanceof Error ? e.message : String(e),
+      });
+      throw e;
     }
-    return { kind: "hit", value: { ok: true } };
   },
 
   "workflow.list": (_rec, ctx) => ({
