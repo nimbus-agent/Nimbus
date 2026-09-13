@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1789280375017,
+  "lastUpdate": 1789305440285,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "bd44def209f209d4fb3fe1415ed89fb44ecf7280",
-          "message": "docs: add the Stage 0 implementation plan, and a third bug it fixes (#776)\n\nFollow-up to #775. Writing the Stage 0 plan surfaced a **worse symptom\nof the same root cause** than either bug already documented, plus a\ndesign correction — so the roadmap's diagnosis is updated alongside the\nnew plan.\n\n## The third bug: the gateway silently mislabels every ops item type\n\n`packages/gateway/src/index/local-index.ts:94`:\n\n```ts\nfunction itemTypeFromRowType(raw: string): NimbusItem[\"itemType\"] {\n  if (raw === \"file\" || raw === \"folder\" || raw === \"email\" ||\n      raw === \"event\" || raw === \"photo\" || raw === \"task\") return raw;\n  return \"file\";\n}\n```\n\nBecause the old SDK union listed six values, every `deployment`,\n`alert`, `incident`, `pr`, `issue`, `pipeline_run`, `dashboard`,\n`infra_resource` and `log_alarm` read through `rowToItem` comes back\n**relabelled `\"file\"`** — mislabelled, not merely untyped.\n\nThis is worse than the VS Code bug in #775: that one loses a display\nattribute in one client; this is **silent data corruption inside the\ngateway, at its own read boundary**. The function accepts two values the\ngateway never emits (`folder`, `task`) and corrupts thirteen it does.\n\n## Design correction: the enum must be open, not closed\n\n#775 said Stage 0 would \"drop `folder`/`task`, add the 19 real types\" —\ni.e. a closed union. That's wrong on three counts:\n\n1. `schema-reference.md` already calls it *\"open enum, extended per\nconnector\"*.\n2. `roadmap.md` plans a dozen more (`service`, `team`, `scorecard`,\n`dora_metric`, `security_finding`, `llm_trace`, …). Under a closed union\n**every one of those is a breaking change**.\n3. A closed union is precisely what forces the coercion being deleted —\nit leaves no way to represent an unrecognised type except to rewrite it.\n\nSo: `KnownItemType` lists the 19 for autocomplete and exhaustiveness,\nand `ItemType = KnownItemType | (string & {})` accepts anything. This\nalso keeps the SDK release a **non-breaking `1.4.0`**, which the\ngateway's existing `^1.3.0` range resolves with no manifest edit — where\na closed union would have forced a major that `^1.3.0` could not pick\nup.\n\n## The plan\n\n`docs/superpowers/plans/2026-07-19-stage-0-seal-the-narrow-waist.md` — 5\ntasks across 4 repos, 42 TDD steps, every step with exact paths, real\ncode and expected output.\n\nTwo things worth calling out:\n\n- **The release hops are sequenced explicitly.** Two npm publishes sit\non the critical path. But `nimbus-client` already has a `verify:sdk`\nscript that builds and packs the sibling `../nimbus-sdk` checkout — so\nclient work proceeds against an unpublished SDK and only the *merge*\nwaits on npm. Tasks 2 and 3–4 run in parallel.\n- **The gate is required to be observed failing.** Task 4 Step 4 renames\na fixture key and asserts the conformance test goes red before\nreverting. A gate never seen failing is not a gate — and an unverified\ngate is how the original bug survived.\n\nExit criteria include a grep proving exactly one declaration of the\nitem-type vocabulary survives across all four repos.\n\n## Notes\n\n- Docs only. No code changes.\n- `bun run lint:markdown` clean (84 files).\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nCo-authored-by: Claude Opus 4.8 (1M context) <noreply@anthropic.com>",
-          "timestamp": "2026-07-19T23:06:42+03:00",
-          "tree_id": "74753cb711e26a4ef34ab16cab419e65f0ebc045",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/bd44def209f209d4fb3fe1415ed89fb44ecf7280"
-        },
-        "date": 1784492384463,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 236.74800015000326,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 239.27153930000168,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 341.5491528499988,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "27c42111e1c44911c56f62b3c558d8808e0ccedb",
+          "message": "feat(agents): nimbus oncall — the seventeenth built-in agent (#1509)\n\nFourth row of the v0.1.1 CLI batch, after `nimbus index health`, `nimbus\nchangelog` and `nimbus standup`. Briefs **one incident** and what the\nlocal index can honestly say about the change around it.\n\n```\nnimbus oncall\nnimbus oncall --service checkout\nnimbus oncall --incident \"pagerduty:PXXXXX\"\n```\n\nSix sections: `## Incident`, `## Last deployment before the alert`, `##\nChange in that deployment`, `## CI`, `## Chat`, `## Prior incidents on\nthis service`, plus the reserved `## Gaps`. Read-only, no HITL, no\nmigration, no new invariant, no new egress class.\n\n## The trigger column was half true, the same way the last three rows'\nwere\n\nIt said *\"engineering work only — depends on the Phase 3 PagerDuty\nconnector (already shipped)\"*. Right about the connector; everything\nelse was re-derived against code before building.\n\n**Two promised capabilities have NO substrate** and are disclosed\nunconditionally in `## Gaps` rather than approximated:\n\n- ***\"…and how it was resolved\"*** is unanswerable. `pagerduty-sync.ts`\nwrites `bodyPreview: status ?? \"\"` — an incident's entire indexed body\nis its status string. There is no resolution note, remediation step or\npostmortem link anywhere in the index. `resolved_by_email` answers *who*\nand `modified_at` approximates *when*; the narrative does not exist.\n- ***\"commit diff summary\"*** is a **diffstat**. No connector indexes a\npatch, a changed-file list or a commit message body, so `additions` /\n`deletions` / `changed_files` is the whole of what can be reported.\n- A third joins them: **OpsGenie has no connector**, so the row's\n\"PagerDuty/OpsGenie\" is PagerDuty-only and the brief says so rather than\nletting its silence read as \"nobody is paged\".\n\n**\"The triggering PR\" overclaims, and the headings were rewritten.**\nNothing in the index links a deployment to an incident. What *is*\nderivable is the deploy that most recently started before the incident\nopened, and the PR whose `merge_commit_sha` equals that deploy's `sha` —\nthe join `metrics/dora.ts`'s `prLeadTime` already ships, reused rather\nthan re-derived so the two cannot disagree. `merge_commit_sha` is\nwritten by `github-sync.ts` **alone**, so the change lane is\nstructurally empty on GitLab/Bitbucket — disclosed under the existing\n`github_only_merge_data` gap name.\n\n**\"The last time a SIMILAR alert fired\" ships as same-SERVICE\nrecurrence.** The index holds no alert-rule id, fingerprint or dedup\nkey, so similarity would be string overlap dressed as a causal claim.\nRecurrence is a fact an on-call engineer can act on.\n\n## `metadata.status` is sync-freshness-dependent, and here that decides\nwhich incident the brief is about\n\n`metrics/dora.ts` already records the mechanism in its own comment — *\"a\nresolved incident whose row has not been re-synced still reads\n`triggered`\"*. For DORA that made a metric move with sync lag. Here a\nstale sync puts an engineer in front of an incident that **closed an\nhour ago**.\n\n`sync_state.last_sync_at` for `pagerduty` is read and its age printed in\nthe preamble **unconditionally** — including when the sync is seconds\nold, because a line seen only when something is wrong gives the reader\nno way to calibrate it. It is an I31 anchored disclosure with **both**\nsentences anchored: a single anchor on the first would let a rewrite\nkeep the fact and drop the caution, the F27 failure observed on\n`negotiate`.\n\n## Selecting nothing refuses\n\n`ERR_ONCALL_NO_ACTIVE_INCIDENT` rather than six empty headings, which\nduring an incident read as *\"you are clear\"* — the one wrong answer that\nlooks like a good one. Two sibling refusals stay deliberately distinct,\nbecause *\"nobody is paging you\"* and *\"I cannot tell who you are\"* have\nopposite fixes: `ERR_ONCALL_IDENTITY_UNRESOLVED` and\n`ERR_ONCALL_INCIDENT_NOT_FOUND`. Identity reuses `resolveSelfPerson`\n**unchanged**, so `oncall`, `standup` and `catchup` cannot disagree\nabout who \"me\" is.\n\n## Externally permitted but SHAPE-bounded — the first agent to take that\nmiddle path\n\n`agents.changelog` is externally excluded for sequencing and\n`agents.standup` structurally. `agents.oncall` is served over\nHTTP/MCP/ChatOps on `--incident`/`--service`, while\n`requireOncallParams` **refuses** the zero-parameter owner-scoped form\nfor an external caller — which would otherwise hand any `agents`-scope\nbearer token the **owner's** active incident and its assignees. That is\ninvariant `I36`'s mechanism: bound the *shape*, not the method.\n\nTwo things worth a reviewer's attention here:\n\n- It needed a **purpose-built total `Record` over `ClientKind`**, not a\nreuse of `EGRESS_BEARING_CLIENT_KINDS` — that map has `chatops: null`\nand would have classified a shared-room caller as the local owner. A\nmutation test pins exactly this (`chatops: true` → 1 failure).\n- **`unknown` is allowed there and it is not a hole.**\n`session.declareKind` is called by exactly one client in this repo (the\nMCP adapter), so the plain CLI arrives undeclared; refusing `unknown`\nwould refuse the command's primary use. Every kind that *must* be\nrefused — `http`, `chatops`, `fleet` — is **derived** by the gateway and\ncan never be declared, so an external caller cannot reach `unknown` by\nstaying quiet.\n\n## Registration\n\n**Ten compiler-forced sites, two more than `standup`'s eight** — the\nextra two (`EXTERNAL_AGENT_NAMES`, `AGENT_PARAM_KINDS`) are consequences\nof going external. Flipping `FLEET_ELIGIBILITY` to `\"eligible\"` failed\nthe build until the digest extractor existed, exactly as documented.\n\n**Not compiler-forced, hand-corrected:**\n\n- `CLAUDE.md` / `GEMINI.md` / `docs/SECURITY-INVARIANTS.md` each said\nI31 covers \"all **sixteen** brief kinds\" → seventeen.\n- `docs/roadmap.md` said the externally permitted set is \"eleven, not\nseventeen\" → twelve of eighteen.\n- `disclosure-anchor-coverage.test.ts` is a **hand-maintained list**,\nnot a table total over kinds, so it silently skipped the new brief until\noncall arms were added — the same shape of gap `standup` had to close in\n`reserved-sections.coverage.test.ts`.\n\n## Two pre-existing drifts fixed in passing\n\n- `metadataRecord` / `finiteNumberField` lived in\n`agents/_lib/standup-time-basis.ts` despite having nothing to do with a\ntime basis. Moved to a neutral `agents/_lib/item-metadata.ts` with their\ntests, rather than importing across from another agent's windowing\nmodule or copying them.\n- `.claude/commands/nimbus-agent-patterns.md` still said \"**fifteen**\nagent kinds\" and listed `standup` among agents \"deferred to a future\nphase\" — stale since 2026-09-12.\n\n## Verification\n\n- `bun run preflight` (full CI parity) — **exit 0**\n- `bun test packages/gateway packages/cli scripts` — **23,086 pass, 0\nfail**\n- `bun run typecheck:tests` run alone (advisory on Windows) — **ok, 0\nnew**\n- Coverage floor, measured against a CI-shaped instrumented run: **every\nfile this branch touches passes**. Seven violations remain in files it\ndoes not touch (`platform/linux.ts`, `platform/sandbox/win32*.ts`,\n`ipc/server/{dispatchers,socket-listeners}.ts`) — the gate is `if:\nrunner.os == 'Linux'` in CI, and `platform/linux.ts` cannot be exercised\non a Windows run at all.\n- Load-bearing assertions were **mutation-tested rather than trusted\ngreen**: the external shape bound (3 mutations, 3 caught, including the\n`chatops` misclassification), the query guards (3/3), and the\nsync-freshness disclosure (2/2).\n\nOne honest note on the renderer tests: two assertions I wrote first were\nchecking *substrings* and failed against a **correct** defense — the\nnewline in an injected title is stripped, so `## Fake heading` survives\nas inline text that can never parse as a heading, and `](javascript:`\nappears as escaped literal text. Both were rewritten to assert the\nstructural property instead.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nhttps://claude.ai/code/session_013rtq7aC9yd5EbgdDnMZLFL\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n\n## Summary by CodeRabbit\n\n- **New Features**\n- Added the `nimbus oncall` agent for incident briefings using incident,\nservice, deployment, CI, chat, and prior-incident context.\n- Added CLI options for incident or service selection, lookback periods\nup to 90 days, Markdown, Slack-compatible text, and JSON output.\n- Added service-scoped and owner-scoped brief generation with freshness,\ntruncation, and data-gap disclosures.\n- Enabled supported external access and fleet reporting for on-call\nbriefs.\n\n- **Documentation**\n- Added CLI reference, changelog, roadmap, security, and built-in agent\ndocumentation for `oncall`.\n\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>",
+          "timestamp": "2026-09-13T13:03:25Z",
+          "tree_id": "affe745bed51a9057cbacaf0d08ddbf17c408244",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/27c42111e1c44911c56f62b3c558d8808e0ccedb"
+        },
+        "date": 1789305437040,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 318.23357784999826,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 322.5899237000107,
             "unit": "ms"
           }
         ]
