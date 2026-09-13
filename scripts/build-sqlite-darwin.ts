@@ -17,7 +17,7 @@ import { join, resolve } from "node:path";
  *
  * WHY WE COMPILE RATHER THAN COPY THE RUNNER'S HOMEBREW BUILD. The point is that the library we
  * SHIP is the library CI TESTED. `.github/actions/setup-nimbus-ci` builds this same artifact and
- * exports `NIMBUS_SQLITE_PATH` to it, so the 54 `skipIf(!VEC_AVAILABLE)` sites and the sqlite-vec
+ * exports `NIMBUS_SQLITE_PATH` to it, so the 68 `skipIf(!VEC_AVAILABLE)` sites and the sqlite-vec
  * canary exercise these exact bytes. Copying whatever `brew` had installed that morning would test
  * one library and ship another.
  *
@@ -108,6 +108,88 @@ export function assertDownloadMatchesPin(bytes: Uint8Array, pin: SqlitePin): voi
         "refusing to compile an unexpected download",
     );
   }
+}
+
+/**
+ * Just enough of `fetch` to make the download policy testable.
+ *
+ * Narrower than `typeof fetch` deliberately: that type carries Bun's `preconnect` property, which a
+ * test double would have to fake for no reason. What this arm actually uses is a URL, a signal and
+ * a `Response`.
+ */
+export type FetchLike = (url: string, init?: { signal?: AbortSignal }) => Promise<Response>;
+
+export interface FetchDeps {
+  readonly fetch: FetchLike;
+  readonly sleep: (ms: number) => Promise<void>;
+}
+
+export interface DownloadPolicy {
+  /** Total attempts, not retries after the first. */
+  readonly attempts: number;
+  /** Per-attempt deadline. Applies to the whole attempt, headers and body alike. */
+  readonly timeoutMs: number;
+  readonly backoffMs: number;
+}
+
+/**
+ * Bounded, because the alternative is unbounded.
+ *
+ * Bun's `fetch` has NO default timeout, so a half-open connection to sqlite.org would block until
+ * the JOB timeout — 45 minutes of a paid macOS runner on the release workflow, reported as a
+ * timeout with no indication of which step stalled. The retry exists for the same reason the step
+ * is fatal: this is now a payload component, so a transient mirror blip should cost 2 seconds
+ * rather than a release.
+ */
+export const DOWNLOAD_POLICY: DownloadPolicy = { attempts: 3, timeoutMs: 60_000, backoffMs: 2_000 };
+
+/** A status worth trying again: rate limiting and server-side faults, never a client error. */
+function isRetryableStatus(status: number): boolean {
+  return status === 408 || status === 429 || status >= 500;
+}
+
+/**
+ * Download the pinned amalgamation, verify it, and return the bytes.
+ *
+ * Retries only what can plausibly succeed on a second try — a thrown transport error (which
+ * includes the abort raised by the per-attempt timeout) and a retryable status. A 404 is NOT
+ * retried: it means the pin names something that does not exist, and three attempts would turn a
+ * clear error into a slow one. A CHECKSUM failure is not retried either — wrong bytes from a mirror
+ * are not a transient condition, and retrying into them would be asking a bad source twice.
+ */
+export async function fetchAmalgamation(
+  pin: SqlitePin,
+  deps: FetchDeps,
+  policy: DownloadPolicy = DOWNLOAD_POLICY,
+): Promise<Uint8Array> {
+  const url = amalgamationUrl(pin);
+  let last = "";
+  for (let attempt = 1; attempt <= policy.attempts; attempt++) {
+    try {
+      const res = await deps.fetch(url, { signal: AbortSignal.timeout(policy.timeoutMs) });
+      if (!res.ok) {
+        if (!isRetryableStatus(res.status)) {
+          throw new Error(
+            `build-sqlite-darwin: GET ${url} -> ${String(res.status)} (not retryable)`,
+          );
+        }
+        last = `HTTP ${String(res.status)}`;
+      } else {
+        const bytes = new Uint8Array(await res.arrayBuffer());
+        // Outside the retry decision on purpose: a mismatch throws straight out of the loop.
+        assertDownloadMatchesPin(bytes, pin);
+        return bytes;
+      }
+    } catch (e) {
+      if (e instanceof Error && /not retryable|SHA3-256|refusing to compile/.test(e.message))
+        throw e;
+      last = e instanceof Error ? e.message : String(e);
+    }
+    if (attempt < policy.attempts) await deps.sleep(policy.backoffMs * attempt);
+  }
+  throw new Error(
+    `build-sqlite-darwin: GET ${url} failed after ${String(policy.attempts)} attempts (${last})`,
+  );
 }
 
 /** Node's `process.arch` spelling mapped to the one `clang -arch` wants. */

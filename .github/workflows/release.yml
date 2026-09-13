@@ -169,9 +169,23 @@ jobs:
       #
       # It resolves from dirname(process.execPath), exactly like vec0.dylib, so it travels the same
       # three routes below: the .pkg payload and both tar.gz archives.
-      - name: Build bundled SQLite (macOS)
+      #
+      # COPIED, NOT REBUILT. `setup-nimbus-ci` already built (or restored from cache) exactly this
+      # library and exported NIMBUS_SQLITE_PATH to it. Compiling a second time here would ship bytes
+      # that no step in this job ever loaded, while the ones the action selected sat unused — two
+      # artifacts from one source, and the packaged one the less exercised of the pair. It is also
+      # ~25 s of a paid runner per macOS leg for a duplicate.
+      - name: Stage bundled SQLite (macOS)
         if: startsWith(matrix.target.os, 'macos')
-        run: bun scripts/build-sqlite-darwin.ts --dest dist --work "${RUNNER_TEMP}/sqlite-build"
+        run: |
+          set -euo pipefail
+          # Fail loudly rather than package a macOS archive with no SQLite in it: the setup step is
+          # fatal on macOS, so an unset variable here means the action changed, not that the build
+          # was skipped.
+          test -n "${NIMBUS_SQLITE_PATH:-}" || {
+            echo "::error::NIMBUS_SQLITE_PATH unset — setup-nimbus-ci did not build the bundled SQLite"; exit 1; }
+          cp "$NIMBUS_SQLITE_PATH" dist/libsqlite3.dylib
+          ls -l dist/libsqlite3.dylib
 
       # nimbus-sandbox-helper.exe (I15): the Windows AppContainer helper the sandbox runner
       # spawns through. helperPath() resolves it the same way tryLoadFromSidecar() resolves

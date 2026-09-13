@@ -37,7 +37,7 @@ runs:
     #
     # THIS BUILDS THE LIBRARY THE RELEASE SHIPS, rather than installing Homebrew's. That is the
     # point: `scripts/build-sqlite-darwin.ts` produces the same bytes the macOS `.pkg` and archives
-    # carry (#1505), so the 54 `skipIf(!VEC_AVAILABLE)` sites and the sqlite-vec canary exercise the
+    # carry (#1505), so the 68 `skipIf(!VEC_AVAILABLE)` sites and the sqlite-vec canary exercise the
     # artifact users get. `brew install sqlite` tested one library and shipped another.
     #
     # THE POSTURE CHANGED FROM NON-FATAL TO FATAL when it did, and the earlier reasoning no longer

@@ -7,6 +7,8 @@ import {
   amalgamationUrl,
   assertDownloadMatchesPin,
   clangArgs,
+  type FetchLike,
+  fetchAmalgamation,
   OUTPUT_FILENAME,
   SQLITE_PIN,
 } from "./build-sqlite-darwin.ts";
@@ -86,6 +88,117 @@ describe("assertDownloadMatchesPin", () => {
     expect(() => assertDownloadMatchesPin(bytes, { ...pinFor(bytes), sizeBytes: 999999 })).toThrow(
       /999999/,
     );
+  });
+});
+
+describe("fetchAmalgamation", () => {
+  // Every case here injects `fetch`, so the retry and timeout policy is exercised on all three
+  // platforms even though the compile it feeds is macOS-only. Nothing here touches the network.
+  const bytes = new TextEncoder().encode("pretend amalgamation");
+  const pin = {
+    ...SQLITE_PIN,
+    sizeBytes: bytes.byteLength,
+    sha3_256: createHash("sha3-256").update(bytes).digest("hex"),
+  };
+  const ok = () => new Response(bytes, { status: 200 });
+  const deps = (fetchImpl: FetchLike) => ({
+    fetch: fetchImpl,
+    sleep: async (): Promise<void> => {},
+  });
+
+  test("returns the verified bytes when the first attempt succeeds", async () => {
+    let calls = 0;
+    const got = await fetchAmalgamation(
+      pin,
+      deps(async () => {
+        calls += 1;
+        return ok();
+      }),
+    );
+    expect(got.byteLength).toBe(bytes.byteLength);
+    expect(calls).toBe(1);
+  });
+
+  test("applies a per-attempt timeout, so a stalled mirror cannot hang the release job", async () => {
+    // Bun's fetch has no default timeout: without a signal, a half-open connection to sqlite.org
+    // blocks until the JOB timeout, which on the release workflow is 45 minutes of a paid runner.
+    let seen: AbortSignal | undefined;
+    await fetchAmalgamation(
+      pin,
+      deps(async (_url, init) => {
+        seen = (init as RequestInit | undefined)?.signal ?? undefined;
+        return ok();
+      }),
+    );
+    expect(seen).toBeInstanceOf(AbortSignal);
+  });
+
+  test("retries a 503 and succeeds on a later attempt", async () => {
+    let calls = 0;
+    const got = await fetchAmalgamation(
+      pin,
+      deps(async () => {
+        calls += 1;
+        return calls < 2 ? new Response("busy", { status: 503 }) : ok();
+      }),
+    );
+    expect(got.byteLength).toBe(bytes.byteLength);
+    expect(calls).toBe(2);
+  });
+
+  test("retries a thrown network error", async () => {
+    let calls = 0;
+    await fetchAmalgamation(
+      pin,
+      deps(async () => {
+        calls += 1;
+        if (calls < 3) throw new Error("ECONNRESET");
+        return ok();
+      }),
+    );
+    expect(calls).toBe(3);
+  });
+
+  test("does NOT retry a 404 — a wrong pin is permanent, and retrying hides it", async () => {
+    let calls = 0;
+    await expect(
+      fetchAmalgamation(
+        pin,
+        deps(async () => {
+          calls += 1;
+          return new Response("nope", { status: 404 });
+        }),
+      ),
+    ).rejects.toThrow(/404/);
+    expect(calls).toBe(1);
+  });
+
+  test("gives up after the attempt budget and says how many it made", async () => {
+    let calls = 0;
+    await expect(
+      fetchAmalgamation(
+        pin,
+        deps(async () => {
+          calls += 1;
+          throw new Error("ETIMEDOUT");
+        }),
+      ),
+    ).rejects.toThrow(/3 attempt/);
+    expect(calls).toBe(3);
+  });
+
+  test("does NOT retry a checksum mismatch — wrong bytes are not a transient failure", async () => {
+    let calls = 0;
+    await expect(
+      fetchAmalgamation(
+        { ...pin, sha3_256: "0".repeat(64) },
+        deps(async () => {
+          calls += 1;
+          return ok();
+        }),
+      ),
+    ).rejects.toThrow(/SHA3-256/);
+    expect(calls).toBe(1);
   });
 });
 

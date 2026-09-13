@@ -51,7 +51,8 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
 
   **CI now builds and tests the bytes the release ships.** `setup-nimbus-ci`'s `brew install sqlite`
   is replaced by this same script, exporting `NIMBUS_SQLITE_PATH` to the result, so the 54
-  `skipIf(!VEC_AVAILABLE)` sites and the sqlite-vec canary exercise the shipped artifact instead of
+  `skipIf(!VEC_AVAILABLE)` sites (68 of them, re-derived rather than carried forward — the CI
+  comment this replaced said 54) and the sqlite-vec canary exercise the shipped artifact instead of
   a library that merely resembles it. That step also changed from deliberately non-fatal to fatal,
   and both halves of the old reasoning are why: a brew hiccup used to be cosmetic, but the library
   is now a PAYLOAD COMPONENT, so a release that cannot build it must not publish a package silently

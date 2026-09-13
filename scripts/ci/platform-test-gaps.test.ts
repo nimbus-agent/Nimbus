@@ -102,6 +102,32 @@ describe("scanSource", () => {
     expect(scanSource("a.test.ts", aliased, "darwin").map((s) => s.line)).toEqual([3]);
   });
 
+  it("expands the alias only in the condition, never in a test title", () => {
+    // The alias name is an ordinary word and can legitimately appear in the title or the body on
+    // the same line. Substituting it there put the comparison INSIDE the string, where
+    // `matchSkipSite` — which reads everything after `skipIf(` to end of line — then found it and
+    // reported a test that actually runs. An over-report from a tool whose entire value is that you
+    // can believe it.
+    //
+    // Scanned ON the named platform, which is where it actually goes wrong: substituting into the
+    // title on win32 yields a comparison that evaluates to NOT-skipped and is silently dropped, so
+    // the bug only surfaces on the platform the alias names. A regression test written against the
+    // wrong platform passes while the defect ships.
+    const source3 = [
+      'const isDarwin = process.platform === "darwin";',
+      'it.skipIf(false)("isDarwin", () => {});',
+    ].join("\n");
+    expect(scanSource("a.test.ts", source3, "darwin")).toHaveLength(0);
+
+    // The `!==` alias is the same defect wearing the other comparison, and it reports a DIFFERENT
+    // platform than the one being scanned — worth pinning separately.
+    const source4 = [
+      'const isWin = process.platform !== "win32";',
+      'it.skipIf(false)("isWin behaviour", () => {});',
+    ].join("\n");
+    expect(scanSource("a.test.ts", source4, "darwin")).toHaveLength(0);
+  });
+
   it("ignores an alias that is not a platform comparison at all", () => {
     const source2 = ["const ready = cache.size > 0;", 'it.skipIf(!ready)("x", () => {});'].join(
       "\n",

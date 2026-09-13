@@ -508,11 +508,13 @@ jobs:
           cp "$VEC0_SRC" "$PAYLOAD/bin/$(basename "$VEC0_SRC")"
 
           # The full SQLite that sidecar needs to load on macOS (#1505). Real macOS archives ship
-          # one; this job builds the same artifact so the assertion below proves install.sh's own
-          # copy loop ran, not that a file we placed by hand survived a tar round-trip.
+          # one, so the served fixture must too — otherwise the assertion below would prove nothing
+          # about install.sh's own copy loop. Taken from NIMBUS_SQLITE_PATH, which setup-nimbus-ci
+          # exported after building it, for release.yml's reason: one artifact per job, not two.
           if [ "$RUNNER_OS" = "macOS" ]; then
-            bun scripts/build-sqlite-darwin.ts --dest "$RUNNER_TEMP/sqlite" --work "$RUNNER_TEMP/sqlite"
-            cp "$RUNNER_TEMP/sqlite/libsqlite3.dylib" "$PAYLOAD/bin/libsqlite3.dylib"
+            test -n "${NIMBUS_SQLITE_PATH:-}" || {
+              echo "::error::NIMBUS_SQLITE_PATH unset — setup-nimbus-ci did not build the bundled SQLite"; exit 1; }
+            cp "$NIMBUS_SQLITE_PATH" "$PAYLOAD/bin/libsqlite3.dylib"
           fi
 
           # Names + layout MUST match scripts/install/lib/release-assets.ts's

@@ -120,6 +120,12 @@ const PLATFORM_ALIAS =
  * `NAME` the comparison itself; anything more (a reassigned alias, a compound condition, an alias
  * for an alias) is left alone and simply not reported, which is the same silence as before rather
  * than a new wrong answer.
+ *
+ * It rewrites ONLY a `skipIf(NAME)` / `skipIf(!NAME)` condition, never the rest of the line. An
+ * alias name is an ordinary word that also appears in test titles and bodies, and a whole-line
+ * replace put the comparison inside the TITLE — where `matchSkipSite`, which reads to end of line,
+ * found it and reported a test that actually runs. That over-report only surfaces when scanning ON
+ * the platform the alias names, so it is easy to write a regression test that passes against it.
  */
 export function scanSource(file: string, source: string, onPlatform: string): SkipSite[] {
   const out: SkipSite[] = [];
@@ -138,15 +144,25 @@ export function scanSource(file: string, source: string, onPlatform: string): Sk
   return out;
 }
 
-/** Replace `!NAME` / `NAME` inside a `skipIf(...)` argument with the comparison the alias holds. */
+/**
+ * Rewrite `skipIf(NAME)` / `skipIf(!NAME)` to `skipIf(<comparison>)`, and nothing else on the line.
+ *
+ * The `\)` in the pattern is what keeps this scoped: only a condition that is EXACTLY the alias,
+ * closing the call immediately, is rewritten. A compound condition (`skipIf(!isDarwin && slow)`) is
+ * left alone and therefore not reported — under-reporting, which is this tool's stated safe
+ * direction.
+ */
 function expandAliases(text: string, aliases: ReadonlyMap<string, string>): string {
   if (aliases.size === 0 || !text.includes("skipIf(")) return text;
   let out = text;
   for (const [name, cmp] of aliases) {
-    // `!alias` first: inverting the comparison is what makes the negated form report the right
-    // platform, and replacing the bare name first would leave a stray `!` in front of it.
-    out = out.replace(new RegExp(`!\\s*\\b${name}\\b`, "g"), invertComparison(cmp));
-    out = out.replace(new RegExp(`\\b${name}\\b`, "g"), cmp);
+    // Negated first: inverting the comparison is what makes `!alias` report the right platform, and
+    // handling the bare form first would leave a stray `!` in front of the substituted text.
+    out = out.replace(
+      new RegExp(`skipIf\\(\\s*!\\s*${name}\\s*\\)`, "g"),
+      `skipIf(${invertComparison(cmp)})`,
+    );
+    out = out.replace(new RegExp(`skipIf\\(\\s*${name}\\s*\\)`, "g"), `skipIf(${cmp})`);
   }
   return out;
 }
