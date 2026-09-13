@@ -93,11 +93,14 @@ export function ConnectorGrid(): ReactNode {
 
   const onHealth = useCallback(
     (payload: HealthChangedPayload) => {
-      const patch: Partial<ConnectorStatus> = { health: payload.health };
-      if (payload.degradationReason !== undefined) {
-        patch.degradationReason = payload.degradationReason;
-      }
-      patchConnector(payload.name, patch);
+      // ALWAYS set `degradationReason` (to the payload's value OR `undefined`), never merely omit
+      // it. `patchConnector` merges via `{ ...x, ...patch }` — omitting the key on a `degraded ->
+      // healthy` recovery would leave the OLD amber reason on the row, rendered under the now-
+      // healthy tile, until the next 30s poll happens to send a full row without it.
+      patchConnector(payload.name, {
+        health: payload.health,
+        degradationReason: payload.degradationReason,
+      });
     },
     [patchConnector],
   );

@@ -83,7 +83,12 @@ describe("ConnectorGrid", () => {
     expect(screen.getByText(/No connectors configured/i)).toBeInTheDocument();
   });
 
-  it("onHealth: patches connector health without degradationReason", () => {
+  it("onHealth: CLEARS degradationReason (sets it to undefined) when the payload omits it", () => {
+    // `patchConnector` merges via `{ ...x, ...patch }`, so omitting the key would leave a STALE
+    // amber reason from a previous degraded state on the row after a recovery. The key must be
+    // explicitly present with value `undefined`, not merely absent — `toHaveProperty` (unlike
+    // `toHaveBeenCalledWith`, which by design treats `{ a: undefined }` as equal to `{}`) is what
+    // actually distinguishes the two.
     render(
       <MemoryRouter>
         <ConnectorGrid />
@@ -92,9 +97,9 @@ describe("ConnectorGrid", () => {
     act(() => {
       capturedHealthHandler?.({ name: "drive", health: "degraded" });
     });
-    expect(patchConnectorSpy).toHaveBeenCalledWith("drive", { health: "degraded" });
     const patch = patchConnectorSpy.mock.calls[0]?.[1];
-    expect(patch).not.toHaveProperty("degradationReason");
+    expect(patch).toHaveProperty("degradationReason");
+    expect(patch?.degradationReason).toBeUndefined();
   });
 
   it("onHealth: includes degradationReason when present in payload", () => {

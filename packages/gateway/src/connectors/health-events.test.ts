@@ -167,3 +167,50 @@ describe("connector.healthChanged", () => {
     expect(seen).toEqual([]);
   });
 });
+
+describe("degradationReason", () => {
+  test("a HEALTHY transition never carries degradationReason, even with a non-null reason", () => {
+    // `resumed` always sets `reason = "connector resumed"` — a real, non-null reason on a
+    // transition that lands on "healthy". `ConnectorTile.tsx` renders `degradationReason`
+    // unconditionally as amber text, so this field reaching the wire here would paint amber
+    // "connector resumed" text under a green tile.
+    const db: Database = createMemoryIndexDb();
+    transitionHealth(db, "github", { type: "paused" }); // healthy -> paused
+    const seen = captured();
+    transitionHealth(db, "github", { type: "resumed" }); // paused -> healthy
+    expect(seen).toHaveLength(1);
+    const p = seen[0]?.params as Record<string, unknown>;
+    expect(p["health"]).toBe("healthy");
+    expect(p["reason"]).toBe("connector resumed");
+    expect("degradationReason" in p).toBe(false);
+  });
+
+  test("a NOT-healthy transition carries degradationReason, equal to reason", () => {
+    const db: Database = createMemoryIndexDb();
+    const seen = captured();
+    transitionHealth(db, "github", { type: "persistent_error", error: "boom" });
+    expect(seen).toHaveLength(1);
+    const p = seen[0]?.params as Record<string, unknown>;
+    expect(p["health"]).toBe("error");
+    expect(p["reason"]).toBe("persistent error: boom");
+    expect(p["degradationReason"]).toBe("persistent error: boom");
+  });
+
+  test("the configured/not_configured arm agrees with the main switch: healthy omits, not_configured carries it", () => {
+    const db: Database = createMemoryIndexDb();
+    transitionHealth(db, "github", { type: "sync_success" }); // create the row, configured = 1
+    const seenNotConfigured = captured();
+    transitionHealth(db, "github", { type: "not_configured" }); // healthy -> not_configured
+    expect(seenNotConfigured).toHaveLength(1);
+    const notConfiguredPayload = seenNotConfigured[0]?.params as Record<string, unknown>;
+    expect(notConfiguredPayload["health"]).toBe("not_configured");
+    expect(notConfiguredPayload["degradationReason"]).toBe("no credential configured");
+
+    const seenConfigured = captured();
+    transitionHealth(db, "github", { type: "configured" }); // not_configured -> healthy
+    expect(seenConfigured).toHaveLength(1);
+    const configuredPayload = seenConfigured[0]?.params as Record<string, unknown>;
+    expect(configuredPayload["health"]).toBe("healthy");
+    expect("degradationReason" in configuredPayload).toBe(false);
+  });
+});

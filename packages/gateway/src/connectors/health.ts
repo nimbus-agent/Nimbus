@@ -266,11 +266,19 @@ export function transitionHealth(
         event.type === "configured"
           ? "not_configured"
           : ((fromState as ConnectorHealthState | null) ?? null);
+      const configReason =
+        event.type === "configured" ? "credential configured" : "no credential configured";
       emitConnectorHealthChanged({
         name: connectorId,
         health: recorded,
+        // Only when the resulting state is NOT "healthy" — `reason`/`degradationReason` mean
+        // different things (see the main switch below) and must not collapse into the same
+        // value. `not_configured` here always populates it ("no credential configured" explains
+        // an amber/red tile); a `configured` event that lands on "healthy" omits it, matching the
+        // main switch's rule below.
+        ...(recorded === "healthy" ? {} : { degradationReason: configReason }),
         fromState: visibleFromState,
-        reason: event.type === "configured" ? "credential configured" : "no credential configured",
+        reason: configReason,
         occurredAt: now,
       });
     }
@@ -386,7 +394,14 @@ export function transitionHealth(
     emitConnectorHealthChanged({
       name: connectorId,
       health: effectiveState,
-      ...(reason === null ? {} : { degradationReason: reason }),
+      // `reason` is the TRANSITION reason (unconditional, below) and `degradationReason` is the
+      // desktop's degradation explanation — they must not collapse into the same value. Every
+      // non-heartbeat transition sets `reason` (including a success like "sync succeeded" or
+      // "connector resumed"), so gating this on `reason !== null` alone put amber
+      // "sync succeeded"/"connector resumed"/"credential re-verified" text under a GREEN tile
+      // (`ConnectorTile.tsx` renders `degradationReason` unconditionally as amber). Only emit it
+      // when the resulting state is actually not healthy.
+      ...(reason === null || effectiveState === "healthy" ? {} : { degradationReason: reason }),
       // `string | null` -> the payload's union; same cast idiom as this file's snapshot builder.
       fromState: (fromState as ConnectorHealthState | null) ?? null,
       reason,
