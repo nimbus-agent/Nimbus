@@ -239,14 +239,28 @@ export async function runTailCommand(
     return;
   }
 
+  let client: TailClient;
+  try {
+    client = await deps.connect(state.socketPath);
+  } catch {
+    // A stale gateway state file — the socket path was recorded but nothing is listening on it
+    // anymore — rejects here rather than at `readState()` above. From the operator's perspective
+    // both mean the same thing, so both get the same documented message rather than a raw
+    // connection-error stack trace.
+    deps.writeErr("Gateway is not running. Start with: nimbus start\n");
+    deps.onExit(1);
+    return;
+  }
+
   // Piping into e.g. `head -n 5` closes stdout early. Without this the process dies with an
-  // unhandled EPIPE stack trace, which is the first thing anyone does with a stream.
+  // unhandled EPIPE stack trace, which is the first thing anyone does with a stream. Installed
+  // only AFTER a successful connect: the two failure returns above exit before this line, so a
+  // failed connect never attaches this listener (and so never needs it removed — `finish()`,
+  // below, is the only place that removes it, and it is unreachable on those paths).
   const onStdoutError = (e: NodeJS.ErrnoException): void => {
     if (e.code === "EPIPE") deps.onExit(0);
   };
   process.stdout.on("error", onStdoutError);
-
-  const client = await deps.connect(state.socketPath);
 
   const onEvent =
     (method: string) =>

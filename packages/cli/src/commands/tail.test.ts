@@ -342,6 +342,20 @@ describe("runTailCommand lifecycle", () => {
     expect(h.exits).toEqual([1]);
   });
 
+  test("a stale socket (connect rejects) reports gateway-not-running, exits 1, and leaks no listener", async () => {
+    // The state file existed (`readState()` resolved), but nothing is listening on the recorded
+    // socket path anymore — `connect()` rejects. Before the fix this reached `main()` as a raw
+    // connection-error stack trace instead of the documented message, and — because the stdout
+    // `error` listener was installed BEFORE `connect()` while `finish()` (which removes it) is
+    // only constructed AFTER a successful connect — left that listener attached forever.
+    const stdoutListenersBefore = process.stdout.listenerCount("error");
+    const h = harness({ connect: async () => Promise.reject(new Error("ECONNREFUSED")) });
+    await runTailCommand([], h.deps);
+    expect(h.err.join("")).toContain("Gateway is not running. Start with: nimbus start");
+    expect(h.exits).toEqual([1]);
+    expect(process.stdout.listenerCount("error")).toBe(stdoutListenersBefore);
+  });
+
   /**
    * `runTailCommand` genuinely awaits `readState()` then `connect()` before it registers any
    * handler — real production behavior against a real Gateway socket. A caller that calls it and
