@@ -2,6 +2,13 @@
 
 All notable changes to the `nimbus` core (headless Gateway + CLI binary + first-party MCP connectors) are documented in this file. release-please appends new entries between this header and the most recent version below when a release PR merges.
 
+## [7.21.1](https://github.com/nimbus-agent/Nimbus/compare/v7.21.0...v7.21.1) (2026-09-13)
+
+
+### Bug Fixes
+
+* **platform:** bundle a full SQLite with the macOS build so semantic search works without Homebrew ([#1507](https://github.com/nimbus-agent/Nimbus/issues/1507)) ([a3703cc](https://github.com/nimbus-agent/Nimbus/commit/a3703cc0b63bf7b9de4efce67bae91a2e71831a2))
+
 ## [7.21.0](https://github.com/nimbus-agent/Nimbus/compare/v7.20.1...v7.21.0) (2026-09-12)
 
 
