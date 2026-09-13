@@ -210,7 +210,11 @@ import {
 import type { StatusReaders } from "../ipc/admin-status-rpc.ts";
 import { resumePendingRemovals } from "../ipc/connector-rpc-handlers/index.ts";
 import type { EgressRpcCtx } from "../ipc/egress-rpc.ts";
-import { emitGatewayEvent, setGatewayEventBroadcast } from "../ipc/gateway-events.ts";
+import {
+  emitGatewayEvent,
+  setGatewayEventBroadcast,
+  type WatcherFiredPayload,
+} from "../ipc/gateway-events.ts";
 import { HTTP_API_DEPLOYMENT_TOKEN_VAULT_KEY } from "../ipc/http-auth.ts";
 import { type ReadOnlyHttpServerOptions, startReadOnlyHttpServer } from "../ipc/http-server.ts";
 import type { TeamsEventsSurface } from "../ipc/http-write-routes.ts";
@@ -629,7 +633,13 @@ async function createSchedulerWithMesh(opts: SchedulerWithMeshOpts): Promise<{
   });
 
   const automation = loadNimbusAutomationFromConfigDir(paths.configDir);
-  const watcherOpts = { graphConditionsEnabled: automation.graphConditions };
+  const watcherOpts = {
+    graphConditionsEnabled: automation.graphConditions,
+    // Both `evaluateWatchersAfterSync` and `evaluateWatchersStartupCatchUp` share this object, so
+    // wiring it here covers both fire paths — a per-call-site wiring is one place for the second
+    // to be forgotten.
+    onFired: (p: WatcherFiredPayload) => emitGatewayEvent("watcher.fired", { ...p }),
+  };
 
   const glossaryCfg = loadNimbusGlossaryFromConfigDir(paths.configDir);
   // Gate at the point of use, so the single config read stays single.

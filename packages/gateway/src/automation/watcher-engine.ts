@@ -1,6 +1,7 @@
 import type { Database } from "bun:sqlite";
 
 import { readIndexedUserVersion } from "../index/migrations/runner.ts";
+import type { WatcherFiredPayload } from "../ipc/gateway-events.ts";
 import {
   type GraphPredicate,
   itemMatchesGraphPredicate,
@@ -17,6 +18,15 @@ import {
 
 export type WatcherEvalOptions = {
   graphConditionsEnabled?: boolean;
+  /**
+   * Structured observation of a fire, for the operational event stream.
+   *
+   * Deliberately NOT the `notify(title, body)` parameter beside it: that one is human prose for an
+   * OS toast. Keeping them separate also keeps this lane visibly distinct from
+   * `makeChatopsWatcherNotify`, which is unwired precisely because routing watcher alerts OUTBOUND
+   * would put the path under I23 and plausibly I29.
+   */
+  onFired?: (payload: WatcherFiredPayload) => void;
 };
 
 /**
@@ -76,6 +86,12 @@ export function evaluateWatchersAfterSync(
     if (fired !== null) {
       insertWatcherEvent(db, w.id, nowMs, fired.snapshot, JSON.stringify({ ok: true }));
       void notify("Nimbus watcher", `${w.name}: ${fired.summary}`);
+      opts.onFired?.({
+        watcherId: w.id,
+        name: w.name,
+        summary: fired.summary,
+        firedAt: nowMs,
+      });
       updateWatcherLastFired(db, w.id, nowMs);
     }
   }
@@ -99,6 +115,12 @@ export function evaluateWatchersStartupCatchUp(
     if (fired !== null) {
       insertWatcherEvent(db, w.id, nowMs, fired.snapshot, JSON.stringify({ ok: true }));
       void notify("Nimbus watcher", `${w.name}: ${fired.summary}`);
+      opts.onFired?.({
+        watcherId: w.id,
+        name: w.name,
+        summary: fired.summary,
+        firedAt: nowMs,
+      });
       updateWatcherLastFired(db, w.id, nowMs);
     }
   }
