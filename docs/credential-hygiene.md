@@ -165,16 +165,26 @@ publish has actually succeeded.**
    publishing for the first time with the old credential already gone. Gate the guard and the
    `OVSX_PAT:` env line on an input (a `workflow_dispatch` boolean, say) so a dry run can take the
    trusted-publishing branch while the secret is still sitting there as the rollback.
-3. **Add `--trusted-publishing` to the `ovsx publish` call.** With the flag, the run FAILS rather
+3. **Upgrade `ovsx` to v1.2.0 or later in `nimbus-vscode`, lockfile included — before step 4, or
+   step 4 fails for a reason that has nothing to do with OIDC.** `package.json` declares
+   `"ovsx": "^1.1.0"` and `bun.lock` resolves `ovsx@1.1.0`; the publish job installs with
+   `bun install --frozen-lockfile` and then runs `bunx ovsx publish`, which prefers the locally
+   installed `node_modules/.bin/ovsx` over anything it could fetch. So the range *permitting*
+   1.2.0 changes nothing on its own — the locked 1.1.0 is what runs, and v1.1.0 has no
+   `trusted-publishing.ts` / `oidc.ts` at all (they first appear at
+   [`v1.2.0`](https://github.com/eclipse-openvsx/openvsx/tree/v1.2.0/cli/src)), so commander
+   rejects `--trusted-publishing` as an unknown option. `bun update ovsx` and commit the
+   regenerated `bun.lock`; confirm with `bunx ovsx publish --help`.
+4. **Add `--trusted-publishing` to the `ovsx publish` call.** With the flag, the run FAILS rather
    than silently falling back if no ID token can be obtained — which is what you want for a
    verification run. Note the precedence trap it guards against: `--pat` / `OVSX_PAT` always wins
    over trusted publishing, so with the secret still exported the migration looks done while
    nothing has changed.
-4. **Prove it** — one dispatch of the controlled mode, publishing a real version, succeeding.
-5. **Only then delete the secret** from `nimbus-vscode` → *Settings* → *Environments* → **release**,
+5. **Prove it** — one dispatch of the controlled mode, publishing a real version, succeeding.
+6. **Only then delete the secret** from `nimbus-vscode` → *Settings* → *Environments* → **release**,
    and drop `OVSX_PAT` from both `publish.yml` and `secret-health.yml` (including its
    `probe-publish-token` step, which has nothing left to probe).
-6. **Flip the registry entry, or you trade one alert for another.** In
+7. **Flip the registry entry, or you trade one alert for another.** In
    `scripts/release/credential-registry.ts`, set the `OVSX_PAT` entry to `state: "forbidden"`,
    `consumedBy: []`, `maxAgeDays: null`. A deleted secret left at `state: "required"` is reported
    by `auditCredentials` as a hard `missing` every week — the same permanently-open-alert failure
