@@ -213,4 +213,27 @@ describe("degradationReason", () => {
     expect(configuredPayload["health"]).toBe("healthy");
     expect("degradationReason" in configuredPayload).toBe(false);
   });
+
+  test("a configured event landing on a stored error state never explains it with a success message", () => {
+    // `recorded` on the configured arm is the connector's PRIOR stored `health_state`
+    // (`applyConfiguredFlag`'s `fromState ?? "healthy"`), which is not always "healthy" — a row
+    // can hold `error`/`degraded`/`rate_limited` while `configured` was `0`. The old
+    // `recorded === "healthy" ? {} : { degradationReason: configReason }` attached
+    // `degradationReason: "credential configured"` in exactly that case, explaining an ERROR
+    // state with a SUCCESS message. Only `not_configured` may attach `degradationReason`.
+    const db: Database = createMemoryIndexDb();
+    transitionHealth(db, "github", { type: "sync_success" }); // create the row, configured = 1
+    transitionHealth(db, "github", { type: "persistent_error", error: "boom" }); // -> error
+    transitionHealth(db, "github", { type: "not_configured" }); // configured -> 0; health_state column untouched
+    const seen = captured();
+    transitionHealth(db, "github", { type: "configured" }); // configured -> 1; recorded = prior "error"
+    expect(seen).toHaveLength(1);
+    const p = seen[0]?.params as Record<string, unknown>;
+    expect(p["health"]).toBe("error");
+    expect(p["reason"]).toBe("credential configured");
+    // The transition reason ("credential configured") is real and stays on `reason` — but it
+    // must never appear as `degradationReason`, which a reader takes as an explanation of the
+    // ERROR state itself.
+    expect("degradationReason" in p).toBe(false);
+  });
 });

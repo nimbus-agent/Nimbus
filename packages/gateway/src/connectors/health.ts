@@ -271,12 +271,20 @@ export function transitionHealth(
       emitConnectorHealthChanged({
         name: connectorId,
         health: recorded,
-        // Only when the resulting state is NOT "healthy" — `reason`/`degradationReason` mean
-        // different things (see the main switch below) and must not collapse into the same
-        // value. `not_configured` here always populates it ("no credential configured" explains
-        // an amber/red tile); a `configured` event that lands on "healthy" omits it, matching the
-        // main switch's rule below.
-        ...(recorded === "healthy" ? {} : { degradationReason: configReason }),
+        // Only on the `not_configured` arm, and unconditionally there (`recorded` is ALWAYS
+        // `"not_configured"` on that arm — `applyConfiguredFlag` forces it — so this is never
+        // "healthy" and needs no extra check). `reason`/`degradationReason` mean different things
+        // (see the main switch below) and must not collapse into the same value.
+        //
+        // A `configured` event's `recorded` is the connector's PRIOR stored `health_state`
+        // (`applyConfiguredFlag`'s `fromState ?? "healthy"`), which is not always "healthy" — a
+        // row can hold `error`/`degraded`/`rate_limited` while `configured` was `0`. Attaching
+        // `configReason` ("credential configured") there would explain an error state with a
+        // success message: `recorded === "healthy" ? {} : ...` let exactly that through, since
+        // `recorded === "error"` took the `degradationReason` branch too. `configured` never
+        // attaches `degradationReason` at all — matching the main switch below, which likewise
+        // omits it once the destination state is healthy.
+        ...(event.type === "not_configured" ? { degradationReason: configReason } : {}),
         fromState: visibleFromState,
         reason: configReason,
         occurredAt: now,
