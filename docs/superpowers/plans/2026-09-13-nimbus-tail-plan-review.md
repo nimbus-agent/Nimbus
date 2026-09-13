@@ -9,6 +9,7 @@
 ## 1. Executive Summary
 
 The implementation plan is exceptionally well-structured and follows strict test-driven development (TDD) discipline. It successfully integrates the critical findings from the design review:
+
 - Resolves the desktop UI schema mismatch by adopting the desktop's `name` / `health` vocabulary.
 - Solves the unicast `consent.request` limitation by introducing observational `hitl.requested` / `hitl.resolved` broadcast events without mutating consent authorization.
 - Moves the `connector.healthChanged` emission outside the SQLite transaction in `transitionHealth`.
@@ -30,6 +31,7 @@ The plan instructs:
 In reality, [`packages/gateway/src/ipc/server/dispatchers.ts:1676-1714`](../../../packages/gateway/src/ipc/server/dispatchers.ts) does not contain individual handlers like `handleExtensionEnable` or `extension.enable` dispatch tables. It simply delegates the entire `extension.*` namespace to `dispatchAutomationRpc` in [`packages/gateway/src/ipc/automation-rpc.ts`](../../../packages/gateway/src/ipc/automation-rpc.ts).
 
 The actual mutation handlers are registered in `packages/gateway/src/ipc/automation-rpc.ts`:
+
 - `"extension.install"`: line 212 (`handleExtensionInstall`)
 - `"extension.update"`: line 219 (`handleAutoUpdateRpc`)
 - `"extension.enable"`: line 221
@@ -62,16 +64,19 @@ and update the relative import to `import type { ConnectorStatus } from "../../s
 **Plan Section:** Task 2, Step 3 (lines 363–394)  
 **The Issue:**  
 In [`packages/gateway/src/connectors/health.ts:241-244`](../../../packages/gateway/src/connectors/health.ts):
+
 ```ts
 if (event.type === "not_configured" || event.type === "configured") {
   applyConfiguredFlag(db, connectorId, current, fromState, event.type === "configured", now);
   return buildSnapshot(connectorId, readHealthRow(db, connectorId));
 }
 ```
+
 When a connector is authenticated or unauthenticated via `nimbus connector auth`, `transitionHealth` returns early on line 243. Because Task 2 places `emitConnectorHealthChanged` at line 383 (after the main `db.transaction`), **no notification is emitted when a connector transitions between `configured` and `not_configured`**.
 
 **Required Correction:**  
 Ensure `applyConfiguredFlag` (or the early-return branch in `transitionHealth`) also calls `emitConnectorHealthChanged` when a configuration state change occurs:
+
 ```ts
 if (event.type === "not_configured" || event.type === "configured") {
   const isConfigured = event.type === "configured";
@@ -96,6 +101,7 @@ if (event.type === "not_configured" || event.type === "configured") {
 **Plan Section:** Task 6, Step 3 (lines 878–886)  
 **The Issue:**  
 In `packages/gateway/src/ipc/consent.ts:89-96`:
+
 ```ts
 rejectAllPending(message: string, hitlAuditReason: string): void {
   const err = new ConsentDisconnectedError(message, hitlAuditReason);
@@ -106,10 +112,12 @@ rejectAllPending(message: string, hitlAuditReason: string): void {
   }
 }
 ```
+
 The existing loop iterates over `snapshot.values()`, which yields only `entry` without the `requestId` key. To emit `hitl.resolved` with the `requestId`, the loop must iterate over entries (`for (const [requestId, entry] of snapshot.entries())`).
 
 **Required Correction:**  
 Update Task 6 Step 3 code snippet:
+
 ```ts
   rejectAllPending(message: string, hitlAuditReason: string): void {
     const err = new ConsentDisconnectedError(message, hitlAuditReason);
@@ -153,6 +161,7 @@ In Task 8, `runTailCommand` directly invokes `process.exit(1)`, `readGatewayStat
 
 **Suggestion:**  
 Expand `TailCommandDeps` to support injectable IO (following the pattern in `packages/cli/src/lib/run-gateway-cli-command.ts`):
+
 ```ts
 export type TailCommandDeps = {
   readonly connect: (socketPath: string) => Promise<IPCClient>;
@@ -162,7 +171,9 @@ export type TailCommandDeps = {
   readonly onExit?: (code: number) => void;
 };
 ```
+
 This enables writing fast unit tests for:
+
 - Gateway offline (`readState` returns `undefined` -> writes error and exits `1`).
 - Successful stream subscription and message filtering.
 - Signal interruption and graceful shutdown.
@@ -173,6 +184,7 @@ In `runTailCommand`, `SIGINT` and `SIGTERM` listeners are attached to `process`.
 
 **Suggestion:**  
 Ensure listeners are removed when the stream closes:
+
 ```ts
   await new Promise<void>((resolve) => {
     const shutdown = (): void => {
@@ -210,8 +222,10 @@ To protect against method-name drift, we should add an integration test in packa
 
 1. **Category Filter on Unknown Future Kinds:**  
    In Task 8 (`categoryOf`, lines 1209–1210), unknown future kinds return `null`, which causes them to be displayed only when NO `--filter` is specified. If a user runs `nimbus tail --filter sync`, unknown kinds are filtered out. Is this the intended behavior? (Yes, this matches standard CLI filter semantics).
+
 2. **`extension.stateChanged` for `extension.sync`:**  
    `automation-rpc.ts` also contains `extension.sync` (syncing publisher keys). Should key syncs emit `extension.stateChanged`, or is that considered internal telemetry rather than extension state? (Excluding it as internal seems correct).
+
 3. **Documentation Retention:**  
    Task 9 Step 6 specifies deleting the design spec, review, and plan before merging to `main`. To maintain context during review, ensure this deletion is the final commit on the branch prior to merge.
 
