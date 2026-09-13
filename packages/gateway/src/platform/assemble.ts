@@ -210,6 +210,7 @@ import {
 import type { StatusReaders } from "../ipc/admin-status-rpc.ts";
 import { resumePendingRemovals } from "../ipc/connector-rpc-handlers/index.ts";
 import type { EgressRpcCtx } from "../ipc/egress-rpc.ts";
+import { setGatewayEventBroadcast } from "../ipc/gateway-events.ts";
 import { HTTP_API_DEPLOYMENT_TOKEN_VAULT_KEY } from "../ipc/http-auth.ts";
 import { type ReadOnlyHttpServerOptions, startReadOnlyHttpServer } from "../ipc/http-server.ts";
 import type { TeamsEventsSurface } from "../ipc/http-write-routes.ts";
@@ -4110,6 +4111,10 @@ export async function assemblePlatformServices(
   }
   // Bind the live broadcast so identity.loginProgress/Done/Error reach subscribers (see identity-boot.ts).
   identityBoot?.bindLoginNotify((method, payload) => ipc.broadcast(method, payload));
+  // Same seam, same reason: the emitters are constructed during assemble, which runs before
+  // `createIpcServer(...)` exists. Until this line runs, every operational emit is dropped
+  // harmlessly — which is also what makes unit tests that never bind safe.
+  setGatewayEventBroadcast((method, params) => ipc.broadcast(method, params));
 
   if (chatopsBoot !== undefined) {
     // I20 fallback leg: when the chat-routed approval is not honored (timeout / non-owner /
