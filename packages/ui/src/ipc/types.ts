@@ -55,6 +55,7 @@ export type ConnectorStatus = {
   health: ConnectorHealth;
   lastSyncAt?: string;
   degradationReason?: string;
+  lastError?: string;
   itemCount?: number;
   intervalMs?: number;
   depth?: "metadata_only" | "summary" | "full";

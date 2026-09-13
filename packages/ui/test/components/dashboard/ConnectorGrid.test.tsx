@@ -9,6 +9,12 @@ vi.mock("@tauri-apps/api/core", () => ({
 
 const patchConnectorSpy = vi.fn<(name: string, patch: Partial<ConnectorStatus>) => void>();
 
+// What `connector.listStatus` returns to `useIpcQuery` — defaults to the gateway's real wire
+// shape (`SyncStatus`: `serviceId`/`healthState`, no `name`/`health`). Individual tests below
+// that only care about a preset `store.connectors` never read this, since their `setConnectors`
+// stays the default no-op.
+let wireListStatus: unknown = [{ serviceId: "drive", healthState: "healthy" }];
+
 const store: {
   connectors: ConnectorStatus[];
   highlightConnector: string | null;
@@ -30,7 +36,7 @@ vi.mock("../../../src/store", () => ({
 }));
 
 vi.mock("../../../src/hooks/useIpcQuery", () => ({
-  useIpcQuery: () => ({ data: store.connectors, error: null, isLoading: false }),
+  useIpcQuery: () => ({ data: wireListStatus, error: null, isLoading: false }),
 }));
 
 type HealthPayload = {
@@ -52,6 +58,9 @@ beforeEach(() => {
   patchConnectorSpy.mockReset();
   capturedHealthHandler = null;
   store.connectors = [{ name: "drive", health: "healthy" }];
+  store.setConnectors = () => undefined;
+  store.patchConnector = patchConnectorSpy;
+  wireListStatus = [{ serviceId: "drive", healthState: "healthy" }];
 });
 
 describe("ConnectorGrid", () => {
@@ -105,5 +114,61 @@ describe("ConnectorGrid", () => {
       health: "rate_limited",
       degradationReason: "too many requests",
     });
+  });
+
+  it("maps a real connector.listStatus (SyncStatus) row so a later health-changed patch lands on it", () => {
+    // Real wire shape from the gateway (`SyncStatus`, `packages/gateway/src/sync/types.ts`):
+    // `serviceId`/`healthState`, no `name`/`health` at all. Wire `setConnectors`/`patchConnector`
+    // up to real (store-mutating) semantics for this test only, so the assertions below prove the
+    // mapping landed in the shape `patchConnector`'s `x.name === name` actually matches on — not
+    // just that the RPC mock returned something.
+    store.setConnectors = (c) => {
+      store.connectors = c;
+    };
+    store.patchConnector = (name, patch) => {
+      patchConnectorSpy(name, patch);
+      store.connectors = store.connectors.map((x) => (x.name === name ? { ...x, ...patch } : x));
+    };
+    wireListStatus = [
+      {
+        serviceId: "drive",
+        status: "ok",
+        healthState: "healthy",
+        lastError: null,
+        itemCount: 12,
+        intervalMs: 60_000,
+        depth: "summary",
+        enabled: true,
+      },
+    ];
+    store.connectors = [];
+
+    render(
+      <MemoryRouter>
+        <ConnectorGrid />
+      </MemoryRouter>,
+    );
+
+    // The initial fetch mapped `serviceId` -> `name` and `healthState` -> `health`, plus the
+    // other listed fields — not `undefined`, which is what the unchecked-assertion bug produced.
+    expect(store.connectors).toEqual([
+      expect.objectContaining({
+        name: "drive",
+        health: "healthy",
+        itemCount: 12,
+        intervalMs: 60_000,
+        depth: "summary",
+        enabled: true,
+      }),
+    ]);
+
+    act(() => {
+      capturedHealthHandler?.({ name: "drive", health: "degraded" });
+    });
+
+    // The patch actually LANDS: `patchConnector`'s `x.name === name` now has a real "drive" row
+    // to match, rather than every row's `name` being `undefined`.
+    expect(patchConnectorSpy).toHaveBeenCalledWith("drive", { health: "degraded" });
+    expect(store.connectors[0]?.health).toBe("degraded");
   });
 });
