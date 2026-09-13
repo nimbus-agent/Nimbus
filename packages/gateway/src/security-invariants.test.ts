@@ -2800,6 +2800,50 @@ describe("I31 — disclosure integrity: a synthesized brief never says less than
     expect(contract).toContain('brief.kind === "standup"');
   });
 
+  test("I31: the renderer and the guard both CALL the one oncall disclosure builder", async () => {
+    // Same wiring claim as the changelog and standup cases above. It matters more here than on
+    // either of them: `oncall`'s preamble carries the sync-freshness disclosure, which qualifies
+    // WHICH INCIDENT the brief selected rather than a count — a guard that imported the builder
+    // and returned `[]` for this kind would let a rewrite drop the one sentence standing between
+    // a reader and a brief about an incident that closed an hour ago.
+    const render = await read("packages/gateway/src/agents/_lib/render.ts");
+    const contract = await read("packages/gateway/src/agents/_lib/brief-contract.ts");
+    expect(render).toContain("oncallDisclosures(");
+    expect(contract).toContain("oncallDisclosures(");
+    expect(contract).toContain('brief.kind === "oncall"');
+  });
+
+  test("I31: EVERY interleaved disclosure builder is called by both the renderer and the guard", async () => {
+    // The three tests above are hand-written, one per kind, and that shape has now failed twice in
+    // this repo for the same reason: a hand-maintained list cannot fail for a kind nobody added to
+    // it. `reserved-sections.coverage.test.ts`'s `ALL_KINDS` silently skipped `standup` (guarded by
+    // its own `toHaveLength`, so the list and the assertion stayed self-consistent), and
+    // `disclosure-anchor-coverage.test.ts` silently skipped `oncall`.
+    //
+    // This closes the class by DERIVING the set from `brief-disclosures.ts`'s own exports rather
+    // than restating it: a builder added there and wired into neither file — or into only one —
+    // fails here without anyone remembering to extend a list. The per-kind tests above are kept
+    // because they additionally assert the guard reaches the builder on that kind's own branch
+    // (`brief.kind === "…"`), which the export name alone cannot tell us: the kind for
+    // `negotiateOwnershipDisclosures` is `negotiate`, not `negotiateOwnership`.
+    const disclosures = await read("packages/gateway/src/agents/_lib/brief-disclosures.ts");
+    const render = await read("packages/gateway/src/agents/_lib/render.ts");
+    const contract = await read("packages/gateway/src/agents/_lib/brief-contract.ts");
+
+    const builders = [...disclosures.matchAll(/export function ([a-zA-Z]+Disclosures)\(/g)]
+      .map((m) => m[1])
+      .filter((name): name is string => name !== undefined);
+
+    // A guard that derives an EMPTY set proves nothing and would pass forever — the failure mode
+    // this whole test exists to prevent, one level up.
+    expect(builders.length).toBeGreaterThanOrEqual(4);
+
+    for (const builder of builders) {
+      expect(render).toContain(`${builder}(`);
+      expect(contract).toContain(`${builder}(`);
+    }
+  });
+
   test("I31: reserved blocks are constructed, never recovered by parsing the render", async () => {
     // The anti-pattern this invariant forbids. `reserved-sections.ts` must not scan rendered
     // markdown for its own headings — that is what makes untrusted brief content harmless.
