@@ -3245,12 +3245,13 @@ nimbus doctor
 
 > **Exit code 2 when `sqlite-vec` is not loaded.** The vector-search check reports `[fail]`, not
 > `[warn]`, because semantic search, hybrid ranking and session-memory recall are all off when it
-> fires — the same severity the sibling `Embeddings: unavailable` line already carries. On **macOS
-> this is reachable on a normal install**: Bun links Apple's system SQLite, which has extension
-> loading compiled out, so a machine with no Homebrew SQLite (`brew install sqlite`, or
-> `NIMBUS_SQLITE_PATH`) makes `nimbus doctor` exit `2` where it previously exited `0` and said
-> nothing. Keyword search is unaffected. A gateway too old to report the field leaves the line out
-> entirely and the exit code unchanged.
+> fires — the same severity the sibling `Embeddings: unavailable` line already carries. On macOS
+> Bun links Apple's system SQLite, which has extension loading compiled out, so this needs a full
+> SQLite build to be present at all; **released macOS builds now ship one** beside the binaries, so
+> a normal install is unaffected. It remains reachable on a **dev checkout** on a machine with
+> neither that bundled library nor a Homebrew one (`brew install sqlite`, or `NIMBUS_SQLITE_PATH`),
+> where `nimbus doctor` exits `2`. Keyword search is unaffected either way. A gateway too old to
+> report the field leaves the line out entirely and the exit code unchanged.
 
 #### `nimbus doctor --fix-keyring`
 
@@ -4486,7 +4487,7 @@ nimbus lan remove abc123
 | `NIMBUS_MAX_TOOL_CALLS_PER_SESSION` | Hard cap on total tool calls per session (1–200; default 20) |
 | `NIMBUS_RUN_QUERY_BENCH` | Set to `1` to enable strict `< 100ms` p95 assertion in the query latency benchmark |
 | `NIMBUS_LOG_LEVEL` | `debug` / `info` / `warn` / `error` (default: `info`) |
-| `NIMBUS_SQLITE_PATH` | **macOS only.** Path to a full `libsqlite3.dylib`, checked before the Homebrew prefixes (`/opt/homebrew/opt/sqlite/lib/`, then `/usr/local/opt/sqlite/lib/`). Bun links Apple's system SQLite on macOS, which has extension loading compiled out, so sqlite-vec — and therefore vector search, hybrid ranking and session-memory recall — needs one of these present. Ignored on Linux and Windows, which use Bun's own full build. `nimbus doctor` reports the resolved state. |
+| `NIMBUS_SQLITE_PATH` | **macOS only.** Path to a full `libsqlite3.dylib`. Checked first, ahead of the `libsqlite3.dylib` released builds ship beside the binaries and then the Homebrew prefixes (`/opt/homebrew/opt/sqlite/lib/`, then `/usr/local/opt/sqlite/lib/`). Bun links Apple's system SQLite on macOS, which has extension loading compiled out, so sqlite-vec — and therefore vector search, hybrid ranking and session-memory recall — needs one of these present; on a released install the bundled one always is, and this variable is an override rather than a requirement. Mainly useful on a dev checkout, where `process.execPath` is `bun` and no library sits beside it. Ignored on Linux and Windows, which use Bun's own full build. `nimbus doctor` reports the resolved state. |
 | `NIMBUS_UPDATER_URL` | Override the update manifest URL (default: official endpoint) |
 | `NIMBUS_UPDATER_DISABLE` | Set to `true` to disable all auto-update checks |
 | `NIMBUS_EXTENSIONS_REGISTRY_URL` | Extension registry base URL; the auto-update polling daemon is only constructed when this is set |
