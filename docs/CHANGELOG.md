@@ -18,6 +18,46 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
 
 ## Post-Phase-6 deliveries
 
+- **2026-09-13 — `nimbus tail`, the gateway's operational event stream.** Fifth row of the v0.1.1
+  CLI batch. A plain-text, follow-only feed of what a running gateway does — connector health
+  transitions, watcher fires, sync completions, extension mutations and HITL requests/resolutions —
+  for a user who keeps a terminal pane open during an incident:
+  `nimbus tail [--filter connector,watcher,sync,extension,hitl] [--json]`. **Follow-only, like
+  `tail -f -n 0`:** it shows only what happens from the moment it connects; there is no backfill of
+  earlier events and nothing it prints is persisted anywhere. Exits `0` on Ctrl+C, `1` if the
+  gateway isn't running or the connection drops mid-stream. No migration, no new invariant.
+
+  **Its roadmap row said "no Gateway API changes required — subscribes to existing IPC
+  notifications". That was wrong on all four lanes it needed**, because "notification" and
+  "notification a second client can actually observe" turned out to be different claims:
+
+  - `connector.healthChanged` had a **desktop consumer and no emitter at all** —
+    `ConnectorGrid.tsx` was already listening for a notification method the gateway never sent, so
+    the panel never updated live. The event this row needed was new production code, not a
+    subscription to something that already existed.
+  - `consent.request` is **unicast**: `requestConsent` resolves exactly one session via
+    `getWriter(clientId)` and writes only to it, so a separate `nimbus tail` process could never see
+    a HITL prompt another client raised. HITL observation needed a new, additive `gateway.event`
+    broadcast (`hitl.requested` / `hitl.resolved`) alongside the existing unicast write — which
+    stays unchanged and still fires on every path — and deliberately omits `details` (action
+    arguments a passive observer has no business seeing) from what leaves on the broadcast lane.
+  - The health event fires **after** `transitionHealth`'s db transaction commits, never inside the
+    transaction closure, so a rolled-back transition can never be published as one that happened.
+  - Per-item sync progress is excluded **by design**, not by omission: every event on this stream is
+    a `broadcastNotification` fan-out to every connected client, so item-level events at that same
+    fan-out would flood every open `nimbus tail`, every desktop window and every other IPC client at
+    once — the five categories shipped are the coarse-grained, operationally relevant subset.
+
+  One more emitter shipped beyond the row's original four-category scope: `extension.stateChanged`,
+  across `install`/`enable`/`disable`/`remove`/`update`. Its `update` arm surfaced a small honesty
+  point of its own — a malformed `extension.update` request naming no target `id` still emits, with
+  `extensionId: ""`, rather than throwing; an empty id on an `update` action means no target was
+  named, not an id to look up.
+
+  `packages/cli/src/commands/tail.ts` (`runTailCommand`, `parseTailArgs`, `renderEvent`),
+  `packages/gateway/src/ipc/gateway-events.ts` (the shared `GatewayEventKind` envelope +
+  per-connector-health `connector.healthChanged`), wired through `platform/assemble.ts`.
+
 - **2026-09-13 — `nimbus oncall`, the seventeenth built-in agent.** Fourth row of the v0.1.1 CLI
   batch, after `nimbus index health`, `nimbus changelog` and `nimbus standup`. Briefs ONE incident
   and what the local index can honestly say about the change around it — the last deployment before

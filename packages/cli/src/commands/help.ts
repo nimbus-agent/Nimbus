@@ -127,6 +127,8 @@ CONFIG & DIAGNOSTICS
   nimbus serve [--port 7474]   Start gateway with NIMBUS_HTTP_PORT (read-only HTTP sidecar)
   nimbus db verify | repair --yes | snapshot | snapshots list | backups list | restore <snap> --yes
   nimbus diag [--json] | diag slow-queries [--limit N] [--since 7d]
+  nimbus tail [--filter sync] [--json]   Follow gateway events live — health, syncs, watchers,
+                              extensions, HITL (follow-only, no backfill)
 
 Environment (optional):
   NIMBUS_GATEWAY_EXECUTABLE   Path to nimbus-gateway binary (overrides auto-detection)

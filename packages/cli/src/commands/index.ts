@@ -58,6 +58,7 @@ export { runStart } from "./start.ts";
 export { runStats } from "./stats.ts";
 export { runStatus } from "./status.ts";
 export { runStop } from "./stop.ts";
+export { runTailCommand } from "./tail.ts";
 export { runTeam } from "./team.ts";
 export { runTelemetry } from "./telemetry.ts";
 export { runTest } from "./test.ts";

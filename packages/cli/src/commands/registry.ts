@@ -60,6 +60,7 @@ export const COMMAND_NAMES = [
   "stats",
   "status",
   "stop",
+  "tail",
   "team",
   "telemetry",
   "test",

@@ -839,6 +839,35 @@ nimbus oncall --since 3d --format slack
 
 ---
 
+### `nimbus tail`
+
+Follow the gateway's operational event stream live: connector health transitions, watcher fires, sync completions, extension mutations and HITL prompts/resolutions — the five categories a running gateway can tell a connected client about outside of a direct IPC call.
+
+```bash
+nimbus tail
+nimbus tail --filter sync
+nimbus tail --filter connector,hitl --json
+```
+
+**Options:**
+
+| Flag | Description |
+|---|---|
+| `--filter <categories>` | Comma-separated, repeatable: `connector`, `watcher`, `sync`, `extension`, `hitl`. Default (flag omitted): all five. An event of a kind this build does not recognise is never filtered out, even under a narrow `--filter` — a stream that silently drops what it does not recognise is worse than one unfamiliar line. |
+| `--json` | Emit the raw JSON-RPC notification (`{method, params}`) as one JSON object per line, instead of the human-readable rendering. |
+
+**`nimbus tail` is follow-only** — the same contract as `tail -f -n 0`. It shows only what happens *from the moment it connects*; there is no backfill of events that occurred before it started, and nothing it prints is persisted anywhere. Reaching for it after the fact (e.g. "what happened to that sync ten minutes ago?") will not work — that history exists only if some other subsystem records it (the egress ledger, `nimbus audit`), not here.
+
+**Deliberately excluded: per-item sync progress.** Every event on this stream is a `broadcastNotification` fan-out to *every* connected client, so a connector mid-sync emitting one event per item would flood every open `nimbus tail`, every desktop window and every other IPC client at once. The five categories above are the coarse-grained, operationally relevant subset; item-level detail stays out of the broadcast surface entirely.
+
+**Extension events can carry an empty `extensionId`.** On an `extension.stateChanged` event whose `action` is `"update"`, an `extensionId` of `""` does not name an extension — it means the originating `extension.update` request named no target at all. The gateway emits the event anyway rather than throwing on malformed input, so a blank id on an `update` action is a request-shape signal, not an id to look up.
+
+**Exit codes:** `0` on a clean Ctrl+C (SIGINT/SIGTERM); `1` if the gateway is not running when the command starts, or if the gateway connection is lost while streaming.
+
+**Read-only, local-socket only:** connects over the same IPC socket as every other CLI command; not reachable over the local HTTP API, MCP, ChatOps, or the Tauri renderer allowlist.
+
+---
+
 ### `nimbus ghost`
 
 Surface ambient teammate context for a file by querying paired peers' expertise across the federation mesh. Returns a ranked list of teammates with recent PRs, issues, and commits touching the file — helping you identify who to consult before starting work. No message is ever sent automatically; this is a read-only suggestion surface.
