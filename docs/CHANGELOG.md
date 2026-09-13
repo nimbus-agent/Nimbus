@@ -64,7 +64,8 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
 
   `packages/cli/src/commands/tail.ts` (`runTailCommand`, `parseTailArgs`, `renderEvent`),
   `packages/gateway/src/ipc/gateway-events.ts` (the shared `GatewayEventKind` envelope +
-  per-connector-health `connector.healthChanged`), wired through `platform/assemble.ts`.
+  per-connector-health `connector.healthChanged`), wired through
+  `packages/gateway/src/platform/assemble.ts`.
 
 - **2026-09-13 — `nimbus oncall`, the seventeenth built-in agent.** Fourth row of the v0.1.1 CLI
   batch, after `nimbus index health`, `nimbus changelog` and `nimbus standup`. Briefs ONE incident
