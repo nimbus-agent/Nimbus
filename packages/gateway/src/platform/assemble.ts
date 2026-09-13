@@ -210,7 +210,7 @@ import {
 import type { StatusReaders } from "../ipc/admin-status-rpc.ts";
 import { resumePendingRemovals } from "../ipc/connector-rpc-handlers/index.ts";
 import type { EgressRpcCtx } from "../ipc/egress-rpc.ts";
-import { setGatewayEventBroadcast } from "../ipc/gateway-events.ts";
+import { emitGatewayEvent, setGatewayEventBroadcast } from "../ipc/gateway-events.ts";
 import { HTTP_API_DEPLOYMENT_TOKEN_VAULT_KEY } from "../ipc/http-auth.ts";
 import { type ReadOnlyHttpServerOptions, startReadOnlyHttpServer } from "../ipc/http-server.ts";
 import type { TeamsEventsSurface } from "../ipc/http-write-routes.ts";
@@ -778,6 +778,17 @@ async function createSchedulerWithMesh(opts: SchedulerWithMeshOpts): Promise<{
       const at = Date.now();
       syncAnomaly.recordSample(`sync:duration_ms:${serviceId}`, durationMs, at);
       syncAnomaly.recordSample(`sync:items_upserted:${serviceId}`, result.itemsUpserted, at);
+      // The hook already existed and already carries every field this event needs.
+      emitGatewayEvent("sync.completed", {
+        serviceId,
+        itemsUpserted: result.itemsUpserted,
+        itemsDeleted: result.itemsDeleted,
+        durationMs,
+        ...(result.bytesTransferred === undefined
+          ? {}
+          : { bytesTransferred: result.bytesTransferred }),
+        hasMore: result.hasMore,
+      });
       evaluateWatchersAfterSync(db, serviceId, at, (t, b) => notifications.show(t, b), watcherOpts);
       glossaryRefresher.trigger();
       decisionsRefresher?.trigger();
