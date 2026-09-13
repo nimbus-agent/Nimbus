@@ -46,13 +46,13 @@ Update Task 7 to target `packages/gateway/src/ipc/automation-rpc.ts` instead of 
 **Plan Section:** Task 3, Step 1 & Step 3 (lines 422, 432, 499, 530)  
 **The Issue:**  
 Task 3 specifies the new test file at:  
-packages/ui/src/components/dashboard/ConnectorGrid.health-contract.test.tsx _(new file)_
+packages/ui/src/components/dashboard/ConnectorGrid.health-contract.test.tsx *(new file)*
 
 Throughout `packages/ui`, **all test files live under `packages/ui/test/...`**, not `packages/ui/src/...` (e.g. `packages/ui/test/components/dashboard/ConnectorGrid.test.tsx`). Placing test files inside `src/` risks inclusion in Vite production build bundles and violates the project layout standard.
 
 **Required Correction:**  
 Move the test file to:  
-packages/ui/test/components/dashboard/ConnectorGrid.health-contract.test.tsx _(new file)_  
+packages/ui/test/components/dashboard/ConnectorGrid.health-contract.test.tsx *(new file)*  
 and update the relative import to `import type { ConnectorStatus } from "../../src/ipc/types";`.
 
 ---
@@ -197,7 +197,7 @@ Ensure listeners are removed when the stream closes:
 ### 3.3 Integration Test Coverage (Self-Review Follow-up)
 
 The plan's Self-Review notes that an end-to-end integration test over a real subprocess gateway was deferred.  
-To protect against method-name drift, we should add an integration test in packages/gateway/test/integration/ipc/tail-stream.integration.test.ts _(new file)_ that:
+To protect against method-name drift, we should add an integration test in packages/gateway/test/integration/ipc/tail-stream.integration.test.ts *(new file)* that:
 
 1. Boots a real temporary gateway instance.
 2. Connects a real `IPCClient`.
@@ -225,4 +225,4 @@ To protect against method-name drift, we should add an integration test in packa
 | **Task 3** | `packages/ui/test/components/dashboard/` | Move test file from `src/` to `test/`. |
 | **Task 6** | `packages/gateway/src/ipc/consent.ts` | Iterate `snapshot.entries()` in `rejectAllPending`. |
 | **Task 7** | `packages/gateway/src/ipc/automation-rpc.ts` | Change target file from `dispatchers.ts` to `automation-rpc.ts`. |
-| **Task 8** | packages/cli/src/commands/tail.ts _(new file)_ | Add IO seams to `TailCommandDeps`; clean up `process.off` signal listeners. |
+| **Task 8** | packages/cli/src/commands/tail.ts *(new file)* | Add IO seams to `TailCommandDeps`; clean up `process.off` signal listeners. |
