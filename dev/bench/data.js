@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1789305440285,
+  "lastUpdate": 1789308087623,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "6984e1ec0665964f64c75f5d11db7f40763ac3d8",
-          "message": "npm supply-chain assurance: weekly provenance monitoring + credential-absence guard (#777)\n\nMonorepo slice of secrets-management sub-project #3 — **npm supply-chain\nassurance**.\n\nnpm OIDC trusted publishing and SLSA provenance turned out to be\n**already live** for both packages (verified on the live registry, not\nfrom docs). So this program is *verify + harden + clean up*, not build.\n\n## What lands here\n\n- `scripts/release/check-secret-health.ts` — provenance classifiers + an\n`NPM_TOKEN` absence guard, folded into the existing weekly health table\nand its de-duped issue filer.\n- `.github/workflows/secret-health.yml` — resolves each package's\npublished version and probes provenance in **monitor** mode.\n- `docs/ci-secrets.md` — npm provenance section + a per-kind alert\nrunbook.\n- `docs/CHANGELOG.md` — dated entry.\n\n## Companion PRs (open, **not** merged)\n\n| Repo | PR | Adds |\n| --- | --- | --- |\n| `nimbus-sdk` | #12 | pre-publish preflight + post-publish provenance\ngate |\n| `nimbus-client` | #5 | same |\n| `nimbus-vscode` | #35 | weekly PAT probe, `.vsix` attestation, verify\ndocs |\n\nAlready merged: two composite actions in `nimbus-agent/.github` (pinned\n`5fb42792fa88287048fd24f704183b9a9b807a67`).\n\nDocs here deliberately describe the satellite gates in the future tense\n— they are not merged yet.\n\n## Defects caught during review (all fixed)\n\n- **False `ok`.** An unreported provenance probe (renamed step id,\nskipped step, action exiting early — all silent, no workflow error)\nclassified as `not-configured`, which sat in neither the hard nor warn\nset. The monitor would have posted \"✅ All release credentials healthy\"\nfor *\"we have no idea\"*.\n- **False alarm on a shipped artifact.** With the version-resolution\nstep allowed to fail soft, an empty version made the action request\n`…/@pkg@` → 404 → `absent` → `missing-provenance`, a hard failure. A\nroutine npm outage would have filed an issue claiming the published\npackage lost its provenance. Both probes now carry an `if:` guard.\n- **Unactionable alerts.** The action emits a `detail` explaining *why*\nprovenance failed; the workflow discarded it along with the version, so\na `source-mismatch` named neither.\n- **Overclaiming docs.** \"OIDC is the only path that can publish\" —\n`mfa=publish` blocks automation, not an interactive maintainer with an\nOTP.\n- **`npm audit signatures` in the repo root** audits the *dependency\ntree*; a package is never its own dependency, so the artifact just\npublished went cryptographically unchecked. The satellite gates now\ninstall the published version into a clean tree and audit that.\n\n## Verification\n\n18 gates green (typecheck, biome, markdown, and all 15 audits). 42/42\ntests in `check-secret-health.test.ts`, with break-it-and-watch-it-fail\nproofs on the fail-closed classifier and the detail composition.\n\n`bun run preflight` aborts early on the known `.claude/worktrees/` biome\ntrap, so gates were run individually.\n\n## Not verified\n\nThe new workflow path has never executed live — that is close-out task\nE1, together with `nimbus-vscode`'s deferred first probe run.\n\n## Follow-ups (not in this PR)\n\n- `nimbus-vscode` `publish.yml` passes publish tokens on argv (`--pat` /\n`-p`); both CLIs accept them from env.\n- The composite action writes `GITHUB_OUTPUT` as plain `key=value` with\na registry-derived `detail` — not exploitable, but it is this project's\nown named defect class.\n- `bun run test:ci` is broken on `main` (builds the deleted\n`packages/client`; surfaces on Windows as a misleading `ENOENT uv_spawn\n'bun'`). Not a CI gate.\n\n---------\n\nCo-authored-by: Claude Opus 4.8 (1M context) <noreply@anthropic.com>",
-          "timestamp": "2026-07-20T15:21:17Z",
-          "tree_id": "338955808a9b42d85b01322677f8e1c9f0c4570d",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/6984e1ec0665964f64c75f5d11db7f40763ac3d8"
-        },
-        "date": 1784561633529,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 313.2413361499959,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 317.88858729998975,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 322.5899237000107,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "306811640+nimbus-release-bot[bot]@users.noreply.github.com",
+            "name": "nimbus-release-bot[bot]",
+            "username": "nimbus-release-bot[bot]"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "bc4567f858c7dab5a2016099a3312539e3ce1ccb",
+          "message": "chore: release main (#1510)\n\n:robot: I have created a release *beep* *boop*\n---\n\n\n<details><summary>7.22.0</summary>\n\n##\n[7.22.0](https://github.com/nimbus-agent/Nimbus/compare/v7.21.1...v7.22.0)\n(2026-09-13)\n\n\n### Features\n\n* **agents:** nimbus oncall — the seventeenth built-in agent\n([#1509](https://github.com/nimbus-agent/Nimbus/issues/1509))\n([27c4211](https://github.com/nimbus-agent/Nimbus/commit/27c42111e1c44911c56f62b3c558d8808e0ccedb))\n</details>\n\n---\nThis PR was generated with [Release\nPlease](https://github.com/googleapis/release-please). See\n[documentation](https://github.com/googleapis/release-please#release-please).\n\nCo-authored-by: nimbus-release-bot[bot] <306811640+nimbus-release-bot[bot]@users.noreply.github.com>",
+          "timestamp": "2026-09-13T16:49:49+03:00",
+          "tree_id": "0fe2a86ec2b689e793ef39e1ec6654ac95b976d1",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/bc4567f858c7dab5a2016099a3312539e3ce1ccb"
+        },
+        "date": 1789308084314,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 321.1360040999978,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 319.37916510000287,
             "unit": "ms"
           }
         ]
