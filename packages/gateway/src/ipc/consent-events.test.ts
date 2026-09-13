@@ -1,5 +1,6 @@
 // packages/gateway/src/ipc/consent-events.test.ts
 import { afterEach, describe, expect, test } from "bun:test";
+import { formatConsentPrompt } from "../engine/executor.ts";
 import { ConsentCoordinatorImpl } from "./consent.ts";
 import { setGatewayEventBroadcast } from "./gateway-events.ts";
 
@@ -31,21 +32,31 @@ describe("HITL observation events", () => {
     expect(p.payload["prompt"]).toBe("Post to Slack?");
   });
 
-  test("`details` is NEVER broadcast", () => {
-    // `details` can carry action arguments. The targeted client needs it to render an approval
-    // card; a passive observer does not, and broadcasting it would widen who sees those arguments
-    // to every connected client, MCP clients included.
+  test("the `details` FIELD is never broadcast, but `prompt` already carries the redacted action arguments", () => {
+    // `prompt` is built by the real `formatConsentPrompt` (engine/executor.ts), the same way
+    // production calls it: it stringifies the redacted `details` object straight into the prompt
+    // text. So while the `details` key itself never appears on the broadcast payload, withholding
+    // it withholds nothing — a recognisable, non-secret-looking value (an email address) survives
+    // into `prompt` and DOES go out to every connected session. A secret-LOOKING key name is the
+    // only thing actually masked, by `redactPayloadForConsentDisplay`'s key-name pattern.
+    const prompt = formatConsentPrompt({
+      type: "chatops.message.post",
+      payload: { to: "ceo@example.com", body: "quarterly numbers", password: "hunter2" },
+    });
     const c = new ConsentCoordinatorImpl(() => () => {});
     const seen = capture();
-    void c.requestConsent("client-a", {
-      requestId: "r2",
-      prompt: "Send email?",
-      details: { to: "ceo@example.com", body: "secret" },
-    });
+    void c.requestConsent("client-a", { requestId: "r2", prompt });
     const ev = seen.find((s) => s.method === "gateway.event");
     const p = ev?.params as { payload: Record<string, unknown> };
+    // The `details` key is genuinely absent from the broadcast payload...
     expect("details" in p.payload).toBe(false);
-    expect(JSON.stringify(p.payload)).not.toContain("ceo@example.com");
+    // ...but the recognisable value it would have carried is already in `prompt`, which IS
+    // broadcast — proving the earlier "details is withheld" claim did not bound what leaves.
+    expect(p.payload["prompt"]).toContain("ceo@example.com");
+    expect(p.payload["prompt"]).toContain("quarterly numbers");
+    // Only the secret-LOOKING key name is masked, and only within `prompt` itself.
+    expect(p.payload["prompt"]).not.toContain("hunter2");
+    expect(p.payload["prompt"]).toContain("[REDACTED]");
   });
 
   test("an answer broadcasts hitl.resolved with the verdict", () => {

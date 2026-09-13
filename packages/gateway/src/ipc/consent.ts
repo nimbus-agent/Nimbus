@@ -52,8 +52,23 @@ export class ConsentCoordinatorImpl implements ConsentCoordinator {
       };
       write(notif);
       // OBSERVATION ONLY, and additive: `consent.request` above stays unicast to the acting
-      // client, so consent semantics (who is asked, who may answer) are untouched. `details` is
-      // deliberately withheld — it can carry action arguments, and this goes to every session.
+      // client, so consent semantics (who is asked, who may answer) are untouched.
+      //
+      // The `details` FIELD is omitted from this broadcast, but that withholds nothing: `prompt`
+      // is built by `engine/executor.ts`'s `formatConsentPrompt`, which stringifies the very same
+      // redacted `details` object into the prompt text (channel names, message bodies,
+      // recipients, file paths — whatever the action payload carries). `redactPayloadForConsentDisplay`
+      // masks only secret-LOOKING key names (token/key/secret/password/credential/bearer/auth);
+      // everything else survives verbatim into `prompt`, and `prompt` DOES go out on this
+      // broadcast, to every connected session. Recipients are same-user local socket sessions,
+      // which can already read the same redacted payload via `audit.list` — this does not widen
+      // who can see it, only when.
+      //
+      // Better long-term shape: thread `action.type` through `requestApproval`'s params and
+      // broadcast `{requestId, actionType}` instead of the rendered prompt, so a passive observer
+      // learns WHAT KIND of action is pending without the argument values riding along. That is a
+      // wider contract change (touches every `ConsentChannel` caller) and is deliberately not done
+      // here.
       emitGatewayEvent("hitl.requested", { requestId, prompt });
     });
   }
