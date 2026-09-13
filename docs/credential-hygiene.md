@@ -126,6 +126,71 @@ token renewal.
 
 Revisit when Marketplace **Trusted Publishing** ships
 ([microsoft/vsmarketplace#1422](https://github.com/microsoft/vsmarketplace/issues/1422),
-still open as of 2026-08-12). `OVSX_PAT` has no OIDC path either and never will
-until [eclipse-openvsx/openvsx#1534](https://github.com/eclipse-openvsx/openvsx/issues/1534)
-lands, so rotation remains the only mitigation for the Open VSX half regardless.
+still open as of 2026-09-12, though actively discussed — 9 comments, last touched
+2026-09-10).
+
+**The Open VSX half is no longer indefinite (re-checked 2026-09-12).** This paragraph used to say
+`OVSX_PAT` "has no OIDC path either and never will until
+[eclipse-openvsx/openvsx#1534](https://github.com/eclipse-openvsx/openvsx/issues/1534) lands".
+That issue **closed COMPLETED on 2026-08-21** — nine days after this section was written — and
+Trusted Publishing shipped in server **v1.2.0** (PR
+[#2000](https://github.com/eclipse-openvsx/openvsx/pull/2000), commit `d5a01c83`), with CLI support
+in `ovsx` v1.2.0 (`cli/src/oidc.ts`, `cli/src/trusted-publishing.ts`). Usage is a `--trusted-publishing`
+flag plus the `id-token: write` permission `publish.yml` already grants.
+
+**It is nevertheless NOT actionable yet, for a reason that is easy to miss: merged upstream is not
+deployed here.** `https://open-vsx.org/api/version` reports **`v1.1.2`** — the release immediately
+BEFORE the feature (v1.1.2 shipped 2026-08-20, the merge landed 2026-08-21), confirmed by
+`gh api repos/eclipse-openvsx/openvsx/compare/v1.1.1...v1.1.2` containing no such commit. So the
+trusted-publisher registration UI does not exist on the instance we publish to, and switching
+`publish.yml` today would fail the next release rather than remove a secret.
+
+**The trigger is therefore a one-line check, not more research:**
+
+```bash
+curl -s https://open-vsx.org/api/version   # retire OVSX_PAT once this reports v1.2.0 or later
+```
+
+When it does, the migration is written out below so it does not need re-deriving. It is ordered
+configure-then-revoke, per the rule at the top of this page: **nothing is deleted until a trusted
+publish has actually succeeded.**
+
+1. **Register the publisher.** [open-vsx.org trusted publishers](https://open-vsx.org/user-settings/trusted-publishers)
+   — namespace-owner action, web UI only, no API. Pin it to the `nimbus-agent` namespace and the
+   `nimbus-vscode` publish workflow.
+2. **Add a controlled-publish mode to `publish.yml` that OMITS `OVSX_PAT` without deleting it.**
+   This step exists because the obvious order does not work: the publish job currently *hard-fails
+   on an empty* `OVSX_PAT` (`if [ -z "$OVSX_PAT" ]; then echo "::error::..."`), so simply deleting
+   the secret aborts at that guard before `ovsx` ever runs — and you would be testing trusted
+   publishing for the first time with the old credential already gone. Gate the guard and the
+   `OVSX_PAT:` env line on an input (a `workflow_dispatch` boolean, say) so a dry run can take the
+   trusted-publishing branch while the secret is still sitting there as the rollback.
+3. **Upgrade `ovsx` to v1.2.0 or later in `nimbus-vscode`, lockfile included — before step 4, or
+   step 4 fails for a reason that has nothing to do with OIDC.** `package.json` declares
+   `"ovsx": "^1.1.0"` and `bun.lock` resolves `ovsx@1.1.0`; the publish job installs with
+   `bun install --frozen-lockfile` and then runs `bunx ovsx publish`, which prefers the locally
+   installed `node_modules/.bin/ovsx` over anything it could fetch. So the range *permitting*
+   1.2.0 changes nothing on its own — the locked 1.1.0 is what runs, and v1.1.0 has no
+   `trusted-publishing.ts` / `oidc.ts` at all (they first appear at
+   [`v1.2.0`](https://github.com/eclipse-openvsx/openvsx/tree/v1.2.0/cli/src)), so commander
+   rejects `--trusted-publishing` as an unknown option. `bun update ovsx` and commit the
+   regenerated `bun.lock`; confirm with `bunx ovsx publish --help`.
+4. **Add `--trusted-publishing` to the `ovsx publish` call.** With the flag, the run FAILS rather
+   than silently falling back if no ID token can be obtained — which is what you want for a
+   verification run. Note the precedence trap it guards against: `--pat` / `OVSX_PAT` always wins
+   over trusted publishing, so with the secret still exported the migration looks done while
+   nothing has changed.
+5. **Prove it** — one dispatch of the controlled mode, publishing a real version, succeeding.
+6. **Only then delete the secret** from `nimbus-vscode` → *Settings* → *Environments* → **release**,
+   and drop `OVSX_PAT` from both `publish.yml` and `secret-health.yml` (including its
+   `probe-publish-token` step, which has nothing left to probe).
+7. **Flip the registry entry, or you trade one alert for another.** In
+   `scripts/release/credential-registry.ts`, set the `OVSX_PAT` entry to `state: "forbidden"`,
+   `consumedBy: []`, `maxAgeDays: null`. A deleted secret left at `state: "required"` is reported
+   by `auditCredentials` as a hard `missing` every week — the same permanently-open-alert failure
+   this page warns about elsewhere — and `forbidden` is the state that says *deliberately deleted;
+   must not come back*, which is exactly the claim being made. This is this migration's equivalent
+   of step 5 in the `VSCE_PAT` runbook above: the one that gets forgotten.
+
+Until open-vsx.org upgrades, rotation on the 180-day age policy remains the only mitigation for
+this half.
