@@ -22,7 +22,7 @@ import net from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-const RUNNER = join(import.meta.dir, "..", "..", "e2e", "_fixtures", "gateway-runner.ts");
+const RUNNER = join(import.meta.dir, "_fixtures", "gateway-runner.ts");
 
 const BOOT_TIMEOUT_MS = 60_000;
 const WAIT_TIMEOUT_MS = 20_000;
