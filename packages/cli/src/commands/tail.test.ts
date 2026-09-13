@@ -149,6 +149,43 @@ describe("renderEvent", () => {
     expect(line).toContain("Approve deleting 3 stale branches?");
   });
 
+  test("collapses a genuinely multi-line hitl prompt onto one line", () => {
+    // Mirrors the real shape of the gateway's `formatConsentPrompt` output (multi-line: a header,
+    // a blank line, `Type: ...`, a blank line, `Details: ...`), which is what a real `nimbus tail`
+    // process actually receives on `hitl.requested`. Interpolated raw, this printed ~5 lines with
+    // the `[hitl]` prefix on only the first — breaking `grep`, `head -n`, `wc -l` and any log
+    // shipper reading this line-oriented stream.
+    const realShapedPrompt =
+      "Action requires your approval\n\nType: connector.remove\n\nDetails: " +
+      '{"serviceId":"jira","reason":"stale credential"}';
+    const line = renderEvent("gateway.event", {
+      kind: "hitl.requested",
+      ts: 1_789_300_000_000,
+      payload: { requestId: "req-9", prompt: realShapedPrompt },
+    });
+    expect(line).not.toBeNull();
+    expect(line).not.toContain("\n");
+    expect(line).toContain("[hitl]");
+    expect(line).toContain("req-9");
+    // Collapsed, not dropped: the substance of the prompt survives on the single line.
+    expect(line).toContain("Type: connector.remove");
+    expect(line).toContain('"serviceId":"jira"');
+  });
+
+  test("truncates an overlong free-text field with an ellipsis rather than printing it in full", () => {
+    const longPrompt = `Action requires your approval\n\nDetails: ${"x".repeat(400)}`;
+    const line = renderEvent("gateway.event", {
+      kind: "hitl.requested",
+      ts: 1_789_300_000_000,
+      payload: { requestId: "req-9", prompt: longPrompt },
+    });
+    expect(line).not.toBeNull();
+    expect(line).not.toContain("\n");
+    expect(line).toContain("…");
+    // Bounded well under the untruncated length (400+ chars of "x" alone).
+    expect((line ?? "").length).toBeLessThan(300);
+  });
+
   test("renders a rejected hitl resolution WITH its reason", () => {
     const line = renderEvent("gateway.event", {
       kind: "hitl.resolved",

@@ -93,6 +93,22 @@ function ts(ms: unknown): string {
     : new Date().toISOString();
 }
 
+const FREE_TEXT_MAX_LEN = 200;
+
+/**
+ * Collapse a free-text field to one line and bound its length, for the HUMAN-readable render
+ * only. `prompt` (a real `formatConsentPrompt` output), `reason`, `error` and `summary` are all
+ * sourced from elsewhere in the system — a HITL consent prompt, a connector health transition, an
+ * extension update failure, a watcher match — and none of them are validated as single-line.
+ * Interpolating one raw put the `[hitl]`/`[connector]`/etc. prefix on only its FIRST line,
+ * breaking `grep`, `head -n`, `wc -l` and any log shipper reading this line-oriented stream.
+ * `--json` is untouched by this: it emits the raw JSON-RPC notification, never this rendering.
+ */
+function oneLine(text: string, maxLen = FREE_TEXT_MAX_LEN): string {
+  const collapsed = text.replace(/\s+/g, " ").trim();
+  return collapsed.length > maxLen ? `${collapsed.slice(0, maxLen)}…` : collapsed;
+}
+
 /**
  * The category a notification belongs to, or `null` when it is not one of ours — including a
  * future `kind` this build does not recognise. Such an event must still be SHOWN, never dropped,
@@ -121,7 +137,7 @@ export function renderEvent(method: string, params: unknown): string | null {
     if (name === null || health === null) return null;
     const from = str(o, "fromState") ?? "unknown";
     const reason = str(o, "reason");
-    const tail = reason === null ? "" : ` (${reason})`;
+    const tail = reason === null ? "" : ` (${oneLine(reason)})`;
     return `${ts(o["occurredAt"])} [connector] ${name}: ${from} -> ${health}${tail}`;
   }
 
@@ -139,7 +155,7 @@ export function renderEvent(method: string, params: unknown): string | null {
     return `${at} [sync]      ${svc}: +${String(up)} items, -${String(del)} (${String(ms)}ms)`;
   }
   if (kind === "watcher.fired") {
-    return `${at} [watcher]   ${str(payload, "name") ?? "?"}: ${str(payload, "summary") ?? ""}`;
+    return `${at} [watcher]   ${str(payload, "name") ?? "?"}: ${oneLine(str(payload, "summary") ?? "")}`;
   }
   if (kind === "extension.stateChanged") {
     const ok = payload["ok"] === true;
@@ -148,16 +164,16 @@ export function renderEvent(method: string, params: unknown): string | null {
     // `extension.update`'s ten non-applied outcomes (signature check failed, downgrade refused,
     // an update already in flight, ...) read as anything other than one indistinguishable
     // "(failed)". Omitted cleanly when the field is absent.
-    const suffix = ok ? "" : error === null ? " (failed)" : ` (failed: ${error})`;
+    const suffix = ok ? "" : error === null ? " (failed)" : ` (failed: ${oneLine(error)})`;
     return `${at} [extension] ${str(payload, "extensionId") ?? "?"}: ${str(payload, "action") ?? "?"}${suffix}`;
   }
   if (kind === "hitl.requested") {
-    return `${at} [hitl]      ${str(payload, "requestId") ?? "?"}: requested — ${str(payload, "prompt") ?? ""}`;
+    return `${at} [hitl]      ${str(payload, "requestId") ?? "?"}: requested — ${oneLine(str(payload, "prompt") ?? "")}`;
   }
   if (kind === "hitl.resolved") {
     const verdict = payload["approved"] === true ? "approved" : "rejected";
     const reason = str(payload, "reason");
-    const suffix = reason === null ? "" : ` — ${reason}`;
+    const suffix = reason === null ? "" : ` — ${oneLine(reason)}`;
     return `${at} [hitl]      ${str(payload, "requestId") ?? "?"}: ${verdict}${suffix}`;
   }
 
