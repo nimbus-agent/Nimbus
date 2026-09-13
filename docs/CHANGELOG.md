@@ -39,16 +39,16 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
     `getWriter(clientId)` and writes only to it, so a separate `nimbus tail` process could never see
     a HITL prompt another client raised. HITL observation needed a new, additive `gateway.event`
     broadcast (`hitl.requested` / `hitl.resolved`) alongside the existing unicast write — which
-    stays unchanged and still fires on every path. The broadcast omits the `details` FIELD, but
-    that withholds nothing: `prompt` (which IS broadcast) is built by `formatConsentPrompt`, which
-    stringifies the same redacted `details` object straight into the prompt text — so the redacted
-    action arguments go out on the broadcast lane too, same as `details` would have, just inlined.
-    `redactPayloadForConsentDisplay` masks only secret-looking key names
-    (token/key/secret/password/credential/bearer/auth); every other value, and every recipient,
-    channel name or file path among them, survives verbatim. Recipients of the broadcast are the
-    same local, same-user IPC sessions that can already read the identical redacted payload via
-    `audit.list`, so this does not widen exposure — it changes *when* a session can see it, not
-    *whether*.
+    stays unchanged and still fires on every path. The broadcast carries `{requestId, actionType}`,
+    never the rendered `prompt`: `prompt` is `formatConsentPrompt(action)`, which stringifies the
+    redacted action payload straight into its text — channel names, message bodies, recipients,
+    file paths — and `redactPayloadForConsentDisplay` masks only secret-LOOKING key names
+    (token/key/secret/password/credential/bearer/auth), so every other value survives verbatim.
+    Broadcasting that text would hand every connected session — not only the one the gateway is
+    asking — the argument values of an action nobody has approved yet, which is not something a
+    passive observer needs; `actionType` says what KIND of action is pending without any of it.
+    The unicast `consent.request` is unaffected — it still carries `prompt` and `details` exactly
+    as before, to the one session actually answering.
   - The health event fires **after** `transitionHealth`'s db transaction commits, never inside the
     transaction closure, so a rolled-back transition can never be published as one that happened.
   - Per-item sync progress is excluded **by design**, not by omission: every event on this stream is

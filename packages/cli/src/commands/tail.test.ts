@@ -159,47 +159,53 @@ describe("renderEvent", () => {
     expect(line).not.toContain("failed");
   });
 
-  test("renders a hitl request with its prompt", () => {
+  test("renders a hitl request with its action type, never the rendered prompt", () => {
+    // The broadcast carries `{requestId, actionType}` — never `prompt`, which would hand every
+    // connected session the redacted action arguments of a request nobody has approved yet. A
+    // `prompt` field on the payload (were one ever to appear there again) must not leak through.
     const line = renderEvent("gateway.event", {
       kind: "hitl.requested",
       ts: 1_789_300_000_000,
-      payload: { requestId: "req-9", prompt: "Approve deleting 3 stale branches?" },
+      payload: {
+        requestId: "req-9",
+        actionType: "slack.message.post",
+        prompt: "Approve deleting 3 stale branches?",
+      },
     });
     expect(line).toContain("[hitl]");
     expect(line).toContain("req-9");
     expect(line).toContain("requested");
-    expect(line).toContain("Approve deleting 3 stale branches?");
+    expect(line).toContain("slack.message.post");
+    expect(line).not.toContain("Approve deleting 3 stale branches?");
   });
 
-  test("collapses a genuinely multi-line hitl prompt onto one line", () => {
-    // Mirrors the real shape of the gateway's `formatConsentPrompt` output (multi-line: a header,
-    // a blank line, `Type: ...`, a blank line, `Details: ...`), which is what a real `nimbus tail`
-    // process actually receives on `hitl.requested`. Interpolated raw, this printed ~5 lines with
-    // the `[hitl]` prefix on only the first — breaking `grep`, `head -n`, `wc -l` and any log
-    // shipper reading this line-oriented stream.
-    const realShapedPrompt =
+  test("collapses a genuinely multi-line hitl resolution reason onto one line", () => {
+    // Mirrors a real, multi-line reason string reaching `hitl.resolved`. Interpolated raw, this
+    // printed multiple lines with the `[hitl]` prefix on only the first — breaking `grep`,
+    // `head -n`, `wc -l` and any log shipper reading this line-oriented stream.
+    const realShapedReason =
       "Action requires your approval\n\nType: connector.remove\n\nDetails: " +
       '{"serviceId":"jira","reason":"stale credential"}';
     const line = renderEvent("gateway.event", {
-      kind: "hitl.requested",
+      kind: "hitl.resolved",
       ts: 1_789_300_000_000,
-      payload: { requestId: "req-9", prompt: realShapedPrompt },
+      payload: { requestId: "req-9", approved: false, reason: realShapedReason },
     });
     expect(line).not.toBeNull();
     expect(line).not.toContain("\n");
     expect(line).toContain("[hitl]");
     expect(line).toContain("req-9");
-    // Collapsed, not dropped: the substance of the prompt survives on the single line.
+    // Collapsed, not dropped: the substance of the reason survives on the single line.
     expect(line).toContain("Type: connector.remove");
     expect(line).toContain('"serviceId":"jira"');
   });
 
   test("truncates an overlong free-text field with an ellipsis rather than printing it in full", () => {
-    const longPrompt = `Action requires your approval\n\nDetails: ${"x".repeat(400)}`;
+    const longReason = `Action requires your approval\n\nDetails: ${"x".repeat(400)}`;
     const line = renderEvent("gateway.event", {
-      kind: "hitl.requested",
+      kind: "hitl.resolved",
       ts: 1_789_300_000_000,
-      payload: { requestId: "req-9", prompt: longPrompt },
+      payload: { requestId: "req-9", approved: false, reason: longReason },
     });
     expect(line).not.toBeNull();
     expect(line).not.toContain("\n");
@@ -288,10 +294,10 @@ describe("renderEvent", () => {
     expect(line).toBe(`${at} [extension] ?: ?`);
   });
 
-  test("hitl.requested with an empty payload falls requestId and prompt back to their placeholders", () => {
+  test("hitl.requested with an empty payload falls requestId and actionType back to their placeholders", () => {
     const at = new Date(1).toISOString();
     const line = renderEvent("gateway.event", { kind: "hitl.requested", ts: 1, payload: {} });
-    expect(line).toBe(`${at} [hitl]      ?: requested — `);
+    expect(line).toBe(`${at} [hitl]      ?: requested — ?`);
   });
 
   test("hitl.resolved with no requestId falls back to the placeholder", () => {
@@ -549,7 +555,7 @@ describe("runTailCommand lifecycle", () => {
     h.handlers["gateway.event"]?.({
       kind: "hitl.requested",
       ts: 1,
-      payload: { requestId: "req-9", prompt: "Approve deleting 3 stale branches?" },
+      payload: { requestId: "req-9", actionType: "slack.message.post" },
     });
     h.handlers["connector.healthChanged"]?.({
       name: "github",
@@ -561,7 +567,7 @@ describe("runTailCommand lifecycle", () => {
     expect(h.out).toHaveLength(1);
     expect(h.out[0]).toContain("[hitl]");
     expect(h.out[0]).toContain("req-9");
-    expect(h.out[0]).toContain("Approve deleting 3 stale branches?");
+    expect(h.out[0]).toContain("slack.message.post");
     expect(h.out.join("")).not.toContain("[connector]");
     process.emit("SIGINT");
     await done;
@@ -574,7 +580,7 @@ describe("runTailCommand lifecycle", () => {
     h.handlers["gateway.event"]?.({
       kind: "hitl.requested",
       ts: 1,
-      payload: { requestId: "req-9", prompt: "Approve deleting 3 stale branches?" },
+      payload: { requestId: "req-9", actionType: "slack.message.post" },
     });
     h.handlers["gateway.event"]?.(syncControlEvent);
     expect(h.out).toHaveLength(1);

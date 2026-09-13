@@ -14,7 +14,12 @@ export class ConsentDisconnectedError extends Error {
 export interface ConsentCoordinator {
   requestConsent(
     clientId: string,
-    params: { requestId: string; prompt: string; details?: unknown },
+    params: {
+      requestId: string;
+      prompt: string;
+      details?: unknown;
+      actionType?: string | undefined;
+    },
   ): Promise<boolean>;
   rejectAllPending(message: string, hitlAuditReason: string): void;
   pendingCount(): number;
@@ -35,7 +40,12 @@ export class ConsentCoordinatorImpl implements ConsentCoordinator {
 
   requestConsent(
     clientId: string,
-    params: { requestId: string; prompt: string; details?: unknown },
+    params: {
+      requestId: string;
+      prompt: string;
+      details?: unknown;
+      actionType?: string | undefined;
+    },
   ): Promise<boolean> {
     return new Promise<boolean>((resolve, reject) => {
       const write = this.getWriter(clientId);
@@ -43,7 +53,7 @@ export class ConsentCoordinatorImpl implements ConsentCoordinator {
         reject(new ConsentDisconnectedError("No active IPC session for client"));
         return;
       }
-      const { requestId, prompt, details } = params;
+      const { requestId, prompt, details, actionType } = params;
       this.pending.set(requestId, { resolve, reject, clientId });
       const notif: JsonRpcNotification = {
         jsonrpc: "2.0",
@@ -52,24 +62,19 @@ export class ConsentCoordinatorImpl implements ConsentCoordinator {
       };
       write(notif);
       // OBSERVATION ONLY, and additive: `consent.request` above stays unicast to the acting
-      // client, so consent semantics (who is asked, who may answer) are untouched.
+      // client, UNCHANGED — same fields, same one recipient — so consent semantics (who is
+      // asked, who may answer, and what they see) are untouched.
       //
-      // The `details` FIELD is omitted from this broadcast, but that withholds nothing: `prompt`
-      // is built by `engine/executor.ts`'s `formatConsentPrompt`, which stringifies the very same
-      // redacted `details` object into the prompt text (channel names, message bodies,
-      // recipients, file paths — whatever the action payload carries). `redactPayloadForConsentDisplay`
-      // masks only secret-LOOKING key names (token/key/secret/password/credential/bearer/auth);
-      // everything else survives verbatim into `prompt`, and `prompt` DOES go out on this
-      // broadcast, to every connected session. Recipients are same-user local socket sessions,
-      // which can already read the same redacted payload via `audit.list` — this does not widen
-      // who can see it, only when.
-      //
-      // Better long-term shape: thread `action.type` through `requestApproval`'s params and
-      // broadcast `{requestId, actionType}` instead of the rendered prompt, so a passive observer
-      // learns WHAT KIND of action is pending without the argument values riding along. That is a
-      // wider contract change (touches every `ConsentChannel` caller) and is deliberately not done
-      // here.
-      emitGatewayEvent("hitl.requested", { requestId, prompt });
+      // The broadcast below carries `{requestId, actionType}`, never `prompt`. `prompt` is built
+      // by `engine/executor.ts`'s `formatConsentPrompt`, which stringifies the redacted `details`
+      // object straight into its text (channel names, message bodies, recipients, file paths —
+      // whatever the action payload carries); `redactPayloadForConsentDisplay` masks only
+      // secret-LOOKING key names (token/key/secret/password/credential/bearer/auth), so
+      // everything else survives verbatim. Broadcasting `prompt` would hand every connected
+      // session — not only the one the gateway is asking — the argument values of an action
+      // nobody has approved yet. `actionType` gives a passive observer (`nimbus tail`) what KIND
+      // of action is pending without any of that riding along.
+      emitGatewayEvent("hitl.requested", { requestId, actionType: actionType ?? "unknown" });
     });
   }
 

@@ -15,13 +15,17 @@ function capture(): Seen[] {
 }
 
 describe("HITL observation events", () => {
-  test("a prompt broadcasts hitl.requested ALONGSIDE the unicast consent.request", () => {
+  test("a request broadcasts hitl.requested ALONGSIDE the unicast consent.request", () => {
     // `consent.request` is written to ONE session (`getWriter(clientId)`), so a separate
     // `nimbus tail` process can never see it. The broadcast is what makes `--filter hitl` real.
     const unicast: unknown[] = [];
     const c = new ConsentCoordinatorImpl(() => (n) => unicast.push(n));
     const seen = capture();
-    void c.requestConsent("client-a", { requestId: "r1", prompt: "Post to Slack?" });
+    void c.requestConsent("client-a", {
+      requestId: "r1",
+      prompt: "Post to Slack?",
+      actionType: "chatops.message.post",
+    });
     // The targeted notification is UNCHANGED — this lane observes a gate, it is not part of one.
     expect(unicast).toHaveLength(1);
     const ev = seen.find((s) => s.method === "gateway.event");
@@ -29,34 +33,45 @@ describe("HITL observation events", () => {
     const p = ev?.params as { kind: string; payload: Record<string, unknown> };
     expect(p.kind).toBe("hitl.requested");
     expect(p.payload["requestId"]).toBe("r1");
-    expect(p.payload["prompt"]).toBe("Post to Slack?");
+    expect(p.payload["actionType"]).toBe("chatops.message.post");
   });
 
-  test("the `details` FIELD is never broadcast, but `prompt` already carries the redacted action arguments", () => {
+  test("the broadcast carries actionType, never the rendered prompt — even though the unicast still does", () => {
     // `prompt` is built by the real `formatConsentPrompt` (engine/executor.ts), the same way
-    // production calls it: it stringifies the redacted `details` object straight into the prompt
-    // text. So while the `details` key itself never appears on the broadcast payload, withholding
-    // it withholds nothing — a recognisable, non-secret-looking value (an email address) survives
-    // into `prompt` and DOES go out to every connected session. A secret-LOOKING key name is the
-    // only thing actually masked, by `redactPayloadForConsentDisplay`'s key-name pattern.
-    const prompt = formatConsentPrompt({
+    // production calls it: it stringifies the redacted action `details` straight into the prompt
+    // text (channel names, message bodies, recipients). A recognisable, non-secret-looking value
+    // (an email address) survives that redaction — `redactPayloadForConsentDisplay` masks only
+    // secret-LOOKING key names — so if `prompt` ever rode the broadcast, every connected session
+    // would see the recipient of an action nobody has approved yet. It must not.
+    const action = {
       type: "chatops.message.post",
       payload: { to: "ceo@example.com", body: "quarterly numbers", password: "hunter2" },
-    });
-    const c = new ConsentCoordinatorImpl(() => () => {});
+    };
+    const prompt = formatConsentPrompt(action);
+    // Sanity: the real function DOES put the recognisable value in the text it builds — otherwise
+    // the assertions below would pass for the wrong reason (nothing to withhold in the first place).
+    expect(prompt).toContain("ceo@example.com");
+
+    const unicast: unknown[] = [];
+    const c = new ConsentCoordinatorImpl(() => (n) => unicast.push(n));
     const seen = capture();
-    void c.requestConsent("client-a", { requestId: "r2", prompt });
+    void c.requestConsent("client-a", { requestId: "r2", prompt, actionType: action.type });
+
+    // The unicast `consent.request` is untouched: the one client actually being asked still gets
+    // the full rendered prompt.
+    expect(unicast).toHaveLength(1);
+    const notif = unicast[0] as { params: Record<string, unknown> };
+    expect(notif.params["prompt"]).toBe(prompt);
+
+    // The broadcast is a different story. Neither the redacted `details` object nor the
+    // recognisable value `formatConsentPrompt` folded into `prompt` may appear anywhere on it.
     const ev = seen.find((s) => s.method === "gateway.event");
     const p = ev?.params as { payload: Record<string, unknown> };
-    // The `details` key is genuinely absent from the broadcast payload...
     expect("details" in p.payload).toBe(false);
-    // ...but the recognisable value it would have carried is already in `prompt`, which IS
-    // broadcast — proving the earlier "details is withheld" claim did not bound what leaves.
-    expect(p.payload["prompt"]).toContain("ceo@example.com");
-    expect(p.payload["prompt"]).toContain("quarterly numbers");
-    // Only the secret-LOOKING key name is masked, and only within `prompt` itself.
-    expect(p.payload["prompt"]).not.toContain("hunter2");
-    expect(p.payload["prompt"]).toContain("[REDACTED]");
+    expect("prompt" in p.payload).toBe(false);
+    expect(JSON.stringify(p.payload)).not.toContain("ceo@example.com");
+    // What IS broadcast: an identifier a passive observer can act on, nothing more.
+    expect(p.payload["actionType"]).toBe("chatops.message.post");
   });
 
   test("an answer broadcasts hitl.resolved with the verdict", () => {

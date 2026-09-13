@@ -64,10 +64,16 @@ export interface ExtensionStateChangedPayload {
   readonly error?: string;
 }
 
-/** `details` is deliberately ABSENT — see `emitHitlRequested`'s caller in `ipc/consent.ts`. */
+/**
+ * `prompt` and `details` are deliberately ABSENT — see the broadcast call in `ipc/consent.ts`'s
+ * `requestConsent`. The rendered prompt stringifies the redacted action payload (channel names,
+ * message bodies, recipients, file paths) and must not go out to every connected session, only to
+ * the one actually being asked (`consent.request`, unicast, unaffected by this type). `actionType`
+ * gives a passive observer (`nimbus tail`) what KIND of action is pending instead.
+ */
 export interface HitlRequestedPayload {
   readonly requestId: string;
-  readonly prompt: string;
+  readonly actionType: string;
 }
 
 export interface HitlResolvedPayload {

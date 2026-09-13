@@ -97,12 +97,12 @@ const FREE_TEXT_MAX_LEN = 200;
 
 /**
  * Collapse a free-text field to one line and bound its length, for the HUMAN-readable render
- * only. `prompt` (a real `formatConsentPrompt` output), `reason`, `error` and `summary` are all
- * sourced from elsewhere in the system — a HITL consent prompt, a connector health transition, an
- * extension update failure, a watcher match — and none of them are validated as single-line.
- * Interpolating one raw put the `[hitl]`/`[connector]`/etc. prefix on only its FIRST line,
- * breaking `grep`, `head -n`, `wc -l` and any log shipper reading this line-oriented stream.
- * `--json` is untouched by this: it emits the raw JSON-RPC notification, never this rendering.
+ * only. `reason`, `error` and `summary` are all sourced from elsewhere in the system — a
+ * connector health transition, an extension update failure, a watcher match — and none of them
+ * are validated as single-line. Interpolating one raw put the `[connector]`/`[extension]`/etc.
+ * prefix on only its FIRST line, breaking `grep`, `head -n`, `wc -l` and any log shipper reading
+ * this line-oriented stream. `--json` is untouched by this: it emits the raw JSON-RPC
+ * notification, never this rendering.
  */
 function oneLine(text: string, maxLen = FREE_TEXT_MAX_LEN): string {
   const collapsed = text.replace(/\s+/g, " ").trim();
@@ -168,7 +168,7 @@ export function renderEvent(method: string, params: unknown): string | null {
     return `${at} [extension] ${str(payload, "extensionId") ?? "?"}: ${str(payload, "action") ?? "?"}${suffix}`;
   }
   if (kind === "hitl.requested") {
-    return `${at} [hitl]      ${str(payload, "requestId") ?? "?"}: requested — ${oneLine(str(payload, "prompt") ?? "")}`;
+    return `${at} [hitl]      ${str(payload, "requestId") ?? "?"}: requested — ${str(payload, "actionType") ?? "?"}`;
   }
   if (kind === "hitl.resolved") {
     const verdict = payload["approved"] === true ? "approved" : "rejected";

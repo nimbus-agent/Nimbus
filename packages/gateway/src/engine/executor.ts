@@ -349,7 +349,7 @@ export class ToolExecutor {
         action.payload === undefined
           ? undefined
           : (redactPayloadForConsentDisplay(action.payload) as Record<string, unknown>);
-      return this.consent.requestApproval(formatConsentPrompt(action), details);
+      return this.consent.requestApproval(formatConsentPrompt(action), details, action.type);
     }
     return delegated === "approved";
   }
@@ -425,11 +425,16 @@ export function bindConsentChannel(
   clientId: string,
 ): ConsentChannel {
   return {
-    requestApproval(prompt: string, details?: Record<string, unknown>): Promise<boolean> {
+    requestApproval(
+      prompt: string,
+      details?: Record<string, unknown>,
+      actionType?: string,
+    ): Promise<boolean> {
       return coordinator.requestConsent(clientId, {
         requestId: randomUUID(),
         prompt,
         details,
+        actionType,
       });
     },
   };

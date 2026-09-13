@@ -8,7 +8,11 @@ export type ActionResult =
   | { status: "rejected"; reason: string };
 
 export interface ConsentChannel {
-  requestApproval(prompt: string, details?: Record<string, unknown>): Promise<boolean>;
+  requestApproval(
+    prompt: string,
+    details?: Record<string, unknown>,
+    actionType?: string,
+  ): Promise<boolean>;
 }
 
 export interface AuditSink {
