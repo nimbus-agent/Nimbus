@@ -547,6 +547,12 @@ export function oncallDisclosures(b: {
   readonly syncUnknown: boolean;
   readonly hasDeployment: boolean;
   readonly otherActiveCount: number;
+  /**
+   * Whether the runner-ups were selected by ASSIGNEE (the owner-scoped shape) rather than by
+   * service. `--service` filters on service and status only, so calling those incidents
+   * "assigned to you" is false.
+   */
+  readonly assigneeScoped: boolean;
   readonly truncatedCount: number;
 }): readonly Disclosure[] {
   const out: Disclosure[] = [];
@@ -581,10 +587,14 @@ export function oncallDisclosures(b: {
 
   if (b.otherActiveCount > 0) {
     const n = b.otherActiveCount;
+    // Scoped by the SELECTION MODE, never fixed at "assigned to you": `--service` selects on
+    // service and status alone, so those runner-ups may be assigned to anyone. The anchor is on
+    // the half that is true either way, so it cannot depend on which branch rendered.
+    const scope = b.assigneeScoped ? "assigned to you" : "on this service";
     out.push({
       scope: { kind: "preamble" },
       line:
-        `${String(n)} other active incident${n === 1 ? " is" : "s are"} assigned to you and ` +
+        `${String(n)} other active incident${n === 1 ? " is" : "s are"} ${scope} and ` +
         `${n === 1 ? "is" : "are"} named below; this brief covers the most recently opened one.`,
       anchors: ["covers the most recently opened one"],
     });

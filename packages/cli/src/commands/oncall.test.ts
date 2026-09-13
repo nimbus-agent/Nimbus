@@ -348,3 +348,17 @@ describe("fetchOncallBrief", () => {
     expect(sentParams).toEqual({ sinceMs: DAY_MS, service: "checkout" });
   });
 });
+
+describe("parseOncallArgs — the 90d bound (CodeRabbit #1509)", () => {
+  test("rejects a window past the documented maximum instead of forwarding it", () => {
+    // The usage text declares `max 90d`. Forwarding 91d anyway made that text a lie and cost the
+    // user a gateway round trip to learn it — the same reasoning that already rejects a
+    // contradictory `--incident`/`--service` pair locally.
+    expect(() => parseOncallArgs(["--since", "91d"])).toThrow(/must not exceed 90d/);
+    expect(() => parseOncallArgs(["--since", "52w"])).toThrow(/must not exceed 90d/);
+  });
+
+  test("accepts exactly 90d — the bound is inclusive, matching the gateway's", () => {
+    expect(parseOncallArgs(["--since", "90d"]).sinceMs).toBe(90 * DAY_MS);
+  });
+});

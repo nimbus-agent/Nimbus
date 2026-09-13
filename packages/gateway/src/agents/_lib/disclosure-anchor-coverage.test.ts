@@ -197,6 +197,7 @@ describe("oncall disclosure anchors", () => {
       syncUnknown: false,
       hasDeployment: true,
       otherActiveCount: 2,
+      assigneeScoped: true,
       truncatedCount: 4,
     });
   }
@@ -243,6 +244,7 @@ describe("oncall disclosure anchors", () => {
         ...opts,
         hasDeployment: false,
         otherActiveCount: 0,
+        assigneeScoped: true,
         truncatedCount: 0,
       });
       expect(all).toHaveLength(1);
@@ -269,6 +271,7 @@ describe("oncall disclosure anchors", () => {
       syncUnknown: false,
       hasDeployment: true,
       otherActiveCount: 0,
+      assigneeScoped: true,
       truncatedCount: 0,
     });
     const without = oncallDisclosures({
@@ -276,6 +279,7 @@ describe("oncall disclosure anchors", () => {
       syncUnknown: false,
       hasDeployment: false,
       otherActiveCount: 0,
+      assigneeScoped: true,
       truncatedCount: 0,
     });
     expect(withDeploy.some((d) => d.anchors.includes("timing alone"))).toBe(true);

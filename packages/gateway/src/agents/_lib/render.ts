@@ -1337,6 +1337,7 @@ export function renderOncall(brief: OncallBrief, opts?: RenderOpts): string {
       syncUnknown: brief.syncFreshness.reason !== null,
       hasDeployment: brief.deployment !== null,
       otherActiveCount: brief.otherActiveIncidents.length,
+      assigneeScoped: brief.selection === "auto_assigned",
       truncatedCount: brief.truncatedCount,
     }).map((d) => d.line),
   ].join("\n");
@@ -1380,12 +1381,16 @@ function renderOncallIncidentSection(brief: OncallBrief): string {
   ];
 
   // Named rather than only counted, so the reader can act on a runner-up without looking it up.
+  //
+  // The heading is derived from the SELECTION MODE, never fixed. `--service` selects on service
+  // and status ALONE (`selectActiveIncidentsForPagerdutyServices` applies no assignee filter), so
+  // "assigned to you" there is a plain falsehood about incidents that may belong to anyone.
   const others =
     brief.otherActiveIncidents.length === 0
       ? []
       : [
           "",
-          "Other active incidents assigned to you:",
+          `${oncallRunnerUpLabel(brief.selection)}:`,
           ...brief.otherActiveIncidents.map(
             (o) =>
               `- \`${stripLineStructureChars(o.id)}\` — ${escapeMarkdownLinkText(stripLineStructureChars(o.title))}` +
@@ -1394,6 +1399,23 @@ function renderOncallIncidentSection(brief: OncallBrief): string {
         ];
 
   return ["", "## Incident", "", ...lines, ...others].join("\n");
+}
+
+/**
+ * What the runner-up incidents actually ARE, given how this brief selected its subject.
+ *
+ * Total over `OncallSelection` rather than a default arm, so a future selection mode is a compile
+ * error here instead of silently inheriting a label that does not describe it. `explicit` never
+ * reaches this — `selectIncident` returns no runner-ups for a named incident — but it is answered
+ * anyway rather than thrown on, because a heading is not worth failing a brief over.
+ */
+function oncallRunnerUpLabel(selection: OncallBrief["selection"]): string {
+  const LABELS: Readonly<Record<OncallBrief["selection"], string>> = {
+    auto_assigned: "Other active incidents assigned to you",
+    auto_service: "Other active incidents on this service",
+    explicit: "Other active incidents",
+  };
+  return LABELS[selection];
 }
 
 /**
@@ -1498,7 +1520,16 @@ function renderOncallPriorSection(brief: OncallBrief): string {
     return ["", "## Prior incidents on this service", "", "_None found._"].join("\n");
   }
   const n = brief.counts.priorIncidents;
-  const summary = `_${String(n)} earlier incident${n === 1 ? "" : "s"} on this service._`;
+  // `counts.priorIncidents` SATURATES: `buildOncallBrief` over-fetches by exactly one past the
+  // display cap, so a service with forty earlier incidents reports eleven. Printed as a bare
+  // total that reads as exact — and recurrence is the one thing this lane exists to convey, so
+  // understating it by 29 is the worst number on the page to get wrong. A count exceeding its own
+  // listed length is precisely the saturated case (the cap makes the list shorter, never longer),
+  // so it needs no constant import to detect.
+  const saturated = n > rows.length;
+  const summary = saturated
+    ? `_At least ${String(n)} earlier incidents on this service — more than this brief counted._`
+    : `_${String(n)} earlier incident${n === 1 ? "" : "s"} on this service._`;
   const body = rows.map((p) => {
     const title = escapeMarkdownLinkText(stripLineStructureChars(p.title));
     const href = p.url === null ? null : safeEvidenceHref(p.url);

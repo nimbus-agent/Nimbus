@@ -59,6 +59,19 @@ export type OncallCliArgs = {
 
 const DEFAULT_SINCE = "24h";
 
+/**
+ * The window bound `agents.oncall` enforces, mirrored here so a typo fails on the command line.
+ *
+ * Rejected LOCALLY as well as in the gateway, for the same reason `--incident`/`--service`
+ * exclusivity is: the gateway's check is the real one — it guards every transport — but this
+ * command's own usage text declares a 90-day maximum, and forwarding `--since 91d` anyway would
+ * make the usage text a lie and cost the user a round trip to learn it. `nimbus standup` takes the
+ * other option and says "the gateway refuses a longer window" in its usage text instead; both are
+ * honest, but this command already validates one flag pair locally, so validating here keeps a
+ * single rule rather than two.
+ */
+const MAX_SINCE_MS = 90 * 24 * 60 * 60 * 1000;
+
 const USAGE =
   "Usage: nimbus oncall [--incident <item-id>] [--service <name>] [--since <duration>]\n" +
   "                     [--format markdown|slack|plain] [--json]\n" +
@@ -122,8 +135,13 @@ export function parseOncallArgs(args: string[]): OncallCliArgs {
     );
   }
 
+  const sinceMs = parseDurationToMs(since);
+  if (sinceMs > MAX_SINCE_MS) {
+    throw new Error(`--since must not exceed 90d (got: ${since})\n${USAGE}`);
+  }
+
   return {
-    sinceMs: parseDurationToMs(since),
+    sinceMs,
     ...(incidentId === undefined ? {} : { incidentId }),
     ...(service === undefined ? {} : { service }),
     format,

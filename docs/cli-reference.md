@@ -811,13 +811,17 @@ nimbus oncall --since 3d --format slack
 |---|---|
 | `--incident <item-id>` | Brief this incident by its **index item id** (not its PagerDuty number — find one with `nimbus query --type incident`). Accepts a resolved incident, which is the postmortem case. Mutually exclusive with `--service`. |
 | `--service <name>` | Pick the newest active incident on this configured service. Mutually exclusive with `--incident`. |
-| `--since <duration>` | **Chat lookback only** (default: `24h`, capped at 90 days). The deployment, change and prior-incident lanes anchor on when the incident *opened* and are not affected by this flag. |
+| `--since <duration>` | **Chat lookback only** (default: `24h`, capped at 90 days — rejected locally, so a typo fails on the command line rather than after a round trip). The deployment, change and prior-incident lanes anchor on when the incident *opened* and are not affected by this flag. |
 | `--format <markdown\|slack\|plain>` | A text transform over the brief's own Markdown (default `markdown`) — never a re-render from the typed findings, so a synthesized rewrite's prose survives. |
 | `--json` | Print the typed findings instead of the brief. |
 
 **Output (Markdown):** `# On-call`, a preamble naming the incident and the chat window, then `## Incident`, `## Last deployment before the alert`, `## Change in that deployment`, `## CI`, `## Chat` and `## Prior incidents on this service` — each rendered even when empty (`_None found._`), because a missing heading and an empty one say different things — followed by the reserved `## Gaps` section.
 
 **Nothing with no incident is a REFUSAL, not an empty brief.** Every section anchors on a selected incident, so with none the brief would be six headings over nothing — which during an incident reads as *you are clear*, the one wrong answer that looks like a good one. `nimbus oncall` exits non-zero with `ERR_ONCALL_NO_ACTIVE_INCIDENT`, and names the two other shapes plus `nimbus index health`. Two sibling refusals exist and are deliberately distinct: `ERR_ONCALL_IDENTITY_UNRESOLVED` (Nimbus cannot tell who you are — a different fix entirely from "nobody is paging you", and collapsing the two would tell an on-call engineer they are clear when nothing was ever checked) and `ERR_ONCALL_INCIDENT_NOT_FOUND`.
+
+**Runner-up incidents are labelled by how they were selected.** With no flags they are *other active incidents assigned to you*; with `--service` they are *other active incidents on this service* — that query filters on service and status alone and applies no assignee predicate, so calling them yours would be false.
+
+**The prior-incident count is a floor once it saturates.** That lane over-fetches one past its display cap, so a service with forty earlier incidents reads *at least 11* rather than a precise-looking `11`. Recurrence is the signal the lane exists for, so understating it silently would defeat the point.
 
 **The deployment is the one before the alert — that is timing, not cause.** Nothing in the index links a deployment to an incident. The heading says what the claim is and the preamble says what it is not; neither calls it a root cause.
 

@@ -66,7 +66,7 @@ function build(opts: {
     nowMs: NOW,
     chatLookbackMs: DAY,
     incident: opts.incident ?? incident(),
-    selection: "auto",
+    selection: "auto_assigned",
     otherActiveIncidents: [],
     serviceConfigs: opts.serviceConfigs ?? [cfg()],
     // A `performance.now()` ORIGIN, not an elapsed duration: the builder measures against it
@@ -296,5 +296,107 @@ describe("emitOncallBrief selection", () => {
         notify,
       }),
     ).rejects.toBeInstanceOf(OncallNoActiveIncidentError);
+  });
+});
+
+/**
+ * Await the `oncall.briefReady` notification rather than the `emitOncallBrief` call.
+ *
+ * `emitBriefWithSynthesis` builds and notifies inside an un-awaited async IIFE and returns
+ * `{ sessionId }` immediately, so asserting on the resolved call observes nothing. A
+ * `briefError` rejects, so a refusal surfaces as a real failure instead of a timeout.
+ */
+function deferredBrief<T>(): {
+  notify: (method: string, params: unknown) => void;
+  promise: Promise<T>;
+} {
+  let resolve!: (v: T) => void;
+  let reject!: (e: Error) => void;
+  const promise = new Promise<T>((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+  return {
+    notify: (method, params) => {
+      if (method === "oncall.briefReady") resolve((params as { findings: T }).findings);
+      if (method === "oncall.briefError") {
+        reject(new Error(String((params as { error: unknown }).error)));
+      }
+    },
+    promise,
+  };
+}
+
+describe("the selection MODE travels from the selector to the brief (CodeRabbit #1509)", () => {
+  /**
+   * Asserted end to end rather than on each half, because the defect this fixes lived in the WIRE:
+   * the selector knew which population it had queried and the renderer did not, so the brief said
+   * "assigned to you" about incidents selected by service alone. Two passing per-side tests would
+   * not have caught that.
+   */
+  function seedActiveIncident(d: Database, id: string, openedAtMs: number): void {
+    d.run(
+      `INSERT INTO item (id, service, type, external_id, title, url, modified_at, author_id, metadata, synced_at)
+       VALUES (?, 'pagerduty', 'incident', ?, ?, NULL, ?, NULL, ?, ?)`,
+      [
+        id,
+        id,
+        id,
+        openedAtMs,
+        JSON.stringify({
+          status: "triggered",
+          incidentId: id,
+          assignee_emails: [],
+          opened_at_ms: openedAtMs,
+          pagerduty_service_id: PD_SVC,
+        }),
+        NOW,
+      ],
+    );
+  }
+
+  test("--service yields auto_service, and names runner-ups it did NOT filter by assignee", async () => {
+    const d = db();
+    seedActiveIncident(d, "inc-newest", NOW - HOUR);
+    seedActiveIncident(d, "inc-older", NOW - 5 * HOUR);
+
+    // `emitBriefWithSynthesis` fires `briefReady` from an un-awaited async IIFE, so the call
+    // resolves with only a sessionId — awaiting it alone would assert against an unbuilt brief.
+    const ready = deferredBrief<{
+      selection: string;
+      otherActiveIncidents: readonly { id: string }[];
+    }>();
+    await emitOncallBrief({
+      db: d,
+      sessionId: "s1",
+      serviceId: "checkout",
+      serviceConfigs: [cfg()],
+      notify: ready.notify,
+    });
+    const brief = await ready.promise;
+
+    expect(brief.selection).toBe("auto_service");
+    // Neither incident is assigned to anyone, which is exactly why the old unconditional
+    // "assigned to you" label was false.
+    expect(brief.otherActiveIncidents.map((o) => o.id)).toEqual(["inc-older"]);
+  });
+
+  test("--incident yields explicit and no runner-ups", async () => {
+    const d = db();
+    seedActiveIncident(d, "inc-named", NOW - HOUR);
+    seedActiveIncident(d, "inc-other", NOW - 5 * HOUR);
+
+    const ready = deferredBrief<{ selection: string; otherActiveIncidents: readonly unknown[] }>();
+    await emitOncallBrief({
+      db: d,
+      sessionId: "s1",
+      incidentId: "inc-named",
+      serviceConfigs: [cfg()],
+      notify: ready.notify,
+    });
+    const brief = await ready.promise;
+
+    expect(brief.selection).toBe("explicit");
+    expect(brief.otherActiveIncidents).toEqual([]);
   });
 });

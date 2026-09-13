@@ -426,16 +426,21 @@ async function selectIncident(opts: EmitOncallOpts): Promise<{
 
   return {
     incident: first,
-    selection: "auto",
+    // Which AUTO mode, not merely "auto": the two select from different populations, and the
+    // renderer says something FALSE about the runner-ups if it cannot tell them apart. See
+    // `OncallSelection`.
+    selection: candidates.selection,
     // Named rather than merely counted: each entry is what `--incident <id>` takes, so the reader
     // can act on the runner-up without going and looking it up.
     others: rest.map((i) => ({ id: i.id, title: i.title, openedAtMs: i.openedAtMs })),
   };
 }
 
-async function resolveCandidates(
-  opts: EmitOncallOpts,
-): Promise<{ list: readonly OncallIncident[]; scope: string }> {
+async function resolveCandidates(opts: EmitOncallOpts): Promise<{
+  list: readonly OncallIncident[];
+  scope: string;
+  selection: Exclude<OncallSelection, "explicit">;
+}> {
   if (opts.serviceId !== undefined && opts.serviceId !== "") {
     const cfg = opts.serviceConfigs.find((c) => c.serviceId === opts.serviceId);
     // An unconfigured service name yields NO PagerDuty ids, so the query matches nothing and the
@@ -444,6 +449,8 @@ async function resolveCandidates(
     return {
       list: selectActiveIncidentsForPagerdutyServices(opts.db, cfg?.pagerdutyServices ?? []),
       scope: `for service \`${opts.serviceId}\``,
+      // NOT assignee-filtered — this query reads service and status only.
+      selection: "auto_service",
     };
   }
 
@@ -457,6 +464,7 @@ async function resolveCandidates(
   return {
     list: selectActiveAssignedIncidents(opts.db, resolution.personId),
     scope: "is assigned to you",
+    selection: "auto_assigned",
   };
 }
 

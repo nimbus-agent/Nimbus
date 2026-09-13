@@ -15,7 +15,7 @@ function brief(over: Partial<OncallBrief> = {}): OncallBrief {
     latencyMs: 12,
     gaps: [],
     query: { sinceMs: NOW - DAY, nowMs: NOW },
-    selection: "auto",
+    selection: "auto_assigned",
     incident: {
       id: "pagerduty:inc-1",
       title: "Checkout 500s",
@@ -290,5 +290,84 @@ describe("renderOncall", () => {
     expect(canonical).toContain("## Gaps");
     expect(omitted).not.toContain("## Gaps");
     expect(canonical).not.toBe(omitted);
+  });
+});
+
+describe("renderOncall — review fixes (CodeRabbit #1509)", () => {
+  const RUNNER_UP = {
+    id: "pagerduty:inc-2",
+    title: "Payments latency",
+    openedAtMs: NOW - 6 * HOUR,
+  };
+
+  test("a --service brief does NOT call runner-ups `assigned to you`", () => {
+    // `selectActiveIncidentsForPagerdutyServices` filters on service and status ONLY — no
+    // assignee predicate — so those incidents may belong to anyone. Saying otherwise is a plain
+    // falsehood about someone else's page, in the exact class of defect this brief exists to
+    // avoid.
+    const out = renderOncall(
+      brief({ selection: "auto_service", otherActiveIncidents: [RUNNER_UP] }),
+    );
+    expect(out).not.toContain("assigned to you");
+    expect(out).toContain("Other active incidents on this service");
+    expect(out).toContain("on this service and");
+  });
+
+  test("an owner-scoped brief still says `assigned to you`, which is true there", () => {
+    // The fix must not make the accurate case vaguer — that was the reason for splitting the
+    // selection union rather than adopting one scope-neutral phrase everywhere.
+    const out = renderOncall(
+      brief({ selection: "auto_assigned", otherActiveIncidents: [RUNNER_UP] }),
+    );
+    expect(out).toContain("Other active incidents assigned to you");
+    expect(out).toContain("assigned to you and");
+  });
+
+  test("the runner-up disclosure keeps its anchor under BOTH selection modes", () => {
+    // The anchor sits on the half that is true either way, so the I31 guard cannot start
+    // depending on which branch rendered.
+    for (const selection of ["auto_assigned", "auto_service"] as const) {
+      const out = renderOncall(brief({ selection, otherActiveIncidents: [RUNNER_UP] }));
+      expect(out).toContain("covers the most recently opened one");
+    }
+  });
+
+  test("a SATURATED prior-incident count renders as a floor, not an exact total", () => {
+    // `buildOncallBrief` over-fetches by exactly one past the display cap, so a service with forty
+    // earlier incidents reports eleven. Recurrence is the one thing this lane exists to convey, so
+    // printing the saturated value as though it were exact understates it by 29.
+    const rows = Array.from({ length: 10 }, (_, i) => ({
+      id: `pagerduty:inc-${String(i)}`,
+      title: `Earlier ${String(i)}`,
+      url: null,
+      openedAtMs: NOW - (i + 3) * DAY,
+      resolvedAtMs: null,
+      resolvedByEmail: null,
+    }));
+    const out = renderOncall(
+      brief({ priorIncidents: rows, counts: { messages: 0, priorIncidents: 11 } }),
+    );
+    expect(out).toContain("At least 11 earlier incidents on this service");
+    expect(out).toContain("more than this brief counted");
+  });
+
+  test("an UNSATURATED count still renders as the exact total it is", () => {
+    // The floor wording must not leak into the ordinary case, or every brief would hedge a number
+    // it actually knows.
+    const rows = [
+      {
+        id: "pagerduty:inc-0",
+        title: "Earlier",
+        url: null,
+        openedAtMs: NOW - 10 * DAY,
+        resolvedAtMs: null,
+        resolvedByEmail: null,
+      },
+    ];
+    const out = renderOncall(
+      brief({ priorIncidents: rows, counts: { messages: 0, priorIncidents: 1 } }),
+    );
+    expect(out).toContain("1 earlier incident on this service");
+    expect(out).not.toContain("At least");
   });
 });

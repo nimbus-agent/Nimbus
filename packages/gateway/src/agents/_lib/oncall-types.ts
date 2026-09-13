@@ -187,12 +187,23 @@ export type OncallCounts = {
 /**
  * How the incident this brief covers was chosen.
  *
- * On the brief because it changes how the reader should read an unexpected incident. `explicit`
- * means they named it and there is nothing to second-guess. `auto` means Nimbus picked it from
- * the incidents assigned to the resolved owner, so a wrong pick is possible for every reason
- * `OncallIdentity` and `OncallSyncFreshness` describe.
+ * On the brief because it changes how the reader should read an unexpected incident, and because
+ * the two AUTO modes select from different populations — which is not a nuance, it is the
+ * difference between a true and a false sentence about the runner-ups:
+ *
+ * - `explicit` — the caller named the incident; there is nothing to second-guess.
+ * - `auto_assigned` — picked from incidents ASSIGNED to the resolved owner (the zero-parameter
+ *   shape). A wrong pick is possible for every reason `OncallSyncFreshness` describes.
+ * - `auto_service` — picked from every ACTIVE incident on the named service, regardless of who
+ *   is assigned (`--service`). `selectActiveIncidentsForPagerdutyServices` filters on service and
+ *   status ONLY.
+ *
+ * The split exists because both render sites originally said "assigned to you" unconditionally,
+ * which is simply false on a `--service` brief: those runner-ups may belong to anyone. Collapsing
+ * the two into one scope-neutral phrase would have fixed the falsehood by making the accurate
+ * case vaguer too; keeping them apart lets each say something true AND specific.
  */
-export type OncallSelection = "explicit" | "auto";
+export type OncallSelection = "explicit" | "auto_assigned" | "auto_service";
 
 /**
  * Whether the incident's PagerDuty service maps to a configured Nimbus service.

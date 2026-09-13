@@ -118,6 +118,7 @@ export function requiredPhrases(brief: SynthInput): readonly Disclosure[] {
       syncUnknown: brief.syncFreshness.reason !== null,
       hasDeployment: brief.deployment !== null,
       otherActiveCount: brief.otherActiveIncidents.length,
+      assigneeScoped: brief.selection === "auto_assigned",
       truncatedCount: brief.truncatedCount,
     });
   }

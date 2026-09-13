@@ -389,7 +389,7 @@ const ONCALL: OncallBrief = {
   latencyMs: 0,
   gaps: [GAP],
   query: { sinceMs: -86_400_000, nowMs: 0 },
-  selection: "auto",
+  selection: "auto_assigned",
   incident: {
     id: "pagerduty:inc-1",
     title: "Checkout 500s",
