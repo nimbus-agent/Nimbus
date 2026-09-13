@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1789278724254,
+  "lastUpdate": 1789280375017,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "6a7ecad8a9281751461f7d0f642d365085dc723d",
-          "message": "docs: add the ecosystem roadmap — the sdk/client/clients delivery spine (#775)\n\n`roadmap.md` is authoritative for what the gateway *does*. Nothing was\nauthoritative for how that capability *reaches a human* — and that gap\nis now the binding constraint on the whole product:\n\n> **The gateway roadmap is 27 phases deep. The client surface is 15\nmethods wide.**\n\nThis adds `docs/ecosystem-roadmap.md` to own the width, and cross-links\nboth roadmaps so they declare their scopes instead of drifting into\noverlap.\n\n## Why now — three measured facts\n\nEach verified against source, not inferred.\n\n**1. The capability is built; it is not reachable.**\nThe gateway dispatches ~212 JSON-RPC methods. `@nimbus-dev/client`\nexposes **15**. The VS Code extension consumes **13**. Entire namespaces\nare built, dispatch-wired and mostly already Tauri-allowlisted, yet\nunreachable from any npm client: `agents.*`, `workflow.*`, `watcher.*`,\n`share.*`, `federation.*`, `connector.*`, `people.*`, `metrics.dora`,\n`deploy.preflight`.\n\nThe client has shipped **5 new methods in 4 months** against ~198\nunexposed. Adding one is ~100 lines across 5–6 files and needs **zero\ngateway changes**. *This is not a hard problem; it is an unstaffed one.*\n\n**2. The narrow waist has no enforced contract — and it is broken\ntoday.**\n\n| Layer | Says |\n|---|---|\n| `index/item-list-query.ts:37` | `SELECT * FROM item` → raw\n**snake_case** |\n| `@nimbus-dev/client` | `Record<string, unknown>[]` — the only method\nwith **no validator** |\n| `@nimbus-dev/sdk` `NimbusItem` | **camelCase**, 6-value `itemType`\nincl. `folder`/`task` |\n| `docs/schema-reference.md` | **19** types incl.\n`deployment`/`alert`/`incident`; `task` explicitly *not* emitted |\n\nConsequence, shipped and live: the VS Code Index view reads\n`rec[\"itemType\"]` and gets `undefined` every time — it has **never**\ndisplayed a type or sorted by time. It looks fine only because\n`id`/`name`/`service`/`url` collide across both casings.\n\nBehind that bug: `item_type` has **no machine-readable source of truth\nanywhere** — it lives in a SQL comment, while `roadmap.md` plans to add\n`service`, `team`, `dora_metric`, `security_finding`, `llm_trace`…\n\n**3. Nobody is using it.** VS Code extension: **3 installs**. And\n`incident` / `on-call` / `deploy` / `alert` / `SRE` appear **zero**\ntimes in its `src/`, README or `package.json` — against a product whose\nREADME opens *\"Cross-service incident context in under 100 ms\"* and\nwhose `audiences.md` ranks On-call/SRE first.\n\n## The shape\n\n**Seal the waist → open the waist → surface it → tell people**, with the\noperating principle that **every stage ends in a gate a machine can\ncheck** — because delivery is largely agent-driven, and fact 2 is\nexactly what agents-against-wrong-contracts produce when nothing is\nwatching.\n\n- **Stage 0** — single-source `ItemType` in the SDK, validated\n`queryItems`, and a client↔gateway conformance test in CI. Ships the\nIndex bug fix.\n- **Stage 1** — expose namespaces in batches. `agents.*` first: 8\nread-only methods where the SDK *already publishes* both\n`brief-types.ts` and `guard-factory.ts` runtime guards, so the two\ncostliest parts of exposing a method are already done.\n- **Stage 2** — re-cut surfaces for the ICP. Headline is the `nimbus\nwhy` lens *already specified in this repo's Phase 7*; egress receipts\n(M7 / Phase 12.5 / EAF) as the moat; LM-tool registration as the\nmultiplier.\n- **Stage 3** — distribution.\n\nLicensing fixes the contract's direction: sdk/client are MIT, gateway is\nAGPL-3.0, so shared types **must** live in the SDK and be imported by\nthe gateway. That edge already exists (`gateway → @nimbus-dev/sdk\n^1.3.0`), so Stage 0 adds no new dependency.\n\n## Notes for review\n\n- **Docs only** — no code, no behaviour change.\n- `bun run lint:markdown` clean; all internal link targets verified\npresent.\n- The doc contains an **Open decisions** section rather than pretending\nconsensus: where the `item_type` enum ultimately lives, what the\nconformance test runs against, whether the editor is even the right\nfirst home for the `why` lens (during a live page engineers are in Slack\nand PagerDuty, not VS Code), and the fact that every stage is gated on\nclient throughput that has averaged ~1.25 methods/month.\n- The 212 figure carries a footnote on how it was derived and admits a\nraw grep returns 243 including notification names.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nCo-authored-by: Claude Opus 4.8 (1M context) <noreply@anthropic.com>",
-          "timestamp": "2026-07-19T22:59:07+03:00",
-          "tree_id": "e4027a875e3281e469e567f5072f2d31291eb79e",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/6a7ecad8a9281751461f7d0f642d365085dc723d"
-        },
-        "date": 1784491889630,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 300.31496275000063,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 299.96221599999956,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 324.93235560001193,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "a7050be177e053db074f434e7eef264a9c41d8ed",
+          "message": "docs(secrets): OVSX_PAT is retireable once open-vsx.org upgrades, not never (#1506)\n\nI was asked to retire `OVSX_PAT` via Open VSX Trusted Publishing. **It\ncannot be done yet, and doing it would break the next extension\nrelease** — but the reason we thought it was impossible is now wrong, so\nthe three places that said so are corrected here.\n\n## What changed upstream\n\nOur docs said `OVSX_PAT` \"has no OIDC path either and **never will**\nuntil\n[eclipse-openvsx/openvsx#1534](https://github.com/eclipse-openvsx/openvsx/issues/1534)\nlands\", written 2026-08-12.\n\nThat issue closed **COMPLETED on 2026-08-21** — nine days later. Trusted\nPublishing shipped in server **v1.2.0** ([PR\n#2000](https://github.com/eclipse-openvsx/openvsx/pull/2000), commit\n`d5a01c83`) and in `ovsx` CLI v1.2.0 (`cli/src/oidc.ts`,\n`cli/src/trusted-publishing.ts`). `nimbus-vscode`'s `publish.yml`\nalready grants the `id-token: write` permission it needs.\n\n## Why it is still blocked — deployment, not upstream\n\n```\n$ curl -s https://open-vsx.org/api/version\n{\"maxExtensionSize\":262144000,\"version\":\"v1.1.2\"}\n```\n\n`v1.1.2` is the release **immediately before** the feature: it shipped\n2026-08-20 and the merge landed 2026-08-21. Confirmed both directions —\n\n```\ngh api repos/eclipse-openvsx/openvsx/compare/v1.1.2...v1.2.0   # contains d5a01c83\ngh api repos/eclipse-openvsx/openvsx/compare/v1.1.1...v1.1.2   # contains no such commit\n```\n\nSo the trusted-publisher registration UI does not exist on the instance\nwe publish to. Switching `publish.yml` today would fail the next release\ninstead of removing a secret. **No workflow change is made in this PR.**\n\n## What this PR does instead\n\nReplaces an indefinite blocker with a checkable one, in all three places\nthat carried the false claim — `docs/credential-hygiene.md`,\n`docs/ci-secrets.md`, and the machine-readable `note` on the `OVSX_PAT`\nentry in `scripts/release/credential-registry.ts`:\n\n```bash\ncurl -s https://open-vsx.org/api/version   # retire OVSX_PAT once this reports v1.2.0 or later\n```\n\n…and writes down the migration so it does not need re-deriving: register\nthe workflow under [trusted\npublishers](https://open-vsx.org/user-settings/trusted-publishers)\n(namespace-owner action, web UI only), add `--trusted-publishing`, then\nremove the secret.\n\n**The precedence trap is called out explicitly**, because it is the one\nthat would look like success: `--pat` / `OVSX_PAT` takes precedence over\ntrusted publishing, so leaving the secret in place silently keeps the\nold path and the migration appears done while nothing has changed.\nConfigure-then-revoke ordering from the top of `credential-hygiene.md`\napplies — prove the first trusted publish before deleting the token.\n\n## Not touched\n\n`VSCE_PAT` is unchanged and still needs **manual rotation before\n2026-09-20**. There is no automation available for it: Marketplace\nTrusted Publishing is still open\n([microsoft/vsmarketplace#1422](https://github.com/microsoft/vsmarketplace/issues/1422),\nthough actively discussed — last touched 2026-09-10), the Entra/OIDC\npath was attempted end to end on 2026-08-12 and fails structurally\nbecause the backing ADO org is MSA-backed (`TF14045`), and Azure DevOps\nPATs cannot be created non-interactively at all. Runbook:\n`docs/credential-hygiene.md`.\n\nNo behaviour change; docs and one registry `note` only.\n\n## Verification\n\n`preflight:fast` PASSED · `audit:doc-refs` 1515 refs resolve ·\n`audit:secret-inventory` OK (24 secrets, all documented) ·\n`lint:markdown` 0 issues · `credential-registry.test.ts` 11 pass.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nhttps://claude.ai/code/session_018oTrzDDuYDGD7hE1gaee4v\n\nCo-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>",
+          "timestamp": "2026-09-13T06:05:45Z",
+          "tree_id": "2f9d9768f6dcc11313adaa7a9233683a300249f3",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/a7050be177e053db074f434e7eef264a9c41d8ed"
+        },
+        "date": 1789280371020,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 347.07428024999825,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 341.5491528499988,
             "unit": "ms"
           }
         ]
