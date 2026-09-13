@@ -41,11 +41,26 @@
  * `scripts/gen-agent-brief-fixtures.ts`. The helpers under `packages/gateway/test/` are unwired on
  * purpose: they only ever execute inside `bun test`, where the preload has already installed.
  *
- * OUT OF SCOPE, deliberately: what ships to a macOS end user who has no Homebrew SQLite. That
- * needs a decision about bundling a `libsqlite3.dylib` in the macOS package versus degrading
- * honestly (size, notarization and licensing consequences), and it is a separate change. What
- * this module guarantees is that such a user is TOLD — see `index/sqlite-vec-load.ts`, which now
- * surfaces the final failure at `warn` instead of `debug`.
+ * WHAT SHIPS TO A USER WITH NO HOMEBREW SQLITE. That was deliberately out of scope when this
+ * module landed, and is issue #1505; it is now answered by BUNDLING one. `scripts/build-sqlite-
+ * darwin.ts` compiles a pinned SQLite amalgamation with an explicit, tested flag set, and the
+ * macOS `.pkg` and both `tar.gz` archives carry it beside the binaries — so
+ * {@link bundledSqlitePath} resolves ahead of the Homebrew prefixes and `brew install sqlite`
+ * stops being an undocumented prerequisite for a headline feature on one platform out of three
+ * (non-negotiable #5). Of the three consequences that decision was waiting on: size is ~1.5 MB
+ * per macOS artifact, licensing is nil (SQLite is public domain), and notarization is unchanged —
+ * payload libraries are not codesigned individually today, `vec0.dylib` included, and the `.pkg`
+ * they travel in is `productsign`ed and notarized as a unit.
+ *
+ * THE BUNDLED LIBRARY IS PREFERRED OVER A USER'S OWN HOMEBREW BUILD, which is why its feature set
+ * is a superset rather than a minimum: it is the build CI tested, and a machine that has both must
+ * not get a worse SQLite than it had. `NIMBUS_SQLITE_PATH` still outranks both, for anyone who
+ * needs to override.
+ *
+ * A user who has NEITHER — a dev checkout on a machine with no Homebrew SQLite, where
+ * `process.execPath` is `bun` rather than an installed binary — is still TOLD rather than left to
+ * guess: see `index/sqlite-vec-load.ts`, which surfaces the final failure at `warn`, and the
+ * `nimbus doctor` line.
  */
 
 import { Database } from "bun:sqlite";
@@ -92,6 +107,27 @@ export function sidecarFilename(platform: NodeJS.Platform): string {
 export function sidecarPath(execPath: string, platform: NodeJS.Platform): string {
   const p = platform === "win32" ? winPath : posixPath;
   return p.join(p.dirname(execPath), sidecarFilename(platform));
+}
+
+/**
+ * The full SQLite build shipped beside the macOS binaries by `scripts/build-sqlite-darwin.ts`.
+ *
+ * Named for what it IS rather than where it came from, because `setCustomSQLite` takes any full
+ * build and the Homebrew candidates below are the same kind of thing from a different source.
+ */
+export const BUNDLED_SQLITE_FILENAME = "libsqlite3.dylib";
+
+/**
+ * Where the bundled full SQLite sits relative to an executable — the same relationship
+ * {@link sidecarPath} expresses for `vec0.dylib`, and travelling in the same archives and
+ * installer payload.
+ *
+ * Takes the platform for {@link sidecarPath}'s reason: so a Windows or Linux test can assert
+ * against the macOS path this produces without the host's separator leaking into it.
+ */
+export function bundledSqlitePath(execPath: string, platform: NodeJS.Platform): string {
+  const p = platform === "win32" ? winPath : posixPath;
+  return p.join(p.dirname(execPath), BUNDLED_SQLITE_FILENAME);
 }
 
 /** Environment override, checked before any built-in candidate. */
@@ -155,6 +191,13 @@ export interface FullSqliteStatus {
 export interface FullSqliteDeps {
   readonly platform: NodeJS.Platform;
   readonly env: (name: string) => string | undefined;
+  /**
+   * `process.execPath`, from which the bundled library's location is derived.
+   *
+   * Injected rather than read at the use site so the darwin resolution order is assertable from
+   * a Linux or Windows runner — the same reason every other host fact here arrives as a dep.
+   */
+  readonly execPath: string;
   readonly exists: (path: string) => boolean;
   /** `Database.setCustomSQLite`. Returns false, or throws, when the library is unusable. */
   readonly setCustomSQLite: (path: string) => boolean;
@@ -181,11 +224,12 @@ const REMEDY =
 export function fullSqliteCandidates(
   platform: NodeJS.Platform,
   env: (name: string) => string | undefined,
+  execPath: string,
 ): readonly string[] {
   if (platform !== "darwin") return [];
   const override = env(SQLITE_PATH_ENV);
   const overrides = override === undefined || override.trim() === "" ? [] : [override.trim()];
-  return [...overrides, ...DARWIN_SQLITE_CANDIDATES];
+  return [...overrides, bundledSqlitePath(execPath, platform), ...DARWIN_SQLITE_CANDIDATES];
 }
 
 /**
@@ -272,7 +316,7 @@ function discriminateRejection(
  * runs it without semantic search, and says so.
  */
 export function installFullSqlite(deps: FullSqliteDeps): FullSqliteStatus {
-  const candidates = fullSqliteCandidates(deps.platform, deps.env);
+  const candidates = fullSqliteCandidates(deps.platform, deps.env, deps.execPath);
   if (deps.platform !== "darwin") {
     return {
       state: "not-applicable",
@@ -393,6 +437,7 @@ function defaultExtensionProbe(): ExtensionProbeResult {
 export const DEFAULT_FULL_SQLITE_DEPS: FullSqliteDeps = {
   platform: process.platform,
   env: (name) => process.env[name],
+  execPath: process.execPath,
   exists: existsSync,
   setCustomSQLite: (path) => Database.setCustomSQLite(path),
   probeExtensionLoad: defaultExtensionProbe,

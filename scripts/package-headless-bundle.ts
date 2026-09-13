@@ -2,6 +2,7 @@
 import { copyFileSync, cpSync, existsSync, mkdirSync, rmSync } from "node:fs";
 import { join, resolve } from "node:path";
 
+import { OUTPUT_FILENAME as BUNDLED_SQLITE_FILENAME } from "./build-sqlite-darwin.ts";
 import { vec0Filename } from "./copy-vec0-sidecar.ts";
 
 const isWin = process.platform === "win32";
@@ -56,6 +57,16 @@ const vec0Name = vec0Filename(process.platform);
 const vec0Src = resolve(repoRoot, "dist", vec0Name);
 if (existsSync(vec0Src)) {
   copyFileSync(vec0Src, join(outDir, vec0Name));
+}
+
+// On macOS the extension above cannot load without a full SQLite build to point the process at
+// (#1505), so the bundle carries one too, resolved from the same directory. Optional for the same
+// reason as the sidecar, and absent by construction off darwin.
+if (process.platform === "darwin") {
+  const sqliteSrc = resolve(repoRoot, "dist", BUNDLED_SQLITE_FILENAME);
+  if (existsSync(sqliteSrc)) {
+    copyFileSync(sqliteSrc, join(outDir, BUNDLED_SQLITE_FILENAME));
+  }
 }
 
 async function materializeEmbeddingModelDefault(dest: string): Promise<void> {

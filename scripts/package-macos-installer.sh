@@ -40,6 +40,18 @@ if [ -f "${BIN_DIR}/vec0.dylib" ]; then
   install -m 0644 "${BIN_DIR}/vec0.dylib" "${ROOT}/nimbus/bin/vec0.dylib"
 fi
 
+# The full SQLite build the extension above needs in order to load at all (#1505). Apple's system
+# SQLite has extension loading compiled out, so without this the sidecar is inert and the user has
+# no vector search, no hybrid ranking and no session-memory recall unless they happen to have run
+# `brew install sqlite`. Resolved from dirname(process.execPath) by
+# packages/gateway/src/platform/sqlite-runtime.ts, hence the same directory as the binaries.
+#
+# Guarded like the sidecar rather than required: a .pkg built from a staging dir that lacks it is
+# still a working Nimbus, minus semantic search — and `nimbus doctor` says so.
+if [ -f "${BIN_DIR}/libsqlite3.dylib" ]; then
+  install -m 0644 "${BIN_DIR}/libsqlite3.dylib" "${ROOT}/nimbus/bin/libsqlite3.dylib"
+fi
+
 # Channel-marked wrappers -> ~/.local/bin
 for t in nimbus nimbus-gateway; do
   cat > "${ROOT}/bin/${t}" <<EOF
