@@ -77,6 +77,12 @@ describe("HITL observation events", () => {
   test("a FOREIGN requestId is still refused — observation grants no authority", () => {
     // A `tail` client that tried to answer must not be able to. This is the existing behaviour;
     // the test pins that adding the broadcast did not loosen it.
+    //
+    // NOTE: this test alone cannot distinguish `entry?.clientId !== clientId` (the real,
+    // client-scoped guard) from the weaker `entry === undefined` (an existence-only guard) —
+    // "never-issued" trips the `entry === undefined` half of the condition either way. See the
+    // next test for the guard's actual security property: a requestId that WAS issued, to a
+    // DIFFERENT client, must still be refused.
     const c = new ConsentCoordinatorImpl(() => () => {});
     const seen = capture();
     const err = c.handleRespond("client-b", { requestId: "never-issued", approved: true });
@@ -89,5 +95,42 @@ describe("HITL observation events", () => {
           s.method === "gateway.event" && (s.params as { kind: string }).kind === "hitl.resolved",
       ),
     ).toBe(false);
+  });
+
+  test("a FOREIGN client cannot answer ANOTHER client's live consent request", async () => {
+    // This branch makes every requestId VISIBLE to every connected client (the `hitl.requested`
+    // broadcast added above), so `handleRespond`'s `entry?.clientId !== clientId` check is now
+    // security-load-bearing in a way it was not before: without it, any `nimbus tail` client
+    // could approve a prompt raised for someone else, having only OBSERVED its requestId.
+    const c = new ConsentCoordinatorImpl(() => () => {});
+    const seen = capture();
+
+    let settled = false;
+    const pending = c.requestConsent("client-a", { requestId: "r1", prompt: "Post to Slack?" });
+    pending.then(
+      () => {
+        settled = true;
+      },
+      () => {
+        settled = true;
+      },
+    );
+
+    // client-b observed "r1" (e.g. via `nimbus tail --filter hitl`) and tries to answer it.
+    const err = c.handleRespond("client-b", { requestId: "r1", approved: true });
+    expect(err?.code).toBe(-32602);
+
+    // No `hitl.resolved` was broadcast — a foreign answer must not even look like it landed.
+    expect(
+      seen.some(
+        (s) =>
+          s.method === "gateway.event" && (s.params as { kind: string }).kind === "hitl.resolved",
+      ),
+    ).toBe(false);
+
+    // client-a's pending promise is still unresolved. Give any wrongly-scheduled settlement a
+    // full turn of the event loop to land before asserting it did not.
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(settled).toBe(false);
   });
 });
