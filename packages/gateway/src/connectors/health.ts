@@ -1,6 +1,7 @@
 import type { Database } from "bun:sqlite";
 
 import { dbRun } from "../db/write.ts";
+import { emitConnectorHealthChanged } from "../ipc/gateway-events.ts";
 
 function jitterBelowMs(maxExclusive: number): number {
   const word = new Uint32Array(1);
@@ -194,6 +195,7 @@ function appendHistory(
  * `buildSnapshot` already reads as `not_configured` — creating ~90 rows on a fresh install to
  * record the absence of news would be its own noise.
  */
+/** Returns the state it RECORDED, or `null` when nothing changed (the no-op guard). */
 function applyConfiguredFlag(
   db: Database,
   connectorId: string,
@@ -201,9 +203,9 @@ function applyConfiguredFlag(
   fromState: string | null,
   nowConfigured: boolean,
   now: number,
-): void {
-  if (current === null) return;
-  if ((current.configured !== 0) === nowConfigured) return;
+): ConnectorHealthState | null {
+  if (current === null) return null;
+  if ((current.configured !== 0) === nowConfigured) return null;
   dbRun(db, "UPDATE sync_state SET configured = ? WHERE connector_id = ?", [
     nowConfigured ? 1 : 0,
     connectorId,
@@ -211,14 +213,20 @@ function applyConfiguredFlag(
   // History carries the DERIVED state, which is what a human reading the log needs. Logging the
   // untouched `health_state` would record "healthy" for the moment a connector stopped being
   // configured at all.
+  // ONE derivation, reused by both the history row and the event — a second copy of this ternary
+  // is a second place for them to disagree about what the state became.
+  const recorded: ConnectorHealthState = nowConfigured
+    ? ((fromState as ConnectorHealthState | null) ?? "healthy")
+    : "not_configured";
   appendHistory(
     db,
     connectorId,
     fromState,
-    nowConfigured ? (fromState ?? "healthy") : "not_configured",
+    recorded,
     nowConfigured ? "credential configured" : "no credential configured",
     now,
   );
+  return recorded;
 }
 
 export const DEFAULT_MAX_BACKOFF_ATTEMPTS = 10;
@@ -239,7 +247,33 @@ export function transitionHealth(
   }
 
   if (event.type === "not_configured" || event.type === "configured") {
-    applyConfiguredFlag(db, connectorId, current, fromState, event.type === "configured", now);
+    const recorded = applyConfiguredFlag(
+      db,
+      connectorId,
+      current,
+      fromState,
+      event.type === "configured",
+      now,
+    );
+    if (recorded !== null) {
+      // The EXTERNALLY VISIBLE previous state, not the raw `health_state` column — that column
+      // doesn't move when only `configured` flips, so using it here would print `healthy ->
+      // healthy` for exactly the `nimbus connector auth` round trip this event exists to surface.
+      // `applyConfiguredFlag` returned non-null, so the flag genuinely changed: for a `configured`
+      // event it was previously 0 (visible state was `not_configured`); for `not_configured` it
+      // was previously 1 (visible state was whatever `health_state` already said).
+      const visibleFromState: ConnectorHealthState | null =
+        event.type === "configured"
+          ? "not_configured"
+          : ((fromState as ConnectorHealthState | null) ?? null);
+      emitConnectorHealthChanged({
+        name: connectorId,
+        health: recorded,
+        fromState: visibleFromState,
+        reason: event.type === "configured" ? "credential configured" : "no credential configured",
+        occurredAt: now,
+      });
+    }
     return buildSnapshot(connectorId, readHealthRow(db, connectorId));
   }
 
@@ -323,6 +357,20 @@ export function transitionHealth(
     });
     appendHistory(db, connectorId, fromState, effectiveState, reason, now);
   })();
+
+  // AFTER the transaction, deliberately. Emitting from inside `appendHistory` would publish before
+  // commit — a rollback would leave clients told of a transition that never happened — and would
+  // let a throwing subscriber roll the transaction back. `appendHistory` stays the single place
+  // every transition is RECORDED; this is the single place one is ANNOUNCED.
+  emitConnectorHealthChanged({
+    name: connectorId,
+    health: effectiveState,
+    ...(reason === null ? {} : { degradationReason: reason }),
+    // `string | null` -> the payload's union; same cast idiom as this file's snapshot builder.
+    fromState: (fromState as ConnectorHealthState | null) ?? null,
+    reason,
+    occurredAt: now,
+  });
 
   const updated = readHealthRow(db, connectorId);
   return buildSnapshot(connectorId, updated);
