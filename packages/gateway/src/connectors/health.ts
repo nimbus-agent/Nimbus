@@ -362,15 +362,37 @@ export function transitionHealth(
   // commit — a rollback would leave clients told of a transition that never happened — and would
   // let a throwing subscriber roll the transaction back. `appendHistory` stays the single place
   // every transition is RECORDED; this is the single place one is ANNOUNCED.
-  emitConnectorHealthChanged({
-    name: connectorId,
-    health: effectiveState,
-    ...(reason === null ? {} : { degradationReason: reason }),
-    // `string | null` -> the payload's union; same cast idiom as this file's snapshot builder.
-    fromState: (fromState as ConnectorHealthState | null) ?? null,
-    reason,
-    occurredAt: now,
-  });
+  //
+  // EXCEPT for one shape: a transition that leaves an already-healthy connector healthy (most
+  // commonly a `sync_success` heartbeat) is recorded above like any other transition — history is
+  // unaffected — but NOT announced. "A sync ran" is already carried by the separate
+  // `sync.completed` gateway event, with item counts and duration; `connector.healthChanged` is
+  // for STATE CHANGES. With ~90 registered syncables, an unconfigured connector's every no-op
+  // sync still calls `transitionHealth(..., { type: "sync_success" })` (see
+  // `sync/scheduler.ts`'s `runJob` comment on `isConnectorConfigured` gating only the egress
+  // append, never the run), so without this a fresh install's `nimbus tail` would scroll a burst
+  // of `healthy -> healthy` lines every sync interval, drowning the transitions it exists to
+  // surface, and the desktop `ConnectorGrid` would `patchConnector` repeatedly with values it
+  // already holds.
+  //
+  // The check is on the STATE PAIR, not the event name — `fromState === effectiveState ===
+  // "healthy"` — never on `event.type === "sync_success"` alone. That keeps a genuine `null ->
+  // healthy` first observation announced (fromState is `null`, not `"healthy"`), and keeps a
+  // REPEATED FAILURE announced too: `degraded -> degraded` from a second `transient_error` does
+  // not match this condition (effectiveState is `"degraded"`), because a repeated failure while
+  // already failing is information a repeated success while already healthy is not.
+  const isNoOpHealthyHeartbeat = fromState === "healthy" && effectiveState === "healthy";
+  if (!isNoOpHealthyHeartbeat) {
+    emitConnectorHealthChanged({
+      name: connectorId,
+      health: effectiveState,
+      ...(reason === null ? {} : { degradationReason: reason }),
+      // `string | null` -> the payload's union; same cast idiom as this file's snapshot builder.
+      fromState: (fromState as ConnectorHealthState | null) ?? null,
+      reason,
+      occurredAt: now,
+    });
+  }
 
   const updated = readHealthRow(db, connectorId);
   return buildSnapshot(connectorId, updated);

@@ -41,6 +41,38 @@ describe("connector.healthChanged", () => {
     expect(p["health"]).toBe("degraded");
   });
 
+  test("a repeat sync_success on an already-healthy connector emits nothing", () => {
+    // The no-op-heartbeat suppression: a `sync_success` that leaves an already-healthy connector
+    // healthy carries no new state to announce — with ~90 registered syncables this is the burst
+    // that drowns `nimbus tail` for connectors the user never configured. History is still
+    // recorded (proven below); only the notification is withheld.
+    const db: Database = createMemoryIndexDb();
+    transitionHealth(db, "github", { type: "sync_success" }); // null -> healthy, creates the row
+    const seen = captured();
+    transitionHealth(db, "github", { type: "sync_success" }); // healthy -> healthy, the heartbeat
+    expect(seen).toEqual([]);
+    const rows = db
+      .query(
+        "SELECT from_state, to_state FROM connector_health_history WHERE connector_id = ? ORDER BY id",
+      )
+      .all("github") as Array<{ from_state: string | null; to_state: string }>;
+    expect(rows).toHaveLength(2);
+    expect(rows[1]).toEqual({ from_state: "healthy", to_state: "healthy" });
+  });
+
+  test("a first sync_success on a fresh connector still emits — null -> healthy is a real transition", () => {
+    // The suppression above keys on `fromState === "healthy"`, never on the event type alone, so
+    // a connector's very first observed success (no prior row, `fromState` is `null`) must still
+    // announce — this is the boundary the condition turns on.
+    const db: Database = createMemoryIndexDb();
+    const seen = captured();
+    transitionHealth(db, "github", { type: "sync_success" });
+    expect(seen).toHaveLength(1);
+    const p = seen[0]?.params as Record<string, unknown>;
+    expect(p["fromState"]).toBeNull();
+    expect(p["health"]).toBe("healthy");
+  });
+
   test("a throwing subscriber leaves the transition COMMITTED", () => {
     const db: Database = createMemoryIndexDb();
     setGatewayEventBroadcast(() => {
