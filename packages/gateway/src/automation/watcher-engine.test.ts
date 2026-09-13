@@ -3,6 +3,7 @@ import { describe, expect, test } from "bun:test";
 import { upsertGraphEntity, upsertGraphRelation } from "../graph/relationship-graph.ts";
 import { upsertIndexedItem } from "../index/item-store.ts";
 import { LocalIndex } from "../index/local-index.ts";
+import type { WatcherFiredPayload } from "../ipc/gateway-events.ts";
 import type { ServiceIdentityResolver } from "../metrics/service-identity.ts";
 import { evaluateWatchersAfterSync, evaluateWatchersStartupCatchUp } from "./watcher-engine.ts";
 import { insertWatcher, listWatchers } from "./watcher-store.ts";
@@ -165,6 +166,36 @@ describe("watcher-engine", () => {
     expect(evCount.c).toBe(1);
   });
 
+  test("opts.onFired receives the real fire's payload from evaluateWatchersAfterSync", () => {
+    // Drives `opts.onFired` through the PRODUCTION fire site inside `evaluateWatchersAfterSync`
+    // (`watcher-engine.ts`), not a hand-built payload the test constructs and calls itself — the
+    // shape this file's earlier `fired-event` test never actually exercised.
+    const db = makeDb();
+    const t0 = 1_701_000_000_000;
+    const wid = insertAlertFiredWatcher(
+      db,
+      "pd-onfired",
+      JSON.stringify({ filter: { service: "pagerduty" } }),
+      t0,
+    );
+    upsertIndexedItem(db, {
+      service: "pagerduty",
+      type: "alert",
+      externalId: "inc-99",
+      title: "Disk full",
+      modifiedAt: t0 + 8000,
+      syncedAt: t0 + 8000,
+    });
+    const fired: WatcherFiredPayload[] = [];
+    const evalAt = t0 + 9000;
+    evaluateWatchersAfterSync(db, "pagerduty", evalAt, () => {}, { onFired: (p) => fired.push(p) });
+    expect(fired).toHaveLength(1);
+    expect(fired[0]?.watcherId).toBe(wid);
+    expect(fired[0]?.name).toBe("pd-onfired");
+    expect(fired[0]?.summary).toContain("Disk full");
+    expect(fired[0]?.firedAt).toBe(evalAt);
+  });
+
   test("omitted filter service matches any synced service", () => {
     const db = makeDb();
     const t0 = 2_700_000_000_000;
@@ -202,6 +233,36 @@ describe("watcher-engine", () => {
     });
     expect(bodies).toHaveLength(1);
     expect(bodies[0]).toContain("Regression");
+  });
+
+  test("opts.onFired receives the real fire's payload from evaluateWatchersStartupCatchUp", () => {
+    // The SECOND, independent fire site inside `watcher-engine.ts` — `evaluateWatchersAfterSync`
+    // and `evaluateWatchersStartupCatchUp` each call `opts.onFired?.(...)` on their own, so a test
+    // that only drives one of them cannot prove the other still calls it.
+    const db = makeDb();
+    const t0 = 3_801_000_000_000;
+    const wid = insertAlertFiredWatcher(
+      db,
+      "catch-up-onfired",
+      JSON.stringify({ filter: { service: "sentry" } }),
+      t0,
+    );
+    upsertIndexedItem(db, {
+      service: "sentry",
+      type: "alert",
+      externalId: "su-99",
+      title: "Latency regression",
+      modifiedAt: t0 + 4000,
+      syncedAt: t0 + 4000,
+    });
+    const fired: WatcherFiredPayload[] = [];
+    const evalAt = t0 + 5000;
+    evaluateWatchersStartupCatchUp(db, evalAt, () => {}, { onFired: (p) => fired.push(p) });
+    expect(fired).toHaveLength(1);
+    expect(fired[0]?.watcherId).toBe(wid);
+    expect(fired[0]?.name).toBe("catch-up-onfired");
+    expect(fired[0]?.summary).toContain("Latency regression");
+    expect(fired[0]?.firedAt).toBe(evalAt);
   });
 
   test("null filter in condition_json does not notify", () => {
