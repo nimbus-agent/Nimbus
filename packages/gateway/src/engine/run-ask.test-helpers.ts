@@ -124,6 +124,22 @@ export type MakeRunAskParamsOptions = {
   readonly localRouterThrows?: string;
   /** Tool ids the fake conversational agent records via `recordExplainToolCall` before replying. */
   readonly agentToolCalls?: readonly string[];
+  /**
+   * Seeds a SECOND indexed item whose title is exactly this string, so `buildLocalIndexedContext`
+   * actually finds a match for `input` and builds a non-empty pool — the default seeded item's
+   * title deliberately matches nothing, so every other test here gets `localContext === undefined`
+   * regardless of route.
+   */
+  readonly seedMatchingTitle?: string;
+  /**
+   * Overrides the classifier's verdict. Combined with `omitConversationalAgent`, forces the
+   * `plan_dispatch` route: `canUseConversation` requires an agent or a local-router preference, so
+   * omitting both makes `runAsk` dispatch the resolved plan regardless of the classifier's
+   * confidence.
+   */
+  readonly classifyAs?: ClassifiedIntent;
+  /** Omits `conversationalAgent` — see `classifyAs`'s doc comment for why this forces `plan_dispatch`. */
+  readonly omitConversationalAgent?: boolean;
 };
 
 /**
@@ -140,13 +156,20 @@ export function makeRunAskParams(opts: MakeRunAskParamsOptions): RunAskParams {
     "INSERT INTO item (id, service, type, external_id, title, modified_at, synced_at) " +
       "VALUES ('seed:1', 'seed', 'note', '1', 'unrelated seeded item', 1, 1)",
   );
+  if (opts.seedMatchingTitle !== undefined) {
+    db.run(
+      "INSERT INTO item (id, service, type, external_id, title, modified_at, synced_at) " +
+        "VALUES ('seed:2', 'seed', 'note', '2', ?, 1, 1)",
+      [opts.seedMatchingTitle],
+    );
+  }
   const localIndex = new LocalIndex(db);
 
   const classify = async (): Promise<ClassifiedIntent> => {
     if (opts.throwAt === "classification") {
       throw new Error("boom");
     }
-    return DEFAULT_CLASSIFIED;
+    return opts.classifyAs ?? DEFAULT_CLASSIFIED;
   };
 
   return {
@@ -160,10 +183,14 @@ export function makeRunAskParams(opts: MakeRunAskParamsOptions): RunAskParams {
     egressSink: NULL_EGRESS_SINK,
     sendChunk: () => {},
     classify,
-    conversationalAgent: fakeConversationalAgent({
-      throwsOnGenerate: opts.throwAt === "model",
-      ...(opts.agentToolCalls === undefined ? {} : { agentToolCalls: opts.agentToolCalls }),
-    }),
+    ...(opts.omitConversationalAgent === true
+      ? {}
+      : {
+          conversationalAgent: fakeConversationalAgent({
+            throwsOnGenerate: opts.throwAt === "model",
+            ...(opts.agentToolCalls === undefined ? {} : { agentToolCalls: opts.agentToolCalls }),
+          }),
+        }),
     ...(opts.localRouterThrows === undefined
       ? {}
       : { llmRouter: fakeLocalRouter({ throws: opts.localRouterThrows }) }),

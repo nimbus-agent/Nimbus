@@ -62,4 +62,73 @@ describe("recorder wiring (spec §4.2)", () => {
       "searchLocalIndex",
     );
   });
+
+  test("a fallback turn that ALSO built local context surfaces the pool, not just the fallback", async () => {
+    // The controller's ruling: `promptWithContext` is built ONCE, above the router-vs-agent fork
+    // (`run-conversational-agent.ts`), so the pre-ranked local pool built here genuinely reached
+    // the agent's prompt on fallback. Reporting `agent_tools` with no pool would under-report on
+    // exactly the turn a user is most likely to be debugging.
+    const r = new AskExplainRecorder();
+    await runAsk(
+      makeRunAskParams({
+        input: "widget",
+        explainRecorder: r,
+        localRouterThrows: "connect ECONNREFUSED",
+        seedMatchingTitle: "widget status page",
+      }),
+    );
+    const last = r.last();
+    expect(last?.route).toBe("agent_tools");
+    expect(last?.fallbackFromLocalRouter?.error).toContain("ECONNREFUSED");
+    const localContextAlsoGiven =
+      last?.route === "agent_tools" ? last.localContextAlsoGiven : undefined;
+    expect(localContextAlsoGiven).toBeDefined();
+    expect(localContextAlsoGiven?.pool.length ?? 0).toBeGreaterThan(0);
+    expect(localContextAlsoGiven?.searchTerms).toBe("widget");
+  });
+
+  test("a non-fallback agent_tools turn (no local context built) carries no localContextAlsoGiven", async () => {
+    // The absence contract: `shouldBuildLocalContext` is false on the pure agent route (no
+    // `llmRouter` at all here), so this turn never even attempts retrieval — absence must mean
+    // "none was built", not "we lost it".
+    const r = new AskExplainRecorder();
+    await runAsk(
+      makeRunAskParams({
+        input: "list my PRs",
+        explainRecorder: r,
+        omitConversationalAgent: false,
+      }),
+    );
+    const last = r.last();
+    expect(last?.route).toBe("agent_tools");
+    expect(last?.route === "agent_tools" ? last.localContextAlsoGiven : "present").toBeUndefined();
+  });
+
+  test("persona is pinned to '<tone>/<voice>' for the default (unconfigured) profile", async () => {
+    const r = new AskExplainRecorder();
+    await runAsk(makeRunAskParams({ input: "q", explainRecorder: r }));
+    // stubPaths.configDir has no nimbus.toml, so `resolvePersona` returns
+    // `DEFAULT_NIMBUS_PERSONA_TOML` (`{ tone: "neutral", voice: "neutral" }`).
+    expect(r.last()?.persona).toBe("neutral/neutral");
+  });
+
+  test("plan_dispatch's plan field is pinned to 'reply: <text>' for a resolved reply plan", async () => {
+    const r = new AskExplainRecorder();
+    // No conversational agent and no local router: `canUseConversation` is false, so `runAsk`
+    // dispatches the classifier's resolved plan instead of answering conversationally — the only
+    // way to reach `plan_dispatch` with this test helper.
+    await runAsk(
+      makeRunAskParams({
+        input: "move a file",
+        explainRecorder: r,
+        omitConversationalAgent: true,
+        classifyAs: { intent: "file_organize", entities: {}, requiresHITL: true, confidence: 1 },
+      }),
+    );
+    const last = r.last();
+    expect(last?.route).toBe("plan_dispatch");
+    expect(last?.route === "plan_dispatch" ? last.plan : undefined).toBe(
+      "reply: Please specify both source and destination paths for the move.",
+    );
+  });
 });

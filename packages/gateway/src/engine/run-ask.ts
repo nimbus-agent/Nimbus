@@ -185,7 +185,21 @@ type ExplainRoute =
       readonly pool: readonly LocalCandidate[];
       readonly discardedTail: ReadonlyArray<{ service: string; type: string; count: number }>;
     }
-  | { readonly kind: "agent_tools" }
+  | {
+      readonly kind: "agent_tools";
+      /**
+       * Set only on the local-router fallback path (spec §4.2 follow-up): `promptWithContext` is
+       * built ONCE, above the router-vs-agent fork, so a local pool built for this turn was
+       * genuinely handed to the agent on fallback, not silently dropped. Absent means none was
+       * built, never that it was lost.
+       */
+      readonly localContextAlsoGiven?: {
+        readonly searchTerms: string;
+        readonly fallbackTermFired?: string;
+        readonly pool: readonly LocalCandidate[];
+        readonly discardedTail: ReadonlyArray<{ service: string; type: string; count: number }>;
+      };
+    }
   | { readonly kind: "plan_dispatch"; readonly plan: string };
 
 /**
@@ -260,10 +274,17 @@ async function answerConversationally(
   }
   // `toolless` means the LOCAL ROUTER answered this turn with no fallback — the same signal
   // `appendDeterministicDisclosures` uses to decide the negation-tools-unavailable line. Only
-  // then does the route report the indexed-context retrieval trace Task 4 built; a fallback to
-  // the Mastra agent (or an agent turn that never had local context to begin with) is reported
-  // as `agent_tools`, with `fallbackFromLocalRouter` carrying the local-router failure alongside
-  // it (spec §4.2) — the two are not mutually exclusive.
+  // then does the route report the indexed-context retrieval trace Task 4 built AS THE PRIMARY
+  // route payload; a fallback to the Mastra agent (or an agent turn that never had local context
+  // to begin with) is reported as `agent_tools`, with `fallbackFromLocalRouter` carrying the
+  // local-router failure alongside it (spec §4.2) — the two are not mutually exclusive.
+  //
+  // A fallback turn does NOT lose the local pool, though: `promptWithContext` is built ONCE,
+  // above the router-vs-agent fork in `run-conversational-agent.ts`, and `runTurn` hands that
+  // SAME `promptArg` to the agent on fallback — so a pool built for this turn genuinely reached
+  // the model's prompt even when the route is `agent_tools`. `localContextAlsoGiven` carries it
+  // there, additively, only when one was actually built (`shouldBuildLocalContext` is false on
+  // the pure agent route, so a non-fallback `agent_tools` turn never sets this).
   partial.route =
     result.toolless && localContext !== undefined
       ? {
@@ -276,7 +297,21 @@ async function answerConversationally(
           pool: localContext.explain.pool,
           discardedTail: localContext.explain.discardedTail,
         }
-      : { kind: "agent_tools" };
+      : {
+          kind: "agent_tools",
+          ...(localContext === undefined
+            ? {}
+            : {
+                localContextAlsoGiven: {
+                  searchTerms: localContext.explain.searchTerms,
+                  ...(localContext.explain.fallbackTermFired === undefined
+                    ? {}
+                    : { fallbackTermFired: localContext.explain.fallbackTermFired }),
+                  pool: localContext.explain.pool,
+                  discardedTail: localContext.explain.discardedTail,
+                },
+              }),
+        };
 
   await persistConversationTurn(p.sessionMemoryStore, sessionId, p.input, result.reply);
 
@@ -953,7 +988,14 @@ function buildExplainRecord(
       // explicitly) already run inside `agentRequestContext.run(...)`, so a store exists by the
       // time this drains it. `?? []` covers a caller outside any such context (a bare unit test):
       // no store means no calls to report, not an error.
-      return { ...base, route: "agent_tools", toolCalls: [...(getExplainToolCalls() ?? [])] };
+      return {
+        ...base,
+        route: "agent_tools",
+        toolCalls: [...(getExplainToolCalls() ?? [])],
+        ...(route.localContextAlsoGiven === undefined
+          ? {}
+          : { localContextAlsoGiven: route.localContextAlsoGiven }),
+      };
     case "plan_dispatch":
       return { ...base, route: "plan_dispatch", plan: route.plan };
   }

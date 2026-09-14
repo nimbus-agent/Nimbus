@@ -101,7 +101,26 @@ export type AskExplainRecord = BaseExplainRecord &
         readonly pool: readonly LocalCandidate[];
         readonly discardedTail: ReadonlyArray<{ service: string; type: string; count: number }>;
       }
-    | { readonly route: "agent_tools"; readonly toolCalls: readonly CollectedToolCall[] }
+    | {
+        readonly route: "agent_tools";
+        readonly toolCalls: readonly CollectedToolCall[];
+        /**
+         * Present only when a local indexed-context probe was ALSO built for this turn — which
+         * can only happen on the local-router fallback path: `shouldBuildLocalContext` is false
+         * whenever the turn goes straight to the agent, so a non-fallback `agent_tools` turn has
+         * no pool here and the field stays absent. `promptWithContext` is built ONCE, above the
+         * router-vs-agent fork (`run-conversational-agent.ts`), and the SAME `promptArg` is
+         * handed to the agent on fallback — so when present, this pool genuinely reached the
+         * model's prompt on this turn, not merely something Nimbus computed and threw away.
+         * Absent means none was built, never that one was lost (spec §4.2).
+         */
+        readonly localContextAlsoGiven?: {
+          readonly searchTerms: string;
+          readonly fallbackTermFired?: string;
+          readonly pool: readonly LocalCandidate[];
+          readonly discardedTail: ReadonlyArray<{ service: string; type: string; count: number }>;
+        };
+      }
     | { readonly route: "plan_dispatch"; readonly plan: string }
     | {
         readonly route: "failed";
