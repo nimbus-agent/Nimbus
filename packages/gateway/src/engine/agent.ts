@@ -20,7 +20,6 @@ import { searchPersons } from "../people/person-store.ts";
 import { buildGeneratedTools } from "../toolgen/toolgen-agent-tools.ts";
 import type { ToolgenRegistry } from "../toolgen/toolgen-registry.ts";
 import { getAgentRequestSessionId, recordExplainToolCall } from "./agent-request-context.ts";
-// redactAuditPayload is ALREADY imported above (from "../audit/format-audit-payload.ts") — reuse it.
 import type { CollectedToolCall } from "./ask-explain-types.ts";
 import {
   buildSearchLocalIndexHealthExtras,
@@ -36,8 +35,15 @@ const MAX_TOOL_STRING_LEN = 2000;
  * Reads the `searchLocalIndex` tool's own ranking summary off its raw result, for `nimbus explain
  * last` (spec §2.5, §4.5). A read of an already-computed value, never a recomputation — and a
  * real type guard rather than a cast, since the tool's return value is external/untrusted data.
+ * Every field of every `sourceSummary` element is checked; a malformed element (missing/wrong-typed
+ * `type` or `count`, not just `service`) is DROPPED rather than half-populated with a cast.
+ *
+ * Exported for direct unit testing (mirrors `toRouterModelId`): it is a pure function of its
+ * argument, and fabricating a malformed `sourceSummary` element through the real
+ * `searchLocalIndex` tool (which only ever produces well-formed ones) is not possible without
+ * reaching into `context-ranker.ts`'s internals.
  */
-function readRanking(raw: unknown): CollectedToolCall["ranking"] | undefined {
+export function readRanking(raw: unknown): CollectedToolCall["ranking"] | undefined {
   if (raw === null || typeof raw !== "object") return undefined;
   const r = raw as Record<string, unknown>;
   if (typeof r["totalMatches"] !== "number" || typeof r["itemsInWindow"] !== "number") {
@@ -47,13 +53,14 @@ function readRanking(raw: unknown): CollectedToolCall["ranking"] | undefined {
   return {
     totalMatches: r["totalMatches"],
     itemsInWindow: r["itemsInWindow"],
-    sourceSummary: summary.flatMap((g) =>
-      g !== null &&
-      typeof g === "object" &&
-      typeof (g as Record<string, unknown>)["service"] === "string"
-        ? [g as { service: string; type: string; count: number }]
-        : [],
-    ),
+    sourceSummary: summary.flatMap((g) => {
+      if (g === null || typeof g !== "object") return [];
+      const group = g as Record<string, unknown>;
+      const { service, type, count } = group;
+      return typeof service === "string" && typeof type === "string" && typeof count === "number"
+        ? [{ service, type, count }]
+        : [];
+    }),
   };
 }
 
@@ -99,7 +106,7 @@ function wrapToolForLlm<T>(
           service,
           status,
           durationMs: Date.now() - calledAt,
-          paramsJson: input === undefined ? null : redactAuditPayload(input, 2048),
+          params: input,
         });
         throw err;
       }
@@ -121,7 +128,7 @@ function wrapToolForLlm<T>(
         service,
         status,
         durationMs: Date.now() - calledAt,
-        paramsJson: input === undefined ? null : redactAuditPayload(input, 2048),
+        params: input,
         ...(ranking !== undefined ? { ranking } : {}),
       });
       return envelope;

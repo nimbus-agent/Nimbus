@@ -15,10 +15,11 @@ describe("in-process tool collection (spec §4.5)", () => {
         service: "nimbus",
         status: "ok",
         durationMs: 12,
-        paramsJson: '{"name":"rate"}',
+        params: { name: "rate" },
       });
       expect(getExplainToolCalls()).toHaveLength(1);
       expect(getExplainToolCalls()?.[0]?.toolId).toBe("searchLocalIndex");
+      expect(getExplainToolCalls()?.[0]?.paramsJson).toBe('{"name":"rate"}');
     });
   });
 
@@ -31,7 +32,7 @@ describe("in-process tool collection (spec §4.5)", () => {
             service: "nimbus",
             status: "ok",
             durationMs: 1,
-            paramsJson: null,
+            params: undefined,
           });
           setTimeout(() => resolve(getExplainToolCalls() ?? []), 5);
         });
@@ -48,7 +49,7 @@ describe("in-process tool collection (spec §4.5)", () => {
         service: "y",
         status: "ok",
         durationMs: 0,
-        paramsJson: null,
+        params: undefined,
       }),
     ).not.toThrow();
     expect(getExplainToolCalls()).toBeUndefined();
