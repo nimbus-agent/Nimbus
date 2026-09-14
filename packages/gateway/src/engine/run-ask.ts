@@ -11,6 +11,8 @@ import type { LlmGenerateResult } from "../llm/types.ts";
 import type { SessionMemoryStore } from "../memory/session-memory-store.ts";
 import type { PlatformPaths } from "../platform/paths.ts";
 import { getAgentRequestSessionId } from "./agent-request-context.ts";
+import { classifyCandidateOutcome } from "./ask-explain-outcome.ts";
+import type { CandidateOutcome, ContributingPass, LocalCandidate } from "./ask-explain-types.ts";
 import { capPerService, stripInternalRankField } from "./context-fairness.ts";
 import type { ContextTruncation } from "./context-truncation-disclosure.ts";
 import {
@@ -477,6 +479,12 @@ function githubIssueContextItemsForRepo(
 interface LocalIndexedContext {
   readonly text: string;
   readonly truncation: ContextTruncation;
+  readonly explain: {
+    readonly searchTerms: string;
+    readonly fallbackTermFired?: string;
+    readonly pool: LocalCandidate[];
+    readonly discardedTail: Array<{ service: string; type: string; count: number }>;
+  };
 }
 
 async function buildLocalIndexedContext(
@@ -489,17 +497,28 @@ async function buildLocalIndexedContext(
   }
   try {
     const byId = new Map<string, Omit<LocalContextItem, "rank">>();
-    const addRankedResults = (items: RankedIndexItem[]): void => {
+    const passById = new Map<string, ContributingPass>();
+    // The scores survive ONLY here — `formatContextItem` drops them, and `byId` never gets
+    // them back (spec §2.4).
+    const rankedById = new Map<string, RankedIndexItem>();
+    const addRankedResults = (items: RankedIndexItem[], pass: ContributingPass): void => {
       for (const item of items) {
         if (!byId.has(item.indexPrimaryKey)) {
           byId.set(item.indexPrimaryKey, formatContextItem(localIndex, item));
+          passById.set(item.indexPrimaryKey, pass);
+          rankedById.set(item.indexPrimaryKey, item);
         }
       }
     };
-    const addContextItems = (items: Array<Omit<LocalContextItem, "rank">>): void => {
+    const addContextItems = (
+      items: Array<Omit<LocalContextItem, "rank">>,
+      pass: ContributingPass,
+    ): void => {
       for (const item of items) {
         if (!byId.has(item.sourceId)) {
           byId.set(item.sourceId, item);
+          passById.set(item.sourceId, pass);
+          // Deliberately NOT added to rankedById: these rows were never scored (spec §2.4).
         }
       }
     };
@@ -518,15 +537,20 @@ async function buildLocalIndexedContext(
       { name: searchTerms, limit: LOCAL_CONTEXT_TOTAL_PROBE_LIMIT },
       { semantic: true, contextChunks: 2 },
     );
-    addRankedResults(primary.slice(0, resolveLocalContextItemLimit()));
+    addRankedResults(primary.slice(0, resolveLocalContextItemLimit()), { kind: "primary-hybrid" });
     for (const quotedQuery of extractQuotedSearchQueries(query)) {
       addRankedResults(
         localIndex.searchRanked({ name: quotedQuery, limit: resolveLocalContextItemLimit() }),
+        { kind: "quoted", query: quotedQuery },
       );
     }
     for (const repoSlug of extractGithubRepoSlugs(query)) {
-      addContextItems(githubIssueContextItemsForRepo(localIndex, repoSlug));
+      addContextItems(githubIssueContextItemsForRepo(localIndex, repoSlug), {
+        kind: "repo-slug",
+        slug: repoSlug,
+      });
     }
+    let fallbackTermFired: string | undefined;
     if (byId.size === 0) {
       // The AND join is strict enough that three reasonable words routinely describe a document
       // containing only two — "what should I do for the smoke test issue?" misses an item titled
@@ -540,8 +564,15 @@ async function buildLocalIndexedContext(
         // between; the slice back to eight still happens after it.
         addRankedResults(
           localIndex.searchRanked({ name: term, limit: LOCAL_CONTEXT_TOTAL_PROBE_LIMIT }),
+          {
+            kind: "fallback-term",
+            term,
+          },
         );
-        if (byId.size > 0) break;
+        if (byId.size > 0) {
+          fallbackTermFired = term;
+          break;
+        }
       }
     }
     // The no-name fallback is GONE (F1, fix 2). `searchRanked` with no `name` sets
@@ -564,6 +595,95 @@ async function buildLocalIndexedContext(
     const contextItems = capPerService([...byId.values()], resolveLocalContextItemLimit()).map(
       (item, idx) => ({ ...item, rank: idx + 1 }),
     );
+
+    const shownIds = new Set(contextItems.map((i) => i.sourceId));
+    const byIdOrder = [...byId.keys()];
+    const limit = resolveLocalContextItemLimit();
+
+    const outcomeFor = (id: string, inById: boolean): CandidateOutcome =>
+      classifyCandidateOutcome({
+        sourceId: id,
+        inById,
+        byIdPosition: inById ? byIdOrder.indexOf(id) : -1,
+        shownIds,
+        limit,
+      });
+
+    /** A candidate that WAS scored: read the components off the preserved RankedIndexItem. */
+    const fromRanked = (
+      item: RankedIndexItem,
+      pass: ContributingPass,
+      inById: boolean,
+    ): LocalCandidate => ({
+      sourceId: item.indexPrimaryKey,
+      service: item.service,
+      indexedType: item.indexedType,
+      title: cleanContextText(item.name),
+      ...(item.modifiedAt === undefined ? {} : { modifiedAt: item.modifiedAt }),
+      ...(item.scoringFormula === undefined
+        ? {}
+        : {
+            score: item.score,
+            matchScore: item.matchScore,
+            recencyComponent: item.recencyComponent,
+            servicePriorityComponent: item.servicePriorityComponent,
+            scoringFormula: item.scoringFormula,
+          }),
+      pass,
+      outcome: outcomeFor(item.indexPrimaryKey, inById),
+    });
+
+    /**
+     * A candidate that was NEVER scored — the raw-SQL repo-slug rows. Score fields are left
+     * ABSENT, never 0: rendering an absent score as zero would claim it ranked last when in fact
+     * it was never ranked (spec §2.4).
+     */
+    const fromContext = (
+      item: Omit<LocalContextItem, "rank">,
+      pass: ContributingPass,
+    ): LocalCandidate => ({
+      sourceId: item.sourceId,
+      service: item.service,
+      indexedType: item.indexedType,
+      title: item.title,
+      pass,
+      outcome: outcomeFor(item.sourceId, true),
+    });
+
+    const pool: LocalCandidate[] = [];
+    const seen = new Set<string>();
+    for (const [id, ctxItem] of byId) {
+      seen.add(id);
+      const pass = passById.get(id) ?? { kind: "primary-hybrid" as const };
+      const ranked = rankedById.get(id);
+      pool.push(ranked === undefined ? fromContext(ctxItem, pass) : fromRanked(ranked, pass, true));
+    }
+    for (const item of primary) {
+      if (seen.has(item.indexPrimaryKey)) continue;
+      seen.add(item.indexPrimaryKey);
+      pool.push(fromRanked(item, { kind: "primary-hybrid" }, false));
+    }
+
+    // Group the discarded tail by service + type.
+    //
+    // Spec §2.5 suggested reusing `buildContextWindow`. DO NOT: its cap is
+    // `Math.min(200, Math.max(1, Math.floor(maxItems)))`, so passing 0 to summarise EVERYTHING
+    // clamps to 1 — it would keep the first discarded row as an "item" and silently omit it from
+    // the summary. It would also need an unsound cast, since LocalCandidate is not a
+    // RankedIndexItem. Ten honest lines beat a reused function used off-contract.
+    const tail = new Map<string, { service: string; type: string; count: number }>();
+    for (const c of pool) {
+      if (c.outcome === "shown") continue;
+      const key = JSON.stringify([c.service, c.indexedType]);
+      const hit = tail.get(key);
+      if (hit === undefined) {
+        tail.set(key, { service: c.service, type: c.indexedType, count: 1 });
+      } else {
+        hit.count += 1;
+      }
+    }
+    const discardedTail = [...tail.values()].sort((a, b) => b.count - a.count);
+
     return {
       // `rank` is stripped before serialising (F12c). It is internal relevance ordering, the
       // envelope carries no schema to say so, and models reported it as data — "PR #414691 is
@@ -580,6 +700,12 @@ async function buildLocalIndexedContext(
         // still a floor, never an upper bound on what the index holds.
         total: Math.max(primary.length, byId.size),
         atLeast: primary.length >= LOCAL_CONTEXT_TOTAL_PROBE_LIMIT,
+      },
+      explain: {
+        searchTerms,
+        ...(fallbackTermFired === undefined ? {} : { fallbackTermFired }),
+        pool,
+        discardedTail,
       },
     };
   } catch (e) {
@@ -668,3 +794,6 @@ export async function runAsk(
   const plan = planFromIntent(classified, p.paths);
   return await dispatchPlan(p, plan);
 }
+
+/** Test seam: `buildLocalIndexedContext` is module-private and has no other entry point. */
+export const buildLocalIndexedContextForTest = buildLocalIndexedContext;
