@@ -592,8 +592,13 @@ ensureFullSqlite();
 
 function seedMany(n: number): LocalIndex {
   const db = new Database(":memory:");
+  // Schema comes from the STATIC `LocalIndex.ensureSchema(db)` — there is no `idx.migrate()`
+  // instance method. And `syncedAt` is REQUIRED by `upsertIndexedItem`'s input type; omitting it
+  // is a typecheck failure, not a runtime default. (Both corrected during Task 1, which had the
+  // same fixture shape.)
+  LocalIndex.ensureSchema(db);
   const idx = new LocalIndex(db);
-  idx.migrate();
+  const now = Date.now();
   for (let i = 0; i < n; i++) {
     // Standalone function taking the Database — not a LocalIndex method (see Task 1).
     upsertIndexedItem(db, {
@@ -602,7 +607,8 @@ function seedMany(n: number): LocalIndex {
       externalId: `slack:${String(i)}`,
       title: `rate limiting note ${String(i)}`,
       bodyPreview: "throttling discussion",
-      modifiedAt: Date.now() - i * 1000,
+      modifiedAt: now - i * 1000,
+      syncedAt: now,
     });
   }
   return idx;
