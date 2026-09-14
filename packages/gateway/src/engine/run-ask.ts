@@ -1067,6 +1067,37 @@ async function runAskInner(
  * without changing what the caller receives or throws either way. `p.explainRecorder` is
  * optional: absent, nothing is recorded and this wrapper costs one object allocation.
  */
+/**
+ * The ONE place both `runAsk` exit paths go through to record — deliberately, so the "recording
+ * must never affect the answer" guarantee lives in a single spot rather than two call sites that
+ * must each remember it (the same lesson Task 5 learned the hard way over `recordExplainToolCall`,
+ * where `redactAuditPayload` was evaluated as an argument OUTSIDE its own try/catch: on the
+ * success arm it sat after the guard and a throw discarded an already-computed successful result;
+ * on the error arm it replaced the original error). Both `buildExplainRecord` AND `.record()` run
+ * INSIDE the try, so a future field added to `buildExplainRecord` that reads something throwable
+ * cannot reintroduce this by construction — there is no unguarded call site left to reintroduce it
+ * at. A failure here is swallowed (logged, best-effort): a diagnostic about what happened to an
+ * ask must never change what the caller receives or throws.
+ */
+function recordExplainSafely(
+  p: RunAskParams,
+  partial: ExplainPartial,
+  startedAt: number,
+  error: unknown,
+): void {
+  if (p.explainRecorder === undefined) {
+    return;
+  }
+  try {
+    p.explainRecorder.record(buildExplainRecord(p, partial, startedAt, error));
+  } catch (e) {
+    runAskLog.warn(
+      { err: e },
+      "failed to build/record an ask-explain entry; the answer itself is unaffected",
+    );
+  }
+}
+
 export async function runAsk(
   p: RunAskParams,
 ): Promise<{ reply: string; modelMeta?: LlmGenerateResult }> {
@@ -1074,10 +1105,10 @@ export async function runAsk(
   const partial: ExplainPartial = { stage: "classification" };
   try {
     const out = await runAskInner(p, partial);
-    p.explainRecorder?.record(buildExplainRecord(p, partial, startedAt, undefined));
+    recordExplainSafely(p, partial, startedAt, undefined);
     return out;
   } catch (e) {
-    p.explainRecorder?.record(buildExplainRecord(p, partial, startedAt, e));
+    recordExplainSafely(p, partial, startedAt, e);
     throw e;
   }
 }

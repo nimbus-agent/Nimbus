@@ -4,6 +4,13 @@ import { AskExplainRecorder } from "./ask-explain-recorder.ts";
 import { makeRunAskParams } from "./run-ask.test-helpers.ts";
 import { runAsk } from "./run-ask.ts";
 
+/** Only overrides `record` — every other `AskExplainRecorder` behavior stays real. */
+class ThrowingRecorder extends AskExplainRecorder {
+  override record(): void {
+    throw new Error("recorder boom");
+  }
+}
+
 describe("recorder wiring (spec §4.2)", () => {
   test("a failed ask is recorded, so explain last cannot show the previous success", async () => {
     const r = new AskExplainRecorder();
@@ -153,5 +160,59 @@ describe("recorder wiring (spec §4.2)", () => {
     expect(last?.route === "plan_dispatch" ? last.plan : undefined).toBe(
       "reply: Please specify both source and destination paths for the move.",
     );
+  });
+
+  test("classifier destination is captured from a real router.generate round-trip", async () => {
+    // `makeRunAskParams` normally injects `classify` unconditionally, which
+    // `classifyIntentForAskWithLocalFallback` prefers over the real classifier
+    // (`p.classify ?? (...)`) — so the wrapped `policy.generate` closure that captures
+    // `classifierDestination` never runs under that default. `realClassifierRouter` omits the
+    // injected `classify` and routes the REAL `classifyIntentForAsk` -> `classifyIntent` through a
+    // router double, the only way to exercise that capture.
+    const r = new AskExplainRecorder();
+    await runAsk(
+      makeRunAskParams({
+        input: "what files do I have",
+        explainRecorder: r,
+        realClassifierRouter: {
+          responseText: JSON.stringify({
+            intent: "unknown",
+            entities: {},
+            requiresHITL: false,
+            confidence: 0,
+          }),
+          provider: "test-vendor",
+        },
+      }),
+    );
+    const last = r.last();
+    expect(last?.classifier.called).toBe(true);
+    expect(last?.classifier.called === true ? last.classifier.destination : undefined).toBe(
+      "test-vendor",
+    );
+  });
+
+  test("a recorder that throws never changes runAsk's own success or failure", async () => {
+    // Task 5 learned this the hard way over `recordExplainToolCall`: a diagnostic evaluated
+    // unguarded can destroy the result it is describing. The controller's ruling: the same shape
+    // existed here (`buildExplainRecord(...)` evaluated INSIDE the try), currently latent only
+    // because `resolvePersona` happens to swallow its own errors — luck, not design.
+    const throwing = new ThrowingRecorder();
+
+    // Success path: the answer must survive a throwing recorder.
+    const ok = await runAsk(makeRunAskParams({ input: "ok question", explainRecorder: throwing }));
+    expect(ok.reply.length).toBeGreaterThan(0);
+
+    // Throw path: the ORIGINAL error must survive, not a recorder-building error.
+    let caught: unknown;
+    try {
+      await runAsk(
+        makeRunAskParams({ input: "boom", explainRecorder: throwing, throwAt: "model" }),
+      );
+    } catch (e) {
+      caught = e;
+    }
+    expect(caught).toBeDefined();
+    expect(String(caught)).not.toContain("recorder boom");
   });
 });

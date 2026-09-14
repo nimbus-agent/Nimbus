@@ -116,6 +116,30 @@ function fakeLocalRouter(opts: { throws?: string }): LlmRouter {
   } as unknown as LlmRouter;
 }
 
+/**
+ * A router double whose `generate` answers EVERY call (classification included) with the same
+ * canned `LlmGenerateResult`, `provider` and all — used ONLY to exercise the real classifier seam
+ * (`classifyIntentForAskWithLocalFallback`'s wrapped `policy.generate`), which an injected
+ * `classify` bypasses entirely. Unlike `fakeLocalRouter`, `prefersLocal` is FALSE here: the point
+ * is to isolate the classification round-trip, not also route the conversational turn through
+ * this same double (`shouldUseLocalRouter` would otherwise reuse it for `runViaLocalRouter` too,
+ * folding two different call sites' responses into one assertion).
+ */
+function fakeRealClassifierRouter(opts: { responseText: string; provider: string }): LlmRouter {
+  return {
+    prefersLocal: () => false,
+    enforcesAirGap: () => false,
+    generate: async () => ({
+      text: opts.responseText,
+      tokensIn: 1,
+      tokensOut: 1,
+      modelUsed: "classifier-test-model",
+      isLocal: false,
+      provider: opts.provider,
+    }),
+  } as unknown as LlmRouter;
+}
+
 const DEFAULT_CLASSIFIED: ClassifiedIntent = {
   intent: "unknown",
   entities: {},
@@ -162,6 +186,16 @@ export type MakeRunAskParamsOptions = {
   readonly classifyAs?: ClassifiedIntent;
   /** Omits `conversationalAgent` — see `classifyAs`'s doc comment for why this forces `plan_dispatch`. */
   readonly omitConversationalAgent?: boolean;
+  /**
+   * Exercises the REAL classifier seam instead of the injected `classify` double: omits `classify`
+   * entirely (so `classifyIntentForAskWithLocalFallback` falls through to the real
+   * `classifyIntentForAsk` → `classifyIntent`) and wires a router whose `generate` returns this
+   * `responseText`/`provider` for every call, including the classification one — the ONLY way to
+   * exercise the wrapped `policy.generate` closure that captures `classifierDestination`, which an
+   * injected `classify` bypasses unconditionally. Mutually exclusive with `localRouterThrows` /
+   * `localRouterSucceeds` / `classifyAs` (this option supersedes them when set).
+   */
+  readonly realClassifierRouter?: { readonly responseText: string; readonly provider: string };
 };
 
 /**
@@ -187,12 +221,18 @@ export function makeRunAskParams(opts: MakeRunAskParamsOptions): RunAskParams {
   }
   const localIndex = new LocalIndex(db);
 
-  const classify = async (): Promise<ClassifiedIntent> => {
-    if (opts.throwAt === "classification") {
-      throw new Error("boom");
-    }
-    return opts.classifyAs ?? DEFAULT_CLASSIFIED;
-  };
+  // `realClassifierRouter` exercises the REAL classifier seam, so `classify` must be OMITTED
+  // entirely (not merely a pass-through function) — `classifyIntentForAskWithLocalFallback` does
+  // `p.classify ?? (...)`, and any injected function, however transparent, would still win.
+  const classify =
+    opts.realClassifierRouter !== undefined
+      ? undefined
+      : async (): Promise<ClassifiedIntent> => {
+          if (opts.throwAt === "classification") {
+            throw new Error("boom");
+          }
+          return opts.classifyAs ?? DEFAULT_CLASSIFIED;
+        };
 
   return {
     input: opts.input,
@@ -204,7 +244,7 @@ export function makeRunAskParams(opts: MakeRunAskParamsOptions): RunAskParams {
     dispatcher: stubDispatcher,
     egressSink: NULL_EGRESS_SINK,
     sendChunk: () => {},
-    classify,
+    ...(classify === undefined ? {} : { classify }),
     ...(opts.omitConversationalAgent === true
       ? {}
       : {
@@ -213,11 +253,13 @@ export function makeRunAskParams(opts: MakeRunAskParamsOptions): RunAskParams {
             ...(opts.agentToolCalls === undefined ? {} : { agentToolCalls: opts.agentToolCalls }),
           }),
         }),
-    ...(opts.localRouterThrows !== undefined
-      ? { llmRouter: fakeLocalRouter({ throws: opts.localRouterThrows }) }
-      : opts.localRouterSucceeds === true
-        ? { llmRouter: fakeLocalRouter({}) }
-        : {}),
+    ...(opts.realClassifierRouter !== undefined
+      ? { llmRouter: fakeRealClassifierRouter(opts.realClassifierRouter) }
+      : opts.localRouterThrows !== undefined
+        ? { llmRouter: fakeLocalRouter({ throws: opts.localRouterThrows }) }
+        : opts.localRouterSucceeds === true
+          ? { llmRouter: fakeLocalRouter({}) }
+          : {}),
     ...(opts.explainRecorder === undefined ? {} : { explainRecorder: opts.explainRecorder }),
   };
 }
