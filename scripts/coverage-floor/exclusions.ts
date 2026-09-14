@@ -268,6 +268,7 @@ export const EXCLUSIONS: readonly ExclusionPattern[] = Object.freeze([
   { kind: "basenameRegex", re: /^types\.ts$/ },
   { kind: "basenameRegex", re: /-types\.ts$/ },
   { kind: "exact", path: "packages/gateway/src/index/ranked-item.ts" },
+  { kind: "exact", path: "packages/gateway/src/engine/ask-explain-types.ts" },
   { kind: "exact", path: "packages/gateway/src/embedding/embedding-runtime.ts" },
   { kind: "exact", path: "packages/gateway/src/vault/nimbus-vault.ts" },
   { kind: "exact", path: "packages/gateway/src/ipc/agent-invoke.ts" },
