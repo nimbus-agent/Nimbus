@@ -352,4 +352,136 @@ describe("formatExplain honesty rules (spec §5)", () => {
     });
     expect(out).toMatch(/no model route was resolved/i);
   });
+
+  test("a called classifier renders intent/confidence/destination and its entities", () => {
+    const out = formatExplain({
+      ...base,
+      classifier: {
+        called: true,
+        intent: "file_search",
+        confidence: 0.87,
+        entities: { pattern: "*.md" },
+        destination: "anthropic",
+      },
+      route: "empty_index",
+    });
+    expect(out).toContain("intent=file_search");
+    expect(out).toContain("confidence=0.87");
+    expect(out).toContain("destination=anthropic");
+    expect(out).toContain("entities={pattern=*.md}");
+    expect(out).not.toMatch(/not called/i);
+  });
+
+  test("a called classifier with no entities renders no entities clause at all", () => {
+    // The empty-entities half of the ternary: an empty `{}` must render no trailing
+    // `entities={...}` clause, never an empty `entities={}`.
+    const out = formatExplain({
+      ...base,
+      classifier: {
+        called: true,
+        intent: "unknown",
+        confidence: 0.1,
+        entities: {},
+        destination: "ollama",
+      },
+      route: "empty_index",
+    });
+    expect(out).toContain("intent=unknown confidence=0.10 destination=ollama");
+    expect(out).not.toContain("entities={");
+  });
+
+  test("a quoted-phrase pass renders its own distinct label, not the primary-hybrid one", () => {
+    const out = formatExplain({
+      ...base,
+      route: "local_context",
+      searchTerms: "rate limiting",
+      truncation: { shown: 1, total: 1, atLeast: false },
+      discardedTail: [],
+      pool: [
+        {
+          sourceId: "q",
+          service: "github",
+          indexedType: "issue",
+          title: `Issue titled "rate limiting"`,
+          pass: { kind: "quoted", query: "rate limiting" },
+          outcome: "shown",
+        },
+      ],
+    });
+    expect(out).toMatch(/quoted-phrase match "rate limiting"/);
+  });
+
+  test("cut: over cap and cut: service fairness render their own distinct reasons", () => {
+    const out = formatExplain({
+      ...base,
+      route: "local_context",
+      searchTerms: "x",
+      truncation: { shown: 1, total: 3, atLeast: false },
+      discardedTail: [],
+      pool: [
+        {
+          sourceId: "cap",
+          service: "slack",
+          indexedType: "message",
+          title: "over the cap",
+          pass: { kind: "primary-hybrid" },
+          outcome: "cut: over cap",
+        },
+        {
+          sourceId: "fair",
+          service: "slack",
+          indexedType: "message",
+          title: "displaced by fairness",
+          pass: { kind: "primary-hybrid" },
+          outcome: "cut: service fairness",
+        },
+      ],
+    });
+    expect(out).toMatch(/cut — over the final cap/);
+    expect(out).toMatch(/cut — displaced by per-service fairness/);
+  });
+
+  test("two score-less candidates in the same pass sort as a no-op, never crash or reorder", () => {
+    // Both `score`s are `undefined`, so `sortGroup`'s comparator takes its "neither is scored"
+    // branch (returns 0) rather than the score-difference branch below it — pinned by asserting
+    // the ORIGINAL insertion order survives untouched.
+    const out = formatExplain({
+      ...base,
+      route: "local_context",
+      searchTerms: "x",
+      truncation: { shown: 2, total: 2, atLeast: false },
+      discardedTail: [],
+      pool: [
+        {
+          sourceId: "first",
+          service: "github",
+          indexedType: "pr",
+          title: "first unscored",
+          pass: { kind: "repo-slug", slug: "acme/api" },
+          outcome: "shown",
+        },
+        {
+          sourceId: "second",
+          service: "github",
+          indexedType: "pr",
+          title: "second unscored",
+          pass: { kind: "repo-slug", slug: "acme/api" },
+          outcome: "shown",
+        },
+      ],
+    });
+    const firstIndex = out.indexOf("first unscored");
+    const secondIndex = out.indexOf("second unscored");
+    expect(firstIndex).toBeGreaterThan(-1);
+    expect(secondIndex).toBeGreaterThan(-1);
+    expect(firstIndex).toBeLessThan(secondIndex);
+  });
+
+  test("noColor renders a plain title with no ANSI escape codes", () => {
+    const colored = formatExplain({ ...base, route: "empty_index" });
+    const plain = formatExplain({ ...base, route: "empty_index" }, { noColor: true });
+    expect(colored).toContain(String.fromCodePoint(27));
+    expect(plain).not.toContain(String.fromCodePoint(27));
+    expect(plain).toContain("nimbus explain last");
+  });
 });

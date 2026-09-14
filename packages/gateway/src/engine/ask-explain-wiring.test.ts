@@ -26,6 +26,26 @@ describe("recorder wiring (spec §4.2)", () => {
     expect(last?.question).not.toBe("ok question");
   });
 
+  test("a classification-stage failure is recorded at stage 'classification', with no classifier verdict", async () => {
+    // `run-ask.test-helpers.ts`'s `throwAt: "classification"` option was supported but exercised
+    // by no test — the earliest possible failure in `runAsk` (before `partial.stage` is ever
+    // advanced past its initial "classification" value, and before `partial.classifier` is ever
+    // set) was dead in this suite. Distinct from the `throwAt: "model"` case covered above: that
+    // throw happens well after classification succeeds and `partial.classifier` has already been
+    // filled in, so only THIS stage proves `buildExplainRecord` falls back to
+    // `CLASSIFIER_NOT_CALLED_DEFAULT` rather than reporting a stale or fabricated verdict.
+    const r = new AskExplainRecorder();
+    await runAsk(
+      makeRunAskParams({ input: "boom", explainRecorder: r, throwAt: "classification" }),
+    ).catch(() => undefined);
+    const last = r.last();
+    expect(last?.route).toBe("failed");
+    expect(last?.route === "failed" ? last.stage : undefined).toBe("classification");
+    expect(last?.route === "failed" ? last.error : undefined).toContain("boom");
+    // No classifier verdict was ever recorded — the classify call itself is what threw.
+    expect(last?.classifier.called).toBe(false);
+  });
+
   test("source is chatops when the gateway bound that clientId, local otherwise", async () => {
     const r = new AskExplainRecorder();
     await runAsk(makeRunAskParams({ input: "q", explainRecorder: r, clientId: "chatops" }));
@@ -248,5 +268,80 @@ describe("recorder wiring (spec §4.2)", () => {
     }
     expect(caught).toBeDefined();
     expect(String(caught)).not.toContain("recorder boom");
+  });
+
+  test("a streamed turn still records correctly — the helper's agent.stream path", async () => {
+    // Every other test in this file leaves `RunAskParams.stream` at its default `false`, so
+    // `fakeConversationalAgent`'s own `stream` closure (`run-ask.test-helpers.ts`) was dead in
+    // this suite: `run-conversational-agent.ts`'s `runViaAgent` only calls `agent.stream` when
+    // `p.stream` is true. Threading `stream: true` through proves the explain trail is recorded
+    // identically off the streaming path, not just the one-shot `generate` path.
+    const r = new AskExplainRecorder();
+    const chunks: string[] = [];
+    await runAsk({
+      ...makeRunAskParams({ input: "list my PRs", explainRecorder: r, stream: true }),
+      sendChunk: (text) => chunks.push(text),
+    });
+    const last = r.last();
+    expect(last?.route).toBe("agent_tools");
+    // `fakeConversationalAgent`'s `stream` closure yields an empty `fullStream` and resolves
+    // `text` directly, so `runViaAgent`'s `!streamedAnyToken` fallback in `answerConversationally`
+    // does not apply here (that fallback lives in the LOCAL-router path, not the agent path) —
+    // what this pins is that the turn completes and is recorded, not a specific chunk count.
+    expect(chunks.length).toBeGreaterThanOrEqual(0);
+  });
+
+  test("a successful actions-plan dispatch (no rejection, no throw) is recorded at plan_dispatch", async () => {
+    // The dispatch-stage-failure test above (`dispatcherThrows`) is the ONLY existing coverage of
+    // `runActionsPlan`'s executor call — every path through it throws. The plain success path
+    // (`ToolExecutor.execute` resolving `{status:"ok"}` off the stub dispatcher's non-throwing
+    // `return null`) had no test of its own.
+    const r = new AskExplainRecorder();
+    await runAsk(
+      makeRunAskParams({
+        input: "find files named report",
+        explainRecorder: r,
+        omitConversationalAgent: true,
+        classifyAs: {
+          intent: "file_search",
+          entities: { pattern: "report*.md" },
+          requiresHITL: false,
+          confidence: 1,
+        },
+      }),
+    );
+    const last = r.last();
+    expect(last?.route).toBe("plan_dispatch");
+    expect(last?.route === "plan_dispatch" ? last.plan : undefined).toBe(
+      "actions: filesystem_search_files",
+    );
+  });
+
+  test("a HITL-gated action denied by the stub consent coordinator is recorded, not thrown", async () => {
+    // `stubConsent.requestConsent` (`run-ask.test-helpers.ts`) always resolves `false` — every
+    // other test here reaches a `plan_dispatch` whose action type is NOT in `HITL_REQUIRED_BACKING`
+    // (`file_search`), so the consent coordinator itself was never actually asked. `file_organize`
+    // with both entities present plans a `file.move` action, which IS gated (I2/I3) — the only way
+    // to exercise `requestConsent`'s stub body. A denial does not throw: `runActionsPlan` records
+    // "Rejected: <reason>" as the reply and `runAsk` still succeeds, so the explain record is
+    // built on the SUCCESS path with `route: "plan_dispatch"`, not `"failed"`.
+    const r = new AskExplainRecorder();
+    const out = await runAsk(
+      makeRunAskParams({
+        input: "move a file",
+        explainRecorder: r,
+        omitConversationalAgent: true,
+        classifyAs: {
+          intent: "file_organize",
+          entities: { source: "a.txt", destination: "b.txt" },
+          requiresHITL: true,
+          confidence: 1,
+        },
+      }),
+    );
+    expect(out.reply).toMatch(/^Rejected:/);
+    const last = r.last();
+    expect(last?.route).toBe("plan_dispatch");
+    expect(last?.route === "plan_dispatch" ? last.plan : undefined).toBe("actions: file.move");
   });
 });

@@ -205,4 +205,173 @@ describe("ask.explainLast wire round-trip (fix-wave CRITICAL 2)", () => {
     expect(() => parseExplainLastResult("not an object")).toThrow(/malformed response/i);
     expect(() => parseExplainLastResult(null)).toThrow(/malformed response/i);
   });
+
+  test("an absent modelRoute round-trips through the real parser, not just the renderer", () => {
+    // `explain-format.test.ts`'s "no model route resolved" case constructs an already-narrowed
+    // `ExplainRecordView` by hand and never touches `parseBase` at all — so the wire-side ternary
+    // that omits `modelRoute` when the field is absent from the raw payload was never actually
+    // exercised through `parseExplainLastResult` itself.
+    const { modelRoute: _omit, ...rawWithoutModelRoute } = baseRaw;
+    const res = parseExplainLastResult({
+      record: { ...rawWithoutModelRoute, route: "empty_index" },
+    });
+    expect(res.record).not.toBeNull();
+    if (res.record === null) return;
+    expect(res.record.modelRoute).toBeUndefined();
+    const out = formatExplain(res.record);
+    expect(out).toMatch(/no model route was resolved/i);
+  });
+
+  test("a called classifier round-trips through the real parser, entities included", () => {
+    // `baseRaw.classifier` is always `{ called: false, ... }` — the `called: true` arm of
+    // `parseClassifier`, including its `entities` record-building loop, was otherwise only ever
+    // exercised on hand-built `ExplainRecordView` values in `explain-format.test.ts`, never on the
+    // raw wire shape a real gateway response would carry.
+    const raw = {
+      ...baseRaw,
+      classifier: {
+        called: true,
+        intent: "file_search",
+        confidence: 0.87,
+        entities: { pattern: "*.md" },
+        destination: "anthropic",
+      },
+      route: "empty_index",
+    };
+    const res = parseExplainLastResult({ record: raw });
+    expect(res.record).not.toBeNull();
+    if (res.record === null) return;
+    expect(res.record.classifier).toEqual({
+      called: true,
+      intent: "file_search",
+      confidence: 0.87,
+      entities: { pattern: "*.md" },
+      destination: "anthropic",
+    });
+  });
+
+  test("a quoted-phrase pass round-trips through the real parser", () => {
+    const raw = {
+      ...baseRaw,
+      route: "local_context",
+      searchTerms: "rate limiting",
+      truncation: { shown: 1, total: 1, atLeast: false },
+      discardedTail: [],
+      pool: [
+        {
+          sourceId: "q",
+          service: "github",
+          indexedType: "issue",
+          title: `Issue titled "rate limiting"`,
+          pass: { kind: "quoted", query: "rate limiting" },
+          outcome: "shown",
+        },
+      ],
+    };
+    const res = parseExplainLastResult({ record: raw });
+    expect(res.record).not.toBeNull();
+    if (res.record === null) return;
+    const out = formatExplain(res.record);
+    expect(out).toMatch(/quoted-phrase match "rate limiting"/);
+  });
+
+  test("a null paramsJson round-trips through the real parser", () => {
+    const raw = {
+      ...baseRaw,
+      route: "agent_tools",
+      toolCalls: [
+        {
+          toolId: "searchLocalIndex",
+          service: "nimbus",
+          status: "ok",
+          durationMs: 5,
+          paramsJson: null,
+        },
+      ],
+    };
+    const res = parseExplainLastResult({ record: raw });
+    expect(res.record).not.toBeNull();
+    if (res.record === null) return;
+    expect(
+      res.record.route === "agent_tools" ? res.record.toolCalls[0]?.paramsJson : "x",
+    ).toBeNull();
+  });
+
+  test("bad() refusal: an unrecognised contributing-pass kind throws", () => {
+    const raw = {
+      ...baseRaw,
+      route: "local_context",
+      searchTerms: "x",
+      truncation: { shown: 1, total: 1, atLeast: false },
+      discardedTail: [],
+      pool: [
+        {
+          sourceId: "x",
+          service: "github",
+          indexedType: "pr",
+          title: "x",
+          pass: { kind: "some_future_pass" },
+          outcome: "shown",
+        },
+      ],
+    };
+    expect(() => parseExplainLastResult({ record: raw })).toThrow(/malformed response/i);
+  });
+
+  test("bad() refusal: an unrecognised candidate outcome throws", () => {
+    const raw = {
+      ...baseRaw,
+      route: "local_context",
+      searchTerms: "x",
+      truncation: { shown: 1, total: 1, atLeast: false },
+      discardedTail: [],
+      pool: [
+        {
+          sourceId: "x",
+          service: "github",
+          indexedType: "pr",
+          title: "x",
+          pass: { kind: "primary-hybrid" },
+          outcome: "cut: some new reason",
+        },
+      ],
+    };
+    expect(() => parseExplainLastResult({ record: raw })).toThrow(/malformed response/i);
+  });
+
+  test("bad() refusal: an unrecognised scoringFormula throws", () => {
+    const raw = {
+      ...baseRaw,
+      route: "local_context",
+      searchTerms: "x",
+      truncation: { shown: 1, total: 1, atLeast: false },
+      discardedTail: [],
+      pool: [
+        {
+          sourceId: "x",
+          service: "github",
+          indexedType: "pr",
+          title: "x",
+          score: 0.5,
+          matchScore: 0.5,
+          recencyComponent: 0.5,
+          servicePriorityComponent: 0.5,
+          scoringFormula: "bm25",
+          pass: { kind: "primary-hybrid" },
+          outcome: "shown",
+        },
+      ],
+    };
+    expect(() => parseExplainLastResult({ record: raw })).toThrow(/malformed response/i);
+  });
+
+  test("bad() refusal: an unrecognised failed-route stage throws", () => {
+    const raw = { ...baseRaw, route: "failed", stage: "some_future_stage", error: "x" };
+    expect(() => parseExplainLastResult({ record: raw })).toThrow(/malformed response/i);
+  });
+
+  test("bad() refusal: a classifier.called that is neither true nor false throws", () => {
+    const raw = { ...baseRaw, classifier: { called: "yes" }, route: "empty_index" };
+    expect(() => parseExplainLastResult({ record: raw })).toThrow(/malformed response/i);
+  });
 });

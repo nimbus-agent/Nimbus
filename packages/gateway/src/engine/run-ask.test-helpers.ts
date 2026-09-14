@@ -214,6 +214,13 @@ export type MakeRunAskParamsOptions = {
    * stage) have already completed, so it must record `stage: "dispatch"`, not `"model"`.
    */
   readonly dispatcherThrows?: string;
+  /**
+   * Threads through to `RunAskParams.stream`, defaulting to `false` (every other option here
+   * assumes a one-shot turn). Setting this `true` is the only way to exercise
+   * `fakeConversationalAgent`'s own `stream` closure below — every other test here goes through
+   * `agent.generate`, leaving `agent.stream` dead in this file's own coverage.
+   */
+  readonly stream?: boolean;
 };
 
 /**
@@ -263,7 +270,7 @@ export function makeRunAskParams(opts: MakeRunAskParamsOptions): RunAskParams {
 
   return {
     input: opts.input,
-    stream: false,
+    stream: opts.stream ?? false,
     clientId: opts.clientId ?? "test-client",
     paths: stubPaths,
     consentCoordinator: stubConsent,
