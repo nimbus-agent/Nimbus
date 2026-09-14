@@ -116,10 +116,14 @@ caller: `engine/agent.ts:235`, inside the `searchLocalIndex` **tool**.
 
 Two consequences, and the second is the more useful:
 
-1. The local-context route has **no** `sourceSummary` today. If the report wants
-   the discarded tail grouped by service and type, the recorder must construct
-   it — `buildContextWindow` over the candidate pool is the natural way, and
-   reuses existing, tested code rather than writing a second grouping pass.
+1. The local-context route has **no** `sourceSummary` today, so the recorder must
+   construct the grouped discarded tail itself. **Not by reusing
+   `buildContextWindow`**, inviting as that looks: its cap is
+   `Math.min(200, Math.max(1, Math.floor(maxItems)))`, so asking it to summarise
+   *everything* by passing `0` clamps to `1` — it keeps the first discarded row
+   as an "item" and silently omits it from the summary. It would also need an
+   unsound cast, since a candidate is not a `RankedIndexItem`. Ten lines of
+   explicit grouping beat a tested function used off its contract.
 2. **The agent route does rank — inside each tool call.** `searchLocalIndex`
    calls `searchRankedAsync`, builds a context window, and returns
    `totalMatches` / `itemsInWindow` / `sourceSummary` in its result. So §4.5's

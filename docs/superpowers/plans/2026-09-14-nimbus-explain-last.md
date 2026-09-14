@@ -44,6 +44,7 @@ Create `packages/gateway/src/index/local-index.score-components.test.ts`:
 import { describe, expect, test } from "bun:test";
 import { Database } from "bun:sqlite";
 import { ensureFullSqlite } from "../platform/sqlite-runtime.ts";
+import { upsertIndexedItem } from "./item-store.ts";
 import { LocalIndex } from "./local-index.ts";
 
 // D30: any non-test file value-importing Database must name ensureFullSqlite. Tests do it too,
@@ -54,7 +55,9 @@ function seed(): LocalIndex {
   const db = new Database(":memory:");
   const idx = new LocalIndex(db);
   idx.migrate();
-  idx.upsertIndexedItem({
+  // `upsertIndexedItem` is a STANDALONE function in `item-store.ts` taking the Database —
+  // `LocalIndex` has no such method, so `idx.upsertIndexedItem(...)` is a TypeError at runtime.
+  upsertIndexedItem(db, {
     service: "github",
     type: "pr",
     externalId: "acme/api#1",
@@ -344,7 +347,14 @@ export type BaseExplainRecord = {
    */
   readonly source: "chatops" | "local";
   readonly persona: string;
-  readonly modelRoute: { readonly provider: string; readonly model: string; readonly isLocal: boolean };
+  /**
+   * OPTIONAL, deliberately: the `empty_index` route and a failure at the classification stage
+   * never resolve a model at all. Requiring this would force the recorder to fabricate
+   * `{ provider: "none", model: "none", isLocal: true }` — inventing a route that did not
+   * happen, in a report whose entire purpose is not doing that. Absent means "no model route
+   * was resolved", and the renderer says so.
+   */
+  readonly modelRoute?: { readonly provider: string; readonly model: string; readonly isLocal: boolean };
   readonly classifier:
     | { readonly called: false; readonly reason: string }
     | {
@@ -415,15 +425,29 @@ export class AskExplainRecorder {
 }
 ```
 
-- [ ] **Step 5: Run the test**
+- [ ] **Step 5: Exclude the type-only file from the coverage floor**
 
-Run: `bun test packages/gateway/src/engine/ask-explain-recorder.test.ts`
-Expected: PASS (3 tests).
+`ask-explain-types.ts` is a NEW type-only file and is **not** excluded by anything yet. A
+type-only file emits no `SF:` lcov record, so it must be listed explicitly or the floor audit
+trips on it. Add to `scripts/coverage-floor/exclusions.ts`, beside the existing
+`packages/gateway/src/index/ranked-item.ts` entry (~:270):
 
-- [ ] **Step 6: Commit**
+```ts
+  { kind: "exact", path: "packages/gateway/src/engine/ask-explain-types.ts" },
+```
+
+Verify the file stays type-only — moving runtime logic into it would silently bypass the floor,
+which is exactly what `ranked-item.ts`'s header warns about.
+
+- [ ] **Step 6: Run the test**
+
+Run: `bun test packages/gateway/src/engine/ask-explain-recorder.test.ts && bun run audit:coverage-floor`
+Expected: PASS (3 tests); the floor audit does not name the new file.
+
+- [ ] **Step 7: Commit**
 
 ```bash
-git add packages/gateway/src/engine/ask-explain-types.ts packages/gateway/src/engine/ask-explain-recorder.ts packages/gateway/src/engine/ask-explain-recorder.test.ts
+git add packages/gateway/src/engine/ask-explain-types.ts packages/gateway/src/engine/ask-explain-recorder.ts packages/gateway/src/engine/ask-explain-recorder.test.ts scripts/coverage-floor/exclusions.ts
 git commit -m "feat(engine): add the ask-explain record types and bounded ring"
 ```
 
@@ -560,6 +584,7 @@ Create `packages/gateway/src/engine/ask-explain-local-capture.test.ts`. It drive
 import { describe, expect, test } from "bun:test";
 import { Database } from "bun:sqlite";
 import { ensureFullSqlite } from "../platform/sqlite-runtime.ts";
+import { upsertIndexedItem } from "../index/item-store.ts";
 import { LocalIndex } from "../index/local-index.ts";
 import { buildLocalIndexedContextForTest } from "./run-ask.ts";
 
@@ -570,7 +595,8 @@ function seedMany(n: number): LocalIndex {
   const idx = new LocalIndex(db);
   idx.migrate();
   for (let i = 0; i < n; i++) {
-    idx.upsertIndexedItem({
+    // Standalone function taking the Database — not a LocalIndex method (see Task 1).
+    upsertIndexedItem(db, {
       service: "slack",
       type: "message",
       externalId: `slack:${String(i)}`,
@@ -609,6 +635,32 @@ describe("local-context capture (spec §4.4)", () => {
     expect(tail[0]?.service).toBe("slack");
     expect(tail[0]?.type).toBe("message");
   });
+
+  test("a SHOWN candidate carries real score components, not undefined", async () => {
+    // THE regression guard for this task. `byId` holds `Omit<LocalContextItem,"rank">`, and
+    // `formatContextItem` drops score/components/scoringFormula — so an implementation that
+    // reads them off a byId value yields undefined for every candidate, every row renders
+    // "n/a (direct query)", and Task 1 is silently defeated. The other tests in this file all
+    // pass in that world, because they assert on pass and outcome only.
+    const out = await buildLocalIndexedContextForTest(seedMany(40), "rate limiting");
+    const shown = (out?.explain.pool ?? []).filter((c) => c.outcome === "shown");
+    expect(shown.length).toBeGreaterThan(0);
+    for (const c of shown) {
+      expect(c.scoringFormula).toBeDefined();
+      expect(typeof c.score).toBe("number");
+      expect(typeof c.matchScore).toBe("number");
+      expect(typeof c.recencyComponent).toBe("number");
+      expect(typeof c.servicePriorityComponent).toBe("number");
+    }
+  });
+
+  test("title comes from RankedIndexItem.name — there is no .title on that type", async () => {
+    const out = await buildLocalIndexedContextForTest(seedMany(5), "rate limiting");
+    for (const c of out?.explain.pool ?? []) {
+      expect(c.title).toContain("rate limiting note");
+      expect(c.sourceId).not.toBe("undefined");
+    }
+  });
 });
 ```
 
@@ -629,25 +681,69 @@ import type { ContributingPass, LocalCandidate } from "./ask-explain-types.ts";
 import { buildContextWindow } from "./context-ranker.ts";
 ```
 
-2. Inside `buildLocalIndexedContext`, record which pass inserted each id. `addRankedResults`
-   already keeps the FIRST writer (`if (!byId.has(...))`), so record the pass at the same guard:
+2. **`byId` does not hold `RankedIndexItem`, and this is the trap in this task.** There are TWO
+   adders, keyed differently, and the ranked one *discards every score*:
+
+```ts
+// The REAL existing code (run-ask.ts:491-505):
+const byId = new Map<string, Omit<LocalContextItem, "rank">>();
+const addRankedResults = (items: RankedIndexItem[]): void => {
+  for (const item of items) {
+    if (!byId.has(item.indexPrimaryKey)) {
+      byId.set(item.indexPrimaryKey, formatContextItem(localIndex, item)); // <- scores GONE
+    }
+  }
+};
+const addContextItems = (items: Array<Omit<LocalContextItem, "rank">>): void => {
+  for (const item of items) {
+    if (!byId.has(item.sourceId)) byId.set(item.sourceId, item);
+  }
+};
+```
+
+`formatContextItem` returns `{ sourceId: item.indexPrimaryKey, service, indexedType, title:
+cleanContextText(item.name), preview?, url? }` — **no `score`, no components, no
+`scoringFormula`**. So reading score fields off a `byId` value yields `undefined` for every
+candidate, every row renders `n/a (direct query)`, and Task 1 is silently defeated. The key
+spaces DO align (`sourceId === indexPrimaryKey`), so `byIdOrder.indexOf(sourceId)` is sound —
+only the score fields are lost.
+
+Also note `RankedIndexItem` has **`.indexPrimaryKey` and `.name`**, never `.sourceId`/`.title`.
+
+Keep a PARALLEL map of the original ranked items, and record the pass in both adders:
 
 ```ts
 const passById = new Map<string, ContributingPass>();
-const addRankedResults = (items: readonly RankedIndexItem[], pass: ContributingPass): void => {
+const rankedById = new Map<string, RankedIndexItem>();
+
+const addRankedResults = (items: RankedIndexItem[], pass: ContributingPass): void => {
+  for (const item of items) {
+    if (!byId.has(item.indexPrimaryKey)) {
+      byId.set(item.indexPrimaryKey, formatContextItem(localIndex, item));
+      passById.set(item.indexPrimaryKey, pass);
+      // The scores survive ONLY here — formatContextItem drops them.
+      rankedById.set(item.indexPrimaryKey, item);
+    }
+  }
+};
+
+const addContextItems = (
+  items: Array<Omit<LocalContextItem, "rank">>,
+  pass: ContributingPass,
+): void => {
   for (const item of items) {
     if (!byId.has(item.sourceId)) {
       byId.set(item.sourceId, item);
       passById.set(item.sourceId, pass);
+      // Deliberately NOT added to rankedById: these rows were never scored (spec §2.4).
     }
   }
 };
 ```
 
-Update the four call sites to pass their pass: `{ kind: "primary-hybrid" }`,
-`{ kind: "quoted", query: quotedQuery }`, `{ kind: "repo-slug", slug: repoSlug }` (via
-`addContextItems`, which needs the same treatment), and
-`{ kind: "fallback-term", term }`. Record the fired fallback term in a
+Update the four call sites: `{ kind: "primary-hybrid" }`,
+`{ kind: "quoted", query: quotedQuery }`, `{ kind: "repo-slug", slug: repoSlug }` (on
+`addContextItems`), and `{ kind: "fallback-term", term }`. Record the fired fallback term in a
 `let fallbackTermFired: string | undefined` set inside the fallback loop.
 
 3. After `contextItems` is computed, build the pool over the UNION of the full primary probe and
@@ -658,18 +754,26 @@ const shownIds = new Set(contextItems.map((i) => i.sourceId));
 const byIdOrder = [...byId.keys()];
 const limit = resolveLocalContextItemLimit();
 
-const toCandidate = (
+const outcomeFor = (id: string, inById: boolean): CandidateOutcome =>
+  classifyCandidateOutcome({
+    sourceId: id,
+    inById,
+    byIdPosition: inById ? byIdOrder.indexOf(id) : -1,
+    shownIds,
+    limit,
+  });
+
+/** A candidate that WAS scored: read the components off the preserved RankedIndexItem. */
+const fromRanked = (
   item: RankedIndexItem,
   pass: ContributingPass,
   inById: boolean,
 ): LocalCandidate => ({
-  sourceId: item.sourceId,
+  sourceId: item.indexPrimaryKey,
   service: item.service,
   indexedType: item.indexedType,
-  title: item.title,
+  title: cleanContextText(item.name),
   ...(item.modifiedAt === undefined ? {} : { modifiedAt: item.modifiedAt }),
-  // Left ABSENT, never 0, for a candidate that was never scored — rendering an absent score
-  // as zero would claim it ranked last when in fact it was never ranked (spec §2.4).
   ...(item.scoringFormula === undefined
     ? {}
     : {
@@ -680,39 +784,59 @@ const toCandidate = (
         scoringFormula: item.scoringFormula,
       }),
   pass,
-  outcome: classifyCandidateOutcome({
-    sourceId: item.sourceId,
-    inById,
-    byIdPosition: inById ? byIdOrder.indexOf(item.sourceId) : -1,
-    shownIds,
-    limit,
-  }),
+  outcome: outcomeFor(item.indexPrimaryKey, inById),
+});
+
+/**
+ * A candidate that was NEVER scored — the raw-SQL repo-slug rows. Score fields are left ABSENT,
+ * never 0: rendering an absent score as zero would claim it ranked last when in fact it was
+ * never ranked (spec §2.4).
+ */
+const fromContext = (
+  item: Omit<LocalContextItem, "rank">,
+  pass: ContributingPass,
+): LocalCandidate => ({
+  sourceId: item.sourceId,
+  service: item.service,
+  indexedType: item.indexedType,
+  title: item.title,
+  pass,
+  outcome: outcomeFor(item.sourceId, true),
 });
 
 const pool: LocalCandidate[] = [];
 const seen = new Set<string>();
-for (const [id, item] of byId) {
+for (const [id, ctxItem] of byId) {
   seen.add(id);
-  pool.push(toCandidate(item, passById.get(id) ?? { kind: "primary-hybrid" }, true));
+  const pass = passById.get(id) ?? { kind: "primary-hybrid" as const };
+  const ranked = rankedById.get(id);
+  pool.push(ranked === undefined ? fromContext(ctxItem, pass) : fromRanked(ranked, pass, true));
 }
 for (const item of primary) {
-  if (seen.has(item.sourceId)) continue;
-  seen.add(item.sourceId);
-  pool.push(toCandidate(item, { kind: "primary-hybrid" }, false));
+  if (seen.has(item.indexPrimaryKey)) continue;
+  seen.add(item.indexPrimaryKey);
+  pool.push(fromRanked(item, { kind: "primary-hybrid" }, false));
 }
 
-// `buildLocalIndexedContext` does not build a context window today — `buildContextWindow`'s only
-// other caller is the agent's searchLocalIndex tool (spec §2.5). Reuse it here rather than
-// writing a second grouping pass.
-const discardedTail = buildContextWindow(
-  pool.filter((c) => c.outcome !== "shown").map((c) => ({
-    ...c,
-    score: c.score ?? 0,
-    indexPrimaryKey: c.sourceId,
-    modifiedAt: c.modifiedAt ?? 0,
-  })) as unknown as RankedIndexItem[],
-  0,
-).sourceSummary.map((g) => ({ service: g.service, type: g.type, count: g.count }));
+// Group the discarded tail by service + type.
+//
+// Spec §2.5 suggested reusing `buildContextWindow`. DO NOT: its cap is
+// `Math.min(200, Math.max(1, Math.floor(maxItems)))`, so passing 0 to summarise EVERYTHING
+// clamps to 1 — it would keep the first discarded row as an "item" and silently omit it from
+// the summary. It would also need an unsound cast, since LocalCandidate is not a
+// RankedIndexItem. Ten honest lines beat a reused function used off-contract.
+const tail = new Map<string, { service: string; type: string; count: number }>();
+for (const c of pool) {
+  if (c.outcome === "shown") continue;
+  const key = JSON.stringify([c.service, c.indexedType]);
+  const hit = tail.get(key);
+  if (hit === undefined) {
+    tail.set(key, { service: c.service, type: c.indexedType, count: 1 });
+  } else {
+    hit.count += 1;
+  }
+}
+const discardedTail = [...tail.values()].sort((a, b) => b.count - a.count);
 ```
 
 4. Add `explain` to the returned object alongside `text` and `truncation`:
@@ -869,9 +993,13 @@ In `packages/gateway/src/engine/agent.ts`, in the wrapper that already computes 
 error arms. Redact with the same helper the write path uses, so the two cannot disagree about
 what is safe to show:
 
+Add ONE import. **Do not add a `redactAuditPayload` import** — `agent.ts:8` already has it, from
+`../audit/format-audit-payload.ts` (there is no `db/redact-audit-payload.ts`), and a second one
+is a duplicate-identifier compile error:
+
 ```ts
 import { recordExplainToolCall } from "./agent-request-context.ts";
-import { redactAuditPayload } from "../db/redact-audit-payload.ts";
+// redactAuditPayload is ALREADY imported at agent.ts:8 — reuse it, do not re-import.
 
 // ...in both arms, beside the existing writeToolCallLog call:
 recordExplainToolCall({
@@ -1312,9 +1440,20 @@ Create `packages/cli/src/commands/explain-format.ts` rendering the header (times
 
 - [ ] **Step 4: Write the command**
 
-Create `packages/cli/src/commands/explain.ts` modelled on `index-health-cmd.ts`:
+Two functions, matching the `index health` pattern exactly: `COMMAND_HANDLERS` is typed
+`(args: string[]) => Promise<void> | void` (`cli/src/index.ts:92`), and `index-cmd.ts:617`
+bridges to its client-taking implementation with `withGatewayIpc((c) => runIndexHealth(c, tail))`.
+Follow that — do not hand-roll connect/disconnect.
+
+Create `packages/cli/src/commands/explain.ts`:
 
 ```ts
+/** Registered in COMMAND_HANDLERS; matches the `(args: string[])` CommandHandler signature. */
+export async function runExplainCmd(args: string[]): Promise<void> {
+  await withGatewayIpc((c) => runExplain(c, args));
+}
+
+/** The client-taking implementation, exported separately so unit tests need no live gateway. */
 export async function runExplain(client: IPCClient, args: string[]): Promise<void> {
   const sub = args[0];
   if (sub !== "last") {
@@ -1335,8 +1474,13 @@ export async function runExplain(client: IPCClient, args: string[]): Promise<voi
 }
 ```
 
-Register it in `packages/cli/src/index.ts`'s `COMMAND_HANDLERS` as `explain: runExplain` (matching
-the surrounding handlers' arity — wrap with the client accessor the neighbours use).
+Register it in `packages/cli/src/index.ts`'s `COMMAND_HANDLERS` as `explain: runExplainCmd` —
+the `args`-only function, never `runExplain`, whose arity does not match `CommandHandler`.
+
+**Candidate ordering is part of the contract, not the renderer's whim:** group by contributing
+pass, and sort by `score` descending *within* each group. Never sort across groups by score —
+that is precisely the cross-formula comparison §2.2 forbids. Score-less (repo-slug) candidates
+form their own group, ordered as the index returned them (`modified_at DESC`).
 
 - [ ] **Step 5: Run the tests**
 
@@ -1366,8 +1510,11 @@ Spec §3.1, §8. **This task is what catches a handler added without a dispatche
 
 - [ ] **Step 1: Write the failing E2E test**
 
-Create `packages/gateway/test/e2e/explain-last.e2e.test.ts`. Spawn a real gateway subprocess
-against a fresh temp dir (`os.tmpdir()` + `path.join`), then:
+Create `packages/gateway/test/e2e/explain-last.e2e.test.ts`. **Use the existing fixture**
+`join(import.meta.dir, "_fixtures", "gateway-runner.ts")` — the same one
+`tail-stream.e2e.test.ts` uses. It already handles the fresh temp dir, Windows named pipes
+(`\\.\pipe\...`) vs unix sockets, and cleanup on exit; hand-rolling a spawn here would
+reintroduce every cross-platform path bug it already solves. Then:
 
 ```ts
 test("explain last reports the empty state on a fresh gateway, then the ask", async () => {
@@ -1430,6 +1577,24 @@ git commit -m "test(e2e): prove explain last over a real socket; document the co
 **Deliberately deferred (spec §6), do not implement:** the durable `ask_explain` table,
 `nimbus explain list` / `explain <n>`, and capture of negation predicates / `indexCountFor`.
 
-**The two highest-risk steps**, called out so a reviewer gates them hardest: Task 7 Step 3 (the LAN
-denylist entry — the spec's first draft got this backwards, and without it the method ships
-peer-reachable) and Task 7 Step 4's routing entry (a handler without it is silently unreachable).
+**The three highest-risk steps**, called out so a reviewer gates them hardest:
+
+1. **Task 7 Step 3** — the `FORBIDDEN_OVER_LAN` entry. It is a *denylist*; the spec's first draft
+   had this backwards, and without the entry the method ships reachable by any paired peer,
+   carrying the owner's question text.
+2. **Task 7 Step 4** — the `tryDispatchDiagnosticsRpc` routing entry. A handler without it is
+   green in every unit test and `Method not found` over a real socket. Task 9's E2E is the only
+   layer that catches it.
+3. **Task 4 Step 3** — the `rankedById` parallel map. `byId` holds
+   `Omit<LocalContextItem, "rank">`, and `formatContextItem` **drops every score field**, so
+   reading components off a `byId` value yields `undefined` for every candidate, renders every
+   row as `n/a (direct query)`, and silently defeats Task 1 entirely. The "a SHOWN candidate
+   carries real score components" test exists solely to make that failure loud — without it the
+   whole file passes in the broken world.
+
+**Fixed in review, worth not regressing:** `upsertIndexedItem` is a standalone function in
+`item-store.ts`, not a `LocalIndex` method; `redactAuditPayload` lives in
+`audit/format-audit-payload.ts` and is already imported by `agent.ts`; `RankedIndexItem` carries
+`.indexPrimaryKey`/`.name`, never `.sourceId`/`.title`; `COMMAND_HANDLERS` entries take
+`args: string[]` only; `modelRoute` is optional because `empty_index` and classification-stage
+failures resolve no model.
