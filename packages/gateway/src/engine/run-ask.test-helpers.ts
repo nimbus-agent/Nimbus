@@ -6,11 +6,13 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Agent } from "@mastra/core/agent";
 
+import { dbRun } from "../db/write.ts";
 import { NULL_EGRESS_SINK } from "../egress/egress-ledger.ts";
 import { LocalIndex } from "../index/local-index.ts";
 import type { ConsentCoordinator } from "../ipc/consent.ts";
 import type { LlmRouter } from "../llm/router.ts";
 import type { PlatformPaths } from "../platform/paths.ts";
+import { ensureFullSqlite } from "../platform/sqlite-runtime.ts";
 import { recordExplainToolCall } from "./agent-request-context.ts";
 import type { AskExplainRecorder } from "./ask-explain-recorder.ts";
 import type { ClassifiedIntent } from "./router.ts";
@@ -206,14 +208,23 @@ export type MakeRunAskParamsOptions = {
  * retrieval logic (covered by its own tests).
  */
 export function makeRunAskParams(opts: MakeRunAskParamsOptions): RunAskParams {
+  // D30: `Database.setCustomSQLite` is process-wide and only takes effect before the first
+  // `Database` open, so this must run before the `new Database(...)` below — not merely
+  // somewhere in the module. Without it sqlite-vec cannot load on macOS and the process silently
+  // loses vector search, hybrid ranking and session-memory recall (issue #1029). Idempotent
+  // (memoised), so calling it on every `makeRunAskParams` invocation is cheap and correct.
+  ensureFullSqlite();
   const db = new Database(":memory:");
   LocalIndex.ensureSchema(db);
-  db.run(
+  // I14/D12: every SQLite write goes through `dbRun`, never a raw `db.run(...)`.
+  dbRun(
+    db,
     "INSERT INTO item (id, service, type, external_id, title, modified_at, synced_at) " +
       "VALUES ('seed:1', 'seed', 'note', '1', 'unrelated seeded item', 1, 1)",
   );
   if (opts.seedMatchingTitle !== undefined) {
-    db.run(
+    dbRun(
+      db,
       "INSERT INTO item (id, service, type, external_id, title, modified_at, synced_at) " +
         "VALUES ('seed:2', 'seed', 'note', '2', ?, 1, 1)",
       [opts.seedMatchingTitle],
