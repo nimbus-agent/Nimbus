@@ -34,6 +34,7 @@ GETTING STARTED
 
 ASK & SEARCH
   nimbus ask <query>        Natural language (needs LLM keys, or [llm] prefer_local + Ollama)
+  nimbus explain last [--json]   X-ray the most recent ask — retrieval, ranking, what the model got
   nimbus search <q> …       Ranked index search (FTS + optional semantic)
   nimbus query --service <id> [--type <t>] [--since 7d] [--sql "SELECT …"] [--json | --pretty]
   nimbus repl [--session]   Interactive agent loop (TTY)

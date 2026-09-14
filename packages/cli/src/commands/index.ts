@@ -18,6 +18,7 @@ export { runDiag } from "./diag.ts";
 export { runDoctor } from "./doctor.ts";
 export { runExec } from "./exec.ts";
 export { runExpertCli } from "./expert.ts";
+export { runExplainCmd } from "./explain.ts";
 export { runExtension } from "./extension.ts";
 export { runFleet } from "./fleet.ts";
 export { runGhostCli } from "./ghost.ts";
