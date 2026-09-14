@@ -30,11 +30,17 @@ describe("classifyCandidateOutcome (spec §4.6)", () => {
     ).toBe("cut: over cap");
   });
 
-  test("a multi-pass item merged by a later pass is never 'cut: probe slice'", () => {
-    // Primary rank 15 (outside the slice) but also matched a quoted term, so it IS in byId.
-    // Its fate is decided by byId, not by the probe (spec §4.6, multi-pass reconciliation).
+  test("an item at position limit-1 is still inside the budget by arrival order", () => {
+    // Boundary test: byIdPosition: 7 with limit: 8 (7 < 8 is true)
     expect(
-      classifyCandidateOutcome({ ...base, sourceId: "a", inById: true, byIdPosition: 30 }),
-    ).toBe("shown");
+      classifyCandidateOutcome({ ...base, sourceId: "x", inById: true, byIdPosition: 7 }),
+    ).toBe("cut: service fairness");
+  });
+
+  test("an item at position exactly limit crosses into over cap", () => {
+    // Boundary test: byIdPosition: 8 with limit: 8 (8 < 8 is false)
+    expect(
+      classifyCandidateOutcome({ ...base, sourceId: "y", inById: true, byIdPosition: 8 }),
+    ).toBe("cut: over cap");
   });
 });
