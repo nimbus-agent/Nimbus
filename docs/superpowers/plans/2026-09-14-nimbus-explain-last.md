@@ -1006,7 +1006,10 @@ export type AgentRequestContext = {
 export function recordExplainToolCall(call: CollectedToolCall): void {
   const store = agentRequestContext.getStore();
   if (store === undefined) return; // outside a turn: a diagnostic must never break the caller
-  (store.explainToolCalls ??= []).push(call);
+  // NOT `(store.explainToolCalls ??= []).push(call)` -- biome's noAssignInExpressions rejects
+  // an assignment used as an expression. Mirror `negation-disclosure.ts`'s lazy-creation form.
+  if (store.explainToolCalls === undefined) store.explainToolCalls = [];
+  store.explainToolCalls.push(call);
 }
 
 export function getExplainToolCalls(): readonly CollectedToolCall[] | undefined {
