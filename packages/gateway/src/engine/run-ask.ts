@@ -196,6 +196,7 @@ type ExplainRoute =
       readonly localContextAlsoGiven?: {
         readonly searchTerms: string;
         readonly fallbackTermFired?: string;
+        readonly truncation: ContextTruncation;
         readonly pool: readonly LocalCandidate[];
         readonly discardedTail: ReadonlyArray<{ service: string; type: string; count: number }>;
       };
@@ -307,6 +308,7 @@ async function answerConversationally(
                   ...(localContext.explain.fallbackTermFired === undefined
                     ? {}
                     : { fallbackTermFired: localContext.explain.fallbackTermFired }),
+                  truncation: localContext.truncation,
                   pool: localContext.explain.pool,
                   discardedTail: localContext.explain.discardedTail,
                 },

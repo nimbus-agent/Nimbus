@@ -117,6 +117,21 @@ export type AskExplainRecord = BaseExplainRecord &
         readonly localContextAlsoGiven?: {
           readonly searchTerms: string;
           readonly fallbackTermFired?: string;
+          /**
+           * `atLeast` is the field that forces this to be included at all: it says the primary
+           * probe itself hit its ceiling, so `total` is a FLOOR, not an exact count. Without it a
+           * renderer's only options are staying silent about how much was withheld on this
+           * fallback turn, or deriving an approximate total from the pool and printing an exact
+           * "12 of 40" where the honest statement is "12 of at least 40" — overclaiming an exact
+           * total is exactly the class of defect this feature exists to expose. `shown` and
+           * `total` are each roughly derivable from the pool, but `atLeast` is not derivable from
+           * it at all.
+           */
+          readonly truncation: {
+            readonly shown: number;
+            readonly total: number;
+            readonly atLeast: boolean;
+          };
           readonly pool: readonly LocalCandidate[];
           readonly discardedTail: ReadonlyArray<{ service: string; type: string; count: number }>;
         };

@@ -69,6 +69,25 @@ describe("recorder wiring (spec §4.2)", () => {
     // the agent's prompt on fallback. Reporting `agent_tools` with no pool would under-report on
     // exactly the turn a user is most likely to be debugging.
     const r = new AskExplainRecorder();
+
+    // Baseline: the SAME input/seed, but the local router SUCCEEDS — the plain `local_context`
+    // route, whose own `truncation` the fallback arm's copy is compared against below. `atLeast`
+    // is the field that forces `truncation` into the payload at all: it says the probe itself hit
+    // its ceiling, so `total` is a FLOOR rather than an exact count — not derivable from the pool.
+    await runAsk(
+      makeRunAskParams({
+        input: "widget",
+        explainRecorder: r,
+        localRouterSucceeds: true,
+        seedMatchingTitle: "widget status page",
+      }),
+    );
+    const baseline = r.last();
+    expect(baseline?.route).toBe("local_context");
+    const baselineTruncation =
+      baseline?.route === "local_context" ? baseline.truncation : undefined;
+    expect(baselineTruncation).toBeDefined();
+
     await runAsk(
       makeRunAskParams({
         input: "widget",
@@ -85,6 +104,10 @@ describe("recorder wiring (spec §4.2)", () => {
     expect(localContextAlsoGiven).toBeDefined();
     expect(localContextAlsoGiven?.pool.length ?? 0).toBeGreaterThan(0);
     expect(localContextAlsoGiven?.searchTerms).toBe("widget");
+    // The field this fix adds: the fallback arm's truncation is not merely PRESENT, it carries
+    // the exact same values the local_context route recorded for the identical turn.
+    expect(localContextAlsoGiven?.truncation).toBeDefined();
+    expect(localContextAlsoGiven?.truncation).toEqual(baselineTruncation);
   });
 
   test("a non-fallback agent_tools turn (no local context built) carries no localContextAlsoGiven", async () => {

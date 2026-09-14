@@ -91,13 +91,27 @@ function fakeConversationalAgent(opts: {
   } as unknown as Agent;
 }
 
-/** A local-router double. Throwing here is what exercises the local→agent fallback (spec §4.2). */
-function fakeLocalRouter(opts: { throws: string }): LlmRouter {
+/**
+ * A local-router double. Throwing (`throws`) is what exercises the local→agent fallback (spec
+ * §4.2); succeeding is what exercises the plain `local_context` route, used as the baseline the
+ * fallback test compares its `localContextAlsoGiven.truncation` against.
+ */
+function fakeLocalRouter(opts: { throws?: string }): LlmRouter {
   return {
     prefersLocal: () => true,
     enforcesAirGap: () => false,
     generate: async () => {
-      throw new Error(opts.throws);
+      if (opts.throws !== undefined) {
+        throw new Error(opts.throws);
+      }
+      return {
+        text: "local reply",
+        tokensIn: 1,
+        tokensOut: 1,
+        modelUsed: "local-test-model",
+        isLocal: true,
+        provider: "ollama",
+      };
     },
   } as unknown as LlmRouter;
 }
@@ -131,6 +145,14 @@ export type MakeRunAskParamsOptions = {
    * regardless of route.
    */
   readonly seedMatchingTitle?: string;
+  /**
+   * Wires a local router that SUCCEEDS (no throw), taking the plain `local_context` route rather
+   * than the pure-agent `agent_tools` route — the baseline the fallback test compares its
+   * `localContextAlsoGiven` payload against. Ignored when `localRouterThrows` is set (that option
+   * already wires a router; the two are mutually exclusive by construction, not by a runtime
+   * check, since no test needs both).
+   */
+  readonly localRouterSucceeds?: boolean;
   /**
    * Overrides the classifier's verdict. Combined with `omitConversationalAgent`, forces the
    * `plan_dispatch` route: `canUseConversation` requires an agent or a local-router preference, so
@@ -191,9 +213,11 @@ export function makeRunAskParams(opts: MakeRunAskParamsOptions): RunAskParams {
             ...(opts.agentToolCalls === undefined ? {} : { agentToolCalls: opts.agentToolCalls }),
           }),
         }),
-    ...(opts.localRouterThrows === undefined
-      ? {}
-      : { llmRouter: fakeLocalRouter({ throws: opts.localRouterThrows }) }),
+    ...(opts.localRouterThrows !== undefined
+      ? { llmRouter: fakeLocalRouter({ throws: opts.localRouterThrows }) }
+      : opts.localRouterSucceeds === true
+        ? { llmRouter: fakeLocalRouter({}) }
+        : {}),
     ...(opts.explainRecorder === undefined ? {} : { explainRecorder: opts.explainRecorder }),
   };
 }
