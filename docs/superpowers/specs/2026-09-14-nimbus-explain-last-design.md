@@ -236,10 +236,24 @@ the call and records `outcome: "failed"` with the stage reached
 ### 4.3 Fields common to every route
 
 - asked-at, question text, wall-clock duration, `outcome: "answered" | "failed"`
-- **`source`: `"cli" | "desktop" | "chatops"`.** `runAsk` is shared by CLI
-  `nimbus ask`, desktop `engine.askStream`, and the ChatOps `@nimbus` bot, all
-  against one gateway and one ring. A teammate's Slack question will otherwise
-  appear, unlabelled, as "your last ask". The header names the source.
+- **`source`: `"chatops" | "local"`, and only those two.** `runAsk` is shared by
+  CLI `nimbus ask`, desktop `engine.askStream`, and the ChatOps `@nimbus` bot,
+  all against one gateway and one ring — so a teammate's Slack question would
+  otherwise appear, unlabelled, as "your last ask".
+
+  A three-way `cli | desktop | chatops` split is **not derivable and must not be
+  claimed**. `ClientKindStore.RECOGNISED` admits a declared kind only from
+  `cli`/`mcp`/`ui`, and in practice **only the MCP adapter ever calls
+  `session.declareKind`** (`packages/cli/src/mcp/adapter.ts:249`) — a plain
+  `nimbus ask` arrives undeclared and resolves to `unknown`, so a `source: cli`
+  label would be an invention.
+
+  What *is* a fact: `gateway-main.ts:229` binds the ChatOps ask path with a
+  literal `clientId: "chatops"`. So the recorder derives `chatops` from that
+  clientId and reports everything else as `local` — "some client on this
+  machine's socket". That is the distinction the field exists for (did this come
+  from the channel, or from here?), and it is the only one the gateway actually
+  knows.
 - route taken, the reason it was taken (`prefer_local`, `no remote vendor
   enabled`, `vendor <x> enabled`, `--devil`), and any fallback (§4.2)
 - classifier verdict: `intent`, `confidence`, `entities`, `requiresHITL` — or the
@@ -449,7 +463,7 @@ export interface BaseExplainRecord {
   readonly askedAt: number;
   readonly durationMs: number;
   readonly question: string;
-  readonly source: "cli" | "desktop" | "chatops";
+  readonly source: "chatops" | "local"; // see §4.3 — a cli/desktop split is not derivable
   readonly persona: string;
   readonly modelRoute: { provider: string; model: string; isLocal: boolean };
   readonly classifier:
@@ -464,7 +478,7 @@ Text form, local-context route (illustrative — the score column is grouped by
 `scoringFormula`, never merged across formulas):
 
 ```text
-Ask explained — 2026-09-14 18:42:10Z · 342 ms · source: CLI
+Ask explained — 2026-09-14 18:42:10Z · 342 ms · source: local
 Question: "what did we decide about rate limiting on slack?"
 Route:    conversational / local context   (reason: llm.prefer_local = true)
 Model:    ollama / llama3.2 (local)        Persona: standard
