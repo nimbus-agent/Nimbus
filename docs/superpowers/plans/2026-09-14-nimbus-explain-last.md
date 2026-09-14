@@ -1512,6 +1512,17 @@ Create `packages/cli/src/commands/explain-format.ts` rendering the header (times
   pool contains more than one distinct `scoringFormula`. Then the discarded tail.
 - `agent_tools` — the lead line ("the model chose which tools to call; each `searchLocalIndex`
   call ranked internally, but nothing ranked across the turn"), then one line per call.
+  **Plus, when `fallbackFromLocalRouter` is present:** say so explicitly — the local model failed
+  and the turn re-ran on the agent — and render the optional local-context payload (the same pool
+  rendering as `local_context` above) under a heading that makes its status plain, e.g.
+  `## Local context assembled before the fallback`.
+
+  This is not decoration. `run-conversational-agent.ts` builds `promptWithContext` ABOVE the
+  router-vs-agent fork and hands the SAME prompt to the agent on fallback, so that pool really
+  was put in front of the model. Omitting it would under-report on exactly the turn a user is
+  most likely to be debugging. The field is absent on a non-fallback `agent_tools` turn
+  (`shouldBuildLocalContext` is false on the pure agent route), so absent means "none was built",
+  never "we lost it" — and the renderer must not imply otherwise.
 - `plan_dispatch` / `empty_index` / `failed` — the route line plus the common fields; for
   `failed`, the stage and error.
 
