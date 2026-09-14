@@ -73,6 +73,53 @@ describe("formatExplain honesty rules (spec §5)", () => {
     expect(out).toMatch(/not comparable/i);
   });
 
+  test("within a group, candidates sort by score descending — pinned by index position", () => {
+    // Both candidates share the SAME pass (primary-hybrid), so this is the within-group half of
+    // the sort rule — the across-group half (never comparing scores across passes) is covered by
+    // the non-comparability test above. Input order is deliberately low-score-first, so neither
+    // "no sort at all" nor "sort ascending" can pass this by accident.
+    const out = formatExplain({
+      ...base,
+      route: "local_context",
+      searchTerms: "rate",
+      truncation: { shown: 2, total: 2, atLeast: false },
+      discardedTail: [],
+      pool: [
+        {
+          sourceId: "lo",
+          service: "slack",
+          indexedType: "message",
+          title: "Low score item",
+          score: 0.3,
+          matchScore: 0.3,
+          recencyComponent: 0.3,
+          servicePriorityComponent: 0.5,
+          scoringFormula: "hybrid_rrf",
+          pass: { kind: "primary-hybrid" },
+          outcome: "shown",
+        },
+        {
+          sourceId: "hi",
+          service: "slack",
+          indexedType: "message",
+          title: "High score item",
+          score: 0.9,
+          matchScore: 0.9,
+          recencyComponent: 0.9,
+          servicePriorityComponent: 0.5,
+          scoringFormula: "hybrid_rrf",
+          pass: { kind: "primary-hybrid" },
+          outcome: "shown",
+        },
+      ],
+    });
+    const hiIndex = out.indexOf("High score item");
+    const loIndex = out.indexOf("Low score item");
+    expect(hiIndex).toBeGreaterThan(-1);
+    expect(loIndex).toBeGreaterThan(-1);
+    expect(hiIndex).toBeLessThan(loIndex);
+  });
+
   test("the agent route says ranking happened per tool call, not that nothing ranked", () => {
     const out = formatExplain({
       ...base,
