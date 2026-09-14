@@ -12,7 +12,7 @@ import type {
 } from "../memory/session-memory-store.ts";
 import { insertPerson } from "../people/person-store.ts";
 import { createNimbusEngineAgent } from "./agent.ts";
-import { agentRequestContext } from "./agent-request-context.ts";
+import { agentRequestContext, getExplainToolCalls } from "./agent-request-context.ts";
 
 /**
  * The agent now REQUIRES a resolved vendor and an egress db: slice 2b removed
@@ -1169,5 +1169,122 @@ describe("wrapToolForLlm (auditDb branches)", () => {
     await tool.execute({});
     const row = db.query("SELECT COUNT(*) AS n FROM tool_call_log").get() as { n: number };
     expect(row.n).toBe(0);
+  });
+});
+
+describe("wrapToolForLlm collects for `nimbus explain last` (spec §4.5)", () => {
+  test("success arm: records the call with redacted params and no ranking for a non-search tool", async () => {
+    const { localIndex } = freshIndex();
+    const { agent } = createNimbusEngineAgent({
+      localIndex,
+      vendor: TEST_VENDOR,
+      egressDb: TEST_EGRESS_DB,
+      agentModel: "openai/gpt-4o-mini",
+    });
+    const tool = await getTool(agent, "listConnectors");
+    await agentRequestContext.run({}, async () => {
+      await tool.execute({ token: "shhh-super-secret-000" });
+      const calls = getExplainToolCalls();
+      expect(calls).toHaveLength(1);
+      expect(calls?.[0]?.toolId).toBe("listConnectors");
+      expect(calls?.[0]?.service).toBe("connectors");
+      expect(calls?.[0]?.status).toBe("ok");
+      expect(calls?.[0]?.ranking).toBeUndefined();
+      // Redacted with the SAME helper the tool_call_log write path uses (agent.ts:8's
+      // `redactAuditPayload`) -- the raw secret must never appear in the collected diagnostic.
+      expect(calls?.[0]?.paramsJson).not.toContain("shhh-super-secret-000");
+      expect(calls?.[0]?.paramsJson).toContain("[REDACTED]");
+    });
+  });
+
+  test("error arm: records the call with status='error' before re-throwing", async () => {
+    const { localIndex } = freshIndex();
+    (
+      localIndex as unknown as {
+        searchRankedAsync: () => Promise<never>;
+      }
+    ).searchRankedAsync = async () => {
+      throw new Error("boom");
+    };
+    const { agent } = createNimbusEngineAgent({
+      localIndex,
+      vendor: TEST_VENDOR,
+      egressDb: TEST_EGRESS_DB,
+      agentModel: "openai/gpt-4o-mini",
+    });
+    const tool = await getTool(agent, "searchLocalIndex");
+    await agentRequestContext.run({}, async () => {
+      await expect(tool.execute({})).rejects.toThrow("boom");
+      const calls = getExplainToolCalls();
+      expect(calls).toHaveLength(1);
+      expect(calls?.[0]?.toolId).toBe("searchLocalIndex");
+      expect(calls?.[0]?.status).toBe("error");
+      expect(calls?.[0]?.ranking).toBeUndefined();
+    });
+  });
+
+  test("ranking is READ from searchLocalIndex's own returned totals, never recomputed", async () => {
+    const { db, localIndex } = freshIndex();
+    seedItem(db, { service: "github", externalId: "g1", title: "alpha repo" });
+    seedItem(db, { service: "slack", externalId: "s1", title: "alpha thread" });
+    const { agent } = createNimbusEngineAgent({
+      localIndex,
+      vendor: TEST_VENDOR,
+      egressDb: TEST_EGRESS_DB,
+      agentModel: "openai/gpt-4o-mini",
+    });
+    const tool = await getTool(agent, "searchLocalIndex");
+    await agentRequestContext.run({}, async () => {
+      const envelope = await tool.execute({ name: "alpha" });
+      const parsed = parseEnvelope(envelope);
+      const payload = parsed.payload as {
+        totalMatches: number;
+        itemsInWindow: number;
+        sourceSummary: Array<{ service: string; type: string; count: number }>;
+      };
+      // Sanity: this fixture actually produced a non-trivial ranking to compare against.
+      expect(payload.totalMatches).toBeGreaterThan(0);
+      const calls = getExplainToolCalls();
+      expect(calls).toHaveLength(1);
+      expect(calls?.[0]?.ranking).toEqual({
+        totalMatches: payload.totalMatches,
+        itemsInWindow: payload.itemsInWindow,
+        sourceSummary: payload.sourceSummary,
+      });
+    });
+  });
+
+  test("two tool calls in one turn are both collected, in order", async () => {
+    const { localIndex } = freshIndex();
+    const { agent } = createNimbusEngineAgent({
+      localIndex,
+      vendor: TEST_VENDOR,
+      egressDb: TEST_EGRESS_DB,
+      agentModel: "openai/gpt-4o-mini",
+    });
+    const listConnectorsTool = await getTool(agent, "listConnectors");
+    const searchTool = await getTool(agent, "searchLocalIndex");
+    await agentRequestContext.run({}, async () => {
+      await listConnectorsTool.execute({});
+      await searchTool.execute({});
+      const calls = getExplainToolCalls();
+      expect(calls).toHaveLength(2);
+      expect(calls?.[0]?.toolId).toBe("listConnectors");
+      expect(calls?.[1]?.toolId).toBe("searchLocalIndex");
+    });
+  });
+
+  test("outside a turn, nothing is collected and the tool still returns normally", async () => {
+    const { localIndex } = freshIndex();
+    const { agent } = createNimbusEngineAgent({
+      localIndex,
+      vendor: TEST_VENDOR,
+      egressDb: TEST_EGRESS_DB,
+      agentModel: "openai/gpt-4o-mini",
+    });
+    const tool = await getTool(agent, "listConnectors");
+    const envelope = await tool.execute({});
+    expect(parseEnvelope(envelope).tool).toBe("listConnectors");
+    expect(getExplainToolCalls()).toBeUndefined();
   });
 });

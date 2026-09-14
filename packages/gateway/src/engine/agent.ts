@@ -19,7 +19,9 @@ import type { SessionMemoryStore } from "../memory/session-memory-store.ts";
 import { searchPersons } from "../people/person-store.ts";
 import { buildGeneratedTools } from "../toolgen/toolgen-agent-tools.ts";
 import type { ToolgenRegistry } from "../toolgen/toolgen-registry.ts";
-import { getAgentRequestSessionId } from "./agent-request-context.ts";
+import { getAgentRequestSessionId, recordExplainToolCall } from "./agent-request-context.ts";
+// redactAuditPayload is ALREADY imported above (from "../audit/format-audit-payload.ts") — reuse it.
+import type { CollectedToolCall } from "./ask-explain-types.ts";
 import {
   buildSearchLocalIndexHealthExtras,
   formatConnectorHealthCaveatForIndexSearch,
@@ -29,6 +31,31 @@ import { createNegationTools } from "./negation-tools.ts";
 import { wrapToolOutput } from "./tool-output-envelope.ts";
 
 const MAX_TOOL_STRING_LEN = 2000;
+
+/**
+ * Reads the `searchLocalIndex` tool's own ranking summary off its raw result, for `nimbus explain
+ * last` (spec §2.5, §4.5). A read of an already-computed value, never a recomputation — and a
+ * real type guard rather than a cast, since the tool's return value is external/untrusted data.
+ */
+function readRanking(raw: unknown): CollectedToolCall["ranking"] | undefined {
+  if (raw === null || typeof raw !== "object") return undefined;
+  const r = raw as Record<string, unknown>;
+  if (typeof r["totalMatches"] !== "number" || typeof r["itemsInWindow"] !== "number") {
+    return undefined;
+  }
+  const summary = Array.isArray(r["sourceSummary"]) ? r["sourceSummary"] : [];
+  return {
+    totalMatches: r["totalMatches"],
+    itemsInWindow: r["itemsInWindow"],
+    sourceSummary: summary.flatMap((g) =>
+      g !== null &&
+      typeof g === "object" &&
+      typeof (g as Record<string, unknown>)["service"] === "string"
+        ? [g as { service: string; type: string; count: number }]
+        : [],
+    ),
+  };
+}
 
 function wrapToolForLlm<T>(
   service: string,
@@ -48,8 +75,9 @@ function wrapToolForLlm<T>(
       const calledAt = Date.now();
       let status: "ok" | "error" = "ok";
       let envelope: string;
+      let raw: unknown;
       try {
-        const raw = await original(input, ctx);
+        raw = await original(input, ctx);
         envelope = wrapToolOutput({ service, tool }, raw);
       } catch (err) {
         status = "error";
@@ -66,6 +94,13 @@ function wrapToolForLlm<T>(
             params: input,
           });
         }
+        recordExplainToolCall({
+          toolId: tool,
+          service,
+          status,
+          durationMs: Date.now() - calledAt,
+          paramsJson: input === undefined ? null : redactAuditPayload(input, 2048),
+        });
         throw err;
       }
       if (auditDb !== undefined) {
@@ -80,6 +115,15 @@ function wrapToolForLlm<T>(
           params: input,
         });
       }
+      const ranking = tool === "searchLocalIndex" ? readRanking(raw) : undefined;
+      recordExplainToolCall({
+        toolId: tool,
+        service,
+        status,
+        durationMs: Date.now() - calledAt,
+        paramsJson: input === undefined ? null : redactAuditPayload(input, 2048),
+        ...(ranking !== undefined ? { ranking } : {}),
+      });
       return envelope;
     },
   } as unknown as T;
