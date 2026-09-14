@@ -24,12 +24,13 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
   writes exactly one record — success or throw — to an in-memory ring of the last 10 asks;
   `nimbus explain last [--json]` reads the newest one over a new, CLI-only, LAN-forbidden
   `ask.explainLast` IPC method. A record shows what reached the model's context and why: for a
-  `local_context` turn (or an `agent_tools` turn's own `searchLocalIndex` calls), every candidate
-  the local-index ranking pass considered, grouped by contributing retrieval pass, each marked
-  `shown` or cut with the real reason (`cut: probe slice` / `cut: over cap` / `cut: service
-  fairness`); for an `agent_tools` turn, the live tool calls actually made; and which of the five
-  routes (`empty_index` / `local_context` / `agent_tools` / `plan_dispatch` / `failed`) the turn
-  took. No migration, no new invariant, no new egress class, no new HITL action type — the ring is
+  `local_context` turn, every candidate the local-index ranking pass considered, grouped by
+  contributing retrieval pass, each marked `shown` or cut with the real reason (`cut: probe slice`
+  / `cut: over cap` / `cut: service fairness`); for an `agent_tools` turn, the live tool calls
+  actually made, each `searchLocalIndex` call's own per-call ranking summary (no candidates, no
+  passes — just totals); and which of the five routes (`empty_index` / `local_context` /
+  `agent_tools` / `plan_dispatch` / `failed`) the turn took. No migration, no new invariant, no new
+  egress class, no new HITL action type — the ring is
   in-memory only and nothing is written to the index.
 
   **The roadmap row's original wording promised three things the index has no substrate for, and

@@ -118,9 +118,12 @@ function assertDiagnosticsRpcAccess(
     return;
   }
   if (wantsAskExplain) {
-    // ask.explainLast reads the in-memory ring only — unlike the index.* diagnostics below, it
-    // has no localIndex/dataDir dependency, so it must not inherit that requirement (a gateway
-    // without a local index would otherwise refuse a method that needs no index at all).
+    // This branch is unreachable-by-omission, not load-bearing: `wantsDiagnostics`'s own prefix
+    // match (`db.` / `diag.` / `index.*`) is disjoint from the literal `ask.explainLast`, so the
+    // `if (wantsDiagnostics && ...)` guard below already excludes this method on its own — this
+    // early return exists so that fact is stated explicitly (ask.explainLast reads the in-memory
+    // ring only and has no localIndex/dataDir dependency to enforce) rather than left implicit in
+    // what the guard below happens not to match.
     return;
   }
   if (wantsDiagnostics && (opts.localIndex === undefined || opts.dataDir === undefined)) {

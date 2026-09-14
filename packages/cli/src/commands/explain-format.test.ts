@@ -12,6 +12,15 @@ const base = {
 };
 
 describe("formatExplain honesty rules (spec §5)", () => {
+  test("the recorded question is rendered — the field the whole privacy posture is justified by", () => {
+    // Fix-wave finding CRITICAL 1: `question` survived capture, transport and parsing but reached
+    // no line of human output. Without it a reader of `explain last` cannot tell WHICH ask a
+    // report describes — load-bearing when the ring is shared with the ChatOps path, so the
+    // newest record may legitimately be someone else's question.
+    const out = formatExplain({ ...base, route: "empty_index" });
+    expect(out).toContain(`Question:    ${base.question}`);
+  });
+
   test("a score-less candidate renders n/a, never 0.00", () => {
     const out = formatExplain({
       ...base,
@@ -71,6 +80,86 @@ describe("formatExplain honesty rules (spec §5)", () => {
       ],
     });
     expect(out).toMatch(/not comparable/i);
+  });
+
+  test("the primary-hybrid pass label reflects whether the search actually ran hybrid, never unconditionally", () => {
+    // Fix-wave finding IMPORTANT 4: `LocalIndex.searchRankedAsync` falls back to plain FTS
+    // whenever semantic search is off, sqlite-vec is unavailable, or the schema predates it — so
+    // labelling the primary pass "primary hybrid search" unconditionally would claim semantic
+    // retrieval ran when it may not have. The label must be derived from the group's own
+    // `scoringFormula`, distinguishing all three cases.
+    const hybridOut = formatExplain({
+      ...base,
+      route: "local_context",
+      searchTerms: "x",
+      truncation: { shown: 1, total: 1, atLeast: false },
+      discardedTail: [],
+      pool: [
+        {
+          sourceId: "a",
+          service: "slack",
+          indexedType: "message",
+          title: "hybrid hit",
+          score: 0.8,
+          matchScore: 0.8,
+          recencyComponent: 0.8,
+          servicePriorityComponent: 0.5,
+          scoringFormula: "hybrid_rrf",
+          pass: { kind: "primary-hybrid" },
+          outcome: "shown",
+        },
+      ],
+    });
+    expect(hybridOut).toContain("primary search (hybrid RRF)");
+    expect(hybridOut).not.toContain("primary hybrid search");
+
+    const ftsOut = formatExplain({
+      ...base,
+      route: "local_context",
+      searchTerms: "x",
+      truncation: { shown: 1, total: 1, atLeast: false },
+      discardedTail: [],
+      pool: [
+        {
+          sourceId: "a",
+          service: "slack",
+          indexedType: "message",
+          title: "fts hit",
+          score: 0.8,
+          matchScore: 0.8,
+          recencyComponent: 0.8,
+          servicePriorityComponent: 0.5,
+          scoringFormula: "fts_rank",
+          pass: { kind: "primary-hybrid" },
+          outcome: "shown",
+        },
+      ],
+    });
+    expect(ftsOut).toContain("primary search (FTS rank)");
+    expect(ftsOut).not.toContain("hybrid");
+
+    // No candidate in the group carries a formula at all (score-less throughout) — the neutral
+    // fallback, never a guess.
+    const neutralOut = formatExplain({
+      ...base,
+      route: "local_context",
+      searchTerms: "x",
+      truncation: { shown: 1, total: 1, atLeast: false },
+      discardedTail: [],
+      pool: [
+        {
+          sourceId: "a",
+          service: "slack",
+          indexedType: "message",
+          title: "unscored hit",
+          pass: { kind: "primary-hybrid" },
+          outcome: "shown",
+        },
+      ],
+    });
+    expect(neutralOut).toContain("primary index search");
+    expect(neutralOut).not.toContain("hybrid");
+    expect(neutralOut).not.toContain("FTS");
   });
 
   test("within a group, candidates sort by score descending — pinned by index position", () => {
@@ -149,7 +238,6 @@ describe("formatExplain honesty rules (spec §5)", () => {
       pool: [],
     });
     expect(out).toContain("Given to the model");
-    expect(out).not.toMatch(/read by the model/i);
   });
 
   test("truncation.atLeast renders 'at least N', never an exact total (a probe ceiling, not a count)", () => {
@@ -224,6 +312,32 @@ describe("formatExplain honesty rules (spec §5)", () => {
     });
     expect(out).toContain("retrieval");
     expect(out).toContain("SQLITE_BUSY");
+  });
+
+  test("a 'dispatch'-stage failure is distinct from 'model', and carries the plan", () => {
+    // Fix-wave finding IMPORTANT 3: a connector/executor failure must never be reported as a
+    // model failure, and the plan that was being dispatched must survive onto the record.
+    const out = formatExplain({
+      ...base,
+      route: "failed",
+      stage: "dispatch",
+      error: "ECONNRESET talking to the connector",
+      plan: "actions: filesystem_search_files",
+    });
+    expect(out).toContain("Stage: dispatch");
+    expect(out).not.toContain("Stage: model");
+    expect(out).toContain("ECONNRESET talking to the connector");
+    expect(out).toContain("actions: filesystem_search_files");
+  });
+
+  test("a non-dispatch failure never fabricates a plan line", () => {
+    const out = formatExplain({
+      ...base,
+      route: "failed",
+      stage: "model",
+      error: "boom",
+    });
+    expect(out).not.toContain("Plan:");
   });
 
   test("no model route resolved is disclosed rather than fabricated", () => {

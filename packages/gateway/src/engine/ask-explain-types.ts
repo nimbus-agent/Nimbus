@@ -139,7 +139,15 @@ export type AskExplainRecord = BaseExplainRecord &
     | { readonly route: "plan_dispatch"; readonly plan: string }
     | {
         readonly route: "failed";
-        readonly stage: "classification" | "retrieval" | "model";
+        readonly stage: "classification" | "retrieval" | "model" | "dispatch";
         readonly error: string;
+        /**
+         * Present only for a "dispatch"-stage failure: the plan that was being dispatched when
+         * the throw happened. `runAskInner` builds `partial.route = { kind: "plan_dispatch",
+         * plan }` before calling `dispatchPlan`, and without threading it through here that
+         * capture is discarded on exactly the arm a reader needs it most — a connector or
+         * executor failure with no record of what was being attempted.
+         */
+        readonly plan?: string;
       }
   );

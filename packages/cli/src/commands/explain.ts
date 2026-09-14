@@ -9,7 +9,10 @@ export async function runExplainCmd(args: string[]): Promise<void> {
   await withGatewayIpc((c) => runExplain(c, args));
 }
 
-/** The client-taking implementation, exported separately so unit tests need no live gateway. */
+/**
+ * The client-taking implementation, exported separately so unit tests need no live gateway — see
+ * the DI tests in `explain.test.ts`, which drive this with a fake `IPCClient`.
+ */
 export async function runExplain(client: IPCClient, args: string[]): Promise<void> {
   const sub = args[0];
   if (sub !== "last") {

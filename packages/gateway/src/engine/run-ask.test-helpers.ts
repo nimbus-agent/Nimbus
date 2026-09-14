@@ -39,11 +39,18 @@ const stubConsent: ConsentCoordinator = {
   },
 };
 
-const stubDispatcher: ConnectorDispatcher = {
-  async dispatch(): Promise<unknown> {
-    return null;
-  },
-};
+function makeStubDispatcher(opts: { throws?: string }): ConnectorDispatcher {
+  return {
+    async dispatch(): Promise<unknown> {
+      if (opts.throws !== undefined) {
+        throw new Error(opts.throws);
+      }
+      return null;
+    },
+  };
+}
+
+const stubDispatcher = makeStubDispatcher({});
 
 function emptyAsyncIterable(): AsyncIterable<unknown> {
   return {
@@ -198,6 +205,15 @@ export type MakeRunAskParamsOptions = {
    * `localRouterSucceeds` / `classifyAs` (this option supersedes them when set).
    */
   readonly realClassifierRouter?: { readonly responseText: string; readonly provider: string };
+  /**
+   * Makes `ConnectorDispatcher.dispatch` throw with this message — the ONLY way to reach the
+   * "dispatch"-stage failed route (fix-wave finding IMPORTANT 3): combined with `classifyAs` +
+   * `omitConversationalAgent` to force `plan_dispatch` into an "actions" plan (`file_search` with
+   * a `pattern` entity, not gated by HITL), the throw happens inside `ToolExecutor.execute`'s
+   * `connectors.dispatch(action)` call — after classification and plan construction ("model"
+   * stage) have already completed, so it must record `stage: "dispatch"`, not `"model"`.
+   */
+  readonly dispatcherThrows?: string;
 };
 
 /**
@@ -252,7 +268,10 @@ export function makeRunAskParams(opts: MakeRunAskParamsOptions): RunAskParams {
     paths: stubPaths,
     consentCoordinator: stubConsent,
     localIndex,
-    dispatcher: stubDispatcher,
+    dispatcher:
+      opts.dispatcherThrows === undefined
+        ? stubDispatcher
+        : makeStubDispatcher({ throws: opts.dispatcherThrows }),
     egressSink: NULL_EGRESS_SINK,
     sendChunk: () => {},
     ...(classify === undefined ? {} : { classify }),

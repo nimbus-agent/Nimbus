@@ -881,7 +881,7 @@ nimbus explain last --json
 
 | Flag | Description |
 |---|---|
-| `--json` | Emit the raw wire shape as JSON instead of the human-readable rendering. |
+| `--json` | Emit the validated wire shape as JSON instead of the human-readable rendering — the record reparsed by `parseExplainLastResult`, not the raw IPC response; an unrecognised gateway field is dropped rather than passed through. |
 
 **In memory only, and deliberately so.** The ring lives in the gateway process; it holds nothing across a restart, and nothing is written to the index. "No ask recorded since the gateway started" is a different, honest statement from "no ask has ever happened" — the CLI never conflates the two.
 
@@ -891,7 +891,7 @@ nimbus explain last --json
 - **`local_context`** — the turn answered from the local SQLite index directly (no live connector call). Shows the search terms used, every candidate the ranking pass considered — grouped by which retrieval pass surfaced it (primary hybrid search, a quoted-phrase match, a repo-slug lookup, a fallback-term retry), never mixed across passes, since their scores are not comparable — and, for each, whether it was `shown` to the model or cut, and **why it was cut**: `cut: probe slice` (ranked outside the top of the primary probe, so it never entered the candidate pool at all), `cut: over cap` (in the pool, dropped by the final size cap), or `cut: service fairness` (in the pool and under the cap by arrival order, displaced by per-service round-robin so one noisy connector cannot crowd out the rest). A `discardedTail` summary counts what never made the pool at all, by service and type.
 - **`agent_tools`** — the turn went to the conversational agent, which made zero or more live tool calls (each shown with its service, status, duration and — for a `searchLocalIndex` call specifically — its own internal ranking). If a local-context probe was *also* built for this turn (the local-router-fallback path only) and actually reached the model's prompt, it is shown using the same `local_context` rendering, under its own heading.
 - **`plan_dispatch`** — the turn was classified as an action and dispatched a plan; the record shows the plan, not a live trace of its execution.
-- **`failed`** — the turn threw. Shows the stage it reached (`classification` / `retrieval` / `model`) and the error.
+- **`failed`** — the turn threw. Shows the stage it reached (`classification` / `retrieval` / `model` / `dispatch`) and the error; a `dispatch`-stage failure (a connector or executor error, not a model failure) also shows the plan that was being dispatched.
 
 **Three things the roadmap row that introduced this command promised and the index cannot back up — stated here rather than dropped quietly:**
 

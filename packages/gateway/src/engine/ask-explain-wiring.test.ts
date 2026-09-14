@@ -162,6 +162,40 @@ describe("recorder wiring (spec §4.2)", () => {
     );
   });
 
+  test("a connector-dispatch failure is recorded at stage 'dispatch', not 'model', and keeps the plan", async () => {
+    // Fix-wave finding IMPORTANT 3: everything up to and including plan construction is the
+    // "model" stage, but the actual connector dispatch is a DIFFERENT stage — a connector or
+    // executor failure here must never be reported as a model failure.
+    const r = new AskExplainRecorder();
+    await runAsk(
+      makeRunAskParams({
+        input: "find files named report",
+        explainRecorder: r,
+        omitConversationalAgent: true,
+        classifyAs: {
+          intent: "file_search",
+          entities: { pattern: "report*.md" },
+          requiresHITL: false,
+          confidence: 1,
+        },
+        dispatcherThrows: "ECONNRESET talking to the connector",
+      }),
+    ).catch(() => undefined);
+
+    const last = r.last();
+    expect(last?.route).toBe("failed");
+    expect(last?.route === "failed" ? last.stage : undefined).toBe("dispatch");
+    expect(last?.route === "failed" ? last.error : undefined).toContain(
+      "ECONNRESET talking to the connector",
+    );
+    // The plan being dispatched must survive onto the failure record — otherwise a
+    // dispatch-stage failure discards the one piece of context ("what was being attempted") a
+    // reader needs most.
+    expect(last?.route === "failed" ? last.plan : undefined).toBe(
+      "actions: filesystem_search_files",
+    );
+  });
+
   test("classifier destination is captured from a real router.generate round-trip", async () => {
     // `makeRunAskParams` normally injects `classify` unconditionally, which
     // `classifyIntentForAskWithLocalFallback` prefers over the real classifier

@@ -218,11 +218,37 @@ describe("explain last over a real socket", () => {
         // already-covered concern) — what matters here is only that a record now exists.
         void askReply;
 
-        const after = await client.call<{ record: { question: string } | null }>(
+        const after = await client.call<{ record: Record<string, unknown> | null }>(
           "ask.explainLast",
           null,
         );
-        expect(after.record?.question).toBe("what is indexed?");
+        expect(after.record?.["question"]).toBe("what is indexed?");
+
+        // Assert the KEY SET a real gateway produced (fix-wave finding CRITICAL 2), not just that
+        // SOME record came back. `explain-format.ts`'s CLI-side parser is a strict, independently
+        // declared mirror of the gateway's `AskExplainRecord` — a gateway-side rename of any field
+        // here would not degrade the CLI report, it would replace it with a malformed-response
+        // error, and no unit test on either side alone can catch that: this is the one place both
+        // shapes are checked against what actually crossed the wire. A fresh, empty index takes
+        // the `empty_index` route, whose only field beyond the shared base is `route` itself;
+        // `modelRoute` and `fallbackFromLocalRouter` are never set on this route, so they must be
+        // ABSENT here, not merely unchecked.
+        const record = after.record;
+        expect(record).not.toBeNull();
+        if (record !== null && record !== undefined) {
+          expect(new Set(Object.keys(record))).toEqual(
+            new Set([
+              "askedAt",
+              "durationMs",
+              "question",
+              "source",
+              "persona",
+              "classifier",
+              "route",
+            ]),
+          );
+          expect(record["route"]).toBe("empty_index");
+        }
       } finally {
         client.disconnect();
         await gw.stop();

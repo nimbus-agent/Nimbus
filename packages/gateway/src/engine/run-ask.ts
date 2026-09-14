@@ -211,7 +211,7 @@ type ExplainRoute =
  * variants carry no stage at all.
  */
 type ExplainPartial = {
-  stage: "classification" | "retrieval" | "model";
+  stage: "classification" | "retrieval" | "model" | "dispatch";
   classifier?: BaseExplainRecord["classifier"];
   modelRoute?: BaseExplainRecord["modelRoute"];
   fallbackFromLocalRouter?: { readonly error: string };
@@ -962,7 +962,20 @@ function buildExplainRecord(
   };
 
   if (error !== undefined) {
-    return { ...base, route: "failed", stage: partial.stage, error: describeExplainError(error) };
+    // `partial.route` is only ever `plan_dispatch`-shaped when the throw happened at (or after)
+    // the "dispatch" stage — carry the plan along so a dispatch-stage failure doesn't discard the
+    // one piece of context ("what was being attempted") a connector/executor error needs.
+    const plan =
+      partial.stage === "dispatch" && partial.route?.kind === "plan_dispatch"
+        ? partial.route.plan
+        : undefined;
+    return {
+      ...base,
+      route: "failed",
+      stage: partial.stage,
+      error: describeExplainError(error),
+      ...(plan === undefined ? {} : { plan }),
+    };
   }
 
   // Absent only if a future route forgets to set it before returning — default to `agent_tools`
@@ -1055,6 +1068,11 @@ async function runAskInner(
   partial.stage = "model";
   const plan = planFromIntent(classified, p.paths);
   partial.route = { kind: "plan_dispatch", plan: describePlan(plan) };
+  // Distinct from "model": everything above this line is classification + plan construction, no
+  // connector or executor has been touched yet. A throw from `dispatchPlan` onward is a connector
+  // or executor failure, not a model failure, and must be reported as such (fix wave finding
+  // "IMPORTANT 3").
+  partial.stage = "dispatch";
   return await dispatchPlan(p, plan);
 }
 

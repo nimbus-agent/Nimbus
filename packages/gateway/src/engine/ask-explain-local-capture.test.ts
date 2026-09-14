@@ -94,7 +94,28 @@ describe("local-context capture (spec §4.4)", () => {
     // An item reachable by BOTH the primary probe and a quoted term must record the pass that
     // actually merged it (`addRankedResults`/`addContextItems` keep the FIRST writer via
     // `if (!byId.has(...))`), never the last one to match.
-    const out = await buildLocalIndexedContextForTest(seedMany(12), 'rate limiting "throttling"');
+    //
+    // `seedMany`'s 12 items all share the SAME `bodyPreview` ("throttling discussion"), so the
+    // primary probe's 3-term AND join ("rate" + "limiting" + "throttling", every term matching
+    // title OR body) and the quoted pass's single-term search ("throttling", title OR body) match
+    // the identical 12-item set and rank them in the identical order — the quoted pass then
+    // contributes NOTHING, since every candidate it would add is already in `byId`. That made the
+    // premise below false with the shared fixture: a genuine gap this fix-wave finding surfaces,
+    // not a style nit. One extra item is seeded here whose title/body contain "throttling" but
+    // NEITHER "rate" NOR "limiting" — excluded from the primary probe's AND join entirely, so it
+    // is reachable ONLY through the quoted pass, and dated most-recent so it ranks inside the
+    // quoted search's own context-limited window.
+    const idx = seedMany(12);
+    upsertIndexedItem(idx.getDatabase(), {
+      service: "docs",
+      type: "note",
+      externalId: "quoted-only",
+      title: "Throttling policy overview",
+      bodyPreview: "explains how throttling works",
+      modifiedAt: Date.now() + 10_000,
+      syncedAt: Date.now(),
+    });
+    const out = await buildLocalIndexedContextForTest(idx, 'rate limiting "throttling"');
     const pool = out?.explain.pool ?? [];
     const merged = pool.filter((c) => c.outcome !== "cut: probe slice");
     expect(merged.length).toBeGreaterThan(0);
@@ -104,5 +125,10 @@ describe("local-context capture (spec §4.4)", () => {
       expect(c.pass.kind).toBeTruthy();
     }
     expect(merged.some((c) => c.pass.kind === "primary-hybrid")).toBe(true);
+    // The premise this test depends on: the quoted pass must actually contribute at least one
+    // candidate of its own. Without this, the assertion above passes identically whether or not
+    // the quoted pass contributed anything at all — i.e. identically under first-writer-wins and
+    // last-writer-wins semantics — because it never observes the quoted pass in the first place.
+    expect(pool.some((c) => c.pass.kind === "quoted")).toBe(true);
   });
 });

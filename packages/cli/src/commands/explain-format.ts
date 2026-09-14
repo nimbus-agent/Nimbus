@@ -4,8 +4,11 @@
  *
  * The wire shape is re-declared here rather than imported: `packages/cli` reaches the gateway over
  * IPC only and never imports gateway source (a repo dependency rule). The gateway-side type is
- * `AskExplainRecord` in `gateway/src/engine/ask-explain-types.ts`; the seam between them is covered
- * by the `ask.explainLast` tests in `diagnostics-rpc.test.ts`.
+ * `AskExplainRecord` in `gateway/src/engine/ask-explain-types.ts`; the seam between the two
+ * independently-declared shapes is covered by `explain-format-wire.test.ts`, which round-trips one
+ * record per route through `parseExplainLastResult` → `formatExplain`, plus
+ * `packages/gateway/test/e2e/explain-last.e2e.test.ts`, which asserts the key set of a record a
+ * real gateway produced against this file's parser.
  *
  * This renderer IS the product: every honesty rule below exists because the upstream collector
  * (`run-ask.ts`) went to real trouble to distinguish "never scored" from "scored zero", "given to
@@ -129,8 +132,10 @@ export type ExplainRecordView = ExplainRecordBase &
     | { readonly route: "plan_dispatch"; readonly plan: string }
     | {
         readonly route: "failed";
-        readonly stage: "classification" | "retrieval" | "model";
+        readonly stage: "classification" | "retrieval" | "model" | "dispatch";
         readonly error: string;
+        /** Present only for a "dispatch"-stage failure — the plan that was being dispatched. */
+        readonly plan?: string;
       }
   );
 
@@ -342,9 +347,12 @@ function parseFallbackValue(v: unknown, where: string): FallbackInfo {
   return { error: str(v["error"], `${where}.error`) };
 }
 
-function parseStage(v: unknown, where: string): "classification" | "retrieval" | "model" {
+function parseStage(
+  v: unknown,
+  where: string,
+): "classification" | "retrieval" | "model" | "dispatch" {
   const s = str(v, where);
-  if (s !== "classification" && s !== "retrieval" && s !== "model") bad(where);
+  if (s !== "classification" && s !== "retrieval" && s !== "model" && s !== "dispatch") bad(where);
   return s;
 }
 
@@ -401,11 +409,13 @@ export function parseExplainRecordView(v: unknown): ExplainRecordView {
     return { ...base, route, plan: str(v["plan"], "plan") };
   }
   if (route === "failed") {
+    const planRaw = v["plan"];
     return {
       ...base,
       route,
       stage: parseStage(v["stage"], "stage"),
       error: str(v["error"], "error"),
+      ...(planRaw === undefined ? {} : { plan: str(planRaw, "plan") }),
     };
   }
   bad("route");
@@ -454,6 +464,7 @@ function renderClassifier(c: ClassifierVerdict): string {
 function renderCommonFields(r: ExplainRecordView): string[] {
   const lines: string[] = [
     `Asked:       ${fmtTimestamp(r.askedAt)}`,
+    `Question:    ${r.question}`,
     `Duration:    ${r.durationMs}ms`,
     `Source:      ${r.source}`,
     `Persona:     ${r.persona}`,
@@ -484,10 +495,20 @@ function passKey(pass: ContributingPass): string {
   }
 }
 
-function passLabel(pass: ContributingPass): string {
+/**
+ * `LocalIndex.searchRankedAsync` falls back to plain FTS whenever semantic search is off,
+ * `sqlite-vec` is unavailable, or the schema predates it — so the primary pass is NOT always
+ * hybrid, and printing "primary hybrid search" unconditionally would claim semantic retrieval ran
+ * when it did not. The label is derived from the GROUP's own `scoringFormula` (never from the
+ * pass kind alone) so it reflects what actually happened on this turn: `undefined` — no candidate
+ * in the group carried a formula at all — falls back to a neutral label rather than guessing.
+ */
+function passLabel(pass: ContributingPass, formula: LocalCandidate["scoringFormula"]): string {
   switch (pass.kind) {
     case "primary-hybrid":
-      return "primary hybrid search";
+      if (formula === "hybrid_rrf") return "primary search (hybrid RRF)";
+      if (formula === "fts_rank") return "primary search (FTS rank)";
+      return "primary index search";
     case "quoted":
       return `quoted-phrase match "${pass.query}"`;
     case "repo-slug":
@@ -555,7 +576,11 @@ function fmtComponent(n: number | undefined): string {
 
 function renderCandidateLine(c: LocalCandidate): string {
   const outcome = outcomeLabel(c.outcome);
-  const head = `  - [${outcome}] ${c.title} (${c.service} ${c.indexedType})`;
+  // Absent for repo-slug rows (that projection does not select modified_at) — omitted rather than
+  // printing a fabricated timestamp. Useful beside `recencyComponent`: it is the raw input that
+  // component was computed from.
+  const modifiedPart = c.modifiedAt === undefined ? "" : ` modified=${fmtTimestamp(c.modifiedAt)}`;
+  const head = `  - [${outcome}] ${c.title} (${c.service} ${c.indexedType})${modifiedPart}`;
   if (c.score === undefined) return head;
   const components =
     `match=${fmtComponent(c.matchScore)} recency=${fmtComponent(c.recencyComponent)} ` +
@@ -616,7 +641,7 @@ function renderLocalContextPayload(p: LocalContextPayload, heading: string | und
     // "n/a (direct query)" is printed rather than a fabricated 0.00, which would claim the item
     // ranked last when it was never ranked at all.
     const formulaLabel = g.formula ?? "n/a (direct query)";
-    lines.push(`Pass: ${passLabel(g.pass)} — scoring: ${formulaLabel}`);
+    lines.push(`Pass: ${passLabel(g.pass, g.formula)} — scoring: ${formulaLabel}`);
     for (const c of g.items) {
       lines.push(renderCandidateLine(c));
     }
@@ -695,7 +720,13 @@ export function formatExplain(record: ExplainRecordView, opts?: FormatExplainOpt
       lines.push(`Plan: ${record.plan}`, "");
       break;
     case "failed":
-      lines.push(`Stage: ${record.stage}`, `Error: ${record.error}`, "");
+      lines.push(`Stage: ${record.stage}`, `Error: ${record.error}`);
+      // Present only for a "dispatch"-stage failure — the plan a connector/executor error was
+      // being dispatched against, without which a reader has no idea what the turn was doing.
+      if (record.plan !== undefined) {
+        lines.push(`Plan:  ${record.plan}`);
+      }
+      lines.push("");
       break;
   }
 
