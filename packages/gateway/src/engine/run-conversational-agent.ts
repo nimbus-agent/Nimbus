@@ -209,11 +209,24 @@ async function runViaAgent(
  * so a turn that started local and fell back must not carry a disclosure saying they were
  * unavailable (F21).
  */
+type ConversationalTurnResult = {
+  reply: string;
+  modelMeta?: LlmGenerateResult;
+  toolless: boolean;
+  /**
+   * Set only on the fallback arm below: the local router threw and the turn silently re-ran on
+   * the Mastra agent (`nimbus explain last`, spec §4.2). Carried alongside `toolless: false` —
+   * the two are not mutually exclusive, since local retrieval context can still have been built
+   * for a turn that ultimately answered through the agent.
+   */
+  fallbackFromLocalRouter?: { error: string };
+};
+
 async function runTurn(
   p: RunConversationalAgentParams,
   promptArg: PromptArg,
   maxSteps: number,
-): Promise<{ reply: string; modelMeta?: LlmGenerateResult; toolless: boolean }> {
+): Promise<ConversationalTurnResult> {
   const llmRouter = p.llmRouter;
   if (llmRouter !== undefined && shouldUseLocalRouter(p)) {
     try {
@@ -230,6 +243,11 @@ async function runTurn(
         throw e;
       }
       conversationalLog.warn({ err: e }, "local LLM router failed; falling back to agent");
+      return {
+        ...(await runViaAgent(p.agent, promptArg, p, maxSteps)),
+        toolless: false,
+        fallbackFromLocalRouter: { error: String(e) },
+      };
     }
   }
   if (p.agent === undefined) {
@@ -288,13 +306,20 @@ function appendDeterministicDisclosures<T extends { reply: string; toolless: boo
   return { ...res, reply: `${res.reply}${text}` };
 }
 
+/**
+ * `toolless` and `fallbackFromLocalRouter` ride along on this return value deliberately — they
+ * are internal bookkeeping for `nimbus explain last` (spec §4.2), not part of what a CLIENT sees.
+ * `run-ask.ts`'s `answerConversationally` reads them to build the explain record and then
+ * constructs `runAsk`'s own `{ reply, modelMeta? }` return explicitly, so neither field rides out
+ * through `runAsk` into an IPC response a client might come to depend on.
+ */
 export async function runConversationalAgent(
   p: RunConversationalAgentParams,
-): Promise<{ reply: string; modelMeta?: LlmGenerateResult }> {
+): Promise<ConversationalTurnResult> {
   const maxSteps = Config.conversationalAgentMaxSteps;
   const trimmed = p.input.trim();
   if (trimmed === "") {
-    return { reply: "" };
+    return { reply: "", toolless: true };
   }
 
   // Injected HERE, above the router-vs-agent fork below, so both paths carry it. Neither
@@ -312,14 +337,7 @@ export async function runConversationalAgent(
   const promptArg = buildPromptArg(promptWithContext, p.priorTurns ?? []);
 
   try {
-    // `toolless` is internal bookkeeping for the disclosure decision, not part of this
-    // function's contract — dropped here so it cannot ride out through `runAsk` into an IPC
-    // response where a client might come to depend on it.
-    const { toolless: _toolless, ...out } = appendDeterministicDisclosures(
-      await runTurn(p, promptArg, maxSteps),
-      p,
-    );
-    return out;
+    return appendDeterministicDisclosures(await runTurn(p, promptArg, maxSteps), p);
   } catch (e) {
     // A step that recorded a disclosure and then threw must not leave it sitting in the
     // (possibly shared, e.g. workflow.run's one-store-per-workflow) request store for the

@@ -10,9 +10,16 @@ import type { LlmRouter } from "../llm/router.ts";
 import type { LlmGenerateResult } from "../llm/types.ts";
 import type { SessionMemoryStore } from "../memory/session-memory-store.ts";
 import type { PlatformPaths } from "../platform/paths.ts";
-import { getAgentRequestSessionId } from "./agent-request-context.ts";
+import { getAgentRequestSessionId, getExplainToolCalls } from "./agent-request-context.ts";
 import { classifyCandidateOutcome } from "./ask-explain-outcome.ts";
-import type { CandidateOutcome, ContributingPass, LocalCandidate } from "./ask-explain-types.ts";
+import type { AskExplainRecorder } from "./ask-explain-recorder.ts";
+import type {
+  AskExplainRecord,
+  BaseExplainRecord,
+  CandidateOutcome,
+  ContributingPass,
+  LocalCandidate,
+} from "./ask-explain-types.ts";
 import { capPerService, stripInternalRankField } from "./context-fairness.ts";
 import type { ContextTruncation } from "./context-truncation-disclosure.ts";
 import {
@@ -71,6 +78,14 @@ export type RunAskParams = {
   // "frozen set only". This is the path agent-PLANNED actions take, so it is the one an org's
   // `[policy.hitl] require` list most needs to reach.
   policyHitl?: ExecutorPolicyDep;
+  /**
+   * `nimbus explain last` (spec §4). Absent means "no recorder wired" — a test double or a
+   * gate-only caller that has no use for it — in which case `runAsk` records nothing rather than
+   * fabricating a recorder. Recording happens exactly once per call, success or throw (spec
+   * §4.2): a caller that only recorded on success would leave `explain last` showing the
+   * PREVIOUS successful ask at the moment the user most needs the truth.
+   */
+  explainRecorder?: AskExplainRecorder;
 };
 
 const EMPTY_INDEX_GUIDANCE = `No data indexed yet.
@@ -155,6 +170,40 @@ function canUseConversation(p: RunAskParams): boolean {
 }
 
 /**
+ * What a route contributes to the explain record beyond the shared `BaseExplainRecord` fields
+ * (spec §4.2). One MUTABLE field on {@link ExplainPartial}, filled in as the turn progresses —
+ * never a per-arm closure, the same rule I35's gate learned: state a single exit point must
+ * write belongs in ONE place, or it is two places for it to go missing.
+ */
+type ExplainRoute =
+  | { readonly kind: "empty_index" }
+  | {
+      readonly kind: "local_context";
+      readonly searchTerms: string;
+      readonly fallbackTermFired?: string;
+      readonly truncation: ContextTruncation;
+      readonly pool: readonly LocalCandidate[];
+      readonly discardedTail: ReadonlyArray<{ service: string; type: string; count: number }>;
+    }
+  | { readonly kind: "agent_tools" }
+  | { readonly kind: "plan_dispatch"; readonly plan: string };
+
+/**
+ * The single mutable record `runAsk` threads through `runAskInner` and every helper it calls,
+ * filled in as the turn progresses so `runAsk`'s `finally`-shaped wrapper can build an
+ * {@link AskExplainRecord} on EITHER exit path — success or throw (spec §4.2) — from whatever got
+ * captured before the throw. `stage` is read only on the failure path; the successful route
+ * variants carry no stage at all.
+ */
+type ExplainPartial = {
+  stage: "classification" | "retrieval" | "model";
+  classifier?: BaseExplainRecord["classifier"];
+  modelRoute?: BaseExplainRecord["modelRoute"];
+  fallbackFromLocalRouter?: { readonly error: string };
+  route?: ExplainRoute;
+};
+
+/**
  * The conversational answer path: prior turns + optional indexed context → the agent/router,
  * then persist the turn.
  *
@@ -164,9 +213,11 @@ function canUseConversation(p: RunAskParams): boolean {
  */
 async function answerConversationally(
   p: RunAskParams,
+  partial: ExplainPartial,
 ): Promise<{ reply: string; modelMeta?: LlmGenerateResult }> {
   const sessionId = getAgentRequestSessionId();
   const priorTurns = await loadRecentConversationHistory(p.sessionMemoryStore, sessionId);
+  partial.stage = "retrieval";
   const localContext = shouldBuildLocalContext(p)
     ? await buildLocalIndexedContext(p.localIndex, p.input)
     : undefined;
@@ -178,6 +229,7 @@ async function answerConversationally(
   const count = countDb === undefined ? undefined : indexCountFor(countDb, p.input);
   const countLine = count === undefined ? undefined : indexCountLine(count);
 
+  partial.stage = "model";
   const result = await runConversationalAgent({
     input: p.input,
     stream: p.stream,
@@ -196,9 +248,42 @@ async function answerConversationally(
     persona: resolvePersona(p.paths.configDir),
   });
 
+  if (result.fallbackFromLocalRouter !== undefined) {
+    partial.fallbackFromLocalRouter = result.fallbackFromLocalRouter;
+  }
+  if (result.modelMeta !== undefined) {
+    partial.modelRoute = {
+      provider: result.modelMeta.provider,
+      model: result.modelMeta.modelUsed,
+      isLocal: result.modelMeta.isLocal,
+    };
+  }
+  // `toolless` means the LOCAL ROUTER answered this turn with no fallback — the same signal
+  // `appendDeterministicDisclosures` uses to decide the negation-tools-unavailable line. Only
+  // then does the route report the indexed-context retrieval trace Task 4 built; a fallback to
+  // the Mastra agent (or an agent turn that never had local context to begin with) is reported
+  // as `agent_tools`, with `fallbackFromLocalRouter` carrying the local-router failure alongside
+  // it (spec §4.2) — the two are not mutually exclusive.
+  partial.route =
+    result.toolless && localContext !== undefined
+      ? {
+          kind: "local_context",
+          searchTerms: localContext.explain.searchTerms,
+          ...(localContext.explain.fallbackTermFired === undefined
+            ? {}
+            : { fallbackTermFired: localContext.explain.fallbackTermFired }),
+          truncation: localContext.truncation,
+          pool: localContext.explain.pool,
+          discardedTail: localContext.explain.discardedTail,
+        }
+      : { kind: "agent_tools" };
+
   await persistConversationTurn(p.sessionMemoryStore, sessionId, p.input, result.reply);
 
-  return result;
+  return {
+    reply: result.reply,
+    ...(result.modelMeta === undefined ? {} : { modelMeta: result.modelMeta }),
+  };
 }
 
 function shouldBuildLocalContext(p: RunAskParams): boolean {
@@ -218,7 +303,23 @@ function shouldAnswerFromLocalIndexedContext(p: RunAskParams): boolean {
   );
 }
 
-async function classifyIntentForAskWithLocalFallback(p: RunAskParams): Promise<ClassifiedIntent> {
+/**
+ * `classified` plus what the explain recorder needs to know about the classifier call itself
+ * (spec §4.3): `classifierDestination` names where the classifying prompt actually went, and is
+ * set ONLY from inside a successful `router.generate` round-trip — never guessed — so its
+ * absence means "no destination was ever resolved" (no router, an injected `p.classify` double,
+ * or a caught fallback below), not "resolved to nothing". `classifierSkipReason` is set only on
+ * the graceful local-fallback arm, where the classifier never produced an answer to report.
+ */
+type ClassifyForAskResult = {
+  readonly classified: ClassifiedIntent;
+  readonly classifierDestination?: string;
+  readonly classifierSkipReason?: string;
+};
+
+async function classifyIntentForAskWithLocalFallback(
+  p: RunAskParams,
+): Promise<ClassifyForAskResult> {
   // Resolved from the router, which owns `[llm]` AND is now the classifier's only way out of the
   // machine: `generate` is what carries the per-vendor `[llm.remote.*]` opt-in and appends the
   // I29 `model` row. Absent a router there is no configuration to read and no ledger to append
@@ -226,12 +327,29 @@ async function classifyIntentForAskWithLocalFallback(p: RunAskParams): Promise<C
   // fall back to its own env-keyed HTTP client. Every production path builds a router
   // (`platform/assemble.ts`).
   const router = p.llmRouter;
+  // Captured by wrapping the closure `classifyIntent` already receives (spec §4.3), rather than
+  // widening `classifyIntent`'s own exported return type, which has its own tests and is not
+  // this function's to change.
+  let classifierDestination: string | undefined;
   const policy: ClassifierEgressPolicy = {
     enforceAirGap: router?.enforcesAirGap() ?? false,
-    generate: router === undefined ? undefined : (opts) => router.generate(opts),
+    generate:
+      router === undefined
+        ? undefined
+        : async (opts) => {
+            const res = await router.generate(opts);
+            classifierDestination = res.provider;
+            return res;
+          },
   };
   try {
-    return await (p.classify ?? ((input) => classifyIntentForAsk(input, policy)))(p.input);
+    const classified = await (p.classify ?? ((input) => classifyIntentForAsk(input, policy)))(
+      p.input,
+    );
+    return {
+      classified,
+      ...(classifierDestination === undefined ? {} : { classifierDestination }),
+    };
   } catch (e) {
     if (
       p.llmRouter === undefined ||
@@ -251,10 +369,13 @@ async function classifyIntentForAskWithLocalFallback(p: RunAskParams): Promise<C
       "remote intent classifier unavailable; falling back to local indexed-context answer",
     );
     return {
-      intent: "unknown",
-      entities: {},
-      requiresHITL: false,
-      confidence: 0,
+      classified: {
+        intent: "unknown",
+        entities: {},
+        requiresHITL: false,
+        confidence: 0,
+      },
+      classifierSkipReason: `remote classifier unavailable: ${e.reason}`,
     };
   }
 }
@@ -757,12 +878,96 @@ async function persistConversationTurn(
   }
 }
 
-export async function runAsk(
+/** A one-line, human-readable summary of a resolved plan for the explain record (spec §4.2). */
+function describePlan(plan: PlanResult): string {
+  return plan.kind === "reply"
+    ? `reply: ${plan.text}`
+    : `actions: ${plan.actions.map((a) => a.type).join(", ")}`;
+}
+
+const CLASSIFIER_NOT_CALLED_DEFAULT: BaseExplainRecord["classifier"] = {
+  called: false,
+  reason: "classification did not run before this ask concluded",
+};
+
+function describeExplainError(e: unknown): string {
+  return e instanceof Error ? e.message : String(e);
+}
+
+/**
+ * Assembles the {@link AskExplainRecord} `runAsk`'s wrapper records on EVERY exit path (spec
+ * §4.2). `error === undefined` is success; anything else is the "failed" route, reporting
+ * whatever stage `partial.stage` had most recently advanced to before the throw. Persona is
+ * resolved fresh here (matching `resolvePersona`'s own per-invocation, no-cache contract) rather
+ * than threaded through `partial`, so every route — including ones that never touch the
+ * conversational path at all — gets one.
+ */
+function buildExplainRecord(
   p: RunAskParams,
+  partial: ExplainPartial,
+  startedAt: number,
+  error: unknown,
+): AskExplainRecord {
+  const base = {
+    askedAt: startedAt,
+    durationMs: Date.now() - startedAt,
+    question: p.input,
+    source: p.clientId === "chatops" ? ("chatops" as const) : ("local" as const),
+    persona: (() => {
+      const persona = resolvePersona(p.paths.configDir);
+      return `${persona.tone}/${persona.voice}`;
+    })(),
+    classifier: partial.classifier ?? CLASSIFIER_NOT_CALLED_DEFAULT,
+    ...(partial.modelRoute === undefined ? {} : { modelRoute: partial.modelRoute }),
+    ...(partial.fallbackFromLocalRouter === undefined
+      ? {}
+      : { fallbackFromLocalRouter: partial.fallbackFromLocalRouter }),
+  };
+
+  if (error !== undefined) {
+    return { ...base, route: "failed", stage: partial.stage, error: describeExplainError(error) };
+  }
+
+  // Absent only if a future route forgets to set it before returning — default to `agent_tools`
+  // with no tool calls rather than throw a second, confusing error out of the recording path
+  // itself (recording must never break the user's answer, which by now has already succeeded).
+  const route = partial.route ?? { kind: "agent_tools" as const };
+  switch (route.kind) {
+    case "empty_index":
+      return { ...base, route: "empty_index" };
+    case "local_context":
+      return {
+        ...base,
+        route: "local_context",
+        searchTerms: route.searchTerms,
+        ...(route.fallbackTermFired === undefined
+          ? {}
+          : { fallbackTermFired: route.fallbackTermFired }),
+        truncation: route.truncation,
+        pool: route.pool,
+        discardedTail: route.discardedTail,
+      };
+    case "agent_tools":
+      // Task 5's collector, drained here: the four `runAsk` call sites (the three
+      // `ipc/server/inline-handlers.ts` sites and the ChatOps one `gateway-main.ts` wraps
+      // explicitly) already run inside `agentRequestContext.run(...)`, so a store exists by the
+      // time this drains it. `?? []` covers a caller outside any such context (a bare unit test):
+      // no store means no calls to report, not an error.
+      return { ...base, route: "agent_tools", toolCalls: [...(getExplainToolCalls() ?? [])] };
+    case "plan_dispatch":
+      return { ...base, route: "plan_dispatch", plan: route.plan };
+  }
+}
+
+async function runAskInner(
+  p: RunAskParams,
+  partial: ExplainPartial,
 ): Promise<{ reply: string; modelMeta?: LlmGenerateResult }> {
   const indexed = countIndexedItems(p.localIndex);
   const empty = emptyIndexGuidanceIfNeeded(p, indexed);
   if (empty !== undefined) {
+    partial.classifier = { called: false, reason: "index is empty" };
+    partial.route = { kind: "empty_index" };
     return empty;
   }
 
@@ -772,15 +977,27 @@ export async function runAsk(
   // user cannot predict. The classifier is skipped entirely rather than called and ignored: its
   // verdict cannot change the route here, and it costs an LLM round-trip.
   if (p.devil === true) {
+    partial.classifier = { called: false, reason: "devil mode bypasses the classifier" };
     if (!canUseConversation(p)) {
       // Forcing the route must not fabricate a path: with no agent and no local router there is
       // nothing to converse with, and the existing no-LLM error is the honest answer.
       throw new GatewayAgentUnavailableError({ reason: "no_api_key" });
     }
-    return await answerConversationally(p);
+    return await answerConversationally(p, partial);
   }
 
-  const classified = await classifyIntentForAskWithLocalFallback(p);
+  const { classified, classifierDestination, classifierSkipReason } =
+    await classifyIntentForAskWithLocalFallback(p);
+  partial.classifier =
+    classifierDestination === undefined
+      ? { called: false, reason: classifierSkipReason ?? "classifier produced no destination" }
+      : {
+          called: true,
+          intent: classified.intent,
+          confidence: classified.confidence,
+          entities: classified.entities,
+          destination: classifierDestination,
+        };
 
   const shouldUseConversational =
     shouldAnswerFromLocalIndexedContext(p) ||
@@ -788,11 +1005,37 @@ export async function runAsk(
     classified.confidence < 0.6;
 
   if (canUseConversation(p) && shouldUseConversational) {
-    return await answerConversationally(p);
+    return await answerConversationally(p, partial);
   }
 
+  partial.stage = "model";
   const plan = planFromIntent(classified, p.paths);
+  partial.route = { kind: "plan_dispatch", plan: describePlan(plan) };
   return await dispatchPlan(p, plan);
+}
+
+/**
+ * `runAsk` records exactly one {@link AskExplainRecord} per call, on EVERY exit path — success or
+ * throw (spec §4.2). A caller that only recorded on success would leave `explain last` showing
+ * the PREVIOUS successful ask at the moment the user most needs the truth, so the whole body runs
+ * inside `runAskInner`, which mutates one `ExplainPartial` as the turn progresses, and this
+ * wrapper builds the record from whatever got captured — complete on success, partial on throw —
+ * without changing what the caller receives or throws either way. `p.explainRecorder` is
+ * optional: absent, nothing is recorded and this wrapper costs one object allocation.
+ */
+export async function runAsk(
+  p: RunAskParams,
+): Promise<{ reply: string; modelMeta?: LlmGenerateResult }> {
+  const startedAt = Date.now();
+  const partial: ExplainPartial = { stage: "classification" };
+  try {
+    const out = await runAskInner(p, partial);
+    p.explainRecorder?.record(buildExplainRecord(p, partial, startedAt, undefined));
+    return out;
+  } catch (e) {
+    p.explainRecorder?.record(buildExplainRecord(p, partial, startedAt, e));
+    throw e;
+  }
 }
 
 /** Test seam: `buildLocalIndexedContext` is module-private and has no other entry point. */

@@ -157,6 +157,7 @@ import {
   embedQueryDualBestEffort,
 } from "../embedding/embedding-readiness.ts";
 import type { EmbeddingRuntime as ConcreteEmbeddingRuntime } from "../embedding/embedding-runtime.ts";
+import { AskExplainRecorder } from "../engine/ask-explain-recorder.ts";
 import { delegatedApprovalBroker } from "../engine/delegated-approval-broker.ts";
 import { buildDelegatedRequestRemote } from "../engine/delegated-request-remote.ts";
 import { DelegationStore } from "../engine/delegation-store.ts";
@@ -4175,6 +4176,10 @@ export async function assemblePlatformServices(
   });
   sidecarStops.push(telemetryStop.stop);
 
+  // `nimbus explain last` (spec §4). ONE recorder for the process's lifetime, shared by every
+  // `runAsk` call site `gateway-main.ts` wires it to — see `PlatformServices.askExplainRecorder`.
+  const askExplainRecorder = new AskExplainRecorder();
+
   return {
     vault,
     ipc,
@@ -4193,6 +4198,7 @@ export async function assemblePlatformServices(
     ...(agentVendor === undefined ? {} : { agentVendor }),
     connectorWriteDeps,
     embeddingReadiness,
+    askExplainRecorder,
     ...(sessionMemoryStore === undefined ? {} : { sessionMemoryStore }),
     policyHitl,
     ...(federationBooted === undefined ? {} : { executorDelegation: federationBooted }),
