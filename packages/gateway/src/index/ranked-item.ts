@@ -12,4 +12,20 @@ export type RankedIndexItem = NimbusItem & {
   semanticSnippet?: string;
   bm25Rank?: number | null;
   vectorRank?: number | null;
+  /**
+   * The three inputs `compositeSearchScore` folded into `score`, kept so `nimbus explain last`
+   * can say WHY an item ranked where it did (spec §2.1).
+   *
+   * `matchScore` is deliberately NOT named `bm25Score`: on the hybrid path it is the min-max
+   * normalised RRF score, and on the FTS path it is a normalised rank POSITION
+   * (`1 - i/(n-1)`) — `normalizeBm25LowerIsBetter` is not called on either (spec §2.2).
+   * `scoringFormula` is what tells a renderer which scores may be compared with which.
+   *
+   * All four are optional because candidates from the raw-SQL repo-slug pass have none of
+   * them — no score was ever computed for those rows (spec §2.4).
+   */
+  matchScore?: number;
+  recencyComponent?: number;
+  servicePriorityComponent?: number;
+  scoringFormula?: "hybrid_rrf" | "fts_rank";
 };
