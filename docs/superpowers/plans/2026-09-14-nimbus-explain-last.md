@@ -677,9 +677,10 @@ In `packages/gateway/src/engine/run-ask.ts`:
 
 ```ts
 import { classifyCandidateOutcome } from "./ask-explain-outcome.ts";
-import type { ContributingPass, LocalCandidate } from "./ask-explain-types.ts";
-import { buildContextWindow } from "./context-ranker.ts";
+import type { CandidateOutcome, ContributingPass, LocalCandidate } from "./ask-explain-types.ts";
 ```
+
+Note there is **no** `buildContextWindow` import — see the grouping step below for why.
 
 2. **`byId` does not hold `RankedIndexItem`, and this is the trap in this task.** There are TWO
    adders, keyed differently, and the ranked one *discards every score*:
@@ -1177,6 +1178,41 @@ single exit point must write belongs in ONE place, or it is two places for it to
 
 `source` is `p.clientId === "chatops" ? "chatops" : "local"` (spec §4.3).
 
+**`buildExplainRecord` MUST drain Task 5's collector for the `agent_tools` route:**
+
+```ts
+import { getExplainToolCalls } from "./agent-request-context.ts";
+// ...when partial.route is "agent_tools":
+{ route: "agent_tools", toolCalls: [...(getExplainToolCalls() ?? [])] }
+```
+
+This is safe from inside `runAsk`: **all four `runAsk` call sites already run inside
+`agentRequestContext.run(...)`** — the three in `ipc/server/inline-handlers.ts` (:96, :215, :350)
+and the ChatOps one, which `gateway-main.ts:222` wraps explicitly and says so in a comment.
+
+Without this drain, `toolCalls` is a required field with nothing to fill it, and the likeliest
+implementation is `[]` — which type-checks and ships an agent-route report that silently always
+says "no tool calls". That is the same silent-defeat shape as Task 4's `rankedById` trap, so it
+gets the same treatment: a test that is loud about it.
+
+Add to the Step 1 test file:
+
+```ts
+test("an agent-route ask carries the tool calls Task 5 collected", async () => {
+  const r = new AskExplainRecorder();
+  await runAsk(
+    makeRunAskParams({ input: "list my PRs", explainRecorder: r, agentToolCalls: ["searchLocalIndex"] }),
+  );
+  const last = r.last();
+  expect(last?.route).toBe("agent_tools");
+  // Guards the drain: an implementation that fills `toolCalls: []` passes every other test here.
+  expect(last?.route === "agent_tools" ? last.toolCalls : []).toHaveLength(1);
+});
+```
+
+`makeRunAskParams`'s injected agent fake honours `agentToolCalls` by calling
+`recordExplainToolCall` once per named tool before returning its reply.
+
 - [ ] **Step 6: Surface the fallback from `runConversationalAgent`**
 
 In `run-conversational-agent.ts` at the local-router catch (~:228), add the caught error to the
@@ -1335,8 +1371,19 @@ Spec §9, §5. Two substantial renderers; two route lines.
 - Test: `packages/cli/src/commands/explain-format.test.ts`
 
 **Interfaces:**
-- Consumes: the `ask.explainLast` result from Task 7.
-- Produces: `runExplain(args: string[]): Promise<void>`, `formatExplain(record, opts): string`.
+- Consumes: the `ask.explainLast` result from Task 7 — **as a locally-declared structural type**.
+- Produces: `runExplainCmd(args: string[]): Promise<void>`, `runExplain(client, args): Promise<void>`, `formatExplain(record, opts): string`.
+
+**Non-negotiable for this task:** `packages/cli` reaches the gateway **IPC-only — no source
+imports**. Do NOT `import type { AskExplainRecord } from "../../../gateway/src/engine/..."`.
+Declare the response shape locally in `explain-format.ts` (the same way `index-health-format.ts`
+declares its own `IndexHealthReport`) and let the JSON-RPC boundary be the contract:
+
+```ts
+export type ExplainLastResult =
+  | { readonly record: null; readonly reason: "no_ask_since_start" }
+  | { readonly record: ExplainRecordView };
+```
 
 - [ ] **Step 1: Write the failing test**
 
