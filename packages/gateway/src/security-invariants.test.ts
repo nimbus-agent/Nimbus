@@ -442,6 +442,17 @@ describe("I5 — LAN method allowlist is intrinsic to LanServer", () => {
     expect(() => checkLanMethodAllowed("clip.pair", peer)).toThrow(/not callable over LAN/);
     expect(() => checkLanMethodAllowed("clip.status", peer)).toThrow(/not callable over LAN/);
   });
+
+  test("FORBIDDEN_OVER_LAN blocks the whole ask namespace (explain last carries the owner's question)", async () => {
+    const src = await read("packages/gateway/src/ipc/lan-rpc.ts");
+    expect(src).toMatch(/"ask"/);
+    const { checkLanMethodAllowed } = await import("./ipc/lan-rpc.ts");
+    const peer = { peerId: "peer:x", writeAllowed: true };
+    // checkLanMethodAllowed is a DENYLIST: everything not named is ALLOWED. Without the "ask"
+    // entry this method ships reachable by any paired peer, handing them the owner's question
+    // text and the titles of the owner's indexed items (spec §3.2).
+    expect(() => checkLanMethodAllowed("ask.explainLast", peer)).toThrow(/ERR_METHOD_NOT_ALLOWED/);
+  });
 });
 
 describe("I6 — LAN bind defaults to loopback", () => {

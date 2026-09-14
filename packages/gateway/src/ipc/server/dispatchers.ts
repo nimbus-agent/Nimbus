@@ -99,6 +99,7 @@ function assertDiagnosticsRpcAccess(
   wantsConfig: boolean,
   wantsTelemetry: boolean,
   wantsDiagnostics: boolean,
+  wantsAskExplain: boolean,
   opts: Pick<CreateIpcServerOptions, "configDir" | "dataDir" | "localIndex">,
 ): void {
   if (wantsConfig) {
@@ -114,6 +115,12 @@ function assertDiagnosticsRpcAccess(
     if (method === "telemetry.preview" && opts.localIndex === undefined) {
       throw new RpcMethodError(-32603, "telemetry.preview requires local index");
     }
+    return;
+  }
+  if (wantsAskExplain) {
+    // ask.explainLast reads the in-memory ring only — unlike the index.* diagnostics below, it
+    // has no localIndex/dataDir dependency, so it must not inherit that requirement (a gateway
+    // without a local index would otherwise refuse a method that needs no index at all).
     return;
   }
   if (wantsDiagnostics && (opts.localIndex === undefined || opts.dataDir === undefined)) {
@@ -1828,10 +1835,18 @@ export async function tryDispatchDiagnosticsRpc(
     method === "index.health" ||
     method === "index.queryItems" ||
     method === "index.querySql";
-  if (!wantsConfig && !wantsTelemetry && !wantsDiagnostics) {
+  const wantsAskExplain = method === "ask.explainLast";
+  if (!wantsConfig && !wantsTelemetry && !wantsDiagnostics && !wantsAskExplain) {
     return diagnosticsRpcSkipped;
   }
-  assertDiagnosticsRpcAccess(method, wantsConfig, wantsTelemetry, wantsDiagnostics, ctx.options);
+  assertDiagnosticsRpcAccess(
+    method,
+    wantsConfig,
+    wantsTelemetry,
+    wantsDiagnostics,
+    wantsAskExplain,
+    ctx.options,
+  );
   try {
     const ctxBase = {
       dataDir: ctx.options.dataDir ?? "",
@@ -1851,6 +1866,10 @@ export async function tryDispatchDiagnosticsRpc(
       ...(ctx.options.embeddingReadiness === undefined
         ? {}
         : { embeddingReadiness: ctx.options.embeddingReadiness }),
+      // ask.explainLast reads this ring directly; no other diagnostics method touches it.
+      ...(ctx.options.askExplainRecorder === undefined
+        ? {}
+        : { askExplainRecorder: ctx.options.askExplainRecorder }),
     };
     const diagCtx =
       ctx.options.localIndex === undefined

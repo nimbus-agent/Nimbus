@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { AskExplainRecorder } from "../../engine/ask-explain-recorder.ts";
 import { InMemoryDiscoveryProvider } from "../../federation/discovery.ts";
 import { PeerPairing } from "../../federation/peer-pairing.ts";
 import { LocalIndex } from "../../index/local-index.ts";
@@ -96,6 +97,19 @@ describe("assertDiagnosticsRpcAccess fall-through (the `return;` after each guar
       (e: unknown) => e,
     );
     expect(outcome).not.toBe(diagnosticsRpcSkipped);
+  });
+
+  test("ask.explainLast falls through with NO localIndex/dataDir at all", async () => {
+    // The regression this guards: a handler added to diagnostics-rpc.ts without a matching
+    // routing entry in tryDispatchDiagnosticsRpc's wantsConfig/wantsTelemetry/wantsDiagnostics
+    // guard compiles, unit-tests green against dispatchDiagnosticsRpc directly, and returns
+    // "Method not found" over a real socket. Calling the ROUTING function (not the sub-dispatcher)
+    // with NEITHER localIndex NOR dataDir set is what proves the route exists independently of
+    // assertDiagnosticsRpcAccess's other branches, which ask.explainLast must not inherit.
+    const ctx = makeCtx({ askExplainRecorder: new AskExplainRecorder() });
+    const outcome = await tryDispatchDiagnosticsRpc(ctx, "ask.explainLast", null);
+    expect(outcome).not.toBe(diagnosticsRpcSkipped);
+    expect(outcome).toEqual({ record: null, reason: "no_ask_since_start" });
   });
 });
 

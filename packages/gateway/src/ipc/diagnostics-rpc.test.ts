@@ -3,6 +3,8 @@ import { describe, expect, test } from "bun:test";
 import { existsSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { isAbsolute, join, relative } from "node:path";
+import { AskExplainRecorder } from "../engine/ask-explain-recorder.ts";
+import type { AskExplainRecord } from "../engine/ask-explain-types.ts";
 import { upsertGraphEntity, upsertGraphRelation } from "../graph/relationship-graph.ts";
 import { LocalIndex } from "../index/local-index.ts";
 import { openMigratedDb } from "../index/migrated-db-template.ts";
@@ -38,6 +40,30 @@ function makeCtx(dataDir: string): DiagnosticsRpcContext {
     consent: { pendingCount: () => 0 } as never,
     gatewayVersion: "0.0.0-test",
     startedAtMs: Date.now(),
+  };
+}
+
+function makeCtxWithRecorder(askExplainRecorder: AskExplainRecorder): DiagnosticsRpcContext {
+  return {
+    dataDir: "",
+    configDir: "",
+    consent: { pendingCount: () => 0 } as never,
+    gatewayVersion: "0.0.0-test",
+    startedAtMs: Date.now(),
+    askExplainRecorder,
+  };
+}
+
+function sampleRecord(question: string): AskExplainRecord {
+  return {
+    askedAt: 1_700_000_000_000,
+    durationMs: 10,
+    question,
+    source: "local",
+    persona: "standard",
+    modelRoute: { provider: "ollama", model: "llama3.2", isLocal: true },
+    classifier: { called: false, reason: "local preference" },
+    route: "empty_index",
   };
 }
 
@@ -1865,5 +1891,32 @@ describe("db.restore.preview — valid path", () => {
     } finally {
       rmTmp(dir);
     }
+  });
+});
+
+describe("ask.explainLast", () => {
+  test("reports the empty state rather than an empty report", async () => {
+    const r = await dispatchDiagnosticsRpc(
+      "ask.explainLast",
+      null,
+      makeCtxWithRecorder(new AskExplainRecorder()),
+    );
+    expect(r).toEqual({ kind: "hit", value: { record: null, reason: "no_ask_since_start" } });
+  });
+
+  test("returns the most recent record", async () => {
+    const rec = new AskExplainRecorder();
+    rec.record(sampleRecord("why is checkout slow?"));
+    const r = await dispatchDiagnosticsRpc("ask.explainLast", null, makeCtxWithRecorder(rec));
+    expect((r as { value: { record: { question: string } } }).value.record.question).toBe(
+      "why is checkout slow?",
+    );
+  });
+
+  test("a context with no recorder at all reports the empty state, not a crash", async () => {
+    const ctx = makeCtxWithRecorder(new AskExplainRecorder());
+    const { askExplainRecorder: _drop, ...withoutRecorder } = ctx;
+    const r = await dispatchDiagnosticsRpc("ask.explainLast", null, withoutRecorder as typeof ctx);
+    expect(r).toEqual({ kind: "hit", value: { record: null, reason: "no_ask_since_start" } });
   });
 });
