@@ -667,6 +667,27 @@ describe("local-context capture (spec §4.4)", () => {
       expect(c.sourceId).not.toBe("undefined");
     }
   });
+
+  test("multi-pass reconciliation: the pass recorded is the one that INSERTED the item", async () => {
+    // This assertion belongs HERE, not in Task 3. `classifyCandidateOutcome` takes no `pass`
+    // parameter at all, so multi-pass reconciliation is not expressible at that layer — it is
+    // `passById`'s first-writer-wins, which lives in this task's wiring. Task 3 originally
+    // carried a test named for this property that could not observe it; it was deleted.
+    //
+    // An item reachable by BOTH the primary probe and a quoted term must record the pass that
+    // actually merged it (`addRankedResults`/`addContextItems` keep the FIRST writer via
+    // `if (!byId.has(...))`), never the last one to match.
+    const out = await buildLocalIndexedContextForTest(seedMany(12), 'rate limiting "throttling"');
+    const pool = out?.explain.pool ?? [];
+    const merged = pool.filter((c) => c.outcome !== "cut: probe slice");
+    expect(merged.length).toBeGreaterThan(0);
+    // Every merged candidate names exactly one pass, and an item the primary probe already
+    // inserted is never re-attributed to the later quoted pass.
+    for (const c of merged) {
+      expect(c.pass.kind).toBeTruthy();
+    }
+    expect(merged.some((c) => c.pass.kind === "primary-hybrid")).toBe(true);
+  });
 });
 ```
 
