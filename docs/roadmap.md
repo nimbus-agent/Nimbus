@@ -1013,20 +1013,26 @@ multimodal row; it is not a spine row and is not counted in either half.
   the parent design spec's § 10, which this shipped design avoided precisely because a Bun upgrade
   or a moved config directory must not present as tampering).
 
-  **Structurally offered, not model-reachable yet.** `toolgen-agent-tools.ts`'s `buildGeneratedTools`
-  — the function that would put a generated (ephemeral or saved) tool in front of the conversational
+  **Structurally offered, not model-reachable.** `toolgen-agent-tools.ts`'s `buildGeneratedTools` —
+  the function that would put a generated (ephemeral or saved) tool in front of the conversational
   model — exists and is tested, but `engine/agent.ts`'s `NimbusEngineAgentDeps.toolgen` is optional
   and its one production caller, `gateway-main.ts`'s `createNimbusEngineAgent(...)` call, never
   supplies it. `nimbus tool create`/`save`/`list`/`revoke`/`credential set` therefore work end to
   end, and a saved tool survives a restart and is spawnable IN-PROCESS (`spawnSavedTool`, exercised
-  end to end by this closing PR's own integration test across two independent gateway processes).
-  **No path INVOKES a generated tool this release** — there is no `toolgen.invoke` IPC method and no
-  CLI subcommand that calls one, and with `deps.toolgen` unwired the model cannot either; the cited
-  proof is an in-process test call, not a shipped surface. Same disclosure shape
-  `deps.computerUse` already carries for the identical reason.
-  Wiring `deps.toolgen` is a deliberate, undone decision, not an oversight: it would activate a
-  dormant capability (model-authored code becoming model-invocable) and is left for a human to
-  schedule.
+  end to end by this closing PR's own integration test across two independent gateway processes). At
+  the time this PR shipped, no path invoked a generated tool at all — there was no `toolgen.invoke`
+  IPC method and no CLI subcommand that called one. **That gap closed in a follow-up (2026-09-15):**
+  `toolgen.invoke` (CLI-only, LAN-forbidden, like every other `toolgen.*` method) plus
+  `nimbus tool run <tool-id> [--input <json>] [--json]` now invoke a SAVED tool for real, through a
+  fresh confined spawn — see [`cli-reference.md` § `nimbus tool`](./cli-reference.md#nimbus-tool) for
+  the full contract (exactly one `tool.invoke` audit row per call, carrying neither the input nor the
+  result; presence-only input validation, not schema conformance). **What did NOT move with it:**
+  `deps.toolgen` is STILL deliberately left unwired in `gateway-main.ts`, so the model itself still
+  cannot invoke a generated tool — `nimbus tool run` is CLI/owner-only, the same scope bound
+  `nimbus exec` holds under I33, and an ephemeral (created-but-not-saved) tool is still not invocable
+  by any path. Wiring `deps.toolgen` remains a deliberate, undone decision, not an oversight: it
+  would activate a dormant capability (model-authored code becoming model-invocable) and is left for
+  a human to schedule.
 
   **Agent-initiated proposal did not ship in this slice and is a named, reason-recorded deferral** —
   the same treatment fleet's subject-enumeration PR 2b and the computer-use screen lane received,

@@ -1899,11 +1899,16 @@ the row, the `saved/` directory, the registry entry, the ephemeral script and th
 together. Design:
 [`architecture.md` § Runtime tool generation](./architecture.md#runtime-tool-generation-toolgen-nimbus-tool).
 
-**Not shipped:** agent-initiated tool proposal (`allow_agent_initiated` + `allowed_hosts`), and any
-path that INVOKES a generated tool — neither an IPC method nor a CLI subcommand calls one, and the
-engine's `deps.toolgen` is deliberately left unwired. A saved tool is spawnable in-process
-(`spawnSavedTool`) and is exercised end to end by an integration test; nothing in the shipped
-gateway calls it.
+**Invocation shipped in a follow-up.** `nimbus tool run <tool-id> [--input <json>] [--json]` calls
+a SAVED tool through the new `toolgen.invoke` IPC method — CLI-only and LAN-forbidden like every
+other `toolgen.*` method, and absent from the Tauri allowlist. It runs the saved artifact's real,
+signature-verified body in a fresh confined spawn and returns the result. See below for its full
+contract. **What has not moved:** the engine's `deps.toolgen` is still deliberately left unwired in
+`gateway-main.ts`, so the model itself still cannot call a generated tool — `nimbus tool run` is
+CLI/owner-only, the same scope bound `nimbus exec` holds under I33. An ephemeral (created-but-not-
+saved) tool is still not invocable at all.
+
+**Not shipped:** agent-initiated tool proposal (`allow_agent_initiated` + `allowed_hosts`).
 
 **`[tool_generation] drafting` controls which model may author a tool body — DEFAULT `"local"`:**
 
@@ -2021,6 +2026,8 @@ nimbus tool create --description "post to my tracker" --host api.example.com \
 nimbus tool list
 nimbus tool list --json
 nimbus tool save 3fa85f64-5717-4562-b3fc-2c963f66afa6
+nimbus tool run 3fa85f64-5717-4562-b3fc-2c963f66afa6 --input '{"city":"Berlin"}'
+nimbus tool run 3fa85f64-5717-4562-b3fc-2c963f66afa6 --input '{"city":"Berlin"}' --json
 nimbus tool revoke 3fa85f64-5717-4562-b3fc-2c963f66afa6
 nimbus tool credential set 3fa85f64-5717-4562-b3fc-2c963f66afa6 api.example.com --bearer sk_live_...
 ```
@@ -2032,6 +2039,7 @@ A tool id is a raw `randomUUID()` value (`ToolgenGateDeps.newId`) — there is n
 | `create --description <text> --host <h>...` | Register a tool. `--host` is repeatable and at least one is required. `--credential <host>=<token>` is repeatable and bearer-only from the CLI; naming a host not also passed to `--host` is refused before anything is sent to the gateway. |
 | `list [--json]` | Live tools from this CLI's own session, UNION every SAVED tool regardless of session — including a saved tool that failed verification, which is listed with its `disabledReason` rather than silently omitted. Never a credential value, only the host names a credential is bound for. |
 | `save <tool-id>` | Promotes a live tool to a DURABLE one (I40): signs the artifact with a Vault-held Ed25519 key, writes `saved/<tool-id>/`, rows it in `generated_tool`. Prompts SEPARATELY from `create`, over its own broker — approving a save is a STANDING approval ("runs in every future session, unattended"), not the create-time one reused. Refuses a tool that is not live in this session. Saving the exact bytes twice is a no-op (`already_saved`); re-saving bytes whose row is disabled but whose digest still matches is a `repaired`, with no fresh prompt. |
+| `run <tool-id> [--input <json>] [--json]` | Invokes a SAVED tool — `create` alone is not enough; the tool has to have gone through `save` first. `--input` is a JSON object of the tool's arguments, validated CLIENT-SIDE before anything is sent to the gateway: it must parse as JSON and be an object, or the CLI refuses before opening a connection. Omitted `--input` defaults to `{}`. No approval prompt: the STANDING approval already obtained at `save` time covers every future invocation, unattended, which is the whole point of persisting a tool — see `save`'s own row. Headless-capable, unlike `create`/`save`: nothing here needs a TTY. |
 | `revoke <tool-id>` | The WITHDRAWAL PATH, and the one the save prompt names. Ends the tool's child process, evicts it from the registry's saved set, deletes its `generated_tool` row and its `saved/<tool-id>` directory, deletes its approved ephemeral script, and deletes every Vault credential bound to it — one call, all of it, so a revoked tool does not come back at the next boot. Idempotent, and works whether the tool is saved-only, ephemeral-only, or both. The reserved id `signing` is refused (`ERR_TOOLGEN_TOOL_ID_RESERVED`): its Vault prefix is the artifact-signing keypair's. |
 | `credential set <tool-id> <host> (--bearer <token> \| --header <name> <value> \| --basic <user> <pass>)` | Binds a credential to a host the tool was ALREADY approved to reach. This is the recovery path for a SAVED tool after a restart: a saved tool's approval persists, its per-host secret never does (the boot/shutdown sweep is total), so a saved tool needing a credential re-acquires it here. `credentialHosts` is part of the signed artifact and is never widened — a host outside it is refused with `ERR_TOOLGEN_CREDENTIAL_HOST_UNKNOWN`. All three schemes work. |
 
@@ -2083,7 +2091,7 @@ There is no headless path: toolgen.create is LAN-forbidden and local-only.
 `approvalRespond` is the local owner answering a prompt no peer may answer for them) and absent
 from the Tauri allowlist (I7).
 
-**Exit codes.**
+**Exit codes for `create`.**
 
 | Code | Meaning |
 | --- | --- |
@@ -2095,6 +2103,42 @@ On `ERR_TOOLGEN_DRAFT_INVALID`, and only when the route that produced the failin
 the CLI adds a hint: configure a larger local model (`[llm] min_reasoning_params`) or set
 `[tool_generation] drafting = "allow-remote"`. It is withheld when the failing route was remote —
 suggesting a bigger local model to someone already on a frontier model is noise, not help.
+
+**`nimbus tool run` — invoking a saved tool.** `--input`'s object is checked for the right SHAPE,
+never full JSON Schema conformance: every key the tool's drafted `inputSchema` marks `required` must
+be present, and that is the entire check — a `required: number` field holding a string is not
+caught here, nor is anything about `properties` the drafted schema does not mark required. The tool
+body itself is what actually consumes the value, so a type mismatch surfaces as a normal tool
+failure (`status: "failed"`), not a refusal.
+
+`toolgen.invoke` (`{ toolId, input? }`) returns one of three shapes, exactly:
+
+```text
+{ status: "executed", toolId, result, durationMs }
+{ status: "failed",   toolId, error,  durationMs }
+{ status: "refused",  toolId, code,   reason? }
+```
+
+**Nothing about the call is recorded except that it happened.** Exactly one `audit_log` row is
+written per invocation (`action_type: "tool.invoke"`, `hitl_status: "not_required"` — the STANDING
+approval obtained at `save` time, not a fresh one per call), and its payload carries the outcome,
+the tool id, the duration, and — on a refusal or failure — the code/error text. It carries neither
+the `--input` object nor the tool's `result`: the projection type the row is built from has no
+member for either, so adding one is a compile error, not a discipline someone has to remember.
+**One honest bound, stated rather than left implicit:** a tool's `error` text is free text the TOOL
+itself composes, capped at 512 Unicode code points before it is written to the row — a tool that
+echoes its own input back into its error message can put that fragment in the row. The cap bounds
+the exposure; it does not eliminate it. The full, uncapped error still reaches the caller on the
+returned outcome, which is where an operator actually reads it — the cap applies only to the copy
+written to disk.
+
+**Exit codes for `run`.**
+
+| Code | Meaning |
+| --- | --- |
+| `0` | `status: "executed"` — the tool ran and returned its result. |
+| `1` | `status: "failed"` — the tool ran and threw, or `--input` failed the CLIENT-SIDE JSON/object check before anything was sent to the gateway. |
+| `127` | `status: "refused"` — refused before any spawn: the capability is off (config or org policy), the tool id does not name a SAVED tool (`ERR_TOOLGEN_NOT_SAVED` — includes a tool that was only ever `create`d, never `save`d), the input failed the gateway's own required-key check, or the saved artifact's signature no longer verifies (`ERR_TOOLGEN_SIGNATURE_INVALID` — tampered or corrupted since `save`). |
 
 **Org lockoff.** A signed `nimbus.policy.toml` can disable it fleet-wide:
 
