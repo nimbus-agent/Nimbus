@@ -257,7 +257,11 @@ the code and error string.
 
 **The input and output are never recorded by construction** — the projection type has no member for
 either, so adding one is a compile error. A failure's error TEXT is recorded but capped at 512
-code points (UTF-8 code points, not bytes, so characters are not split). The asymmetry with
+Unicode code points rather than bytes — slicing UTF-8 by byte can split a character and write
+mojibake into the row, which a code-point slice cannot. The narrower residual, stated rather than
+implied: a code-point slice can still divide a multi-code-point grapheme cluster (a ZWJ emoji
+sequence, an emoji with a skin-tone modifier) into two halves, each individually valid. The
+asymmetry with
 `code.execute` is deliberate: I33 records an execution's body in full because the owner approved
 those exact bytes and the record is what proves it. Here the body was approved at save time and
 already sits on disk under signature; what differs per call is the *input*, which is ordinary
