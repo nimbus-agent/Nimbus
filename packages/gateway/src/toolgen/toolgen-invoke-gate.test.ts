@@ -239,7 +239,12 @@ describe("serialise cleanup", () => {
         describe: async () => ({ name: "", description: "", inputSchema: {} }),
       }),
     });
-    await invokeSavedTool({ toolId: "cleanup-test-t1", input: { q: "x" } }, d);
+    const out = await invokeSavedTool({ toolId: "cleanup-test-t1", input: { q: "x" } }, d);
+    // Assert the invocation actually RAN before asserting the cleanup. Every refusal returns
+    // before `serialise` is ever called, so a future change that made this path refuse would
+    // create no chain entry at all and the size assertion below would hold vacuously — passing
+    // while proving nothing about the cleanup it is named for.
+    expect(out.status).toBe("executed");
     // Let the cleanup microtask run: it is queued on the tail's `finally`, one turn after the
     // invocation's own promise resolves.
     await Promise.resolve();
