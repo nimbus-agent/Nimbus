@@ -143,19 +143,30 @@ export async function invokeSavedTool(
  */
 const chains = new Map<string, Promise<unknown>>();
 
+/**
+ * Test-only accessor for the size of the chains map. Exists solely so the cleanup of per-tool-id
+ * chain entries can be asserted without reaching into module internals.
+ */
+export function __chainsSizeForTest(): number {
+  return chains.size;
+}
+
 function serialise<T>(toolId: string, run: () => Promise<T>): Promise<T> {
   const prev = chains.get(toolId) ?? Promise.resolve();
   const next = prev.then(run, run);
-  // Keep the chain from growing unbounded, and drop the entry once it is the tail.
-  chains.set(
-    toolId,
-    next.catch(() => undefined),
-  );
-  void next
-    .catch(() => undefined)
-    .finally(() => {
-      if (chains.get(toolId) === undefined) chains.delete(toolId);
-    });
+  // The stored tail is a settled-either-way derivation of `next`, so a rejected predecessor can
+  // never poison a later caller's chain. Keep exactly ONE reference to it: the cleanup below
+  // compares identity, and a second `.catch()` would build a different object that could never
+  // match. The previous comparison was against `undefined`, which `set` makes unreachable — the
+  // entry was never dropped at all.
+  const tail = next.catch(() => undefined);
+  chains.set(toolId, tail);
+  void tail.finally(() => {
+    // Drop the entry only when nothing has queued behind us: the map still holding OUR tail means
+    // we are the last link. If a later call has already chained on, it has replaced the value and
+    // will do its own cleanup.
+    if (chains.get(toolId) === tail) chains.delete(toolId);
+  });
   return next;
 }
 

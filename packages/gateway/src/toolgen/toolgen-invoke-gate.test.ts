@@ -1,5 +1,9 @@
 import { describe, expect, test } from "bun:test";
-import { invokeSavedTool, type ToolgenInvokeDeps } from "./toolgen-invoke-gate.ts";
+import {
+  __chainsSizeForTest,
+  invokeSavedTool,
+  type ToolgenInvokeDeps,
+} from "./toolgen-invoke-gate.ts";
 
 const ARTIFACT = {
   toolId: "t1",
@@ -219,5 +223,27 @@ describe("invokeSavedTool execution", () => {
       invokeSavedTool({ toolId: "t2", input: { q: "b" } }, d),
     ]);
     expect(maxActive).toBe(2);
+  });
+});
+
+describe("serialise cleanup", () => {
+  test("the per-tool-id chain entry is dropped once the last caller drains", async () => {
+    const before = __chainsSizeForTest();
+    const d = deps({
+      registry: {
+        savedTools: () => [{ toolId: "cleanup-test-t1", artifact: ARTIFACT }],
+      } as unknown as ToolgenInvokeDeps["registry"],
+      spawn: async () => ({
+        call: async () => "ok",
+        close: async () => {},
+        describe: async () => ({ name: "", description: "", inputSchema: {} }),
+      }),
+    });
+    await invokeSavedTool({ toolId: "cleanup-test-t1", input: { q: "x" } }, d);
+    // Let the cleanup microtask run: it is queued on the tail's `finally`, one turn after the
+    // invocation's own promise resolves.
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(__chainsSizeForTest()).toBe(before);
   });
 });
