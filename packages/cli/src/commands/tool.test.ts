@@ -4,10 +4,12 @@ import { join } from "node:path";
 import type { OutcomeSink, RunToolDeps, ToolClient } from "./tool.ts";
 import {
   CLI_TOOLGEN_SESSION_ID,
+  exitCodeForInvoke,
   exitCodeForTool,
   formatToolApprovalPrompt,
   handleToolApprovalBroadcast,
   parseToolArgs,
+  renderToolInvokeOutcome,
   renderToolList,
   renderToolOutcome,
   runTool,
@@ -132,6 +134,39 @@ describe("parseToolArgs", () => {
     expect(() => parseToolArgs(["save", "--force"])).toThrow(/tool id is required/);
   });
 
+  test("parses run with input and json", () => {
+    expect(parseToolArgs(["run", "t1", "--input", '{"q":"x"}', "--json"])).toEqual({
+      sub: "run",
+      toolId: "t1",
+      input: { q: "x" },
+      json: true,
+    });
+  });
+
+  test("run without --input defaults to an empty object", () => {
+    expect(parseToolArgs(["run", "t1"])).toMatchObject({ sub: "run", input: {} });
+  });
+
+  test("invalid --input JSON is a usage error and never reaches the gateway", () => {
+    expect(() => parseToolArgs(["run", "t1", "--input", "{nope"])).toThrow(/must be valid JSON/);
+  });
+
+  test("--input that is not an object is a usage error", () => {
+    expect(() => parseToolArgs(["run", "t1", "--input", "[1,2]"])).toThrow(/must be a JSON object/);
+  });
+
+  test("run with no tool id is a usage error", () => {
+    expect(() => parseToolArgs(["run"])).toThrow(/Usage/);
+  });
+
+  test("run with a flag where the tool id belongs is refused, not read as an id", () => {
+    expect(() => parseToolArgs(["run", "--json"])).toThrow(/tool id is required/);
+  });
+
+  test("run rejects an unknown flag", () => {
+    expect(() => parseToolArgs(["run", "t1", "--verbose"])).toThrow(/Unknown flag/);
+  });
+
   test("an unknown subcommand is refused, not defaulted", () => {
     expect(() => parseToolArgs(["frobnicate"])).toThrow(/Usage/);
   });
@@ -240,6 +275,94 @@ describe("exitCodeForTool", () => {
 
   test("an unrecognised status maps to refused, never 0", () => {
     expect(exitCodeForTool({ status: "something-new" })).toBe(TOOL_EXIT_CODES.refused);
+  });
+});
+
+describe("exitCodeForInvoke", () => {
+  test("exit code 0 on executed, 1 on failed, 127 on refused", () => {
+    expect(
+      exitCodeForInvoke({ status: "executed", toolId: "t1", result: "ok", durationMs: 1 }),
+    ).toBe(0);
+    expect(
+      exitCodeForInvoke({ status: "failed", toolId: "t1", error: "boom", durationMs: 1 }),
+    ).toBe(1);
+    expect(
+      exitCodeForInvoke({ status: "refused", toolId: "t1", code: "ERR_TOOLGEN_NOT_SAVED" }),
+    ).toBe(TOOL_EXIT_CODES.refused);
+  });
+
+  test("an unrecognised status maps to refused, never 0", () => {
+    expect(exitCodeForInvoke({ status: "something-new" })).toBe(TOOL_EXIT_CODES.refused);
+  });
+});
+
+describe("renderToolInvokeOutcome", () => {
+  function sunk(): { sink: OutcomeSink; lines: string[] } {
+    const lines: string[] = [];
+    return { sink: { out: (t) => lines.push(t), err: (t) => lines.push(t) }, lines };
+  }
+
+  test("renders a string result bare, an object pretty, and nothing as (no output)", () => {
+    const { sink, lines } = sunk();
+    renderToolInvokeOutcome(
+      { status: "executed", toolId: "t", result: "hello", durationMs: 1 },
+      sink,
+      false,
+    );
+    renderToolInvokeOutcome(
+      { status: "executed", toolId: "t", result: { a: 1 }, durationMs: 1 },
+      sink,
+      false,
+    );
+    renderToolInvokeOutcome(
+      { status: "executed", toolId: "t", result: undefined, durationMs: 1 },
+      sink,
+      false,
+    );
+    expect(lines[0]).toBe("hello\n");
+    expect(lines[1]).toContain('"a": 1');
+    expect(lines[2]).toBe("(no output)\n");
+  });
+
+  test("a null result also renders as (no output)", () => {
+    const { sink, lines } = sunk();
+    renderToolInvokeOutcome(
+      { status: "executed", toolId: "t", result: null, durationMs: 1 },
+      sink,
+      false,
+    );
+    expect(lines[0]).toBe("(no output)\n");
+  });
+
+  test("--json serializes the result even when it is a string", () => {
+    const { sink, lines } = sunk();
+    renderToolInvokeOutcome(
+      { status: "executed", toolId: "t", result: "hello", durationMs: 1 },
+      sink,
+      true,
+    );
+    expect(lines[0]).toBe(`${JSON.stringify("hello", null, 2)}\n`);
+  });
+
+  test("a failed outcome prints the error to stderr with the nimbus: prefix", () => {
+    const { sink, lines } = sunk();
+    renderToolInvokeOutcome(
+      { status: "failed", toolId: "t", error: "boom", durationMs: 1 },
+      sink,
+      false,
+    );
+    expect(lines[0]).toBe("nimbus: boom\n");
+  });
+
+  test("a refused outcome prints the code and reason to stderr", () => {
+    const { sink, lines } = sunk();
+    renderToolInvokeOutcome(
+      { status: "refused", toolId: "t", code: "ERR_TOOLGEN_NOT_SAVED", reason: "not saved" },
+      sink,
+      false,
+    );
+    expect(lines.join("")).toContain("ERR_TOOLGEN_NOT_SAVED");
+    expect(lines.join("")).toContain("not saved");
   });
 });
 
@@ -974,6 +1097,115 @@ describe("runTool save — the save approval prompt discloses PERSISTENCE, and a
   });
 });
 
+describe("runTool run — calls toolgen.invoke and renders every outcome", () => {
+  test("nimbus tool run <id> calls toolgen.invoke with the tool id and input, never a sessionId", async () => {
+    const h = fakeDeps({
+      runWithClient: async (fn) =>
+        fn({
+          onNotification: () => {},
+          call: async (method, params) => {
+            h.calls.push({ method, params });
+            return { status: "executed", toolId: "t1", result: "hello", durationMs: 5 };
+          },
+        }),
+    });
+    await runTool(["run", "t1", "--input", '{"q":"x"}'], h.d);
+    expect(h.calls).toEqual([
+      { method: "toolgen.invoke", params: { toolId: "t1", input: { q: "x" } } },
+    ]);
+    expect(h.out.join("")).toBe("hello\n");
+    expect(h.codes).toEqual([0]);
+  });
+
+  test("--json prints the result as JSON", async () => {
+    const h = fakeDeps({
+      runWithClient: async (fn) =>
+        fn({
+          onNotification: () => {},
+          call: async () => ({ status: "executed", toolId: "t1", result: { a: 1 }, durationMs: 5 }),
+        }),
+    });
+    await runTool(["run", "t1", "--json"], h.d);
+    expect(h.out.join("")).toContain('"a": 1');
+    expect(h.codes).toEqual([0]);
+  });
+
+  test("with no id exits non-zero with usage, and never reaches the gateway", async () => {
+    const h = fakeDeps();
+    await runTool(["run"], h.d);
+    expect(h.calls).toEqual([]);
+    expect(h.codes).toEqual([TOOL_EXIT_CODES.refused]);
+    expect(h.err.join("")).toContain("a tool id is required");
+    expect(h.err.join("")).toContain("Usage");
+  });
+
+  test("a failed outcome is reported on stderr and exits 1", async () => {
+    const h = fakeDeps({
+      runWithClient: async (fn) =>
+        fn({
+          onNotification: () => {},
+          call: async () => ({ status: "failed", toolId: "t1", error: "boom", durationMs: 5 }),
+        }),
+    });
+    await runTool(["run", "t1"], h.d);
+    expect(h.codes).toEqual([1]);
+    expect(h.err.join("")).toContain("boom");
+  });
+
+  test("a refused outcome is reported on stderr and exits refused", async () => {
+    const h = fakeDeps({
+      runWithClient: async (fn) =>
+        fn({
+          onNotification: () => {},
+          call: async () => ({ status: "refused", toolId: "t1", code: "ERR_TOOLGEN_NOT_SAVED" }),
+        }),
+    });
+    await runTool(["run", "t1"], h.d);
+    expect(h.codes).toEqual([TOOL_EXIT_CODES.refused]);
+    expect(h.err.join("")).toContain("ERR_TOOLGEN_NOT_SAVED");
+  });
+});
+
+describe("runTool run — headless-capable by design, unlike create/save (no isInteractiveTty guard)", () => {
+  test("a non-interactive stdin still calls the gateway -- run obtains no consent of its own", async () => {
+    const h = fakeDeps({
+      isInteractiveTty: () => false,
+      runWithClient: async (fn) =>
+        fn({
+          onNotification: () => {},
+          call: async (method, params) => {
+            h.calls.push({ method, params });
+            return { status: "executed", toolId: "t1", result: "ok", durationMs: 1 };
+          },
+        }),
+    });
+    await runTool(["run", "t1"], h.d);
+    expect(h.calls).toEqual([{ method: "toolgen.invoke", params: { toolId: "t1", input: {} } }]);
+    expect(h.codes).toEqual([0]);
+  });
+
+  test("never registers an approval broadcast handler or asks the owner anything", async () => {
+    let asked = false;
+    let registered = false;
+    const h = fakeDeps({
+      ask: async () => {
+        asked = true;
+        return true;
+      },
+      runWithClient: async (fn) =>
+        fn({
+          onNotification: () => {
+            registered = true;
+          },
+          call: async () => ({ status: "executed", toolId: "t1", result: "ok", durationMs: 1 }),
+        }),
+    });
+    await runTool(["run", "t1"], h.d);
+    expect(asked).toBe(false);
+    expect(registered).toBe(false);
+  });
+});
+
 describe("runTool create — the approval prompt shows the VERBATIM body (load-bearing #4)", () => {
   test("the body the owner is asked to approve reaches `ask` unmodified", async () => {
     const BODY = "export default async function main() { return 42; }";
@@ -1281,6 +1513,7 @@ describe("runTool -- a transport failure is reported and sets the refused exit c
     ["revoke", ["revoke", "tg_a"]],
     ["create", ["create", "--description", "d", "--host", "api.example.com"]],
     ["save", ["save", "tg_a"]],
+    ["run", ["run", "tg_a"]],
     ["credential set", ["credential", "set", "tg_a", "api.example.com", "--bearer", "t"]],
   ])("%s surfaces an Error's message", async (_label, argv) => {
     const h = throwing(new Error("gateway is not running"));
@@ -1294,6 +1527,7 @@ describe("runTool -- a transport failure is reported and sets the refused exit c
     ["revoke", ["revoke", "tg_a"]],
     ["create", ["create", "--description", "d", "--host", "api.example.com"]],
     ["save", ["save", "tg_a"]],
+    ["run", ["run", "tg_a"]],
     ["credential set", ["credential", "set", "tg_a", "api.example.com", "--bearer", "t"]],
   ])("%s surfaces a NON-Error throw rather than printing nothing", async (_label, argv) => {
     // A rejected promise carrying a bare string is the shape that would otherwise render as
