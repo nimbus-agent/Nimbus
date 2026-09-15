@@ -622,7 +622,11 @@ the boundary is `unknown` until validated, no casts on `params`:
   if (input === undefined) {
     throw new ToolgenRpcError(-32602, "input must be a JSON object");
   }
-  return invokeSavedTool({ toolId, input }, ctx.invokeDeps);
+  // SERVER-derived, never caller-supplied — the caller does not get to name the session its
+  // audit row is attributed to. Task 3 projects this onto the `tool.invoke` row's `sessionId`;
+  // omitting it here would leave every production row without the attribution every other audit
+  // row carries, while the unit tests that pass one still went green.
+  return invokeSavedTool({ toolId, input, sessionId: CLI_TOOLGEN_SESSION_ID }, ctx.invokeDeps);
 },
 ```
 
@@ -631,7 +635,13 @@ Add `readonly invokeDeps: ToolgenInvokeDeps;` to `ToolgenRpcCtx`, then build it 
 exist before this plan was written:
 
 ```ts
-// `CLI_TOOLGEN_SESSION_ID` does NOT exist yet — DEFINE it in toolgen-types.ts as part of this task.
+// `CLI_TOOLGEN_SESSION_ID` does not exist IN THE GATEWAY — define it in toolgen-types.ts as part
+// of this task. It DOES already exist in the CLI (`packages/cli/src/commands/tool.ts:307`, also
+// `"cli"`), which `toolgen.create` already sends. The gateway cannot import it from there (the
+// dependency rule is one-way), so two definitions of one wire value is the correct outcome here —
+// but they MUST agree on the literal `"cli"`, since the registry's `countForSession` and the
+// audit row's attribution both key on it. Say so in the docstring; do not let the duplication be
+// silent.
 // `SavedSpawnDeps.sessionId` is documented as "the SPAWNING CALLER's session — never a 'saved'
 // sentinel", and a CLI invocation has no real session, so it needs a named constant of its own.
 export const CLI_TOOLGEN_SESSION_ID = "cli";
@@ -731,6 +741,15 @@ Spec §3, §3.2, §3.4.
   (`:796`, `:810`) over the `OutcomeSink` interface at `:323`; follow that shape exactly rather than
   inventing a new one.
 
+**DEFINE the outcome type LOCALLY in `tool.ts`. Do NOT import it from the gateway.** `packages/cli`
+reaching into gateway source violates a Non-Negotiable (`cli` and `ui` reach the gateway IPC-only);
+`tool.ts` imports nothing from it today, and that is deliberate. The existing pattern is right
+there: `ToolOutcomeShape` (`tool.ts:310`) is a LOCAL interface whose docstring says "mirroring the
+gateway's `ToolgenOutcome`", and the IPC response is cast to it at the call site
+(`)) as ToolOutcomeShape`, `:633`). Add a sibling `ToolInvokeOutcomeShape` the same way — a local
+mirror of the gateway's `ToolgenInvokeOutcome`, cast at the `toolgen.invoke` call site. The test
+object literals below are the WIRE shape and are correct as written; only the TYPE is local.
+
 **`run` is a SUBcommand.** `tool: runTool` is already in `COMMAND_HANDLERS` and `registry.ts`
 enumerates only the top-level `"tool"` — neither needs touching. `help.ts` and `tool.ts`'s `USAGE`
 both enumerate the subcommand list and must be updated together, or help advertises a surface the
@@ -772,11 +791,9 @@ test("renders a string result bare, an object pretty, and nothing as (no output)
   renderToolInvokeOutcome({ status: "executed", toolId: "t", result: "hello", durationMs: 1 }, sink, false);
   renderToolInvokeOutcome({ status: "executed", toolId: "t", result: { a: 1 }, durationMs: 1 }, sink, false);
   renderToolInvokeOutcome({ status: "executed", toolId: "t", result: undefined, durationMs: 1 }, sink, false);
-  expect(lines[0]).toBe("hello
-");
+  expect(lines[0]).toBe("hello\n");
   expect(lines[1]).toContain('"a": 1');
-  expect(lines[2]).toBe("(no output)
-");
+  expect(lines[2]).toBe("(no output)\n");
 });
 ```
 
