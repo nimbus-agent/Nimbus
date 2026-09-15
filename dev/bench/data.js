@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1789490251713,
+  "lastUpdate": 1789492830630,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "9237c91063d45f5e81e9112d78988e80e0210569",
-          "message": "Enable WAL on the production SQLite write handles (#789)\n\nCloses #426 (roadmap **B5**, high-priority).\n\n## Confirmed before changing anything\n\nThe issue explicitly asks for this, and it was worth doing — the finding\nwas a static code-read, so it could have been wrong. On the live 21 MB\ngateway DB:\n\n```\njournal_mode = delete\n```\n\nNot `wal`. Confirmed.\n\nThat means every handle was on SQLite's rollback journal, where readers\nand the writer block each other, the shutdown `wal_checkpoint(TRUNCATE)`\nwas a silent no-op, and `busy_timeout = 8000` was the *only* thing\nstanding between contention and an error — concurrent delta sync, query,\nand the I13 write path could stall up to 8 s before they could even\nfail.\n\n## The change\n\n`applyWritablePragmas()` in the new `db/writable-pragmas.ts` centralises\n`journal_mode = WAL` + `busy_timeout`, applied at all three production\n**writable** open sites:\n\n| Site | Handle |\n|---|---|\n| `platform/assemble.ts` | main writer |\n| `embedding/embedding-worker.ts` | embedding worker |\n| `ipc/http-server.ts` | I13 HTTP write handle |\n\nRead-only handles are deliberately untouched: `journal_mode` is a\nproperty of the database **file**, not the connection, so they cannot\nset it and do not need to — they inherit WAL once any writer has\nconverted the file. There is a test for exactly that, because it is the\nkind of thing a future reader will otherwise \"fix\" by adding a pragma to\nthe read path.\n\nIn `assemble.ts` the call is placed **before** `ensureSchema`, since\nmigrations write and this is the handle that converts the file.\n\n## It reports what SQLite adopted, not what we asked for\n\n`PRAGMA journal_mode = WAL` can be *declined* rather than raise — WAL\nneeds shared memory, so `:memory:` reports `memory`, and it is\nunavailable on some network filesystems. The helper returns the adopted\nmode so this is observable, and production deliberately does **not**\nhard-fail on it: degrading to the old blocking behaviour is worse than\nWAL but still correct, whereas refusing to start the gateway over a\nfilesystem quirk would be a worse trade. The tests assert `wal` on a\nreal file-backed handle, which is where a decline would be a genuine\nregression.\n\n## Backups: checked, not assumed\n\nWAL keeps committed data in `-wal` until checkpoint, so a **file-copy**\nbackup taken under WAL can silently lose recent commits. The issue\ndoesn't raise this, so I checked: both backup paths\n(`migrations/runner.ts` pre-migration backup and `db/snapshot.ts`) go\nthrough `vacuumAndGzip` → `VACUUM INTO`, which reads through the\nconnection and emits a self-contained file. WAL-safe. There are no raw\ncopies of `nimbus.db` anywhere in the gateway.\n\n## Regression guard — including one that didn't work\n\nA unit test of the helper proves the helper works, not that anything\ncalls it, so there is also a per-site assertion that each production\nopen site still calls it.\n\n**The first version of that guard was broken.** It asserted\n`src.toContain(\"applyWritablePragmas\")`, which is satisfied by the\nleftover `import { applyWritablePragmas }` line — so deleting the actual\ncall still passed. Caught by running the red proof rather than assuming\nit. Tightened to match the call, then re-proven:\n\n```\n(fail) production writable handles wire the pragmas > embedding/embedding-worker.ts calls applyWritablePragmas\n 7 pass, 1 fail\n```\n\nRestored: 9 pass / 0 fail.\n\n## Verification\n\n`bun test packages/gateway/src/{db,embedding,platform}/` → 572 pass / 3\nskip / 0 fail. `typecheck` clean, Biome clean,\n`audit:{invariants,boundaries,cross-platform,doc-refs,status-drift}` +\n`lint:markdown` all pass.\n\n`packages/gateway/src/ipc/` shows **1 pre-existing failure** —\n`handleConnectorAuth … google_drive` times out at 5 s under parallel\nload, passes in 238 ms alone. I verified it fails identically on\nunmodified gateway code, so it is not from this change.\n\nDocs updated to match: `architecture.md`'s honest \"not currently set\"\nstatus note is replaced, and roadmap **B5** is closed out.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nCo-authored-by: Claude Opus 4.8 (1M context) <noreply@anthropic.com>",
-          "timestamp": "2026-07-21T18:22:01Z",
-          "tree_id": "e44b7bfd7ceb5549b875e817862355b0bc60ad0d",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/9237c91063d45f5e81e9112d78988e80e0210569"
-        },
-        "date": 1784658890955,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 294.39047039999565,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 297.42509854999736,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 249.86164430000355,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "49699333+dependabot[bot]@users.noreply.github.com",
+            "name": "dependabot[bot]",
+            "username": "dependabot[bot]"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "edd72d3431f9d85df308c05ec55319025e6c847a",
+          "message": "chore(deps): bump imapflow from 1.7.8 to 2.0.2 (#1517)\n\nBumps [imapflow](https://github.com/postalsys/imapflow) from 1.7.8 to\n2.0.2.\n<details>\n<summary>Changelog</summary>\n<p><em>Sourced from <a\nhref=\"https://github.com/postalsys/imapflow/blob/master/CHANGELOG.md\">imapflow's\nchangelog</a>.</em></p>\n<blockquote>\n<h2><a\nhref=\"https://github.com/postalsys/imapflow/compare/v2.0.1...v2.0.2\">2.0.2</a>\n(2026-09-10)</h2>\n<h3>Bug Fixes</h3>\n<ul>\n<li>skip LSUB once a server has rejected ENABLE over the IMAP4rev2 it\nadvertises (<a\nhref=\"https://github.com/postalsys/imapflow/commit/1c4bca2349ed05d5cb61a85abb4152630ceb3d73\">1c4bca2</a>)</li>\n</ul>\n<h2><a\nhref=\"https://github.com/postalsys/imapflow/compare/v2.0.0...v2.0.1\">2.0.1</a>\n(2026-09-10)</h2>\n<h3>Bug Fixes</h3>\n<ul>\n<li>stop acting on an IMAP4rev2 advertisement once the server rejects\nENABLE over it (<a\nhref=\"https://github.com/postalsys/imapflow/commit/227355fee56a10913af8feb8e52a74364eb90ca2\">227355f</a>)</li>\n</ul>\n<h2><a\nhref=\"https://github.com/postalsys/imapflow/compare/v1.7.8...v2.0.0\">2.0.0</a>\n(2026-09-07)</h2>\n<h3>⚠ BREAKING CHANGES</h3>\n<ul>\n<li>Node.js 20 or newer is required. The <code>lib/</code> directory is\nno longer published; use the package root or the\n<code>imapflow/lib/*</code> export map.</li>\n</ul>\n<h3>Features</h3>\n<ul>\n<li>migrate to TypeScript with ES module and CommonJS builds (<a\nhref=\"https://github.com/postalsys/imapflow/commit/a2cde0778f6d7cb8471ca8e4011534476442ae98\">a2cde07</a>)</li>\n<li>support Bun and Cloudflare Workers (<a\nhref=\"https://github.com/postalsys/imapflow/commit/70fff15b4a3297d4b29c8da7b1faf703ebf00876\">70fff15</a>)</li>\n</ul>\n<h3>Bug Fixes</h3>\n<ul>\n<li>re-arm auto-IDLE after an IDLE or poll session ends on its own (<a\nhref=\"https://github.com/postalsys/imapflow/commit/e6e5d27debf87748aae740b5a0a47b2afc2079b3\">e6e5d27</a>)</li>\n<li><strong>types:</strong> strip the internal members of ImapFlow from\nthe declarations (<a\nhref=\"https://github.com/postalsys/imapflow/commit/68b72587e07ebba52676df5b68631d60f55b08c0\">68b7258</a>)</li>\n<li><strong>types:</strong> type AuthenticationFailure.response as the\nstring it always is (<a\nhref=\"https://github.com/postalsys/imapflow/commit/5c3b3afd234bccf7d86fd999f4673e43ec131b6d\">5c3b3af</a>)</li>\n<li><strong>types:</strong> type the events without the generic\nEventEmitter of <code>@​types/node</code> (<a\nhref=\"https://github.com/postalsys/imapflow/commit/a4285b26064115bd1740b7850b2b0a14e02d96b8\">a4285b2</a>)</li>\n</ul>\n</blockquote>\n</details>\n<details>\n<summary>Commits</summary>\n<ul>\n<li><a\nhref=\"https://github.com/postalsys/imapflow/commit/58ef92c1a09fd1e1da1af3564e3a13777c150536\"><code>58ef92c</code></a>\nchore(master): release 2.0.2 [skip-ci] (<a\nhref=\"https://redirect.github.com/postalsys/imapflow/issues/395\">#395</a>)</li>\n<li><a\nhref=\"https://github.com/postalsys/imapflow/commit/1c4bca2349ed05d5cb61a85abb4152630ceb3d73\"><code>1c4bca2</code></a>\nfix: skip LSUB once a server has rejected ENABLE over the IMAP4rev2 it\nadvert...</li>\n<li><a\nhref=\"https://github.com/postalsys/imapflow/commit/1eb08f623238f1fa59585d4f63d303a18e728403\"><code>1eb08f6</code></a>\nchore(master): release 2.0.1 [skip-ci] (<a\nhref=\"https://redirect.github.com/postalsys/imapflow/issues/394\">#394</a>)</li>\n<li><a\nhref=\"https://github.com/postalsys/imapflow/commit/227355fee56a10913af8feb8e52a74364eb90ca2\"><code>227355f</code></a>\nfix: stop acting on an IMAP4rev2 advertisement once the server rejects\nENABLE...</li>\n<li><a\nhref=\"https://github.com/postalsys/imapflow/commit/fad663d0c7f6e4680f7cf967a96ad72b205998b4\"><code>fad663d</code></a>\nchore(master): release 2.0.0 [skip-ci] (<a\nhref=\"https://redirect.github.com/postalsys/imapflow/issues/393\">#393</a>)</li>\n<li><a\nhref=\"https://github.com/postalsys/imapflow/commit/7ef1b7dd420d3d4caec227e17ae6ada458650ba7\"><code>7ef1b7d</code></a>\nchore(deps): update dependencies</li>\n<li><a\nhref=\"https://github.com/postalsys/imapflow/commit/68b72587e07ebba52676df5b68631d60f55b08c0\"><code>68b7258</code></a>\nfix(types): strip the internal members of ImapFlow from the\ndeclarations</li>\n<li><a\nhref=\"https://github.com/postalsys/imapflow/commit/5c3b3afd234bccf7d86fd999f4673e43ec131b6d\"><code>5c3b3af</code></a>\nfix(types): type AuthenticationFailure.response as the string it always\nis</li>\n<li><a\nhref=\"https://github.com/postalsys/imapflow/commit/a4285b26064115bd1740b7850b2b0a14e02d96b8\"><code>a4285b2</code></a>\nfix(types): type the events without the generic EventEmitter of\n<code>@​types/node</code></li>\n<li><a\nhref=\"https://github.com/postalsys/imapflow/commit/e6e5d27debf87748aae740b5a0a47b2afc2079b3\"><code>e6e5d27</code></a>\nfix: re-arm auto-IDLE after an IDLE or poll session ends on its own</li>\n<li>Additional commits viewable in <a\nhref=\"https://github.com/postalsys/imapflow/compare/v1.7.8...v2.0.2\">compare\nview</a></li>\n</ul>\n</details>\n<br />\n\n---------\n\nSigned-off-by: dependabot[bot] <support@github.com>\nCo-authored-by: dependabot[bot] <49699333+dependabot[bot]@users.noreply.github.com>\nCo-authored-by: AsafGolombek <asafgolombek@gmail.com>\nCo-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>",
+          "timestamp": "2026-09-15T20:09:47+03:00",
+          "tree_id": "ae592bddbc0b6c183d6a7dbaa622018a1fc81c61",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/edd72d3431f9d85df308c05ec55319025e6c847a"
+        },
+        "date": 1789492827623,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 240.04223964999946,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 231.93138010000075,
             "unit": "ms"
           }
         ]
