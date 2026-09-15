@@ -104,3 +104,120 @@ describe("invokeSavedTool refusals happen before any spawn", () => {
     expect(out.status === "refused" && out.code).toBe("ERR_TOOLGEN_INPUT_INVALID");
   });
 });
+
+describe("invokeSavedTool execution", () => {
+  test("a successful call returns the result", async () => {
+    const out = await invokeSavedTool(
+      { toolId: "t1", input: { q: "x" } },
+      deps({
+        spawn: async () => ({
+          call: async () => ({ ok: 1 }),
+          close: async () => {},
+          describe: async () => ({ name: "", description: "", inputSchema: {} }),
+        }),
+      }),
+    );
+    expect(out.status).toBe("executed");
+    expect(out.status === "executed" && out.result).toEqual({ ok: 1 });
+  });
+
+  test("a throwing tool body is `failed`, not `refused`", async () => {
+    // The distinction is the point: "the gateway would not run it" and "it ran and broke" are
+    // different facts and a script acts differently on each (spec §3.1).
+    const out = await invokeSavedTool(
+      { toolId: "t1", input: { q: "x" } },
+      deps({
+        spawn: async () => ({
+          call: async () => {
+            throw new Error("boom");
+          },
+          close: async () => {},
+          describe: async () => ({ name: "", description: "", inputSchema: {} }),
+        }),
+      }),
+    );
+    expect(out.status).toBe("failed");
+    expect(out.status === "failed" && out.error).toContain("boom");
+  });
+
+  test("the handle is closed even when the call throws", async () => {
+    let closed = 0;
+    await invokeSavedTool(
+      { toolId: "t1", input: { q: "x" } },
+      deps({
+        spawn: async () => ({
+          call: async () => {
+            throw new Error("boom");
+          },
+          close: async () => {
+            closed += 1;
+          },
+          describe: async () => ({ name: "", description: "", inputSchema: {} }),
+        }),
+      }),
+    );
+    expect(closed).toBe(1);
+  });
+
+  test("concurrent invocations of the SAME tool id are serialised", async () => {
+    // Guards spec §4.2: spawnSavedTool re-emits saved/<id>/index.ts on every spawn, so two
+    // overlapping spawns write the same path and transiently EBUSY on Windows.
+    let active = 0;
+    let maxActive = 0;
+    const d = deps({
+      spawn: async () => {
+        active += 1;
+        maxActive = Math.max(maxActive, active);
+        await new Promise((r) => setTimeout(r, 5));
+        return {
+          call: async () => {
+            active -= 1;
+            return "ok";
+          },
+          close: async () => {},
+          describe: async () => ({ name: "", description: "", inputSchema: {} }),
+        };
+      },
+    });
+    await Promise.all([
+      invokeSavedTool({ toolId: "t1", input: { q: "a" } }, d),
+      invokeSavedTool({ toolId: "t1", input: { q: "b" } }, d),
+    ]);
+    expect(maxActive).toBe(1);
+  });
+
+  test("different tool ids are NOT serialised against each other", async () => {
+    let active = 0;
+    let maxActive = 0;
+    // `invokeSavedTool` resolves through `savedTools()`, never `findArtifact()` (see the
+    // "ephemeral" refusal test above) — so the fake registry must serve BOTH tool ids from
+    // `savedTools()` for this test to reach spawn at all.
+    const registry = {
+      savedTools: () => [
+        { toolId: "t1", artifact: ARTIFACT },
+        { toolId: "t2", artifact: { ...ARTIFACT, toolId: "t2" } },
+      ],
+    };
+    const d = deps({
+      registry: registry as unknown as ToolgenInvokeDeps["registry"],
+      spawn: async () => {
+        active += 1;
+        maxActive = Math.max(maxActive, active);
+        await new Promise((r) => setTimeout(r, 5));
+        return {
+          call: async () => {
+            active -= 1;
+            return "ok";
+          },
+          close: async () => {},
+          describe: async () => ({ name: "", description: "", inputSchema: {} }),
+        };
+      },
+    });
+    await Promise.all([
+      invokeSavedTool({ toolId: "t1", input: { q: "a" } }, d),
+      invokeSavedTool({ toolId: "t2", input: { q: "b" } }, d),
+    ]);
+    expect(maxActive).toBe(2);
+  });
+});

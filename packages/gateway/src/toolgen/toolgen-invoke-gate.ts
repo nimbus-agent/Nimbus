@@ -1,12 +1,14 @@
 import type { NimbusToolGenerationToml } from "../config/nimbus-toml.ts";
 import type { EnforcedPolicy } from "../policy/policy-gate.ts";
 import { isToolgenCapabilityEnabled } from "./toolgen-capability.ts";
+import type { GeneratedToolHandle } from "./toolgen-client.ts";
 import type { ToolgenRegistry } from "./toolgen-registry.ts";
 import {
   ERR_TOOLGEN_INPUT_INVALID,
   ERR_TOOLGEN_INVOKE_DISABLED,
   ERR_TOOLGEN_INVOKE_POLICY_DISABLED,
   ERR_TOOLGEN_NOT_SAVED,
+  ToolgenError,
   type ToolInputSchema,
 } from "./toolgen-types.ts";
 
@@ -43,21 +45,25 @@ export interface ToolgenInvokeDeps {
   readonly config: Pick<NimbusToolGenerationToml, "enabled">;
   readonly enforced: Pick<EnforcedPolicy, "capabilitiesDisabled"> | undefined;
   readonly registry: Pick<ToolgenRegistry, "savedTools">;
-  readonly spawn: (
-    scriptPath: string,
-    input: Record<string, unknown>,
-    timeoutMs: number,
-  ) => Promise<unknown>;
+  /**
+   * Spawns the saved tool identified by `toolId` and returns its live handle. Bound to
+   * `spawnSavedTool` (`toolgen-saved-spawn.ts`) plus its `SavedSpawnDeps` in production; injected
+   * here so a test can drive spawn/call/close without launching a real subprocess. Throws
+   * `ToolgenError` when the on-disk signature check fails at spawn time (I40) — that is a REFUSAL,
+   * not an execution failure, and `invokeSavedTool` must tell the two apart.
+   */
+  readonly spawn: (toolId: string) => Promise<GeneratedToolHandle>;
   readonly audit: (outcome: ToolgenInvokeOutcome) => void;
   readonly now: () => number;
 }
 
 /**
  * Invokes a saved (persisted, signed) generated tool. Refusals happen before any spawn:
- * capability disabled, tool not found, ephemeral tool, invalid input. Later steps (Task 2+)
- * handle process spawning and execution.
+ * capability disabled, tool not found, ephemeral tool, invalid input. Past that point the tool is
+ * spawned, called with `input`, and its handle is closed in a `finally` regardless of outcome.
+ * Invocations of the SAME tool id are serialised (spec §4.2); different tool ids run concurrently.
  *
- * Spec §4, §4.5, §3.3.
+ * Spec §4, §4.1, §4.2, §4.3, §4.5, §3.3.
  */
 export async function invokeSavedTool(
   req: {
@@ -100,8 +106,57 @@ export async function invokeSavedTool(
     return refuse(deps, toolId, ERR_TOOLGEN_INPUT_INVALID, inputError);
   }
 
-  // Spawn + call land in Task 2.
-  throw new Error("not implemented");
+  return await serialise(toolId, async () => {
+    const startedAt = deps.now();
+    let handle: GeneratedToolHandle | undefined;
+    try {
+      handle = await deps.spawn(toolId);
+      const result = await handle.call(input);
+      return succeed(deps, toolId, result, deps.now() - startedAt);
+    } catch (e) {
+      // A ToolgenError from spawnSavedTool is a pre-execution REFUSAL, not a tool failure. The
+      // signature-invalid path (`toolgen-saved-spawn.ts:206`) is the one that matters: reporting a
+      // tampered artifact as `failed` would give exit 1 and an audit `outcome: "failed"`, making an
+      // I40 refusal read as a bug in the tool.
+      if (e instanceof ToolgenError) {
+        return refuse(deps, toolId, e.code, e.message);
+      }
+      const msg = e instanceof Error ? e.message : String(e);
+      return fail(deps, toolId, msg, deps.now() - startedAt);
+    } finally {
+      // Close must not mask the outcome: a close failure is not the caller's problem.
+      try {
+        await handle?.close();
+      } catch {
+        /* best-effort */
+      }
+    }
+  });
+}
+
+/**
+ * Per-tool-id serialisation, keyed by an in-process promise-chain map — the same shape I35 uses
+ * for concurrent `computer.act` on one lane. `spawnSavedTool` re-emits `saved/<id>/index.ts` from
+ * the verified body on EVERY spawn (I40's "never read index.ts back and trust it"), so two
+ * overlapping spawns of the SAME tool id write the same path while another child may hold it open
+ * — a transient `EBUSY` on Windows. Different tool ids are never chained against each other.
+ */
+const chains = new Map<string, Promise<unknown>>();
+
+function serialise<T>(toolId: string, run: () => Promise<T>): Promise<T> {
+  const prev = chains.get(toolId) ?? Promise.resolve();
+  const next = prev.then(run, run);
+  // Keep the chain from growing unbounded, and drop the entry once it is the tail.
+  chains.set(
+    toolId,
+    next.catch(() => undefined),
+  );
+  void next
+    .catch(() => undefined)
+    .finally(() => {
+      if (chains.get(toolId) === undefined) chains.delete(toolId);
+    });
+  return next;
 }
 
 /**
@@ -125,6 +180,35 @@ function validateInput(input: unknown, schema: ToolInputSchema): string | undefi
   }
 
   return undefined;
+}
+
+/**
+ * Builds an executed outcome and writes the audit row.
+ */
+function succeed(
+  deps: ToolgenInvokeDeps,
+  toolId: string,
+  result: unknown,
+  durationMs: number,
+): ToolgenInvokeOutcome {
+  const outcome: ToolgenInvokeOutcome = { status: "executed", toolId, result, durationMs };
+  deps.audit(outcome);
+  return outcome;
+}
+
+/**
+ * Builds a failed outcome and writes the audit row. Distinct from `refuse`: the tool DID run and
+ * threw, rather than being refused before it was ever spawned (spec §3.1).
+ */
+function fail(
+  deps: ToolgenInvokeDeps,
+  toolId: string,
+  error: string,
+  durationMs: number,
+): ToolgenInvokeOutcome {
+  const outcome: ToolgenInvokeOutcome = { status: "failed", toolId, error, durationMs };
+  deps.audit(outcome);
+  return outcome;
 }
 
 /**
