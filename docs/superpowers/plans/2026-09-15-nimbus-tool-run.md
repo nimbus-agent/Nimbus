@@ -602,19 +602,14 @@ the current time and destroy the record of when the tool was approved.
 That `?? []` means a tool whose artifact is missing from the registry runs with NO approved hosts
 and every brokered fetch is refused, presenting as the remote host's fault.
 
-The gate already refuses with `ERR_TOOLGEN_NOT_SAVED` when `findArtifact` misses (Task 1), which
-closes this by construction: the same lookup that would have yielded an empty host list now refuses
-the run outright. Add a test asserting that a registry miss refuses rather than proceeding:
+Task 1's `savedTools()` lookup already closes this by construction: the same miss that would have
+produced an empty host list now refuses the run outright with `ERR_TOOLGEN_NOT_SAVED`.
 
-```ts
-test("a registry miss refuses loudly rather than running with no approved hosts", async () => {
-  const out = await invokeSavedTool({ toolId: "gone" }, deps({
-    registry: { findArtifact: () => undefined } as unknown as ToolgenInvokeDeps["registry"],
-    spawn: async () => { throw new Error("must not spawn"); },
-  }));
-  expect(out.status === "refused" && out.code).toBe("ERR_TOOLGEN_NOT_SAVED");
-});
-```
+**Add no test here.** Task 1's "unknown tool id" and "an EPHEMERAL tool is refused" cases already
+drive exactly this path with exactly this assertion — a third test with the same fake, the same
+code path and the same expectation would read as new coverage for §4.3 while adding none. Verify by
+reading those two tests and confirming they cover it; say so in your report rather than adding a
+lookalike.
 
 - [ ] **Step 5: Run the tests**
 
@@ -650,7 +645,12 @@ Spec §3, §3.2, §3.4.
 
 **Interfaces:**
 - Consumes: the `toolgen.invoke` IPC method from Task 4; `TOOL_EXIT_CODES` (`tool.ts:13`, `denied: 126`, `refused: 127`).
-- Produces: `nimbus tool run <id> [--input <json>] [--json]`.
+- Produces: `nimbus tool run <id> [--input <json>] [--json]`, plus an exported pure pair mirroring
+  the existing create/save helpers — `exitCodeForInvoke(outcome): number` and
+  `renderToolInvokeOutcome(outcome, sink: OutcomeSink, json: boolean): void`. `tool.ts` already has
+  `exitCodeForTool`/`renderToolOutcome` (`:332`, `:342`) and `exitCodeForSave`/`renderToolSaveOutcome`
+  (`:796`, `:810`) over the `OutcomeSink` interface at `:323`; follow that shape exactly rather than
+  inventing a new one.
 
 **`run` is a SUBcommand.** `tool: runTool` is already in `COMMAND_HANDLERS` and `registry.ts`
 enumerates only the top-level `"tool"` — neither needs touching. `help.ts` and `tool.ts`'s `USAGE`
@@ -681,10 +681,23 @@ test("run with no tool id is a usage error", () => {
   expect(() => parseToolArgs(["run"])).toThrow(/Usage/);
 });
 
-test("exit code 0 on executed, 1 on failed, 127 on refused", async () => {
-  expect(await runToolWithOutcome({ status: "executed", toolId: "t1", result: "ok", durationMs: 1 })).toBe(0);
-  expect(await runToolWithOutcome({ status: "failed", toolId: "t1", error: "boom", durationMs: 1 })).toBe(1);
-  expect(await runToolWithOutcome({ status: "refused", toolId: "t1", code: "ERR_TOOLGEN_NOT_SAVED" })).toBe(TOOL_EXIT_CODES.refused);
+test("exit code 0 on executed, 1 on failed, 127 on refused", () => {
+  expect(exitCodeForInvoke({ status: "executed", toolId: "t1", result: "ok", durationMs: 1 })).toBe(0);
+  expect(exitCodeForInvoke({ status: "failed", toolId: "t1", error: "boom", durationMs: 1 })).toBe(1);
+  expect(exitCodeForInvoke({ status: "refused", toolId: "t1", code: "ERR_TOOLGEN_NOT_SAVED" })).toBe(TOOL_EXIT_CODES.refused);
+});
+
+test("renders a string result bare, an object pretty, and nothing as (no output)", () => {
+  const lines: string[] = [];
+  const sink = { out: (t: string) => lines.push(t), err: (t: string) => lines.push(t) };
+  renderToolInvokeOutcome({ status: "executed", toolId: "t", result: "hello", durationMs: 1 }, sink, false);
+  renderToolInvokeOutcome({ status: "executed", toolId: "t", result: { a: 1 }, durationMs: 1 }, sink, false);
+  renderToolInvokeOutcome({ status: "executed", toolId: "t", result: undefined, durationMs: 1 }, sink, false);
+  expect(lines[0]).toBe("hello
+");
+  expect(lines[1]).toContain('"a": 1');
+  expect(lines[2]).toBe("(no output)
+");
 });
 ```
 
