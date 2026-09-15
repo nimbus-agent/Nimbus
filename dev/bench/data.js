@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1789483988988,
+  "lastUpdate": 1789486096657,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "b22b4952628e1ae9ac3085254ce572e5359dd658",
-          "message": "Credential rotation & hardening: a manifest the weekly monitor checks against live state (#783)\n\nSub-project #4 of the secrets-management program, and the last one.\nWhere #1 monitored a handful of release credentials by name and #2/#3\nretired PATs in favour of App and OIDC minting, this one asks the\nquestion none of them could: *is the set of credentials we think exists\nthe set that actually exists?*\n\n## What it adds\n\n- **A credential manifest** (`scripts/release/credential-registry.ts`) —\nevery credential across the org, each with a three-valued `state`:\n`required` / `optional` / `forbidden`. Two values would have been wrong:\nsix credentials are legitimately referenced-but-unset today\n(Windows/Apple signing certs, `NIMBUS_CHECKS_TOKEN`, `SCORECARD_TOKEN`)\nand would all have hard-failed on day one.\n- **Live enumeration** (`credential-enumerate.ts`) via a new read-only\n`nimbus-secret-auditor` GitHub App, and a **diff**\n(`credential-audit.ts`) against the manifest.\n- **Inventory rows in the weekly monitor**, folded into #1's existing\nde-duplicated issue filer.\n- **`audit:consumed-by`** — a preflight gate that fails when the\nmanifest's `consumedBy` names a workflow that does not exist, so the\n\"who uses this?\" column cannot rot.\n- **`docs/credential-hygiene.md`** — the manual workstation audit,\ncovering what CI-side inspection structurally cannot see.\n\n## Why the scan surface is not derived from the manifest\n\nThe original design enumerated secrets from the manifest's own repo\nlist. The manifest names 3 repos; the org has 18. Fifteen — both npm\nsatellites and all six private repos — would never have been scanned, so\na secret in an undocumented repo would have been invisible *by\nconstruction* while the monitor reported everything healthy.\n`enumerateSecrets` takes no repos parameter; it discovers its surface\nfrom `/installation/repositories`.\n\n## Proven live, not just in tests\n\nThe hard-failure path never runs on a healthy monitor, so it was driven\ndeliberately — the same blind spot that hid a broken alert path in\nsub-project #3.\n\nA throwaway secret was planted in `nimbus-benchmarks`, a repo that\nappears **nowhere in the manifest**. Run\n[29849554973](https://github.com/nimbus-agent/Nimbus/actions/runs/29849554973)\nfailed with:\n\n```\n| nimbus-benchmarks/ZZ_AUDIT_PROBE | inventory | undocumented | actions secret in nimbus-benchmarks is absent from credential-registry.ts — add it or delete it |\n```\n\nUnder the manifest-derived design that row was impossible. Baseline\n[29847962142](https://github.com/nimbus-agent/Nimbus/actions/runs/29847962142)\nand recovery\n[29849794916](https://github.com/nimbus-agent/Nimbus/actions/runs/29849794916)\nboth succeeded; the probe is deleted and left no residue. De-duplication\nheld — no second issue was filed, #782's body was edited in place.\n\n## Two real findings on the first run\n\n- `Nimbus/CODECOV_TOKEN` — stale, last set 95d ago against a 90d policy.\nNeeds an interactive rotation.\n- `org/RELEASE_PLEASE_PAT` — visibility is `all`, declared `selected`.\nNarrowing was attempted and blocked by the org plan. The drift row is\ndeliberately left loud rather than declaring `all` in the manifest,\nwhich would silence a genuine over-exposure.\n\nBoth are warn-level, so the monitor stays green while issue #782 stays\nopen. That is the intended behaviour: `undocumented` is hard, drift and\nstaleness are warnings.\n\n## Live state changed by this work\n\nOne thing only: `nimbus-sdk` had secret scanning and push protection\n**off** — the only repo of 18 — and both are now enabled.\n\n`RELEASE_PAT` and `PACKAGE_MANAGER_PAT` **stay**. Their retirement is\ngated on a full release cycle going green under the GitHub App, and no\ntag-triggered workflow has run since that migration merged.\n\n## Verification\n\n`typecheck`, standalone `tsc --strict` over `scripts/` (which the\nworkspace-filtered `typecheck` does not cover), biome, `lint:markdown`,\n`audit:{doc-refs,consumed-by,status-drift,action-sha-pins,boundaries,invariants,cross-platform}`,\nand `bun test scripts/{release,lib}` → 148 pass / 6 skip / 0 fail.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n---------\n\nCo-authored-by: Claude Opus 4.8 (1M context) <noreply@anthropic.com>",
-          "timestamp": "2026-07-21T20:13:15+03:00",
-          "tree_id": "70a354632f8f271446c324b5df976d9b024c9598",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/b22b4952628e1ae9ac3085254ce572e5359dd658"
-        },
-        "date": 1784655123077,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 286.17363270000243,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 286.3088461500003,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 192.19715975000182,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "306811640+nimbus-release-bot[bot]@users.noreply.github.com",
+            "name": "nimbus-release-bot[bot]",
+            "username": "nimbus-release-bot[bot]"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "33309a82acfff9476c7ff059d3f6d2e66ff18ed8",
+          "message": "chore: release main (#1512)\n\n:robot: I have created a release *beep* *boop*\n---\n\n\n<details><summary>7.23.0</summary>\n\n##\n[7.23.0](https://github.com/nimbus-agent/Nimbus/compare/v7.22.0...v7.23.0)\n(2026-09-15)\n\n\n### Features\n\n* **cli:** nimbus explain last — an X-ray of the most recent nimbus ask\n([#1514](https://github.com/nimbus-agent/Nimbus/issues/1514))\n([755c2b6](https://github.com/nimbus-agent/Nimbus/commit/755c2b6019479a1313ada85ab4d3db6726c4add4))\n* **cli:** nimbus tail — follow the gateway's operational event stream\n([#1511](https://github.com/nimbus-agent/Nimbus/issues/1511))\n([9f70962](https://github.com/nimbus-agent/Nimbus/commit/9f70962084caa57c3eba05d99be40f99dd58187b))\n</details>\n\n---\nThis PR was generated with [Release\nPlease](https://github.com/googleapis/release-please). See\n[documentation](https://github.com/googleapis/release-please#release-please).\n\nCo-authored-by: nimbus-release-bot[bot] <306811640+nimbus-release-bot[bot]@users.noreply.github.com>",
+          "timestamp": "2026-09-15T15:10:49Z",
+          "tree_id": "7ae227d046a418adecb1c5e16bb2f0c7f3bda4cc",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/33309a82acfff9476c7ff059d3f6d2e66ff18ed8"
+        },
+        "date": 1789486092647,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 334.9431323999961,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 336.4271272000031,
             "unit": "ms"
           }
         ]
