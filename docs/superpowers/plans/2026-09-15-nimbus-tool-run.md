@@ -865,9 +865,36 @@ Spec §6, §8.
 
 - [ ] **Step 1: Write the integration test**
 
-Against a real signed artifact: save a tool, then invoke it, and assert the result plus exactly one
-audit row. Then **tamper with the saved artifact on disk and assert the invocation refuses** — that
-is I40's property and the one worth having.
+**Do not build the harness from scratch — copy it.**
+`packages/gateway/test/integration/toolgen/toolgen-saved-spawn.test.ts` already stands up everything
+this needs and is the template: a temp `configDir`, `runIndexedSchemaMigrations` to
+`CURRENT_SCHEMA_VERSION`, its local `makeSharedVault(store)` holding `TOOLGEN_SIGNING_PUBKEY`, its
+`spawnConfined` helper, `createGeneratedTool` → `saveGeneratedTool` → `getSavedTool`, and a local
+`Bun.serve` via `ensureServer()` for a tool that reaches the broker. Read that file first and reuse
+its shape; inventing a second signing/Vault/migration harness is how the two drift.
+
+Assert two things:
+
+1. **The happy path end to end** — save a tool, invoke it through `invokeSavedTool`, and assert both
+   the result AND exactly one `tool.invoke` audit row in the real `audit_log`. Unit tests assert the
+   row against an injected sink; this is the only place the row is proven to survive a real
+   `appendAuditEntry` against a migrated schema, including the BLAKE3 chain accepting it.
+
+2. **A tampered artifact is REFUSED, with the refusal's own code** — rewrite `artifact.json` on
+   disk after saving, then invoke.
+
+**State why (2) is not duplicate coverage, because at first glance it is.** Tamper refusal is
+already tested at two lower layers — `toolgen-saved-store.test.ts:95` ("a tampered artifact.json is
+refused") and `toolgen-saved-spawn.test.ts`. Task 1 separately unit-tests that a `ToolgenError`
+thrown by a STUBBED `spawn` maps to `refused` rather than `failed`. What no existing test covers is
+the JOIN: that a REAL signature failure actually throws `ToolgenError` — rather than some other
+error the gate would classify as `failed` — so the two halves of the mapping are proven against each
+other instead of against a fake on both sides. That is the
+[[fakes-cant-catch-contract-mismatch]] shape, and it is the reason this case earns its place.
+
+So assert the CODE, not merely that it refused: `out.status === "refused"` **and** the specific
+`code`. An assertion that only checks `refused` would pass if the gate started refusing for an
+unrelated reason, which is exactly the failure this test exists to exclude.
 
 - [ ] **Step 2: Write the E2E**
 
@@ -886,8 +913,20 @@ nothing below it does.
 `create` alone is not runnable; headless-capable; input validation is presence-only, not schema
 conformance; neither input nor output is recorded; and the model still cannot call a generated tool.
 
-`docs/roadmap.md` records the gap as closed. `CLAUDE.md` and `GEMINI.md` mirror each other — update
-both or the drift gate fires.
+`docs/roadmap.md` records the gap as closed. `docs/CHANGELOG.md` is the canonical dated log and
+gains an entry (it is in this task's Files list and is easy to skip, since the other three doc edits
+read as the whole job). `CLAUDE.md` and `GEMINI.md` mirror each other — update both or the drift
+gate fires.
+
+**Two claims in `CLAUDE.md` become FALSE with this branch and must be corrected, not merely
+appended to.** Its toolgen paragraph currently states that "NO path invokes a generated tool at all
+this release: there is no `toolgen.invoke` IPC method and no CLI subcommand that calls one, so a
+saved tool is spawnable in-process (`spawnSavedTool`, exercised by an integration test) and nothing
+more". This branch adds exactly that method and that subcommand. Leaving the sentence while adding
+a newer one elsewhere is the drift this file has been bitten by before. What stays TRUE and must
+survive the rewrite: the model still cannot call a generated tool, because `deps.toolgen` remains
+unsupplied by `gateway-main.ts` — that is the scope bound, and it is the sentence a reader needs
+most.
 
 - [ ] **Step 4: Run the full gate set**
 
