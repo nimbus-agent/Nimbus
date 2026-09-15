@@ -10,6 +10,7 @@ import {
   type FetchMessageObject,
   type FetchQueryObject,
   ImapFlow,
+  type MessageAddressObject,
   type MessageStructureObject,
 } from "imapflow";
 
@@ -105,7 +106,7 @@ export function previewFromParts(parts: Map<string, Buffer> | undefined, partKey
   return buf === undefined ? "" : capPreview(buf.toString("utf8"));
 }
 
-export function addresses(list: { name?: string; address?: string }[] | undefined): string[] {
+export function addresses(list: readonly MessageAddressObject[] | undefined): string[] {
   return (list ?? []).map((a) => {
     const addr = a.address ?? "";
     if (a.name !== undefined && a.name !== "") {
