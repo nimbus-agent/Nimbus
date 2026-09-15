@@ -389,81 +389,161 @@ Spec §5. Exactly one row per invocation, carrying neither input nor output.
 - Test: `packages/gateway/src/toolgen/toolgen-invoke-gate.test.ts` (extend)
 
 **Interfaces:**
-- Consumes: `appendAuditEntry(db, {actionType, hitlStatus, actionJson, timestamp})` from `db/audit-chain.ts:56`.
-- Produces: one `audit_log` row per invocation with `actionType: "tool.invoke"`.
+- Consumes: `AppendAuditEntryFields` (type only) from `db/audit-chain.ts:27`. The gate does NOT
+  call `appendAuditEntry` itself — it has no `Database`. Task 4's wiring binds `deps.audit` to a
+  closure over `appendAuditEntry(db, row)`.
+- Produces: `deps.audit` RETYPED to `(row: AppendAuditEntryFields) => void`, and one
+  `actionType: "tool.invoke"` row per invocation.
 
-- [ ] **Step 1: Write the failing tests**
+**Why this task retypes an existing dep — read before Step 1.** Tasks 1–2 shipped
+`audit: (outcome: ToolgenInvokeOutcome) => void`, called from all three arms
+(`toolgen-invoke-gate.ts:195`, `:210`, `:229`). That dep hands the sink the OUTCOME, and the
+`executed` variant carries `result: unknown` (`:23`) — the tool's full output. A Task 4 wiring that
+stringified its argument into `action_json` would make the audit row a verbatim copy of the tool's
+output, which is exactly what spec §5 forbids. The fix is structural: the gate PROJECTS the outcome
+onto a row whose type has no `result` and no `input` member, and the sink only ever sees the
+projection. The omission is then guaranteed by the type, not by a discipline the wiring task has to
+remember.
+
+- [ ] **Step 1: Retype the dep**
+
+In `ToolgenInvokeDeps`, replace the `audit` member:
+
+```ts
+  /**
+   * Sink for the one `tool.invoke` audit row this invocation writes. Takes an ALREADY-PROJECTED
+   * row, never the outcome: `ToolgenInvokeOutcome.executed` carries the tool's `result`, and a
+   * sink handed the outcome could stringify the tool's output into `action_json` (spec §5 forbids
+   * exactly that). Bound to `appendAuditEntry(db, row)` in production (Task 4).
+   */
+  readonly audit: (row: AppendAuditEntryFields) => void;
+```
+
+Add the type-only import:
+
+```ts
+import type { AppendAuditEntryFields } from "../db/audit-chain.ts";
+```
+
+- [ ] **Step 2: Write the failing tests**
 
 ```ts
 describe("invokeSavedTool audit", () => {
   test("exactly one row per outcome, and neither input nor output appears in it", async () => {
-    const rows: Array<{ actionType: string; hitlStatus: string; actionJson: string }> = [];
+    const rows: AppendAuditEntryFields[] = [];
     const d = deps({
       audit: (row) => { rows.push(row); },
       spawn: async () => ({ call: async () => "SECRET-OUTPUT", close: async () => {}, describe: async () => ({ name: "", description: "", inputSchema: {} }) }),
     });
-    await invokeSavedTool({ toolId: "t1", input: { q: "SECRET-INPUT" } }, d);
+    const out = await invokeSavedTool({ toolId: "t1", input: { q: "SECRET-INPUT" } }, d);
+    expect(out.status).toBe("executed");
     expect(rows).toHaveLength(1);
     expect(rows[0]?.actionType).toBe("tool.invoke");
     expect(rows[0]?.hitlStatus).toBe("not_required");
+    expect(rows[0]?.timestamp).toBe(1_000);
     // Spec §5: the audit trail must not become a second copy of the user's data.
     expect(rows[0]?.actionJson).not.toContain("SECRET-INPUT");
     expect(rows[0]?.actionJson).not.toContain("SECRET-OUTPUT");
   });
 
-  test("a refusal writes exactly one row too", async () => {
-    const rows: unknown[] = [];
-    await invokeSavedTool({ toolId: "t1", input: {} }, deps({ audit: (r) => { rows.push(r); } }));
+  test("a refusal writes exactly one row, and the row says it was refused", async () => {
+    const rows: AppendAuditEntryFields[] = [];
+    const out = await invokeSavedTool({ toolId: "t1", input: {} }, deps({ audit: (r) => { rows.push(r); } }));
+    // Asserted, not assumed: without these two the test passes even if `{}` SUCCEEDS, since the
+    // row count is one either way.
+    expect(out.status).toBe("refused");
+    expect(out.status === "refused" && out.code).toBe("ERR_TOOLGEN_INPUT_INVALID");
     expect(rows).toHaveLength(1);
+    expect(JSON.parse(rows[0]?.actionJson ?? "{}")).toMatchObject({
+      outcome: "refused",
+      code: "ERR_TOOLGEN_INPUT_INVALID",
+    });
   });
 
   test("a failed execution writes exactly one row", async () => {
-    const rows: unknown[] = [];
-    await invokeSavedTool({ toolId: "t1", input: { q: "x" } }, deps({
+    const rows: AppendAuditEntryFields[] = [];
+    const out = await invokeSavedTool({ toolId: "t1", input: { q: "x" } }, deps({
       audit: (r) => { rows.push(r); },
       spawn: async () => ({ call: async () => { throw new Error("boom"); }, close: async () => {}, describe: async () => ({ name: "", description: "", inputSchema: {} }) }),
     }));
+    expect(out.status).toBe("failed");
     expect(rows).toHaveLength(1);
+    expect(JSON.parse(rows[0]?.actionJson ?? "{}")).toMatchObject({ outcome: "failed" });
+  });
+
+  test("the row carries the caller's session id when one was supplied", async () => {
+    const rows: AppendAuditEntryFields[] = [];
+    await invokeSavedTool({ toolId: "t1", input: { q: "x" }, sessionId: "sess-9" }, deps({
+      audit: (r) => { rows.push(r); },
+      spawn: async () => ({ call: async () => "ok", close: async () => {}, describe: async () => ({ name: "", description: "", inputSchema: {} }) }),
+    }));
+    expect(rows[0]?.sessionId).toBe("sess-9");
+  });
+
+  test("the row OMITS sessionId entirely when the caller supplied none", async () => {
+    const rows: AppendAuditEntryFields[] = [];
+    await invokeSavedTool({ toolId: "t1", input: { q: "x" } }, deps({
+      audit: (r) => { rows.push(r); },
+      spawn: async () => ({ call: async () => "ok", close: async () => {}, describe: async () => ({ name: "", description: "", inputSchema: {} }) }),
+    }));
+    // `exactOptionalPropertyTypes`: the key must be ABSENT, not present-and-undefined.
+    expect(rows[0] !== undefined && "sessionId" in rows[0]).toBe(false);
   });
 });
 ```
 
-- [ ] **Step 2: Run to verify they fail**
+- [ ] **Step 3: Run to verify they fail**
 
 Run: `bun test packages/gateway/src/toolgen/toolgen-invoke-gate.test.ts`
-Expected: FAIL — rows empty or the payload contains the input.
+Expected: FAIL — the retyped dep has no producer yet, so `rows` is empty.
 
-- [ ] **Step 3: Write the audit call**
+- [ ] **Step 4: Write the projection**
 
-One helper, called from `refuse` / `succeed` / `fail` so no arm can forget it:
+ONE helper, called from `refuse` / `succeed` / `fail`, so no arm can forget it. Every optional
+member is added by CONDITIONAL SPREAD — this repo sets `exactOptionalPropertyTypes`, so
+`durationMs: undefined` is a compile error, not a shorthand for absence:
 
 ```ts
-function writeInvokeAudit(deps: ToolgenInvokeDeps, fields: {
-  outcome: "executed" | "failed" | "refused";
-  toolId: string;
-  durationMs?: number;
-  code?: string;
-  error?: string;
-}): void {
+function writeInvokeAudit(
+  deps: ToolgenInvokeDeps,
+  sessionId: string | undefined,
+  fields: {
+    readonly outcome: "executed" | "failed" | "refused";
+    readonly toolId: string;
+    readonly durationMs?: number;
+    readonly code?: string;
+    readonly error?: string;
+  },
+): void {
   deps.audit({
     actionType: "tool.invoke",
     // I39's `recordToolEgress` precedent: the tool's REGISTRATION was approved, not each request.
     hitlStatus: "not_required",
     actionJson: JSON.stringify(fields),
     timestamp: deps.now(),
+    ...(sessionId === undefined ? {} : { sessionId }),
   });
 }
 ```
 
-`fields` deliberately has no `input` or `result` member — the omission is structural, not a
-discipline the caller has to remember.
+`fields` deliberately has no `input` and no `result` member — the omission is structural, not a
+discipline the caller has to remember. Build each arm's `fields` the same way:
 
-- [ ] **Step 4: Run the tests**
+```ts
+  writeInvokeAudit(deps, req.sessionId, {
+    outcome: "refused",
+    toolId,
+    code,
+    ...(reason === undefined ? {} : { error: reason }),
+  });
+```
+
+- [ ] **Step 5: Run the tests**
 
 Run: `bun test packages/gateway/src/toolgen/ && bun run typecheck && bunx biome check packages/gateway/src/toolgen/`
 Expected: PASS, clean.
 
-- [ ] **Step 5: Commit**
+- [ ] **Step 6: Commit**
 
 ```bash
 git add packages/gateway/src/toolgen/toolgen-invoke-gate.ts packages/gateway/src/toolgen/toolgen-invoke-gate.test.ts
@@ -471,7 +551,6 @@ git commit -m "feat(toolgen): write one tool.invoke audit row per invocation"
 ```
 
 ---
-
 ### Task 4: Wire the IPC method
 
 Spec §3, §3.1, §4.3.
