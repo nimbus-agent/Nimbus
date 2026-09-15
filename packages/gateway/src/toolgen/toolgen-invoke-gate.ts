@@ -136,28 +136,49 @@ export async function invokeSavedTool(
   return await serialise(toolId, async () => {
     const startedAt = deps.now();
     let handle: GeneratedToolHandle | undefined;
+    // ONE mutable slot, assigned by whichever arm runs, read by the single audit write below.
+    // This is deliberately NOT "each arm writes its own row": the audit call used to sit INSIDE
+    // the `try`, so a throwing `deps.audit` on the success path was caught by the `catch` beneath
+    // it, seen as a plain `Error`, routed to `fail()` and audited a SECOND time — permanently
+    // recording `outcome: "failed"` for an execution that succeeded (a transient `SQLITE_BUSY`),
+    // or propagating with ZERO rows written (a deterministic failure, e.g. the DB closed at
+    // shutdown). The repo's I35 lesson, one hop on: state a single `finally` must write exactly
+    // once belongs in ONE record passed to the arms, never in each arm's own closure.
+    let outcome: ToolgenInvokeOutcome;
     try {
       handle = await deps.spawn(toolId);
       const result = await handle.call(input);
-      return succeed(deps, toolId, result, deps.now() - startedAt, req.sessionId);
+      outcome = { status: "executed", toolId, result, durationMs: deps.now() - startedAt };
     } catch (e) {
       // A ToolgenError from spawnSavedTool is a pre-execution REFUSAL, not a tool failure. The
       // signature-invalid path (`toolgen-saved-spawn.ts:206`) is the one that matters: reporting a
       // tampered artifact as `failed` would give exit 1 and an audit `outcome: "failed"`, making an
       // I40 refusal read as a bug in the tool.
-      if (e instanceof ToolgenError) {
-        return refuse(deps, toolId, e.code, e.message, req.sessionId);
-      }
-      const msg = e instanceof Error ? e.message : String(e);
-      return fail(deps, toolId, msg, deps.now() - startedAt, req.sessionId);
+      outcome =
+        e instanceof ToolgenError
+          ? buildRefused(toolId, e.code, e.message)
+          : {
+              status: "failed",
+              toolId,
+              error: e instanceof Error ? e.message : String(e),
+              durationMs: deps.now() - startedAt,
+            };
     } finally {
-      // Close must not mask the outcome: a close failure is not the caller's problem.
+      // Close must not mask the outcome: a close failure is not the caller's problem. It also runs
+      // BEFORE the audit write below, so a throwing sink can never strand a live child process.
       try {
         await handle?.close();
       } catch {
         /* best-effort */
       }
     }
+    // Exactly one row per invocation, unconditionally, from a projection DERIVED from the assigned
+    // outcome — structurally outside the `catch` that could otherwise re-enter it. A failure here
+    // propagates to the caller rather than being swallowed: the audit trail is the point of the
+    // gate, and silently returning `executed` on a row that was never written would be the same
+    // false claim in the other direction.
+    writeInvokeAudit(deps, req.sessionId, auditFieldsFor(outcome));
+    return outcome;
   });
 }
 
@@ -221,22 +242,59 @@ function validateInput(input: unknown, schema: ToolInputSchema): string | undefi
 }
 
 /**
- * Projects an invocation outcome onto the one `tool.invoke` audit row it writes, and hands the
- * projection — never the outcome itself — to `deps.audit`. `fields` deliberately has no `input`
- * and no `result` member: the omission is structural, not a discipline the caller has to
- * remember (spec §5). I39's `recordToolEgress` precedent applies here too: the tool's
- * REGISTRATION was approved, not each request, hence `hitlStatus: "not_required"`.
+ * The shape of a `tool.invoke` audit row's `action_json`, BEFORE the error cap is applied.
+ * Deliberately has no `input` and no `result` member: the omission is structural, not a discipline
+ * a caller has to remember (spec §5), so adding either is a compile error rather than a review
+ * catch.
+ */
+interface InvokeAuditFields {
+  readonly outcome: "executed" | "failed" | "refused";
+  readonly toolId: string;
+  readonly durationMs?: number;
+  readonly code?: string;
+  readonly error?: string;
+}
+
+/**
+ * The ONE projection from an outcome to its audit row's fields, shared by the pre-spawn refusal
+ * path and the post-execution write. Pure: it reads the outcome and nothing else, which is what
+ * lets `invokeSavedTool` assign the outcome in one place and write the row in another without the
+ * two being able to disagree about what happened.
+ *
+ * A refusal carries no `durationMs` (nothing ran) and its `reason` is stored under `error` — both
+ * preserved verbatim from the per-arm builders this replaced, key ORDER included, since
+ * `action_json` is a stringified record that tests and auditors read back.
+ */
+function auditFieldsFor(outcome: ToolgenInvokeOutcome): InvokeAuditFields {
+  switch (outcome.status) {
+    case "executed":
+      return { outcome: "executed", toolId: outcome.toolId, durationMs: outcome.durationMs };
+    case "failed":
+      return {
+        outcome: "failed",
+        toolId: outcome.toolId,
+        durationMs: outcome.durationMs,
+        error: outcome.error,
+      };
+    case "refused":
+      return {
+        outcome: "refused",
+        toolId: outcome.toolId,
+        code: outcome.code,
+        ...(outcome.reason === undefined ? {} : { error: outcome.reason }),
+      };
+  }
+}
+
+/**
+ * Hands an ALREADY-PROJECTED row — never the outcome itself — to `deps.audit`. I39's
+ * `recordToolEgress` precedent applies here too: the tool's REGISTRATION was approved, not each
+ * request, hence `hitlStatus: "not_required"`.
  */
 function writeInvokeAudit(
   deps: ToolgenInvokeDeps,
   sessionId: string | undefined,
-  fields: {
-    readonly outcome: "executed" | "failed" | "refused";
-    readonly toolId: string;
-    readonly durationMs?: number;
-    readonly code?: string;
-    readonly error?: string;
-  },
+  fields: InvokeAuditFields,
 ): void {
   // Cap the error text for the stored row only, never the returned outcome (which keeps the full message).
   // Use a spread to conditionally include the capped error, respecting exactOptionalPropertyTypes.
@@ -253,39 +311,20 @@ function writeInvokeAudit(
   });
 }
 
-/**
- * Builds an executed outcome and writes the audit row.
- */
-function succeed(
-  deps: ToolgenInvokeDeps,
-  toolId: string,
-  result: unknown,
-  durationMs: number,
-  sessionId?: string,
-): ToolgenInvokeOutcome {
-  const outcome: ToolgenInvokeOutcome = { status: "executed", toolId, result, durationMs };
-  writeInvokeAudit(deps, sessionId, { outcome: "executed", toolId, durationMs });
-  return outcome;
+/** Builds a refused outcome. PURE — writes nothing; see `refuse` for the audited form. */
+function buildRefused(toolId: string, code: string, reason?: string): ToolgenInvokeOutcome {
+  return {
+    status: "refused",
+    toolId,
+    code,
+    ...(reason !== undefined && { reason }),
+  };
 }
 
 /**
- * Builds a failed outcome and writes the audit row. Distinct from `refuse`: the tool DID run and
- * threw, rather than being refused before it was ever spawned (spec §3.1).
- */
-function fail(
-  deps: ToolgenInvokeDeps,
-  toolId: string,
-  error: string,
-  durationMs: number,
-  sessionId?: string,
-): ToolgenInvokeOutcome {
-  const outcome: ToolgenInvokeOutcome = { status: "failed", toolId, error, durationMs };
-  writeInvokeAudit(deps, sessionId, { outcome: "failed", toolId, durationMs, error });
-  return outcome;
-}
-
-/**
- * Builds a refused outcome and writes the audit row.
+ * Builds a refused outcome and writes its audit row — the form used by every refusal decided
+ * BEFORE `serialise` is reached. Inside the serialised body the outcome is assigned and the row is
+ * written once at the end instead (see `invokeSavedTool`), so the two never both fire.
  */
 function refuse(
   deps: ToolgenInvokeDeps,
@@ -294,17 +333,7 @@ function refuse(
   reason?: string,
   sessionId?: string,
 ): ToolgenInvokeOutcome {
-  const outcome: ToolgenInvokeOutcome = {
-    status: "refused",
-    toolId,
-    code,
-    ...(reason !== undefined && { reason }),
-  };
-  writeInvokeAudit(deps, sessionId, {
-    outcome: "refused",
-    toolId,
-    code,
-    ...(reason === undefined ? {} : { error: reason }),
-  });
+  const outcome = buildRefused(toolId, code, reason);
+  writeInvokeAudit(deps, sessionId, auditFieldsFor(outcome));
   return outcome;
 }

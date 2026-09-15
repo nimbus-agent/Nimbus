@@ -439,3 +439,93 @@ test("a multi-byte message is not corrupted when capped", async () => {
   // It should still parse as valid JSON (already done by JSON.parse above).
   expect(typeof actionJson.error).toBe("string");
 });
+
+describe("a throwing audit sink cannot double-write or reclassify the outcome", () => {
+  // The defect this pins: `succeed()` used to be called INSIDE the `try`, so a `deps.audit` that
+  // threw was caught by the surrounding `catch`, seen as a plain `Error` (not a `ToolgenError`),
+  // routed to `fail()` -- and audited AGAIN. Two reachable consequences:
+  //
+  //   - a DETERMINISTIC throw (the DB closed at shutdown, a full disk): the second append threw
+  //     too, escaped the catch and propagated, so a tool that RAN, made real brokered network
+  //     requests and produced a result yielded a JSON-RPC error, exit 127, and ZERO audit rows.
+  //   - a TRANSIENT throw (SQLITE_BUSY -- reachable; the embedding backfill writes constantly):
+  //     the second append SUCCEEDED and the chain permanently recorded `outcome: "failed"` for an
+  //     execution that succeeded, with the audit subsystem's own error text in the tool's `error`.
+  //
+  // The write is hoisted out of the `try` now, so this is structural rather than a swallowed catch.
+  test("a deterministically throwing audit sink is called ONCE and does not turn a success into a failure", async () => {
+    let calls = 0;
+    let toolRan = 0;
+    const d = deps({
+      audit: () => {
+        calls += 1;
+        throw new Error("audit sink is down");
+      },
+      spawn: async () => ({
+        call: async () => {
+          toolRan += 1;
+          return { ok: 1 };
+        },
+        close: async () => {},
+        describe: async () => ({ name: "", description: "", inputSchema: {} }),
+      }),
+    });
+
+    // The failure surfaces to the caller rather than being swallowed -- but it surfaces ONCE, and
+    // never as a `failed` outcome, which would be a false statement about an execution that
+    // succeeded.
+    await expect(invokeSavedTool({ toolId: "t1", input: { q: "x" } }, d)).rejects.toThrow(
+      "audit sink is down",
+    );
+
+    // Asserted, not assumed: without this the call-count assertion would hold vacuously if a
+    // future change made this path refuse before ever spawning.
+    expect(toolRan).toBe(1);
+    expect(calls).toBe(1);
+  });
+
+  test("a TRANSIENT audit failure cannot rewrite a success as `failed` on a retry row", async () => {
+    // The SQLITE_BUSY shape: the first append throws, a second would succeed. If a second append
+    // ever happens, it lands here -- and it must not, so `rows` must stay empty.
+    const rows: AppendAuditEntryFields[] = [];
+    let calls = 0;
+    const d = deps({
+      audit: (r) => {
+        calls += 1;
+        if (calls === 1) throw new Error("SQLITE_BUSY: database is locked");
+        rows.push(r);
+      },
+      spawn: async () => ({
+        call: async () => ({ ok: 1 }),
+        close: async () => {},
+        describe: async () => ({ name: "", description: "", inputSchema: {} }),
+      }),
+    });
+
+    await expect(invokeSavedTool({ toolId: "t1", input: { q: "x" } }, d)).rejects.toThrow(
+      "SQLITE_BUSY",
+    );
+    expect(calls).toBe(1);
+    expect(rows).toHaveLength(0);
+  });
+
+  test("the handle is still closed when the audit write throws", async () => {
+    // The close lives in the `finally`, which now runs BEFORE the audit write rather than
+    // alongside it -- so a throwing sink must not strand a live child process.
+    let closed = 0;
+    const d = deps({
+      audit: () => {
+        throw new Error("audit sink is down");
+      },
+      spawn: async () => ({
+        call: async () => ({ ok: 1 }),
+        close: async () => {
+          closed += 1;
+        },
+        describe: async () => ({ name: "", description: "", inputSchema: {} }),
+      }),
+    });
+    await expect(invokeSavedTool({ toolId: "t1", input: { q: "x" } }, d)).rejects.toThrow();
+    expect(closed).toBe(1);
+  });
+});
