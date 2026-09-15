@@ -174,18 +174,18 @@
     "clean": "bun run --filter '*' clean && rm -rf node_modules"
   },
   "dependencies": {
-    "zod": "^4.5.4"
+    "zod": "^4.6.2"
   },
   "devDependencies": {
-    "@babel/core": "8.0.1",
+    "@babel/core": "8.0.5",
     "@babel/plugin-syntax-jsx": "8.0.1",
     "@babel/preset-typescript": "8.0.1",
-    "@biomejs/biome": "^2.5.12",
+    "@biomejs/biome": "^2.5.13",
     "@conventional-commits/parser": "^0.4.1",
     "@resvg/resvg-js": "^2.6.2",
     "@stryker-mutator/core": "10.0.0",
     "@types/babel__core": "7.20.5",
-    "@types/bun": "^1.4.1",
+    "@types/bun": "^1.4.2",
     "@types/istanbul-lib-coverage": "2.0.6",
     "@types/istanbul-lib-report": "3.0.3",
     "@types/istanbul-reports": "3.0.4",
@@ -196,12 +196,12 @@
     "istanbul-lib-report": "3.0.1",
     "istanbul-reports": "3.2.0",
     "js-yaml": "^4.3.2",
-    "jscpd": "^5.1.2",
-    "knip": "^6.34.0",
+    "jscpd": "^5.2.0",
+    "knip": "^6.35.1",
     "markdownlint-cli2": "^0.23.2",
     "tweetnacl": "^1.0.3",
     "typescript": "^7.0.2",
     "typescript-compiler-api": "npm:typescript@^6.0.3",
-    "yaml": "^2.9.0"
+    "yaml": "^2.9.1"
   }
 }
