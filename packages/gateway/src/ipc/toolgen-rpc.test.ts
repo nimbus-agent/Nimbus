@@ -278,6 +278,63 @@ function makeCtx(
       now: () => 1_700_000_000_000,
       ...saveOver,
     },
+    // Task 4's `toolgen.invoke` deps -- shares the SAME `registry` instance as `gateDeps`/
+    // `saveDeps` above, matching production (`platform/assemble.ts` shares ONE `toolgenRegistry`
+    // across all three). `spawn` throws by default so a test that reaches it without meaning to
+    // fails loudly rather than silently returning a fake handle.
+    invokeDeps: {
+      config: { enabled: true },
+      enforced: { capabilitiesDisabled: new Set<string>() },
+      registry,
+      spawn: async () => {
+        throw new Error("spawn must not be reached unless a test wires a saved tool");
+      },
+      audit: () => {},
+      now: () => 1_700_000_000_000,
+    },
+  };
+}
+
+/**
+ * A ctx whose registry holds one HEALTHY saved tool ("t1") and whose `invokeDeps.spawn` returns a
+ * fake `GeneratedToolHandle` that succeeds -- for `toolgen.invoke`'s happy-path test, which needs
+ * `invokeSavedTool` to reach `succeed()` rather than refuse before ever calling `spawn`.
+ */
+function ctxWithFakeInvoke(): TestCtx {
+  const ctx = makeCtx();
+  ctx.gateDeps.registry.registerSaved({
+    toolId: "t1",
+    needsCredentials: false,
+    artifact: {
+      toolId: "t1",
+      toolName: "t1",
+      description: "d",
+      body: "return 1;",
+      approvedHosts: ["api.example.com"],
+      credentialHosts: [],
+      manifest: {
+        id: "toolgen.t1",
+        version: "0.0.0",
+        permissions: { network: [], filesystem: { read: [], write: [] } },
+        updateChannel: "stable",
+      },
+      inputSchema: { type: "object", properties: {} },
+    },
+  });
+  return {
+    ...ctx,
+    invokeDeps: {
+      ...ctx.invokeDeps,
+      spawn: async () => ({
+        describe: async () => ({
+          name: "t1",
+          description: "d",
+          inputSchema: { type: "object", properties: {} },
+        }),
+        call: async () => ({ ok: true }),
+        close: async () => {},
+      }),
+    },
   };
 }
 
@@ -1132,5 +1189,25 @@ describe("a malformed hosts array yields an EMPTY host list, never a partial one
     });
     // The point of the test: the ONE good host was not silently kept.
     expect(ctx.broadcasts).toHaveLength(0);
+  });
+});
+
+describe("toolgen.invoke", () => {
+  test("toolgen.invoke resolves through the HANDLERS map", async () => {
+    const out = await dispatchToolgenRpc(
+      "toolgen.invoke",
+      { toolId: "t1", input: { q: "x" } },
+      ctxWithFakeInvoke(),
+    );
+    // `dispatchToolgenRpc` returns an `RpcMissOrHit`, not the outcome bare -- unwrap `.value`
+    // exactly as every other handler test in this file does (see `toolgen.list`'s tests above).
+    if (out.kind !== "hit") throw new Error("unreachable");
+    expect(out.value).toMatchObject({ status: "executed" });
+  });
+
+  test("toolgen.invoke requires a string toolId", async () => {
+    await expect(
+      dispatchToolgenRpc("toolgen.invoke", { toolId: 42 }, ctxWithFakeInvoke()),
+    ).rejects.toThrow();
   });
 });

@@ -164,6 +164,22 @@ export const ERR_TOOLGEN_EXECUTION_FAILED = "ERR_TOOLGEN_EXECUTION_FAILED";
 export const ERR_TOOLGEN_EXECUTION_TIMEOUT = "ERR_TOOLGEN_EXECUTION_TIMEOUT";
 
 /**
+ * The session id every CLI-originated `toolgen.invoke` call is attributed to, matching
+ * `toolgen.create`'s existing `CLI_TOOLGEN_SESSION_ID` (`packages/cli/src/commands/tool.ts:307`,
+ * also `"cli"`). This is a SECOND, independent definition of the same wire value, not a mistake:
+ * the gateway cannot import the CLI's constant (the dependency rule is one-way — gateway imports
+ * nothing from cli), so each side of the wire needs its own copy. The two MUST agree on the
+ * literal `"cli"` — `ToolgenRegistry.countForSession` and a `tool.invoke` audit row's session
+ * attribution both key on it, so a drift between the two definitions would silently split what
+ * should be one bucket into two.
+ *
+ * `SavedSpawnDeps.sessionId` is documented as "the SPAWNING CALLER's session — never a `\"saved\"`
+ * sentinel", and a CLI invocation has no real session of its own, so it needs a named constant
+ * here too, distinct from anything a real agent conversation would supply.
+ */
+export const CLI_TOOLGEN_SESSION_ID = "cli";
+
+/**
  * A caller-supplied `toolId` that could not be a tool id this gateway ever minted — it fails
  * `assertSafeToolId`'s `^[A-Za-z0-9_-]{1,64}$` shape (`toolgen-script-store.ts`).
  *
