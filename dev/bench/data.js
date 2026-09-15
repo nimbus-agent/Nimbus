@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1789486096657,
+  "lastUpdate": 1789487658281,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "306811640+nimbus-release-bot[bot]@users.noreply.github.com",
-            "name": "nimbus-release-bot[bot]",
-            "username": "nimbus-release-bot[bot]"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "6514f82cebb300443d54a1d897dd8b37aabaa299",
-          "message": "chore: release main (#784)\n\n:robot: I have created a release *beep* *boop*\n---\n\n\n<details><summary>0.23.1</summary>\n\n##\n[0.23.1](https://github.com/nimbus-agent/Nimbus/compare/v0.23.0...v0.23.1)\n(2026-07-21)\n\n\n### Bug Fixes\n\n* **deps:** clear the critical + high advisories blocking every PR\n([#781](https://github.com/nimbus-agent/Nimbus/issues/781))\n([4d723b8](https://github.com/nimbus-agent/Nimbus/commit/4d723b80bad63d96016f5aeb379b465844f82f5e))\n* stop relabelling 55% of indexed items, and return NimbusItem from\nindex.queryItems\n([#780](https://github.com/nimbus-agent/Nimbus/issues/780))\n([008615d](https://github.com/nimbus-agent/Nimbus/commit/008615da3ba74fec7aabf935abc57b7eabda90bb))\n</details>\n\n---\nThis PR was generated with [Release\nPlease](https://github.com/googleapis/release-please). See\n[documentation](https://github.com/googleapis/release-please#release-please).\n\nCo-authored-by: nimbus-release-bot[bot] <306811640+nimbus-release-bot[bot]@users.noreply.github.com>\nCo-authored-by: Asaf <asafgolombek@gmail.com>",
-          "timestamp": "2026-07-21T17:30:23Z",
-          "tree_id": "39f9f28e6f46ed10a252dc683ce00b9a2fbc0169",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/6514f82cebb300443d54a1d897dd8b37aabaa299"
-        },
-        "date": 1784655882619,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 304.24857360000095,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 303.4729196000044,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 336.4271272000031,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "e9fe1bc0a8c9c8bfb12122fb0af11c17a8cd78b5",
+          "message": "docs(roadmap): reject SQLite encryption at rest — bun:sqlite cannot link SQLCipher off macOS (#1520)\n\nRejects the `v0.1.1` row \"SQLite encryption at rest (SQLCipher, opt-in\n`[db.encrypt]`)\" and records why, so the next person does not rediscover\nit.\n\n## Why\n\nSQLCipher is a **fork** of SQLite — it changes the pager for page-level\ncrypto — not a loadable extension, so `db.loadExtension()` cannot reach\nit. The only way in is replacing the linked library, and `bun:sqlite`\nexposes exactly one lever for that: `Database.setCustomSQLite`.\n\nIt is a **no-op on Windows and Linux**. Probed directly with a\ndiscriminator that cannot give a false negative — point it at a\nnonexistent library, then open a database; a real call has to fail\nsomewhere:\n\n| Platform | Bun | `setCustomSQLite` with a bogus path | Then open |\nVerdict |\n| --- | --- | --- | --- | --- |\n| win32 | 1.3.14 | returns, no throw | opens, `sqlite_version` 3.53.0 |\nno-op |\n| linux, docker `oven/bun:1.3` | 1.3.14 | returns, no throw | opens,\n`sqlite_version` 3.53.0 | no-op |\n\nmacOS is the one platform where the lever is real — which is why\n`platform/sqlite-runtime.ts` already uses it to bundle a full SQLite\nthere. One platform of three fails non-negotiable 5.\n\nThe row's trigger column said \"engineering work only — no external\ndependency\". That was wrong in the expensive direction: the blocker is\nthe runtime, not effort.\n\n## The failure mode is silent, and that is recorded too\n\nOn plain SQLite `PRAGMA key` does **not** error — it returns empty and\nis ignored. An implementation can set the key, observe no error, report\nencryption enabled, and write plaintext. Anything attempted here in\nfuture must verify positively via `PRAGMA cipher_version`, never by the\nabsence of an error.\n\n## Substitutes considered and rejected\n\nShutdown-time encryption is the dangerous one: Nimbus is a\ncontinuously-syncing daemon, so \"encrypted only while stopped\" is close\nto \"not encrypted\" while carrying the word encryption in the config key,\nand a crash leaves plaintext. Field-level encryption destroys FTS5 and\nvector search over the encrypted column. A own-FFI binding rewrites the\nDB layer. A page-encrypting VFS is hand-rolled crypto in the storage\npath. Reporting OS full-disk-encryption status is a reasonable feature\nthat encrypts nothing — if wanted it belongs in its own row, named for\nwhat it does, rather than letting this row be ticked by something that\nprovides no encryption.\n\n## Scope\n\nDocs only. Sweeps all four dependent references rather than the batch\nrow alone: the Phase 4 decisions table, the Phase 4 deferral note, the\n`v0.1.1` batch row, and `cli-reference.md`'s `explain last` text — whose\n`ask_explain` deferral had cited SQLCipher as a row it was waiting on,\nand now stands on a permanent property of the index instead.\n\n`audit:doc-refs`, `lint:markdown` and `audit:status-drift` all pass.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nhttps://claude.ai/code/session_018de5p4L7YihdexuyiwevUE\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n\n## Summary by CodeRabbit\n\n- **Documentation**\n- Updated CLI reference documentation to clarify that durable\nexplanation history is deferred.\n- Revised the roadmap to mark SQLite encryption at rest as rejected\nrather than deferred, citing cross-platform support limitations and\ndocumenting conditions for reconsideration.\n\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\nCo-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>",
+          "timestamp": "2026-09-15T18:28:34+03:00",
+          "tree_id": "107ef635505ac3417922ee315c8c7415e367853e",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/e9fe1bc0a8c9c8bfb12122fb0af11c17a8cd78b5"
+        },
+        "date": 1789487654648,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 363.2282527500025,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 369.4527107499962,
             "unit": "ms"
           }
         ]
