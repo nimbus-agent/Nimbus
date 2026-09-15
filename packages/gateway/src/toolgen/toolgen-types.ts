@@ -160,12 +160,20 @@ export const ERR_TOOLGEN_INVOKE_POLICY_DISABLED = "ERR_TOOLGEN_INVOKE_POLICY_DIS
 export const ERR_TOOLGEN_NOT_SAVED = "ERR_TOOLGEN_NOT_SAVED";
 export const ERR_TOOLGEN_PUBKEY_UNAVAILABLE = "ERR_TOOLGEN_PUBKEY_UNAVAILABLE";
 export const ERR_TOOLGEN_INPUT_INVALID = "ERR_TOOLGEN_INPUT_INVALID";
-export const ERR_TOOLGEN_EXECUTION_FAILED = "ERR_TOOLGEN_EXECUTION_FAILED";
-export const ERR_TOOLGEN_EXECUTION_TIMEOUT = "ERR_TOOLGEN_EXECUTION_TIMEOUT";
+
+/**
+ * There is deliberately NO `ERR_TOOLGEN_EXECUTION_FAILED` / `ERR_TOOLGEN_EXECUTION_TIMEOUT`. Both
+ * existed here through the first drafts of this feature and neither was ever assigned by any path:
+ * a `failed` outcome carries the tool's own free-text `error` and no code at all, and the protocol
+ * timeout (`toolgen-client.ts`'s `DEFAULT_PROTOCOL_REQUEST_TIMEOUT_MS`, 60s) throws a plain
+ * `Error`, so a caller grepping for a timeout code to detect a hung tool would have got nothing,
+ * ever. An exported constant that no code path can produce is worse than its absence: it reads as
+ * a contract. If a timeout ever needs to be distinguishable, the throw site has to change first.
+ */
 
 /**
  * The session id every CLI-originated `toolgen.invoke` call is attributed to, matching
- * `toolgen.create`'s existing `CLI_TOOLGEN_SESSION_ID` (`packages/cli/src/commands/tool.ts:307`,
+ * `toolgen.create`'s existing `CLI_TOOLGEN_SESSION_ID` (`packages/cli/src/commands/tool.ts:368`,
  * also `"cli"`). This is a SECOND, independent definition of the same wire value, not a mistake:
  * the gateway cannot import the CLI's constant (the dependency rule is one-way — gateway imports
  * nothing from cli), so each side of the wire needs its own copy. The two MUST agree on the

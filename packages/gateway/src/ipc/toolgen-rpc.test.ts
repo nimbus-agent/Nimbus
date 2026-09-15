@@ -290,6 +290,7 @@ function makeCtx(
         throw new Error("spawn must not be reached unless a test wires a saved tool");
       },
       audit: () => {},
+      disabledReasonFor: (toolId: string) => getSavedTool(db, toolId)?.disabledReason ?? null,
       now: () => 1_700_000_000_000,
     },
   };

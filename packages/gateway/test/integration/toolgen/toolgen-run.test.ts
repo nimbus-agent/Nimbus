@@ -289,6 +289,7 @@ function buildInvokeDeps(gw: GatewayHandle, configDir: string): ToolgenInvokeDep
     registry: gw.registry,
     spawn: buildInvokeSpawn(gw, configDir),
     audit: (entry) => appendAuditEntry(gw.db, entry),
+    disabledReasonFor: (toolId) => getSavedTool(gw.db, toolId)?.disabledReason ?? null,
     now: () => Date.now(),
   };
 }

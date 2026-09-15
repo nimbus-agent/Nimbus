@@ -27,6 +27,9 @@ function deps(over: Partial<ToolgenInvokeDeps> = {}): ToolgenInvokeDeps {
       throw new Error("spawn must not be reached in this test");
     },
     audit: () => {},
+    // Default: no durable row at all, so an unknown tool id refuses with no reason attached. A
+    // test that cares about the saved-but-disabled case overrides this.
+    disabledReasonFor: () => null,
     now: () => 1_000,
     ...over,
   } as ToolgenInvokeDeps;
@@ -527,5 +530,38 @@ describe("a throwing audit sink cannot double-write or reclassify the outcome", 
     });
     await expect(invokeSavedTool({ toolId: "t1", input: { q: "x" } }, d)).rejects.toThrow();
     expect(closed).toBe(1);
+  });
+});
+
+describe("ERR_TOOLGEN_NOT_SAVED distinguishes 'never saved' from 'saved but disabled'", () => {
+  // Registry absence has TWO causes that a bare `ERR_TOOLGEN_NOT_SAVED` conflates: the tool was
+  // never saved at all, and the tool IS saved but was skipped at boot because its signature no
+  // longer verifies. In the second case `nimbus tool list` shows the tool WITH a `disabledReason`,
+  // so "not saved" reads as a contradiction of what the user was just told.
+  test("a saved-but-disabled row's reason is carried into the refusal", async () => {
+    const out = await invokeSavedTool(
+      { toolId: "t1" },
+      deps({
+        registry: { savedTools: () => [] } as unknown as ToolgenInvokeDeps["registry"],
+        disabledReasonFor: () => "signature_mismatch",
+      }),
+    );
+    expect(out.status === "refused" && out.code).toBe("ERR_TOOLGEN_NOT_SAVED");
+    expect(out.status === "refused" && out.reason).toContain("signature_mismatch");
+  });
+
+  test("a genuinely unsaved tool still refuses with NO reason attached", async () => {
+    // The negative control: without it the assertion above would pass for a change that always
+    // attached some text, which would put "disabled" language in front of a tool that was simply
+    // never saved.
+    const out = await invokeSavedTool(
+      { toolId: "t1" },
+      deps({
+        registry: { savedTools: () => [] } as unknown as ToolgenInvokeDeps["registry"],
+        disabledReasonFor: () => null,
+      }),
+    );
+    expect(out.status === "refused" && out.code).toBe("ERR_TOOLGEN_NOT_SAVED");
+    expect(out.status === "refused" && out.reason).toBeUndefined();
   });
 });

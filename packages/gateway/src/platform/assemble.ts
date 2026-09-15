@@ -4106,6 +4106,10 @@ export async function assemblePlatformServices(
       });
     },
     audit: (entry) => appendAuditEntry(db, entry),
+    // Refusal-path disambiguation only -- see `ToolgenInvokeDeps.disabledReasonFor`. The row is a
+    // health-report CACHE (I40), never an authority: it is read here to explain a refusal the
+    // registry already decided, and can never make a tool invocable.
+    disabledReasonFor: (toolId) => getSavedTool(db, toolId)?.disabledReason ?? null,
     now: () => Date.now(),
   };
 

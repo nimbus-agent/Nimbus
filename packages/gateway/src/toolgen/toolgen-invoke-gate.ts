@@ -81,6 +81,21 @@ export interface ToolgenInvokeDeps {
    * exactly that). Bound to `appendAuditEntry(db, row)` in production (Task 4).
    */
   readonly audit: (row: AppendAuditEntryFields) => void;
+  /**
+   * The `generated_tool` row's `disabled_reason` for `toolId`, or `null` when there is no row or
+   * the row is healthy. Bound to `getSavedTool(db, toolId)?.disabledReason ?? null` in production.
+   *
+   * Exists only to DISAMBIGUATE `ERR_TOOLGEN_NOT_SAVED`, which otherwise conflates two facts with
+   * opposite fixes: the tool was never saved (fix: `nimbus tool save`), and the tool IS saved but
+   * was skipped at load because its signature no longer verifies (fix: investigate, then
+   * `nimbus tool save` again to repair). The second reads as a flat contradiction of
+   * `nimbus tool list`, which shows that tool present with a `disabledReason`.
+   *
+   * It is NOT an authority and never widens what may run: the registry remains the only thing that
+   * makes a tool invocable, and this accessor is consulted ONLY on the refusal path, to write a
+   * better `reason` onto a decision already made.
+   */
+  readonly disabledReasonFor: (toolId: string) => string | null;
   readonly now: () => number;
 }
 
@@ -121,7 +136,17 @@ export async function invokeSavedTool(
   // to enforce it.
   const saved = deps.registry.savedTools().find((s) => s.toolId === toolId);
   if (saved === undefined) {
-    return refuse(deps, toolId, ERR_TOOLGEN_NOT_SAVED, undefined, req.sessionId);
+    // Absence from the registry has two causes with opposite fixes -- see `disabledReasonFor`'s
+    // docstring. A durable row that exists but is DISABLED says so in the reason; a tool that was
+    // never saved gets no reason at all, so "disabled" language never appears in front of one.
+    const disabledReason = deps.disabledReasonFor(toolId);
+    return refuse(
+      deps,
+      toolId,
+      ERR_TOOLGEN_NOT_SAVED,
+      disabledReason === null ? undefined : `saved, but disabled: ${disabledReason}`,
+      req.sessionId,
+    );
   }
 
   const artifact = saved.artifact;
