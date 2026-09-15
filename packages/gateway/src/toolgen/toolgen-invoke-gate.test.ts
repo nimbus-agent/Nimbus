@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import type { AppendAuditEntryFields } from "../db/audit-chain.ts";
 import {
   __chainsSizeForTest,
   invokeSavedTool,
@@ -250,5 +251,110 @@ describe("serialise cleanup", () => {
     await Promise.resolve();
     await Promise.resolve();
     expect(__chainsSizeForTest()).toBe(before);
+  });
+});
+
+describe("invokeSavedTool audit", () => {
+  test("exactly one row per outcome, and neither input nor output appears in it", async () => {
+    const rows: AppendAuditEntryFields[] = [];
+    const d = deps({
+      audit: (row) => {
+        rows.push(row);
+      },
+      spawn: async () => ({
+        call: async () => "SECRET-OUTPUT",
+        close: async () => {},
+        describe: async () => ({ name: "", description: "", inputSchema: {} }),
+      }),
+    });
+    const out = await invokeSavedTool({ toolId: "t1", input: { q: "SECRET-INPUT" } }, d);
+    expect(out.status).toBe("executed");
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.actionType).toBe("tool.invoke");
+    expect(rows[0]?.hitlStatus).toBe("not_required");
+    expect(rows[0]?.timestamp).toBe(1_000);
+    // Spec §5: the audit trail must not become a second copy of the user's data.
+    expect(rows[0]?.actionJson).not.toContain("SECRET-INPUT");
+    expect(rows[0]?.actionJson).not.toContain("SECRET-OUTPUT");
+  });
+
+  test("a refusal writes exactly one row, and the row says it was refused", async () => {
+    const rows: AppendAuditEntryFields[] = [];
+    const out = await invokeSavedTool(
+      { toolId: "t1", input: {} },
+      deps({
+        audit: (r) => {
+          rows.push(r);
+        },
+      }),
+    );
+    // Asserted, not assumed: without these two the test passes even if `{}` SUCCEEDS, since the
+    // row count is one either way.
+    expect(out.status).toBe("refused");
+    expect(out.status === "refused" && out.code).toBe("ERR_TOOLGEN_INPUT_INVALID");
+    expect(rows).toHaveLength(1);
+    expect(JSON.parse(rows[0]?.actionJson ?? "{}")).toMatchObject({
+      outcome: "refused",
+      code: "ERR_TOOLGEN_INPUT_INVALID",
+    });
+  });
+
+  test("a failed execution writes exactly one row", async () => {
+    const rows: AppendAuditEntryFields[] = [];
+    const out = await invokeSavedTool(
+      { toolId: "t1", input: { q: "x" } },
+      deps({
+        audit: (r) => {
+          rows.push(r);
+        },
+        spawn: async () => ({
+          call: async () => {
+            throw new Error("boom");
+          },
+          close: async () => {},
+          describe: async () => ({ name: "", description: "", inputSchema: {} }),
+        }),
+      }),
+    );
+    expect(out.status).toBe("failed");
+    expect(rows).toHaveLength(1);
+    expect(JSON.parse(rows[0]?.actionJson ?? "{}")).toMatchObject({ outcome: "failed" });
+  });
+
+  test("the row carries the caller's session id when one was supplied", async () => {
+    const rows: AppendAuditEntryFields[] = [];
+    await invokeSavedTool(
+      { toolId: "t1", input: { q: "x" }, sessionId: "sess-9" },
+      deps({
+        audit: (r) => {
+          rows.push(r);
+        },
+        spawn: async () => ({
+          call: async () => "ok",
+          close: async () => {},
+          describe: async () => ({ name: "", description: "", inputSchema: {} }),
+        }),
+      }),
+    );
+    expect(rows[0]?.sessionId).toBe("sess-9");
+  });
+
+  test("the row OMITS sessionId entirely when the caller supplied none", async () => {
+    const rows: AppendAuditEntryFields[] = [];
+    await invokeSavedTool(
+      { toolId: "t1", input: { q: "x" } },
+      deps({
+        audit: (r) => {
+          rows.push(r);
+        },
+        spawn: async () => ({
+          call: async () => "ok",
+          close: async () => {},
+          describe: async () => ({ name: "", description: "", inputSchema: {} }),
+        }),
+      }),
+    );
+    // `exactOptionalPropertyTypes`: the key must be ABSENT, not present-and-undefined.
+    expect(rows[0] !== undefined && "sessionId" in rows[0]).toBe(false);
   });
 });

@@ -1,4 +1,5 @@
 import type { NimbusToolGenerationToml } from "../config/nimbus-toml.ts";
+import type { AppendAuditEntryFields } from "../db/audit-chain.ts";
 import type { EnforcedPolicy } from "../policy/policy-gate.ts";
 import { isToolgenCapabilityEnabled } from "./toolgen-capability.ts";
 import type { GeneratedToolHandle } from "./toolgen-client.ts";
@@ -53,7 +54,13 @@ export interface ToolgenInvokeDeps {
    * not an execution failure, and `invokeSavedTool` must tell the two apart.
    */
   readonly spawn: (toolId: string) => Promise<GeneratedToolHandle>;
-  readonly audit: (outcome: ToolgenInvokeOutcome) => void;
+  /**
+   * Sink for the one `tool.invoke` audit row this invocation writes. Takes an ALREADY-PROJECTED
+   * row, never the outcome: `ToolgenInvokeOutcome.executed` carries the tool's `result`, and a
+   * sink handed the outcome could stringify the tool's output into `action_json` (spec §5 forbids
+   * exactly that). Bound to `appendAuditEntry(db, row)` in production (Task 4).
+   */
+  readonly audit: (row: AppendAuditEntryFields) => void;
   readonly now: () => number;
 }
 
@@ -78,13 +85,13 @@ export async function invokeSavedTool(
   // Check config first: a user who turned the feature off locally should not be told their org
   // policy forbids it. This check lets the two error codes stay distinguishable.
   if (!deps.config.enabled) {
-    return refuse(deps, toolId, ERR_TOOLGEN_INVOKE_DISABLED);
+    return refuse(deps, toolId, ERR_TOOLGEN_INVOKE_DISABLED, undefined, req.sessionId);
   }
 
   // Check org policy (fail-closed on absent accessor: "cannot tell" must never resolve to "allowed"
   // for a standing, unattended execution capability).
   if (!isToolgenCapabilityEnabled({ config: deps.config, enforced: deps.enforced })) {
-    return refuse(deps, toolId, ERR_TOOLGEN_INVOKE_POLICY_DISABLED);
+    return refuse(deps, toolId, ERR_TOOLGEN_INVOKE_POLICY_DISABLED, undefined, req.sessionId);
   }
 
   // Look up the saved tool. MUST use `savedTools()`, NOT `findArtifact()`. `findArtifact` reads the
@@ -94,7 +101,7 @@ export async function invokeSavedTool(
   // to enforce it.
   const saved = deps.registry.savedTools().find((s) => s.toolId === toolId);
   if (saved === undefined) {
-    return refuse(deps, toolId, ERR_TOOLGEN_NOT_SAVED);
+    return refuse(deps, toolId, ERR_TOOLGEN_NOT_SAVED, undefined, req.sessionId);
   }
 
   const artifact = saved.artifact;
@@ -103,7 +110,7 @@ export async function invokeSavedTool(
   const input = req.input ?? {};
   const inputError = validateInput(input, artifact.inputSchema);
   if (inputError !== undefined) {
-    return refuse(deps, toolId, ERR_TOOLGEN_INPUT_INVALID, inputError);
+    return refuse(deps, toolId, ERR_TOOLGEN_INPUT_INVALID, inputError, req.sessionId);
   }
 
   return await serialise(toolId, async () => {
@@ -112,17 +119,17 @@ export async function invokeSavedTool(
     try {
       handle = await deps.spawn(toolId);
       const result = await handle.call(input);
-      return succeed(deps, toolId, result, deps.now() - startedAt);
+      return succeed(deps, toolId, result, deps.now() - startedAt, req.sessionId);
     } catch (e) {
       // A ToolgenError from spawnSavedTool is a pre-execution REFUSAL, not a tool failure. The
       // signature-invalid path (`toolgen-saved-spawn.ts:206`) is the one that matters: reporting a
       // tampered artifact as `failed` would give exit 1 and an audit `outcome: "failed"`, making an
       // I40 refusal read as a bug in the tool.
       if (e instanceof ToolgenError) {
-        return refuse(deps, toolId, e.code, e.message);
+        return refuse(deps, toolId, e.code, e.message, req.sessionId);
       }
       const msg = e instanceof Error ? e.message : String(e);
-      return fail(deps, toolId, msg, deps.now() - startedAt);
+      return fail(deps, toolId, msg, deps.now() - startedAt, req.sessionId);
     } finally {
       // Close must not mask the outcome: a close failure is not the caller's problem.
       try {
@@ -194,6 +201,33 @@ function validateInput(input: unknown, schema: ToolInputSchema): string | undefi
 }
 
 /**
+ * Projects an invocation outcome onto the one `tool.invoke` audit row it writes, and hands the
+ * projection — never the outcome itself — to `deps.audit`. `fields` deliberately has no `input`
+ * and no `result` member: the omission is structural, not a discipline the caller has to
+ * remember (spec §5). I39's `recordToolEgress` precedent applies here too: the tool's
+ * REGISTRATION was approved, not each request, hence `hitlStatus: "not_required"`.
+ */
+function writeInvokeAudit(
+  deps: ToolgenInvokeDeps,
+  sessionId: string | undefined,
+  fields: {
+    readonly outcome: "executed" | "failed" | "refused";
+    readonly toolId: string;
+    readonly durationMs?: number;
+    readonly code?: string;
+    readonly error?: string;
+  },
+): void {
+  deps.audit({
+    actionType: "tool.invoke",
+    hitlStatus: "not_required",
+    actionJson: JSON.stringify(fields),
+    timestamp: deps.now(),
+    ...(sessionId === undefined ? {} : { sessionId }),
+  });
+}
+
+/**
  * Builds an executed outcome and writes the audit row.
  */
 function succeed(
@@ -201,9 +235,10 @@ function succeed(
   toolId: string,
   result: unknown,
   durationMs: number,
+  sessionId?: string,
 ): ToolgenInvokeOutcome {
   const outcome: ToolgenInvokeOutcome = { status: "executed", toolId, result, durationMs };
-  deps.audit(outcome);
+  writeInvokeAudit(deps, sessionId, { outcome: "executed", toolId, durationMs });
   return outcome;
 }
 
@@ -216,9 +251,10 @@ function fail(
   toolId: string,
   error: string,
   durationMs: number,
+  sessionId?: string,
 ): ToolgenInvokeOutcome {
   const outcome: ToolgenInvokeOutcome = { status: "failed", toolId, error, durationMs };
-  deps.audit(outcome);
+  writeInvokeAudit(deps, sessionId, { outcome: "failed", toolId, durationMs, error });
   return outcome;
 }
 
@@ -230,6 +266,7 @@ function refuse(
   toolId: string,
   code: string,
   reason?: string,
+  sessionId?: string,
 ): ToolgenInvokeOutcome {
   const outcome: ToolgenInvokeOutcome = {
     status: "refused",
@@ -237,6 +274,11 @@ function refuse(
     code,
     ...(reason !== undefined && { reason }),
   };
-  deps.audit(outcome);
+  writeInvokeAudit(deps, sessionId, {
+    outcome: "refused",
+    toolId,
+    code,
+    ...(reason === undefined ? {} : { error: reason }),
+  });
   return outcome;
 }
