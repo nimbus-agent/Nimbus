@@ -2137,8 +2137,8 @@ written to disk.
 | Code | Meaning |
 | --- | --- |
 | `0` | `status: "executed"` — the tool ran and returned its result. |
-| `1` | `status: "failed"` — the tool ran and threw, or `--input` failed the CLIENT-SIDE JSON/object check before anything was sent to the gateway. |
-| `127` | `status: "refused"` — refused before any spawn: the capability is off (config or org policy), the tool id does not name a SAVED tool (`ERR_TOOLGEN_NOT_SAVED` — includes a tool that was only ever `create`d, never `save`d), the input failed the gateway's own required-key check, or the saved artifact's signature no longer verifies (`ERR_TOOLGEN_SIGNATURE_INVALID` — tampered or corrupted since `save`). |
+| `1` | `status: "failed"` — the tool ran and threw. This code means the tool EXECUTED; nothing that refuses before a spawn lands here. |
+| `127` | `status: "refused"` — refused before any spawn: the capability is off (config or org policy), the tool id does not name a SAVED tool (`ERR_TOOLGEN_NOT_SAVED` — includes a tool that was only ever `create`d, never `save`d; when a saved row exists but was skipped at load, the refusal's reason names its `disabledReason`), the input failed the gateway's own required-key check, or the saved artifact's signature no longer verifies (`ERR_TOOLGEN_SIGNATURE_INVALID` — tampered or corrupted since `save`). A `--input` that fails the CLIENT-SIDE JSON/object check exits `127` too: it is a usage error refused before the gateway is dialed at all, so it shares the code every other usage error gets rather than `1`, which would claim the tool ran. |
 
 **Org lockoff.** A signed `nimbus.policy.toml` can disable it fleet-wide:
 

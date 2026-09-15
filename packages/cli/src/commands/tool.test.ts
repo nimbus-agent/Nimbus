@@ -1130,6 +1130,28 @@ describe("runTool run — calls toolgen.invoke and renders every outcome", () =>
     expect(h.codes).toEqual([0]);
   });
 
+  // Pins the exit code for a malformed `--input`. Nothing pinned it in either direction before,
+  // which is how `docs/cli-reference.md` and `docs/CHANGELOG.md` came to claim exit 1 for it: the
+  // parse error is thrown by `parseRunArgs` and caught by `runTool`'s own parse guard, which sets
+  // `refused` (127) -- the same code every other usage error gets, and what the design spec's
+  // exit-code table says. 1 is reserved for "the tool RAN and threw", which this never did.
+  test("a malformed --input exits 127 (refused), not 1, and never reaches the gateway", async () => {
+    const h = fakeDeps();
+    await runTool(["run", "t1", "--input", "{not json"], h.d);
+    expect(h.calls).toEqual([]);
+    expect(h.codes).toEqual([TOOL_EXIT_CODES.refused]);
+    expect(h.err.join("")).toContain("--input must be valid JSON");
+  });
+
+  test("an --input that parses but is not an object also exits 127", async () => {
+    // The second client-side arm: valid JSON, wrong shape. Same code, same never-dialed gateway.
+    const h = fakeDeps();
+    await runTool(["run", "t1", "--input", "[1,2]"], h.d);
+    expect(h.calls).toEqual([]);
+    expect(h.codes).toEqual([TOOL_EXIT_CODES.refused]);
+    expect(h.err.join("")).toContain("--input must be a JSON object");
+  });
+
   test("with no id exits non-zero with usage, and never reaches the gateway", async () => {
     const h = fakeDeps();
     await runTool(["run"], h.d);

@@ -25,8 +25,9 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
   other `toolgen.*` method, and absent from the Tauri allowlist — returning one of exactly three
   shapes: `{ status: "executed", toolId, result, durationMs }`, `{ status: "failed", toolId,
   error, durationMs }`, or `{ status: "refused", toolId, code, reason? }`. `nimbus tool run
-  <tool-id> [--input <json>] [--json]` calls it; exit `0` on executed, `1` on failed (including a
-  malformed `--input` refused client-side before the gateway is ever called), `127` on refused. A
+  <tool-id> [--input <json>] [--json]` calls it; exit `0` on executed, `1` on failed — which means
+  the tool RAN and threw — and `127` on refused, which is also what a malformed `--input` gets,
+  since that is a usage error refused client-side before the gateway is ever dialed. A
   tool must be SAVED to be invocable — `create` alone is not enough (`ERR_TOOLGEN_NOT_SAVED`) — and
   no approval prompt is shown at invoke time, because the STANDING approval obtained at `save`
   already covers every future call. Input validation checks only that the drafted schema's

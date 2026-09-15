@@ -981,8 +981,10 @@ multimodal row; it is not a spine row and is not counted in either half.
   — at boot (`toolgen-boot-reconcile.ts`, a health-report pass that also sweeps `saved/` directories
   with no database row), when the registry loads saved tools into visibility
   (`loadSavedToolsIntoRegistry`), and again immediately before the tool actually runs
-  (`spawnSavedTool` — implemented and integration-tested, but with NO production caller this
-  release, for the same reason `deps.toolgen` is unwired) — never trusting an earlier
+  (`spawnSavedTool` — which had no production caller when this PR shipped, and gained one in the
+  2026-09-15 follow-up below: `assemble.ts` binds it as `ToolgenInvokeDeps.spawn`, reached by
+  `toolgen.invoke` / `nimbus tool run`. `deps.toolgen` stays unwired either way, so the MODEL
+  still cannot invoke a generated tool) — never trusting an earlier
   pass's result or the `disabled_reason` column, which is a cache. New schema **V61**
   (`generated_tool`): existence only, never content — the signed `artifact.json` plus its signature
   is what proves the persisted bytes are the exact ones approved. **What signing defends, and does
