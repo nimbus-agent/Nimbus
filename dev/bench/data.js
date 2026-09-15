@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1789359331309,
+  "lastUpdate": 1789483988988,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "008615da3ba74fec7aabf935abc57b7eabda90bb",
-          "message": "fix: stop relabelling 55% of indexed items, and return NimbusItem from index.queryItems (#780)\n\nStage 0 of the ecosystem roadmap, gateway half. Fixes a data-fidelity\nbug and an IPC contract leak that share one root cause: the gateway's\nitem-type vocabulary disagreed with itself.\n\n## The bug, measured\n\n`itemTypeFromRowType()` accepted only the six values in the pre-1.4.0\nSDK union and returned `\"file\"` for everything else. Against a live\n546-row index that is **300 rows — 55% — mislabelled**:\n\n| type | rows | before |\n| --- | --- | --- |\n| `email` | 228 | preserved |\n| `ci_run` | 214 | → `\"file\"` |\n| `pr` | 79 | → `\"file\"` |\n| `file` | 13 | preserved |\n| `folder` | 5 | preserved |\n| `issue` | 5 | → `\"file\"` |\n| `web_clip` | 2 | → `\"file\"` |\n\nThis is corruption, not missing typing — the true value was discarded.\n`@nimbus-dev/sdk@1.4.0` makes `ItemType` an open enum (`KnownItemType |\n(string & {})`), so the raw column value now passes through unchanged.\nOne deletion fixes `search`, `searchRanked` and `queryItems` at once,\nsince all three map rows through `rowToItem`.\n\n## The contract leak\n\n`index.queryItems` returned raw `SELECT * FROM item` rows, leaking\nunified-V3 column names (`type`, `title`, `external_id`) over IPC —\nwhile every other read path already mapped through `rowToItem`.\nDownstream clients had to guess the wire shape, and nimbus-vscode\nguessed wrong (it reads camelCase and silently got `undefined` on every\nrow).\n\nAdds `LocalIndex.listItems()`, which owns the list SQL and the mapping\ntogether, returning:\n\n```ts\ntype IndexedItem = NimbusItem & { indexPrimaryKey: string };\n```\n\n`indexPrimaryKey` carries the `service:external_id` composite key.\n`NimbusItem.id` is the bare `external_id`, which is **not unique across\nservices**, so list consumers need it for stable identity — mirroring\nthe existing `RankedSearchItem` pattern. `rowToItem` and `ItemRow` stay\nmodule-private; `listItems` is the seam.\n\n## Breaking change\n\nThe `index.queryItems` wire shape changes from raw snake_case rows to\ncamelCase `IndexedItem`. Known consumers:\n\n- `nimbus query` — updated here.\n- **nimbus-vscode** — broken today regardless; fixed by a follow-up once\n`@nimbus-dev/client@0.6.0` ships.\n\nTwo things reviewers should know:\n\n- `GET /v1/items` still returns raw snake_case rows with all columns, so\nit and `index.queryItems` now differ in both shape and data, despite the\ndocs describing shared filter semantics. Deliberate for this stage,\nflagged for follow-up.\n- `index.queryItems` is LAN-callable by a paired peer, so a\nmixed-version pair sees the shape flip. Acceptable pre-1.0.\n\nThe narrowing is intentional: `body_preview`, `author_id`,\n`canonical_url`, `synced_at` and `pinned` are storage/provenance\nconcerns, not item identity. `index.querySql` remains for raw column\naccess and is untouched.\n\n## Regression caught in review\n\nThe whole-branch review found a user-visible regression that per-commit\nreview missed: `isItemLikeRow` gated `nimbus query`'s card rendering on\n`row[\"title\"]`, which the new payload lacks — so TTY output silently\ndegraded from numbered cards to `── #1 ──` key/value blocks with\nunformatted epoch timestamps. Fixed to accept **both** shapes (`--sql`\nlegitimately still returns raw rows). ~15 stale test fixtures that hid\nit were migrated, and the new regression test was verified to fail when\nthe fix is reverted.\n\n## Dependency change and its real blast radius\n\n`packages/gateway` moves to `^1.4.0`. The lockfile refresh also adds\nnested `@nimbus-dev/sdk@1.4.0` entries for **94 `nimbus-mcp-*`\npackages** that had none, so the connector fleet resolves 1.4.0 rather\nthan the hoisted 1.3.0. Safe — 1.4.0 only *widens* the union, so a\nconnector emitting `ci_run` gains valid typings rather than losing any —\nand it cannot be split from this PR, since `itemType: string` does not\ntypecheck against 1.3.0.\n\n## Verification\n\n| Gate | Result |\n| --- | --- |\n| `typecheck` (96 packages) | ✅ |\n| Targeted tests | ✅ 229 pass / 0 fail |\n| `packages/gateway/src/index/` | ✅ 348 pass / 0 fail |\n| `biome` (1613 files) | ✅ |\n| `lint:markdown` | ✅ |\n| All 10 `audit:*` gates | ✅ incl. `invariants`, `openapi-drift`,\n`boundaries` |\n\nCoverage of every changed file is well above the 85%/80% floor:\n`local-index.ts` 96.9%/89.9%, `diagnostics-rpc.ts` 99.0%/92.4%,\n`query.ts` 98.0%/92.5%.\n\nTwo known-red items are **pre-existing and unrelated**, both confirmed\nidentical at the branch base: 8 TTY-stdin failures in\n`cli/src/commands/update.test.ts`, and 4 `coverage-floor` violations in\nfiles this branch never touches (`update.ts`, `socket-listeners.ts`,\n`lever/search-filter.ts`).\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n## Summary by CodeRabbit\n\n* **Breaking Changes**\n* `index.queryItems` now returns camelCase `NimbusItem`-style rows with\n`indexPrimaryKey`.\n* Some previously surfaced database-specific fields are intentionally\nomitted from the narrowed wire shape.\n* SQL-style queries (`querySql` / `--sql`) continue to return raw\ndatabase-shaped results.\n* **Improvements**\n* CLI “item cards” now render correctly for both supported item row\nformats (including TTY scenarios) and improved timestamp handling.\n  * Item type values are preserved end-to-end.\n* **Documentation / Tests**\n* Updated roadmap/changelog notes and added regression coverage to\nprevent snake_case top-level fields in responses.\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude Opus 4.8 (1M context) <noreply@anthropic.com>",
-          "timestamp": "2026-07-21T17:12:10Z",
-          "tree_id": "68666d74821329b4315ff30c5ffb328fdaf46acb",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/008615da3ba74fec7aabf935abc57b7eabda90bb"
-        },
-        "date": 1784654473673,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 243.97526955000066,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 237.03852389998937,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 362.3900003499992,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "755c2b6019479a1313ada85ab4d3db6726c4add4",
+          "message": "feat(cli): nimbus explain last — an X-ray of the most recent nimbus ask (#1514)\n\nAdds `nimbus explain last` — a CLI-only X-ray of the most recent `nimbus\nask`, so a weak answer can be diagnosed as a retrieval failure or a\nmodel failure instead of a mystery.\n\nEvery `runAsk` writes exactly one record — win or throw — to an\nin-memory ring of the last 10. `ask.explainLast` returns the newest;\n`nimbus explain last [--json]` renders it.\n\n## What it reports\n\n- Which of five routes the turn took: `empty_index`, `local_context`,\n`agent_tools`, `plan_dispatch`, `failed`.\n- For a local-index turn: every candidate considered, grouped by\ncontributing retrieval pass, each marked `shown` or cut with the real\nreason — `cut: probe slice`, `cut: over cap`, `cut: service fairness` —\nwith the three score components that produced its rank.\n- For an agent turn: the tool calls the model actually made, plus each\n`searchLocalIndex` call's own ranking summary.\n- On a local-to-agent fallback: the local pool that was still in the\nagent's prompt, so the turn is not under-reported.\n\n## Honesty properties, enforced by tests\n\n- A candidate that was never scored renders `n/a` and never `0.00` — a\nzero would claim it ranked last when it was never ranked.\n- Scores are never compared across scoring formulas. The two formulas\nare different scales, so groups are labelled and sorted only within\nthemselves.\n- \"Given to the model\", never \"read by the model\". The gateway knows\nwhat it handed over, not what was attended to.\n- `at least N` whenever the retrieval probe hit its own ceiling, because\nthe total is then a floor.\n- The empty state is its own sentence. The ring is in-memory, so \"no ask\nsince the gateway started\" is a different claim from \"no ask ever\nhappened\".\n\n## Security posture\n\nCLI-only. The record carries the owner's question verbatim and titles\nfrom the owner's private index, so `ask` is added to\n`FORBIDDEN_OVER_LAN` as a whole-namespace entry —\n`checkLanMethodAllowed` is a denylist, so an unnamed method is reachable\nby any paired peer. Verified at runtime with a negative control:\n`ask.explainLast` and an arbitrary future `ask.*` are both refused while\n`index.health` still passes. No Tauri allowlist entry, no HTTP, MCP or\nChatOps route.\n\n## What the roadmap row promised that has no substrate\n\nStated in `docs/roadmap.md` rather than quietly dropped:\n\n- \"Connector rate-limited\" is not a discard reason. The local-context\nroute queries no connector at all.\n- \"Below relevance threshold\" does not exist. Cuts are slice, cap and\nfairness decisions over an already-ranked list.\n- \"Which connectors were queried vs answered from cache\" misdescribes\nthe index — the local index is the cache. The real axis is local index\nvs live tool call, and that is what ships.\n\n## Deferrals, recorded with reasons\n\nA durable `ask_explain` table, deferred because persisting this would\nwrite every question asked plus its retrieval trace to an index that is\nnot encrypted at rest; `nimbus explain list` navigation; and capture of\nnegation predicates.\n\n## Scope\n\nNo schema migration, no new invariant, no new egress class, no HITL\naction type, no new Tauri allowlist entry. Nine tasks, each\nindependently reviewed, plus a whole-branch review and its fix wave.\n\nFull suite: 23280 pass, 80 skip, 0 fail.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nhttps://claude.ai/code/session_018de5p4L7YihdexuyiwevUE\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n\n## Summary by CodeRabbit\n\n- **New Features**\n- Added `nimbus explain last` to inspect the most recent ask, including\nrouting, retrieval results, ranking details, tool calls, truncation, and\nfailures.\n- Supports human-readable and validated JSON output, with color disabled\nautomatically when appropriate.\n- Retains up to 10 recent ask outcomes in memory, including failed\nrequests.\n\n- **Security**\n- Explanation data is read-only, temporary, and unavailable over LAN and\nother remote interfaces.\n\n- **Documentation**\n- Added CLI reference, changelog entry, and roadmap updates for the new\ncommand.\n\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>",
+          "timestamp": "2026-09-15T17:46:14+03:00",
+          "tree_id": "88ba08db1a6e6a39ddf607cf8883225eb39685d1",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/755c2b6019479a1313ada85ab4d3db6726c4add4"
+        },
+        "date": 1789483985771,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 188.94094984999646,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 192.19715975000182,
             "unit": "ms"
           }
         ]
