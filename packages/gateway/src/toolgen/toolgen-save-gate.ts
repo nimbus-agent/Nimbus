@@ -181,6 +181,37 @@ function buildApprovalInput(artifact: GeneratedToolArtifact): ToolgenSaveApprova
 }
 
 /**
+ * Make the just-persisted tool visible to the RUNNING gateway's saved collection, the same way
+ * `toolgen-saved-spawn.ts`'s `loadSavedToolsIntoRegistry` makes a previously-persisted one visible
+ * at boot — the envelope shape here is that construction site's, mirrored field for field.
+ *
+ * Without this, `registry.registerSaved` had exactly ONE production caller (that boot pass), so a
+ * tool saved by the running gateway did not enter `#saved` until the next restart: `nimbus tool
+ * list` reported it saved and healthy while `nimbus tool run` refused it `ERR_TOOLGEN_NOT_SAVED`,
+ * because `invokeSavedTool` gates on registry membership.
+ *
+ * Registering here rather than teaching the invoke gate to fall back to `getSavedTool(db, ...)` is
+ * deliberate: the broker's `approvedHostsFor`/`credentialHostsFor` (`platform/assemble.ts`) resolve
+ * through the REGISTRY, so a DB-only fallback would spawn a tool with an empty approved-host list
+ * and refuse every brokered fetch it makes — crippled, silently, rather than refused.
+ *
+ * The one field that is not identical to what a later boot will hold is `artifact.manifest`: this
+ * is the LIVE ephemeral artifact, whose concrete manifest grants read to the ephemeral script
+ * directory, where the boot pass rebuilds it against `saved/<toolId>`. That is harmless and is not
+ * papered over: nothing spawns from this copy. `spawnSavedTool` rebuilds the concrete manifest from
+ * code on every spawn and asserts it against the SIGNED portable shape, and the portable shape
+ * drops `filesystem.read` for exactly this reason. Every other field is the artifact that was just
+ * canonicalised and signed, byte for byte.
+ */
+function registerSavedNow(deps: ToolgenSaveDeps, artifact: GeneratedToolArtifact): void {
+  deps.registry.registerSaved({
+    toolId: artifact.toolId,
+    needsCredentials: artifact.credentialHosts.length > 0,
+    artifact,
+  });
+}
+
+/**
  * The ONE path from a live, session-only generated tool to a durable one that survives a gateway
  * restart (I40 / spec § 6). This is the first STANDING approval in this codebase: every other HITL
  * gate here (I33, I35, I39's own create gate) approves a single act inside one session. Persisting
@@ -242,6 +273,10 @@ export async function saveGeneratedTool(
         pubkey: pubkeyB64,
         savedAt: deps.now(),
       });
+      // A repaired row is healthy again, so it becomes invocable in THIS session too -- the boot
+      // pass that would otherwise be the first to register it skipped this tool precisely because
+      // the row was disabled when the gateway started.
+      registerSavedNow(deps, artifact);
       audit(deps, toolId, "repaired", { digest });
       return { status: "repaired", toolId };
     }
@@ -259,6 +294,7 @@ export async function saveGeneratedTool(
       lastLoadedAt: null,
       disabledReason: null,
     });
+    registerSavedNow(deps, artifact);
     audit(deps, toolId, "saved", { digest });
     return { status: "saved", toolId };
   } catch (err) {

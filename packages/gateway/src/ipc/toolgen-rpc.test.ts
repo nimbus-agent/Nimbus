@@ -516,18 +516,21 @@ describe("toolgen RPC", () => {
 
   // Task 10 carried-forward item 5: `ToolgenRegistry.forSession` can return an ephemeral AND a
   // saved entry sharing a `toolId`, and `toolgen.list`'s union now surfaces both rather than one
-  // silently shadowing the other. Fixed round 1: the mechanism is NOT "create then save in the
-  // same session" -- `saveGeneratedTool` never calls `registry.registerSaved()`; the only
-  // production caller is `loadSavedToolsIntoRegistry` (`toolgen-saved-spawn.ts`), run once at
-  // boot, so a same-session save does not enter the in-memory saved collection at all, and by the
-  // next boot the ephemeral map is gone anyway. The only production route to this state is a
-  // freshly minted `randomUUID()` (`toolgen-gate.ts`'s `newId`) for a BRAND-NEW ephemeral tool
-  // colliding with an id a PREVIOUS boot persisted and THIS boot loaded -- a probability
-  // indistinguishable from zero, and unrelated to any create/save sequencing. This test is a
-  // regression guard on `toolgen.list`'s union behaviour (should a future change make the save
-  // gate register synchronously, this documents what the listing would then show), not a
-  // realistic scenario. See the Task 10 report for why this is not this task's to fix.
-  test("a toolId live as BOTH an ephemeral tool and an already-saved tool produces two list entries (known collision, not resolved here)", async () => {
+  // silently shadowing the other.
+  //
+  // This comment previously argued the state was near-impossible in production BECAUSE
+  // `saveGeneratedTool` never called `registry.registerSaved()` -- only the once-at-boot
+  // `loadSavedToolsIntoRegistry` did. That reasoning is DEAD: the save gate registers the tool
+  // synchronously now (`toolgen-save-gate.ts`'s `registerSavedNow`), without which a tool saved by
+  // the running gateway stayed un-invocable until the next restart. So `nimbus tool create` then
+  // `nimbus tool save` in one session produces this exact state ROUTINELY, not by UUID collision.
+  //
+  // The BEHAVIOUR is unchanged and still benign: both entries are built from the same artifact at
+  // save time, so the two rows describe the same bytes -- the ephemeral one flagged `saved: false`
+  // and the saved one `saved: true`, which is an honest report of a tool that is both running now
+  // and persisted for later. The union is what keeps that visible; collapsing the two would hide
+  // one of the halves rather than reconcile them. This test pins that union.
+  test("a toolId live as BOTH an ephemeral tool and an already-saved tool produces two list entries (the routine post-save state)", async () => {
     const ctx = makeCtx();
     ctx.gateDeps.registry.register(makeEnvelope("dup", "s1"), async () => {});
     ctx.gateDeps.registry.registerSaved(makeSavedEnvelope("dup"));

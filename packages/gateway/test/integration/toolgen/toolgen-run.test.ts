@@ -491,3 +491,72 @@ describe("invokeSavedTool against a real gateway B: tampered artifact", () => {
     }
   }, 30_000);
 });
+
+describe("create, save and invoke inside ONE gateway process", () => {
+  // The gap the two suites above structurally cannot see. Both of them save in "gateway A", tear
+  // it down, boot "gateway B" and call `loadSavedToolsIntoRegistry` BY HAND -- which is the only
+  // production caller of `registry.registerSaved`, and it runs once, at boot. A tool saved by the
+  // RUNNING gateway therefore never entered the in-memory saved collection at all, so
+  // `invokeSavedTool`'s registry lookup missed it and `nimbus tool run` refused
+  // `ERR_TOOLGEN_NOT_SAVED` until the next restart -- on a tool `nimbus tool list` was already
+  // reporting as saved and healthy.
+  //
+  // This test is deliberately the OPPOSITE shape: ONE gateway, ONE registry instance, no reboot and
+  // no `loadSavedToolsIntoRegistry` call anywhere in it. `saveGeneratedTool` has to be what makes
+  // the tool invocable, or nothing in this test does.
+  test("a tool saved by the running gateway is invocable immediately, with no restart and no load pass", async () => {
+    const configDir = mkdtempSync(join(tmpdir(), "nimbus-toolgen-run-e2e-same-process-"));
+    const dbPath = join(configDir, "nimbus.db");
+    const gw = await bootGateway(dbPath, new Map<string, string>());
+    let handle: GeneratedToolHandle | undefined;
+    try {
+      const draftTool = createDraftToolClosure({
+        generate: fakeGenerate,
+        hasDraftRoute: async () => true,
+        findEndpoints: async () => [],
+      });
+      const req: CreateGeneratedToolRequest = {
+        sessionId: CLI_TOOLGEN_SESSION_ID,
+        description: "fetch a JSON payload from the example API",
+        hosts: [STUB_HOST],
+      };
+      const createOutcome = await createGeneratedTool(
+        req,
+        buildCreateGateDeps(gw, configDir, draftTool, (h) => {
+          handle = h;
+        }),
+      );
+      expect(createOutcome.status).toBe("registered");
+      if (createOutcome.status !== "registered") throw new Error("unreachable");
+      const { toolId } = createOutcome;
+
+      // Before the save the tool is ephemeral only -- the saved collection is genuinely empty, so
+      // the assertion below cannot pass for some unrelated reason.
+      expect(gw.registry.savedTools().map((t) => t.toolId)).not.toContain(toolId);
+
+      const saveOutcome = await saveGeneratedTool({ toolId }, buildSaveDeps(gw, configDir));
+      expect(saveOutcome.status).toBe("saved");
+
+      // The registry entry is the load-bearing half: the broker's `approvedHostsFor` reads the
+      // REGISTRY, so a tool that reached `invokeSavedTool` through a DB-only lookup would spawn
+      // with an empty approved-host list and have every brokered fetch refused.
+      expect(gw.registry.savedTools().map((t) => t.toolId)).toContain(toolId);
+
+      const outcome = await invokeSavedTool(
+        { toolId, input: {}, sessionId: CLI_TOOLGEN_SESSION_ID },
+        buildInvokeDeps(gw, configDir),
+      );
+      expect(outcome.status).toBe("executed");
+      // The RESULT, not merely the status: the stub payload can only come back if the brokered
+      // fetch was allowed, which is the half a DB-only fallback would have broken silently.
+      if (outcome.status === "executed") {
+        expect(outcome.result).toEqual(STUB_PAYLOAD);
+      }
+    } finally {
+      await handle?.close();
+      await gw.registry.revokeAll();
+      gw.db.close();
+      rmSync(configDir, { recursive: true, force: true });
+    }
+  }, 30_000);
+});
