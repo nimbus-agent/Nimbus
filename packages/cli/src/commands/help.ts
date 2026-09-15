@@ -85,8 +85,9 @@ PRIVACY & AUDIT
                               (off by default; enable with [code_execution] enabled = true)
   nimbus tool create --description <d> --host <h> [--credential <h>=<tok>]   Owner-approved
                               generated tool (off by default; enable with [tool_generation]
-                              enabled = true — drafting itself is not shipped yet; create refuses)
-  nimbus tool list [--json] | revoke <id> | run <id> [--input <json>] [--json]
+                              enabled = true; drafting is local by default —
+                              [tool_generation] drafting = "off" | "local" | "allow-remote")
+  nimbus tool list [--json] | save <id> | revoke <id> | run <id> [--input <json>] [--json]
                               | credential set <id> <host> ...
   nimbus computer browser --origin <o> [--script-origin <o>]   HITL-gated browser session
                               (off by default; enable with [computer_use] enabled = true —
