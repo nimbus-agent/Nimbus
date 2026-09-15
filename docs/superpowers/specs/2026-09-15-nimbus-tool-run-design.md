@@ -280,7 +280,10 @@ against the owner's machine is invisible after the fact. One audit row per invoc
   command, which this is not; verified before writing, not assumed.)
 - Two places DO document the subcommand list and must be updated together, or the help output
   advertises a surface the code does not have: `help.ts:86-89` and `tool.ts:47`'s usage string.
-- One IPC method plus its dispatcher routing entry.
+- One IPC method: an entry in `toolgen-rpc.ts`'s `HANDLERS` map. **No outer dispatcher entry is
+  needed** — `dispatchers.ts:1242` routes by PREFIX (`if (!method.startsWith("toolgen."))`), not by
+  enumerating methods, so the map entry is the routing. (An earlier draft claimed a separate entry
+  was required, generalising from `diagnostics-rpc`, which does enumerate. Verified, not assumed.)
 - One new gate module, seven error codes, one audit action type.
 - No migration, no new invariant, no new egress class, no Tauri allowlist entry.
 
@@ -290,7 +293,7 @@ against the owner's machine is invisible after the fact. One audit row per invoc
 | --- | --- |
 | CLI parse | `run <id> [--input <json>] [--json]`; invalid JSON and a missing tool id are usage errors, and the gateway is never called |
 | CLI render | string result, object result, no-output, and exit codes 0 / 1 / 127 distinguished |
-| IPC dispatch | `toolgen.invoke` routes; a handler without a dispatcher entry returns `Method not found` |
+| IPC dispatch | `toolgen.invoke` resolves through `dispatchToolgenRpc`'s `HANDLERS` map and returns the outcome union |
 | LAN guard | `checkLanMethodAllowed("toolgen.invoke", peer)` **throws** — asserted by calling it, not by grepping the source |
 | Tauri | `ALLOWED_METHODS` unchanged, asserted by count and by absence |
 | Gate | capability off; org policy off; policy accessor absent so fail-closed; unknown tool; **tampered artifact refused at spawn (I40)** |
@@ -299,3 +302,4 @@ against the owner's machine is invisible after the fact. One audit row per invoc
 | Concurrency | two concurrent invocations of the same tool id both succeed (§4.2) — the case that fails on Windows without serialisation |
 | Registry | a saved tool whose artifact is absent from the registry refuses loudly rather than running with an empty host list (§4.3) |
 | Integration | save then run, end to end against a real signed artifact, with a fake broker |
+| E2E over a real socket | the CLI reaches the gateway and gets a result back. NOT for a routing gap — the prefix match makes that unreachable — but because nothing below this layer exercises CLI plus IPC plus gate plus spawn together |
