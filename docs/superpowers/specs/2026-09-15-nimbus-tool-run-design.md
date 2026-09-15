@@ -202,6 +202,13 @@ and if it cannot, **refuse loudly** with a named code rather than proceeding int
 The boot passes already populate the registry for saved tools; this closes the window where a tool
 saved after boot, or repaired later, would otherwise run with no hosts.
 
+**The gate's lookup must be `registry.savedTools()`, never `registry.findArtifact()`.**
+`findArtifact` reads the EPHEMERAL collection first —
+`#byId.get(id)?.envelope.artifact ?? #saved.get(id)?.artifact` (`registry.ts:78`) — so using it
+here would admit a created-but-unsaved tool, defeating §3.5's saved-only bound at the very line
+meant to enforce it, and then failing obscurely inside `spawnSavedTool` instead of refusing
+cleanly.
+
 ### 4.4 No new HITL prompt
 
 A saved tool's standing approval already means, in the save prompt's own words, "run this in every

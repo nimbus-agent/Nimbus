@@ -34,7 +34,7 @@ Spec §4, §4.5, §3.3. No spawning yet: this task establishes the gate, its out
 - Test: `packages/gateway/src/toolgen/toolgen-invoke-gate.test.ts`
 
 **Interfaces:**
-- Consumes: `isToolgenCapabilityEnabled({config, enforced})` from `toolgen-capability.ts`; `ToolgenRegistry.findArtifact(toolId): GeneratedToolArtifact | undefined`; `ToolInputSchema` (`{type:"object"; properties; required?: readonly string[]}`) from `toolgen-types.ts`.
+- Consumes: `isToolgenCapabilityEnabled({config, enforced})` from `toolgen-capability.ts`; `ToolgenRegistry.savedTools(): SavedToolEnvelope[]` (`registry.ts:112`) — NOT `findArtifact`, which reads ephemeral entries first; `ToolInputSchema` (`{type:"object"; properties; required?: readonly string[]}`) from `toolgen-types.ts`.
 - Produces: `invokeSavedTool(req, deps): Promise<ToolgenInvokeOutcome>`, `ToolgenInvokeDeps`, `ToolgenInvokeOutcome`, and seven `ERR_TOOLGEN_*` constants.
 
 - [ ] **Step 1: Write the failing test**
@@ -55,7 +55,7 @@ function deps(over: Partial<ToolgenInvokeDeps> = {}): ToolgenInvokeDeps {
   return {
     config: { enabled: true },
     enforced: { capabilitiesDisabled: new Set<string>() },
-    registry: { findArtifact: () => ARTIFACT } as unknown as ToolgenInvokeDeps["registry"],
+    registry: { savedTools: () => [{ toolId: "t1", artifact: ARTIFACT }] } as unknown as ToolgenInvokeDeps["registry"],
     spawn: async () => {
       throw new Error("spawn must not be reached in this test");
     },
@@ -90,7 +90,23 @@ describe("invokeSavedTool refusals happen before any spawn", () => {
 
   test("unknown tool id", async () => {
     const out = await invokeSavedTool({ toolId: "nope" }, deps({
-      registry: { findArtifact: () => undefined } as unknown as ToolgenInvokeDeps["registry"],
+      registry: { savedTools: () => [] } as unknown as ToolgenInvokeDeps["registry"],
+    }));
+    expect(out.status === "refused" && out.code).toBe("ERR_TOOLGEN_NOT_SAVED");
+  });
+
+  test("an EPHEMERAL (created-but-unsaved) tool is refused, not run", async () => {
+    // The trap this guards: `registry.findArtifact(id)` reads the ephemeral collection FIRST, so
+    // using it here would let a `nimbus tool create` tool through the saved-only gate and fail
+    // obscurely inside spawnSavedTool instead. The saved list is empty; an ephemeral entry exists.
+    const out = await invokeSavedTool({ toolId: "ephemeral-1" }, deps({
+      registry: {
+        savedTools: () => [],
+        findArtifact: () => ARTIFACT, // present ephemerally — must NOT satisfy the check
+      } as unknown as ToolgenInvokeDeps["registry"],
+      spawn: async () => {
+        throw new Error("must not spawn an unsaved tool");
+      },
     }));
     expect(out.status === "refused" && out.code).toBe("ERR_TOOLGEN_NOT_SAVED");
   });
@@ -157,8 +173,13 @@ export async function invokeSavedTool(
   if (!isToolgenCapabilityEnabled({ config: deps.config, enforced: deps.enforced })) {
     return refuse(deps, toolId, ERR_TOOLGEN_INVOKE_POLICY_DISABLED);
   }
-  const artifact = deps.registry.findArtifact(toolId);
-  if (artifact === undefined) return refuse(deps, toolId, ERR_TOOLGEN_NOT_SAVED);
+  // `savedTools()`, NOT `findArtifact()`. `findArtifact` reads the EPHEMERAL collection first
+  // (`registry.ts:78`: `#byId.get(id)?.envelope.artifact ?? #saved.get(id)?.artifact`), so a
+  // created-but-unsaved tool would pass this check and then fail obscurely inside
+  // `spawnSavedTool` — defeating spec §3.5's saved-only bound at the very line meant to enforce it.
+  const saved = deps.registry.savedTools().find((s) => s.toolId === toolId);
+  if (saved === undefined) return refuse(deps, toolId, ERR_TOOLGEN_NOT_SAVED);
+  const artifact = saved.artifact;
 
   const input = req.input ?? {};
   const bad = validateInput(input, artifact.inputSchema);
@@ -207,7 +228,8 @@ Spec §4.1, §4.2, §4.3. This task makes the gate actually run a tool.
 
 **Interfaces:**
 - Consumes: `spawnSavedTool(toolId, deps: SavedSpawnDeps): Promise<GeneratedToolHandle>`; `GeneratedToolHandle` = `{ describe(); call(args: Record<string, unknown>): Promise<unknown>; close(): Promise<void> }` (`toolgen-client.ts:62-66`).
-- Produces: the `executed` / `failed` arms of `ToolgenInvokeOutcome`.
+- Consumes: `ToolgenError` (carries `.code`) — `spawnSavedTool` throws it on a failed signature check (`toolgen-saved-spawn.ts:206`).
+- Produces: the `executed` / `failed` arms of `ToolgenInvokeOutcome`, plus a `refused` arm for a `ToolgenError` raised during spawn.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -320,7 +342,15 @@ return await serialise(toolId, async () => {
     const result = await handle.call(input);
     return succeed(deps, toolId, result, deps.now() - startedAt);
   } catch (e) {
-    return fail(deps, toolId, String(e), deps.now() - startedAt);
+    // A ToolgenError from spawnSavedTool is a pre-execution REFUSAL, not a tool failure. The
+    // signature-invalid path (`toolgen-saved-spawn.ts:206`) is the one that matters: reporting a
+    // tampered artifact as `failed` would give exit 1 and an audit `outcome: "failed"`, making an
+    // I40 refusal read as a bug in the tool.
+    if (e instanceof ToolgenError) {
+      return refuse(deps, toolId, e.code, e.message);
+    }
+    const msg = e instanceof Error ? e.message : String(e);
+    return fail(deps, toolId, msg, deps.now() - startedAt);
   } finally {
     // Close must not mask the outcome: a close failure is not the caller's problem.
     try { await handle?.close(); } catch { /* best-effort */ }
@@ -504,6 +534,10 @@ the boundary is `unknown` until validated, no casts on `params`:
 "toolgen.invoke": async (params, ctx) => {
   const rec = asRecord(params) ?? {};
   const toolId = requireString(params, "toolId");
+  // Same guard `toolgen.revoke` and `toolgen.credentialSet` already apply (`toolgen-rpc.ts:430`,
+  // `:511`): it refuses the reserved id `signing`, whose Vault prefix IS the signing keypair's,
+  // and rejects path-traversal shapes. A caller-supplied tool id must never skip it.
+  assertCallerToolId(toolId);
   const rawInput = rec["input"];
   const input = rawInput === undefined ? {} : (asRecord(rawInput) ?? undefined);
   if (input === undefined) {
@@ -513,8 +547,54 @@ the boundary is `unknown` until validated, no casts on `params`:
 },
 ```
 
-Add `readonly invokeDeps: ToolgenInvokeDeps;` to `ToolgenRpcCtx`, and build it in
-`platform/assemble.ts` beside the existing toolgen wiring.
+Add `readonly invokeDeps: ToolgenInvokeDeps;` to `ToolgenRpcCtx`, then build it in
+`platform/assemble.ts` beside the existing toolgen wiring. Every identifier below was verified to
+exist before this plan was written:
+
+```ts
+// `CLI_TOOLGEN_SESSION_ID` does NOT exist yet — DEFINE it in toolgen-types.ts as part of this task.
+// `SavedSpawnDeps.sessionId` is documented as "the SPAWNING CALLER's session — never a 'saved'
+// sentinel", and a CLI invocation has no real session, so it needs a named constant of its own.
+export const CLI_TOOLGEN_SESSION_ID = "cli";
+
+const toolgenInvokeDeps: ToolgenInvokeDeps = {
+  config: toolGenerationCfg,
+  // A GETTER, not a snapshot: org policy is re-resolved per call, so a policy tightened after
+  // boot takes effect on the next invocation rather than at the next restart.
+  get enforced() {
+    return policyGate.enforced();
+  },
+  registry: toolgenRegistry,
+  spawn: async (toolId) => {
+    const pubkeyB64 = await vault.get(TOOLGEN_SIGNING_PUBKEY);      // toolgen-keypair.ts
+    if (pubkeyB64 === null) {
+      throw new ToolgenError(ERR_TOOLGEN_PUBKEY_UNAVAILABLE, "toolgen signing pubkey unavailable");
+    }
+    const row = getSavedTool(db, toolId);                           // toolgen-saved-repo.ts:172
+    if (row === null) {
+      throw new ToolgenError(ERR_TOOLGEN_NOT_SAVED, `tool "${toolId}" is not saved`);
+    }
+    return spawnSavedTool(toolId, {
+      configDir: paths.configDir,
+      pubkeyB64,
+      sessionId: CLI_TOOLGEN_SESSION_ID,
+      row: { approvedAt: row.approvedAt },
+      runtime: { requiredReadPaths: () => runtimeReadPaths },
+      readVerifiedSavedTool,
+      savedToolDir,                                                 // toolgen-saved-store.ts
+      rewriteSavedToolScript,                                       // toolgen-saved-store.ts
+      spawn: (envelope) => spawnGeneratedTool(envelope, toolgenBroker, dirname(envelope.scriptPath)),
+    });
+  },
+  audit: (entry) => appendAuditEntry(db, entry),                    // db/audit-chain.ts:56
+  now: () => Date.now(),
+};
+```
+
+**Read `SavedSpawnDeps`'s own docstrings before filling `sessionId` and `row.approvedAt`** — both
+carry explicit warnings. `approvedAt` must come from the `generated_tool` ROW, never `now()` and
+never the artifact (which does not carry it); a `?? now()` fallback would stamp every spawn with
+the current time and destroy the record of when the tool was approved.
 
 - [ ] **Step 4: Satisfy spec §4.3 — the registry must hold the verified artifact**
 
@@ -582,11 +662,11 @@ code does not have.
 ```ts
 test("parses run with input and json", () => {
   expect(parseToolArgs(["run", "t1", "--input", '{"q":"x"}', "--json"]))
-    .toEqual({ kind: "run", toolId: "t1", input: { q: "x" }, json: true });
+    .toEqual({ sub: "run", toolId: "t1", input: { q: "x" }, json: true });
 });
 
 test("run without --input defaults to an empty object", () => {
-  expect(parseToolArgs(["run", "t1"])).toMatchObject({ kind: "run", input: {} });
+  expect(parseToolArgs(["run", "t1"])).toMatchObject({ sub: "run", input: {} });
 });
 
 test("invalid --input JSON is a usage error and never reaches the gateway", () => {
