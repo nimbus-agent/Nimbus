@@ -16,18 +16,18 @@
     "clean": "rm -rf dist"
   },
   "dependencies": {
-    "@clack/prompts": "^1.7.0",
+    "@clack/prompts": "^1.8.0",
     "@modelcontextprotocol/sdk": "1.30.0",
     "@nimbus-dev/client": "^0.17.3",
     "@nimbus-dev/sdk": "^2.0.0",
     "ink": "^7.1.1",
     "pino": "^10.3.1",
-    "react": "^19.2.7",
-    "yaml": "^2.9.0"
+    "react": "^19.3.0",
+    "yaml": "^2.9.1"
   },
   "devDependencies": {
-    "@types/bun": "^1.4.1",
-    "@types/react": "^19.2.18",
+    "@types/bun": "^1.4.2",
+    "@types/react": "^19.3.0",
     "ink-testing-library": "^4.0.0",
     "react-devtools-core": "^8.0.0"
   }
