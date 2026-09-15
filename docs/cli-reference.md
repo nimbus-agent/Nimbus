@@ -868,6 +868,43 @@ nimbus tail --filter connector,hitl --json
 
 ---
 
+### `nimbus explain last [--json]`
+
+X-ray of the most recent `nimbus ask` (or `agent.invoke`, or the ChatOps read path — every caller of the shared `runAsk` pipeline): what data reached the model's context, how each candidate was ranked, what was cut and why, which tools were actually called, and which route the turn took. Every `runAsk` call writes exactly one record to an in-memory ring of the last 10 asks, win or throw; this command reads the newest one.
+
+```bash
+nimbus explain last
+nimbus explain last --json
+```
+
+**Options:**
+
+| Flag | Description |
+|---|---|
+| `--json` | Emit the validated wire shape as JSON instead of the human-readable rendering — the record reparsed by `parseExplainLastResult`, not the raw IPC response; an unrecognised gateway field is dropped rather than passed through. |
+
+**In memory only, and deliberately so.** The ring lives in the gateway process; it holds nothing across a restart, and nothing is written to the index. "No ask recorded since the gateway started" is a different, honest statement from "no ask has ever happened" — the CLI never conflates the two.
+
+**What a record shows, by route** (`runAsk` takes exactly one per turn):
+
+- **`empty_index`** — the index has nothing in it; the turn never reached a model or a search.
+- **`local_context`** — the turn answered from the local SQLite index directly (no live connector call). Shows the search terms used, every candidate the ranking pass considered — grouped by which retrieval pass surfaced it (primary hybrid search, a quoted-phrase match, a repo-slug lookup, a fallback-term retry), never mixed across passes, since their scores are not comparable — and, for each, whether it was `shown` to the model or cut, and **why it was cut**: `cut: probe slice` (ranked outside the top of the primary probe, so it never entered the candidate pool at all), `cut: over cap` (in the pool, dropped by the final size cap), or `cut: service fairness` (in the pool and under the cap by arrival order, displaced by per-service round-robin so one noisy connector cannot crowd out the rest). A `discardedTail` summary counts what never made the pool at all, by service and type.
+- **`agent_tools`** — the turn went to the conversational agent, which made zero or more live tool calls (each shown with its service, status, duration and — for a `searchLocalIndex` call specifically — its own internal ranking). If a local-context probe was *also* built for this turn (the local-router-fallback path only) and actually reached the model's prompt, it is shown using the same `local_context` rendering, under its own heading.
+- **`plan_dispatch`** — the turn was classified as an action and dispatched a plan; the record shows the plan, not a live trace of its execution.
+- **`failed`** — the turn threw. Shows the stage it reached (`classification` / `retrieval` / `model` / `dispatch`) and the error; a `dispatch`-stage failure (a connector or executor error, not a model failure) also shows the plan that was being dispatched.
+
+**Three things the roadmap row that introduced this command promised and the index cannot back up — stated here rather than dropped quietly:**
+
+- **There is no "connector rate-limited" discard reason.** The `local_context` route queries the local SQLite index only — it never calls a connector at all, so a connector's rate limit cannot be why a candidate was cut. The three real cut reasons are the probe slice, the size cap, and per-service fairness, above; none of them is about a live API call.
+- **There is no relevance threshold.** Nothing here scores a candidate against a minimum and drops it for scoring too low. Every cut is a *slice/cap/fairness* decision over an already-ranked list, not a relevance judgment — which is also why a candidate that would have scored well can still be marked `cut: service fairness` if enough same-service items arrived ahead of it.
+- **"Which connectors were queried vs. answered from cache" is not the axis that exists.** The local index *is* the cache — there is no separate query-vs-cache distinction inside it. The real axis this record shows is **local index vs. live tool call**: a `local_context` turn (or an `agent_tools` turn's own `searchLocalIndex` calls) reads the already-synced local index; any other `agent_tools` tool call reaches out live. The record shows which of those happened, not a cache-hit/miss split that the local index has no concept of.
+
+**Deferred, not shipped:** a durable `ask_explain` table — persisting this would write every question the user asks, with its full retrieval trace, to an index that is not encrypted at rest (SQLite encryption, `[db.encrypt]`/SQLCipher, is itself a deferred v0.1.1 row); `nimbus explain list` / `nimbus explain <n>` to browse beyond the newest record (the ring holds up to 10, but only the newest is reachable today); and capture of the three negation predicates (`--not-touching`/`--no-downstream-incident`/exclusion counts) and of `indexCountFor` guidance inside an explain record.
+
+**Read-only, no HITL, CLI-only, LAN-forbidden.** `ask.explainLast` is not reachable over the local HTTP API, MCP, ChatOps, or a paired peer over the LAN — the record carries the owner's question verbatim plus titles of items retrieved from the owner's private index, so admitting it over the wire would hand a peer the owner's own ask. It is not on the Tauri renderer allowlist either.
+
+---
+
 ### `nimbus ghost`
 
 Surface ambient teammate context for a file by querying paired peers' expertise across the federation mesh. Returns a ranked list of teammates with recent PRs, issues, and commits touching the file — helping you identify who to consult before starting work. No message is ever sent automatically; this is a read-only suggestion surface.

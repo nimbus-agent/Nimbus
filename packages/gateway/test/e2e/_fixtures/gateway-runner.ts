@@ -9,6 +9,9 @@
 // (transports → identity → policy → HITL gate → dispatch → reply), not the LLM.
 
 import { loadNimbusIdentityFromConfigDir } from "../../../src/config/nimbus-toml.ts";
+import { makeEgressSink } from "../../../src/egress/egress-ledger.ts";
+import { runAsk } from "../../../src/engine/run-ask.ts";
+import type { ConnectorDispatcher } from "../../../src/engine/types.ts";
 import { IdentityStore } from "../../../src/identity/identity-store.ts";
 import { assemblePlatformServices } from "../../../src/platform/assemble.ts";
 import type { PlatformPaths } from "../../../src/platform/paths.ts";
@@ -162,6 +165,29 @@ if (toolCallSeeds.length > 0) {
 // WIRING (IPC, signed policy, SCIM, executor HITL gate, audit chain, I23) against a mock transport.
 services.chatops?.bindAskEngine((query, namespace) =>
   Promise.resolve(`[${namespace}] oncall = alice (stub-engine answer to: ${query})`),
+);
+
+// `agent.invoke` -> the real `runAsk` pipeline, wired the same shape `gateway-main.ts` uses in
+// production (paths/consent/localIndex/dispatcher/egressSink/explainRecorder), so
+// `explain-last.e2e.test.ts` can prove `ask.explainLast` is reachable end-to-end over a real
+// socket after a real ask. Unlike the chatops stub above — which proves transport wiring, not the
+// LLM — this proves the recorder is reachable, not the model: no `conversationalAgent`/`llmRouter`
+// is configured, so a non-empty index would fail to classify. Every e2e test that drives this
+// fixture's `agent.invoke` keeps the index empty, which resolves deterministically via the
+// `empty_index` route (`run-ask.ts`) and never touches a model or dispatches to a connector.
+const stubAgentDispatcher: ConnectorDispatcher = {
+  dispatch: () => Promise.reject(new Error("e2e runner: no connector dispatch configured")),
+};
+services.ipc.setAgentInvokeHandler((ctx) =>
+  runAsk({
+    ...ctx,
+    paths: services.paths,
+    consentCoordinator: services.ipc.consent,
+    localIndex: services.localIndex,
+    dispatcher: stubAgentDispatcher,
+    egressSink: makeEgressSink(services.localIndex.getDatabase()),
+    explainRecorder: services.askExplainRecorder,
+  }),
 );
 
 const shutdown = (): void => {

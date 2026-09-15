@@ -171,10 +171,18 @@ function rowToItem(row: ItemRow): NimbusItem {
   return item;
 }
 
+type ScoreComponents = {
+  matchScore: number;
+  recencyComponent: number;
+  servicePriorityComponent: number;
+  scoringFormula: "hybrid_rrf" | "fts_rank";
+};
+
 function rowToRankedItem(
   row: ItemRow,
   score: number,
   duplicates?: readonly string[],
+  components?: ScoreComponents,
 ): RankedIndexItem {
   const base = rowToItem(row);
   const canon = row.canonical_url;
@@ -186,31 +194,32 @@ function rowToRankedItem(
     indexedType: String(row.type),
     ...(trimmed === "" ? {} : { canonicalUrl: trimmed }),
     ...(duplicates !== undefined && duplicates.length > 0 ? { duplicates } : {}),
+    ...(components ?? {}),
   };
   return item;
 }
 
 function dedupeRankedByCanonicalUrl(
-  scored: Array<{ row: ItemRow; score: number }>,
+  scored: Array<{ row: ItemRow; score: number; components?: ScoreComponents }>,
 ): RankedIndexItem[] {
   const out: RankedIndexItem[] = [];
   const canonicalToOutIdx = new Map<string, number>();
-  for (const { row, score } of scored) {
+  for (const { row, score, components } of scored) {
     const canon = row.canonical_url;
     if (canon === null || canon === undefined || canon.trim() === "") {
-      out.push(rowToRankedItem(row, score));
+      out.push(rowToRankedItem(row, score, undefined, components));
       continue;
     }
     const c = canon.trim();
     const idx = canonicalToOutIdx.get(c);
     if (idx === undefined) {
       canonicalToOutIdx.set(c, out.length);
-      out.push(rowToRankedItem(row, score));
+      out.push(rowToRankedItem(row, score, undefined, components));
       continue;
     }
     const prev = out[idx];
     if (prev === undefined) {
-      out.push(rowToRankedItem(row, score));
+      out.push(rowToRankedItem(row, score, undefined, components));
       continue;
     }
     const dups = [...(prev.duplicates ?? []), row.service];
@@ -620,14 +629,25 @@ export class LocalIndex {
         normBm25 = rows.map(() => 0.5);
       }
 
-      const scored: Array<{ row: ItemRow; score: number }> = rows.map((row, i) => {
-        const mod = Number(row.modified_at);
-        const rec = recencyScore(mod, now);
-        const sp = servicePriorityScore(row.service, priorities);
-        const bm = normBm25[i];
-        const comp = compositeSearchScore(bm ?? 0.5, rec, sp);
-        return { row, score: comp };
-      });
+      const scored: Array<{ row: ItemRow; score: number; components?: ScoreComponents }> = rows.map(
+        (row, i) => {
+          const mod = Number(row.modified_at);
+          const rec = recencyScore(mod, now);
+          const sp = servicePriorityScore(row.service, priorities);
+          const bm = normBm25[i] ?? 0.5;
+          const comp = compositeSearchScore(bm, rec, sp);
+          return {
+            row,
+            score: comp,
+            components: {
+              matchScore: bm,
+              recencyComponent: rec,
+              servicePriorityComponent: sp,
+              scoringFormula: "fts_rank" as const,
+            },
+          };
+        },
+      );
 
       scored.sort((a, b) => {
         if (b.score !== a.score) {
@@ -696,7 +716,12 @@ export class LocalIndex {
           const sp = servicePriorityScore(row.service, priorities);
           const nr = normRrf[i] ?? 0.5;
           const comp = compositeSearchScore(nr, rec, sp);
-          const base = rowToRankedItem(row, comp, h.duplicates);
+          const base = rowToRankedItem(row, comp, h.duplicates, {
+            matchScore: nr,
+            recencyComponent: rec,
+            servicePriorityComponent: sp,
+            scoringFormula: "hybrid_rrf",
+          });
           const ranked: RankedIndexItem = {
             ...base,
             bm25Rank: h.bm25Rank,

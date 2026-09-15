@@ -2,6 +2,7 @@ import type { ChatopsBoot } from "../chatops/chatops-boot.ts";
 import type { ConnectorWriteContext } from "../connectors/connector-write-transport.ts";
 import type { LazyConnectorMesh } from "../connectors/lazy-mesh/index.ts";
 import type { EmbeddingReadiness } from "../embedding/embedding-readiness.ts";
+import type { AskExplainRecorder } from "../engine/ask-explain-recorder.ts";
 import type { ExecutorDelegationDep, ExecutorPolicyDep } from "../engine/executor.ts";
 import type { FleetScheduler } from "../fleet/fleet-scheduler.ts";
 import type { LocalIndex } from "../index/local-index.ts";
@@ -81,5 +82,13 @@ export interface PlatformServices {
    * tell "warming" from "disabled" from "fetch failed".
    */
   embeddingReadiness: () => EmbeddingReadiness;
+  /**
+   * `nimbus explain last` (spec §4). ONE recorder for the process's whole lifetime, shared by
+   * every `runAsk` call site — both `gateway-main.ts` wires it to (`setAgentInvokeHandler` and
+   * the ChatOps `bindAskEngine` path), so a ring bounded per-recorder (not per-caller) is what
+   * "last" means. Always constructed, like `sandboxRunner` and `toolgenRegistry`: recording is
+   * in-memory-only and has no on/off switch of its own.
+   */
+  askExplainRecorder: AskExplainRecorder;
   disposeSidecars?: () => void;
 }

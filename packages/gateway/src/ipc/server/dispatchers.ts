@@ -99,6 +99,7 @@ function assertDiagnosticsRpcAccess(
   wantsConfig: boolean,
   wantsTelemetry: boolean,
   wantsDiagnostics: boolean,
+  wantsAskExplain: boolean,
   opts: Pick<CreateIpcServerOptions, "configDir" | "dataDir" | "localIndex">,
 ): void {
   if (wantsConfig) {
@@ -114,6 +115,15 @@ function assertDiagnosticsRpcAccess(
     if (method === "telemetry.preview" && opts.localIndex === undefined) {
       throw new RpcMethodError(-32603, "telemetry.preview requires local index");
     }
+    return;
+  }
+  if (wantsAskExplain) {
+    // This branch is unreachable-by-omission, not load-bearing: `wantsDiagnostics`'s own prefix
+    // match (`db.` / `diag.` / `index.*`) is disjoint from the literal `ask.explainLast`, so the
+    // `if (wantsDiagnostics && ...)` guard below already excludes this method on its own — this
+    // early return exists so that fact is stated explicitly (ask.explainLast reads the in-memory
+    // ring only and has no localIndex/dataDir dependency to enforce) rather than left implicit in
+    // what the guard below happens not to match.
     return;
   }
   if (wantsDiagnostics && (opts.localIndex === undefined || opts.dataDir === undefined)) {
@@ -1828,10 +1838,18 @@ export async function tryDispatchDiagnosticsRpc(
     method === "index.health" ||
     method === "index.queryItems" ||
     method === "index.querySql";
-  if (!wantsConfig && !wantsTelemetry && !wantsDiagnostics) {
+  const wantsAskExplain = method === "ask.explainLast";
+  if (!wantsConfig && !wantsTelemetry && !wantsDiagnostics && !wantsAskExplain) {
     return diagnosticsRpcSkipped;
   }
-  assertDiagnosticsRpcAccess(method, wantsConfig, wantsTelemetry, wantsDiagnostics, ctx.options);
+  assertDiagnosticsRpcAccess(
+    method,
+    wantsConfig,
+    wantsTelemetry,
+    wantsDiagnostics,
+    wantsAskExplain,
+    ctx.options,
+  );
   try {
     const ctxBase = {
       dataDir: ctx.options.dataDir ?? "",
@@ -1851,6 +1869,10 @@ export async function tryDispatchDiagnosticsRpc(
       ...(ctx.options.embeddingReadiness === undefined
         ? {}
         : { embeddingReadiness: ctx.options.embeddingReadiness }),
+      // ask.explainLast reads this ring directly; no other diagnostics method touches it.
+      ...(ctx.options.askExplainRecorder === undefined
+        ? {}
+        : { askExplainRecorder: ctx.options.askExplainRecorder }),
     };
     const diagCtx =
       ctx.options.localIndex === undefined

@@ -11,8 +11,8 @@ import type {
   SessionMemoryStore,
 } from "../memory/session-memory-store.ts";
 import { insertPerson } from "../people/person-store.ts";
-import { createNimbusEngineAgent } from "./agent.ts";
-import { agentRequestContext } from "./agent-request-context.ts";
+import { createNimbusEngineAgent, readRanking } from "./agent.ts";
+import { agentRequestContext, getExplainToolCalls } from "./agent-request-context.ts";
 
 /**
  * The agent now REQUIRES a resolved vendor and an egress db: slice 2b removed
@@ -1169,5 +1169,220 @@ describe("wrapToolForLlm (auditDb branches)", () => {
     await tool.execute({});
     const row = db.query("SELECT COUNT(*) AS n FROM tool_call_log").get() as { n: number };
     expect(row.n).toBe(0);
+  });
+});
+
+describe("wrapToolForLlm collects for `nimbus explain last` (spec §4.5)", () => {
+  test("success arm: records the call with redacted params and no ranking for a non-search tool", async () => {
+    const { localIndex } = freshIndex();
+    const { agent } = createNimbusEngineAgent({
+      localIndex,
+      vendor: TEST_VENDOR,
+      egressDb: TEST_EGRESS_DB,
+      agentModel: "openai/gpt-4o-mini",
+    });
+    const tool = await getTool(agent, "listConnectors");
+    await agentRequestContext.run({}, async () => {
+      await tool.execute({ token: "shhh-super-secret-000" });
+      const calls = getExplainToolCalls();
+      expect(calls).toHaveLength(1);
+      expect(calls?.[0]?.toolId).toBe("listConnectors");
+      expect(calls?.[0]?.service).toBe("connectors");
+      expect(calls?.[0]?.status).toBe("ok");
+      expect(calls?.[0]?.ranking).toBeUndefined();
+      // Redacted with the SAME helper the tool_call_log write path uses (agent.ts:8's
+      // `redactAuditPayload`) -- the raw secret must never appear in the collected diagnostic.
+      expect(calls?.[0]?.paramsJson).not.toContain("shhh-super-secret-000");
+      expect(calls?.[0]?.paramsJson).toContain("[REDACTED]");
+    });
+  });
+
+  test("error arm: records the call with status='error' before re-throwing", async () => {
+    const { localIndex } = freshIndex();
+    (
+      localIndex as unknown as {
+        searchRankedAsync: () => Promise<never>;
+      }
+    ).searchRankedAsync = async () => {
+      throw new Error("boom");
+    };
+    const { agent } = createNimbusEngineAgent({
+      localIndex,
+      vendor: TEST_VENDOR,
+      egressDb: TEST_EGRESS_DB,
+      agentModel: "openai/gpt-4o-mini",
+    });
+    const tool = await getTool(agent, "searchLocalIndex");
+    await agentRequestContext.run({}, async () => {
+      await expect(tool.execute({})).rejects.toThrow("boom");
+      const calls = getExplainToolCalls();
+      expect(calls).toHaveLength(1);
+      expect(calls?.[0]?.toolId).toBe("searchLocalIndex");
+      expect(calls?.[0]?.status).toBe("error");
+      expect(calls?.[0]?.ranking).toBeUndefined();
+    });
+  });
+
+  test("ranking is READ from searchLocalIndex's own returned totals, never recomputed", async () => {
+    const { db, localIndex } = freshIndex();
+    seedItem(db, { service: "github", externalId: "g1", title: "alpha repo" });
+    seedItem(db, { service: "slack", externalId: "s1", title: "alpha thread" });
+    const { agent } = createNimbusEngineAgent({
+      localIndex,
+      vendor: TEST_VENDOR,
+      egressDb: TEST_EGRESS_DB,
+      agentModel: "openai/gpt-4o-mini",
+    });
+    const tool = await getTool(agent, "searchLocalIndex");
+    await agentRequestContext.run({}, async () => {
+      const envelope = await tool.execute({ name: "alpha" });
+      const parsed = parseEnvelope(envelope);
+      const payload = parsed.payload as {
+        totalMatches: number;
+        itemsInWindow: number;
+        sourceSummary: Array<{ service: string; type: string; count: number }>;
+      };
+      // Sanity: this fixture actually produced a non-trivial ranking to compare against.
+      expect(payload.totalMatches).toBeGreaterThan(0);
+      const calls = getExplainToolCalls();
+      expect(calls).toHaveLength(1);
+      expect(calls?.[0]?.ranking).toEqual({
+        totalMatches: payload.totalMatches,
+        itemsInWindow: payload.itemsInWindow,
+        sourceSummary: payload.sourceSummary,
+      });
+    });
+  });
+
+  test("two tool calls in one turn are both collected, in order", async () => {
+    const { localIndex } = freshIndex();
+    const { agent } = createNimbusEngineAgent({
+      localIndex,
+      vendor: TEST_VENDOR,
+      egressDb: TEST_EGRESS_DB,
+      agentModel: "openai/gpt-4o-mini",
+    });
+    const listConnectorsTool = await getTool(agent, "listConnectors");
+    const searchTool = await getTool(agent, "searchLocalIndex");
+    await agentRequestContext.run({}, async () => {
+      await listConnectorsTool.execute({});
+      await searchTool.execute({});
+      const calls = getExplainToolCalls();
+      expect(calls).toHaveLength(2);
+      expect(calls?.[0]?.toolId).toBe("listConnectors");
+      expect(calls?.[1]?.toolId).toBe("searchLocalIndex");
+    });
+  });
+
+  test("outside a turn, nothing is collected and the tool still returns normally", async () => {
+    const { localIndex } = freshIndex();
+    const { agent } = createNimbusEngineAgent({
+      localIndex,
+      vendor: TEST_VENDOR,
+      egressDb: TEST_EGRESS_DB,
+      agentModel: "openai/gpt-4o-mini",
+    });
+    const tool = await getTool(agent, "listConnectors");
+    const envelope = await tool.execute({});
+    expect(parseEnvelope(envelope).tool).toBe("listConnectors");
+    expect(getExplainToolCalls()).toBeUndefined();
+  });
+
+  test("success arm: a circular-reference input cannot be serialized, but the successful result is still returned", async () => {
+    const { localIndex } = freshIndex();
+    const { agent } = createNimbusEngineAgent({
+      localIndex,
+      vendor: TEST_VENDOR,
+      egressDb: TEST_EGRESS_DB,
+      agentModel: "openai/gpt-4o-mini",
+    });
+    const tool = await getTool(agent, "listConnectors");
+    const circular: Record<string, unknown> = {};
+    circular["self"] = circular; // JSON.stringify throws on this inside redactAuditPayload
+    await agentRequestContext.run({}, async () => {
+      const envelope = await tool.execute(circular);
+      // The tool call succeeded and its real envelope is returned -- a redaction/serialization
+      // failure inside the best-effort collector must not discard it or throw a spurious error.
+      expect(parseEnvelope(envelope).tool).toBe("listConnectors");
+      // Best-effort: the collector caught its own failure and recorded nothing for this call,
+      // rather than half-writing a call or (worse) crashing the caller.
+      expect(getExplainToolCalls()).toBeUndefined();
+    });
+  });
+
+  test("error arm: a circular-reference input still surfaces the ORIGINAL tool error, not a serialization error", async () => {
+    const { localIndex } = freshIndex();
+    (
+      localIndex as unknown as {
+        searchRankedAsync: () => Promise<never>;
+      }
+    ).searchRankedAsync = async () => {
+      throw new Error("boom");
+    };
+    const { agent } = createNimbusEngineAgent({
+      localIndex,
+      vendor: TEST_VENDOR,
+      egressDb: TEST_EGRESS_DB,
+      agentModel: "openai/gpt-4o-mini",
+    });
+    const tool = await getTool(agent, "searchLocalIndex");
+    const circular: Record<string, unknown> = {};
+    circular["self"] = circular;
+    await agentRequestContext.run({}, async () => {
+      // Must reject with the tool's own "boom", never a TypeError from JSON.stringify on a
+      // circular structure -- the redaction call sits INSIDE recordExplainToolCall's own
+      // try/catch and can never replace the error already being thrown.
+      await expect(tool.execute(circular)).rejects.toThrow("boom");
+      expect(getExplainToolCalls()).toBeUndefined();
+    });
+  });
+});
+
+describe("readRanking (spec §2.5, §4.5)", () => {
+  test("drops a sourceSummary element with a missing or wrong-typed field, keeps well-formed ones", () => {
+    const raw = {
+      totalMatches: 7,
+      itemsInWindow: 3,
+      sourceSummary: [
+        { service: "github", type: "pr", count: 2 }, // well-formed: kept
+        { service: "slack" }, // missing type/count: dropped
+        { service: "jira", type: "ticket", count: "5" }, // count wrong type: dropped
+        { service: "notion", type: 42, count: 1 }, // type wrong type: dropped
+        null, // not an object: dropped
+        "not-an-object", // not an object: dropped
+        { service: "linear", type: "issue", count: 1 }, // well-formed: kept
+      ],
+    };
+    const ranking = readRanking(raw);
+    expect(ranking).toEqual({
+      totalMatches: 7,
+      itemsInWindow: 3,
+      sourceSummary: [
+        { service: "github", type: "pr", count: 2 },
+        { service: "linear", type: "issue", count: 1 },
+      ],
+    });
+  });
+
+  test("returns undefined when totalMatches/itemsInWindow are missing or wrong-typed", () => {
+    expect(readRanking(null)).toBeUndefined();
+    expect(readRanking("not-an-object")).toBeUndefined();
+    expect(readRanking({})).toBeUndefined();
+    expect(readRanking({ totalMatches: "7", itemsInWindow: 3 })).toBeUndefined();
+  });
+
+  test("defaults sourceSummary to empty when absent or not an array", () => {
+    expect(readRanking({ totalMatches: 1, itemsInWindow: 1 })).toEqual({
+      totalMatches: 1,
+      itemsInWindow: 1,
+      sourceSummary: [],
+    });
+    expect(
+      readRanking({ totalMatches: 1, itemsInWindow: 1, sourceSummary: "not-an-array" }),
+    ).toEqual({
+      totalMatches: 1,
+      itemsInWindow: 1,
+      sourceSummary: [],
+    });
   });
 });

@@ -157,6 +157,7 @@ import {
   embedQueryDualBestEffort,
 } from "../embedding/embedding-readiness.ts";
 import type { EmbeddingRuntime as ConcreteEmbeddingRuntime } from "../embedding/embedding-runtime.ts";
+import { AskExplainRecorder } from "../engine/ask-explain-recorder.ts";
 import { delegatedApprovalBroker } from "../engine/delegated-approval-broker.ts";
 import { buildDelegatedRequestRemote } from "../engine/delegated-request-remote.ts";
 import { DelegationStore } from "../engine/delegation-store.ts";
@@ -4070,6 +4071,15 @@ export async function assemblePlatformServices(
   assignIfPresent(ipcOpts, "ownershipRefresher", ownershipRefresher);
   assignIfPresent(ipcOpts, "premortemRefresher", premortemRefresher);
 
+  // `nimbus explain last` (spec §4). ONE recorder for the process's lifetime, shared by every
+  // `runAsk` call site `gateway-main.ts` wires it to (via `PlatformServices.askExplainRecorder`
+  // below) AND by `ask.explainLast` here, over the shared LAN-forbidden diagnostics IPC route.
+  // Constructed here — before `createIpcServer(ipcOpts)` — so the same instance reaches both
+  // consumers; constructing it after the IPC server exists would leave `ask.explainLast` reading
+  // an instance nothing else ever writes to.
+  const askExplainRecorder = new AskExplainRecorder();
+  ipcOpts.askExplainRecorder = askExplainRecorder;
+
   collectSidecarsFromEnv(db, paths, sidecarStops, httpSidecarOpts);
 
   const ipc = createIpcServer(ipcOpts);
@@ -4193,6 +4203,7 @@ export async function assemblePlatformServices(
     ...(agentVendor === undefined ? {} : { agentVendor }),
     connectorWriteDeps,
     embeddingReadiness,
+    askExplainRecorder,
     ...(sessionMemoryStore === undefined ? {} : { sessionMemoryStore }),
     policyHitl,
     ...(federationBooted === undefined ? {} : { executorDelegation: federationBooted }),

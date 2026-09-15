@@ -18,6 +18,42 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
 
 ## Post-Phase-6 deliveries
 
+- **2026-09-14 — `nimbus explain last`, an X-ray of the most recent `nimbus ask`.** Sixth and
+  final row of the v0.1.1 CLI batch (design doc: `2026-09-14-nimbus-explain-last`). Every call
+  through the shared `runAsk` pipeline (`nimbus ask`, `agent.invoke`, the ChatOps read path)
+  writes exactly one record — success or throw — to an in-memory ring of the last 10 asks;
+  `nimbus explain last [--json]` reads the newest one over a new, CLI-only, LAN-forbidden
+  `ask.explainLast` IPC method. A record shows what reached the model's context and why: for a
+  `local_context` turn, every candidate the local-index ranking pass considered, grouped by
+  contributing retrieval pass, each marked `shown` or cut with the real reason (`cut: probe slice`
+  / `cut: over cap` / `cut: service fairness`); for an `agent_tools` turn, the live tool calls
+  actually made, each `searchLocalIndex` call's own per-call ranking summary (no candidates, no
+  passes — just totals); and which of the five routes (`empty_index` / `local_context` /
+  `agent_tools` / `plan_dispatch` / `failed`) the turn took. No migration, no new invariant, no new
+  egress class, no new HITL action type — the ring is
+  in-memory only and nothing is written to the index.
+
+  **The roadmap row's original wording promised three things the index has no substrate for, and
+  they were corrected rather than shipped as written.** There is no "connector rate-limited"
+  discard reason: the `local_context` route never calls a connector, only the local SQLite index.
+  There is no "below relevance threshold" reason either — every cut is a slice/cap/fairness
+  decision over an already-ranked list, never a score-against-a-minimum judgment. And "which
+  connectors were queried vs. answered from cache" misdescribes the index: the local index **is**
+  the cache, so the real axis a record discloses is **local index vs. live tool call**, not a
+  query/cache split that does not exist inside it. Deferred and stated as such rather than dropped
+  quietly: a durable `ask_explain` table (persisting every question plus its retrieval trace into
+  an index that is not encrypted at rest), `nimbus explain list` / `nimbus explain <n>` navigation
+  beyond the newest ring entry, and capture of the three negation predicates / `indexCountFor`
+  guidance inside a record.
+
+  **The closing test layer is the one no unit test can provide.** `ask.explainLast` is wired into
+  both `diagnostics-rpc.ts`'s inner dispatcher and `tryDispatchDiagnosticsRpc`'s outer
+  method-routing match in `ipc/server/dispatchers.ts` — a handler present in the first without the
+  second compiles cleanly and passes every unit test that calls the sub-dispatcher directly, and
+  returns `Method not found` over a real socket. `packages/gateway/test/e2e/explain-last.e2e.test.ts`
+  boots a real gateway subprocess and drives `ask.explainLast` over a real Unix-socket/named-pipe
+  connection, proving the routing entry rather than only the handler.
+
 - **2026-09-13 — `nimbus tail`, the gateway's operational event stream.** Fifth row of the v0.1.1
   CLI batch. A plain-text, follow-only feed of what a running gateway does — connector health
   transitions, watcher fires, sync completions, extension mutations and HITL requests/resolutions —

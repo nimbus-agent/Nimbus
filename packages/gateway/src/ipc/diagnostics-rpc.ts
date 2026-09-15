@@ -21,6 +21,7 @@ import { formatRepairReport, repairIndex } from "../db/repair.ts";
 import { listSnapshots, previewRestore, pruneSnapshots, takeSnapshot } from "../db/snapshot.ts";
 import { formatVerifyResult, verifyIndex } from "../db/verify.ts";
 import type { EmbeddingReadiness } from "../embedding/embedding-readiness.ts";
+import type { AskExplainRecorder } from "../engine/ask-explain-recorder.ts";
 import { preT2DisabledCount, signatureDisabledRegistry } from "../extensions/hard-disable.ts";
 import { buildItemListSql } from "../index/item-list-query.ts";
 import type { LocalIndex } from "../index/local-index.ts";
@@ -65,6 +66,13 @@ export type DiagnosticsRpcContext = {
     intervalHours: number;
     airGapBlocked: boolean;
   };
+  /**
+   * `nimbus explain last` (spec §3). Reads the in-memory bounded ring only — no `localIndex`/
+   * `dataDir` dependency, unlike the `index.*` diagnostics above. Undefined when the gateway
+   * was assembled without it (should not happen in production, since `platform/assemble.ts`
+   * always constructs one; a test context may omit it).
+   */
+  readonly askExplainRecorder?: AskExplainRecorder;
 };
 
 export function buildSandboxDiagPayload(runner: SandboxRunner | undefined): {
@@ -697,6 +705,16 @@ function rpcDiagSnapshot(ctx: DiagnosticsRpcContext): DiagnosticsRpcOutcome {
   };
 }
 
+function rpcAskExplainLast(ctx: DiagnosticsRpcContext): DiagnosticsRpcOutcome {
+  const rec = ctx.askExplainRecorder?.last();
+  if (rec === undefined) {
+    // Deliberately NOT an empty report: the ring is in memory only, so "nothing since the
+    // gateway started" is a different statement from "no ask ever happened" (spec §4.1).
+    return { kind: "hit", value: { record: null, reason: "no_ask_since_start" } };
+  }
+  return { kind: "hit", value: { record: rec } };
+}
+
 export function dispatchDiagnosticsRpc(
   method: string,
   params: unknown,
@@ -739,6 +757,8 @@ export function dispatchDiagnosticsRpc(
       return rpcTelemetryPreview(ctx);
     case "diag.snapshot":
       return rpcDiagSnapshot(ctx);
+    case "ask.explainLast":
+      return rpcAskExplainLast(ctx);
     case "telemetry.getStatus": {
       const disabled = existsSync(join(ctx.dataDir, ".nimbus-telemetry-disabled"));
       if (disabled) return { kind: "hit", value: { enabled: false } };

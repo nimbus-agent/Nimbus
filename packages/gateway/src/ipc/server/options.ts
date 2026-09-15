@@ -7,6 +7,7 @@ import type { ProfileManager } from "../../config/profiles.ts";
 import type { LazyConnectorMesh } from "../../connectors/lazy-mesh/index.ts";
 import type { DecisionRefresher } from "../../decisions/decision-refresh.ts";
 import type { EmbeddingReadiness } from "../../embedding/embedding-readiness.ts";
+import type { AskExplainRecorder } from "../../engine/ask-explain-recorder.ts";
 import type { ExecutorPolicyDep } from "../../engine/executor.ts";
 import type { ConnectorDispatcher } from "../../engine/types.ts";
 import type { AutoUpdateRuntimeBag } from "../../extensions/auto-update-init.ts";
@@ -231,4 +232,9 @@ export type CreateIpcServerOptions = {
   // nimbus.toml). Always set at boot (not gated on the briefs seam being wired), so it is never
   // left undefined by omission.
   briefsEnabled?: boolean;
+  // `nimbus explain last` (spec §3). The in-memory bounded ring behind ask.explainLast, shared
+  // with `runAsk`'s recording call site. Reads only — no localIndex/dataDir dependency, unlike
+  // the index.* diagnostics methods. LAN-forbidden (I5) and absent from the Tauri allowlist (I7):
+  // the record carries the owner's question verbatim plus titles from the owner's private index.
+  askExplainRecorder?: AskExplainRecorder;
 };

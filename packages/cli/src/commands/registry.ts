@@ -20,6 +20,7 @@ export const COMMAND_NAMES = [
   "egress",
   "exec",
   "expert",
+  "explain",
   "extension",
   "fleet",
   "ghost",
