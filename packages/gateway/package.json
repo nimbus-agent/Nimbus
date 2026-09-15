@@ -26,7 +26,7 @@
     "bonjour-service": "^1.4.4",
     "bs58": "^6.0.0",
     "hyparquet": "^1.29.2",
-    "imapflow": "^1.7.8",
+    "imapflow": "^2.0.2",
     "js-yaml": "^4.3.1",
     "pino": "^10.3.1",
     "semver": "^7.8.3",
