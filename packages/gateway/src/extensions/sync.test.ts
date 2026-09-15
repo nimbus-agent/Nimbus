@@ -1,6 +1,7 @@
-import { describe, expect, it } from "bun:test";
+import { afterEach, describe, expect, it } from "bun:test";
 
 import {
+  cleanupExtensionTestDirs,
   setupFreshExtensionDb,
   stageSignedExtensionOnDisk,
 } from "../../test/fixtures/extension.ts";
@@ -10,6 +11,8 @@ import { AirGapEnforcementError, syncPublisherKeys } from "./sync.ts";
 import { encodeBase64, generateEd25519Keypair } from "./verify-signature.ts";
 
 describe("syncPublisherKeys", () => {
+  afterEach(cleanupExtensionTestDirs);
+
   it("unchanged: cached key equals registry key → publishersUnchanged++", async () => {
     const { db, extensionsDir } = setupFreshExtensionDb();
     const vault = new MockVault();
