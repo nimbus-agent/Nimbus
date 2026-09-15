@@ -181,7 +181,7 @@ Commercial license also available now for organizations that need to embed Nimbu
 | Full document content extraction (PDF/DOCX body text in FTS5) | Phase 3 — embedding pipeline + Filesystem connector v2 |
 | Generic user-defined MCP connector (`nimbus connector add --mcp`) | Phase 3 — Extension Registry v1 (adds sandboxing + manifest verification) |
 | Vault credential portability between machines | Phase 4 — `nimbus data export/import` |
-| SQLite encryption at rest (SQLCipher) | Phase 4 — opt-in AES-256 via SQLCipher; key in OS Vault; `[db.encrypt] = true`; see Data Sovereignty section |
+| SQLite encryption at rest (SQLCipher) | ❌ **rejected 2026-09-15** — the `[db.encrypt]`/AES-256/Vault-key design below was never reachable: `bun:sqlite` cannot link SQLCipher on Windows or Linux. See [§ Rejected Directions](#sqlite-encryption-at-rest-sqlcipher--rejected-2026-09-15) |
 | Per-connector OAuth vault keys vs shared family key (`google.oauth`, `microsoft.oauth`) | Phase 3/4 consideration — shared key kept for simplicity; revisit if scope-collision UX proves painful |
 
 ---
@@ -409,7 +409,7 @@ First-party demonstrations of multi-agent orchestration. **Deferred to the v0.1.
 - [x] **GDPR deletion** — `nimbus data delete --service <name>`: preflight shows counts; `--dry-run` for preview; `--yes` to confirm; removes all `item` rows and Vault entries for a service; writes `data.delete` audit entry
 - [x] **Tamper-evident audit log** — each audit log row is BLAKE3-chained to the previous (V18 schema migration); `nimbus audit verify [--full] [--since <id>]` checks integrity incrementally or fully; `nimbus audit export --output <path>` exports chain
 - [x] **Data minimization / connector reindex** — `nimbus connector reindex <name> [--depth <metadata_only|summary|full>]`: prunes body/embeddings at `metadata_only`, writes `data.minimization.prune` audit entry
-- **[Deferred to v0.1.1.]** SQLite encryption at rest (SQLCipher) — see the v0.1.1 batch table.
+- **[REJECTED 2026-09-15, was deferred to v0.1.1.]** SQLite encryption at rest (SQLCipher) — `Database.setCustomSQLite` is a no-op off macOS, so the library cannot be swapped on Windows or Linux. See [§ Rejected Directions](#sqlite-encryption-at-rest-sqlcipher--rejected-2026-09-15).
 
 #### Automation & Graph Enhancements
 
@@ -460,7 +460,7 @@ These items have no external blocker; they slip out of `v0.1.0` to keep the rele
 
 | Item | Trigger to ship |
 |---|---|
-| **SQLite encryption at rest (SQLCipher, opt-in `[db.encrypt]`)** | engineering work only — no external dependency |
+| ~~**SQLite encryption at rest (SQLCipher, opt-in `[db.encrypt]`)**~~ ❌ **rejected 2026-09-15** — not buildable on this stack; `Database.setCustomSQLite` is a no-op on Windows and Linux, so SQLCipher cannot be linked on two of three platforms. Reasoning and the probe: [§ Rejected Directions](#sqlite-encryption-at-rest-sqlcipher--rejected-2026-09-15). | ~~engineering work only — no external dependency~~ — the trigger column was wrong: the blocker is the runtime, not effort |
 | **Workflow branching / conditionals (`if` / `else` / `switch`)** | engineering work only |
 | **Built-in `nimbus prep` (Meeting preparation agent)** | WS6 streaming surface (`engine.askStream`) battle-tested in the wild |
 | **5 seed community extensions in the registry** | `registry.nimbus-agent.dev` host live |
@@ -2852,6 +2852,51 @@ product" and "we maintain an editor" are not compatible statements about where t
 **Reopens if:** the `why`-lens hover is actually built and the extension host demonstrably blocks the
 ambient UX it needs — evidence from a built thing, not an assumption about the API surface. That is a
 cheap experiment and it should be run before this is raised again.
+
+### SQLite encryption at rest (SQLCipher) — rejected 2026-09-15
+
+**Proposed:** opt-in `[db.encrypt]`, AES-256 via SQLCipher, key held in the OS Vault — so the local
+index is unreadable without the key. Carried as a Phase 4 decision, then deferred to the `v0.1.1`
+batch with the trigger "engineering work only — no external dependency".
+
+**Why not. The trigger column was wrong: the blocker is the runtime, not effort.** SQLCipher is a
+*fork* of SQLite — it changes the pager for page-level crypto — not a loadable extension, so
+`db.loadExtension()` cannot reach it. The only way in is replacing the linked library, and
+`bun:sqlite` exposes exactly one lever for that, `Database.setCustomSQLite(path)`, which **is a
+no-op on Windows and Linux**. Probed directly on 2026-09-15 with a discriminator that cannot give a
+false negative — point it at a nonexistent library, then open a database; a real call must fail
+somewhere:
+
+| Platform | Bun | `setCustomSQLite("/bogus")` | Then `new Database(":memory:")` | Verdict |
+| --- | --- | --- | --- | --- |
+| win32 | 1.3.14 | returns, no throw | opens, `sqlite_version() = 3.53.0` | no-op |
+| linux (docker `oven/bun:1.3`) | 1.3.14 | returns, no throw | opens, `sqlite_version() = 3.53.0` | no-op |
+
+macOS is the one platform where the lever is real — which is why `platform/sqlite-runtime.ts` uses
+it to bundle a full SQLite there. Shipping at-rest encryption on one platform of three fails
+non-negotiable #5. Linking SQLCipher into the compiled binary does not rescue it either: `bun:sqlite`
+in a dev run or under `bun test` still uses Bun's own build, so the DB layer would behave differently
+in development than in production.
+
+**The failure mode is silent, which raises the stakes on any future attempt.** On plain SQLite
+`PRAGMA key = '…'` does **not** error — it returns an empty result and is ignored. An implementation
+can therefore set the key, observe no error, report encryption enabled, and write plaintext. Anything
+built here must verify positively (`PRAGMA cipher_version` returning non-empty), never by the absence
+of an error.
+
+**Rejected substitutes, and why each is worse than nothing:**
+
+| Substitute | Why not |
+| --- | --- |
+| Encrypt the file on shutdown, decrypt on start | Nimbus is a continuously-syncing daemon, so "encrypted only while stopped" is close to "not encrypted" — while carrying the word *encryption* in the config key. A crash leaves plaintext. It invites precisely the belief it does not earn. |
+| Field-level encryption of `item.body` | Destroys FTS5 and vector search over the encrypted column, which is the index's entire purpose. |
+| Our own `bun:ffi` binding to SQLCipher | Rewrites the DB layer, every Worker realm and the sqlite-vec path; and sync FFI blocks the event loop. |
+| A page-encrypting custom VFS | Hand-rolled crypto in the storage path — the category of thing not to hand-roll. |
+| Reporting OS full-disk encryption status | A reasonable feature, but it encrypts nothing. Landing it under this row would let "SQLite encryption at rest" be ticked by something that provides no encryption. If wanted, it belongs in its own row, named for what it does. |
+
+**Reopens if:** `bun:sqlite` gains a real custom-library lever on Windows and Linux, or Bun ships
+SQLCipher support directly. Re-run the probe above before designing anything — the whole row rests
+on that one API's behaviour, and a doc claim is not a substitute for the two-line experiment.
 
 ### Agent-authored code generation — rejected 2026-08-29
 
