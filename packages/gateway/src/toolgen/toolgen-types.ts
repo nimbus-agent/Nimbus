@@ -154,6 +154,15 @@ export const ERR_TOOLGEN_SAVE_DISABLED = "ERR_TOOLGEN_SAVE_DISABLED";
 export const ERR_TOOLGEN_SAVE_NOT_LIVE = "ERR_TOOLGEN_SAVE_NOT_LIVE";
 export const ERR_TOOLGEN_SAVE_DENIED = "ERR_TOOLGEN_SAVE_DENIED";
 
+/** Task 1: `nimbus tool run` invoke gate refusals. */
+export const ERR_TOOLGEN_INVOKE_DISABLED = "ERR_TOOLGEN_INVOKE_DISABLED";
+export const ERR_TOOLGEN_INVOKE_POLICY_DISABLED = "ERR_TOOLGEN_INVOKE_POLICY_DISABLED";
+export const ERR_TOOLGEN_NOT_SAVED = "ERR_TOOLGEN_NOT_SAVED";
+export const ERR_TOOLGEN_PUBKEY_UNAVAILABLE = "ERR_TOOLGEN_PUBKEY_UNAVAILABLE";
+export const ERR_TOOLGEN_INPUT_INVALID = "ERR_TOOLGEN_INPUT_INVALID";
+export const ERR_TOOLGEN_EXECUTION_FAILED = "ERR_TOOLGEN_EXECUTION_FAILED";
+export const ERR_TOOLGEN_EXECUTION_TIMEOUT = "ERR_TOOLGEN_EXECUTION_TIMEOUT";
+
 /**
  * A caller-supplied `toolId` that could not be a tool id this gateway ever minted — it fails
  * `assertSafeToolId`'s `^[A-Za-z0-9_-]{1,64}$` shape (`toolgen-script-store.ts`).
