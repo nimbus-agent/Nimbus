@@ -14,6 +14,26 @@ import {
 } from "./toolgen-types.ts";
 
 /**
+ * Cap on the `error` text stored in a `tool.invoke` audit row. The row is meant to carry neither
+ * the tool's input nor its result, and the deliberate fields enforce that by type — but a thrown
+ * message is free text the TOOL composes, so a tool that echoes its own arguments into its error
+ * can put them here. The cap bounds that rather than eliminating it (see the design doc's § 5
+ * bound). The FULL message still reaches the caller on the returned outcome, which is where an
+ * operator actually reads it; this limit applies only to what is written to disk.
+ *
+ * Counted in CODE POINTS, not bytes: slicing UTF-8 by byte can split a character and write
+ * mojibake into the row.
+ */
+const AUDIT_ERROR_MAX_CHARS = 512;
+
+/** Truncates an audit error string to `AUDIT_ERROR_MAX_CHARS`, marking it when it cuts. */
+function capAuditError(message: string): string {
+  const points = [...message];
+  if (points.length <= AUDIT_ERROR_MAX_CHARS) return message;
+  return `${points.slice(0, AUDIT_ERROR_MAX_CHARS).join("")}… [truncated]`;
+}
+
+/**
  * The outcome of `invokeSavedTool`, which can refuse before spawning, fail during execution,
  * or complete successfully. Only `executed` and `failed` may involve a subprocess; `refused`
  * guarantees no spawn occurred.
@@ -218,10 +238,16 @@ function writeInvokeAudit(
     readonly error?: string;
   },
 ): void {
+  // Cap the error text for the stored row only, never the returned outcome (which keeps the full message).
+  // Use a spread to conditionally include the capped error, respecting exactOptionalPropertyTypes.
+  const cappedFields = {
+    ...fields,
+    ...(fields.error === undefined ? {} : { error: capAuditError(fields.error) }),
+  };
   deps.audit({
     actionType: "tool.invoke",
     hitlStatus: "not_required",
-    actionJson: JSON.stringify(fields),
+    actionJson: JSON.stringify(cappedFields),
     timestamp: deps.now(),
     ...(sessionId === undefined ? {} : { sessionId }),
   });

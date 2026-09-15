@@ -358,3 +358,84 @@ describe("invokeSavedTool audit", () => {
     expect(rows[0] !== undefined && "sessionId" in rows[0]).toBe(false);
   });
 });
+
+test("a long error is capped in the row but NOT in the returned outcome", async () => {
+  // The row should not store the full 2000 characters; the returned outcome should keep them.
+  const rows: AppendAuditEntryFields[] = [];
+  const longError = "x".repeat(2000);
+  const out = await invokeSavedTool(
+    { toolId: "t1", input: { q: "x" } },
+    deps({
+      audit: (r) => {
+        rows.push(r);
+      },
+      spawn: async () => ({
+        call: async () => {
+          throw new Error(longError);
+        },
+        close: async () => {},
+        describe: async () => ({ name: "", description: "", inputSchema: {} }),
+      }),
+    }),
+  );
+  expect(out.status).toBe("failed");
+  // The returned outcome MUST carry the full error message for the operator to read.
+  expect(out.status === "failed" && out.error).toContain(longError);
+  // The audit row's actionJson must be shorter and have truncation marker.
+  const actionJson = JSON.parse(rows[0]?.actionJson ?? "{}");
+  expect(actionJson.error).toBeDefined();
+  expect(actionJson.error.length).toBeLessThan(longError.length);
+  expect(actionJson.error).toContain("[truncated]");
+});
+
+test("a short error is stored verbatim with no truncation marker", async () => {
+  const rows: AppendAuditEntryFields[] = [];
+  const out = await invokeSavedTool(
+    { toolId: "t1", input: { q: "x" } },
+    deps({
+      audit: (r) => {
+        rows.push(r);
+      },
+      spawn: async () => ({
+        call: async () => {
+          throw new Error("boom");
+        },
+        close: async () => {},
+        describe: async () => ({ name: "", description: "", inputSchema: {} }),
+      }),
+    }),
+  );
+  expect(out.status).toBe("failed");
+  const actionJson = JSON.parse(rows[0]?.actionJson ?? "{}");
+  expect(actionJson.error).toBe("boom");
+  expect(actionJson.error).not.toContain("[truncated]");
+});
+
+test("a multi-byte message is not corrupted when capped", async () => {
+  // Verifies that we slice on code points, not bytes, so emojis don't get split and create U+FFFD.
+  const rows: AppendAuditEntryFields[] = [];
+  const emojiError = "🙂".repeat(600); // 600 emojis, each 4 bytes in UTF-8
+  const out = await invokeSavedTool(
+    { toolId: "t1", input: { q: "x" } },
+    deps({
+      audit: (r) => {
+        rows.push(r);
+      },
+      spawn: async () => ({
+        call: async () => {
+          throw new Error(emojiError);
+        },
+        close: async () => {},
+        describe: async () => ({ name: "", description: "", inputSchema: {} }),
+      }),
+    }),
+  );
+  expect(out.status).toBe("failed");
+  const actionJson = JSON.parse(rows[0]?.actionJson ?? "{}");
+  // The stored error should be shorter (capped at 512 code points).
+  expect(actionJson.error.length).toBeLessThan(emojiError.length);
+  // Most importantly, it should NOT contain the replacement character U+FFFD.
+  expect(actionJson.error).not.toContain("\uFFFD");
+  // It should still parse as valid JSON (already done by JSON.parse above).
+  expect(typeof actionJson.error).toBe("string");
+});

@@ -255,12 +255,17 @@ does not for `code.execute`, where I33 avoids the value because on that action t
 The payload carries exactly the outcome, the tool id, the duration, and — on a refusal or failure —
 the code and error string.
 
-**Neither the input nor the output is recorded, and the asymmetry with `code.execute` is
-deliberate.** I33 records an execution's body in full because the owner approved those exact bytes
-and the record is what proves it. Here the body was approved at save time and already sits on disk
-under signature; what differs per call is the *input*, which is ordinary runtime data and can carry
-anything the owner typed — a search term, an address, an API parameter. Recording it would turn an
-audit trail into a second copy of the user's data, in a table with a different retention story.
+**The input and output are never recorded by construction** — the projection type has no member for
+either, so adding one is a compile error. A failure's error TEXT is recorded but capped at 512
+code points (UTF-8 code points, not bytes, so characters are not split). The asymmetry with
+`code.execute` is deliberate: I33 records an execution's body in full because the owner approved
+those exact bytes and the record is what proves it. Here the body was approved at save time and
+already sits on disk under signature; what differs per call is the *input*, which is ordinary
+runtime data and can carry anything the owner typed — a search term, an address, an API parameter.
+A tool that echoes its own input into its error message can transitively place that fragment in
+the row, which is a known bound: the cap prevents unbounded growth, not echoing. Recording input
+verbatim would turn an audit trail into a second copy of the user's data, in a table with a
+different retention story.
 
 **This is the honesty fix.** Today a generated tool that makes no network request leaves **no trace
 whatsoever** — the I39 broker ledgers egress only, so a purely local model-authored tool running
@@ -276,7 +281,7 @@ against the owner's machine is invisible after the fact. One audit row per invoc
   lookups differently.
 - **A created-but-unsaved tool is not runnable** (§3.5).
 - **Input validation is presence-only, not schema conformance** (§3.3).
-- **Neither input nor output is retained** (§5).
+- **Input and output are never retained; error text is retained but capped at 512 code points** (§5).
 
 ## 7. Cost
 
