@@ -30,7 +30,7 @@
  * and not the join this test exists to prove.
  */
 import { Database } from "bun:sqlite";
-import { describe, expect, test } from "bun:test";
+import { afterAll, describe, expect, test } from "bun:test";
 import { randomUUID } from "node:crypto";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -118,6 +118,11 @@ function ensureServer(): ReturnType<typeof Bun.serve> {
   }
   return server;
 }
+
+afterAll(async () => {
+  await server?.stop(true);
+  server = undefined;
+});
 
 const fakeGenerate = async (_prompt: string): Promise<DraftGeneration | null> => ({
   text: JSON.stringify({

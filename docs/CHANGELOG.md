@@ -33,9 +33,11 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
   already covers every future call. Input validation checks only that the drafted schema's
   `required` keys are present, never full JSON Schema conformance.
 
-  Exactly one `audit_log` row is written per invocation (`action_type: "tool.invoke"`,
-  `hitl_status: "not_required"`), and the projection it is built from has no `input` or `result`
-  member at all — a future field for either is a compile error, not a discipline to remember. One
+  Exactly one `audit_log` row is attempted per invocation (`action_type: "tool.invoke"`,
+  `hitl_status: "not_required"`), never two; if that single append itself fails, the invocation
+  fails with it rather than returning an outcome, which can leave zero rows for a tool that ran.
+  The projection the row is built from has no `input` or `result` member at all — a future field
+  for either is a compile error, not a discipline to remember. One
   bound stated rather than hidden: a tool's own `error` text is free-form and capped at 512 Unicode
   code points before it reaches the row, so a tool that echoes its input into its error message can
   still leak a capped fragment there; the full message still reaches the caller on the returned
