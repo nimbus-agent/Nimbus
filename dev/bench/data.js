@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1789495727584,
+  "lastUpdate": 1789578006883,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "6a209f210e654477494b0b6d9e19ac45edb6a45b",
-          "message": "docs: correct the schema reference to the unified V3 `item` table (#791)\n\n`schema-reference.md` documents a table that does not exist — and that\nfiction has already cost real work.\n\n## The problem\n\nThe doc describes a table named `indexed_items` with columns\n`item_type`, `name`, `mime_type`, `size_bytes`, `created_at`,\n`parent_id`.\n\n```bash\n$ grep -rn \"indexed_items\" packages/gateway/src --include=*.ts | grep -v test\n# (no output)\n```\n\nThe real table is the unified V3 `item`\n(`index/unified-item-v3-sql.ts`):\n\n```text\nid, service, type, external_id, title, body_preview, url,\ncanonical_url, modified_at, author_id, metadata, synced_at, pinned\n```\n\nThe doc was wrong about the *legacy* shape too: the pre-V3 table was\n`items`, not `indexed_items` — see\n`UNIFIED_ITEM_V3_MIGRATE_FROM_LEGACY_SQL`, which selects from `items.`.\n\n## Why this is worth fixing now\n\nThis is not cosmetic staleness. Stage 0's original implementation plan\nwas written **from this document**, mapped `item_type` and `name`, and\nproduced a validator that **rejected all 546 rows** of a real index — a\nhard failure replacing a silent one. It was caught before merge and\ndiscarded, but only after the work was done. #785 landed the corrected\nplan and recorded the diagnosis; this PR fixes the source that caused\nit.\n\n## Changes\n\n- Replaces the `indexed_items` block with the real `item` table, its\nthree indexes, and `item_fts` (noting the triggers that maintain it).\n- Replaces the hand-maintained `item_type` comment list with a pointer\nto `@nimbus-dev/sdk` `KnownItemType`, and states plainly that the column\nis an **open enum** (`KnownItemType | (string & {})`) stored verbatim.\nThat list was a fourth copy of the very vocabulary Stage 0 exists to\nconsolidate — left in place it would simply have drifted again.\n- Records why coercion is forbidden, citing the 55%-relabelling bug #780\nfixed.\n- Fixes the matching stale table names in `architecture.md`.\n\nDeliberately **not** in scope: auditing the remaining ~40 table\ndefinitions in this file. This corrects the one that has demonstrably\ncaused damage; a full audit is a separate pass.\n\n## Verification\n\n| Gate | Result |\n| --- | --- |\n| `lint:markdown` | ✅ 0 errors, 96 files |\n| `audit:doc-refs` | ✅ 605 refs across 15 docs, all resolve |\n| `lychee` at CI scope (`--config lychee.toml 'docs/**/*.md' '*.md'`) |\n✅ 797 total, 0 errors |\n| `audit:status-drift` | ✅ OK |\n\n## Secondary purpose\n\nThis is a docs-only PR, so it is also the live proof for #788. Before\n#788, six required contexts would sit on *\"Expected — Waiting for status\nto be reported\"* forever and this PR could only merge via an\nOrganizationAdmin bypass. Expected now: `PR quality — required gates`\nreports and passes.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nCo-authored-by: Claude Opus 4.8 (1M context) <noreply@anthropic.com>",
-          "timestamp": "2026-07-21T21:33:46+03:00",
-          "tree_id": "a75577c586395df4acadd0842bb1fd93a5121f70",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/6a209f210e654477494b0b6d9e19ac45edb6a45b"
-        },
-        "date": 1784660506398,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 317.51399165000146,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 309.58618909999205,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 343.623365749995,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "a89bd2762c274d06ccf20d766eb300ebe0e871ed",
+          "message": "feat(cli): add nimbus tool run to invoke a saved generated tool (#1521)\n\n## Summary\n\nCloses the invocation gap runtime tool generation's PR 3 left open: a\nsaved, signed, owner-approved generated tool could be spawned only\nin-process by an integration test, through no IPC method and no CLI\nsubcommand.\n\n- **`toolgen.invoke`** (`{ toolId, input? }`) is served: CLI-only,\nLAN-forbidden like every other `toolgen.*` method, absent from the Tauri\nallowlist. It returns exactly one of `executed` / `failed` / `refused`.\n- **`nimbus tool run <tool-id> [--input <json>] [--json]`** calls it.\nExit `0` executed, `1` failed, meaning the tool RAN and threw, `127`\nrefused, which is also what a malformed `--input` gets client-side.\n- A tool must be **saved** to be invocable; `create` alone refuses\n`ERR_TOOLGEN_NOT_SAVED`, which now carries the row's `disabled_reason`\nwhen there is one. No prompt at invoke time: the standing approval from\n`save` covers it.\n- Input validation is presence-only on the drafted schema's `required`\nkeys, not full JSON Schema conformance.\n- **Exactly one `tool.invoke` audit row per invocation**, written once\nby construction: one `outcome` slot, one write after try/catch/finally.\nThe projection has no `input` or `result` member, so adding one is a\ncompile error. A tool's own error text is capped at 512 code points on\nthe row.\n- Invocations are serialised per tool id.\n- A tool saved in the **running** session is invocable immediately:\n`saveGeneratedTool` now registers on `saved` and `repaired`, not only at\nboot.\n\nNo migration, no new invariant, no new egress class: I39/I40's broker\nand signature machinery covers a run exactly as it covers a spawn.\n\n**What did NOT move:** the model still cannot invoke a generated tool.\n`NimbusEngineAgentDeps.toolgen` remains unsupplied by `gateway-main.ts`,\nso this is owner/CLI-only, the same scope bound `nimbus exec` holds\nunder I33.\n\n### Also in this branch\n\n- **`toolgen-client.ts`: a tool process that exits now rejects\noutstanding requests immediately.** `wireToolProtocol` never listened\nfor child exit, so a crashing tool, or a sandbox helper that refused to\nstart it, left `describe`/`call` waiting out the full 60s timeout and\nthen blamed a \"wedged\" tool that never ran. Latent until now; `nimbus\ntool run` is its first production caller, and it was observed live in\nthe new E2E. The `controllableIo` test fake modelled a child already\nexited at construction and now exits only when killed or told to.\n- **Rider, not tool-run work:** `help.ts` said the computer-use browser\ndriver was not shipped yet and omitted the terminal lane. Both have\nshipped; corrected.\n- Five statements elsewhere in the docs went false with this branch and\nwere corrected: the I40 rows in `CLAUDE.md`/`GEMINI.md`,\n`SECURITY-INVARIANTS.md`'s I40 wiring list, `roadmap.md`, and\n`schema-reference.md`. `spawnSavedTool` now has a production caller in\n`assemble.ts`.\n\n## Known bounds, not fixed here\n\n- **Sandbox-unavailable classifies as `failed`, not `refused`.**\nConfinement is fail-closed and correct; the run path never spawns\nunconfined. Only the audit classification is wrong. Fixing it needs a\npre-spawn `canConfine` check and a new refusal code, which is a design\naddition.\n- `durationMs` is on the IPC reply and audit row but not rendered by the\nCLI.\n- **Pre-existing Windows defect found while verifying:**\n`sandbox-helper-win32` adds an AppContainer ACE via `SetEntriesInAclW`\nfor every granted path on every spawn and never removes it, so the DACL\non `dirname(process.execPath)` grows without bound. On the dev machine\nit reached 1366 ACEs and made every SandboxRunner-confined spawn fail\nwith `ERR_TOOLGEN_CONFINEMENT_FAILED`. That affects I33 exec, I35\nterminal and I39/I40 toolgen. Not introduced here.\n- `help.test.ts` does not assert every `tool` subcommand appears in\nusage and help, which is how the rider above survived two PRs.\n\n## Verification\n\n- `bun run preflight` on Windows: every static gate green; `test:ci` red\non exactly two tests in `platform/sandbox/win32.test.ts`, unchanged from\n`main`. Both assume nothing exists at the default helper path next to\n`bun.exe`, and this dev machine has a copy there from earlier manual\ntesting. Environmental; CI runners have no such file.\n- `bun test packages/gateway/src/toolgen/\npackages/gateway/src/ipc/toolgen-rpc.test.ts`: 638 pass, 0 fail.\n- Toolgen integration + `tool-run.e2e.test.ts` on Windows against a real\n`nimbus-sandbox-helper.exe`: 17 pass, 1 skip, 0 fail, with the spawn\ncase exercised for real.\n- The client-exit fix was proven red first: both new tests waited out\nthe 30s timeout before the fix.\n- A whole-branch review returned 1 Critical and 3 Important findings;\nall were fixed, and a scoped re-review of the fix commits found no\nremaining issues.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n## Summary by CodeRabbit\n\n- **New Features**\n- Added the owner-only `nimbus tool run <tool-id>` command for running\nsaved, signature-verified tools.\n- Supports optional JSON input, JSON or text output, and clear\nexecution, failure, and refusal results.\n- Tools saved during a running session are available immediately without\nrestarting.\n\n- **Security**\n- Invocations run in a confined environment and create one redacted\naudit record.\n- Unsaved, disabled, unauthorized, invalid, or tampered tools are\nrefused.\n  - Audit persistence failures cause the invocation to fail.\n\n- **Documentation**\n- Added CLI guidance, exit-code details, security behavior, and current\nlimitations, including unavailable model-initiated invocation.\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>",
+          "timestamp": "2026-09-16T16:45:53Z",
+          "tree_id": "3c677e583f773aa3411e04e23558e3bcc13af966",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/a89bd2762c274d06ccf20d766eb300ebe0e871ed"
+        },
+        "date": 1789578003512,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 326.343975599996,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 331.5390834500002,
             "unit": "ms"
           }
         ]
