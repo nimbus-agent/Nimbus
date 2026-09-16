@@ -2,6 +2,13 @@
 
 All notable changes to the `nimbus` core (headless Gateway + CLI binary + first-party MCP connectors) are documented in this file. release-please appends new entries between this header and the most recent version below when a release PR merges.
 
+## [7.24.0](https://github.com/nimbus-agent/Nimbus/compare/v7.23.0...v7.24.0) (2026-09-16)
+
+
+### Features
+
+* **cli:** add nimbus tool run to invoke a saved generated tool ([#1521](https://github.com/nimbus-agent/Nimbus/issues/1521)) ([a89bd27](https://github.com/nimbus-agent/Nimbus/commit/a89bd2762c274d06ccf20d766eb300ebe0e871ed))
+
 ## [7.23.0](https://github.com/nimbus-agent/Nimbus/compare/v7.22.0...v7.23.0) (2026-09-15)
 
 
