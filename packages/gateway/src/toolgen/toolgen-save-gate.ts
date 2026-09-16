@@ -267,35 +267,44 @@ export async function saveGeneratedTool(
     const script = emitToolScript(artifact);
     await writeSavedTool(deps.configDir, toolId, { canonicalJson, sigB64, script });
 
+    // The row change and its success audit commit TOGETHER, and the tool is registered only after
+    // they have. Otherwise an audit append that throws (a full disk, a closed handle) would leave a
+    // persisted -- and, in this session, invocable -- standing approval behind a `refused` outcome
+    // and with no row recording it. The files written above are harmless on rollback: with no
+    // `generated_tool` row they are an orphan the boot sweep already removes.
     if (existing.kind === "disabled_match") {
-      repairDisabledSavedTool(deps.db, toolId, {
-        signature: sigB64,
-        pubkey: pubkeyB64,
-        savedAt: deps.now(),
-      });
+      deps.db.transaction(() => {
+        repairDisabledSavedTool(deps.db, toolId, {
+          signature: sigB64,
+          pubkey: pubkeyB64,
+          savedAt: deps.now(),
+        });
+        audit(deps, toolId, "repaired", { digest });
+      })();
       // A repaired row is healthy again, so it becomes invocable in THIS session too -- the boot
       // pass that would otherwise be the first to register it skipped this tool precisely because
       // the row was disabled when the gateway started.
       registerSavedNow(deps, artifact);
-      audit(deps, toolId, "repaired", { digest });
       return { status: "repaired", toolId };
     }
 
-    insertSavedTool(deps.db, {
-      toolId,
-      toolName: artifact.toolName,
-      description: artifact.description,
-      artifactJson: canonicalJson,
-      artifactDigest: digest,
-      signature: sigB64,
-      pubkey: pubkeyB64,
-      approvedAt: deps.now(),
-      savedAt: deps.now(),
-      lastLoadedAt: null,
-      disabledReason: null,
-    });
+    deps.db.transaction(() => {
+      insertSavedTool(deps.db, {
+        toolId,
+        toolName: artifact.toolName,
+        description: artifact.description,
+        artifactJson: canonicalJson,
+        artifactDigest: digest,
+        signature: sigB64,
+        pubkey: pubkeyB64,
+        approvedAt: deps.now(),
+        savedAt: deps.now(),
+        lastLoadedAt: null,
+        disabledReason: null,
+      });
+      audit(deps, toolId, "saved", { digest });
+    })();
     registerSavedNow(deps, artifact);
-    audit(deps, toolId, "saved", { digest });
     return { status: "saved", toolId };
   } catch (err) {
     const code = err instanceof ToolgenError ? err.code : "ERR_TOOLGEN_INTERNAL";

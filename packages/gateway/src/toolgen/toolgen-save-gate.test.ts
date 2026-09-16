@@ -303,6 +303,52 @@ describe("saveGeneratedTool — a successful save", () => {
   });
 });
 
+/**
+ * Make the audit append for ONE save outcome fail inside SQLite itself, so the real
+ * `appendAuditEntry` throws at exactly the point a full disk or a closed handle would -- and the
+ * refusal row the catch writes afterwards still succeeds.
+ */
+function failAuditFor(db: Database, outcome: string): void {
+  db.run(
+    `CREATE TRIGGER test_fail_tool_save_audit BEFORE INSERT ON audit_log
+       WHEN json_extract(NEW.action_json, '$.outcome') = '${outcome}'
+       BEGIN SELECT RAISE(ABORT, 'audit append failed'); END`,
+  );
+}
+
+describe("saveGeneratedTool — a save whose success audit fails did NOT take effect", () => {
+  // The shape this guards: the row was persisted and the tool registered as invocable, THEN the
+  // success audit threw, and the gate reported `refused`. The owner is told the save failed while
+  // `nimbus tool run` accepts the tool in this session and the next boot loads it -- a standing
+  // approval that took effect with no `saved` row recording it.
+  test("a new save rolls back its row and never registers when the success audit fails", async () => {
+    const d = deps();
+    failAuditFor(d.db, "saved");
+    const out = await saveGeneratedTool({ toolId: "t1" }, d as never);
+    expect(out).toEqual({ status: "refused", code: "ERR_TOOLGEN_INTERNAL" });
+    expect(getSavedTool(d.db, "t1")).toBeNull();
+    expect(d.registry.savedTools().map((t) => t.toolId)).not.toContain("t1");
+    const rows = auditRows(d.db);
+    expect(rows).toHaveLength(1);
+    expect(JSON.parse(rows[0]?.action_json ?? "{}")["outcome"]).toBe("failed_after_approval");
+  });
+
+  test("a repair rolls back and never registers when the success audit fails", async () => {
+    const d = deps();
+    await saveGeneratedTool({ toolId: "t1" }, d as never);
+    setSavedToolDisabled(d.db, "t1", "signature_missing");
+    // What the boot pass leaves behind for a disabled row: present on disk and in the DB, absent
+    // from the registry.
+    d.registry.unregisterSaved("t1");
+    failAuditFor(d.db, "repaired");
+
+    const out = await saveGeneratedTool({ toolId: "t1" }, d as never);
+    expect(out).toEqual({ status: "refused", code: "ERR_TOOLGEN_INTERNAL" });
+    expect(getSavedTool(d.db, "t1")?.disabledReason).toBe("signature_missing");
+    expect(d.registry.savedTools().map((t) => t.toolId)).not.toContain("t1");
+  });
+});
+
 describe("saveGeneratedTool — repairing a disabled row", () => {
   test("a DISABLED row with a matching digest is REPAIRED, not reported already_saved", async () => {
     let prompts = 0;
