@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1789582914234,
+  "lastUpdate": 1789584550729,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "c6feb351d6e904a2a03a272e97e265e0b3d05d51",
-          "message": "ci: make the PR-title gate actually run (#792)\n\n## The gate has never run\n\nEvery invocation since #764 added it is `startup_failure`:\n\n```\nThe action amannn/action-semantic-pull-request@0723387… is not allowed in\nnimbus-agent/Nimbus because all actions must be from a repository owned by\nnimbus-agent, created by GitHub, verified in the GitHub Marketplace, or match\none of the patterns…\n```\n\nThis repo sets `allowed_actions: selected` with a 13-pattern allow-list\nthat doesn't include `amannn/*`. The **org** is `all` — but a repo's\nnarrower setting wins, which is why this looked fine when the App\nmigration audited org-level policy and concluded no allow-list change\nwas needed.\n\nAnd `startup_failure` is **not a required context**, so a workflow that\nnever ran was indistinguishable from one that passed.\n\n## What it cost\n\nThree unparseable PR titles reached `main` through the hole — #787,\n#789, #790. The repo squash-merges, so those became the commit subjects\nRelease Please reads. It found no user-facing commits and cut no\nrelease:\n\n```\n✔ No user facing commits found since 6514f82c - skipping\n```\n\nSo **the WAL fix in #789 has no changelog entry and is in no release**.\nThe gate's own header comment predicted this exactly: *\"a malformed one\ncan't silently break a release.\"*\n\n## The fix\n\nInline the check rather than widen the allow-list. Validating a title\nagainst a regex needs no third-party action and no checkout, so this is\nboth the smaller change and the smaller attack surface — and it leaves\nthe deliberately tight allow-list alone.\n\nTwo safety details kept from the original: `pull_request_target` so fork\nPRs are validated too, and the title passed via `env:` rather than\ninterpolated into the `run:` body, since a PR title is\nattacker-controlled text and `${{ }}` in a script body is an injection\nsink.\n\n## Verified against the real corpus\n\n| Input | Result |\n|---|---|\n| `Retire CODECOV_TOKEN — it never reached Codecov` | ❌ fail |\n| `Move App token minting off the deprecated app-id input` | ❌ fail |\n| `Enable WAL on the production SQLite write handles` | ❌ fail |\n| `fix(db): enable WAL on the production SQLite write handles` | ✅ pass\n|\n| `chore(deps)!: drop Node 20` | ✅ pass |\n| `refactor(index/migrations): split runner` | ✅ pass |\n| `feat:no space after colon` | ❌ fail |\n| `nope(scope): unknown type` | ❌ fail |\n\nThe allowed type list is derived from `git log` on `main`, not invented:\nfeat, fix, chore, docs, ci, build, test, refactor, perf, style, revert.\n\n`audit:action-sha-pins` passes; YAML re-parsed with `js-yaml`.\n\n## This PR cannot self-test — correcting an earlier claim\n\nI first wrote that this PR's own title would be the first passing run of\nthe gate. **That is wrong.** `pull_request_target` always executes the\nworkflow file from the **base** branch, so this PR is still validated by\n`main`'s broken copy — and its run is, correctly, another\n`startup_failure`.\n\nThe gate only starts working **after this merges**. The regex evidence\nabove is local (`bash` against the real title corpus); the first genuine\nend-to-end proof will be the next PR opened after merge, which should\nshow a `Validate PR title` check for the first time in this repo's\nhistory. Worth confirming on that PR rather than assuming.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)",
-          "timestamp": "2026-07-21T20:27:54Z",
-          "tree_id": "9e6d2063175b6d16c729ba1a128c3bc26521bddb",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/c6feb351d6e904a2a03a272e97e265e0b3d05d51"
-        },
-        "date": 1784666209479,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 257.9305223499956,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 265.1625038500035,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 333.38209555000793,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "7659e91a0e02362d7d02e444b34a4a608438ba92",
+          "message": "chore(secrets): VSCE_PAT regenerated; hard deadline is now 2026-12-15 (#1523)\n\n## Summary\n\n`VSCE_PAT`, the org-scoped Azure DevOps PAT that publishes\n`nimbus-vscode` to the Marketplace, was regenerated on 2026-09-16. Its\nprevious expiry was 2026-09-20, and the new one is **2026-12-15**. This\nupdates the single source of truth the weekly credential monitor reads,\nplus every restatement of the old date.\n\n- `scripts/release/credential-registry.ts`: `hardDeadline` changes to\n`2026-12-15`. The note still explains why the date is the token's own\nexpiry and not the 2026-12-01 global-PAT decommission, which now falls\nbefore it.\n- `scripts/release/credential-registry.test.ts`: the pinned date and its\ncomment.\n- `docs/ci-secrets.md`, `docs/credential-hygiene.md`,\n`docs/infrastructure-roadmap.md`: the restated dates.\n- The fixtures in `check-secret-health.test.ts` that say `2026-09-20`\nare left alone. They are fixed-clock test data, not readings of the\nregistry.\n\n### Runbook correction\n\n`docs/credential-hygiene.md` step 2 said `VSCE_PAT` is a `release`\n**environment** secret and that storing it at repository level leaves\npublish reading the old value. The live state is the opposite: `GET\n/repos/nimbus-agent/nimbus-vscode/environments/release/secrets` returns\n`total_count: 0`, so `publish.yml` and `secret-health.yml` both fall\nback to the **repository** secret. The regenerated value was stored\nthere. The step now says so, warns that a future environment-level copy\nwould shadow it, and gives the `gh secret set` form.\n\nStep 5 now says the date must be updated in **both** repos.\n`nimbus-vscode`'s `scripts/secret-health.ts` keeps its own\n`DECLARED_EXPIRY`, and that copy is what failed today's manual health\nrun with `expiry-critical`, \"recorded expiry 2026-09-20 is 3d\". That\nrepo gets its own PR.\n\n## Verification\n\n- The new token was live-probed by `nimbus-vscode` run 35134790326,\nwhich reported `probe vsce (nimbus-agent): ok`. Its only failure was the\nstale declared date above.\n- `bun test scripts/release`: 321 pass, 0 fail. `bun run\npreflight:fast`: passed.\n- Expected after merge: the Nimbus monitor reports `VSCE_PAT` as a\n**warn** row, `deadline-approaching`, right away, because 2026-12-15 is\nexactly 90 days out and the lead is `<= 90`. That is the designed 90-day\nrunway, not a regression.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n\n## Summary by CodeRabbit\n\n- **Documentation**\n  - Updated the VSCE_PAT expiry date to December 15, 2026.\n  - Recorded the token’s regeneration date as September 16, 2026.\n- Clarified the distinction between the token’s expiry and the broader\nAzure DevOps PAT decommission date.\n- Documented the repository-secret configuration and related maintenance\nguidance.\n\n- **Tests**\n- Updated deadline checks to reflect the regenerated token and its\nrevised expiry date.\n\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\nCo-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>",
+          "timestamp": "2026-09-16T21:35:53+03:00",
+          "tree_id": "197f176f838a336d4c91388ff89bd9fdfd567401",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/7659e91a0e02362d7d02e444b34a4a608438ba92"
+        },
+        "date": 1789584547024,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 317.25931570000284,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 318.2668597500091,
             "unit": "ms"
           }
         ]
