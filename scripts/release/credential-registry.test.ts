@@ -75,11 +75,13 @@ describe("CREDENTIAL_REGISTRY", () => {
 
   // The token is org-scoped (confirmed 2026-07-22), so the 2026-12-01 global-PAT
   // decommission does not apply to it. What does bite is the token's own expiry:
-  // publishing breaks on 2026-09-20 unless it is regenerated. Pinned so the
-  // earlier, real date cannot silently regress back to the decommission date.
+  // regenerated 2026-09-16, publishing breaks on 2026-12-15 unless it is
+  // regenerated again. Pinned so the real date cannot silently regress to the
+  // decommission date — which now falls BEFORE it, so a swap would fire early
+  // rather than late, but would still be a date nothing actually enforces.
   test("the VSCE_PAT deadline is its expiry, not the global decommission", () => {
     const vsce = CREDENTIAL_REGISTRY.find((e) => e.name === "VSCE_PAT");
-    expect(vsce?.hardDeadline).toBe("2026-09-20");
+    expect(vsce?.hardDeadline).toBe("2026-12-15");
     expect(vsce?.hardDeadline).not.toBe("2026-12-01");
   });
 

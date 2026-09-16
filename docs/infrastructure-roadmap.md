@@ -800,8 +800,9 @@ was genuinely missing was the *review* layer, in two halves.
   `check-secret-health` is the stronger of the two and already does more than
   the dashboard proposed: it splits *"a calendar says this breaks later"* from
   *"the remaining runway is now shorter than the time a replacement takes to
-  arrange"*, and `VSCE_PAT`'s 2026-09-20 expiry is encoded as a `hardDeadline`
-  producing `hard deadline 2026-09-20 in Nd`.
+  arrange"*, and `VSCE_PAT`'s expiry is encoded as a `hardDeadline`
+  producing `hard deadline <date> in Nd` (2026-09-20 when this was written;
+  2026-12-15 since the 2026-09-16 regeneration).
 
   **The argument against building it is this file's own operating principle.** A
   page that displays what two mechanisms already escalate is a control nobody is
@@ -816,15 +817,16 @@ was genuinely missing was the *review* layer, in two halves.
     a different thing with a different audience — an outward-facing "is this
     project maintained" signal — and should be scoped as that, not resurrected
     as this row.
-- **Known inventory item with a deadline:** `VSCE_PAT` expires **2026-09-20**,
+- **Known inventory item with a deadline:** `VSCE_PAT` expires **2026-12-15**
+  (regenerated 2026-09-16; the first expiry was 2026-09-20),
   and three release PATs retired during the App migration were never deleted.
   The date is the token's **own expiry**, per
   `scripts/release/credential-registry.ts`, which is the SSoT. It is *not*
   2026-12-01 — that is the Azure DevOps global-PAT decommission, which does not
   apply because this token was confirmed org-scoped in the ADO portal
   (2026-07-22, nimbus-vscode#34). An earlier revision of this file carried the
-  December date; at 90-day lead that would have stayed silent past the expiry
-  that actually bites.
+  2026-12-01 date; at 90-day lead that would have stayed silent past the first
+  expiry, 2026-09-20, which is the one that actually bit.
 
 ### Code-scanning progress log
 

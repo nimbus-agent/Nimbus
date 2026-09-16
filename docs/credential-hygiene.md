@@ -71,7 +71,7 @@ So a quiet monitor is not proof of rotation. That is what this page is for.
 ## Runbook — regenerating `VSCE_PAT`
 
 `VSCE_PAT` is the one credential on a **hard calendar deadline** rather than an
-age policy: it expires **2026-09-20**, and the first extension release after that
+age policy: it expires **2026-12-15** (last regenerated 2026-09-16), and the first extension release after that
 date fails at the `vsce publish` step. Nothing else breaks — it is not a merge
 gate, and the Nimbus gateway release path does not touch it.
 
@@ -83,9 +83,14 @@ The steps are short; the one that gets forgotten is step 5.
    organizations" — org-scoped is what keeps this out of the 2026-12-01 global-PAT
    decommission). Scope: **Marketplace → Manage**. Set an expiry and write it
    down; you need it for step 5.
-2. **Store it.** `nimbus-vscode` → *Settings* → *Environments* → **release** →
-   update the `VSCE_PAT` secret. It is an **environment** secret, not a repository
-   secret — pasting it at repo level leaves the publish job reading the old value.
+2. **Store it.** `gh secret set VSCE_PAT --repo nimbus-agent/nimbus-vscode` and
+   paste at the prompt (never `--body`, which lands in shell history). It is a
+   **repository** secret: both `publish.yml` and `secret-health.yml` run in the
+   `release` environment, but that environment holds no secrets (verified
+   2026-09-16, `total_count: 0`), so they fall back to the repository value. An
+   earlier revision of this step said the opposite. If an environment-level
+   `VSCE_PAT` is ever added, it will SHADOW the repository one — update or delete
+   it rather than keeping two.
 3. **Verify — before revoking anything.** Run the `secret-health` workflow in
    `nimbus-vscode` manually. It live-probes the token via `probe-publish-token`
    (`tool: vsce`), so a bad paste or a wrong-scope store surfaces in about a
@@ -94,8 +99,11 @@ The steps are short; the one that gets forgotten is step 5.
    reported `ok`. This is the configure-then-revoke ordering rule from the top of
    this page: until the replacement is proven, the old token is the rollback, and
    revoking first throws it away at exactly the moment you might need it.
-5. **Update the deadline.** Set `hardDeadline` on the `VSCE_PAT` entry in
-   `scripts/release/credential-registry.ts` to the new expiry date. Skipping this
+5. **Update the deadline — in BOTH repos.** Set `hardDeadline` on the `VSCE_PAT` entry in
+   `scripts/release/credential-registry.ts` to the new expiry date, and
+   `DECLARED_EXPIRY.VSCE_PAT` in `nimbus-vscode`'s
+   [`secret-health.ts`](https://github.com/nimbus-agent/nimbus-vscode/blob/main/scripts/secret-health.ts), which
+   its own weekly probe reads. Skipping this
    is the failure mode with teeth: the date is hand-maintained, so a stale past
    date makes the health job cry wolf every week, and deleting the field instead
    makes it go silent through the next real expiry.
