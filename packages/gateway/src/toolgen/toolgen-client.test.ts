@@ -303,6 +303,8 @@ interface ControllableIo {
   readonly writes: Array<Record<string, unknown>>;
   readonly kills: () => number;
   readonly signals: () => Array<NodeJS.Signals | number | undefined>;
+  /** End the child on its own -- a crash, or a sandbox helper that refused to start it. */
+  readonly exit: () => void;
 }
 
 function controllableIo(opts: { neverExits?: boolean } = {}): ControllableIo {
@@ -310,8 +312,13 @@ function controllableIo(opts: { neverExits?: boolean } = {}): ControllableIo {
   let onData: ((chunk: Uint8Array) => void) | undefined;
   const signals: Array<NodeJS.Signals | number | undefined> = [];
   let killCount = 0;
-  const exited =
-    opts.neverExits === true ? new Promise<void>(() => {}) : Promise.resolve<void>(undefined);
+  // A real child exits when it is killed or when it ends on its own -- never merely because it
+  // was spawned. Modelling an exit that has ALREADY happened at construction would make every
+  // outstanding request look like it was cut off by a dead child.
+  let markExited: () => void = () => {};
+  const exited = new Promise<void>((resolve) => {
+    markExited = resolve;
+  });
   return {
     io: {
       writeLine: (line) => writes.push(JSON.parse(line) as Record<string, unknown>),
@@ -321,6 +328,7 @@ function controllableIo(opts: { neverExits?: boolean } = {}): ControllableIo {
       kill: (signal) => {
         killCount += 1;
         signals.push(signal);
+        if (opts.neverExits !== true) markExited();
       },
       waitExit: () => exited,
     },
@@ -329,6 +337,7 @@ function controllableIo(opts: { neverExits?: boolean } = {}): ControllableIo {
     writes,
     kills: () => killCount,
     signals: () => signals,
+    exit: () => markExited(),
   };
 }
 
@@ -503,6 +512,31 @@ describe("GeneratedToolHandle -- describe() tolerates a child that answers badly
     await expect(
       answering({ name: "real-name", description: "real-desc", inputSchema: schema }).describe(),
     ).resolves.toEqual({ name: "real-name", description: "real-desc", inputSchema: schema });
+  });
+});
+
+describe("wireToolProtocol -- a child that EXITS does not leave its caller waiting out the timeout", () => {
+  // The shape this guards: the sandbox helper refuses to start the tool (it exits 65 when it
+  // cannot create the AppContainer profile), or the tool body crashes. Nothing will ever answer,
+  // so the only honest outcome is an immediate rejection that says the process is gone -- not a
+  // 60-second wait that ends blaming a "wedged" tool which never ran at all.
+  test("an outstanding call is rejected as soon as the child exits", async () => {
+    const c = controllableIo();
+    const handle = wireToolProtocol(c.io, envelope, unreachableBroker(), 30_000);
+    const pending = handle.call({});
+    c.exit();
+    // The request timeout is 30s, so anything but an immediate rejection here hangs this test.
+    await expect(pending).rejects.toThrow(/exited before responding to "call"/);
+  });
+
+  test("a call made AFTER the child exited is rejected outright, never written to a dead child", async () => {
+    const c = controllableIo();
+    const handle = wireToolProtocol(c.io, envelope, unreachableBroker(), 30_000);
+    c.exit();
+    await Promise.resolve();
+    const writesBefore = c.writes.length;
+    await expect(handle.call({})).rejects.toThrow(/has exited/);
+    expect(c.writes).toHaveLength(writesBefore);
   });
 });
 
