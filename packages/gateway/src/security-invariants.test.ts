@@ -395,6 +395,14 @@ describe("I5 — LAN method allowlist is intrinsic to LanServer", () => {
     expect(() => checkLanMethodAllowed("computer.anythingAddedLater", peer)).toThrow();
   });
 
+  test("FORBIDDEN_OVER_LAN covers toolgen.invoke via the namespace entry", async () => {
+    const { checkLanMethodAllowed } = await import("./ipc/lan-rpc.ts");
+    const peer = { peerId: "peer:x", writeAllowed: true };
+    // The namespace entry already exists; this asserts it REACHES a method added later,
+    // by calling the function rather than grepping the source for "toolgen".
+    expect(() => checkLanMethodAllowed("toolgen.invoke", peer)).toThrow(/ERR_METHOD_NOT_ALLOWED/);
+  });
+
   test("FORBIDDEN_OVER_LAN blocks filesystem.ensureRoot (Stage 2a)", async () => {
     const { checkLanMethodAllowed } = await import("./ipc/lan-rpc.ts");
     const peer = { peerId: "peer:x", writeAllowed: true };
@@ -1055,6 +1063,14 @@ describe("I7 — Tauri ALLOWED_METHODS surface for T2 PR 3", () => {
   test("extension.install stays absent from ALLOWED_METHODS (chain C1 / B1 audit)", async () => {
     const rust = await read("packages/ui/src-tauri/src/gateway_bridge.rs");
     expect(rust).not.toMatch(/^\s*"extension\.install",\s*$/m);
+  });
+
+  // Namespace-level, like the `computer.` check: a generated tool runs owner-approved,
+  // network-reaching code, and `toolgen.invoke` executes it. The count cannot protect this -- a
+  // one-for-one swap keeps it at 105 -- and a future `toolgen.*` verb should be absent by default.
+  test("no toolgen.* method is exposed to the Tauri renderer (I7)", async () => {
+    const rust = await read("packages/ui/src-tauri/src/gateway_bridge.rs");
+    expect(rust).not.toContain("toolgen.");
   });
 
   test("allowlist_exact_size assertion is 105", async () => {

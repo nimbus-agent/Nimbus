@@ -85,11 +85,16 @@ PRIVACY & AUDIT
                               (off by default; enable with [code_execution] enabled = true)
   nimbus tool create --description <d> --host <h> [--credential <h>=<tok>]   Owner-approved
                               generated tool (off by default; enable with [tool_generation]
-                              enabled = true — drafting itself is not shipped yet; create refuses)
-  nimbus tool list [--json] | revoke <id> | credential set <id> <host> ...
+                              enabled = true; drafting is local by default —
+                              [tool_generation] drafting = "off" | "local" | "allow-remote")
+  nimbus tool list [--json] | save <id> | revoke <id> | run <id> [--input <json>] [--json]
+                              | credential set <id> <host> ...
   nimbus computer browser --origin <o> [--script-origin <o>]   HITL-gated browser session
-                              (off by default; enable with [computer_use] enabled = true —
-                               browser driver not shipped yet, sessions refuse)
+                              (off by default; enable with [computer_use] enabled = true
+                               and add "browser" to [computer_use] allowed_lanes)
+  nimbus computer terminal --cwd <dir> [--shell <id>]   HITL-gated sandboxed shell; every
+                              command line is approved in full before a byte reaches it
+                              (needs "terminal" in [computer_use] allowed_lanes)
   nimbus computer sessions | close <id>   List / close computer-use sessions
   nimbus fleet status | list | briefs | show <id> | run <job> [--force] | digest [--since <dur>]
                               Overnight agent fleet (off by default; enable with

@@ -1418,10 +1418,15 @@ the filesystem-write attacker and claims nothing against the Vault-read one.
 
 **Structurally offered, not model-reachable.** `buildGeneratedTools` exists and is tested, but
 `engine/agent.ts`'s optional `NimbusEngineAgentDeps.toolgen` is not supplied by its one production
-caller, and there is no `toolgen.invoke` IPC method — so a generated tool is reachable only via the
-CLI this release. Agent-initiated tool proposal is a recorded **deferral**, not a gap: every
-capability that shipped is owner-initiated, and a model proposing its own network-reaching tool
-mid-conversation is a materially larger trust boundary that gets its own consent-UX pass.
+caller — so a generated tool is reachable only via the CLI, never the model. Invocation itself does
+have a path now: `toolgen.invoke` (CLI-only, LAN-forbidden like every other `toolgen.*` method,
+absent from the Tauri allowlist) plus `nimbus tool run <tool-id> [--input <json>] [--json]` invoke a
+SAVED tool for real, through a fresh confined spawn — one `tool.invoke` audit row per call, carrying
+neither the input nor the result, and presence-only input validation (required keys, never full
+schema conformance). What that does not change: the MODEL still cannot reach it, since
+`deps.toolgen` stays unwired. Agent-initiated tool proposal is a recorded **deferral**, not a gap:
+every capability that shipped is owner-initiated, and a model proposing its own network-reaching
+tool mid-conversation is a materially larger trust boundary that gets its own consent-UX pass.
 
 ### Overnight sub-agent fleets (`fleet/`, `nimbus fleet`)
 

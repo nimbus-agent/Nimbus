@@ -18,6 +18,50 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
 
 ## Post-Phase-6 deliveries
 
+- **2026-09-15 — `nimbus tool run`, invoking a saved generated tool.** Closes the invocation gap
+  runtime tool generation's PR 3 left open (2026-09-10): a saved, signed, owner-approved tool could
+  be spawned only in-process by an integration test, through no IPC method and no CLI subcommand.
+  `toolgen.invoke` (`{ toolId, input? }`) is now served — CLI-only and LAN-forbidden, like every
+  other `toolgen.*` method, and absent from the Tauri allowlist — returning one of exactly three
+  shapes: `{ status: "executed", toolId, result, durationMs }`, `{ status: "failed", toolId,
+  error, durationMs }`, or `{ status: "refused", toolId, code, reason? }`. `nimbus tool run
+  <tool-id> [--input <json>] [--json]` calls it; exit `0` on executed, `1` on failed — which means
+  the tool RAN and threw — and `127` on refused, which is also what a malformed `--input` gets,
+  since that is a usage error refused client-side before the gateway is ever dialed. A
+  tool must be SAVED to be invocable — `create` alone is not enough (`ERR_TOOLGEN_NOT_SAVED`) — and
+  no approval prompt is shown at invoke time, because the STANDING approval obtained at `save`
+  already covers every future call. Input validation checks only that the drafted schema's
+  `required` keys are present, never full JSON Schema conformance.
+
+  Exactly one `audit_log` row is attempted per invocation (`action_type: "tool.invoke"`,
+  `hitl_status: "not_required"`), never two; if that single append itself fails, the invocation
+  fails with it rather than returning an outcome, which can leave zero rows for a tool that ran.
+  The projection the row is built from has no `input` or `result` member at all — a future field
+  for either is a compile error, not a discipline to remember. One
+  bound stated rather than hidden: a tool's own `error` text is free-form and capped at 512 Unicode
+  code points before it reaches the row, so a tool that echoes its input into its error message can
+  still leak a capped fragment there; the full message still reaches the caller on the returned
+  outcome, only the on-disk copy is capped.
+
+  No migration, no new invariant — I39's existing broker/signature machinery covers a run exactly as
+  it covers a spawn already proven by the PR 3 integration suite. **What did NOT move:** the model
+  still cannot invoke a generated tool. `engine/agent.ts`'s `NimbusEngineAgentDeps.toolgen` remains
+  unsupplied by `gateway-main.ts`, so `nimbus tool run` is CLI/owner-only, the same scope bound
+  `nimbus exec` holds under I33; an ephemeral (created-but-not-saved) tool is still not invocable by
+  any path.
+
+  **Test layers, and why each earns its place.** A new integration suite
+  (`test/integration/toolgen/toolgen-run.test.ts`, reusing `toolgen-saved-spawn.test.ts`'s
+  signing/Vault/migration harness rather than a second copy of it) proves two things no unit test
+  can: the happy path's audit row survives a REAL `appendAuditEntry` against a fully migrated
+  `audit_log`, BLAKE3 chain included, not an injected sink; and a REAL tampered-artifact signature
+  failure actually throws the `ToolgenError(ERR_TOOLGEN_SIGNATURE_INVALID)` shape the outcome
+  mapping assumes, joining two things previously proven only against fakes on each side separately.
+  A new E2E test (`test/e2e/tool-run.e2e.test.ts`) is the first in this repository to drive the
+  REAL, unmodified `spawnGeneratedTool` — not a test-authored `spawnConfined` reimplementation —
+  inside a real gateway subprocess over a real IPC socket, proving CLI-shaped request → IPC → gate →
+  a real confined spawn → the real result crossing back.
+
 - **2026-09-14 — `nimbus explain last`, an X-ray of the most recent `nimbus ask`.** Sixth and
   final row of the v0.1.1 CLI batch (design doc: `2026-09-14-nimbus-explain-last`). Every call
   through the shared `runAsk` pipeline (`nimbus ask`, `agent.invoke`, the ChatOps read path)

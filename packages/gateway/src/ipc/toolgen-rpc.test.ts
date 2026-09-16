@@ -278,6 +278,64 @@ function makeCtx(
       now: () => 1_700_000_000_000,
       ...saveOver,
     },
+    // Task 4's `toolgen.invoke` deps -- shares the SAME `registry` instance as `gateDeps`/
+    // `saveDeps` above, matching production (`platform/assemble.ts` shares ONE `toolgenRegistry`
+    // across all three). `spawn` throws by default so a test that reaches it without meaning to
+    // fails loudly rather than silently returning a fake handle.
+    invokeDeps: {
+      config: { enabled: true },
+      enforced: { capabilitiesDisabled: new Set<string>() },
+      registry,
+      spawn: async () => {
+        throw new Error("spawn must not be reached unless a test wires a saved tool");
+      },
+      audit: () => {},
+      disabledReasonFor: (toolId: string) => getSavedTool(db, toolId)?.disabledReason ?? null,
+      now: () => 1_700_000_000_000,
+    },
+  };
+}
+
+/**
+ * A ctx whose registry holds one HEALTHY saved tool ("t1") and whose `invokeDeps.spawn` returns a
+ * fake `GeneratedToolHandle` that succeeds -- for `toolgen.invoke`'s happy-path test, which needs
+ * `invokeSavedTool` to reach `succeed()` rather than refuse before ever calling `spawn`.
+ */
+function ctxWithFakeInvoke(): TestCtx {
+  const ctx = makeCtx();
+  ctx.gateDeps.registry.registerSaved({
+    toolId: "t1",
+    needsCredentials: false,
+    artifact: {
+      toolId: "t1",
+      toolName: "t1",
+      description: "d",
+      body: "return 1;",
+      approvedHosts: ["api.example.com"],
+      credentialHosts: [],
+      manifest: {
+        id: "toolgen.t1",
+        version: "0.0.0",
+        permissions: { network: [], filesystem: { read: [], write: [] } },
+        updateChannel: "stable",
+      },
+      inputSchema: { type: "object", properties: {} },
+    },
+  });
+  return {
+    ...ctx,
+    invokeDeps: {
+      ...ctx.invokeDeps,
+      spawn: async () => ({
+        describe: async () => ({
+          name: "t1",
+          description: "d",
+          inputSchema: { type: "object", properties: {} },
+        }),
+        call: async () => ({ ok: true }),
+        close: async () => {},
+      }),
+    },
   };
 }
 
@@ -459,18 +517,21 @@ describe("toolgen RPC", () => {
 
   // Task 10 carried-forward item 5: `ToolgenRegistry.forSession` can return an ephemeral AND a
   // saved entry sharing a `toolId`, and `toolgen.list`'s union now surfaces both rather than one
-  // silently shadowing the other. Fixed round 1: the mechanism is NOT "create then save in the
-  // same session" -- `saveGeneratedTool` never calls `registry.registerSaved()`; the only
-  // production caller is `loadSavedToolsIntoRegistry` (`toolgen-saved-spawn.ts`), run once at
-  // boot, so a same-session save does not enter the in-memory saved collection at all, and by the
-  // next boot the ephemeral map is gone anyway. The only production route to this state is a
-  // freshly minted `randomUUID()` (`toolgen-gate.ts`'s `newId`) for a BRAND-NEW ephemeral tool
-  // colliding with an id a PREVIOUS boot persisted and THIS boot loaded -- a probability
-  // indistinguishable from zero, and unrelated to any create/save sequencing. This test is a
-  // regression guard on `toolgen.list`'s union behaviour (should a future change make the save
-  // gate register synchronously, this documents what the listing would then show), not a
-  // realistic scenario. See the Task 10 report for why this is not this task's to fix.
-  test("a toolId live as BOTH an ephemeral tool and an already-saved tool produces two list entries (known collision, not resolved here)", async () => {
+  // silently shadowing the other.
+  //
+  // This comment previously argued the state was near-impossible in production BECAUSE
+  // `saveGeneratedTool` never called `registry.registerSaved()` -- only the once-at-boot
+  // `loadSavedToolsIntoRegistry` did. That reasoning is DEAD: the save gate registers the tool
+  // synchronously now (`toolgen-save-gate.ts`'s `registerSavedNow`), without which a tool saved by
+  // the running gateway stayed un-invocable until the next restart. So `nimbus tool create` then
+  // `nimbus tool save` in one session produces this exact state ROUTINELY, not by UUID collision.
+  //
+  // The BEHAVIOUR is unchanged and still benign: both entries are built from the same artifact at
+  // save time, so the two rows describe the same bytes -- the ephemeral one flagged `saved: false`
+  // and the saved one `saved: true`, which is an honest report of a tool that is both running now
+  // and persisted for later. The union is what keeps that visible; collapsing the two would hide
+  // one of the halves rather than reconcile them. This test pins that union.
+  test("a toolId live as BOTH an ephemeral tool and an already-saved tool produces two list entries (the routine post-save state)", async () => {
     const ctx = makeCtx();
     ctx.gateDeps.registry.register(makeEnvelope("dup", "s1"), async () => {});
     ctx.gateDeps.registry.registerSaved(makeSavedEnvelope("dup"));
@@ -1132,5 +1193,25 @@ describe("a malformed hosts array yields an EMPTY host list, never a partial one
     });
     // The point of the test: the ONE good host was not silently kept.
     expect(ctx.broadcasts).toHaveLength(0);
+  });
+});
+
+describe("toolgen.invoke", () => {
+  test("toolgen.invoke resolves through the HANDLERS map", async () => {
+    const out = await dispatchToolgenRpc(
+      "toolgen.invoke",
+      { toolId: "t1", input: { q: "x" } },
+      ctxWithFakeInvoke(),
+    );
+    // `dispatchToolgenRpc` returns an `RpcMissOrHit`, not the outcome bare -- unwrap `.value`
+    // exactly as every other handler test in this file does (see `toolgen.list`'s tests above).
+    if (out.kind !== "hit") throw new Error("unreachable");
+    expect(out.value).toMatchObject({ status: "executed" });
+  });
+
+  test("toolgen.invoke requires a string toolId", async () => {
+    await expect(
+      dispatchToolgenRpc("toolgen.invoke", { toolId: 42 }, ctxWithFakeInvoke()),
+    ).rejects.toThrow();
   });
 });

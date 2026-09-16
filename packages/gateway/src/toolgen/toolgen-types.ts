@@ -154,6 +154,39 @@ export const ERR_TOOLGEN_SAVE_DISABLED = "ERR_TOOLGEN_SAVE_DISABLED";
 export const ERR_TOOLGEN_SAVE_NOT_LIVE = "ERR_TOOLGEN_SAVE_NOT_LIVE";
 export const ERR_TOOLGEN_SAVE_DENIED = "ERR_TOOLGEN_SAVE_DENIED";
 
+/** Task 1: `nimbus tool run` invoke gate refusals. */
+export const ERR_TOOLGEN_INVOKE_DISABLED = "ERR_TOOLGEN_INVOKE_DISABLED";
+export const ERR_TOOLGEN_INVOKE_POLICY_DISABLED = "ERR_TOOLGEN_INVOKE_POLICY_DISABLED";
+export const ERR_TOOLGEN_NOT_SAVED = "ERR_TOOLGEN_NOT_SAVED";
+export const ERR_TOOLGEN_PUBKEY_UNAVAILABLE = "ERR_TOOLGEN_PUBKEY_UNAVAILABLE";
+export const ERR_TOOLGEN_INPUT_INVALID = "ERR_TOOLGEN_INPUT_INVALID";
+
+/**
+ * There is deliberately NO `ERR_TOOLGEN_EXECUTION_FAILED` / `ERR_TOOLGEN_EXECUTION_TIMEOUT`. Both
+ * existed here through the first drafts of this feature and neither was ever assigned by any path:
+ * a `failed` outcome carries the tool's own free-text `error` and no code at all, and the protocol
+ * timeout (`toolgen-client.ts`'s `DEFAULT_PROTOCOL_REQUEST_TIMEOUT_MS`, 60s) throws a plain
+ * `Error`, so a caller grepping for a timeout code to detect a hung tool would have got nothing,
+ * ever. An exported constant that no code path can produce is worse than its absence: it reads as
+ * a contract. If a timeout ever needs to be distinguishable, the throw site has to change first.
+ */
+
+/**
+ * The session id every CLI-originated `toolgen.invoke` call is attributed to, matching
+ * `toolgen.create`'s existing `CLI_TOOLGEN_SESSION_ID` (`packages/cli/src/commands/tool.ts:368`,
+ * also `"cli"`). This is a SECOND, independent definition of the same wire value, not a mistake:
+ * the gateway cannot import the CLI's constant (the dependency rule is one-way — gateway imports
+ * nothing from cli), so each side of the wire needs its own copy. The two MUST agree on the
+ * literal `"cli"` — `ToolgenRegistry.countForSession` and a `tool.invoke` audit row's session
+ * attribution both key on it, so a drift between the two definitions would silently split what
+ * should be one bucket into two.
+ *
+ * `SavedSpawnDeps.sessionId` is documented as "the SPAWNING CALLER's session — never a `\"saved\"`
+ * sentinel", and a CLI invocation has no real session of its own, so it needs a named constant
+ * here too, distinct from anything a real agent conversation would supply.
+ */
+export const CLI_TOOLGEN_SESSION_ID = "cli";
+
 /**
  * A caller-supplied `toolId` that could not be a tool id this gateway ever minted — it fails
  * `assertSafeToolId`'s `^[A-Za-z0-9_-]{1,64}$` shape (`toolgen-script-store.ts`).

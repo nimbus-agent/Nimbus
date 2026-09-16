@@ -311,15 +311,29 @@ import {
 } from "../toolgen/toolgen-draft-llm.ts";
 import type { ToolgenGateDeps } from "../toolgen/toolgen-gate.ts";
 import { createEndpointFinder } from "../toolgen/toolgen-grounding.ts";
+import type { ToolgenInvokeDeps } from "../toolgen/toolgen-invoke-gate.ts";
+import { TOOLGEN_SIGNING_PUBKEY } from "../toolgen/toolgen-keypair.ts";
 import { ToolgenRegistry } from "../toolgen/toolgen-registry.ts";
 import type { ToolgenSaveDeps } from "../toolgen/toolgen-save-gate.ts";
-import { loadSavedToolsIntoRegistry } from "../toolgen/toolgen-saved-spawn.ts";
-import { removeSavedTool } from "../toolgen/toolgen-saved-store.ts";
+import { getSavedTool } from "../toolgen/toolgen-saved-repo.ts";
+import { loadSavedToolsIntoRegistry, spawnSavedTool } from "../toolgen/toolgen-saved-spawn.ts";
+import {
+  readVerifiedSavedTool,
+  removeSavedTool,
+  rewriteSavedToolScript,
+  savedToolDir,
+} from "../toolgen/toolgen-saved-store.ts";
 import {
   removeToolScript,
   toolScriptDir,
   writeToolScript,
 } from "../toolgen/toolgen-script-store.ts";
+import {
+  CLI_TOOLGEN_SESSION_ID,
+  ERR_TOOLGEN_NOT_SAVED,
+  ERR_TOOLGEN_PUBKEY_UNAVAILABLE,
+  ToolgenError,
+} from "../toolgen/toolgen-types.ts";
 import { type SynthSource, synthesizeAnswer } from "../tribal/answer-synthesizer.ts";
 import type { TribalCluster } from "../tribal/cluster-store.ts";
 import { buildTribalBoot, type TribalBoot } from "../tribal/tribal-boot.ts";
@@ -4049,11 +4063,62 @@ export async function assemblePlatformServices(
     requestApproval: (input, ttlMs) => toolgenSaveConsent.request(input, ttlMs),
     now: () => Date.now(),
   };
+
+  // Task 4's `toolgen.invoke` deps: everything `invokeSavedTool` (`toolgen-invoke-gate.ts`,
+  // Tasks 1-3) needs to spawn, call and audit a SAVED tool. CLI-only this release -- see
+  // `ToolgenRpcCtx.invokeDeps`'s docstring -- and deliberately NOT wired into
+  // `NimbusEngineAgentDeps.toolgen`, which stays unset, so the model cannot reach this path.
+  //
+  // Resolved once, matching `loadSavedToolsIntoRegistry`'s own read of the same runtime above.
+  const runtimeReadPaths = resolveRuntimeById("bun").requiredReadPaths();
+  const toolgenInvokeDeps: ToolgenInvokeDeps = {
+    config: toolGenerationCfg,
+    // A GETTER, not a snapshot: org policy is re-resolved per call, so a policy tightened after
+    // boot takes effect on the next invocation rather than at the next restart -- the same shape
+    // as `toolgenGateDeps`/`toolgenSaveDeps` above.
+    get enforced() {
+      return policyGate.enforced();
+    },
+    registry: toolgenRegistry,
+    spawn: async (toolId) => {
+      const pubkeyB64 = await vault.get(TOOLGEN_SIGNING_PUBKEY);
+      if (pubkeyB64 === null) {
+        throw new ToolgenError(
+          ERR_TOOLGEN_PUBKEY_UNAVAILABLE,
+          "toolgen signing pubkey unavailable",
+        );
+      }
+      const row = getSavedTool(db, toolId);
+      if (row === null) {
+        throw new ToolgenError(ERR_TOOLGEN_NOT_SAVED, `tool "${toolId}" is not saved`);
+      }
+      return spawnSavedTool(toolId, {
+        configDir: paths.configDir,
+        pubkeyB64,
+        sessionId: CLI_TOOLGEN_SESSION_ID,
+        row: { approvedAt: row.approvedAt },
+        runtime: { requiredReadPaths: () => runtimeReadPaths },
+        readVerifiedSavedTool,
+        savedToolDir,
+        rewriteSavedToolScript,
+        spawn: (envelope) =>
+          spawnGeneratedTool(envelope, toolgenBroker, dirname(envelope.scriptPath)),
+      });
+    },
+    audit: (entry) => appendAuditEntry(db, entry),
+    // Refusal-path disambiguation only -- see `ToolgenInvokeDeps.disabledReasonFor`. The row is a
+    // health-report CACHE (I40), never an authority: it is read here to explain a refusal the
+    // registry already decided, and can never make a tool invocable.
+    disabledReasonFor: (toolId) => getSavedTool(db, toolId)?.disabledReason ?? null,
+    now: () => Date.now(),
+  };
+
   ipcOpts.toolgenRpcCtx = {
     consent: toolgenConsent,
     gateDeps: toolgenGateDeps,
     saveDeps: toolgenSaveDeps,
     saveConsent: toolgenSaveConsent,
+    invokeDeps: toolgenInvokeDeps,
     removeScript: (toolId) => removeToolScript(paths.configDir, toolId),
     // The DURABLE half of `toolgen.revoke`: `saved/<toolId>` -- body, artifact and signature. The
     // matching `generated_tool` row is dropped by the handler itself, which already holds `db`.

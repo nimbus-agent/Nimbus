@@ -181,6 +181,37 @@ function buildApprovalInput(artifact: GeneratedToolArtifact): ToolgenSaveApprova
 }
 
 /**
+ * Make the just-persisted tool visible to the RUNNING gateway's saved collection, the same way
+ * `toolgen-saved-spawn.ts`'s `loadSavedToolsIntoRegistry` makes a previously-persisted one visible
+ * at boot — the envelope shape here is that construction site's, mirrored field for field.
+ *
+ * Without this, `registry.registerSaved` had exactly ONE production caller (that boot pass), so a
+ * tool saved by the running gateway did not enter `#saved` until the next restart: `nimbus tool
+ * list` reported it saved and healthy while `nimbus tool run` refused it `ERR_TOOLGEN_NOT_SAVED`,
+ * because `invokeSavedTool` gates on registry membership.
+ *
+ * Registering here rather than teaching the invoke gate to fall back to `getSavedTool(db, ...)` is
+ * deliberate: the broker's `approvedHostsFor`/`credentialHostsFor` (`platform/assemble.ts`) resolve
+ * through the REGISTRY, so a DB-only fallback would spawn a tool with an empty approved-host list
+ * and refuse every brokered fetch it makes — crippled, silently, rather than refused.
+ *
+ * The one field that is not identical to what a later boot will hold is `artifact.manifest`: this
+ * is the LIVE ephemeral artifact, whose concrete manifest grants read to the ephemeral script
+ * directory, where the boot pass rebuilds it against `saved/<toolId>`. That is harmless and is not
+ * papered over: nothing spawns from this copy. `spawnSavedTool` rebuilds the concrete manifest from
+ * code on every spawn and asserts it against the SIGNED portable shape, and the portable shape
+ * drops `filesystem.read` for exactly this reason. Every other field is the artifact that was just
+ * canonicalised and signed, byte for byte.
+ */
+function registerSavedNow(deps: ToolgenSaveDeps, artifact: GeneratedToolArtifact): void {
+  deps.registry.registerSaved({
+    toolId: artifact.toolId,
+    needsCredentials: artifact.credentialHosts.length > 0,
+    artifact,
+  });
+}
+
+/**
  * The ONE path from a live, session-only generated tool to a durable one that survives a gateway
  * restart (I40 / spec § 6). This is the first STANDING approval in this codebase: every other HITL
  * gate here (I33, I35, I39's own create gate) approves a single act inside one session. Persisting
@@ -236,30 +267,44 @@ export async function saveGeneratedTool(
     const script = emitToolScript(artifact);
     await writeSavedTool(deps.configDir, toolId, { canonicalJson, sigB64, script });
 
+    // The row change and its success audit commit TOGETHER, and the tool is registered only after
+    // they have. Otherwise an audit append that throws (a full disk, a closed handle) would leave a
+    // persisted -- and, in this session, invocable -- standing approval behind a `refused` outcome
+    // and with no row recording it. The files written above are harmless on rollback: with no
+    // `generated_tool` row they are an orphan the boot sweep already removes.
     if (existing.kind === "disabled_match") {
-      repairDisabledSavedTool(deps.db, toolId, {
-        signature: sigB64,
-        pubkey: pubkeyB64,
-        savedAt: deps.now(),
-      });
-      audit(deps, toolId, "repaired", { digest });
+      deps.db.transaction(() => {
+        repairDisabledSavedTool(deps.db, toolId, {
+          signature: sigB64,
+          pubkey: pubkeyB64,
+          savedAt: deps.now(),
+        });
+        audit(deps, toolId, "repaired", { digest });
+      })();
+      // A repaired row is healthy again, so it becomes invocable in THIS session too -- the boot
+      // pass that would otherwise be the first to register it skipped this tool precisely because
+      // the row was disabled when the gateway started.
+      registerSavedNow(deps, artifact);
       return { status: "repaired", toolId };
     }
 
-    insertSavedTool(deps.db, {
-      toolId,
-      toolName: artifact.toolName,
-      description: artifact.description,
-      artifactJson: canonicalJson,
-      artifactDigest: digest,
-      signature: sigB64,
-      pubkey: pubkeyB64,
-      approvedAt: deps.now(),
-      savedAt: deps.now(),
-      lastLoadedAt: null,
-      disabledReason: null,
-    });
-    audit(deps, toolId, "saved", { digest });
+    deps.db.transaction(() => {
+      insertSavedTool(deps.db, {
+        toolId,
+        toolName: artifact.toolName,
+        description: artifact.description,
+        artifactJson: canonicalJson,
+        artifactDigest: digest,
+        signature: sigB64,
+        pubkey: pubkeyB64,
+        approvedAt: deps.now(),
+        savedAt: deps.now(),
+        lastLoadedAt: null,
+        disabledReason: null,
+      });
+      audit(deps, toolId, "saved", { digest });
+    })();
+    registerSavedNow(deps, artifact);
     return { status: "saved", toolId };
   } catch (err) {
     const code = err instanceof ToolgenError ? err.code : "ERR_TOOLGEN_INTERNAL";

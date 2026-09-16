@@ -190,10 +190,14 @@ export function wireToolProtocol(
   broker: ToolgenBroker,
   requestTimeoutMs = DEFAULT_PROTOCOL_REQUEST_TIMEOUT_MS,
 ): GeneratedToolHandle {
-  const pending = new Map<string, { resolve: (v: unknown) => void; reject: (e: Error) => void }>();
+  const pending = new Map<
+    string,
+    { method: string; resolve: (v: unknown) => void; reject: (e: Error) => void }
+  >();
   let seq = 0;
   let buf = "";
   let closed = false;
+  let exited = false;
   // ONE decoder for the life of the handle, fed with `{ stream: true }`. Decoding each chunk
   // independently corrupts any multi-byte character the pipe happens to split: both halves become
   // U+FFFD, and because the surrounding JSON still parses, a `call` result or a `describe`
@@ -206,10 +210,20 @@ export function wireToolProtocol(
     io.writeLine(JSON.stringify(msg));
   };
 
-  const failAllPending = (reason: string): void => {
-    for (const p of pending.values()) p.reject(new Error(reason));
+  const failAllPending = (reason: (method: string) => string): void => {
+    for (const p of pending.values()) p.reject(new Error(reason(p.method)));
     pending.clear();
   };
+
+  // A child that is gone will never answer: the sandbox helper refused to start it (it exits
+  // before the tool runs when it cannot create the AppContainer profile), or the body crashed.
+  // Without this, every outstanding request waits out the full request timeout and then blames a
+  // "wedged" tool that may never have run at all -- and `nimbus tool run` makes that the owner's
+  // first sight of the failure.
+  void io.waitExit().then(() => {
+    exited = true;
+    failAllPending((method) => `generated tool exited before responding to "${method}"`);
+  });
 
   /** Dispatch one parsed line: a brokered fetch, an unrecognized request, or a reply to ours. */
   const handleInbound = (msg: InboundMessage): void => {
@@ -256,6 +270,7 @@ export function wireToolProtocol(
   // own outbound fetch, not to the child's own compute, so nothing else catches this.
   const request = (method: string, params: unknown): Promise<unknown> => {
     if (closed) return Promise.reject(new Error("generated tool handle is closed"));
+    if (exited) return Promise.reject(new Error("generated tool has exited"));
     const id = `g${String(++seq)}`;
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => {
@@ -267,6 +282,7 @@ export function wireToolProtocol(
       // Wrapped so EITHER a real reply or the timeout above clears the other's timer/pending
       // entry — whichever settles first must not leave the loser dangling.
       pending.set(id, {
+        method,
         resolve: (v) => {
           clearTimeout(timer);
           resolve(v);
@@ -300,7 +316,7 @@ export function wireToolProtocol(
     close: async () => {
       if (closed) return;
       closed = true;
-      failAllPending("generated tool handle was closed");
+      failAllPending(() => "generated tool handle was closed");
       io.kill();
       // A generated tool has no signal-handling logic of its own (`emitToolScript` installs none),
       // so SIGTERM is expected to end it promptly. When it does not — an ignored signal, a tight

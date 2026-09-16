@@ -160,6 +160,9 @@ function rpcCtx(
     gateDeps: { db, registry } as unknown as ToolgenRpcCtx["gateDeps"],
     consent: undefined as unknown as ToolgenRpcCtx["consent"],
     saveConsent: undefined as unknown as ToolgenRpcCtx["saveConsent"],
+    // `toolgen.revoke` does not reach `toolgen.invoke`'s dependency set either — same rationale
+    // as `gateDeps` above, now that `ToolgenRpcCtx` carries it (Task 4).
+    invokeDeps: undefined as unknown as ToolgenRpcCtx["invokeDeps"],
     saveDeps: deps,
     // The REAL production closures, bound exactly as `platform/assemble.ts` binds them.
     removeScript: (toolId) => removeToolScript(configDir, toolId),

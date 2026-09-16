@@ -9,6 +9,7 @@ import {
   normalizeHost,
   type ToolgenGateDeps,
 } from "../toolgen/toolgen-gate.ts";
+import { invokeSavedTool, type ToolgenInvokeDeps } from "../toolgen/toolgen-invoke-gate.ts";
 import type { SavedToolEnvelope } from "../toolgen/toolgen-registry.ts";
 import { saveGeneratedTool, type ToolgenSaveDeps } from "../toolgen/toolgen-save-gate.ts";
 import {
@@ -19,6 +20,7 @@ import {
 import { parseCanonicalArtifact } from "../toolgen/toolgen-saved-store.ts";
 import { assertSafeToolId } from "../toolgen/toolgen-script-store.ts";
 import {
+  CLI_TOOLGEN_SESSION_ID,
   ERR_TOOLGEN_CREDENTIAL_HOST_UNKNOWN,
   ERR_TOOLGEN_TOOL_ID_INVALID,
   ERR_TOOLGEN_TOOL_ID_RESERVED,
@@ -91,6 +93,13 @@ export interface ToolgenRpcCtx {
    * outlived both the tool and the gateway, keyed to a toolId nothing would ever call again.
    */
   readonly revokeCredentialsForTool: (toolId: string) => Promise<void>;
+  /**
+   * Everything `invokeSavedTool` (`toolgen-invoke-gate.ts`, Tasks 1-3) needs to run
+   * `toolgen.invoke`. Shares the SAME `registry` instance as `gateDeps`/`saveDeps` above, for the
+   * same reason those two share it with each other: a tool saved this session must be invocable
+   * without a second lookup path.
+   */
+  readonly invokeDeps: ToolgenInvokeDeps;
 }
 
 /**
@@ -546,6 +555,32 @@ const HANDLERS: RpcMethodHandlerMap<ToolgenRpcCtx> = {
 
     if (failed) throw firstError;
     return { revoked: true, savedRemoved: wasLoadedSaved || hadSavedRow };
+  },
+
+  /**
+   * Task 4's IPC surface for `invokeSavedTool` (Tasks 1-3). CLI-only (no path to it from
+   * `engine/agent.ts` this release — see `NimbusEngineAgentDeps.toolgen`'s docstring) and, like
+   * every other `toolgen.*` method, LAN-forbidden via the whole-namespace entry in `lan-rpc.ts`
+   * rather than a per-method one.
+   */
+  "toolgen.invoke": async (params, ctx) => {
+    const rec = asRecord(params) ?? {};
+    const toolId = requireString(params, "toolId");
+    // Same guard `toolgen.revoke` and `toolgen.credentialSet` already apply above: it refuses the
+    // reserved id `signing`, whose Vault prefix IS the signing keypair's, and rejects
+    // path-traversal shapes. A caller-supplied tool id must never skip it.
+    assertCallerToolId(toolId);
+    const rawInput = rec["input"];
+    const input = rawInput === undefined ? {} : (asRecord(rawInput) ?? undefined);
+    if (input === undefined) {
+      throw new ToolgenRpcError(-32602, "input must be a JSON object");
+    }
+    // SERVER-derived, never caller-supplied -- the caller does not get to name the session its
+    // own audit row is attributed to. `invokeSavedTool` projects this onto the `tool.invoke`
+    // row's `sessionId` (Task 3); omitting it here would leave every production row without the
+    // attribution every other audit row carries, while a unit test that passes one explicitly
+    // would still go green.
+    return invokeSavedTool({ toolId, input, sessionId: CLI_TOOLGEN_SESSION_ID }, ctx.invokeDeps);
   },
 };
 

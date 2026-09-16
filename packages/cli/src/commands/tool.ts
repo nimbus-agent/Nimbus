@@ -37,6 +37,12 @@ export type ParsedToolArgs =
   | { readonly sub: "revoke"; readonly toolId: string }
   | { readonly sub: "save"; readonly toolId: string }
   | {
+      readonly sub: "run";
+      readonly toolId: string;
+      readonly input: Record<string, unknown>;
+      readonly json: boolean;
+    }
+  | {
       readonly sub: "credential-set";
       readonly toolId: string;
       readonly host: string;
@@ -49,6 +55,7 @@ const USAGE = [
   "       nimbus tool list [--json]",
   "       nimbus tool revoke <tool-id>",
   "       nimbus tool save <tool-id>",
+  "       nimbus tool run <tool-id> [--input <json>] [--json]",
   "       nimbus tool credential set <tool-id> <host>",
   "                           (--bearer <token> | --header <name> <value> | --basic <user> <pass>)",
 ].join("\n");
@@ -174,6 +181,58 @@ function parseSaveArgs(rest: readonly string[]): Extract<ParsedToolArgs, { sub: 
 }
 
 /**
+ * `nimbus tool run <tool-id> [--input <json>] [--json]`.
+ *
+ * `--input` is parsed HERE, not left for the gateway to reject -- a malformed JSON string, or one
+ * that parses to something other than a plain object (an array, a scalar), is a usage error and
+ * must never leave this process: `toolgen.invoke` would refuse a non-object `input` with a
+ * JSON-RPC `-32602`, but by then a request already went out over IPC for something this parser
+ * could see was wrong before dialing. `JSON.parse`'s own error text is not surfaced -- it varies
+ * across the runtimes this CLI ships on, where a stable, grep-able message here does not.
+ *
+ * `--input` absent defaults to `{}`, mirroring the gateway's own default for an omitted `input`
+ * field so the parsed shape is uniform whether or not the flag was typed.
+ */
+function parseRunArgs(rest: readonly string[]): Extract<ParsedToolArgs, { sub: "run" }> {
+  const toolId = rest[0];
+  if (toolId === undefined || toolId.startsWith("--")) {
+    throw new Error(`nimbus tool run: a tool id is required\n${USAGE}`);
+  }
+
+  let input: Record<string, unknown> = {};
+  let json = false;
+
+  const cur = flagCursor(rest.slice(1));
+  while (cur.more()) {
+    const flag = cur.peek();
+    switch (flag) {
+      case "--input": {
+        const raw = cur.valueFor(flag);
+        let parsedValue: unknown;
+        try {
+          parsedValue = JSON.parse(raw);
+        } catch {
+          throw new Error(`nimbus tool run: --input must be valid JSON\n${USAGE}`);
+        }
+        if (typeof parsedValue !== "object" || parsedValue === null || Array.isArray(parsedValue)) {
+          throw new Error(`nimbus tool run: --input must be a JSON object\n${USAGE}`);
+        }
+        input = parsedValue as Record<string, unknown>;
+        break;
+      }
+      case "--json":
+        json = true;
+        break;
+      default:
+        throw new Error(`Unknown flag: ${flag}\n${USAGE}`);
+    }
+    cur.step();
+  }
+
+  return { sub: "run", toolId, input, json };
+}
+
+/**
  * `nimbus tool credential set <tool-id> <host> (--bearer|--header|--basic ...)`.
  *
  * Parsing succeeds independently of whether the tool named is live -- that check belongs to
@@ -270,6 +329,8 @@ export function parseToolArgs(argv: readonly string[]): ParsedToolArgs {
       return parseRevokeArgs(rest);
     case "save":
       return parseSaveArgs(rest);
+    case "run":
+      return parseRunArgs(rest);
     case "credential": {
       const [action, ...credRest] = rest;
       if (action !== "set") {
@@ -928,6 +989,105 @@ async function runSaveCmd(
 }
 
 /**
+ * What a `toolgen.invoke` call resolves to, mirroring the gateway's `ToolgenInvokeOutcome`
+ * (Task 4's `toolgen.invoke` IPC method). Defined LOCALLY rather than imported -- `packages/cli`
+ * reaches the gateway over IPC only, never its source; see `ToolOutcomeShape`, above, for the
+ * same pattern this mirrors field for field.
+ */
+export interface ToolInvokeOutcomeShape {
+  readonly status: string;
+  readonly toolId?: string;
+  readonly result?: unknown;
+  readonly durationMs?: number;
+  readonly error?: string;
+  readonly code?: string;
+  readonly reason?: string;
+}
+
+/**
+ * Map a `toolgen.invoke` outcome to a process exit code. An unrecognised shape maps to `refused`,
+ * never 0, matching `exitCodeForTool`'s identical rule -- exiting 0 on something this command did
+ * not understand would read as "it ran".
+ */
+export function exitCodeForInvoke(outcome: ToolInvokeOutcomeShape): number {
+  if (outcome.status === "executed") return 0;
+  if (outcome.status === "failed") return 1;
+  return TOOL_EXIT_CODES.refused;
+}
+
+/**
+ * Write a `toolgen.invoke` outcome to the user. Pure over an injected sink, matching
+ * `renderToolOutcome`/`renderToolSaveOutcome`'s split.
+ *
+ * `--json` governs only the `executed` arm's SUCCESS rendering -- a `failed`/`refused` outcome
+ * always goes to stderr as text, since there is no result value to serialize and a caller piping
+ * `--json` output still needs a human-readable reason on a non-zero exit.
+ */
+export function renderToolInvokeOutcome(
+  outcome: ToolInvokeOutcomeShape,
+  sink: OutcomeSink,
+  json: boolean,
+): void {
+  if (outcome.status === "executed") {
+    if (json) {
+      // `?? null` guards `JSON.stringify(undefined)`, which returns `undefined` (not a string)
+      // rather than the literal text `"undefined"` -- an absent result must still print something
+      // parseable.
+      sink.out(`${JSON.stringify(outcome.result ?? null, null, 2)}\n`);
+      return;
+    }
+    if (outcome.result === undefined || outcome.result === null) {
+      sink.out("(no output)\n");
+      return;
+    }
+    if (typeof outcome.result === "string") {
+      sink.out(`${outcome.result}\n`);
+      return;
+    }
+    sink.out(`${JSON.stringify(outcome.result, null, 2)}\n`);
+    return;
+  }
+  if (outcome.status === "failed") {
+    sink.err(`nimbus: ${outcome.error ?? "unknown error"}\n`);
+    return;
+  }
+  sink.err(`nimbus: refused (${outcome.code ?? "unknown"})\n`);
+  if (outcome.reason !== undefined && outcome.reason !== "") {
+    sink.err(`  ${outcome.reason}\n`);
+  }
+}
+
+/**
+ * `nimbus tool run <tool-id>` invokes an already-saved, owner-approved tool -- it obtains no
+ * consent of its own (there is no `onNotification` registration here, unlike `create`/`save`) and
+ * carries no `isInteractiveTty()` guard, DELIBERATELY: the standing approval `nimbus tool save`
+ * granted is the operational meaning of "run this in every future session, unattended", and `run`
+ * is that promise kept, not a fresh grant. Headless-capable by design.
+ *
+ * No `sessionId` is sent -- the gateway derives the audit session server-side, and a caller
+ * naming its own session would be attributing its own audit row.
+ */
+async function runRunCmd(
+  parsed: Extract<ParsedToolArgs, { sub: "run" }>,
+  deps: RunToolDeps,
+): Promise<void> {
+  try {
+    const outcome = await deps.runWithClient(async (c) => {
+      return (await c.call("toolgen.invoke", {
+        toolId: parsed.toolId,
+        input: parsed.input,
+      })) as ToolInvokeOutcomeShape;
+    });
+
+    renderToolInvokeOutcome(outcome, deps.sink, parsed.json);
+    deps.setExitCode(exitCodeForInvoke(outcome));
+  } catch (e) {
+    deps.sink.err(`${e instanceof Error ? e.message : String(e)}\n`);
+    deps.setExitCode(TOOL_EXIT_CODES.refused);
+  }
+}
+
+/**
  * Binds a credential to a host the named tool was ALREADY approved to reach (spec § 8.3) -- the
  * fix for a saved tool that lost its Vault binding across a restart, and the first user-facing
  * path for `header`/`basic` bindings (their parser has existed since PR 1; only `bearer` had
@@ -979,6 +1139,9 @@ export async function runTool(args: string[], deps: RunToolDeps = defaultDeps): 
       return;
     case "save":
       await runSaveCmd(parsed, deps);
+      return;
+    case "run":
+      await runRunCmd(parsed, deps);
       return;
     case "credential-set":
       await runCredentialSetCmd(parsed, deps);
