@@ -161,7 +161,7 @@ describe.skipIf(!IS_WIN || (!READY && !IS_CI))("Windows sandbox ACE release (rea
     // A wall-clock kill terminates the helper process itself (TerminateProcess), so nothing the
     // helper might run after its own wait ever happens. The gateway-side release must still fire.
     const baseline = explicitAppContainerAces(binDir).length;
-    const outs = [];
+    const outs: Array<{ status: string; profile: string }> = [];
     for (let i = 0; i < 3; i++) {
       outs.push(await execReal("for (;;) {}", 1_500));
     }

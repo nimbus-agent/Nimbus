@@ -316,7 +316,11 @@ import { TOOLGEN_SIGNING_PUBKEY } from "../toolgen/toolgen-keypair.ts";
 import { ToolgenRegistry } from "../toolgen/toolgen-registry.ts";
 import type { ToolgenSaveDeps } from "../toolgen/toolgen-save-gate.ts";
 import { getSavedTool } from "../toolgen/toolgen-saved-repo.ts";
-import { loadSavedToolsIntoRegistry, spawnSavedTool } from "../toolgen/toolgen-saved-spawn.ts";
+import {
+  loadSavedToolsIntoRegistry,
+  savedToolSpawnPolicy,
+  spawnSavedTool,
+} from "../toolgen/toolgen-saved-spawn.ts";
 import {
   readVerifiedSavedTool,
   removeSavedTool,
@@ -4117,6 +4121,12 @@ export async function assemblePlatformServices(
     // health-report CACHE (I40), never an authority: it is read here to explain a refusal the
     // registry already decided, and can never make a tool invocable.
     disabledReasonFor: (toolId) => getSavedTool(db, toolId)?.disabledReason ?? null,
+    // Asked before spawning, over the exact policy `spawnSavedTool` builds, so an unconfinable
+    // sandbox is recorded as a refusal rather than as a run that failed. See the dep's docstring.
+    confinementUnavailable: (toolId) =>
+      sandboxRunner.canConfine(
+        savedToolSpawnPolicy(toolId, savedToolDir(paths.configDir, toolId), runtimeReadPaths),
+      ),
     now: () => Date.now(),
   };
 

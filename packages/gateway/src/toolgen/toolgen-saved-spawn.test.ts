@@ -16,6 +16,7 @@ import { insertSavedTool } from "./toolgen-saved-repo.ts";
 import {
   loadSavedToolsIntoRegistry,
   type SavedSpawnDeps,
+  savedToolSpawnPolicy,
   spawnSavedTool,
 } from "./toolgen-saved-spawn.ts";
 import {
@@ -478,5 +479,15 @@ describe("loadSavedToolsIntoRegistry", () => {
     test("accessor-absent loads nothing — fail-CLOSED, never defaulting to enabled", async () => {
       await loadsNothing({ config: { enabled: true } });
     });
+  });
+});
+
+describe("savedToolSpawnPolicy", () => {
+  test("is the policy a saved tool spawns with: its own id, its saved dir plus the runtime, no network", () => {
+    const policy = savedToolSpawnPolicy("t1", "/cfg/toolgen/saved/t1", ["/bun/bin"]);
+    expect(policy.id).toBe("toolgen.t1");
+    expect(policy.permissions.network).toEqual([]);
+    expect(policy.permissions.filesystem.read).toEqual(["/cfg/toolgen/saved/t1", "/bun/bin"]);
+    expect(policy.permissions.filesystem.write).toEqual([]);
   });
 });

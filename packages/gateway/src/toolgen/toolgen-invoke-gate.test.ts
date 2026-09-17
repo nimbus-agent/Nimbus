@@ -30,6 +30,7 @@ function deps(over: Partial<ToolgenInvokeDeps> = {}): ToolgenInvokeDeps {
     // Default: no durable row at all, so an unknown tool id refuses with no reason attached. A
     // test that cares about the saved-but-disabled case overrides this.
     disabledReasonFor: () => null,
+    confinementUnavailable: () => null,
     now: () => 1_000,
     ...over,
   } as ToolgenInvokeDeps;
@@ -110,6 +111,43 @@ describe("invokeSavedTool refusals happen before any spawn", () => {
   test("omitted input defaults to an empty object and still fails the required check", async () => {
     const out = await invokeSavedTool({ toolId: "t1" }, deps());
     expect(out.status === "refused" && out.code).toBe("ERR_TOOLGEN_INPUT_INVALID");
+  });
+
+  test("a sandbox that cannot confine the tool is REFUSED before any spawn, not a failed run", async () => {
+    // Before this check the spawn itself threw (the Windows helper missing, or unable to create a
+    // profile), the catch saw a plain Error, and the audit row recorded `outcome: "failed"` with
+    // exit 1 — a claim that the tool RAN and threw, for a tool that never started. Confinement was
+    // still fail-closed; only the classification was false. `deps().spawn` throws if reached.
+    const rows: AppendAuditEntryFields[] = [];
+    const out = await invokeSavedTool(
+      { toolId: "t1", input: { q: "x" } },
+      deps({
+        confinementUnavailable: () => "nimbus-sandbox-helper.exe not found at C:\\x",
+        audit: (row) => {
+          rows.push(row);
+        },
+      }),
+    );
+    expect(out.status === "refused" && out.code).toBe("ERR_TOOLGEN_SANDBOX_DEGRADED");
+    expect(out.status === "refused" && out.reason).toContain("not found");
+    expect(rows).toHaveLength(1);
+    expect(JSON.parse(rows[0]?.actionJson ?? "{}")["outcome"]).toBe("refused");
+  });
+
+  test("confinement is asked about a SAVED tool only — an unknown id still gets NOT_SAVED", async () => {
+    let asked = 0;
+    const out = await invokeSavedTool(
+      { toolId: "nope", input: { q: "x" } },
+      deps({
+        registry: { savedTools: () => [] } as unknown as ToolgenInvokeDeps["registry"],
+        confinementUnavailable: () => {
+          asked += 1;
+          return "unavailable";
+        },
+      }),
+    );
+    expect(out.status === "refused" && out.code).toBe("ERR_TOOLGEN_NOT_SAVED");
+    expect(asked).toBe(0);
   });
 });
 

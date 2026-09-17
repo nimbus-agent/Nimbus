@@ -291,6 +291,7 @@ function makeCtx(
       },
       audit: () => {},
       disabledReasonFor: (toolId: string) => getSavedTool(db, toolId)?.disabledReason ?? null,
+      confinementUnavailable: () => null,
       now: () => 1_700_000_000_000,
     },
   };
