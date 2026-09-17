@@ -241,12 +241,17 @@ credentials and no gateway code.
   its `README.md`, `nimbus.extension.json`, and the tool registrations in `src/tools.ts` (or
   `src/server.ts` where there is no `tools.ts`).
 - **Authentication:** do not copy the command from another page, and check the connector's README
-  rather than trusting it — several still show a command that fails. OAuth connectors use
-  `nimbus connector auth <service>`; every other connector is configured with
-  `nimbus vault set <service>.<key> <value>`, and `connector auth` does not work for it. The keys
-  are listed per service in `CONNECTOR_VAULT_SECRET_KEYS`
-  (`packages/gateway/src/connectors/connector-secrets-manifest.ts`), and the `good first issue` for
-  each page names them.
+  rather than trusting it — several still show a command that fails. There are three cases:
+  - **OAuth connectors** (Zoom, Figma, Salesforce, …) use `nimbus connector auth <service>`.
+  - **Token connectors with a dedicated flow** also use `nimbus connector auth <service>`, with the
+    flags that service takes (for example `--token`). The services with such a flow are the keys of
+    `PAT_CONNECTOR_AUTH_HANDLERS` in `packages/gateway/src/ipc/connector-rpc-handlers/auth.ts`
+    (GitHub, GitLab, Linear, Jira, Confluence, AWS, Datadog, Sentry and others).
+  - **Every other connector** is configured with `nimbus vault set <service>.<key> <value>`;
+    `connector auth` fails for these. The keys are listed per service in `CONNECTOR_VAULT_SECRET_KEYS`
+    (`packages/gateway/src/connectors/connector-secrets-manifest.ts`).
+
+  The `good first issue` for each page says which case applies and names the keys.
 
 Build and check it locally — this is the same command the `Docs checks` CI job runs, and it type-checks
 the site and validates every internal link:
