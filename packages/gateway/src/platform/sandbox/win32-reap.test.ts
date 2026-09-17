@@ -4,7 +4,12 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Logger } from "pino";
 
-import { liveExtensionIds, reapAppContainersAtBoot, reapWith } from "./win32-reap.ts";
+import {
+  liveExtensionIds,
+  parseSweepOutput,
+  reapAppContainersAtBoot,
+  reapWith,
+} from "./win32-reap.ts";
 
 // NO `describe.skipIf(process.platform !== "win32")` at file scope — deliberately, for the same
 // reason recorded at the top of win32.test.ts. `reapAppContainersAtBoot` short-circuits on
@@ -214,4 +219,106 @@ describe("reapAppContainersAtBoot", () => {
       expect(warns).toHaveLength(0);
     },
   );
+
+  // --- the ACE sweep --------------------------------------------------------------------------
+  // Deleting a profile does not remove the ACEs its SID holds, so the reap above leaves every
+  // reaped profile's grants behind as unresolvable entries. The sweep runs AFTER the reap so the
+  // profiles it just deleted are already unregistered when the helper looks.
+
+  it.skipIf(process.platform === "win32")(
+    "sweeps the given paths AFTER reaping, and logs what it removed",
+    async () => {
+      pretendWindows();
+      const calls = join(tmp, "calls.txt");
+      installFakeHelper(
+        [
+          `printf '%s\\n' "$1" >> "${calls}"`,
+          'case "$1" in',
+          "  --list-profiles) printf 'nimbus-ext-exec-old\\n' ;;",
+          "  --delete-profile) ;;",
+          '  --sweep-orphaned-aces) printf "removed 7 %s\\n" "$2"; printf "removed 0 %s\\n" "$3" ;;',
+          "  *) exit 3 ;;",
+          "esac",
+          "exit 0",
+        ].join("\n"),
+      );
+
+      await reapAppContainersAtBoot({
+        db: emptyDb(),
+        logger: logger(),
+        sweepPaths: ["/bun/bin", "/other"],
+      });
+
+      expect(readFileSync(calls, "utf8")).toBe(
+        "--list-profiles\n--delete-profile\n--sweep-orphaned-aces\n",
+      );
+      // One info for the reap, one for the sweep, which names only the paths that lost ACEs.
+      expect(infos).toEqual([
+        { reaped: ["nimbus-ext-exec-old"] },
+        { swept: [{ path: "/bun/bin", removed: 7 }] },
+      ]);
+      expect(warns).toHaveLength(0);
+    },
+  );
+
+  it.skipIf(process.platform === "win32")("a sweep that removed nothing logs nothing", async () => {
+    pretendWindows();
+    installFakeHelper(
+      [
+        'case "$1" in',
+        "  --list-profiles) ;;",
+        '  --sweep-orphaned-aces) printf "removed 0 %s\\n" "$2" ;;',
+        "  *) exit 3 ;;",
+        "esac",
+        "exit 0",
+      ].join("\n"),
+    );
+    await reapAppContainersAtBoot({ db: emptyDb(), logger: logger(), sweepPaths: ["/bun/bin"] });
+    expect(infos).toHaveLength(0);
+    expect(warns).toHaveLength(0);
+  });
+
+  it.skipIf(process.platform === "win32")(
+    "a failing sweep warns and does not change what the reap reports",
+    async () => {
+      pretendWindows();
+      installFakeHelper(
+        [
+          'case "$1" in',
+          "  --list-profiles) printf 'nimbus-ext-exec-old\\n' ;;",
+          "  --delete-profile) ;;",
+          "  --sweep-orphaned-aces) echo 'GetNamedSecurityInfoW: 5' >&2; exit 1 ;;",
+          "  *) exit 3 ;;",
+          "esac",
+          "exit 0",
+        ].join("\n"),
+      );
+      const reaped = await reapAppContainersAtBoot({
+        db: emptyDb(),
+        logger: logger(),
+        sweepPaths: ["/bun/bin"],
+      });
+      expect(reaped).toEqual(["nimbus-ext-exec-old"]);
+      expect(warns).toHaveLength(1);
+    },
+  );
+
+  it.skipIf(process.platform === "win32")("no sweep paths means no sweep call at all", async () => {
+    pretendWindows();
+    const calls = join(tmp, "calls.txt");
+    installFakeHelper(`printf '%s\\n' "$1" >> "${calls}"\nexit 0\n`);
+    await reapAppContainersAtBoot({ db: emptyDb(), logger: logger() });
+    expect(readFileSync(calls, "utf8")).toBe("--list-profiles\n");
+  });
+});
+
+describe("parseSweepOutput", () => {
+  it("reads each removed line, keeping a path that contains spaces whole", () => {
+    expect(
+      parseSweepOutput("removed 3 /opt/Program Files/Nimbus\r\nnoise\nremoved 0 /x\n"),
+    ).toEqual([
+      { path: "/opt/Program Files/Nimbus", removed: 3 },
+      { path: "/x", removed: 0 },
+    ]);
+  });
 });
