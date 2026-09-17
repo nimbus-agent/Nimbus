@@ -24,7 +24,7 @@ import type { EmbeddingReadiness } from "../embedding/embedding-readiness.ts";
 import type { AskExplainRecorder } from "../engine/ask-explain-recorder.ts";
 import { preT2DisabledCount, signatureDisabledRegistry } from "../extensions/hard-disable.ts";
 import { buildItemListSql } from "../index/item-list-query.ts";
-import type { LocalIndex } from "../index/local-index.ts";
+import type { IndexedItem, LocalIndex } from "../index/local-index.ts";
 import { LocalIndex as LocalIndexClass } from "../index/local-index.ts";
 import type { NegationExplain } from "../index/negation-predicates.ts";
 import {
@@ -33,6 +33,7 @@ import {
   runNotTouchingQuery,
 } from "../index/negation-query.ts";
 import { isVecLoaded, lastVecLoadFailure } from "../index/sqlite-vec-load.ts";
+import { mediaSourceBytes } from "../multimodal/media-source-registry.ts";
 import type { SandboxRunner } from "../platform/sandbox/sandbox-runner.ts";
 import { ensureFullSqlite } from "../platform/sqlite-runtime.ts";
 import { buildTelemetryPreview } from "../telemetry/collector.ts";
@@ -489,6 +490,32 @@ function negationResult<Row, Gaps>(
 }
 
 /**
+ * Fill `sizeBytes` for a media artifact from the key its connector actually writes.
+ *
+ * `rowToItem` hydrates `sizeBytes` only from a `size_bytes` metadata key, and no media source
+ * writes that key — `filesystem` writes `sizeBytes`, Google Drive and OneDrive write `size` (Drive's
+ * as a string) — so every media row reached the wire with its size buried in `rawMeta`, and the
+ * `nimbus media allow-remote` consent preview printed "size unknown" for all of them.
+ * `mediaSourceBytes` is the table the media pass itself budgets with, so the preview and the pass
+ * read one definition. A hydrated `size_bytes` still wins, and a source with no recorded byte count
+ * (Google Photos) stays absent rather than estimated.
+ */
+function withMediaSourceSize(item: IndexedItem): IndexedItem {
+  if (item.sizeBytes !== undefined || item.rawMeta === undefined) return item;
+  const derived = mediaSourceBytes(item.service, item.rawMeta);
+  return derived === null ? item : { ...item, sizeBytes: derived };
+}
+
+/** `withMediaSourceSize` over a negation outcome's rows, so a predicate never changes the row shape. */
+function withMediaSourceSizes<Gaps>(
+  outcome: NegationOutcome<IndexedItem, Gaps>,
+): NegationOutcome<IndexedItem, Gaps> {
+  return outcome.kind === "refused"
+    ? outcome
+    : { ...outcome, rows: outcome.rows.map(withMediaSourceSize) };
+}
+
+/**
  * The optional half of a query's time window. An absent bound is OMITTED from the object rather
  * than passed as `undefined`, which is what the callee's optional properties expect. One
  * definition for all three call sites below, which each built it inline before.
@@ -531,7 +558,7 @@ function rpcIndexQueryItems(params: unknown, ctx: DiagnosticsRpcContext): Diagno
       limit,
       explain,
     });
-    return negationResult(outcome, limit);
+    return negationResult(withMediaSourceSizes(outcome), limit);
   }
 
   // --no-downstream-incident: same probe-first shape, over the `correlates_with` substrate.
@@ -544,13 +571,13 @@ function rpcIndexQueryItems(params: unknown, ctx: DiagnosticsRpcContext): Diagno
       limit,
       explain,
     });
-    return negationResult(outcome, limit);
+    return negationResult(withMediaSourceSizes(outcome), limit);
   }
 
   // Plain path — no negation predicate requested. `--explain` still works here: the spec (§ 5)
   // requires it on ANY `query` invocation, not only negation ones, so it is attached on every
   // return path rather than gated inside the negation branches above.
-  const items = requireLocalIndex(ctx).listItems(baseParams);
+  const items = requireLocalIndex(ctx).listItems(baseParams).map(withMediaSourceSize);
   if (!explain) {
     return { kind: "hit", value: { items, meta: { limit, total: items.length } } };
   }
