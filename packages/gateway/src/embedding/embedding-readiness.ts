@@ -164,8 +164,12 @@ export function resolveEmbeddingQueryTimeoutMs(): number {
   if (raw === undefined || raw === "") {
     return DEFAULT_EMBEDDING_QUERY_TIMEOUT_MS;
   }
-  const n = Number.parseInt(raw, 10);
-  if (!Number.isFinite(n) || n <= 0) {
+  // Whole-string check first: `parseInt` would read "1.5" as 1 and "250ms" as 250.
+  if (!/^\d+$/.test(raw)) {
+    return DEFAULT_EMBEDDING_QUERY_TIMEOUT_MS;
+  }
+  const n = Number(raw);
+  if (!Number.isSafeInteger(n) || n <= 0) {
     return DEFAULT_EMBEDDING_QUERY_TIMEOUT_MS;
   }
   return n;

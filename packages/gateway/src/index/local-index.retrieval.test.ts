@@ -16,7 +16,7 @@ const MODEL = "vec-test-model";
 
 function seed(
   outcome: (q: Float32Array) => DualVectorsOutcome,
-  backfill: BackfillPassProgress | null = null,
+  backfill: BackfillPassProgress | null | (() => BackfillPassProgress | null) = null,
 ): { idx: LocalIndex; db: Database } {
   const db = new Database(":memory:");
   LocalIndex.ensureSchema(db);
@@ -44,7 +44,7 @@ function seed(
     model: MODEL,
     embedQuery: async () => q,
     embedQueryDualOutcome: async () => outcome(q),
-    activeBackfillPass: () => backfill,
+    activeBackfillPass: typeof backfill === "function" ? backfill : () => backfill,
   };
   return { idx: new LocalIndex(db, { semanticSearch: deps }), db };
 }
@@ -92,6 +92,23 @@ describe("searchRankedAsync discloses what it actually did", () => {
     expect((await idx.searchRankedAsync({ name: "rate limiting" })).retrieval.reason).toBe(
       "warming",
     );
+  });
+
+  test("the backfill pass is read when ranking starts, not before the query embedding", async () => {
+    // The pass finishes WHILE the query is being embedded; ranking then runs over a complete index,
+    // so disclosing the pass would claim incompleteness that no longer exists.
+    let current: BackfillPassProgress | null = { done: 10, total: 20 };
+    const { idx } = seed(
+      (q) => {
+        current = null;
+        return {
+          vectors: { vec384: q, vec1536: null, model384: MODEL, model1536: null },
+          degraded: null,
+        };
+      },
+      () => current,
+    );
+    expect((await idx.searchRankedAsync({ name: "rate limiting" })).retrieval.backfill).toBeNull();
   });
 
   test("a running backfill pass is disclosed on BOTH branches", async () => {

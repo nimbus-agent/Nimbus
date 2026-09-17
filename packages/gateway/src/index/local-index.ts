@@ -692,7 +692,6 @@ export class LocalIndex {
     const nameQ = query.name?.trim() ?? "";
     const semanticOn = options?.semantic ?? true;
     const ss = this.semanticSearch;
-    const backfill = ss?.activeBackfillPass() ?? null;
     const uv = readIndexedUserVersion(this.db);
     const vecReady = ensureSqliteVecForConnection(this.db, uv);
     const canHybrid = semanticOn && nameQ !== "" && ss !== undefined && uv >= 6 && vecReady;
@@ -702,7 +701,6 @@ export class LocalIndex {
       try {
         const outcome = await ss.embedQueryDualOutcome(nameQ);
         const dual = outcome.vectors;
-        const retrieval = retrievalFromOutcome(outcome, backfill);
         const hybridOpts: HybridSearchOptions = {
           query: nameQ,
           limit: query.limit ?? 50,
@@ -723,6 +721,9 @@ export class LocalIndex {
           hybridOpts.queryEmbedding1536 = dual.vec1536;
           hybridOpts.embeddingModel1536 = dual.model1536;
         }
+        // Snapshot the backfill pass when RANKING starts, not before the query embedding: that
+        // await can span the whole embedding budget, during which a pass may start or finish.
+        const retrieval = retrievalFromOutcome(outcome, ss.activeBackfillPass());
         const hybridResults = await hybridSearch(this.db, hybridOpts);
 
         const normRrf = normalizeHigherIsBetter(hybridResults.map((h) => h.rrfScore));
@@ -761,7 +762,7 @@ export class LocalIndex {
       items: this.searchRanked(query, options),
       retrieval: unrankedRetrieval(
         unrankedReasonFor({ nameQ, semanticOn, hasRuntime: ss !== undefined }),
-        backfill,
+        ss?.activeBackfillPass() ?? null,
       ),
     };
   }

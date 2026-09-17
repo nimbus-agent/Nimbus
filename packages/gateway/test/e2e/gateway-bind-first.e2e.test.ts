@@ -333,6 +333,22 @@ describe("gateway bind-first (#928): a FAILED model fetch degrades, it does not 
   // The permanent-failure half of the false green: a semantic search is SERVED (keyword-only) once
   // embeddings are known dead — and with the envelope it says so instead of reading as complete.
   test("a semantic search after the fetch failed is keyword-only AND says so", async () => {
+    // The refusing proxy makes the fetch fail EVENTUALLY, not by the time the socket binds: on a
+    // slow runner readiness is still `warming` here, and a search then correctly returns the typed
+    // -32021 warming error instead of the keyword-only envelope this test is about. Wait for the
+    // failure to settle first — the precondition is "after the fetch failed", so establish it.
+    const deadline = Date.now() + 60_000;
+    let state: EmbeddingReadinessWire["state"] = "warming";
+    while (state === "warming") {
+      const ping = await ipc.raw("gateway.ping", {});
+      state = ((ping.result as Record<string, unknown>)["embedding"] as EmbeddingReadinessWire)
+        .state;
+      if (state !== "warming") break;
+      if (Date.now() > deadline) throw new Error("embedding readiness never left `warming` in 60s");
+      await new Promise((r) => setTimeout(r, 100));
+    }
+    expect(state).toBe("unavailable");
+
     const res = await ipc.raw("index.searchRanked", {
       name: "who owns billing",
       limit: 5,

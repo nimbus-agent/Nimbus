@@ -152,7 +152,7 @@ describe("resolveEmbeddingQueryTimeoutMs", () => {
   test("honours a positive integer override and ignores anything else", () => {
     process.env[KEY] = "250";
     expect(resolveEmbeddingQueryTimeoutMs()).toBe(250);
-    for (const bad of ["", "0", "-5", "abc"]) {
+    for (const bad of ["", "0", "-5", "abc", "1.5", "250ms", " 250"]) {
       process.env[KEY] = bad;
       expect(resolveEmbeddingQueryTimeoutMs()).toBe(DEFAULT_EMBEDDING_QUERY_TIMEOUT_MS);
     }
