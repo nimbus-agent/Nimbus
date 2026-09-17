@@ -213,6 +213,14 @@ nimbus search "flaky test" --keyword-only            # BM25 only, no vector rank
 > **No other flags are accepted.** `nimbus search` throws `Unknown flag: <arg>` on any argument starting with `-` that is not in the table above — including `--help`, `--json`, `--since` and `--state`. (It is not alone: `nimbus glossary`, `nimbus update`, `nimbus deploy annotate` and `nimbus tribal capture` reject unknown flags too. Most other commands ignore them.) Time, state and assignee filtering are not available here; use [`nimbus query`](#nimbus-query) for `--since`, or raw SQL via `nimbus query --sql`.
 >
 > If the embedding model is still warming up, a semantic search falls back to keyword-only for that call and prints a note on stderr.
+>
+> **stdout is always the plain JSON array of results**, so `nimbus search … | jq '.[0]'` keeps working. Anything the results do not say about themselves goes to **stderr** as `note:` lines:
+>
+> - **Keyword-only results:** why semantic ranking did not run — the query embedding timed out (default budget 5 s, override with `NIMBUS_EMBEDDING_QUERY_TIMEOUT_MS`), the model is still loading, embeddings are disabled or did not start, or the vector index could not be loaded.
+> - **Partial ranking:** a hybrid result ranked on one dimension only, because the other half timed out.
+> - **Incomplete results:** a background embedding pass is still running, reported as `8,400 of 51,600 items processed this pass`. That is progress of the current pass, not index coverage; `nimbus index health` reports per-connector coverage.
+>
+> A gateway older than the CLI prints no notes.
 
 ---
 
