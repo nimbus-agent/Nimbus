@@ -8,6 +8,7 @@ import {
   openTerminalLane,
   TERMINAL_OUTPUT_MAX_BYTES,
   type TerminalLaneRuntime,
+  terminalSpawnOptions,
 } from "./terminal.ts";
 
 /** A fake child process: two readable streams plus a recording stdin. */
@@ -79,6 +80,18 @@ function open(child: FakeChild, spawnSpy?: (a: SpawnArgs) => void) {
     },
   );
 }
+
+describe("terminalSpawnOptions", () => {
+  test("releases the session's grants on exit — its policy id is new per session", () => {
+    // `cu-terminal-<sessionId>`: no other spawn shares the SID, so releasing every ACE it holds
+    // cannot strip a sibling's access, and not releasing grew the owner's cwd DACL per session.
+    const o = terminalSpawnOptions(LAUNCH, "/tmp/cu");
+    expect(o.releaseGrantsOnExit).toBe(true);
+    expect(o.policy).toBe(LAUNCH.policy);
+    expect(o.cwd).toBe("/tmp/cu");
+    expect(o.stdio).toEqual(["pipe", "pipe", "pipe"]);
+  });
+});
 
 describe("openTerminalLane", () => {
   test("writes EXACTLY the bytes it is given plus one newline, and nothing else", async () => {

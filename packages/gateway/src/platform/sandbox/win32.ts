@@ -1,10 +1,11 @@
-import { type ChildProcess, spawn, spawnSync } from "node:child_process";
+import { type ChildProcess, execFile, spawn, spawnSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { canonicalPath, canonicalPolicyPaths } from "./canonical-path.ts";
 import type { SandboxPolicy } from "./sandbox-policy.ts";
 import type { SandboxRunner, SandboxSpawnOptions } from "./sandbox-runner.ts";
 import { buildHelperArgv } from "./win32-argv.ts";
+import { attachGrantRelease, type HelperRun, releaseGrantsFor } from "./win32-release.ts";
 
 export { profileNameFor } from "./win32-argv.ts";
 
@@ -41,6 +42,16 @@ function probeHelper(path: string): HelperState {
   }
 }
 
+/** Run the helper asynchronously, hidden, rejecting on a non-zero exit. */
+export function helperRunner(path: string): HelperRun {
+  return (argv) =>
+    new Promise<void>((resolve, reject) => {
+      execFile(path, argv, { windowsHide: true }, (err) =>
+        err === null ? resolve() : reject(err),
+      );
+    });
+}
+
 export function createWin32SandboxRunner(): SandboxRunner {
   const path = helperPath();
   const helper = probeHelper(path);
@@ -65,7 +76,14 @@ export function createWin32SandboxRunner(): SandboxRunner {
       // Hides the console Windows allocates for this child of the console-less Gateway.
       // Purely about window visibility: it is not part of the AppContainer confinement and
       // does not alter the helper argv, the ACL grant, or the stdio the helper forwards.
-      return spawn(path, argv, { env: opts.env, cwd, stdio: opts.stdio, windowsHide: true });
+      const child = spawn(path, argv, { env: opts.env, cwd, stdio: opts.stdio, windowsHide: true });
+      if (opts.releaseGrantsOnExit === true) {
+        // The SAME canonicalised cwd and policy the grant used: releasing a different spelling of a
+        // directory would leave the real ACE in place. See win32-release.ts for why this is driven
+        // from here rather than from inside the helper.
+        attachGrantRelease(child, () => releaseGrantsFor(helperRunner(path), policy, { cwd }));
+      }
+      return child;
     },
     isFullyActive(): boolean {
       return helper.available;

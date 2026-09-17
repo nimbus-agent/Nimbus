@@ -7,6 +7,17 @@ export interface SandboxSpawnOptions {
   env: Record<string, string>;
   cwd: string;
   stdio?: SpawnOptions["stdio"];
+  /**
+   * Release this spawn's host-side grants when the child exits. Windows only; Linux and macOS leave
+   * no host state behind (bwrap binds and SBPL profiles live and die with the process).
+   *
+   * Set it ONLY for a policy id that is new on every run — `exec-<id>`, `cu-terminal-<id>` — and
+   * never for one that concurrent spawns can share (an extension id, `toolgen.<toolId>`). The
+   * AppContainer SID is derived from the id, and the release removes EVERY explicit ACE that SID
+   * holds, so releasing a shared id would strip a still-running sibling's read access to the
+   * runtime it is executing from.
+   */
+  releaseGrantsOnExit?: boolean;
 }
 
 export interface SandboxRunner {

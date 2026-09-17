@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { EventEmitter } from "node:events";
 import { PassThrough } from "node:stream";
 import type { SandboxPolicy } from "../platform/sandbox/sandbox-policy.ts";
-import type { SandboxRunner } from "../platform/sandbox/sandbox-runner.ts";
+import type { SandboxRunner, SandboxSpawnOptions } from "../platform/sandbox/sandbox-runner.ts";
 import { runConfined } from "./exec-run.ts";
 
 const POLICY: SandboxPolicy = {
@@ -44,6 +44,25 @@ function fakeRunner(child: FakeChild): SandboxRunner {
 const BASE = { policy: POLICY, cwd: "/tmp", maxOutputBytes: 1024, maxWallClockMs: 5000 };
 
 describe("runConfined", () => {
+  test("asks the runner to release the spawn's grants when it exits", async () => {
+    // An execution's policy id is `exec-<executionId>`, new on every run, so no concurrent spawn
+    // shares its AppContainer SID. Without the release, each run left one more ACE on the runtime
+    // bin dir on Windows until the DACL overflowed and every confined spawn refused.
+    const child = fakeChild();
+    let seen: SandboxSpawnOptions | undefined;
+    const runner: SandboxRunner = {
+      ...fakeRunner(child),
+      spawn: (_cmd, _args, opts) => {
+        seen = opts;
+        return child as never;
+      },
+    };
+    const p = runConfined(runner, "bun", ["run", "s.ts"], BASE);
+    child.emit("close", 0);
+    await p;
+    expect(seen?.releaseGrantsOnExit).toBe(true);
+  });
+
   test("captures output and reports a clean exit", async () => {
     const child = fakeChild();
     const p = runConfined(fakeRunner(child), "bun", ["run", "s.ts"], BASE);
