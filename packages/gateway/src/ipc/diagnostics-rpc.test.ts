@@ -912,6 +912,65 @@ describe("index.queryItems", () => {
     }
   });
 
+  // The `nimbus media allow-remote` consent preview reads `sizeBytes` off these rows. No media
+  // source writes the `size_bytes` key `rowToItem` hydrates from, so before the derivation every
+  // media artifact previewed as "size unknown". Each metadata literal below is the shape its
+  // connector actually writes (filesystem-v2-sync.ts, google-drive-sync.ts, onedrive-sync.ts).
+  test("derives sizeBytes for media sources from the key each connector writes", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "nimbus-diag-qi-size-"));
+    try {
+      const { ctx, db } = makeCtxWithIndex(dir);
+      try {
+        db.run(
+          `INSERT INTO item (id, service, type, external_id, title, modified_at, synced_at, metadata)
+           VALUES
+             ('fs-1', 'filesystem', 'media_image', '/p/a.png', 'a.png', 4000, 4000,
+              '{"path":"/p/a.png","sizeBytes":1234,"mimeType":"image/png","mediaKind":"image"}'),
+             ('gd-1', 'google_drive', 'file', 'd1', 'b.png', 3000, 3000,
+              '{"mimeType":"image/png","size":"390842"}'),
+             ('od-1', 'onedrive', 'file', 'o1', 'c.png', 2000, 2000,
+              '{"size":5678,"mimeType":"image/png"}'),
+             ('gp-1', 'google_photos', 'photo', 'p1', 'd.jpg', 1000, 1000,
+              '{"mimeType":"image/jpeg","mediaMetadata":{"width":"10","height":"10"}}')`,
+        );
+        const r = await dispatchDiagnosticsRpc("index.queryItems", {}, ctx);
+        expect(r.kind).toBe("hit");
+        const v = (r as { value: { items: Record<string, unknown>[] } }).value;
+        const byKey = new Map(v.items.map((i) => [i["indexPrimaryKey"], i]));
+        expect(byKey.get("fs-1")?.["sizeBytes"]).toBe(1234);
+        expect(byKey.get("gd-1")?.["sizeBytes"]).toBe(390_842);
+        expect(byKey.get("od-1")?.["sizeBytes"]).toBe(5678);
+        // Google Photos records no byte count: unknown stays unknown, never estimated.
+        expect(byKey.get("gp-1")?.["sizeBytes"]).toBeUndefined();
+      } finally {
+        db.close();
+      }
+    } finally {
+      rmTmp(dir);
+    }
+  });
+
+  test("a hydrated size_bytes wins over the media-source derivation", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "nimbus-diag-qi-size2-"));
+    try {
+      const { ctx, db } = makeCtxWithIndex(dir);
+      try {
+        db.run(
+          `INSERT INTO item (id, service, type, external_id, title, modified_at, synced_at, metadata)
+           VALUES ('od-2', 'onedrive', 'file', 'o2', 'e.png', 1000, 1000,
+                   '{"size_bytes":42,"size":99}')`,
+        );
+        const r = await dispatchDiagnosticsRpc("index.queryItems", {}, ctx);
+        const v = (r as { value: { items: Record<string, unknown>[] } }).value;
+        expect(v.items[0]?.["sizeBytes"]).toBe(42);
+      } finally {
+        db.close();
+      }
+    } finally {
+      rmTmp(dir);
+    }
+  });
+
   test("no response key is snake_case", async () => {
     // The structural gate. If queryItems ever regresses to returning raw
     // SELECT * rows, this fails regardless of how the regression is written.
