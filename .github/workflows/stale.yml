@@ -31,3 +31,9 @@ jobs:
           days-before-stale: 60
           days-before-pr-stale: 45
           days-before-close: 7
+          # The contributor shelf is written once and then waits for a volunteer, so "no activity"
+          # is its normal state, not a sign it is dead. Without these exemptions every
+          # `good first issue` would be closed roughly 67 days after it was filed. An issue someone
+          # has claimed is exempt for the same reason: the silence is them working on it.
+          exempt-issue-labels: 'good first issue,help wanted'
+          exempt-all-issue-assignees: true
