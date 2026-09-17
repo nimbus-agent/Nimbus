@@ -4,7 +4,12 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import pino from "pino";
 
-import { type EmbeddingWarmingError, isEmbeddingWarmingError } from "./embedding-readiness.ts";
+import {
+  type EmbeddingTimeoutError,
+  type EmbeddingWarmingError,
+  isEmbeddingTimeoutError,
+  isEmbeddingWarmingError,
+} from "./embedding-readiness.ts";
 import type { EmbeddingRuntime } from "./embedding-runtime.ts";
 import { tryCreateEmbeddingWorkerBridge } from "./worker-bridge.ts";
 
@@ -234,6 +239,52 @@ describe("tryCreateEmbeddingWorkerBridge", () => {
       expect(result).toBeNull();
     } finally {
       bridge.terminate();
+    }
+  });
+
+  // The #928 rule applied to the OTHER arm. A worker that never answers (starved, wedged) used to
+  // resolve `null` after 60 s — indistinguishable from the permanent `unavailable` state, so hybrid
+  // search silently became BM25 and an empty result read as "found nothing". This drives the REAL
+  // timer: no reply is ever fired, and the only thing that can settle the call is the timeout arm.
+  test("a ready worker that never answers REJECTS with the typed timeout — never a null vector", async () => {
+    installFakeWorker();
+    const KEY = "NIMBUS_EMBEDDING_QUERY_TIMEOUT_MS";
+    const saved = process.env[KEY];
+    process.env[KEY] = "40";
+    const bridge = makeBridge();
+    try {
+      const handle = currentHandle();
+      handle.fire({ type: "ready" });
+      const started = Date.now();
+      const outcome: unknown = await bridge.embedQuery("starved").then(
+        (v) => ({ resolved: v }),
+        (e: unknown) => ({ rejected: e }),
+      );
+      expect(outcome).not.toHaveProperty("resolved");
+      const err = (outcome as { rejected: unknown }).rejected;
+      expect(isEmbeddingTimeoutError(err)).toBe(true);
+      expect((err as EmbeddingTimeoutError).timeoutMs).toBe(40);
+      expect((err as EmbeddingTimeoutError).readiness.state).toBe("ready");
+      // Bounded by the configured budget, not the old hard-coded 60 s.
+      expect(Date.now() - started).toBeLessThan(10_000);
+
+      // A late answer for the abandoned request must be ignored, not resolve a stale promise.
+      const sent = handle.posted().find((m) => m["type"] === "embed_texts");
+      handle.fire({ type: "embed_texts_result", id: sent?.["id"], ok: true, vectors: [[1]] });
+
+      // The dual path carries the same contract.
+      const dual: unknown = await bridge.embedQueryDual("starved again").then(
+        () => "resolved",
+        (e: unknown) => e,
+      );
+      expect(isEmbeddingTimeoutError(dual)).toBe(true);
+    } finally {
+      bridge.terminate();
+      if (saved === undefined) {
+        Reflect.deleteProperty(process.env, KEY);
+      } else {
+        process.env[KEY] = saved;
+      }
     }
   });
 

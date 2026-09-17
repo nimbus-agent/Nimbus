@@ -12,6 +12,8 @@ import {
   type EmbeddingReadinessState,
   EmbeddingWarmingError,
   NO_DUAL_VECTORS,
+  resolveEmbeddingQueryTimeoutMs,
+  withEmbeddingQueryTimeout,
 } from "./embedding-readiness.ts";
 import type { EmbeddingRuntime } from "./embedding-runtime.ts";
 import { LOCAL_EMBEDDING_MODEL_ID } from "./model.ts";
@@ -19,7 +21,6 @@ import type { EmbeddingDualVectors } from "./types.ts";
 
 type Pending = {
   resolve: (v: Float32Array | null) => void;
-  timer: ReturnType<typeof setTimeout>;
 };
 
 const DEFAULT_EMBEDDING_INIT_TIMEOUT_MS = 600_000;
@@ -240,7 +241,6 @@ class EmbeddingWorkerBridge implements EmbeddingRuntime {
     if (p === undefined) {
       return;
     }
-    clearTimeout(p.timer);
     this.pending.delete(id);
     if (rec["ok"] === true && Array.isArray(rec["vectors"])) {
       const first = rec["vectors"][0];
@@ -318,7 +318,9 @@ class EmbeddingWorkerBridge implements EmbeddingRuntime {
   /**
    * The false-green guard (#928). A not-yet-ready worker must NOT hand back a null vector:
    * hybrid search would silently degrade to BM25 and report `[]` as a legitimate zero.
-   * `unavailable` still returns null — that absence is permanent for this process.
+   * The same holds for a ready worker that does not answer in time: that throws
+   * `EmbeddingTimeoutError`. `unavailable` (and a worker that cannot accept the message)
+   * still returns null — that absence is permanent for this process.
    */
   async embedQuery(text: string): Promise<Float32Array | null> {
     if (!this.workerReady) {
@@ -329,16 +331,29 @@ class EmbeddingWorkerBridge implements EmbeddingRuntime {
       return null;
     }
     const id = randomUUID();
-    return new Promise<Float32Array | null>((resolve) => {
-      const timer = setTimeout(() => {
-        this.pending.delete(id);
-        resolve(null);
-      }, 60_000);
-      this.pending.set(id, { resolve, timer });
+    let resolvePending!: (v: Float32Array | null) => void;
+    const posted = new Promise<Float32Array | null>((resolve) => {
+      resolvePending = resolve;
+    });
+    this.pending.set(id, { resolve: resolvePending });
+    try {
       this.worker.postMessage({ type: "embed_texts", id, texts: [text] });
-    }).catch((err: unknown) => {
+    } catch (err) {
+      // A worker that cannot even accept the message is dead for this process — the one case
+      // where `null` (permanent) is the honest answer.
+      this.pending.delete(id);
       this.logger.warn({ err }, "embedQuery failed");
       return null;
+    }
+    // The budget turns into a TYPED rejection, never `null` (#928's rule, applied to the arm it
+    // missed). A late `embed_texts_result` for the abandoned id finds no pending entry and is
+    // dropped.
+    return withEmbeddingQueryTimeout(posted, {
+      timeoutMs: resolveEmbeddingQueryTimeoutMs(),
+      readiness: () => this.getReadiness(),
+      onTimeout: () => {
+        this.pending.delete(id);
+      },
     });
   }
 
@@ -376,7 +391,6 @@ class EmbeddingWorkerBridge implements EmbeddingRuntime {
     this.markUnavailable("embedding worker terminated");
     this.worker.onmessage = null;
     for (const [, p] of this.pending) {
-      clearTimeout(p.timer);
       p.resolve(null);
     }
     this.pending.clear();
