@@ -95,6 +95,8 @@ class EmbeddingWorkerBridge implements EmbeddingRuntime {
 
   private readonly pending = new Map<string, Pending>();
   private progress: { done: number; total: number } | null = null;
+  /** True between the first `backfill_progress` of a pass and its `backfill_done`. */
+  private backfillRunning = false;
   private gateSettled = false;
   private workerReady = false;
   private readonly startedMs = Date.now();
@@ -229,6 +231,7 @@ class EmbeddingWorkerBridge implements EmbeddingRuntime {
     const total = rec["total"];
     if (typeof done === "number" && typeof total === "number") {
       this.progress = { done: Math.floor(done), total: Math.floor(total) };
+      this.backfillRunning = true;
     }
   }
 
@@ -275,6 +278,9 @@ class EmbeddingWorkerBridge implements EmbeddingRuntime {
       return;
     }
     if (t === "backfill_done") {
+      // Ends the pass whether it finished, failed, or stopped for battery — in each case nothing
+      // is being embedded right now, so a search must not claim results may still be arriving.
+      this.backfillRunning = false;
       if (rec["success"] === false) {
         this.logger.warn(
           { msg: "embedding_backfill_failed" },
@@ -382,6 +388,10 @@ class EmbeddingWorkerBridge implements EmbeddingRuntime {
     return this.progress;
   }
 
+  getActiveBackfillPass(): { done: number; total: number } | null {
+    return this.backfillRunning ? this.progress : null;
+  }
+
   startBackgroundJobs(): void {
     /* worker backfills after ready */
   }
@@ -389,6 +399,7 @@ class EmbeddingWorkerBridge implements EmbeddingRuntime {
   terminate(): void {
     // A torn-down bridge must stop claiming "warming" — nothing will ever make it ready.
     this.markUnavailable("embedding worker terminated");
+    this.backfillRunning = false;
     this.worker.onmessage = null;
     for (const [, p] of this.pending) {
       p.resolve(null);

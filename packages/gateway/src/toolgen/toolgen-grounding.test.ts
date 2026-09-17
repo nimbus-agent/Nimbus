@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import type { RankedIndexItem } from "../index/ranked-item.ts";
+import type { SearchRankedResult } from "../index/search-retrieval.ts";
 import { createEndpointFinder, groundingOf } from "./toolgen-grounding.ts";
 
 function rankedItem(title: string, meta: Record<string, unknown>): RankedIndexItem {
@@ -15,19 +16,27 @@ function rankedItem(title: string, meta: Record<string, unknown>): RankedIndexIt
   } as unknown as RankedIndexItem;
 }
 
+/** A search result as `searchRankedAsync` returns it, for mocks that only care about the items. */
+function found(items: RankedIndexItem[]): SearchRankedResult {
+  return {
+    items,
+    retrieval: { vectorRanked: false, reason: "no_query", partial: null, backfill: null },
+  };
+}
+
 describe("createEndpointFinder", () => {
   test("queries api_endpoint items with the description as the search term", async () => {
     const calls: unknown[] = [];
     const index = {
       searchRankedAsync: async (q: unknown) => {
         calls.push(q);
-        return [
+        return found([
           rankedItem("GET /repos/{owner}/{repo}/issues", {
             service_name: "github-api",
             operation_id: "listIssues",
             tags: ["issues"],
           }),
-        ];
+        ]);
       },
     };
     const find = createEndpointFinder(index as never);
@@ -46,16 +55,17 @@ describe("createEndpointFinder", () => {
   });
 
   test("skips an item whose title is not METHOD PATH rather than emitting a broken row", async () => {
-    const index = { searchRankedAsync: async () => [rankedItem("malformed", {})] };
+    const index = { searchRankedAsync: async () => found([rankedItem("malformed", {})]) };
     expect(await createEndpointFinder(index as never)("q", 8)).toEqual([]);
   });
 
   test("AsyncAPI channels are deliberately excluded: a generated tool has no pub/sub transport", async () => {
     const index = {
-      searchRankedAsync: async () => [
-        rankedItem("PUBLISH user/signedup", { service_name: "kafka", tags: ["user"] }),
-        rankedItem("SUBSCRIBE user/signedup", { service_name: "kafka", tags: ["user"] }),
-      ],
+      searchRankedAsync: async () =>
+        found([
+          rankedItem("PUBLISH user/signedup", { service_name: "kafka", tags: ["user"] }),
+          rankedItem("SUBSCRIBE user/signedup", { service_name: "kafka", tags: ["user"] }),
+        ]),
     };
     expect(await createEndpointFinder(index as never)("q", 8)).toEqual([]);
   });
@@ -81,7 +91,7 @@ describe("createEndpointFinder", () => {
       indexedType: "api_endpoint",
       // rawMeta intentionally absent
     } as unknown as RankedIndexItem;
-    const index = { searchRankedAsync: async () => [item] };
+    const index = { searchRankedAsync: async () => found([item]) };
     expect(await createEndpointFinder(index as never)("q", 8)).toEqual([
       {
         serviceName: "internal-api",
@@ -95,10 +105,11 @@ describe("createEndpointFinder", () => {
 
   test("rawMeta.tags absent or not an array falls back to an empty summary, not a throw", async () => {
     const index = {
-      searchRankedAsync: async () => [
-        rankedItem("GET /a", { service_name: "svc", tags: "not-an-array" }),
-        rankedItem("GET /b", {}),
-      ],
+      searchRankedAsync: async () =>
+        found([
+          rankedItem("GET /a", { service_name: "svc", tags: "not-an-array" }),
+          rankedItem("GET /b", {}),
+        ]),
     };
     const out = await createEndpointFinder(index as never)("q", 8);
     expect(out.map((e) => e.summary)).toEqual(["", ""]);
@@ -106,9 +117,8 @@ describe("createEndpointFinder", () => {
 
   test("non-string entries in rawMeta.tags are filtered out of the summary", async () => {
     const index = {
-      searchRankedAsync: async () => [
-        rankedItem("GET /a", { service_name: "svc", tags: ["issues", 42, null, "open"] }),
-      ],
+      searchRankedAsync: async () =>
+        found([rankedItem("GET /a", { service_name: "svc", tags: ["issues", 42, null, "open"] })]),
     };
     const out = await createEndpointFinder(index as never)("q", 8);
     expect(out[0]?.summary).toBe("issues open");
@@ -116,7 +126,7 @@ describe("createEndpointFinder", () => {
 
   test("a wrong-typed service_name falls back to item.service rather than the bad value", async () => {
     const index = {
-      searchRankedAsync: async () => [rankedItem("GET /a", { service_name: 12345 })],
+      searchRankedAsync: async () => found([rankedItem("GET /a", { service_name: 12345 })]),
     };
     const out = await createEndpointFinder(index as never)("q", 8);
     expect(out[0]?.serviceName).toBe("openapi"); // rankedItem()'s item.service
@@ -124,7 +134,7 @@ describe("createEndpointFinder", () => {
 
   test("a wrong-typed operation_id falls back to null rather than the bad value", async () => {
     const index = {
-      searchRankedAsync: async () => [rankedItem("GET /a", { operation_id: 999 })],
+      searchRankedAsync: async () => found([rankedItem("GET /a", { operation_id: 999 })]),
     };
     const out = await createEndpointFinder(index as never)("q", 8);
     expect(out[0]?.operationId).toBeNull();

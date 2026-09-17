@@ -416,6 +416,13 @@ describe("tryCreateEmbeddingWorkerBridge", () => {
       expect(bridge.getBackfillProgress()).toBeNull();
       handle.fire({ type: "backfill_progress", done: 3, total: 10 });
       expect(bridge.getBackfillProgress()).toEqual({ done: 3, total: 10 });
+      // A pass is RUNNING between its first progress and its done — that window, and only that
+      // window, is what a search discloses as "results may be incomplete".
+      expect(bridge.getActiveBackfillPass()).toEqual({ done: 3, total: 10 });
+      handle.fire({ type: "backfill_done", success: true });
+      expect(bridge.getActiveBackfillPass()).toBeNull();
+      // `nimbus status` still shows the last progress after the pass ends.
+      expect(bridge.getBackfillProgress()).toEqual({ done: 3, total: 10 });
       handle.fire({ type: "backfill_done", success: true });
       handle.fire({ type: "backfill_done", success: false });
       handle.fire({ type: "embed_texts_result", id: 42 });

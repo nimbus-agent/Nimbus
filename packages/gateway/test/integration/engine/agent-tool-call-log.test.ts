@@ -25,7 +25,10 @@ function freshAuditDb(): Database {
 
 function stubLocalIndex(): LocalIndex {
   return {
-    searchRankedAsync: async () => [],
+    searchRankedAsync: async () => ({
+      items: [],
+      retrieval: { vectorRanked: false, reason: "no_query", partial: null, backfill: null },
+    }),
     fetchMoreItems: () => [],
     traverseGraph: () => ({ entities: [], relations: [] }),
     getDatabase: () => new Database(":memory:"),

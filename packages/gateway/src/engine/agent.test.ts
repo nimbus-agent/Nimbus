@@ -247,6 +247,16 @@ describe("searchLocalIndex", () => {
     expect(Array.isArray(p.items)).toBe(true);
     expect(p.items).toHaveLength(0);
     expect(typeof p.note).toBe("string");
+    // The search's own disclosure reaches the model inside the envelope (I11), so a keyword-only
+    // or mid-backfill result cannot read to it as a complete semantic search.
+    expect((env.payload as { retrieval?: unknown }).retrieval).toEqual({
+      vectorRanked: false,
+      reason: "no_query",
+      partial: null,
+      backfill: null,
+    });
+    // `no_query` is not a degradation, so there is no note to add.
+    expect((env.payload as { retrievalNote?: unknown }).retrievalNote).toBeUndefined();
   });
 
   test("non-object input is coerced to empty query", async () => {

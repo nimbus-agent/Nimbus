@@ -295,10 +295,11 @@ export async function rpcIndexSearchRanked(ctx: ServerCtx, params: unknown): Pro
   if (itemType !== undefined) {
     query.itemType = itemType;
   }
-  return await ctx.options.localIndex.searchRankedAsync(query, {
+  const result = await ctx.options.localIndex.searchRankedAsync(query, {
     semantic,
     contextChunks,
   });
+  return result.items;
 }
 
 export function rpcConsentRespond(ctx: ServerCtx, clientId: string, params: unknown): unknown {

@@ -691,10 +691,11 @@ async function buildLocalIndexedContext(
     // Probe wide, serve narrow. `primary.length` is the only honest source for "how many
     // match" — every other search below is itself capped, so counting `byId` would just
     // re-measure the truncation instead of the substrate.
-    const primary = await localIndex.searchRankedAsync(
+    const primarySearch = await localIndex.searchRankedAsync(
       { name: searchTerms, limit: LOCAL_CONTEXT_TOTAL_PROBE_LIMIT },
       { semantic: true, contextChunks: 2 },
     );
+    const primary = primarySearch.items;
     addRankedResults(primary.slice(0, resolveLocalContextItemLimit()), { kind: "primary-hybrid" });
     for (const quotedQuery of extractQuotedSearchQueries(query)) {
       addRankedResults(

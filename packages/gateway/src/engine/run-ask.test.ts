@@ -899,7 +899,10 @@ describe("runAsk", () => {
     // Partial localIndex shape: no getDatabase method
     const partialIndex = {
       searchRanked: () => [],
-      searchRankedAsync: async () => [],
+      searchRankedAsync: async () => ({
+        items: [],
+        retrieval: { vectorRanked: false, reason: "no_query", partial: null, backfill: null },
+      }),
       getBodyPreview: () => undefined,
     } as unknown as InstanceType<typeof LocalIndex>;
 
@@ -1028,7 +1031,10 @@ describe("runAsk", () => {
     // the no-context path without the empty-query guard at line 335.
     const originalAsync = localIndex.searchRankedAsync.bind(localIndex);
     const originalSync = localIndex.searchRanked.bind(localIndex);
-    localIndex.searchRankedAsync = async () => [];
+    localIndex.searchRankedAsync = async () => ({
+      items: [],
+      retrieval: { vectorRanked: false, reason: "no_query", partial: null, backfill: null },
+    });
     localIndex.searchRanked = () => [];
 
     const out = await runAsk({
@@ -1070,7 +1076,10 @@ describe("runAsk", () => {
     const calls: string[] = [];
 
     // Override searches to always return [] so buildLocalIndexedContext reaches line 374
-    localIndex.searchRankedAsync = async () => [];
+    localIndex.searchRankedAsync = async () => ({
+      items: [],
+      retrieval: { vectorRanked: false, reason: "no_query", partial: null, backfill: null },
+    });
     localIndex.searchRanked = () => [];
 
     const out = await runAsk({

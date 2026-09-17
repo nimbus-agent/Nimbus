@@ -200,6 +200,10 @@ export function createLazyEmbeddingRuntime(
       return null;
     },
 
+    getActiveBackfillPass(): { done: number; total: number } | null {
+      return null;
+    },
+
     getReadiness: readiness,
 
     startBackgroundJobs(): void {
