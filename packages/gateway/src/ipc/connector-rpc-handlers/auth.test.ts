@@ -46,14 +46,21 @@ import {
   ZOOM_OAUTH_CLIENT_ID_HELP,
 } from "../../auth/oauth-env-help-messages.ts";
 import {
+  CONNECTOR_SERVICE_IDS,
   type ConnectorServiceId,
+  credentialsReusedFrom,
   oauthProfileForService,
 } from "../../connectors/connector-catalog.ts";
+import { CONNECTOR_VAULT_SECRET_KEYS } from "../../connectors/connector-secrets-manifest.ts";
 import { LocalIndex } from "../../index/local-index.ts";
 import { createMockVault } from "../../vault/mock.ts";
 import type { NimbusVault } from "../../vault/nimbus-vault.ts";
 import { ConnectorRpcError } from "../connector-rpc-shared.ts";
-import { handleConnectorAuth, oauthClientConfigForProvider } from "./auth.ts";
+import {
+  connectorAuthUnavailableMessage,
+  handleConnectorAuth,
+  oauthClientConfigForProvider,
+} from "./auth.ts";
 import type { ConnectorRpcHandlerContext, OAuthClientConfigResolver } from "./context.ts";
 
 let db: Database;
@@ -207,5 +214,84 @@ describe("handleConnectorAuth — PAT handler routing", () => {
     expect(out.kind).toBe("hit");
     expect((out.value as { ok: boolean; serviceId: string }).ok).toBe(true);
     expect((out.value as { serviceId: string }).serviceId).toBe("github");
+  });
+});
+
+describe("handleConnectorAuth — a service with no auth flow refuses usefully (#1531)", () => {
+  /** A context whose browser opener fails the test if the handler ever reaches the OAuth path. */
+  function refusingCtx(service: string): ConnectorRpcHandlerContext {
+    return {
+      ...ctxFor(service),
+      rec: { service, personalAccessToken: "ignored-token" },
+      openUrl: async () => {
+        throw new Error(`OAuth was attempted for ${service}`);
+      },
+    };
+  }
+
+  async function refusalFor(service: string): Promise<InstanceType<typeof ConnectorRpcError>> {
+    let caught: unknown;
+    try {
+      await handleConnectorAuth(refusingCtx(service));
+    } catch (e) {
+      caught = e;
+    }
+    expect(caught).toBeInstanceOf(ConnectorRpcError);
+    return caught as InstanceType<typeof ConnectorRpcError>;
+  }
+
+  test("the services the issue reproduced get a -32602 naming every `nimbus vault set` key", async () => {
+    for (const service of [
+      "stripe",
+      "vercel",
+      "elasticsearch",
+      "localdb",
+      "great_expectations",
+    ] as const) {
+      const err = await refusalFor(service);
+      expect(err.rpcCode).toBe(-32602);
+      expect(err.message).not.toContain("oauthProfileForService");
+      for (const key of CONNECTOR_VAULT_SECRET_KEYS[service]) {
+        expect(err.message).toContain(`nimbus vault set ${key} <value>`);
+      }
+      // The refusal must happen before anything is stored.
+      expect(await vault.listKeys(`${service}.`)).toEqual([]);
+    }
+  });
+
+  test("a service that syncs with another service's credential names that service", async () => {
+    expect((await refusalFor("bigquery")).message).toContain("nimbus connector auth gcp");
+    expect((await refusalFor("github_actions")).message).toContain("nimbus connector auth github");
+    expect((await refusalFor("athena")).message).toContain("nimbus connector auth aws");
+  });
+
+  test("across the whole catalog, no refusal points back at the command that just failed", () => {
+    for (const id of CONNECTOR_SERVICE_IDS) {
+      const message = connectorAuthUnavailableMessage(id);
+      if (message === null) continue;
+      expect(message).not.toContain(`connector auth ${id}\``);
+      expect(message).not.toContain(`connector.auth ${id}`);
+      if (credentialsReusedFrom(id) === undefined) {
+        // Every vault-set refusal names a command per manifest key, so none can be a dead end.
+        const keys: readonly string[] = CONNECTOR_VAULT_SECRET_KEYS[id];
+        expect(keys.length).toBeGreaterThan(0);
+        for (const key of keys) expect(message).toContain(`nimbus vault set ${key}`);
+      }
+    }
+  });
+
+  test("services that DO have a flow are untouched: a PAT handler or an OAuth profile gets no refusal", () => {
+    for (const id of ["github", "jira", "aws", "google_drive", "notion", "slack"] as const) {
+      expect(connectorAuthUnavailableMessage(id)).toBeNull();
+    }
+  });
+
+  test("the OAuth-unsupported error no longer tells the user to run connector.auth", () => {
+    expect(() => oauthProfileForService("stripe")).toThrow("does not use OAuth");
+    try {
+      oauthProfileForService("stripe");
+    } catch (e) {
+      expect(String(e)).not.toContain("connector.auth");
+    }
   });
 });

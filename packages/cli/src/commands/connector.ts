@@ -1380,6 +1380,10 @@ CircleCI: --token (personal API token) or env NIMBUS_CIRCLECI_API_TOKEN / CIRCLE
   );
   console.log(`Kubernetes: --kubeconfig <path> [--context <name>] or env NIMBUS_KUBECONFIG / KUBECONFIG (vault keys kubernetes.kubeconfig, optional kubernetes.context). Indexes cluster deployments.
 
+Most other token / API-key connectors (stripe, vercel, snowflake, elasticsearch, …) have no auth flow:
+store their settings with \`nimbus vault set <service>.<key> <value>\` (each write asks for approval).
+\`nimbus connector auth <service>\` prints the exact keys for one of them.
+
 Credentials are stored in the OS vault only (never printed here).
 `);
 }

@@ -18,6 +18,26 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
 
 ## Post-Phase-6 deliveries
 
+- **2026-09-17 — `nimbus connector auth <service>` stops sending you back to itself (#1531).** For
+  50 token/API-key and local-setting connectors (Stripe, Vercel, Snowflake, Elasticsearch,
+  `localdb`, …) the command had no handler. It fell through to the OAuth path, which threw an
+  internal `oauthProfileForService: <svc> … (connector.auth <svc>)` error — telling the user to run
+  the command that had just failed — and `--token` was silently dropped. It now refuses up front
+  with a `-32602` that says how the service authenticates and lists the exact
+  `nimbus vault set <key> <value>` command for each of its `CONNECTOR_VAULT_SECRET_KEYS`. The seven
+  services that sync with another service's credential (`github_actions` → `github`; `bigquery`,
+  `cloud_logging`, `vertex_ai` → `gcp`; `athena`, `cloudwatch`, `sagemaker` → `aws`) name that
+  service instead. **Deliberately a refusal, not a new store-the-keys arm:** `vault set` asks for
+  approval on every write, and `connector.auth` is renderer-reachable, so adding an ungated
+  Vault-write path for 50 more services was rejected; the manifest also cannot say which of a
+  service's keys are required, so a generic arm would accept a half-configured connector silently.
+  The `OAUTH_UNSUPPORTED_DETAILS` strings no longer name any command, `nimbus connector help` and
+  `connector auth <svc> --help` now point at `vault set`, and `docs/cli-reference.md` moves the 34
+  affected examples out of the `connector auth` block into a generated table of each service's
+  Vault keys. **Not changed:** the four upstream connector READMEs in `nimbus-mcp-servers` that
+  still show `nimbus connector auth <svc>` (`elasticsearch`, `dataprofile`, `localdb`, `storybook`),
+  and the Phase 11 acceptance criterion in `docs/roadmap.md` that names `connector auth fastmail`.
+  No invariant, no migration, no egress class.
 - **2026-09-17 — a search now says when it was keyword-only or incomplete (the follow-up V62
   deferred).** V62 fixed the quadratic vector-search plan behind #1396, but two false greens
   remained. First, a query embedding that timed out resolved `null`, exactly like the permanent
