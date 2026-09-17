@@ -252,7 +252,15 @@ describe("fleet.list / fleet.briefs / fleet.show over a real store", () => {
     expect(out).toMatchObject({ kind: "hit" });
     if (out.kind !== "hit") throw new Error("expected a hit");
     expect(out.value).toEqual({
-      jobs: [{ name: "morning_catchup", agent: "catchup", intervalSeconds: 3600, state: null }],
+      jobs: [
+        {
+          name: "morning_catchup",
+          agent: "catchup",
+          intervalSeconds: 3600,
+          state: null,
+          sweep: null,
+        },
+      ],
     });
   });
 
@@ -323,6 +331,89 @@ describe("fleet.list / fleet.briefs / fleet.show over a real store", () => {
     await expect(dispatchFleetRpc("fleet.briefs", { limit: -1 }, ctx(0))).rejects.toThrow(
       FleetRpcError,
     );
+  });
+
+  function seedBrief(jobId: string, subjectKey: string, createdAt: number): void {
+    const runId = store.openRun({
+      startedAt: createdAt,
+      hostPower: "ac",
+      hostIdleMs: 0,
+      hostSource: "measured",
+      remoteCallBudget: 0,
+    });
+    store.recordBrief({
+      runId,
+      jobId,
+      subjectKey,
+      agentMethod: "agents.oncall",
+      briefMarkdown: "x",
+      findingsJson: "{}",
+      synthesisJson: null,
+      createdAt,
+      expiresAt: createdAt + 86_400_000,
+    });
+  }
+
+  const sweepJob: NimbusFleetJobToml = {
+    name: "bus",
+    agent: "ownership",
+    intervalSeconds: 86_400,
+    params: {},
+    digestMinDelta: 1,
+    sweep: { kind: "paths", maxSubjects: 20, pathPrefix: "src/" },
+  };
+
+  test("fleet.briefs filters by subjectKey", async () => {
+    seedBrief("nightly", "services:checkout", 1000);
+    seedBrief("nightly", "services:billing", 1001);
+    const r = await dispatchFleetRpc(
+      "fleet.briefs",
+      { subjectKey: "services:checkout" },
+      ctx(2000),
+    );
+    expect(r.kind).toBe("hit");
+    const briefs = (r as { value: { briefs: Array<{ subjectKey: string }> } }).value.briefs;
+    expect(briefs.map((b) => b.subjectKey)).toEqual(["services:checkout"]);
+  });
+
+  test("fleet.briefs refuses an empty subjectKey", async () => {
+    await expect(dispatchFleetRpc("fleet.briefs", { subjectKey: "" }, ctx(2000))).rejects.toThrow(
+      /subjectKey must be a non-empty string/,
+    );
+  });
+
+  test("fleet.list reports sweep config and state; config-named jobs report sweep: null", async () => {
+    store.recordSweepEnumeration("bus", { kind: "paths", subjectsTotal: 60, emptyReason: null });
+    const r = await dispatchFleetRpc("fleet.list", {}, ctx(2000, { jobs: [...jobs, sweepJob] }));
+    const listed = (r as { value: { jobs: Array<{ name: string; sweep: unknown }> } }).value.jobs;
+    expect(listed.find((j) => j.name === "bus")?.sweep).toEqual({
+      kind: "paths",
+      maxSubjects: 20,
+      pathPrefix: "src/",
+      subjectsTotal: 60,
+      cursor: null,
+      emptyReason: null,
+      // ceil(60 / 20) = 3 runs × 1 day = 3 days, inside the default 14-day retention
+      rotationExceedsRetention: false,
+    });
+    expect(listed.find((j) => j.name === "morning_catchup")?.sweep).toBeNull();
+  });
+
+  test("fleet.list flags a rotation longer than retention, and null before any enumeration", async () => {
+    type Listed = { value: { jobs: Array<{ sweep: { rotationExceedsRetention: unknown } }> } };
+    const r1 = (await dispatchFleetRpc(
+      "fleet.list",
+      {},
+      ctx(2000, { jobs: [sweepJob] }),
+    )) as Listed;
+    expect(r1.value.jobs[0]?.sweep.rotationExceedsRetention).toBeNull();
+    store.recordSweepEnumeration("bus", { kind: "paths", subjectsTotal: 400, emptyReason: null });
+    const r2 = (await dispatchFleetRpc(
+      "fleet.list",
+      {},
+      ctx(2000, { jobs: [sweepJob] }),
+    )) as Listed;
+    expect(r2.value.jobs[0]?.sweep.rotationExceedsRetention).toBe(true); // 20 runs = 20 days > 14
   });
 
   test('fleet.briefs caps an oversized limit at MAX_BRIEFS_LIMIT, not just "does not throw"', async () => {

@@ -1,4 +1,4 @@
-import type { NimbusFleetJobToml, NimbusFleetToml } from "../config/fleet-toml.ts";
+import type { NimbusFleetJobToml, NimbusFleetToml, SweepKind } from "../config/fleet-toml.ts";
 import { asRecord } from "../connectors/unknown-record.ts";
 import { buildFleetDigest } from "../fleet/fleet-digest.ts";
 import type { FleetDigestResult } from "../fleet/fleet-digest-types.ts";
@@ -142,24 +142,65 @@ async function handleStatus(_params: unknown, ctx: FleetRpcCtx): Promise<FleetSt
   };
 }
 
+export interface FleetJobSweepListEntry {
+  readonly kind: SweepKind;
+  readonly maxSubjects: number;
+  readonly pathPrefix: string | null;
+  /** From the last enumeration; null before the first. */
+  readonly subjectsTotal: number | null;
+  readonly cursor: string | null;
+  readonly emptyReason: string | null;
+  /**
+   * Whether one full rotation (ceil(total / max) × interval) outlasts `[fleet] retention_days`, in
+   * which case a subject's predecessor expires before it is revisited and the digest can never
+   * report movement for this sweep (spec § 10). Null before the first enumeration.
+   */
+  readonly rotationExceedsRetention: boolean | null;
+}
+
 export interface FleetJobListEntry {
   readonly name: string;
   readonly agent: string;
   readonly intervalSeconds: number;
   /** `null` when the job has never run (no `fleet_job_state` row yet) or the store is unavailable. */
   readonly state: FleetJobState | null;
+  /** `null` for a config-named job (`sweep` unset in `[[fleet.job]]`); otherwise its sweep config plus the last enumeration's state. */
+  readonly sweep: FleetJobSweepListEntry | null;
 }
 
-/** Lists every CONFIGURED job (from `[[fleet.job]]`), not just ones that have already run. */
+/**
+ * Lists every CONFIGURED job (from `[[fleet.job]]`), not just ones that have already run. Sweep
+ * PROGRESS lives here rather than on `fleet.status`, which never reads the store.
+ */
 function handleList(_params: unknown, ctx: FleetRpcCtx): { jobs: readonly FleetJobListEntry[] } {
   const jobs = ctx.jobs ?? [];
   return {
-    jobs: jobs.map((j) => ({
-      name: j.name,
-      agent: j.agent,
-      intervalSeconds: j.intervalSeconds,
-      state: ctx.store?.loadJobState(j.name) ?? null,
-    })),
+    jobs: jobs.map((j) => {
+      const state = ctx.store?.loadSweepState(j.name);
+      const total = state?.subjectsTotal ?? null;
+      return {
+        name: j.name,
+        agent: j.agent,
+        intervalSeconds: j.intervalSeconds,
+        state: ctx.store?.loadJobState(j.name) ?? null,
+        sweep:
+          j.sweep === null
+            ? null
+            : {
+                kind: j.sweep.kind,
+                maxSubjects: j.sweep.maxSubjects,
+                pathPrefix: j.sweep.pathPrefix,
+                subjectsTotal: total,
+                cursor: state?.cursor ?? null,
+                emptyReason: state?.emptyReason ?? null,
+                rotationExceedsRetention:
+                  total === null
+                    ? null
+                    : Math.ceil(total / j.sweep.maxSubjects) * j.intervalSeconds * 1000 >
+                      ctx.config.retentionDays * 86_400_000,
+              },
+      };
+    }),
   };
 }
 
@@ -167,11 +208,13 @@ function handleBriefs(params: unknown, ctx: FleetRpcCtx): { briefs: readonly Fle
   const store = requireStore(ctx);
   const limit = optLimit(params, "limit") ?? DEFAULT_BRIEFS_LIMIT;
   const jobId = optString(params, "jobId");
+  const subjectKey = optString(params, "subjectKey");
   return {
     briefs: store.listBriefs({
       limit,
       now: ctx.now(),
       ...(jobId === undefined ? {} : { jobId }),
+      ...(subjectKey === undefined ? {} : { subjectKey }),
     }),
   };
 }

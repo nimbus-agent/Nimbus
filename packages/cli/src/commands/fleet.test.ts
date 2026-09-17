@@ -57,6 +57,14 @@ test("briefs --job filters by job id", () => {
   });
 });
 
+test("parses briefs --subject", () => {
+  expect(parseFleetArgs(["briefs", "--subject", "paths:file:/r:a.ts"])).toEqual({
+    sub: "briefs",
+    subject: "paths:file:/r:a.ts",
+    json: false,
+  });
+});
+
 function sinkSpy(): {
   out: string[];
   err: string[];
@@ -429,6 +437,82 @@ test("fleet.briefs renders one line per brief, newest-first order preserved", as
     `b2  morning-catchup  agents.catchup  ${new Date(1_757_200_000_000).toISOString()}\n`,
     `b1  weekly-owners  agents.ownership  ${new Date(1_757_100_000_000).toISOString()}\n`,
   ]);
+});
+
+test("briefs sends subjectKey and shows a subject only when it differs from the job", async () => {
+  const calls: Array<{ method: string; params: unknown }> = [];
+  const out: string[] = [];
+  const ipc: FleetIpc = {
+    call: async (method, params) => {
+      calls.push({ method, params });
+      return {
+        briefs: [
+          {
+            id: "b1",
+            runId: "r",
+            jobId: "nightly",
+            subjectKey: "nightly",
+            agentMethod: "agents.catchup",
+            briefMarkdown: null,
+            findingsJson: "{}",
+            synthesisJson: null,
+            createdAt: 0,
+          },
+          {
+            id: "b2",
+            runId: "r",
+            jobId: "bus",
+            subjectKey: "paths:a",
+            agentMethod: "agents.ownership",
+            briefMarkdown: null,
+            findingsJson: "{}",
+            synthesisJson: null,
+            createdAt: 0,
+          },
+        ],
+      };
+    },
+  };
+  await runFleetCommand(
+    ipc,
+    { sub: "briefs", subject: "paths:a", json: false },
+    { out: (s) => out.push(s), err: () => {} },
+  );
+  expect(calls[0]?.params).toEqual({ subjectKey: "paths:a" });
+  expect(out[0]).toBe(`b1  nightly  agents.catchup  ${new Date(0).toISOString()}\n`);
+  expect(out[1]).toBe(`b2  bus  [paths:a]  agents.ownership  ${new Date(0).toISOString()}\n`);
+});
+
+test("list shows sweep info and an empty reason", async () => {
+  const out: string[] = [];
+  const ipc: FleetIpc = {
+    call: async () => ({
+      jobs: [
+        {
+          name: "bus",
+          agent: "ownership",
+          intervalSeconds: 60,
+          state: null,
+          sweep: {
+            kind: "paths",
+            maxSubjects: 20,
+            pathPrefix: null,
+            subjectsTotal: 0,
+            cursor: null,
+            emptyReason: "no roots",
+            rotationExceedsRetention: null,
+          },
+        },
+      ],
+    }),
+  };
+  await runFleetCommand(
+    ipc,
+    { sub: "list", json: false },
+    { out: (s) => out.push(s), err: () => {} },
+  );
+  expect(out.join("")).toContain("sweep=paths max=20 total=0");
+  expect(out.join("")).toContain("empty: no roots");
 });
 
 test("fleet.briefs with no rows says so rather than printing nothing", async () => {
