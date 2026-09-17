@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1789665749046,
+  "lastUpdate": 1789668617713,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "c1a2077d073a89dad9792667700bf5bdffa6ad72",
-          "message": "chore(secrets): retire RELEASE_PLEASE_PAT — the last release PAT is gone (#800)\n\nDeleted org-wide 2026-07-22. **The last long-lived credential on the\nrelease path.**\n\n## All four consumers now mint from the App\n\n| Repo | Migrated | Proven |\n|---|---|---|\n| Nimbus | #787 | ✅ |\n| nimbus-client | #8 | ✅ |\n| nimbus-sdk | #16 | ✅ live mint |\n| nimbus-vscode | #42 | ✅ live mint on main |\n\nEach shows `Mint release-bot token: success`. Zero live\n`secrets.RELEASE_PLEASE_PAT` references remain across all four repos.\n\n## The manifest earned its keep\n\nI nearly deleted this token after proving nimbus-sdk. The manifest's\n`consumedBy` listed **nimbus-vscode** as a fourth consumer — a check\nconfirmed it still used the PAT, and deleting then would have broken its\nreleases. That's the credential registry (#783) doing exactly what it's\nfor.\n\nFlipped `required → forbidden` (deletion first, so `forbidden` + absent\nreads \"correctly absent\" rather than the hard failure `forbidden` +\npresent would give).\n\n## The release credential surface is now fully App-based\n\n`RELEASE_PAT`, `PACKAGE_MANAGER_PAT`, `RELEASE_BOT_APP_ID`, and\n`RELEASE_PLEASE_PAT` are all **deleted and forbidden**. The App\ncredentials live as **org secrets** (client-id all, private-key scoped\nto the 4 release repos). Only `WINGET_PAT` remains — it forks\n`microsoft/winget-pkgs`, which the App cannot reach.\n\n## Verification\n\n`bun test scripts/release/` 11/11 registry + suite green;\n`audit:consumed-by` OK; standalone `tsc --strict` exit 0.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)",
-          "timestamp": "2026-07-22T18:36:31+03:00",
-          "tree_id": "c6fdd0cd8b039d4a94cbf646d891970b6501840c",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/c1a2077d073a89dad9792667700bf5bdffa6ad72"
-        },
-        "date": 1784735209356,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 196.47722350000004,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 198.0245463999974,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 342.6785682499987,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "5d31dabfbfda1cd7e0f576c98ca36a4e032d78bc",
+          "message": "fix(embedding): report the backfill pass from the hybrid and openai runtimes (#1538)\n\nA stated residual of #1535 (the search retrieval disclosure), fixed.\n\n## What was wrong\n\n`getActiveBackfillPass()` returned `null` on the two runtimes that run\n`backfillAll` on the gateway's own thread — `hybrid`\n(`create-routing-runtime.ts`) and `openai` (`lazy-scheduler.ts`). So a\nsearch running during the backfill **those runtimes themselves started**\nwas told no pass was active, and partial results read as complete. Only\nthe worker bridge, which learns of a pass from `backfill_progress`\nmessages, ever reported one. `getBackfillProgress()` — what `nimbus\nstatus` prints — was `null` on both too.\n\n## The fix\n\nOne shared `embedding/backfill-pass-tracker.ts`, keeping the worker\nbridge's semantics rather than inventing new ones:\n\n- a pass is **active from its first progress report** until it settles,\nso a pass with nothing to embed never becomes active (the worker's never\nsends `backfill_progress` in that case either);\n- it stops being active whether the pass finished, was stopped by its\nbattery/shutdown gate (which **returns**, it does not throw), or threw;\n- the final figure survives for `nimbus status`.\n\n`RoutingEmbeddingPipeline.backfillAll` needed a change too. Its two\nsequential passes each count from zero against their own total, so\nforwarding both callbacks unchanged made `done` jump backwards when the\nsecond started. The second half is now offset by the first half's final\nfigures.\n\n**Stated consequence:** while the first half runs, `total` covers only\nthat half and grows when the second begins. Counting both totals up\nfront was rejected: the second half's `COUNT(*)` would run before the\nfirst half had finished changing which rows it counts.\n\n## Tests\n\n- `backfill-pass-tracker.test.ts`: active only after the first report; a\npass with no rows never activates; a throwing pass clears active and\nkeeps the figure; a gate-stopped pass is not left \"running\".\n- `lazy-scheduler.test.ts`: a **real** backfill over three items with an\nembedder that blocks on the second batch, so the \"during\" window is\nobservable rather than raced for — asserts an active pass with `total:\n3`, then `null` after, with the final figure retained. Batch size 1,\nbecause at the default all three embed in one call and no window exists.\n- `routing-pipeline.test.ts`: four items across both halves; `done`\nstrictly increases, `total` never decreases, and the pass ends at\n`{done: 4, total: 4}`.\n- The two existing tests that asserted \"always null\" now assert \"null\nbefore any pass has run\", which is what they were really pinning.\n\nBoth behavioural tests fail against the unfixed source. `preflight:fast`\npasses; `packages/gateway/src/{embedding,index}` is 894 pass / 0 fail.\n\n## Docs\n\n`architecture.md`'s \"Only the worker bridge reports a pass\" sentence is\nnow the history plus what is true today. A new CHANGELOG entry records\nthe `total`-grows-mid-pass consequence.\n\nNo schema, no invariant, no egress class, no config key.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nCo-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>",
+          "timestamp": "2026-09-17T17:57:51Z",
+          "tree_id": "26cb5fc628ef7da00a2010e1d389c4ccf244003f",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/5d31dabfbfda1cd7e0f576c98ca36a4e032d78bc"
+        },
+        "date": 1789668613362,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 327.8175214999988,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 331.2793091000047,
             "unit": "ms"
           }
         ]
