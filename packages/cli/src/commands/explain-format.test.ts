@@ -82,6 +82,51 @@ describe("formatExplain honesty rules (spec §5)", () => {
     expect(out).toMatch(/not comparable/i);
   });
 
+  test("a keyword-only primary search is labelled from its disclosure, even though every row says hybrid_rrf", () => {
+    // `searchRankedAsync`'s hybrid branch keeps `scoringFormula: "hybrid_rrf"` on every row even when
+    // the query embedding timed out and no vector was used — so the formula alone labelled a
+    // keyword-only search "hybrid RRF". The recorded `primaryRetrieval` is what the search actually did.
+    const record = {
+      ...base,
+      route: "local_context" as const,
+      searchTerms: "x",
+      truncation: { shown: 1, total: 1, atLeast: false },
+      discardedTail: [],
+      pool: [
+        {
+          sourceId: "a",
+          service: "slack",
+          indexedType: "message",
+          title: "looks hybrid",
+          score: 0.8,
+          matchScore: 0.8,
+          recencyComponent: 0.8,
+          servicePriorityComponent: 0.5,
+          scoringFormula: "hybrid_rrf" as const,
+          pass: { kind: "primary-hybrid" as const },
+          outcome: "shown" as const,
+        },
+      ],
+    };
+    const degraded = formatExplain({
+      ...record,
+      primaryRetrieval: {
+        vectorRanked: false,
+        notes: [
+          "semantic ranking unavailable (the query embedding timed out) — keyword-only results",
+        ],
+      },
+    });
+    expect(degraded).toContain("primary search (keyword-only — semantic ranking did not run)");
+    expect(degraded).not.toContain("primary search (hybrid RRF)");
+    expect(degraded).toContain(
+      "Retrieval note: semantic ranking unavailable (the query embedding timed out) — keyword-only results",
+    );
+
+    // A record from a gateway that predates the field keeps the formula-derived label.
+    expect(formatExplain(record)).toContain("primary search (hybrid RRF)");
+  });
+
   test("the primary-hybrid pass label reflects whether the search actually ran hybrid, never unconditionally", () => {
     // Fix-wave finding IMPORTANT 4: `LocalIndex.searchRankedAsync` falls back to plain FTS
     // whenever semantic search is off, sqlite-vec is unavailable, or the schema predates it — so

@@ -198,6 +198,10 @@ export function createDeferredEmbeddingRuntime(
       return delegate?.getBackfillProgress() ?? null;
     },
 
+    getActiveBackfillPass(): { done: number; total: number } | null {
+      return delegate?.getActiveBackfillPass() ?? null;
+    },
+
     getReadiness,
 
     startBackgroundJobs(): void {

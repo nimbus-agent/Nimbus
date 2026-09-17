@@ -18,6 +18,32 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
 
 ## Post-Phase-6 deliveries
 
+- **2026-09-17 — a search now says when it was keyword-only or incomplete (the follow-up V62
+  deferred).** V62 fixed the quadratic vector-search plan behind #1396, but two false greens
+  remained. First, a query embedding that timed out resolved `null`, exactly like the permanent
+  `unavailable` state, so hybrid search silently became BM25 and an empty result read as "found
+  nothing". Second, nothing disclosed that a background embedding pass was still running, so
+  partial results read as complete. **The timeout** is now a typed `EmbeddingTimeoutError`, bounded
+  by one shared helper in all three runtimes. It defaults to 5 s (`NIMBUS_EMBEDDING_QUERY_TIMEOUT_MS`),
+  inside the CLI's 30 s IPC bound; the old 60 s bound sat outside it and had never fired. The
+  `hybrid` and `openai` runtimes previously had no query bound at all, and a stalled OpenAI half no
+  longer costs the local vector. **`LocalIndex.searchRankedAsync` returns `{ items, retrieval }`**,
+  built once at the only site that knows both facts. The agent's `searchLocalIndex` tool, briefs
+  and `nimbus explain last` all read it. `explain last` had been labelling a timed-out search
+  "primary search (hybrid RRF)", because every row keeps that scoring formula. Briefs had guessed
+  semantic availability from `vectorRank`, which was wrong whenever a working vector search matched
+  nothing. **On the wire the disclosure is opt-in** (`index.searchRanked` with `envelope: true`),
+  because the published `@nimbus-dev/client` 0.17.3 requires an array. `nimbus search` passes it and
+  writes `note:` lines to stderr, keeping stdout the plain array a script pipes into `jq`. The MCP
+  search tools add the notes as a separate text block. **Stated residuals:** a client that never
+  passes the flag — including `nimbus-vscode`, until a client release can forward it — still gets
+  undisclosed partial results. The backfill figure is progress of the current pass, not index
+  coverage, and says so; `nimbus index health` stays authoritative. Only the worker-bridge runtime
+  reports a pass at all. **Deferred:** worker admission control (measured at 7–9 ms vs 2–3 ms idle,
+  immaterial), a `[embedding] query_timeout_ms` TOML key, and converging `index health` onto the
+  search-time figure. No schema, no invariant, no egress class. Design:
+  `2026-09-12-cold-start-search-starvation-design.md` §4.2–4.5, re-validated against `main` before
+  implementation.
 - **2026-09-17 — the `nimbus media allow-remote` consent preview shows real sizes.** The defect the
   2026-09-06 acceptance run filed was wider than recorded. It was filed as a Google Drive parsing
   bug (Drive serialises `size` as a string), but the preview printed `(size unknown)` for **every**

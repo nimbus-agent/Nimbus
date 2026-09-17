@@ -268,6 +268,30 @@ describe("gateway bind-first (#928): the socket serves while the embedding model
     expect(Array.isArray(res.result)).toBe(true);
   });
 
+  // The retrieval envelope over a REAL socket: the `envelope` param must survive the real
+  // `server.ts` routing and param parsing, not only the handler a unit test calls directly.
+  test("`envelope: true` returns items + retrieval + notes over the real socket", async () => {
+    const res = await ipc.raw("index.searchRanked", {
+      name: "who owns billing",
+      limit: 5,
+      semantic: false,
+      envelope: true,
+    });
+    expect(res.error).toBeUndefined();
+    const env = res.result as {
+      items?: unknown;
+      retrieval?: Record<string, unknown>;
+      notes?: unknown;
+    };
+    expect(Array.isArray(env.items)).toBe(true);
+    expect(env.retrieval).toMatchObject({
+      vectorRanked: false,
+      reason: "semantic_off",
+      partial: null,
+    });
+    expect(Array.isArray(env.notes)).toBe(true);
+  });
+
   test("non-embedding surfaces are fully available while the model is still fetching", async () => {
     const demo = await ipc.raw("index.demoSymbol", {});
     // `index.demoSymbol` reads indexed symbols and never touches a vector table, so it must
@@ -305,4 +329,62 @@ describe("gateway bind-first (#928): a FAILED model fetch degrades, it does not 
     expect(audit.error).toBeUndefined();
     expect(failed?.proc.killed).toBeFalsy();
   });
+
+  // Explicit, and passed to the test below: bunfig's 30 s default would kill the test before a
+  // 60 s settle deadline could ever fire and name the real cause.
+  const SETTLE_MS = 60_000;
+
+  // The permanent-failure half of the false green: a semantic search is SERVED (keyword-only) once
+  // embeddings are known dead — and with the envelope it says so instead of reading as complete.
+  test(
+    "a semantic search after the fetch failed is keyword-only AND says so",
+    async () => {
+      // The refusing proxy makes the fetch fail EVENTUALLY, not by the time the socket binds: on a
+      // slow runner readiness is still `warming` here, and a search then correctly returns the typed
+      // -32021 warming error instead of the keyword-only envelope this test is about. Wait for the
+      // failure to settle first — the precondition is "after the fetch failed", so establish it.
+      // The deadline bounds each ping as well as the loop: `raw` has no request timeout of its own, so
+      // a gateway that stops answering would otherwise hang here until the test runner's timeout.
+      const deadline = Date.now() + SETTLE_MS;
+      const settleFailure = (): Error =>
+        new Error(`embedding readiness never left \`warming\` within ${String(SETTLE_MS)}ms`);
+      let state: EmbeddingReadinessWire["state"] = "warming";
+      while (state === "warming") {
+        let timer: ReturnType<typeof setTimeout> | undefined;
+        const expired = new Promise<never>((_, reject) => {
+          timer = setTimeout(() => reject(settleFailure()), Math.max(0, deadline - Date.now()));
+        });
+        try {
+          const ping = await Promise.race([ipc.raw("gateway.ping", {}), expired]);
+          state = ((ping.result as Record<string, unknown>)["embedding"] as EmbeddingReadinessWire)
+            .state;
+        } finally {
+          clearTimeout(timer);
+        }
+        if (state !== "warming") break;
+        if (Date.now() > deadline) throw settleFailure();
+        await new Promise((r) => setTimeout(r, 100));
+      }
+      expect(state).toBe("unavailable");
+
+      const res = await ipc.raw("index.searchRanked", {
+        name: "who owns billing",
+        limit: 5,
+        envelope: true,
+      });
+      expect(res.error).toBeUndefined();
+      const env = res.result as {
+        items?: unknown;
+        retrieval?: { vectorRanked?: unknown; reason?: string };
+        notes?: string[];
+      };
+      expect(Array.isArray(env.items)).toBe(true);
+      expect(env.retrieval?.vectorRanked).toBe(false);
+      expect(["unavailable", "vec_unavailable", "no_embedding_runtime"]).toContain(
+        env.retrieval?.reason ?? "",
+      );
+      expect(env.notes?.[0] ?? "").toContain("keyword-only");
+    },
+    SETTLE_MS + 30_000,
+  );
 });

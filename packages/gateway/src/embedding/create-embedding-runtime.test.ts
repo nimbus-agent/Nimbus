@@ -395,6 +395,10 @@ function makeFakeRuntime(): EmbeddingRuntime {
     getBackfillProgress(): { done: number; total: number } | null {
       return null;
     },
+
+    getActiveBackfillPass(): { done: number; total: number } | null {
+      return null;
+    },
     startBackgroundJobs(): void {
       /* no-op */
     },

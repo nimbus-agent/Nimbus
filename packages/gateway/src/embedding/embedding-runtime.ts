@@ -17,7 +17,14 @@ export type EmbeddingRuntime = {
   embedQueryDual: (text: string) => Promise<EmbeddingDualVectors>;
   getEmbeddingModel: () => string;
   getEmbeddingDims: () => number;
+  /** Last reported backfill progress; kept after the pass ends (`nimbus status` shows it). */
   getBackfillProgress: () => { done: number; total: number } | null;
+  /**
+   * The progress of a backfill pass that is RUNNING NOW, or `null` when none is. What a search
+   * discloses as "results may be incomplete". `total` counts items that had no vector when the pass
+   * started, not the index size — see `index/search-retrieval.ts`.
+   */
+  getActiveBackfillPass: () => { done: number; total: number } | null;
   /** Live warm-up/failure state, safe to call at any time and cheap enough to poll. */
   getReadiness: () => EmbeddingReadiness;
   startBackgroundJobs: () => void;

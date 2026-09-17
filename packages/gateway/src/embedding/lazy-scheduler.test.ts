@@ -6,6 +6,7 @@ import { join } from "node:path";
 import pino from "pino";
 import { runIndexedSchemaMigrations } from "../index/migrations/runner.ts";
 import { isVecLoaded, tryLoadSqliteVec } from "../index/sqlite-vec-load.ts";
+import { isEmbeddingTimeoutError } from "./embedding-readiness.ts";
 import { createLazyEmbeddingRuntime } from "./lazy-scheduler.ts";
 import type { Embedder } from "./types.ts";
 
@@ -211,6 +212,49 @@ describe.skipIf(!VEC_AVAILABLE)(
       }
       // First test in this block pays the one-time sqlite-vec extension cold-start;
       // on slow CI (Windows) that can exceed the 5 s default. Give it headroom.
+    }, 30_000);
+
+    // The `openai` provider's lazy runtime had no query bound: a stalled remote embed held the
+    // search until the caller's IPC bound. Only the embed is bounded — the first-call pipeline
+    // load is NOT, so a cold model load is never misreported as a query timeout.
+    test("a stalled query embed REJECTS with the typed timeout (single and dual)", async () => {
+      const h = makeHarness({ migrateTo: 30 });
+      const KEY = "NIMBUS_EMBEDDING_QUERY_TIMEOUT_MS";
+      const saved = process.env[KEY];
+      process.env[KEY] = "40";
+      try {
+        let stall = false;
+        const embedder: Embedder = {
+          model: "local:stall",
+          dims: 384,
+          isLocal: true,
+          embed: (texts: string[]) =>
+            stall
+              ? new Promise<Float32Array[]>(() => {})
+              : Promise.resolve(texts.map(() => new Float32Array(384))),
+        };
+        const runtime = createLazyEmbeddingRuntime(h.db, h.dataDir, silentLogger, h.toml, embedder);
+        // Load the pipeline first (unbounded, and fast here), THEN stall the query embeds.
+        expect(await runtime.embedQuery("warm")).toBeInstanceOf(Float32Array);
+        stall = true;
+        const single: unknown = await runtime.embedQuery("q").then(
+          () => "resolved",
+          (e: unknown) => e,
+        );
+        expect(isEmbeddingTimeoutError(single)).toBe(true);
+        const dual: unknown = await runtime.embedQueryDual("q").then(
+          () => "resolved",
+          (e: unknown) => e,
+        );
+        expect(isEmbeddingTimeoutError(dual)).toBe(true);
+      } finally {
+        if (saved === undefined) {
+          Reflect.deleteProperty(process.env, KEY);
+        } else {
+          process.env[KEY] = saved;
+        }
+        h.cleanup();
+      }
     }, 30_000);
 
     test("embedQueryDual with 384-dim pipeline returns vec384 populated, vec1536 null", async () => {

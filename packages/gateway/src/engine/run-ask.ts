@@ -5,6 +5,7 @@ import { resolvePersona } from "../config/persona.ts";
 import type { EgressSink } from "../egress/egress-ledger.ts";
 import type { LocalIndex } from "../index/local-index.ts";
 import type { RankedIndexItem } from "../index/ranked-item.ts";
+import { describeRetrieval } from "../index/search-retrieval.ts";
 import type { ConsentCoordinator } from "../ipc/consent.ts";
 import type { LlmRouter } from "../llm/router.ts";
 import type { LlmGenerateResult } from "../llm/types.ts";
@@ -19,6 +20,7 @@ import type {
   CandidateOutcome,
   ContributingPass,
   LocalCandidate,
+  PrimaryRetrieval,
 } from "./ask-explain-types.ts";
 import { capPerService, stripInternalRankField } from "./context-fairness.ts";
 import type { ContextTruncation } from "./context-truncation-disclosure.ts";
@@ -180,6 +182,7 @@ type ExplainRoute =
   | {
       readonly kind: "local_context";
       readonly searchTerms: string;
+      readonly primaryRetrieval: PrimaryRetrieval;
       readonly fallbackTermFired?: string;
       readonly truncation: ContextTruncation;
       readonly pool: readonly LocalCandidate[];
@@ -195,6 +198,7 @@ type ExplainRoute =
        */
       readonly localContextAlsoGiven?: {
         readonly searchTerms: string;
+        readonly primaryRetrieval: PrimaryRetrieval;
         readonly fallbackTermFired?: string;
         readonly truncation: ContextTruncation;
         readonly pool: readonly LocalCandidate[];
@@ -291,6 +295,7 @@ async function answerConversationally(
       ? {
           kind: "local_context",
           searchTerms: localContext.explain.searchTerms,
+          primaryRetrieval: localContext.explain.primaryRetrieval,
           ...(localContext.explain.fallbackTermFired === undefined
             ? {}
             : { fallbackTermFired: localContext.explain.fallbackTermFired }),
@@ -305,6 +310,7 @@ async function answerConversationally(
             : {
                 localContextAlsoGiven: {
                   searchTerms: localContext.explain.searchTerms,
+                  primaryRetrieval: localContext.explain.primaryRetrieval,
                   ...(localContext.explain.fallbackTermFired === undefined
                     ? {}
                     : { fallbackTermFired: localContext.explain.fallbackTermFired }),
@@ -639,6 +645,7 @@ interface LocalIndexedContext {
   readonly truncation: ContextTruncation;
   readonly explain: {
     readonly searchTerms: string;
+    readonly primaryRetrieval: PrimaryRetrieval;
     readonly fallbackTermFired?: string;
     readonly pool: LocalCandidate[];
     readonly discardedTail: Array<{ service: string; type: string; count: number }>;
@@ -691,10 +698,11 @@ async function buildLocalIndexedContext(
     // Probe wide, serve narrow. `primary.length` is the only honest source for "how many
     // match" — every other search below is itself capped, so counting `byId` would just
     // re-measure the truncation instead of the substrate.
-    const primary = await localIndex.searchRankedAsync(
+    const primarySearch = await localIndex.searchRankedAsync(
       { name: searchTerms, limit: LOCAL_CONTEXT_TOTAL_PROBE_LIMIT },
       { semantic: true, contextChunks: 2 },
     );
+    const primary = primarySearch.items;
     addRankedResults(primary.slice(0, resolveLocalContextItemLimit()), { kind: "primary-hybrid" });
     for (const quotedQuery of extractQuotedSearchQueries(query)) {
       addRankedResults(
@@ -861,6 +869,10 @@ async function buildLocalIndexedContext(
       },
       explain: {
         searchTerms,
+        primaryRetrieval: {
+          ...primarySearch.retrieval,
+          notes: describeRetrieval(primarySearch.retrieval),
+        },
         ...(fallbackTermFired === undefined ? {} : { fallbackTermFired }),
         pool,
         discardedTail,
@@ -990,6 +1002,7 @@ function buildExplainRecord(
         ...base,
         route: "local_context",
         searchTerms: route.searchTerms,
+        primaryRetrieval: route.primaryRetrieval,
         ...(route.fallbackTermFired === undefined
           ? {}
           : { fallbackTermFired: route.fallbackTermFired }),

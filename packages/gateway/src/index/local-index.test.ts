@@ -426,28 +426,39 @@ describe("LocalIndex.searchRankedAsync fallback path", () => {
   test("falls back to searchRanked when no semanticSearch is configured", async () => {
     const idx = makeIndex(); // no semanticSearch
     idx.upsert(makeItem({ id: "async1", name: "Async search test" }));
-    const results = await idx.searchRankedAsync({ name: "async search test" });
+    const { items: results, retrieval } = await idx.searchRankedAsync({
+      name: "async search test",
+    });
     expect(results).toHaveLength(1);
     expect(results[0]?.id).toBe("async1");
+    // Keyword-only, and it SAYS so: no runtime is wired.
+    expect(retrieval).toEqual({
+      vectorRanked: false,
+      reason: "no_embedding_runtime",
+      partial: null,
+      backfill: null,
+    });
   });
 
   test("falls back when semantic=false is explicitly set", async () => {
     const scheduleIds: string[] = [];
     const idx = makeIndex({ scheduleItemEmbedding: (id) => scheduleIds.push(id) });
     idx.upsert(makeItem({ id: "async2", name: "Explicit no semantic" }));
-    const results = await idx.searchRankedAsync(
+    const { items: results, retrieval } = await idx.searchRankedAsync(
       { name: "Explicit no semantic" },
       { semantic: false },
     );
     expect(results).toHaveLength(1);
+    expect(retrieval.reason).toBe("semantic_off");
   });
 
   test("falls back when nameQ is empty (semantic requires a name query)", async () => {
     const idx = makeIndex();
     idx.upsert(makeItem({ id: "async3", name: "Browse all" }));
     // no name = nameQ is "" → canHybrid = false → fallback
-    const results = await idx.searchRankedAsync({});
+    const { items: results, retrieval } = await idx.searchRankedAsync({});
     expect(results).toHaveLength(1);
+    expect(retrieval.reason).toBe("no_query");
   });
 });
 
@@ -472,18 +483,17 @@ describe("LocalIndex.searchRankedAsync hybrid path", () => {
     const fakeDeps: SemanticSearchDeps = {
       model: "all-MiniLM-L6-v2",
       embedQuery: async (_text: string): Promise<Float32Array | null> => null,
-      embedQueryDual: async (_text: string) => ({
-        vec384: null,
-        vec1536: null,
-        model384: null,
-        model1536: null,
+      embedQueryDualOutcome: async (_text: string) => ({
+        vectors: { vec384: null, vec1536: null, model384: null, model1536: null },
+        degraded: null,
       }),
+      activeBackfillPass: () => null,
     };
 
     const idx = new LocalIndex(db, { semanticSearch: fakeDeps });
     // Even with semanticSearch, if vec is not available, hybridSearch will likely fall back
     // We just confirm no throw and we get results
-    const results = await idx.searchRankedAsync({ name: "hybrid query" });
+    const { items: results } = await idx.searchRankedAsync({ name: "hybrid query" });
     // The result can be 0 (if hybrid returns nothing) or 1 — no throw is the key invariant
     expect(Array.isArray(results)).toBe(true);
   });

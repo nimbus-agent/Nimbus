@@ -12,6 +12,7 @@ import { processEnvDelete, processEnvSet } from "../platform/env-access.ts";
 import type { PlatformPaths } from "../platform/paths.ts";
 import { MockVault } from "../vault/mock.ts";
 import type { NimbusVault } from "../vault/nimbus-vault.ts";
+import { isEmbeddingTimeoutError } from "./embedding-readiness.ts";
 import type { Embedder } from "./types.ts";
 
 function vecAvailable(): boolean {
@@ -367,6 +368,56 @@ describe.skipIf(!VEC_AVAILABLE)(
         // so the count stays at one rather than two.
         expect(listEgress(h.db, {})).toHaveLength(1);
       } finally {
+        h.cleanup();
+      }
+    });
+
+    // The hybrid runtime had NO query bound at all: a stalled OpenAI request held the whole dual
+    // embed until the caller's 30 s IPC bound fired. Each half is now bounded separately, so a
+    // stalled remote no longer costs the local vector — and the loss is MARKED, not silent.
+    test("a stalled OpenAI half keeps the local vector and marks the result partial", async () => {
+      const h = makeHarness({ migrateTo: 44, setApiKey: true });
+      processEnvSet("NIMBUS_EMBEDDING_QUERY_TIMEOUT_MS", "40");
+      globalThis.fetch = (() => new Promise<Response>(() => {})) as unknown as typeof fetch;
+      try {
+        const factory = await importFactory();
+        const runtime = await factory(h.db, h.paths, silentLogger, h.toml, h.vault);
+        const out = await runtime?.embedQueryDual("hello");
+        expect(out?.vec384).toBeInstanceOf(Float32Array);
+        expect(out?.vec1536).toBeNull();
+        expect(out?.model1536).toBeNull();
+        expect(out?.partial).toBe("remote_timeout");
+      } finally {
+        processEnvDelete("NIMBUS_EMBEDDING_QUERY_TIMEOUT_MS");
+        h.cleanup();
+      }
+    });
+
+    test("when BOTH halves stall, and for the local-only embedQuery, it is the typed timeout", async () => {
+      const h = makeHarness({ migrateTo: 44, setApiKey: true });
+      processEnvSet("NIMBUS_EMBEDDING_QUERY_TIMEOUT_MS", "40");
+      globalThis.fetch = (() => new Promise<Response>(() => {})) as unknown as typeof fetch;
+      const stalling = async (): Promise<Embedder> => ({
+        model: "local:stall",
+        dims: 384,
+        isLocal: true,
+        embed: () => new Promise<Float32Array[]>(() => {}),
+      });
+      try {
+        const factory = await importFactory(stalling);
+        const runtime = await factory(h.db, h.paths, silentLogger, h.toml, h.vault);
+        const dual: unknown = await runtime?.embedQueryDual("hello").then(
+          () => "resolved",
+          (e: unknown) => e,
+        );
+        expect(isEmbeddingTimeoutError(dual)).toBe(true);
+        const single: unknown = await runtime?.embedQuery("hello").then(
+          () => "resolved",
+          (e: unknown) => e,
+        );
+        expect(isEmbeddingTimeoutError(single)).toBe(true);
+      } finally {
+        processEnvDelete("NIMBUS_EMBEDDING_QUERY_TIMEOUT_MS");
         h.cleanup();
       }
     });

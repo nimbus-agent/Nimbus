@@ -32,6 +32,12 @@ export type EmbeddingDualVectors = {
   vec1536: Float32Array | null;
   model384: string | null;
   model1536: string | null;
+  /**
+   * Set only by the hybrid runtime, when ONE half timed out and the other answered: the query is
+   * still vector-ranked, on one dimension only. Absent means both halves answered (or neither
+   * was asked). Both halves timing out is `EmbeddingTimeoutError`, never this.
+   */
+  partial?: "local_timeout" | "remote_timeout";
 };
 
 export interface EmbeddingPipeline {
