@@ -1,12 +1,15 @@
-import type { NimbusFleetJobToml } from "../config/fleet-toml.ts";
+import { type NimbusFleetJobToml, SWEEP_KINDS, type SweepKind } from "../config/fleet-toml.ts";
 import { codeUnitCompare } from "../util/code-unit-compare.ts";
 import { summarizeBrief } from "./fleet-digest-extractors.ts";
 import type {
   BriefSummary,
   FleetDigestNotCompared,
   FleetDigestResult,
+  FleetDigestSubjectRef,
   FleetJobDigest,
   FleetMetricDelta,
+  FleetSweepDigest,
+  FleetSweepSubjectDigest,
 } from "./fleet-digest-types.ts";
 import type { FleetStore } from "./fleet-store.ts";
 
@@ -97,17 +100,151 @@ export function compareSummaries(
   };
 }
 
+const DAY_MS = 86_400_000;
+/** First-observation keys shown in Markdown before "… and N more". JSON carries all of them. */
+const FIRST_OBSERVATION_SHOWN = 10;
+
+function kindFromKey(key: string): SweepKind | null {
+  const prefix = key.slice(0, key.indexOf(":"));
+  return (SWEEP_KINDS as readonly string[]).includes(prefix) ? (prefix as SweepKind) : null;
+}
+
+/**
+ * One sweep job's grouped outcomes across every subject with a live brief in the window (spec
+ * § 8.1). Mirrors `buildFleetDigest`'s per-job loop, scoped to subjects rather than job ids, and
+ * shares the same four-way classification (moved / unchanged / first observation / not
+ * summarizable / agent changed) plus the rotation-vs-retention estimate from sweep state.
+ */
+function buildSweepDigest(
+  deps: { store: FleetStore; now: number; retentionDays: number },
+  jobId: string,
+  cfg: NimbusFleetJobToml | undefined,
+  windowStartMs: number,
+): FleetSweepDigest {
+  const keys = deps.store.subjectKeysWithBriefsInWindow({ jobId, windowStartMs, now: deps.now });
+  const configured = cfg !== undefined;
+  const minDelta = cfg?.digestMinDelta ?? 1;
+  let agentMethod = cfg === undefined ? "unknown" : `agents.${cfg.agent}`;
+  const moved: FleetSweepSubjectDigest[] = [];
+  const firstObservationKeys: string[] = [];
+  const notSummarizable: FleetDigestSubjectRef[] = [];
+  const agentChanged: FleetDigestSubjectRef[] = [];
+  let unchangedCount = 0;
+  let unchangedWithinThresholdCount = 0;
+
+  for (const subjectKey of keys) {
+    const { current, predecessor } = deps.store.briefPairForSubject({
+      jobId,
+      subjectKey,
+      windowStartMs,
+      now: deps.now,
+    });
+    if (current === undefined) continue;
+    agentMethod = current.agentMethod;
+    if (predecessor === undefined) {
+      firstObservationKeys.push(subjectKey);
+      continue;
+    }
+    if (current.agentMethod !== predecessor.agentMethod) {
+      agentChanged.push({
+        subjectKey,
+        briefId: current.id,
+        reason: `${predecessor.agentMethod} → ${current.agentMethod}, not comparable`,
+      });
+      continue;
+    }
+    const after = summarizeBrief(current.agentMethod, current.findingsJson);
+    const before = summarizeBrief(predecessor.agentMethod, predecessor.findingsJson);
+    if (after === undefined || before === undefined) {
+      if (after === undefined) {
+        notSummarizable.push({
+          subjectKey,
+          briefId: current.id,
+          reason: `unreadable ${current.agentMethod} brief (current)`,
+        });
+      }
+      if (before === undefined) {
+        notSummarizable.push({
+          subjectKey,
+          briefId: predecessor.id,
+          reason: `unreadable ${predecessor.agentMethod} brief (predecessor)`,
+        });
+      }
+      continue;
+    }
+    const compared = compareSummaries(before, after, minDelta);
+    if (compared.status === "unchanged") {
+      unchangedCount += 1;
+      continue;
+    }
+    if (compared.status === "unchanged_within_threshold") {
+      unchangedWithinThresholdCount += 1;
+      continue;
+    }
+    moved.push({
+      jobId,
+      subjectKey,
+      agentMethod: current.agentMethod,
+      configured,
+      minDelta,
+      currentBriefId: current.id,
+      currentCreatedAt: current.createdAt,
+      predecessorBriefId: predecessor.id,
+      predecessorCreatedAt: predecessor.createdAt,
+      comparisonSpanMs: current.createdAt - predecessor.createdAt,
+      ...compared,
+    });
+  }
+
+  const subjectsTotal = deps.store.loadSweepState(jobId)?.subjectsTotal ?? null;
+  const sweep = cfg?.sweep ?? null;
+  const rotationRunsEstimate =
+    subjectsTotal === null || sweep === null ? null : Math.ceil(subjectsTotal / sweep.maxSubjects);
+  const rotationMsEstimate =
+    rotationRunsEstimate === null || cfg === undefined
+      ? null
+      : rotationRunsEstimate * cfg.intervalSeconds * 1000;
+  const retentionMs = deps.retentionDays * DAY_MS;
+  const firstKey = keys.find((k) => k !== jobId);
+  return {
+    jobId,
+    agentMethod,
+    sweepKind: sweep?.kind ?? (firstKey === undefined ? null : kindFromKey(firstKey)),
+    configured,
+    subjectsTotal,
+    subjectsSweptInWindow: keys.length,
+    rotationRunsEstimate,
+    rotationMsEstimate,
+    retentionMs,
+    rotationExceedsRetention: rotationMsEstimate !== null && rotationMsEstimate > retentionMs,
+    moved,
+    unchangedCount,
+    unchangedWithinThresholdCount,
+    firstObservationKeys,
+    notSummarizable,
+    agentChanged,
+    noBriefInWindow: keys.length === 0,
+  };
+}
+
 /**
  * Walks the UNION of configured jobs and jobs with a live brief in the window (spec § 5.1) — not
  * either half alone: config-only drops overnight work when a job block is deleted in the morning,
  * briefs-only drops the "configured but never ran" fact. Sorts every outcome into a job digest or
  * one of four `notCompared` populations; never drops a job silently.
+ *
+ * A sweep job (spec § 8.1) is pulled out of that walk entirely — one job maps to MANY subjects,
+ * so it cannot land in `jobs` or `notCompared`, which are both per-job-id. `sweepIds` decides
+ * membership before the loop runs, from config when the job is still configured, or from a live
+ * brief's subject key (non-self) once it is not — the same union-not-either-half rule as `ids`
+ * above, just evaluated per job rather than globally.
  */
 export function buildFleetDigest(deps: {
   store: FleetStore;
   jobs: readonly NimbusFleetJobToml[];
   windowMs: number;
   now: number;
+  retentionDays: number;
 }): FleetDigestResult {
   const windowStartMs = deps.now - deps.windowMs;
   const configured = new Map(deps.jobs.map((j) => [j.name, j]));
@@ -117,6 +254,18 @@ export function buildFleetDigest(deps: {
       ...deps.store.jobIdsWithBriefsInWindow({ windowStartMs, now: deps.now }),
     ]),
   ].sort(codeUnitCompare);
+
+  // A job is a sweep when its config says so, or — once removed from config — when a live brief in
+  // the window carries a subject key other than its own job id (spec § 8.1).
+  const sweepIds = new Set(
+    ids.filter((id) => {
+      const cfg = configured.get(id);
+      if (cfg !== undefined) return cfg.sweep !== null;
+      return deps.store
+        .subjectKeysWithBriefsInWindow({ jobId: id, windowStartMs, now: deps.now })
+        .some((k) => k !== id);
+    }),
+  );
 
   const jobs: FleetJobDigest[] = [];
   // Derived from `FleetDigestNotCompared` rather than restated inline — that type is the single
@@ -128,6 +277,7 @@ export function buildFleetDigest(deps: {
   const agentChanged: FleetDigestNotCompared["agentChanged"][number][] = [];
 
   for (const jobId of ids) {
+    if (sweepIds.has(jobId)) continue;
     const cfg = configured.get(jobId);
     const { current, predecessor } = deps.store.briefPairForSubject({
       jobId,
@@ -214,11 +364,17 @@ export function buildFleetDigest(deps: {
     });
   }
 
+  // `ids` is already `codeUnitCompare`-sorted, so `sweeps` is too.
+  const sweeps = [...sweepIds].map((id) =>
+    buildSweepDigest(deps, id, configured.get(id), windowStartMs),
+  );
+
   const result = {
     windowMs: deps.windowMs,
     generatedAt: deps.now,
     jobs,
     notCompared: { firstObservation, notSummarizable, noBriefInWindow, agentChanged },
+    sweeps,
   };
   // One computation, two shapes. Rendering from `result` rather than from the locals is what makes
   // it impossible for `--json` and the printed digest to disagree about what moved.
@@ -323,6 +479,7 @@ export function renderFleetDigest(d: Omit<FleetDigestResult, "markdown">): strin
   );
 
   for (const j of d.jobs) out.push(...jobSection(j));
+  for (const s of d.sweeps) out.push(...sweepSection(s));
   out.push(...notComparedSection(d.notCompared));
 
   return out.join("\n");
@@ -334,15 +491,18 @@ function keyChurnLines(label: string, keys: readonly string[]): string[] {
   return [`${label} (${String(keys.length)}):`, ...keys.map((k) => `- ${mdSafe(k)}`), ""];
 }
 
-/** One job's `## <id>` section: header line, withheld-metric disclosure, table, key churn. */
+/** One job's `## <id>` section: the heading, a blank line, then the shared body. Output unchanged. */
 function jobSection(j: FleetJobDigest): string[] {
+  return [`## ${mdSafe(j.jobId)}${unconfiguredMarker(j.configured)}`, "", ...jobBody(j)];
+}
+
+/** Everything under a job OR sweep-subject heading: summary line, withheld disclosure, table, churn. */
+function jobBody(j: FleetJobDigest): string[] {
   const status =
     j.status === "unchanged_within_threshold"
       ? `unchanged within threshold (digest_min_delta = ${String(j.minDelta)})`
       : j.status;
   const out: string[] = [
-    `## ${mdSafe(j.jobId)}${unconfiguredMarker(j.configured)}`,
-    "",
     `${mdSafe(j.agentMethod)} · compared over ${humanDuration(j.comparisonSpanMs)} · ${status}`,
     "",
   ];
@@ -374,6 +534,54 @@ function jobSection(j: FleetJobDigest): string[] {
     ...keyChurnLines("Appeared", j.keysAppeared),
     ...keyChurnLines("Resolved", j.keysResolved),
   );
+  return out;
+}
+
+const ROTATION_EXCEEDS_RETENTION =
+  "A full rotation takes longer than retention, so a subject's previous brief expires before it is " +
+  "revisited — this sweep cannot report movement. Raise max_subjects, shorten interval_seconds, " +
+  "or raise [fleet] retention_days.";
+
+function coverageLine(s: FleetSweepDigest): string {
+  const total = s.subjectsTotal === null ? "an unknown number of" : String(s.subjectsTotal);
+  const rotation =
+    s.rotationRunsEstimate === null || s.rotationMsEstimate === null
+      ? "full rotation unknown"
+      : `full rotation ≈ ${String(s.rotationRunsEstimate)} runs ≈ ${humanDuration(s.rotationMsEstimate)}`;
+  return (
+    `${mdSafe(s.agentMethod)} · swept ${String(s.subjectsSweptInWindow)} of ${total} subjects this window · ` +
+    `${rotation} · retention ${humanDuration(s.retentionMs)}`
+  );
+}
+
+/**
+ * A sweep job's ONE section (spec § 8.1). Every outcome line is always written, including as an
+ * explicit zero — the 2a rule that a section vanishing when empty trains a reader to stop looking.
+ */
+function sweepSection(s: FleetSweepDigest): string[] {
+  const out: string[] = [
+    `## ${mdSafe(s.jobId)} (sweep: ${s.sweepKind ?? "unknown"})${unconfiguredMarker(s.configured)}`,
+    "",
+    coverageLine(s),
+    "",
+  ];
+  if (s.rotationExceedsRetention) out.push(ROTATION_EXCEEDS_RETENTION, "");
+  const hidden = s.firstObservationKeys.length - FIRST_OBSERVATION_SHOWN;
+  out.push(
+    `Moved: ${String(s.moved.length)}`,
+    `Unchanged: ${String(s.unchangedCount)}`,
+    `Unchanged within digest_min_delta: ${String(s.unchangedWithinThresholdCount)}`,
+    `First observation: ${String(s.firstObservationKeys.length)}`,
+    ...s.firstObservationKeys.slice(0, FIRST_OBSERVATION_SHOWN).map((k) => `- ${mdSafe(k)}`),
+    ...(hidden > 0 ? [`- … and ${String(hidden)} more`] : []),
+    `Not summarizable: ${String(s.notSummarizable.length)}`,
+    ...s.notSummarizable.map((e) => `- ${mdSafe(e.subjectKey)} — ${mdSafe(e.reason)}`),
+    `Agent changed: ${String(s.agentChanged.length)}`,
+    ...s.agentChanged.map((e) => `- ${mdSafe(e.subjectKey)} — ${mdSafe(e.reason)}`),
+    `No brief in window: ${s.noBriefInWindow ? "yes" : "no"}`,
+    "",
+  );
+  for (const m of s.moved) out.push(`### ${mdSafe(m.subjectKey)}`, "", ...jobBody(m));
   return out;
 }
 

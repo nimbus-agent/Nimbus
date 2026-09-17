@@ -209,7 +209,13 @@ describe("buildFleetDigest assembles the job union", () => {
   }
 
   test("a configured job with no brief in window lands in noBriefInWindow", () => {
-    const r = buildFleetDigest({ store, jobs: [job("j1", "ghost")], windowMs: 1000, now: 5000 });
+    const r = buildFleetDigest({
+      store,
+      jobs: [job("j1", "ghost")],
+      windowMs: 1000,
+      now: 5000,
+      retentionDays: 14,
+    });
     expect(r.notCompared.noBriefInWindow).toEqual([
       { jobId: "j1", agent: "ghost", configured: true },
     ]);
@@ -226,7 +232,7 @@ describe("buildFleetDigest assembles the job union", () => {
       createdAt: 99_000,
       findings: ghostFindings(["p1"]),
     });
-    const r = buildFleetDigest({ store, jobs: [], windowMs: 1000, now: 5000 });
+    const r = buildFleetDigest({ store, jobs: [], windowMs: 1000, now: 5000, retentionDays: 14 });
     expect(r.notCompared.noBriefInWindow).toEqual([]);
     expect(r.jobs).toEqual([]);
     expect(r.notCompared.firstObservation).toEqual([]);
@@ -242,7 +248,7 @@ describe("buildFleetDigest assembles the job union", () => {
       createdAt: 4500,
       findings: ghostFindings(["p1"]),
     });
-    const r = buildFleetDigest({ store, jobs: [], windowMs: 1000, now: 5000 });
+    const r = buildFleetDigest({ store, jobs: [], windowMs: 1000, now: 5000, retentionDays: 14 });
     expect(r.notCompared.firstObservation).toEqual([
       { jobId: "retired", briefId: expect.any(String), createdAt: 4500, configured: false },
     ]);
@@ -261,7 +267,7 @@ describe("buildFleetDigest assembles the job union", () => {
       createdAt: 4500,
       findings: ghostFindings(["p1"]),
     });
-    const r = buildFleetDigest({ store, jobs: [], windowMs: 1000, now: 5000 });
+    const r = buildFleetDigest({ store, jobs: [], windowMs: 1000, now: 5000, retentionDays: 14 });
     expect(r.notCompared.agentChanged).toEqual([
       { jobId: "retired", from: "agents.catchup", to: "agents.ghost", configured: false },
     ]);
@@ -280,7 +286,7 @@ describe("buildFleetDigest assembles the job union", () => {
       createdAt: 4500,
       findings: ghostFindings(["p1", "p2"]),
     });
-    const r = buildFleetDigest({ store, jobs: [], windowMs: 1000, now: 5000 });
+    const r = buildFleetDigest({ store, jobs: [], windowMs: 1000, now: 5000, retentionDays: 14 });
     expect(r.jobs).toHaveLength(1);
     expect(r.jobs[0]?.configured).toBe(false);
     expect(r.jobs[0]?.keysAppeared).toEqual(["p2"]);
@@ -293,7 +299,13 @@ describe("buildFleetDigest assembles the job union", () => {
       createdAt: 4500,
       findings: ghostFindings(["p1"]),
     });
-    const r = buildFleetDigest({ store, jobs: [job("j1", "ghost")], windowMs: 1000, now: 5000 });
+    const r = buildFleetDigest({
+      store,
+      jobs: [job("j1", "ghost")],
+      windowMs: 1000,
+      now: 5000,
+      retentionDays: 14,
+    });
     expect(r.jobs).toEqual([]);
     expect(r.notCompared.firstObservation[0]?.jobId).toBe("j1");
   });
@@ -306,14 +318,26 @@ describe("buildFleetDigest assembles the job union", () => {
       createdAt: 4500,
       findings: ghostFindings(["p1"]),
     });
-    const r = buildFleetDigest({ store, jobs: [job("j1", "ghost")], windowMs: 1000, now: 5000 });
+    const r = buildFleetDigest({
+      store,
+      jobs: [job("j1", "ghost")],
+      windowMs: 1000,
+      now: 5000,
+      retentionDays: 14,
+    });
     expect(r.notCompared.notSummarizable[0]).toMatchObject({ jobId: "j1", role: "predecessor" });
   });
 
   test("both sides unreadable produce TWO notSummarizable entries, one per role", () => {
     insertBrief({ jobId: "j1", agentMethod: "agents.ghost", createdAt: 4000, findingsJson: "{{{" });
     insertBrief({ jobId: "j1", agentMethod: "agents.ghost", createdAt: 4500, findingsJson: "}}}" });
-    const r = buildFleetDigest({ store, jobs: [job("j1", "ghost")], windowMs: 1000, now: 5000 });
+    const r = buildFleetDigest({
+      store,
+      jobs: [job("j1", "ghost")],
+      windowMs: 1000,
+      now: 5000,
+      retentionDays: 14,
+    });
     expect(r.notCompared.notSummarizable).toHaveLength(2);
     expect(r.notCompared.notSummarizable).toContainEqual(
       expect.objectContaining({ jobId: "j1", role: "current" }),
@@ -340,7 +364,13 @@ describe("buildFleetDigest assembles the job union", () => {
       createdAt: 4500,
       findings: ghostFindings(["p1"]),
     });
-    const r = buildFleetDigest({ store, jobs: [job("j1", "ghost")], windowMs: 1000, now: 5000 });
+    const r = buildFleetDigest({
+      store,
+      jobs: [job("j1", "ghost")],
+      windowMs: 1000,
+      now: 5000,
+      retentionDays: 14,
+    });
     expect(r.jobs).toEqual([]);
     expect(r.notCompared.agentChanged).toEqual([
       { jobId: "j1", from: "agents.catchup", to: "agents.ghost", configured: true },
@@ -367,7 +397,13 @@ describe("buildFleetDigest assembles the job union", () => {
       findings,
       markdown: "# Totally different prose",
     });
-    const r = buildFleetDigest({ store, jobs: [job("j1", "ghost")], windowMs: 1000, now: 5000 });
+    const r = buildFleetDigest({
+      store,
+      jobs: [job("j1", "ghost")],
+      windowMs: 1000,
+      now: 5000,
+      retentionDays: 14,
+    });
     expect(r.jobs[0]?.status).toBe("unchanged");
   });
 
@@ -384,9 +420,158 @@ describe("buildFleetDigest assembles the job union", () => {
       createdAt: 4500,
       findings: ghostFindings(["p1"]),
     });
-    const r = buildFleetDigest({ store, jobs: [job("j1", "ghost")], windowMs: 1000, now: 5000 });
+    const r = buildFleetDigest({
+      store,
+      jobs: [job("j1", "ghost")],
+      windowMs: 1000,
+      now: 5000,
+      retentionDays: 14,
+    });
     expect(r.jobs[0]?.comparisonSpanMs).toBe(3500);
     expect(r.windowMs).toBe(1000);
+  });
+
+  describe("sweep jobs", () => {
+    const SWEEP_JOB: NimbusFleetJobToml = {
+      name: "sym",
+      agent: "ghost",
+      intervalSeconds: 86_400,
+      params: {},
+      digestMinDelta: 1,
+      sweep: { kind: "symbols", maxSubjects: 2, pathPrefix: null },
+    };
+    const brief = (subjectKey: string, createdAt: number, peers: string[]): void =>
+      insertBrief({
+        jobId: "sym",
+        subjectKey,
+        agentMethod: "agents.ghost",
+        createdAt,
+        findings: ghostFindings(peers),
+      });
+
+    test("groups a sweep job into ONE sweeps entry with per-subject outcomes", () => {
+      brief("symbols:a", 100, ["p1"]);
+      brief("symbols:a", 5000, ["p1", "p2"]); // moved
+      brief("symbols:b", 100, ["p1"]);
+      brief("symbols:b", 5000, ["p1"]); // unchanged
+      for (const k of ["c", "d", "e", "f", "g", "h", "i", "j", "k", "l", "m", "n"]) {
+        brief(`symbols:${k}`, 5000, ["p1"]); // first observation
+      }
+      store.recordSweepEnumeration("sym", {
+        kind: "symbols",
+        subjectsTotal: 40,
+        emptyReason: null,
+      });
+
+      const r = buildFleetDigest({
+        store,
+        jobs: [SWEEP_JOB],
+        windowMs: 1000,
+        now: 5500,
+        retentionDays: 14,
+      });
+      expect(r.jobs).toEqual([]);
+      expect(r.notCompared.firstObservation).toEqual([]);
+      expect(r.sweeps).toHaveLength(1);
+      const s = r.sweeps[0];
+      expect(s?.moved.map((m) => m.subjectKey)).toEqual(["symbols:a"]);
+      expect(s?.unchangedCount).toBe(1);
+      expect(s?.firstObservationKeys).toHaveLength(12);
+      expect(s?.subjectsSweptInWindow).toBe(14);
+      expect(s?.rotationRunsEstimate).toBe(20);
+      expect(s?.rotationMsEstimate).toBe(20 * 86_400_000);
+      expect(s?.rotationExceedsRetention).toBe(true);
+      expect(s?.noBriefInWindow).toBe(false);
+
+      expect(r.markdown).toContain("## sym (sweep: symbols)");
+      expect(r.markdown).toContain("swept 14 of 40 subjects this window");
+      expect(r.markdown).toContain("cannot report movement");
+      expect(r.markdown).toContain("First observation: 12");
+      expect(r.markdown).toContain("- … and 2 more");
+      expect(r.markdown).toContain("### symbols:a");
+    });
+
+    test("a configured sweep with no brief in the window reports noBriefInWindow at JOB level", () => {
+      const r = buildFleetDigest({
+        store,
+        jobs: [SWEEP_JOB],
+        windowMs: 1000,
+        now: 5500,
+        retentionDays: 14,
+      });
+      expect(r.sweeps[0]?.noBriefInWindow).toBe(true);
+      expect(r.notCompared.noBriefInWindow).toEqual([]);
+      expect(r.markdown).toContain("No brief in window: yes");
+    });
+
+    test("an UNCONFIGURED job whose briefs carry non-job subject keys is still grouped as a sweep", () => {
+      insertBrief({
+        jobId: "gone",
+        subjectKey: "services:checkout",
+        agentMethod: "agents.ghost",
+        createdAt: 5000,
+        findings: ghostFindings(["p1"]),
+      });
+      const r = buildFleetDigest({ store, jobs: [], windowMs: 1000, now: 5500, retentionDays: 14 });
+      expect(r.sweeps[0]).toMatchObject({
+        jobId: "gone",
+        sweepKind: "services",
+        configured: false,
+        rotationRunsEstimate: null,
+      });
+      expect(r.markdown).toContain("[unconfigured]");
+    });
+
+    // Controller ruling: the brief's version of this test asserted
+    // `r.markdown` against `renderFleetDigest({ ...same data... })`, which compares the renderer's
+    // output against itself and cannot fail independently. Omitted; the two assertions below
+    // (an empty sweeps array, and no "(sweep:" text) are what this test actually checks, and the
+    // pre-existing golden Markdown tests in `describe("renderFleetDigest", ...)` remain the real
+    // byte-identity guard, exercised again by Step 7's red-prove.
+    test("(red-prove) a fleet with no sweeps has an empty sweeps array and no sweep section", () => {
+      insertBrief({
+        jobId: "j1",
+        agentMethod: "agents.ghost",
+        createdAt: 100,
+        findings: ghostFindings(["p1"]),
+      });
+      insertBrief({
+        jobId: "j1",
+        agentMethod: "agents.ghost",
+        createdAt: 5000,
+        findings: ghostFindings(["p2"]),
+      });
+      const r = buildFleetDigest({
+        store,
+        jobs: [job("j1", "ghost")],
+        windowMs: 1000,
+        now: 5500,
+        retentionDays: 14,
+      });
+      expect(r.sweeps).toEqual([]);
+      expect(r.markdown).not.toContain("(sweep:");
+    });
+
+    test("the same database renders the same bytes twice, keys code-unit sorted", () => {
+      brief("symbols:b", 5000, ["p1"]);
+      brief("symbols:a", 5000, ["p1"]);
+      const once = buildFleetDigest({
+        store,
+        jobs: [SWEEP_JOB],
+        windowMs: 1000,
+        now: 5500,
+        retentionDays: 14,
+      });
+      const twice = buildFleetDigest({
+        store,
+        jobs: [SWEEP_JOB],
+        windowMs: 1000,
+        now: 5500,
+        retentionDays: 14,
+      });
+      expect(once.markdown).toBe(twice.markdown);
+      expect(once.sweeps[0]?.firstObservationKeys).toEqual(["symbols:a", "symbols:b"]);
+    });
   });
 });
 
@@ -400,6 +585,7 @@ describe("renderFleetDigest", () => {
 
   test("the preamble states the window AND that predecessors may predate it", () => {
     const md = renderFleetDigest({
+      sweeps: [],
       windowMs: 86_400_000,
       generatedAt: 0,
       jobs: [],
@@ -410,7 +596,13 @@ describe("renderFleetDigest", () => {
   });
 
   test("every Not compared subsection is present even when empty", () => {
-    const md = renderFleetDigest({ windowMs: 1000, generatedAt: 0, jobs: [], notCompared: empty });
+    const md = renderFleetDigest({
+      sweeps: [],
+      windowMs: 1000,
+      generatedAt: 0,
+      jobs: [],
+      notCompared: empty,
+    });
     expect(md).toContain("## Not compared");
     expect(md).toContain("First observation: 0");
     expect(md).toContain("Not summarizable: 0");
@@ -422,6 +614,7 @@ describe("renderFleetDigest", () => {
     // The 24h boundary sits on the HOURS side: the default window is exactly 86_400_000 and
     // "the last 1.0d" is a worse way to say "the last 24h".
     const md = renderFleetDigest({
+      sweeps: [],
       windowMs: 86_400_000,
       generatedAt: 0,
       jobs: [],
@@ -433,6 +626,7 @@ describe("renderFleetDigest", () => {
 
   test("a week-long comparison span renders as 7d", () => {
     const md = renderFleetDigest({
+      sweeps: [],
       windowMs: 86_400_000,
       generatedAt: 0,
       notCompared: empty,
@@ -460,6 +654,7 @@ describe("renderFleetDigest", () => {
 
   test("an unchanged job gets a line, never silent omission", () => {
     const md = renderFleetDigest({
+      sweeps: [],
       windowMs: 1000,
       generatedAt: 0,
       notCompared: empty,
@@ -488,6 +683,7 @@ describe("renderFleetDigest", () => {
 
   test("an unconfigured job is marked", () => {
     const md = renderFleetDigest({
+      sweeps: [],
       windowMs: 1000,
       generatedAt: 0,
       notCompared: empty,
@@ -515,6 +711,7 @@ describe("renderFleetDigest", () => {
 
   test("a suppressed change names the threshold", () => {
     const md = renderFleetDigest({
+      sweeps: [],
       windowMs: 1000,
       generatedAt: 0,
       notCompared: empty,
@@ -545,6 +742,7 @@ describe("renderFleetDigest", () => {
   // the withholding, naming the threshold — today nothing prints when `status` is "changed".
   test("a withheld metric is disclosed even on a job reported as changed", () => {
     const md = renderFleetDigest({
+      sweeps: [],
       windowMs: 1000,
       generatedAt: 0,
       notCompared: empty,
@@ -598,6 +796,7 @@ describe("renderFleetDigest", () => {
 
   test("a metric name containing a pipe keeps the table at four columns", () => {
     const md = renderFleetDigest({
+      sweeps: [],
       windowMs: 1000,
       generatedAt: 0,
       notCompared: empty,
@@ -616,6 +815,7 @@ describe("renderFleetDigest", () => {
     // where Markdown reads `\\` as one literal backslash and the pipe after it is LIVE — so the
     // row breaks anyway. The escape character has to be escaped first.
     const md = renderFleetDigest({
+      sweeps: [],
       windowMs: 1000,
       generatedAt: 0,
       notCompared: empty,
@@ -638,6 +838,7 @@ describe("renderFleetDigest", () => {
 
   test("a finding key containing a newline plus a forged heading does not produce a second heading", () => {
     const md = renderFleetDigest({
+      sweeps: [],
       windowMs: 1000,
       generatedAt: 0,
       notCompared: empty,
@@ -651,6 +852,7 @@ describe("renderFleetDigest", () => {
 
   test("a two-sided metric renders a plain delta row", () => {
     const md = renderFleetDigest({
+      sweeps: [],
       windowMs: 1000,
       generatedAt: 0,
       notCompared: empty,
@@ -661,6 +863,7 @@ describe("renderFleetDigest", () => {
 
   test("a one-sided metric shows (new metric) / (no longer reported) with an em dash, never 0 or null", () => {
     const md = renderFleetDigest({
+      sweeps: [],
       windowMs: 1000,
       generatedAt: 0,
       notCompared: empty,
@@ -681,6 +884,7 @@ describe("renderFleetDigest", () => {
 
   test("a populated Appeared and Resolved list renders the count and every entry", () => {
     const md = renderFleetDigest({
+      sweeps: [],
       windowMs: 1000,
       generatedAt: 0,
       notCompared: empty,
@@ -694,6 +898,7 @@ describe("renderFleetDigest", () => {
 
   test("a populated firstObservation entry renders its bullet text", () => {
     const md = renderFleetDigest({
+      sweeps: [],
       windowMs: 1000,
       generatedAt: 0,
       jobs: [],
@@ -708,6 +913,7 @@ describe("renderFleetDigest", () => {
 
   test("an unconfigured firstObservation entry is marked", () => {
     const md = renderFleetDigest({
+      sweeps: [],
       windowMs: 1000,
       generatedAt: 0,
       jobs: [],
@@ -721,6 +927,7 @@ describe("renderFleetDigest", () => {
 
   test("a populated notSummarizable entry renders its role and reason", () => {
     const md = renderFleetDigest({
+      sweeps: [],
       windowMs: 1000,
       generatedAt: 0,
       jobs: [],
@@ -743,6 +950,7 @@ describe("renderFleetDigest", () => {
 
   test("an unconfigured notSummarizable entry is marked", () => {
     const md = renderFleetDigest({
+      sweeps: [],
       windowMs: 1000,
       generatedAt: 0,
       jobs: [],
@@ -764,6 +972,7 @@ describe("renderFleetDigest", () => {
 
   test("a populated noBriefInWindow entry renders its configured agent", () => {
     const md = renderFleetDigest({
+      sweeps: [],
       windowMs: 1000,
       generatedAt: 0,
       jobs: [],
@@ -778,6 +987,7 @@ describe("renderFleetDigest", () => {
 
   test("a populated agentChanged entry renders the from/to agent methods", () => {
     const md = renderFleetDigest({
+      sweeps: [],
       windowMs: 1000,
       generatedAt: 0,
       jobs: [],
@@ -794,6 +1004,7 @@ describe("renderFleetDigest", () => {
 
   test("an unconfigured agentChanged entry is marked", () => {
     const md = renderFleetDigest({
+      sweeps: [],
       windowMs: 1000,
       generatedAt: 0,
       jobs: [],

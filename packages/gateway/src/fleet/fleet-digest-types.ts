@@ -1,3 +1,4 @@
+import type { SweepKind } from "../config/fleet-toml.ts";
 import type { AgentMethod, FLEET_ELIGIBILITY } from "../ipc/agents-rpc.ts";
 
 /**
@@ -93,10 +94,46 @@ export interface FleetDigestNotCompared {
   }[];
 }
 
+export type FleetSweepSubjectDigest = FleetJobDigest & { readonly subjectKey: string };
+
+export interface FleetDigestSubjectRef {
+  readonly subjectKey: string;
+  readonly briefId: string;
+  readonly reason: string;
+}
+
+export interface FleetSweepDigest {
+  readonly jobId: string;
+  readonly agentMethod: string;
+  /** From config; for an unconfigured sweep, the key prefix — null only if that prefix is not a kind. */
+  readonly sweepKind: SweepKind | null;
+  readonly configured: boolean;
+  /** At the last enumeration; null when the job has never enumerated. */
+  readonly subjectsTotal: number | null;
+  readonly subjectsSweptInWindow: number;
+  /** ceil(total / max_subjects); null when either is unknown. */
+  readonly rotationRunsEstimate: number | null;
+  /** rotationRunsEstimate × interval; null under the same condition. */
+  readonly rotationMsEstimate: number | null;
+  readonly retentionMs: number;
+  readonly rotationExceedsRetention: boolean;
+  readonly moved: readonly FleetSweepSubjectDigest[];
+  readonly unchangedCount: number;
+  /** Unchanged ONLY because digest_min_delta withheld a metric (2a § 6.3). */
+  readonly unchangedWithinThresholdCount: number;
+  /** Every key, code-unit sorted; Markdown truncates, JSON does not. */
+  readonly firstObservationKeys: readonly string[];
+  readonly notSummarizable: readonly FleetDigestSubjectRef[];
+  readonly agentChanged: readonly FleetDigestSubjectRef[];
+  /** Job-level: no subject of this job has a brief in the window. */
+  readonly noBriefInWindow: boolean;
+}
+
 export interface FleetDigestResult {
   readonly windowMs: number;
   readonly generatedAt: number;
   readonly markdown: string;
   readonly jobs: readonly FleetJobDigest[];
   readonly notCompared: FleetDigestNotCompared;
+  readonly sweeps: readonly FleetSweepDigest[];
 }

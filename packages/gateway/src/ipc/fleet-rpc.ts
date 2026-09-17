@@ -233,6 +233,7 @@ function handleDigest(params: unknown, ctx: FleetRpcCtx): FleetDigestResult {
     jobs: ctx.jobs ?? [],
     windowMs,
     now: ctx.now(),
+    retentionDays: ctx.config.retentionDays,
   });
 }
 
