@@ -2719,7 +2719,9 @@ Specs and plans do not land on `main`. Before opening the PR:
 git rm docs/superpowers/specs/2026-09-17-fleet-subject-enumeration-design.md \
        docs/superpowers/specs/2026-09-17-fleet-subject-enumeration-review.md \
        docs/superpowers/specs/2026-09-17-fleet-subject-enumeration-review-response.md \
-       docs/superpowers/plans/2026-09-17-fleet-subject-enumeration.md
+       docs/superpowers/plans/2026-09-17-fleet-subject-enumeration.md \
+       docs/superpowers/plans/2026-09-17-fleet-subject-enumeration-review.md \
+       docs/superpowers/plans/2026-09-17-fleet-subject-enumeration-review-response.md
 git commit -F <msgfile>   # "docs: strip the fleet subject enumeration spec and plan before merge"
 git diff main --stat -- docs/superpowers   # must print nothing
 ```
