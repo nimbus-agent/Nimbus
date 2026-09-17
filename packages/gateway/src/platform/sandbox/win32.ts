@@ -5,7 +5,7 @@ import { canonicalPath, canonicalPolicyPaths } from "./canonical-path.ts";
 import type { SandboxPolicy } from "./sandbox-policy.ts";
 import type { SandboxRunner, SandboxSpawnOptions } from "./sandbox-runner.ts";
 import { buildHelperArgv } from "./win32-argv.ts";
-import { attachGrantRelease, type HelperRun, releaseGrantsFor } from "./win32-release.ts";
+import { attachGrantReleaseIf, type HelperRun, releaseGrantsFor } from "./win32-release.ts";
 
 export { profileNameFor } from "./win32-argv.ts";
 
@@ -77,12 +77,12 @@ export function createWin32SandboxRunner(): SandboxRunner {
       // Purely about window visibility: it is not part of the AppContainer confinement and
       // does not alter the helper argv, the ACL grant, or the stdio the helper forwards.
       const child = spawn(path, argv, { env: opts.env, cwd, stdio: opts.stdio, windowsHide: true });
-      if (opts.releaseGrantsOnExit === true) {
-        // The SAME canonicalised cwd and policy the grant used: releasing a different spelling of a
-        // directory would leave the real ACE in place. See win32-release.ts for why this is driven
-        // from here rather than from inside the helper.
-        attachGrantRelease(child, () => releaseGrantsFor(helperRunner(path), policy, { cwd }));
-      }
+      // The SAME canonicalised cwd and policy the grant used: releasing a different spelling of a
+      // directory would leave the real ACE in place. See win32-release.ts for why this is driven
+      // from here rather than from inside the helper.
+      attachGrantReleaseIf(opts.releaseGrantsOnExit, child, () =>
+        releaseGrantsFor(helperRunner(path), policy, { cwd }),
+      );
       return child;
     },
     isFullyActive(): boolean {

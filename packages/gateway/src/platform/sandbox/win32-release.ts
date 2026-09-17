@@ -48,6 +48,21 @@ interface ChildLifecycle {
  * wait happens on those paths. The `exit` event fires for all of them.
  */
 export function attachGrantRelease(child: ChildLifecycle, release: () => Promise<void>): void {
+  attachGrantReleaseIf(true, child, release);
+}
+
+/**
+ * {@link attachGrantRelease} when `requested` is exactly `true`, otherwise nothing. The runner passes
+ * `SandboxSpawnOptions.releaseGrantsOnExit` straight through, so the decision lives here — where it
+ * is tested on every platform — rather than in a spawn path only a Windows box with the helper
+ * installed can reach.
+ */
+export function attachGrantReleaseIf(
+  requested: boolean | undefined,
+  child: ChildLifecycle,
+  release: () => Promise<void>,
+): void {
+  if (requested !== true) return;
   let done = false;
   const fire = (): void => {
     if (done) return;

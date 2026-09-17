@@ -2,8 +2,9 @@ import { describe, expect, it } from "bun:test";
 import { EventEmitter } from "node:events";
 
 import type { SandboxPolicy } from "./sandbox-policy.ts";
+import { helperRunner } from "./win32.ts";
 import { buildRevokeGrantsArgv, buildSweepArgv } from "./win32-argv.ts";
-import { attachGrantRelease, releaseGrantsFor } from "./win32-release.ts";
+import { attachGrantRelease, attachGrantReleaseIf, releaseGrantsFor } from "./win32-release.ts";
 
 // NO platform skip: every function here is argv derivation or orchestration over an injected
 // `run`, so it executes on the CI-Linux coverage run. The real helper is exercised by
@@ -105,5 +106,51 @@ describe("attachGrantRelease", () => {
     child.emit("exit", null, "SIGTERM");
     await Promise.resolve();
     expect(released).toBe(1);
+  });
+});
+
+describe("attachGrantReleaseIf", () => {
+  it.each([
+    ["false", false],
+    ["absent", undefined],
+  ])(
+    "attaches nothing when the option is %s — a shared SID must never be released",
+    async (_l, v) => {
+      const child = new EventEmitter();
+      let released = 0;
+      attachGrantReleaseIf(v, child, async () => {
+        released += 1;
+      });
+      expect(child.listenerCount("exit")).toBe(0);
+      expect(child.listenerCount("error")).toBe(0);
+      child.emit("exit", 0, null);
+      await Promise.resolve();
+      expect(released).toBe(0);
+    },
+  );
+
+  it("attaches the release when the option is true", async () => {
+    const child = new EventEmitter();
+    let released = 0;
+    attachGrantReleaseIf(true, child, async () => {
+      released += 1;
+    });
+    child.emit("exit", 0, null);
+    await Promise.resolve();
+    expect(released).toBe(1);
+  });
+});
+
+describe("helperRunner", () => {
+  // Driven through the running Bun binary rather than the Windows helper, so both arms execute on
+  // every platform: what is under test is the exit-code-to-promise mapping, not the helper.
+  it("resolves when the process exits 0", async () => {
+    await expect(
+      helperRunner(process.execPath)(["-e", "process.exit(0)"]),
+    ).resolves.toBeUndefined();
+  });
+
+  it("rejects when the process exits non-zero, so releaseGrantsFor can tell a failure", async () => {
+    await expect(helperRunner(process.execPath)(["-e", "process.exit(3)"])).rejects.toThrow();
   });
 });
