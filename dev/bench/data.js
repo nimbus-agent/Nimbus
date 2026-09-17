@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1789661670269,
+  "lastUpdate": 1789664015123,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "f2110a96a586d465f611553fb23577334503a16b",
-          "message": "chore(secrets): org-scope the App secrets + retire RELEASE_PAT/PACKAGE_MANAGER_PAT (#797)\n\nFollows a live consolidation of the App credentials from per-repo\nsecrets into **org secrets**, so the private key rotates in one place\ninstead of three.\n\n## What changed live (already done)\n\n| Secret | Before | After |\n|---|---|---|\n| `RELEASE_BOT_CLIENT_ID` | repo secret on Nimbus + nimbus-client |\n**org secret, visibility all** — it's public (`GET /apps/{slug}`), so\nall-repo exposure costs nothing |\n| `RELEASE_BOT_PRIVATE_KEY` | repo secret on Nimbus + nimbus-client |\n**org secret, visibility SELECTED** → Nimbus + nimbus-client +\nnimbus-sdk |\n\nThe private key is deliberately **not** `visibility: all`: with it you\ncan mint `contents`/`PRs`/`issues:write` tokens for any repo the App is\ninstalled on, so the blast radius is kept to the three repos that\nactually mint tokens. As a bonus, nimbus-sdk (in the scope) no longer\nneeds its own secret set — only the App install.\n\nRepo-level copies deleted; org secrets take over (repo secrets override\norg, so there was no breakage window).\n\n## Why this PR exists\n\nChanging the secret topology made the weekly monitor go red **within one\ndispatch** — `RELEASE_BOT_{CLIENT_ID,PRIVATE_KEY}` showed `missing` at\nrepo scope and `undocumented` at org scope. That's the credential\nmanifest (#783) doing exactly its job. This PR updates the registry to\nmatch reality: both entries move to `scope: \"org\"` with the correct\n`expectedVisibility`, and the location counts shift **ORG 2→4 / Nimbus\n25→23**.\n\n## Verified\n\n- `secret-health`'s **\"Mint release-bot token\" step succeeds** reading\nthe org secret — proven live, so all three repos resolve it.\n- `bun test scripts/release/` 143 pass / 6 skip / 0 fail;\n`audit:consumed-by` OK; standalone `tsc --strict` exit 0; biome clean.\n\nAfter this merges, the next monitor run should show both entries `ok`\nagain and clear the four red rows.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)",
-          "timestamp": "2026-07-22T17:50:46+03:00",
-          "tree_id": "b98559713748c3ad4fb3e14152254b7c07f22e60",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/f2110a96a586d465f611553fb23577334503a16b"
-        },
-        "date": 1784732613048,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 297.6576737999949,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 299.38418309999327,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 316.2780237000017,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "c6c7e27b75901cbfa19f7b03b4514d6fb63d831c",
+          "message": "feat(search): disclose keyword-only and mid-backfill results; typed embedding query timeout (#1535)\n\nThe follow-up #1500 deferred. V62 fixed the quadratic vector-search\nplan. Two false greens survived it, and a search could still report a\nkeyword-only or incomplete result as complete.\n\n## What was wrong\n\n1. **A query embed that timed out resolved `null`.**\n`worker-bridge.ts`'s 60 s timeout arm and its `.catch` both resolved\n`null`, identical to the permanent `unavailable` state. Hybrid search\nsilently became BM25, and an empty result read as \"found nothing\" —\n#928's false green on the arm that fix missed. The 60 s bound also sat\nOUTSIDE the CLI's 30 s IPC bound, so it had never fired. The `hybrid`\nand `openai` runtimes had no query bound at all.\n2. **Nothing disclosed a running backfill.** Readiness is `ready` for\nthe whole backfill, even at 0 %.\n3. **The rows cannot carry either fact.** A timed-out query's rows still\nsay `scoringFormula: \"hybrid_rrf\"`, so `nimbus explain last` labelled it\n\"primary search (hybrid RRF)\". Briefs guessed semantic availability from\n`vectorRank`, which read wrong whenever a working vector search matched\nnothing.\n\n## What changed\n\n- **`EmbeddingTimeoutError`**, brand-checked like the warming error. One\nhelper, `withEmbeddingQueryTimeout`, bounds all three runtimes. The\ndefault is **5 s**, inside the CLI's 30 s IPC bound, with\n`NIMBUS_EMBEDDING_QUERY_TIMEOUT_MS` as the override. The hybrid runtime\nbounds each half separately, so a stalled OpenAI request keeps the local\nvector and is marked `partial`. The lazy runtime bounds the embed, never\nthe first-call model load.\n- **`LocalIndex.searchRankedAsync` returns `{ items, retrieval }`**,\nbuilt once at the only site that knows both facts:\n  - `vectorRanked`: whether a query vector was actually used;\n  - `reason`: why not;\n  - `partial`: a hybrid result ranked on one dimension only;\n  - `backfill`: present only while a pass runs.\n\n  The wording lives in ONE place, `describeRetrieval`.\n- **Consumers:**\n- the agent's `searchLocalIndex` tool result (inside the I11 envelope);\n  - briefs' `semanticAvailable`;\n  - the `explain last` record (`primaryRetrieval`) and its label;\n- `nimbus search`: notes go to **stderr**, and stdout stays the plain\narray;\n- the MCP search tools: notes as a separate text block, rows block\nunchanged.\n- **Wire: opt-in.** `index.searchRanked` returns the bare array unless\nthe request passes `envelope: true`, which returns `{ items, retrieval,\nnotes }`. The notes are the gateway's own wording, sent over the wire so\nno client keeps a copy.\n\n## Decisions settled before implementation\n\n1. **Opt-in envelope kept.** The published `@nimbus-dev/client` 0.17.3\nasserts this method returns an array, so an unconditional envelope would\nmake every published client throw. The client's `searchRanked` also\nforwards only six named params, so **`nimbus-vscode` cannot opt in**\nuntil a client release adds the flag — filed as\nnimbus-agent/nimbus-client#86.\n2. **Coverage is worded as pass progress, never index coverage.** The\nspec's \"8,400/60,000 items\" is not derivable:\n`getBackfillProgress().total` is the count of items with no vector when\nTHIS pass started, `done` includes failures, and the value was never\ncleared. A new `getActiveBackfillPass()` returns it only while a pass is\nrunning. The note says \"8,400 of 51,600 items processed this pass\" and\npoints at `nimbus index health`, which stays authoritative. It is not\ncomputed per query: `readPerService` is a full scan.\n3. **No JSON-RPC code (-32022).** Every path degrades through\n`embedQueryDualOutcome`, so the timeout error cannot cross IPC; its\nreason travels in `retrieval.reason`.\n4. **The timeout bound applies to the `hybrid` and `openai` runtimes\ntoo**, not only the worker bridge.\n\n## Out of scope, unchanged\n\n- **Worker admission control, spec §4.1:** measured at 7–9 ms vs 2–3 ms\nidle, which is immaterial.\n- **`[embedding] query_timeout_ms` TOML key:** deferred.\n- **Converging `index health` onto the search-time figure:** deferred.\n- **`vec-store-join-order.test.ts` and\n`session-memory-join-order.test.ts`:** untouched, 25 pass.\n\n## Verification\n\n- **TDD, each new arm red-proved by reverting the fix:**\n- **Worker bridge timeout:** the test drives the REAL timer with a\nworker that never replies. Reverted to `resolve(null)`, it fails with\n`Received value: null`.\n- **Disclosure wiring in `searchRankedAsync`:** real vec0 rows. With the\nreason and backfill dropped, 3 of 4 fail.\n- **`nimbus search` stderr notes:** fails when the notes are not\nprinted.\n- **Explain label:** fails when the label ignores the recorded\nretrieval.\n- **Real-socket e2e** in `gateway-bind-first.e2e.test.ts`, covering the\nenvelope and a keyword-only search after a failed model fetch. Both fail\nwhen the handler's envelope branch is removed — this is what proves the\nparam survives real routing, not only the handler.\n- **Lazy and hybrid runtime bounds:** removing the bound makes the call\nnever settle, observed as a hang rather than a clean assertion failure,\nbecause those tests set their own 30 s timeout.\n- **Gates:** `bun run preflight:fast` all green; `bun run\ntypecheck:tests` 0 new.\n- **Scoped suites** (search, memory, embedding, index, engine, ipc,\nbriefs, toolgen grounding, CLI commands/mcp/lib, engine integration):\n6865 pass, 0 fail.\n\nNo schema migration, no new invariant, no egress class, no Tauri\nallowlist change. Design:\n`2026-09-12-cold-start-search-starvation-design.md` §4.2–4.5; durable\ndecisions recorded in `docs/architecture.md` and `docs/CHANGELOG.md`.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n## Summary by CodeRabbit\n\n* **New Features**\n* Search results now disclose semantic-ranking status, keyword-only\nfallback reasons, partial ranking, and embedding backfill progress.\n* Embedding query timeouts now produce typed errors with a configurable\n5-second default.\n* CLI, MCP, briefs, and explain views surface retrieval notes without\nchanging result rows.\n* **Compatibility**\n* Opt-in response envelopes expose retrieval metadata and notes while\nlegacy arrays remain supported.\n* CLI results remain on stdout; diagnostic notes are written to stderr.\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>",
+          "timestamp": "2026-09-17T16:41:49Z",
+          "tree_id": "7e73b2a882f887355edd86d82f3dadf0b8f00abc",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/c6c7e27b75901cbfa19f7b03b4514d6fb63d831c"
+        },
+        "date": 1789664011211,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 256.70208299999683,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 260.4140179000075,
             "unit": "ms"
           }
         ]
