@@ -23,6 +23,38 @@ profile creation **works** on this machine, not that a capability is **held**.
   AppContainer profile. Exit 0 on success or if the profile is already absent.
   Refuses (exit 64) to delete anything outside the `nimbus-` namespace.
 
+- `nimbus-sandbox-helper.exe --revoke-grants --profile <name> [--path <p>]…` — remove
+  every **explicit** ACE the named profile's SID holds on each path (and, through
+  `SetNamedSecurityInfoW`'s propagation, the inherited copies beneath it). The SID is
+  derived from the name with `DeriveAppContainerSidFromAppContainerName`, so this works
+  after `--delete-profile` too and never re-registers a profile. A path that no longer
+  exists is success. Exit 0 when every path succeeded, 1 if any failed (each named on
+  stderr; the remaining paths are still attempted), 64 on a usage error or a profile
+  outside the `nimbus-` namespace.
+
+- `nimbus-sandbox-helper.exe --sweep-orphaned-aces <path>…` — remove every explicit
+  `ACCESS_ALLOWED` ACE on each path whose SID is an app-container SID (`S-1-15-2-*`)
+  **and** has no subkey under the current user's Mappings key **and** does not resolve
+  via `LookupAccountSidW`. Both checks must say "not there"; any other answer keeps the
+  ACE. The Mappings key lists installed packages as well as Nimbus profiles, so a Store
+  app's grant is never swept. Prints `removed <n> <path>` per path; exit 0/1/64 as above.
+
+  ### Why grants must be released, and why the gateway drives it
+
+  `grant_path` only ever **adds** an ACE, and deleting a profile does **not** remove
+  one — it survives as an unresolvable `S-1-15-2-*` entry. Re-granting the SAME SID
+  merges into its existing ACE, but every DISTINCT SID adds one, so a policy id that is
+  new on every run (`exec-<id>`, `cu-terminal-<id>`) grew the DACL of every path that
+  outlives the run — the runtime bin dir above all — by one ACE per run. Measured on a
+  development machine at 1366 ACEs, where `SetEntriesInAclW` failed with 87 and every
+  confined spawn refused.
+
+  The release is run by the **gateway** when the helper process exits, not by the
+  spawn mode after its wait: the gateway ends terminal sessions and timed-out executions
+  by terminating this helper, so nothing after `WaitForSingleObject` would run on those
+  paths. The boot-time sweep covers what a gateway crash leaves behind on the runtime
+  paths.
+
 - `nimbus-sandbox-helper.exe --profile <name> --cwd <path> [--capability internetClient]
   [--grant-read <path>]… [--grant-write <path>]… -- <argv…>` — the spawn mode. Creates
   (or derives) the named AppContainer profile, grants its SID the ACEs described below,

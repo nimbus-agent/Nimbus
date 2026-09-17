@@ -5,7 +5,7 @@ import type { ExtensionManifest } from "../extensions/manifest.ts";
 import { extensionProcessEnv } from "../extensions/spawn-env.ts";
 import { policyFromManifest } from "../platform/sandbox/sandbox-policy.ts";
 import type { SandboxRunner } from "../platform/sandbox/sandbox-runner.ts";
-import { ToolgenError } from "./toolgen-types.ts";
+import { ERR_TOOLGEN_SANDBOX_DEGRADED, ToolgenError } from "./toolgen-types.ts";
 
 /** The probe's exit code for "the read was denied", i.e. confinement worked. */
 const PROBE_EXIT_FS_DENIED = 10;
@@ -240,7 +240,7 @@ export async function assertToolConfinement(deps: ToolConfinementDeps): Promise<
   const cannot = deps.runner.canConfine(policy);
   if (cannot !== null) {
     throw new ToolgenError(
-      "ERR_TOOLGEN_SANDBOX_DEGRADED",
+      ERR_TOOLGEN_SANDBOX_DEGRADED,
       `refusing to generate a tool that could not be confined: ${cannot}`,
     );
   }

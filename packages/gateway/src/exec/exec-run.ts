@@ -74,6 +74,10 @@ export function runConfined(
       env: extensionProcessEnv({}),
       cwd: opts.cwd,
       stdio: ["ignore", "pipe", "pipe"],
+      // `exec-<executionId>` is new on every run, so no concurrent spawn shares this policy's
+      // AppContainer SID and releasing every ACE it holds on exit is safe. See
+      // `SandboxSpawnOptions.releaseGrantsOnExit`.
+      releaseGrantsOnExit: true,
     });
 
     const outChunks: Uint8Array[] = [];

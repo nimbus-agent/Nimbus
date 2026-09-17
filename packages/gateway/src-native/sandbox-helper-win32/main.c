@@ -12,6 +12,7 @@
 #include <windows.h>
 #include <userenv.h>
 #include <aclapi.h>
+#include <sddl.h>
 #include <stdio.h>
 #include <wchar.h>
 
@@ -422,14 +423,201 @@ static int mode_spawn(int argc, wchar_t **argv) {
     return (int)code;
 }
 
+/* ------------------------------------------------------------------------------------------------
+ * Releasing grants. grant_path only ever ADDS an ACE, and deleting a profile does not remove one:
+ * the ACE survives as an unresolvable S-1-15-2-* entry. For a policy id that is new on every run
+ * (`exec-<id>`, `cu-terminal-<id>`) that meant one more ACE per run on every path that outlives it
+ * — the runtime bin dir above all — until SetEntriesInAclW failed with 87 and every confined spawn
+ * on the machine refused. These two modes are the removal half. Both are driven by the GATEWAY,
+ * not by mode_spawn after its wait: the gateway ends terminal sessions and timed-out executions
+ * with TerminateProcess on this helper, so nothing after WaitForSingleObject runs on those paths.
+ * ---------------------------------------------------------------------------------------------- */
+
+#define MAX_RELEASE_PATHS 256
+
+/* A path that is already gone has no ACE left to remove: success, not failure. The caller may
+ * reasonably delete a temp working directory before or while the release runs. */
+static BOOL path_is_gone(DWORD rc) {
+    return rc == ERROR_FILE_NOT_FOUND || rc == ERROR_PATH_NOT_FOUND;
+}
+
+/* Remove every explicit ACE held by each of `sids` from `path`'s DACL in ONE rewrite. Returns 0 on
+ * success (including a path that no longer exists), 1 on failure with the reason on stderr. */
+static int revoke_sids_on_path(const wchar_t *path, PSID *sids, ULONG nsids) {
+    if (nsids == 0) return 0;
+    PACL old_acl = NULL;
+    PACL new_acl = NULL;
+    PSECURITY_DESCRIPTOR sd = NULL;
+    DWORD rc = GetNamedSecurityInfoW((LPWSTR)path, SE_FILE_OBJECT,
+                                     DACL_SECURITY_INFORMATION, NULL, NULL, &old_acl, NULL, &sd);
+    if (path_is_gone(rc)) return 0;
+    if (rc != ERROR_SUCCESS) { err(L"GetNamedSecurityInfoW(%s): %lu", path, rc); return 1; }
+
+    EXPLICIT_ACCESS_W *ea = (EXPLICIT_ACCESS_W *)HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY,
+                                                           sizeof(EXPLICIT_ACCESS_W) * nsids);
+    if (ea == NULL) { LocalFree(sd); err(L"HeapAlloc: out of memory"); return 1; }
+    for (ULONG k = 0; k < nsids; k++) {
+        ea[k].grfAccessMode       = REVOKE_ACCESS;
+        ea[k].Trustee.TrusteeForm = TRUSTEE_IS_SID;
+        ea[k].Trustee.TrusteeType = TRUSTEE_IS_GROUP;
+        ea[k].Trustee.ptstrName   = (LPWSTR)sids[k];
+    }
+    rc = SetEntriesInAclW(nsids, ea, old_acl, &new_acl);
+    HeapFree(GetProcessHeap(), 0, ea);
+    if (rc != ERROR_SUCCESS) { LocalFree(sd); err(L"SetEntriesInAclW(%s): %lu", path, rc); return 1; }
+
+    rc = SetNamedSecurityInfoW((LPWSTR)path, SE_FILE_OBJECT,
+                               DACL_SECURITY_INFORMATION, NULL, NULL, new_acl, NULL);
+    LocalFree(new_acl);
+    LocalFree(sd);
+    if (path_is_gone(rc)) return 0;
+    if (rc != ERROR_SUCCESS) { err(L"SetNamedSecurityInfoW(%s): %lu", path, rc); return 1; }
+    return 0;
+}
+
+/* --revoke-grants --profile <name> [--path <p>]... */
+static int mode_revoke_grants(int argc, wchar_t **argv) {
+    const wchar_t *profile = NULL;
+    const wchar_t *paths[MAX_RELEASE_PATHS];
+    int npaths = 0;
+    for (int i = 2; i < argc; i++) {
+        if (wcscmp(argv[i], L"--profile") == 0 && i + 1 < argc) {
+            profile = argv[++i];
+        } else if (wcscmp(argv[i], L"--path") == 0 && i + 1 < argc) {
+            if (npaths >= MAX_RELEASE_PATHS) { err(L"too many --path"); return 64; }
+            paths[npaths++] = argv[++i];
+        } else {
+            err(L"unexpected arg: %s", argv[i]);
+            return 64;
+        }
+    }
+    if (profile == NULL) { err(L"--revoke-grants requires --profile"); return 64; }
+    if (wcsncmp(profile, PROFILE_PREFIX, wcslen(PROFILE_PREFIX)) != 0) {
+        err(L"refusing to revoke grants outside the %s namespace: %s", PROFILE_PREFIX, profile);
+        return 64;
+    }
+
+    /* Derived, never created: the SID is a function of the name, so this works whether or not the
+     * profile still exists — and it must not re-register a profile the caller is tearing down. */
+    PSID sid = NULL;
+    HRESULT hr = DeriveAppContainerSidFromAppContainerName(profile, &sid);
+    if (FAILED(hr)) { err(L"derive SID for %s: hr=0x%08lx", profile, (unsigned long)hr); return 1; }
+
+    int status = 0;
+    for (int k = 0; k < npaths; k++) {
+        /* One failed path must not strand the rest: keep going, report at the end. */
+        if (revoke_sids_on_path(paths[k], &sid, 1) != 0) status = 1;
+    }
+    FreeSid(sid);
+    return status;
+}
+
+/* S-1-15-2-*: the APP_PACKAGE authority (15) with base RID 2. Capability SIDs (S-1-15-3-*) are not
+ * profiles and are never touched. */
+static BOOL is_app_container_sid(PSID sid) {
+    const SID_IDENTIFIER_AUTHORITY *auth = GetSidIdentifierAuthority(sid);
+    static const BYTE want[6] = {0, 0, 0, 0, 0, 15};
+    if (memcmp(auth->Value, want, sizeof(want)) != 0) return FALSE;
+    if (*GetSidSubAuthorityCount(sid) < 1) return FALSE;
+    return *GetSidSubAuthority(sid, 0) == SECURITY_APP_PACKAGE_BASE_RID;
+}
+
+/* An ACE's SID is orphaned only when BOTH independent checks agree it names nothing:
+ *   1. no subkey under the per-user Mappings key — which lists installed packages (Notepad, VCLibs)
+ *      as well as CreateAppContainerProfile profiles, so a Store app's grant is never an orphan;
+ *   2. LookupAccountSidW reports ERROR_NONE_MAPPED.
+ * Anything short of a clean "not there" on either check (an access error, a lookup that fails for
+ * another reason) keeps the ACE: removing a live grant breaks a running app, while keeping an
+ * orphan costs one ACL entry. */
+static BOOL is_orphaned_sid(PSID sid) {
+    LPWSTR str = NULL;
+    if (!ConvertSidToStringSidW(sid, &str)) return FALSE;
+    wchar_t key[512];
+    int n = swprintf(key, 512, L"%s\\%s", MAPPINGS_KEY, str);
+    LocalFree(str);
+    if (n < 0) return FALSE;
+
+    HKEY h;
+    LSTATUS rs = RegOpenKeyExW(HKEY_CURRENT_USER, key, 0, KEY_READ, &h);
+    if (rs == ERROR_SUCCESS) { RegCloseKey(h); return FALSE; }
+    if (rs != ERROR_FILE_NOT_FOUND) return FALSE;
+
+    wchar_t name[256];
+    wchar_t domain[256];
+    DWORD nlen = 256;
+    DWORD dlen = 256;
+    SID_NAME_USE use;
+    if (LookupAccountSidW(NULL, sid, name, &nlen, domain, &dlen, &use)) return FALSE;
+    return GetLastError() == ERROR_NONE_MAPPED;
+}
+
+/* Collect the distinct orphaned app-container SIDs holding an explicit ACCESS_ALLOWED ACE on `acl`.
+ * The returned pointers point INTO `acl`, so they are valid only while its security descriptor is.
+ * Returns the count, or -1 on allocation failure. `*out` is freed by the caller with HeapFree. */
+static int collect_orphans(PACL acl, PSID **out) {
+    *out = NULL;
+    if (acl == NULL) return 0;
+    ACL_SIZE_INFORMATION info;
+    if (!GetAclInformation(acl, &info, sizeof(info), AclSizeInformation)) return 0;
+    if (info.AceCount == 0) return 0;
+    PSID *found = (PSID *)HeapAlloc(GetProcessHeap(), 0, sizeof(PSID) * info.AceCount);
+    if (found == NULL) return -1;
+
+    int count = 0;
+    for (DWORD i = 0; i < info.AceCount; i++) {
+        LPVOID raw = NULL;
+        if (!GetAce(acl, i, &raw)) continue;
+        const ACE_HEADER *hdr = (const ACE_HEADER *)raw;
+        if (hdr->AceType != ACCESS_ALLOWED_ACE_TYPE) continue;
+        if ((hdr->AceFlags & INHERITED_ACE) != 0) continue; /* the parent's to remove, not ours */
+        PSID sid = (PSID)&((ACCESS_ALLOWED_ACE *)raw)->SidStart;
+        if (!is_app_container_sid(sid)) continue;
+        BOOL seen = FALSE;
+        for (int k = 0; k < count && !seen; k++) seen = EqualSid(found[k], sid);
+        if (seen || !is_orphaned_sid(sid)) continue;
+        found[count++] = sid;
+    }
+    *out = found;
+    return count;
+}
+
+/* --sweep-orphaned-aces <path>... */
+static int mode_sweep_orphaned_aces(int argc, wchar_t **argv) {
+    if (argc < 3) { err(L"--sweep-orphaned-aces requires at least one path"); return 64; }
+    int status = 0;
+    for (int i = 2; i < argc; i++) {
+        const wchar_t *path = argv[i];
+        PACL acl = NULL;
+        PSECURITY_DESCRIPTOR sd = NULL;
+        DWORD rc = GetNamedSecurityInfoW((LPWSTR)path, SE_FILE_OBJECT,
+                                         DACL_SECURITY_INFORMATION, NULL, NULL, &acl, NULL, &sd);
+        if (path_is_gone(rc)) { wprintf(L"removed 0 %s\n", path); continue; }
+        if (rc != ERROR_SUCCESS) { err(L"GetNamedSecurityInfoW(%s): %lu", path, rc); status = 1; continue; }
+
+        PSID *orphans = NULL;
+        int n = collect_orphans(acl, &orphans);
+        if (n < 0) { LocalFree(sd); err(L"HeapAlloc: out of memory"); status = 1; continue; }
+        /* revoke_sids_on_path re-reads the DACL itself; `orphans` points into `sd`, which stays
+         * alive until after it returns, so the SIDs it is handed remain valid throughout. */
+        int r = revoke_sids_on_path(path, orphans, (ULONG)n);
+        if (orphans != NULL) HeapFree(GetProcessHeap(), 0, orphans);
+        LocalFree(sd);
+        if (r != 0) { status = 1; continue; }
+        wprintf(L"removed %d %s\n", n, path);
+    }
+    return status;
+}
+
 int wmain(int argc, wchar_t **argv) {
-    if (argc < 2) { err(L"usage: --check-caps | --list-profiles | --delete-profile <name> | --profile <name> [...] -- <argv>"); return 64; }
+    if (argc < 2) { err(L"usage: --check-caps | --list-profiles | --delete-profile <name> | --revoke-grants --profile <name> [--path <p>]... | --sweep-orphaned-aces <path>... | --profile <name> [...] -- <argv>"); return 64; }
     if (wcscmp(argv[1], L"--check-caps") == 0)     return mode_check_caps();
     if (wcscmp(argv[1], L"--list-profiles") == 0)  return mode_list_profiles();
     if (wcscmp(argv[1], L"--delete-profile") == 0) {
         if (argc < 3) { err(L"--delete-profile requires a name"); return 64; }
         return mode_delete_profile(argv[2]);
     }
+    if (wcscmp(argv[1], L"--revoke-grants") == 0)       return mode_revoke_grants(argc, argv);
+    if (wcscmp(argv[1], L"--sweep-orphaned-aces") == 0) return mode_sweep_orphaned_aces(argc, argv);
     if (wcscmp(argv[1], L"--profile") == 0) return mode_spawn(argc, argv);
     err(L"unknown mode: %s", argv[1]);
     return 64;

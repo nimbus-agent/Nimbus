@@ -9,6 +9,7 @@ import {
   ERR_TOOLGEN_INVOKE_DISABLED,
   ERR_TOOLGEN_INVOKE_POLICY_DISABLED,
   ERR_TOOLGEN_NOT_SAVED,
+  ERR_TOOLGEN_SANDBOX_DEGRADED,
   ToolgenError,
   type ToolInputSchema,
 } from "./toolgen-types.ts";
@@ -96,6 +97,16 @@ export interface ToolgenInvokeDeps {
    * better `reason` onto a decision already made.
    */
   readonly disabledReasonFor: (toolId: string) => string | null;
+  /**
+   * Why the platform sandbox cannot confine `toolId`'s spawn, or `null` when it can. Bound in
+   * production to `SandboxRunner.canConfine` over the policy the tool actually spawns with.
+   *
+   * Asked BEFORE spawning so that a sandbox that cannot run the tool is a REFUSAL. Without it the
+   * spawn itself threw, the catch saw a plain `Error`, and the audit row said `failed` — "the tool
+   * ran and threw" — for a tool that never started. Confinement was fail-closed either way; this
+   * only makes the recorded outcome true.
+   */
+  readonly confinementUnavailable: (toolId: string) => string | null;
   readonly now: () => number;
 }
 
@@ -156,6 +167,13 @@ export async function invokeSavedTool(
   const inputError = validateInput(input, artifact.inputSchema);
   if (inputError !== undefined) {
     return refuse(deps, toolId, ERR_TOOLGEN_INPUT_INVALID, inputError, req.sessionId);
+  }
+
+  // Ask the sandbox LAST among the refusals: it is the only check that reflects the machine rather
+  // than the request, and a caller with a bad tool id or input should hear about that first.
+  const unconfinable = deps.confinementUnavailable(toolId);
+  if (unconfinable !== null) {
+    return refuse(deps, toolId, ERR_TOOLGEN_SANDBOX_DEGRADED, unconfinable, req.sessionId);
   }
 
   return await serialise(toolId, async () => {

@@ -1,4 +1,5 @@
 import { afterAll, beforeEach, describe, expect, it } from "bun:test";
+import { join } from "node:path";
 
 import { captureOutput } from "../../test/helpers/cli-output.ts";
 import { COMMAND_NAMES } from "./registry.ts";
@@ -119,6 +120,34 @@ describe("nimbus help names every command you can run (F19)", () => {
       "pre-mortem",
     ]) {
       expect(out.stdout).toContain(`nimbus ${agent}`);
+    }
+  });
+
+  it("names every `nimbus tool` subcommand, in both the help block and tool.ts's own usage", async () => {
+    // DERIVED from `ParsedToolArgs`, not listed by hand: a hand-written list agrees with itself
+    // while omitting the subcommand someone just added, which is how `help.ts` came to describe a
+    // browser driver as unshipped and to omit `run` across two PRs. A new `sub` literal fails here
+    // until both surfaces name it.
+    const src = await Bun.file(join(import.meta.dir, "tool.ts")).text();
+    const subs = [...src.matchAll(/readonly sub: "([a-z-]+)"/g)].map((m) =>
+      (m[1] as string).replace("-", " "),
+    );
+    expect(subs.length).toBeGreaterThanOrEqual(6);
+
+    const usage = /const USAGE = \[([\s\S]*?)\]\.join/.exec(src)?.[1] ?? "";
+    printHelp();
+    // The help block's `tool` lines: from the first `nimbus tool` line through its indented
+    // continuations, stopping at the next command — so another command's `| run` cannot satisfy it.
+    const blockLines: string[] = [];
+    let inBlock = false;
+    for (const line of out.stdout.split("\n")) {
+      if (/^\s*nimbus /.test(line)) inBlock = line.includes("nimbus tool");
+      if (inBlock) blockLines.push(line);
+    }
+    const helpBlock = blockLines.join("\n");
+    for (const sub of subs) {
+      expect(usage).toContain(`nimbus tool ${sub}`);
+      expect(helpBlock).toMatch(new RegExp(`(nimbus tool|\\|) ${sub}\\b`));
     }
   });
 });

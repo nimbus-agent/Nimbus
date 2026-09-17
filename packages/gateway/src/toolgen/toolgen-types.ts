@@ -160,6 +160,12 @@ export const ERR_TOOLGEN_INVOKE_POLICY_DISABLED = "ERR_TOOLGEN_INVOKE_POLICY_DIS
 export const ERR_TOOLGEN_NOT_SAVED = "ERR_TOOLGEN_NOT_SAVED";
 export const ERR_TOOLGEN_PUBKEY_UNAVAILABLE = "ERR_TOOLGEN_PUBKEY_UNAVAILABLE";
 export const ERR_TOOLGEN_INPUT_INVALID = "ERR_TOOLGEN_INPUT_INVALID";
+/**
+ * The platform sandbox cannot confine this tool (`SandboxRunner.canConfine` returned a reason).
+ * Shared by the create gate's pre-consent check and the invoke gate's pre-spawn check, so "could
+ * not be confined" reads the same whether it stopped a tool being made or being run.
+ */
+export const ERR_TOOLGEN_SANDBOX_DEGRADED = "ERR_TOOLGEN_SANDBOX_DEGRADED";
 
 /**
  * There is deliberately NO `ERR_TOOLGEN_EXECUTION_FAILED` / `ERR_TOOLGEN_EXECUTION_TIMEOUT`. Both

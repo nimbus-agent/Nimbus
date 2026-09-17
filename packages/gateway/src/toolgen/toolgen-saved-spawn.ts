@@ -1,5 +1,6 @@
 import type { Database } from "bun:sqlite";
 import type { ExtensionManifest } from "../extensions/manifest.ts";
+import { policyFromManifest, type SandboxPolicy } from "../platform/sandbox/sandbox-policy.ts";
 import type { NimbusVault } from "../vault/nimbus-vault.ts";
 import { isToolgenCapabilityEnabled, type ToolgenCapabilityState } from "./toolgen-capability.ts";
 import type { GeneratedToolHandle } from "./toolgen-client.ts";
@@ -46,6 +47,21 @@ import {
  * than throwing, for `loadSavedToolsIntoRegistry`'s caller, which must skip such a tool rather than
  * abort loading every other one; `spawnSavedTool` re-throws the failure instead, since a single
  * spawn attempt has no "skip and continue" — the caller asked for THIS tool. */
+/**
+ * The sandbox policy a saved tool's spawn runs under — built by the same `buildGeneratedManifest`
+ * call `rebuildManifestOrNull` makes, so a pre-spawn `canConfine` question is asked about the policy
+ * that actually spawns rather than a look-alike.
+ */
+export function savedToolSpawnPolicy(
+  toolId: string,
+  savedDir: string,
+  runtimeReadPaths: readonly string[],
+): SandboxPolicy {
+  return policyFromManifest(
+    buildGeneratedManifest(toolId, { scriptDir: savedDir, runtimeReadPaths }),
+  );
+}
+
 function rebuildManifestOrNull(
   toolId: string,
   savedDir: string,

@@ -295,6 +295,7 @@ function buildInvokeDeps(gw: GatewayHandle, configDir: string): ToolgenInvokeDep
     spawn: buildInvokeSpawn(gw, configDir),
     audit: (entry) => appendAuditEntry(gw.db, entry),
     disabledReasonFor: (toolId) => getSavedTool(gw.db, toolId)?.disabledReason ?? null,
+    confinementUnavailable: () => null,
     now: () => Date.now(),
   };
 }

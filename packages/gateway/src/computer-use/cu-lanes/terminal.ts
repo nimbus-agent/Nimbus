@@ -1,6 +1,9 @@
 import type { ChildProcess } from "node:child_process";
 import { extensionProcessEnv } from "../../extensions/spawn-env.ts";
-import { createSandboxRunner } from "../../platform/sandbox/sandbox-runner.ts";
+import {
+  createSandboxRunner,
+  type SandboxSpawnOptions,
+} from "../../platform/sandbox/sandbox-runner.ts";
 import type {
   CuTerminalLaunchPolicy,
   OpenTerminalLaneOptions,
@@ -115,6 +118,29 @@ function trimPartialUtf8(buf: Uint8Array): Uint8Array {
   return buf;
 }
 
+/**
+ * The spawn options for a terminal session's shell. Exported so the one flag that is easy to lose
+ * here — `releaseGrantsOnExit` — is testable without constructing a real sandbox runner.
+ */
+export function terminalSpawnOptions(
+  launch: CuTerminalLaunchPolicy,
+  cwd: string,
+): SandboxSpawnOptions {
+  return {
+    policy: launch.policy,
+    // The I1 baseline allow-list plus the shell's history/rc suppression — NOT the gateway's
+    // environment. A stray token in `process.env` reaching an owner-approved-but-untrusted
+    // command would be an exfiltration path the filesystem and network rules never see.
+    env: extensionProcessEnv({ ...launch.envOverlay }),
+    cwd,
+    stdio: ["pipe", "pipe", "pipe"],
+    // `cu-terminal-<sessionId>` is new per session, so no other spawn shares this SID. Without the
+    // release, every session left one more ACE on the owner's cwd on Windows. See
+    // `SandboxSpawnOptions.releaseGrantsOnExit`.
+    releaseGrantsOnExit: true,
+  };
+}
+
 export async function openTerminalLane(
   opts: OpenTerminalLaneOptions,
   runtime?: TerminalLaneRuntime,
@@ -124,15 +150,7 @@ export async function openTerminalLane(
     const runner = await createSandboxRunner();
     rt = {
       spawnShell: ({ cmd, args, cwd, launch }) =>
-        runner.spawn(cmd, [...args], {
-          policy: launch.policy,
-          // The I1 baseline allow-list plus the shell's history/rc suppression — NOT the gateway's
-          // environment. A stray token in `process.env` reaching an owner-approved-but-untrusted
-          // command would be an exfiltration path the filesystem and network rules never see.
-          env: extensionProcessEnv({ ...launch.envOverlay }),
-          cwd,
-          stdio: ["pipe", "pipe", "pipe"],
-        }),
+        runner.spawn(cmd, [...args], terminalSpawnOptions(launch, cwd)),
     };
   }
 
