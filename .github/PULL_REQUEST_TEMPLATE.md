@@ -38,12 +38,11 @@ Closes #
 - [ ] The HITL consent gate has not been weakened, bypassed, or made configurable
 - [ ] If this PR touches `docs/README.md`, a screenshot of the rendered page (light + dark) is attached in the Screenshots / Output section below
 
-## Coverage (if engine/ or vault/ was changed)
+## Coverage (if you added or changed source files)
 
-<!-- CI enforces: Engine ≥85%, Vault ≥90%. Paste coverage output or confirm it passes. -->
+<!-- CI enforces coverage on Linux only: `audit:coverage-floor` (every non-exempt file ≥85% line and ≥80% branch) and `audit:coverage-scopes` (per-directory floors, e.g. engine/ ≥85%, vault/ ≥90%). A local run on Windows or macOS is not authoritative — reproduce CI with `bun run verify:docker --full`. See docs/CONTRIBUTING.md § The per-file coverage floor. -->
 
-- [ ] `bun run test:coverage:engine` passes (Engine ≥85%) — if `engine/` was modified
-- [ ] `bun run test:coverage:vault` passes (Vault ≥90%) — if `vault/` was modified
+- [ ] New or changed source files are covered by tests, or the PR description says why a file is excluded
 
 ## Testing
 

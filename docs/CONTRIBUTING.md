@@ -1,6 +1,6 @@
 # Contributing to Nimbus
 
-Thank you for your interest in contributing. Nimbus is in active development (Phase 5 — The Extended Surface; Phase 4 Presence is complete). Architecture is stabilising but not all interfaces are frozen.
+Thank you for your interest in contributing. Nimbus is in active development — [`roadmap.md`](./roadmap.md) records what is shipping now. Architecture is stabilising but not all interfaces are frozen.
 
 Before writing any code, read the documents that define what Nimbus is and what we are building this quarter:
 
@@ -31,26 +31,33 @@ These are architectural constraints, not preferences. Contributions that violate
 ### 1. Set Up
 
 ```bash
-# Requires Bun v1.2+
-git clone https://github.com/your-org/nimbus.git
-cd nimbus
+# Requires Bun v1.2+ (CI uses 1.3). Building the docs site also needs Node >= 22.12.
+git clone https://github.com/nimbus-agent/Nimbus.git
+cd Nimbus
 bun install
 ```
 
 ### 2. Verify Your Environment
 
 ```bash
-bun run typecheck     # Must pass with zero errors
-bun run lint          # Biome — format + lint
-bun test              # All unit tests
+bun run typecheck                    # Must pass with zero errors
+bun run lint                         # Biome — format + lint
+bun test packages/gateway/src/db     # a quick, scoped test run to prove the toolchain works
 ```
+
+The whole suite is large and slow; while you work, run the tests for the area you touched. Before pushing, run `bun run preflight:fast` (about 2–3 minutes of static gates).
 
 ### 3. Find Something to Work On
 
 - Issues tagged [`good first issue`](https://github.com/nimbus-agent/Nimbus/issues?q=is%3Aissue+is%3Aopen+label%3A%22good+first+issue%22) are the best starting point
-- Issues tagged [`help-wanted`](https://github.com/nimbus-agent/Nimbus/issues?q=is%3Aissue+is%3Aopen+label%3Ahelp-wanted) are open for contributors
+- Issues tagged [`help wanted`](https://github.com/nimbus-agent/Nimbus/issues?q=is%3Aissue+is%3Aopen+label%3A%22help+wanted%22) are open for contributors
+- Connector code lives in [nimbus-agent/nimbus-mcp-servers](https://github.com/nimbus-agent/nimbus-mcp-servers), which has its own issues; the per-connector **sync and indexing** logic stays here
 - **Open a discussion before starting any large PR.** Architecture decisions belong in a discussion, not in a surprise diff
-- **Ask to be assigned before you start.** Comment on the issue and let a maintainer assign it to you first — it keeps two people from building the same thing. During Hacktoberfest and other high-traffic periods, an outside pull request is reviewed only for an issue the author was assigned first, to keep the review queue honest; outside those periods it's the courteous default, not a hard gate — if in doubt, comment on the issue and open the PR anyway.
+- **Ask to be assigned before you start.** Comment on the issue and let a maintainer assign it to you first — it keeps two people from building the same thing. During October and other high-traffic periods, an outside pull request is reviewed only for an issue the author was assigned first, to keep the review queue honest; outside those periods it's the courteous default, not a hard gate — if in doubt, comment on the issue and open the PR anyway.
+
+### October 2026
+
+Nimbus carries the `hacktoberfest` topic and treats October as its main contributor month: the `good first issue` shelf is stocked and every issue on it has an acceptance criterion. Note that **Hacktoberfest 2026 no longer counts pull requests** — the organisers moved to in-person and online events — so there is no PR tally to chase and no `hacktoberfest-accepted` label here. Contribute because the work is useful to you; we will review it on the same terms as any other month.
 
 ---
 
@@ -82,28 +89,20 @@ Append `!` after the type (e.g. `feat!:`) or include a `BREAKING CHANGE:` footer
 
 Scope is the package or area touched, e.g. `feat(gateway):`, `fix(cli):`, `docs(roadmap):`. The scope is optional but recommended; release-please groups changelog entries by scope.
 
-We do **not** enforce this with commitlint today. The cost of getting it wrong is a malformed changelog entry, not a failed build — but please follow the format anyway.
+Because pull requests are squash-merged, what actually lands on `main` is the **PR title**, not your individual commit messages — so that is where the format matters. The `Validate PR title` check enforces it (scope must be lowercase); you can fix a failing title by editing it on the PR, no new push needed. Individual commit messages inside your branch are not checked.
 
 ### Running Tests
 
 ```bash
-bun test                          # all unit tests
-bun run test:integration          # integration tests (real SQLite, real subprocesses)
-bun run test:e2e:cli              # E2E CLI tests (real Gateway + mock MCP servers)
-cd packages/ui && bunx vitest run # UI component tests
-
-# Coverage gates (enforced in CI — must pass before merge)
-bun run test:coverage:engine      # Engine ≥85%
-bun run test:coverage:agents      # Agents ≥80%
-bun run test:coverage:vault       # Vault ≥90%
-bun run test:coverage:sandbox     # Sandbox PAL ≥80%  (T2 PR 1)
-bun run test:coverage:embedding   # Embedding ≥80%
-bun run test:coverage:metrics     # DORA calculators + IPC ≥80%  (T4 PR 2)
-bun run test:coverage:preflight   # Preflight calculator + IPC ≥80%  (T4 PR 3a)
-bun run test:coverage:deployment  # Deployment annotation + HTTP write ≥80%  (T4 PR 3b)
+bun test packages/gateway/src/<area>  # the tests for what you changed — the everyday loop
+bun run test:integration              # integration tests (real SQLite, real subprocesses)
+bun run test:e2e:cli                  # E2E CLI tests (real Gateway + mock MCP servers)
+cd packages/ui && bunx vitest run     # UI component tests
+bun run preflight:fast                # static gates CI runs — run before every push
+bun run preflight                     # the full CI-parity gate set, including the whole test suite
 ```
 
-The full coverage-gate catalogue (including sync, rate-limiter, people, workflow, watcher, DB, health, config, telemetry, doctor, TUI, MCP, SDK, updater, LAN, perf, UI Vitest) plus environment-variable overrides lives in the [`nimbus-commands`](../.claude/commands/nimbus-commands.md) skill / reference file.
+Coverage is enforced by two CI gates that read the Linux coverage report: `audit:coverage-floor` (per file, below) and `audit:coverage-scopes` (per directory — for example `engine/` ≥85%, `vault/` ≥90%, most others ≥80%; the list is in `scripts/coverage-floor/check-scopes.ts`). The `test:coverage:*` scripts in `package.json` do **not** enforce anything — Bun ignores their threshold flag — so a green run of one tells you nothing about CI. The full command catalogue and environment-variable overrides live in the [`nimbus-commands`](../.claude/commands/nimbus-commands.md) skill / reference file.
 
 ### Cross-platform test conventions
 
@@ -131,12 +130,14 @@ The `pr-quality-cross-platform` job (`.github/workflows/ci.yml`) runs the same w
 
 ### Using the `nimbus-*` skill set (Claude Code / compatible AI assistants)
 
-The repository ships fourteen `nimbus-*` skills under `.claude/commands/` that codify how to do common contributor tasks correctly:
+The repository ships a set of `nimbus-*` skills under `.claude/commands/` that codify how to do common contributor tasks correctly. The ones most contributors reach for:
 
 - **Architecture & navigation:** `nimbus-architecture` (subsystem overview), `nimbus-file-map` (where things live), `nimbus-commands` (the full `bun run` + CLI catalogue with coverage gates and env-var overrides).
-- **Security invariants:** `nimbus-security-invariants` (the triple rule — wiring + docs + test), `nimbus-tool-output-envelope` (I11), `nimbus-tauri-allowlist` (I7), `nimbus-http-write-surface` (I13 — Phase 5 T4 PR 3b).
-- **Subsystem authoring:** `nimbus-ipc` (JSON-RPC method conventions), `nimbus-connector-authoring` (first-party MCP connectors), `nimbus-agent-patterns` (built-in agents), `nimbus-db-migrations` (SQLite schema), `nimbus-embedding-routing` (T6 PR 3 hybrid embedding).
-- **Cross-cutting:** `nimbus-cicd-data-layer` (T4 DORA + preflight + annotation), `nimbus-testing` (which test layer for which subsystem).
+- **Before you push:** `nimbus-preflight` (which gates to run and why local green is not CI green), `nimbus-testing` (which test layer for which subsystem).
+- **Security invariants:** `nimbus-security-invariants` (the triple rule — wiring + docs + test), `nimbus-tool-output-envelope` (I11), `nimbus-tauri-allowlist` (I7), `nimbus-http-write-surface` (I13).
+- **Subsystem authoring:** `nimbus-ipc` (JSON-RPC method conventions), `nimbus-connector-authoring` (first-party MCP connectors), `nimbus-agent-patterns` (built-in agents), `nimbus-db-migrations` (SQLite schema), `nimbus-embedding-routing` and `nimbus-index-body-depth` (how an indexed item type is embedded and how much of its body is stored).
+
+The full list, with a one-line "use when" for each, is the Skill References table in `CLAUDE.md`.
 
 When working in Claude Code (or a compatible AI assistant that respects skills), they load automatically and prevent the most common cross-cutting mistakes — orphan security defenses, broken HITL invariants, dead-code allowlist entries, and the like.
 
@@ -152,7 +153,7 @@ The `scripts/` directory holds repository tooling — release packaging (`script
 - [ ] `bun run lint` passes (or `bun run lint:fix` was run)
 - [ ] All existing tests pass
 - [ ] New behaviour is covered by tests
-- [ ] Coverage gates still pass if you touched `engine/` or `vault/`
+- [ ] New or changed source files clear the per-file coverage floor (below)
 - [ ] You have not introduced any `any` types
 - [ ] Platform-specific code is behind the `PlatformServices` abstraction
 - [ ] No credentials, tokens, or secret values appear in any log, IPC message, or config
@@ -204,23 +205,16 @@ invisible to all three. They report clean, which is not the same as done.
 
 ### After generating
 
-Two steps are still yours, and the gates enforce both:
+Everything else about the connector package happens in the connectors repository and is described
+there — its [guide to adding a connector](https://github.com/nimbus-agent/nimbus-mcp-servers/blob/main/docs/adding-a-connector.md)
+and its contributing guide. Its single pre-push command is `bun run check` (lint, typecheck, the
+connector audits and the full suite).
 
-1. **Add the package path to the root `package.json` `workspaces` array.** It is an explicit list,
-   not a glob — `bun install` and `bun run typecheck` (which runs `--filter '*'` over workspace
-   members) silently skip a connector directory that is not listed. Run `bun install` afterwards.
-2. **Run `bun run gen:connector-registry`** and commit the result. The bundled registry is a
-   generated, committed file; `bun run audit:connector-registry-drift` fails until you regenerate
-   it, and the shipped binary cannot start an unregistered connector.
-
-Then verify:
-
-```bash
-bun run audit:connector-entrypoints
-bun run audit:connector-deps
-bun run audit:connector-registry-drift
-bun run typecheck
-```
+This repository picks the connector up only after it is **published** in a new
+`@nimbus-dev/connectors` release: the maintainer bumps the pin here and regenerates the bundled
+registry (`bun run gen:connector-registry`, checked by `audit:connector-registry-drift`). You do not
+need to do that in your connector PR. Gateway-side indexing for the new connector — a sync handler —
+is a separate PR here, and can follow once the connector is published.
 
 Run the SDK contract tests against your manifest with `runContractTests(manifest)` from
 `@nimbus-dev/sdk` — it validates the mandatory tool surface, the HITL declaration, the item-ID
@@ -229,6 +223,34 @@ for the sandbox, also run `runSandboxContractTests()`. `MockGateway` from `@nimb
 stubs IPC in unit tests.
 
 See the [architecture](./architecture.md) for connector mesh details.
+
+---
+
+## Contributing a Docs Page
+
+The documentation site ([nimbus-agent.dev](https://nimbus-agent.dev)) is an Astro Starlight project in
+`packages/docs`, and a missing connector page is one of the best first contributions: it needs no
+credentials and no gateway code.
+
+- **Where:** `packages/docs/src/content/docs/connectors/<service>.mdx`, with underscores in the
+  service id written as hyphens (`google_drive` → `google-drive.mdx`). The sidebar picks the file up
+  automatically — no config edit.
+- **Shape:** copy the section structure of an existing page such as `linear.mdx` or `aws.mdx`.
+- **Source of truth:** the connector's own directory in
+  [nimbus-mcp-servers](https://github.com/nimbus-agent/nimbus-mcp-servers/tree/main/connectors) —
+  its `README.md`, `nimbus.extension.json`, and the tool registrations in `src/tools.ts` (or
+  `src/server.ts` where there is no `tools.ts`).
+- **Authentication:** copy the command from that connector's README rather than an existing page.
+  OAuth connectors use `nimbus connector auth <service>`; connectors that take an API key or token
+  use `nimbus vault set <key> <value>`, and `connector auth` does not work for them.
+
+Build and check it locally — this is the same command the `Docs checks` CI job runs, and it type-checks
+the site and validates every internal link:
+
+```bash
+bun run docs:build                   # astro check + astro build (needs Node >= 22.12 on PATH)
+bun run --filter @nimbus/docs dev    # live preview while you write
+```
 
 ---
 
@@ -262,15 +284,19 @@ Circular dependencies are forbidden. The linter will catch cross-package source 
 
 1. Open an issue or discussion first for anything non-trivial
 2. Fill in the pull request template completely — incomplete PRs will be returned
-3. All CI checks must be green: `pr-quality` (Ubuntu) must pass before review begins. To run optional desktop E2E (Tauri + Playwright) on a PR, add the `ci:e2e-desktop` label (that retriggers CI so the E2E job can run).
-4. At least one maintainer approval is required before merge
-5. Squash-merge is preferred for feature branches; merge commits for release branches
+3. Sign the CLA if this is your first PR (see [below](#contributor-license-agreement-cla)); the `cla` check stays red until you do
+4. All required CI checks must be green before merge. To run optional desktop E2E (Tauri + Playwright) on a PR, add the `ci:e2e-desktop` label (that retriggers CI so the E2E job can run).
+5. The maintainer reviews and merges. Pull requests are **squash-merged** — the only merge method enabled — so the PR title becomes the commit subject on `main`: write it in the Conventional Commits format above.
+
+**CI on your first pull request waits for a maintainer.** GitHub does not run workflows on a pull request from a first-time contributor's fork until a maintainer approves the run, and that approval is needed again for each push until your first PR merges. If your PR shows checks as "waiting for approval", that is on us, not you — it counts toward the 72-hour first response below, and a nudge is welcome.
 
 ### What to expect from the maintainer
 
 **First response within 72 hours** on any new issue or pull request — a review, a question, or at minimum an acknowledgement that it is queued. Nimbus is maintained by one person, so a full review may take longer than the first response; if 72 hours pass with silence, a nudge on the thread is welcome and appropriate.
 
-Write access follows contribution: the switches that move this repository from single-maintainer to two-maintainer mode are already written down in `.github/rulesets/general-branch.json` under `$contributor_two`.
+### Becoming a maintainer
+
+**Write access is offered after three merged, non-trivial pull requests** — a change that needed review, not a typo fix or a one-line bump. The switches that move this repository from single-maintainer to two-maintainer mode (required approvals, code-owner review, last-push approval, bypass mode) are already written down in `.github/rulesets/general-branch.json` under `$contributor_two`, so granting it is one reviewed diff rather than a negotiation.
 
 ---
 
