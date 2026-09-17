@@ -204,14 +204,26 @@ interface FleetJobListEntryShape {
   readonly agent: string;
   readonly intervalSeconds: number;
   readonly state: FleetJobStateShape | null;
-  readonly sweep: FleetJobSweepListEntryShape | null;
+  /**
+   * Optional, not just nullable: this is the shape of a response from the GATEWAY, which this CLI
+   * releases separately from and can be OLDER than — a pre-sweep gateway's `fleet.list` never sends
+   * this field at all, rather than sending it as `null`. The render path below reads it with `==
+   * null`, on purpose, to tolerate that absence; keep the two in sync — narrowing this to
+   * non-optional invites deleting that check as "redundant" when it is the version-skew guard.
+   */
+  readonly sweep?: FleetJobSweepListEntryShape | null;
 }
 
 interface FleetBriefSummaryShape {
   readonly id: string;
   readonly runId: string;
   readonly jobId: string;
-  readonly subjectKey: string;
+  /**
+   * Optional for the same reason as `FleetJobListEntryShape.sweep`: an older gateway's
+   * `fleet.briefs` response predates this field and omits it entirely. `runBriefs` reads it with
+   * `== null` for that reason — do not tighten this to required without also removing that check.
+   */
+  readonly subjectKey?: string;
   readonly agentMethod: string;
   readonly briefMarkdown: string | null;
   readonly findingsJson: string;
