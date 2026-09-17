@@ -278,7 +278,11 @@ describe("gateway bind-first (#928): the socket serves while the embedding model
       envelope: true,
     });
     expect(res.error).toBeUndefined();
-    const env = res.result as { items?: unknown; retrieval?: unknown; notes?: unknown };
+    const env = res.result as {
+      items?: unknown;
+      retrieval?: Record<string, unknown>;
+      notes?: unknown;
+    };
     expect(Array.isArray(env.items)).toBe(true);
     expect(env.retrieval).toMatchObject({
       vectorRanked: false,
@@ -337,14 +341,14 @@ describe("gateway bind-first (#928): a FAILED model fetch degrades, it does not 
     expect(res.error).toBeUndefined();
     const env = res.result as {
       items?: unknown;
-      retrieval?: { vectorRanked?: unknown; reason?: unknown };
-      notes?: unknown[];
+      retrieval?: { vectorRanked?: unknown; reason?: string };
+      notes?: string[];
     };
     expect(Array.isArray(env.items)).toBe(true);
     expect(env.retrieval?.vectorRanked).toBe(false);
     expect(["unavailable", "vec_unavailable", "no_embedding_runtime"]).toContain(
-      env.retrieval?.reason,
+      env.retrieval?.reason ?? "",
     );
-    expect(env.notes?.[0]).toContain("keyword-only");
+    expect(env.notes?.[0] ?? "").toContain("keyword-only");
   });
 });

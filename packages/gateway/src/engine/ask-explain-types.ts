@@ -34,6 +34,20 @@ export type LocalCandidate = {
   readonly outcome: CandidateOutcome;
 };
 
+/**
+ * What the PRIMARY search of a local-context probe actually did — the `retrieval` block
+ * `searchRankedAsync` built (see `index/search-retrieval.ts`) plus the gateway's own wording for it.
+ * The candidates' `scoringFormula` cannot carry this: a search whose query embedding timed out is
+ * keyword-only while every row still says `hybrid_rrf`.
+ */
+export type PrimaryRetrieval = {
+  readonly vectorRanked: boolean;
+  readonly reason: string | null;
+  readonly partial: "local_timeout" | "remote_timeout" | null;
+  readonly backfill: { readonly done: number; readonly total: number } | null;
+  readonly notes: readonly string[];
+};
+
 export type CollectedToolCall = {
   readonly toolId: string;
   readonly service: string;
@@ -92,6 +106,7 @@ export type AskExplainRecord = BaseExplainRecord &
     | {
         readonly route: "local_context";
         readonly searchTerms: string;
+        readonly primaryRetrieval: PrimaryRetrieval;
         readonly fallbackTermFired?: string;
         readonly truncation: {
           readonly shown: number;
@@ -116,6 +131,7 @@ export type AskExplainRecord = BaseExplainRecord &
          */
         readonly localContextAlsoGiven?: {
           readonly searchTerms: string;
+          readonly primaryRetrieval: PrimaryRetrieval;
           readonly fallbackTermFired?: string;
           /**
            * `atLeast` is the field that forces this to be included at all: it says the primary

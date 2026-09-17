@@ -47,6 +47,16 @@ describe("ask.explainLast wire round-trip (fix-wave CRITICAL 2)", () => {
       ...baseRaw,
       route: "local_context",
       searchTerms: "rate limiting",
+      // The full gateway shape: the CLI reads vectorRanked + notes and must tolerate the rest.
+      primaryRetrieval: {
+        vectorRanked: false,
+        reason: "timeout",
+        partial: null,
+        backfill: { done: 10, total: 40 },
+        notes: [
+          "semantic ranking unavailable (the query embedding timed out) — keyword-only results",
+        ],
+      },
       fallbackTermFired: "throttling",
       truncation: { shown: 2, total: 40, atLeast: true },
       discardedTail: [{ service: "slack", type: "message", count: 12 }],
@@ -96,6 +106,10 @@ describe("ask.explainLast wire round-trip (fix-wave CRITICAL 2)", () => {
     expect(out).toContain("n/a (direct query)");
     expect(out).toMatch(/at least 40/i);
     expect(out).toMatch(/not comparable/i);
+    expect(out).toContain("primary search (keyword-only — semantic ranking did not run)");
+    expect(out).toContain(
+      "Retrieval note: semantic ranking unavailable (the query embedding timed out)",
+    );
   });
 
   test("agent_tools round-trips, including a searchLocalIndex ranking summary and a fallback pool", () => {
