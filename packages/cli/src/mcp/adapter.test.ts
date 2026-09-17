@@ -476,10 +476,37 @@ describe("TOOL_SPECS", () => {
     });
     expect(calls[0]).toEqual({
       method: "index.searchRanked",
-      params: { name: "login bug", limit: 50, semantic: true, contextChunks: 0, service: "github" },
+      params: {
+        name: "login bug",
+        limit: 50,
+        semantic: true,
+        contextChunks: 0,
+        envelope: true,
+        service: "github",
+      },
     });
     expect(res.isError).toBeUndefined();
     expect(res.content[0]?.text).toContain('"type": "pr"');
+    // Nothing to disclose on a bare-array (pre-envelope) answer, so no extra block.
+    expect(res.content).toHaveLength(1);
+  });
+
+  it("searchIndex adds the gateway's retrieval notes as a separate block, rows unchanged", async () => {
+    const { deps } = recordingDeps({
+      result: {
+        items: [{ name: "n", service: "github", indexedType: "pr", score: 1 }],
+        retrieval: { vectorRanked: false, reason: "warming", partial: null, backfill: null },
+        notes: [
+          "semantic ranking unavailable (the embedding model is still loading) — keyword-only results",
+        ],
+      },
+    });
+    const res = await spec("searchIndex").run(deps, { query: "login bug" });
+    expect(res.content[0]?.text).toContain('"type": "pr"');
+    expect(JSON.parse(res.content[0]?.text ?? "") as unknown).toHaveLength(1);
+    expect(res.content[1]?.text).toBe(
+      "note: semantic ranking unavailable (the embedding model is still loading) — keyword-only results",
+    );
   });
 
   it("getRecentPullRequests browses itemType pr by recency", async () => {
@@ -487,7 +514,14 @@ describe("TOOL_SPECS", () => {
     await spec("getRecentPullRequests").run(deps, {});
     expect(calls[0]).toEqual({
       method: "index.searchRanked",
-      params: { name: "", limit: 20, semantic: false, contextChunks: 0, itemType: "pr" },
+      params: {
+        name: "",
+        limit: 20,
+        semantic: false,
+        contextChunks: 0,
+        envelope: true,
+        itemType: "pr",
+      },
     });
   });
 

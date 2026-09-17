@@ -268,6 +268,26 @@ describe("gateway bind-first (#928): the socket serves while the embedding model
     expect(Array.isArray(res.result)).toBe(true);
   });
 
+  // The retrieval envelope over a REAL socket: the `envelope` param must survive the real
+  // `server.ts` routing and param parsing, not only the handler a unit test calls directly.
+  test("`envelope: true` returns items + retrieval + notes over the real socket", async () => {
+    const res = await ipc.raw("index.searchRanked", {
+      name: "who owns billing",
+      limit: 5,
+      semantic: false,
+      envelope: true,
+    });
+    expect(res.error).toBeUndefined();
+    const env = res.result as { items?: unknown; retrieval?: unknown; notes?: unknown };
+    expect(Array.isArray(env.items)).toBe(true);
+    expect(env.retrieval).toMatchObject({
+      vectorRanked: false,
+      reason: "semantic_off",
+      partial: null,
+    });
+    expect(Array.isArray(env.notes)).toBe(true);
+  });
+
   test("non-embedding surfaces are fully available while the model is still fetching", async () => {
     const demo = await ipc.raw("index.demoSymbol", {});
     // `index.demoSymbol` reads indexed symbols and never touches a vector table, so it must
@@ -304,5 +324,27 @@ describe("gateway bind-first (#928): a FAILED model fetch degrades, it does not 
     const audit = await ipc.raw("audit.list", { limit: 1 });
     expect(audit.error).toBeUndefined();
     expect(failed?.proc.killed).toBeFalsy();
+  });
+
+  // The permanent-failure half of the false green: a semantic search is SERVED (keyword-only) once
+  // embeddings are known dead — and with the envelope it says so instead of reading as complete.
+  test("a semantic search after the fetch failed is keyword-only AND says so", async () => {
+    const res = await ipc.raw("index.searchRanked", {
+      name: "who owns billing",
+      limit: 5,
+      envelope: true,
+    });
+    expect(res.error).toBeUndefined();
+    const env = res.result as {
+      items?: unknown;
+      retrieval?: { vectorRanked?: unknown; reason?: unknown };
+      notes?: unknown[];
+    };
+    expect(Array.isArray(env.items)).toBe(true);
+    expect(env.retrieval?.vectorRanked).toBe(false);
+    expect(["unavailable", "vec_unavailable", "no_embedding_runtime"]).toContain(
+      env.retrieval?.reason,
+    );
+    expect(env.notes?.[0]).toContain("keyword-only");
   });
 });

@@ -119,9 +119,9 @@ const UNRANKED_NOTES: Readonly<Record<RetrievalUnrankedReason, string | null>> =
 };
 
 /**
- * Plain-language notes for a retrieval block, empty when there is nothing to disclose. The CLI keeps
- * its own copy of this wording (it reaches the gateway over IPC only and never imports gateway
- * source); the two are pinned against each other by `search-retrieval-wording.test.ts` in the CLI.
+ * Plain-language notes for a retrieval block, empty when there is nothing to disclose. The ONE copy of
+ * this wording: `index.searchRanked` sends these strings with `envelope: true`, so the CLI and the MCP
+ * adapter print them verbatim rather than keeping a second copy that could drift.
  */
 export function describeRetrieval(r: SearchRetrieval): string[] {
   const notes: string[] = [];

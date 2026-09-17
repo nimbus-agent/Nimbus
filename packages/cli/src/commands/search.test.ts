@@ -57,7 +57,7 @@ describe("runSearch — dispatcher", () => {
     expect(mock.calls).toHaveLength(1);
     expect(mock.calls[0]).toEqual({
       method: "index.searchRanked",
-      params: { name: "hello world", limit: 20, semantic: true, contextChunks: 2 },
+      params: { name: "hello world", limit: 20, semantic: true, contextChunks: 2, envelope: true },
     });
     expect(out.stdout).toContain("My PR");
   });
@@ -83,6 +83,7 @@ describe("runSearch — dispatcher", () => {
       limit: 50,
       semantic: false,
       contextChunks: 2,
+      envelope: true,
       service: "github",
       itemType: "pr",
     });
@@ -120,6 +121,7 @@ describe("runSearch — dispatcher", () => {
       limit: 5,
       semantic: true,
       contextChunks: 2,
+      envelope: true,
       service: "slack",
       itemType: "message",
     });
@@ -140,6 +142,51 @@ describe("runSearch — dispatcher", () => {
     expect(out.stdout).toContain('"id": "github:pr_1"');
     expect(out.stdout).toContain('"title": "Foo"');
     expect(out.stdout).toContain('"title": "Bar"');
+  });
+});
+
+describe("runSearch — retrieval disclosure", () => {
+  beforeEach(() => {
+    out.reset();
+  });
+  afterEach(() => {
+    clearFixture();
+  });
+
+  it("prints the gateway's notes on stderr and keeps stdout a plain, parseable array", async () => {
+    const mock = createMockIpcClient([
+      {
+        items: [{ id: "github:pr_1", title: "My PR" }],
+        retrieval: { vectorRanked: false, reason: "timeout", partial: null, backfill: null },
+        notes: [
+          "semantic ranking unavailable (the query embedding timed out) — keyword-only results",
+          "background embedding in progress: 8,400 of 51,600 items processed this pass — results may be incomplete; run 'nimbus index health' for per-connector coverage",
+        ],
+      },
+    ]);
+    setFixture({ gatewayState: { socketPath: FAKE_SOCKET_PATH }, ipcClient: mock.client });
+
+    await runSearch(["hello"]);
+
+    expect(out.stderr).toContain(
+      "note: semantic ranking unavailable (the query embedding timed out)",
+    );
+    expect(out.stderr).toContain("8,400 of 51,600 items processed this pass");
+    expect(out.stdout).not.toContain("note:");
+    // The envelope never reaches stdout: `nimbus search q | jq '.[0]'` keeps working.
+    const parsed = JSON.parse(out.stdout) as unknown;
+    expect(Array.isArray(parsed)).toBe(true);
+    expect(parsed).toEqual([{ id: "github:pr_1", title: "My PR" }]);
+  });
+
+  it("an older gateway that ignores the flag still works, with nothing on stderr", async () => {
+    const mock = createMockIpcClient([[{ id: "a", title: "T" }]]);
+    setFixture({ gatewayState: { socketPath: FAKE_SOCKET_PATH }, ipcClient: mock.client });
+
+    await runSearch(["hello"]);
+
+    expect(out.stderr).toBe("");
+    expect(JSON.parse(out.stdout) as unknown).toEqual([{ id: "a", title: "T" }]);
   });
 });
 
