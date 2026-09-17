@@ -240,9 +240,13 @@ credentials and no gateway code.
   [nimbus-mcp-servers](https://github.com/nimbus-agent/nimbus-mcp-servers/tree/main/connectors) —
   its `README.md`, `nimbus.extension.json`, and the tool registrations in `src/tools.ts` (or
   `src/server.ts` where there is no `tools.ts`).
-- **Authentication:** copy the command from that connector's README rather than an existing page.
-  OAuth connectors use `nimbus connector auth <service>`; connectors that take an API key or token
-  use `nimbus vault set <key> <value>`, and `connector auth` does not work for them.
+- **Authentication:** do not copy the command from another page, and check the connector's README
+  rather than trusting it — several still show a command that fails. OAuth connectors use
+  `nimbus connector auth <service>`; every other connector is configured with
+  `nimbus vault set <service>.<key> <value>`, and `connector auth` does not work for it. The keys
+  are listed per service in `CONNECTOR_VAULT_SECRET_KEYS`
+  (`packages/gateway/src/connectors/connector-secrets-manifest.ts`), and the `good first issue` for
+  each page names them.
 
 Build and check it locally — this is the same command the `Docs checks` CI job runs, and it type-checks
 the site and validates every internal link:
