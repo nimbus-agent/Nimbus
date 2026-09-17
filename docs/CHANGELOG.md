@@ -38,6 +38,21 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
   still show `nimbus connector auth <svc>` (`elasticsearch`, `dataprofile`, `localdb`, `storybook`),
   and the Phase 11 acceptance criterion in `docs/roadmap.md` that names `connector auth fastmail`.
   No invariant, no migration, no egress class.
+- **2026-09-17 — the `hybrid` and `openai` embedding runtimes now disclose their own backfill pass.**
+  A stated residual of the search-disclosure work earlier the same day: `getActiveBackfillPass()`
+  returned `null` on both in-process runtimes, so a search running during the backfill THEY start
+  reported no pass and partial results read as complete. Only the worker bridge, which learns of a
+  pass through `backfill_progress` messages, ever reported one. Both now share
+  `embedding/backfill-pass-tracker.ts`, with the bridge's semantics preserved exactly: active from
+  the first progress report until the pass settles (so a pass with nothing to embed never becomes
+  active), cleared whether it finished, was stopped by its battery/shutdown gate, or threw, and the
+  final figure kept for `nimbus status`. `RoutingEmbeddingPipeline.backfillAll` also had to change:
+  its two sequential passes each counted from zero against their own total, so forwarding both
+  callbacks unchanged made `done` jump backwards mid-pass. The second half is now offset by the
+  first's final figures. The consequence, stated rather than hidden: while the first half runs,
+  `total` covers only that half and grows when the second begins — counting both totals up front
+  would run the second half's `COUNT(*)` before the first half has finished changing it. No schema,
+  no invariant, no egress class, no config key.
 - **2026-09-17 — a search now says when it was keyword-only or incomplete (the follow-up V62
   deferred).** V62 fixed the quadratic vector-search plan behind #1396, but two false greens
   remained. First, a query embedding that timed out resolved `null`, exactly like the permanent

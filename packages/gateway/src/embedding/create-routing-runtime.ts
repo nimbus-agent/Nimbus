@@ -10,6 +10,7 @@ import { processEnvGet } from "../platform/env-access.ts";
 import type { PlatformPaths } from "../platform/paths.ts";
 import type { NimbusVault } from "../vault/nimbus-vault.ts";
 import type { BackfillGate } from "./backfill-gate.ts";
+import { createBackfillPassTracker } from "./backfill-pass-tracker.ts";
 import {
   type EmbeddingReadiness,
   isEmbeddingTimeoutError,
@@ -128,6 +129,9 @@ export async function tryCreateRoutingEmbeddingRuntime(
   const pipeline = new RoutingEmbeddingPipeline(db, local, openai);
 
   let backfillStarted = false;
+  // Without this, a search during the backfill this runtime runs itself reported no active pass —
+  // so partial results read as complete on the `hybrid` runtime (#1535 follow-up).
+  const backfillPass = createBackfillPassTracker();
 
   // This runtime is only ever CONSTRUCTED after both embedders resolved, so it is ready
   // by construction — the slow part happened above, off the gateway's bind path (#928).
@@ -201,11 +205,11 @@ export async function tryCreateRoutingEmbeddingRuntime(
     },
 
     getBackfillProgress(): { done: number; total: number } | null {
-      return null;
+      return backfillPass.last();
     },
 
     getActiveBackfillPass(): { done: number; total: number } | null {
-      return null;
+      return backfillPass.active();
     },
 
     getReadiness: readiness,
@@ -215,9 +219,11 @@ export async function tryCreateRoutingEmbeddingRuntime(
         return;
       }
       backfillStarted = true;
-      void pipeline.backfillAll().catch((err: unknown) => {
-        logger.warn({ err }, "hybrid embedding backfill failed");
-      });
+      void backfillPass
+        .run((onProgress) => pipeline.backfillAll(onProgress))
+        .catch((err: unknown) => {
+          logger.warn({ err }, "hybrid embedding backfill failed");
+        });
     },
 
     terminate(): void {
