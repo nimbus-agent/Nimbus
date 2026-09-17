@@ -2,6 +2,13 @@
 
 All notable changes to the `nimbus` core (headless Gateway + CLI binary + first-party MCP connectors) are documented in this file. release-please appends new entries between this header and the most recent version below when a release PR merges.
 
+## [7.24.1](https://github.com/nimbus-agent/Nimbus/compare/v7.24.0...v7.24.1) (2026-09-17)
+
+
+### Bug Fixes
+
+* **sandbox:** stop the Windows helper leaking an ACE per run; tool run follow-ups ([#1524](https://github.com/nimbus-agent/Nimbus/issues/1524)) ([52fb7cf](https://github.com/nimbus-agent/Nimbus/commit/52fb7cfea808893955c6267caf08a5cb18aae943))
+
 ## [7.24.0](https://github.com/nimbus-agent/Nimbus/compare/v7.23.0...v7.24.0) (2026-09-16)
 
 
