@@ -2,7 +2,11 @@ import { getValidMicrosoftAccessToken } from "../../auth/microsoft-access-token.
 import { extensionProcessEnv } from "../../extensions/spawn-env.ts";
 import type { NimbusVault } from "../../vault/nimbus-vault.ts";
 import { readConnectorSecret } from "../connector-vault.ts";
-import { manifestForFirstParty } from "./first-party-manifests.ts";
+import {
+  hostnameFromUrl,
+  manifestForFirstParty,
+  manifestWithExtraNetworkHosts,
+} from "./first-party-manifests.ts";
 import { connectorSpawn } from "./keys.ts";
 import type { ServerSpec } from "./slot.ts";
 import { wrapServerSpec } from "./wrap-server-spec.ts";
@@ -51,6 +55,43 @@ export async function chatopsSlackBotServers(
   };
 }
 
+/**
+ * The Bot Framework reply hosts Teams hands out as an activity's `serviceUrl`: the public cloud
+ * (every regional path shares one host, and it is also the connector's own default) and the three
+ * sovereign clouds.
+ *
+ * A FIXED set rather than the activity's host. The bot sends its credential to `serviceUrl`, and
+ * the inbound JWT check does not bind that field, so allowlisting whatever host an activity names
+ * would let one validated-but-crafted activity widen the sandbox to an arbitrary destination. A
+ * `serviceUrl` outside this set is still passed to the connector and fails at the OS, as before.
+ * There is deliberately no suffix match: `trafficmanager.net` subdomains are Azure-wide.
+ */
+export const TEAMS_BOT_SERVICE_HOSTS: readonly string[] = [
+  "smba.trafficmanager.net",
+  "smba.infra.gcc.teams.microsoft.com",
+  "smba.infra.gov.teams.microsoft.us",
+  "smba.infra.dod.teams.microsoft.us",
+];
+
+const TEAMS_BOT_DEFAULT_SERVICE_HOST = "smba.trafficmanager.net";
+
+/**
+ * The public-cloud default always (the connector falls back to it when no `serviceUrl` is known),
+ * plus a sovereign-cloud host only when THIS activity named one from the fixed set.
+ */
+function teamsBotHostsFor(serviceUrl: string | undefined): string[] {
+  const hosts = [TEAMS_BOT_DEFAULT_SERVICE_HOST];
+  const host = serviceUrl === undefined ? null : hostnameFromUrl(serviceUrl);
+  if (
+    host !== null &&
+    host !== TEAMS_BOT_DEFAULT_SERVICE_HOST &&
+    TEAMS_BOT_SERVICE_HOSTS.includes(host)
+  ) {
+    hosts.push(host);
+  }
+  return hosts;
+}
+
 /** Teams bot spec: requires `teams.bot_app_id` + `teams.bot_app_password`. `MICROSOFT_OAUTH_ACCESS_TOKEN`
  *  (for `teams_user_info` Graph lookups) is added only when the bot vault entry also carries a
  *  `microsoft.oauth` credential; otherwise the lookup tool fails closed in the connector. */
@@ -83,7 +124,7 @@ export async function chatopsTeamsBotServers(
           ...(graphToken === undefined ? {} : { MICROSOFT_OAUTH_ACCESS_TOKEN: graphToken }),
         }),
       },
-      manifestForFirstParty("teams"),
+      manifestWithExtraNetworkHosts("teams", teamsBotHostsFor(opts?.serviceUrl)),
       sandboxCwd,
     ),
   };
