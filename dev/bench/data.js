@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1789584550729,
+  "lastUpdate": 1789627315877,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "306811640+nimbus-release-bot[bot]@users.noreply.github.com",
-            "name": "nimbus-release-bot[bot]",
-            "username": "nimbus-release-bot[bot]"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "27f0b2ebcbc66db6cc47d0fbd850c452c367b504",
-          "message": "chore: release main (#794)\n\n:robot: I have created a release *beep* *boop*\n---\n\n\n<details><summary>0.23.2</summary>\n\n##\n[0.23.2](https://github.com/nimbus-agent/Nimbus/compare/v0.23.1...v0.23.2)\n(2026-07-21)\n\n\n### Bug Fixes\n\n* **deps:** clear two high advisories blocking every PR\n([#793](https://github.com/nimbus-agent/Nimbus/issues/793))\n([40007eb](https://github.com/nimbus-agent/Nimbus/commit/40007ebbfc5aa5abd06e3b3345782c72f85b18fd))\n</details>\n\n---\nThis PR was generated with [Release\nPlease](https://github.com/googleapis/release-please). See\n[documentation](https://github.com/googleapis/release-please#release-please).\n\nCo-authored-by: nimbus-release-bot[bot] <306811640+nimbus-release-bot[bot]@users.noreply.github.com>",
-          "timestamp": "2026-07-22T05:21:02+03:00",
-          "tree_id": "c42bf50552194c078f06fea1a08e82fd56081b0a",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/27f0b2ebcbc66db6cc47d0fbd850c452c367b504"
-        },
-        "date": 1784687578411,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 303.3665053499979,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 305.2437471500081,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 318.2668597500091,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "52fb7cfea808893955c6267caf08a5cb18aae943",
+          "message": "fix(sandbox): stop the Windows helper leaking an ACE per run; tool run follow-ups (#1524)\n\n## Summary\n\n### The Windows sandbox leaked an ACE per run until confinement broke\nmachine-wide\n\n`nimbus-sandbox-helper.exe` grants an AppContainer SID an ACE on the cwd\nand every policy path, and nothing ever removed one. Deleting the\nprofile, whether by the boot reaper or `--delete-profile`, leaves the\nACE behind as an unresolvable `S-1-15-2-*` entry. Measured on a temp\ndir:\n\n| step | ACEs |\n| --- | --- |\n| start | 5 |\n| spawn with profile A | 7 |\n| spawn with profile A again | 7: `GRANT_ACCESS` merges for the same SID\n|\n| spawn with profile B | 9 |\n| delete both profiles | 9: the ACEs survive |\n\nSo growth comes from **distinct SIDs**, and three callers use an id that\nis new on every run: `exec-<executionId>`, `cu-terminal-<sessionId>`,\nand one `toolgen.<toolId>` per tool. The ACEs land on paths that outlive\nthe run, above all the runtime bin dir every exec and generated-tool\nspawn is granted. A development machine reached **1366 ACEs** there,\nwhere `SetEntriesInAclW` fails with `87` and every confined spawn\nrefuses: I33 exec, the I35 terminal lane, and I39/I40 toolgen at once.\nThis is pre-existing and was found while verifying #1521.\n\n**Fix: two helper modes and two consumers.**\n\n- `--revoke-grants --profile <name> [--path <p>]...` derives the SID\nfrom the name, so it works after the profile is gone and never\nre-registers one. It removes that SID's explicit ACEs from each path,\nand a missing path counts as success.\n- `--sweep-orphaned-aces <path>...` removes an explicit ACE only when\nall three hold:\n  - its SID is an app-container SID;\n- it has **no** subkey under the per-user Mappings key, which also lists\ninstalled Store packages;\n  - it does **not** resolve via `LookupAccountSidW`.\n- **Released on exit, from the gateway.**\n`SandboxSpawnOptions.releaseGrantsOnExit` is set only by exec and the\nterminal lane, whose ids are unique per run. With it set, the win32\nrunner revokes the grants and then deletes the profile when the helper\nprocess exits or fails to launch. This runs in the gateway, not the\nhelper, because terminal close and exec timeouts `child.kill()` the\nhelper (`TerminateProcess`), so nothing after its wait would run.\n- **Not released for shared ids.** Revoking removes *every* ACE the SID\nholds, which would strip a concurrent sibling's access mid-run. That\nrules out:\n  - extensions and `toolgen.<toolId>`;\n  - `nimbus.preflight`, a fixed id;\n- the toolgen confinement probe, whose id the approved tool then spawns\nunder.\n- **Swept at boot.** `reapAppContainersAtBoot` sweeps the runtime's\nrequired read paths after its existing profile reap, so the profiles\njust reaped are exactly the ones whose ACEs are now orphaned. A missing\nhelper stays silent; any other failure warns and changes nothing the\nreap reports. That covers reaped generated tools, a crashed gateway, and\nthe existing backlog.\n\n**Residuals, stated.**\n- **Owner directories after a crash:** a gateway crash mid-run leaves\nthat run's ACEs on the owner's directories (exec grants, the terminal\ncwd). The sweep does not visit them, since nothing records which owner\ndirectories past runs were granted.\n- **Two gateways for one user:** they can still race through the\npre-existing boot reap.\n- **Shared install directory:** assumed not to carry another Windows\nuser's live Nimbus SIDs.\n\nAll three are in `docs/sandbox.md` § Grants are released.\n\n### `nimbus tool run` follow-ups from #1521's review\n\n- **An unconfinable sandbox now refuses.** `invokeSavedTool` asks\n`confinementUnavailable` before spawning. Production binds it to\n`SandboxRunner.canConfine` over `savedToolSpawnPolicy`, the same\nmanifest builder `spawnSavedTool` uses. It now refuses with\n`ERR_TOOLGEN_SANDBOX_DEGRADED`, the code `tool create` already used and\nnow a shared constant. Previously the spawn threw, and the audit\nrecorded `outcome: \"failed\"` with exit 1, claiming the tool ran.\nConfinement was fail-closed either way; only the classification was\nfalse.\n- **The duration is printed on stderr** in human mode: `nimbus:\ncompleted in <n> ms` or `nimbus: failed after <n> ms`. Stdout stays the\nbare result, so piping still works, and `--json` is unchanged.\n- **`help.test.ts` derives the `nimbus tool` subcommands** from\n`ParsedToolArgs` and requires each one in both `tool.ts`'s usage text\nand the contiguous `nimbus help` tool block. The test was red-proven two\nways: removing `save` from help, and adding a new `sub` literal.\n- **Docs:** `cli-reference.md` and `roadmap.md` still said \"exactly one\n`tool.invoke` audit row\". Those were restatements #1521's review\ncorrected elsewhere but missed here; both are corrected.\n\nNo migration, no new invariant, no new egress class, no new IPC method.\n\n## Verification\n\n- **Helper modes, by hand against real DACLs.** An orphan sweep removed\n2 of 3 SIDs and kept the live profile's. A revoke returned the directory\nto its pre-spawn baseline. A profile outside the namespace and a sweep\nwith no paths both exit 64.\n- **New Windows integration test**\n`test/integration/platform/sandbox/win32-ace-release.test.ts`, run\nagainst the real helper: 3 pass. It checks three things:\n- the ACE appears mid-run and is gone afterwards, and the profile is\ndeleted;\n  - a **killed** execution (wall-clock) releases too;\n  - the sweep removes an orphan and keeps a live profile's ACE.\n- **Red proof:** with `releaseGrantsOnExit` switched off, both execution\ncases fail.\n- **Unit tests:** `win32-release.test.ts` and the boot-sweep cases in\n`win32-reap.test.ts` (POSIX stand-in helper). Those four sweep cases\nskip on Windows and were run red, then green, under Linux Bun 1.3.14 in\nWSL.\n- **Test suites:** sandbox 102 pass, apart from the 2 local-environment\nfailures noted below. exec + computer-use 547 pass. toolgen +\ntoolgen-rpc 643 pass. `tool.test.ts` 146 pass. `help.test.ts` 11 pass.\n- **Preflight:** every static gate passed; test:ci red on exactly the\ntwo known win32.test.ts cases (`reports itself as not fully active…` /\n`explains the degradation…`), unchanged from main, which fail on this\nmachine only because a copy of nimbus-sandbox-helper.exe sits next to\nbun.exe in ~/.bun/bin. The same two failures were disclosed on #1521.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n\n## Summary by CodeRabbit\n\n- **New Features**\n- Windows sandbox permissions are now cleaned up after execution and\nterminal sessions, with recovery cleanup for orphaned permissions after\ngateway restarts.\n- Tool runs now report execution duration on stderr in human-readable\nmode and include duration in JSON results.\n\n- **Bug Fixes**\n- Tool runs refuse to start when sandbox confinement is unavailable,\nreturning a clear error.\n  - Cleanup now also handles interrupted or failed executions.\n\n- **Documentation**\n- Updated CLI, sandbox, roadmap, and changelog documentation with the\nlatest behavior and audit guarantees.\n\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>",
+          "timestamp": "2026-09-17T09:27:19+03:00",
+          "tree_id": "a9e8e5de964b9c14a1d389c89b4ed76af6c75d2f",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/52fb7cfea808893955c6267caf08a5cb18aae943"
+        },
+        "date": 1789627312061,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 329.8040119499994,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 327.89727520000343,
             "unit": "ms"
           }
         ]
