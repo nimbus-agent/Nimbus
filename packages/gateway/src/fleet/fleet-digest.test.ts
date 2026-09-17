@@ -217,8 +217,8 @@ describe("buildFleetDigest assembles the job union", () => {
   });
 
   // I1 red-prove: a future-dated brief (NTP correction) must not put an unconfigured job into
-  // `noBriefInWindow` at all — `jobIdsWithBriefsInWindow` and `briefPairForJob` must agree on the
-  // upper bound, or the union admits the job while the pair query then finds no `current` for it.
+  // `noBriefInWindow` at all — `jobIdsWithBriefsInWindow` and `briefPairForSubject` must agree on
+  // the upper bound, or the union admits the job while the pair query then finds no `current` for it.
   test("a future-dated brief for an unconfigured job does not appear in noBriefInWindow", () => {
     insertBrief({
       jobId: "retired-ghost",

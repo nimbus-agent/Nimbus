@@ -310,6 +310,9 @@ export class FleetScheduler {
         jobsCompleted: tally.completed,
         jobsSkippedNotDue: tally.skippedNotDue,
         remoteCallsMade: this.deps.remoteBudget.spent(),
+        subjectsInScope: 0,
+        subjectsAttempted: 0,
+        subjectsCompleted: 0,
       });
       // Prune HERE as well as at boot, and on every exit including `deferred` — because every exit
       // opened a row. `openRun` runs before the admission check, so an enabled fleet writes one

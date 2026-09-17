@@ -129,8 +129,9 @@ export function buildFleetDigest(deps: {
 
   for (const jobId of ids) {
     const cfg = configured.get(jobId);
-    const { current, predecessor } = deps.store.briefPairForJob({
+    const { current, predecessor } = deps.store.briefPairForSubject({
       jobId,
+      subjectKey: jobId,
       windowStartMs,
       now: deps.now,
     });
