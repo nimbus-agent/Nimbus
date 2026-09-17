@@ -542,7 +542,56 @@ Methods on `FleetStore`:
   }
 ```
 
-Rename `briefPairForJob` to `briefPairForSubject`, add `subjectKey: string` to its query object, and add `AND subject_key = ?` immediately after `job_id = ?` in ALL THREE of its `queryOne` WHERE clauses, with `q.subjectKey` inserted after `q.jobId` in each params array. Keep its doc comment, adding one sentence: "Scoped to one subject: a sweep job's subjects are compared only with themselves."
+Replace `briefPairForJob` with `briefPairForSubject`. Keep its existing doc comment and the three inline comments (the future-dated-row comment above `current`, the id-not-timestamp comment above `oldestInWindow`), adding one sentence to the doc comment: "Scoped to one subject: a sweep job's subjects are compared only with themselves." All THREE queries carry `subject_key = ?` — the third is the one easiest to miss, since it only runs when nothing precedes the window:
+
+```ts
+  briefPairForSubject(q: { jobId: string; subjectKey: string; windowStartMs: number; now: number }): {
+    current: FleetBriefRow | undefined;
+    predecessor: FleetBriefRow | undefined;
+  } {
+    const current = this.queryOne(
+      `WHERE job_id = ? AND subject_key = ? AND created_at >= ? AND created_at <= ? AND expires_at > ?
+       ORDER BY created_at DESC, id DESC LIMIT 1`,
+      [q.jobId, q.subjectKey, q.windowStartMs, q.now, q.now],
+    );
+    if (current === undefined) return { current: undefined, predecessor: undefined };
+    const before = this.queryOne(
+      `WHERE job_id = ? AND subject_key = ? AND created_at < ? AND expires_at > ?
+       ORDER BY created_at DESC, id DESC LIMIT 1`,
+      [q.jobId, q.subjectKey, q.windowStartMs, q.now],
+    );
+    if (before !== undefined) return { current, predecessor: before };
+    const oldestInWindow = this.queryOne(
+      `WHERE job_id = ? AND subject_key = ? AND created_at >= ? AND created_at <= ? AND id != ? AND expires_at > ?
+       ORDER BY created_at ASC, id ASC LIMIT 1`,
+      [q.jobId, q.subjectKey, q.windowStartMs, current.createdAt, current.id, q.now],
+    );
+    return { current, predecessor: oldestInWindow };
+  }
+```
+
+Add a store test for the third query specifically:
+
+```ts
+  test("(red-prove) the oldest-in-window fallback is subject-scoped too", () => {
+    // Nothing precedes the window, so the pair falls back to the OLDEST brief inside it. Without
+    // `subject_key = ?` on that query, subject a's predecessor would be subject b's earlier brief.
+    insertBrief({ jobId: "bus", subjectKey: "paths:b", createdAt: 1100 });
+    insertBrief({ jobId: "bus", subjectKey: "paths:a", createdAt: 1200 });
+    insertBrief({ jobId: "bus", subjectKey: "paths:a", createdAt: 1500 });
+    const pair = store.briefPairForSubject({
+      jobId: "bus",
+      subjectKey: "paths:a",
+      windowStartMs: 1000,
+      now: 2000,
+    });
+    expect(pair.current?.createdAt).toBe(1500);
+    expect(pair.predecessor?.createdAt).toBe(1200);
+    expect(pair.predecessor?.subjectKey).toBe("paths:a");
+  });
+```
+
+Red-prove it by removing `subject_key = ? AND` (and `q.subjectKey`) from the third query only; confirm it FAILS (predecessor is 1100, subject b); restore.
 
 `listBriefs`: replace the two-arm query with one built WHERE:
 
@@ -645,6 +694,22 @@ describe("[[fleet.job]] sweep", () => {
     ).toThrow(/path_prefix applies only to sweep = "paths" or "symbols"/);
   });
 
+  test("an EMPTY path_prefix is refused, not read as 'no filter'", () => {
+    // `""` prefixes every path, so it would silently mean "no narrowing" — a value the owner wrote
+    // that does nothing. Refused like `digest_min_delta = 0`. NOT trimmed: a repo-relative path may
+    // legally contain spaces, and trimming would silently change what the owner asked for.
+    expect(() =>
+      parseNimbusTomlFleetJobs(`${base}sweep = "paths"\nmax_subjects = 5\npath_prefix = ""\n`),
+    ).toThrow(/bus path_prefix must not be empty/);
+  });
+
+  test("path_prefix whitespace is preserved verbatim", () => {
+    const [job] = parseNimbusTomlFleetJobs(
+      `${base}sweep = "paths"\nmax_subjects = 5\npath_prefix = "my docs/"\n`,
+    );
+    expect(job?.sweep?.pathPrefix).toBe("my docs/");
+  });
+
   test("an unknown sweep kind is refused and names the valid set", () => {
     expect(() =>
       parseNimbusTomlFleetJobs(`${base}sweep = "people"\nmax_subjects = 5\n`),
@@ -732,6 +797,11 @@ function resolveSweep(name: string, d: FleetJobDraft): FleetJobSweepToml | null 
       `[[fleet.job]] ${name} requires max_subjects between 1 and ${String(MAX_SWEEP_SUBJECTS)} ` +
         `when sweep is set (refused, not clamped; an unbounded sweep must not be expressible)`,
     );
+  }
+  if (d.pathPrefix === "") {
+    // Every path starts with "", so an empty prefix would silently mean "no narrowing". Refused, not
+    // trimmed or dropped: a path may legally contain spaces, so whitespace is kept verbatim.
+    throw new FleetConfigError(`[[fleet.job]] ${name} path_prefix must not be empty`);
   }
   if (d.pathPrefix !== undefined && !PATH_PREFIX_KINDS.has(kind)) {
     throw new FleetConfigError(
@@ -1402,6 +1472,11 @@ export function enumerateSymbols(
   for (const { label } of rows) {
     if (pathPrefix !== null) {
       const at = label.lastIndexOf(SYMBOL_LABEL_SEPARATOR);
+      // A label with no separator has no file part to match. `syncCodeSymbolGraph` is the ONLY
+      // writer of `symbol` entities and always writes the separator, so this arm is not reachable
+      // from production data; if it ever is, EXCLUDING the symbol from a path-filtered sweep is the
+      // honest answer. Falling back to the whole label would match the symbol NAME against a path
+      // prefix and admit a symbol whose file is unknown.
       const file = at === -1 ? "" : label.slice(at + SYMBOL_LABEL_SEPARATOR.length);
       if (!file.startsWith(pathPrefix)) continue;
     }

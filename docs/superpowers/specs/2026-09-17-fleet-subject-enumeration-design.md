@@ -79,7 +79,9 @@ refusal disables the fleet with the same loud log a parse error gets:
    `term`) — two sources for one subject.
 3. `sweep` set and `max_subjects` absent, non-integer, `< 1`, or `> 500` (refused, not clamped).
 4. `max_subjects` or a narrowing key set without `sweep`.
-5. `path_prefix` on a kind that does not accept it (`services`, `terms`).
+5. `path_prefix` on a kind that does not accept it (`services`, `terms`), or an EMPTY `path_prefix`
+   (every path starts with `""`, so it would silently mean "no narrowing"; whitespace is kept
+   verbatim rather than trimmed, since a path may legally contain spaces).
 6. `sweep` with `namespace`/`namespaces` on `ghost`/`conflicts`: those fan out to paired peers, and a
    sweep would multiply federated calls under the owner's identity — the peer-amplification
    concern the ChatOps agent-intent disclosure already names. A sweep stays local.
