@@ -40,6 +40,13 @@ exclude = [
   # and dev/bench dir are created by the first post-merge push, so the link 404s
   # while the PR documenting it is open. Resolves automatically post-merge.
   "github\\.com/nimbus-agent/Nimbus/tree/perf-data",
+  # open-vsx.org's signed-in settings pages (cited in docs/ci-secrets.md and
+  # docs/credential-hygiene.md) answer 503 intermittently — measured 2026-09-17 from a
+  # dev machine, not only runner egress: 3 of 6 samples 503 on `/user-settings/tokens`
+  # while `/extension/...` pages returned 200 on all 6. lychee does not retry a
+  # rejected status, so both passes failed in three runs across two PRs that day. Scoped to
+  # `/user-settings/` so the public open-vsx.org links stay checked.
+  "open-vsx\\.org/user-settings/",
 ]
 # 202 Accepted is a 2xx success — figma.com's homepage returns it to scripted UAs,
 # which lychee otherwise rejects (the long-standing intermittent figma.com flake).
