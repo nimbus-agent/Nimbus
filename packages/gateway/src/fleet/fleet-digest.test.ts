@@ -137,7 +137,7 @@ describe("buildFleetDigest assembles the job union", () => {
   });
 
   function job(name: string, agent: string, digestMinDelta = 1): NimbusFleetJobToml {
-    return { name, agent, intervalSeconds: 3600, params: {}, digestMinDelta };
+    return { name, agent, intervalSeconds: 3600, params: {}, digestMinDelta, sweep: null };
   }
 
   const ghostBase = { agentVersion: 1, generatedAt: 0, latencyMs: 0, gaps: [] };

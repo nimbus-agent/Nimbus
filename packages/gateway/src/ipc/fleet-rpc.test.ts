@@ -53,8 +53,22 @@ test("fleet.status reports running: true and the real config/jobsConfigured when
   // dropped config field all fail here.
   const scheduler: FakeScheduler = { runOnce: async () => COMPLETED };
   const jobs: readonly NimbusFleetJobToml[] = [
-    { name: "a", agent: "catchup", intervalSeconds: 60, params: {}, digestMinDelta: 1 },
-    { name: "b", agent: "ownership", intervalSeconds: 120, params: {}, digestMinDelta: 1 },
+    {
+      name: "a",
+      agent: "catchup",
+      intervalSeconds: 60,
+      params: {},
+      digestMinDelta: 1,
+      sweep: null,
+    },
+    {
+      name: "b",
+      agent: "ownership",
+      intervalSeconds: 120,
+      params: {},
+      digestMinDelta: 1,
+      sweep: null,
+    },
   ];
   const config: NimbusFleetToml = {
     ...DEFAULT_FLEET_CONFIG,
@@ -213,6 +227,7 @@ describe("fleet.list / fleet.briefs / fleet.show over a real store", () => {
       intervalSeconds: 3600,
       params: {},
       digestMinDelta: 1,
+      sweep: null,
     },
   ];
   const config: NimbusFleetToml = DEFAULT_FLEET_CONFIG;
@@ -360,6 +375,7 @@ describe("fleet.digest", () => {
       intervalSeconds: 3600,
       params: {},
       digestMinDelta: 1,
+      sweep: null,
     },
   ];
   const config: NimbusFleetToml = DEFAULT_FLEET_CONFIG;
