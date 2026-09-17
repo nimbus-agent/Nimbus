@@ -1,9 +1,16 @@
-import type { NimbusFleetJobToml, NimbusFleetToml } from "../config/fleet-toml.ts";
+import type {
+  FleetJobSweepToml,
+  NimbusFleetJobToml,
+  NimbusFleetToml,
+} from "../config/fleet-toml.ts";
 import type { HostActivity, HostActivityProbe } from "../platform/host-activity.ts";
 import type { AdmissionVerdict } from "./fleet-admission.ts";
 import { admitFleetRun } from "./fleet-admission.ts";
 import type { FleetInvoker } from "./fleet-invoker.ts";
 import type { FleetJobState, FleetRunOutcome, FleetStore } from "./fleet-store.ts";
+import type { FleetSweepEnumerate, SweepSubject } from "./fleet-sweep-enumerators.ts";
+import { sweepParamFor } from "./fleet-sweep-support.ts";
+import { selectSweepWindow } from "./fleet-sweep-window.ts";
 
 /**
  * The `AI_V2_CAPABILITIES` member (`policy/types.ts`) an org policy disables to turn the fleet off
@@ -48,6 +55,10 @@ export interface FleetRunSummary {
   readonly jobsUnattempted: number;
   /** In scope but outside its `interval_seconds` or inside its backoff. Not a failure. */
   readonly jobsSkippedNotDue: number;
+  /** Units of brief production selected this run: 1 per due config-named job, the window per sweep. */
+  readonly subjectsInScope: number;
+  readonly subjectsAttempted: number;
+  readonly subjectsCompleted: number;
 }
 
 /**
@@ -100,6 +111,11 @@ export interface FleetSchedulerDeps {
    * `allow_remote = false` fleet still has a budget, it is just clamped to 0.
    */
   readonly remoteBudget: FleetRunBudget;
+  /**
+   * Enumerates a sweep job's subjects (spec § 5). REQUIRED: a scheduler that could not enumerate would
+   * silently run no sweep at all, the optional-dep shape PR 1 already paid for once.
+   */
+  readonly enumerate: FleetSweepEnumerate;
   /** Test seam only. Production leaves it at `DEFAULT_TICK_MS`. */
   readonly tickMs?: number | undefined;
 }
@@ -124,6 +140,18 @@ export function isJobDue(
   if (state?.lastSuccessAt == null) return true;
   return now - state.lastSuccessAt >= job.intervalSeconds * 1000;
 }
+
+/** ONE mutable record every exit reads — see `execute`'s `close`. */
+interface RunTally {
+  attempted: number;
+  completed: number;
+  skippedNotDue: number;
+  subjectsInScope: number;
+  subjectsAttempted: number;
+  subjectsCompleted: number;
+}
+
+type SweepJobResult = "succeeded" | "failed" | "yielded";
 
 export class FleetScheduler {
   private timer: ReturnType<typeof setInterval> | undefined;
@@ -200,6 +228,9 @@ export class FleetScheduler {
         // scope is genuinely unattempted because another run held the lane.
         jobsUnattempted: jobs.length,
         jobsSkippedNotDue: 0,
+        subjectsInScope: 0,
+        subjectsAttempted: 0,
+        subjectsCompleted: 0,
       };
     }
     this.inFlight = true;
@@ -258,6 +289,122 @@ export class FleetScheduler {
     return true;
   }
 
+  /**
+   * Enumerate, persist what was found, and select this run's window. `null` means enumeration
+   * failed and the failure is already recorded (backoff).
+   */
+  private enumerateWindow(
+    job: NimbusFleetJobToml,
+    sweep: FleetJobSweepToml,
+  ): SweepSubject[] | null {
+    const param = sweepParamFor(job.agent, sweep.kind);
+    if (param === null) {
+      // Unreachable after `validateFleetSweepJobs`; recorded rather than thrown so a config that
+      // bypassed validation fails one job, not the run.
+      this.deps.store.recordJobFailure(
+        job.name,
+        this.deps.now(),
+        `agent ${job.agent} cannot sweep ${sweep.kind}`,
+      );
+      return null;
+    }
+    let found: ReturnType<FleetSweepEnumerate>;
+    try {
+      found = this.deps.enumerate({ kind: sweep.kind, param, pathPrefix: sweep.pathPrefix });
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      this.deps.store.recordJobFailure(
+        job.name,
+        this.deps.now(),
+        `sweep enumeration failed: ${msg}`,
+      );
+      return null;
+    }
+    this.deps.store.recordSweepEnumeration(job.name, {
+      kind: sweep.kind,
+      subjectsTotal: found.subjects.length,
+      emptyReason: found.emptyReason,
+    });
+    const cursor = this.deps.store.loadSweepState(job.name)?.cursor ?? null;
+    const byKey = new Map(found.subjects.map((s) => [s.key, s]));
+    return selectSweepWindow([...byKey.keys()], cursor, sweep.maxSubjects).flatMap((k) => {
+      const s = byKey.get(k);
+      return s === undefined ? [] : [s];
+    });
+  }
+
+  /** One subject's turn. Unlike `runOneJob`, a failure is NOT a job failure — the window decides that. */
+  private async runSweepSubject(
+    job: NimbusFleetJobToml,
+    subject: SweepSubject,
+    runId: string,
+    expiresAt: number,
+  ): Promise<string | null> {
+    const outcome = await this.deps.invoke({
+      ...job,
+      params: { ...job.params, ...subject.params },
+    });
+    if (outcome.status !== "done") return outcome.error;
+    this.deps.store.recordBrief({
+      runId,
+      jobId: job.name,
+      subjectKey: subject.key,
+      agentMethod: `agents.${job.agent}`,
+      briefMarkdown: outcome.briefMarkdown,
+      findingsJson: outcome.findingsJson,
+      synthesisJson: outcome.synthesisJson,
+      createdAt: this.deps.now(),
+      expiresAt,
+    });
+    return null;
+  }
+
+  /**
+   * A sweep job's turn (spec § 7). The cursor advances after EVERY subject, success or failure, so
+   * one broken subject cannot pin the rotation. A yield records no success, so the job stays due and
+   * resumes from the cursor. The first subject is not re-probed: `execute` probed at the job boundary.
+   */
+  private async runSweepJob(
+    job: NimbusFleetJobToml,
+    sweep: FleetJobSweepToml,
+    runId: string,
+    expiresAt: number,
+    tally: RunTally,
+    force: boolean,
+  ): Promise<SweepJobResult> {
+    const window = this.enumerateWindow(job, sweep);
+    if (window === null) return "failed";
+    if (window.length === 0) {
+      this.deps.store.recordJobSuccess(job.name, this.deps.now());
+      return "succeeded";
+    }
+    tally.subjectsInScope += window.length;
+    let succeeded = 0;
+    let firstError: string | null = null;
+    for (const [i, subject] of window.entries()) {
+      if (i > 0 && !(await this.stillAdmitted(tally.subjectsAttempted, force))) return "yielded";
+      tally.subjectsAttempted += 1;
+      const error = await this.runSweepSubject(job, subject, runId, expiresAt);
+      if (error === null) {
+        succeeded += 1;
+        tally.subjectsCompleted += 1;
+      } else {
+        firstError ??= error;
+      }
+      this.deps.store.advanceSweepCursor(job.name, sweep.kind, subject.key);
+    }
+    if (succeeded > 0) {
+      this.deps.store.recordJobSuccess(job.name, this.deps.now());
+      return "succeeded";
+    }
+    this.deps.store.recordJobFailure(
+      job.name,
+      this.deps.now(),
+      `all ${String(window.length)} sweep subjects failed; first: ${firstError ?? "unknown"}`,
+    );
+    return "failed";
+  }
+
   private async execute(
     jobs: readonly NimbusFleetJobToml[],
     force: boolean,
@@ -296,7 +443,14 @@ export class FleetScheduler {
     // ONE mutable tally, read by `close` rather than threaded through it as arguments. Every exit
     // (deferred, yielded, failed, completed) then reports the same numbers by construction — three
     // positional counters at four call sites is how one of them ends up stale on one path.
-    const tally = { attempted: 0, completed: 0, skippedNotDue: 0 };
+    const tally: RunTally = {
+      attempted: 0,
+      completed: 0,
+      skippedNotDue: 0,
+      subjectsInScope: 0,
+      subjectsAttempted: 0,
+      subjectsCompleted: 0,
+    };
 
     const close = (outcome: FleetRunOutcome): FleetRunSummary => {
       this.deps.store.closeRun(runId, {
@@ -310,9 +464,9 @@ export class FleetScheduler {
         jobsCompleted: tally.completed,
         jobsSkippedNotDue: tally.skippedNotDue,
         remoteCallsMade: this.deps.remoteBudget.spent(),
-        subjectsInScope: 0,
-        subjectsAttempted: 0,
-        subjectsCompleted: 0,
+        subjectsInScope: tally.subjectsInScope,
+        subjectsAttempted: tally.subjectsAttempted,
+        subjectsCompleted: tally.subjectsCompleted,
       });
       // Prune HERE as well as at boot, and on every exit including `deferred` — because every exit
       // opened a row. `openRun` runs before the admission check, so an enabled fleet writes one
@@ -332,6 +486,9 @@ export class FleetScheduler {
         // them as unattempted would report an ordinary tick as a run that gave up.
         jobsUnattempted: jobs.length - tally.attempted - tally.skippedNotDue,
         jobsSkippedNotDue: tally.skippedNotDue,
+        subjectsInScope: tally.subjectsInScope,
+        subjectsAttempted: tally.subjectsAttempted,
+        subjectsCompleted: tally.subjectsCompleted,
       };
     };
 
@@ -341,7 +498,9 @@ export class FleetScheduler {
 
     try {
       for (const job of jobs) {
-        if (!(await this.stillAdmitted(tally.attempted, force))) return close("yielded");
+        // Keyed on SUBJECTS attempted: one counter across both job kinds, so admission is re-checked
+        // at every unit boundary (a config-named job is one unit).
+        if (!(await this.stillAdmitted(tally.subjectsAttempted, force))) return close("yielded");
 
         // Due check AND backoff, both inside `isJobDue`. NAMING a job (not `--force`) is what
         // overrides the schedule: an owner asking for one job by name has made the decision this
@@ -354,7 +513,18 @@ export class FleetScheduler {
         }
 
         tally.attempted += 1;
-        if (await this.runOneJob(job, runId, expiresAt)) tally.completed += 1;
+        if (job.sweep === null) {
+          tally.subjectsInScope += 1;
+          tally.subjectsAttempted += 1;
+          if (await this.runOneJob(job, runId, expiresAt)) {
+            tally.completed += 1;
+            tally.subjectsCompleted += 1;
+          }
+          continue;
+        }
+        const result = await this.runSweepJob(job, job.sweep, runId, expiresAt, tally, force);
+        if (result === "yielded") return close("yielded");
+        if (result === "succeeded") tally.completed += 1;
       }
     } catch (err) {
       // The invoker CONTRACT returns `{ status: "failed" }` rather than throwing, so reaching here

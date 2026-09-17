@@ -189,6 +189,7 @@ import { appendPreflightAudit, defaultRunCommand } from "../federation/preflight
 import { buildFleetInvoker } from "../fleet/fleet-invoker.ts";
 import { FLEET_CAPABILITY, FleetScheduler } from "../fleet/fleet-scheduler.ts";
 import { FleetStore } from "../fleet/fleet-store.ts";
+import { buildFleetSweepEnumerate } from "../fleet/fleet-sweep-enumerators.ts";
 import { validateFleetSweepJobs } from "../fleet/fleet-sweep-support.ts";
 import { createFleetRemoteBudget } from "../fleet/fleet-synthesis-router.ts";
 import type { ConsolidatorLlm } from "../glossary/glossary-consolidate.ts";
@@ -245,6 +246,7 @@ import {
   createOwnershipRefresher,
   type OwnershipRefresher,
 } from "../ownership/ownership-refresh.ts";
+import { ownershipRoots } from "../ownership/ownership-target.ts";
 import { ensureAnchorKeypair } from "../policy/anchor-keypair.ts";
 import { partitionByAllowlist } from "../policy/connector-allowlist.ts";
 import { startPurge } from "../policy/gdpr-purge.ts";
@@ -3115,6 +3117,15 @@ export function assembleFleetRuntime(deps: FleetBootDeps): FleetRuntime {
       configDir: deps.paths.configDir,
     }),
     now: () => Date.now(),
+    // Roots and services are read FRESH per enumeration. Services use the loader agents resolve
+    // `service` against — deliberately NOT `loadServiceConfigsOrDegrade`: degrading to an empty map
+    // would report "no services are configured" for a config that is merely malformed, where a throw
+    // records the real cause on the job and backs it off.
+    enumerate: buildFleetSweepEnumerate({
+      db: deps.db,
+      roots: () => ownershipRoots(deps.paths.configDir),
+      serviceIds: () => [...loadNimbusServiceConfigsFromConfigDir(deps.paths.configDir).keys()],
+    }),
   });
   scheduler.start();
   // Without this the 60 s interval outlives `disposeSidecars()`. `.unref()` keeps it from holding

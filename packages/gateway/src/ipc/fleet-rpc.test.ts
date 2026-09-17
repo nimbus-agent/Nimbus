@@ -29,6 +29,9 @@ const COMPLETED: FleetRunSummary = {
   jobsCompleted: 1,
   jobsUnattempted: 0,
   jobsSkippedNotDue: 0,
+  subjectsInScope: 1,
+  subjectsAttempted: 1,
+  subjectsCompleted: 1,
 };
 
 test("fleet.status reports the live probe and config without running anything", async () => {
