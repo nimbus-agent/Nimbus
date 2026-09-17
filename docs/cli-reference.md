@@ -216,7 +216,7 @@ nimbus search "flaky test" --keyword-only            # BM25 only, no vector rank
 >
 > **stdout is always the plain JSON array of results**, so `nimbus search … | jq '.[0]'` keeps working. Anything the results do not say about themselves goes to **stderr** as `note:` lines:
 >
-> - **Keyword-only results:** why semantic ranking did not run — the query embedding timed out (default budget 5 s, override with `NIMBUS_EMBEDDING_QUERY_TIMEOUT_MS`), the model is still loading, embeddings are disabled or did not start, or the vector index could not be loaded.
+> - **Keyword-only results:** why semantic ranking did not run — the query embedding timed out (default budget 5 s, override with `NIMBUS_EMBEDDING_QUERY_TIMEOUT_MS`, capped at 25 s so it still fires inside the 30 s IPC bound), the model is still loading, embeddings are disabled or did not start, or the vector index could not be loaded.
 > - **Partial ranking:** a hybrid result ranked on one dimension only, because the other half timed out.
 > - **Incomplete results:** a background embedding pass is still running, reported as `8,400 of 51,600 items processed this pass`. That is progress of the current pass, not index coverage; `nimbus index health` reports per-connector coverage.
 >

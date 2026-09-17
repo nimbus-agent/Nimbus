@@ -134,7 +134,10 @@ export function describeRetrieval(r: SearchRetrieval): string[] {
   } else if (r.partial === "local_timeout") {
     notes.push("semantic ranking used remote vectors only (the local embedding timed out)");
   }
-  if (r.backfill !== null) {
+  // A backfill pass writes VECTORS only, so it can leave a vector-ranked result incomplete but never
+  // a keyword-only one: the FTS rows it ranks exist regardless. The structured `backfill` field still
+  // travels on every branch; only the claim "results may be incomplete" is scoped.
+  if (r.backfill !== null && r.vectorRanked) {
     notes.push(
       `background embedding in progress: ${r.backfill.done.toLocaleString("en-US")} of ` +
         `${r.backfill.total.toLocaleString("en-US")} items processed this pass — results may be ` +

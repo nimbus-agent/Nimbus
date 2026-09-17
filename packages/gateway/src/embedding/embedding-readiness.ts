@@ -155,9 +155,18 @@ export const EMBEDDING_TIMEOUT_CODE = "embedding_timeout";
 export const DEFAULT_EMBEDDING_QUERY_TIMEOUT_MS = 5_000;
 
 /**
+ * Ceiling for an override. The inner bound only produces a disclosed keyword-only result if it
+ * fires BEFORE the CLI/MCP `IPCClient`'s 30 s request bound; at or above that the caller gets a
+ * transport error instead — exactly the failure the 5 s default exists to avoid. 25 s leaves the
+ * hybrid search itself room to finish inside the outer bound.
+ */
+export const MAX_EMBEDDING_QUERY_TIMEOUT_MS = 25_000;
+
+/**
  * `NIMBUS_EMBEDDING_QUERY_TIMEOUT_MS`, read at call time so a diagnosis can change it without a
  * rebuild — the same reason `NIMBUS_EMBEDDING_INIT_TIMEOUT_MS` exists. Anything that is not a
- * positive integer falls back to the default rather than disabling the bound.
+ * positive integer falls back to the default rather than disabling the bound; a larger value is
+ * clamped to {@link MAX_EMBEDDING_QUERY_TIMEOUT_MS}.
  */
 export function resolveEmbeddingQueryTimeoutMs(): number {
   const raw = processEnvGet("NIMBUS_EMBEDDING_QUERY_TIMEOUT_MS");
@@ -172,7 +181,7 @@ export function resolveEmbeddingQueryTimeoutMs(): number {
   if (!Number.isSafeInteger(n) || n <= 0) {
     return DEFAULT_EMBEDDING_QUERY_TIMEOUT_MS;
   }
-  return n;
+  return Math.min(n, MAX_EMBEDDING_QUERY_TIMEOUT_MS);
 }
 
 /**

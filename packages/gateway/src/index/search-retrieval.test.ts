@@ -100,12 +100,29 @@ describe("describeRetrieval", () => {
   });
 
   test("words backfill as progress of THIS pass, never as index coverage", () => {
-    const [note] = describeRetrieval(
-      unrankedRetrieval("semantic_off", { done: 8400, total: 51600 }),
-    );
+    const [note] = describeRetrieval({
+      vectorRanked: true,
+      reason: null,
+      partial: null,
+      backfill: { done: 8400, total: 51600 },
+    });
     expect(note).toContain("8,400 of 51,600 items processed this pass");
     expect(note).toContain("nimbus index health");
     expect(note).not.toContain("coverage 8,400");
+  });
+
+  test("never calls a keyword-only result incomplete: a backfill writes vectors, not FTS rows", () => {
+    const pass = { done: 8400, total: 51600 };
+    expect(describeRetrieval(unrankedRetrieval("semantic_off", pass))).toEqual([]);
+    expect(describeRetrieval(unrankedRetrieval("no_query", pass))).toEqual([]);
+    const degraded = describeRetrieval({
+      vectorRanked: false,
+      reason: "warming",
+      partial: null,
+      backfill: pass,
+    });
+    expect(degraded).toHaveLength(1);
+    expect(degraded[0]).toContain("keyword-only");
   });
 
   test("retrievalNoteFor omits the field entirely when there is nothing to say", () => {

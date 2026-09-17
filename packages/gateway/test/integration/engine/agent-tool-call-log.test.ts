@@ -27,7 +27,14 @@ function stubLocalIndex(): LocalIndex {
   return {
     searchRankedAsync: async () => ({
       items: [],
-      retrieval: { vectorRanked: false, reason: "no_query", partial: null, backfill: null },
+      // A named query ("x" below) cannot be `no_query`; `no_embedding_runtime` is a real outcome
+      // for it, and one that carries a note, so the logged envelope can be checked for it.
+      retrieval: {
+        vectorRanked: false,
+        reason: "no_embedding_runtime",
+        partial: null,
+        backfill: null,
+      },
     }),
     fetchMoreItems: () => [],
     traverseGraph: () => ({ entities: [], relations: [] }),
@@ -67,6 +74,8 @@ describe("agent.ts wrapToolForLlm — tool_call_log audit-write", () => {
     expect(row.toolId).toBe("searchLocalIndex");
     expect(row.status).toBe("ok");
     expect(row.resultEnvelope).toContain("<tool_output");
+    expect(row.resultEnvelope).toContain("retrievalNote");
+    expect(row.resultEnvelope).toContain("embeddings are disabled or did not start");
   });
 
   test("writes a status='error' row when the wrapped tool throws (and re-throws)", async () => {

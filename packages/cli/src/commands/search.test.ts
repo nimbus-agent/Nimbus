@@ -157,9 +157,15 @@ describe("runSearch — retrieval disclosure", () => {
     const mock = createMockIpcClient([
       {
         items: [{ id: "github:pr_1", title: "My PR" }],
-        retrieval: { vectorRanked: false, reason: "timeout", partial: null, backfill: null },
+        // A shape the gateway really emits: the backfill note rides only a vector-ranked result.
+        retrieval: {
+          vectorRanked: true,
+          reason: null,
+          partial: "remote_timeout",
+          backfill: { done: 8400, total: 51600 },
+        },
         notes: [
-          "semantic ranking unavailable (the query embedding timed out) — keyword-only results",
+          "semantic ranking used local vectors only (the remote embedding timed out)",
           "background embedding in progress: 8,400 of 51,600 items processed this pass — results may be incomplete; run 'nimbus index health' for per-connector coverage",
         ],
       },
@@ -169,7 +175,7 @@ describe("runSearch — retrieval disclosure", () => {
     await runSearch(["hello"]);
 
     expect(out.stderr).toContain(
-      "note: semantic ranking unavailable (the query embedding timed out)",
+      "note: semantic ranking used local vectors only (the remote embedding timed out)",
     );
     expect(out.stderr).toContain("8,400 of 51,600 items processed this pass");
     expect(out.stdout).not.toContain("note:");

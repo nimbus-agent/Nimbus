@@ -15,6 +15,7 @@ import {
   embedQueryDualOutcome,
   isEmbeddingTimeoutError,
   isEmbeddingWarmingError,
+  MAX_EMBEDDING_QUERY_TIMEOUT_MS,
   NO_DUAL_VECTORS,
   normalizeModelProgress,
   resolveEmbeddingQueryTimeoutMs,
@@ -156,6 +157,14 @@ describe("resolveEmbeddingQueryTimeoutMs", () => {
       process.env[KEY] = bad;
       expect(resolveEmbeddingQueryTimeoutMs()).toBe(DEFAULT_EMBEDDING_QUERY_TIMEOUT_MS);
     }
+  });
+
+  test("clamps an override below the IPC client's 30 s bound, so the inner bound still fires first", () => {
+    expect(MAX_EMBEDDING_QUERY_TIMEOUT_MS).toBeLessThan(30_000);
+    process.env[KEY] = "60000";
+    expect(resolveEmbeddingQueryTimeoutMs()).toBe(MAX_EMBEDDING_QUERY_TIMEOUT_MS);
+    process.env[KEY] = String(MAX_EMBEDDING_QUERY_TIMEOUT_MS);
+    expect(resolveEmbeddingQueryTimeoutMs()).toBe(MAX_EMBEDDING_QUERY_TIMEOUT_MS);
   });
 });
 
