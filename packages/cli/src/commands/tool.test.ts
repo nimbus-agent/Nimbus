@@ -297,13 +297,14 @@ describe("exitCodeForInvoke", () => {
 });
 
 describe("renderToolInvokeOutcome", () => {
-  function sunk(): { sink: OutcomeSink; lines: string[] } {
-    const lines: string[] = [];
-    return { sink: { out: (t) => lines.push(t), err: (t) => lines.push(t) }, lines };
+  function sunk(): { sink: OutcomeSink; out: string[]; err: string[] } {
+    const out: string[] = [];
+    const err: string[] = [];
+    return { sink: { out: (t) => out.push(t), err: (t) => err.push(t) }, out, err };
   }
 
   test("renders a string result bare, an object pretty, and nothing as (no output)", () => {
-    const { sink, lines } = sunk();
+    const { sink, out } = sunk();
     renderToolInvokeOutcome(
       { status: "executed", toolId: "t", result: "hello", durationMs: 1 },
       sink,
@@ -319,50 +320,90 @@ describe("renderToolInvokeOutcome", () => {
       sink,
       false,
     );
-    expect(lines[0]).toBe("hello\n");
-    expect(lines[1]).toContain('"a": 1');
-    expect(lines[2]).toBe("(no output)\n");
+    expect(out[0]).toBe("hello\n");
+    expect(out[1]).toContain('"a": 1');
+    expect(out[2]).toBe("(no output)\n");
   });
 
   test("a null result also renders as (no output)", () => {
-    const { sink, lines } = sunk();
+    const { sink, out } = sunk();
     renderToolInvokeOutcome(
       { status: "executed", toolId: "t", result: null, durationMs: 1 },
       sink,
       false,
     );
-    expect(lines[0]).toBe("(no output)\n");
+    expect(out[0]).toBe("(no output)\n");
   });
 
   test("--json serializes the result even when it is a string", () => {
-    const { sink, lines } = sunk();
+    const { sink, out } = sunk();
     renderToolInvokeOutcome(
       { status: "executed", toolId: "t", result: "hello", durationMs: 1 },
       sink,
       true,
     );
-    expect(lines[0]).toBe(`${JSON.stringify("hello", null, 2)}\n`);
+    expect(out[0]).toBe(`${JSON.stringify("hello", null, 2)}\n`);
   });
 
   test("a failed outcome prints the error to stderr with the nimbus: prefix", () => {
-    const { sink, lines } = sunk();
+    const { sink, err } = sunk();
     renderToolInvokeOutcome(
       { status: "failed", toolId: "t", error: "boom", durationMs: 1 },
       sink,
       false,
     );
-    expect(lines[0]).toBe("nimbus: boom\n");
+    expect(err[0]).toBe("nimbus: boom\n");
   });
 
   test("a refused outcome prints the code and reason to stderr", () => {
-    const { sink, lines } = sunk();
+    const { sink, err } = sunk();
     renderToolInvokeOutcome(
       { status: "refused", toolId: "t", code: "ERR_TOOLGEN_NOT_SAVED", reason: "not saved" },
       sink,
       false,
     );
-    expect(lines.join("")).toContain("ERR_TOOLGEN_NOT_SAVED");
-    expect(lines.join("")).toContain("not saved");
+    expect(err.join("")).toContain("ERR_TOOLGEN_NOT_SAVED");
+    expect(err.join("")).toContain("not saved");
+  });
+
+  // The duration goes to STDERR, never stdout: stdout carries the tool's result verbatim so it can
+  // be piped, and a timing line appended there would corrupt exactly the output a script consumes.
+  test("an executed run reports its duration on stderr and leaves stdout as the bare result", () => {
+    const { sink, out, err } = sunk();
+    renderToolInvokeOutcome(
+      { status: "executed", toolId: "t", result: "hello", durationMs: 42 },
+      sink,
+      false,
+    );
+    expect(out).toEqual(["hello\n"]);
+    expect(err).toEqual(["nimbus: completed in 42 ms\n"]);
+  });
+
+  test("a failed run reports how long it ran, after the error", () => {
+    const { sink, err } = sunk();
+    renderToolInvokeOutcome(
+      { status: "failed", toolId: "t", error: "boom", durationMs: 7 },
+      sink,
+      false,
+    );
+    expect(err).toEqual(["nimbus: boom\n", "nimbus: failed after 7 ms\n"]);
+  });
+
+  test("--json prints no duration at all — its output is the result and nothing else", () => {
+    const { sink, err } = sunk();
+    renderToolInvokeOutcome(
+      { status: "executed", toolId: "t", result: "hello", durationMs: 42 },
+      sink,
+      true,
+    );
+    expect(err).toEqual([]);
+  });
+
+  test("an outcome without durationMs (a refusal, or an older gateway) prints no duration", () => {
+    const { sink, err } = sunk();
+    renderToolInvokeOutcome({ status: "executed", toolId: "t", result: "x" }, sink, false);
+    renderToolInvokeOutcome({ status: "refused", toolId: "t", code: "ERR_X" }, sink, false);
+    expect(err.join("")).not.toContain(" ms");
   });
 });
 

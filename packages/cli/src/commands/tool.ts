@@ -1015,13 +1015,30 @@ export function exitCodeForInvoke(outcome: ToolInvokeOutcomeShape): number {
   return TOOL_EXIT_CODES.refused;
 }
 
+function humanResultText(result: unknown): string {
+  if (result === undefined || result === null) return "(no output)";
+  if (typeof result === "string") return result;
+  return JSON.stringify(result, null, 2);
+}
+
+/**
+ * The run's duration, on STDERR. Stdout carries the tool's result verbatim so it can be piped, and
+ * a timing line there would corrupt exactly the output a script consumes. Absent `durationMs` (a
+ * refusal carries none) prints nothing rather than a misleading `0 ms`.
+ */
+function reportDuration(sink: OutcomeSink, verb: string, durationMs: number | undefined): void {
+  if (durationMs === undefined) return;
+  sink.err(`nimbus: ${verb} ${durationMs} ms\n`);
+}
+
 /**
  * Write a `toolgen.invoke` outcome to the user. Pure over an injected sink, matching
  * `renderToolOutcome`/`renderToolSaveOutcome`'s split.
  *
- * `--json` governs only the `executed` arm's SUCCESS rendering -- a `failed`/`refused` outcome
- * always goes to stderr as text, since there is no result value to serialize and a caller piping
- * `--json` output still needs a human-readable reason on a non-zero exit.
+ * `--json` governs only the `executed` arm's SUCCESS rendering -- the bare JSON result on stdout
+ * and nothing else, not even the duration. A `failed`/`refused` outcome always goes to stderr as
+ * text, since there is no result value to serialize and a caller piping `--json` output still needs
+ * a human-readable reason on a non-zero exit.
  */
 export function renderToolInvokeOutcome(
   outcome: ToolInvokeOutcomeShape,
@@ -1036,19 +1053,13 @@ export function renderToolInvokeOutcome(
       sink.out(`${JSON.stringify(outcome.result ?? null, null, 2)}\n`);
       return;
     }
-    if (outcome.result === undefined || outcome.result === null) {
-      sink.out("(no output)\n");
-      return;
-    }
-    if (typeof outcome.result === "string") {
-      sink.out(`${outcome.result}\n`);
-      return;
-    }
-    sink.out(`${JSON.stringify(outcome.result, null, 2)}\n`);
+    sink.out(`${humanResultText(outcome.result)}\n`);
+    reportDuration(sink, "completed in", outcome.durationMs);
     return;
   }
   if (outcome.status === "failed") {
     sink.err(`nimbus: ${outcome.error ?? "unknown error"}\n`);
+    reportDuration(sink, "failed after", outcome.durationMs);
     return;
   }
   sink.err(`nimbus: refused (${outcome.code ?? "unknown"})\n`);
