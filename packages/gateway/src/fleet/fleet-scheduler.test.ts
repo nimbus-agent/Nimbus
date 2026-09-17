@@ -2,6 +2,7 @@ import { Database } from "bun:sqlite";
 import { beforeEach, describe, expect, test } from "bun:test";
 import type { NimbusFleetJobToml, NimbusFleetToml } from "../config/fleet-toml.ts";
 import { DEFAULT_FLEET_CONFIG } from "../config/fleet-toml.ts";
+import { FLEET_SUBJECTS_V63_SQL } from "../index/fleet-subjects-v63-sql.ts";
 import { FLEET_V60_SQL } from "../index/fleet-v60-sql.ts";
 import type { HostActivityProbe } from "../platform/host-activity.ts";
 import type { FleetInvoker, FleetJobOutcome } from "./fleet-invoker.ts";
@@ -38,6 +39,7 @@ beforeEach(() => {
   db = new Database(":memory:");
   db.run("PRAGMA foreign_keys = ON");
   db.exec(FLEET_V60_SQL);
+  for (const stmt of FLEET_SUBJECTS_V63_SQL) db.exec(stmt);
   store = new FleetStore(db);
 });
 

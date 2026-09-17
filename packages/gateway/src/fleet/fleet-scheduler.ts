@@ -246,6 +246,7 @@ export class FleetScheduler {
     this.deps.store.recordBrief({
       runId,
       jobId: job.name,
+      subjectKey: job.name,
       agentMethod: `agents.${job.agent}`,
       briefMarkdown: outcome.briefMarkdown,
       findingsJson: outcome.findingsJson,

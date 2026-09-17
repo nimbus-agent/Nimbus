@@ -8,6 +8,7 @@ import {
   type FleetRunSummary,
 } from "../fleet/fleet-scheduler.ts";
 import { FleetStore } from "../fleet/fleet-store.ts";
+import { FLEET_SUBJECTS_V63_SQL } from "../index/fleet-subjects-v63-sql.ts";
 import { FLEET_V60_SQL } from "../index/fleet-v60-sql.ts";
 import {
   dispatchFleetRpc,
@@ -201,6 +202,7 @@ describe("fleet.list / fleet.briefs / fleet.show over a real store", () => {
     db = new Database(":memory:");
     db.run("PRAGMA foreign_keys = ON");
     db.exec(FLEET_V60_SQL);
+    for (const stmt of FLEET_SUBJECTS_V63_SQL) db.exec(stmt);
     store = new FleetStore(db);
   });
 
@@ -255,6 +257,7 @@ describe("fleet.list / fleet.briefs / fleet.show over a real store", () => {
     const id = store.recordBrief({
       runId,
       jobId: "morning_catchup",
+      subjectKey: "morning_catchup",
       agentMethod: "agents.catchup",
       briefMarkdown: "# hi",
       findingsJson: "{}",
@@ -322,6 +325,7 @@ describe("fleet.list / fleet.briefs / fleet.show over a real store", () => {
       store.recordBrief({
         runId,
         jobId: `j${i}`,
+        subjectKey: `j${i}`,
         agentMethod: "agents.catchup",
         briefMarkdown: "x",
         findingsJson: "{}",
@@ -345,6 +349,7 @@ describe("fleet.digest", () => {
     db = new Database(":memory:");
     db.run("PRAGMA foreign_keys = ON");
     db.exec(FLEET_V60_SQL);
+    for (const stmt of FLEET_SUBJECTS_V63_SQL) db.exec(stmt);
     store = new FleetStore(db);
   });
 

@@ -17,11 +17,38 @@ export interface FleetBriefRow {
   readonly id: string;
   readonly runId: string;
   readonly jobId: string;
+  readonly subjectKey: string;
   readonly agentMethod: string;
   readonly briefMarkdown: string | null;
   readonly findingsJson: string;
   readonly synthesisJson: string | null;
   readonly createdAt: number;
+}
+
+type FleetBriefDbRow = {
+  id: string;
+  run_id: string;
+  job_id: string;
+  subject_key: string;
+  agent_method: string;
+  brief_markdown: string | null;
+  findings_json: string;
+  synthesis_json: string | null;
+  created_at: number;
+};
+
+function toBriefRow(r: FleetBriefDbRow): FleetBriefRow {
+  return {
+    id: r.id,
+    runId: r.run_id,
+    jobId: r.job_id,
+    subjectKey: r.subject_key,
+    agentMethod: r.agent_method,
+    briefMarkdown: r.brief_markdown,
+    findingsJson: r.findings_json,
+    synthesisJson: r.synthesis_json,
+    createdAt: r.created_at,
+  };
 }
 
 /** 1h, 2h, 4h … capped at 24h. Capped because an uncapped doubling silently retires a job. */
@@ -98,6 +125,7 @@ export class FleetStore {
   recordBrief(b: {
     runId: string;
     jobId: string;
+    subjectKey: string;
     agentMethod: string;
     briefMarkdown: string | null;
     findingsJson: string;
@@ -109,13 +137,14 @@ export class FleetStore {
     dbRun(
       this.db,
       `INSERT INTO fleet_brief
-         (id, run_id, job_id, agent_method, brief_markdown, findings_json, synthesis_json,
-          created_at, expires_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         (id, run_id, job_id, subject_key, agent_method, brief_markdown, findings_json,
+          synthesis_json, created_at, expires_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         id,
         b.runId,
         b.jobId,
+        b.subjectKey,
         b.agentMethod,
         b.briefMarkdown,
         b.findingsJson,
@@ -197,39 +226,21 @@ export class FleetStore {
       q.jobId === undefined
         ? this.db
             .query(
-              `SELECT id, run_id, job_id, agent_method, brief_markdown, findings_json,
-                      synthesis_json, created_at
+              `SELECT id, run_id, job_id, subject_key, agent_method, brief_markdown,
+                      findings_json, synthesis_json, created_at
                  FROM fleet_brief WHERE expires_at > ? ORDER BY created_at DESC LIMIT ?`,
             )
             .all(q.now, q.limit)
         : this.db
             .query(
-              `SELECT id, run_id, job_id, agent_method, brief_markdown, findings_json,
-                      synthesis_json, created_at
+              `SELECT id, run_id, job_id, subject_key, agent_method, brief_markdown,
+                      findings_json, synthesis_json, created_at
                  FROM fleet_brief WHERE job_id = ? AND expires_at > ?
                  ORDER BY created_at DESC LIMIT ?`,
             )
             .all(q.jobId, q.now, q.limit)
-    ) as ReadonlyArray<{
-      id: string;
-      run_id: string;
-      job_id: string;
-      agent_method: string;
-      brief_markdown: string | null;
-      findings_json: string;
-      synthesis_json: string | null;
-      created_at: number;
-    }>;
-    return rows.map((r) => ({
-      id: r.id,
-      runId: r.run_id,
-      jobId: r.job_id,
-      agentMethod: r.agent_method,
-      briefMarkdown: r.brief_markdown,
-      findingsJson: r.findings_json,
-      synthesisJson: r.synthesis_json,
-      createdAt: r.created_at,
-    }));
+    ) as ReadonlyArray<FleetBriefDbRow>;
+    return rows.map(toBriefRow);
   }
 
   /**
@@ -241,35 +252,17 @@ export class FleetStore {
   getBrief(id: string, now: number): FleetBriefRow | undefined {
     const row = this.db
       .query(
-        `SELECT id, run_id, job_id, agent_method, brief_markdown, findings_json,
+        `SELECT id, run_id, job_id, subject_key, agent_method, brief_markdown, findings_json,
                 synthesis_json, created_at
            FROM fleet_brief WHERE id = ? AND expires_at > ?`,
       )
-      .get(id, now) as {
-      id: string;
-      run_id: string;
-      job_id: string;
-      agent_method: string;
-      brief_markdown: string | null;
-      findings_json: string;
-      synthesis_json: string | null;
-      created_at: number;
-    } | null;
+      .get(id, now) as FleetBriefDbRow | null;
     if (row === null) return undefined;
-    return {
-      id: row.id,
-      runId: row.run_id,
-      jobId: row.job_id,
-      agentMethod: row.agent_method,
-      briefMarkdown: row.brief_markdown,
-      findingsJson: row.findings_json,
-      synthesisJson: row.synthesis_json,
-      createdAt: row.created_at,
-    };
+    return toBriefRow(row);
   }
 
   private static readonly BRIEF_COLS =
-    `SELECT id, run_id, job_id, agent_method, brief_markdown, findings_json,
+    `SELECT id, run_id, job_id, subject_key, agent_method, brief_markdown, findings_json,
             synthesis_json, created_at FROM fleet_brief `;
 
   /** One row or none, for a `WHERE …` fragment appended to the shared column list. */
@@ -277,27 +270,11 @@ export class FleetStore {
     whereAndOrder: string,
     params: readonly (string | number)[],
   ): FleetBriefRow | undefined {
-    const row = this.db.query(FleetStore.BRIEF_COLS + whereAndOrder).get(...params) as {
-      id: string;
-      run_id: string;
-      job_id: string;
-      agent_method: string;
-      brief_markdown: string | null;
-      findings_json: string;
-      synthesis_json: string | null;
-      created_at: number;
-    } | null;
+    const row = this.db
+      .query(FleetStore.BRIEF_COLS + whereAndOrder)
+      .get(...params) as FleetBriefDbRow | null;
     if (row === null) return undefined;
-    return {
-      id: row.id,
-      runId: row.run_id,
-      jobId: row.job_id,
-      agentMethod: row.agent_method,
-      briefMarkdown: row.brief_markdown,
-      findingsJson: row.findings_json,
-      synthesisJson: row.synthesis_json,
-      createdAt: row.created_at,
-    };
+    return toBriefRow(row);
   }
 
   /**

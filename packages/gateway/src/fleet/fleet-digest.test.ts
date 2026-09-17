@@ -1,6 +1,7 @@
 import { Database } from "bun:sqlite";
 import { beforeEach, describe, expect, test } from "bun:test";
 import type { NimbusFleetJobToml } from "../config/fleet-toml.ts";
+import { FLEET_SUBJECTS_V63_SQL } from "../index/fleet-subjects-v63-sql.ts";
 import { FLEET_V60_SQL } from "../index/fleet-v60-sql.ts";
 import { buildFleetDigest, compareSummaries, renderFleetDigest } from "./fleet-digest.ts";
 import type { FleetJobDigest } from "./fleet-digest-types.ts";
@@ -131,6 +132,7 @@ describe("buildFleetDigest assembles the job union", () => {
     db = new Database(":memory:");
     db.run("PRAGMA foreign_keys = ON");
     db.exec(FLEET_V60_SQL);
+    for (const stmt of FLEET_SUBJECTS_V63_SQL) db.exec(stmt);
     store = new FleetStore(db);
   });
 
@@ -179,6 +181,7 @@ describe("buildFleetDigest assembles the job union", () => {
    */
   function insertBrief(b: {
     jobId: string;
+    subjectKey?: string;
     agentMethod: string;
     createdAt: number;
     findings?: string;
@@ -195,6 +198,7 @@ describe("buildFleetDigest assembles the job union", () => {
     store.recordBrief({
       runId,
       jobId: b.jobId,
+      subjectKey: b.subjectKey ?? b.jobId,
       agentMethod: b.agentMethod,
       briefMarkdown: b.markdown ?? "x",
       findingsJson: b.findings ?? b.findingsJson ?? "{}",

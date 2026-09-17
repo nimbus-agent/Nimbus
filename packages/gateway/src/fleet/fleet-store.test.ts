@@ -1,5 +1,6 @@
 import { Database } from "bun:sqlite";
 import { beforeEach, describe, expect, test } from "bun:test";
+import { FLEET_SUBJECTS_V63_SQL } from "../index/fleet-subjects-v63-sql.ts";
 import { FLEET_V60_SQL } from "../index/fleet-v60-sql.ts";
 import { FleetStore } from "./fleet-store.ts";
 
@@ -10,6 +11,7 @@ beforeEach(() => {
   db = new Database(":memory:");
   db.run("PRAGMA foreign_keys = ON");
   db.exec(FLEET_V60_SQL);
+  for (const stmt of FLEET_SUBJECTS_V63_SQL) db.exec(stmt);
   store = new FleetStore(db);
 });
 
@@ -19,7 +21,12 @@ beforeEach(() => {
  * module-level `beforeEach`) would add an extra `fleet_run` row that pre-existing tests like
  * `pruneRuns` never expected and do not filter out.
  */
-function insertBrief(b: { jobId: string; createdAt: number; expiresAt?: number }): void {
+function insertBrief(b: {
+  jobId: string;
+  subjectKey?: string;
+  createdAt: number;
+  expiresAt?: number;
+}): void {
   const runId = store.openRun({
     startedAt: b.createdAt,
     hostPower: "ac",
@@ -30,6 +37,7 @@ function insertBrief(b: { jobId: string; createdAt: number; expiresAt?: number }
   store.recordBrief({
     runId,
     jobId: b.jobId,
+    subjectKey: b.subjectKey ?? b.jobId,
     agentMethod: "agents.catchup",
     briefMarkdown: "x",
     findingsJson: "{}",
@@ -51,6 +59,7 @@ describe("FleetStore", () => {
     store.recordBrief({
       runId,
       jobId: "morning_catchup",
+      subjectKey: "morning_catchup",
       agentMethod: "agents.catchup",
       briefMarkdown: "# Catchup",
       findingsJson: "{}",
@@ -151,6 +160,7 @@ describe("FleetStore", () => {
     store.recordBrief({
       runId,
       jobId: "j",
+      subjectKey: "j",
       agentMethod: "agents.catchup",
       briefMarkdown: "x",
       findingsJson: "{}",
@@ -193,6 +203,7 @@ describe("FleetStore", () => {
       store.recordBrief({
         runId,
         jobId: id,
+        subjectKey: id,
         agentMethod: "agents.catchup",
         briefMarkdown: "x",
         findingsJson: "{}",
@@ -219,6 +230,7 @@ describe("FleetStore", () => {
       const id = store.recordBrief({
         runId,
         jobId: `j${i}`,
+        subjectKey: `j${i}`,
         agentMethod: "agents.catchup",
         briefMarkdown: "x",
         findingsJson: "{}",
@@ -243,6 +255,7 @@ describe("FleetStore", () => {
     store.recordBrief({
       runId,
       jobId: "j",
+      subjectKey: "j",
       agentMethod: "agents.catchup",
       briefMarkdown: "x",
       findingsJson: "{}",
@@ -272,6 +285,7 @@ describe("FleetStore", () => {
     const id = store.recordBrief({
       runId,
       jobId: "stale",
+      subjectKey: "stale",
       agentMethod: "agents.catchup",
       briefMarkdown: "x",
       findingsJson: "{}",
@@ -292,6 +306,29 @@ describe("FleetStore", () => {
     // Sanity: the same brief IS visible before its expiry.
     expect(store.getBrief(id, 500)?.id).toBe(id);
     expect(store.listBriefs({ limit: 10, now: 500 })).toHaveLength(1);
+  });
+
+  test("a brief round-trips its subject key through every read", () => {
+    const runId = store.openRun({
+      startedAt: 1000,
+      hostPower: "ac",
+      hostIdleMs: 0,
+      hostSource: "measured",
+      remoteCallBudget: 0,
+    });
+    const id = store.recordBrief({
+      runId,
+      jobId: "bus-factor",
+      subjectKey: "paths:file:/r:src/a.ts",
+      agentMethod: "agents.ownership",
+      briefMarkdown: "x",
+      findingsJson: "{}",
+      synthesisJson: null,
+      createdAt: 1100,
+      expiresAt: 1100 + 86_400_000,
+    });
+    expect(store.getBrief(id, 1200)?.subjectKey).toBe("paths:file:/r:src/a.ts");
+    expect(store.listBriefs({ limit: 5, now: 1200 })[0]?.subjectKey).toBe("paths:file:/r:src/a.ts");
   });
 });
 
