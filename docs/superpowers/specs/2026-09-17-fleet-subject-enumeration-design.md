@@ -67,7 +67,11 @@ Parsed in `config/fleet-toml.ts`. `sweep`, `max_subjects` and `path_prefix` join
 they never reach an agent as parameters. `path_prefix` is the ONE narrowing key (§ 5.2 defines its
 match for each kind that accepts it).
 
-**Refused at load** (`FleetConfigError`, naming the job and the reason — never silently skipped):
+**Refused at load** (`FleetConfigError`, naming the job and the reason — never silently skipped).
+Rules 3–5 are syntactic and live in the parser (`config/fleet-toml.ts`). Rules 1, 2 and 6 need the
+agent map, which `config/` must not import, so they run in `fleet/fleet-sweep-support.ts`'s
+`validateFleetSweepJobs`, called by `assembleFleetRuntime` inside the SAME try that parses — so a
+refusal disables the fleet with the same loud log a parse error gets:
 
 1. `sweep` names a kind the agent's enumerator-map entry does not accept (including every
    not-enumerable agent).
@@ -87,18 +91,25 @@ match for each kind that accepts it).
 ```ts
 type SweepKind = "paths" | "services" | "symbols" | "terms";
 
-type SweepSupport =
-  | { readonly kinds: readonly [SweepKind, ...SweepKind[]] }
-  | { readonly kinds: readonly []; readonly reason: string };
+type SweepSubjectParam = "path" | "service" | "file" | "term";
+
+// One interface, not a union: indexing a union of record shapes by `SweepKind` needs an assertion to
+// read, and the exclusivity below is pinned by a runtime test over every entry instead.
+interface SweepSupport {
+  readonly accepts: Readonly<Partial<Record<SweepKind, SweepSubjectParam>>>;
+  readonly reason: string | null;
+}
 
 export const FLEET_SWEEP_SUPPORT = Object.freeze({ … }) satisfies Readonly<
   Record<EligibleAgentMethod, SweepSupport>
 >;
 ```
 
-Flipping an agent to `eligible` fails typecheck until it has an entry. A non-empty `kinds` without a
-matching per-`(agent, kind)` parameter binding is also a compile error (the binding table is keyed
-by the same union).
+Flipping an agent to `eligible` fails typecheck until it has an entry. The kind → parameter binding
+IS the entry (`accepts: { paths: "path", services: "service" }`), so a kind cannot be accepted
+without naming the parameter it fills. The two arms are exclusive at runtime — a test pins that every
+entry has either a non-empty `accepts` with `reason: null`, or an empty `accepts` with a non-empty
+reason.
 
 Each enumerator is a pure, synchronous, read-only function
 `(db, options) => { subjects: SweepSubject[]; emptyReason: string | null }` where
@@ -109,9 +120,9 @@ Each enumerator is a pure, synchronous, read-only function
 | Kind | Source | Agents → param | Key |
 |---|---|---|---|
 | `paths` | the ownership pass's OWN nodes: `graph_entity` rows of type `source_file` (external id `file:<root>:<rel>`) and `directory` (`dir:<root>:<rel>`), restricted to the roots `ownershipRoots` currently resolves | `ownership` → `path` = `path.join(root, rel)` (absolute, OS-native; `rel = ""` → the root itself) | `paths:<external_id>` |
-| `services` | configured `[ci.service.<id>]` ids (`parseNimbusCiServiceToml`) | `oncall`, `changelog`, `ownership` → `service` | `services:<id>` |
+| `services` | the keys of `loadNimbusServiceConfigsFromConfigDir(configDir)` — `[ci.service.<id>]` ∪ `[metrics.dora.<id>]`, the SAME loader `ipc/agents-rpc.ts` resolves a `service` against | `oncall`, `changelog`, `ownership` → `service` | `services:<id>` |
 | `symbols` | DISTINCT `graph_entity.label` where `type = 'symbol'`; label is `"<name> — <file>"`, `<file>` repo-relative (`graph-populator.ts` `syncCodeSymbolGraph`, fed by `filesystem-v2-sync.ts`) | `ghost`, `conflicts` → `file` (the exact label) | `symbols:<label>` |
-| `terms` | `glossary_term` where `status = 'consolidated'` | `glossary` → `term` | `terms:<term_key>` |
+| `terms` | `glossary_term` where `status = 'consolidated'` | `glossary` → `term` = `display_term` (the agent normalises its input, and `term_key` is `normalizeTerm(display_term)`) | `terms:<term_key>` |
 
 `ownership` accepts two kinds; the job's `sweep` picks one.
 
@@ -162,7 +173,8 @@ what the agent's `file` parameter can express is an agent change, not an enumera
   --subject <key>` without `--job` — a legitimate cross-job question, since two jobs can sweep the
   same subject — is not a table scan.
 - **`fleet_job_state` gains** nullable `sweep_kind TEXT`, `sweep_cursor TEXT` (the last PROCESSED
-  subject key), `sweep_subjects_total INTEGER` (size at the last enumeration).
+  subject key), `sweep_subjects_total INTEGER` (size at the last enumeration),
+  `sweep_empty_reason TEXT` (the enumerator's reason when the last enumeration was empty, else NULL).
 - **`fleet_run` gains** `subjects_in_scope`, `subjects_attempted`, `subjects_completed`
   (`INTEGER NOT NULL DEFAULT 0`), keeping the row self-describing: jobs and subjects are different
   units. **A config-named job counts as ONE subject** in all three, so
@@ -201,8 +213,8 @@ job → `runOneJob` (unchanged); a sweep job → `runSweepJob(job, runId, expire
 `runSweepJob`:
 
 1. Enumerate. A throw → `recordJobFailure` (existing backoff), subjects counted as 0.
-2. Empty list → `recordJobSuccess`, persist `sweep_subjects_total = 0`, carry `emptyReason` to the
-   status surface. An accurately empty sweep is not a failure and must not back off.
+2. Empty list → `recordJobSuccess`, persist `sweep_subjects_total = 0` and `sweep_empty_reason`,
+   which `fleet.list` reports. An accurately empty sweep is not a failure and must not back off.
 3. Select the window from the cursor (§ 6). `tally.subjectsInScope += window.length`.
 4. For each subject: `stillAdmitted` before EVERY subject except the run's very first unit of work.
    The exemption keys on `tally.subjectsAttempted` — ONE counter across config-named jobs (one unit
@@ -252,42 +264,63 @@ Ordering: jobs then subjects, `codeUnitCompare`. The digest still makes no model
 by construction).
 
 **JSON shape.** Config-named jobs stay in `jobs: FleetJobDigest[]` with `notCompared` unchanged, so
-their JSON is byte-identical too. Sweep jobs go in a NEW, additive sibling array rather than
-widening `FleetJobDigest` — whose non-optional predecessor fields are 2a's deliberate "no holes"
-guarantee, which a sweep-level record cannot honour:
+every per-job object is byte-identical; the top-level result gains one key, `sweeps` (an empty array
+when no job sweeps), so the WHOLE response is additive rather than identical. Sweep jobs go in that
+new sibling array rather than widening `FleetJobDigest` — whose non-optional predecessor fields are
+2a's deliberate "no holes" guarantee, which a sweep-level record cannot honour:
 
 ```ts
+export type FleetSweepSubjectDigest = FleetJobDigest & { readonly subjectKey: string };
+
+export interface FleetDigestSubjectRef {
+  readonly subjectKey: string;
+  readonly briefId: string;
+  readonly reason: string;
+}
+
 export interface FleetSweepDigest {
   readonly jobId: string;
   readonly agentMethod: string;
-  readonly sweepKind: SweepKind;
+  /** From config; for an unconfigured sweep, the key prefix — null only if that prefix is not a kind. */
+  readonly sweepKind: SweepKind | null;
   readonly configured: boolean;
-  readonly subjectsTotal: number;          // at the last enumeration
+  /** At the last enumeration; null when the job has never enumerated. */
+  readonly subjectsTotal: number | null;
   readonly subjectsSweptInWindow: number;
-  readonly rotationRunsEstimate: number;   // ceil(total / max_subjects)
-  readonly rotationMsEstimate: number;     // rotationRunsEstimate × interval
+  /** ceil(total / max_subjects); null when total or max is unknown (e.g. unconfigured). */
+  readonly rotationRunsEstimate: number | null;
+  /** rotationRunsEstimate × interval; null under the same condition. */
+  readonly rotationMsEstimate: number | null;
   readonly retentionMs: number;
   readonly rotationExceedsRetention: boolean;
-  readonly moved: readonly FleetJobDigest[]; // one per moved subject, subjectKey set
+  readonly moved: readonly FleetSweepSubjectDigest[];
   readonly unchangedCount: number;
+  /** Unchanged ONLY because digest_min_delta withheld a metric — 2a § 6.3, not folded into unchanged. */
+  readonly unchangedWithinThresholdCount: number;
   readonly firstObservationKeys: readonly string[]; // ALL keys, sorted
   readonly notSummarizable: readonly FleetDigestSubjectRef[];
   readonly agentChanged: readonly FleetDigestSubjectRef[];
-  readonly noBriefInWindow: boolean;       // job-level
+  readonly noBriefInWindow: boolean; // job-level
 }
-// FleetDigestResult gains:  readonly sweeps: readonly FleetSweepDigest[];
-// FleetJobDigest gains:     readonly subjectKey: string;  (= jobId for a config-named job)
+// FleetDigestResult gains: readonly sweeps: readonly FleetSweepDigest[];
 ```
 
-`FleetDigestSubjectRef` is `{ subjectKey, briefId, reason }`, mirroring the existing
-`notCompared` entries.
+`FleetJobDigest` itself is NOT widened. A job is treated as a sweep when its config sets `sweep`, or —
+for a job no longer in config — when any live brief in the window carries a `subject_key` other than
+its `job_id`; its kind is then read from the key's prefix.
 
 ### 8.2 CLI / IPC (extend existing `fleet.*` only — no new methods)
 
-- `nimbus fleet list`: sweep jobs show `sweep=<kind> max=<n>`.
-- `nimbus fleet status`: per sweep job — subjects at last enumeration, cursor progress in the current
-  rotation, estimated rotation length vs. retention, `emptyReason`.
-- `nimbus fleet briefs` / `show`: a `subject` field; `briefs --subject <key>` filters.
+- `nimbus fleet list` / `fleet.list`: each entry gains `sweep: null | { kind, maxSubjects, pathPrefix,
+  subjectsTotal, cursor, emptyReason, rotationExceedsRetention }` — the last is § 10's run-surface
+  disclosure (null before the first enumeration), printed as a WARNING in human output. Human output adds `sweep=<kind> max=<n> total=<t>` and the
+  empty reason when present. Sweep progress lives HERE, not on `fleet.status`: `handleStatus` is
+  documented as never touching the store, and `fleet.list` already reads `fleet_job_state`.
+- `nimbus fleet briefs` / `fleet.briefs`: rows gain `subjectKey`; `--subject <key>` (RPC
+  `subjectKey`) filters. `nimbus fleet show` prints the markdown body unchanged (pipeable);
+  `subjectKey` is in `--json`.
+- No new IPC method, so no routing change: `fleet.briefs`/`fleet.list` are already routed, and the
+  new params are tested at `dispatchFleetRpc`.
 - `--json` shapes are additive. `fleet.*` stays LAN-forbidden and absent from the Tauri allowlist.
 
 ## 9. Rejected architectures
@@ -324,7 +357,7 @@ Every test below targets a specific silent failure; key tests are red-proven by 
   `FLEET_ELIGIBILITY` at runtime — never a hand-written list with its own length assertion.
 - **Enumerators against the real schema**, rows written by production writers (the ownership pass
   for `source_file`/`directory` nodes, `syncCodeSymbolGraph` for symbols, the glossary store,
-  `parseNimbusCiServiceToml`). For each emitted subject, run the
+  `loadNimbusServiceConfigsFromConfigDir`). For each emitted subject, run the
   AGENT'S OWN resolver: `resolveOwnershipPath` resolves the path; `resolveMatchToken` returns that
   exact entity; `normalizeTerm` round-trips the term key.
 - **Cursor:** additions and removals between runs neither skip nor repeat; wrap; kind change resets;
@@ -339,8 +372,8 @@ Every test below targets a specific silent failure; key tests are red-proven by 
 - **Config refusals:** each of § 4's six.
 - **Digest:** grouping; unchanged count; first-observation truncation at 10; job-level-only
   `no brief in window` for sweeps; config-named golden output unchanged; deterministic bytes.
-- **Routing:** `fleet.briefs` with `subject` through the real dispatcher, not only the
-  sub-dispatcher.
+- **RPC:** `fleet.briefs` with `subjectKey` and `fleet.list` sweep entries through `dispatchFleetRpc`;
+  no new method exists, so there is no new routing entry to prove.
 
 ## 12. Docs
 
