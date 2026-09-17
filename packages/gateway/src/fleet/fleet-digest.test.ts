@@ -526,6 +526,37 @@ describe("buildFleetDigest assembles the job union", () => {
       expect(r.markdown).toContain("[unconfigured]");
     });
 
+    // Whole-branch review finding 6: a job DEMOTED to config-named mid-window (its `sweep` key
+    // just removed) still has sweep-keyed briefs sitting in the window from before the edit. The
+    // old filter short-circuited on `cfg !== undefined` before ever checking the briefs, so this
+    // job read as config-named, `briefPairForSubject({ subjectKey: jobId })` found nothing (the
+    // real brief is keyed `services:checkout`, not `gone`), and it landed in
+    // `notCompared.noBriefInWindow` — "configured, produced nothing" — a false negative, not an
+    // absence of data. The promote direction (test above) was already handled; this is its mirror.
+    test("a job DEMOTED to config-named mid-window is still grouped as a sweep", () => {
+      insertBrief({
+        jobId: "gone",
+        subjectKey: "services:checkout",
+        agentMethod: "agents.ghost",
+        createdAt: 5000,
+        findings: ghostFindings(["p1"]),
+      });
+      const r = buildFleetDigest({
+        store,
+        jobs: [job("gone", "ghost")], // configured, but WITHOUT `sweep` any more
+        windowMs: 1000,
+        now: 5500,
+        retentionDays: 14,
+      });
+      expect(r.sweeps[0]).toMatchObject({
+        jobId: "gone",
+        sweepKind: "services",
+        configured: true,
+      });
+      expect(r.notCompared.noBriefInWindow).toEqual([]);
+      expect(r.jobs).toEqual([]);
+    });
+
     // Controller ruling: the brief's version of this test asserted
     // `r.markdown` against `renderFleetDigest({ ...same data... })`, which compares the renderer's
     // output against itself and cannot fail independently. Omitted; the two assertions below

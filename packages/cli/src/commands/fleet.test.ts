@@ -515,6 +515,43 @@ test("list shows sweep info and an empty reason", async () => {
   expect(out.join("")).toContain("empty: no roots");
 });
 
+// Finding 8 of the whole-branch review: the gateway asserts the `rotationExceedsRetention`
+// BOOLEAN in its own tests, but nothing anywhere asserted the WARNING sentence a user actually
+// sees printed for it. Sibling of the test above, same fixture shape, `rotationExceedsRetention`
+// flipped to `true`.
+test("list shows the rotation-exceeds-retention WARNING text", async () => {
+  const out: string[] = [];
+  const ipc: FleetIpc = {
+    call: async () => ({
+      jobs: [
+        {
+          name: "bus",
+          agent: "ownership",
+          intervalSeconds: 60,
+          state: null,
+          sweep: {
+            kind: "paths",
+            maxSubjects: 20,
+            pathPrefix: null,
+            subjectsTotal: 500,
+            cursor: null,
+            emptyReason: null,
+            rotationExceedsRetention: true,
+          },
+        },
+      ],
+    }),
+  };
+  await runFleetCommand(
+    ipc,
+    { sub: "list", json: false },
+    { out: (s) => out.push(s), err: () => {} },
+  );
+  expect(out.join("")).toContain(
+    "WARNING: a full rotation outlasts retention; this sweep cannot report movement",
+  );
+});
+
 test("fleet.briefs with no rows says so rather than printing nothing", async () => {
   const client: FleetIpc = { call: async () => ({ briefs: [] }) };
   const s = sinkSpy();

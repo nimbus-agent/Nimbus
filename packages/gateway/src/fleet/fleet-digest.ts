@@ -255,12 +255,16 @@ export function buildFleetDigest(deps: {
     ]),
   ].sort(codeUnitCompare);
 
-  // A job is a sweep when its config says so, or — once removed from config — when a live brief in
-  // the window carries a subject key other than its own job id (spec § 8.1).
+  // A job is a sweep when its config says so, OR when a live brief in the window carries a
+  // subject key other than its own job id — checked for EVERY id, not only an unconfigured one.
+  // A job demoted to config-named mid-window (its `sweep` key just removed) still has sweep-keyed
+  // briefs sitting in the window, and short-circuiting on `cfg !== undefined` would read those
+  // briefs through `briefPairForSubject({ subjectKey: jobId })`, which finds none of them and
+  // reports "configured, produced nothing" — a false negative, not an absence of data.
   const sweepIds = new Set(
     ids.filter((id) => {
       const cfg = configured.get(id);
-      if (cfg !== undefined) return cfg.sweep !== null;
+      if (cfg?.sweep !== undefined && cfg.sweep !== null) return true;
       return deps.store
         .subjectKeysWithBriefsInWindow({ jobId: id, windowStartMs, now: deps.now })
         .some((k) => k !== id);

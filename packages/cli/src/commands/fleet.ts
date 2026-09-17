@@ -238,9 +238,17 @@ interface FleetRunSummaryShape {
   readonly jobsCompleted: number;
   readonly jobsUnattempted: number;
   readonly jobsSkippedNotDue: number;
-  readonly subjectsInScope: number;
-  readonly subjectsAttempted: number;
-  readonly subjectsCompleted: number;
+  /**
+   * Optional for the same reason as `FleetJobListEntryShape.sweep`: a pre-sweep gateway's
+   * `fleet.runNow` response predates these three counters and omits them entirely rather than
+   * sending `0`. Neither this field nor its two siblings is read anywhere in this file today — if
+   * one becomes read, read it with `== null` / `??`, on purpose, to tolerate that absence; keep
+   * this comment in sync — narrowing these to non-optional invites deleting that tolerance as
+   * "redundant" when it is the version-skew guard.
+   */
+  readonly subjectsInScope?: number;
+  readonly subjectsAttempted?: number;
+  readonly subjectsCompleted?: number;
 }
 
 interface FleetDigestResultShape {
@@ -248,7 +256,13 @@ interface FleetDigestResultShape {
   readonly generatedAt: number;
   readonly markdown: string;
   readonly jobs: readonly unknown[];
-  readonly sweeps: readonly unknown[];
+  /**
+   * Optional for the same reason as `FleetJobListEntryShape.sweep`: a pre-sweep gateway's
+   * `fleet.digest` response predates this field and omits it entirely. Not read anywhere in this
+   * file today (the digest is printed via `r.markdown` or re-serialized whole) — if that changes,
+   * read it with `== null` / `??`, on purpose, to tolerate that absence.
+   */
+  readonly sweeps?: readonly unknown[];
   readonly notCompared: {
     readonly firstObservation: readonly unknown[];
     readonly notSummarizable: readonly unknown[];
