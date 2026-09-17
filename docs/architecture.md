@@ -2,7 +2,7 @@
 
 **Version:** 1.0
 **Runtime:** Bun v1.2+ / TypeScript 7.x (strict)
-**Status + dated delivery log:** see [`CHANGELOG.md`](./CHANGELOG.md) (canonical) and [`roadmap.md`](./roadmap.md) (phases + acceptance criteria). Current invariants through I40 (I28 reserved); schema V62.
+**Status + dated delivery log:** see [`CHANGELOG.md`](./CHANGELOG.md) (canonical) and [`roadmap.md`](./roadmap.md) (phases + acceptance criteria). Current invariants through I40 (I28 reserved); schema V63.
 
 > **Authoring references for AI-assisted contributors:** the [`.claude/commands/nimbus-*.md`](../.claude/commands/) skill files are the load-bearing how-to references for every subsystem in this document. Treat this architecture doc as the *what + where* and the skills as the *how*. Pair them when adding new code:
 >
@@ -1479,6 +1479,156 @@ run to run on an unchanged index — through per-agent extractors whose map is c
 over the eligible set, so flipping a twelfth agent to eligible fails the build until its extractor
 exists. It makes **no model call at any point**, which is what keeps it outside `I38` by
 construction rather than by check.
+
+#### Subject enumeration (PR 2b, shipped 2026-09-17)
+
+A `[[fleet.job]]` names exactly one subject in config by default (`path = "src/auth"`,
+`service = "checkout"`). PR 2b lets a job set `sweep = "paths" | "services" | "symbols" | "terms"`
+instead, so the fleet rotates through every subject the index can list for that agent, a bounded
+window per run, with the digest (above) reporting what moved. `sweep`, `max_subjects` (REQUIRED
+when `sweep` is set, integer `1..500`, refused rather than clamped — the same posture as
+`media allow-remote --limit`) and `path_prefix` (optional, case-sensitive plain prefix on the
+repo-relative POSIX path, accepted only for `paths`/`symbols`, refused when empty) join
+`JOB_RESERVED` in `config/fleet-toml.ts`, so they never reach an agent as a parameter. The
+syntactic refusals (unknown `sweep` kind, `max_subjects`/`path_prefix` set without `sweep`, an
+out-of-range or non-integer `max_subjects`, `path_prefix` on a kind that does not accept it or set
+empty) live in the parser; refusals that need the agent map (an agent's own enumerator-map entry
+rejecting the kind, a job setting BOTH `sweep` and the parameter that kind would supply, or
+`sweep` combined with `namespace`/`namespaces` on `ghost`/`conflicts` — a sweep stays local rather
+than multiplying federated calls under the owner's identity) run in
+`fleet/fleet-sweep-support.ts`'s `validateFleetSweepJobs`, called from `assembleFleetRuntime`
+inside the same try that parses, so a refusal disables the fleet with the same loud log a parse
+error gets.
+
+**The enumerator map is TOTAL over the fleet-eligible agents.** `fleet/fleet-sweep-support.ts`'s
+`FLEET_SWEEP_SUPPORT` is one interface — `{ accepts: Partial<Record<SweepKind, SweepSubjectParam>>,
+reason: string | null }` — rather than a union keyed by kind, because indexing a union by
+`SweepKind` needs an assertion to read; the two arms are exclusive at runtime (non-empty `accepts`
+with `reason: null`, or an empty `accepts` with a reason), pinned by a test over every entry. It is
+`satisfies Record<EligibleAgentMethod, SweepSupport>`, the same compiler-enforced shape
+`FLEET_DIGEST_EXTRACTORS` uses, so a twelfth eligible agent does not compile until someone
+classifies it. Four kinds ship, each a pure, synchronous, read-only enumerator sorted with
+`codeUnitCompare` (`fleet/fleet-sweep-enumerators.ts`):
+
+| Kind | Source | Agents → param | Key |
+|---|---|---|---|
+| `paths` | the ownership pass's OWN `graph_entity` nodes — `source_file` (`file:<root>:<rel>`) and `directory` (`dir:<root>:<rel>`), restricted to currently-configured roots | `ownership` → `path` = absolute `path.join(root, rel)` (`rel = ""` reaches the root itself) | `paths:<external_id>` |
+| `services` | the keys of `loadNimbusServiceConfigsFromConfigDir` — the SAME loader `ipc/agents-rpc.ts` resolves a `service` against | `oncall`, `changelog`, `ownership` → `service` | `services:<id>` |
+| `symbols` | DISTINCT `graph_entity.label` where `type = 'symbol'` (`"<name> — <file>"`, fed by `filesystem-v2-sync.ts`'s `syncCodeSymbolGraph`) | `ghost`, `conflicts` → `file` (the exact label) | `symbols:<label>` |
+| `terms` | `glossary_term` where `status = 'consolidated'` | `glossary` → `term` = `display_term` | `terms:<term_key>` |
+
+`ownership` accepts two kinds; the job's `sweep` picks one.
+
+**`paths` enumerates the ownership pass's own nodes, not blame rows.** An earlier draft proposed
+deriving files from `git_blame_line` and synthesising every parent directory; review found that
+this would emit directories the ownership pass never wrote a node for — each one a brief whose
+only content is `ownership.ts`'s "resolved to a configured root but has no ownership node" gap.
+The pass's own `source_file`/`directory` entities are exactly what the agent can answer, are
+distinct by construction (no parent-directory dedup step exists to get wrong), and carry root and
+relative path in the external id, which the enumerator reuses VERBATIM as the key — normalising it
+(e.g. lower-casing a Windows drive letter) would make the key disagree with the node it names.
+Passing the ABSOLUTE `path.join(root, rel)` lets `resolveOwnershipPath` resolve against exactly
+one root even when two roots contain the same relative path, and the root node (`rel = ""`)
+reaches its `matchRootItself` arm.
+
+**Why `symbols`, not `paths`, for `ghost`/`conflicts`.** Their `file` parameter goes through
+`agents/_lib/match-token.ts`'s `resolveMatchToken`: an exact `graph_entity` symbol-label match,
+then a fuzzy basename `LIKE '%<basename>%'`. A path sweep would hand every `index.ts` the same
+fuzzy token and produce hundreds of briefs about whichever symbol matched first; passing the full
+label takes the exact-match arm instead. **Labels are not unique per symbol** — a second
+review-found correction to an earlier draft, which had assumed they were: the symbol's external id
+includes its `kind` and `root` (`sym:<root>:<file>:<name>:<kind>`), but the label does not, so a
+function and a type of the same name in the same file — or the same file indexed under two roots —
+share one label. The enumerator takes DISTINCT labels, so each collision is ONE subject, and the
+agent resolves it to one of the colliding entities (`LIMIT 1`). This is stated as a bound (below),
+not fixed: changing what the agent's `file` parameter can express is an agent change, not an
+enumeration one.
+
+**Not enumerable, with the reason recorded in the map rather than a `Set` exclusion:** `why` (needs
+a line; a file-level sweep is not what it briefs), `expert` (a free-text topic has no corpus to
+enumerate), `impact`/`catchup` (their `service` is a CONNECTOR id, not a `ServiceConfig` id),
+`decisions` (`--service` is a normalised repo/ticket-key NAME match, not a `ServiceConfig` id),
+`standup`/`huddle` (no subject parameter), and `janitor` (`resourceRef` is free text probed for
+mentions; the index holds no resource inventory, so a list would be INVENTED rather than
+enumerated).
+
+**Data model — migration V63.** `fleet_brief` gains `subject_key TEXT NOT NULL`; SQLite cannot add
+a `NOT NULL` column without a default, and a default would write a placeholder into history, so
+V63 rebuilds the table inside the migration transaction (create `fleet_brief_v63` with the column,
+`INSERT … SELECT` with `subject_key = job_id`, drop, rename — a config-named job's subject IS the
+job, so its history reads as one subject unchanged), re-creating `run_id … ON DELETE CASCADE`
+(a rebuild is where that silently disappears) and its indexes (`idx_fleet_brief_job` becomes
+`(job_id, subject_key, created_at DESC)`; `idx_fleet_brief_subject (subject_key, created_at DESC)`
+is added so `fleet.briefs --subject` without `--job` — a legitimate cross-job question, since two
+jobs can sweep the same subject — is not a table scan). `fleet_job_state` gains nullable
+`sweep_kind`/`sweep_cursor` (the last PROCESSED subject key)/`sweep_subjects_total` (size at the
+last enumeration)/`sweep_empty_reason`. `fleet_run` gains `subjects_in_scope`/`subjects_attempted`/
+`subjects_completed` (`NOT NULL DEFAULT 0`) — a config-named job counts as ONE subject in all
+three, so the completed/attempted ratio means the same thing whatever mix of job kinds a run
+carried. `CURRENT_SCHEMA_VERSION` → 63.
+
+**The cursor is a key, not an ordinal** — an ordinal shifts when a subject is added or deleted and
+would silently skip or repeat one. `fleet/fleet-sweep-window.ts`'s `selectSweepWindow` takes the
+first key strictly greater than the cursor, wrapping to the start, up to `max_subjects` distinct
+keys, taken whole and once (never padded by wrapping onto keys already in the window). A cursor
+whose recorded `sweep_kind` differs from the job's configured kind is treated as absent. Sweep
+state is written only by two `FleetStore` methods — `recordSweepEnumeration`/`advanceSweepCursor`
+— never by `recordJobSuccess`/`recordJobFailure`, which already use an explicit column list on
+`ON CONFLICT … DO UPDATE SET` and so cannot clobber the cursor.
+
+**Scheduler.** `execute`'s job loop and `isJobDue` are unchanged; the branch is at the call site —
+a sweep job goes through `fleet-scheduler.ts`'s `runSweepJob` instead of `runOneJob`. It enumerates
+(a throw counts as zero subjects and backs off the job normally), records an accurately-empty
+enumeration as a success rather than a failure, selects the window from the cursor, and re-checks
+host admission before EVERY subject except the run's first unit of work — the exemption keys on
+ONE tally counter shared across config-named jobs (one unit each) and sweep subjects, so admission
+is re-checked at every unit boundary regardless of job kind. A refusal mid-window yields (the same
+`close("yielded")` `execute` already returns between jobs) without recording success, so the job
+resumes from the cursor on the next tick; `--force` skips the check as today. The cursor advances
+after EACH subject, success or failure, so one broken subject cannot pin the rotation; the window
+succeeds (`recordJobSuccess`) once at least one subject does. The I38 budget is still `reset()`
+once per run and spent across every subject in it — many subjects per run make budget exhaustion
+the NORMAL case rather than the exception, which is why the per-brief `fleetRemoteWithheld`
+disclosure is load-bearing here.
+
+**Digest and CLI/IPC.** `nimbus fleet digest` groups a sweep job into ONE section — a coverage line
+(`<agent> · swept <n> of <total> subjects this window · full rotation ≈ <k> runs ≈ <d> days ·
+retention <r> days`, with an explicit disclosure when the rotation estimate exceeds retention: a
+subject's predecessor would expire before it is revisited, so the sweep cannot report movement for
+it), moved subjects rendered in full, an unchanged count, a first-observation count (the first 10
+keys in Markdown, all of them in JSON), and `not summarizable`/`agent changed` listed individually;
+`no brief in window` is computed at JOB level only for a sweep, since it is expected under
+rotation. Config-named jobs render byte-identically to before this PR (a golden test), because a
+config-named job is a job with one subject — one code path through the same pairing query,
+`briefPairForSubject`. The JSON result gains one additive top-level key, `sweeps`, rather than
+widening `FleetJobDigest` (whose non-optional fields are 2a's "no holes" guarantee, which a
+sweep-level record cannot honour). `fleet.list`/`nimbus fleet list` gain a `sweep` field per job
+(kind, cap, prefix, subjects total, cursor, empty reason, and the rotation-vs-retention flag,
+printed as a WARNING in human output); `fleet.briefs`/`nimbus fleet briefs` gain `subjectKey` and a
+`--subject <key>` filter. No new IPC method — both were already routed, so there is no new routing
+entry to prove; `fleet.*` stays LAN-forbidden and absent from the Tauri allowlist.
+
+**Rejected architectures (spec § 9).** Virtual jobs expanded at config load (one job per subject,
+e.g. `bus-factor#src/auth.ts`) were rejected because config stops being the SSoT for what a job
+*is*, `fleet_job_state` rows multiply into the thousands, subject churn needs reconciliation, and
+each subject would get its own interval, which makes "rotate through all" a non-concept. A separate
+sweep runner beside the scheduler was rejected because it would duplicate admission, the I38 budget
+reset, run accounting and single-flight — two components doing one job is how PR 1's budget defect
+happened (the invoker spent against a different instance than the row read).
+
+**Stated bounds (spec § 10), unchanged by any later PR.** Rotation vs. retention cannot be refused
+at load, because the subject total is unknown until enumeration — it is disclosed on the run
+surface and the digest instead. Coverage is eventual, not prioritised: a risky file waits its turn
+in a rotation. `paths` covers only what the ownership pass emitted — git-aware roots, and only the
+files/directories it wrote a node for. `symbols` collapses label collisions: a same-named
+function/type in one file, or one file under two roots, is ONE subject, and the agent briefs
+whichever entity its exact-label lookup returns. `services` covers configured services only, never
+one a connector merely mentions. A subject deleted mid-rotation simply stops appearing and its old
+briefs age out under retention; a renamed file is a new subject. `negotiate` stays `deferred`, and
+enumeration is now the SETTLED reason rather than an open question: no sweep enumerator returns
+person-shaped subjects, and turning "the owner built one dossier" into "the machine builds a
+dossier on every indexed person, nightly, unattended" has no consent surface today. No new
+invariant, no static rule, no new egress class, no HITL action type; D28 and I38 are unchanged.
 
 ### Bring-your-own-frontier-model routing (`llm/`)
 
