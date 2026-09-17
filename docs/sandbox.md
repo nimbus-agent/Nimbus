@@ -127,6 +127,48 @@ the runner **refuses to spawn unconfined** and the extension does not
 start — the same fail-closed posture the pre-implementation stub had,
 now conditional on a measured fact instead of permanent.
 
+#### Grants are released, not left behind {#windows-ace-release}
+
+An ACE the helper grants does **not** go away when its profile is
+deleted: it survives as an unresolvable `S-1-15-2-*` entry. Granting
+the SAME SID again merges into its existing ACE, but every DISTINCT
+SID adds one — and a policy id that is new on every run is a new SID
+every run. Until 2026-09-17 nothing removed these, so `nimbus exec`
+(`exec-<executionId>`), terminal sessions (`cu-terminal-<sessionId>`)
+and every generated tool (`toolgen.<toolId>`) grew the DACL of every
+granted path that outlives the run — the runtime bin dir above all —
+by one ACE each. A development machine reached 1366 ACEs on that
+directory, where `SetEntriesInAclW` fails with `87` and **every**
+confined spawn on the machine refuses.
+
+Two mechanisms now bound it:
+
+- **Released on exit.** A spawn whose policy id is unique per run
+  (`SandboxSpawnOptions.releaseGrantsOnExit`, set by exec and the
+  terminal lane only) has its grants revoked (`--revoke-grants`) and
+  its profile deleted when the helper process exits, however it
+  exits. That runs in the **gateway**, not in the helper after its
+  wait: terminal close and exec timeouts terminate the helper, so
+  helper-side cleanup would never run on those paths. Shared ids —
+  extensions, `toolgen.<toolId>`, `nimbus.preflight` — are never
+  released on exit, because revoking removes every ACE the SID holds
+  and would strip a concurrent sibling's access mid-run.
+- **Swept at boot.** After the existing profile reap, the gateway runs
+  `--sweep-orphaned-aces` over the runtime's required read paths. An
+  ACE is removed only when its SID is an app-container SID **and** has
+  no registration under the per-user Mappings key (which also lists
+  installed Store packages) **and** does not resolve by name. This
+  clears what a crashed gateway, a reaped generated tool, or the
+  pre-fix backlog left behind.
+
+Stated residuals: a gateway crash mid-run leaves that run's ACEs on the
+**owner's** directories (exec grants, the terminal cwd), which the boot
+sweep does not visit because nothing records which owner directories
+past runs were granted; two gateways for one Windows user can still
+race, since the pre-existing boot reap may delete another live
+gateway's per-run profile; and a shared install directory is assumed
+not to carry another Windows user's live Nimbus SIDs.
+
 #### Known limitation: `bun <script>` under a profile-nested cwd
 
 Measured on this branch, not theoretical: **a `bun <script>` child

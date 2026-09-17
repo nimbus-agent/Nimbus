@@ -1027,7 +1027,7 @@ multimodal row; it is not a spine row and is not counted in either half.
   `toolgen.invoke` (CLI-only, LAN-forbidden, like every other `toolgen.*` method) plus
   `nimbus tool run <tool-id> [--input <json>] [--json]` now invoke a SAVED tool for real, through a
   fresh confined spawn — see [`cli-reference.md` § `nimbus tool`](./cli-reference.md#nimbus-tool) for
-  the full contract (exactly one `tool.invoke` audit row per call, carrying neither the input nor the
+  the full contract (at most one `tool.invoke` audit row per call, never two, carrying neither the input nor the
   result; presence-only input validation, not schema conformance). **What did NOT move with it:**
   `deps.toolgen` is STILL deliberately left unwired in `gateway-main.ts`, so the model itself still
   cannot invoke a generated tool — `nimbus tool run` is CLI/owner-only, the same scope bound

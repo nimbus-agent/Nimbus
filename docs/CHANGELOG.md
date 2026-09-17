@@ -18,6 +18,41 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
 
 ## Post-Phase-6 deliveries
 
+- **2026-09-17 — the Windows sandbox no longer leaks ACEs, and `nimbus tool run` follow-ups.**
+  `nimbus-sandbox-helper.exe` granted an AppContainer SID an ACE on every path a spawn needed and
+  nothing ever removed one — deleting the profile leaves the ACE as an unresolvable `S-1-15-2-*`
+  entry. Re-granting the same SID merges, but a policy id that is new on every run is a new SID
+  every run, so `nimbus exec`, terminal sessions and every generated tool each left one more ACE on
+  the runtime bin dir. A development machine reached 1366, where `SetEntriesInAclW` fails with `87`
+  and every confined spawn on the machine refuses: I33 exec, the I35 terminal lane and I39/I40
+  toolgen all at once. Pre-existing since the Windows helper shipped; found while verifying
+  `nimbus tool run`.
+
+  Two new helper modes, `--revoke-grants --profile <name> [--path <p>]...` and
+  `--sweep-orphaned-aces <path>...`, and two consumers. **On exit:** a spawn marked
+  `SandboxSpawnOptions.releaseGrantsOnExit` — exec and the terminal lane only, whose ids are unique
+  per run — has its grants revoked and its profile deleted when the helper process exits. That runs
+  in the gateway, not the helper, because terminal close and exec timeouts terminate the helper
+  and nothing after its wait would run. Shared ids (extensions, `toolgen.<toolId>`,
+  `nimbus.preflight`) are never released on exit: revoking removes every ACE the SID holds and
+  would strip a concurrent sibling's access. **At boot:** after the existing profile reap, the
+  runtime's read paths are swept; an ACE goes only when its SID is an app-container SID with no
+  Mappings registration (which also lists installed Store packages) AND no name resolution. A new
+  Windows integration test (`test/integration/platform/sandbox/win32-ace-release.test.ts`) proves
+  both against the real helper, including a KILLED execution, and was red-proven by disabling the
+  release. Residuals are stated in `docs/sandbox.md` § Grants are released: a gateway crash mid-run
+  leaves ACEs on owner directories the sweep does not visit, and two gateways for one Windows user
+  can still race through the pre-existing reap. No migration, no invariant, no egress class.
+
+  Three `nimbus tool run` follow-ups ride along. **An unconfinable sandbox now REFUSES**
+  (`ERR_TOOLGEN_SANDBOX_DEGRADED`, the code `tool create` already used) before spawning, where it
+  used to throw inside the spawn and be audited as `outcome: "failed"` — a claim the tool ran, for a
+  tool that never started; confinement itself was fail-closed either way. **The run's duration** is
+  printed on stderr in human mode (`nimbus: completed in <n> ms` / `failed after <n> ms`), leaving
+  stdout as the bare result for piping and `--json` unchanged. **`help.test.ts` derives the
+  `nimbus tool` subcommands from `ParsedToolArgs`** and requires each in both `tool.ts`'s usage and
+  the `nimbus help` block, the missing guard that let a stale help line survive two PRs.
+
 - **2026-09-15 — `nimbus tool run`, invoking a saved generated tool.** Closes the invocation gap
   runtime tool generation's PR 3 left open (2026-09-10): a saved, signed, owner-approved tool could
   be spawned only in-process by an integration test, through no IPC method and no CLI subcommand.

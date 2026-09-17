@@ -2119,8 +2119,16 @@ failure (`status: "failed"`), not a refusal.
 { status: "refused",  toolId, code,   reason? }
 ```
 
-**Nothing about the call is recorded except that it happened.** Exactly one `audit_log` row is
-written per invocation (`action_type: "tool.invoke"`, `hitl_status: "not_required"` — the STANDING
+Without `--json`, stdout carries only the result (a string bare, anything else pretty-printed, and
+`(no output)` for none) and the duration goes to **stderr** — `nimbus: completed in <n> ms`, or
+`nimbus: failed after <n> ms` beneath a failure's error — so piping stdout still yields exactly the
+tool's output. With `--json`, a successful run prints the JSON result and nothing else, duration
+included.
+
+**Nothing about the call is recorded except that it happened.** At most one `audit_log` row is
+written per invocation — never two, and if that single append fails the invocation fails with it
+rather than returning an outcome, which can leave zero rows for a tool that ran —
+(`action_type: "tool.invoke"`, `hitl_status: "not_required"` — the STANDING
 approval obtained at `save` time, not a fresh one per call), and its payload carries the outcome,
 the tool id, the duration, and — on a refusal or failure — the code/error text. It carries neither
 the `--input` object nor the tool's `result`: the projection type the row is built from has no
@@ -2138,7 +2146,7 @@ written to disk.
 | --- | --- |
 | `0` | `status: "executed"` — the tool ran and returned its result. |
 | `1` | `status: "failed"` — the tool ran and threw. This code means the tool EXECUTED; nothing that refuses before a spawn lands here. |
-| `127` | `status: "refused"` — refused before any spawn: the capability is off (config or org policy), the tool id does not name a SAVED tool (`ERR_TOOLGEN_NOT_SAVED` — includes a tool that was only ever `create`d, never `save`d; when a saved row exists but was skipped at load, the refusal's reason names its `disabledReason`), the input failed the gateway's own required-key check, or the saved artifact's signature no longer verifies (`ERR_TOOLGEN_SIGNATURE_INVALID` — tampered or corrupted since `save`). A `--input` that fails the CLIENT-SIDE JSON/object check exits `127` too: it is a usage error refused before the gateway is dialed at all, so it shares the code every other usage error gets rather than `1`, which would claim the tool ran. |
+| `127` | `status: "refused"` — refused before any spawn: the capability is off (config or org policy), the tool id does not name a SAVED tool (`ERR_TOOLGEN_NOT_SAVED` — includes a tool that was only ever `create`d, never `save`d; when a saved row exists but was skipped at load, the refusal's reason names its `disabledReason`), the input failed the gateway's own required-key check, the platform sandbox cannot confine the tool on this machine (`ERR_TOOLGEN_SANDBOX_DEGRADED` — e.g. the Windows helper is missing; the same code `tool create` refuses with, and asked before spawning so it is never recorded as a run that failed), or the saved artifact's signature no longer verifies (`ERR_TOOLGEN_SIGNATURE_INVALID` — tampered or corrupted since `save`). A `--input` that fails the CLIENT-SIDE JSON/object check exits `127` too: it is a usage error refused before the gateway is dialed at all, so it shares the code every other usage error gets rather than `1`, which would claim the tool ran. |
 
 **Org lockoff.** A signed `nimbus.policy.toml` can disable it fleet-wide:
 
