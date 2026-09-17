@@ -502,6 +502,10 @@ describe("buildFleetDigest assembles the job union", () => {
       expect(r.sweeps[0]?.noBriefInWindow).toBe(true);
       expect(r.notCompared.noBriefInWindow).toEqual([]);
       expect(r.markdown).toContain("No brief in window: yes");
+      // `coverageLine`'s unknown branch: no `recordSweepEnumeration` call in this test means
+      // `subjectsTotal` is null, which must read as an unknown total rather than a silent 0.
+      expect(r.markdown).toContain("an unknown number of");
+      expect(r.markdown).toContain("full rotation unknown");
     });
 
     test("an UNCONFIGURED job whose briefs carry non-job subject keys is still grouped as a sweep", () => {
@@ -571,6 +575,145 @@ describe("buildFleetDigest assembles the job union", () => {
       });
       expect(once.markdown).toBe(twice.markdown);
       expect(once.sweeps[0]?.firstObservationKeys).toEqual(["symbols:a", "symbols:b"]);
+    });
+
+    // Fix round 2: the five tests above only ever produce `moved`, plain `unchangedCount` and
+    // `firstObservationKeys` — none exercises `unchangedWithinThresholdCount`, `notSummarizable`
+    // or `agentChanged` on `buildSweepDigest`'s per-subject classification. These three mirror the
+    // job-level equivalents already in this file (the `compareSummaries`
+    // "unchanged_within_threshold" cases above, "a job repointed at a different agent is NOT
+    // diffed across shapes", and "both sides unreadable produce TWO notSummarizable entries, one
+    // per role").
+    const ghostFindingsWithRanks = (entries: readonly { peerId: string; rank: string }[]): string =>
+      JSON.stringify({
+        ...ghostBase,
+        kind: "ghost",
+        query: { file: "a.ts" },
+        startEntityId: null,
+        findings: entries.map((e) => ({
+          peerId: e.peerId,
+          expert: null,
+          rank: e.rank,
+          context: [],
+          suggestedContact: "",
+        })),
+      });
+
+    test("a subject pair whose metric moves below the job's digest_min_delta is unchangedWithinThreshold, not unchanged", () => {
+      const thresholdJob: NimbusFleetJobToml = { ...SWEEP_JOB, digestMinDelta: 2 };
+      insertBrief({
+        jobId: "sym",
+        subjectKey: "symbols:x",
+        agentMethod: "agents.ghost",
+        createdAt: 100,
+        findings: ghostFindingsWithRanks([
+          { peerId: "p1", rank: "medium" },
+          { peerId: "p2", rank: "medium" },
+        ]),
+      });
+      insertBrief({
+        jobId: "sym",
+        subjectKey: "symbols:x",
+        agentMethod: "agents.ghost",
+        createdAt: 5000,
+        // Same peer set (no key churn); one peer's rank moves medium -> high, so rank_medium and
+        // rank_high each shift by magnitude 1 — below this job's digest_min_delta of 2, so BOTH
+        // are suppressed and the pair must read as unchanged-within-threshold, never plain
+        // unchanged (spec's `unchangedCount` / `unchangedWithinThresholdCount` separation).
+        findings: ghostFindingsWithRanks([
+          { peerId: "p1", rank: "high" },
+          { peerId: "p2", rank: "medium" },
+        ]),
+      });
+      const r = buildFleetDigest({
+        store,
+        jobs: [thresholdJob],
+        windowMs: 1000,
+        now: 5500,
+        retentionDays: 14,
+      });
+      const s = r.sweeps[0];
+      expect(s?.unchangedWithinThresholdCount).toBe(1);
+      expect(s?.unchangedCount).toBe(0);
+      expect(r.markdown).toContain("Unchanged within digest_min_delta: 1");
+    });
+
+    test("a subject pair whose two briefs carry different agent methods is agentChanged, not diffed", () => {
+      insertBrief({
+        jobId: "sym",
+        subjectKey: "symbols:y",
+        agentMethod: "agents.catchup",
+        createdAt: 100,
+        findings: catchupFindings(),
+      });
+      insertBrief({
+        jobId: "sym",
+        subjectKey: "symbols:y",
+        agentMethod: "agents.ghost",
+        createdAt: 5000,
+        findings: ghostFindings(["p1"]),
+      });
+      const r = buildFleetDigest({
+        store,
+        jobs: [SWEEP_JOB],
+        windowMs: 1000,
+        now: 5500,
+        retentionDays: 14,
+      });
+      const s = r.sweeps[0];
+      expect(s?.agentChanged).toEqual([
+        {
+          subjectKey: "symbols:y",
+          briefId: expect.any(String),
+          reason: "agents.catchup → agents.ghost, not comparable",
+        },
+      ]);
+      // NOT in notSummarizable: both briefs read fine, the comparison is what failed (mirrors
+      // the job-level "NOT diffed across shapes" test).
+      expect(s?.notSummarizable).toEqual([]);
+      expect(r.markdown).toContain("Agent changed: 1");
+      expect(r.markdown).toContain("- symbols:y — agents.catchup → agents.ghost, not comparable");
+    });
+
+    test("a subject pair with unreadable findings JSON produces TWO notSummarizable entries, one per role", () => {
+      insertBrief({
+        jobId: "sym",
+        subjectKey: "symbols:z",
+        agentMethod: "agents.ghost",
+        createdAt: 100,
+        findingsJson: "{{{",
+      });
+      insertBrief({
+        jobId: "sym",
+        subjectKey: "symbols:z",
+        agentMethod: "agents.ghost",
+        createdAt: 5000,
+        findingsJson: "}}}",
+      });
+      const r = buildFleetDigest({
+        store,
+        jobs: [SWEEP_JOB],
+        windowMs: 1000,
+        now: 5500,
+        retentionDays: 14,
+      });
+      const s = r.sweeps[0];
+      expect(s?.notSummarizable).toHaveLength(2);
+      expect(s?.notSummarizable).toContainEqual(
+        expect.objectContaining({
+          subjectKey: "symbols:z",
+          reason: expect.stringContaining("(current)"),
+        }),
+      );
+      expect(s?.notSummarizable).toContainEqual(
+        expect.objectContaining({
+          subjectKey: "symbols:z",
+          reason: expect.stringContaining("(predecessor)"),
+        }),
+      );
+      expect(r.markdown).toContain("Not summarizable: 2");
+      expect(r.markdown).toContain("- symbols:z — unreadable agents.ghost brief (current)");
+      expect(r.markdown).toContain("- symbols:z — unreadable agents.ghost brief (predecessor)");
     });
   });
 });
