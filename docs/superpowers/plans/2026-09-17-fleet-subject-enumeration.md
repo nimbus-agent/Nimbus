@@ -573,6 +573,7 @@ Rename `briefPairForJob` to `briefPairForSubject`, add `subjectKey: string` to i
 - [ ] **Step 4: Fix the two call sites**
 
 `fleet/fleet-digest.ts:132`: `deps.store.briefPairForSubject({ jobId, subjectKey: jobId, windowStartMs, now: deps.now })`.
+Then `rg -n "briefPairForJob" packages docs` must print nothing: comments that name the old method (e.g. `fleet-digest.test.ts` ~line 216, `fleet-store.ts`'s `jobIdsWithBriefsInWindow` doc) are updated too — a comment naming a method that no longer exists is a false attestation.
 `fleet/fleet-scheduler.ts` `close`: pass `subjectsInScope: 0, subjectsAttempted: 0, subjectsCompleted: 0` to `closeRun`. These are placeholders only between Task 2 and Task 6, which replaces them with the tally in the same function; add no comment referring to the plan.
 
 - [ ] **Step 5: Run tests; red-prove**
