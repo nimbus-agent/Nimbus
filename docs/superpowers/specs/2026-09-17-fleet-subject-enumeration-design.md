@@ -63,8 +63,9 @@ sweep = "services"
 max_subjects = 50
 ```
 
-Parsed in `config/fleet-toml.ts`. `sweep`, `max_subjects`, `path_prefix` and `symbol_prefix` join
-`JOB_RESERVED`, so they never reach an agent as parameters.
+Parsed in `config/fleet-toml.ts`. `sweep`, `max_subjects` and `path_prefix` join `JOB_RESERVED`, so
+they never reach an agent as parameters. `path_prefix` is the ONE narrowing key (§ 5.2 defines its
+match for each kind that accepts it).
 
 **Refused at load** (`FleetConfigError`, naming the job and the reason — never silently skipped):
 
@@ -74,7 +75,7 @@ Parsed in `config/fleet-toml.ts`. `sweep`, `max_subjects`, `path_prefix` and `sy
    `term`) — two sources for one subject.
 3. `sweep` set and `max_subjects` absent, non-integer, `< 1`, or `> 500` (refused, not clamped).
 4. `max_subjects` or a narrowing key set without `sweep`.
-5. A narrowing key belonging to another kind (`path_prefix` on `sweep = "symbols"`).
+5. `path_prefix` on a kind that does not accept it (`services`, `terms`).
 6. `sweep` with `namespace`/`namespaces` on `ghost`/`conflicts`: those fan out to paired peers, and a
    sweep would multiply federated calls under the owner's identity — the peer-amplification
    concern the ChatOps agent-intent disclosure already names. A sweep stays local.
@@ -107,18 +108,36 @@ Each enumerator is a pure, synchronous, read-only function
 
 | Kind | Source | Agents → param | Key |
 |---|---|---|---|
-| `paths` | distinct `(repo_root, file_path)` from `git_blame_line`, plus each file's parent directories, restricted to the git-aware roots `ownershipRoots` resolves | `ownership` → `path` | `paths:<repo_root posix>/<file_path posix>` |
+| `paths` | the ownership pass's OWN nodes: `graph_entity` rows of type `source_file` (external id `file:<root>:<rel>`) and `directory` (`dir:<root>:<rel>`), restricted to the roots `ownershipRoots` currently resolves | `ownership` → `path` = `path.join(root, rel)` (absolute, OS-native; `rel = ""` → the root itself) | `paths:<external_id>` |
 | `services` | configured `[ci.service.<id>]` ids (`parseNimbusCiServiceToml`) | `oncall`, `changelog`, `ownership` → `service` | `services:<id>` |
-| `symbols` | `graph_entity` where `type = 'symbol'`; label is `"<name> — <file>"` (unique per symbol, `graph-populator.ts`) | `ghost`, `conflicts` → `file` (the exact label) | `symbols:<label>` |
+| `symbols` | DISTINCT `graph_entity.label` where `type = 'symbol'`; label is `"<name> — <file>"`, `<file>` repo-relative (`graph-populator.ts` `syncCodeSymbolGraph`, fed by `filesystem-v2-sync.ts`) | `ghost`, `conflicts` → `file` (the exact label) | `symbols:<label>` |
 | `terms` | `glossary_term` where `status = 'consolidated'` | `glossary` → `term` | `terms:<term_key>` |
 
 `ownership` accepts two kinds; the job's `sweep` picks one.
 
+**`paths` enumerates ownership nodes, not blame rows.** Deriving files from `git_blame_line` and
+synthesising every parent directory would emit directories the ownership pass never wrote a node
+for — each one a brief whose only content is `ownership.ts`'s "resolved to a configured root but has
+no ownership node" gap. The pass's own `source_file`/`directory` entities are exactly what the agent
+can answer, are distinct by construction (no parent-directory dedup step exists to get wrong), and
+carry root and relative path in the external id. Passing the ABSOLUTE `path.join(root, rel)` lets
+`resolveOwnershipPath` resolve against exactly one root even when two roots contain the same
+relative path; the root node (`rel = ""`) reaches its `matchRootItself` arm.
+
+**`path_prefix`** is a case-sensitive, plain-string prefix on the repo-relative POSIX path: `rel` for
+`paths`, `<file>` (the label's suffix after ` — `, equivalently the `file` the symbol writer
+recorded) for `symbols`. Refused on `services` and `terms` (§ 4 rule 5).
+
 **Why symbols, not paths, for ghost/conflicts.** Their `file` parameter goes through
 `agents/_lib/match-token.ts`'s `resolveMatchToken`: an exact `graph_entity` symbol-label match, then
 `LIKE '%<basename>%'`. A path sweep would hand every `index.ts` the same fuzzy token and produce
-hundreds of briefs about whichever symbol matched first. Passing the full unique label takes the
-exact-match arm.
+hundreds of briefs about whichever symbol matched first. Passing the full label takes the
+exact-match arm. **Labels are not unique per symbol**, correcting an earlier draft: the symbol's
+external id includes its kind and root (`sym:<root>:<file>:<name>:<kind>`) but the label does not, so
+a function and a type of the same name in the same file — or the same file in two roots — share one
+label. The enumerator takes DISTINCT labels, so each collision is ONE subject, and the agent resolves
+it to one of the colliding entities (`LIMIT 1`). Stated as a bound in § 10, not fixed here: changing
+what the agent's `file` parameter can express is an agent change, not an enumeration one.
 
 ### 5.3 Not enumerable — reasons recorded in the map
 
@@ -138,12 +157,17 @@ exact-match arm.
   migration transaction: create `fleet_brief_v63` with the column, `INSERT … SELECT` with
   `subject_key = job_id`, drop, rename. The rebuilt table keeps
   `run_id … REFERENCES fleet_run(id) ON DELETE CASCADE` (a rebuild is where that silently disappears).
-  Indexes recreated; `idx_fleet_brief_job` becomes `(job_id, subject_key, created_at DESC)`.
+  Indexes recreated; `idx_fleet_brief_job` becomes `(job_id, subject_key, created_at DESC)`, and
+  `idx_fleet_brief_subject (subject_key, created_at DESC)` is added so `nimbus fleet briefs
+  --subject <key>` without `--job` — a legitimate cross-job question, since two jobs can sweep the
+  same subject — is not a table scan.
 - **`fleet_job_state` gains** nullable `sweep_kind TEXT`, `sweep_cursor TEXT` (the last PROCESSED
   subject key), `sweep_subjects_total INTEGER` (size at the last enumeration).
 - **`fleet_run` gains** `subjects_in_scope`, `subjects_attempted`, `subjects_completed`
   (`INTEGER NOT NULL DEFAULT 0`), keeping the row self-describing: jobs and subjects are different
-  units.
+  units. **A config-named job counts as ONE subject** in all three, so
+  `subjects_completed / subjects_attempted` means the same thing on every run whatever mix of job
+  kinds it carried. `FleetRunSummary` gains the same three fields.
 - `CURRENT_SCHEMA_VERSION` → 63, pinned by a test (PR 1's first defect was an unbumped version).
 
 **Cursor semantics.** A key, not an ordinal: an ordinal shifts when a file is added or deleted and
@@ -154,8 +178,20 @@ by wrapping onto keys already in the window. If
 `sweep_kind` differs from the job's configured kind, the cursor is treated as absent and
 overwritten.
 
-**Keys are platform-independent.** Paths use POSIX separators, so the same file yields the same key
-on Windows and Linux.
+**Keys are machine-local and derived verbatim from their substrate** — correcting an earlier draft
+that claimed a file yields the same key on Windows and Linux. A `nimbus.db` is never shared across
+operating systems, so cross-platform key equality protects nothing; what must hold is that a key is
+STABLE across runs on one machine. `paths` keys reuse the ownership pass's external id unchanged
+(root as configured, relative path as git reports it); normalising here — e.g. lower-casing a
+Windows drive letter — would make the key disagree with the node it names, and the pass already
+relies on those ids being stable. `symbols` keys reuse the label, whose file part is repo-relative.
+
+**Store methods.** Sweep state is written only by two new `FleetStore` methods —
+`recordSweepEnumeration(jobId, kind, total)` and `advanceSweepCursor(jobId, kind, key)` — never by
+`recordJobSuccess`/`recordJobFailure`. Those two already use `ON CONFLICT(job_id) DO UPDATE SET`
+with an explicit column list, which leaves unlisted columns untouched, so they cannot clobber the
+cursor today; a regression test pins that, because the next edit to either statement is where it
+would break.
 
 ## 7. Scheduler
 
@@ -168,8 +204,10 @@ job → `runOneJob` (unchanged); a sweep job → `runSweepJob(job, runId, expire
 2. Empty list → `recordJobSuccess`, persist `sweep_subjects_total = 0`, carry `emptyReason` to the
    status surface. An accurately empty sweep is not a failure and must not back off.
 3. Select the window from the cursor (§ 6). `tally.subjectsInScope += window.length`.
-4. For each subject: `stillAdmitted` before EVERY subject except the run's very first unit of work
-   (the existing exemption, now counted in subjects); on refusal `runSweepJob` returns a `yielded`
+4. For each subject: `stillAdmitted` before EVERY subject except the run's very first unit of work.
+   The exemption keys on `tally.subjectsAttempted` — ONE counter across config-named jobs (one unit
+   each) and sweep subjects — so admission is re-checked at every unit boundary regardless of job
+   kind; on refusal `runSweepJob` returns a `yielded`
    signal WITHOUT recording job success, and `execute` then returns `close("yielded")` exactly as it
    does between jobs — so the job is still due on the next tick and resumes from the cursor.
    `--force` skips the check as today.
@@ -203,7 +241,8 @@ Sweep jobs render ONE section:
   movement."
 - Moved subjects in full (existing extractors, `digest_min_delta` per subject).
 - Unchanged subjects as a count.
-- `first observation` as a count plus the first 10 keys and `… and N more`.
+- `first observation` as a count plus the first 10 keys in `codeUnitCompare` order and
+  `… and N more`. The truncation is Markdown-only; JSON carries every key.
 - `not summarizable` and `agent changed` listed individually.
 - `no brief in window` computed at JOB level only for sweeps; per subject it is expected under
   rotation and would present design as failure.
@@ -211,6 +250,37 @@ Sweep jobs render ONE section:
 
 Ordering: jobs then subjects, `codeUnitCompare`. The digest still makes no model call (outside I38
 by construction).
+
+**JSON shape.** Config-named jobs stay in `jobs: FleetJobDigest[]` with `notCompared` unchanged, so
+their JSON is byte-identical too. Sweep jobs go in a NEW, additive sibling array rather than
+widening `FleetJobDigest` — whose non-optional predecessor fields are 2a's deliberate "no holes"
+guarantee, which a sweep-level record cannot honour:
+
+```ts
+export interface FleetSweepDigest {
+  readonly jobId: string;
+  readonly agentMethod: string;
+  readonly sweepKind: SweepKind;
+  readonly configured: boolean;
+  readonly subjectsTotal: number;          // at the last enumeration
+  readonly subjectsSweptInWindow: number;
+  readonly rotationRunsEstimate: number;   // ceil(total / max_subjects)
+  readonly rotationMsEstimate: number;     // rotationRunsEstimate × interval
+  readonly retentionMs: number;
+  readonly rotationExceedsRetention: boolean;
+  readonly moved: readonly FleetJobDigest[]; // one per moved subject, subjectKey set
+  readonly unchangedCount: number;
+  readonly firstObservationKeys: readonly string[]; // ALL keys, sorted
+  readonly notSummarizable: readonly FleetDigestSubjectRef[];
+  readonly agentChanged: readonly FleetDigestSubjectRef[];
+  readonly noBriefInWindow: boolean;       // job-level
+}
+// FleetDigestResult gains:  readonly sweeps: readonly FleetSweepDigest[];
+// FleetJobDigest gains:     readonly subjectKey: string;  (= jobId for a config-named job)
+```
+
+`FleetDigestSubjectRef` is `{ subjectKey, briefId, reason }`, mirroring the existing
+`notCompared` entries.
 
 ### 8.2 CLI / IPC (extend existing `fleet.*` only — no new methods)
 
@@ -235,7 +305,10 @@ by construction).
 - **Rotation vs. retention** (§ 8.1): cannot be refused at load because the subject total is unknown
   until enumeration; disclosed on the run surface and the digest instead.
 - **Coverage is eventual, not prioritised.** A risky file waits its turn in a rotation (D2).
-- **`paths` covers git-aware roots only** — the substrate `git_blame_line` holds.
+- **`paths` covers what the ownership pass emitted** — git-aware roots only, and only the files and
+  directories it wrote a node for (excluded files have none).
+- **`symbols` collapses label collisions.** A same-named function and type in one file, or one file
+  under two roots, is ONE subject; the agent briefs whichever entity its exact-label lookup returns.
 - **`services` covers configured services only**, not services a connector merely mentions.
 - **Subject churn between runs**: a subject deleted mid-rotation simply stops appearing; its old
   briefs age out under retention. A renamed file is a new subject.
@@ -245,16 +318,21 @@ by construction).
 
 Every test below targets a specific silent failure; key tests are red-proven by reverting the fix.
 
-- **Migration:** V63 on the migrated template; backfill `subject_key = job_id`; new index present;
+- **Migration:** V63 on the migrated template; backfill `subject_key = job_id`; both new indexes present;
   `CURRENT_SCHEMA_VERSION = 63`; deleting a `fleet_run` cascades to its briefs AFTER the rebuild.
 - **Map totality:** compiler (`satisfies`), plus a test deriving the expected key set from
   `FLEET_ELIGIBILITY` at runtime — never a hand-written list with its own length assertion.
-- **Enumerators against the real schema**, rows written by production writers (blame pass,
-  `upsertGraphEntity`, glossary store, `parseNimbusCiServiceToml`). For each emitted subject, run the
+- **Enumerators against the real schema**, rows written by production writers (the ownership pass
+  for `source_file`/`directory` nodes, `syncCodeSymbolGraph` for symbols, the glossary store,
+  `parseNimbusCiServiceToml`). For each emitted subject, run the
   AGENT'S OWN resolver: `resolveOwnershipPath` resolves the path; `resolveMatchToken` returns that
   exact entity; `normalizeTerm` round-trips the term key.
 - **Cursor:** additions and removals between runs neither skip nor repeat; wrap; kind change resets;
-  Windows and POSIX produce equal keys.
+  a key is identical across two enumerations of an unchanged index; `recordJobSuccess` and
+  `recordJobFailure` leave `sweep_cursor`/`sweep_kind`/`sweep_subjects_total` untouched.
+- **`paths` resolution:** two roots containing the same relative path each resolve to their OWN
+  root via the absolute `path` param; the root node resolves through `matchRootItself`.
+- **`symbols` collision:** two entities sharing a label enumerate as one subject.
 - **Scheduler** (fake `HostActivity` + invoker): yield mid-sweep then resume from cursor; failed
   subject advances; all-fail → backoff; empty → success with reason; I38 budget reset once with
   spend accumulating across subjects; subject counters correct on every exit path.
