@@ -101,6 +101,42 @@ describe("RoutingEmbeddingPipeline", () => {
     expect(dims.every((r) => r.dims === 384)).toBe(true);
   });
 
+  test.skipIf(!VEC_AVAILABLE)(
+    "backfillAll reports its two passes as one: done never goes backwards",
+    async () => {
+      // Both halves count from zero against their own total. Forwarding both callbacks unchanged made
+      // `done` restart mid-pass, which a search would disclose as progress going backwards.
+      const db = freshDb();
+      insertItem(db, "e1", "slack", "message"); // prose-heavy → OpenAI half
+      insertItem(db, "e2", "slack", "message");
+      insertItem(db, "e3", "github", "git_commit"); // → local half
+      insertItem(db, "e4", "github", "git_commit");
+
+      const local = new SqliteEmbeddingPipeline({
+        db,
+        embedder: stubEmbedder("Xenova/all-MiniLM-L6-v2", 384, true),
+        backfillBatchSize: 1,
+      });
+      const openai = new SqliteEmbeddingPipeline({
+        db,
+        embedder: stubEmbedder("openai:text-embedding-3-small", 1536, false),
+        backfillBatchSize: 1,
+      });
+      const seen: Array<{ done: number; total: number }> = [];
+      await new RoutingEmbeddingPipeline(db, local, openai).backfillAll((done, total) => {
+        seen.push({ done, total });
+      });
+
+      expect(seen.length).toBe(4);
+      for (let i = 1; i < seen.length; i += 1) {
+        expect(seen[i]?.done ?? 0).toBeGreaterThan(seen[i - 1]?.done ?? 0);
+        expect(seen[i]?.total ?? 0).toBeGreaterThanOrEqual(seen[i - 1]?.total ?? 0);
+      }
+      // The second half's total is added when it starts, so the pass ends at the full count.
+      expect(seen.at(-1)).toEqual({ done: 4, total: 4 });
+    },
+  );
+
   test.skipIf(!VEC_AVAILABLE)("backfillAll uses disjoint scopes", async () => {
     const db = freshDb();
     insertItem(db, "e1", "slack", "message");

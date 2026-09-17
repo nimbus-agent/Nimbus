@@ -111,11 +111,12 @@ describe("createLazyEmbeddingRuntime — synchronous getters before pipeline loa
     }
   });
 
-  test("getBackfillProgress always returns null", () => {
+  test("no backfill has run yet: no progress and no active pass", () => {
     const h = makeHarness({ migrateTo: 0 });
     try {
       const runtime = createLazyEmbeddingRuntime(h.db, h.dataDir, silentLogger, h.toml);
       expect(runtime.getBackfillProgress()).toBeNull();
+      expect(runtime.getActiveBackfillPass()).toBeNull();
     } finally {
       h.cleanup();
     }
@@ -428,6 +429,63 @@ describe.skipIf(!VEC_AVAILABLE)(
           c: number;
         };
         expect(chunks.c).toBeGreaterThan(0);
+      } finally {
+        h.cleanup();
+      }
+    });
+
+    test("discloses the pass WHILE it backfills, and keeps the figure afterwards", async () => {
+      // The defect this covers: a search running during this runtime's own backfill was told no pass
+      // was active, so partial results read as complete. Proven against a real backfill, with an
+      // embedder that blocks so the "during" window is observable rather than raced for.
+      const h = makeHarness({ migrateTo: 30 });
+      try {
+        for (const id of ["unit:bf-a", "unit:bf-b", "unit:bf-c"]) insertItem(h.db, id);
+        let release: (() => void) | undefined;
+        const blocked = new Promise<void>((r) => {
+          release = r;
+        });
+        let firstEmbed: (() => void) | undefined;
+        const embedded = new Promise<void>((r) => {
+          firstEmbed = r;
+        });
+        let calls = 0;
+        const slow: Embedder = {
+          model: "local:test",
+          dims: 384,
+          isLocal: true,
+          async embed(texts: string[]): Promise<Float32Array[]> {
+            calls += 1;
+            if (calls === 2) {
+              firstEmbed?.();
+              await blocked;
+            }
+            return texts.map(() => new Float32Array(384));
+          },
+        };
+        // One item per batch, so progress is reported before the blocking call — with the default
+        // batch size all three items embed in a single call and no "during" window exists to observe.
+        const runtime = createLazyEmbeddingRuntime(
+          h.db,
+          h.dataDir,
+          silentLogger,
+          { ...h.toml, backfillBatchSize: 1 },
+          slow,
+        );
+        runtime.startBackgroundJobs();
+        await embedded;
+        const active = runtime.getActiveBackfillPass();
+        expect(active).not.toBeNull();
+        expect(active?.total).toBe(3);
+        expect(active?.done).toBeGreaterThan(0);
+
+        release?.();
+        for (let i = 0; i < 100 && runtime.getActiveBackfillPass() !== null; i += 1) {
+          await new Promise((r) => setTimeout(r, 10));
+        }
+        expect(runtime.getActiveBackfillPass()).toBeNull();
+        // Still reported by `nimbus status` after the pass ends — that is what `last` is for.
+        expect(runtime.getBackfillProgress()).toEqual({ done: 3, total: 3 });
       } finally {
         h.cleanup();
       }
