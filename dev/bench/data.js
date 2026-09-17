@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1789627315877,
+  "lastUpdate": 1789652104284,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "864bb8e0eb626725ee0c917acd7b49026f12336a",
-          "message": "fix(deps): clear two high advisories blocking every PR (sharp, svgo) (#796)\n\nTwo high advisories published **after** #793's last green Security run,\nso `bun audit --audit-level high` fails on every open PR again —\nincluding #795, #792's successor work, and this. Spotted on #795's\nDependency audit + Trivy jobs.\n\n| Package | Have | Advisory | Fix |\n|---|---|---|---|\n| `sharp` | 0.34.5 | `<0.35.0` — inherited libvips CVEs\n(33327/33328/35590/35591,\n[GHSA-f88m-g3jw-g9cj](https://github.com/advisories/GHSA-f88m-g3jw-g9cj))\n| **0.35.3** |\n| `svgo` | 4.0.x | `>=4.0.0 <4.0.2` — removeScripts leaves some\nexecutable scripts intact\n([GHSA-2p49-hgcm-8545](https://github.com/advisories/GHSA-2p49-hgcm-8545))\n| **4.0.2** |\n\nBoth within the same major — no breaking surface.\n\n## Why overrides\n\n- `sharp` — the root `overrides` block already pinned it, at `0.34.5`,\nwhich is inside the vulnerable range. Bump the pin.\n- `svgo` — transitive, nothing declares it, so a new override entry.\n\nSame shape as #793 / #781, and the same reason Dependabot can't do it:\nit doesn't bump root overrides.\n\n## Verification\n\n`bun audit --audit-level high` → **exit 0**. `typecheck` clean, `biome`\nclean, `audit:js-licenses` passes (both packages affect the license set\n— 1166 packages, all allow-listed). `sharp` is transitive with no direct\nimport in source, so no code path changes.\n\nMerging unblocks #795 and every other open PR.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)",
-          "timestamp": "2026-07-22T06:55:24+03:00",
-          "tree_id": "5a28218d445afd058fe0796e12fa688c12668303",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/864bb8e0eb626725ee0c917acd7b49026f12336a"
-        },
-        "date": 1784693253274,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 305.63841655000107,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 304.4422231000055,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 327.89727520000343,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "87d72e1212a186b0f683defd575447a4d43f725f",
+          "message": "docs(contributing): prepare the contributor side for October (#1526)\n\nContributor-side preparation for October 2026. Docs and CI config only;\nno product code.\n\n## Why\n\nA gap audit of the contributor funnel against the distribution-program\ndesign found the leaks were on the maintainer side, not in recruiting:\n\n- **The stale bot would have closed the good-first-issue shelf\nmid-October.** `stale.yml` exempted nothing, and the shelf is written\nonce and then waits for a volunteer. Seven issues filed 2026-07-30 would\nhave been stale-labelled around 09-28 and closed around 10-05; the\ndocs-page issues later in October.\n- **`docs/CONTRIBUTING.md` misled newcomers in several places** — see\nbelow.\n- **Hacktoberfest 2026 no longer counts pull requests.**\nhacktoberfest.com now describes in-person and online events instead of a\nPR tally, so the guide stops implying one.\n\n## Changes\n\n**`.github/workflows/stale.yml`** — `exempt-issue-labels: 'good first\nissue,help wanted'` and `exempt-all-issue-assignees: true`. PR staleness\nis unchanged.\n\n**`docs/CONTRIBUTING.md`** — corrections:\n\n- Clone URL was the placeholder `your-org/nimbus.git`.\n- The `help-wanted` link pointed at a label that does not exist; the\nlabel is `help wanted`, so the link showed an empty list.\n- The status line said Phase 5; it now points at the roadmap instead of\nrestating a phase that will drift.\n- `bun test` was described as \"all unit tests\"; the everyday loop is now\na scoped run plus `preflight:fast` / `preflight`.\n- The `test:coverage:*` scripts were listed as CI-enforced. They enforce\nnothing — Bun ignores `--coverage-threshold-lines`. It now names the\nreal gates, `audit:coverage-floor` and `audit:coverage-scopes`.\n- \"At least one maintainer approval is required\" contradicted the\nruleset, which requires 0; \"merge commits for release branches\"\ncontradicted squash-only.\n- \"We do not enforce this with commitlint\" was stale: `Validate PR\ntitle` enforces Conventional Commit titles, and the PR title is what\nlands on `main`.\n- \"Fourteen skills\" — there are 21; the list is no longer counted and\npoints at the table in `CLAUDE.md`.\n- The connector \"After generating\" steps told contributors to edit this\nrepo's `workspaces` and regenerate the bundled registry. Connectors\nmoved to nimbus-mcp-servers; those steps now point there, and the\nregistry is regenerated here when the pin is bumped.\n\n**`docs/CONTRIBUTING.md`** — additions:\n\n- **October 2026** — the repo carries the `hacktoberfest` topic; no PR\ntally, no `hacktoberfest-accepted` label.\n- **Fork CI waits for a maintainer** — first-time contributors'\nworkflows need approval on every push until their first merge, and that\nwait counts against the 72-hour first response, not against them.\nPrompted by #1328, whose checks sat `action_required`.\n- **Contributing a docs page** — location, shape, where the facts come\nfrom, the `connector auth` vs `vault set` distinction, and `bun run\ndocs:build`, which needs Node >= 22.12.\n- **Becoming a maintainer** — write access after three merged\nnon-trivial PRs, tied to the `$contributor_two` switches already in\n`.github/rulesets/general-branch.json`.\n\n**`.github/PULL_REQUEST_TEMPLATE.md`** — the coverage checklist repeated\nthe non-enforcing `test:coverage:*` claim; it now names the\nLinux-authoritative gates and `verify:docker --full`.\n\n**`lychee.toml`** — excludes `open-vsx.org/user-settings/` only. Those\nsigned-in settings pages answered 503 in 3 of 6 samples from a dev\nmachine while public open-vsx pages returned 200 every time, and lychee\ndoes not retry a rejected status, so the unrequired `lychee link check`\nwent red on this PR and on the release PR #1525 for reasons unrelated to\neither. Public open-vsx links stay checked.\n\n## Done outside this PR\n\n- Repo topic `hacktoberfest` added, `agpl-3-0` removed; the license\nstill shows in the sidebar.\n- The good-first-issue shelf is being corrected separately: every issue\ncited the deleted `packages/mcp-connectors/` tree, and 11 of the 14 docs\nissues told contributors to document `nimbus connector auth` for\ntoken-based connectors, where it throws.\n\n## Verification\n\n- `bun run preflight:fast` — all gates green, including\n`audit:doc-refs`, `lint:markdown` and `audit:workflow-lint`.\n- `bun test packages/gateway/src/db` — the scoped command the guide now\nsuggests — 297 pass in about 4 s.\n- `exempt-issue-labels` and `exempt-all-issue-assignees` are documented\ninputs of `actions/stale`.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n## Summary by CodeRabbit\n\n- **Documentation**\n- Updated contributor guidance with current runtime requirements,\ntesting and coverage expectations, contribution workflows, documentation\nstandards, authentication, local builds, connector publication, and\nmaintainer onboarding.\n- Updated the pull request template with general coverage requirements,\nCI coverage thresholds, and Docker verification steps.\n\n- **Chores**\n- Issues labeled “good first issue” or “help wanted,” as well as\nassigned issues, are now excluded from stale processing and closure.\n- Link checking now excludes intermittently failing Open VSX\nuser-settings pages.\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>",
+          "timestamp": "2026-09-17T13:19:21Z",
+          "tree_id": "bb4388fff83ddee057983526b6ceeac95757cfe9",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/87d72e1212a186b0f683defd575447a4d43f725f"
+        },
+        "date": 1789652100684,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 335.5907376999941,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 336.6617414999957,
             "unit": "ms"
           }
         ]
