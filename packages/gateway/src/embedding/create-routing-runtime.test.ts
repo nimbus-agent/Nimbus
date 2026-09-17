@@ -322,12 +322,13 @@ describe.skipIf(!VEC_AVAILABLE)(
       }
     });
 
-    test("getBackfillProgress returns null (lazy runtime carries no progress)", async () => {
+    test("no backfill has run yet: no progress and no active pass", async () => {
       const h = makeHarness({ migrateTo: 30, setApiKey: true });
       try {
         const factory = await importFactory();
         const runtime = await factory(h.db, h.paths, silentLogger, h.toml, h.vault);
         expect(runtime?.getBackfillProgress()).toBeNull();
+        expect(runtime?.getActiveBackfillPass()).toBeNull();
       } finally {
         h.cleanup();
       }

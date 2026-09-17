@@ -6,6 +6,7 @@ import type { NimbusEmbeddingToml } from "../config/nimbus-toml.ts";
 import { readIndexedUserVersion } from "../index/migrations/runner.ts";
 import { ensureSqliteVecForConnection } from "../index/sqlite-vec-load.ts";
 import type { BackfillGate } from "./backfill-gate.ts";
+import { createBackfillPassTracker } from "./backfill-pass-tracker.ts";
 import {
   type EmbeddingModelDownload,
   type EmbeddingReadiness,
@@ -41,6 +42,9 @@ export function createLazyEmbeddingRuntime(
     outerGate === undefined ? undefined : async () => (stopped ? false : outerGate());
   let loading: Promise<SqliteEmbeddingPipeline | null> | null = null;
   let backfillStarted = false;
+  // Without this, a search during the backfill this runtime runs itself reported no active pass —
+  // so partial results read as complete on the in-process runtime (#1535 follow-up).
+  const backfillPass = createBackfillPassTracker();
   const startedMs = Date.now();
   let settledMs: number | null = null;
   let state: EmbeddingReadinessState = "warming";
@@ -197,11 +201,11 @@ export function createLazyEmbeddingRuntime(
     },
 
     getBackfillProgress(): { done: number; total: number } | null {
-      return null;
+      return backfillPass.last();
     },
 
     getActiveBackfillPass(): { done: number; total: number } | null {
-      return null;
+      return backfillPass.active();
     },
 
     getReadiness: readiness,
@@ -216,9 +220,11 @@ export function createLazyEmbeddingRuntime(
           if (p === null) {
             return;
           }
-          await p.backfillAll().catch((err: unknown) => {
-            logger.warn({ err }, "embedding backfill failed");
-          });
+          await backfillPass
+            .run((onProgress) => p.backfillAll(onProgress))
+            .catch((err: unknown) => {
+              logger.warn({ err }, "embedding backfill failed");
+            });
         })
         .catch((err: unknown) => {
           logger.warn({ err }, "embedding backfill could not start");
