@@ -10,14 +10,19 @@ import { processEnvGet } from "../platform/env-access.ts";
 import type { PlatformPaths } from "../platform/paths.ts";
 import type { NimbusVault } from "../vault/nimbus-vault.ts";
 import type { BackfillGate } from "./backfill-gate.ts";
-import type { EmbeddingReadiness } from "./embedding-readiness.ts";
+import {
+  type EmbeddingReadiness,
+  isEmbeddingTimeoutError,
+  resolveEmbeddingQueryTimeoutMs,
+  withEmbeddingQueryTimeout,
+} from "./embedding-readiness.ts";
 import type { EmbeddingRuntime } from "./embedding-runtime.ts";
 import { type CreateLocalEmbedderOptions, createLocalEmbedder } from "./model.ts";
 import { createOpenAIEmbedder } from "./openai-embedder.ts";
 import { SqliteEmbeddingPipeline } from "./pipeline.ts";
 import { EMBEDDING_DIM_LOCAL, EMBEDDING_DIM_OPENAI } from "./routing.ts";
 import { RoutingEmbeddingPipeline } from "./routing-pipeline.ts";
-import type { Embedder, IndexedItem } from "./types.ts";
+import type { Embedder, EmbeddingDualVectors, IndexedItem } from "./types.ts";
 
 async function resolveOpenAIApiKey(vault: NimbusVault): Promise<string> {
   const envKey = processEnvGet("OPENAI_API_KEY")?.trim() ?? "";
@@ -124,6 +129,19 @@ export async function tryCreateRoutingEmbeddingRuntime(
 
   let backfillStarted = false;
 
+  // This runtime is only ever CONSTRUCTED after both embedders resolved, so it is ready
+  // by construction — the slow part happened above, off the gateway's bind path (#928).
+  const readiness = (): EmbeddingReadiness => ({
+    state: "ready",
+    elapsedMs: 0,
+    model: localEmbedder.model,
+    dims: EMBEDDING_DIM_LOCAL,
+    download: null,
+    reason: null,
+  });
+  const boundQueryEmbed = <T>(work: Promise<T>): Promise<T> =>
+    withEmbeddingQueryTimeout(work, { timeoutMs: resolveEmbeddingQueryTimeoutMs(), readiness });
+
   return {
     scheduleItemEmbedding(itemId: string): void {
       void (async () => {
@@ -140,26 +158,38 @@ export async function tryCreateRoutingEmbeddingRuntime(
     },
 
     async embedQuery(text: string): Promise<Float32Array | null> {
-      const vecs = await localEmbedder.embed([text]);
+      const vecs = await boundQueryEmbed(localEmbedder.embed([text]));
       return vecs[0] ?? null;
     },
 
-    async embedQueryDual(text: string): Promise<{
-      vec384: Float32Array | null;
-      vec1536: Float32Array | null;
-      model384: string | null;
-      model1536: string | null;
-    }> {
-      const [local384, openai1536] = await Promise.all([
-        localEmbedder.embed([text]),
-        openaiEmbedder.embed([text]),
+    async embedQueryDual(text: string): Promise<EmbeddingDualVectors> {
+      // Each half is bounded on its own, so a stalled OpenAI request no longer costs the local
+      // vector. A half that TIMES OUT degrades to null and is marked `partial`; any other failure
+      // still propagates, exactly as `Promise.all` did. Both halves timing out is the typed timeout.
+      const [local, remote] = await Promise.allSettled([
+        boundQueryEmbed(localEmbedder.embed([text])),
+        boundQueryEmbed(openaiEmbedder.embed([text])),
       ]);
-      return {
-        vec384: local384[0] ?? null,
-        vec1536: openai1536[0] ?? null,
-        model384: localEmbedder.model,
-        model1536: openaiEmbedder.model,
+      for (const half of [local, remote]) {
+        if (half.status === "rejected" && !isEmbeddingTimeoutError(half.reason)) {
+          throw half.reason;
+        }
+      }
+      if (local.status === "rejected" && remote.status === "rejected") {
+        throw local.reason;
+      }
+      const out: EmbeddingDualVectors = {
+        vec384: local.status === "fulfilled" ? (local.value[0] ?? null) : null,
+        vec1536: remote.status === "fulfilled" ? (remote.value[0] ?? null) : null,
+        model384: local.status === "fulfilled" ? localEmbedder.model : null,
+        model1536: remote.status === "fulfilled" ? openaiEmbedder.model : null,
       };
+      if (local.status === "rejected") {
+        out.partial = "local_timeout";
+      } else if (remote.status === "rejected") {
+        out.partial = "remote_timeout";
+      }
+      return out;
     },
 
     getEmbeddingModel(): string {
@@ -174,18 +204,7 @@ export async function tryCreateRoutingEmbeddingRuntime(
       return null;
     },
 
-    // This runtime is only ever CONSTRUCTED after both embedders resolved, so it is ready
-    // by construction — the slow part happened above, off the gateway's bind path (#928).
-    getReadiness(): EmbeddingReadiness {
-      return {
-        state: "ready",
-        elapsedMs: 0,
-        model: localEmbedder.model,
-        dims: EMBEDDING_DIM_LOCAL,
-        download: null,
-        reason: null,
-      };
-    },
+    getReadiness: readiness,
 
     startBackgroundJobs(): void {
       if (backfillStarted) {

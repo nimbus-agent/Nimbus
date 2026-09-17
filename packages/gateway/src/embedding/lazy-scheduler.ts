@@ -6,10 +6,12 @@ import type { NimbusEmbeddingToml } from "../config/nimbus-toml.ts";
 import { readIndexedUserVersion } from "../index/migrations/runner.ts";
 import { ensureSqliteVecForConnection } from "../index/sqlite-vec-load.ts";
 import type { BackfillGate } from "./backfill-gate.ts";
-import type {
-  EmbeddingModelDownload,
-  EmbeddingReadiness,
-  EmbeddingReadinessState,
+import {
+  type EmbeddingModelDownload,
+  type EmbeddingReadiness,
+  type EmbeddingReadinessState,
+  resolveEmbeddingQueryTimeoutMs,
+  withEmbeddingQueryTimeout,
 } from "./embedding-readiness.ts";
 import type { EmbeddingRuntime } from "./embedding-runtime.ts";
 import {
@@ -115,6 +117,27 @@ export function createLazyEmbeddingRuntime(
     settle("unavailable", err instanceof Error ? err.message : String(err));
   });
 
+  function readiness(): EmbeddingReadiness {
+    const end = state === "warming" ? Date.now() : (settledMs ?? Date.now());
+    return {
+      state,
+      elapsedMs: Math.max(0, end - startedMs),
+      model: pipeline?.embeddingModel ?? preloadedEmbedder?.model ?? LOCAL_EMBEDDING_MODEL_ID,
+      dims: pipeline?.embeddingDims ?? preloadedEmbedder?.dims ?? 384,
+      download: state === "warming" ? download : null,
+      reason,
+    };
+  }
+
+  // Bounds the EMBED only. The pipeline load above it is deliberately outside the budget: a cold
+  // model load is warm-up, not a stalled query, and must not be reported as a timeout.
+  function boundQueryEmbed<T>(work: Promise<T>): Promise<T> {
+    return withEmbeddingQueryTimeout(work, {
+      timeoutMs: resolveEmbeddingQueryTimeoutMs(),
+      readiness,
+    });
+  }
+
   return {
     scheduleItemEmbedding(itemId: string): void {
       void (async () => {
@@ -139,7 +162,7 @@ export function createLazyEmbeddingRuntime(
       if (p === null) {
         return null;
       }
-      const rows = await p.embedTexts([text]);
+      const rows = await boundQueryEmbed(p.embedTexts([text]));
       return rows[0] ?? null;
     },
 
@@ -153,7 +176,7 @@ export function createLazyEmbeddingRuntime(
       if (p === null) {
         return { vec384: null, vec1536: null, model384: null, model1536: null };
       }
-      const vecs = await p.embedTexts([text]);
+      const vecs = await boundQueryEmbed(p.embedTexts([text]));
       const vec = vecs[0] ?? null;
       if (vec === null) {
         return { vec384: null, vec1536: null, model384: null, model1536: null };
@@ -177,17 +200,7 @@ export function createLazyEmbeddingRuntime(
       return null;
     },
 
-    getReadiness(): EmbeddingReadiness {
-      const end = state === "warming" ? Date.now() : (settledMs ?? Date.now());
-      return {
-        state,
-        elapsedMs: Math.max(0, end - startedMs),
-        model: pipeline?.embeddingModel ?? preloadedEmbedder?.model ?? LOCAL_EMBEDDING_MODEL_ID,
-        dims: pipeline?.embeddingDims ?? preloadedEmbedder?.dims ?? 384,
-        download: state === "warming" ? download : null,
-        reason,
-      };
-    },
+    getReadiness: readiness,
 
     startBackgroundJobs(): void {
       if (backfillStarted) {
