@@ -38,9 +38,10 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
   so the completed/attempted ratio means the same thing whatever mix of job kinds a run carried.
 
   **The enumerator map is TOTAL over the fleet-eligible agents** — `fleet/fleet-sweep-support.ts`'s
-  `FLEET_SWEEP_SUPPORT`, the same compiler-enforced shape `FLEET_DIGEST_EXTRACTORS` already uses, so
-  a twelfth eligible agent does not compile until someone classifies it. Four kinds ship: `paths`
-  (`ownership`), `services` (`oncall`/`changelog`/`ownership`), `symbols` (`ghost`/`conflicts`),
+  `FLEET_SWEEP_SUPPORT`, the same compiler-enforced shape `FLEET_DIGEST_EXTRACTORS` already uses;
+  it is total over the 14 fleet-eligible agents, so a fifteenth does not compile until someone
+  classifies it. Four kinds ship: `paths` (`ownership`), `services`
+  (`oncall`/`changelog`/`ownership`), `symbols` (`ghost`/`conflicts`),
   `terms` (`glossary`); `why`/`expert`/`impact`/`catchup`/`decisions`/`standup`/`huddle`/`janitor`
   stay not-enumerable, each with a reason recorded in the map — `janitor`'s is that the index holds
   no resource inventory, so a subject list would be INVENTED rather than enumerated.
@@ -79,7 +80,7 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
   one dossier" into "the machine builds a dossier on every indexed person, nightly, unattended" has
   no consent surface today. Bounds stated rather than solved: coverage is eventual, not
   prioritised — a risky file waits its turn in the rotation; `paths` covers only what the ownership
-  pass emitted (git-aware roots, and only the nodes it wrote a node for); `services` covers
+  pass emitted (git-aware roots, and only the files and directories it wrote a node for); `services` covers
   configured services only, not one a connector merely mentions; a subject deleted mid-rotation
   simply stops appearing and its old briefs age out under retention, while a renamed file is a new
   subject. Design: `2026-09-17-fleet-subject-enumeration-design.md`.

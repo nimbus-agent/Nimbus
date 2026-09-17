@@ -1944,14 +1944,14 @@ share one label and enumerate as ONE subject (a stated bound — see
 cannot be swept: its subject is free text probed for mentions, and the index holds no resource
 inventory to enumerate one from.
 
-**Eligible agents** (11 of the 15 served `agents.*` methods): `catchup`, `huddle`, `glossary`,
-`decisions`, `ownership`, `why`, `ghost`, `conflicts`, `impact`, `expert`, `janitor`. Excluded:
-`preflight` and `premortem` (side effects — a HITL prompt nobody is awake to answer, and durable
-watcher/tombstone writes), `whyPeek` (synchronous shape, never fires the completion notification
-the invoker awaits), and `negotiate` (**deferred**, settled rather than pending: no sweep
-enumerator returns person-shaped subjects, and a nightly, unattended dossier over every indexed
-person has no consent surface today). The map is TOTAL over the served methods, so a new agent
-does not compile until someone classifies it.
+**Eligible agents** (14 of the 18 served `agents.*` methods): `catchup`, `standup`, `oncall`,
+`changelog`, `huddle`, `glossary`, `decisions`, `ownership`, `why`, `ghost`, `conflicts`, `impact`,
+`expert`, `janitor`. Excluded: `preflight` and `premortem` (side effects — a HITL prompt nobody is
+awake to answer, and durable watcher/tombstone writes), `whyPeek` (synchronous shape, never fires
+the completion notification the invoker awaits), and `negotiate` (**deferred**, settled rather
+than pending: no sweep enumerator returns person-shaped subjects, and a nightly, unattended
+dossier over every indexed person has no consent surface today). The map is TOTAL over the served
+methods, so a new agent does not compile until someone classifies it.
 
 **Org lockoff:** `[policy.capabilities.ai_v2] agent_fleet = false` in a signed `nimbus.policy.toml`
 halts the scheduler before any hardware probe (invariant I22, tighten-only).
