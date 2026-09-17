@@ -1019,4 +1019,88 @@ describe("renderFleetDigest", () => {
       "- retired [unconfigured] — agents.catchup → agents.ghost, not comparable",
     );
   });
+
+  // Task 7 fix round 1: the spec requires a config-named-only digest's rendered Markdown to stay
+  // byte-identical to before this PR, and every OTHER assertion in this file is toContain/toMatch,
+  // so none of them would notice a stray character added anywhere in the document. This is the
+  // real byte-identity guard. EXPECTED was captured by running this exact scenario (one compared
+  // job with a metric table and key churn, plus one entry in each of the four `notCompared`
+  // populations) through the PRE-SWEEP renderer — `git show 1d070093:packages/gateway/src/fleet/
+  // fleet-digest.ts`, Task 6's commit, the last one before this slice touched this file — never
+  // through the current code. A `sweeps: []` field is added to the input below only because the
+  // current `renderFleetDigest`'s parameter type requires it; the pre-sweep renderer never saw it
+  // and produced this exact string without it.
+  test("(byte-identity) a config-named-only digest renders EXACTLY the pre-sweep output", () => {
+    const md = renderFleetDigest({
+      sweeps: [],
+      windowMs: 86_400_000,
+      generatedAt: 0,
+      jobs: [
+        {
+          jobId: "svc-a",
+          agentMethod: "agents.ghost",
+          configured: true,
+          status: "changed",
+          minDelta: 1,
+          currentBriefId: "c1",
+          currentCreatedAt: 5000,
+          predecessorBriefId: "p1",
+          predecessorCreatedAt: 100,
+          comparisonSpanMs: 4900,
+          metrics: { ghost_peers: { before: 2, after: 3, delta: 1 } },
+          metricsSuppressed: 0,
+          keysAppeared: ["p2"],
+          keysResolved: ["p1"],
+        },
+      ],
+      notCompared: {
+        firstObservation: [{ jobId: "new-job", briefId: "b1", createdAt: 0, configured: true }],
+        notSummarizable: [
+          {
+            jobId: "j2",
+            briefId: "b2",
+            role: "current",
+            reason: "unreadable agents.ghost brief",
+            configured: true,
+          },
+        ],
+        noBriefInWindow: [{ jobId: "j3", agent: "ghost", configured: true }],
+        agentChanged: [
+          { jobId: "j4", from: "agents.catchup", to: "agents.ghost", configured: true },
+        ],
+      },
+    });
+    // EXPECTED is the literal byte-for-byte capture from the pre-sweep renderer (see comment
+    // above) — never re-derived from the current renderer.
+    const EXPECTED =
+      "# Fleet digest\n" +
+      "\n" +
+      "Window: the last 24h. Each job is compared against its own previous brief, which may be older than the window above; the comparison span is given per job.\n" +
+      "\n" +
+      "## svc-a\n" +
+      "\n" +
+      "agents.ghost · compared over 0m · changed\n" +
+      "\n" +
+      "| metric | before | after | delta |\n" +
+      "| --- | --- | --- | --- |\n" +
+      "| ghost_peers | 2 | 3 | 1 |\n" +
+      "\n" +
+      "Appeared (1):\n" +
+      "- p2\n" +
+      "\n" +
+      "Resolved (1):\n" +
+      "- p1\n" +
+      "\n" +
+      "## Not compared\n" +
+      "\n" +
+      "First observation: 1\n" +
+      "- new-job — one brief so far, nothing to compare\n" +
+      "Not summarizable: 1\n" +
+      "- j2 (current) — unreadable agents.ghost brief\n" +
+      "No brief in window: 1\n" +
+      "- j3 (ghost) — configured, produced nothing\n" +
+      "Agent changed: 1\n" +
+      "- j4 — agents.catchup → agents.ghost, not comparable\n";
+    expect(md).toBe(EXPECTED);
+  });
 });
