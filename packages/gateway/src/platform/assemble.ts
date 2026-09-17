@@ -189,6 +189,7 @@ import { appendPreflightAudit, defaultRunCommand } from "../federation/preflight
 import { buildFleetInvoker } from "../fleet/fleet-invoker.ts";
 import { FLEET_CAPABILITY, FleetScheduler } from "../fleet/fleet-scheduler.ts";
 import { FleetStore } from "../fleet/fleet-store.ts";
+import { validateFleetSweepJobs } from "../fleet/fleet-sweep-support.ts";
 import { createFleetRemoteBudget } from "../fleet/fleet-synthesis-router.ts";
 import type { ConsolidatorLlm } from "../glossary/glossary-consolidate.ts";
 import { rebuildGlossary, runGlossaryPass } from "../glossary/glossary-extract.ts";
@@ -3046,7 +3047,9 @@ export function assembleFleetRuntime(deps: FleetBootDeps): FleetRuntime {
   };
   let configError = false;
   try {
-    fleet = loadNimbusFleetFromPath(fleetToml);
+    const loaded = loadNimbusFleetFromPath(fleetToml);
+    validateFleetSweepJobs(loaded.jobs);
+    fleet = loaded;
   } catch (err) {
     configError = true;
     deps.logger.error(

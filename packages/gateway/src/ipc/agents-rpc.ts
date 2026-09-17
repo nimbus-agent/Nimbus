@@ -1556,9 +1556,10 @@ export const FLEET_ELIGIBILITY = Object.freeze({
   // Synchronous: returns its payload directly and never calls `notify`, so it cannot settle the
   // completion promise the invoker waits on.
   "agents.whyPeek": "excluded_shape",
-  // No side effects and the shape fits — but `--person` makes it a dossier builder, and SCHEDULED
-  // dossier-building is a different proposition from an owner running it once. Revisit in PR 2
-  // alongside subject enumeration.
+  // No side effects and the shape fits — but `--person` makes it a dossier builder. SETTLED with
+  // subject enumeration (PR 2b): a sweep would turn "the owner built one dossier" into "the machine
+  // builds a dossier on every indexed person, nightly, unattended", which no current consent surface
+  // covers. No sweep enumerator returns person-shaped subjects, and this stays deferred for that reason.
   "agents.negotiate": "deferred",
   "agents.catchup": "eligible",
   // Eligible, and the identity question is what makes that a real decision rather than a
