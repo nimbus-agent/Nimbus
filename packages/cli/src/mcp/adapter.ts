@@ -146,6 +146,12 @@ export function projectRankedItems(rows: unknown): Array<Record<string, unknown>
 export interface ConnectionEnv {
   readState(): Promise<{ socketPath: string } | undefined>;
   connect(socketPath: string): Promise<IpcCallable>;
+  /**
+   * Whether this connection targets a demo-rooted gateway (`CliPlatformPaths.demo === true`).
+   * Optional, defaulting to `false`, so every hand-built test `ConnectionEnv` stays valid — only
+   * `createProductionDeps()` sets it, from the real paths resolver.
+   */
+  demo?: boolean;
 }
 
 /**
@@ -220,13 +226,13 @@ export function createDeps(env: ConnectionEnv): AdapterDeps {
   const openConnection = async (): Promise<IpcCallable> => {
     const state = await env.readState();
     if (state === undefined) {
-      throw new GatewayUnavailableError();
+      throw new GatewayUnavailableError({ demo: env.demo === true });
     }
     let raw: IpcCallable;
     try {
       raw = await env.connect(state.socketPath);
     } catch {
-      throw new GatewayUnavailableError();
+      throw new GatewayUnavailableError({ demo: env.demo === true });
     }
     const client = makeReconnectingClient(raw, invalidate);
     // The `call`-failure hook above only fires when a call fails, and while awaiting a brief there
@@ -301,6 +307,7 @@ export function createProductionDeps(): AdapterDeps {
       await client.connect();
       return client;
     },
+    demo: getCliPlatformPaths().demo === true,
   });
 }
 

@@ -2,6 +2,7 @@ import { stdin as input, stdout as output } from "node:process";
 import { createInterface } from "node:readline/promises";
 
 import type { IPCClient } from "../ipc-client/index.ts";
+import { gatewayNotRunningMessage } from "../lib/gateway-not-running.ts";
 import type { CliPlatformPaths } from "../paths.ts";
 
 export interface ReplGatewayState {
@@ -70,7 +71,7 @@ export async function loadReplPreconditions(
   const paths = deps.getCliPlatformPaths();
   const state = await deps.readGatewayState(paths);
   if (state === undefined) {
-    throw new Error("Gateway is not running. Start with: nimbus start");
+    throw new Error(gatewayNotRunningMessage(paths.demo === true));
   }
   return { socketPath: state.socketPath, sessionId };
 }

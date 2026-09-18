@@ -3,6 +3,7 @@ import { platform } from "node:os";
 import { join } from "node:path";
 
 import type { IPCClient } from "../ipc-client/index.ts";
+import { gatewayStartCommand } from "../lib/gateway-not-running.ts";
 import type { CliPlatformPaths } from "../paths.ts";
 import { type FixKeyringDeps, runFixKeyringCommand } from "./doctor-fix-keyring.ts";
 
@@ -772,7 +773,9 @@ export async function runDoctor(args: string[], deps: DoctorCoreDeps): Promise<v
       await client.disconnect().catch(() => {});
     }
   } else if (state === undefined) {
-    console.log("[fail] Gateway: not running (no gateway.json — start with: nimbus start).");
+    console.log(
+      `[fail] Gateway: not running (no gateway.json — start with: ${gatewayStartCommand(paths.demo === true)}).`,
+    );
     exit = Math.max(exit, 2);
   } else {
     console.log(

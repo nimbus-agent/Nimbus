@@ -1,6 +1,7 @@
 import { confirm, isCancel } from "@clack/prompts";
 
 import { IPCClient } from "../ipc-client/index.ts";
+import { gatewayNotRunningMessage } from "../lib/gateway-not-running.ts";
 import { type GatewayStateFile, readGatewayState } from "../lib/gateway-process.ts";
 import { getCliPlatformPaths } from "../paths.ts";
 
@@ -664,7 +665,7 @@ export async function runTeamWithIo(argv: string[], io: RunTeamIo): Promise<void
 
   const state = await io.readGatewayState();
   if (state === undefined) {
-    process.stderr.write("Gateway is not running. Start with: nimbus start\n");
+    process.stderr.write(`${gatewayNotRunningMessage(getCliPlatformPaths().demo === true)}\n`);
     return io.exit(1);
   }
   const client = io.makeClient(state.socketPath);

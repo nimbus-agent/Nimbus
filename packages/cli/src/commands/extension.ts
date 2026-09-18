@@ -9,6 +9,7 @@ import {
   generateEd25519Keypair,
   signManifest,
 } from "../lib/extension-signing.ts";
+import { gatewayNotRunningMessage } from "../lib/gateway-not-running.ts";
 import { readGatewayState } from "../lib/gateway-process.ts";
 import { getCliPlatformPaths } from "../paths.ts";
 import {
@@ -610,7 +611,7 @@ export async function runExtension(args: string[]): Promise<void> {
   const paths = getCliPlatformPaths();
   const state = await readGatewayState(paths);
   if (state === undefined) {
-    throw new Error("Gateway is not running. Start with: nimbus start");
+    throw new Error(gatewayNotRunningMessage(paths.demo === true));
   }
 
   const client = new IPCClient(state.socketPath);

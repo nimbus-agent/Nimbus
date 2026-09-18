@@ -1,5 +1,6 @@
 import { IPCClient } from "../ipc-client/index.ts";
 import { getCliPlatformPaths } from "../paths.ts";
+import { gatewayNotRunningMessage } from "./gateway-not-running.ts";
 import { readGatewayState } from "./gateway-process.ts";
 
 /** The lifecycle surface this runner needs — satisfied by `IPCClient`. */
@@ -22,7 +23,8 @@ export interface GatewayCliIo<C extends GatewayCliClient> {
   readonly fail: (message: string) => never;
 }
 
-export const GATEWAY_NOT_RUNNING_MESSAGE = "Gateway is not running. Start with: nimbus start";
+/** Non-demo default — kept for the modules that already import this constant directly. */
+export const GATEWAY_NOT_RUNNING_MESSAGE = gatewayNotRunningMessage(false);
 
 export const REAL_GATEWAY_CLI_IO: GatewayCliIo<IPCClient> = {
   readState: async () => readGatewayState(getCliPlatformPaths()),
@@ -65,7 +67,7 @@ export async function runGatewayCliCommand<Cmd, C extends GatewayCliClient>(
   }
   const state = await spec.io.readState();
   if (state === undefined) {
-    return spec.io.fail(GATEWAY_NOT_RUNNING_MESSAGE);
+    return spec.io.fail(gatewayNotRunningMessage(getCliPlatformPaths().demo === true));
   }
   const client = spec.io.makeClient(state.socketPath);
   await client.connect();

@@ -1,5 +1,6 @@
 import { IPCClient } from "../ipc-client/index.ts";
 import { resolveBriefTimeoutMs } from "../lib/agent-brief-render.ts";
+import { gatewayNotRunningMessage } from "../lib/gateway-not-running.ts";
 import { readGatewayState } from "../lib/gateway-process.ts";
 import { registerInteractiveCliIpcHandlers } from "../lib/interactive-ipc-handlers.ts";
 import { getCliPlatformPaths } from "../paths.ts";
@@ -91,7 +92,7 @@ export async function runAgentBriefCli<TFindings>(
   const paths = getCliPlatformPaths();
   const state = await readGatewayState(paths);
   if (state === undefined) {
-    process.stderr.write("Gateway is not running. Start with: nimbus start\n");
+    process.stderr.write(`${gatewayNotRunningMessage(paths.demo === true)}\n`);
     process.exit(1);
   }
 

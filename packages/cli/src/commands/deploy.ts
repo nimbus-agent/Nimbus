@@ -1,4 +1,5 @@
 import { IPCClient } from "../ipc-client/index.ts";
+import { gatewayNotRunningMessage } from "../lib/gateway-not-running.ts";
 import { readGatewayState } from "../lib/gateway-process.ts";
 import { getCliPlatformPaths } from "../paths.ts";
 import { runDeployAnnotate } from "./deploy-annotate.ts";
@@ -143,7 +144,7 @@ async function runDeployPreflight(args: readonly string[]): Promise<void> {
   const paths = getCliPlatformPaths();
   const state = await readGatewayState(paths);
   if (state === undefined) {
-    process.stderr.write("Gateway is not running. Start with: nimbus start\n");
+    process.stderr.write(`${gatewayNotRunningMessage(paths.demo === true)}\n`);
     process.exit(2);
   }
   const client = new IPCClient(state.socketPath);

@@ -1,6 +1,7 @@
 import type { IPCClient } from "../ipc-client/index.ts";
 import type { CliPlatformPaths } from "../paths.ts";
 import { getCliPlatformPaths } from "../paths.ts";
+import { gatewayNotRunningMessage } from "./gateway-not-running.ts";
 import { readGatewayState } from "./gateway-process.ts";
 import { type ConsentChoice, registerConsentFor } from "./interactive-ipc-handlers.ts";
 import { createIpcClient } from "./rpc-timeouts.ts";
@@ -16,11 +17,7 @@ import { createIpcClient } from "./rpc-timeouts.ts";
  */
 export class GatewayNotRunningError extends Error {
   constructor(opts: { demo?: boolean } = {}) {
-    super(
-      opts.demo === true
-        ? "Gateway is not running (demo root). Start with: nimbus --demo start"
-        : "Gateway is not running. Start with: nimbus start",
-    );
+    super(gatewayNotRunningMessage(opts.demo === true));
     this.name = "GatewayNotRunningError";
   }
 }

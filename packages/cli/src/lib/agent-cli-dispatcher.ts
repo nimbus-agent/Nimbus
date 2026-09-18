@@ -1,9 +1,9 @@
 import { IPCClient } from "../ipc-client/index.ts";
 import { getCliPlatformPaths } from "../paths.ts";
 import { awaitAgentBrief, type PendingBrief, renderAgentBrief } from "./agent-brief-render.ts";
+import { gatewayNotRunningMessage } from "./gateway-not-running.ts";
 import { readGatewayState } from "./gateway-process.ts";
 import { registerInteractiveCliIpcHandlers } from "./interactive-ipc-handlers.ts";
-import { GatewayNotRunningError } from "./with-gateway-ipc.ts";
 
 /**
  * Run an agent CLI command: read the gateway state (exit 1 if not running),
@@ -26,7 +26,7 @@ export async function runAgentCli<B extends { gaps: readonly { category: string 
   const paths = getCliPlatformPaths();
   const state = await readGatewayState(paths);
   if (state === undefined) {
-    process.stderr.write(`${new GatewayNotRunningError({ demo: paths.demo === true }).message}\n`);
+    process.stderr.write(`${gatewayNotRunningMessage(paths.demo === true)}\n`);
     process.exit(1);
   }
 
