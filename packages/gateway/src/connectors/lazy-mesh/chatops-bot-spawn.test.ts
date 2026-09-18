@@ -1,6 +1,22 @@
 import { describe, expect, test } from "bun:test";
+import { parseSandboxPolicy, SANDBOX_POLICY_ENV } from "../../platform/sandbox/sandbox-policy.ts";
 import type { NimbusVault } from "../../vault/nimbus-vault.ts";
-import { chatopsSlackBotServers, chatopsTeamsBotServers } from "./chatops-bot-spawn.ts";
+import {
+  chatopsSlackBotServers,
+  chatopsTeamsBotServers,
+  TEAMS_BOT_SERVICE_HOSTS,
+} from "./chatops-bot-spawn.ts";
+
+async function teamsBotNetwork(serviceUrl?: string): Promise<readonly string[]> {
+  const servers = await chatopsTeamsBotServers(
+    fakeVault({ "teams.bot_app_id": "app-1", "teams.bot_app_password": "pw-1" }),
+    "/cwd",
+    serviceUrl === undefined ? undefined : { serviceUrl },
+  );
+  const raw = servers?.["teams"]?.env[SANDBOX_POLICY_ENV];
+  if (raw === undefined) throw new Error("no sandbox policy on the teams bot spawn");
+  return parseSandboxPolicy(raw).permissions.network;
+}
 
 function fakeVault(entries: Record<string, string>): NimbusVault {
   return {
@@ -78,6 +94,31 @@ describe("chatopsTeamsBotServers (I1/I15 bot-credential spawn spec)", () => {
       { serviceUrl: "https://smba.example/emea/" },
     );
     expect(servers?.["teams"]?.env["TEAMS_BOT_SERVICE_URL"]).toBe("https://smba.example/emea/");
+  });
+
+  describe("sandbox allowlist for the Bot Framework reply host (#1533)", () => {
+    test("the connector's default reply host is reachable even with no serviceUrl", async () => {
+      expect(await teamsBotNetwork()).toContain("smba.trafficmanager.net");
+    });
+
+    test("a sovereign-cloud serviceUrl from the fixed set is added", async () => {
+      for (const host of TEAMS_BOT_SERVICE_HOSTS) {
+        expect(await teamsBotNetwork(`https://${host}/teams/`)).toContain(host);
+      }
+    });
+
+    test("a serviceUrl outside the fixed set never widens the policy", async () => {
+      // The bot sends its credential to serviceUrl; an activity must not be able to add a host.
+      for (const url of [
+        "https://attacker.example/teams/",
+        "https://evil.trafficmanager.net/teams/",
+        "https://smba.trafficmanager.net.attacker.example/",
+      ]) {
+        const network = await teamsBotNetwork(url);
+        expect(network).not.toContain(new URL(url).hostname);
+        expect(network).toContain("smba.trafficmanager.net");
+      }
+    });
   });
 
   test("no microsoft.oauth in the bot entry → Graph lookup degrades (no MICROSOFT_OAUTH_ACCESS_TOKEN)", async () => {

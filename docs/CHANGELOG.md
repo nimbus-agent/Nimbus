@@ -37,6 +37,25 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
   unhandled. The worker's cancelled-id set is bounded (256, oldest evicted) for the one case that
   leaks: a cancel whose request never arrives because the worker restarted in between. No schema, no
   invariant, no egress class — the ledger row is still appended before the request, unchanged.
+- **2026-09-17 — Jira, Confluence, self-managed GitLab, regional dbt and the Teams bot can reach
+  their own API from inside the connector sandbox (#1533).** Each of these MCP processes calls a
+  host taken from config — the Atlassian site URL, `gitlab.api_base`, `dbt.api_base` — or, for the
+  Teams bot, the Bot Framework reply host. None of those hosts was in the spawn's sandbox allowlist,
+  which named only the static vendor endpoint (`api.atlassian.com`, `gitlab.com`,
+  `cloud.getdbt.com`, Graph). On a per-host sandbox — macOS, and Linux with `nimbus-sandbox-helper`
+  — the tools could not reach their API; for Jira and Confluence that was every user, and it
+  included HITL-approved writes, which failed after the owner approved them. Windows and Linux
+  without the helper were unaffected (their policy grants the whole network once any host is
+  listed), and indexing was never affected, since sync runs in the gateway process. The fix is the
+  `hostnameFromUrl` + `manifestWithExtraNetworkHosts` pattern Grafana and Jenkins already used; an
+  unparseable URL adds nothing. **The Teams bot is deliberately narrower:** the bot sends its
+  credential to the activity's `serviceUrl`, and the inbound JWT check does not bind that field, so
+  the spawn allowlists a FIXED set of Bot Framework reply hosts (the public cloud, always, plus
+  GCC/GCC High/DoD when the activity names one) and never the activity's host itself. A
+  `serviceUrl` outside that set fails at the OS as before. **Not covered:** the connectors #1433
+  tracks (Sentry, Datadog, LaunchDarkly, Flagsmith, SonarQube, Wiz, Fastmail); `kubernetes`, which
+  has no network grant at all; and a real per-host spawn, which is still unverified on macOS and on
+  Linux with the helper. No invariant, no migration, no egress class.
 - **2026-09-17 — Overnight sub-agent fleets, PR 2b of 2: subject enumeration, closing the row.**
   A `[[fleet.job]]` can now set `sweep = "paths" | "services" | "symbols" | "terms"` instead of
   naming exactly one subject. `max_subjects` is REQUIRED when `sweep` is set (integer `1..500`,

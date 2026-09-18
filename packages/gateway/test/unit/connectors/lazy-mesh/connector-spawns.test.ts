@@ -29,7 +29,18 @@ import { Config } from "../../../../src/config.ts";
 import { getConnectorHealth } from "../../../../src/connectors/health.ts";
 import type { MeshSpawnContext, ServerSpec } from "../../../../src/connectors/lazy-mesh/slot.ts";
 import { LocalIndex } from "../../../../src/index/local-index.ts";
+import {
+  parseSandboxPolicy,
+  SANDBOX_POLICY_ENV,
+} from "../../../../src/platform/sandbox/sandbox-policy.ts";
 import { createMockVault } from "../../../../src/vault/mock.ts";
+
+/** The sandbox allowlist a captured spawn will actually run under, parsed the way the wrapper does. */
+function spawnedNetworkHosts(server: string): readonly string[] {
+  const raw = capturedClients[0]?.servers[server]?.env[SANDBOX_POLICY_ENV];
+  if (raw === undefined) throw new Error(`no sandbox policy on the ${server} spawn`);
+  return parseSandboxPolicy(raw).permissions.network;
+}
 
 // Config is `as const` (mutable at runtime, not Object.frozen). ensureWorkdayMcp reads the
 // tenant host/name from Config; set them deterministically per-test rather than relying on
@@ -541,6 +552,23 @@ describe("ensureGitlabMcp", () => {
     expect(env?.["GITLAB_API_BASE_URL"]).toBe("https://gitlab.example.com/api/v4");
   });
 
+  test("a self-managed api_base host joins the sandbox allowlist beside gitlab.com (#1533)", async () => {
+    const { ctx, vault } = makeCtx();
+    await vault.set("gitlab.pat", "glpat_test");
+    await vault.set("gitlab.api_base", "https://gitlab.example.com/api/v4/");
+    await ensureGitlabMcp(ctx);
+    const hosts = spawnedNetworkHosts("gitlab");
+    expect(hosts).toContain("gitlab.example.com");
+    expect(hosts).toContain("gitlab.com");
+  });
+
+  test("no api_base → the static allowlist, unchanged", async () => {
+    const { ctx, vault } = makeCtx();
+    await vault.set("gitlab.pat", "glpat_test");
+    await ensureGitlabMcp(ctx);
+    expect(spawnedNetworkHosts("gitlab")).toEqual(["gitlab.com"]);
+  });
+
   test("blank pat → no spawn", async () => {
     const { ctx, calls, vault } = makeCtx();
     await vault.set("gitlab.pat", "");
@@ -695,6 +723,26 @@ describe("ensureJiraMcp", () => {
     expectNoProcessEnvLeak(env ?? {});
   });
 
+  test("the site host the connector calls is on the sandbox allowlist (#1533)", async () => {
+    const { ctx, vault } = makeCtx();
+    await vault.set("jira.api_token", "jira_tok");
+    await vault.set("jira.email", "alice@acme.com");
+    await vault.set("jira.base_url", "https://acme.atlassian.net");
+    await ensureJiraMcp(ctx);
+    const hosts = spawnedNetworkHosts("jira");
+    expect(hosts).toContain("acme.atlassian.net");
+    expect(hosts).toContain("api.atlassian.com");
+  });
+
+  test("an unparseable base_url adds nothing rather than widening the policy", async () => {
+    const { ctx, vault } = makeCtx();
+    await vault.set("jira.api_token", "jira_tok");
+    await vault.set("jira.email", "alice@acme.com");
+    await vault.set("jira.base_url", "not a url");
+    await ensureJiraMcp(ctx);
+    expect(spawnedNetworkHosts("jira")).toEqual(["api.atlassian.com"]);
+  });
+
   test("already running → no double-spawn", async () => {
     const { ctx, vault } = makeCtx({ existingClient: true });
     await vault.set("jira.api_token", "jira_tok");
@@ -733,6 +781,17 @@ describe("ensureConfluenceMcp", () => {
     expect(env?.["CONFLUENCE_EMAIL"]).toBe("alice@acme.com");
     expect(env?.["CONFLUENCE_BASE_URL"]).toBe("https://acme.atlassian.net/wiki");
     expectNoProcessEnvLeak(env ?? {});
+  });
+
+  test("the site host the connector calls is on the sandbox allowlist (#1533)", async () => {
+    const { ctx, vault } = makeCtx();
+    await vault.set("confluence.api_token", "conf_tok");
+    await vault.set("confluence.email", "alice@acme.com");
+    await vault.set("confluence.base_url", "https://acme.atlassian.net/wiki");
+    await ensureConfluenceMcp(ctx);
+    const hosts = spawnedNetworkHosts("confluence");
+    expect(hosts).toContain("acme.atlassian.net");
+    expect(hosts).toContain("api.atlassian.com");
   });
 
   test("already running → no double-spawn", async () => {

@@ -27,6 +27,7 @@ import { getValidSlackAccessToken } from "../../auth/slack-access-token.ts";
 import { getValidWorkdayAccessToken } from "../../auth/workday-access-token.ts";
 import { getValidZoomAccessToken } from "../../auth/zoom-access-token.ts";
 import { Config } from "../../config.ts";
+import type { ExtensionManifest } from "../../extensions/manifest.ts";
 import { extensionProcessEnv } from "../../extensions/spawn-env.ts";
 import { stripTrailingSlashes } from "../../string/strip-trailing-slashes.ts";
 import { readConnectorSecret } from "../connector-vault.ts";
@@ -43,6 +44,23 @@ import { wrapServerSpec } from "./wrap-server-spec.ts";
 
 function wrap(spec: ServerSpec, serviceId: string, ctx: MeshSpawnContext): ServerSpec {
   return wrapServerSpec(spec, manifestForFirstParty(serviceId), ctx.sandboxCwd);
+}
+
+/**
+ * For a connector whose MCP process calls a host taken from CONFIG rather than a fixed vendor
+ * endpoint. The static manifest cannot name that host, so on a per-host sandbox (macOS, Linux with
+ * the helper) the process could not reach its own API. Merges the configured URL's host into the
+ * manifest; an absent or unparseable URL adds nothing, leaving the static allowlist as it was.
+ *
+ * Returns the MANIFEST, not a wrapped spec: each site still calls `wrapServerSpec` itself, which is
+ * the shape the I15 static rule (D10) recognises around a `connectorSpawn` literal.
+ */
+function manifestWithConfiguredHost(
+  serviceId: string,
+  configuredUrl: string | null,
+): ExtensionManifest {
+  const host = configuredUrl === null ? null : hostnameFromUrl(configuredUrl);
+  return manifestWithExtraNetworkHosts(serviceId, host === null ? [] : [host]);
 }
 
 export async function ensurePhase3BundleMcp(ctx: MeshSpawnContext): Promise<void> {
@@ -322,13 +340,13 @@ export async function ensureGitlabMcp(ctx: MeshSpawnContext): Promise<void> {
     new MCPClient({
       id: `nimbus-gitlab-${randomUUID()}`,
       servers: {
-        gitlab: wrap(
+        gitlab: wrapServerSpec(
           {
             ...connectorSpawn("gitlab"),
             env: gitlabServerEnv,
           },
-          "gitlab",
-          ctx,
+          manifestWithConfiguredHost("gitlab", trimmedBase),
+          ctx.sandboxCwd,
         ),
       },
     }),
@@ -472,7 +490,7 @@ export async function ensureJiraMcp(ctx: MeshSpawnContext): Promise<void> {
     new MCPClient({
       id: `nimbus-jira-${randomUUID()}`,
       servers: {
-        jira: wrap(
+        jira: wrapServerSpec(
           {
             ...connectorSpawn("jira"),
             env: extensionProcessEnv({
@@ -481,8 +499,8 @@ export async function ensureJiraMcp(ctx: MeshSpawnContext): Promise<void> {
               JIRA_BASE_URL: baseUrl,
             }),
           },
-          "jira",
-          ctx,
+          manifestWithConfiguredHost("jira", baseUrl),
+          ctx.sandboxCwd,
         ),
       },
     }),
@@ -604,7 +622,7 @@ export async function ensureConfluenceMcp(ctx: MeshSpawnContext): Promise<void> 
     new MCPClient({
       id: `nimbus-confluence-${randomUUID()}`,
       servers: {
-        confluence: wrap(
+        confluence: wrapServerSpec(
           {
             ...connectorSpawn("confluence"),
             env: extensionProcessEnv({
@@ -613,8 +631,8 @@ export async function ensureConfluenceMcp(ctx: MeshSpawnContext): Promise<void> 
               CONFLUENCE_BASE_URL: baseUrl,
             }),
           },
-          "confluence",
-          ctx,
+          manifestWithConfiguredHost("confluence", baseUrl),
+          ctx.sandboxCwd,
         ),
       },
     }),
