@@ -93,7 +93,7 @@ When set, every path moves under one demo root inside the REAL data dir:
 | `dataDir` | `<realDataDir>/demo/data` |
 | `logDir`, `extensionsDir` | under the demo `dataDir`, same shape as today |
 | `tempDir` | `join(tmpdir(), "nimbus-demo")` — not `tmpdir()/nimbus`, which the real processes use |
-| socket | the platform default with `-demo` inserted before any extension: `\\.\pipe\nimbus-gateway-demo` (Windows), `<dir>/nimbus-gateway-demo.sock` (macOS/Linux) |
+| socket | macOS/Linux: `<same dir as the real socket>/nimbus-gateway-demo.sock`. Windows: `\\.\pipe\nimbus-gateway-demo-<h>`, where `<h>` is the first 12 hex chars of SHA-256 over the demo root path — a named pipe is MACHINE-global, so a fixed name would let a test booted on temp roots connect to a developer's live demo gateway (§ 10) |
 | `gateway.json` | under the demo `dataDir` (follows `dataDir`) |
 
 Inside the real data dir so `nimbus demo reset` has exactly one directory to remove and nothing about
@@ -109,14 +109,23 @@ demo `configDir`, where none exist, so it falls through to the demo `nimbus.toml
 
 ### 3.3 Invariant I41 — demo isolation
 
-**I41:** a demo-rooted process never resolves the real `configDir`, the real `dataDir` (other than
-the `demo/` subtree it owns), the real `tempDir`, or the real socket; and synthetic seed rows can be written only by a
-demo-rooted gateway (§ 4.1). Consequences: the Vault is a fresh, empty store under the demo config
-(zero connector credentials), and the demo `nimbus.toml` is written by the seeder, never copied.
+**I41:** a demo-rooted process (1) resolves every config/data/log/extensions path INSIDE the demo
+root `<realDataDir>/demo`, and no real path lies inside that root; (2) resolves a `tempDir` and a
+socket that differ from the real ones; (3) never opens the OS credential store — its Vault is an
+in-process, never-persisted store; (4) never runs a host-global boot action whose scope it computes
+from its OWN index (the Windows AppContainer boot reap) and never starts the env-selected HTTP or
+metrics sidecars; and (5) — PR 2 — is the only process in which synthetic seed rows can be written
+(§ 4.1). The demo `nimbus.toml` is written by the seeder, never copied.
+
+Clause (1) is phrased as a SUBTREE rule, not "no demo path lies under the real `configDir`",
+because on macOS `configDir` and `dataDir` are the SAME directory
+(`~/Library/Application Support/Nimbus`), so the demo root necessarily sits under the real config
+dir there. What matters is that the demo process can reach no real FILE, and clause (1) is exactly
+that: every path it resolves is inside a subtree that holds no real path.
 
 Triple rule, in PR 1's single commit: wiring (both path modules), a `docs/SECURITY-INVARIANTS.md`
-section, and an enforcement test in `packages/gateway/src/security-invariants.test.ts`. The second
-clause (seeding) is added to the same section and test block in PR 2, where its wiring lands.
+section, and an enforcement test in `packages/gateway/src/security-invariants.test.ts`. Clause (5)
+(seeding) is added to the same section and test block in PR 2, where its wiring lands.
 **No document states the isolation property before its enforcement test exists** (§ 7 of
 `ecosystem-roadmap.md`).
 
@@ -267,10 +276,11 @@ Without these, an evaluator could authenticate a real connector into the demo ro
 
 **PR 1**
 
-- I41 enforcement: resolve paths for all three OS branches with `NIMBUS_DEMO=1` (the path functions
-  take OS inputs, so this is host-independent) and assert no path equals or lies under the real
-  `configDir`, and nothing lies under the real `dataDir` except the `demo/` subtree. **Negative
-  control:** the same assertion fails without the flag.
+- I41 enforcement: resolve paths for all three OS branches with `NIMBUS_DEMO=1` (each resolver reads
+  only env + `homedir()`, so all three run on any host) and assert clause (1)'s subtree rule — every
+  demo config/data/log/extensions path is inside `<realDataDir>/demo`, and no REAL path is inside it
+  — plus distinct `tempDir` and socket. **Negative control:** the same assertion fails without the
+  flag. Clauses (3) and (4) are asserted on the vault factory, the reap and the sidecar collector.
 - CLI ↔ gateway path parity: both modules resolve byte-identical demo paths on every OS branch.
 - Fail-closed refusal of `NIMBUS_DEMO` combined with `NIMBUS_CONFIG_DIR` / `NIMBUS_GATEWAY_SOCKET`,
   and of any `NIMBUS_DEMO` value other than unset/`""`/`"0"`/`"1"`.
@@ -278,9 +288,15 @@ Without these, an evaluator could authenticate a real connector into the demo ro
 - CLI argv pre-pass: `nimbus --demo oncall` dispatches `oncall` with `--demo` stripped, and the CLI
   file logger opens under the DEMO `logDir` — asserted by pointing the real roots at temp dirs and
   checking the real `logDir` is never created.
-- E2E (in `packages/gateway/test/e2e/`, where the Linux D-Bus wrapper lives): a demo gateway boots
-  beside a "real" one on temp OS roots, both answer `status`, and the real `dataDir` OUTSIDE its `demo/` subtree
-  (and the real `configDir` in full) is byte-identical before and after.
+- E2E (in `packages/gateway/test/e2e/`): the REAL gateway entry (`src/index.ts`, so the real
+  `create*Paths` resolution runs — not the e2e runner, which injects paths) boots with
+  `NIMBUS_DEMO=1` on temp OS roots, answers `gateway.ping` on the demo socket, does not listen on an
+  exported `NIMBUS_HTTP_PORT`, and after it exits every file under the temp OS roots lies inside the
+  demo root. **Changed at plan time:** the spec'd "boots beside a real one" is dropped — booting a
+  NON-demo gateway from the real entry opens the developer's real OS credential store on macOS and
+  Linux, and `gateway-main.ts`'s boot sweep deletes `toolgen.*` credentials there, so the test would
+  itself be the cross-instance damage I41 forbids. Distinct socket and state-file paths are proven
+  by the I41 unit tests instead.
 
 **PR 2**
 
@@ -351,3 +367,37 @@ Every finding was checked against the code before it was accepted or rejected.
 | 5.2 | Tour headers; non-TTY | **Fixed** (§ 5). `nimbus demo --json` **deferred** (§ 8): no consumer. |
 | 5.3 | `ask` should give a friendly refusal | **Partly adopted** (§ 6): behaviour is captured, not asserted from reading. If it is an unhandled error or a hang, it is fixed in `ask` for every fresh install, not special-cased for demo. The proposed message text is not adopted — it names setup steps not yet verified. |
 | 6 | Task checklists | **Deferred to the implementation plan** (writing-plans). Not copied: it includes the rejected auto-seed item. |
+
+## 10. Plan-time corrections (found while writing the PR 1 plan, 2026-09-18)
+
+Path isolation alone does NOT isolate a second gateway. Three pieces of state are host-global rather
+than path-derived, and each would have let a demo gateway damage or read the real install:
+
+1. **The Vault is not under `configDir` on macOS or Linux.** `vault/darwin.ts` stores secrets in the
+   Keychain under the fixed service `dev.nimbus` (only a key INDEX file lives under `configDir`);
+   `vault/linux.ts`'s `LinuxSecretToolVault()` takes no paths at all. A demo gateway on those OSes
+   would READ the real credentials — and `sweepToolgenCredentials`, which runs at every boot AND
+   shutdown (`gateway-main.ts`), would DELETE the real `toolgen.*` credentials. **Fix:** a demo
+   gateway's `createNimbusVault` returns an in-process `EphemeralVault` on every OS (uniform, and it
+   never touches an OS store). Rejected alternative: a namespaced OS vault (`dev.nimbus.demo` service,
+   a libsecret attribute) — it changes three platform vault implementations under a 90% coverage
+   gate to persist credentials a throwaway demo should not hold anyway.
+2. **The Windows AppContainer boot reap is computed from the gateway's OWN index.**
+   `platform/sandbox/win32-reap.ts` deletes every `nimbus-*` profile whose extension id is not in
+   `liveExtensionIds(db)` — first-party manifests plus THIS gateway's `extension` table — then sweeps
+   the orphaned ACEs. A demo DB holds none of the owner's installed extensions, so a demo boot would
+   delete the real gateway's extension profiles (possibly in use) and strip their ACEs. **Fix:** a
+   demo gateway skips `reapAppContainersAtBoot`.
+3. **The HTTP API and metrics sidecars are selected by ENV, not config** (`NIMBUS_HTTP_PORT` /
+   `NIMBUS_METRICS_PORT`, `platform/assemble.ts` `collectSidecarsFromEnv`). A demo gateway spawned
+   from a shell exporting them would crash on the port or — with the real gateway stopped — serve the
+   HTTP API on the owner's real port, where the clipper and the editor extension would read the demo
+   as the real index. **Fix:** a demo gateway never starts either sidecar.
+4. **macOS `configDir === dataDir`** — I41 clause (1) rephrased as a subtree rule (§ 3.3).
+5. **The Windows demo pipe is hashed from the demo root** (§ 3.1 table) — named pipes are
+   machine-global, and the e2e test must not be able to reach a developer's live demo gateway.
+
+How the demo gateway KNOWS it is one: `PlatformPaths` gains an optional `demo?: true`, set only by
+the three `create*Paths` resolvers when `NIMBUS_DEMO=1`. The vault factory, the reap and the sidecars
+branch on `paths.demo === true`, never on the env var directly — so an injected `PlatformPaths` (the
+e2e runner's `NIMBUS_E2E_PATHS_JSON`) cannot be half-demo.
