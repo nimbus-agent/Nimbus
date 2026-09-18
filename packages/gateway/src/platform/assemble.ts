@@ -3460,7 +3460,7 @@ export async function assemblePlatformServices(
   // into the extension. The gateway binds 127.0.0.1 (I6); the port is NIMBUS_HTTP_PORT (the same var
   // that gates the /v1/clips sidecar below). Undefined port → no HTTP surface → leave it unset.
   const clipHttpPort = parseSidecarPortEnv(processEnvGet("NIMBUS_HTTP_PORT"));
-  if (clipHttpPort !== undefined) {
+  if (bootPolicy.envSidecars && clipHttpPort !== undefined) {
     ipcOpts.clipHttpBaseUrl = `http://127.0.0.1:${clipHttpPort}`;
   }
 

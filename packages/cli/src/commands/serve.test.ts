@@ -91,6 +91,35 @@ describe("runServe dispatcher", () => {
     });
     await expect(runServe(["--port", "7474"])).rejects.toThrow(/already running/i);
   });
+
+  // I-3(b) (final review, 2026-09-18): a demo-rooted gateway ignores --port/NIMBUS_HTTP_PORT and
+  // never serves the HTTP API, so printing "HTTP: http://127.0.0.1:.../v1/items" was a lie —
+  // possibly pointing at the REAL gateway's port. `nimbus --demo serve` must refuse before
+  // spawning anything, never reaching `ensureGatewayDirs`/spawn.
+  describe("--demo refusal (I-3b)", () => {
+    const originalDemo = process.env["NIMBUS_DEMO"];
+    const originalConfigDir = process.env["NIMBUS_CONFIG_DIR"];
+    const originalSocket = process.env["NIMBUS_GATEWAY_SOCKET"];
+
+    beforeEach(() => {
+      delete process.env["NIMBUS_CONFIG_DIR"];
+      delete process.env["NIMBUS_GATEWAY_SOCKET"];
+      process.env["NIMBUS_DEMO"] = "1";
+    });
+    afterEach(() => {
+      if (originalDemo === undefined) delete process.env["NIMBUS_DEMO"];
+      else process.env["NIMBUS_DEMO"] = originalDemo;
+      if (originalConfigDir === undefined) delete process.env["NIMBUS_CONFIG_DIR"];
+      else process.env["NIMBUS_CONFIG_DIR"] = originalConfigDir;
+      if (originalSocket === undefined) delete process.env["NIMBUS_GATEWAY_SOCKET"];
+      else process.env["NIMBUS_GATEWAY_SOCKET"] = originalSocket;
+    });
+
+    it("refuses before spawning anything, with a demo-root HTTP API message", async () => {
+      setFixture({});
+      await expect(runServe(["--port", "7474"])).rejects.toThrow(/demo root has no HTTP API/i);
+    });
+  });
 });
 
 describe("runServe spawn path (mocked ../lib/spawn-gateway.ts)", () => {

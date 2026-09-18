@@ -41,6 +41,13 @@ The HTTP server binds 127.0.0.1 only. Set a different port with --port or NIMBUS
   const port = parsed.port;
 
   const paths = getCliPlatformPaths();
+  if (paths.demo === true) {
+    throw new Error(
+      "The demo root has no HTTP API — `nimbus --demo serve` would start a demo gateway that " +
+        "ignores --port/NIMBUS_HTTP_PORT and then print an HTTP origin nothing serves (or, if " +
+        "one happens to be listening, the REAL gateway's). Use `nimbus --demo start` instead.",
+    );
+  }
   await ensureGatewayDirs(paths);
 
   const existing = await readGatewayState(paths);
