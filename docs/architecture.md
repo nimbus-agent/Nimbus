@@ -144,6 +144,17 @@ export interface PlatformPaths {
 }
 ```
 
+**The demo root (`NIMBUS_DEMO=1`, the CLI's global `--demo`).** A second, throwaway Nimbus inside
+`<dataDir>/demo`, resolved by `platform/demo-root.ts` (mirrored in `cli/src/lib/demo-root.ts`, held
+equal by `scripts/parity/demo-root.parity.test.ts`). Every config/data/log/extensions path moves into
+that subtree, `tempDir` becomes `<tmpdir>/nimbus-demo`, and the IPC endpoint gets a demo name (hashed
+from the demo root on Windows, where pipes are machine-global). The resolvers mark the result
+`PlatformPaths.demo = true`, and that field — never the env var — is the one signal the rest of the
+gateway reads: the vault factory returns an in-memory `EphemeralVault`, and `platform/demo-boot.ts`
+switches off the Windows AppContainer boot reap and the env-selected HTTP/metrics sidecars, the three
+pieces of host-global state path isolation cannot reach. Rationale and bounds:
+`SECURITY-INVARIANTS.md` § I41.
+
 ## Package Dependency Rules
 
 To maintain strict subsystem isolation and ensure cross-platform portability, Nimbus enforces the following import rules:
