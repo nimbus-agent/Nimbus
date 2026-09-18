@@ -124,7 +124,7 @@ function ownerCountsMetadata(ranked: ReturnType<typeof rankOwners>): {
 export function fileExternalId(root: string, path: string): string {
   return `file:${root}:${path}`;
 }
-function dirExternalId(root: string, path: string): string {
+export function dirExternalId(root: string, path: string): string {
   return `dir:${root}:${path}`;
 }
 

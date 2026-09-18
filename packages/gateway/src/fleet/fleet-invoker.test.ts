@@ -43,6 +43,7 @@ const JOB: NimbusFleetJobToml = {
   intervalSeconds: 1,
   params: {},
   digestMinDelta: 1,
+  sweep: null,
 };
 
 describe("buildFleetInvoker", () => {

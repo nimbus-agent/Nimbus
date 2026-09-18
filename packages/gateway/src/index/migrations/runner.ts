@@ -30,6 +30,7 @@ import {
   EXTENSION_SESSION_V10_NO_VEC_MIGRATION_SQL,
 } from "../extension-session-v10-sql.ts";
 import { V33_FEDERATION_SQL } from "../federation-v33-sql.ts";
+import { FLEET_SUBJECTS_V63_SQL } from "../fleet-subjects-v63-sql.ts";
 import { FLEET_V60_SQL } from "../fleet-v60-sql.ts";
 import { GDPR_V37_SQL } from "../gdpr-v37-sql.ts";
 import { GENERATED_TOOL_V61_SQL } from "../generated-tool-v61-sql.ts";
@@ -569,6 +570,12 @@ const INDEXED_SCHEMA_STEPS: readonly IndexedSchemaStep[] = [
   simpleStep(59, 60, "agent fleet scheduling", FLEET_V60_SQL),
   simpleStep(60, 61, "saved generated tools (persistence + signing)", GENERATED_TOOL_V61_SQL),
   simpleStep(61, 62, "vec_rowid join indexes (KNN-driven vector search)", VEC_JOIN_INDEX_V62_SQL),
+  simpleStep(
+    62,
+    63,
+    "fleet subject enumeration (brief subject_key + sweep cursor)",
+    FLEET_SUBJECTS_V63_SQL,
+  ),
 ];
 
 /**

@@ -286,16 +286,16 @@ interval_seconds = 3600
       const runId = seedRun(0);
       dbRun(
         db,
-        `INSERT INTO fleet_brief (id, run_id, job_id, agent_method, brief_markdown, findings_json,
-           synthesis_json, created_at, expires_at)
-         VALUES ('b-old', ?, 'j', 'agents.catchup', NULL, '{}', NULL, ?, ?)`,
+        `INSERT INTO fleet_brief (id, run_id, job_id, subject_key, agent_method, brief_markdown,
+           findings_json, synthesis_json, created_at, expires_at)
+         VALUES ('b-old', ?, 'j', 'j', 'agents.catchup', NULL, '{}', NULL, ?, ?)`,
         [runId, Date.now() - 1000, Date.now() - 1],
       );
       dbRun(
         db,
-        `INSERT INTO fleet_brief (id, run_id, job_id, agent_method, brief_markdown, findings_json,
-           synthesis_json, created_at, expires_at)
-         VALUES ('b-live', ?, 'j', 'agents.catchup', NULL, '{}', NULL, ?, ?)`,
+        `INSERT INTO fleet_brief (id, run_id, job_id, subject_key, agent_method, brief_markdown,
+           findings_json, synthesis_json, created_at, expires_at)
+         VALUES ('b-live', ?, 'j', 'j', 'agents.catchup', NULL, '{}', NULL, ?, ?)`,
         [runId, Date.now(), Date.now() + 10 * DAY_MS],
       );
       const { gate } = stubGate(enforcedWith({}));

@@ -23,7 +23,7 @@ const USAGE = `Usage: nimbus fleet <status|list|briefs|show|run|digest> [options
 
   status                        report [fleet] config and a live host-activity probe
   list                          list every configured job and its last-run state
-  briefs [--limit N] [--job ID] list synthesised briefs, most recent first
+  briefs [--limit N] [--job ID] [--subject KEY]  list synthesised briefs, most recent first
   show <id>                     print one brief's full markdown body
   run <job> [--force]           run one configured job right now, bypassing its schedule — naming
                                  the job skips both its interval and any failure backoff
@@ -48,6 +48,7 @@ export interface FleetBriefsArgs {
   readonly sub: "briefs";
   readonly limit?: number;
   readonly job?: string;
+  readonly subject?: string;
   readonly json: boolean;
 }
 export interface FleetShowArgs {
@@ -94,6 +95,7 @@ function flagValue(args: readonly string[], name: string): string | undefined {
 function parseBriefsArgs(rest: readonly string[], json: boolean): ParsedFleetArgs | undefined {
   const limitRaw = flagValue(rest, "--limit");
   const job = flagValue(rest, "--job");
+  const subject = flagValue(rest, "--subject");
   let limit: number | undefined;
   if (limitRaw !== undefined) {
     const n = Number.parseInt(limitRaw, 10);
@@ -104,6 +106,7 @@ function parseBriefsArgs(rest: readonly string[], json: boolean): ParsedFleetArg
     sub: "briefs",
     ...(limit === undefined ? {} : { limit }),
     ...(job === undefined ? {} : { job }),
+    ...(subject === undefined ? {} : { subject }),
     json,
   };
 }
@@ -186,17 +189,41 @@ interface FleetStatusResultShape {
   };
 }
 
+interface FleetJobSweepListEntryShape {
+  readonly kind: string;
+  readonly maxSubjects: number;
+  readonly pathPrefix: string | null;
+  readonly subjectsTotal: number | null;
+  readonly cursor: string | null;
+  readonly emptyReason: string | null;
+  readonly rotationExceedsRetention: boolean | null;
+}
+
 interface FleetJobListEntryShape {
   readonly name: string;
   readonly agent: string;
   readonly intervalSeconds: number;
   readonly state: FleetJobStateShape | null;
+  /**
+   * Optional, not just nullable: this is the shape of a response from the GATEWAY, which this CLI
+   * releases separately from and can be OLDER than — a pre-sweep gateway's `fleet.list` never sends
+   * this field at all, rather than sending it as `null`. The render path below reads it with `==
+   * null`, on purpose, to tolerate that absence; keep the two in sync — narrowing this to
+   * non-optional invites deleting that check as "redundant" when it is the version-skew guard.
+   */
+  readonly sweep?: FleetJobSweepListEntryShape | null;
 }
 
 interface FleetBriefSummaryShape {
   readonly id: string;
   readonly runId: string;
   readonly jobId: string;
+  /**
+   * Optional for the same reason as `FleetJobListEntryShape.sweep`: an older gateway's
+   * `fleet.briefs` response predates this field and omits it entirely. `runBriefs` reads it with
+   * `== null` for that reason — do not tighten this to required without also removing that check.
+   */
+  readonly subjectKey?: string;
   readonly agentMethod: string;
   readonly briefMarkdown: string | null;
   readonly findingsJson: string;
@@ -211,6 +238,17 @@ interface FleetRunSummaryShape {
   readonly jobsCompleted: number;
   readonly jobsUnattempted: number;
   readonly jobsSkippedNotDue: number;
+  /**
+   * Optional for the same reason as `FleetJobListEntryShape.sweep`: a pre-sweep gateway's
+   * `fleet.runNow` response predates these three counters and omits them entirely rather than
+   * sending `0`. Neither this field nor its two siblings is read anywhere in this file today — if
+   * one becomes read, read it with `== null` / `??`, on purpose, to tolerate that absence; keep
+   * this comment in sync — narrowing these to non-optional invites deleting that tolerance as
+   * "redundant" when it is the version-skew guard.
+   */
+  readonly subjectsInScope?: number;
+  readonly subjectsAttempted?: number;
+  readonly subjectsCompleted?: number;
 }
 
 interface FleetDigestResultShape {
@@ -218,6 +256,13 @@ interface FleetDigestResultShape {
   readonly generatedAt: number;
   readonly markdown: string;
   readonly jobs: readonly unknown[];
+  /**
+   * Optional for the same reason as `FleetJobListEntryShape.sweep`: a pre-sweep gateway's
+   * `fleet.digest` response predates this field and omits it entirely. Not read anywhere in this
+   * file today (the digest is printed via `r.markdown` or re-serialized whole) — if that changes,
+   * read it with `== null` / `??`, on purpose, to tolerate that absence.
+   */
+  readonly sweeps?: readonly unknown[];
   readonly notCompared: {
     readonly firstObservation: readonly unknown[];
     readonly notSummarizable: readonly unknown[];
@@ -272,8 +317,16 @@ async function runList(c: FleetIpc, json: boolean, sink: OutcomeSink): Promise<n
     const last =
       j.state?.lastSuccessAt != null ? new Date(j.state.lastSuccessAt).toISOString() : "never";
     const failures = j.state?.consecutiveFailures ?? 0;
+    const sweep =
+      j.sweep == null
+        ? ""
+        : `  sweep=${j.sweep.kind} max=${j.sweep.maxSubjects} total=${j.sweep.subjectsTotal ?? "?"}` +
+          (j.sweep.emptyReason === null ? "" : `  empty: ${j.sweep.emptyReason}`) +
+          (j.sweep.rotationExceedsRetention === true
+            ? "  WARNING: a full rotation outlasts retention; this sweep cannot report movement"
+            : "");
     sink.out(
-      `${j.name}  agent=${j.agent}  interval=${j.intervalSeconds}s  last success=${last}  consecutive failures=${failures}\n`,
+      `${j.name}  agent=${j.agent}  interval=${j.intervalSeconds}s  last success=${last}  consecutive failures=${failures}${sweep}\n`,
     );
   }
   return FLEET_EXIT_CODES.ok;
@@ -283,6 +336,7 @@ async function runBriefs(c: FleetIpc, a: FleetBriefsArgs, sink: OutcomeSink): Pr
   const params: Record<string, unknown> = {};
   if (a.limit !== undefined) params["limit"] = a.limit;
   if (a.job !== undefined) params["jobId"] = a.job;
+  if (a.subject !== undefined) params["subjectKey"] = a.subject;
   const r = (await c.call("fleet.briefs", params)) as {
     briefs: readonly FleetBriefSummaryShape[];
   };
@@ -295,7 +349,12 @@ async function runBriefs(c: FleetIpc, a: FleetBriefsArgs, sink: OutcomeSink): Pr
     return FLEET_EXIT_CODES.ok;
   }
   for (const b of r.briefs) {
-    sink.out(`${b.id}  ${b.jobId}  ${b.agentMethod}  ${new Date(b.createdAt).toISOString()}\n`);
+    // A config-named job's subject IS the job, so the column is shown only when it adds something —
+    // which also keeps every pre-sweep output line byte-identical.
+    const subject = b.subjectKey == null || b.subjectKey === b.jobId ? "" : `  [${b.subjectKey}]`;
+    sink.out(
+      `${b.id}  ${b.jobId}${subject}  ${b.agentMethod}  ${new Date(b.createdAt).toISOString()}\n`,
+    );
   }
   return FLEET_EXIT_CODES.ok;
 }

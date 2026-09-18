@@ -8,6 +8,7 @@ import {
   type FleetRunSummary,
 } from "../fleet/fleet-scheduler.ts";
 import { FleetStore } from "../fleet/fleet-store.ts";
+import { FLEET_SUBJECTS_V63_SQL } from "../index/fleet-subjects-v63-sql.ts";
 import { FLEET_V60_SQL } from "../index/fleet-v60-sql.ts";
 import {
   dispatchFleetRpc,
@@ -28,6 +29,9 @@ const COMPLETED: FleetRunSummary = {
   jobsCompleted: 1,
   jobsUnattempted: 0,
   jobsSkippedNotDue: 0,
+  subjectsInScope: 1,
+  subjectsAttempted: 1,
+  subjectsCompleted: 1,
 };
 
 test("fleet.status reports the live probe and config without running anything", async () => {
@@ -52,8 +56,22 @@ test("fleet.status reports running: true and the real config/jobsConfigured when
   // dropped config field all fail here.
   const scheduler: FakeScheduler = { runOnce: async () => COMPLETED };
   const jobs: readonly NimbusFleetJobToml[] = [
-    { name: "a", agent: "catchup", intervalSeconds: 60, params: {}, digestMinDelta: 1 },
-    { name: "b", agent: "ownership", intervalSeconds: 120, params: {}, digestMinDelta: 1 },
+    {
+      name: "a",
+      agent: "catchup",
+      intervalSeconds: 60,
+      params: {},
+      digestMinDelta: 1,
+      sweep: null,
+    },
+    {
+      name: "b",
+      agent: "ownership",
+      intervalSeconds: 120,
+      params: {},
+      digestMinDelta: 1,
+      sweep: null,
+    },
   ];
   const config: NimbusFleetToml = {
     ...DEFAULT_FLEET_CONFIG,
@@ -201,6 +219,7 @@ describe("fleet.list / fleet.briefs / fleet.show over a real store", () => {
     db = new Database(":memory:");
     db.run("PRAGMA foreign_keys = ON");
     db.exec(FLEET_V60_SQL);
+    for (const stmt of FLEET_SUBJECTS_V63_SQL) db.exec(stmt);
     store = new FleetStore(db);
   });
 
@@ -211,6 +230,7 @@ describe("fleet.list / fleet.briefs / fleet.show over a real store", () => {
       intervalSeconds: 3600,
       params: {},
       digestMinDelta: 1,
+      sweep: null,
     },
   ];
   const config: NimbusFleetToml = DEFAULT_FLEET_CONFIG;
@@ -232,7 +252,15 @@ describe("fleet.list / fleet.briefs / fleet.show over a real store", () => {
     expect(out).toMatchObject({ kind: "hit" });
     if (out.kind !== "hit") throw new Error("expected a hit");
     expect(out.value).toEqual({
-      jobs: [{ name: "morning_catchup", agent: "catchup", intervalSeconds: 3600, state: null }],
+      jobs: [
+        {
+          name: "morning_catchup",
+          agent: "catchup",
+          intervalSeconds: 3600,
+          state: null,
+          sweep: null,
+        },
+      ],
     });
   });
 
@@ -255,6 +283,7 @@ describe("fleet.list / fleet.briefs / fleet.show over a real store", () => {
     const id = store.recordBrief({
       runId,
       jobId: "morning_catchup",
+      subjectKey: "morning_catchup",
       agentMethod: "agents.catchup",
       briefMarkdown: "# hi",
       findingsJson: "{}",
@@ -304,6 +333,126 @@ describe("fleet.list / fleet.briefs / fleet.show over a real store", () => {
     );
   });
 
+  function seedBrief(jobId: string, subjectKey: string, createdAt: number): void {
+    const runId = store.openRun({
+      startedAt: createdAt,
+      hostPower: "ac",
+      hostIdleMs: 0,
+      hostSource: "measured",
+      remoteCallBudget: 0,
+    });
+    store.recordBrief({
+      runId,
+      jobId,
+      subjectKey,
+      agentMethod: "agents.oncall",
+      briefMarkdown: "x",
+      findingsJson: "{}",
+      synthesisJson: null,
+      createdAt,
+      expiresAt: createdAt + 86_400_000,
+    });
+  }
+
+  const sweepJob: NimbusFleetJobToml = {
+    name: "bus",
+    agent: "ownership",
+    intervalSeconds: 86_400,
+    params: {},
+    digestMinDelta: 1,
+    sweep: { kind: "paths", maxSubjects: 20, pathPrefix: "src/" },
+  };
+
+  test("fleet.briefs filters by subjectKey", async () => {
+    seedBrief("nightly", "services:checkout", 1000);
+    seedBrief("nightly", "services:billing", 1001);
+    const r = await dispatchFleetRpc(
+      "fleet.briefs",
+      { subjectKey: "services:checkout" },
+      ctx(2000),
+    );
+    expect(r.kind).toBe("hit");
+    const briefs = (r as { value: { briefs: Array<{ subjectKey: string }> } }).value.briefs;
+    expect(briefs.map((b) => b.subjectKey)).toEqual(["services:checkout"]);
+  });
+
+  test("fleet.briefs refuses an empty subjectKey", async () => {
+    await expect(dispatchFleetRpc("fleet.briefs", { subjectKey: "" }, ctx(2000))).rejects.toThrow(
+      /subjectKey must be a non-empty string/,
+    );
+  });
+
+  test("fleet.list reports sweep config and state; config-named jobs report sweep: null", async () => {
+    store.recordSweepEnumeration("bus", { kind: "paths", subjectsTotal: 60, emptyReason: null });
+    const r = await dispatchFleetRpc("fleet.list", {}, ctx(2000, { jobs: [...jobs, sweepJob] }));
+    const listed = (r as { value: { jobs: Array<{ name: string; sweep: unknown }> } }).value.jobs;
+    expect(listed.find((j) => j.name === "bus")?.sweep).toEqual({
+      kind: "paths",
+      maxSubjects: 20,
+      pathPrefix: "src/",
+      subjectsTotal: 60,
+      cursor: null,
+      emptyReason: null,
+      // ceil(60 / 20) = 3 runs × 1 day = 3 days, inside the default 14-day retention
+      rotationExceedsRetention: false,
+    });
+    expect(listed.find((j) => j.name === "morning_catchup")?.sweep).toBeNull();
+  });
+
+  test("fleet.list flags a rotation longer than retention, and null before any enumeration", async () => {
+    type Listed = { value: { jobs: Array<{ sweep: { rotationExceedsRetention: unknown } }> } };
+    const r1 = (await dispatchFleetRpc(
+      "fleet.list",
+      {},
+      ctx(2000, { jobs: [sweepJob] }),
+    )) as Listed;
+    expect(r1.value.jobs[0]?.sweep.rotationExceedsRetention).toBeNull();
+    store.recordSweepEnumeration("bus", { kind: "paths", subjectsTotal: 400, emptyReason: null });
+    const r2 = (await dispatchFleetRpc(
+      "fleet.list",
+      {},
+      ctx(2000, { jobs: [sweepJob] }),
+    )) as Listed;
+    expect(r2.value.jobs[0]?.sweep.rotationExceedsRetention).toBe(true); // 20 runs = 20 days > 14
+  });
+
+  test("fleet.list reports NOTHING from a previous sweep kind's persisted state", async () => {
+    // `recordSweepEnumeration` resets the cursor on a kind change, but `subjects_total` and
+    // `empty_reason` survive until the NEW kind enumerates successfully — and a failed enumeration
+    // never replaces them. Reporting those under the new kind would state a total the new corpus
+    // never had, and derive a rotation warning from it.
+    store.recordSweepEnumeration("bus", {
+      kind: "paths",
+      subjectsTotal: 400,
+      emptyReason: "stale reason from the paths sweep",
+    });
+    store.advanceSweepCursor("bus", "paths", "paths:file:/r:a.ts");
+
+    const switched: NimbusFleetJobToml = {
+      ...sweepJob,
+      sweep: { kind: "services", maxSubjects: 20, pathPrefix: null },
+    };
+    const r = (await dispatchFleetRpc("fleet.list", {}, ctx(2000, { jobs: [switched] }))) as {
+      value: {
+        jobs: Array<{
+          sweep: {
+            kind: string;
+            subjectsTotal: unknown;
+            cursor: unknown;
+            emptyReason: unknown;
+            rotationExceedsRetention: unknown;
+          };
+        }>;
+      };
+    };
+    const sweep = r.value.jobs[0]?.sweep;
+    expect(sweep?.kind).toBe("services");
+    expect(sweep?.subjectsTotal).toBeNull();
+    expect(sweep?.cursor).toBeNull();
+    expect(sweep?.emptyReason).toBeNull();
+    expect(sweep?.rotationExceedsRetention).toBeNull();
+  });
+
   test('fleet.briefs caps an oversized limit at MAX_BRIEFS_LIMIT, not just "does not throw"', async () => {
     // Seeding only 3 rows and asserting 3 come back (the previous version of this test) passes
     // identically whether or not the clamp exists — 3 rows is 3 rows either way, so that assertion
@@ -322,6 +471,7 @@ describe("fleet.list / fleet.briefs / fleet.show over a real store", () => {
       store.recordBrief({
         runId,
         jobId: `j${i}`,
+        subjectKey: `j${i}`,
         agentMethod: "agents.catchup",
         briefMarkdown: "x",
         findingsJson: "{}",
@@ -345,6 +495,7 @@ describe("fleet.digest", () => {
     db = new Database(":memory:");
     db.run("PRAGMA foreign_keys = ON");
     db.exec(FLEET_V60_SQL);
+    for (const stmt of FLEET_SUBJECTS_V63_SQL) db.exec(stmt);
     store = new FleetStore(db);
   });
 
@@ -355,6 +506,7 @@ describe("fleet.digest", () => {
       intervalSeconds: 3600,
       params: {},
       digestMinDelta: 1,
+      sweep: null,
     },
   ];
   const config: NimbusFleetToml = DEFAULT_FLEET_CONFIG;
