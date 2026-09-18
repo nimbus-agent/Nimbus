@@ -272,6 +272,12 @@ describe("tryCreateEmbeddingWorkerBridge", () => {
       const sent = handle.posted().find((m) => m["type"] === "embed_texts");
       handle.fire({ type: "embed_texts_result", id: sent?.["id"], ok: true, vectors: [[1]] });
 
+      // Dropping the pending entry only stops the bridge listening; without a cancel the worker
+      // still embeds the abandoned text and posts a reply, delaying whatever is queued behind it.
+      const cancels = handle.posted().filter((m) => m["type"] === "cancel_embed");
+      expect(cancels).toHaveLength(1);
+      expect(cancels[0]?.["id"]).toBe(sent?.["id"]);
+
       // The dual path carries the same contract.
       const dual: unknown = await bridge.embedQueryDual("starved again").then(
         () => "resolved",

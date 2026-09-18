@@ -12,10 +12,20 @@ export type Chunk = {
   text: string;
 };
 
+/**
+ * Per-call options for {@link Embedder.embed}.
+ *
+ * `signal` is OPTIONAL and an implementation may ignore it: only an embedder whose work can really
+ * be stopped honours it (today, the OpenAI one, which hands it to `fetch`). A local ONNX inference
+ * cannot be interrupted once started, so its embedder ignores the signal rather than pretending —
+ * abandoning work and cancelling it are different claims, and only the second is made here.
+ */
+export type EmbedOptions = { readonly signal?: AbortSignal };
+
 export interface Embedder {
   model: string;
   dims: number;
-  embed(texts: string[]): Promise<Float32Array[]>;
+  embed(texts: string[], opts?: EmbedOptions): Promise<Float32Array[]>;
   /**
    * Whether embedding runs ON this machine. DECLARED by each implementation, never inferred
    * from a URL by a caller: `egress/embedding-egress.ts` reads this to decide whether a batch

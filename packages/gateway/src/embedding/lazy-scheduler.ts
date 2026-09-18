@@ -135,7 +135,13 @@ export function createLazyEmbeddingRuntime(
 
   // Bounds the EMBED only. The pipeline load above it is deliberately outside the budget: a cold
   // model load is warm-up, not a stalled query, and must not be reported as a timeout.
-  function boundQueryEmbed<T>(work: Promise<T>): Promise<T> {
+  /**
+   * The signal reaches no one here, and that is the honest shape: this runtime's pipeline embeds
+   * through a local ONNX inference that cannot be interrupted once started. The timeout still stops
+   * the CALLER waiting, which is all it ever did on this path — see `openai-embedder.ts` for the one
+   * place cancellation is real.
+   */
+  function boundQueryEmbed<T>(work: (signal: AbortSignal) => Promise<T>): Promise<T> {
     return withEmbeddingQueryTimeout(work, {
       timeoutMs: resolveEmbeddingQueryTimeoutMs(),
       readiness,
@@ -166,7 +172,7 @@ export function createLazyEmbeddingRuntime(
       if (p === null) {
         return null;
       }
-      const rows = await boundQueryEmbed(p.embedTexts([text]));
+      const rows = await boundQueryEmbed(() => p.embedTexts([text]));
       return rows[0] ?? null;
     },
 
@@ -180,7 +186,7 @@ export function createLazyEmbeddingRuntime(
       if (p === null) {
         return { vec384: null, vec1536: null, model384: null, model1536: null };
       }
-      const vecs = await boundQueryEmbed(p.embedTexts([text]));
+      const vecs = await boundQueryEmbed(() => p.embedTexts([text]));
       const vec = vecs[0] ?? null;
       if (vec === null) {
         return { vec384: null, vec1536: null, model384: null, model1536: null };

@@ -218,23 +218,47 @@ export function isEmbeddingTimeoutError(err: unknown): err is EmbeddingTimeoutEr
  * Bounds one query-embedding call. The ONE place the budget turns into a typed rejection, shared by
  * every runtime so none of them can drift back to resolving `null`. `onTimeout` lets a caller drop
  * bookkeeping it holds for the abandoned request (the worker bridge's pending map).
+ *
+ * It takes a work FACTORY rather than a started promise, so the budget can hand the work an
+ * `AbortSignal` and abort it on timeout. With a started promise the timeout could only stop WAITING
+ * for the work; the work itself ran on — a real cost for the OpenAI embedder, which held an HTTP
+ * request nobody would read. What each runtime does with the signal differs and is documented at
+ * each: the OpenAI embedder passes it to `fetch`, the worker bridge turns it into a `cancel_embed`
+ * message, and a local ONNX inference ignores it because it cannot be interrupted.
  */
 export function withEmbeddingQueryTimeout<T>(
-  work: Promise<T>,
+  work: (signal: AbortSignal) => Promise<T>,
   opts: {
     readonly timeoutMs: number;
     readonly readiness: () => EmbeddingReadiness;
     readonly onTimeout?: () => void;
   },
 ): Promise<T> {
+  const controller = new AbortController();
   let timer: ReturnType<typeof setTimeout> | undefined;
+  const started = work(controller.signal);
+  // Aborting MAKES the work reject, and by the time it does the race has already settled on the
+  // timeout, so that rejection would surface as UNHANDLED — the cancellation causing the crash it
+  // was added to avoid. The no-op catch attaches a handler to a DERIVED promise, which marks the
+  // rejection handled without changing what `started` itself resolves or rejects with; the race
+  // below still sees the real outcome and still rejects with the original error when work loses.
+  started.catch(() => {
+    /* handled by the race, or deliberately discarded after the timeout won */
+  });
   const timeout = new Promise<never>((_, reject) => {
     timer = setTimeout(() => {
+      const err = new EmbeddingTimeoutError(opts.readiness(), opts.timeoutMs);
       opts.onTimeout?.();
-      reject(new EmbeddingTimeoutError(opts.readiness(), opts.timeoutMs));
+      // REJECT BEFORE ABORT, and the order is load-bearing. An abort listener that rejects the work
+      // synchronously would otherwise settle the race first, and the caller would receive the work's
+      // own "aborted" error instead of the typed timeout — silently undoing #1535's guarantee that a
+      // starved query is distinguishable from a dead one. Rejecting first pins the race's outcome;
+      // the work's later rejection is swallowed by the handler attached above.
+      reject(err);
+      controller.abort(err);
     }, opts.timeoutMs);
   });
-  return Promise.race([work, timeout]).finally(() => {
+  return Promise.race([started, timeout]).finally(() => {
     clearTimeout(timer);
   });
 }

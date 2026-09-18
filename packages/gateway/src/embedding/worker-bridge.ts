@@ -354,11 +354,21 @@ class EmbeddingWorkerBridge implements EmbeddingRuntime {
     // The budget turns into a TYPED rejection, never `null` (#928's rule, applied to the arm it
     // missed). A late `embed_texts_result` for the abandoned id finds no pending entry and is
     // dropped.
-    return withEmbeddingQueryTimeout(posted, {
+    return withEmbeddingQueryTimeout(() => posted, {
       timeoutMs: resolveEmbeddingQueryTimeoutMs(),
       readiness: () => this.getReadiness(),
       onTimeout: () => {
         this.pending.delete(id);
+        // Dropping the pending entry only stops US listening; the worker would still embed the
+        // abandoned text and post a result nobody reads, delaying whatever is queued behind it.
+        // The worker drops the request if it has not started, and suppresses the reply either way.
+        // Best-effort by nature: an inference already running cannot be interrupted, and a worker
+        // that cannot accept the message is one this process has already given up on.
+        try {
+          this.worker.postMessage({ type: "cancel_embed", id });
+        } catch (err) {
+          this.logger.warn({ err, msg: "embed_cancel_post_failed" }, "could not cancel embed");
+        }
       },
     });
   }

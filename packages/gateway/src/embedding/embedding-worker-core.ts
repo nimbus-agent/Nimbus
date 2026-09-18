@@ -21,8 +21,15 @@ export type InitMsg = {
 
 export type EmbedTextsMsg = { type: "embed_texts"; id: string; texts: string[] };
 export type EmbedItemMsg = { type: "embed_item"; itemId: string };
+/**
+ * The main thread gave up on `id` (its query timed out). Best-effort: the request is dropped if its
+ * embed has not started, and its reply is suppressed either way. An inference already running is
+ * NOT interrupted — nothing in the local stack can do that — so this reclaims queue position and
+ * silences a reply, never CPU already committed.
+ */
+export type CancelEmbedMsg = { type: "cancel_embed"; id: string };
 
-export type InMsg = InitMsg | EmbedTextsMsg | EmbedItemMsg;
+export type InMsg = InitMsg | EmbedTextsMsg | EmbedItemMsg | CancelEmbedMsg;
 
 /**
  * Runtime type guard narrowing external (cross-realm) worker input to `InMsg`.
@@ -59,6 +66,9 @@ export function isInMsg(data: unknown): data is InMsg {
   }
   if (m["type"] === "embed_item") {
     return typeof m["itemId"] === "string";
+  }
+  if (m["type"] === "cancel_embed") {
+    return typeof m["id"] === "string";
   }
   return false;
 }
@@ -103,6 +113,12 @@ export type EmbeddingWorkerDeps = {
  * stays in the residual `onmessage` shell and is NOT part of this core — the core
  * operates on already-parsed payloads.
  */
+/**
+ * Upper bound on remembered cancellations. Each entry is a UUID string, so this is kilobytes, and
+ * the set only grows when a cancel outlives the request it names — a bound, not a tuning knob.
+ */
+const CANCELLED_MAX = 256;
+
 export class EmbeddingWorkerCore {
   private readonly sendToMain: (data: unknown) => void;
   private readonly setup: EmbeddingWorkerSetup;
@@ -118,6 +134,13 @@ export class EmbeddingWorkerCore {
   // exactly as the pre-extraction worker's `void (async () => …)()` did) so that
   // `idle()` can await all of it in tests without serializing it.
   private readonly inFlight = new Set<Promise<void>>();
+  /**
+   * Ids the main thread gave up on. Normally each entry is consumed by the request it names, but a
+   * cancel whose request never arrives (the worker restarted in between) would linger, so the set is
+   * bounded and evicts oldest-first — a Set iterates in insertion order. Losing the oldest entry
+   * costs at most one suppressed reply that the bridge discards anyway for having no pending id.
+   */
+  private readonly cancelled = new Set<string>();
 
   constructor(deps: EmbeddingWorkerDeps) {
     this.sendToMain = deps.sendToMain;
@@ -126,6 +149,18 @@ export class EmbeddingWorkerCore {
 
   handleMessage(msg: unknown): void {
     if (!isInMsg(msg)) return;
+    // Handled BEFORE the readiness guard below: a cancel for an id from an earlier, still-queued
+    // request must land even in the window where the worker is re-initialising, or the id would be
+    // remembered as live forever.
+    if (msg.type === "cancel_embed") {
+      this.cancelled.add(msg.id);
+      while (this.cancelled.size > CANCELLED_MAX) {
+        const oldest = this.cancelled.values().next();
+        if (oldest.done === true) break;
+        this.cancelled.delete(oldest.value);
+      }
+      return;
+    }
     if (msg.type === "init") {
       if (this.initStarted) return;
       this.initStarted = true;
@@ -223,8 +258,14 @@ export class EmbeddingWorkerCore {
     id: string,
     texts: string[],
   ): Promise<void> {
+    // Checked twice, and neither check is redundant. BEFORE: the cancel arrived while this request
+    // waited its turn behind other work, so the embed never runs — the only real saving available
+    // here. AFTER: the cancel arrived mid-inference, which cannot be stopped, so all that is left is
+    // not to post a result the main thread has already stopped listening for.
+    if (this.takeCancelled(id)) return;
     try {
       const vectors = await pipeline.embedTexts(texts);
+      if (this.takeCancelled(id)) return;
       this.sendToMain({
         type: "embed_texts_result",
         id,
@@ -232,8 +273,18 @@ export class EmbeddingWorkerCore {
         vectors: vectors.map((v) => Array.from(v)),
       });
     } catch (err) {
+      if (this.takeCancelled(id)) return;
       this.sendToMain({ type: "embed_texts_result", id, ok: false, error: errMessage(err) });
     }
+  }
+
+  /**
+   * True when `id` was cancelled, consuming the record so the set cannot grow without bound: a
+   * cancel for an id that never arrives (a worker restarted between the request and the cancel)
+   * is the one case that leaves an entry behind, which `CANCELLED_MAX` then bounds.
+   */
+  private takeCancelled(id: string): boolean {
+    return this.cancelled.delete(id);
   }
 }
 
