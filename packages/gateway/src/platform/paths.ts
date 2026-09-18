@@ -1,5 +1,6 @@
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
+import { demoModeRequested, deriveDemoPaths } from "./demo-root.ts";
 import { processEnvGet } from "./env-access.ts";
 import { PlatformInitError } from "./errors.ts";
 
@@ -10,6 +11,13 @@ export interface PlatformPaths {
   socketPath: string;
   extensionsDir: string;
   tempDir: string;
+  /**
+   * Set ONLY by the three `create*Paths` resolvers below, when `NIMBUS_DEMO=1` (invariant I41).
+   * Everything host-global that must differ for a demo process — the vault factory, the Windows
+   * AppContainer boot reap, the env-selected sidecars — branches on this field, never on the env
+   * var, so an injected `PlatformPaths` cannot be half-demo.
+   */
+  demo?: true;
 }
 
 /**
@@ -51,6 +59,7 @@ function socketPathOverride(): string | undefined {
 }
 
 export function createWindowsPaths(): PlatformPaths {
+  const demo = demoModeRequested(processEnvGet);
   const appData = processEnvGet("APPDATA");
   const localAppData = processEnvGet("LOCALAPPDATA");
   if (appData === undefined || appData.length === 0) {
@@ -65,7 +74,7 @@ export function createWindowsPaths(): PlatformPaths {
   }
   const configDir = configDirOverride() ?? join(appData, "Nimbus");
   const dataDir = join(localAppData, "Nimbus", "data");
-  return {
+  const real: PlatformPaths = {
     configDir,
     dataDir,
     logDir: join(dataDir, "logs"),
@@ -73,13 +82,15 @@ export function createWindowsPaths(): PlatformPaths {
     extensionsDir: join(localAppData, "Nimbus", "extensions"),
     tempDir: join(tmpdir(), "nimbus"),
   };
+  return demo ? deriveDemoPaths(real) : real;
 }
 
 export function createDarwinPaths(): PlatformPaths {
+  const demo = demoModeRequested(processEnvGet);
   const root = join(homedir(), "Library", "Application Support", "Nimbus");
   const configDir = configDirOverride() ?? root;
   const tmp = processEnvGet("TMPDIR") ?? "/tmp";
-  return {
+  const real: PlatformPaths = {
     configDir,
     dataDir: root,
     logDir: join(root, "logs"),
@@ -87,16 +98,18 @@ export function createDarwinPaths(): PlatformPaths {
     extensionsDir: join(root, "extensions"),
     tempDir: join(tmpdir(), "nimbus"),
   };
+  return demo ? deriveDemoPaths(real) : real;
 }
 
 export function createLinuxPaths(): PlatformPaths {
+  const demo = demoModeRequested(processEnvGet);
   const home = homedir();
   const configRoot = processEnvGet("XDG_CONFIG_HOME") ?? join(home, ".config");
   const dataRoot = processEnvGet("XDG_DATA_HOME") ?? join(home, ".local", "share");
   const runtimeDir = processEnvGet("XDG_RUNTIME_DIR") ?? tmpdir();
   const configDir = configDirOverride() ?? join(configRoot, "nimbus");
   const dataDir = join(dataRoot, "nimbus");
-  return {
+  const real: PlatformPaths = {
     configDir,
     dataDir,
     logDir: join(dataDir, "logs"),
@@ -104,4 +117,5 @@ export function createLinuxPaths(): PlatformPaths {
     extensionsDir: join(dataDir, "extensions"),
     tempDir: join(tmpdir(), "nimbus"),
   };
+  return demo ? deriveDemoPaths(real) : real;
 }
