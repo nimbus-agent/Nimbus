@@ -37,6 +37,72 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
   unhandled. The worker's cancelled-id set is bounded (256, oldest evicted) for the one case that
   leaks: a cancel whose request never arrives because the worker restarted in between. No schema, no
   invariant, no egress class — the ledger row is still appended before the request, unchanged.
+- **2026-09-17 — Overnight sub-agent fleets, PR 2b of 2: subject enumeration, closing the row.**
+  A `[[fleet.job]]` can now set `sweep = "paths" | "services" | "symbols" | "terms"` instead of
+  naming exactly one subject. `max_subjects` is REQUIRED when `sweep` is set (integer `1..500`,
+  refused rather than clamped outside — the same posture as `media allow-remote --limit`) and
+  `path_prefix` is an optional, case-sensitive plain-string prefix on the repo-relative POSIX path,
+  accepted only for `paths`/`symbols` and refused when empty (every path starts with `""`, so an
+  empty prefix would silently mean "no narrowing") or set on a kind that does not accept it. The
+  scheduler (`fleet/fleet-scheduler.ts`'s `runSweepJob`) rotates through a bounded window each run
+  on a per-job KEY cursor — the first key strictly greater than the last one processed, wrapping to
+  the start — re-checking host admission before EVERY subject rather than only between jobs, and
+  advancing the cursor after each subject, success or failure, so one broken subject cannot pin the
+  rotation. Schema **V63**: `fleet_brief` gains `subject_key TEXT NOT NULL` (the table is rebuilt in
+  the migration transaction, since SQLite cannot add a `NOT NULL` column without a default and a
+  default would write a placeholder into history — backfilled to `job_id`, so a config-named job's
+  history reads as one subject, unchanged), `fleet_job_state` gains `sweep_kind`/`sweep_cursor`/
+  `sweep_subjects_total`/`sweep_empty_reason`, and `fleet_run` gains `subjects_in_scope`/
+  `subjects_attempted`/`subjects_completed` — a config-named job counts as ONE subject in all three,
+  so the completed/attempted ratio means the same thing whatever mix of job kinds a run carried.
+
+  **The enumerator map is TOTAL over the fleet-eligible agents** — `fleet/fleet-sweep-support.ts`'s
+  `FLEET_SWEEP_SUPPORT`, the same compiler-enforced shape `FLEET_DIGEST_EXTRACTORS` already uses;
+  it is total over the 14 fleet-eligible agents, so a fifteenth does not compile until someone
+  classifies it. Four kinds ship: `paths` (`ownership`), `services`
+  (`oncall`/`changelog`/`ownership`), `symbols` (`ghost`/`conflicts`),
+  `terms` (`glossary`); `why`/`expert`/`impact`/`catchup`/`decisions`/`standup`/`huddle`/`janitor`
+  stay not-enumerable, each with a reason recorded in the map — `janitor`'s is that the index holds
+  no resource inventory, so a subject list would be INVENTED rather than enumerated.
+
+  **Two corrections landed in review, before implementation, both from checking a claim against the
+  source rather than the brainstorm.** `paths` enumerates the ownership pass's OWN `graph_entity`
+  nodes (`source_file`/`directory`), never files and directories synthesized from
+  `git_blame_line` — that would have emitted directories the pass never wrote a node for, each one a
+  brief whose only content is "resolved to a configured root but has no ownership node". And a
+  symbol's label (`"<name> — <file>"`, the string `ghost`/`conflicts` match on) is **not unique per
+  symbol** as an earlier draft assumed — the entity's external id carries `kind` and `root`, which
+  the label does not, so a same-named function and type in one file, or one file indexed under two
+  roots, share a label. Stated as a bound rather than fixed (§ 10): the enumerator takes DISTINCT
+  labels, one subject per collision, and `ghost`/`conflicts`' own exact-match lookup resolves it to
+  one of the colliding entities (`LIMIT 1`). **Why `symbols`, not `paths`, for `ghost`/`conflicts`:**
+  their `file` parameter resolves through `resolveMatchToken` — an exact symbol-label match, THEN a
+  fuzzy basename `LIKE` — and a path sweep would hand every same-named file (every repo's
+  `index.ts`) the identical fuzzy token.
+
+  `nimbus fleet digest` groups every sweep job into ONE section: a coverage line (`<agent> · swept
+  <n> of <total> subjects this window · full rotation ≈ <k> runs ≈ <d> days · retention <r> days`),
+  moved subjects in full, and unchanged / first-observation (truncated to 10 keys in Markdown, all
+  of them in JSON) / not-summarizable / agent-changed counts — disclosing, never preventing, the
+  case a rotation longer than retention cannot report movement for. `nimbus fleet list` / `fleet.list`
+  gain a `sweep` field (kind, cap, prefix, subjects total, cursor, empty reason, and the
+  rotation-vs-retention flag, printed as a WARNING in human output); `nimbus fleet briefs` /
+  `fleet.briefs` gain `subjectKey` and a `--subject <key>` filter. Config-named jobs render
+  byte-identically to before this PR, pinned by a golden test.
+
+  **No new invariant, no new static rule, no new egress class, no new IPC method** — both RPCs were
+  already routed, so there is no new routing entry to prove. I38's per-run remote-call budget is
+  still reset once per run, never per subject; many subjects per run make budget exhaustion the
+  NORMAL case rather than the exception, which is why the per-brief `fleetRemoteWithheld` disclosure
+  (#1462) is load-bearing here. `negotiate` stays `deferred`, now for the SETTLED reason enumeration
+  itself created: no sweep enumerator returns person-shaped subjects, and turning "the owner built
+  one dossier" into "the machine builds a dossier on every indexed person, nightly, unattended" has
+  no consent surface today. Bounds stated rather than solved: coverage is eventual, not
+  prioritised — a risky file waits its turn in the rotation; `paths` covers only what the ownership
+  pass emitted (git-aware roots, and only the files and directories it wrote a node for); `services` covers
+  configured services only, not one a connector merely mentions; a subject deleted mid-rotation
+  simply stops appearing and its old briefs age out under retention, while a renamed file is a new
+  subject. Design: `2026-09-17-fleet-subject-enumeration-design.md`.
 - **2026-09-17 — the `hybrid` and `openai` embedding runtimes now disclose their own backfill pass.**
   A stated residual of the search-disclosure work earlier the same day: `getActiveBackfillPass()`
   returned `null` on both in-process runtimes, so a search running during the backfill THEY start

@@ -19,12 +19,32 @@ export interface NimbusFleetToml {
 
 export type FleetJobParamValue = string | number;
 
+export const SWEEP_KINDS = ["paths", "services", "symbols", "terms"] as const;
+export type SweepKind = (typeof SWEEP_KINDS)[number];
+
+/** A sweep's per-run cap ceiling — refused above, never clamped (the `media allow-remote --limit` posture). */
+export const MAX_SWEEP_SUBJECTS = 500;
+
+/** Kinds whose subjects carry a repo-relative path `path_prefix` can match. */
+const PATH_PREFIX_KINDS: ReadonlySet<SweepKind> = new Set<SweepKind>(["paths", "symbols"]);
+
+export interface FleetJobSweepToml {
+  readonly kind: SweepKind;
+  readonly maxSubjects: number;
+  readonly pathPrefix: string | null;
+}
+
+function isSweepKind(s: string): s is SweepKind {
+  return (SWEEP_KINDS as readonly string[]).includes(s);
+}
+
 export interface NimbusFleetJobToml {
   readonly name: string;
   readonly agent: string;
   readonly intervalSeconds: number;
   readonly params: Readonly<Record<string, FleetJobParamValue>>;
   readonly digestMinDelta: number;
+  readonly sweep: FleetJobSweepToml | null;
 }
 
 export const DEFAULT_FLEET_CONFIG: NimbusFleetToml = Object.freeze({
@@ -43,7 +63,15 @@ function camel(key: string): string {
   return key.replace(/_([a-z])/g, (_m, c: string) => c.toUpperCase());
 }
 
-const JOB_RESERVED = new Set(["name", "agent", "interval_seconds", "digest_min_delta"]);
+const JOB_RESERVED = new Set([
+  "name",
+  "agent",
+  "interval_seconds",
+  "digest_min_delta",
+  "sweep",
+  "max_subjects",
+  "path_prefix",
+]);
 
 /**
  * Apply one `[fleet]` key to the accumulating config. A malformed value is IGNORED here and falls
@@ -130,6 +158,9 @@ type FleetJobDraft = {
   intervalSeconds?: number;
   params: Record<string, FleetJobParamValue>;
   digestMinDelta?: number;
+  sweep?: string;
+  maxSubjectsRaw?: string;
+  pathPrefix?: string;
 };
 
 /**
@@ -173,10 +204,62 @@ function applyJobKey(cur: FleetJobDraft, key: string, valRaw: string): void {
     cur.digestMinDelta = n;
     return;
   }
+  if (key === "sweep") {
+    cur.sweep = parseString(valRaw);
+    return;
+  }
+  if (key === "max_subjects") {
+    // Kept RAW: validity depends on whether `sweep` is set, which a later line may decide.
+    cur.maxSubjectsRaw = valRaw;
+    return;
+  }
+  if (key === "path_prefix") {
+    cur.pathPrefix = parseString(valRaw);
+    return;
+  }
   if (!JOB_RESERVED.has(key)) {
     const n = parseIntDec(valRaw);
     cur.params[camel(key)] = n ?? parseString(valRaw);
   }
+}
+
+/**
+ * Rules 3–5 of the sweep spec (§ 4) — the syntactic half. Rules 1, 2 and 6 need the agent map and
+ * run in `fleet/fleet-sweep-support.ts`, since `config/` does not import `fleet/`.
+ */
+function resolveSweep(name: string, d: FleetJobDraft): FleetJobSweepToml | null {
+  if (d.sweep === undefined) {
+    if (d.maxSubjectsRaw !== undefined || d.pathPrefix !== undefined) {
+      throw new FleetConfigError(
+        `[[fleet.job]] ${name} sets max_subjects or path_prefix without sweep`,
+      );
+    }
+    return null;
+  }
+  const kind = d.sweep;
+  if (!isSweepKind(kind)) {
+    throw new FleetConfigError(
+      `[[fleet.job]] ${name} has unknown sweep "${kind}" (expected one of ${SWEEP_KINDS.join(", ")})`,
+    );
+  }
+  const n = d.maxSubjectsRaw === undefined ? undefined : parseIntDec(d.maxSubjectsRaw);
+  if (n === undefined || n < 1 || n > MAX_SWEEP_SUBJECTS) {
+    throw new FleetConfigError(
+      `[[fleet.job]] ${name} requires max_subjects between 1 and ${String(MAX_SWEEP_SUBJECTS)} ` +
+        `when sweep is set (refused, not clamped; an unbounded sweep must not be expressible)`,
+    );
+  }
+  if (d.pathPrefix === "") {
+    // Every path starts with "", so an empty prefix would silently mean "no narrowing". Refused, not
+    // trimmed or dropped: a path may legally contain spaces, so whitespace is kept verbatim.
+    throw new FleetConfigError(`[[fleet.job]] ${name} path_prefix must not be empty`);
+  }
+  if (d.pathPrefix !== undefined && !PATH_PREFIX_KINDS.has(kind)) {
+    throw new FleetConfigError(
+      `[[fleet.job]] ${name} path_prefix applies only to sweep = "paths" or "symbols"`,
+    );
+  }
+  return { kind, maxSubjects: n, pathPrefix: d.pathPrefix ?? null };
 }
 
 export function parseNimbusTomlFleetJobs(source: string): NimbusFleetJobToml[] {
@@ -186,8 +269,9 @@ export function parseNimbusTomlFleetJobs(source: string): NimbusFleetJobToml[] {
 
   const flush = (): void => {
     if (cur === undefined) return;
-    const { name, agent, intervalSeconds, params, digestMinDelta } = cur;
+    const draft = cur;
     cur = undefined;
+    const { name, agent, intervalSeconds, params, digestMinDelta } = draft;
     // A block with nothing in it is not a job; an INCOMPLETE one is a job the owner meant to
     // configure. Refuse the second rather than dropping it (they would believe it runs) or
     // defaulting it (a schedule they did not choose).
@@ -201,7 +285,14 @@ export function parseNimbusTomlFleetJobs(source: string): NimbusFleetJobToml[] {
       throw new FleetConfigError(`[[fleet.job]] duplicate name: ${name}`);
     }
     seen.add(name);
-    jobs.push({ name, agent, intervalSeconds, params, digestMinDelta: digestMinDelta ?? 1 });
+    jobs.push({
+      name,
+      agent,
+      intervalSeconds,
+      params,
+      digestMinDelta: digestMinDelta ?? 1,
+      sweep: resolveSweep(name, draft),
+    });
   };
 
   for (const line of source.split(/\r?\n/)) {

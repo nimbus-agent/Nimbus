@@ -69,6 +69,7 @@ test("parses multiple [[fleet.job]] blocks with flat params", () => {
     intervalSeconds: 86400,
     params: { sinceMs: 86400000, service: "github" },
     digestMinDelta: 1,
+    sweep: null,
   });
   expect(jobs[1]?.params).toEqual({});
 });
@@ -201,5 +202,70 @@ describe("[[fleet.job]] digest_min_delta", () => {
       expect(j?.digestMinDelta).toBe(1);
       expect(j?.params).toEqual({});
     }
+  });
+});
+
+describe("[[fleet.job]] sweep", () => {
+  const base = `[[fleet.job]]\nname = "bus"\nagent = "ownership"\ninterval_seconds = 86400\n`;
+
+  test("parses sweep, max_subjects and path_prefix, none of which reach params", () => {
+    const [job] = parseNimbusTomlFleetJobs(
+      `${base}sweep = "paths"\nmax_subjects = 200\npath_prefix = "packages/"\n`,
+    );
+    expect(job?.sweep).toEqual({ kind: "paths", maxSubjects: 200, pathPrefix: "packages/" });
+    expect(job?.params).toEqual({});
+  });
+
+  test("a job without sweep has sweep: null", () => {
+    expect(parseNimbusTomlFleetJobs(base)[0]?.sweep).toBeNull();
+  });
+
+  test.each([
+    ["absent", ""],
+    ["zero", "max_subjects = 0\n"],
+    ["above 500 (refused, not clamped)", "max_subjects = 501\n"],
+    ["non-integer", 'max_subjects = "lots"\n'],
+  ])("rule 3: sweep with max_subjects %s is refused", (_label, line) => {
+    expect(() => parseNimbusTomlFleetJobs(`${base}sweep = "paths"\n${line}`)).toThrow(
+      /bus requires max_subjects between 1 and 500/,
+    );
+  });
+
+  test("rule 4: max_subjects without sweep is refused", () => {
+    expect(() => parseNimbusTomlFleetJobs(`${base}max_subjects = 5\n`)).toThrow(/without sweep/);
+  });
+
+  test("rule 4: path_prefix without sweep is refused", () => {
+    expect(() => parseNimbusTomlFleetJobs(`${base}path_prefix = "src/"\n`)).toThrow(
+      /without sweep/,
+    );
+  });
+
+  test("rule 5: path_prefix on a kind that does not accept it is refused", () => {
+    expect(() =>
+      parseNimbusTomlFleetJobs(`${base}sweep = "services"\nmax_subjects = 5\npath_prefix = "x"\n`),
+    ).toThrow(/path_prefix applies only to sweep = "paths" or "symbols"/);
+  });
+
+  test("an EMPTY path_prefix is refused, not read as 'no filter'", () => {
+    // `""` prefixes every path, so it would silently mean "no narrowing" — a value the owner wrote
+    // that does nothing. Refused like `digest_min_delta = 0`. NOT trimmed: a repo-relative path may
+    // legally contain spaces, and trimming would silently change what the owner asked for.
+    expect(() =>
+      parseNimbusTomlFleetJobs(`${base}sweep = "paths"\nmax_subjects = 5\npath_prefix = ""\n`),
+    ).toThrow(/bus path_prefix must not be empty/);
+  });
+
+  test("path_prefix whitespace is preserved verbatim", () => {
+    const [job] = parseNimbusTomlFleetJobs(
+      `${base}sweep = "paths"\nmax_subjects = 5\npath_prefix = "my docs/"\n`,
+    );
+    expect(job?.sweep?.pathPrefix).toBe("my docs/");
+  });
+
+  test("an unknown sweep kind is refused and names the valid set", () => {
+    expect(() => parseNimbusTomlFleetJobs(`${base}sweep = "people"\nmax_subjects = 5\n`)).toThrow(
+      /unknown sweep "people".*paths, services, symbols, terms/,
+    );
   });
 });
