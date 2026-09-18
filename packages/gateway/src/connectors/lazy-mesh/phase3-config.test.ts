@@ -780,6 +780,10 @@ describe("phase3AddDbtMcp", () => {
     const spec = servers["dbt"];
     if (spec === undefined) throw new Error("expected spec");
     expect(spec.env?.["DBT_API_BASE"]).toBe("https://emea.dbt.com");
+    // The host DBT_API_BASE points at must be reachable, not only the default (#1533).
+    const network = readSandboxPolicy(spec).permissions.network;
+    expect(network).toContain("emea.dbt.com");
+    expect(network).toContain("cloud.getdbt.com");
   });
 });
 
