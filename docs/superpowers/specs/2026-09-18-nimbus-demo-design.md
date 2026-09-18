@@ -58,6 +58,10 @@ cast"). A later cast may be recorded from this command, but that is not a goal h
    `decision_record` / ownership `graph_entity` rows exist only after their passes run.
 8. **Not resolved statically:** the exact behaviour of `nimbus --demo ask` with no model route
    (`engine/run-ask.ts` route selection spans several modules). Resolved empirically in PR 2 (§ 6).
+9. **To verify in the plan:** which read methods (`connector.listStatus`, `nimbus status`, `doctor`)
+   read from the `SyncScheduler` rather than the DB, and therefore need a defined empty answer when a
+   demo gateway does not construct one (§ 5). A read that throws on a missing scheduler would turn
+   `nimbus --demo status` into an error.
 
 ## 3. Isolation — PR 1
 
@@ -68,6 +72,19 @@ One environment variable, `NIMBUS_DEMO=1`, read by **both** mirrored path module
 flag sets it for its own process; `cli/src/lib/spawn-gateway.ts` already forwards the environment to
 the gateway it spawns.
 
+**Parsing is exact.** Unset, `""` and `"0"` mean off; `"1"` means on; **any other value refuses**
+with a named error (`NIMBUS_DEMO must be 1 or unset`). Silently treating `"true"` as off would run
+against the REAL root a user who typed it believed they had left.
+
+**The CLI sets it before anything resolves a path.** `packages/cli/src/index.ts` resolves
+`getCliPlatformPaths()` and opens the CLI file logger (lines 205–206) BEFORE dispatch, and dispatch
+takes `rawArgv[0]` as the command (line 213). So a flag parsed inside a command would (a) have
+already written `cli-YYYY-MM-DD.log` into the REAL `logDir`, and (b) make `nimbus --demo oncall`
+dispatch the command `--demo`. A pre-pass at the top of `index.ts`, before line 205, sets
+`NIMBUS_DEMO=1` when argv contains `--demo` or the subcommand is `demo`, and strips every `--demo`
+token from the argv handed to dispatch. No existing command defines its own `--demo` flag (checked
+2026-09-18), so stripping it globally shadows nothing.
+
 When set, every path moves under one demo root inside the REAL data dir:
 
 | Path | Demo value |
@@ -75,6 +92,7 @@ When set, every path moves under one demo root inside the REAL data dir:
 | `configDir` | `<realDataDir>/demo/config` |
 | `dataDir` | `<realDataDir>/demo/data` |
 | `logDir`, `extensionsDir` | under the demo `dataDir`, same shape as today |
+| `tempDir` | `join(tmpdir(), "nimbus-demo")` — not `tmpdir()/nimbus`, which the real processes use |
 | socket | the platform default with `-demo` inserted before any extension: `\\.\pipe\nimbus-gateway-demo` (Windows), `<dir>/nimbus-gateway-demo.sock` (macOS/Linux) |
 | `gateway.json` | under the demo `dataDir` (follows `dataDir`) |
 
@@ -92,7 +110,7 @@ demo `configDir`, where none exist, so it falls through to the demo `nimbus.toml
 ### 3.3 Invariant I41 — demo isolation
 
 **I41:** a demo-rooted process never resolves the real `configDir`, the real `dataDir` (other than
-the `demo/` subtree it owns), or the real socket; and synthetic seed rows can be written only by a
+the `demo/` subtree it owns), the real `tempDir`, or the real socket; and synthetic seed rows can be written only by a
 demo-rooted gateway (§ 4.1). Consequences: the Vault is a fresh, empty store under the demo config
 (zero connector credentials), and the demo `nimbus.toml` is written by the seeder, never copied.
 
@@ -117,13 +135,17 @@ there), not a runtime refusal. The method is:
 
 - CLI-only; absent from the Tauri `ALLOWED_METHODS` (I7).
 - **LAN-forbidden explicitly** — `checkLanMethodAllowed` is a denylist, so a new namespace is
-  LAN-reachable by default; `demo.` is added to it with a test that CALLS the check, plus a negative
-  control.
+  LAN-reachable by default; the `demo` namespace is added to `FORBIDDEN_OVER_LAN`
+  (`ipc/lan-rpc.ts`) with a test that CALLS the check, plus a negative control.
 - Routed in both the inner dispatcher and the outer method-routing match; proven over a real socket
   by an e2e test (a handler present without routing passes unit tests and fails live).
 
-`demo.seed` is reset-then-seed in one call: it truncates the demo index, then writes the corpus. It
-takes `now` from the gateway clock (a test seam injects it).
+`demo.seed` **never truncates**. It seeds only a freshly migrated, EMPTY index and refuses
+(`ERR_DEMO_ALREADY_SEEDED`) when `item` holds any row. Re-seeding is done by recreating the demo data
+root, not by deleting rows (§ 4.4): `packages/gateway/src/index/` holds 83 `CREATE TABLE` statements across 47 files (counted 2026-09-18), so a
+hand-maintained truncation list would be wrong on the day it was written and silently incomplete
+on the day a migration adds a table. It takes `now` from the gateway clock (a test seam injects
+it).
 
 ### 4.2 Corpus format
 
@@ -168,7 +190,18 @@ including one failed one, decision and glossary threads) so `standup`, `expert`,
 ### 4.4 Time drift
 
 Agent windows are 24h/48h/3d/90d, so a corpus rebased on Monday is stale by Friday. `nimbus demo`
-re-seeds on every run; `nimbus --demo status` reports the seed age.
+re-seeds on every run by **recreating** the root: stop the demo gateway, **wait for its process to
+exit**, delete `demo/data` and `demo/workspace`, start a fresh demo gateway (which migrates an empty
+DB), then call `demo.seed`. `nimbus --demo status` reports the seed age.
+
+**Waiting for exit is required, not polish.** `nimbus stop` today sends SIGTERM and returns
+immediately (`cli/src/commands/stop.ts`), and on Windows SIGTERM is `TerminateProcess` — the process
+dies, but its handles on `nimbus.db`, `-wal`, `-shm` and the log are released asynchronously, so an
+immediate recursive delete fails with `EBUSY`/`EPERM`. A shared `stopAndWaitForExit` helper signals,
+polls `process.kill(pid, 0)` to a bounded deadline, and only then returns; `nimbus demo`,
+`demo stop` and `demo reset` all use it. Past the deadline it fails loudly (naming the pid) rather
+than deleting a directory a live process still holds. Because every `nimbus demo` run recreates the
+root, this is on the common path, not only on `reset`.
 
 ## 5. Command surface
 
@@ -187,13 +220,46 @@ never reformatted or trimmed):
 2. `nimbus --demo why src/retry/backoff.ts:42` — the line → PR #412 → `PAY-231`.
 3. `nimbus --demo owners src/retry` — bus factor 1.
 
-**Labelling** — every command run with `--demo` prints one line to **stderr** (so `--json` output
-stays parseable):
-`DEMO — synthetic "Acme" org, not your data · seeded 2h ago · nimbus demo reset to remove`.
+Each tour step is introduced by a fixed two-line header, then the verbatim brief:
 
-**Keeping "synthetic only" true** — a demo gateway refuses `connector.auth`, connector add, and
-`connector.sync` with an error naming the real profile. Otherwise an evaluator could authenticate a
-real connector into the demo root and the banner's "not your data" would become false.
+```text
+── [1/3] On-call triage ─────────────────────────────
+$ nimbus --demo oncall
+```
+
+When stdout is not a TTY the tour prints the same text with no spinner or cursor-control escapes.
+`nimbus demo --json` is not offered (§ 8).
+
+**Labelling** — every command run with `--demo` prints one line to **stderr** (so `--json` output
+stays parseable), in one of three states:
+
+- seeded: `DEMO — synthetic "Acme" org, not your data · seeded 2h ago · nimbus demo reset to remove`
+- stale (seed older than 24h, the narrowest agent window):
+  `DEMO — synthetic "Acme" org · seeded 3d ago (stale — briefs may be empty) · run nimbus demo to re-seed`
+- unseeded (a demo gateway reachable but `item` empty):
+  `DEMO — not seeded yet · run nimbus demo`
+
+A `--demo` command with no demo gateway running fails with the existing "Gateway is not running"
+error, but its hint names `nimbus demo`, not `nimbus start` (which would start the REAL gateway).
+`--demo` commands never auto-seed: a gateway that writes synthetic rows as a side effect of booting,
+or of an unrelated read, is a harder property to reason about than one explicit `nimbus demo`.
+
+**Keeping "synthetic only" true** — two layers, so neither is load-bearing alone:
+
+1. **Structural:** a demo gateway does not construct or start the `SyncScheduler`
+   (`platform/assemble.ts`). No connector can sync into the demo index, whatever credentials or
+   config reach it.
+2. **Refusal at the one routing choke point** — `dispatchMethod` in `ipc/server/server.ts`, before
+   any namespace dispatcher, refuses with `ERR_DEMO_FORBIDDEN` (naming the real profile as the place
+   to connect accounts):
+   - every `connector.*` method EXCEPT an explicit read allow-list (`connector.listStatus`,
+     `connector.status`, `connector.healthHistory`) — an ALLOW-list, so a connector method added
+     later is refused in demo until someone decides otherwise;
+   - `vault.set` / `vault.delete`, `data.import`, and `extension.install` — each a way to bring real
+     credentials or real data into a root labelled "not your data".
+
+Without these, an evaluator could authenticate a real connector into the demo root and the banner's
+"not your data" would become false.
 
 **`ask` is not in the tour**, and the tour must not depend on a model. See § 2.8 and § 6.
 
@@ -206,7 +272,12 @@ real connector into the demo root and the banner's "not your data" would become 
   `configDir`, and nothing lies under the real `dataDir` except the `demo/` subtree. **Negative
   control:** the same assertion fails without the flag.
 - CLI ↔ gateway path parity: both modules resolve byte-identical demo paths on every OS branch.
-- Fail-closed refusal of `NIMBUS_DEMO` combined with `NIMBUS_CONFIG_DIR` / `NIMBUS_GATEWAY_SOCKET`.
+- Fail-closed refusal of `NIMBUS_DEMO` combined with `NIMBUS_CONFIG_DIR` / `NIMBUS_GATEWAY_SOCKET`,
+  and of any `NIMBUS_DEMO` value other than unset/`""`/`"0"`/`"1"`.
+- `tempDir` under the flag differs from the real `tempDir` on every OS branch (part of the I41 test).
+- CLI argv pre-pass: `nimbus --demo oncall` dispatches `oncall` with `--demo` stripped, and the CLI
+  file logger opens under the DEMO `logDir` — asserted by pointing the real roots at temp dirs and
+  checking the real `logDir` is never created.
 - E2E (in `packages/gateway/test/e2e/`, where the Linux D-Bus wrapper lives): a demo gateway boots
   beside a "real" one on temp OS roots, both answer `status`, and the real `dataDir` OUTSIDE its `demo/` subtree
   (and the real `configDir` in full) is byte-identical before and after.
@@ -221,9 +292,24 @@ real connector into the demo root and the banner's "not your data" would become 
   names PR #412's deploy; `why` reaches `PAY-231`; owners reports bus factor 1) and that `## Gaps` is
   present.
 - Seeding at an injected `now` seven days later still yields non-empty briefs (windows rebase).
-- Demo gateway refuses `connector.auth` / connector add / `connector.sync`.
+- Demo gateway, over a real socket: every `connector.*` method outside the read allow-list, plus
+  `vault.set`/`vault.delete`/`data.import`/`extension.install`, returns `ERR_DEMO_FORBIDDEN`; the
+  three allow-listed reads succeed; a normal gateway is unaffected (negative control). The
+  `connector.*` method set is DERIVED from the dispatcher's own cases, not hand-listed, so a new
+  connector method cannot be missing from the test.
+- No `SyncScheduler` is constructed in a demo gateway.
+- `demo.seed` refuses a non-empty index (`ERR_DEMO_ALREADY_SEEDED`).
+- `stopAndWaitForExit`: returns only after the pid is gone; fails loudly past the deadline without
+  deleting anything; `nimbus demo` run twice back-to-back succeeds on Windows (the `EBUSY` case).
+- `why` and `owners` tour commands succeed with `process.cwd()` OUTSIDE the demo workspace (this
+  already holds — `matchConfiguredRoot` in `agents/_lib/why-subject.ts` joins a relative ref to each
+  configured root, never to the cwd — the test pins it).
+- Banner: seeded / stale (>24h) / unseeded states, all on stderr, none on stdout under `--json`.
 - `nimbus --demo ask` against a demo gateway: capture the actual outcome in an e2e test; docs describe
-  the captured behaviour, nothing more (§ 2.8).
+  the captured behaviour, nothing more (§ 2.8). If the capture shows an unhandled error or a hang
+  rather than a clear "no model configured" refusal, that is a defect of `ask` on EVERY fresh
+  install, not of the demo — it is fixed in `ask` itself (with its own test), not special-cased
+  for demo mode.
 
 ## 7. Docs
 
@@ -240,6 +326,28 @@ PR whose tests prove them.
 - The Killer Demo's remediation / dry-run flow and `nimbus audit replay`.
 - `nimbus wow`.
 - Desktop (Tauri) demo mode.
+- `nimbus demo --json`. The tour is for a human reading a terminal; a structured tour output has no
+  consumer. Every individual `--demo` command already honours `--json`.
 - Name clash to avoid: the zero-config onboarding "demo symbol" (`ipc/index-demo-symbol-rpc.ts`,
   `agents/_lib/demo-symbol.ts`) is unrelated; the new code uses the `demo/` directory and `demo.`
   IPC namespace, and must not reuse those identifiers.
+
+## 9. Review disposition (review of 2026-09-18, `2026-09-18-nimbus-demo-design-review.md`)
+
+Every finding was checked against the code before it was accepted or rejected.
+
+| # | Finding | Disposition |
+|---|---|---|
+| 2.1 | `--demo` parsed after the logger opens; `--demo` would dispatch as a command | **Fixed** (§ 3.1). Verified: `cli/src/index.ts` resolves paths + logger at 205–206, dispatches `rawArgv[0]` at 213. |
+| 2.2 | `tempDir` shared with real processes | **Fixed** (§ 3.1 table, I41, § 6). |
+| 2.3 | Loose env parsing | **Fixed, stricter than proposed** (§ 3.1): an unrecognised value REFUSES instead of meaning "off", which would silently run against the real root. |
+| 3.1 | `reset` deletes while Windows still holds handles | **Fixed, wider** (§ 4.4). Verified `stop.ts` never waits. Since re-seeding now recreates the root, this is on every `nimbus demo` run, not only `reset`. |
+| 3.2 | Unseeded demo gateway | **Option B adopted, A rejected** (§ 5): unseeded banner + a `nimbus demo` hint; no auto-seed on boot, which would make booting a writer. |
+| 3.3 | Truncate tables in a transaction | **Concern adopted, method rejected** (§ 4.1, § 4.4). Of the named tables, `graph_edge`, `item_chunk`, `deployment` and `ci_run` do not exist (edges are `graph_relation`; deployments and CI runs are `item` rows), and a hand list over 83 tables rots. Re-seed recreates the data root; `demo.seed` refuses a non-empty index. |
+| 3.4 | Stale-seed hint | **Fixed** (§ 5), 24h threshold = narrowest agent window. |
+| 4.1 | Refuse at the dispatcher, not per handler | **Fixed, stronger** (§ 5): at `dispatchMethod`, an ALLOW-list for `connector.*` reads, plus vault / data-import / extension-install, plus the `SyncScheduler` not constructed at all. The review's version was a mutation DENY-list, which a future connector method would slip past. |
+| 4.2 | Test `-32601` + LAN + Tauri | **Already specified**; `FORBIDDEN_OVER_LAN` location added (§ 4.1). |
+| 5.1 | `why` must not resolve against cwd | **Already true** — `matchConfiguredRoot` joins to configured roots only. Test added to pin it (§ 6). |
+| 5.2 | Tour headers; non-TTY | **Fixed** (§ 5). `nimbus demo --json` **deferred** (§ 8): no consumer. |
+| 5.3 | `ask` should give a friendly refusal | **Partly adopted** (§ 6): behaviour is captured, not asserted from reading. If it is an unhandled error or a hang, it is fixed in `ask` for every fresh install, not special-cased for demo. The proposed message text is not adopted — it names setup steps not yet verified. |
+| 6 | Task checklists | **Deferred to the implementation plan** (writing-plans). Not copied: it includes the rejected auto-seed item. |
