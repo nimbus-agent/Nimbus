@@ -143,7 +143,7 @@ export async function tryCreateRoutingEmbeddingRuntime(
     download: null,
     reason: null,
   });
-  const boundQueryEmbed = <T>(work: Promise<T>): Promise<T> =>
+  const boundQueryEmbed = <T>(work: (signal: AbortSignal) => Promise<T>): Promise<T> =>
     withEmbeddingQueryTimeout(work, { timeoutMs: resolveEmbeddingQueryTimeoutMs(), readiness });
 
   return {
@@ -162,7 +162,10 @@ export async function tryCreateRoutingEmbeddingRuntime(
     },
 
     async embedQuery(text: string): Promise<Float32Array | null> {
-      const vecs = await boundQueryEmbed(localEmbedder.embed([text]));
+      // The local embedder ignores the signal (ONNX inference cannot be interrupted); it is passed
+      // anyway so the call shape is the same on both halves and a future local runtime that CAN
+      // stop work needs no change here.
+      const vecs = await boundQueryEmbed((signal) => localEmbedder.embed([text], { signal }));
       return vecs[0] ?? null;
     },
 
@@ -171,8 +174,10 @@ export async function tryCreateRoutingEmbeddingRuntime(
       // vector. A half that TIMES OUT degrades to null and is marked `partial`; any other failure
       // still propagates, exactly as `Promise.all` did. Both halves timing out is the typed timeout.
       const [local, remote] = await Promise.allSettled([
-        boundQueryEmbed(localEmbedder.embed([text])),
-        boundQueryEmbed(openaiEmbedder.embed([text])),
+        boundQueryEmbed((signal) => localEmbedder.embed([text], { signal })),
+        // The half this actually stops: an aborted signal closes the OpenAI request rather than
+        // leaving it to finish into a result no one reads.
+        boundQueryEmbed((signal) => openaiEmbedder.embed([text], { signal })),
       ]);
       for (const half of [local, remote]) {
         if (half.status === "rejected" && !isEmbeddingTimeoutError(half.reason)) {

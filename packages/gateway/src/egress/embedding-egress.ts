@@ -1,6 +1,6 @@
 import type { Database } from "bun:sqlite";
 
-import type { Embedder } from "../embedding/types.ts";
+import type { Embedder, EmbedOptions } from "../embedding/types.ts";
 import { appendEgressEntry } from "./egress-ledger.ts";
 import { redactEgressSummary } from "./egress-record.ts";
 import { EgressAppendFailedError } from "./model-egress.ts";
@@ -39,7 +39,7 @@ export function wrapLedgeredEmbedder(
     model: embedder.model,
     dims: embedder.dims,
     isLocal: embedder.isLocal,
-    embed: async (texts: string[]): Promise<Float32Array[]> => {
+    embed: async (texts: string[], opts?: EmbedOptions): Promise<Float32Array[]> => {
       // An empty batch makes no request -- `createOpenAIEmbedder` returns early -- so a row
       // would record egress that did not happen.
       if (texts.length === 0) {
@@ -63,7 +63,10 @@ export function wrapLedgeredEmbedder(
       } catch (err) {
         throw new EgressAppendFailedError(err);
       }
-      return embedder.embed(texts);
+      // `opts` is FORWARDED, not dropped: this wrapper decorates exactly the remote embedders, so
+      // swallowing the caller's `signal` here would mean a timed-out query never cancels the one
+      // request that can actually be cancelled.
+      return embedder.embed(texts, opts);
     },
   };
 }

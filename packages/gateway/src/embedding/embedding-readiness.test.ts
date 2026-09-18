@@ -170,7 +170,7 @@ describe("resolveEmbeddingQueryTimeoutMs", () => {
 
 describe("withEmbeddingQueryTimeout", () => {
   test("resolves with the work's value when it settles in time", async () => {
-    const out = await withEmbeddingQueryTimeout(Promise.resolve(7), {
+    const out = await withEmbeddingQueryTimeout(() => Promise.resolve(7), {
       timeoutMs: 1_000,
       readiness: () => readiness({ state: "ready" }),
     });
@@ -180,7 +180,7 @@ describe("withEmbeddingQueryTimeout", () => {
   test("rejects with the TYPED timeout (never null) and runs the cleanup when the work stalls", async () => {
     let cleaned = 0;
     const never = new Promise<number>(() => {});
-    const p = withEmbeddingQueryTimeout(never, {
+    const p = withEmbeddingQueryTimeout(() => never, {
       timeoutMs: 20,
       readiness: () => readiness({ state: "ready" }),
       onTimeout: () => {
@@ -198,11 +198,78 @@ describe("withEmbeddingQueryTimeout", () => {
 
   test("passes the work's own rejection through unchanged", async () => {
     await expect(
-      withEmbeddingQueryTimeout(Promise.reject(new Error("boom")), {
+      withEmbeddingQueryTimeout(() => Promise.reject(new Error("boom")), {
         timeoutMs: 1_000,
         readiness: () => readiness({ state: "ready" }),
       }),
     ).rejects.toThrow("boom");
+  });
+
+  test("aborts the work's signal on timeout, so the work can stop rather than just be abandoned", async () => {
+    let aborted = false;
+    let reason: unknown;
+    const p = withEmbeddingQueryTimeout(
+      (signal) =>
+        new Promise<number>((_, reject) => {
+          signal.addEventListener("abort", () => {
+            aborted = true;
+            reason = signal.reason;
+            reject(new Error("aborted by signal"));
+          });
+        }),
+      { timeoutMs: 20, readiness: () => readiness({ state: "ready" }) },
+    );
+    const err: unknown = await p.then(
+      () => undefined,
+      (e: unknown) => e,
+    );
+    expect(aborted).toBe(true);
+    // The reason names WHY, so an embedder that surfaces it does not report a generic cancellation.
+    expect(isEmbeddingTimeoutError(reason)).toBe(true);
+    // The caller still sees the typed timeout, never the work's own abort error.
+    expect(isEmbeddingTimeoutError(err)).toBe(true);
+  });
+
+  test("a signal that is never aborted stays clean on the happy path", async () => {
+    const seen: AbortSignal[] = [];
+    await withEmbeddingQueryTimeout(
+      (signal) => {
+        seen.push(signal);
+        return Promise.resolve(1);
+      },
+      { timeoutMs: 1_000, readiness: () => readiness({ state: "ready" }) },
+    );
+    expect(seen[0]?.aborted).toBe(false);
+  });
+
+  test("a post-timeout rejection does not escape as an unhandled rejection", async () => {
+    // Aborting MAKES the work reject after the race settled. Without the swallow in the helper that
+    // rejection is unhandled — the cancellation crashing the process it was added to protect.
+    const unhandled: unknown[] = [];
+    // Typed structurally rather than as `PromiseRejectionEvent`: that DOM lib type is not in this
+    // project's `lib`, and the two members used here are all the listener needs.
+    const onUnhandled = (e: Event & { reason?: unknown }): void => {
+      unhandled.push(e.reason);
+      e.preventDefault();
+    };
+    globalThis.addEventListener("unhandledrejection", onUnhandled as EventListener);
+    try {
+      const p = withEmbeddingQueryTimeout(
+        (signal) =>
+          new Promise<number>((_, reject) => {
+            signal.addEventListener("abort", () => {
+              reject(new Error("late rejection after the timeout won"));
+            });
+          }),
+        { timeoutMs: 10, readiness: () => readiness({ state: "ready" }) },
+      );
+      await p.catch(() => undefined);
+      // Two macrotask turns: the rejection is delivered after the current microtask drain.
+      await new Promise((r) => setTimeout(r, 30));
+      expect(unhandled).toEqual([]);
+    } finally {
+      globalThis.removeEventListener("unhandledrejection", onUnhandled as EventListener);
+    }
   });
 });
 

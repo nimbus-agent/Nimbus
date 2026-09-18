@@ -168,6 +168,35 @@ describe("createOpenAIEmbedder", () => {
     );
   });
 
+  test("forwards the caller's AbortSignal to fetch, so a timed-out query really stops the request", async () => {
+    // The only embedder whose work can be cancelled. Without the forward, a timed-out query left the
+    // request running to completion — billed, holding a connection, its answer discarded.
+    const seen: Array<AbortSignal | undefined> = [];
+    globalThis.fetch = (async (_input: Parameters<typeof fetch>[0], init?: RequestInit) => {
+      seen.push(init?.signal ?? undefined);
+      return jsonResponse({
+        data: [{ index: 0, embedding: Array.from({ length: 384 }, () => 0) }],
+      });
+    }) as typeof fetch;
+    const embedder = await createOpenAIEmbedder({ apiKey: "k" });
+    const controller = new AbortController();
+    await embedder.embed(["x"], { signal: controller.signal });
+    expect(seen[0]).toBe(controller.signal);
+  });
+
+  test("no signal: the request carries none, and callers that pass nothing are unaffected", async () => {
+    const seen: Array<AbortSignal | null | undefined> = [];
+    globalThis.fetch = (async (_input: Parameters<typeof fetch>[0], init?: RequestInit) => {
+      seen.push(init?.signal);
+      return jsonResponse({
+        data: [{ index: 0, embedding: Array.from({ length: 384 }, () => 0) }],
+      });
+    }) as typeof fetch;
+    const embedder = await createOpenAIEmbedder({ apiKey: "k" });
+    await embedder.embed(["x"]);
+    expect(seen[0] == null).toBe(true);
+  });
+
   test("numeric coercion: stringified numbers in embedding still produce a Float32Array", async () => {
     const embedding = Array.from({ length: 384 }, (_, i) => String(i / 384));
     captureFetch(jsonResponse({ data: [{ index: 0, embedding }] }));
