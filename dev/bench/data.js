@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1789668617713,
+  "lastUpdate": 1789716296492,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "f310d2a679ca7edc1f73c6abde808acd0c851931",
-          "message": "feat(gateway): research briefs — staged HTTP reasoning surface with citation-validated reports (#799)\n\n## What this is\n\nThe gateway side of **Nimbus research briefs**. The `nimbus-web-clipper`\nextension lets a user write a question (\"compare MV3 service worker\nlifecycles across Chrome and Firefox\"), select some open tabs, and ship\nthe extracted text here. The gateway reasons across those pages — plus\nthe user's already-indexed clips — and returns a citation-validated\nreport of **findings, conflicts, and gaps**. All judgment lives in the\ngateway; the extension extracts, feeds, polls, and renders.\n\nSpec: `docs/superpowers/specs/2026-07-21-research-briefs-design.md` ·\nPlan: `docs/superpowers/plans/2026-07-21-research-briefs-gateway.md`\n\n## Surface\n\nFour bearer-authed loopback write routes on the I13 surface\n(`WRITE_ROUTE_ALLOWLIST` **8 → 12**) plus one bearer-gated read route:\n\n```\nPOST /v1/briefs                 → { id, status:\"collecting\", expected }\nPOST /v1/briefs/{id}/sources    → { accepted, received, expected }   (idempotent per canonical URL)\nPOST /v1/briefs/{id}/run        → { status:\"running\" }               (idempotent, fire-and-forget synthesis)\nPOST /v1/briefs/{id}/save       → { itemId }                         (nimbus:research_brief item)\nGET  /v1/briefs/{id}            → { status, report?, failureReason? }\n```\n\nStaged collection, because eleven articles is ~500 KB and an MV3 worker\nwon't survive one long request through synthesis.\n\n## Design decisions worth a reviewer's eye\n\n- **The model judges; the server verifies.** Unlike the built-in agents\n(which build a deterministic brief and let the LLM only re-render it),\nbriefs let the model reason — then constrain it structurally. Citations\nare opaque server-issued tokens (`S1`, `C2`); an unknown ref is dropped,\na zero-ref finding is dropped, a conflict needs ≥2 distinct refs, and a\nquote must be a verbatim (normalized) substring of the cited body or\nit's stripped. Source bodies enter the prompt through `wrapToolOutput`\n(**I11**) — the first load-bearing use of the envelope outside\n`agents/`.\n- **Run state is in-memory only.** Source bodies never touch disk; a\nrestart drops everything. That makes \"a brief is a question, not a save\"\nstructural, not a promise — the same argument I30 makes for the pairing\nwindow. Lazy expiry, 30-min TTL, hard caps (3 concurrent runs / 20\nsources / 256 KB per source / 4 MB per run, all counting body **+ title\n+ url**).\n- **Concurrency cap is `503 briefs_busy` with no `Retry-After`**,\ndeliberately not a 429 — a concurrency delta from run expiry is up to\n1800 s, which the client clamps to 120 s and retries into a wall.\n- **`[briefs].prefer_local` is honored independently of `[llm]`.**\nSource-text egress is the most privacy-sensitive thing here, so briefs\nprefer a local model even when the general ask-routing prefers remote,\nfalling back only when no local provider exists. When synthesis does run\nremote, a mandatory, unsuppressable disclosure gap says so.\n- **Default-off.** `[briefs].enabled` defaults false; the seam is absent\nand every route 404s (`briefs_disabled` + hint). `nimbus clip status`\nreports the enable-state.\n\n## Invariants & safety\n\nNo new invariant, no schema migration. Reuses **I6** (loopback), **I10**\n(constant-time token compare), **I11** (tool-output envelope), **I13**\n(allowlist + audit-on-rejection — every 4xx incl. 404/410/409 audits),\n**I14** (bound-param SQL). **I30** (clipper token minting) is untouched\n— briefs consume the token, never mint. A whole-branch review traced the\ntrust boundary end-to-end and confirmed no model- or source-controlled\ninput reaches the report unvalidated or escapes the I11 envelope. E2E\nleak test proves the bearer token, source body, and source URL appear in\nno response and no `audit_log` row.\n\n## Testing\n\nTDD throughout. New `packages/gateway/src/briefs/` subsystem (~11\nmodules) each unit-tested; a 10-case E2E drives the real HTTP server +\nreal SQLite + a stub LLM through the full staged round trip, caps, auth,\nand the leak proof. 717 tests pass across all touched suites; gateway +\ncli `tsc` clean; biome, `audit:doc-refs`, `audit:readme-cli` green.\n\n> ⚠️ **One gate unverified locally:** `audit:coverage-floor`\n(Linux-authoritative, istanbul shards) could not run in the dev\nenvironment (Docker daemon down). Every new file was coverage-reviewed\nindividually and `brief-test-server.ts` is coverage-excluded, but **CI\nmust confirm the floor is green** before merge. `origin/main` also\nadvanced during the build, so this relies on CI's post-push run against\ncurrent main.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n\n## Summary by CodeRabbit\n\n* **New Features**\n* Added opt-in research briefs for creating runs, submitting captured\nsources, generating citation-validated reports, checking status, and\nsaving completed reports.\n* Added support for local or remote synthesis, with disclosures when\nsource content leaves the device.\n* Added run limits, expiration handling, duplicate-source protection,\nand clear errors for unavailable or oversized requests.\n* Added `nimbus clip status` visibility for whether research briefs are\nenabled.\n\n* **Documentation**\n* Documented the research briefs workflow, configuration, status\nbehavior, and release details.\n\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude Opus 4.8 (1M context) <noreply@anthropic.com>",
-          "timestamp": "2026-07-22T18:53:56+03:00",
-          "tree_id": "fef3d881e8daebb0f721fc9354970df8a61038f3",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/f310d2a679ca7edc1f73c6abde808acd0c851931"
-        },
-        "date": 1784736343087,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 312.7436258999969,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 316.83922359999667,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 331.2793091000047,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "c1bab1081af5eb45d13eb0f21a6ee6d441745cc9",
+          "message": "feat(fleet): subject enumeration — sweep a corpus instead of naming one subject (#1541)\n\nCloses fleet PR 2b, the last unshipped half of the overnight sub-agent\nfleet row. Before this, every `[[fleet.job]]` named exactly one subject\nin config, so org-wide bus-factor coverage stayed manual — an owner had\nto write one job per file or service they already suspected.\n\nA job can now name an enumerator instead of a subject:\n\n```toml\n[[fleet.job]]\nname = \"bus-factor\"\nagent = \"ownership\"\ninterval_seconds = 86400\nsweep = \"paths\"            # paths | services | symbols | terms\nmax_subjects = 200         # REQUIRED with sweep, 1..500, refused not clamped\npath_prefix = \"packages/\"  # optional, paths and symbols only\n```\n\n## How a sweep runs\n\nOne sweep job stays ONE job: one interval, one backoff, one\n`fleet_job_state` row. When it comes due, the scheduler enumerates that\nkind's subjects, takes up to `max_subjects` keys after the job's cursor,\nwrapping, and runs each through the existing invoker. Properties that\nare the point, each pinned by a test that fails without it:\n\n- **Admission is re-checked between SUBJECTS**, not only between jobs,\non one counter shared by config-named jobs and sweep subjects. A\n200-subject job yields when you come back to the machine.\n- **A yield records no job success**, so the job stays due and the next\nrun resumes from the cursor. Yielding never costs coverage.\n- **The cursor is a KEY, not an ordinal**, and advances after every\nsubject, success or failure. An ordinal shifts when a file is added or\ndeleted and would silently skip or repeat; one broken subject cannot pin\nthe rotation.\n- **An empty enumeration is success with a stated reason**, not a\nfailure. A sweep that correctly finds nothing is not pushed into\nbackoff.\n- **The I38 remote budget resets once per run**, never per subject.\n\n## What the index can actually enumerate\n\n| Kind | Source | Agents |\n| --- | --- | --- |\n| `paths` | the ownership pass's own `source_file` / `directory` nodes,\ngit-aware roots only | `ownership` |\n| `services` | configured service ids, the same loader the agents\nresolve `service` against | `oncall`, `changelog`, `ownership` |\n| `symbols` | distinct `graph_entity` symbol labels | `ghost`,\n`conflicts` |\n| `terms` | consolidated glossary terms | `glossary` |\n\n`FLEET_SWEEP_SUPPORT` is compiler-total over the 14 fleet-eligible\nagents, so a fifteenth does not compile until someone classifies it, and\nthe eight non-sweepable agents each carry a recorded reason rather than\nsitting in an exclusion set.\n\n**Two decisions worth reading, both corrections found while designing:**\n\n- **ghost and conflicts sweep SYMBOLS, not paths.** Their `file`\nparameter resolves a `graph_entity` symbol label — exact match first,\nthen a fuzzy basename match. A path sweep would hand every `index.ts`\nthe same fuzzy token and produce hundreds of briefs about whichever\nsymbol matched first.\n- **`paths` enumerates the ownership pass's own nodes, not blame rows.**\nDeriving files from `git_blame_line` and synthesising parent directories\nwould emit directories the pass never wrote a node for, each producing a\nbrief whose only content is a \"no ownership node\" gap.\n\n## Digest, CLI, schema\n\n`nimbus fleet digest` groups each sweep job into one section: a coverage\nline, moved subjects in full, unchanged as a count, threshold-suppressed\ncounted separately, first observations truncated at 10 in Markdown only\nwith JSON carrying every key. Config-named jobs render\n**byte-identically** — guarded by a full-document test whose expected\nliteral was captured from the pre-change renderer, red-proved by\ninjecting a blank line.\n\n`fleet.list` reports each sweep's kind, cap, subject total, cursor and\n`rotationExceedsRetention`; `nimbus fleet briefs --subject <key>`\nfilters by subject. No new IPC method, so no routing entry and no Tauri\nallowlist change.\n\nSchema **V63** rebuilds `fleet_brief` with `subject_key TEXT NOT NULL`\nbackfilled to `job_id` — true history, since a config-named job's\nsubject IS the job — preserving the `ON DELETE CASCADE` a rebuild\nsilently loses, adds sweep state to `fleet_job_state` and subject\ncounters to `fleet_run`, and redefines `idx_fleet_brief_job` while\nadding `idx_fleet_brief_subject`.\n\n## Bounds, stated rather than glossed\n\n- **A rotation longer than `retention_days` cannot report movement** — a\nsubject's predecessor expires before it is revisited. The subject total\nis unknown until enumeration, so this is disclosed on `fleet.list` and\nin the digest rather than refused at config load.\n- **Coverage is eventual, not prioritised.** A risky file waits its\nturn.\n- **Symbol label collisions collapse to one subject.** A label omits\nkind and root, so a same-named function and type in one file share one;\nthe agent briefs whichever its lookup returns.\n- **`janitor` is not enumerable.** Its `resourceRef` is free text probed\nfor mentions and the index holds no resource inventory, so a list would\nbe invented rather than enumerated.\n- **`negotiate` stays deferred**, with enumeration now the settled\nreason: scheduled dossier-building over every indexed person is a\ndifferent act from an owner running one, and no enumerator returns\nperson-shaped subjects.\n- **`paths` covers git-aware roots only**, and only nodes the ownership\npass wrote.\n\nNo new invariant, no new static rule, no new egress class, no HITL\naction type. `fleet.*` stays LAN-forbidden and absent from the Tauri\nallowlist.\n\n## Verification\n\n`bun run preflight:fast` green across all 33 gates; scoped fleet,\nconfig, IPC, CLI and migration suites pass; `bun run typecheck` and\n`typecheck:tests` clean; `audit:platform-test-gaps` clean. Every task\nwent through a task-scoped review, and the branch through a whole-branch\nreview whose findings are fixed here — including a stale\n`docs/schema-reference.md` that still described the pre-V63 fleet\ntables, which no gate catches because `audit:status-drift` only reads\nthe ceiling sentence.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n## Summary by CodeRabbit\n\n* **New Features**\n  * Added fleet sweep jobs for paths, services, symbols, and terms.\n* Added bounded subject rotation, progress tracking, filtering, and\ndigest summaries.\n* Search now reports typed query timeouts, fallback status, and\nincomplete retrieval progress.\n\n* **Bug Fixes**\n* Improved sweep handling for empty results, failures, retention limits,\nand cursor resumption.\n* Media previews now report file sizes more reliably across supported\nsources.\n  * Embedding backfill progress now includes in-process runtimes.\n\n* **Documentation**\n* Updated CLI, architecture, schema, changelog, and roadmap\ndocumentation.\n\n* **Chores**\n  * Advanced the local schema version to V63.\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>",
+          "timestamp": "2026-09-18T07:10:02Z",
+          "tree_id": "6617b9dc1712e55f53b10054658f1b57cebe2cec",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/c1bab1081af5eb45d13eb0f21a6ee6d441745cc9"
+        },
+        "date": 1789716291747,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 318.89309834999693,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 329.23593350000084,
             "unit": "ms"
           }
         ]
