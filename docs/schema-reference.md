@@ -937,7 +937,9 @@ CREATE TABLE IF NOT EXISTS fleet_run (
 -- Backfilled to `job_id`, which is true history rather than a placeholder: for a config-named job
 -- the subject IS the job. The rebuild keeps the `run_id ... ON DELETE CASCADE` above -- a rebuild
 -- is exactly where that cascade would silently disappear -- and all four indexes are recreated
--- after the rename, with `idx_fleet_brief_job` REDEFINED to lead with `subject_key` and a new
+-- after the rename, with `idx_fleet_brief_job` REDEFINED to `(job_id, subject_key, created_at DESC)`
+-- -- `subject_key` FOLLOWS `job_id` rather than leading, so the index still serves a job-scoped
+-- query -- and a new
 -- `idx_fleet_brief_subject` added so `nimbus fleet briefs --subject <key>` without `--job` -- a
 -- legitimate cross-job question, since two jobs can sweep the same subject -- is not a table scan.
 CREATE TABLE IF NOT EXISTS fleet_brief (

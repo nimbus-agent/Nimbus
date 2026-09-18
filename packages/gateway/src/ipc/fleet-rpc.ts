@@ -176,7 +176,14 @@ function handleList(_params: unknown, ctx: FleetRpcCtx): { jobs: readonly FleetJ
   const jobs = ctx.jobs ?? [];
   return {
     jobs: jobs.map((j) => {
-      const state = ctx.store?.loadSweepState(j.name);
+      const stored = j.sweep === null ? undefined : ctx.store?.loadSweepState(j.name);
+      // Only state belonging to the CONFIGURED kind is reported. `recordSweepEnumeration` resets the
+      // cursor when the kind changes, but the row keeps the previous kind's `subjects_total` and
+      // `empty_reason` until the next SUCCESSFUL enumeration — and a failed one never replaces them.
+      // Surfacing those under the new kind would report a total the new corpus never had, and
+      // `rotationExceedsRetention` computed from it would be a warning about a rotation that does
+      // not exist. Absent is the honest answer until the new kind has actually enumerated.
+      const state = stored?.kind === j.sweep?.kind ? stored : undefined;
       const total = state?.subjectsTotal ?? null;
       return {
         name: j.name,

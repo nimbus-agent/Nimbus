@@ -151,7 +151,7 @@
     "body-parser": "2.3.0",
     "brace-expansion": "5.0.9",
     "browserslist": "4.28.7",
-    "devalue": "5.8.1",
+    "devalue": "5.9.1",
     "esbuild": "0.28.1",
     "fast-uri": "3.1.7",
     "form-data": "4.0.6",
@@ -1360,7 +1360,7 @@
 
     "detect-libc": ["detect-libc@2.1.2", "", {}, "sha512-Btj2BOOO83o3WyH59e8MgXsxEQVcarkUOpEYrubB0urwnN10yQ364rsiByU11nZlqWYZm05i/of7io4mzihBtQ=="],
 
-    "devalue": ["devalue@5.8.1", "", {}, "sha512-4CXDYRBGqN+57wVJkuXBYmpAVUSg3L6JAQa/DFqm238G73E1wuyc/JhGQJzN7vUf/CMphYau2zXbfWzDR5aTEw=="],
+    "devalue": ["devalue@5.9.1", "", {}, "sha512-+17vil3EVQRzvtDJSFuTWEb8XJRvXqAiV3qZyQWD398QeXUa6CxsUyMdD1fxzEhUrd4FojitFz7lhIHBTlV4fw=="],
 
     "devlop": ["devlop@1.1.0", "", { "dependencies": { "dequal": "^2.0.0" } }, "sha512-RWmIqhcFf1lRYBvNmr7qTNuyCt/7/ns2jbpp1+PalgE/rDQcBT0fioSMUpJ93irlUhC5hrg4cYqe6U+0ImW0rA=="],
 

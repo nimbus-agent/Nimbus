@@ -416,6 +416,43 @@ describe("fleet.list / fleet.briefs / fleet.show over a real store", () => {
     expect(r2.value.jobs[0]?.sweep.rotationExceedsRetention).toBe(true); // 20 runs = 20 days > 14
   });
 
+  test("fleet.list reports NOTHING from a previous sweep kind's persisted state", async () => {
+    // `recordSweepEnumeration` resets the cursor on a kind change, but `subjects_total` and
+    // `empty_reason` survive until the NEW kind enumerates successfully — and a failed enumeration
+    // never replaces them. Reporting those under the new kind would state a total the new corpus
+    // never had, and derive a rotation warning from it.
+    store.recordSweepEnumeration("bus", {
+      kind: "paths",
+      subjectsTotal: 400,
+      emptyReason: "stale reason from the paths sweep",
+    });
+    store.advanceSweepCursor("bus", "paths", "paths:file:/r:a.ts");
+
+    const switched: NimbusFleetJobToml = {
+      ...sweepJob,
+      sweep: { kind: "services", maxSubjects: 20, pathPrefix: null },
+    };
+    const r = (await dispatchFleetRpc("fleet.list", {}, ctx(2000, { jobs: [switched] }))) as {
+      value: {
+        jobs: Array<{
+          sweep: {
+            kind: string;
+            subjectsTotal: unknown;
+            cursor: unknown;
+            emptyReason: unknown;
+            rotationExceedsRetention: unknown;
+          };
+        }>;
+      };
+    };
+    const sweep = r.value.jobs[0]?.sweep;
+    expect(sweep?.kind).toBe("services");
+    expect(sweep?.subjectsTotal).toBeNull();
+    expect(sweep?.cursor).toBeNull();
+    expect(sweep?.emptyReason).toBeNull();
+    expect(sweep?.rotationExceedsRetention).toBeNull();
+  });
+
   test('fleet.briefs caps an oversized limit at MAX_BRIEFS_LIMIT, not just "does not throw"', async () => {
     // Seeding only 3 rows and asserting 3 come back (the previous version of this test) passes
     // identically whether or not the clamp exists — 3 rows is 3 rows either way, so that assertion
