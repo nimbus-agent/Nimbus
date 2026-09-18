@@ -2,20 +2,22 @@ import { Database } from "bun:sqlite";
 import { beforeEach, describe, expect, test } from "bun:test";
 import type { NimbusFleetJobToml, NimbusFleetToml } from "../config/fleet-toml.ts";
 import { DEFAULT_FLEET_CONFIG } from "../config/fleet-toml.ts";
+import { FLEET_SUBJECTS_V63_SQL } from "../index/fleet-subjects-v63-sql.ts";
 import { FLEET_V60_SQL } from "../index/fleet-v60-sql.ts";
 import type { HostActivityProbe } from "../platform/host-activity.ts";
 import type { FleetInvoker, FleetJobOutcome } from "./fleet-invoker.ts";
 import type { FleetRunBudget, FleetRunSummary } from "./fleet-scheduler.ts";
 import { DEFAULT_TICK_MS, FleetScheduler, isJobDue } from "./fleet-scheduler.ts";
 import { FleetStore } from "./fleet-store.ts";
+import type { FleetSweepEnumerate, SweepSubject } from "./fleet-sweep-enumerators.ts";
 import { createFleetRemoteBudget, wrapFleetSynthesisRouter } from "./fleet-synthesis-router.ts";
 
 const AC_IDLE: HostActivityProbe = { power: "ac", idleMs: 3_600_000, source: "measured" };
 const ON_BATTERY: HostActivityProbe = { power: "battery", idleMs: 3_600_000, source: "measured" };
 
 const JOBS: readonly NimbusFleetJobToml[] = [
-  { name: "a", agent: "catchup", intervalSeconds: 1, params: {}, digestMinDelta: 1 },
-  { name: "b", agent: "ownership", intervalSeconds: 1, params: {}, digestMinDelta: 1 },
+  { name: "a", agent: "catchup", intervalSeconds: 1, params: {}, digestMinDelta: 1, sweep: null },
+  { name: "b", agent: "ownership", intervalSeconds: 1, params: {}, digestMinDelta: 1, sweep: null },
 ];
 
 const NOW = 1_000_000;
@@ -38,6 +40,7 @@ beforeEach(() => {
   db = new Database(":memory:");
   db.run("PRAGMA foreign_keys = ON");
   db.exec(FLEET_V60_SQL);
+  for (const stmt of FLEET_SUBJECTS_V63_SQL) db.exec(stmt);
   store = new FleetStore(db);
 });
 
@@ -49,6 +52,7 @@ function build(opts: {
   remoteBudget?: FleetRunBudget;
   tickMs?: number;
   onProbe?: () => void;
+  enumerate?: FleetSweepEnumerate;
 }): FleetScheduler {
   let i = 0;
   const config: NimbusFleetToml = { ...DEFAULT_FLEET_CONFIG, enabled: true, ...opts.config };
@@ -74,6 +78,11 @@ function build(opts: {
     // still gets the one its config implies rather than a stub. Tests that care pass their own.
     remoteBudget:
       opts.remoteBudget ?? createFleetRemoteBudget(config.allowRemote, config.remoteCallBudget),
+    enumerate:
+      opts.enumerate ??
+      (() => {
+        throw new Error("test bug: no enumerator configured");
+      }),
     ...(opts.tickMs === undefined ? {} : { tickMs: opts.tickMs }),
   });
 }
@@ -137,6 +146,7 @@ describe("isJobDue", () => {
     intervalSeconds: 1,
     params: {},
     digestMinDelta: 1,
+    sweep: null,
   };
 
   test("a job with no state at all is due", () => {
@@ -298,9 +308,30 @@ describe("FleetScheduler.runOnce", () => {
     // only ONE job was actually cut short. The spec calls a run that under-reports what it was
     // configured for a disclosure failure; over-reporting what it abandoned is the same failure.
     const jobs: readonly NimbusFleetJobToml[] = [
-      { name: "a", agent: "catchup", intervalSeconds: 1, params: {}, digestMinDelta: 1 },
-      { name: "b", agent: "ownership", intervalSeconds: 1, params: {}, digestMinDelta: 1 },
-      { name: "c", agent: "impact", intervalSeconds: 1, params: {}, digestMinDelta: 1 },
+      {
+        name: "a",
+        agent: "catchup",
+        intervalSeconds: 1,
+        params: {},
+        digestMinDelta: 1,
+        sweep: null,
+      },
+      {
+        name: "b",
+        agent: "ownership",
+        intervalSeconds: 1,
+        params: {},
+        digestMinDelta: 1,
+        sweep: null,
+      },
+      {
+        name: "c",
+        agent: "impact",
+        intervalSeconds: 1,
+        params: {},
+        digestMinDelta: 1,
+        sweep: null,
+      },
     ];
     store.recordJobSuccess("a", NOW); // not due: zero elapsed against a 1 s interval
     const ran: string[] = [];
@@ -417,9 +448,16 @@ describe("FleetScheduler.runOnce", () => {
   // runs in one body, because a run leaves `fleet_job_state` behind and a later run in the same
   // database would be judged against the earlier one's successes.
   const THREE_JOBS: readonly NimbusFleetJobToml[] = [
-    { name: "a", agent: "catchup", intervalSeconds: 1, params: {}, digestMinDelta: 1 },
-    { name: "b", agent: "ownership", intervalSeconds: 1, params: {}, digestMinDelta: 1 },
-    { name: "c", agent: "impact", intervalSeconds: 1, params: {}, digestMinDelta: 1 },
+    { name: "a", agent: "catchup", intervalSeconds: 1, params: {}, digestMinDelta: 1, sweep: null },
+    {
+      name: "b",
+      agent: "ownership",
+      intervalSeconds: 1,
+      params: {},
+      digestMinDelta: 1,
+      sweep: null,
+    },
+    { name: "c", agent: "impact", intervalSeconds: 1, params: {}, digestMinDelta: 1, sweep: null },
   ];
 
   test("a COMPLETED run's row is self-describing", async () => {
@@ -702,6 +740,9 @@ describe("FleetScheduler.runOnce", () => {
       // Refused before any run opens, so nothing here reads the budget — the default cap is the
       // honest value rather than a number this test would be implying something about.
       remoteBudget: createFleetRemoteBudget(false, 0),
+      enumerate: () => {
+        throw new Error("test bug: no enumerator configured");
+      },
     });
     await expect(s.runOnce({ force: true })).rejects.toThrow(/org policy/);
     const runs = db.query(`SELECT COUNT(*) AS n FROM fleet_run`).get() as { n: number };
@@ -726,6 +767,9 @@ describe("FleetScheduler.runOnce", () => {
       // Refused before any run opens, so nothing here reads the budget — the default cap is the
       // honest value rather than a number this test would be implying something about.
       remoteBudget: createFleetRemoteBudget(false, 0),
+      enumerate: () => {
+        throw new Error("test bug: no enumerator configured");
+      },
     });
     await expect(s.runOnce()).rejects.toThrow(/disabled/);
     expect(probed).toBe(0);
@@ -835,6 +879,170 @@ describe("FleetScheduler.runOnce", () => {
   });
 });
 
+describe("sweep jobs", () => {
+  const SWEEP: NimbusFleetJobToml = {
+    name: "bus",
+    agent: "ownership",
+    intervalSeconds: 1,
+    params: {},
+    digestMinDelta: 1,
+    sweep: { kind: "paths", maxSubjects: 2, pathPrefix: null },
+  };
+  const AC_IDLE: HostActivityProbe = { power: "ac", idleMs: 3_600_000, source: "measured" };
+  const BATTERY: HostActivityProbe = { power: "battery", idleMs: 3_600_000, source: "measured" };
+
+  function subjects(...keys: string[]): SweepSubject[] {
+    return keys.map((k) => ({ key: `paths:${k}`, params: { path: `/r/${k}` } }));
+  }
+
+  function briefKeys(): string[] {
+    return (
+      db.query("SELECT subject_key FROM fleet_brief ORDER BY subject_key").all() as Array<{
+        subject_key: string;
+      }>
+    ).map((r) => r.subject_key);
+  }
+
+  test("runs the next window, merges the subject param, records subject keys, advances the cursor", async () => {
+    const seen: unknown[] = [];
+    const s = build({
+      probes: [AC_IDLE],
+      jobs: [SWEEP],
+      enumerate: () => ({ subjects: subjects("a", "b", "c"), emptyReason: null }),
+      invoke: async (job) => {
+        seen.push(job.params);
+        return done(job.name);
+      },
+    });
+    const summary = await s.runOnce();
+    expect(seen).toEqual([{ path: "/r/a" }, { path: "/r/b" }]);
+    expect(briefKeys()).toEqual(["paths:a", "paths:b"]);
+    expect(store.loadSweepState("bus")).toMatchObject({ cursor: "paths:b", subjectsTotal: 3 });
+    expect(summary).toMatchObject({
+      subjectsInScope: 2,
+      subjectsAttempted: 2,
+      subjectsCompleted: 2,
+    });
+  });
+
+  test("(red-prove) admission is re-probed between SUBJECTS; a yield resumes from the cursor", async () => {
+    let probes = 0;
+    const s = build({
+      probes: [AC_IDLE, AC_IDLE, BATTERY],
+      jobs: [{ ...SWEEP, sweep: { kind: "paths", maxSubjects: 3, pathPrefix: null } }],
+      enumerate: () => ({ subjects: subjects("a", "b", "c"), emptyReason: null }),
+      invoke: async (job) => done(job.name),
+      onProbe: () => {
+        probes += 1;
+      },
+    });
+    const first = await s.runOnce();
+    expect(first.outcome).toBe("yielded");
+    expect(briefKeys()).toEqual(["paths:a", "paths:b"]);
+    expect(store.loadJobState("bus")?.lastSuccessAt ?? null).toBeNull(); // still due
+    expect(probes).toBe(3);
+
+    const resumed = build({
+      probes: [AC_IDLE],
+      jobs: [{ ...SWEEP, sweep: { kind: "paths", maxSubjects: 1, pathPrefix: null } }],
+      enumerate: () => ({ subjects: subjects("a", "b", "c"), emptyReason: null }),
+      invoke: async (job) => done(job.name),
+    });
+    await resumed.runOnce();
+    expect(briefKeys()).toEqual(["paths:a", "paths:b", "paths:c"]);
+  });
+
+  test("a failed subject advances the cursor and does not back off the job", async () => {
+    const s = build({
+      probes: [AC_IDLE],
+      jobs: [SWEEP],
+      enumerate: () => ({ subjects: subjects("a", "b"), emptyReason: null }),
+      invoke: async (job) =>
+        job.params["path"] === "/r/a" ? { status: "failed", error: "boom" } : done(job.name),
+    });
+    const summary = await s.runOnce();
+    expect(store.loadSweepState("bus")?.cursor).toBe("paths:b");
+    expect(store.loadJobState("bus")?.backoffUntil ?? null).toBeNull();
+    expect(summary).toMatchObject({ subjectsAttempted: 2, subjectsCompleted: 1, jobsCompleted: 1 });
+  });
+
+  test("every subject failing backs the job off", async () => {
+    const s = build({
+      probes: [AC_IDLE],
+      jobs: [SWEEP],
+      enumerate: () => ({ subjects: subjects("a", "b"), emptyReason: null }),
+      invoke: async () => ({ status: "failed", error: "boom" }),
+    });
+    await s.runOnce();
+    expect(store.loadJobState("bus")?.consecutiveFailures).toBe(1);
+    expect(store.loadJobState("bus")?.lastError).toMatch(/all 2 sweep subjects failed/);
+  });
+
+  test("an enumeration that throws backs the job off", async () => {
+    const s = build({
+      probes: [AC_IDLE],
+      jobs: [SWEEP],
+      enumerate: () => {
+        throw new Error("bad config");
+      },
+      invoke: async (job) => done(job.name),
+    });
+    await s.runOnce();
+    expect(store.loadJobState("bus")?.lastError).toMatch(/sweep enumeration failed: bad config/);
+  });
+
+  test("an EMPTY enumeration is success with its reason recorded, not a failure", async () => {
+    const s = build({
+      probes: [AC_IDLE],
+      jobs: [SWEEP],
+      enumerate: () => ({
+        subjects: [],
+        emptyReason: "no git-aware filesystem roots are configured",
+      }),
+      invoke: async (job) => done(job.name),
+    });
+    await s.runOnce();
+    expect(store.loadJobState("bus")?.lastSuccessAt).toBe(NOW);
+    expect(store.loadSweepState("bus")).toMatchObject({
+      subjectsTotal: 0,
+      emptyReason: "no git-aware filesystem roots are configured",
+    });
+  });
+
+  test("the I38 budget is reset ONCE per run, not per subject", async () => {
+    let resets = 0;
+    const budget: FleetRunBudget = {
+      reset: () => {
+        resets += 1;
+      },
+      spent: () => 0,
+      remaining: () => 0,
+    };
+    const s = build({
+      probes: [AC_IDLE],
+      jobs: [{ ...SWEEP, sweep: { kind: "paths", maxSubjects: 3, pathPrefix: null } }],
+      enumerate: () => ({ subjects: subjects("a", "b", "c"), emptyReason: null }),
+      invoke: async (job) => done(job.name),
+      remoteBudget: budget,
+    });
+    await s.runOnce();
+    expect(resets).toBe(1);
+  });
+
+  test("a config-named job counts as ONE subject on the run row", async () => {
+    const [first] = JOBS;
+    if (first === undefined) throw new Error("test bug: JOBS is empty");
+    const s = build({ probes: [AC_IDLE], jobs: [first], invoke: async (j) => done(j.name) });
+    const summary = await s.runOnce();
+    const row = db
+      .query(
+        "SELECT subjects_in_scope, subjects_attempted, subjects_completed FROM fleet_run WHERE id = ?",
+      )
+      .get(requireRunId(summary)) as Record<string, number>;
+    expect(row).toEqual({ subjects_in_scope: 1, subjects_attempted: 1, subjects_completed: 1 });
+  });
+});
+
 describe("FleetScheduler.start/stop", () => {
   test("start() ticks the loop and stop() halts it", async () => {
     let probed = 0;
@@ -905,6 +1113,9 @@ describe("FleetScheduler.start/stop", () => {
       now: () => NOW,
       tickMs: 5,
       remoteBudget: createFleetRemoteBudget(false, 0),
+      enumerate: () => {
+        throw new Error("test bug: no enumerator configured");
+      },
     });
     s.start();
     await sleep(40);

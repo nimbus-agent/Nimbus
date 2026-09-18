@@ -3779,6 +3779,7 @@ describe("I38 — an unattended fleet run reaches a non-local model only under g
     intervalSeconds: 1,
     params: {},
     digestMinDelta: 1,
+    sweep: null,
   };
 
   /**

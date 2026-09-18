@@ -1,6 +1,7 @@
 import type { Database } from "bun:sqlite";
 import { dbRun } from "../db/write.ts";
 import type { HostPower, HostProbeSource } from "../platform/host-activity.ts";
+import { codeUnitCompare } from "../util/code-unit-compare.ts";
 
 export type FleetRunOutcome = "completed" | "yielded" | "deferred" | "failed";
 
@@ -17,11 +18,45 @@ export interface FleetBriefRow {
   readonly id: string;
   readonly runId: string;
   readonly jobId: string;
+  readonly subjectKey: string;
   readonly agentMethod: string;
   readonly briefMarkdown: string | null;
   readonly findingsJson: string;
   readonly synthesisJson: string | null;
   readonly createdAt: number;
+}
+
+type FleetBriefDbRow = {
+  id: string;
+  run_id: string;
+  job_id: string;
+  subject_key: string;
+  agent_method: string;
+  brief_markdown: string | null;
+  findings_json: string;
+  synthesis_json: string | null;
+  created_at: number;
+};
+
+export interface FleetSweepState {
+  readonly kind: string | null;
+  readonly cursor: string | null;
+  readonly subjectsTotal: number | null;
+  readonly emptyReason: string | null;
+}
+
+function toBriefRow(r: FleetBriefDbRow): FleetBriefRow {
+  return {
+    id: r.id,
+    runId: r.run_id,
+    jobId: r.job_id,
+    subjectKey: r.subject_key,
+    agentMethod: r.agent_method,
+    briefMarkdown: r.brief_markdown,
+    findingsJson: r.findings_json,
+    synthesisJson: r.synthesis_json,
+    createdAt: r.created_at,
+  };
 }
 
 /** 1h, 2h, 4h … capped at 24h. Capped because an uncapped doubling silently retires a job. */
@@ -74,13 +109,23 @@ export class FleetStore {
        */
       jobsSkippedNotDue: number;
       remoteCallsMade: number;
+      /**
+       * Subjects are units of brief production: a config-named job is one, a sweep job its
+       * window. REQUIRED for the same reason as `jobsInScope`/`jobsSkippedNotDue` above — a
+       * silent default would make a sweep run's row indistinguishable from one that had nothing
+       * to sweep.
+       */
+      subjectsInScope: number;
+      subjectsAttempted: number;
+      subjectsCompleted: number;
     },
   ): void {
     dbRun(
       this.db,
       `UPDATE fleet_run
           SET ended_at = ?, outcome = ?, jobs_in_scope = ?, jobs_attempted = ?,
-              jobs_completed = ?, jobs_skipped_not_due = ?, remote_calls_made = ?
+              jobs_completed = ?, jobs_skipped_not_due = ?, remote_calls_made = ?,
+              subjects_in_scope = ?, subjects_attempted = ?, subjects_completed = ?
         WHERE id = ?`,
       [
         r.endedAt,
@@ -90,6 +135,9 @@ export class FleetStore {
         r.jobsCompleted,
         r.jobsSkippedNotDue,
         r.remoteCallsMade,
+        r.subjectsInScope,
+        r.subjectsAttempted,
+        r.subjectsCompleted,
         runId,
       ],
     );
@@ -98,6 +146,7 @@ export class FleetStore {
   recordBrief(b: {
     runId: string;
     jobId: string;
+    subjectKey: string;
     agentMethod: string;
     briefMarkdown: string | null;
     findingsJson: string;
@@ -109,13 +158,14 @@ export class FleetStore {
     dbRun(
       this.db,
       `INSERT INTO fleet_brief
-         (id, run_id, job_id, agent_method, brief_markdown, findings_json, synthesis_json,
-          created_at, expires_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         (id, run_id, job_id, subject_key, agent_method, brief_markdown, findings_json,
+          synthesis_json, created_at, expires_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         id,
         b.runId,
         b.jobId,
+        b.subjectKey,
         b.agentMethod,
         b.briefMarkdown,
         b.findingsJson,
@@ -183,6 +233,63 @@ export class FleetStore {
     );
   }
 
+  loadSweepState(jobId: string): FleetSweepState | undefined {
+    const row = this.db
+      .query(
+        `SELECT sweep_kind, sweep_cursor, sweep_subjects_total, sweep_empty_reason
+           FROM fleet_job_state WHERE job_id = ?`,
+      )
+      .get(jobId) as {
+      sweep_kind: string | null;
+      sweep_cursor: string | null;
+      sweep_subjects_total: number | null;
+      sweep_empty_reason: string | null;
+    } | null;
+    if (row === null) return undefined;
+    return {
+      kind: row.sweep_kind,
+      cursor: row.sweep_cursor,
+      subjectsTotal: row.sweep_subjects_total,
+      emptyReason: row.sweep_empty_reason,
+    };
+  }
+
+  /**
+   * The ONE writer of the enumeration half of sweep state. A changed kind resets the cursor: keys of
+   * one kind are not comparable with another's. SQLite evaluates every SET expression against the
+   * PRE-update row, so the CASE reads the old `sweep_kind` even though `sweep_kind` is also assigned.
+   */
+  recordSweepEnumeration(
+    jobId: string,
+    e: { kind: string; subjectsTotal: number; emptyReason: string | null },
+  ): void {
+    dbRun(
+      this.db,
+      `INSERT INTO fleet_job_state (job_id, sweep_kind, sweep_cursor, sweep_subjects_total, sweep_empty_reason)
+       VALUES (?, ?, NULL, ?, ?)
+       ON CONFLICT(job_id) DO UPDATE SET
+         sweep_cursor = CASE WHEN fleet_job_state.sweep_kind IS excluded.sweep_kind
+                             THEN fleet_job_state.sweep_cursor ELSE NULL END,
+         sweep_kind = excluded.sweep_kind,
+         sweep_subjects_total = excluded.sweep_subjects_total,
+         sweep_empty_reason = excluded.sweep_empty_reason`,
+      [jobId, e.kind, e.subjectsTotal, e.emptyReason],
+    );
+  }
+
+  /** Scoped to the kind, so a cursor can never be written under a kind it was not selected from. */
+  advanceSweepCursor(jobId: string, kind: string, key: string): void {
+    dbRun(
+      this.db,
+      `UPDATE fleet_job_state SET sweep_cursor = ? WHERE job_id = ? AND sweep_kind = ?`,
+      [key, jobId, kind],
+    );
+  }
+
+  private static readonly BRIEF_COLS =
+    `SELECT id, run_id, job_id, subject_key, agent_method, brief_markdown, findings_json,
+            synthesis_json, created_at FROM fleet_brief `;
+
   /**
    * `now` is REQUIRED, not defaulted to `Date.now()` internally: pruning runs at gateway boot
    * (`assembleFleetRuntime`) and at the end of each fleet RUN (`FleetScheduler`'s `close`), so on a
@@ -192,44 +299,29 @@ export class FleetStore {
    * supplied clock (rather than an internal `Date.now()`) keeps this testable without a live clock
    * and matches every other timestamped method on this class (`pruneBriefs`, `recordJobSuccess`, …).
    */
-  listBriefs(q: { limit: number; jobId?: string; now: number }): FleetBriefRow[] {
-    const rows = (
-      q.jobId === undefined
-        ? this.db
-            .query(
-              `SELECT id, run_id, job_id, agent_method, brief_markdown, findings_json,
-                      synthesis_json, created_at
-                 FROM fleet_brief WHERE expires_at > ? ORDER BY created_at DESC LIMIT ?`,
-            )
-            .all(q.now, q.limit)
-        : this.db
-            .query(
-              `SELECT id, run_id, job_id, agent_method, brief_markdown, findings_json,
-                      synthesis_json, created_at
-                 FROM fleet_brief WHERE job_id = ? AND expires_at > ?
-                 ORDER BY created_at DESC LIMIT ?`,
-            )
-            .all(q.jobId, q.now, q.limit)
-    ) as ReadonlyArray<{
-      id: string;
-      run_id: string;
-      job_id: string;
-      agent_method: string;
-      brief_markdown: string | null;
-      findings_json: string;
-      synthesis_json: string | null;
-      created_at: number;
-    }>;
-    return rows.map((r) => ({
-      id: r.id,
-      runId: r.run_id,
-      jobId: r.job_id,
-      agentMethod: r.agent_method,
-      briefMarkdown: r.brief_markdown,
-      findingsJson: r.findings_json,
-      synthesisJson: r.synthesis_json,
-      createdAt: r.created_at,
-    }));
+  listBriefs(q: {
+    limit: number;
+    jobId?: string;
+    subjectKey?: string;
+    now: number;
+  }): FleetBriefRow[] {
+    const where: string[] = ["expires_at > ?"];
+    const params: (string | number)[] = [q.now];
+    if (q.jobId !== undefined) {
+      where.push("job_id = ?");
+      params.push(q.jobId);
+    }
+    if (q.subjectKey !== undefined) {
+      where.push("subject_key = ?");
+      params.push(q.subjectKey);
+    }
+    params.push(q.limit);
+    const rows = this.db
+      .query(
+        `${FleetStore.BRIEF_COLS}WHERE ${where.join(" AND ")} ORDER BY created_at DESC LIMIT ?`,
+      )
+      .all(...params) as ReadonlyArray<FleetBriefDbRow>;
+    return rows.map(toBriefRow);
   }
 
   /**
@@ -241,63 +333,25 @@ export class FleetStore {
   getBrief(id: string, now: number): FleetBriefRow | undefined {
     const row = this.db
       .query(
-        `SELECT id, run_id, job_id, agent_method, brief_markdown, findings_json,
+        `SELECT id, run_id, job_id, subject_key, agent_method, brief_markdown, findings_json,
                 synthesis_json, created_at
            FROM fleet_brief WHERE id = ? AND expires_at > ?`,
       )
-      .get(id, now) as {
-      id: string;
-      run_id: string;
-      job_id: string;
-      agent_method: string;
-      brief_markdown: string | null;
-      findings_json: string;
-      synthesis_json: string | null;
-      created_at: number;
-    } | null;
+      .get(id, now) as FleetBriefDbRow | null;
     if (row === null) return undefined;
-    return {
-      id: row.id,
-      runId: row.run_id,
-      jobId: row.job_id,
-      agentMethod: row.agent_method,
-      briefMarkdown: row.brief_markdown,
-      findingsJson: row.findings_json,
-      synthesisJson: row.synthesis_json,
-      createdAt: row.created_at,
-    };
+    return toBriefRow(row);
   }
-
-  private static readonly BRIEF_COLS =
-    `SELECT id, run_id, job_id, agent_method, brief_markdown, findings_json,
-            synthesis_json, created_at FROM fleet_brief `;
 
   /** One row or none, for a `WHERE …` fragment appended to the shared column list. */
   private queryOne(
     whereAndOrder: string,
     params: readonly (string | number)[],
   ): FleetBriefRow | undefined {
-    const row = this.db.query(FleetStore.BRIEF_COLS + whereAndOrder).get(...params) as {
-      id: string;
-      run_id: string;
-      job_id: string;
-      agent_method: string;
-      brief_markdown: string | null;
-      findings_json: string;
-      synthesis_json: string | null;
-      created_at: number;
-    } | null;
+    const row = this.db
+      .query(FleetStore.BRIEF_COLS + whereAndOrder)
+      .get(...params) as FleetBriefDbRow | null;
     if (row === null) return undefined;
-    return {
-      id: row.id,
-      runId: row.run_id,
-      jobId: row.job_id,
-      agentMethod: row.agent_method,
-      briefMarkdown: row.brief_markdown,
-      findingsJson: row.findings_json,
-      synthesisJson: row.synthesis_json,
-      createdAt: row.created_at,
-    };
+    return toBriefRow(row);
   }
 
   /**
@@ -312,12 +366,19 @@ export class FleetStore {
    * `expires_at > now` on every arm, for the same reason `listBriefs` carries it: retention that a
    * read surface ignores is not retention.
    *
+   * Scoped to one subject: a sweep job's subjects are compared only with themselves.
+   *
    * `jobIdsWithBriefsInWindow`, below, MUST agree with `current`'s `created_at <= now` bound — both
    * are read against the same window and both feed the same digest, so if one admits a future-dated
    * row and the other excludes it, a job lands in the union with no `current` this query can find,
    * and reports as `noBriefInWindow` for a job that in fact produced a brief.
    */
-  briefPairForJob(q: { jobId: string; windowStartMs: number; now: number }): {
+  briefPairForSubject(q: {
+    jobId: string;
+    subjectKey: string;
+    windowStartMs: number;
+    now: number;
+  }): {
     current: FleetBriefRow | undefined;
     predecessor: FleetBriefRow | undefined;
   } {
@@ -326,15 +387,15 @@ export class FleetStore {
     // it passes the retention filter and would be selected as `current` — reporting a brief from
     // outside the window as this window's newest.
     const current = this.queryOne(
-      `WHERE job_id = ? AND created_at >= ? AND created_at <= ? AND expires_at > ?
+      `WHERE job_id = ? AND subject_key = ? AND created_at >= ? AND created_at <= ? AND expires_at > ?
        ORDER BY created_at DESC, id DESC LIMIT 1`,
-      [q.jobId, q.windowStartMs, q.now, q.now],
+      [q.jobId, q.subjectKey, q.windowStartMs, q.now, q.now],
     );
     if (current === undefined) return { current: undefined, predecessor: undefined };
     const before = this.queryOne(
-      `WHERE job_id = ? AND created_at < ? AND expires_at > ?
+      `WHERE job_id = ? AND subject_key = ? AND created_at < ? AND expires_at > ?
        ORDER BY created_at DESC, id DESC LIMIT 1`,
-      [q.jobId, q.windowStartMs, q.now],
+      [q.jobId, q.subjectKey, q.windowStartMs, q.now],
     );
     if (before !== undefined) return { current, predecessor: before };
     // Excluded by ID, not by `created_at < current.createdAt`. `fleet_brief` has no per-job
@@ -344,9 +405,10 @@ export class FleetStore {
     // reading of spec § 2.1's "the oldest brief inside the window, provided it is not the current
     // brief itself": the exclusion is of that ROW, never of that instant.
     const oldestInWindow = this.queryOne(
-      `WHERE job_id = ? AND created_at >= ? AND created_at <= ? AND id != ? AND expires_at > ?
+      `WHERE job_id = ? AND subject_key = ? AND created_at >= ? AND created_at <= ? AND id != ?
+         AND expires_at > ?
        ORDER BY created_at ASC, id ASC LIMIT 1`,
-      [q.jobId, q.windowStartMs, current.createdAt, current.id, q.now],
+      [q.jobId, q.subjectKey, q.windowStartMs, current.createdAt, current.id, q.now],
     );
     return { current, predecessor: oldestInWindow };
   }
@@ -354,11 +416,11 @@ export class FleetStore {
   /**
    * Distinct job ids with a live brief inside the window — half of the digest's job union.
    *
-   * `created_at <= now` MUST match `briefPairForJob`'s `current` bound: without it, a future-dated
-   * row (an NTP correction moving the clock backwards after a brief was written) puts a job in this
-   * union while `briefPairForJob` finds no `current` for it — the two window queries disagreeing
-   * about what is "in the window", surfacing as a false `noBriefInWindow` entry for a job that did
-   * in fact produce a brief.
+   * `created_at <= now` MUST match `briefPairForSubject`'s `current` bound: without it, a
+   * future-dated row (an NTP correction moving the clock backwards after a brief was written) puts
+   * a job in this union while `briefPairForSubject` finds no `current` for it — the two window
+   * queries disagreeing about what is "in the window", surfacing as a false `noBriefInWindow`
+   * entry for a job that did in fact produce a brief.
    */
   jobIdsWithBriefsInWindow(q: { windowStartMs: number; now: number }): string[] {
     const rows = this.db
@@ -368,6 +430,27 @@ export class FleetStore {
       )
       .all(q.windowStartMs, q.now, q.now) as ReadonlyArray<{ job_id: string }>;
     return rows.map((r) => r.job_id);
+  }
+
+  /**
+   * Distinct subject keys with a live brief inside the window, for ONE job — the sweep-job
+   * analogue of `jobIdsWithBriefsInWindow`. Sorted with `codeUnitCompare` rather than SQL's
+   * `ORDER BY`: SQLite's default `BINARY` collation compares UTF-8 bytes, `codeUnitCompare`
+   * compares UTF-16 code units, and the two disagree above the BMP — the digest must order
+   * identically everywhere it runs.
+   */
+  subjectKeysWithBriefsInWindow(q: {
+    jobId: string;
+    windowStartMs: number;
+    now: number;
+  }): string[] {
+    const rows = this.db
+      .query(
+        `SELECT DISTINCT subject_key FROM fleet_brief
+          WHERE job_id = ? AND created_at >= ? AND created_at <= ? AND expires_at > ?`,
+      )
+      .all(q.jobId, q.windowStartMs, q.now, q.now) as ReadonlyArray<{ subject_key: string }>;
+    return rows.map((r) => r.subject_key).sort(codeUnitCompare);
   }
 
   /** Deletes briefs whose `expires_at` is at or before `now`. Returns the count removed. */
