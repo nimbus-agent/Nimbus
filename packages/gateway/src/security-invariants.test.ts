@@ -4336,4 +4336,12 @@ describe("I41 — a demo-rooted process never reaches the real install", () => {
     expect(src).toMatch(/if \(bootPolicy\.envSidecars\) \{\s*collectSidecarsFromEnv\(db,/);
     expect(src).toContain("const bootPolicy = bootPolicyFor(paths);");
   });
+
+  test("clause 3 wiring: linux.ts resolves paths before probing the real OS keyring, and skips the probe entirely in demo mode", async () => {
+    const src = await read("packages/gateway/src/platform/linux.ts");
+    expect(src.match(/assertLinuxSecretToolAvailable\(\)/g)?.length).toBe(1);
+    expect(src).toMatch(
+      /const paths = createLinuxPaths\(\);\s*if \(paths\.demo !== true\) \{\s*assertLinuxSecretToolAvailable\(\);\s*\}/,
+    );
+  });
 });
