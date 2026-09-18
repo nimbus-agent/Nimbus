@@ -782,10 +782,10 @@ test("V52 leaves resolve_key NULL for a row with neither url", () => {
   db.close();
 });
 
-test("CURRENT_SCHEMA_VERSION is 62, so the newest step runs in production", () => {
+test("CURRENT_SCHEMA_VERSION is 63, so the newest step runs in production", () => {
   // Without this bump the step exists but never executes: runIndexedSchemaMigrations early-returns
   // once user_version >= targetVersion, and every production caller passes CURRENT_SCHEMA_VERSION.
-  expect(CURRENT_SCHEMA_VERSION).toBe(62);
+  expect(CURRENT_SCHEMA_VERSION).toBe(63);
   const db = freshDb();
   runIndexedSchemaMigrations(db, 53);
   expect(tableNames(db)).toContain("item");
@@ -835,6 +835,61 @@ test("V62 creates both vec_rowid join indexes through the runner", () => {
   expect(indexNames("embedding_chunk")).toContain("idx_embedding_chunk_vec_rowid");
   expect(indexNames("session_memory")).toContain("idx_session_memory_vec_rowid");
   expect(userVersion(db)).toBe(62);
+  db.close();
+});
+
+test("V63 rebuilds fleet_brief with subject_key, backfilled to job_id, cascade intact", () => {
+  // The SQL constant being right does not prove the step is registered, and a table REBUILD is
+  // exactly where an ON DELETE CASCADE silently disappears — both are asserted here, through the
+  // runner, on a database that already holds a pre-V63 brief.
+  const db = freshDb();
+  db.run("PRAGMA foreign_keys = ON");
+  runIndexedSchemaMigrations(db, 62);
+  db.run(
+    `INSERT INTO fleet_run (id, started_at, host_power, host_source) VALUES ('r1', 1, 'ac', 'measured')`,
+  );
+  db.run(
+    `INSERT INTO fleet_brief (id, run_id, job_id, agent_method, findings_json, created_at, expires_at)
+     VALUES ('b1', 'r1', 'nightly', 'agents.catchup', '{}', 1, 999)`,
+  );
+
+  runIndexedSchemaMigrations(db, 63);
+  expect(userVersion(db)).toBe(63);
+
+  const row = db.query("SELECT subject_key FROM fleet_brief WHERE id = 'b1'").get() as {
+    subject_key: string;
+  };
+  expect(row.subject_key).toBe("nightly");
+
+  const idx = (db.query("PRAGMA index_list(fleet_brief)").all() as Array<{ name: string }>).map(
+    (r) => r.name,
+  );
+  expect(idx).toContain("idx_fleet_brief_job");
+  expect(idx).toContain("idx_fleet_brief_subject");
+  expect(idx).toContain("idx_fleet_brief_run");
+  expect(idx).toContain("idx_fleet_brief_expires");
+
+  const stateCols = (
+    db.query("PRAGMA table_info(fleet_job_state)").all() as Array<{ name: string }>
+  ).map((c) => c.name);
+  expect(stateCols).toEqual(
+    expect.arrayContaining([
+      "sweep_kind",
+      "sweep_cursor",
+      "sweep_subjects_total",
+      "sweep_empty_reason",
+    ]),
+  );
+  const runCols = (db.query("PRAGMA table_info(fleet_run)").all() as Array<{ name: string }>).map(
+    (c) => c.name,
+  );
+  expect(runCols).toEqual(
+    expect.arrayContaining(["subjects_in_scope", "subjects_attempted", "subjects_completed"]),
+  );
+
+  db.run("DELETE FROM fleet_run WHERE id = 'r1'");
+  const left = db.query("SELECT COUNT(*) AS n FROM fleet_brief").get() as { n: number };
+  expect(left.n).toBe(0);
   db.close();
 });
 

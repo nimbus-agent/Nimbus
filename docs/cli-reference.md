@@ -1711,11 +1711,13 @@ Everything here is local: a fleet brief is written to SQLite and read back by yo
 AND the run's remaining call budget covers the call — a frontier key configured under
 `[llm.remote.<vendor>]` for interactive `nimbus ask` grants the fleet nothing on its own.
 
-**What did NOT ship in PR 1** — stated here because the gap is visible from the command line:
-there is no subject enumeration (you name the subject in each job's config, so `nimbus fleet` will
-not sweep every service on its own), no change/threshold notion, and no digest surface. Those are
-PR 2. `negotiate` is classified `deferred` rather than eligible, so it cannot be named as a job's
-`agent` today.
+**Subject enumeration (PR 2b) shipped 2026-09-17.** A `[[fleet.job]]` can name a `sweep` kind
+instead of one subject, in which case the fleet rotates through a bounded window of subjects each
+run — see `sweep`/`max_subjects`/`path_prefix` below, `--subject` on `fleet briefs`, and the
+`sweep` field on `fleet list`. `negotiate` remains classified `deferred` rather than eligible, so
+it cannot be named as a job's `agent`: no sweep enumerator returns person-shaped subjects, and
+turning "the owner built one dossier" into a nightly, unattended dossier on every indexed person
+has no consent surface today.
 
 ### `nimbus fleet status`
 
@@ -1756,15 +1758,38 @@ last-success timestamp and consecutive-failure count:
 morning-catchup  agent=catchup  interval=86400s  last success=2026-09-07T03:12:44.001Z  consecutive failures=0
 ```
 
+A job with a `sweep` gains a trailing summary of its enumeration and rotation state, read from
+`fleet_job_state` (`fleet.list` already reads that store; sweep progress lives HERE, not on
+`fleet.status`, which never touches it):
+
+```text
+bus-factor  agent=ownership  interval=86400s  last success=2026-09-17T03:12:44.001Z  consecutive failures=0  sweep=paths max=200 total=843
+```
+
+`total` is `null` (rendered `?`) before the job has ever enumerated. An empty enumeration prints
+its `emptyReason` alongside the counts rather than a silent `total=0`. When the estimated full
+rotation (`ceil(total / max_subjects)` runs, at the job's `interval_seconds`) exceeds
+`retention_days`, the line ends with `WARNING: a full rotation outlasts retention; this sweep
+cannot report movement` — a subject's predecessor brief would already have expired by the time the
+rotation revisits it, so the digest (below) can never show what changed for that subject. In
+`--json`, each entry's `sweep` is `null` for a config-named job, or
+`{ kind, maxSubjects, pathPrefix, subjectsTotal, cursor, emptyReason, rotationExceedsRetention }`
+for a sweep job.
+
 ### `nimbus fleet briefs`
 
 ```bash
-nimbus fleet briefs [--limit N] [--job <name>] [--json]
+nimbus fleet briefs [--limit N] [--job <name>] [--subject <key>] [--json]
 ```
 
 Lists synthesised briefs, most recent first — id, job, agent method, creation time. `--limit`
 defaults to 20 and is capped at 500 **at the IPC boundary**, not in the CLI (a `brief_markdown`
-body can be tens of KB, so an unbounded limit is an unbounded response).
+body can be tens of KB, so an unbounded limit is an unbounded response). `--subject <key>` filters
+to one subject's briefs; used **without** `--job`, it is a legitimate cross-job question — two
+jobs can sweep the same subject — and is not a table scan (`idx_fleet_brief_subject`). Every row
+carries `subjectKey` in `--json`; the human listing shows it in brackets only when it differs from
+the job id (a config-named job's subject IS the job, so its output line is unchanged from before
+this PR).
 
 Expiry is enforced **on the read path** — `expires_at > now` — as well as by the prune, so an
 expired brief is never returned even between prunes; a read surface that still returned one would
@@ -1832,6 +1857,16 @@ all, a brief whose findings JSON does not match its agent's shape, and a job tha
 agent it runs between the two compared briefs are each reported under `## Not compared`, not
 treated as failures.
 
+**A sweep job (above) renders as ONE section, not one per subject.** It prints a coverage line
+(`<agent> · swept <n> of <total> subjects this window · full rotation ≈ <k> runs ≈ <d> days ·
+retention <r> days`), every moved subject in full, and unchanged / first-observation (the first 10
+keys, `… and N more` in Markdown — `--json` carries every key) / not-summarizable / agent-changed
+as counts; `## Not compared` for a sweep is computed at JOB level only, since an individual
+subject having "no brief in window" is the expected shape of rotation, not a comparison failure.
+When the rotation estimate exceeds `retention_days`, the section says so rather than silently
+omitting movement it cannot compute. `--json`'s top-level result gains one additive key, `sweeps`
+(empty when no job sweeps); a config-named job's own `jobs[]` entry is unaffected.
+
 **Exit codes** (`nimbus fleet` only): `0` ok — including a `yielded` run, which is a host-activity
 boundary stopping a run early rather than a failure, and including an empty digest; `1` usage; `2`
 fleet disabled or its store unavailable; `3` no such job or no such brief; `4` run deferred; `5` run
@@ -1866,11 +1901,64 @@ rather than dropped (dropping it silently would leave the owner believing a job 
 than defaulted (a daily schedule they never chose). A malformed `[fleet]` config does not crash
 boot: the gateway logs loudly, constructs no scheduler, and comes up with the fleet off.
 
-**Eligible agents** (11 of the 15 served `agents.*` methods): `catchup`, `huddle`, `glossary`,
-`decisions`, `ownership`, `why`, `ghost`, `conflicts`, `impact`, `expert`, `janitor`. Excluded:
-`preflight` and `premortem` (side effects — a HITL prompt nobody is awake to answer, and durable
-watcher/tombstone writes), `whyPeek` (synchronous shape, never fires the completion notification
-the invoker awaits), and `negotiate` (**deferred** to PR 2). The map is TOTAL over the served
+#### Sweep jobs (`sweep`, `max_subjects`, `path_prefix`)
+
+A `[[fleet.job]]` can set `sweep` instead of naming one subject in its own parameters, so the
+scheduler rotates through every subject the index can list for that kind, a bounded window per
+run:
+
+```toml
+[[fleet.job]]
+name             = "bus-factor"
+agent            = "ownership"
+interval_seconds = 86400
+sweep            = "paths"       # "paths" | "services" | "symbols" | "terms"
+max_subjects     = 200           # REQUIRED when `sweep` is set; integer 1..500
+path_prefix      = "packages/"   # optional; "paths"/"symbols" only
+```
+
+`sweep`, `max_subjects` and `path_prefix` join the reserved keys, so they never reach the agent as
+a parameter. **Refused, never clamped or silently dropped, naming the job and the reason:**
+
+- `sweep` names a kind the agent does not accept — including every not-enumerable agent (`why`,
+  `expert`, `impact`, `catchup`, `decisions`, `standup`, `huddle`, `janitor`; see the enumerator
+  table below).
+- `sweep` is set and the job ALSO sets the parameter that kind supplies (`path`, `service`,
+  `file`, `term`) — two sources for one subject.
+- `sweep` is set and `max_subjects` is absent, non-integer, `< 1`, or `> 500`.
+- `max_subjects` or `path_prefix` is set without `sweep`.
+- `path_prefix` is set on `services`/`terms` (neither accepts it), or is the empty string (every
+  path starts with `""`, so an empty prefix would silently mean "no narrowing"; whitespace is
+  kept verbatim — a path may legally contain spaces, so it is never trimmed).
+- `sweep` is combined with `namespace`/`namespaces` on `ghost`/`conflicts` — those fan out to
+  paired peers, and a sweep would multiply federated calls under the owner's identity; a sweep
+  stays local.
+
+**The four kinds and what they enumerate:**
+
+| `sweep` | Source | Eligible agents | `path_prefix` |
+|---|---|---|---|
+| `paths` | the ownership pass's own indexed files/directories (git-aware roots only) | `ownership` | yes |
+| `services` | configured `[ci.service.<id>]` / `[metrics.dora.<id>]` ids | `oncall`, `changelog`, `ownership` | no |
+| `symbols` | distinct code-symbol labels from the filesystem symbol graph | `ghost`, `conflicts` | yes |
+| `terms` | consolidated glossary terms | `glossary` | no |
+
+`ownership` accepts both `paths` and `services`; a job picks one. `ghost`/`conflicts` sweep
+`symbols` rather than file paths, since their match parameter takes an exact symbol-label lookup
+before a fuzzy basename match, and a path sweep would hand every same-named file the identical
+fuzzy token; a same-named function/type in one file, or the same file indexed under two roots,
+share one label and enumerate as ONE subject (a stated bound — see
+[`architecture.md` § Spine S2 Subsystems](./architecture.md#spine-s2-subsystems)). `janitor`
+cannot be swept: its subject is free text probed for mentions, and the index holds no resource
+inventory to enumerate one from.
+
+**Eligible agents** (14 of the 18 served `agents.*` methods): `catchup`, `standup`, `oncall`,
+`changelog`, `huddle`, `glossary`, `decisions`, `ownership`, `why`, `ghost`, `conflicts`, `impact`,
+`expert`, `janitor`. Excluded: `preflight` and `premortem` (side effects — a HITL prompt nobody is
+awake to answer, and durable watcher/tombstone writes), `whyPeek` (synchronous shape, never fires
+the completion notification the invoker awaits), and `negotiate` (**deferred**, settled rather
+than pending: no sweep enumerator returns person-shaped subjects, and a nightly, unattended
+dossier over every indexed person has no consent surface today). The map is TOTAL over the served
 methods, so a new agent does not compile until someone classifies it.
 
 **Org lockoff:** `[policy.capabilities.ai_v2] agent_fleet = false` in a signed `nimbus.policy.toml`
