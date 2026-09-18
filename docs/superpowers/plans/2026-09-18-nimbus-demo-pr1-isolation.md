@@ -146,6 +146,11 @@ describe("demoSocketPathFor", () => {
     expect(s.slice(`${pipe}-demo-`.length)).toMatch(/^[0-9a-f]{12}$/);
   });
 
+  test("pipe detection is case-insensitive, like dirs.ts isWindowsNamedPipe", () => {
+    const upper = "\\\\.\\PIPE\\nimbus-gateway";
+    expect(demoSocketPathFor(upper, join("A", "demo"))).toMatch(/-demo-[0-9a-f]{12}$/);
+  });
+
   test("the pipe suffix is deterministic per root and distinct across roots", () => {
     const a1 = demoSocketPathFor(pipe, join("A", "demo"));
     const a2 = demoSocketPathFor(pipe, join("A", "demo"));
@@ -202,6 +207,7 @@ import { createHash } from "node:crypto";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 
+import { isWindowsNamedPipe } from "./dirs.ts";
 import { PlatformInitError } from "./errors.ts";
 import type { PlatformPaths } from "./paths.ts";
 
@@ -216,7 +222,6 @@ export const DEMO_ENV = "NIMBUS_DEMO";
 export const DEMO_DIRNAME = "demo";
 export const DEMO_TEMP_DIRNAME = "nimbus-demo";
 
-const WINDOWS_PIPE_PREFIX = "\\\\.\\pipe\\";
 const DEMO_UNIX_SOCKET_BASENAME = "nimbus-gateway-demo.sock";
 /** A demo process honouring either of these would open the REAL config/Vault or dial the REAL gateway. */
 const REAL_ROOT_OVERRIDES = ["NIMBUS_CONFIG_DIR", "NIMBUS_GATEWAY_SOCKET"] as const;
@@ -253,9 +258,11 @@ export function demoRootFor(realDataDir: string): string {
  * The demo IPC endpoint. A Windows named pipe is MACHINE-global, so a fixed name would let a
  * process booted on temp roots (a test) reach a developer's live demo gateway; the suffix is a
  * hash of the demo root, so each root owns its own pipe and the CLI and gateway still agree.
+ * Pipe detection reuses `dirs.ts`'s case-insensitive `isWindowsNamedPipe`, the gateway's one
+ * definition of "is this a pipe".
  */
 export function demoSocketPathFor(realSocketPath: string, demoRoot: string): string {
-  if (realSocketPath.startsWith(WINDOWS_PIPE_PREFIX)) {
+  if (isWindowsNamedPipe(realSocketPath)) {
     const h = createHash("sha256").update(demoRoot, "utf8").digest("hex").slice(0, 12);
     return `${realSocketPath}-demo-${h}`;
   }
@@ -342,9 +349,18 @@ In `packages/gateway/src/platform/paths.test.ts`, add `"NIMBUS_DEMO"` and `"NIMB
 ```ts
 describe("NIMBUS_DEMO=1 relocates every resolver into <realDataDir>/demo", () => {
   let snapshot: Record<string, string | undefined>;
+  // HOME/USERPROFILE are saved and restored HERE rather than added to TRACKED_ENV_KEYS: `clearEnv()`
+  // deletes every tracked key in the OTHER describes' beforeEach, and those tests compute their
+  // expectations from the real `homedir()`.
+  let savedHome: string | undefined;
+  let savedUserProfile: string | undefined;
   beforeEach(() => {
     snapshot = snapshotEnv();
     clearEnv();
+    savedHome = process.env["HOME"];
+    savedUserProfile = process.env["USERPROFILE"];
+    process.env["HOME"] = join(FAKE_TMPDIR, "home");
+    process.env["USERPROFILE"] = join(FAKE_TMPDIR, "home");
     process.env["APPDATA"] = join(FAKE_TMPDIR, "roaming");
     process.env["LOCALAPPDATA"] = join(FAKE_TMPDIR, "local");
     process.env["XDG_CONFIG_HOME"] = join(FAKE_TMPDIR, "xdg-config");
@@ -354,6 +370,10 @@ describe("NIMBUS_DEMO=1 relocates every resolver into <realDataDir>/demo", () =>
   });
   afterEach(() => {
     restoreEnv(snapshot);
+    if (savedHome === undefined) delete process.env["HOME"];
+    else process.env["HOME"] = savedHome;
+    if (savedUserProfile === undefined) delete process.env["USERPROFILE"];
+    else process.env["USERPROFILE"] = savedUserProfile;
   });
 
   const RESOLVERS = [
@@ -473,6 +493,12 @@ describe("demoModeRequested (cli mirror)", () => {
 
 describe("demoSocketPathFor (cli mirror)", () => {
   const pipe = "\\\\.\\pipe\\nimbus-gateway";
+  test("Windows pipe: case-insensitive detection", () => {
+    expect(demoSocketPathFor("\\\\.\\PIPE\\nimbus-gateway", join("A", "demo"))).toMatch(
+      /-demo-[0-9a-f]{12}$/,
+    );
+  });
+
   test("Windows pipe: deterministic -demo-<12 hex> suffix", () => {
     const s = demoSocketPathFor(pipe, join("A", "demo"));
     expect(s.slice(`${pipe}-demo-`.length)).toMatch(/^[0-9a-f]{12}$/);
@@ -534,6 +560,7 @@ export const DEMO_ENV = "NIMBUS_DEMO";
 export const DEMO_DIRNAME = "demo";
 export const DEMO_TEMP_DIRNAME = "nimbus-demo";
 
+/** Lower-case; compared against a lower-cased path, matching the gateway's `isWindowsNamedPipe`. */
 const WINDOWS_PIPE_PREFIX = "\\\\.\\pipe\\";
 const DEMO_UNIX_SOCKET_BASENAME = "nimbus-gateway-demo.sock";
 const REAL_ROOT_OVERRIDES = ["NIMBUS_CONFIG_DIR", "NIMBUS_GATEWAY_SOCKET"] as const;
@@ -569,7 +596,7 @@ export function demoRootFor(realDataDir: string): string {
 }
 
 export function demoSocketPathFor(realSocketPath: string, demoRoot: string): string {
-  if (realSocketPath.startsWith(WINDOWS_PIPE_PREFIX)) {
+  if (realSocketPath.toLowerCase().startsWith(WINDOWS_PIPE_PREFIX)) {
     const h = createHash("sha256").update(demoRoot, "utf8").digest("hex").slice(0, 12);
     return `${realSocketPath}-demo-${h}`;
   }
@@ -627,6 +654,19 @@ const REALS = [
       dataDir: join("C:", "Users", "u", "AppData", "Local", "Nimbus", "data"),
       logDir: join("C:", "Users", "u", "AppData", "Local", "Nimbus", "data", "logs"),
       socketPath: "\\\\.\\pipe\\nimbus-gateway",
+      extensionsDir: join("C:", "Users", "u", "AppData", "Local", "Nimbus", "extensions"),
+      tempDir: join("T", "nimbus"),
+    },
+  },
+  {
+    // Upper-case prefix: the gateway detects pipes via dirs.ts's case-insensitive
+    // isWindowsNamedPipe, the CLI inline — this row is what keeps those two equal.
+    name: "windows-shaped, upper-case PIPE prefix",
+    real: {
+      configDir: join("C:", "Users", "u", "AppData", "Roaming", "Nimbus"),
+      dataDir: join("C:", "Users", "u", "AppData", "Local", "Nimbus", "data"),
+      logDir: join("C:", "Users", "u", "AppData", "Local", "Nimbus", "data", "logs"),
+      socketPath: "\\\\.\\PIPE\\nimbus-gateway",
       extensionsDir: join("C:", "Users", "u", "AppData", "Local", "Nimbus", "extensions"),
       tempDir: join("T", "nimbus"),
     },
@@ -850,7 +890,7 @@ Change line 84 to:
 const rawArgv = applyDemoFlag(process.argv.slice(2), process.env);
 ```
 
-adding `import { applyDemoFlag } from "./lib/demo-flag.ts";` and changing the paths import to `import { type CliPlatformPaths, getCliPlatformPaths } from "./paths.ts";`. Then in `main()`, replace the two lines `const paths = getCliPlatformPaths();` / `const { logger } = await createCliFileLogger(paths);` with:
+adding `import { applyDemoFlag } from "./lib/demo-flag.ts";` and changing the paths import to `import { type CliPlatformPaths, getCliPlatformPaths } from "./paths.ts";`. Then in `main()`, replace the THREE opening lines — `if (!shouldSuppressBanner) intro("Nimbus");` / `const paths = getCliPlatformPaths();` / `const { logger } = await createCliFileLogger(paths);` — with the block below. Path resolution moves ABOVE `intro()`: a refusal returns early and never reaches `outro()`, so an `intro()` already printed would leave an unclosed `┌ Nimbus` box on stdout above the stderr message.
 
 ```ts
   let paths: CliPlatformPaths;
@@ -864,6 +904,7 @@ adding `import { applyDemoFlag } from "./lib/demo-flag.ts";` and changing the pa
     process.exitCode = 1;
     return;
   }
+  if (!shouldSuppressBanner) intro("Nimbus");
   const { logger } = await createCliFileLogger(paths);
 ```
 
@@ -946,7 +987,8 @@ async function runCli(args: string[], env: Record<string, string>) {
 
 afterAll(() => {
   try {
-    rmSync(root, { recursive: true, force: true });
+    // Retries are for the LEAK (issue #972), not for flakiness: a failure is already swallowed.
+    rmSync(root, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
   } catch {
     /* best effort — a Windows handle release can lag */
   }
@@ -1325,7 +1367,12 @@ Append after the I40 `describe` block:
 
 ```ts
 describe("I41 — a demo-rooted process never reaches the real install", () => {
+  // HOME/USERPROFILE too: `createDarwinPaths` reads `homedir()`, which follows these in-process
+  // (verified 2026-09-18 on Bun 1.3.14) — so without them the darwin resolver computes paths under
+  // the developer's REAL home. Nothing is written here, but the Global Constraint is unconditional.
   const ENV_KEYS = [
+    "HOME",
+    "USERPROFILE",
     "APPDATA",
     "LOCALAPPDATA",
     "XDG_CONFIG_HOME",
@@ -1345,6 +1392,8 @@ describe("I41 — a demo-rooted process never reaches the real install", () => {
       delete process.env[k];
     }
     const root = mkdtempSync(join(tmpdir(), "nimbus-i41-"));
+    process.env["HOME"] = join(root, "home");
+    process.env["USERPROFILE"] = join(root, "home");
     process.env["APPDATA"] = join(root, "roaming");
     process.env["LOCALAPPDATA"] = join(root, "local");
     process.env["XDG_CONFIG_HOME"] = join(root, "xdg-config");
@@ -1637,7 +1686,6 @@ beforeAll(async () => {
     "NIMBUS_CONFIG_DIR",
     "NIMBUS_GATEWAY_SOCKET",
     "NIMBUS_E2E_PATHS_JSON",
-    "NIMBUS_PROFILE",
     "NIMBUS_METRICS_PORT",
   ]) {
     delete env[k];
@@ -1656,6 +1704,10 @@ beforeAll(async () => {
     NIMBUS_SKIP_EMBEDDING_RUNTIME: "1",
     NIMBUS_HTTP_PORT: String(httpPort),
     NIMBUS_DEMO: "1",
+    // An owner's shell may export a profile. The demo config dir holds no `nimbus.work.toml`,
+    // so `resolveNimbusTomlForProfile` must fall back to the demo `nimbus.toml` — set, not
+    // deleted, so the boot below proves that fallback rather than assuming it (spec § 3.2).
+    NIMBUS_PROFILE: "work",
   });
 
   // Premise: the child must resolve homedir() to the temp HOME, or on macOS this test would boot
@@ -1693,7 +1745,8 @@ afterAll(async () => {
     await proc.exited;
   }
   try {
-    rmSync(root, { recursive: true, force: true });
+    // Retries are for the LEAK (issue #972), not for flakiness: a failure is already swallowed.
+    rmSync(root, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
   } catch {
     /* best effort — a Windows handle release can lag behind process exit */
   }
@@ -1829,7 +1882,8 @@ is otherwise unexercised. From Git Bash in the worktree:
 R=$(mktemp -d)
 export APPDATA="$R/r" LOCALAPPDATA="$R/l" HOME="$R/h" USERPROFILE="$R/h" \
   XDG_CONFIG_HOME="$R/c" XDG_DATA_HOME="$R/d" XDG_RUNTIME_DIR="$R/u" \
-  TMPDIR="$R/t" TEMP="$R/t" TMP="$R/t" NIMBUS_SKIP_EMBEDDING_RUNTIME=1
+  TMPDIR="$R/t" TEMP="$R/t" TMP="$R/t" NIMBUS_SKIP_EMBEDDING_RUNTIME=1 \
+  NIMBUS_PROFILE=work  # an inherited profile must fall back to the demo nimbus.toml, not break start
 mkdir -p "$R"/{r,l,h,c,d,u,t}
 unset NIMBUS_CONFIG_DIR NIMBUS_GATEWAY_SOCKET NIMBUS_DEMO
 bun packages/cli/src/index.ts --demo start
@@ -1871,4 +1925,18 @@ git push -u origin dev/asafgolombek/nimbus-demo
 ```
 
 Open the PR with title `feat: isolated demo root for nimbus --demo (invariant I41)` (the title IS the squash commit subject release-please parses — `feat`, no `!`: no existing user has to change anything). The description becomes the permanent commit body: summarise the four I41 clauses, the three host-global findings, the plan-time change to the e2e (no non-demo gateway boots in the test, and why), and "PR 2 of 2 follows: the synthetic corpus, `demo.seed`, and the tour". End it with the attribution line. Do NOT put a bare `Release-As:` line in it. Use `gh pr create` with `--body-file`. Do not merge — wait for `PR quality — required gates`; merging is the owner's call.
-```
+
+---
+
+## Review disposition (review of 2026-09-18, `2026-09-18-nimbus-demo-pr1-isolation-review.md`)
+
+Each finding was checked against the code first.
+
+| # | Finding | Disposition |
+|---|---|---|
+| 2.1 | I41 test omits `HOME`/`USERPROFILE` | **Fixed** (Task 5 Step 1, and Task 1 Step 5's new `describe`). Verified the premise: Bun 1.3.14's `homedir()` DOES follow in-process `USERPROFILE`/`HOME` changes, so without them the darwin resolver computed paths under the real home. In `paths.test.ts` they are saved/restored locally, NOT added to `TRACKED_ENV_KEYS` — `clearEnv()` would delete them for the other describes, whose expectations use the real `homedir()`. |
+| 2.2 | `intro()` prints before a refusal, leaving an unclosed box | **Fixed** (Task 3 Step 5). Verified: `index.ts:204` calls `intro` before `getCliPlatformPaths()`. Path resolution now precedes it. |
+| 2.3 | Pipe-prefix check is case-sensitive | **Fixed, by reuse**: the gateway now calls `dirs.ts`'s existing `isWindowsNamedPipe` rather than a second prefix constant (no runtime cycle — `dirs.ts` imports `paths.ts` type-only); the CLI mirror lower-cases inline; an upper-case `\\.\PIPE\` row was added to the parity test and both unit tests. Low real-world reach — demo mode refuses `NIMBUS_GATEWAY_SOCKET`, so the input is always our own lower-case default — but two definitions of "is a pipe" was the actual defect. |
+| 2.4 | `rmSync` in `afterAll` can flake on Windows | **Premise rejected, change adopted for a different reason.** Both cleanups are already inside `try/catch`, so a lingering handle cannot fail a test. The retry (`maxRetries: 3, retryDelay: 50`, Node's own `RmOptions` rather than a hand loop) is kept to reduce the temp-dir LEAK tracked as #972. Whether Bun honours those options at runtime is unverified; inside the catch, the worst case is no change. |
+| 2.5 | Inherited `NIMBUS_PROFILE` untested | **Fixed, in the layer that reads it**: the gateway e2e now SETS `NIMBUS_PROFILE=work` instead of deleting it, and the Task 7 smoke exports it — the gateway (`resolveNimbusTomlForProfile`) and `nimbus start` are the consumers. Not added to the CLI e2e as suggested: `--demo --version` never reads a profile, so it would pass without exercising anything. |
+| § 3 | Validation matrix ("33/33 preflight gates") | **Not adopted.** The gate count is unverified and would rot; the plan's per-task Expected lines already state the pass criteria. |
