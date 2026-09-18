@@ -2353,7 +2353,8 @@ nimbus connector auth discord        # bot token (opt-in)
 # CI/CD
 nimbus connector auth jenkins        # base URL + username + API token
 nimbus connector auth circleci       # API token
-# github_actions / gitlab_ci reuse the github / gitlab credentials above
+# github_actions reuses the github credential above (there is no gitlab_ci service: GitLab CI data
+# comes from the gitlab connector, authenticated above)
 
 # Cloud platforms / infrastructure
 nimbus connector auth aws
@@ -2382,7 +2383,7 @@ nimbus connector auth figma          # OAuth (+ non-secret team id)
 nimbus connector auth zoom           # OAuth 3-legged PKCE — opens browser
 ```
 
-**Credential reuse — no separate `connector auth` needed.** `github_actions` / `gitlab_ci` reuse the `github` / `gitlab` credentials; `google_meet` rides the `google` OAuth; and the metadata-only **BigQuery / Athena / CloudWatch / SageMaker / Cloud Logging / Vertex AI** connectors reuse your `aws` / `gcp` credentials. Authenticate the underlying provider and these light up automatically.
+**Credential reuse — no separate `connector auth` needed.** `github_actions` reuses the `github` credential (there is no `gitlab_ci` service — GitLab CI data comes from the `gitlab` connector, which you authenticate directly); `google_meet` rides the `google` OAuth; and the metadata-only **BigQuery / Athena / CloudWatch / SageMaker / Cloud Logging / Vertex AI** connectors reuse your `aws` / `gcp` credentials. Authenticate the underlying provider and these light up automatically.
 
 **Connectors set up with `nimbus vault set`, not `connector auth`.** The services below have no `connector auth` flow. Running `nimbus connector auth <service>` for one of them refuses and prints the exact `nimbus vault set` commands for that service. Store each setting with `nimbus vault set <key> <value>`; every write asks for your approval. Set the keys your setup uses: optional ones, such as a self-hosted base URL or a team id, can be left out. The table comes from `CONNECTOR_VAULT_SECRET_KEYS`; if it ever disagrees with what the refusal prints, the refusal is current.
 
