@@ -3,6 +3,7 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { z } from "zod";
 import { IPCClient } from "../ipc-client/index.ts";
 import { readGatewayState } from "../lib/gateway-process.ts";
+import { parseSearchRankedResponse } from "../lib/search-ranked-response.ts";
 import { getCliPlatformPaths } from "../paths.ts";
 import { AGENT_TOOL_SPECS, failBriefsForClient } from "./agent-tools.ts";
 import {
@@ -331,6 +332,8 @@ function searchParams(opts: {
     limit: opts.limit,
     semantic: opts.semantic,
     contextChunks: 0,
+    // Ask for the retrieval disclosure; an older gateway ignores the flag and answers a bare array.
+    envelope: true,
   };
   if (opts.itemType !== undefined) {
     p["itemType"] = opts.itemType;
@@ -345,8 +348,16 @@ async function searchAndProject(
   client: IpcCallable,
   params: Record<string, unknown>,
 ): Promise<ToolResult> {
-  const rows = await client.call<unknown>("index.searchRanked", params);
-  return jsonResult(projectRankedItems(rows));
+  const { items, notes } = parseSearchRankedResponse(
+    await client.call<unknown>("index.searchRanked", params),
+  );
+  const result = jsonResult(projectRankedItems(items));
+  // A SEPARATE text block, only when there is something to disclose: the rows block keeps its exact
+  // shape for every caller, and a keyword-only or mid-backfill result cannot read as complete.
+  if (notes.length > 0) {
+    result.content.push({ type: "text", text: notes.map((n) => `note: ${n}`).join("\n") });
+  }
+  return result;
 }
 
 /** A browse tool pinned to one itemType (recent items, recency-ranked). */

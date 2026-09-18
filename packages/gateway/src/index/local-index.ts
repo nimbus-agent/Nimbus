@@ -10,6 +10,7 @@ import {
   recordSlowQuery,
 } from "../db/latency-ring-buffer.ts";
 import { dbRun } from "../db/write.ts";
+import type { DualVectorsOutcome } from "../embedding/embedding-readiness.ts";
 import {
   compositeSearchScore,
   normalizeHigherIsBetter,
@@ -49,6 +50,13 @@ import {
   runIndexedSchemaMigrations,
 } from "./migrations/runner.ts";
 import type { RankedIndexItem } from "./ranked-item.ts";
+import {
+  type BackfillPassProgress,
+  retrievalFromOutcome,
+  type SearchRankedResult,
+  unrankedReasonFor,
+  unrankedRetrieval,
+} from "./search-retrieval.ts";
 import { ensureSqliteVecForConnection } from "./sqlite-vec-load.ts";
 
 export type { TraverseGraphOptions, TraverseGraphResult } from "../graph/relationship-graph.ts";
@@ -246,12 +254,14 @@ function stripRankedToNimbus(r: RankedIndexItem): NimbusItem {
 export type SemanticSearchDeps = {
   model: string;
   embedQuery: (text: string) => Promise<Float32Array | null>;
-  embedQueryDual: (text: string) => Promise<{
-    vec384: Float32Array | null;
-    vec1536: Float32Array | null;
-    model384: string | null;
-    model1536: string | null;
-  }>;
+  /**
+   * The query vectors AND, when there are none, the temporary reason why (`warming` /
+   * `timeout`). Never the bare vectors: a degrade that drops its reason is how a keyword-only
+   * result came to be reported as complete.
+   */
+  embedQueryDualOutcome: (text: string) => Promise<DualVectorsOutcome>;
+  /** The running background embedding pass, or `null` when none is running. O(1). */
+  activeBackfillPass: () => BackfillPassProgress | null;
 };
 
 export type LocalIndexOptions = {
@@ -669,10 +679,16 @@ export class LocalIndex {
     }
   }
 
+  /**
+   * Ranked search plus the disclosure of what it actually did ({@link SearchRetrieval}). The
+   * disclosure is built HERE, the one site that knows both whether the vector half came back and
+   * whether a background embedding pass is running, and travels with the items so no caller can
+   * report a keyword-only result as a complete semantic one.
+   */
   async searchRankedAsync(
     query: IndexSearchQuery,
     options?: SearchRankOptions & { semantic?: boolean; contextChunks?: number },
-  ): Promise<RankedIndexItem[]> {
+  ): Promise<SearchRankedResult> {
     const nameQ = query.name?.trim() ?? "";
     const semanticOn = options?.semantic ?? true;
     const ss = this.semanticSearch;
@@ -683,7 +699,8 @@ export class LocalIndex {
     if (canHybrid) {
       const t0 = performance.now();
       try {
-        const dual = await ss.embedQueryDual(nameQ);
+        const outcome = await ss.embedQueryDualOutcome(nameQ);
+        const dual = outcome.vectors;
         const hybridOpts: HybridSearchOptions = {
           query: nameQ,
           limit: query.limit ?? 50,
@@ -704,13 +721,16 @@ export class LocalIndex {
           hybridOpts.queryEmbedding1536 = dual.vec1536;
           hybridOpts.embeddingModel1536 = dual.model1536;
         }
+        // Snapshot the backfill pass when RANKING starts, not before the query embedding: that
+        // await can span the whole embedding budget, during which a pass may start or finish.
+        const retrieval = retrievalFromOutcome(outcome, ss.activeBackfillPass());
         const hybridResults = await hybridSearch(this.db, hybridOpts);
 
         const normRrf = normalizeHigherIsBetter(hybridResults.map((h) => h.rrfScore));
         const now = options?.nowMs ?? Date.now();
         const priorities = options?.searchServicePriority ?? new Map();
 
-        return hybridResults.map((h, i) => {
+        const items = hybridResults.map((h, i) => {
           const row = h.item;
           const rec = recencyScore(row.modified_at, now);
           const sp = servicePriorityScore(row.service, priorities);
@@ -732,12 +752,19 @@ export class LocalIndex {
           }
           return ranked;
         });
+        return { items, retrieval };
       } finally {
         this.emitQueryLatency("hybrid", performance.now() - t0, nameQ.slice(0, 200) || null);
       }
     }
 
-    return this.searchRanked(query, options);
+    return {
+      items: this.searchRanked(query, options),
+      retrieval: unrankedRetrieval(
+        unrankedReasonFor({ nameQ, semanticOn, hasRuntime: ss !== undefined }),
+        ss?.activeBackfillPass() ?? null,
+      ),
+    };
   }
 
   fetchMoreItems(

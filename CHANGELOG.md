@@ -2,6 +2,19 @@
 
 All notable changes to the `nimbus` core (headless Gateway + CLI binary + first-party MCP connectors) are documented in this file. release-please appends new entries between this header and the most recent version below when a release PR merges.
 
+## [7.25.0](https://github.com/nimbus-agent/Nimbus/compare/v7.24.0...v7.25.0) (2026-09-17)
+
+
+### Features
+
+* **search:** disclose keyword-only and mid-backfill results; typed embedding query timeout ([#1535](https://github.com/nimbus-agent/Nimbus/issues/1535)) ([c6c7e27](https://github.com/nimbus-agent/Nimbus/commit/c6c7e27b75901cbfa19f7b03b4514d6fb63d831c))
+
+
+### Bug Fixes
+
+* **media:** show real sizes in the allow-remote consent preview ([#1534](https://github.com/nimbus-agent/Nimbus/issues/1534)) ([c6f927e](https://github.com/nimbus-agent/Nimbus/commit/c6f927ec0d5f88dc6d54d4f81482765236a324be))
+* **sandbox:** stop the Windows helper leaking an ACE per run; tool run follow-ups ([#1524](https://github.com/nimbus-agent/Nimbus/issues/1524)) ([52fb7cf](https://github.com/nimbus-agent/Nimbus/commit/52fb7cfea808893955c6267caf08a5cb18aae943))
+
 ## [7.24.0](https://github.com/nimbus-agent/Nimbus/compare/v7.23.0...v7.24.0) (2026-09-16)
 
 

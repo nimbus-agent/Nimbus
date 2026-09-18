@@ -98,12 +98,11 @@ function seedHybrid(): { idx: LocalIndex; db: Database } {
     embedQuery: async () => q,
     // A real, non-null 384-dim query vector — the thing round 1 never provided, which is
     // exactly what kept `canHybrid` false and the hybrid branch unreached.
-    embedQueryDual: async () => ({
-      vec384: q,
-      vec1536: null,
-      model384: model,
-      model1536: null,
+    embedQueryDualOutcome: async () => ({
+      vectors: { vec384: q, vec1536: null, model384: model, model1536: null },
+      degraded: null,
     }),
+    activeBackfillPass: () => null,
   };
 
   return { idx: new LocalIndex(db, { semanticSearch: fakeDeps }), db };
@@ -118,10 +117,9 @@ describe("score components survive onto RankedIndexItem — hybrid path (spec §
     // meaning the strict assertion below could never legitimately pass.
     expect(db.query("select vec_version() as v").get()).toBeDefined();
 
-    const [item] = await idx.searchRankedAsync(
-      { name: "rate limiting", limit: 5 },
-      { semantic: true },
-    );
+    const {
+      items: [item],
+    } = await idx.searchRankedAsync({ name: "rate limiting", limit: 5 }, { semantic: true });
     expect(item).toBeDefined();
     // Strict equality, not `["fts_rank", "hybrid_rrf"].toContain(...)`: if the hybrid
     // branch were not entered (or its `scoringFormula: "hybrid_rrf"` assignment were
@@ -136,10 +134,9 @@ describe("score components survive onto RankedIndexItem — hybrid path (spec §
     const { idx, db } = seedHybrid();
     expect(db.query("select vec_version() as v").get()).toBeDefined();
 
-    const [item] = await idx.searchRankedAsync(
-      { name: "rate limiting", limit: 5 },
-      { semantic: true },
-    );
+    const {
+      items: [item],
+    } = await idx.searchRankedAsync({ name: "rate limiting", limit: 5 }, { semantic: true });
     expect(item?.scoringFormula).toBe("hybrid_rrf");
     const recomposed =
       0.5 * (item?.matchScore ?? 0) +

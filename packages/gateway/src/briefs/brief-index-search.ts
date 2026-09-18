@@ -14,7 +14,7 @@ export function createBriefIndexSearch(localIndex: LocalIndex): IndexSearch {
   return async (query, limit) => {
     // NO itemType filter: a brief draws on the whole index. `IndexSearchQuery.itemType`
     // is optional and the SQL applies it only when set, so omitting it is the widening.
-    const hits = await localIndex.searchRankedAsync(
+    const { items: hits, retrieval } = await localIndex.searchRankedAsync(
       { name: query, limit },
       { semantic: true, contextChunks: 2 },
     );
@@ -30,8 +30,10 @@ export function createBriefIndexSearch(localIndex: LocalIndex): IndexSearch {
         url: h.url ?? h.canonicalUrl ?? null,
         snippet: h.semanticSnippet ?? h.name,
       })),
-      // A hit with no vectorRank anywhere means the hybrid path did not run.
-      semanticAvailable: hits.some((h) => h.vectorRank !== undefined && h.vectorRank !== null),
+      // Read from the search's own disclosure. The previous guess — "some hit carries a
+      // vectorRank" — reported semantic search as unavailable whenever a working vector search
+      // simply matched nothing.
+      semanticAvailable: retrieval.vectorRanked,
     };
   };
 }

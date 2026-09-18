@@ -15,6 +15,7 @@ import { getConnectorHealth } from "../connectors/health.ts";
 import { writeToolCallLog } from "../db/tool-call-log.ts";
 import { wrapLedgeredMastraModel } from "../egress/mastra-model-egress.ts";
 import type { IndexSearchQuery, LocalIndex, TraverseGraphOptions } from "../index/local-index.ts";
+import { retrievalNoteFor } from "../index/search-retrieval.ts";
 import type { SessionMemoryStore } from "../memory/session-memory-store.ts";
 import { searchPersons } from "../people/person-store.ts";
 import { buildGeneratedTools } from "../toolgen/toolgen-agent-tools.ts";
@@ -278,7 +279,7 @@ export function createNimbusEngineAgent(deps: NimbusEngineAgentDeps): {
       if (itemType !== undefined) {
         query.itemType = itemType;
       }
-      const ranked = await deps.localIndex.searchRankedAsync(query, {
+      const { items: ranked, retrieval } = await deps.localIndex.searchRankedAsync(query, {
         searchServicePriority: searchPriority,
         semantic,
         contextChunks,
@@ -293,6 +294,10 @@ export function createNimbusEngineAgent(deps: NimbusEngineAgentDeps): {
         sourceSummary: window.sourceSummary,
         note: "Additional matches are collapsed into sourceSummary. Call fetchMoreIndexResults with the same service and indexedType values shown in sourceSummary.type to retrieve more rows (offset starts at 0).",
         ...healthExtras,
+        // What the search actually did. Without it a keyword-only result (embedding warming or
+        // timed out) or one taken mid-backfill reads to the model as a complete semantic search.
+        retrieval,
+        ...retrievalNoteFor(retrieval),
       };
     },
   });

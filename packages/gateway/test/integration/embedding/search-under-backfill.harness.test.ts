@@ -87,17 +87,21 @@ describe.skipIf(!RUN)("end-to-end search latency under a saturating backfill (me
               lastEmbedMs = performance.now() - t0;
               return v ?? null;
             },
-            embedQueryDual: async (text) => {
+            embedQueryDualOutcome: async (text) => {
               const t0 = performance.now();
               const [v] = await pipeline.embedTexts([text]);
               lastEmbedMs = performance.now() - t0;
               return {
-                vec384: v ?? null,
-                vec1536: null,
-                model384: v !== undefined ? model : null,
-                model1536: null,
+                vectors: {
+                  vec384: v ?? null,
+                  vec1536: null,
+                  model384: v !== undefined ? model : null,
+                  model1536: null,
+                },
+                degraded: null,
               };
             },
+            activeBackfillPass: () => null,
           },
         });
 
@@ -136,7 +140,7 @@ describe.skipIf(!RUN)("end-to-end search latency under a saturating backfill (me
         const embeddedBeforeLoad = embedded;
 
         const loadT0 = performance.now();
-        const underLoadResults = await idx.searchRankedAsync(
+        const { items: underLoadResults } = await idx.searchRankedAsync(
           { name: QUERY_TEXT, limit: 20 },
           { semantic: true },
         );
@@ -155,7 +159,7 @@ describe.skipIf(!RUN)("end-to-end search latency under a saturating backfill (me
         await backfill;
 
         const idleT0 = performance.now();
-        const idleResults = await idx.searchRankedAsync(
+        const { items: idleResults } = await idx.searchRankedAsync(
           { name: QUERY_TEXT, limit: 20 },
           { semantic: true },
         );

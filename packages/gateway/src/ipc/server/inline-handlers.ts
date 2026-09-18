@@ -14,6 +14,7 @@ import {
 import { GatewayAgentUnavailableError } from "../../engine/gateway-agent-error.ts";
 import { driftHintsFromIndex } from "../../index/drift-hints.ts";
 import type { IndexSearchQuery } from "../../index/local-index.ts";
+import { describeRetrieval } from "../../index/search-retrieval.ts";
 import type { AgentInvokeContext } from "../agent-invoke.ts";
 import { type AgentInvokeContextLike, createAskStreamHandler } from "../engine-ask-stream.ts";
 import type { ClientSession } from "../session.ts";
@@ -295,10 +296,23 @@ export async function rpcIndexSearchRanked(ctx: ServerCtx, params: unknown): Pro
   if (itemType !== undefined) {
     query.itemType = itemType;
   }
-  return await ctx.options.localIndex.searchRankedAsync(query, {
+  const result = await ctx.options.localIndex.searchRankedAsync(query, {
     semantic,
     contextChunks,
   });
+  // OPT-IN, and only on the wire. The published `@nimbus-dev/client` (0.17.3) asserts this method
+  // returns an array, so an unconditional envelope would make every existing client throw. First-party
+  // callers pass `envelope: true` and get the disclosure plus the gateway's own wording for it, so no
+  // client keeps a second copy of the notes. A caller that does not ask still receives undisclosed
+  // partial results — the stated residual (docs/architecture.md, search retrieval disclosure).
+  if (rec["envelope"] === true) {
+    return {
+      items: result.items,
+      retrieval: result.retrieval,
+      notes: describeRetrieval(result.retrieval),
+    };
+  }
+  return result.items;
 }
 
 export function rpcConsentRespond(ctx: ServerCtx, clientId: string, params: unknown): unknown {

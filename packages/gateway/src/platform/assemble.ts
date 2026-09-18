@@ -154,7 +154,7 @@ import { createEmbeddingRuntimeNonBlocking } from "../embedding/create-embedding
 import {
   type EmbeddingReadiness,
   embedQueryBestEffort,
-  embedQueryDualBestEffort,
+  embedQueryDualOutcome,
 } from "../embedding/embedding-readiness.ts";
 import type { EmbeddingRuntime as ConcreteEmbeddingRuntime } from "../embedding/embedding-runtime.ts";
 import { AskExplainRecorder } from "../engine/ask-explain-recorder.ts";
@@ -489,14 +489,15 @@ function createLocalIndexWithEmbeddingRuntime(
   if (rt) {
     scheduleItemEmbedding = rt.scheduleItemEmbedding.bind(rt);
     // DELIBERATE degradation seam. `searchRankedAsync` runs on every ask/agent/brief path, and
-    // a warming throw there would take `nimbus ask` down for the length of the model download.
-    // It therefore degrades to BM25 while warming — and the warm-up is NOT hidden: the
-    // `index.searchRanked` RPC checks `embeddingReadiness()` first and returns the typed
-    // warming condition rather than a lexical-only result the caller would read as complete.
+    // a warming or timed-out embed throwing there would take `nimbus ask` down with it. It
+    // therefore degrades to BM25 — and the degrade is NOT hidden: `embedQueryDualOutcome` keeps
+    // the reason, and `searchRankedAsync` hands every caller a `retrieval` block saying the
+    // results were keyword-only and why (see `index/search-retrieval.ts`).
     semanticSearch = {
       model: rt.getEmbeddingModel(),
       embedQuery: (text: string) => embedQueryBestEffort(rt, text),
-      embedQueryDual: (text: string) => embedQueryDualBestEffort(rt, text),
+      embedQueryDualOutcome: (text: string) => embedQueryDualOutcome(rt, text),
+      activeBackfillPass: () => rt.getActiveBackfillPass(),
     };
   }
   const localIndexOpts: LocalIndexOptions = {};

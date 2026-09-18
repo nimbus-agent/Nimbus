@@ -105,19 +105,19 @@ export function renewCredentials() { return {}; }
       semanticSearch: {
         model: MODEL,
         embedQuery: async () => q,
-        embedQueryDual: async () => ({
-          vec384: q,
-          vec1536: null,
-          model384: MODEL,
-          model1536: null,
+        embedQueryDualOutcome: async () => ({
+          vectors: { vec384: q, vec1536: null, model384: MODEL, model1536: null },
+          degraded: null,
         }),
+        activeBackfillPass: () => null,
       },
     });
 
-    const ranked = await idx.searchRankedAsync(
+    const { items: ranked, retrieval } = await idx.searchRankedAsync(
       { name: "OAuth refresh", limit: 20 },
       { semantic: true, contextChunks: 1 },
     );
+    expect(retrieval.vectorRanked).toBe(true);
     expect(ranked.length).toBeGreaterThanOrEqual(2);
     const posTarget = ranked.findIndex((r) => r.indexPrimaryKey === targetId);
     const posDecoy = ranked.findIndex((r) => r.indexPrimaryKey === decoyId);

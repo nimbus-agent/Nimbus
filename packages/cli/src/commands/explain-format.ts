@@ -95,8 +95,18 @@ export type Truncation = {
   readonly atLeast: boolean;
 };
 
+/**
+ * What the primary search actually did. OPTIONAL on the wire: a gateway that predates it sends no
+ * such field, and the report then falls back to the candidates' scoring formula.
+ */
+export type PrimaryRetrieval = {
+  readonly vectorRanked: boolean;
+  readonly notes: readonly string[];
+};
+
 export type LocalContextPayload = {
   readonly searchTerms: string;
+  readonly primaryRetrieval?: PrimaryRetrieval;
   readonly fallbackTermFired?: string;
   readonly truncation: Truncation;
   readonly pool: readonly LocalCandidate[];
@@ -265,11 +275,25 @@ function parseTruncation(v: unknown, where: string): Truncation {
   };
 }
 
+function parsePrimaryRetrieval(v: unknown, where: string): PrimaryRetrieval {
+  if (!isRecordObj(v)) bad(where);
+  return {
+    vectorRanked: bool(v["vectorRanked"], `${where}.vectorRanked`),
+    notes: arr(v["notes"], `${where}.notes`).map((n, i) => str(n, `${where}.notes[${i}]`)),
+  };
+}
+
 function parseLocalContextPayload(v: unknown, where: string): LocalContextPayload {
   if (!isRecordObj(v)) bad(where);
   const fallbackTermFiredRaw = v["fallbackTermFired"];
+  const primaryRetrievalRaw = v["primaryRetrieval"];
   return {
     searchTerms: str(v["searchTerms"], `${where}.searchTerms`),
+    ...(primaryRetrievalRaw === undefined
+      ? {}
+      : {
+          primaryRetrieval: parsePrimaryRetrieval(primaryRetrievalRaw, `${where}.primaryRetrieval`),
+        }),
     ...(fallbackTermFiredRaw === undefined
       ? {}
       : { fallbackTermFired: str(fallbackTermFiredRaw, `${where}.fallbackTermFired`) }),
@@ -503,9 +527,18 @@ function passKey(pass: ContributingPass): string {
  * pass kind alone) so it reflects what actually happened on this turn: `undefined` — no candidate
  * in the group carried a formula at all — falls back to a neutral label rather than guessing.
  */
-function passLabel(pass: ContributingPass, formula: LocalCandidate["scoringFormula"]): string {
+function passLabel(
+  pass: ContributingPass,
+  formula: LocalCandidate["scoringFormula"],
+  retrieval: PrimaryRetrieval | undefined,
+): string {
   switch (pass.kind) {
     case "primary-hybrid":
+      // The search's own disclosure wins over the formula: a query whose embedding timed out or was
+      // still loading is keyword-only, yet every row it returned still carries `hybrid_rrf`.
+      if (retrieval?.vectorRanked === false) {
+        return "primary search (keyword-only — semantic ranking did not run)";
+      }
       if (formula === "hybrid_rrf") return "primary search (hybrid RRF)";
       if (formula === "fts_rank") return "primary search (FTS rank)";
       return "primary index search";
@@ -622,7 +655,11 @@ function renderLocalContextPayload(p: LocalContextPayload, heading: string | und
   const totalLabel = p.truncation.atLeast
     ? `at least ${p.truncation.total}`
     : `${p.truncation.total}`;
-  lines.push(`Given to the model: ${p.truncation.shown} of ${totalLabel} matching items`, "");
+  lines.push(`Given to the model: ${p.truncation.shown} of ${totalLabel} matching items`);
+  for (const note of p.primaryRetrieval?.notes ?? []) {
+    lines.push(`Retrieval note: ${note}`);
+  }
+  lines.push("");
 
   const groups = groupPool(p.pool);
   if (distinctFormulas(p.pool).size > 1) {
@@ -641,7 +678,9 @@ function renderLocalContextPayload(p: LocalContextPayload, heading: string | und
     // "n/a (direct query)" is printed rather than a fabricated 0.00, which would claim the item
     // ranked last when it was never ranked at all.
     const formulaLabel = g.formula ?? "n/a (direct query)";
-    lines.push(`Pass: ${passLabel(g.pass, g.formula)} — scoring: ${formulaLabel}`);
+    lines.push(
+      `Pass: ${passLabel(g.pass, g.formula, p.primaryRetrieval)} — scoring: ${formulaLabel}`,
+    );
     for (const c of g.items) {
       lines.push(renderCandidateLine(c));
     }

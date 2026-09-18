@@ -135,6 +135,15 @@ describe("recorder wiring (spec §4.2)", () => {
     // the exact same values the local_context route recorded for the identical turn.
     expect(localContextAlsoGiven?.truncation).toBeDefined();
     expect(localContextAlsoGiven?.truncation).toEqual(baselineTruncation);
+    // What the primary search actually did travels on BOTH arms, recorded from the search's own
+    // disclosure. This fixture wires no embedding runtime, so the honest record is keyword-only
+    // with its reason and note — never a silent "hybrid" read off the rows' scoring formula.
+    const baselineRetrieval =
+      baseline?.route === "local_context" ? baseline.primaryRetrieval : undefined;
+    expect(baselineRetrieval?.vectorRanked).toBe(false);
+    expect(baselineRetrieval?.reason).toBe("no_embedding_runtime");
+    expect(baselineRetrieval?.notes[0]).toContain("keyword-only");
+    expect(localContextAlsoGiven?.primaryRetrieval).toEqual(baselineRetrieval);
   });
 
   test("a non-fallback agent_tools turn (no local context built) carries no localContextAlsoGiven", async () => {

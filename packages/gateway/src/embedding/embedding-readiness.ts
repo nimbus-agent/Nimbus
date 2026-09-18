@@ -17,6 +17,7 @@
  * `EmbeddingWarmingError` means "no vectors YET".
  */
 
+import { processEnvGet } from "../platform/env-access.ts";
 import type { EmbeddingDualVectors } from "./types.ts";
 
 export type EmbeddingReadinessState =
@@ -143,8 +144,142 @@ export function downloadPercent(loadedBytes: number, totalBytes: number): number
   return Math.min(100, Math.max(0, pct));
 }
 
+/** Stable machine-readable code carried by the timeout error. */
+export const EMBEDDING_TIMEOUT_CODE = "embedding_timeout";
+
+/**
+ * Per-query embedding budget. Deliberately well inside the CLI's 30 s IPC request bound, so the
+ * INNER bound is the one that fires: the caller then gets a disclosed keyword-only result rather
+ * than a transport error. (The old 60 s bound sat OUTSIDE that 30 s one and had never fired.)
+ */
+export const DEFAULT_EMBEDDING_QUERY_TIMEOUT_MS = 5_000;
+
+/**
+ * Ceiling for an override. The inner bound only produces a disclosed keyword-only result if it
+ * fires BEFORE the CLI/MCP `IPCClient`'s 30 s request bound; at or above that the caller gets a
+ * transport error instead — exactly the failure the 5 s default exists to avoid. 25 s leaves the
+ * hybrid search itself room to finish inside the outer bound.
+ */
+export const MAX_EMBEDDING_QUERY_TIMEOUT_MS = 25_000;
+
+/**
+ * `NIMBUS_EMBEDDING_QUERY_TIMEOUT_MS`, read at call time so a diagnosis can change it without a
+ * rebuild — the same reason `NIMBUS_EMBEDDING_INIT_TIMEOUT_MS` exists. Anything that is not a
+ * positive integer falls back to the default rather than disabling the bound; a larger value is
+ * clamped to {@link MAX_EMBEDDING_QUERY_TIMEOUT_MS}.
+ */
+export function resolveEmbeddingQueryTimeoutMs(): number {
+  const raw = processEnvGet("NIMBUS_EMBEDDING_QUERY_TIMEOUT_MS");
+  if (raw === undefined || raw === "") {
+    return DEFAULT_EMBEDDING_QUERY_TIMEOUT_MS;
+  }
+  // Whole-string check first: `parseInt` would read "1.5" as 1 and "250ms" as 250.
+  if (!/^\d+$/.test(raw)) {
+    return DEFAULT_EMBEDDING_QUERY_TIMEOUT_MS;
+  }
+  const n = Number(raw);
+  if (!Number.isSafeInteger(n) || n <= 0) {
+    return DEFAULT_EMBEDDING_QUERY_TIMEOUT_MS;
+  }
+  return Math.min(n, MAX_EMBEDDING_QUERY_TIMEOUT_MS);
+}
+
+/**
+ * Thrown INSTEAD of returning a null vector when a query embedding does not come back within its
+ * budget. The same false green as warming, on a different arm: a null here is indistinguishable
+ * from the permanent `unavailable` state, so hybrid search would silently become BM25 and report an
+ * empty result as "nothing matched". A timeout means "no vectors for THIS query", not "no vectors".
+ */
+export class EmbeddingTimeoutError extends Error {
+  readonly code = EMBEDDING_TIMEOUT_CODE;
+  readonly readiness: EmbeddingReadiness;
+  readonly timeoutMs: number;
+
+  constructor(readiness: EmbeddingReadiness, timeoutMs: number) {
+    super(`embedding query timed out after ${String(timeoutMs)}ms`);
+    this.name = "EmbeddingTimeoutError";
+    this.readiness = readiness;
+    this.timeoutMs = timeoutMs;
+  }
+}
+
+/** Brand check, for the same cross-realm reason as {@link isEmbeddingWarmingError}. */
+export function isEmbeddingTimeoutError(err: unknown): err is EmbeddingTimeoutError {
+  if (err instanceof EmbeddingTimeoutError) {
+    return true;
+  }
+  if (typeof err !== "object" || err === null) {
+    return false;
+  }
+  return (err as { code?: unknown }).code === EMBEDDING_TIMEOUT_CODE;
+}
+
+/**
+ * Bounds one query-embedding call. The ONE place the budget turns into a typed rejection, shared by
+ * every runtime so none of them can drift back to resolving `null`. `onTimeout` lets a caller drop
+ * bookkeeping it holds for the abandoned request (the worker bridge's pending map).
+ */
+export function withEmbeddingQueryTimeout<T>(
+  work: Promise<T>,
+  opts: {
+    readonly timeoutMs: number;
+    readonly readiness: () => EmbeddingReadiness;
+    readonly onTimeout?: () => void;
+  },
+): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => {
+      opts.onTimeout?.();
+      reject(new EmbeddingTimeoutError(opts.readiness(), opts.timeoutMs));
+    }, opts.timeoutMs);
+  });
+  return Promise.race([work, timeout]).finally(() => {
+    clearTimeout(timer);
+  });
+}
+
 type EmbedQueryLike = { embedQuery: (text: string) => Promise<Float32Array | null> };
 type EmbedQueryDualLike = { embedQueryDual: (text: string) => Promise<EmbeddingDualVectors> };
+
+/** Why a query produced no vectors when it otherwise could have. */
+export type EmbeddingDegradation = "warming" | "timeout";
+
+export type DualVectorsOutcome = {
+  readonly vectors: EmbeddingDualVectors;
+  /** `null` when the runtime answered; otherwise the TEMPORARY reason it did not. */
+  readonly degraded: EmbeddingDegradation | null;
+};
+
+function degradationOf(err: unknown): EmbeddingDegradation | null {
+  if (isEmbeddingWarmingError(err)) {
+    return "warming";
+  }
+  if (isEmbeddingTimeoutError(err)) {
+    return "timeout";
+  }
+  return null;
+}
+
+/**
+ * The degrade site that KEEPS the reason. Search uses this rather than
+ * {@link embedQueryDualBestEffort} so the disclosure built in `LocalIndex.searchRankedAsync` can say
+ * why the vector half is empty instead of reporting a keyword-only result as complete.
+ */
+export async function embedQueryDualOutcome(
+  rt: EmbedQueryDualLike,
+  text: string,
+): Promise<DualVectorsOutcome> {
+  try {
+    return { vectors: await rt.embedQueryDual(text), degraded: null };
+  } catch (err) {
+    const degraded = degradationOf(err);
+    if (degraded !== null) {
+      return { vectors: { ...NO_DUAL_VECTORS }, degraded };
+    }
+    throw err;
+  }
+}
 
 /**
  * Explicit opt-in to silent degradation for callers that ADD optional context and never
@@ -158,7 +293,7 @@ export async function embedQueryBestEffort(
   try {
     return await rt.embedQuery(text);
   } catch (err) {
-    if (isEmbeddingWarmingError(err)) {
+    if (degradationOf(err) !== null) {
       return null;
     }
     throw err;
@@ -170,12 +305,5 @@ export async function embedQueryDualBestEffort(
   rt: EmbedQueryDualLike,
   text: string,
 ): Promise<EmbeddingDualVectors> {
-  try {
-    return await rt.embedQueryDual(text);
-  } catch (err) {
-    if (isEmbeddingWarmingError(err)) {
-      return { ...NO_DUAL_VECTORS };
-    }
-    throw err;
-  }
+  return (await embedQueryDualOutcome(rt, text)).vectors;
 }

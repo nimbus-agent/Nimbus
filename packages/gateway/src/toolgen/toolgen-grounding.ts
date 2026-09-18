@@ -74,7 +74,10 @@ export function createEndpointFinder(
   return async (query, limit) => {
     let items: RankedIndexItem[];
     try {
-      items = await index.searchRankedAsync({ itemType: "api_endpoint", name: query, limit });
+      // Retrieval quality is not disclosed here: grounding widens what the model knows and is never
+      // load-bearing, and the draft's own grounding disclosure already says what was found.
+      items = (await index.searchRankedAsync({ itemType: "api_endpoint", name: query, limit }))
+        .items;
     } catch {
       return [];
     }

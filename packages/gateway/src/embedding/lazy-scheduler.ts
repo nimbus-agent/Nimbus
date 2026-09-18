@@ -6,10 +6,13 @@ import type { NimbusEmbeddingToml } from "../config/nimbus-toml.ts";
 import { readIndexedUserVersion } from "../index/migrations/runner.ts";
 import { ensureSqliteVecForConnection } from "../index/sqlite-vec-load.ts";
 import type { BackfillGate } from "./backfill-gate.ts";
-import type {
-  EmbeddingModelDownload,
-  EmbeddingReadiness,
-  EmbeddingReadinessState,
+import { createBackfillPassTracker } from "./backfill-pass-tracker.ts";
+import {
+  type EmbeddingModelDownload,
+  type EmbeddingReadiness,
+  type EmbeddingReadinessState,
+  resolveEmbeddingQueryTimeoutMs,
+  withEmbeddingQueryTimeout,
 } from "./embedding-readiness.ts";
 import type { EmbeddingRuntime } from "./embedding-runtime.ts";
 import {
@@ -39,6 +42,9 @@ export function createLazyEmbeddingRuntime(
     outerGate === undefined ? undefined : async () => (stopped ? false : outerGate());
   let loading: Promise<SqliteEmbeddingPipeline | null> | null = null;
   let backfillStarted = false;
+  // Without this, a search during the backfill this runtime runs itself reported no active pass —
+  // so partial results read as complete on the in-process runtime (#1535 follow-up).
+  const backfillPass = createBackfillPassTracker();
   const startedMs = Date.now();
   let settledMs: number | null = null;
   let state: EmbeddingReadinessState = "warming";
@@ -115,6 +121,27 @@ export function createLazyEmbeddingRuntime(
     settle("unavailable", err instanceof Error ? err.message : String(err));
   });
 
+  function readiness(): EmbeddingReadiness {
+    const end = state === "warming" ? Date.now() : (settledMs ?? Date.now());
+    return {
+      state,
+      elapsedMs: Math.max(0, end - startedMs),
+      model: pipeline?.embeddingModel ?? preloadedEmbedder?.model ?? LOCAL_EMBEDDING_MODEL_ID,
+      dims: pipeline?.embeddingDims ?? preloadedEmbedder?.dims ?? 384,
+      download: state === "warming" ? download : null,
+      reason,
+    };
+  }
+
+  // Bounds the EMBED only. The pipeline load above it is deliberately outside the budget: a cold
+  // model load is warm-up, not a stalled query, and must not be reported as a timeout.
+  function boundQueryEmbed<T>(work: Promise<T>): Promise<T> {
+    return withEmbeddingQueryTimeout(work, {
+      timeoutMs: resolveEmbeddingQueryTimeoutMs(),
+      readiness,
+    });
+  }
+
   return {
     scheduleItemEmbedding(itemId: string): void {
       void (async () => {
@@ -139,7 +166,7 @@ export function createLazyEmbeddingRuntime(
       if (p === null) {
         return null;
       }
-      const rows = await p.embedTexts([text]);
+      const rows = await boundQueryEmbed(p.embedTexts([text]));
       return rows[0] ?? null;
     },
 
@@ -153,7 +180,7 @@ export function createLazyEmbeddingRuntime(
       if (p === null) {
         return { vec384: null, vec1536: null, model384: null, model1536: null };
       }
-      const vecs = await p.embedTexts([text]);
+      const vecs = await boundQueryEmbed(p.embedTexts([text]));
       const vec = vecs[0] ?? null;
       if (vec === null) {
         return { vec384: null, vec1536: null, model384: null, model1536: null };
@@ -174,20 +201,14 @@ export function createLazyEmbeddingRuntime(
     },
 
     getBackfillProgress(): { done: number; total: number } | null {
-      return null;
+      return backfillPass.last();
     },
 
-    getReadiness(): EmbeddingReadiness {
-      const end = state === "warming" ? Date.now() : (settledMs ?? Date.now());
-      return {
-        state,
-        elapsedMs: Math.max(0, end - startedMs),
-        model: pipeline?.embeddingModel ?? preloadedEmbedder?.model ?? LOCAL_EMBEDDING_MODEL_ID,
-        dims: pipeline?.embeddingDims ?? preloadedEmbedder?.dims ?? 384,
-        download: state === "warming" ? download : null,
-        reason,
-      };
+    getActiveBackfillPass(): { done: number; total: number } | null {
+      return backfillPass.active();
     },
+
+    getReadiness: readiness,
 
     startBackgroundJobs(): void {
       if (backfillStarted) {
@@ -199,9 +220,11 @@ export function createLazyEmbeddingRuntime(
           if (p === null) {
             return;
           }
-          await p.backfillAll().catch((err: unknown) => {
-            logger.warn({ err }, "embedding backfill failed");
-          });
+          await backfillPass
+            .run((onProgress) => p.backfillAll(onProgress))
+            .catch((err: unknown) => {
+              logger.warn({ err }, "embedding backfill failed");
+            });
         })
         .catch((err: unknown) => {
           logger.warn({ err }, "embedding backfill could not start");

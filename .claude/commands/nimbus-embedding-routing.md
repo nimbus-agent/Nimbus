@@ -53,6 +53,14 @@ distinguish two different absences:
    `embedQueryDualBestEffort` — those names are the audit trail for every silent-degrade site.
 3. A user-facing surface that could report a zero must surface the warming state instead
    (`index.searchRanked` → JSON-RPC `-32021`, `gateway.ping` → the `embedding` readiness block).
+4. A query embed that does not answer in time THROWS `EmbeddingTimeoutError` — the same rule on
+   the other arm. Bound it with `withEmbeddingQueryTimeout` (default 5 s,
+   `NIMBUS_EMBEDDING_QUERY_TIMEOUT_MS`), never a hand-rolled timer that resolves `null`.
+5. Search degrades through `embedQueryDualOutcome`, which KEEPS the reason, and
+   `LocalIndex.searchRankedAsync` returns it as `{ items, retrieval }`
+   (`index/search-retrieval.ts`). Do not read "was this vector-ranked?" off a row's
+   `scoringFormula` — a timed-out query's rows still say `hybrid_rrf`. Read `retrieval.vectorRanked`.
+   `index.searchRanked` returns the envelope only when a caller passes `envelope: true`.
 
 ## The Routing Decision
 

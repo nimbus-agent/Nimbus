@@ -170,6 +170,40 @@ describe("rpcConsentRespond", () => {
   });
 });
 
+describe("rpcIndexSearchRanked — the opt-in retrieval envelope", () => {
+  // `@nimbus-dev/client` 0.17.3 asserts `index.searchRanked` returns an ARRAY and forwards only six
+  // named params, so an unconditional envelope would make every published client throw. The
+  // disclosure is therefore opt-in on the wire — and ONLY on the wire; in-process callers always
+  // get it from `searchRankedAsync`.
+  test("without `envelope: true` the wire shape is the bare array it has always been", async () => {
+    const ctx = makeCtx({ localIndex: makeIndex() });
+    const r = await rpcIndexSearchRanked(ctx, { name: "alpha" });
+    expect(Array.isArray(r)).toBe(true);
+    const notTrue = await rpcIndexSearchRanked(ctx, { name: "alpha", envelope: "yes" });
+    expect(Array.isArray(notTrue)).toBe(true);
+  });
+
+  test("`envelope: true` returns items, the retrieval block, and the gateway's own notes", async () => {
+    const ctx = makeCtx({ localIndex: makeIndex() });
+    const r = (await rpcIndexSearchRanked(ctx, { name: "alpha", envelope: true })) as {
+      items: unknown;
+      retrieval: unknown;
+      notes: unknown;
+    };
+    expect(Array.isArray(r.items)).toBe(true);
+    // No embedding runtime is wired in this ctx — and the envelope says so rather than hiding it.
+    expect(r.retrieval).toEqual({
+      vectorRanked: false,
+      reason: "no_embedding_runtime",
+      partial: null,
+      backfill: null,
+    });
+    expect(r.notes).toEqual([
+      "semantic ranking unavailable (embeddings are disabled or did not start) — keyword-only results",
+    ]);
+  });
+});
+
 describe("rpcIndexSearchRanked — param validation", () => {
   test("no localIndex -> -32603", async () => {
     const ctx = makeCtx();

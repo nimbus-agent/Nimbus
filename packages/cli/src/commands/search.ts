@@ -1,5 +1,6 @@
 import { IPCClient } from "../ipc-client/index.ts";
 import { readGatewayState } from "../lib/gateway-process.ts";
+import { parseSearchRankedResponse } from "../lib/search-ranked-response.ts";
 import { getCliPlatformPaths } from "../paths.ts";
 
 type SearchFlags = {
@@ -103,6 +104,9 @@ export async function runSearch(args: string[]): Promise<void> {
       limit,
       semantic,
       contextChunks: 2,
+      // Ask for the retrieval disclosure. An older gateway ignores this and answers a bare array,
+      // which parseSearchRankedResponse still reads.
+      envelope: true,
     };
     if (service !== undefined) {
       params["service"] = service;
@@ -110,8 +114,14 @@ export async function runSearch(args: string[]): Promise<void> {
     if (itemType !== undefined) {
       params["itemType"] = itemType;
     }
-    const rows = await searchWithWarmingFallback(client, params, semantic);
-    console.log(JSON.stringify(rows, null, 2));
+    const { items, notes } = parseSearchRankedResponse(
+      await searchWithWarmingFallback(client, params, semantic),
+    );
+    // stderr, never stdout: stdout stays the plain JSON array a script pipes into `jq`.
+    for (const note of notes) {
+      console.error(`note: ${note}`);
+    }
+    console.log(JSON.stringify(items, null, 2));
   } finally {
     await client.disconnect().catch(() => {});
   }
@@ -143,9 +153,9 @@ async function searchWithWarmingFallback(
   client: IPCClient,
   params: Record<string, unknown>,
   semantic: boolean,
-): Promise<unknown[]> {
+): Promise<unknown> {
   try {
-    return await client.call<unknown[]>("index.searchRanked", params);
+    return await client.call<unknown>("index.searchRanked", params);
   } catch (err) {
     // A keyword-only search can never trip the warming gate, so nothing to recover.
     if (!semantic) {
@@ -159,7 +169,7 @@ async function searchWithWarmingFallback(
     console.error(
       "note: semantic search is still warming up; showing keyword-only results. Retry shortly for semantic ranking.",
     );
-    return await client.call<unknown[]>("index.searchRanked", { ...params, semantic: false });
+    return await client.call<unknown>("index.searchRanked", { ...params, semantic: false });
   }
 }
 
