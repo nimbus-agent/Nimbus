@@ -19,7 +19,7 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
 ## Post-Phase-6 deliveries
 
 - **2026-09-18 — An isolated demo root: `nimbus --demo …` / `NIMBUS_DEMO=1` (invariant I41).** The
-  first half of the `nimbus demo` First-Run row: a second, throwaway Nimbus inside `<data dir>/demo`
+  first half of the First-Run row's seeded-sandbox work: a second, throwaway Nimbus inside `<data dir>/demo`
   with its own config, data, logs and IPC endpoint, which the synthetic-org corpus will be seeded into
   next. Path isolation turned out not to be isolation: on macOS the Vault is the Keychain under a
   fixed service name and on Linux it is libsecret, neither under the config dir, so a demo gateway
