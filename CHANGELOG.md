@@ -2,6 +2,18 @@
 
 All notable changes to the `nimbus` core (headless Gateway + CLI binary + first-party MCP connectors) are documented in this file. release-please appends new entries between this header and the most recent version below when a release PR merges.
 
+## [7.26.0](https://github.com/nimbus-agent/Nimbus/compare/v7.25.0...v7.26.0) (2026-09-18)
+
+
+### Features
+
+* **fleet:** subject enumeration — sweep a corpus instead of naming one subject ([#1541](https://github.com/nimbus-agent/Nimbus/issues/1541)) ([c1bab10](https://github.com/nimbus-agent/Nimbus/commit/c1bab1081af5eb45d13eb0f21a6ee6d441745cc9))
+
+
+### Bug Fixes
+
+* **embedding:** report the backfill pass from the hybrid and openai runtimes ([#1538](https://github.com/nimbus-agent/Nimbus/issues/1538)) ([5d31dab](https://github.com/nimbus-agent/Nimbus/commit/5d31dabfbfda1cd7e0f576c98ca36a4e032d78bc))
+
 ## [7.25.0](https://github.com/nimbus-agent/Nimbus/compare/v7.24.0...v7.25.0) (2026-09-17)
 
 
