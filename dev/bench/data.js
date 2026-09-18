@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1789723248679,
+  "lastUpdate": 1789729720838,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "91b4f581d13f795210952a663f83a9bf70cd6dae",
-          "message": "refactor(agents): consume the SDK's brief types; add the fixture generator (#804)\n\nStage 1 Wave 1a, PR 3 of 3 — the piece that actually deletes the\nduplication.\nRequires `@nimbus-dev/sdk@1.5.0` (nimbus-sdk#20 + #21), **published**,\nso the lockfile resolves.\n\n## Why\n\nThe eight composed agent-brief types and their eight runtime guards were\nwritten **twice** in this\nrepo — `gateway/src/agents/_lib/findings.ts` and\n`cli/src/types/agents.ts` — and exported by neither\nthe SDK nor anything else. `@nimbus-dev/client` needed them to expose\nthe `agents.*` namespace, so\nwithout this they would have become a third hand-maintained copy.\n\n1.5.0 promoted them. This consumes them and deletes both local copies.\n\n## What changes\n\n- **`gateway/src/agents/_lib/findings.ts`** — re-exports from the SDK.\nIts public surface is\npreserved exactly: all 26 previously-importable symbols still import,\nplus `ExpertiseRank` (which\n  the file used internally but never exported).\n- **`gateway/src/federation/types.ts`** — `ExpertiseRank`'s canonical\nhome is now the SDK, because\n`GhostBrief` depends on it and it lived in this gateway-internal module.\nNote it needs an\n`import type` **plus** a local re-export, not a bare `export … from`:\nthis module *uses* the name,\nand a bare re-export doesn't bind it locally. Only `tsc` catches that —\n`bun test` passes either\n  way.\n- **`cli/src/types/agents.ts`** — same treatment. `GhostContextItem` and\n`ConflictCollision` are kept\nas aliases of the SDK's `FederatedItemLite` / `ConflictFinding`\n(identical shapes) so existing CLI\n  imports keep resolving.\n- **`scripts/gen-agent-brief-fixtures.ts`** — new. Drives the real\n`dispatchAgentsRpc` →\n`emitBriefWithSynthesis` path against an in-memory index and dumps the\neight `briefReady` payloads.\nIts output is the client's conformance fixture, so that gate is\ngenerated from gateway code rather\n  than hand-written.\n\n## Behaviour-preserving\n\nThe gateway's agent suite is **169/169, identical to the pre-change\nbaseline** captured before any\nsource was touched. CLI: 1766 pass / 8 pre-existing failures in\n`update.test.ts` (`mock.module`\ncontamination), the same 8 before and after, verified by re-running both\nrevisions.\n\nOne real behaviour change, deliberate: the CLI's `isExpertBrief` /\n`isImpactBrief` /\n`isCatchupBrief` were built **without** `requireQuery`, while all eight\ngateway guards use it. The\nCLI now consumes the strict SDK guards. No CLI test exercises a\nquery-less brief, so the green suite\nisn't evidence on its own — the safety argument is that `expert.ts`,\n`impact.ts` and `catchup.ts`\neach have exactly one brief-construction site and all unconditionally\nset `query`. Residual exposure\nis version skew, whose failure mode is an explicit \"Malformed payload\"\nerror, not silent corruption.\n\n## Verification\n\n`typecheck` clean across the workspace · gateway agents 169/169 · CLI\nagent types 14/14 ·\n`biome check packages scripts` 2905 files clean · `lint:markdown` 0\nerrors across 102 files.\n\nTwo notes on running gates locally in a worktree under `.claude/`:\n\n- `bun run lint` passes `.`, which `biome.json` ignores via\n`!**/.claude`, so it exits 1 with \"paths\nprovided but ignored\". Use explicit paths — `biome check packages\nscripts`.\n- `bun test packages/gateway/src/federation/` hangs on Windows on `main`\nand this branch alike\n(isolated to `consent-broker.test.ts` / `preflight-runner.test.ts`;\nneither imports\n`federation/types.ts`, so this change carries no risk there). Verified\nper-file instead; CI/Linux\n  is authoritative.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n---------\n\nCo-authored-by: Claude Opus 4.8 (1M context) <noreply@anthropic.com>",
-          "timestamp": "2026-07-23T09:00:35+03:00",
-          "tree_id": "981807636837e3dc40275cdf0d69b8e04f118b52",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/91b4f581d13f795210952a663f83a9bf70cd6dae"
-        },
-        "date": 1784787233476,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 339.393312850003,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 341.5814185000112,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 329.12634759999565,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "306811640+nimbus-release-bot[bot]@users.noreply.github.com",
+            "name": "nimbus-release-bot[bot]",
+            "username": "nimbus-release-bot[bot]"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "4a91ede4c06f43968192d9074a800f3066e481ef",
+          "message": "chore: release main (#1543)\n\n:robot: I have created a release *beep* *boop*\n---\n\n\n<details><summary>7.26.0</summary>\n\n##\n[7.26.0](https://github.com/nimbus-agent/Nimbus/compare/v7.25.0...v7.26.0)\n(2026-09-18)\n\n\n### Features\n\n* **fleet:** subject enumeration — sweep a corpus instead of naming one\nsubject ([#1541](https://github.com/nimbus-agent/Nimbus/issues/1541))\n([c1bab10](https://github.com/nimbus-agent/Nimbus/commit/c1bab1081af5eb45d13eb0f21a6ee6d441745cc9))\n\n\n### Bug Fixes\n\n* **connectors:** let Jira, Confluence, GitLab, dbt and the Teams bot\nreach their configured host from the sandbox\n([#1536](https://github.com/nimbus-agent/Nimbus/issues/1536))\n([d4465f9](https://github.com/nimbus-agent/Nimbus/commit/d4465f9c3c784532a056cfef0bc63433d2936af2))\n* **connectors:** make connector auth refuse vault-key services with the\nexact vault set commands\n([#1537](https://github.com/nimbus-agent/Nimbus/issues/1537))\n([02011df](https://github.com/nimbus-agent/Nimbus/commit/02011dfa35ceaee8231863de7d43ffb405beb0ef))\n* **embedding:** cancel timed-out query embedding work, not just abandon\nit ([#1542](https://github.com/nimbus-agent/Nimbus/issues/1542))\n([35b0aa8](https://github.com/nimbus-agent/Nimbus/commit/35b0aa86cf38bdb5fdf74dc3b506f4a8b7f8cf52))\n* **embedding:** report the backfill pass from the hybrid and openai\nruntimes ([#1538](https://github.com/nimbus-agent/Nimbus/issues/1538))\n([5d31dab](https://github.com/nimbus-agent/Nimbus/commit/5d31dabfbfda1cd7e0f576c98ca36a4e032d78bc))\n</details>\n\n---\nThis PR was generated with [Release\nPlease](https://github.com/googleapis/release-please). See\n[documentation](https://github.com/googleapis/release-please#release-please).\n\nCo-authored-by: nimbus-release-bot[bot] <306811640+nimbus-release-bot[bot]@users.noreply.github.com>",
+          "timestamp": "2026-09-18T13:54:50+03:00",
+          "tree_id": "eba3b3341c2367a7de603449e810d6893da7bed8",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/4a91ede4c06f43968192d9074a800f3066e481ef"
+        },
+        "date": 1789729717292,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 337.05271419999883,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 333.41755519999714,
             "unit": "ms"
           }
         ]
