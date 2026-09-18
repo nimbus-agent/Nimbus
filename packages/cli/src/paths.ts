@@ -2,6 +2,7 @@ import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { envGet } from "./env.ts";
+import { demoModeRequested, deriveDemoPaths } from "./lib/demo-root.ts";
 
 export type CliPlatformPaths = {
   configDir: string;
@@ -10,6 +11,8 @@ export type CliPlatformPaths = {
   socketPath: string;
   extensionsDir: string;
   tempDir: string;
+  /** Set by `deriveDemoPaths` when the demo root is active (invariant I41). See `lib/demo-root.ts`. */
+  demo?: true;
 };
 
 export function resolveSocketPath(): string {
@@ -52,7 +55,7 @@ function configDirOverride(): string | undefined {
   return v !== undefined && v.length > 0 ? v : undefined;
 }
 
-export function getCliPlatformPaths(): CliPlatformPaths {
+function realCliPlatformPaths(): CliPlatformPaths {
   switch (process.platform) {
     case "win32": {
       const appData = envGet("APPDATA");
@@ -106,4 +109,12 @@ export function getCliPlatformPaths(): CliPlatformPaths {
       };
     }
   }
+}
+
+export function getCliPlatformPaths(): CliPlatformPaths {
+  // Checked FIRST: a refusal (bad NIMBUS_DEMO value, or demo + a real-root override) must win
+  // over everything, including a missing APPDATA.
+  const demo = demoModeRequested(envGet);
+  const real = realCliPlatformPaths();
+  return demo ? deriveDemoPaths(real) : real;
 }
