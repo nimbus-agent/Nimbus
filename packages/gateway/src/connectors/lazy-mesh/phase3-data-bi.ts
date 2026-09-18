@@ -25,7 +25,9 @@ export async function phase3AddDbtMcp(
     return;
   }
   const apiBase = (await readConnectorSecret(vault, "dbt", "api_base"))?.trim() ?? "";
-  servers["dbt"] = wrap(
+  // A regional or single-tenant dbt Cloud host is not the manifest's cloud.getdbt.com.
+  const apiHost = apiBase === "" ? null : hostnameFromUrl(apiBase);
+  servers["dbt"] = wrapServerSpec(
     {
       ...connectorSpawn("dbt"),
       env: extensionProcessEnv({
@@ -33,7 +35,7 @@ export async function phase3AddDbtMcp(
         ...(apiBase === "" ? {} : { DBT_API_BASE: apiBase }),
       }),
     },
-    "dbt",
+    manifestWithExtraNetworkHosts("dbt", apiHost === null ? [] : [apiHost]),
     sandboxCwd,
   );
 }
