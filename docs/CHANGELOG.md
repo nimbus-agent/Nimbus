@@ -18,6 +18,25 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
 
 ## Post-Phase-6 deliveries
 
+- **2026-09-18 — a timed-out query embedding is now CANCELLED where cancelling is possible, not just
+  abandoned.** The last stated residual of the 2026-09-17 search-disclosure work. The timeout stopped
+  the caller waiting and nothing else: the OpenAI request ran to completion (billed, holding a
+  connection, its answer discarded) and the worker kept embedding text the main thread had given up
+  on, delaying whatever was queued behind it. `withEmbeddingQueryTimeout` now takes a work FACTORY
+  and hands it an `AbortSignal`. **Three runtimes, three honest answers:** the OpenAI embedder passes
+  the signal to `fetch` (`Embedder.embed` takes an optional `EmbedOptions`, and `wrapLedgeredEmbedder`
+  FORWARDS it — that wrapper decorates exactly the remote embedders, so swallowing it there would
+  have disabled the only real cancellation); the worker bridge posts a new `cancel_embed` message,
+  and the worker skips the request if its embed has not started and suppresses the reply either way;
+  the local ONNX inference ignores the signal because it cannot be interrupted, so a timed-out local
+  query is abandoned exactly as before. **Two ordering rules the tests pin:** the timeout rejects
+  BEFORE it aborts (an abort listener that rejects synchronously would otherwise win the race, and
+  the caller would get the work's "aborted" error instead of the typed `EmbeddingTimeoutError`,
+  silently undoing the disclosure guarantee), and the started promise carries a no-op `catch`,
+  because aborting MAKES it reject after the race settled and that rejection would otherwise be
+  unhandled. The worker's cancelled-id set is bounded (256, oldest evicted) for the one case that
+  leaks: a cancel whose request never arrives because the worker restarted in between. No schema, no
+  invariant, no egress class — the ledger row is still appended before the request, unchanged.
 - **2026-09-17 — the `hybrid` and `openai` embedding runtimes now disclose their own backfill pass.**
   A stated residual of the search-disclosure work earlier the same day: `getActiveBackfillPass()`
   returned `null` on both in-process runtimes, so a search running during the backfill THEY start

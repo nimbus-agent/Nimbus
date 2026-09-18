@@ -1,4 +1,4 @@
-import type { Embedder } from "./types.ts";
+import type { Embedder, EmbedOptions } from "./types.ts";
 
 export type CreateOpenAIEmbedderOptions = {
   apiKey: string;
@@ -17,10 +17,14 @@ export async function createOpenAIEmbedder(
     model: modelTag,
     dims: dimensions,
     isLocal: false,
-    async embed(texts: string[]): Promise<Float32Array[]> {
+    async embed(texts: string[], opts?: EmbedOptions): Promise<Float32Array[]> {
       if (texts.length === 0) {
         return [];
       }
+      // The ONE embedder whose work can really be stopped: an aborted `fetch` closes the socket,
+      // so a query that gave up at its timeout stops paying for a request nobody will read. Without
+      // this the request ran to completion and its response was discarded — invisible, but it holds
+      // a connection and, for a paid endpoint, is billed.
       const res = await fetch("https://api.openai.com/v1/embeddings", {
         method: "POST",
         headers: {
@@ -32,6 +36,7 @@ export async function createOpenAIEmbedder(
           input: texts,
           dimensions,
         }),
+        ...(opts?.signal === undefined ? {} : { signal: opts.signal }),
       });
       if (!res.ok) {
         const body = await res.text();

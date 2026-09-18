@@ -39,6 +39,25 @@ describe("wrapLedgeredEmbedder", () => {
     expect(listEgress(db, {})).toHaveLength(0);
   });
 
+  test("forwards the caller's embed options to the inner embedder (#1535 follow-up)", async () => {
+    // This wrapper decorates exactly the REMOTE embedders — the only ones whose work a timed-out
+    // query can actually cancel. Dropping `opts` here would silently disable that, with the ledger
+    // row still written and the request still running.
+    const seen: Array<AbortSignal | undefined> = [];
+    const inner: Embedder = {
+      model: "openai:text-embedding-3-small",
+      dims: 384,
+      isLocal: false,
+      embed: async (texts: string[], opts?: { readonly signal?: AbortSignal }) => {
+        seen.push(opts?.signal);
+        return texts.map(() => new Float32Array(384));
+      },
+    };
+    const controller = new AbortController();
+    await wrapLedgeredEmbedder(db, inner).embed(["hello"], { signal: controller.signal });
+    expect(seen[0]).toBe(controller.signal);
+  });
+
   test("a REMOTE embedder appends exactly ONE row per batch", async () => {
     // Per BATCH, not per text: one HTTP request carries the whole array, and a row per text
     // would over-report outbound requests by the batch size.

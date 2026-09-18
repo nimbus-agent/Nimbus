@@ -188,6 +188,110 @@ describe("EmbeddingWorkerCore", () => {
     expect(posts).toHaveLength(before);
   });
 
+  it("cancel_embed BEFORE the embed starts skips the work entirely (#1535 follow-up)", async () => {
+    // The only real saving on this side: a request still waiting its turn is never embedded.
+    const db = makeDb();
+    let embedCalls = 0;
+    const setup: EmbeddingWorkerSetup = async () => ({
+      db,
+      pipeline: makePipeline({
+        embedTexts: async () => {
+          embedCalls += 1;
+          return [new Float32Array([1])];
+        },
+      }),
+    });
+    const { core, posts } = await initReadyCore(setup);
+
+    core.handleMessage({ type: "cancel_embed", id: "req-cancelled" });
+    core.handleMessage({ type: "embed_texts", id: "req-cancelled", texts: ["a"] });
+    await core.idle();
+
+    expect(embedCalls).toBe(0);
+    expect(postsOfType(posts, "embed_texts_result")).toHaveLength(0);
+  });
+
+  it("cancel_embed DURING an embed suppresses the reply (inference itself cannot be stopped)", async () => {
+    const db = makeDb();
+    let release: (() => void) | undefined;
+    const started = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let embedCalls = 0;
+    const setup: EmbeddingWorkerSetup = async () => ({
+      db,
+      pipeline: makePipeline({
+        embedTexts: async () => {
+          embedCalls += 1;
+          await started;
+          return [new Float32Array([1])];
+        },
+      }),
+    });
+    const { core, posts } = await initReadyCore(setup);
+
+    core.handleMessage({ type: "embed_texts", id: "req-mid", texts: ["a"] });
+    // The embed is running; the cancel cannot stop it, so the honest claim is only that its result
+    // is not posted to a main thread that has already given up.
+    core.handleMessage({ type: "cancel_embed", id: "req-mid" });
+    release?.();
+    await core.idle();
+
+    expect(embedCalls).toBe(1);
+    expect(postsOfType(posts, "embed_texts_result")).toHaveLength(0);
+  });
+
+  it("a cancel for one id does not suppress another request's result", async () => {
+    const db = makeDb();
+    const setup: EmbeddingWorkerSetup = async () => ({
+      db,
+      pipeline: makePipeline({ embedTexts: async () => [new Float32Array([1])] }),
+    });
+    const { core, posts } = await initReadyCore(setup);
+
+    core.handleMessage({ type: "cancel_embed", id: "other" });
+    core.handleMessage({ type: "embed_texts", id: "req-live", texts: ["a"] });
+    await core.idle();
+
+    const results = postsOfType(posts, "embed_texts_result");
+    expect(results).toHaveLength(1);
+    expect(results[0]?.["id"]).toBe("req-live");
+  });
+
+  it("a cancelled id is consumed, so a later request reusing it is not suppressed", async () => {
+    const db = makeDb();
+    const setup: EmbeddingWorkerSetup = async () => ({
+      db,
+      pipeline: makePipeline({ embedTexts: async () => [new Float32Array([1])] }),
+    });
+    const { core, posts } = await initReadyCore(setup);
+
+    core.handleMessage({ type: "cancel_embed", id: "reused" });
+    core.handleMessage({ type: "embed_texts", id: "reused", texts: ["a"] });
+    await core.idle();
+    core.handleMessage({ type: "embed_texts", id: "reused", texts: ["b"] });
+    await core.idle();
+
+    const results = postsOfType(posts, "embed_texts_result");
+    expect(results).toHaveLength(1);
+  });
+
+  it("a malformed cancel_embed is ignored like any other malformed message", async () => {
+    const db = makeDb();
+    const setup: EmbeddingWorkerSetup = async () => ({
+      db,
+      pipeline: makePipeline({ embedTexts: async () => [new Float32Array([1])] }),
+    });
+    const { core, posts } = await initReadyCore(setup);
+
+    core.handleMessage({ type: "cancel_embed" });
+    core.handleMessage({ type: "cancel_embed", id: 42 });
+    core.handleMessage({ type: "embed_texts", id: "req-ok", texts: ["a"] });
+    await core.idle();
+
+    expect(postsOfType(posts, "embed_texts_result")).toHaveLength(1);
+  });
+
   it("embed_texts ok posts embed_texts_result with plain number-array vectors", async () => {
     const db = makeDb();
     const setup: EmbeddingWorkerSetup = async () => ({
