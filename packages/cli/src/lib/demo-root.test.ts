@@ -48,6 +48,10 @@ describe("demoModeRequested (cli mirror)", () => {
   test("an EMPTY override is ignored", () => {
     expect(demoModeRequested(env({ NIMBUS_DEMO: "1", NIMBUS_CONFIG_DIR: "" }))).toBe(true);
   });
+
+  test("an override WITHOUT demo mode is not this function's concern", () => {
+    expect(demoModeRequested(env({ NIMBUS_CONFIG_DIR: "/x" }))).toBe(false);
+  });
 });
 
 describe("demoSocketPathFor (cli mirror)", () => {

@@ -141,6 +141,7 @@ export interface PlatformPaths {
   socketPath: string;     // IPC socket or named pipe path
   extensionsDir: string;  // installed third-party extension packages
   tempDir: string;        // ephemeral working files
+  demo?: true;            // set only by the demo-root resolvers (I41); see below
 }
 ```
 

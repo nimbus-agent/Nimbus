@@ -29,7 +29,7 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
   extension profiles; and the HTTP/metrics sidecars are env-selected. A demo gateway therefore opens
   an in-memory vault, skips the reap, and starts neither sidecar. `NIMBUS_DEMO` refuses an ambiguous
   value and refuses to combine with `NIMBUS_CONFIG_DIR` / `NIMBUS_GATEWAY_SOCKET`. No schema
-  migration, no new egress class, no new IPC method. Design: `2026-09-18-nimbus-demo-design.md`.
+  migration, no new egress class, no new IPC method. Design: `SECURITY-INVARIANTS.md` § I41.
 
 - **2026-09-17 — `nimbus connector auth <service>` stops sending you back to itself (#1531).** For
   50 token/API-key and local-setting connectors (Stripe, Vercel, Snowflake, Elasticsearch,

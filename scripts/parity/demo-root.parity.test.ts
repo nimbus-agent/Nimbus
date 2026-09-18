@@ -65,6 +65,7 @@ const ENVS: ReadonlyArray<Record<string, string>> = [
   { NIMBUS_DEMO: "1", NIMBUS_CONFIG_DIR: "/x" },
   { NIMBUS_DEMO: "1", NIMBUS_GATEWAY_SOCKET: "/x" },
   { NIMBUS_DEMO: "1", NIMBUS_CONFIG_DIR: "" },
+  { NIMBUS_CONFIG_DIR: "/x" },
 ];
 
 function verdict(

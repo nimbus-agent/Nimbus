@@ -2,7 +2,7 @@
 #
 # The four satellite repos (nimbus-sdk, nimbus-client, nimbus-vscode,
 # nimbus-web-clipper) have each carried a tuned config since they were created.
-# This monorepo — the one with 38 live security invariants and a structural HITL
+# This monorepo — the one with 40 live security invariants and a structural HITL
 # gate — got stock review until now. That is instance 2 of the pattern named at
 # the top of docs/infrastructure-roadmap.md, running satellites -> monorepo.
 #

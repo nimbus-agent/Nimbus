@@ -4236,6 +4236,7 @@ describe("I41 — a demo-rooted process never reaches the real install", () => {
     "NIMBUS_GATEWAY_SOCKET",
   ] as const;
   let saved: Record<string, string | undefined> = {};
+  let currentRoot: string | undefined;
 
   beforeEach(() => {
     saved = {};
@@ -4244,6 +4245,7 @@ describe("I41 — a demo-rooted process never reaches the real install", () => {
       delete process.env[k];
     }
     const root = mkdtempSync(join(tmpdir(), "nimbus-i41-"));
+    currentRoot = root;
     process.env["HOME"] = join(root, "home");
     process.env["USERPROFILE"] = join(root, "home");
     process.env["APPDATA"] = join(root, "roaming");
@@ -4259,6 +4261,10 @@ describe("I41 — a demo-rooted process never reaches the real install", () => {
       const v = saved[k];
       if (v === undefined) delete process.env[k];
       else process.env[k] = v;
+    }
+    if (currentRoot !== undefined) {
+      rmSync(currentRoot, { recursive: true, force: true });
+      currentRoot = undefined;
     }
   });
 
@@ -4303,7 +4309,12 @@ describe("I41 — a demo-rooted process never reaches the real install", () => {
 
     test(`negative control (${os}): without the flag the same check reports violations`, () => {
       const real = resolve();
-      expect(isolationViolations(real, resolve()).length).toBeGreaterThan(0);
+      const violations = isolationViolations(real, resolve());
+      expect(violations.length).toBeGreaterThan(0);
+      // `length > 0` alone is satisfiable by the tempDir/socket equality checks even if
+      // `isInside` were broken (e.g. always returning `true`) — assert a SUBTREE violation is
+      // actually present, so a broken `isInside` fails this test rather than passing vacuously.
+      expect(violations).toContain(`demo configDir is outside the demo root: ${real.configDir}`);
     });
 
     test(`refusal (${os}): demo + a real-root override never resolves at all`, () => {
