@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1789716296492,
+  "lastUpdate": 1789718610334,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "825df03e6157ebfa2299984115aa68be24539fe1",
-          "message": "fix: clear the SonarCloud board (15), the 6 astro XSS advisories, and the stale release line (#801)\n\nThree separable commits: Sonar board → 0, the open Dependabot\nadvisories, and a doc refresh.\n\n## 1. SonarCloud: 15 → 0\nMost landed with the research-briefs surface (#799), which merged after\nthe last cleanup pass.\n\n- **S3735 ×2** drop the `void` operator in the in-memory test vault\n(block bodies)\n- **S3776** `dispatchWriteRoute`'\\''s `route.kind` if-chain → `switch`\n(17 → under 15; a switch costs +1 total rather than +1 per branch)\n- **S6353 ×2** `[A-Za-z0-9_]` → `\\w` in the two brief-id route regexes\n- **S7781** `replaceAll`; **S4624** hoisted nested template literal;\n**S7755** `gaps.at(-1)`; **S5906 ×7** `not.toContain` / `toHaveLength`\n\nNo behavior change.\n\n## 2. Dependabot: the 6 astro XSS advisories\nGHSA-f48w-9m4c-m7f5, GHSA-7pw4-f3q4-r2p2, GHSA-4g3v-8h47-v7g6 (×2\nmanifests each). The highest patched requirement is **astro 7.1.0**, so\nthis is a coordinated major bump:\n\n- `astro` ^6.4.8 → ^7.1.3 (root + `packages/docs`)\n- `@astrojs/starlight` ^0.39.3 → ^0.41.4 (its peer is astro ^7.0.2)\n- `starlight-links-validator` 0.24.0 → 0.25.2\n- **drop the root `vite` override.** astro 7 needs vite ^8; the pin\nforced 7.3.5 into it and broke the build outright. `packages/ui` keeps\nits own `^7.3.5`, and both now resolve side by side (7.3.5 + 8.1.5) with\nno vulnerable version present.\n\nVerified with a real `docs:build`: **55 pages, all internal links\nvalid**, and `packages/ui` still typechecks on vite 7.\n\n> Note: this had to be built outside the repo tree. In a nested\n`.claude/worktrees/` checkout the SSR bundle resolves `neotraverse` up\ninto the parent repo'\\''s astro-6 `node_modules` and dies with `Export\nnamed '\\''forEach'\\'' not found`. That is a worktree-nesting artifact,\nnot an astro 7 problem — a clean checkout builds green.\n\n**Not fixed — the 7th alert (glib, RUSTSEC-2024-0429).** It is\nunreachable: `gtk 0.18.2` requires `glib ^0.18` and is pinned by tauri,\nso `cargo update -p glib --precise 0.20.0` fails outright. This is\nalready a documented, deliberately-accepted ignore in\n`src-tauri/deny.toml` (\"revisit when Tauri bumps gtk-rs to 0.20+\"); I\nre-verified that rationale rather than taking it on faith.\n\n## 3. Docs\n`CLAUDE.md`/`GEMINI.md` still claimed `v0.22.0` — four releases stale.\n`audit:status-drift` does not cover that line, so it drifted silently.\n\n## Verification\n`preflight:fast` **PASSED** (all 19 gates). Full `preflight` reports 15\ntest failures — **`origin/main` reports exactly the same `14381 pass /\n131 skip / 15 fail` in the same environment**, so this branch adds none.\nThey are Windows/clean-room artifacts (missing `gen-test-key.sh`\nfixture, a WSL config error, and the documented `mock.module`\ncontamination in the combined CLI run). Gateway `tsc` clean; briefs 157,\nhttp 136, security-invariants 92 green.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n---------\n\nCo-authored-by: Claude Opus 4.8 (1M context) <noreply@anthropic.com>",
-          "timestamp": "2026-07-22T18:30:27Z",
-          "tree_id": "70527aa16f56e44ee51c0df00937a5486525fdae",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/825df03e6157ebfa2299984115aa68be24539fe1"
-        },
-        "date": 1784745808417,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 303.684352800003,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 304.9779607999968,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 329.23593350000084,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "d4465f9c3c784532a056cfef0bc63433d2936af2",
+          "message": "fix(connectors): let Jira, Confluence, GitLab, dbt and the Teams bot reach their configured host from the sandbox (#1536)\n\nCloses #1533.\n\n## What was broken\n\nFive connectors' MCP processes call a host that is not in their static\nsandbox manifest:\n\n| Connector | Host it calls | Was allowlisted |\n| --- | --- | --- |\n| Jira | `jira.base_url` (the Atlassian site, e.g. `acme.atlassian.net`)\n| `api.atlassian.com` only |\n| Confluence | `confluence.base_url` | `api.atlassian.com` only |\n| GitLab | `gitlab.api_base`, when set | `gitlab.com` only |\n| dbt | `dbt.api_base`, when set | `cloud.getdbt.com` only |\n| Teams (ChatOps bot) | the Bot Framework `serviceUrl` (default\n`smba.trafficmanager.net`) | Graph + login only |\n\nOn a per-host sandbox — macOS, and Linux with `nimbus-sandbox-helper` —\nthose tools could not reach their API. For Jira and Confluence that was\nevery user, including HITL-approved writes, which failed after the owner\napproved them. Windows and Linux without the helper were unaffected, and\nindexing was never affected (sync runs in the gateway process).\n\n## The fix\n\nJira, Confluence, GitLab and dbt use the pattern Grafana and Jenkins\nalready use: `hostnameFromUrl()` + `manifestWithExtraNetworkHosts()`,\nmerged before `wrapServerSpec()`. An unparseable URL adds nothing. In\n`connector-spawns.ts` the host merge returns a **manifest** rather than\na wrapped spec, so each site still calls `wrapServerSpec` directly\naround its `connectorSpawn` literal, which is the shape the I15 static\nrule (D10) checks. A wrapper function hiding that call failed\n`audit:invariants`, and I did not loosen the rule.\n\n**The Teams bot is deliberately narrower.** The bot sends its credential\nto the activity's `serviceUrl`, and the inbound JWT check does not bind\nthat field. Allowlisting whatever host an activity names would let one\nvalidated-but-crafted activity widen the sandbox to an arbitrary\ndestination. So the spawn allowlists a fixed set of Bot Framework reply\nhosts: the public cloud always, plus GCC / GCC High / DoD when the\nactivity names one. There is no suffix match, because\n`trafficmanager.net` subdomains are Azure-wide. A `serviceUrl` outside\nthe set still fails at the OS, as before.\n\n## Tests\n\nEvery new test reads the allowlist the spawn will actually run under,\nvia the real `parseSandboxPolicy`:\n\n- GitLab: a self-managed host is added; no `api_base` leaves the static\nlist unchanged.\n- Jira: the site host is added; an unparseable `base_url` adds nothing.\n- Confluence: the site host is added.\n- dbt: the `api_base` host is added.\n- Teams: the default host is always present; each sovereign host is\nadded; `attacker.example`, `evil.trafficmanager.net` and\n`smba.trafficmanager.net.attacker.example` are never added.\n\nAll six new assertions fail against the unfixed source and pass with the\nfix. `preflight:fast` and `typecheck:tests` pass.\n\nOne testing note:\n`test/unit/connectors/lazy-mesh/connector-spawns.test.ts` fails to load\nwhen run **on its own** (`Export named 'getValidSalesforceAccessToken'\nnot found`). That happens on `main` too; the file passes as part of the\ndirectory or suite run CI uses (1,778 pass).\n\n## Not covered\n\n- The connectors #1433 tracks (Sentry, Datadog, LaunchDarkly, Flagsmith,\nSonarQube, Wiz, Fastmail).\n- `kubernetes`, which has no network grant at all.\n- A real per-host spawn. Nothing here spawns a macOS child or runs the\nLinux helper; whether per-host mode gives outbound connectivity on Linux\nat all is still the unverified question the issue raises.\n\nNo invariant, no migration, no egress class.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n## Summary by CodeRabbit\n\n- **Bug Fixes**\n- Improved sandbox network access for Jira, Confluence, self-managed\nGitLab, regional dbt, and Teams integrations.\n- Valid configured service hosts are now recognized, while invalid or\ndeceptive URLs cannot expand network access.\n- Teams supports approved Bot Framework hosts across public and\nsovereign cloud environments.\n- Default service hosts remain available, preserving connectivity for\nstandard cloud services.\n\n- **Documentation**\n- Added changelog documentation covering these sandbox network access\nupdates.\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\nCo-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>",
+          "timestamp": "2026-09-18T07:52:11Z",
+          "tree_id": "0962a46f98ed6895d29941394b6ac87e907c603a",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/d4465f9c3c784532a056cfef0bc63433d2936af2"
+        },
+        "date": 1789718606508,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 263.97371969999585,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 263.5881545500048,
             "unit": "ms"
           }
         ]
