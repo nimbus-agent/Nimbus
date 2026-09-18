@@ -2353,8 +2353,8 @@ nimbus connector auth discord        # bot token (opt-in)
 # CI/CD
 nimbus connector auth jenkins        # base URL + username + API token
 nimbus connector auth circleci       # API token
-nimbus connector auth bitrise        # PAT
-# github_actions / gitlab_ci reuse the github / gitlab credentials above
+# github_actions reuses the github credential above (there is no gitlab_ci service: GitLab CI data
+# comes from the gitlab connector, authenticated above)
 
 # Cloud platforms / infrastructure
 nimbus connector auth aws
@@ -2370,45 +2370,7 @@ nimbus connector auth sentry         # auth token + org slug + URL
 nimbus connector auth newrelic       # API key + account id
 nimbus connector auth datadog        # API key + app key + site
 
-# Security scanning
-nimbus connector auth snyk           # API token
-nimbus connector auth sonarqube      # API token (+ optional org for SonarCloud)
-nimbus connector auth semgrep        # PAT + deployment slug
-nimbus connector auth wiz            # client id + secret (CSPM)
-nimbus connector auth dependencytrack # base URL + API key (OWASP Dependency-Track SBOM)
-
-# Feature flags
-nimbus connector auth launchdarkly   # token + base URL + project key
-nimbus connector auth flagsmith      # token + api base
-
-# GitOps / data / BI
-nimbus connector auth argocd         # URL + token
-nimbus connector auth flux           # API URL + token
-nimbus connector auth dbt            # token + api base + account id
-nimbus connector auth metabase       # URL + API key
-nimbus connector auth superset       # URL + username + password
-nimbus connector auth databricks     # host + token
-nimbus connector auth mlflow         # host + token
-
-# Deploy platforms
-nimbus connector auth vercel         # token (+ optional team id)
-nimbus connector auth netlify        # token
-
-# Finance / productivity / support
-nimbus connector auth stripe         # secret API key
-nimbus connector auth mercury        # token
-nimbus connector auth readwise       # token
-nimbus connector auth raindrop       # token
-nimbus connector auth intercom       # token
-nimbus connector auth zendesk        # URL + email + API token
-nimbus connector auth stackoverflow  # token + team
-nimbus connector auth ramp           # OAuth client-credentials (client id + secret)
-nimbus connector auth zotero         # API key + library id
-
 # Recruiting / CRM (OAuth where noted — opens browser)
-nimbus connector auth lever          # API key
-nimbus connector auth greenhouse     # API key
-nimbus connector auth pipedrive      # token
 nimbus connector auth hubspot        # OAuth 3-legged
 nimbus connector auth salesforce     # OAuth 3-legged + PKCE — per-tenant instance_url
 
@@ -2417,18 +2379,66 @@ nimbus connector auth miro           # OAuth
 nimbus connector auth canva          # OAuth + PKCE (Basic-header secret)
 nimbus connector auth figma          # OAuth (+ non-secret team id)
 
-# Data orchestration / search / quality
-nimbus connector auth airflow            # base URL + username + password
-nimbus connector auth prefect            # API URL + API key
-nimbus connector auth dagster            # base URL + API token
-nimbus connector auth elasticsearch      # URL + API key (index metadata only)
-nimbus connector auth great_expectations # results dir path (filesystem; no live creds)
-
 # Meetings
 nimbus connector auth zoom           # OAuth 3-legged PKCE — opens browser
 ```
 
-**Credential reuse — no separate `connector auth` needed.** `github_actions` / `gitlab_ci` reuse the `github` / `gitlab` credentials; `google_meet` rides the `google` OAuth; and the metadata-only **BigQuery / Athena / CloudWatch / SageMaker / Cloud Logging / Vertex AI** connectors reuse your `aws` / `gcp` credentials. Authenticate the underlying provider and these light up automatically.
+**Credential reuse — no separate `connector auth` needed.** `github_actions` reuses the `github` credential (there is no `gitlab_ci` service — GitLab CI data comes from the `gitlab` connector, which you authenticate directly); `google_meet` rides the `google` OAuth; and the metadata-only **BigQuery / Athena / CloudWatch / SageMaker / Cloud Logging / Vertex AI** connectors reuse your `aws` / `gcp` credentials. Authenticate the underlying provider and these light up automatically.
+
+**Connectors set up with `nimbus vault set`, not `connector auth`.** The services below have no `connector auth` flow. Running `nimbus connector auth <service>` for one of them refuses and prints the exact `nimbus vault set` commands for that service. Store each setting with `nimbus vault set <key> <value>`; every write asks for your approval. Set the keys your setup uses: optional ones, such as a self-hosted base URL or a team id, can be left out. The table comes from `CONNECTOR_VAULT_SECRET_KEYS`; if it ever disagrees with what the refusal prints, the refusal is current.
+
+| Service | Vault keys |
+| --- | --- |
+| `snyk` | `snyk.token` |
+| `bitrise` | `bitrise.token` |
+| `codemagic` | `codemagic.token` |
+| `testflight` | `testflight.issuer_id`, `testflight.key_id`, `testflight.private_key` |
+| `firebase` | `firebase.service_account_json`, `firebase.app_ids` |
+| `sonarqube` | `sonarqube.token`, `sonarqube.url`, `sonarqube.organization` |
+| `semgrep` | `semgrep.token`, `semgrep.deployment_slug` |
+| `wiz` | `wiz.client_id`, `wiz.client_secret`, `wiz.api_url`, `wiz.auth_url` |
+| `launchdarkly` | `launchdarkly.token`, `launchdarkly.base_url`, `launchdarkly.project_key` |
+| `flagsmith` | `flagsmith.token`, `flagsmith.api_base` |
+| `argocd` | `argocd.url`, `argocd.token` |
+| `flux` | `flux.api_url`, `flux.token` |
+| `dbt` | `dbt.token`, `dbt.api_base`, `dbt.account_id` |
+| `metabase` | `metabase.url`, `metabase.api_key` |
+| `superset` | `superset.url`, `superset.username`, `superset.password` |
+| `databricks` | `databricks.host`, `databricks.token` |
+| `mlflow` | `mlflow.host`, `mlflow.token` |
+| `vercel` | `vercel.token`, `vercel.team_id` |
+| `netlify` | `netlify.token` |
+| `stripe` | `stripe.api_key` |
+| `mercury` | `mercury.token` |
+| `readwise` | `readwise.token` |
+| `raindrop` | `raindrop.token` |
+| `intercom` | `intercom.token` |
+| `zendesk` | `zendesk.url`, `zendesk.email`, `zendesk.api_token` |
+| `lever` | `lever.api_key` |
+| `greenhouse` | `greenhouse.api_key` |
+| `pipedrive` | `pipedrive.token` |
+| `stackoverflow` | `stackoverflow.token`, `stackoverflow.team` |
+| `zotero` | `zotero.api_key`, `zotero.library` |
+| `dependencytrack` | `dependencytrack.base_url`, `dependencytrack.api_key` |
+| `airflow` | `airflow.base_url`, `airflow.username`, `airflow.password` |
+| `prefect` | `prefect.api_url`, `prefect.api_key` |
+| `dagster` | `dagster.base_url`, `dagster.api_token` |
+| `ramp` | `ramp.client_id`, `ramp.client_secret` |
+| `elasticsearch` | `elasticsearch.url`, `elasticsearch.api_key` |
+| `great_expectations` | `great_expectations.results_dir` |
+| `imap` | `imap.host`, `imap.port`, `imap.username`, `imap.password`, `imap.mailbox`, `imap.smtp_host`, `imap.smtp_port`, `imap.smtp_username`, `imap.smtp_password` |
+| `fastmail` | `fastmail.api_token`, `fastmail.base_url` |
+| `protonmail` | `protonmail.username`, `protonmail.password`, `protonmail.imap_host`, `protonmail.imap_port`, `protonmail.mailbox`, `protonmail.smtp_host`, `protonmail.smtp_port`, `protonmail.smtp_username`, `protonmail.smtp_password` |
+| `localdb` | `localdb.scripts_dir` |
+| `storybook` | `storybook.dir` |
+| `dataprofile` | `dataprofile.dir` |
+| `snowflake` | `snowflake.account`, `snowflake.oauth_token`, `snowflake.key_pair_jwt` |
+| `tableau` | `tableau.url`, `tableau.pat_name`, `tableau.pat_secret` |
+| `looker` | `looker.base_url`, `looker.client_id`, `looker.client_secret` |
+| `powerbi` | `powerbi.tenant_id`, `powerbi.client_id`, `powerbi.client_secret` |
+| `montecarlo` | `montecarlo.api_id`, `montecarlo.api_token` |
+| `bigeye` | `bigeye.base_url`, `bigeye.api_key` |
+| `apple` | `apple.icloud_email`, `apple.icloud_app_password`, `apple.mailbox`, `apple.cal_window_past_days`, `apple.cal_window_future_days`, `apple.cal_max_instances`, `apple.cal_include_calendars`, `apple.cal_exclude_calendars` |
 
 **Output — the command reports only what it actually checked.** For a handful of PAT-based connectors (`github`, `gitlab`, `bitbucket`, `jira`, `jenkins`) the gateway makes one cheap identity-endpoint call before returning; every OAuth connector is confirmed by construction — a completed PKCE browser consent + token exchange IS the provider confirming the credential. So the outcome is one of:
 

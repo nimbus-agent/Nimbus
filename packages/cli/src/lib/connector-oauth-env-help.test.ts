@@ -73,6 +73,14 @@ describe("printConnectorAuthPatOnlyHelp", () => {
     expect(out.stdout).toContain("nimbus connector help");
   });
 
+  it("points at the command that prints the Vault keys, not only at `connector help` (#1531)", () => {
+    // `connector help` does not list the token/API-key connectors that have no auth flow, so the
+    // old pointer was a dead end for them.
+    printConnectorAuthPatOnlyHelp("stripe");
+    expect(out.stdout).toContain("nimbus connector auth stripe");
+    expect(out.stdout).toContain("nimbus vault set");
+  });
+
   it("handles an empty service name gracefully", () => {
     printConnectorAuthPatOnlyHelp("");
     expect(out.stdout).toContain('No OAuth environment-variable help for ""');

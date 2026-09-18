@@ -27,9 +27,12 @@ import { Config } from "../../config.ts";
 import {
   type ConnectorOAuthProfile,
   type ConnectorServiceId,
+  credentialsReusedFrom,
   defaultSyncIntervalMsForService,
   oauthProfileForService,
+  oauthUnsupportedDetail,
 } from "../../connectors/connector-catalog.ts";
+import { CONNECTOR_VAULT_SECRET_KEYS } from "../../connectors/connector-secrets-manifest.ts";
 import {
   deleteConnectorSecret,
   sharedOAuthKey,
@@ -819,6 +822,43 @@ const PAT_CONNECTOR_AUTH_HANDLERS: Partial<Record<ConnectorServiceId, PatConnect
   },
 };
 
+/**
+ * Why `connector.auth` cannot set up `id`, and what the user should run instead — or `null` when it
+ * can (the service has an OAuth profile).
+ *
+ * Only reached for a service with no PAT handler. Before #1531 such a service fell through to the
+ * OAuth path, which threw its internal "does not use OAuth" error, and that text pointed back at
+ * `connector.auth <svc>` — the command that had just failed. So the refusal happens HERE, before
+ * OAuth, and names a command that works:
+ *  - a service that syncs with another service's credential → authenticate that service;
+ *  - otherwise → `nimbus vault set` for each of the service's manifest keys. That path is
+ *    HITL-gated per key, and deliberately stays the only one: `connector.auth` does not grow a
+ *    generic, ungated Vault-write arm for these services.
+ */
+export function connectorAuthUnavailableMessage(id: ConnectorServiceId): string | null {
+  const detail = oauthUnsupportedDetail(id);
+  if (detail === undefined || PAT_CONNECTOR_AUTH_HANDLERS[id] !== undefined) {
+    return null;
+  }
+  const reusedFrom = credentialsReusedFrom(id);
+  if (reusedFrom !== undefined && PAT_CONNECTOR_AUTH_HANDLERS[reusedFrom] !== undefined) {
+    return (
+      `${id} has no credential of its own — it ${detail}. ` +
+      `Set up ${reusedFrom} instead with \`nimbus connector auth ${reusedFrom}\`.`
+    );
+  }
+  const keys: readonly string[] = CONNECTOR_VAULT_SECRET_KEYS[id];
+  if (keys.length === 0) {
+    return `${id} has no \`nimbus connector auth\` flow — it ${detail}.`;
+  }
+  const commands = keys.map((k) => `  nimbus vault set ${k} <value>`).join("\n");
+  return (
+    `${id} has no \`nimbus connector auth\` flow — it ${detail}. ` +
+    "Store its settings in the Vault instead (each write asks for your approval; set the ones your setup uses):\n" +
+    commands
+  );
+}
+
 export async function handleConnectorAuth(
   ctx: ConnectorRpcHandlerContext,
 ): Promise<ConnectorRpcHit> {
@@ -827,6 +867,10 @@ export async function handleConnectorAuth(
   const patHandler = PAT_CONNECTOR_AUTH_HANDLERS[id];
   if (patHandler !== undefined) {
     return patHandler(ctx);
+  }
+  const unavailable = connectorAuthUnavailableMessage(id);
+  if (unavailable !== null) {
+    throw new ConnectorRpcError(-32602, unavailable);
   }
   return connectorAuthOAuthPkce(
     id,

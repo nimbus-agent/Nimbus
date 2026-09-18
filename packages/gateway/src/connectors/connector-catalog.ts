@@ -236,105 +236,130 @@ export type ConnectorOAuthProfile = {
 };
 
 function oauthUnsupported(serviceId: ConnectorServiceId, detail: string): never {
-  throw new Error(`oauthProfileForService: ${serviceId} ${detail}`);
+  throw new Error(`oauthProfileForService: ${serviceId} does not use OAuth — it ${detail}`);
+}
+
+/**
+ * Services with no credential of their own: they sync with the credential another service stores.
+ * Setting one of these up means authenticating the service named here.
+ */
+const CREDENTIALS_REUSED_FROM: Partial<Record<ConnectorServiceId, ConnectorServiceId>> = {
+  github_actions: "github",
+  bigquery: "gcp",
+  cloud_logging: "gcp",
+  vertex_ai: "gcp",
+  athena: "aws",
+  cloudwatch: "aws",
+  sagemaker: "aws",
+};
+
+/** The service whose stored credential `serviceId` syncs with, when it has none of its own. */
+export function credentialsReusedFrom(
+  serviceId: ConnectorServiceId,
+): ConnectorServiceId | undefined {
+  return CREDENTIALS_REUSED_FROM[serviceId];
+}
+
+/**
+ * How a non-OAuth service authenticates, in plain words ("uses a secret API key"), or `undefined`
+ * for a service with an OAuth profile. Descriptive only: it never names a command, because the
+ * command that applies depends on which setup path the service has, and the IPC layer decides that.
+ */
+export function oauthUnsupportedDetail(serviceId: ConnectorServiceId): string | undefined {
+  return OAUTH_UNSUPPORTED_DETAILS[serviceId];
 }
 
 const OAUTH_UNSUPPORTED_DETAILS: Partial<Record<ConnectorServiceId, string>> = {
-  github: "uses a PAT (connector.auth personalAccessToken)",
-  github_actions: "uses the same PAT as github (connector.auth github)",
-  gitlab: "uses a PAT (connector.auth personalAccessToken)",
-  bitbucket: "uses app password (connector.auth username + token)",
-  linear: "uses an API key (connector.auth personalAccessToken)",
-  jira: "uses email + API token + base URL (connector.auth)",
-  confluence: "uses email + API token + base URL (connector.auth)",
-  discord: "uses a bot token + opt-in (connector.auth --enable)",
-  jenkins: "uses base URL + username + API token (connector.auth)",
-  circleci: "uses a personal API token (connector.auth circleci)",
-  pagerduty: "uses a REST API token (connector.auth pagerduty)",
-  kubernetes: "uses a kubeconfig file path (connector.auth kubernetes)",
-  aws: "uses access key + secret + region or profile (connector.auth aws)",
-  azure: "uses service principal tenant + client id + secret (connector.auth azure)",
-  gcp: "uses a service account JSON key path (connector.auth gcp)",
-  iac: "is opt-in for local CLIs (connector.auth iac --enable)",
-  grafana: "uses base URL + API token (connector.auth grafana)",
-  sentry: "uses auth token + org slug (connector.auth sentry)",
-  newrelic: "uses a user API key (connector.auth newrelic)",
-  datadog: "uses API + application keys (connector.auth datadog)",
-  snyk: "uses a REST API token (connector.auth snyk)",
-  bitrise: "uses a personal access token (connector.auth bitrise)",
-  codemagic: "uses an API token sent in the x-auth-token header (connector.auth codemagic)",
+  github: "uses a PAT",
+  github_actions: "uses the same PAT as github",
+  gitlab: "uses a PAT",
+  bitbucket: "uses app password",
+  linear: "uses an API key",
+  jira: "uses email + API token + base URL",
+  confluence: "uses email + API token + base URL",
+  discord: "uses a bot token + opt-in",
+  jenkins: "uses base URL + username + API token",
+  circleci: "uses a personal API token",
+  pagerduty: "uses a REST API token",
+  kubernetes: "uses a kubeconfig file path",
+  aws: "uses access key + secret + region or profile",
+  azure: "uses service principal tenant + client id + secret",
+  gcp: "uses a service account JSON key path",
+  iac: "is opt-in for local CLIs",
+  grafana: "uses base URL + API token",
+  sentry: "uses auth token + org slug",
+  newrelic: "uses a user API key",
+  datadog: "uses API + application keys",
+  snyk: "uses a REST API token",
+  bitrise: "uses a personal access token",
+  codemagic: "uses an API token sent in the x-auth-token header",
   testflight:
-    "uses an App Store Connect ES256 JWT minted from issuer id + key id + .p8 private key (connector.auth testflight)",
-  firebase:
-    "uses a Google service-account key JSON + comma-separated app ids (connector.auth firebase)",
-  sonarqube: "uses an API token (connector.auth sonarqube)",
-  semgrep: "uses a Semgrep PAT (connector.auth semgrep)",
-  wiz: "uses OAuth client_credentials (connector.auth wiz)",
-  launchdarkly: "uses an API token (connector.auth launchdarkly)",
-  flagsmith: "uses an admin API token (connector.auth flagsmith)",
-  argocd: "uses a bearer API token (connector.auth argocd)",
-  flux: "uses a Kubernetes ServiceAccount token (connector.auth flux)",
-  dbt: "uses a dbt Cloud API token (connector.auth dbt)",
-  metabase: "uses a Metabase API key (connector.auth metabase)",
-  superset: "uses Superset username/password (connector.auth superset)",
-  databricks: "uses a Databricks PAT (connector.auth databricks)",
-  mlflow: "uses an MLflow API token (connector.auth mlflow)",
-  vercel: "uses an access token + optional team id (connector.auth vercel)",
-  netlify: "uses a personal access token (connector.auth netlify)",
-  stripe: "uses a secret API key (connector.auth stripe)",
-  mercury: "uses a Mercury API token (connector.auth mercury)",
-  readwise: "uses a Readwise API token (connector.auth readwise)",
-  raindrop: "uses a Raindrop.io API token (connector.auth raindrop)",
-  intercom: "uses an Intercom access token (connector.auth intercom)",
-  zendesk: "uses email + API token Basic auth (connector.auth zendesk)",
-  lever: "uses a Lever API key (connector.auth lever)",
-  greenhouse: "uses a Greenhouse Harvest API key (connector.auth greenhouse)",
-  pipedrive: "uses a Pipedrive API token (connector.auth pipedrive)",
-  stackoverflow: "uses a Stack Overflow for Teams PAT + team slug (connector.auth stackoverflow)",
-  zotero: "uses a Zotero API key + library spec (connector.auth zotero)",
-  dependencytrack: "uses a Dependency-Track API key + base URL (connector.auth dependencytrack)",
-  airflow: "uses HTTP Basic auth — username + password + base URL (connector.auth airflow)",
-  prefect: "uses a Prefect API key (Bearer) + workspace API URL (connector.auth prefect)",
-  dagster: "uses a Dagster Cloud API token + host base URL (connector.auth dagster)",
-  ramp: "uses OAuth2 client-credentials — client id + client secret (connector.auth ramp)",
+    "uses an App Store Connect ES256 JWT minted from issuer id + key id + .p8 private key",
+  firebase: "uses a Google service-account key JSON + comma-separated app ids",
+  sonarqube: "uses an API token",
+  semgrep: "uses a Semgrep PAT",
+  wiz: "uses OAuth client_credentials",
+  launchdarkly: "uses an API token",
+  flagsmith: "uses an admin API token",
+  argocd: "uses a bearer API token",
+  flux: "uses a Kubernetes ServiceAccount token",
+  dbt: "uses a dbt Cloud API token",
+  metabase: "uses a Metabase API key",
+  superset: "uses Superset username/password",
+  databricks: "uses a Databricks PAT",
+  mlflow: "uses an MLflow API token",
+  vercel: "uses an access token + optional team id",
+  netlify: "uses a personal access token",
+  stripe: "uses a secret API key",
+  mercury: "uses a Mercury API token",
+  readwise: "uses a Readwise API token",
+  raindrop: "uses a Raindrop.io API token",
+  intercom: "uses an Intercom access token",
+  zendesk: "uses email + API token Basic auth",
+  lever: "uses a Lever API key",
+  greenhouse: "uses a Greenhouse Harvest API key",
+  pipedrive: "uses a Pipedrive API token",
+  stackoverflow: "uses a Stack Overflow for Teams PAT + team slug",
+  zotero: "uses a Zotero API key + library spec",
+  dependencytrack: "uses a Dependency-Track API key + base URL",
+  airflow: "uses HTTP Basic auth — username + password + base URL",
+  prefect: "uses a Prefect API key (Bearer) + workspace API URL",
+  dagster: "uses a Dagster Cloud API token + host base URL",
+  ramp: "uses OAuth2 client-credentials — client id + client secret",
   bigquery:
-    "reuses the existing GCP service-account JSON key path + project id (connector.auth gcp) — no separate BigQuery credential",
+    "reuses the existing GCP service-account JSON key path + project id — no separate BigQuery credential",
   athena:
-    "reuses the existing AWS access key + secret + region or profile (connector.auth aws) — no separate Athena credential",
+    "reuses the existing AWS access key + secret + region or profile — no separate Athena credential",
   cloudwatch:
-    "reuses the existing AWS access key + secret + region or profile (connector.auth aws) — no separate CloudWatch credential",
+    "reuses the existing AWS access key + secret + region or profile — no separate CloudWatch credential",
   sagemaker:
-    "reuses the existing AWS access key + secret + region or profile (connector.auth aws) — no separate SageMaker credential",
+    "reuses the existing AWS access key + secret + region or profile — no separate SageMaker credential",
   cloud_logging:
-    "reuses the existing GCP service-account JSON key path + project id (connector.auth gcp) — no separate Cloud Logging credential",
+    "reuses the existing GCP service-account JSON key path + project id — no separate Cloud Logging credential",
   vertex_ai:
-    "reuses the existing GCP service-account JSON key path + project id (connector.auth gcp) — no separate Vertex AI credential; optional gcp.region selects the region (default us-central1)",
-  elasticsearch: "uses an Elasticsearch API key + cluster URL (connector.auth elasticsearch)",
+    "reuses the existing GCP service-account JSON key path + project id — no separate Vertex AI credential; optional gcp.region selects the region (default us-central1)",
+  elasticsearch: "uses an Elasticsearch API key + cluster URL",
   great_expectations:
     "reads Great Expectations validation-result JSON artefacts from the configured great_expectations.results_dir — no live credentials",
-  imap: "uses per-tenant IMAP/SMTP host + port + username + password (connector.auth imap)",
-  fastmail: "uses a Fastmail JMAP API token (connector.auth fastmail)",
+  imap: "uses per-tenant IMAP/SMTP host + port + username + password",
+  fastmail: "uses a Fastmail JMAP API token",
   protonmail:
-    "uses ProtonMail Bridge's local IMAP/SMTP credentials (connector.auth protonmail; Bridge must be running)",
+    "uses ProtonMail Bridge's local IMAP/SMTP credentials (ProtonMail Bridge must be running)",
   localdb:
-    "reads saved SQL script files from a configured local DB-tool scripts dir (connector.auth localdb) — no live credentials",
-  storybook:
-    "reads a local Storybook manifest from a configured output dir (connector.auth storybook) — no live credentials",
+    "reads saved SQL script files from a configured local DB-tool scripts dir — no live credentials",
+  storybook: "reads a local Storybook manifest from a configured output dir — no live credentials",
   dataprofile:
-    "profiles local data files (parquet/csv/jsonl/json) in a configured dir for schema only (connector.auth dataprofile) — no live credentials",
-  snowflake:
-    "uses an OAuth token or key-pair JWT + account identifier (connector.auth snowflake) — no PKCE flow",
-  tableau:
-    "uses a Personal Access Token (PAT name + secret) + server URL (connector.auth tableau) — no PKCE flow",
+    "profiles local data files (parquet/csv/jsonl/json) in a configured dir for schema only — no live credentials",
+  snowflake: "uses an OAuth token or key-pair JWT + account identifier — no PKCE flow",
+  tableau: "uses a Personal Access Token (PAT name + secret) + server URL — no PKCE flow",
   looker:
-    "uses OAuth2 client-credentials (client id + client secret) + instance base URL (connector.auth looker) — no PKCE flow",
+    "uses OAuth2 client-credentials (client id + client secret) + instance base URL — no PKCE flow",
   powerbi:
-    "uses Azure AD client-credentials (tenant id + client id + client secret) against the Power BI REST API (connector.auth powerbi) — no PKCE flow",
+    "uses Azure AD client-credentials (tenant id + client id + client secret) against the Power BI REST API — no PKCE flow",
   montecarlo:
-    "uses an API key pair (api_id + api_token) against the Monte Carlo GraphQL API (connector.auth montecarlo) — no PKCE flow",
-  bigeye: "uses a Bearer API key + per-tenant base URL (connector.auth bigeye) — no PKCE flow",
-  apple:
-    "uses an Apple ID + app-specific password for iCloud Mail (IMAP/SMTP) + Calendar (CalDAV); set via connector.auth apple",
+    "uses an API key pair (api_id + api_token) against the Monte Carlo GraphQL API — no PKCE flow",
+  bigeye: "uses a Bearer API key + per-tenant base URL — no PKCE flow",
+  apple: "uses an Apple ID + app-specific password for iCloud Mail (IMAP/SMTP) + Calendar (CalDAV)",
 };
 
 export function oauthProfileForService(serviceId: ConnectorServiceId): ConnectorOAuthProfile {

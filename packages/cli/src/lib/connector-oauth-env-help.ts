@@ -60,7 +60,14 @@ Usage: nimbus connector auth <service> [--port <n>] [--scopes a,b] [--help] …`
 }
 
 export function printConnectorAuthPatOnlyHelp(service: string): void {
+  // The CLI cannot list this service's Vault keys itself (it reaches the gateway over IPC only), so
+  // it names the command that can: the gateway either runs the service's token flow or refuses and
+  // prints the exact `nimbus vault set` keys (#1531).
   console.log(
-    `No OAuth environment-variable help for "${service}". This connector uses a token or API key — see:\n  nimbus connector help`,
+    `No OAuth environment-variable help for "${service}". This connector uses a token, API key or local setting.
+
+Run \`nimbus connector auth ${service}\` with the gateway running. Either it takes the token flags
+listed in \`nimbus connector help\`, or it prints the exact \`nimbus vault set\` commands this
+service needs (most token/API-key connectors are set up that way).`,
   );
 }
