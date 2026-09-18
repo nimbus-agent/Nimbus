@@ -15,8 +15,12 @@ import { createIpcClient } from "./rpc-timeouts.ts";
  * only checks `err instanceof Error` is unaffected.
  */
 export class GatewayNotRunningError extends Error {
-  constructor() {
-    super("Gateway is not running. Start with: nimbus start");
+  constructor(opts: { demo?: boolean } = {}) {
+    super(
+      opts.demo === true
+        ? "Gateway is not running (demo root). Start with: nimbus --demo start"
+        : "Gateway is not running. Start with: nimbus start",
+    );
     this.name = "GatewayNotRunningError";
   }
 }
@@ -82,7 +86,7 @@ export async function withGatewayIpc<T>(
 ): Promise<T> {
   const state = await readGatewayState(paths);
   if (state === undefined) {
-    throw new GatewayNotRunningError();
+    throw new GatewayNotRunningError({ demo: paths.demo === true });
   }
   const client = createIpcClient(state.socketPath, opts.requestTimeoutMs);
   await client.connect();
