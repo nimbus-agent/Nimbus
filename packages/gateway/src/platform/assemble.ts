@@ -356,6 +356,7 @@ import { GATEWAY_VERSION } from "../version.ts";
 import { AnomalyDetectorStub } from "../watcher/anomaly-detector.ts";
 import { registerConnectorMeshSyncables } from "./assemble-sync-registrations.ts";
 import { openUrlInDefaultBrowser } from "./browser.ts";
+import { bootPolicyFor } from "./demo-boot.ts";
 import { ensurePlatformDirectories } from "./dirs.ts";
 import { processEnvGet } from "./env-access.ts";
 import { createGatewayPinoLogger } from "./gateway-log-file.ts";
@@ -3142,6 +3143,7 @@ export async function assemblePlatformServices(
   const assemblyStartedMs = performance.now();
   const sidecarStops: Array<() => void> = [];
   await ensurePlatformDirectories(paths);
+  const bootPolicy = bootPolicyFor(paths);
   // Built before `db` so a boot-marker append failure (below) has somewhere to log a warning.
   const syncLogger: Logger = createGatewayPinoLogger(paths.logDir);
   const vault = customVault ?? (await createNimbusVault(paths));
@@ -3165,11 +3167,14 @@ export async function assemblePlatformServices(
   // runtime's read paths — the directory every exec and generated-tool spawn is granted, which
   // otherwise gained one unresolvable ACE per distinct SID until the DACL overflowed. Non-fatal by
   // construction: see the function.
-  void reapAppContainersAtBoot({
-    db,
-    logger: syncLogger,
-    sweepPaths: resolveRuntimeById("bun").requiredReadPaths(),
-  });
+  // Skipped for a demo-rooted gateway (I41 clause 4, platform/demo-boot.ts).
+  if (bootPolicy.reapAppContainers) {
+    void reapAppContainersAtBoot({
+      db,
+      logger: syncLogger,
+      sweepPaths: resolveRuntimeById("bun").requiredReadPaths(),
+    });
+  }
   const notifications = createUnimplementedNotifications(syncLogger);
   const rateLimiter = new ProviderRateLimiter();
   const activeTomlPath = resolveNimbusTomlForProfile(paths.configDir);
@@ -4177,7 +4182,9 @@ export async function assemblePlatformServices(
   const askExplainRecorder = new AskExplainRecorder();
   ipcOpts.askExplainRecorder = askExplainRecorder;
 
-  collectSidecarsFromEnv(db, paths, sidecarStops, httpSidecarOpts);
+  if (bootPolicy.envSidecars) {
+    collectSidecarsFromEnv(db, paths, sidecarStops, httpSidecarOpts);
+  }
 
   const ipc = createIpcServer(ipcOpts);
 
