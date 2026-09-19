@@ -89,11 +89,21 @@ nimbus demo reset
 ## The browser-download path (both OSes, after the one-liner run)
 
 Revert to the clean state, then install the way someone who distrusts piping a script into a
-shell would: download the archive from the Releases page **in a browser**, extract it with the
-OS's own file manager, and run the installer it contains, following
-[Windows](../install-windows-unsigned.md) or [macOS](../install-macos-unsigned.md). This is where
-SmartScreen and Gatekeeper are expected to appear, and the question is whether those two pages
-describe what actually shows up.
+shell would: download the archive from the Releases page **in a browser**, and follow that OS's
+unsigned-install guide step by step, doing exactly what it says and nothing it does not. The
+guides have the user run the gateway executable directly, not the installer script that also
+ships in the archive, so that is what this run does.
+
+- **Windows** — `nimbus-headless-windows-x64.zip`, then the *File Explorer Workflow* in
+  [`install-windows-unsigned.md`](../install-windows-unsigned.md): extract in File Explorer,
+  double-click `nimbus-gateway-windows-x64.exe`, and take SmartScreen's **More info → Run anyway**.
+- **macOS** — `nimbus-headless-macos-arm64.tar.gz` (or `-x64` on Intel), then the *Finder
+  Workflow* in [`install-macos-unsigned.md`](../install-macos-unsigned.md): extract in Finder,
+  **right-click `nimbus-gateway-macos-<arch>` → Open** (a double-click offers no way through),
+  and confirm Gatekeeper's **Open**.
+
+This is where SmartScreen and Gatekeeper are expected to appear, and the question is whether
+those two guides describe what actually shows up, in the order it shows up.
 
 ## What to record
 
