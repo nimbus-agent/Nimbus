@@ -10,7 +10,7 @@ goes out before it is green on all three operating systems.
 | Windows | Not yet performed by a person. Run sheet below. |
 | macOS | Not yet performed by a person. Run sheet below. |
 
-### What the Linux run was, and what it does not cover
+## What the Linux run was, and what it does not cover
 
 The README's Linux quickstart ([`docs/README.md`](../README.md), the *Linux* block under the
 install section) was run verbatim in a fresh `ubuntu:24.04` container with nothing preinstalled.
