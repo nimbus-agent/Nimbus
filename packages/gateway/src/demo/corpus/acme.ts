@@ -24,9 +24,12 @@ import {
  * have real content. Nothing here is real: every domain is `.example`.
  */
 
-/** Deterministic 40-hex sha for a label (not a real commit). */
+/**
+ * Deterministic 40-hex sha for a label (not a real commit). SHA-256 truncated to git's SHA-1
+ * length: the value only has to look like a commit id, and a weak hash is avoided outright.
+ */
 function sha(label: string): string {
-  return createHash("sha1").update(`acme-demo:${label}`).digest("hex");
+  return createHash("sha256").update(`acme-demo:${label}`).digest("hex").slice(0, 40);
 }
 
 const person = (key: string, first: string, last: string): DemoPerson => ({
