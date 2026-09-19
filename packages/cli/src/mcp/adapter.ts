@@ -292,6 +292,10 @@ export function createDeps(env: ConnectionEnv): AdapterDeps {
     agentToolsDisabledReason(): string | undefined {
       return agentToolsDisabled ? AGENT_TOOLS_UNSUPPORTED_MESSAGE : undefined;
     },
+    // Reused from `ConnectionEnv.demo` (see `createProductionDeps`, the initial-connect path
+    // above) — the SAME source, so the mid-connection-drop path in `runTool` never disagrees with
+    // the "gateway is unavailable" message the initial connect would have shown.
+    demo: env.demo === true,
   };
 }
 

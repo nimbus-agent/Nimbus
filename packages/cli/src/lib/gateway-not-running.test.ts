@@ -43,13 +43,21 @@ describe("gateway-not-running hint is not re-hardcoded elsewhere", () => {
   const SRC_ROOT = import.meta.dir;
   const CLI_SRC = resolve(SRC_ROOT, "..");
   const BUILDER_FILE = resolve(SRC_ROOT, "gateway-not-running.ts");
-  const HINT_RE = /start with:\s*nimbus start/i;
+  // Widened to also catch `tui.tsx`'s former "Start it with: nimbus start" — a `.tsx` site the
+  // narrower `/start with:/` (no "it") and the `.ts`-only scan below both missed.
+  const HINT_RE = /start (?:it )?with:\s*nimbus start/i;
 
   async function nonTestTsFiles(): Promise<string[]> {
     const entries = await readdir(CLI_SRC, { recursive: true });
     return entries
       .map((f) => f.replaceAll("\\", "/"))
-      .filter((f) => f.endsWith(".ts") && !f.endsWith(".test.ts") && !f.endsWith(".d.ts"))
+      .filter(
+        (f) =>
+          (f.endsWith(".ts") || f.endsWith(".tsx")) &&
+          !f.endsWith(".test.ts") &&
+          !f.endsWith(".test.tsx") &&
+          !f.endsWith(".d.ts"),
+      )
       .map((f) => resolve(CLI_SRC, f));
   }
 

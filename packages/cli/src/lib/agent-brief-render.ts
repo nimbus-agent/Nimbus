@@ -68,23 +68,32 @@ export function awaitAgentBrief<T>(
   return routerFor(client).expect(agentName, guard, timeoutMs);
 }
 
+/** Shared with `expert.ts`, which renders the same gap outside this dispatcher. */
+export const EMPTY_INDEX_HINT =
+  "No data indexed yet — run `nimbus connector sync <service>` first.\n";
+/** In the demo, the index is seeded by `nimbus demo`, not by connecting a service. */
+export const DEMO_EMPTY_INDEX_HINT = "The demo index is empty — run nimbus demo to seed it.\n";
+
 /**
  * Renders an agent brief to stdout/stderr. Shared across catchup and impact:
  * - `--json` → JSON-stringify findings to stdout
  * - gap category `empty_index` → stderr message + process.exit(1)
  * - else → print brief to stdout
+ *
+ * `demo` must come from the caller's `CliPlatformPaths.demo === true`, never the env var directly.
  */
 export function renderAgentBrief<T extends { gaps: readonly { category: string }[] }>(
   brief: string,
   findings: T,
   json: boolean,
+  demo = false,
 ): void {
   if (json) {
     process.stdout.write(`${JSON.stringify(findings, null, 2)}\n`);
     return;
   }
   if (findings.gaps.some((g) => g.category === "empty_index")) {
-    process.stderr.write("No data indexed yet — run `nimbus connector sync <service>` first.\n");
+    process.stderr.write(demo ? DEMO_EMPTY_INDEX_HINT : EMPTY_INDEX_HINT);
     process.exit(1);
   }
   process.stdout.write(`${brief}\n`);

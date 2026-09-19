@@ -123,6 +123,29 @@ describe("runAsk", () => {
     localIndex.close();
   });
 
+  test("demo=true: returns the demo-seed guidance instead of connector-auth onboarding", async () => {
+    const db = new Database(":memory:");
+    LocalIndex.ensureSchema(db);
+    const localIndex = new LocalIndex(db);
+    const out = await runAsk({
+      input: "What did I work on yesterday?",
+      stream: false,
+      clientId: "test-client",
+      paths: stubPaths,
+      consentCoordinator: stubConsent,
+      localIndex,
+      dispatcher: stubDispatcher,
+      egressSink: NULL_EGRESS_SINK,
+      sendChunk: () => {},
+      demo: true,
+    });
+    expect(out.reply).toContain("No data indexed yet");
+    expect(out.reply).toContain("This is the demo root");
+    expect(out.reply).toContain("nimbus demo");
+    expect(out.reply).not.toContain("nimbus connector auth");
+    localIndex.close();
+  });
+
   test("BUG-005: appends user input + assistant reply to SessionMemoryStore when sessionId is in the request context", async () => {
     const db = new Database(":memory:");
     LocalIndex.ensureSchema(db);

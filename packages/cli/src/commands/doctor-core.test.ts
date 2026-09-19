@@ -389,7 +389,34 @@ describe("runDoctor dispatcher (4 fixture permutations)", () => {
       }),
     );
     expect(out.stdout).toContain("[fail] Gateway: stale state");
+    expect(out.stdout).toContain("try nimbus stop or remove the state file.");
     expect(process.exitCode).toBe(2);
+  });
+
+  it("demo: stale pid -> the stale-state hint stays inside the demo root", async () => {
+    await runDoctor(
+      [],
+      makeDeps({
+        getCliPlatformPaths: (): CliPlatformPaths => ({ ...FAKE_PATHS, demo: true }),
+        readGatewayState: async () => ({ socketPath: join(FAKE_ROOT, "fake.sock"), pid: 999999 }),
+        isProcessAlive: () => false,
+      }),
+    );
+    expect(out.stdout).toContain("try nimbus --demo stop or remove the state file.");
+    expect(process.exitCode).toBe(2);
+  });
+
+  it("demo: vault check prints the in-memory line without probing the OS keyring", async () => {
+    await runDoctor(
+      [],
+      makeDeps({
+        getCliPlatformPaths: (): CliPlatformPaths => ({ ...FAKE_PATHS, demo: true }),
+        readGatewayState: async () => undefined,
+      }),
+    );
+    expect(out.stdout).toContain(
+      "Vault: in-memory (demo root) — the OS credential store is not used",
+    );
   });
 
   it("live gateway + IPC ok -> prints gateway/config/index/health lines", async () => {

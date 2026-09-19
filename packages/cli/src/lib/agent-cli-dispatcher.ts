@@ -43,7 +43,7 @@ export async function runAgentCli<B extends { gaps: readonly { category: string 
     const { sessionId } = await client.call<{ sessionId: string }>(opts.ipcMethod, opts.callParams);
     pending.bindSession(sessionId);
     const { brief, findings } = await pending.result;
-    renderAgentBrief(brief, findings, opts.json);
+    renderAgentBrief(brief, findings, opts.json, paths.demo === true);
   } catch (err) {
     process.stderr.write(`${err instanceof Error ? err.message : String(err)}\n`);
     process.exit(2);

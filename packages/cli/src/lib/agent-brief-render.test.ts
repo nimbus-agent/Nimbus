@@ -53,6 +53,16 @@ describe("renderAgentBrief — empty_index gap", () => {
     expect(capture.stderrChunks.join("")).toContain("No data indexed yet");
     expect(capture.stdoutChunks).toHaveLength(0);
   });
+
+  it("demo: writes the demo-seed message instead of the connector-sync hint", () => {
+    expect(() =>
+      renderAgentBrief("brief", makeFindings({ emptyIndex: true }), false, true),
+    ).toThrow("process.exit(1)");
+    const err = capture.stderrChunks.join("");
+    expect(err).toContain("The demo index is empty — run nimbus demo to seed it.");
+    expect(err).not.toContain("nimbus connector sync");
+    expect(capture.stdoutChunks).toHaveLength(0);
+  });
 });
 
 describe("renderAgentBrief — normal (non-json, non-empty-index)", () => {

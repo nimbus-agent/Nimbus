@@ -1,10 +1,14 @@
 import { afterAll, afterEach, beforeEach, describe, expect, it } from "bun:test";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 import { clearFixture, FAKE_SOCKET_PATH, setFixture } from "../../test/helpers/cli-mocks.ts";
 import { captureOutput } from "../../test/helpers/cli-output.ts";
+import { createMockIpcClient } from "../../test/helpers/mock-ipc-client.ts";
 
 const mod = await import("./start.ts");
-const { decideStartAction, runStart, wantsNoWizard } = mod;
+const { decideStartAction, printOnboardingHintIfNoConnectors, runStart, wantsNoWizard } = mod;
 
 const out = captureOutput();
 
@@ -57,6 +61,41 @@ describe("decideStartAction", () => {
       pid: 8888,
       reason: "stale state, will clear and restart",
     });
+  });
+});
+
+describe("printOnboardingHintIfNoConnectors", () => {
+  let dir: string;
+
+  beforeEach(() => {
+    out.reset();
+    dir = mkdtempSync(join(tmpdir(), "nimbus-start-onboarding-"));
+  });
+  afterEach(() => {
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("non-demo: prints the real-install connect-a-service steps", async () => {
+    const { client } = createMockIpcClient([[]]);
+    await printOnboardingHintIfNoConnectors(client, join(dir, "marker"), false);
+    expect(out.stdout).toContain("nimbus connector auth github");
+    expect(out.stdout).toContain("nimbus connector sync github");
+    expect(out.stdout).toContain("nimbus doctor");
+    expect(out.stdout).not.toContain("nimbus demo");
+  });
+
+  it("demo: prints only the seed hint — connector auth/sync are refused in the demo", async () => {
+    const { client } = createMockIpcClient([[]]);
+    await printOnboardingHintIfNoConnectors(client, join(dir, "marker"), true);
+    expect(out.stdout).toContain("Seed the synthetic org with: nimbus demo");
+    expect(out.stdout).not.toContain("nimbus connector auth");
+    expect(out.stdout).not.toContain("nimbus connector sync");
+  });
+
+  it("prints nothing when connectors are already registered, demo or not", async () => {
+    const { client } = createMockIpcClient([[{ serviceId: "github" }]]);
+    await printOnboardingHintIfNoConnectors(client, join(dir, "marker"), true);
+    expect(out.stdout).toBe("");
   });
 });
 

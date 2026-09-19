@@ -88,6 +88,15 @@ export type RunAskParams = {
    * PREVIOUS successful ask at the moment the user most needs the truth.
    */
   explainRecorder?: AskExplainRecorder;
+  /**
+   * Whether this turn is running against a demo-rooted gateway (`PlatformPaths.demo === true`).
+   * Optional, defaulting to `false` — every existing caller/test stays non-demo without a stub.
+   * Set at the gateway's IPC wiring site (`gateway-main.ts`) from `platform.paths.demo === true`,
+   * never read from the env var directly. In the demo, connector auth/sync are refused by the
+   * gateway and the org is seeded by `nimbus demo`, so the real-install empty-index guidance is
+   * wrong twice over there.
+   */
+  demo?: boolean;
 };
 
 const EMPTY_INDEX_GUIDANCE = `No data indexed yet.
@@ -100,6 +109,16 @@ To get started, connect a service and run an initial sync:
   nimbus connector sync <service>
 
 Then try your question again, or run nimbus doctor for a health summary.`;
+
+const DEMO_EMPTY_INDEX_GUIDANCE = `No data indexed yet.
+
+This is the demo root. Seed the synthetic "Acme" org with:
+  nimbus demo
+`;
+
+function emptyIndexGuidance(demo: boolean): string {
+  return demo ? DEMO_EMPTY_INDEX_GUIDANCE : EMPTY_INDEX_GUIDANCE;
+}
 
 const INDEX_ITEM_COUNT_CACHE = new WeakMap<Database, { at: number; value: number }>();
 const INDEX_ITEM_COUNT_TTL_MS = 8000;
@@ -147,10 +166,11 @@ function emptyIndexGuidanceIfNeeded(
   if (p.input.trim() === "" || indexed !== 0) {
     return undefined;
   }
+  const guidance = emptyIndexGuidance(p.demo === true);
   if (p.stream) {
-    p.sendChunk(`${EMPTY_INDEX_GUIDANCE}\n`);
+    p.sendChunk(`${guidance}\n`);
   }
-  return { reply: EMPTY_INDEX_GUIDANCE };
+  return { reply: guidance };
 }
 
 async function classifyIntentForAsk(

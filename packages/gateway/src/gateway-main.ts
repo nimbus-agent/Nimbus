@@ -196,6 +196,9 @@ export async function main(): Promise<void> {
       dispatcher,
       egressSink: askEgressSink,
       explainRecorder: platform.askExplainRecorder,
+      // Never read the env var directly here — `platform.paths` is already the demo-derived
+      // `PlatformPaths` (I41) by the time it reaches this wiring site.
+      demo: platform.paths.demo === true,
       // Spread-conditional: `conversationalAgent` is OPTIONAL and `run-ask` already handles its
       // absence, but under `exactOptionalPropertyTypes` an explicit `undefined` is a different
       // type from an absent key.

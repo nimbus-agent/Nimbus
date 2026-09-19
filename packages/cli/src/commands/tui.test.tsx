@@ -68,8 +68,38 @@ describe("runTui — gateway missing", () => {
     setFixture({});
     await runTui([]);
     expect(stderrChunks.join("")).toContain("Gateway is not running");
+    expect(stderrChunks.join("")).toContain("Start with: nimbus start");
     expect(process.exitCode).toBe(1);
     expect(replCalls).toHaveLength(0);
+  });
+
+  describe("--demo", () => {
+    const originalDemo = process.env["NIMBUS_DEMO"];
+    const originalConfigDir = process.env["NIMBUS_CONFIG_DIR"];
+    const originalSocket = process.env["NIMBUS_GATEWAY_SOCKET"];
+
+    beforeEach(() => {
+      delete process.env["NIMBUS_CONFIG_DIR"];
+      delete process.env["NIMBUS_GATEWAY_SOCKET"];
+      process.env["NIMBUS_DEMO"] = "1";
+    });
+    afterEach(() => {
+      if (originalDemo === undefined) delete process.env["NIMBUS_DEMO"];
+      else process.env["NIMBUS_DEMO"] = originalDemo;
+      if (originalConfigDir === undefined) delete process.env["NIMBUS_CONFIG_DIR"];
+      else process.env["NIMBUS_CONFIG_DIR"] = originalConfigDir;
+      if (originalSocket === undefined) delete process.env["NIMBUS_GATEWAY_SOCKET"];
+      else process.env["NIMBUS_GATEWAY_SOCKET"] = originalSocket;
+    });
+
+    it("the not-running hint stays inside the demo root", async () => {
+      setFixture({});
+      await runTui([]);
+      expect(stderrChunks.join("")).toContain("Gateway is not running (demo root)");
+      expect(stderrChunks.join("")).toContain("Start with: nimbus --demo start");
+      expect(process.exitCode).toBe(1);
+      expect(replCalls).toHaveLength(0);
+    });
   });
 });
 

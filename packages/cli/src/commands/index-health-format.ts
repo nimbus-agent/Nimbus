@@ -125,7 +125,10 @@ function confidenceBlock(r: IndexHealthReport, opts: FormatOptions): string[] {
   if (r.confidence === null) {
     // Never render null as 0. A brand-new install scoring "0/100" reads as a verdict on the
     // product, when the truth is that there is nothing indexed to judge yet.
-    return ["  Confidence   —  (the index is empty; run `nimbus sync` first)", ""];
+    return [
+      "  Confidence   —  (the index is empty; run `nimbus connector sync <service>` first)",
+      "",
+    ];
   }
   const low = r.confidence < LOW_CONFIDENCE_THRESHOLD;
   const score = `${r.confidence}/100`;

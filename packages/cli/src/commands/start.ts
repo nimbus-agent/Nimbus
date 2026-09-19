@@ -102,17 +102,30 @@ async function sleep(ms: number): Promise<void> {
   await new Promise<void>((r) => setTimeout(r, ms));
 }
 
-async function printOnboardingHintIfNoConnectors(
+/**
+ * `demo` is derived from `CliPlatformPaths.demo === true`, never the env var directly — see
+ * `maybePrintFirstRunHints`, the one caller.
+ *
+ * In the demo root, connector auth/sync are refused by the gateway (the org is seeded by
+ * `nimbus demo`, not by connecting services), so the real-install onboarding hint is wrong twice
+ * over: wrong install AND a refused command.
+ */
+export async function printOnboardingHintIfNoConnectors(
   client: IPCClient,
   markerPath: string,
+  demo: boolean,
 ): Promise<void> {
   const rows = await client.call<Array<{ serviceId?: string }>>("connector.listStatus", {});
   if (Array.isArray(rows) && rows.length === 0) {
     console.log("");
-    console.log("Next — connect a service so the index has data to search:");
-    console.log("  nimbus connector auth github");
-    console.log("  nimbus connector sync github");
-    console.log("  nimbus doctor");
+    if (demo) {
+      console.log("Seed the synthetic org with: nimbus demo");
+    } else {
+      console.log("Next — connect a service so the index has data to search:");
+      console.log("  nimbus connector auth github");
+      console.log("  nimbus connector sync github");
+      console.log("  nimbus doctor");
+    }
   }
   try {
     writeFileSync(markerPath, `${new Date().toISOString()}\n`, "utf8");
@@ -140,7 +153,7 @@ async function maybePrintFirstRunHints(
     const client = new IPCClient(state.socketPath);
     try {
       await client.connect();
-      await printOnboardingHintIfNoConnectors(client, markerPath);
+      await printOnboardingHintIfNoConnectors(client, markerPath, paths.demo === true);
     } catch {
       /* IPC not ready yet */
     } finally {

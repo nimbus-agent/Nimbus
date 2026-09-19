@@ -3,6 +3,7 @@ import { platform } from "node:os";
 import { join } from "node:path";
 
 import type { IPCClient } from "../ipc-client/index.ts";
+import { nimbusCommand } from "../lib/demo-hint.ts";
 import { gatewayStartCommand } from "../lib/gateway-not-running.ts";
 import type { CliPlatformPaths } from "../paths.ts";
 import { type FixKeyringDeps, runFixKeyringCommand } from "./doctor-fix-keyring.ts";
@@ -426,7 +427,14 @@ function doctorPrintBunCheck(): number {
   return 2;
 }
 
-function doctorPrintVaultCheck(): number {
+/** The demo gateway's Vault is an `EphemeralVault` — nothing to probe on disk or over D-Bus. */
+const DEMO_VAULT_LINE = "Vault: in-memory (demo root) — the OS credential store is not used";
+
+function doctorPrintVaultCheck(demo: boolean): number {
+  if (demo) {
+    console.log(DEMO_VAULT_LINE);
+    return 0;
+  }
   // One probe per run: the Secret Service reads shell out, so never re-probe
   // just to render the line.
   const status = doctorVaultStatus(platform());
@@ -750,7 +758,7 @@ export async function runDoctor(args: string[], deps: DoctorCoreDeps): Promise<v
   console.log(`Data dir: ${paths.dataDir}`);
   console.log(`Gateway state file: ${deps.gatewayStatePath(paths)}`);
 
-  exit = Math.max(exit, doctorPrintVaultCheck());
+  exit = Math.max(exit, doctorPrintVaultCheck(paths.demo === true));
 
   const voiceCfg = loadVoiceConfigFromDir(paths.configDir);
   const voiceLines = doctorVoiceLines(voiceCfg, {
@@ -779,7 +787,7 @@ export async function runDoctor(args: string[], deps: DoctorCoreDeps): Promise<v
     exit = Math.max(exit, 2);
   } else {
     console.log(
-      `[fail] Gateway: stale state (pid ${String(state.pid)} is not running) — try nimbus stop or remove the state file.`,
+      `[fail] Gateway: stale state (pid ${String(state.pid)} is not running) — try ${nimbusCommand("stop", paths.demo === true)} or remove the state file.`,
     );
     exit = Math.max(exit, 2);
   }

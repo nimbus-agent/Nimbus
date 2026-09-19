@@ -41,7 +41,14 @@ function readSurfaceBaseUrl(): string {
  * command; `admin console` prints the URL with the token in the FRAGMENT (never the query string —
  * fragments are not sent to servers / logged in access logs).
  */
-export async function runAdminCommand(client: AdminIpc, cmd: AdminCommand): Promise<void> {
+/** The demo gateway's Vault is an `EphemeralVault` — nothing to resolve `nimbus vault get` for. */
+const DEMO_VAULT_HINT = "The demo root's vault is in-memory; it holds no admin token.\n";
+
+export async function runAdminCommand(
+  client: AdminIpc,
+  cmd: AdminCommand,
+  demo = false,
+): Promise<void> {
   switch (cmd.kind) {
     case "status": {
       const r = await client.call<unknown>("admin.status", {});
@@ -49,6 +56,10 @@ export async function runAdminCommand(client: AdminIpc, cmd: AdminCommand): Prom
       break;
     }
     case "console": {
+      if (demo) {
+        process.stdout.write(DEMO_VAULT_HINT);
+        break;
+      }
       process.stdout.write(
         `Admin console: ${readSurfaceBaseUrl()}/admin#token=$(nimbus vault get ${ADMIN_TOKEN_VAULT_KEY})\n` +
           `Resolve the bearer with: nimbus vault get ${ADMIN_TOKEN_VAULT_KEY}\n` +
@@ -57,6 +68,10 @@ export async function runAdminCommand(client: AdminIpc, cmd: AdminCommand): Prom
       break;
     }
     case "token": {
+      if (demo) {
+        process.stdout.write(DEMO_VAULT_HINT);
+        break;
+      }
       process.stdout.write(
         `The read-surface bearer is the Vault value ${ADMIN_TOKEN_VAULT_KEY}.\n` +
           `Print it with: nimbus vault get ${ADMIN_TOKEN_VAULT_KEY}\n`,
@@ -74,21 +89,22 @@ export async function runAdmin(argv: string[]): Promise<void> {
     process.stderr.write(`${e instanceof Error ? e.message : String(e)}\n`);
     process.exit(1);
   }
+  const paths = getCliPlatformPaths();
+  const demo = paths.demo === true;
   // `console`/`token` are local-only (no gateway round-trip needed); short-circuit before connecting.
   if (cmd.kind === "console" || cmd.kind === "token") {
-    await runAdminCommand({ call: () => Promise.reject(new Error("unused")) }, cmd);
+    await runAdminCommand({ call: () => Promise.reject(new Error("unused")) }, cmd, demo);
     return;
   }
-  const paths = getCliPlatformPaths();
   const state = await readGatewayState(paths);
   if (state === undefined) {
-    process.stderr.write(`${gatewayNotRunningMessage(paths.demo === true)}\n`);
+    process.stderr.write(`${gatewayNotRunningMessage(demo)}\n`);
     process.exit(1);
   }
   const client = new IPCClient(state.socketPath);
   await client.connect();
   try {
-    await runAdminCommand(client, cmd);
+    await runAdminCommand(client, cmd, demo);
   } finally {
     await client.disconnect().catch(() => {});
   }

@@ -66,6 +66,10 @@ describe("formatIndexHealth — the confidence line", () => {
     // The failure this guards: rendering `null` as 0 and telling a new user their brand-new
     // install scores zero out of a hundred.
     expect(out).not.toContain("0/100");
+    // Real bug, not demo-specific: `nimbus sync` is not a registered command
+    // (COMMAND_NAMES has no `sync`) — the hint must name a command that exists.
+    expect(out).toContain("nimbus connector sync <service>");
+    expect(out).not.toContain("nimbus sync`");
   });
 
   test("a low score is called out as low", () => {
