@@ -148,7 +148,8 @@ export interface PlatformPaths {
 **The demo root (`NIMBUS_DEMO=1`, the CLI's global `--demo`).** A second, throwaway Nimbus inside
 `<dataDir>/demo`, resolved by `platform/demo-root.ts` (mirrored in `cli/src/lib/demo-root.ts`, held
 equal by `scripts/parity/demo-root.parity.test.ts`). Every config/data/log/extensions path moves into
-that subtree, `tempDir` becomes `<tmpdir>/nimbus-demo`, and the IPC endpoint gets a demo name (hashed
+that subtree (an explicitly exported `NIMBUS_GATEWAY_LOG_PATH` on a direct gateway launch is the one
+log-path exception; `nimbus --demo start` always overrides it), `tempDir` becomes `<tmpdir>/nimbus-demo`, and the IPC endpoint gets a demo name (hashed
 from the demo root on every OS — Windows pipes are machine-global, and a unix socket's directory can
 be shared by two demo roots). The resolvers mark the result
 `PlatformPaths.demo = true`, and that field — never the env var — is the one signal the rest of the
