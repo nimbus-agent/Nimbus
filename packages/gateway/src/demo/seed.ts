@@ -9,13 +9,13 @@ import {
 } from "../config/nimbus-toml.ts";
 import { dbRun } from "../db/write.ts";
 import { runDecisionPass } from "../decisions/decision-extract.ts";
-import { annotateDeployment } from "../deployment/annotate.ts";
+import { annotateDeployment, validateDeploymentSha } from "../deployment/annotate.ts";
 import { runGlossaryPass } from "../glossary/glossary-extract.ts";
 import { upsertIndexedItem } from "../index/item-store.ts";
 import { runOwnershipPass } from "../ownership/ownership-pass.ts";
 import { NIMBUS_PERSON_NAMESPACE_UUID, uuidV5 } from "../people/person-id.ts";
 import { insertPerson } from "../people/person-store.ts";
-import { upsertBlameLines } from "../security/blame-store.ts";
+import { type BlameRow, upsertBlameLines } from "../security/blame-store.ts";
 
 import { ACME_TOUR, buildAcmeCorpus } from "./corpus/acme.ts";
 import type {
@@ -241,10 +241,25 @@ function writeDeployments(
   }
 }
 
-function writeBlame(db: Database, repoRoot: string, corpus: DemoCorpus, at: At): number {
+/** One file's blame, fully resolved before any write. */
+interface BlamePlan {
+  readonly path: string;
+  readonly rows: readonly BlameRow[];
+}
+
+/**
+ * Resolves every file's blame against the corpus, throwing on the first broken reference: a line
+ * with no blame entry, surplus entries past the last line, or an entry naming a commit the corpus
+ * does not hold. Part of {@link validateCorpus}, so it runs before anything is written.
+ */
+function planBlame(corpus: DemoCorpus, at: At): BlamePlan[] {
   const commitBySha = new Map(corpus.commits.map((c) => [c.sha, c]));
-  let total = 0;
-  for (const file of corpus.files) {
+  return corpus.files.map((file) => {
+    if (file.blame.length > file.lines.length) {
+      throw new Error(
+        `demo seed: ${file.path} has ${String(file.blame.length)} blame entries for ${String(file.lines.length)} lines`,
+      );
+    }
     const rows = file.lines.map((_, i) => {
       const sha = file.blame[i];
       if (sha === undefined) {
@@ -263,8 +278,46 @@ function writeBlame(db: Database, repoRoot: string, corpus: DemoCorpus, at: At):
         authorTimeMs: at(commit.offsetMs),
       };
     });
-    upsertBlameLines(db, repoRoot, file.path, rows);
-    total += rows.length;
+    return { path: file.path, rows };
+  });
+}
+
+/**
+ * The ONE validation pass, run right after `buildAcmeCorpus()` and before ANY write — workspace
+ * files, the demo `nimbus.toml`, the seed marker, or a single DB row. A malformed corpus therefore
+ * refuses with nothing on disk and an empty index, never a half-seeded root:
+ * - every person-key reference resolves — `meKey`, each commit's author, each item's author;
+ * - every file's blame covers exactly its lines and names only commits in `corpus.commits`;
+ * - every deployment sha obeys `annotateDeployment`'s own format contract
+ *   ({@link validateDeploymentSha}). A deployment sha is deliberately NOT required to be one of
+ *   `corpus.commits`: the background deployments use generated shas.
+ *
+ * The writers below reuse the same `findPerson` lookups, which can no longer fail once this pass
+ * has succeeded.
+ */
+function validateCorpus(corpus: DemoCorpus, at: At): BlamePlan[] {
+  findPerson(corpus.people, corpus.meKey);
+  for (const c of corpus.commits) findPerson(corpus.people, c.authorKey);
+  const items = [
+    ...corpus.issues,
+    ...corpus.pullRequests,
+    ...corpus.reviews,
+    ...corpus.ciRuns,
+    ...corpus.incidents,
+    ...corpus.messages,
+  ];
+  for (const i of items) {
+    if (i.authorKey !== undefined) findPerson(corpus.people, i.authorKey);
+  }
+  for (const d of corpus.deployments) validateDeploymentSha(d.sha);
+  return planBlame(corpus, at);
+}
+
+function writeBlame(db: Database, repoRoot: string, blame: readonly BlamePlan[]): number {
+  let total = 0;
+  for (const file of blame) {
+    upsertBlameLines(db, repoRoot, file.path, file.rows);
+    total += file.rows.length;
   }
   return total;
 }
@@ -284,6 +337,8 @@ export async function seedDemoCorpus(
 
   const corpus = buildAcmeCorpus();
   const at: At = (offsetMs) => opts.nowMs + offsetMs;
+  // Before ANY write, on disk or in the index — see `validateCorpus`.
+  const blame = validateCorpus(corpus, at);
 
   const demoRoot = dirname(opts.dataDir);
   const workspace = join(demoRoot, "workspace", "acme-payments");
@@ -309,7 +364,7 @@ export async function seedDemoCorpus(
   writeItems(db, corpus.people, corpus.incidents, at, opts.nowMs);
   writeItems(db, corpus.people, corpus.messages, at, opts.nowMs);
 
-  const blameLines = writeBlame(db, repoRoot, corpus, at);
+  const blameLines = writeBlame(db, repoRoot, blame);
 
   dbRun(
     db,

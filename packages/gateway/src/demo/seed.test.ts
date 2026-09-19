@@ -2,10 +2,11 @@ import { Database } from "bun:sqlite";
 import { afterEach, describe, expect, test } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 
 import { loadNimbusFilesystemRootsFromConfigDir } from "../config/filesystem-toml.ts";
 import { loadNimbusServiceConfigsFromConfigDir } from "../config/nimbus-toml.ts";
+import { AnnotateError } from "../deployment/annotate.ts";
 import { CURRENT_SCHEMA_VERSION } from "../index/local-index.ts";
 import { runIndexedSchemaMigrations } from "../index/migrations/runner.ts";
 import { buildAcmeCorpus } from "./corpus/acme.ts";
@@ -115,16 +116,28 @@ describe("seedDemoCorpus", () => {
 });
 
 // The seeder's referential-integrity guards. `buildAcmeCorpus()` hands back the module's own
-// `people` / `files` arrays (and the same file objects), so a test can break the corpus for the
-// duration of ONE seed call and restore it in `finally`. Each guard must fail LOUD with a message
-// naming the broken reference — never seed a half-connected graph.
+// `people` / `files` arrays (and the same file, message and story-deploy objects), so a test can
+// break the corpus for the duration of ONE seed call and restore it in `finally`. Each guard must
+// fail LOUD with a message naming the broken reference — and, because every guard runs in ONE
+// validation pass before any write, leave NOTHING behind: an empty index, no workspace files, no
+// demo `nimbus.toml`, no seed marker.
 describe("seedDemoCorpus corpus-integrity guards", () => {
   function withCorpusEdit(edit: () => () => void, run: () => Promise<void>): Promise<void> {
     const restore = edit();
     return run().finally(restore);
   }
 
-  test("an unknown person key refuses before anything is indexed", async () => {
+  /** The validation pass ran before every write: nothing in the index, nothing on disk. */
+  function expectNothingWritten(db: Database, configDir: string, dataDir: string): void {
+    for (const table of ["item", "person", "git_blame_line", "deployment_items", "sync_state"]) {
+      expect(count(db, `SELECT COUNT(*) AS n FROM ${table}`)).toBe(0);
+    }
+    expect(existsSync(join(dirname(dataDir), "workspace"))).toBe(false);
+    expect(existsSync(join(configDir, "nimbus.toml"))).toBe(false);
+    expect(existsSync(join(dataDir, DEMO_SEED_MARKER))).toBe(false);
+  }
+
+  test("an unknown person key (the persona itself) refuses, and nothing is written", async () => {
     const { db, configDir, dataDir } = fresh();
     const people = buildAcmeCorpus().people as DemoPerson[];
     const idx = people.findIndex((p) => p.key === "sam");
@@ -142,10 +155,32 @@ describe("seedDemoCorpus corpus-integrity guards", () => {
         ).rejects.toThrow('demo seed: unknown person key "sam"');
       },
     );
-    expect(count(db, "SELECT COUNT(*) AS n FROM item")).toBe(0);
+    expectNothingWritten(db, configDir, dataDir);
   });
 
-  test("a file line with no blame entry refuses, naming the file and line", async () => {
+  test("an item naming an unknown author refuses, and nothing is written", async () => {
+    const { db, configDir, dataDir } = fresh();
+    const message = buildAcmeCorpus().messages.find((m) => m.authorKey !== undefined);
+    if (message === undefined) throw new Error("corpus has no authored message");
+    const mutable = message as { authorKey?: string };
+    await withCorpusEdit(
+      () => {
+        const original = mutable.authorKey;
+        mutable.authorKey = "nobody";
+        return () => {
+          mutable.authorKey = original;
+        };
+      },
+      async () => {
+        await expect(
+          seedDemoCorpus(db, { configDir, dataDir, nowMs: 5 * DAY * 365 }),
+        ).rejects.toThrow('demo seed: unknown person key "nobody"');
+      },
+    );
+    expectNothingWritten(db, configDir, dataDir);
+  });
+
+  test("a file line with no blame entry refuses, naming the file and line, and nothing is written", async () => {
     const { db, configDir, dataDir } = fresh();
     const file = buildAcmeCorpus().files[0];
     if (file === undefined) throw new Error("corpus has no files");
@@ -165,9 +200,33 @@ describe("seedDemoCorpus corpus-integrity guards", () => {
         );
       },
     );
+    expectNothingWritten(db, configDir, dataDir);
   });
 
-  test("a blame entry naming an unknown commit refuses, naming the sha", async () => {
+  test("surplus blame entries past the last line refuse, and nothing is written", async () => {
+    const { db, configDir, dataDir } = fresh();
+    const file = buildAcmeCorpus().files[0];
+    if (file === undefined) throw new Error("corpus has no files");
+    const blame = file.blame as string[];
+    await withCorpusEdit(
+      () => {
+        blame.push(blame[0] ?? "");
+        return () => {
+          blame.pop();
+        };
+      },
+      async () => {
+        await expect(
+          seedDemoCorpus(db, { configDir, dataDir, nowMs: 5 * DAY * 365 }),
+        ).rejects.toThrow(
+          `demo seed: ${file.path} has ${String(file.lines.length + 1)} blame entries for ${String(file.lines.length)} lines`,
+        );
+      },
+    );
+    expectNothingWritten(db, configDir, dataDir);
+  });
+
+  test("a blame entry naming an unknown commit refuses, naming the sha, and nothing is written", async () => {
     const { db, configDir, dataDir } = fresh();
     const file = buildAcmeCorpus().files[0];
     if (file === undefined) throw new Error("corpus has no files");
@@ -187,6 +246,39 @@ describe("seedDemoCorpus corpus-integrity guards", () => {
         ).rejects.toThrow(`demo seed: ${file.path} blames unknown commit ${bogus}`);
       },
     );
+    expectNothingWritten(db, configDir, dataDir);
+  });
+
+  test("a deployment sha outside annotateDeployment's format contract refuses, and nothing is written", async () => {
+    const { db, configDir, dataDir } = fresh();
+    // The story deploy is the corpus's own object (the background ones are rebuilt per call).
+    const deploy = buildAcmeCorpus().deployments.at(-1);
+    if (deploy === undefined) throw new Error("corpus has no deployments");
+    const mutable = deploy as { sha: string };
+    await withCorpusEdit(
+      () => {
+        const original = mutable.sha;
+        mutable.sha = "not-a-sha";
+        return () => {
+          mutable.sha = original;
+        };
+      },
+      async () => {
+        const err = await seedDemoCorpus(db, { configDir, dataDir, nowMs: 5 * DAY * 365 }).then(
+          () => undefined,
+          (e: unknown) => e,
+        );
+        expect(err).toBeInstanceOf(AnnotateError);
+        expect((err as Error).message).toBe("sha must be 7..64 lowercase hex chars");
+      },
+    );
+    expectNothingWritten(db, configDir, dataDir);
+  });
+
+  test("a deployment sha need not be a corpus commit — background deployments use generated shas", () => {
+    const corpus = buildAcmeCorpus();
+    const commitShas = new Set(corpus.commits.map((c) => c.sha));
+    expect(corpus.deployments.some((d) => !commitShas.has(d.sha))).toBe(true);
   });
 
   test("the corpus is restored after each guard case — a normal seed still succeeds", async () => {

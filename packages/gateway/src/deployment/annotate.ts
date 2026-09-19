@@ -131,13 +131,23 @@ function validateOptionalStrings(input: DeploymentAnnotateInput): void {
   }
 }
 
-function validate(input: DeploymentAnnotateInput, nowMs: number): DeploymentAnnotateInput {
-  validateServiceAndProvider(input);
-  validateEnvironment(input);
-  const lcSha = typeof input.sha === "string" ? input.sha.toLowerCase() : "";
+/**
+ * The deployment `sha` format contract — 7..64 hex chars, case-folded — returning the lowercased
+ * sha. The one definition, shared by {@link annotateDeployment} and the demo seeder's pre-write
+ * corpus validation (`demo/seed.ts`), so the two cannot disagree about what a valid sha is.
+ */
+export function validateDeploymentSha(sha: unknown): string {
+  const lcSha = typeof sha === "string" ? sha.toLowerCase() : "";
   if (!SHA_RE.test(lcSha)) {
     throw new AnnotateError("sha", "sha must be 7..64 lowercase hex chars");
   }
+  return lcSha;
+}
+
+function validate(input: DeploymentAnnotateInput, nowMs: number): DeploymentAnnotateInput {
+  validateServiceAndProvider(input);
+  validateEnvironment(input);
+  const lcSha = validateDeploymentSha(input.sha);
   validateRefAndStatus(input);
   validateTimestamps(input, nowMs);
   validateOptionalStrings(input);
