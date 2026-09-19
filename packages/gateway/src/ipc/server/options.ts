@@ -72,6 +72,9 @@ export type CreateIpcServerOptions = {
   sessionMemoryStore?: SessionMemoryStore;
   dataDir?: string;
   configDir?: string;
+  /** true only when the gateway is demo-rooted (`PlatformPaths.demo`); enables the demo refusal
+   *  gate and the demo-only `demo.*` namespace — invariant I41 */
+  demo?: boolean;
   onClientConnected?: (clientId: string) => void;
   // Per-connection client-kind store (Task 2, S1 agents-as-MCP-tools). Optional DI seam: when
   // omitted, `createIpcServer` constructs its own. Tests inject their own instance so they can

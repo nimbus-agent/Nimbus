@@ -616,7 +616,11 @@ export async function tryDispatchIndexReembedRpc(
     const out = await dispatchIndexReembedRpc(method, params, {
       db: ctx.options.localIndex.getDatabase(),
       vault: ctx.options.vault,
-      paths: { dataDir: ctx.options.dataDir },
+      // `demo` is only ever assigned `true`, never `undefined` — `exactOptionalPropertyTypes`-safe.
+      paths:
+        ctx.options.demo === true
+          ? { dataDir: ctx.options.dataDir, demo: true }
+          : { dataDir: ctx.options.dataDir },
       logger: pino({ level: "info" }),
       notify: (m, p) => ctx.broadcastNotification(m, p as Record<string, unknown>),
     });

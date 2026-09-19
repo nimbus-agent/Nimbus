@@ -587,6 +587,46 @@ describe("tryDispatchIndexReembedRpc", () => {
     }).catch((e: unknown) => e);
     expect(outcome).not.toBe(phase4RpcSkipped);
   });
+
+  // Fix round 2 — the demo flag must reach `index.reembed` through the REAL dispatcher, not just
+  // a hand-built `IndexReembedRpcContext` in `index-reembed-rpc.test.ts`. Round 1's gate lived
+  // only in `dispatchIndexReembedRpc`; nothing threaded `ctx.options.demo` into the `paths` it
+  // builds, so a live gateway's `tryDispatchIndexReembedRpc` never saw `demo: true` at all.
+  test("a demo-rooted gateway refuses index.reembed with ERR_EMBEDDINGS_DISABLED (real dispatcher, real LocalIndex)", async () => {
+    const db = trackedDb();
+    const localIndex = new LocalIndex(db);
+    const tmp = mkdtempSync(join(tmpdir(), "nimbus-reembed-demo-"));
+    const { ctx } = makeCtx({ localIndex, dataDir: tmp, demo: true });
+    await expect(
+      tryDispatchIndexReembedRpc(ctx, "index.reembed", {
+        model: "Xenova/all-MiniLM-L6-v2",
+        dryRun: true,
+        batchSize: 100,
+      }),
+    ).rejects.toMatchObject({
+      message: expect.stringContaining("ERR_EMBEDDINGS_DISABLED"),
+    });
+  });
+
+  test("negative control: the same call WITHOUT demo does not reject with ERR_EMBEDDINGS_DISABLED", async () => {
+    const db = trackedDb();
+    const localIndex = new LocalIndex(db);
+    const tmp = mkdtempSync(join(tmpdir(), "nimbus-reembed-nodemo-"));
+    const { ctx } = makeCtx({ localIndex, dataDir: tmp });
+    // `dryRun: true` so this never touches the network or downloads a model even on a real
+    // (non-demo) gateway — it may still reject for an unrelated reason (or resolve normally);
+    // what's under test is only that it is NEVER the demo-refusal message.
+    const outcome = await tryDispatchIndexReembedRpc(ctx, "index.reembed", {
+      model: "Xenova/all-MiniLM-L6-v2",
+      dryRun: true,
+      batchSize: 100,
+    }).catch((e: unknown) => e);
+    if (outcome instanceof Error) {
+      expect(outcome.message).not.toContain("ERR_EMBEDDINGS_DISABLED");
+    } else {
+      expect(outcome).toHaveProperty("jobId");
+    }
+  });
 });
 
 describe("tryDispatchIndexRebodyRpc", () => {

@@ -3410,6 +3410,7 @@ export async function assemblePlatformServices(
     localIndex,
     dataDir: paths.dataDir,
     configDir: paths.configDir,
+    demo: paths.demo === true,
     extensionsDir: paths.extensionsDir,
     openUrl: openUrlInDefaultBrowser,
     syncScheduler,
