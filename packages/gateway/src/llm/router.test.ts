@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { LlmProviderError } from "./provider-error.ts";
+import { LlmProviderError, NoLlmProviderError } from "./provider-error.ts";
 import { LlmRouter, type LlmRouterConfig, midTruncate } from "./router.ts";
 import type { LlmProvider } from "./types.ts";
 
@@ -141,6 +141,24 @@ describe("LlmRouter.generate", () => {
     await expect(router.generate({ task: "classification", prompt: "test" })).rejects.toThrow(
       "No LLM provider available",
     );
+  });
+
+  test("throws a typed NoLlmProviderError (zero eligible routes), not a bare Error", async () => {
+    // A typed class, not just the same message, is what lets `agentErrorFromCaughtError`
+    // (`engine/gateway-agent-error.ts`) recognise "there was nothing to call" by `instanceof`
+    // and map it to the guided NO_LLM_SENTINEL message instead of it surfacing raw to the CLI.
+    const router = new LlmRouter(DEFAULT_CONFIG);
+    let caught: unknown;
+    try {
+      await router.generate({ task: "agent_step", prompt: "test" });
+    } catch (e) {
+      caught = e;
+    }
+    expect(caught).toBeInstanceOf(NoLlmProviderError);
+    expect((caught as NoLlmProviderError).task).toBe("agent_step");
+    // The message stays byte-identical to what the bare `Error` used to carry — other tests
+    // (`engine/router.test.ts`, `llm/base-url-locality.test.ts`) still match on this exact text.
+    expect((caught as Error).message).toBe("No LLM provider available for task: agent_step");
   });
 });
 

@@ -1,10 +1,11 @@
 import { describe, expect, mock, test } from "bun:test";
 import type { Agent } from "@mastra/core/agent";
 
+import { NoLlmProviderError } from "../llm/provider-error.ts";
 import type { LlmRouter } from "../llm/router.ts";
 import { agentRequestContext } from "./agent-request-context.ts";
 import { DEVIL_ADVOCATE_DIRECTIVE } from "./devil-advocate.ts";
-import { GatewayAgentUnavailableError } from "./gateway-agent-error.ts";
+import { GatewayAgentUnavailableError, NO_LLM_SENTINEL } from "./gateway-agent-error.ts";
 import { recordNegationDisclosure } from "./negation-disclosure.ts";
 import { TONE_DIRECTIVES, VOICE_DIRECTIVES } from "./persona.ts";
 import { runConversationalAgent } from "./run-conversational-agent.ts";
@@ -183,6 +184,32 @@ describe("runConversationalAgent", () => {
         },
       }),
     ).rejects.toBeInstanceOf(GatewayAgentUnavailableError);
+  });
+
+  test("router with zero eligible routes (no agent configured) → the no-LLM guidance, not a raw router error", async () => {
+    // This is the demo-gateway shape (Task 10 fix round 2): no `[llm.remote.*]` vendor is
+    // enabled, so no Mastra `conversationalAgent` is constructed at all — `agent` is undefined —
+    // and the local router throws because zero routes are eligible for the task. Before this fix,
+    // `LlmRouter.generate` threw a bare `Error("No LLM provider available for task: ...")`,
+    // `agentErrorFromCaughtError` matched none of its message-substring branches and returned
+    // `null`, and the raw router message surfaced to the CLI unsanitised instead of the guided
+    // NO_LLM_SENTINEL message every other no-LLM path renders.
+    const router = {
+      generate: mock(async () => {
+        throw new NoLlmProviderError("agent_step");
+      }),
+      prefersLocal: () => true,
+      enforcesAirGap: () => false,
+    } as unknown as LlmRouter;
+
+    await expect(
+      runConversationalAgent({
+        llmRouter: router,
+        input: "what is going on with payment-service?",
+        stream: false,
+        sendChunk: () => undefined,
+      }),
+    ).rejects.toThrow(NO_LLM_SENTINEL);
   });
 
   test("BUG-005: passes prior turns + current input as a messages array when priorTurns is non-empty", async () => {

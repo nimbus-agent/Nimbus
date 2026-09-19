@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 
+import { NoLlmProviderError } from "../llm/provider-error.ts";
 import type { AgentProviderName } from "./gateway-agent-error.ts";
 import {
   agentErrorFromCaughtError,
@@ -176,6 +177,19 @@ describe("agentErrorFromCaughtError", () => {
   test("preserves provider when supplied", () => {
     const e = agentErrorFromCaughtError(new Error("401 Unauthorized"), "openai");
     expect(e?.provider).toBe("openai");
+  });
+
+  test("NoLlmProviderError (zero eligible routes) → no_api_key, the NO_LLM_SENTINEL guidance", () => {
+    // The router throws this when NO route was even eligible for the task (no key configured, no
+    // local model reachable) — checked by `instanceof`, ahead of every message-substring branch
+    // above, since it is a real type rather than vendor-failure text to sniff. Before this, the
+    // bare `Error("No LLM provider available for task: ...")` matched none of the branches above
+    // and fell through to `null`, which surfaced as a raw, unsanitised error to the CLI instead of
+    // the guided message.
+    const e = agentErrorFromCaughtError(new NoLlmProviderError("agent_step"));
+    expect(e).not.toBeNull();
+    expect(e?.reason).toBe("no_api_key");
+    expect(e?.message).toContain(NO_LLM_SENTINEL);
   });
 });
 

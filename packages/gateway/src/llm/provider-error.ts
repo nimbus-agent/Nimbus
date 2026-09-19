@@ -86,3 +86,28 @@ export class LlmProviderError extends Error {
     if (status !== undefined) this.status = status;
   }
 }
+
+/**
+ * `LlmRouter.generate` throws this when its priority walk attempted zero routes for a task — no
+ * route was even eligible (never a route that was tried and failed, which is `lastError`
+ * instead). Distinct from `LlmProviderError`, which is a vendor CALL failing; this is "there was
+ * nothing to call".
+ *
+ * A typed class rather than a bare `Error` so `agentErrorFromCaughtError`
+ * (`engine/gateway-agent-error.ts`) can recognise it by `instanceof` and map it to the same
+ * NO_LLM_SENTINEL guidance every other no-LLM path renders, instead of it surfacing as a raw,
+ * unsanitised error string to the CLI (the defect Task 10's demo e2e run first exposed — see
+ * `docs/CHANGELOG.md` / the security-invariants skill's disclosure-integrity guidance on why a
+ * user-facing message must never be an internal implementation detail read verbatim). The message
+ * stays byte-identical to what the bare `Error` used to carry — `router.test.ts`,
+ * `engine/router.test.ts` and `llm/base-url-locality.test.ts` all still match on this exact text.
+ */
+export class NoLlmProviderError extends Error {
+  override readonly name = "NoLlmProviderError";
+  readonly task: string;
+
+  constructor(task: string) {
+    super(`No LLM provider available for task: ${task}`);
+    this.task = task;
+  }
+}

@@ -1,3 +1,5 @@
+import { NoLlmProviderError } from "../llm/provider-error.ts";
+
 export type AgentUnavailableReason =
   | "no_api_key"
   | "invalid_api_key"
@@ -188,11 +190,21 @@ export function agentErrorFromCaughtError(
   e: unknown,
   provider?: AgentProviderName,
 ): GatewayAgentUnavailableError | null {
-  const raw = e instanceof Error ? e.message : String(e);
-  const msg = raw.toLowerCase();
-
   const init = (reason: AgentUnavailableReason): AgentUnavailableInit =>
     provider === undefined ? { reason } : { reason, provider };
+
+  // Checked FIRST, by type rather than message-sniffing: the router throws this when zero routes
+  // were even eligible for the task (no key configured, no local model reachable) — the exact
+  // "no LLM at all" case the NO_LLM_SENTINEL guidance exists for, not a specific vendor's failure
+  // mode. Every other branch below matches on message substrings because it is classifying a
+  // REAL vendor HTTP failure whose only surviving signal, by the time it reaches here, is text;
+  // this one has a real type to check instead, so it does.
+  if (e instanceof NoLlmProviderError) {
+    return new GatewayAgentUnavailableError({ reason: "no_api_key" });
+  }
+
+  const raw = e instanceof Error ? e.message : String(e);
+  const msg = raw.toLowerCase();
 
   if (
     msg.includes("insufficient_quota") ||
