@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1789729720838,
+  "lastUpdate": 1789792091046,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "1b002b516180b8ba039a5279d8db50d03e7e9227",
-          "message": "fix(agents): report why a janitor resourceRef was rejected (#805)\n\n## The bug\n\n`isValidResourceRef` enforces **two** independent rules — a minimum\nlength and an allowed character\nset — but the janitor gap only ever mentioned the length:\n\n```text\nresourceRef too short or malformed (min 4 chars)\n```\n\nSo `repo:acme/payments#branch/wip` — **29 characters**, rejected because\n`#` is not in\n`/^[A-Za-z0-9_:.\\-/]+$/` — was reported as too short. Anyone debugging\nthat goes looking for a length\nproblem that doesn't exist, on a ref that is plainly long enough.\n\nFound while generating agent-brief fixtures from real gateway output:\nthe janitor brief came back\nwith that gap for a ref that was obviously not short.\n\n## The fix\n\n`describeInvalidResourceRef(ref)` returns the specific reason or `null`,\nand the janitor surfaces it:\n\n- too short → `resourceRef must be at least 4 characters (got 2)`\n- bad character → `resourceRef may contain only letters, digits, and _ :\n. - /`\n\nValidation behaviour is unchanged — exactly the same refs are accepted\nand rejected.\n`isValidResourceRef` is untouched for its other callers, and a test\nasserts the two functions always\nagree.\n\n## Tests\n\nBoth rejection paths, in both the probe and the agent:\n\n- the length case asserts the message names the **actual** length (`got\n2`);\n- the long-ref/bad-character case asserts the message says character set\n**and explicitly does not\nmention length** — the assertion that would have caught the original\nbug.\n\nGateway agents: 170/170. `biome check packages scripts` clean.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nCo-authored-by: Claude Opus 4.8 (1M context) <noreply@anthropic.com>",
-          "timestamp": "2026-07-23T09:01:39+03:00",
-          "tree_id": "9863a7450ee46b9c29d02a571dfa720e44ebe0ca",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/1b002b516180b8ba039a5279d8db50d03e7e9227"
-        },
-        "date": 1784787949379,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 317.29723124999543,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 319.12570119999657,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 333.41755519999714,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "8791c1990e85f27364e0c8110da43709fba9b07f",
+          "message": "feat: isolated demo root for nimbus --demo (invariant I41) (#1545)\n\n## What this adds\n\nAn isolated **demo root**: `nimbus --demo <command>` (or\n`NIMBUS_DEMO=1`) runs the CLI and any gateway it starts against a\nsecond, throwaway Nimbus inside `<data dir>/demo` — its own config, data\nand logs, a separate IPC endpoint, and an in-memory vault. Nothing in it\ncan read or damage the owner's real install. This is the first half of\nthe First-Run row's seeded-sandbox work; the synthetic-org corpus that\ngets seeded into this root, and the guided tour on top of it, follow in\na second PR.\n\nNo schema migration, no new egress class, no new IPC method. An existing\nuser who never sets `NIMBUS_DEMO` or passes `--demo` sees no behaviour\nchange.\n\n## Invariant I41 — a demo-rooted process never reaches the real install\n\n1. Every config/data/log/extensions path resolves INSIDE\n`<realDataDir>/demo`, and no real path lies inside that root. It is a\nsubtree rule because on macOS `configDir` and `dataDir` are the same\ndirectory.\n2. `tempDir` and the IPC endpoint differ from the real ones. The Windows\npipe name carries a hash of the demo root, because named pipes are\nmachine-global.\n3. The vault factory returns an in-process `EphemeralVault` BEFORE its\nOS switch — a demo process never opens the OS credential store.\n4. A demo gateway skips the Windows AppContainer boot reap and never\nstarts the env-selected HTTP or metrics sidecars.\n\nAn ambiguous `NIMBUS_DEMO` value, or `NIMBUS_DEMO=1` combined with\n`NIMBUS_CONFIG_DIR` or `NIMBUS_GATEWAY_SOCKET`, refuses at path\nresolution instead of choosing a winner. Section in\n`docs/SECURITY-INVARIANTS.md`, enforcement test in\n`security-invariants.test.ts`, bullet in `CLAUDE.md`/`GEMINI.md`.\n\n## Why path isolation alone was not enough\n\nFound while planning, before any code was written — three pieces of\nstate are host-global rather than path-derived:\n\n- **The vault.** On macOS it is the Keychain under the fixed service\n`dev.nimbus`, and on Linux it is libsecret with no path at all. A demo\ngateway would have READ the owner's credentials, and\n`sweepToolgenCredentials`, which runs at every boot and shutdown, would\nhave DELETED the owner's `toolgen.*` credentials.\n- **The Windows AppContainer boot reap** deletes every profile absent\nfrom the gateway's OWN index. A demo index holds none of the owner's\ninstalled extensions, so a demo boot would have deleted the real\ngateway's extension profiles.\n- **The HTTP API and metrics sidecars** are selected by\n`NIMBUS_HTTP_PORT` / `NIMBUS_METRICS_PORT`, not config. A demo gateway\ninheriting them would crash on the port or serve the demo index on the\nowner's real port.\n\nThe final whole-branch review found a fourth instance of the same shape,\nnow fixed: on Linux the gateway probed the OS keyring BEFORE resolving\npaths, so a demo gateway touched — and depended on — the real Secret\nService.\n\n## Also in this PR\n\n- **The CLI applies `--demo` before it resolves any path**, since it\nopens its log file ahead of dispatch; a refusal now prints before the\nbanner, not after it.\n- **Every \"Gateway is not running\" hint goes through one builder.**\nAbout 25 sites hardcoded `Start with: nimbus start`, which in demo mode\npoints at the REAL gateway. A static test now forbids that hint form\noutside the builder.\n- **Two surfaces stopped advertising an HTTP origin a demo gateway does\nnot serve:** the clip-pairing URL is gated by the same boot policy, and\n`nimbus --demo serve` refuses.\n- **Docs:** `--demo` and `NIMBUS_DEMO` in `cli-reference.md`, an\n`architecture.md` paragraph, and every restatement that \"no variable can\nrelocate the data directory\" corrected.\n\n## What changed at plan time, and what is deliberately not here\n\n- The e2e test boots ONLY a demo gateway. The design originally booted a\nreal one beside it, but a non-demo gateway started from the real entry\nopens the developer's real OS credential store on macOS/Linux, and its\nboot sweep deletes `toolgen.*` credentials there — the test would itself\nhave been the damage I41 forbids.\n- Carried to the next PR, where the spec claims the demo makes no\noutbound calls: the updater's startup check and env-selected telemetry\nin a demo gateway, follow-up hints that drop `--demo`, and the MCP\ntool-runtime's mid-connection-drop hint.\n\n## Verification\n\n- New unit tests for both path modules, a parity test importing both CLI\nand gateway derivations, and a CLI subprocess e2e test on temp roots\nwith a hard premise check that the child's home directory is the temp\none.\n- The I41 enforcement test with negative controls, plus source\nassertions pinning the guarded `assemble.ts` and `linux.ts` call sites;\nred-proved by removing each guard.\n- An e2e test that boots the real gateway entry demo-rooted on temp\nroots, asserts it binds the demo endpoint, answers `gateway.ping`,\nleaves an exported `NIMBUS_HTTP_PORT` unbound, and writes nothing\noutside the demo root; both assertions red-proved.\n- A CLI smoke of `--demo start`, `status` and `stop` on temp roots with\nan inherited `NIMBUS_PROFILE`: every file written landed under\n`…/demo/data/`.\n- Locally on Windows, three gates were red for reasons traced to the\nmachine rather than this branch: two `win32.test.ts` cases fail only in\nthe single-process whole-repo run once the git-ignored sandbox helper is\nfreshly built, via `NIMBUS_SANDBOX_HELPER_PATH`, which this branch never\ntouches; two OAuth tests fail because the machine exports real\n`NIMBUS_OAUTH_*` credentials; and the coverage floor, which is\nCI-Linux-authoritative, flagged five untouched files. CI is the\nauthority here.\n\nThe design spec, the PR 1 plan and both design reviews were branch-only\nand are removed in the last commit; they are recoverable from this\nbranch at `eba2cda6`.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n\n## Summary by CodeRabbit\n\n* **New Features**\n  * Added isolated demo mode via `nimbus --demo` or `NIMBUS_DEMO=1`.\n* Demo sessions use separate configuration, data, logs, extensions,\ntemporary files, IPC endpoints, and an in-memory vault.\n* Demo mode disables HTTP/metrics sidecars and host-global cleanup\nactions.\n* Added validation for unsupported demo values and conflicting\nconfiguration overrides.\n* Gateway-unavailable guidance now provides demo-specific start\ncommands.\n\n* **Bug Fixes**\n* `nimbus --demo serve` now exits safely with guidance to use demo start\nmode.\n\n* **Documentation**\n* Updated CLI, security, architecture, and changelog documentation for\ndemo isolation and security invariant I41.\n\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>",
+          "timestamp": "2026-09-19T04:16:24Z",
+          "tree_id": "e8e3dd09aee555595e051e1fc507763202f86225",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/8791c1990e85f27364e0c8110da43709fba9b07f"
+        },
+        "date": 1789792087237,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 335.7782157000023,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 332.49142934999327,
             "unit": "ms"
           }
         ]
