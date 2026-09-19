@@ -147,3 +147,85 @@ describe("runStart dispatcher", () => {
     expect(out.stdout).toContain("1234");
   });
 });
+
+describe("waitForGatewayReady", () => {
+  // The gateway binds its socket BEFORE it writes gateway.json (gateway-main.ts). Every other
+  // command reads that file first and reports "Gateway is not running" when it is absent, so a
+  // start that returns on a reachable socket alone lets `nimbus start && nimbus <cmd>` fail.
+  function deps(over: Partial<Parameters<typeof mod.waitForGatewayReady>[4]> = {}) {
+    let t = 0;
+    return {
+      isAlive: () => true,
+      probe: async () => true,
+      statePid: async (): Promise<number | undefined> => 42,
+      sleep: async (ms: number) => {
+        t += ms;
+      },
+      now: () => t,
+      ...over,
+    };
+  }
+
+  it("is not ready while the socket answers but the state file is still absent", async () => {
+    let reads = 0;
+    const ready = await mod.waitForGatewayReady(
+      "sock",
+      42,
+      10_000,
+      undefined,
+      deps({
+        statePid: async () => {
+          reads += 1;
+          return reads < 3 ? undefined : 42;
+        },
+      }),
+    );
+    expect(ready).toBe(true);
+    expect(reads).toBe(3);
+  });
+
+  it("is not ready on a state file left by a DIFFERENT gateway process", async () => {
+    const ready = await mod.waitForGatewayReady(
+      "sock",
+      42,
+      1_000,
+      undefined,
+      deps({
+        statePid: async () => 7,
+      }),
+    );
+    expect(ready).toBe(false);
+  });
+
+  it("is not ready while the state file is written but the socket does not answer", async () => {
+    const ready = await mod.waitForGatewayReady(
+      "sock",
+      42,
+      1_000,
+      undefined,
+      deps({
+        probe: async () => false,
+      }),
+    );
+    expect(ready).toBe(false);
+  });
+
+  it("gives up at once when the spawned process has died", async () => {
+    let probes = 0;
+    const ready = await mod.waitForGatewayReady(
+      "sock",
+      42,
+      10_000,
+      undefined,
+      deps({
+        isAlive: () => false,
+        probe: async () => {
+          probes += 1;
+          return true;
+        },
+      }),
+    );
+    expect(ready).toBe(false);
+    expect(probes).toBe(0);
+  });
+});
