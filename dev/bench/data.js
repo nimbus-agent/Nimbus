@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1789845117413,
+  "lastUpdate": 1789846161834,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "c67a5ff4d064d5e0beeedbf416a2be81fd94d114",
-          "message": "docs: Stage 2 re-cut design + PR 1 consumption plan (#814)\n\nDocs-only. Adds the approved Stage 2 design spec\n(`docs/superpowers/specs/2026-07-23-stage-2-recut-design.md`) and the\nimplementation plan for its first deliverable\n(`docs/superpowers/plans/2026-07-23-stage-2-pr1-consumption.md`),\nfollowing the Stage 0/Stage 1 convention of keeping ecosystem\nspecs/plans in this repo.\n\nScope decided 2026-07-23: mandatory client-consumption PR, then 2e-core,\n2d, 2b, 2c in full, plus a build/don't-build data-quality spike for 2a.\nPR 1 itself is already open as nimbus-vscode#45.\n\nLocal verification: lychee (4/4 links OK) + markdownlint (0 errors) on\nboth files.\n\nNote: this is a docs-only PR — the first since #788's\n`pr-quality-required` fix; it should be mergeable without bypass, which\nconfirms that fix end-to-end.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n\n## Summary by CodeRabbit\n\n* **Documentation**\n* Added a detailed implementation plan for integrating the Stage 1\nclient surface into the VS Code extension.\n* Added a design specification outlining the Stage 2 roadmap,\ndeliverables, sequencing, risks, and decisions.\n* Documented planned improvements for session listing, connector health\nreporting, troubleshooting diagnostics, and restricted-mode behavior.\n\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude Fable 5 <noreply@anthropic.com>",
-          "timestamp": "2026-07-23T14:34:28Z",
-          "tree_id": "033f3def335ddb48c2a289d6f6aa03710730f3e8",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/c67a5ff4d064d5e0beeedbf416a2be81fd94d114"
-        },
-        "date": 1784818010852,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 319.43109809999515,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 319.6501751000025,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 225.73074554999874,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "306811640+nimbus-release-bot[bot]@users.noreply.github.com",
+            "name": "nimbus-release-bot[bot]",
+            "username": "nimbus-release-bot[bot]"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "0756397b6077a467d30abe6f40af2d8089b05e10",
+          "message": "chore: release main (#1551)\n\n:robot: I have created a release *beep* *boop*\n---\n\n\n<details><summary>7.27.1</summary>\n\n##\n[7.27.1](https://github.com/nimbus-agent/Nimbus/compare/v7.27.0...v7.27.1)\n(2026-09-19)\n\n\n### Bug Fixes\n\n* **cli:** nimbus start waits for the gateway state file, not only the\nsocket ([#1549](https://github.com/nimbus-agent/Nimbus/issues/1549))\n([4267055](https://github.com/nimbus-agent/Nimbus/commit/4267055986ab9e6e12bc85543a8e0e9fa0f4f838))\n</details>\n\n---\nThis PR was generated with [Release\nPlease](https://github.com/googleapis/release-please). See\n[documentation](https://github.com/googleapis/release-please#release-please).\n\nCo-authored-by: nimbus-release-bot[bot] <306811640+nimbus-release-bot[bot]@users.noreply.github.com>\nCo-authored-by: Asaf <asafgolombek@gmail.com>",
+          "timestamp": "2026-09-19T22:19:59+03:00",
+          "tree_id": "8f4edb398ce17caf04a77dc36edb24ba36ee90fa",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/0756397b6077a467d30abe6f40af2d8089b05e10"
+        },
+        "date": 1789846159235,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 227.24385159999656,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 227.1965786999979,
             "unit": "ms"
           }
         ]
