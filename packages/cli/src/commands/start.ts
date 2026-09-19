@@ -38,22 +38,39 @@ function probeSocketReachable(socketPath: string, timeoutMs: number): Promise<bo
   return probeClientReachable(new IPCClient(socketPath), timeoutMs);
 }
 
-async function waitForGatewayReady(
+export type ReadyWaitDeps = {
+  readonly isAlive: (pid: number) => boolean;
+  readonly probe: (socketPath: string, timeoutMs: number) => Promise<boolean>;
+  /** The pid recorded in gateway.json, or undefined while the file is absent or unreadable. */
+  readonly statePid: () => Promise<number | undefined>;
+  readonly sleep: (ms: number) => Promise<void>;
+  readonly now: () => number;
+};
+
+/**
+ * Ready means BOTH: the socket answers AND gateway.json names the process we spawned. The gateway
+ * binds its socket before it writes that file, and every other command reads the file first and
+ * reports "Gateway is not running" when it is absent — so returning on the socket alone let
+ * `nimbus start && nimbus <cmd>` (and `nimbus demo`'s own tour) fail in the gap between the two.
+ * The pid must match: a file left by an earlier gateway is not evidence about this one.
+ */
+export async function waitForGatewayReady(
   socketPath: string,
   pid: number,
   deadlineMs: number,
-  onTick?: (elapsedMs: number) => void,
+  onTick: ((elapsedMs: number) => void) | undefined,
+  deps: ReadyWaitDeps,
 ): Promise<boolean> {
-  const start = Date.now();
-  while (Date.now() - start < deadlineMs) {
-    if (!isProcessAlive(pid)) {
+  const start = deps.now();
+  while (deps.now() - start < deadlineMs) {
+    if (!deps.isAlive(pid)) {
       return false;
     }
-    if (await probeSocketReachable(socketPath, READY_POLL_INTERVAL_MS)) {
+    if ((await deps.probe(socketPath, READY_POLL_INTERVAL_MS)) && (await deps.statePid()) === pid) {
       return true;
     }
-    onTick?.(Date.now() - start);
-    await sleep(READY_POLL_INTERVAL_MS);
+    onTick?.(deps.now() - start);
+    await deps.sleep(READY_POLL_INTERVAL_MS);
   }
   return false;
 }
@@ -241,15 +258,27 @@ export async function runStart(args: string[]): Promise<void> {
   const tailer = new GatewayLogTailer(logStartOffset);
   let lastPreview = "";
   const tailedLogPath = logPath;
-  const ready = await waitForGatewayReady(paths.socketPath, pid, readyTimeoutMs, (elapsedMs) => {
-    const next = tailer.pollLatest(tailedLogPath);
-    if (next !== null && next.length > 0) {
-      lastPreview = next;
-    }
-    const elapsedSec = Math.round(elapsedMs / 1000);
-    const suffix = lastPreview === "" ? "" : ` — ${truncatePreview(lastPreview)}`;
-    s.message(`Waiting for Gateway IPC (${String(elapsedSec)}s)${suffix}`);
-  });
+  const ready = await waitForGatewayReady(
+    paths.socketPath,
+    pid,
+    readyTimeoutMs,
+    (elapsedMs) => {
+      const next = tailer.pollLatest(tailedLogPath);
+      if (next !== null && next.length > 0) {
+        lastPreview = next;
+      }
+      const elapsedSec = Math.round(elapsedMs / 1000);
+      const suffix = lastPreview === "" ? "" : ` — ${truncatePreview(lastPreview)}`;
+      s.message(`Waiting for Gateway IPC (${String(elapsedSec)}s)${suffix}`);
+    },
+    {
+      isAlive: isProcessAlive,
+      probe: probeSocketReachable,
+      statePid: async () => (await readGatewayState(paths))?.pid,
+      sleep,
+      now: Date.now,
+    },
+  );
   if (!ready) {
     s.stop("Gateway did not become ready");
     await reportGatewayNotReady(paths, pid, logPath, readyTimeoutMs);
