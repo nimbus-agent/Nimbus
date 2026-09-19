@@ -2,6 +2,13 @@
 
 All notable changes to the `nimbus` core (headless Gateway + CLI binary + first-party MCP connectors) are documented in this file. release-please appends new entries between this header and the most recent version below when a release PR merges.
 
+## [7.27.1](https://github.com/nimbus-agent/Nimbus/compare/v7.27.0...v7.27.1) (2026-09-19)
+
+
+### Bug Fixes
+
+* **cli:** nimbus start waits for the gateway state file, not only the socket ([#1549](https://github.com/nimbus-agent/Nimbus/issues/1549)) ([4267055](https://github.com/nimbus-agent/Nimbus/commit/4267055986ab9e6e12bc85543a8e0e9fa0f4f838))
+
 ## [7.27.0](https://github.com/nimbus-agent/Nimbus/compare/v7.26.0...v7.27.0) (2026-09-19)
 
 
