@@ -1,7 +1,7 @@
 import { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { randomUUID } from "node:crypto";
-import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import net from "node:net";
 import { platform, tmpdir } from "node:os";
 import { join } from "node:path";
@@ -880,6 +880,77 @@ describe("createIpcServer — RPC dispatch arms", () => {
       expect(res.error?.message).not.toContain("ERR_DEMO_FORBIDDEN");
     },
   );
+
+  // I41 clause (5): `demo.*` is claimed ONLY by a demo-rooted gateway. This is the routing proof
+  // the unit tests over `dispatchDemoRpc`/`tryDispatchDemoRpc` cannot give — those call the
+  // (sub-)dispatcher directly and so are blind to whether it is actually reachable via the real
+  // dispatch chain (see `ipc-method-needs-routing-not-just-a-handler` in project memory: 60 green
+  // unit tests, `Method not found` live).
+  test("a demo-rooted gateway answers demo.seed with the seeded corpus counts", async () => {
+    const db = new Database(":memory:");
+    LocalIndex.ensureSchema(db);
+    const localIndex = new LocalIndex(db);
+    const demoRoot = mkdtempSync(join(tmpdir(), "nimbus-srv-demo-"));
+    const configDir = join(demoRoot, "config");
+    const dataDir = join(demoRoot, "data");
+    mkdirSync(configDir, { recursive: true });
+    mkdirSync(dataDir, { recursive: true });
+    try {
+      server = createIpcServer({
+        listenPath,
+        vault: createMockVault(),
+        version: "0.0.0-test",
+        demo: true,
+        localIndex,
+        configDir,
+        dataDir,
+      });
+      await server.start();
+
+      const line = await exchangeFirstNdjsonLine(
+        listenPath,
+        `${JSON.stringify({
+          jsonrpc: "2.0",
+          id: 50,
+          method: "demo.seed",
+          params: {},
+        })}\n`,
+      );
+      const res = JSON.parse(line) as {
+        result?: { counts?: { people?: number } };
+        error?: unknown;
+      };
+      expect(res.error).toBeUndefined();
+      expect(res.result?.counts?.people).toBe(8);
+    } finally {
+      try {
+        rmSync(demoRoot, { recursive: true, force: true });
+      } catch {
+        /* best-effort */
+      }
+    }
+  });
+
+  test("a non-demo gateway answers demo.seed with -32601 Method not found", async () => {
+    server = createIpcServer({
+      listenPath,
+      vault: createMockVault(),
+      version: "0.0.0-test",
+    });
+    await server.start();
+
+    const line = await exchangeFirstNdjsonLine(
+      listenPath,
+      `${JSON.stringify({
+        jsonrpc: "2.0",
+        id: 51,
+        method: "demo.seed",
+        params: {},
+      })}\n`,
+    );
+    const res = JSON.parse(line) as { error?: { code: number; message: string } };
+    expect(res.error?.code).toBe(-32601);
+  });
 
   // Proves the wiring, not the class: `client-kind.test.ts` already proves ClientKindStore.forget()
   // clears an entry when called directly. This test proves the production callsite — attachSession's

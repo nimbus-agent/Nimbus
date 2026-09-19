@@ -667,6 +667,9 @@ mod tests {
     fn allowlist_rejects_empty_and_unknown() {
         assert!(!is_method_allowed(""));
         assert!(!is_method_allowed("unknown.method"));
+        // demo.seed (I41 clause 5) exists only on a demo-rooted gateway and has no renderer
+        // consumer; it must never join ALLOWED_METHODS.
+        assert!(!is_method_allowed("demo.seed"));
     }
 
     #[test]

@@ -43,6 +43,7 @@ import { ComputerRpcError, dispatchComputerRpc } from "../computer-rpc.ts";
 import { ConnectorRpcError, dispatchConnectorRpc } from "../connector-rpc.ts";
 import { DataRpcError, dispatchDataRpc } from "../data-rpc.ts";
 import { DecisionsRpcError, dispatchDecisionsRpc } from "../decisions-rpc.ts";
+import { DemoRpcError, dispatchDemoRpc } from "../demo-rpc.ts";
 import { DeploymentRpcError, dispatchDeploymentRpc } from "../deployment-rpc.ts";
 import { DiagnosticsRpcError, dispatchDiagnosticsRpc } from "../diagnostics-rpc.ts";
 import { dispatchEgressRpc, type EgressRpcCtx, EgressRpcError } from "../egress-rpc.ts";
@@ -892,6 +893,40 @@ export async function tryDispatchIndexDemoSymbolRpc(
   return phase4RpcSkipped;
 }
 
+/**
+ * `demo.*` — I41 clause (5). Claimed ONLY by a demo-rooted gateway: on a normal gateway the
+ * namespace is left unclaimed and the request falls through to `Method not found`, so the seeding
+ * code path is not reachable at all rather than refused at runtime.
+ */
+export async function tryDispatchDemoRpc(
+  ctx: ServerCtx,
+  method: string,
+  params: unknown,
+): Promise<unknown> {
+  if (!method.startsWith("demo.")) return phase4RpcSkipped;
+  const { demo, localIndex, configDir, dataDir } = ctx.options;
+  if (
+    demo !== true ||
+    localIndex === undefined ||
+    configDir === undefined ||
+    dataDir === undefined
+  ) {
+    return phase4RpcSkipped;
+  }
+  try {
+    const out = await dispatchDemoRpc(method, params, {
+      db: localIndex.getDatabase(),
+      configDir,
+      dataDir,
+    });
+    if (out.kind === "hit") return out.value;
+  } catch (e) {
+    if (e instanceof DemoRpcError) throw new RpcMethodError(e.rpcCode, e.message);
+    throw e;
+  }
+  return phase4RpcSkipped;
+}
+
 export async function tryDispatchIndexRegraphRpc(
   ctx: ServerCtx,
   method: string,
@@ -1547,7 +1582,7 @@ async function dispatchPhase4TeamMetricsGroup(
   return tryDispatchDataRpc(ctx, method, params, clientId);
 }
 
-/** Third group: lan → profile → index-reembed → index-rebody → index-regraph → index-demoSymbol → policy → chatops → tribal → share → egress → glossary → decisions → premortem → ownership → clip → admin. */
+/** Third group: lan → profile → index-reembed → index-rebody → index-regraph → index-demoSymbol → demo → policy → chatops → tribal → share → egress → glossary → decisions → premortem → ownership → clip → admin. */
 /**
  * The platform-group dispatchers, in probe order.
  *
@@ -1573,6 +1608,7 @@ const PHASE4_PLATFORM_DISPATCHERS: ReadonlyArray<
   tryDispatchIndexRebodyRpc,
   tryDispatchIndexRegraphRpc,
   tryDispatchIndexDemoSymbolRpc,
+  tryDispatchDemoRpc,
   tryDispatchFilesystemRpc,
   tryDispatchPolicyRpc,
   tryDispatchChatopsRpc,
