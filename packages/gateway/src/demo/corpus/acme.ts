@@ -94,7 +94,7 @@ const BACKOFF_LINES: readonly string[] = [
   '  status: number | "timeout",',
   "): RetryDecision {",
   "  if (!isRetryable(status)) {",
-  "    return { retry: false, reason: `status ${String(status)} is final` };",
+  '    return { retry: false, reason: "status " + String(status) + " is final" };',
   "  }",
   "  if (attempt >= MAX_ATTEMPTS) {",
   '    return { retry: false, reason: "attempts exhausted" };',
