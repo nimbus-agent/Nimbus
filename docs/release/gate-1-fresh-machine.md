@@ -6,9 +6,30 @@ goes out before it is green on all three operating systems.
 
 | OS | State |
 | --- | --- |
-| Linux | Performed 2026-08-13 in a clean `ubuntu:24.04` container. It failed first (#1167 — the documented one-liner could not work), then passed after the fix. |
+| Linux | Performed 2026-08-13 in a clean `ubuntu:24.04` container — scope and limits below. |
 | Windows | Not yet performed by a person. Run sheet below. |
 | macOS | Not yet performed by a person. Run sheet below. |
+
+### What the Linux run was, and what it does not cover
+
+The README's Linux quickstart ([`docs/README.md`](../README.md), the *Linux* block under the
+install section) was run verbatim in a fresh `ubuntu:24.04` container with nothing preinstalled.
+
+- **First attempt failed** at the first command: the standalone `install.sh` had no download
+  capability at all (#1167). The docs were corrected and the installer made self-bootstrapping.
+- **Second attempt passed** with the `.deb` route — `sudo apt install /tmp/nimbus.deb`, not
+  `dpkg -i`, which leaves the package unconfigured because it does not resolve `bubblewrap` and
+  `libcap2-bin`. `nimbus init` populated the index from a public repository and
+  `nimbus why <file>:<line>` returned a real `## Authorship` section.
+
+Against the pass criteria at the end of this page: 1 and 2 were met. Criterion 3 was not run by a
+person, because the run predates `nimbus demo`; the Linux leg of the CI job described next now
+runs it on every release. Criterion 4 does not apply to a container, which has no desktop
+security prompts. Two limits of that run are worth keeping in view: the embedding worker failed
+to initialise there, so it proved the deterministic path (index, authorship, briefs) and not
+semantic search; and a headless box with no login keyring needed one pre-created before the
+Vault would unlock, which `nimbus doctor` detects but whose printed remedy is incomplete. A
+desktop Linux session has never been tried.
 
 ## What CI already proves, and what it cannot
 
@@ -88,8 +109,16 @@ nimbus demo reset
 
 ## The browser-download path (both OSes, after the one-liner run)
 
-Revert to the clean state, then install the way someone who distrusts piping a script into a
-shell would: download the archive from the Releases page **in a browser**, and follow that OS's
+Start from a clean state again. On the Windows VM that is a revert to the `clean` snapshot. A
+rented Mac has no snapshot, so use a SECOND fresh user account created before either run (the
+one-liner installs under the first account's home and edits that account's shell profile, so a
+new account sees neither). If a second account is not possible, run `nimbus demo reset`, delete
+`~/.local/bin/nimbus*` and `~/Library/Application Support/Nimbus`, remove the block between
+`# >>> nimbus PATH >>>` and `# <<< nimbus PATH <<<` from `~/.zshrc` (or whichever profile the
+installer named), and record that the run was a cleanup rather than a fresh
+account.
+
+Then install the way someone who distrusts piping a script into a shell would: download the archive from the Releases page **in a browser**, and follow that OS's
 unsigned-install guide step by step, doing exactly what it says and nothing it does not. The
 guides have the user run the gateway executable directly, not the installer script that also
 ships in the archive, so that is what this run does.
