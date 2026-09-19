@@ -176,8 +176,8 @@ In `demo-boot.test.ts`, change both expectations to the full new shape — real:
 - [ ] **Step 2: Guard the three `assemble.ts` sites**
 
 `bootPolicy` is declared in `assemblePlatformServices` (`const bootPolicy = bootPolicyFor(paths);`, ~3146). Locate each site by string and wrap it:
-- `wireUpdaterIntoIpc(paths.configDir, ipc, syncLogger);` → `if (bootPolicy.updaterStartupCheck) { wireUpdaterIntoIpc(paths.configDir, ipc, syncLogger); }` — BUT first read `wireUpdaterIntoIpc`: if it also registers the `updater.*` IPC methods (not only the startup check), do NOT skip the whole call; instead pass a flag so it registers the methods and skips only `updater.checkNow()` at startup. Report which it was.
-- The telemetry flush start (the `startTelemetryFlushScheduler(...)` block) → wrapped in `if (bootPolicy.telemetryFlush) { … }`.
+- `wireUpdaterIntoIpc(paths.configDir, ipc, syncLogger);` → `if (bootPolicy.updaterStartupCheck) { wireUpdaterIntoIpc(paths.configDir, ipc, syncLogger); }`. Decided (verified 2026-09-19): `wireUpdaterIntoIpc` builds the updater, calls `ipc.setUpdater(updater)` and runs the startup `checkNow()` — skipping the WHOLE call on a demo gateway is correct, not just the check: `updater.*` methods then answer "Updater is not configured", which is true of a throwaway demo root (it has nothing to update, and updating it would mean fetching a release).
+- The telemetry flush: `assemble.ts` ~4282–4290 declares `const telemetryStop = startTelemetryFlushScheduler({…});` and then `sidecarStops.push(telemetryStop.stop);` — BOTH statements move inside ONE `if (bootPolicy.telemetryFlush) { … }` block (wrapping only the call leaves `telemetryStop` undeclared at the push).
 - The extensions auto-update daemon block (gated today on `NIMBUS_EXTENSIONS_REGISTRY_URL`) → add `bootPolicy.extensionsAutoUpdate &&` to its condition. If `bootPolicy` is not in scope at that site (it is inside a helper), compute `bootPolicyFor(paths)` there — it is a pure function.
 
 - [ ] **Step 3: No embedding runtime for a demo gateway**
@@ -1122,7 +1122,7 @@ describe("seedDemoCorpus", () => {
       `SELECT COUNT(*) AS n FROM graph_relation r
          JOIN graph_entity pe ON pe.id = r.from_id
          JOIN graph_entity ie ON ie.id = r.to_id
-        WHERE r.relation_type = 'assigned' AND pe.type = 'person' AND ie.external_id LIKE '%PDEMO412%'`,
+        WHERE r.type = 'assigned' AND pe.type = 'person' AND ie.external_id LIKE '%PDEMO412%'`,
     );
     expect(assigned).toBe(1);
   });
@@ -1150,7 +1150,7 @@ describe("seedDemoCorpus", () => {
 });
 ```
 
-The graph-relation column names above (`from_id`, `to_id`, `relation_type`, `graph_entity.type`/`external_id`) are a best guess — confirm them against `index/graph-v7-sql.ts` and correct the QUERY (not the property) if they differ; say so in the report.
+The graph column names above are verified against `index/graph-v7-sql.ts` (`graph_relation.from_id`/`to_id`/`type`, `graph_entity.type`/`external_id`). The incident entity's `external_id` format is not — if `LIKE '%PDEMO412%'` matches nothing, read how the populator keys an `incident` entity and adjust the QUERY (never the property), and say so in the report.
 
 Run: `bun test packages/gateway/src/demo/seed.test.ts` → FAIL (module missing).
 
@@ -1401,7 +1401,7 @@ export function demoBannerLine(marker: { readonly seededAtMs: number } | undefin
 }
 ```
 
-`demo-banner.test.ts`: the three states (undefined; 2h → contains `seeded 2h ago` and `not your data`; 3 days → contains `(stale`), plus `readDemoSeedMarker` on a temp dir with a valid file / garbage / missing file. In `scripts/parity/demo-root.parity.test.ts` add: `expect(cliBanner.DEMO_SEED_MARKER).toBe(gwSeed.DEMO_SEED_MARKER)` (importing `../../packages/cli/src/lib/demo-banner.ts` and `../../packages/gateway/src/demo/seed.ts`).
+`demo-banner.test.ts`: the three states (undefined; 2h → contains `seeded 2h ago` and `not your data`; 3 days → contains `(stale`), clock skew (`nowMs < seededAtMs` → the seeded state with `seeded 0m ago`, no throw), plus `readDemoSeedMarker` on a temp dir with a valid file / garbage / missing file. In `scripts/parity/demo-root.parity.test.ts` add: `expect(cliBanner.DEMO_SEED_MARKER).toBe(gwSeed.DEMO_SEED_MARKER)` (importing `../../packages/cli/src/lib/demo-banner.ts` and `../../packages/gateway/src/demo/seed.ts`).
 
 `index.ts`: right after the paths try/catch in `main()` and BEFORE `intro(...)`:
 
@@ -1521,7 +1521,8 @@ export async function runDemo(args: string[], deps: DemoDeps = defaultDemoDeps):
       "The demo gateway is still running on the synthetic org. Try:",
       "  nimbus --demo standup",
       "  nimbus --demo expert payments",
-      "  nimbus --demo stats",
+      "  nimbus --demo decisions",
+      "  nimbus --demo stats deployment-frequency --service payment-service",
       "Stop it with `nimbus demo stop`; remove everything with `nimbus demo reset`.",
       "",
     ].join("\n"),
@@ -1529,7 +1530,7 @@ export async function runDemo(args: string[], deps: DemoDeps = defaultDemoDeps):
 }
 ```
 
-(Check `expert`'s real argument shape before keeping `nimbus --demo expert payments` in the suggestions; replace it with a command that exists and works on the corpus if not.)
+(Verified 2026-09-19: `expert` takes a free-text topic, `decisions` needs no argument, and `stats` REQUIRES `<metric> --service <id>` — a bare `nimbus --demo stats` would fail with its usage error. Task 10's e2e runs each suggested command once and asserts exit 0, so a suggestion that stops working fails the build.)
 
 `demo.test.ts` (DI only — no real gateway): with fake deps recording calls, assert (a) default run order: `stop, removeDir(<dirname(dataDir)>), start, seed, stop, start, oncall, why("src/retry/backoff.ts:42"), owners("src/retry")` and the three headers appear in `out` in order with `$ nimbus --demo …` lines; (b) `--no-tour` skips the three brief calls; (c) `stop` calls only `stop`; (d) `reset` calls `stop` then `removeDir`; (e) a failing first `start` stops the flow before `seed`; (f) an unknown subcommand prints usage and sets `process.exitCode = 1` (reset it after); (g) `paths.demo !== true` throws.
 
@@ -1575,6 +1576,7 @@ git commit -m "feat(cli): nimbus demo — reset, start, seed and a three-brief t
   - `agent-brief-render.ts` and `expert.ts` "No data indexed yet — run `nimbus connector sync <service>` first." → in demo mode `The demo index is empty — run nimbus demo to seed it.` (thread `demo` from the caller's `CliPlatformPaths`, never the env var).
   - `doctor-core.ts`: the vault check in demo mode prints `Vault: in-memory (demo root) — the OS credential store is not used` instead of probing the OS keyring; the `try nimbus stop …` hint uses `nimbusCommand`.
   - `index-health-format.ts`: fix the nonexistent `nimbus sync` to `nimbus connector sync <service>` (real bug, not demo-specific).
+  - `init.ts`: `nimbus --demo init` REFUSES before doing anything (no gateway spawn, no `nimbus.toml` write, no wizard) with exit code 1 and `The demo root is set up by \`nimbus demo\`, not \`init\` — run \`nimbus demo\` to seed the synthetic org, or run \`nimbus init\` without --demo for your real install.` Its onboarding would call `connector auth` (refused in the demo) and write a `nimbus.toml` the seeder then overwrites. Test in `init.test.ts` with a demo `CliPlatformPaths`: refuses, and none of init's deps (spawn / write / prompt) is called.
   - `tui.tsx`: its hardcoded `Gateway is not running. Start with: nimbus start` → `gatewayNotRunningMessage(paths.demo === true)` from `lib/gateway-not-running.ts`.
   - `mcp/tool-runtime.ts`: the mid-connection-drop path returns `errorResult(GATEWAY_DOWN_MESSAGE)` — add `readonly demo?: boolean` to `AdapterDeps`, set it in `createProductionDeps` from `getCliPlatformPaths().demo === true` (as the initial-connect path already does), and return `errorResult(gatewayDownMessage(deps.demo === true))`.
   - `gateway-not-running.test.ts`: widen the guard to `/start (?:it )?with:\s*nimbus start/i` and scan `.tsx` as well as `.ts`; red-prove it (temporarily re-add a hardcoded "start it with: nimbus start" hint in a `.tsx` file, see it fail, revert).
@@ -1636,11 +1638,12 @@ git commit -m "feat(security): I41 clauses 5-6 - demo.seed is demo-only, a demo 
   3. `--demo connector auth github` → non-zero exit and output contains `ERR_DEMO_FORBIDDEN`.
   4. `--demo ask "what is going on with payment-service?"` with a 90 s timeout → it EXITS (no hang); capture exit code + first lines of output into the test log with `console.log` and assert only that it exited and printed something. Record the captured behaviour in the task report — Task 11 documents it (spec § 11.1).
   5. `NIMBUS_HTTP_PORT` is not listening (`net.createConnection` refused).
+  5b. Every command in `nimbus demo`'s closing "Try:" list (`standup`, `expert payments`, `decisions`, `stats deployment-frequency --service payment-service`), each run with `--demo` → exit 0. A suggestion the tour prints must work.
   6. `demo stop` → exit 0; afterwards no `bun` process from this run is alive.
   7. Every file under the would-be REAL Nimbus directories is inside the demo root (reuse `realNimbusDirs()` / `filesUnder()` from the PR 1 e2e).
   `afterAll`: `demo stop` (ignore failures), then kill any leftover child, then `rmSync(root, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 })` in a try/catch.
 
-- [ ] **Step 2: Run it** — `bun test packages/gateway/test/e2e/demo-tour.e2e.test.ts --timeout 600000`. If a brief assertion fails, read the real brief text first: fix the CORPUS if the story fact is genuinely missing, or the literal if only wording differs — never weaken to "non-empty".
+- [ ] **Step 2: Run it** — on Windows first run `bun run build:sandbox-helper:win32` (POSIX: `bun run build:sandbox-helper`) so the git-ignored helper binary is current, then `bun test packages/gateway/test/e2e/demo-tour.e2e.test.ts --timeout 600000`. If a brief assertion fails, read the real brief text first: fix the CORPUS if the story fact is genuinely missing, or the literal if only wording differs — never weaken to "non-empty".
 
 - [ ] **Step 3: Red-prove two properties** — (a) temporarily delete the `if (ctx.options.demo === true)` gate in `server.ts`, confirm test 3 fails, restore; (b) temporarily make `bootPolicyFor` return `envSidecars: true` for demo, confirm test 5 fails, restore. `git diff` on both production files must be empty afterwards.
 
@@ -1677,3 +1680,22 @@ git commit -m "docs: nimbus demo - the seeded synthetic org and the inert demo g
 ```
 
 (Stripping `docs/superpowers/`, pushing and opening the PR happen at the finishing stage, after the final whole-branch review.)
+
+---
+
+## Review disposition (review of 2026-09-19, `2026-09-19-nimbus-demo-pr2-corpus-and-tour-review.md`)
+
+Each claim was checked against the code before it was accepted.
+
+| # | Finding | Disposition |
+|---|---|---|
+| 2.1 | `nimbus --demo stats` in the closing suggestions fails | **Fixed** (Task 7 Step 4). Verified: `parseStatsArgs` requires `<metric> --service <id>`. Replaced with `stats deployment-frequency --service payment-service` and added `decisions`; `expert payments` verified valid (free-text topic). **Strengthened:** Task 10 now runs every suggested command and asserts exit 0, so a suggestion that breaks later fails the build. |
+| 2.2 | `graph_relation.relation_type` does not exist | **Fixed** (Task 5 Step 1). Verified in `index/graph-v7-sql.ts`: the column is `type`; `from_id`/`to_id` were right. The remaining unverified piece — the incident entity's `external_id` format — is called out for the implementer. |
+| 2.3 | Wrapping only `startTelemetryFlushScheduler` leaves `telemetryStop` undeclared at the push | **Fixed** (Task 2 Step 2). Verified at `assemble.ts:4282–4290`; both statements move into one guarded block. |
+| 2.4 | Decide `wireUpdaterIntoIpc` instead of leaving it to the implementer | **Fixed** (Task 2 Step 2). Verified it builds the updater, `setUpdater`s it and runs the startup check; the demo gateway skips the whole call, so `updater.*` truthfully answers "not configured". |
+| 3.1 | `nimbus --demo init` | **Adopted, option 1** (Task 8): refuse before doing anything, pointing at `nimbus demo`. Option 2 (fail at the first refused RPC) was rejected: by then init would already have spawned a gateway and written a `nimbus.toml` the seeder overwrites. |
+| 3.2 | Refuse `toolgen.*` / `media.allowRemote` too? | **Not adopted, as the review itself concludes.** Neither can move real data or credentials into or out of the demo: the vault is the in-memory `EphemeralVault` (I41 clause 3) and every path is inside the demo root (clause 1). Widening the gate for features no evaluator reaches in the tour is scope without a threat; the allow-list shape means a future `connector.*` write is refused anyway. |
+| 3.3 | Windows path equality between blame rows and roots | **Confirmation only** — no change; the read-the-root-back rule already covers it. |
+| 4.1 | Banner test for clock skew (`now < seededAt`) | **Adopted** (Task 7 Step 3). |
+| 4.2 | Visual separation between briefs | **No change needed**: each header starts with a newline and every brief ends with one (the renderers write `` `${brief}\n` ``), so piped output already separates them. |
+| 4.3 | Build the sandbox helper before the e2e | **Adopted** (Task 10 Step 2), in addition to the Global Constraints line. |
