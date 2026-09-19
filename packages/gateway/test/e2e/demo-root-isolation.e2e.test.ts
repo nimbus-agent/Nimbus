@@ -119,6 +119,10 @@ beforeAll(async () => {
     "NIMBUS_GATEWAY_SOCKET",
     "NIMBUS_E2E_PATHS_JSON",
     "NIMBUS_METRICS_PORT",
+    // This launches the gateway entry directly, not through the CLI's spawnGateway (which always
+    // overwrites this var with the demo log path before spawning) — an inherited value from the
+    // caller's own shell would send the lifecycle log outside the temp roots this test cleans up.
+    "NIMBUS_GATEWAY_LOG_PATH",
   ]) {
     delete env[k];
   }
