@@ -259,6 +259,59 @@ describe("runAsk — happy paths", () => {
   });
 });
 
+describe("runAsk — demo root: skips the connector-registered pre-check", () => {
+  // Mirrors expert.test.ts's `--demo: empty_index gap` pattern: `getCliPlatformPaths()` reads
+  // `NIMBUS_DEMO` for real (it is not mocked), so the env var is the legitimate way to drive it
+  // here — the production rule against reading the env var directly applies to `ask.ts` itself,
+  // which must (and does) branch on `paths.demo`, never on this var.
+  const originalDemo = process.env["NIMBUS_DEMO"];
+  const originalConfigDir = process.env["NIMBUS_CONFIG_DIR"];
+  const originalSocket = process.env["NIMBUS_GATEWAY_SOCKET"];
+
+  beforeEach(() => {
+    stdoutChunks.length = 0;
+    installStreamCapture();
+    delete process.env["NIMBUS_CONFIG_DIR"];
+    delete process.env["NIMBUS_GATEWAY_SOCKET"];
+    process.env["NIMBUS_DEMO"] = "1";
+  });
+  afterEach(() => {
+    clearFixture();
+    restoreStreams();
+    if (originalDemo === undefined) delete process.env["NIMBUS_DEMO"];
+    else process.env["NIMBUS_DEMO"] = originalDemo;
+    if (originalConfigDir === undefined) delete process.env["NIMBUS_CONFIG_DIR"];
+    else process.env["NIMBUS_CONFIG_DIR"] = originalConfigDir;
+    if (originalSocket === undefined) delete process.env["NIMBUS_GATEWAY_SOCKET"];
+    else process.env["NIMBUS_GATEWAY_SOCKET"] = originalSocket;
+  });
+
+  it("calls agent.invoke straight away — even with an empty connector.listStatus — and never prints the real-install hint", async () => {
+    const calls: Array<{ method: string; params: unknown }> = [];
+    setFixture({
+      gatewayState: { socketPath: FAKE_SOCKET_PATH },
+      ipcClient: {
+        call: async (method: string, params: unknown) => {
+          calls.push({ method, params });
+          // An empty array would trigger the real-install hint outside a demo root — see the
+          // non-demo "prints onboarding hint" test above, which pins that it still does.
+          if (method === "connector.listStatus") return [];
+          if (method === "agent.invoke") return { reply: "" };
+          return undefined;
+        },
+        connect: async () => {},
+        disconnect: async () => {},
+        onNotification: () => {},
+      },
+    });
+    await runAsk(["what", "is", "going", "on"]);
+    expect(calls.map((c) => c.method)).toEqual(["agent.invoke"]);
+    const out = stdoutChunks.join("");
+    expect(out).not.toContain("No connectors are registered");
+    expect(out).not.toContain("nimbus connector auth github");
+  });
+});
+
 describe("runAsk — no LLM configured", () => {
   // Mirrors NO_LLM_SENTINEL in gateway/src/engine/gateway-agent-error.ts, which
   // has its own test pinning the constant. The CLI cannot import gateway source

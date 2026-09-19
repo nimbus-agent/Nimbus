@@ -87,23 +87,35 @@ export async function runAsk(args: string[]): Promise<void> {
   registerInteractiveCliIpcHandlers(client);
 
   try {
-    const connectors = await client.call<Array<{ serviceId?: string }>>("connector.listStatus", {});
-    if (!Array.isArray(connectors) || connectors.length === 0) {
-      process.stdout.write(
-        [
-          "No connectors are registered in the local index yet.",
-          "",
-          "Authenticate at least one connector, then sync:",
-          "  nimbus connector auth github",
-          "  nimbus connector auth google",
-          "  nimbus connector list",
-          "  nimbus connector sync <service>",
-          "",
-          "Until a connector is registered, searches and agent answers have no cloud data to draw on.",
-          "",
-        ].join("\n"),
+    // In a demo root, `connector auth`/`connector sync` are refused by the gateway (I41 clause 6)
+    // and the org is seeded by `nimbus demo`, not by connecting a service — so this real-install
+    // hint would name commands the demo gateway refuses, and would fire even on a SEEDED demo
+    // index (the seeder writes items directly and never registers a `connector` row). The gateway
+    // already decides emptiness by item count and is demo-aware (`engine/run-ask.ts`'s
+    // `DEMO_EMPTY_INDEX_GUIDANCE`, wired from `PlatformPaths.demo`, never the env var), so a demo
+    // root skips this pre-check entirely and lets `agent.invoke` answer (or refuse) on its own.
+    if (paths.demo !== true) {
+      const connectors = await client.call<Array<{ serviceId?: string }>>(
+        "connector.listStatus",
+        {},
       );
-      return;
+      if (!Array.isArray(connectors) || connectors.length === 0) {
+        process.stdout.write(
+          [
+            "No connectors are registered in the local index yet.",
+            "",
+            "Authenticate at least one connector, then sync:",
+            "  nimbus connector auth github",
+            "  nimbus connector auth google",
+            "  nimbus connector list",
+            "  nimbus connector sync <service>",
+            "",
+            "Until a connector is registered, searches and agent answers have no cloud data to draw on.",
+            "",
+          ].join("\n"),
+        );
+        return;
+      }
     }
 
     const invokeParams: Record<string, unknown> = {

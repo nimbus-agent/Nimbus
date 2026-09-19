@@ -287,6 +287,10 @@ describe("nimbus demo: the whole flow, end to end, on temp roots", () => {
       );
       expect(typeof r.code).toBe("number");
       expect(`${r.stdout}${r.stderr}`.trim().length).toBeGreaterThan(0);
+      // A demo hint must never name a command the demo gateway itself refuses (I41 clause 6) —
+      // fix round 1: `ask.ts` now skips the real-install connector-registered pre-check entirely
+      // in a demo root, so this text (and its `connector auth` guidance) must not appear here.
+      expect(`${r.stdout}${r.stderr}`).not.toContain("nimbus connector auth");
     },
     ASK_TIMEOUT_MS + 10_000,
   );
