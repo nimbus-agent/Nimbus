@@ -112,10 +112,13 @@ What plain `nimbus demo` does, in order:
 4. Unless `--no-tour` is given, tours three agent briefs in order, each preceded by a
    `── [n/3] <title>` header naming the exact command, printed verbatim before it runs:
    `nimbus --demo oncall`, `nimbus --demo why src/retry/backoff.ts:42`,
-   `nimbus --demo owners src/retry`. Each brief is printed exactly as the gateway renders it, so a
-   command named inside it — a `## Gaps` remediation such as `nimbus owners --refresh` — is written
-   without `--demo` and, pasted as printed, runs against your **real** install; add `--demo` to run
-   it in the demo.
+   `nimbus --demo owners src/retry`. A backticked command named inside a brief — a `## Gaps`
+   remediation such as `nimbus owners --refresh` — is printed as `nimbus --demo owners --refresh`,
+   so pasting it reaches the demo gateway, never your real install; one the demo refuses (e.g.
+   `nimbus --demo connector sync …`) is refused there with `ERR_DEMO_FORBIDDEN`. The same rewrite
+   applies to every agent brief a `--demo` command prints, and only to the printed Markdown:
+   `--json` findings are the gateway's bytes, unchanged, and a command written without backticks is
+   not recognised.
 5. Prints a closing list of four more commands that work without an LLM: `nimbus --demo standup`,
    `nimbus --demo expert payments`, `nimbus --demo decisions`,
    `nimbus --demo stats deployment-frequency --service payment-service`.
@@ -123,10 +126,17 @@ What plain `nimbus demo` does, in order:
 `nimbus demo stop` stops the demo gateway without touching the seeded data — for walking away
 without losing anything (plain `nimbus demo` re-seeds from scratch on its next run regardless).
 `nimbus demo reset` stops it and deletes the whole demo root; nothing else on disk is touched.
-All three signal the recorded demo gateway only after its IPC socket answers: a pid that is alive
-but whose socket does not (the state file outlived a reboot, and the pid may now be some other
-program) is never signalled — the stale state file is removed and the command proceeds as if no
-demo gateway were running.
+All three signal the recorded demo gateway only after its IPC socket answers. A pid that is alive
+but whose socket does not is never signalled, and what happens next depends on when its state file
+was written. If it predates the machine's last boot (the state file outlived a reboot, so the pid
+may now be some other program), the stale file is removed and the command proceeds as if no demo
+gateway were running. If it was written since the last boot, the demo gateway is most likely hung:
+the command stops before deleting or starting anything and exits `1` with `A demo gateway (pid N)
+is running but not answering; end that process, then rerun nimbus demo.` Each takes exactly its
+own arguments — `nimbus demo`, `nimbus demo --no-tour`, `nimbus demo stop`, `nimbus demo reset` —
+and anything else (e.g. `nimbus demo --no-tour stop`) is refused with the usage line before
+anything is stopped or deleted. If seeding fails, `nimbus demo` stops the demo gateway it just
+started before reporting the seed error.
 
 **Banner.** Every `--demo` command prints one line to stderr, never stdout, so piped output stays
 clean:
@@ -149,9 +159,10 @@ host OS keyring, which the demo never uses — its vault is in memory — so run
 repair the real keyring. Rationale: invariant **I41** (`SECURITY-INVARIANTS.md`).
 
 **No outbound call.** A demo gateway's sync scheduler is constructed but never started and registers
-no syncable — `forceSync`/`tick`/`pump` all refuse, keyed on a `syncDisabled` constructor option,
-not on whether `start()` was ever called, so a caller that bypassed the IPC refusal above still
-could not run a sync. The updater startup check, telemetry flush, embedding-runtime model download,
+no syncable — `forceSync` refuses with `ERR_SYNC_DISABLED`, and `tick`/`pump` (like `start` and
+`register`) return without doing anything, all keyed on a `syncDisabled` constructor option, not on
+whether `start()` was ever called, so a caller that bypassed the IPC refusal above still could not
+run a sync. The updater startup check, telemetry flush, embedding-runtime model download,
 and extension auto-update daemon are all skipped at boot. `nimbus demo` makes no real network
 request.
 

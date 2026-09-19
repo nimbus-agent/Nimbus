@@ -89,7 +89,10 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
   The final review fixed four more places a demo user could be led out of the demo:
   `nimbus demo stop` (and every `nimbus demo` re-run) no longer signals the recorded pid unless the
   recorded socket answers — `gateway.json` survives a reboot, and the pid may since belong to an
-  unrelated process (on Windows SIGTERM is `TerminateProcess`); `nimbus --demo connector list` and
+  unrelated process (on Windows SIGTERM is `TerminateProcess`). A live pid with a dead socket is
+  told apart by boot time: a state file from before the last boot is removed as stale, one written
+  since then is a hung demo gateway, and the command aborts naming its pid rather than deleting the
+  root under it and starting a second one; `nimbus --demo connector list` and
   `nimbus --demo index health` stop naming `connector auth`/`connector sync`; the `nimbus --demo
   start` seed hint is keyed on the seed marker rather than on connectors (so a seeded demo is no
   longer told to seed it); and `nimbus --demo doctor --fix-keyring` refuses, since the fixer acts on
@@ -100,6 +103,16 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
   bug, fixed for every install: `NIMBUS_UPDATER_URL` and `NIMBUS_UPDATER_DISABLE` were applied only
   when a `nimbus.toml` existed, so on a first boot — exactly when the startup update check runs —
   neither did anything.
+
+  Review of the PR closed four more gaps. A brief printed under `--demo` named its remediation
+  commands without `--demo` (the tour's own oncall `## Gaps` suggests `nimbus ask`), so pasting one
+  reached the real install; the CLI now rewrites every backticked `nimbus <cmd>` in a printed demo
+  brief to `nimbus --demo <cmd>` on every brief-printing path, leaving `--json` findings untouched.
+  `nimbus demo` validates its whole argv first (`nimbus demo --no-tour stop` used to recreate the
+  root), and a failed seed stops the gateway it just started. The seeder now validates the whole
+  corpus — person keys, blame coverage and commits, deployment sha format (via
+  `annotateDeployment`'s own `validateDeploymentSha`) — before writing anything, so a malformed
+  corpus leaves no files, config or index rows behind.
 
 - **2026-09-18 — An isolated demo root: `nimbus --demo …` / `NIMBUS_DEMO=1` (invariant I41).** The
   first half of the First-Run row's seeded-sandbox work: a second, throwaway Nimbus inside `<data dir>/demo`
