@@ -371,8 +371,13 @@ describe("runAsk — no LLM configured, demo root (fix round 2)", () => {
   const originalConfigDir = process.env["NIMBUS_CONFIG_DIR"];
   const originalSocket = process.env["NIMBUS_GATEWAY_SOCKET"];
   const SENTINEL = "Nimbus needs an LLM for this command.";
+  // Restored, not zeroed: the test sets exit code 1, and forcing 0 afterwards would also
+  // overwrite a non-zero code an earlier test in the same process left behind. `?? 0` on restore
+  // because Bun does not reset an exit code on `process.exitCode = undefined` (it stays 1).
+  let priorExitCode: typeof process.exitCode;
 
   beforeEach(() => {
+    priorExitCode = process.exitCode;
     stdoutChunks.length = 0;
     stderrChunks.length = 0;
     installStreamCapture();
@@ -383,7 +388,7 @@ describe("runAsk — no LLM configured, demo root (fix round 2)", () => {
   afterEach(() => {
     clearFixture();
     restoreStreams();
-    process.exitCode = 0;
+    process.exitCode = priorExitCode ?? 0;
     if (originalDemo === undefined) delete process.env["NIMBUS_DEMO"];
     else process.env["NIMBUS_DEMO"] = originalDemo;
     if (originalConfigDir === undefined) delete process.env["NIMBUS_CONFIG_DIR"];
