@@ -344,7 +344,9 @@ export async function runConversationalAgent(
     // NEXT turn to drain and misattribute to its own reply. Discard rather than append: the
     // turn that recorded it never produced an answer to qualify.
     drainNegationDisclosures();
-    const typed = agentErrorFromCaughtError(e);
+    const typed = agentErrorFromCaughtError(e, undefined, {
+      enforceAirGap: p.llmRouter?.enforcesAirGap() === true,
+    });
     if (typed !== null) {
       throw typed;
     }

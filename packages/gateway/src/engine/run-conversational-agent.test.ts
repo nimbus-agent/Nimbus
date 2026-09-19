@@ -212,6 +212,33 @@ describe("runConversationalAgent", () => {
     ).rejects.toThrow(NO_LLM_SENTINEL);
   });
 
+  test("the same empty route table under enforce_air_gap → air_gap, not the no-LLM guidance", async () => {
+    // The catch passes the router's own air-gap fact into the mapper: under air-gap an empty
+    // route table means remote routes were REFUSED, and "set an API key" would be wrong advice.
+    const router = {
+      generate: mock(async () => {
+        throw new NoLlmProviderError("agent_step");
+      }),
+      prefersLocal: () => false,
+      enforcesAirGap: () => true,
+    } as unknown as LlmRouter;
+
+    let caught: unknown;
+    try {
+      await runConversationalAgent({
+        llmRouter: router,
+        input: "what is going on with payment-service?",
+        stream: false,
+        sendChunk: () => undefined,
+      });
+    } catch (e) {
+      caught = e;
+    }
+    expect(caught).toBeInstanceOf(GatewayAgentUnavailableError);
+    expect((caught as GatewayAgentUnavailableError).reason).toBe("air_gap");
+    expect((caught as Error).message).not.toContain(NO_LLM_SENTINEL);
+  });
+
   test("BUG-005: passes prior turns + current input as a messages array when priorTurns is non-empty", async () => {
     const generateMock = mock(async () => ({ text: "answer" }));
     const agent = { generate: generateMock } as unknown as Agent;

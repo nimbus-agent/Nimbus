@@ -147,9 +147,11 @@ const EMPTY_INTENT: ClassifiedIntent = {
 /**
  * Turns a router failure into the reason the owner can act on.
  *
- * `LlmRouter.generate` throws a bare `Error` when the priority walk found NOTHING eligible, which
- * is the common case here and means one of two very different things: air-gap held every remote
- * route back, or no vendor is enabled at all. Only the caller knows which, hence the policy flag.
+ * `LlmRouter.generate` throws `NoLlmProviderError` (`llm/provider-error.ts`) when the priority
+ * walk found NOTHING eligible, which is the common case here and means one of two very different
+ * things: air-gap held every remote route back, or no vendor is enabled at all. Only the caller
+ * knows which, hence the policy flag. It is not an `LlmProviderError`, so it reaches the last
+ * branch below.
  */
 function classifierFailure(e: unknown, enforceAirGap: boolean): GatewayAgentUnavailableError {
   if (e instanceof GatewayAgentUnavailableError) return e;

@@ -88,16 +88,18 @@ export type RunAskParams = {
    * PREVIOUS successful ask at the moment the user most needs the truth.
    */
   explainRecorder?: AskExplainRecorder;
-  /**
-   * Whether this turn is running against a demo-rooted gateway (`PlatformPaths.demo === true`).
-   * Optional, defaulting to `false` — every existing caller/test stays non-demo without a stub.
-   * Set at the gateway's IPC wiring site (`gateway-main.ts`) from `platform.paths.demo === true`,
-   * never read from the env var directly. In the demo, connector auth/sync are refused by the
-   * gateway and the org is seeded by `nimbus demo`, so the real-install empty-index guidance is
-   * wrong twice over there.
-   */
-  demo?: boolean;
 };
+
+/**
+ * Whether this turn runs on a demo-rooted gateway (I41). DERIVED from the required `paths` —
+ * never a second flag a caller could set differently, and never the env var — so every `runAsk`
+ * caller (the IPC handler and ChatOps alike) is demo-aware without having to remember to be.
+ * In the demo, connector auth/sync are refused and the org is seeded by `nimbus demo`, so the
+ * real-install empty-index and no-LLM guidance are both wrong there.
+ */
+function isDemo(p: RunAskParams): boolean {
+  return p.paths.demo === true;
+}
 
 const EMPTY_INDEX_GUIDANCE = `No data indexed yet.
 
@@ -166,7 +168,7 @@ function emptyIndexGuidanceIfNeeded(
   if (p.input.trim() === "" || indexed !== 0) {
     return undefined;
   }
-  const guidance = emptyIndexGuidance(p.demo === true);
+  const guidance = emptyIndexGuidance(isDemo(p));
   if (p.stream) {
     p.sendChunk(`${guidance}\n`);
   }
@@ -1149,6 +1151,20 @@ function recordExplainSafely(
   }
 }
 
+/**
+ * On a demo gateway, every `no_api_key` refusal — whichever route raised it (the classifier, the
+ * conversational turn, or `--devil`'s own guard) — is re-raised as the demo variant of the no-LLM
+ * guidance. Done HERE, at the one exit every ask client shares, rather than in any client: the
+ * CLI's `ask`, the REPL, the TUI (`engine.askStream`) and `nimbus prove "<q>"` all reach `runAsk`,
+ * and a per-client swap had already missed three of those four.
+ */
+function demoAwareAskError(p: RunAskParams, e: unknown): unknown {
+  if (isDemo(p) && e instanceof GatewayAgentUnavailableError && e.reason === "no_api_key") {
+    return new GatewayAgentUnavailableError({ reason: "no_api_key", demo: true });
+  }
+  return e;
+}
+
 export async function runAsk(
   p: RunAskParams,
 ): Promise<{ reply: string; modelMeta?: LlmGenerateResult }> {
@@ -1158,7 +1174,8 @@ export async function runAsk(
     const out = await runAskInner(p, partial);
     recordExplainSafely(p, partial, startedAt, undefined);
     return out;
-  } catch (e) {
+  } catch (caught) {
+    const e = demoAwareAskError(p, caught);
     recordExplainSafely(p, partial, startedAt, e);
     throw e;
   }

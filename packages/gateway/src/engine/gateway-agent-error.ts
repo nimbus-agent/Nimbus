@@ -28,6 +28,14 @@ export type AgentUnavailableInit = {
   reason: AgentUnavailableReason;
   provider?: AgentProviderName;
   detail?: string;
+  /**
+   * The turn ran on a demo-rooted gateway (`PlatformPaths.demo === true`, I41). Only `no_api_key`
+   * reads it, selecting {@link DEMO_NO_LLM_CONFIGURED_MESSAGE}: the real-install guidance names
+   * `nimbus.toml` and `nimbus stop && nimbus start`, which in a demo drops `--demo` and would stop
+   * the REAL gateway. Set by `runAsk`, the one place every ask client (CLI `ask`, the REPL, the
+   * TUI's `engine.askStream`, `nimbus prove "<q>"`) passes through.
+   */
+  demo?: true;
 };
 
 const DEFAULT_AGENT_UNAVAILABLE_INIT: AgentUnavailableInit = { reason: "unknown" };
@@ -65,6 +73,23 @@ const NO_LLM_CONFIGURED_MESSAGE = [
   "Indexing, `nimbus why`, and the agent briefs all work with no LLM configured.",
 ].join("\n");
 
+/**
+ * The demo-root variant (I41). Starts with {@link NO_LLM_SENTINEL} verbatim — every client keys on
+ * that substring to render guidance rather than a raw error, so a variant without it would be
+ * printed as a failure. Names only `--demo` commands, and points `ask` at the REAL install without
+ * telling the reader to edit a config or restart anything from here.
+ */
+export const DEMO_NO_LLM_CONFIGURED_MESSAGE = [
+  `${NO_LLM_SENTINEL} The demo does not configure one.`,
+  "",
+  "Everything in the tour works without one — try:",
+  "  nimbus --demo standup",
+  "  nimbus --demo expert payments",
+  "  nimbus --demo decisions",
+  "",
+  "`ask` works on your real install once an LLM is configured (see nimbus doctor).",
+].join("\n");
+
 export class GatewayAgentUnavailableError extends Error {
   override readonly name = "GatewayAgentUnavailableError";
   readonly reason: AgentUnavailableReason;
@@ -98,7 +123,7 @@ function buildAgentErrorMessage(init: AgentUnavailableInit): string {
   const provider = providerLabel(init.provider);
   switch (init.reason) {
     case "no_api_key":
-      return NO_LLM_CONFIGURED_MESSAGE;
+      return init.demo === true ? DEMO_NO_LLM_CONFIGURED_MESSAGE : NO_LLM_CONFIGURED_MESSAGE;
     case "invalid_api_key":
       return `${provider} rejected the API key (HTTP 401). Verify the key is correct and not revoked, then restart the gateway.`;
     case "insufficient_quota":
@@ -186,9 +211,15 @@ export function agentErrorFromHttpResponse(
   });
 }
 
+/**
+ * `enforceAirGap` is the owner's `[llm] enforce_air_gap`, passed in by the caller (which already
+ * holds the router) rather than read from config here: it only decides how an empty route table
+ * is WORDED, exactly as `engine/router.ts`'s `classifierFailure` does for the classifier.
+ */
 export function agentErrorFromCaughtError(
   e: unknown,
   provider?: AgentProviderName,
+  context: { readonly enforceAirGap?: boolean } = {},
 ): GatewayAgentUnavailableError | null {
   const init = (reason: AgentUnavailableReason): AgentUnavailableInit =>
     provider === undefined ? { reason } : { reason, provider };
@@ -199,8 +230,14 @@ export function agentErrorFromCaughtError(
   // mode. Every other branch below matches on message substrings because it is classifying a
   // REAL vendor HTTP failure whose only surviving signal, by the time it reaches here, is text;
   // this one has a real type to check instead, so it does.
+  //
+  // Under `enforce_air_gap` an empty route table usually means air-gap held every remote route
+  // back, not that no key exists — "set an API key" would send the owner after a key they may
+  // already have. `air_gap`'s message names the real cause and the local-model route.
   if (e instanceof NoLlmProviderError) {
-    return new GatewayAgentUnavailableError({ reason: "no_api_key" });
+    return new GatewayAgentUnavailableError({
+      reason: context.enforceAirGap === true ? "air_gap" : "no_api_key",
+    });
   }
 
   const raw = e instanceof Error ? e.message : String(e);

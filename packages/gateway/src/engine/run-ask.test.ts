@@ -8,13 +8,19 @@ import type { Agent } from "@mastra/core/agent";
 import { makeEgressSink, NULL_EGRESS_SINK } from "../egress/egress-ledger.ts";
 import { LocalIndex } from "../index/local-index.ts";
 import type { ConsentCoordinator } from "../ipc/consent.ts";
+import { NoLlmProviderError } from "../llm/provider-error.ts";
 import type { LlmRouter } from "../llm/router.ts";
 import type { SessionChunk, SessionMemoryStore } from "../memory/session-memory-store.ts";
 import type { PlatformPaths } from "../platform/paths.ts";
 import { agentRequestContext } from "./agent-request-context.ts";
-import { GatewayAgentUnavailableError } from "./gateway-agent-error.ts";
+import { AskExplainRecorder } from "./ask-explain-recorder.ts";
+import {
+  DEMO_NO_LLM_CONFIGURED_MESSAGE,
+  GatewayAgentUnavailableError,
+  NO_LLM_SENTINEL,
+} from "./gateway-agent-error.ts";
 import { TONE_DIRECTIVES, VOICE_DIRECTIVES } from "./persona.ts";
-import { resolveLocalContextItemLimit, runAsk } from "./run-ask.ts";
+import { type RunAskParams, resolveLocalContextItemLimit, runAsk } from "./run-ask.ts";
 import type { ConnectorDispatcher } from "./types.ts";
 
 const stubBase = join(tmpdir(), "nimbus-run-ask-test");
@@ -26,6 +32,8 @@ const stubPaths: PlatformPaths = {
   extensionsDir: join(stubBase, "ext"),
   tempDir: join(stubBase, "tmp"),
 };
+/** A demo-rooted gateway's paths (I41): `runAsk` derives demo-ness from `paths.demo` alone. */
+const demoPaths: PlatformPaths = { ...stubPaths, demo: true };
 
 const stubConsent: ConsentCoordinator = {
   async requestConsent(): Promise<boolean> {
@@ -123,7 +131,7 @@ describe("runAsk", () => {
     localIndex.close();
   });
 
-  test("demo=true: returns the demo-seed guidance instead of connector-auth onboarding", async () => {
+  test("paths.demo: returns the demo-seed guidance instead of connector-auth onboarding", async () => {
     const db = new Database(":memory:");
     LocalIndex.ensureSchema(db);
     const localIndex = new LocalIndex(db);
@@ -131,13 +139,12 @@ describe("runAsk", () => {
       input: "What did I work on yesterday?",
       stream: false,
       clientId: "test-client",
-      paths: stubPaths,
+      paths: demoPaths,
       consentCoordinator: stubConsent,
       localIndex,
       dispatcher: stubDispatcher,
       egressSink: NULL_EGRESS_SINK,
       sendChunk: () => {},
-      demo: true,
     });
     expect(out.reply).toContain("No data indexed yet");
     expect(out.reply).toContain("This is the demo root");
@@ -2058,5 +2065,109 @@ describe("resolveLocalContextItemLimit", () => {
     for (const bad of ["", "abc", "0", "-3", "40ms", "1.5", "12abc"]) {
       expect(withAskItemsEnv(bad, resolveLocalContextItemLimit)).toBe(8);
     }
+  });
+});
+
+describe("the demo no-LLM guidance comes from runAsk, for every client (I41)", () => {
+  /** A non-empty index: runAsk answers the empty case with onboarding before any LLM question. */
+  function seededIndex(): LocalIndex {
+    const db = new Database(":memory:");
+    LocalIndex.ensureSchema(db);
+    db.run(
+      "INSERT INTO item (id, service, type, external_id, title, modified_at, synced_at) VALUES ('x:1', 'x', 'note', '1', 't', 1, 1)",
+    );
+    return new LocalIndex(db);
+  }
+
+  /** The demo gateway's real shape: a router exists, zero routes are eligible, no agent. */
+  function emptyRouteTable(): LlmRouter {
+    return {
+      prefersLocal: () => true,
+      enforcesAirGap: () => false,
+      generate: async () => {
+        throw new NoLlmProviderError("agent_step");
+      },
+    } as unknown as LlmRouter;
+  }
+
+  /** The error `runAsk` threw, or `undefined` if it answered. */
+  async function askError(paths: PlatformPaths, extra: Partial<RunAskParams>): Promise<unknown> {
+    const localIndex = seededIndex();
+    try {
+      await runAsk({
+        input: "what is going on with payment-service?",
+        stream: false,
+        clientId: "test-client",
+        paths,
+        consentCoordinator: stubConsent,
+        localIndex,
+        dispatcher: stubDispatcher,
+        egressSink: NULL_EGRESS_SINK,
+        sendChunk: () => {},
+        classify: async () => ({
+          intent: "unknown",
+          entities: {},
+          requiresHITL: false,
+          confidence: 0,
+        }),
+        ...extra,
+      });
+      return undefined;
+    } catch (e) {
+      return e;
+    } finally {
+      localIndex.close();
+    }
+  }
+
+  function expectDemoGuidance(e: unknown): void {
+    expect(e).toBeInstanceOf(GatewayAgentUnavailableError);
+    const msg = (e as Error).message;
+    expect(msg.startsWith(NO_LLM_SENTINEL)).toBe(true);
+    expect(msg).toBe(DEMO_NO_LLM_CONFIGURED_MESSAGE);
+    expect(msg).not.toContain("nimbus stop");
+    expect(msg).not.toContain("nimbus.toml");
+  }
+
+  test("demo, conversational route over an empty route table → the demo guidance", async () => {
+    expectDemoGuidance(await askError(demoPaths, { llmRouter: emptyRouteTable() }));
+  });
+
+  test("demo, --devil with nothing to talk to (the guard that throws directly) → the demo guidance", async () => {
+    expectDemoGuidance(await askError(demoPaths, { devil: true }));
+  });
+
+  test("demo, the classifier refusing no_api_key → the demo guidance", async () => {
+    expectDemoGuidance(
+      await askError(demoPaths, {
+        classify: async () => {
+          throw new GatewayAgentUnavailableError({ reason: "no_api_key" });
+        },
+      }),
+    );
+  });
+
+  test("the explain record carries the demo error the client actually received", async () => {
+    const recorder = new AskExplainRecorder();
+    await askError(demoPaths, { llmRouter: emptyRouteTable(), explainRecorder: recorder });
+    expect(JSON.stringify(recorder.last())).toContain("The demo does not configure one.");
+  });
+
+  test("NOT demo, the same empty route table → the real-install guidance, unchanged", async () => {
+    const e = await askError(stubPaths, { llmRouter: emptyRouteTable() });
+    expect(e).toBeInstanceOf(GatewayAgentUnavailableError);
+    expect((e as Error).message.startsWith(NO_LLM_SENTINEL)).toBe(true);
+    expect((e as Error).message).toContain("nimbus stop && nimbus start");
+    expect((e as Error).message).not.toBe(DEMO_NO_LLM_CONFIGURED_MESSAGE);
+  });
+
+  test("demo leaves every other refusal reason alone", async () => {
+    const e = await askError(demoPaths, {
+      classify: async () => {
+        throw new GatewayAgentUnavailableError({ reason: "invalid_api_key", provider: "openai" });
+      },
+    });
+    expect((e as GatewayAgentUnavailableError).reason).toBe("invalid_api_key");
+    expect((e as Error).message).toContain("OpenAI rejected the API key");
   });
 });

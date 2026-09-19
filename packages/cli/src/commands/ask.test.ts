@@ -392,7 +392,15 @@ describe("runAsk — no LLM configured, demo root (fix round 2)", () => {
     else process.env["NIMBUS_GATEWAY_SOCKET"] = originalSocket;
   });
 
-  it("prints the demo variant, not the real-install message, and never names nimbus stop or nimbus.toml", async () => {
+  it("prints the gateway's demo guidance verbatim — the CLI no longer carries its own copy", async () => {
+    // The demo variant is chosen by the GATEWAY now (`runAsk`, from `PlatformPaths.demo`), so
+    // the REPL, the TUI and `nimbus prove` get it too. The CLI prints whatever arrives, exactly.
+    const gatewayDemoMessage = [
+      `${SENTINEL} The demo does not configure one.`,
+      "",
+      "Everything in the tour works without one — try:",
+      "  nimbus --demo standup",
+    ].join("\n");
     setFixture({
       gatewayState: { socketPath: FAKE_SOCKET_PATH },
       ipcClient: {
@@ -400,13 +408,7 @@ describe("runAsk — no LLM configured, demo root (fix round 2)", () => {
           // No `connector.listStatus` call is expected at all in a demo root (fix round 1) —
           // returning something here would mask that regression rather than catch it.
           if (method === "agent.invoke") {
-            throw new Error(
-              [
-                SENTINEL,
-                "",
-                "  Hosted — set ANTHROPIC_API_KEY...restart with: nimbus stop && nimbus start",
-              ].join("\n"),
-            );
+            throw new Error(gatewayDemoMessage);
           }
           return undefined;
         },
@@ -416,11 +418,7 @@ describe("runAsk — no LLM configured, demo root (fix round 2)", () => {
       },
     });
     await runAsk(["what", "is", "going", "on"]);
-    const err = stderrChunks.join("");
-    expect(err).toContain("Nimbus needs an LLM for this command");
-    expect(err).toContain("nimbus --demo standup");
-    expect(err).not.toContain("nimbus stop");
-    expect(err).not.toContain("nimbus.toml");
+    expect(stderrChunks.join("")).toBe(`${gatewayDemoMessage}\n`);
     expect(process.exitCode).toBe(1);
   });
 });

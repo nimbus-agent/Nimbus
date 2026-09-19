@@ -65,26 +65,6 @@ function isNoLlmError(e: unknown): boolean {
   return e instanceof Error && e.message.includes(NO_LLM_SENTINEL);
 }
 
-/**
- * A demo-root variant of the gateway's no-LLM message, printed instead of it in a demo root
- * (I41). The gateway's own message tells the reader to edit `nimbus.toml` and restart with
- * `nimbus stop && nimbus start` — both real-install instructions: that restart command drops
- * `--demo` and would stop the REAL gateway if run as printed, and `[llm]` belongs in the REAL
- * `nimbus.toml`, not the demo's throwaway seeded one. Starts with the same words as
- * `NO_LLM_SENTINEL` so a reader who has seen the real-install message once still recognises this
- * as the same class of refusal.
- */
-const DEMO_NO_LLM_MESSAGE = [
-  "Nimbus needs an LLM for this command, and the demo does not configure one.",
-  "",
-  "Everything in the tour works without one — try:",
-  "  nimbus --demo standup",
-  "  nimbus --demo expert payments",
-  "  nimbus --demo decisions",
-  "",
-  "`ask` works on your real install once an LLM is configured (see nimbus doctor).",
-].join("\n");
-
 export async function runAsk(args: string[]): Promise<void> {
   const { rest, sessionId, agent, devil } = parseAskArgs(args);
   const query = rest.join(" ").trim();
@@ -161,10 +141,10 @@ export async function runAsk(args: string[]): Promise<void> {
       // Guidance, not a failure report: print it as-is rather than letting the
       // top-level handler render it as `cli.error` with a stack. `ask` is the
       // one command that genuinely cannot degrade — everything else in Nimbus
-      // works with no LLM — so the exit code stays non-zero. In a demo root the
-      // gateway's own message is real-install advice (edit nimbus.toml, `nimbus stop &&
-      // nimbus start`) — see `DEMO_NO_LLM_MESSAGE`'s own comment for why that is wrong here.
-      process.stderr.write(`${paths.demo === true ? DEMO_NO_LLM_MESSAGE : (e as Error).message}\n`);
+      // works with no LLM — so the exit code stays non-zero. Printed verbatim in a demo
+      // root too: a demo gateway already sends the demo variant (`runAsk` in
+      // gateway/src/engine/run-ask.ts), the one source every ask client shares.
+      process.stderr.write(`${(e as Error).message}\n`);
       process.exitCode = 1;
       return;
     }
