@@ -301,6 +301,10 @@ describe("nimbus demo: the whole flow, end to end, on temp roots", () => {
       expect(ownersSection).toMatch(/Dana( Okafor)?|dana\.okafor@acme\.example/);
       expect(ownersSection).toContain("## Gaps");
 
+      // Every command a brief names targets the demo: no backticked `nimbus <cmd>` survives that
+      // is not `nimbus --demo …` (or `nimbus demo stop|reset`, which selects the demo on its own).
+      expect(r.stdout).not.toMatch(/`nimbus (?!--demo\b|demo\b)/);
+
       // The closing "Try:" list — every one of its commands is exercised in test 5b.
       expect(r.stdout).toContain("nimbus --demo standup");
       expect(r.stdout).toContain("nimbus --demo expert payments");
