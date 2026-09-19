@@ -10,11 +10,14 @@ import {
   isProcessAlive,
   readGatewayState,
 } from "../lib/gateway-process.ts";
+import {
+  probeSocketReachable as probeClientReachable,
+  SOCKET_PROBE_TIMEOUT_MS,
+} from "../lib/socket-probe.ts";
 import { spawnGateway } from "../lib/spawn-gateway.ts";
 import { getCliPlatformPaths } from "../paths.ts";
 
 const ONBOARDING_MARKER = ".nimbus-post-start-onboarding";
-const SOCKET_PROBE_TIMEOUT_MS = 2000;
 const DEFAULT_READY_WAIT_TIMEOUT_MS = 60_000;
 const READY_POLL_INTERVAL_MS = 250;
 
@@ -30,25 +33,8 @@ function resolveReadyWaitTimeoutMs(): number {
   return n;
 }
 
-async function probeSocketReachable(socketPath: string, timeoutMs: number): Promise<boolean> {
-  const client = new IPCClient(socketPath);
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  try {
-    const timeout = new Promise<never>((_, reject) => {
-      timer = setTimeout(() => {
-        reject(new Error("probe timeout"));
-      }, timeoutMs);
-    });
-    await Promise.race([client.connect(), timeout]);
-    return true;
-  } catch {
-    return false;
-  } finally {
-    if (timer !== undefined) {
-      clearTimeout(timer);
-    }
-    await client.disconnect().catch(() => {});
-  }
+function probeSocketReachable(socketPath: string, timeoutMs: number): Promise<boolean> {
+  return probeClientReachable(new IPCClient(socketPath), timeoutMs);
 }
 
 async function waitForGatewayReady(
