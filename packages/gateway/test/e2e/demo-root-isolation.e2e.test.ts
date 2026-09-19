@@ -8,6 +8,8 @@ import net from "node:net";
 import { tmpdir } from "node:os";
 import { basename, dirname, isAbsolute, join, relative } from "node:path";
 
+import { pickSentinelPort } from "./_fixtures/sentinel-port.ts";
+
 const ENTRY = join(import.meta.dir, "..", "..", "src", "index.ts");
 const BOOT_TIMEOUT_MS = 60_000;
 
@@ -36,18 +38,6 @@ function realNimbusDirs(): { dataDir: string; others: string[] } {
     return { dataDir: join(dirs.home, "Library", "Application Support", "Nimbus"), others: [] };
   }
   return { dataDir: join(dirs.xdgData, "nimbus"), others: [join(dirs.xdgConfig, "nimbus")] };
-}
-
-function freePort(): Promise<number> {
-  return new Promise((resolve, reject) => {
-    const s = net.createServer();
-    s.once("error", reject);
-    s.listen(0, "127.0.0.1", () => {
-      const addr = s.address();
-      const port = typeof addr === "object" && addr !== null ? addr.port : 0;
-      s.close(() => resolve(port));
-    });
-  });
 }
 
 function filesUnder(dir: string): string[] {
@@ -112,7 +102,7 @@ let socketPath = "";
 let httpPort = 0;
 
 beforeAll(async () => {
-  httpPort = await freePort();
+  httpPort = await pickSentinelPort();
   const env: Record<string, string> = { ...(process.env as Record<string, string>) };
   for (const k of [
     "NIMBUS_CONFIG_DIR",
