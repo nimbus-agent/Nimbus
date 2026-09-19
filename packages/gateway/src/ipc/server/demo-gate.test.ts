@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { readdirSync, readFileSync, statSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
 import { DEMO_CONNECTOR_READS, demoRefusal } from "./demo-gate.ts";
@@ -10,10 +10,11 @@ function connectorMethodsInSource(): string[] {
   const root = join(import.meta.dir, "..");
   const found = new Set<string>();
   const walk = (dir: string): void => {
-    for (const name of readdirSync(dir)) {
-      const p = join(dir, name);
-      if (statSync(p).isDirectory()) walk(p);
-      else if (p.endsWith(".ts") && !p.endsWith(".test.ts")) {
+    // Dirent types from the listing itself — no stat-then-read on a path.
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      const p = join(dir, entry.name);
+      if (entry.isDirectory()) walk(p);
+      else if (entry.isFile() && p.endsWith(".ts") && !p.endsWith(".test.ts")) {
         for (const m of readFileSync(p, "utf8").matchAll(/"(connector\.[A-Za-z]+)"/g)) {
           if (m[1] !== undefined) found.add(m[1]);
         }

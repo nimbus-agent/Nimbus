@@ -10,7 +10,7 @@
 // over the source entry (`cli/src/lib/resolve-gateway-launch.ts`), so a stale local build would be
 // what this test exercises. CI has no `dist/` in this job.
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
+import { type Dirent, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import net from "node:net";
 import { tmpdir } from "node:os";
 import { isAbsolute, join, relative } from "node:path";
@@ -64,10 +64,17 @@ function freePort(): Promise<number> {
   });
 }
 
+/** Every file under `dir` (none when `dir` is absent) — listed, never stat-then-read. */
 function filesUnder(dir: string): string[] {
-  if (!existsSync(dir)) return [];
+  let entries: Dirent[];
+  try {
+    entries = readdirSync(dir, { withFileTypes: true });
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === "ENOENT") return [];
+    throw err;
+  }
   const out: string[] = [];
-  for (const e of readdirSync(dir, { withFileTypes: true })) {
+  for (const e of entries) {
     const p = join(dir, e.name);
     if (e.isDirectory()) out.push(...filesUnder(p));
     else out.push(p);
