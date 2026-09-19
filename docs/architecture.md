@@ -160,12 +160,17 @@ pieces of host-global state path isolation cannot reach. Rationale and bounds:
 
 **The demo gateway is inert.** `platform/demo-boot.ts`'s `bootPolicyFor(paths)` returns one boolean
 per host-global boot action — `syncScheduler`, `updaterStartupCheck`, `telemetryFlush`,
-`embeddingRuntime`, `extensionsAutoUpdate`, plus the two above — every one of them `!demo`, and every
-consumer reads it fresh via its own `bootPolicyFor(paths)` call rather than a value threaded through
-(`assemble.ts` itself for `syncScheduler`/`updaterStartupCheck`/`telemetryFlush`/
-`extensionsAutoUpdate`; `embedding/create-embedding-runtime.ts` and `ipc/index-reembed-rpc.ts` each
-call it independently for `embeddingRuntime`, since the model-download decision has two entry
-points, boot and a live `index.reembed` call) — so a demo-rooted gateway skips all five. The sync
+`embeddingRuntime`, `extensionsAutoUpdate`, plus the two above — every one of them `!demo`, and
+every consumer derives it from `PlatformPaths.demo`, never the env var, though not all by the same
+route. `assemble.ts`'s `assemblePlatformServices` computes `const bootPolicy = bootPolicyFor(paths)`
+once and threads that value to the reap, the sidecars, `updaterStartupCheck` and `telemetryFlush`;
+`createSchedulerWithMesh` (`syncScheduler`) and the extension auto-update wiring
+(`extensionsAutoUpdate`) each call `bootPolicyFor(paths)` again on the same `paths`;
+`embedding/create-embedding-runtime.ts` calls it on the `paths` it is handed at boot; and
+`ipc/index-reembed-rpc.ts` calls it on a narrowed `{ dataDir, demo }` that
+`ipc/server/dispatchers.ts` builds from `ctx.options.demo` — which `assemble.ts` set from
+`paths.demo === true` when it built the IPC server — because the model-download decision has two
+entry points, boot and a live `index.reembed` call. A demo-rooted gateway therefore skips all five. The sync
 scheduler is the one that cannot
 simply be skipped: `createSchedulerWithMesh` also builds the connector mesh and the
 glossary/decisions/ownership refreshers, which ~15 other type sites assume exist, so a demo gateway

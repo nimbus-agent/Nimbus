@@ -67,19 +67,39 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
   line named the nonexistent `nimbus sync` (there is no such command) instead of
   `nimbus connector sync <service>`.
 
-  Two `ask` defects surfaced while capturing `nimbus --demo ask`'s behaviour for the docs, and both
-  were fixed for every install, not special-cased for the demo. First, `ask`'s own local
-  "no connectors registered" pre-check read `connector.listStatus`, which the demo gate refuses and
-  which the seeder never populates (it writes items directly), so `ask` was unreachable on a
-  seeded demo no matter how much data it held — the CLI now skips that pre-check in a demo root and
-  lets the gateway's own item-count-based empty-index check answer instead. Second, and unrelated to
-  the demo: `LlmRouter.generate` with zero eligible routes threw a bare `Error`, which
+  Two `ask` defects surfaced while capturing `nimbus --demo ask`'s behaviour for the docs. First,
+  and demo-specific: `ask`'s own local "no connectors registered" pre-check keyed on
+  `connector.listStatus` being empty. That method is on the demo gate's allow-list — it is not
+  refused — but the seeder never registers a connector (it writes items directly), so the list is
+  always empty and `ask` was unreachable on a seeded demo no matter how much data it held. The CLI
+  now skips that pre-check in a demo root — a demo special case, deliberately — and lets the
+  gateway's own item-count-based empty-index check answer instead. Second, and unrelated to the
+  demo: `LlmRouter.generate` with zero eligible routes threw a bare `Error`, which
   `agentErrorFromCaughtError` could not recognise (it matches known vendor HTTP failure substrings),
   so it fell through to the raw, unsanitised router message on **every** fresh install with no LLM
-  configured — not only the demo. A new typed `NoLlmProviderError` (`llm/provider-error.ts`) fixes
-  that for everyone; on top of it, the demo prints its own wording (pointing at `nimbus --demo
-  standup`/`expert`/`decisions` rather than the real install's "edit `nimbus.toml`, `nimbus stop &&
-  nimbus start`" text, since that restart command as printed would touch the real gateway).
+  configured. A new typed `NoLlmProviderError` (`llm/provider-error.ts`) fixes that for everyone —
+  and, under `[llm] enforce_air_gap`, now maps to the `air_gap` refusal rather than "no API key",
+  since there an empty route table means remote routes were refused, not absent. On a demo gateway
+  the no-LLM refusal is its own wording (pointing at `nimbus --demo standup`/`expert`/`decisions`
+  rather than the real install's "edit `nimbus.toml`, `nimbus stop && nimbus start`" text, which as
+  printed would touch the real gateway), and it is chosen by the GATEWAY — `runAsk`, from
+  `PlatformPaths.demo` — so the REPL, the TUI (`engine.askStream`) and `nimbus prove "<q>"` get it
+  too, not only `nimbus ask`.
+
+  The final review fixed four more places a demo user could be led out of the demo:
+  `nimbus demo stop` (and every `nimbus demo` re-run) no longer signals the recorded pid unless the
+  recorded socket answers — `gateway.json` survives a reboot, and the pid may since belong to an
+  unrelated process (on Windows SIGTERM is `TerminateProcess`); `nimbus --demo connector list` and
+  `nimbus --demo index health` stop naming `connector auth`/`connector sync`; the `nimbus --demo
+  start` seed hint is keyed on the seed marker rather than on connectors (so a seeded demo is no
+  longer told to seed it); and `nimbus --demo doctor --fix-keyring` refuses, since the fixer acts on
+  the host keyring and the demo's vault is in memory. The demo e2e now points the telemetry and
+  updater endpoints at a local recorder and fails on any request to either — it had left the
+  telemetry endpoint at the production default, so a regression would have posted to production
+  from CI and still passed. Making it able to catch an updater request surfaced a pre-existing
+  bug, fixed for every install: `NIMBUS_UPDATER_URL` and `NIMBUS_UPDATER_DISABLE` were applied only
+  when a `nimbus.toml` existed, so on a first boot — exactly when the startup update check runs —
+  neither did anything.
 
 - **2026-09-18 — An isolated demo root: `nimbus --demo …` / `NIMBUS_DEMO=1` (invariant I41).** The
   first half of the First-Run row's seeded-sandbox work: a second, throwaway Nimbus inside `<data dir>/demo`

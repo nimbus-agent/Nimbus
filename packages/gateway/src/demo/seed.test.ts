@@ -49,6 +49,14 @@ describe("seedDemoCorpus", () => {
     expect(count(db, "SELECT COUNT(*) AS n FROM item")).toBeGreaterThan(80);
     expect(count(db, "SELECT COUNT(*) AS n FROM git_blame_line")).toBeGreaterThan(40);
     expect(count(db, "SELECT COUNT(*) AS n FROM deployment_items")).toBe(r.counts.deployments);
+    // `counts.items` excludes deployments (which `annotateDeployment` also writes as `item` rows)
+    // and the extraction passes' own derived rows (the glossary pass indexes its terms as
+    // `nimbus:glossary_term` items) — pinned so the `DemoSeedResult.counts` doc comment cannot
+    // drift from what it describes.
+    expect(count(db, "SELECT COUNT(*) AS n FROM item WHERE service != 'nimbus'")).toBe(
+      r.counts.items + r.counts.deployments,
+    );
+    expect(count(db, "SELECT COUNT(*) AS n FROM item WHERE service = 'nimbus'")).toBeGreaterThan(0);
     expect(r.tour).toEqual({ whyRef: "src/retry/backoff.ts:42", ownersPath: "src/retry" });
 
     // The files `why` needs on disk exist under the configured root, read back through the real loader.

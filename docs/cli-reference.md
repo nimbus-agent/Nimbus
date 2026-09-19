@@ -112,7 +112,10 @@ What plain `nimbus demo` does, in order:
 4. Unless `--no-tour` is given, tours three agent briefs in order, each preceded by a
    `── [n/3] <title>` header naming the exact command, printed verbatim before it runs:
    `nimbus --demo oncall`, `nimbus --demo why src/retry/backoff.ts:42`,
-   `nimbus --demo owners src/retry`.
+   `nimbus --demo owners src/retry`. Each brief is printed exactly as the gateway renders it, so a
+   command named inside it — a `## Gaps` remediation such as `nimbus owners --refresh` — is written
+   without `--demo` and, pasted as printed, runs against your **real** install; add `--demo` to run
+   it in the demo.
 5. Prints a closing list of four more commands that work without an LLM: `nimbus --demo standup`,
    `nimbus --demo expert payments`, `nimbus --demo decisions`,
    `nimbus --demo stats deployment-frequency --service payment-service`.
@@ -120,6 +123,10 @@ What plain `nimbus demo` does, in order:
 `nimbus demo stop` stops the demo gateway without touching the seeded data — for walking away
 without losing anything (plain `nimbus demo` re-seeds from scratch on its next run regardless).
 `nimbus demo reset` stops it and deletes the whole demo root; nothing else on disk is touched.
+All three signal the recorded demo gateway only after its IPC socket answers: a pid that is alive
+but whose socket does not (the state file outlived a reboot, and the pid may now be some other
+program) is never signalled — the stale state file is removed and the command proceeds as if no
+demo gateway were running.
 
 **Banner.** Every `--demo` command prints one line to stderr, never stdout, so piped output stays
 clean:
@@ -137,7 +144,9 @@ clean:
 credentials or real data into a root that is supposed to hold only the synthetic org.
 `nimbus --demo init` refuses outright, before touching the gateway or `nimbus.toml`, for the same
 reason: its onboarding would otherwise call a refused command and overwrite the seeder's config.
-Rationale: invariant **I41** (`SECURITY-INVARIANTS.md`).
+`nimbus --demo doctor --fix-keyring` (with or without `--dry-run`) refuses too: the fixer acts on the
+host OS keyring, which the demo never uses — its vault is in memory — so run it without `--demo` to
+repair the real keyring. Rationale: invariant **I41** (`SECURITY-INVARIANTS.md`).
 
 **No outbound call.** A demo gateway's sync scheduler is constructed but never started and registers
 no syncable — `forceSync`/`tick`/`pump` all refuse, keyed on a `syncDisabled` constructor option,
@@ -147,10 +156,12 @@ and extension auto-update daemon are all skipped at boot. `nimbus demo` makes no
 request.
 
 **`nimbus --demo ask`.** The demo's seeded `nimbus.toml` configures no `[llm]` section, so on the
-**seeded** demo `ask` exits `1` and prints, to stderr:
+**seeded** demo `ask` exits `1` and prints, to stderr, the demo gateway's own no-LLM refusal — the
+same text the REPL, the TUI and `nimbus --demo prove "<question>"` receive, since the gateway picks
+it, not the client:
 
 ```text
-Nimbus needs an LLM for this command, and the demo does not configure one.
+Nimbus needs an LLM for this command. The demo does not configure one.
 
 Everything in the tour works without one — try:
   nimbus --demo standup
@@ -160,9 +171,12 @@ Everything in the tour works without one — try:
 `ask` works on your real install once an LLM is configured (see nimbus doctor).
 ```
 
-On an **unseeded** demo (before the first `nimbus demo` run, or right after `nimbus demo reset`),
-`ask` instead exits `0` and prints the demo's own empty-index hint to stdout, which points at
-`nimbus demo` rather than the real install's `nimbus connector auth …`:
+With no demo gateway running at all — before the first `nimbus demo`, after `nimbus demo stop`, or
+right after `nimbus demo reset` — `ask` instead fails with the demo root's not-running message
+(`Start with: nimbus --demo start`). Only a demo gateway started with `nimbus --demo start` on an
+**unseeded** root reaches the gateway's empty-index check: `ask` then exits `0` and prints the
+demo's own empty-index hint to stdout, which points at `nimbus demo` rather than the real install's
+`nimbus connector auth …`:
 
 ```text
 No data indexed yet.

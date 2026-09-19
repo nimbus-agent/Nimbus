@@ -62,6 +62,17 @@ export class DemoSeedRefusedError extends Error {
 export interface DemoSeedResult {
   readonly seededAtMs: number;
   readonly corpus: "acme";
+  /**
+   * What the seeder wrote, counted from the corpus rather than from the table afterwards.
+   *
+   * `items` counts the corpus's DIRECT `upsertIndexedItem` writes only — issues, git commits, pull
+   * requests, reviews, CI runs, incidents and messages. It does NOT include deployments, which
+   * `annotateDeployment` also stores as `item` rows (reported separately under `deployments`),
+   * nor the rows the extraction passes derive afterwards (the glossary pass indexes its terms as
+   * `nimbus:glossary_term` items). So on a freshly seeded index the non-`nimbus` item rows number
+   * exactly `items + deployments`, and the table as a whole holds a few more. `nimbus demo` prints
+   * `people` and `items`.
+   */
   readonly counts: {
     readonly people: number;
     readonly items: number;
