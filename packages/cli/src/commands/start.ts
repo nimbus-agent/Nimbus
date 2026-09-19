@@ -3,6 +3,7 @@ import { unlink } from "node:fs/promises";
 import { join } from "node:path";
 import { spinner } from "@clack/prompts";
 import { IPCClient } from "../ipc-client/index.ts";
+import { readDemoSeedMarker } from "../lib/demo-banner.ts";
 import { GatewayLogTailer, truncatePreview } from "../lib/gateway-log-tail.ts";
 import {
   ensureGatewayDirs,
@@ -88,30 +89,18 @@ async function sleep(ms: number): Promise<void> {
   await new Promise<void>((r) => setTimeout(r, ms));
 }
 
-/**
- * `demo` is derived from `CliPlatformPaths.demo === true`, never the env var directly — see
- * `maybePrintFirstRunHints`, the one caller.
- *
- * In the demo root, connector auth/sync are refused by the gateway (the org is seeded by
- * `nimbus demo`, not by connecting services), so the real-install onboarding hint is wrong twice
- * over: wrong install AND a refused command.
- */
+/** The real-install first-run hint: shown once, when no connector is registered yet. */
 export async function printOnboardingHintIfNoConnectors(
   client: IPCClient,
   markerPath: string,
-  demo: boolean,
 ): Promise<void> {
   const rows = await client.call<Array<{ serviceId?: string }>>("connector.listStatus", {});
   if (Array.isArray(rows) && rows.length === 0) {
     console.log("");
-    if (demo) {
-      console.log("Seed the synthetic org with: nimbus demo");
-    } else {
-      console.log("Next — connect a service so the index has data to search:");
-      console.log("  nimbus connector auth github");
-      console.log("  nimbus connector sync github");
-      console.log("  nimbus doctor");
-    }
+    console.log("Next — connect a service so the index has data to search:");
+    console.log("  nimbus connector auth github");
+    console.log("  nimbus connector sync github");
+    console.log("  nimbus doctor");
   }
   try {
     writeFileSync(markerPath, `${new Date().toISOString()}\n`, "utf8");
@@ -120,10 +109,30 @@ export async function printOnboardingHintIfNoConnectors(
   }
 }
 
+/**
+ * The demo root's first-run hint, keyed on the demo SEED marker (`demo-seed.json`, read through
+ * `lib/demo-banner.ts` — the same reader the banner uses), never on connectors or the onboarding
+ * marker. A demo index has no connector rows even when seeded (the seeder writes items directly),
+ * and `nimbus demo` starts its gateway with `--no-wizard`, so it never writes the onboarding
+ * marker either: keyed on either, the hint told a user with a fully seeded demo to seed it.
+ */
+export function printDemoSeedHintIfUnseeded(dataDir: string): void {
+  if (readDemoSeedMarker(dataDir) !== undefined) return;
+  console.log("");
+  console.log("Seed the synthetic org with: nimbus demo");
+}
+
 async function maybePrintFirstRunHints(
   paths: ReturnType<typeof getCliPlatformPaths>,
 ): Promise<void> {
   if (!process.stdout.isTTY || process.env["CI"] === "true") {
+    return;
+  }
+  // Derived from `CliPlatformPaths.demo`, never the env var. In the demo root, connector
+  // auth/sync are refused by the gateway, so the real-install hint below would be wrong twice
+  // over: wrong install AND a refused command.
+  if (paths.demo === true) {
+    printDemoSeedHintIfUnseeded(paths.dataDir);
     return;
   }
   const markerPath = join(paths.dataDir, ONBOARDING_MARKER);
@@ -139,7 +148,7 @@ async function maybePrintFirstRunHints(
     const client = new IPCClient(state.socketPath);
     try {
       await client.connect();
-      await printOnboardingHintIfNoConnectors(client, markerPath, paths.demo === true);
+      await printOnboardingHintIfNoConnectors(client, markerPath);
     } catch {
       /* IPC not ready yet */
     } finally {

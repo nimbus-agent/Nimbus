@@ -114,6 +114,44 @@ describe("runConnector list", () => {
     });
     await runConnector(["list"]);
     expect(out.stdout).toContain("No connectors registered yet");
+    expect(out.stdout).toContain("nimbus connector auth <service>");
+  });
+
+  describe("demo root", () => {
+    // `getCliPlatformPaths()` reads `NIMBUS_DEMO` for real (it is not mocked), so the env var is
+    // the legitimate way to drive it here — `connector.ts` itself branches on `paths.demo`.
+    // Nothing is read or written at those paths: the gateway state and IPC client are mocked.
+    const saved = {
+      demo: process.env["NIMBUS_DEMO"],
+      configDir: process.env["NIMBUS_CONFIG_DIR"],
+      socket: process.env["NIMBUS_GATEWAY_SOCKET"],
+    };
+    const restore = (k: string, v: string | undefined): void => {
+      if (v === undefined) delete process.env[k];
+      else process.env[k] = v;
+    };
+    beforeEach(() => {
+      delete process.env["NIMBUS_CONFIG_DIR"];
+      delete process.env["NIMBUS_GATEWAY_SOCKET"];
+      process.env["NIMBUS_DEMO"] = "1";
+    });
+    afterEach(() => {
+      restore("NIMBUS_DEMO", saved.demo);
+      restore("NIMBUS_CONFIG_DIR", saved.configDir);
+      restore("NIMBUS_GATEWAY_SOCKET", saved.socket);
+    });
+
+    it("an empty list says the demo has no connectors and names no refused command", async () => {
+      const ipc = createMockIpcClient([[]]);
+      setFixture({
+        gatewayState: { socketPath: FAKE_SOCKET_PATH },
+        ipcClient: { call: ipc.client.call, connect: () => {}, disconnect: () => {} },
+      });
+      await runConnector(["list"]);
+      expect(out.stdout).toContain("The demo has no connectors");
+      expect(out.stdout).toContain("nimbus demo");
+      expect(out.stdout).not.toContain("connector auth");
+    });
   });
 });
 

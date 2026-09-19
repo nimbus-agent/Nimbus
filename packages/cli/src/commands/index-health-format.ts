@@ -99,6 +99,11 @@ export interface FormatOptions {
   readonly noColor: boolean;
   /** List connectors holding zero items. Off by default — see `visibleConnectors`. */
   readonly all?: boolean;
+  /**
+   * The demo root (I41), from `CliPlatformPaths.demo` — never the env var. Its index is seeded by
+   * `nimbus demo`, and `connector sync` is refused there, so the empty-index hint changes.
+   */
+  readonly demo?: boolean;
 }
 
 /**
@@ -126,7 +131,9 @@ function confidenceBlock(r: IndexHealthReport, opts: FormatOptions): string[] {
     // Never render null as 0. A brand-new install scoring "0/100" reads as a verdict on the
     // product, when the truth is that there is nothing indexed to judge yet.
     return [
-      "  Confidence   —  (the index is empty; run `nimbus connector sync <service>` first)",
+      opts.demo === true
+        ? "  Confidence   —  (the demo index is empty; run `nimbus demo` to seed it)"
+        : "  Confidence   —  (the index is empty; run `nimbus connector sync <service>` first)",
       "",
     ];
   }

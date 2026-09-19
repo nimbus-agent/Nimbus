@@ -8,6 +8,7 @@ import { createMockIpcClient } from "../../test/helpers/mock-ipc-client.ts";
 import type { IPCClient } from "../ipc-client/index.ts";
 import type { CliPlatformPaths } from "../paths.ts";
 import {
+  DEMO_FIX_KEYRING_REFUSAL,
   type DoctorCoreDeps,
   type DoctorEnv,
   type DoctorGatewayState,
@@ -526,6 +527,57 @@ describe("runDoctor --fix-keyring wiring", () => {
       expect(process.exitCode).toBe(0);
     }
   });
+
+  // `--fix-keyring` acts on the HOST keyring, which no demo root contains; a demo gateway's vault
+  // is the in-memory EphemeralVault (I41 clause 3). Decided from the resolved paths' `demo`, so
+  // these inject it there — never through the env var.
+  for (const flags of [["--fix-keyring"], ["--fix-keyring", "--dry-run"]]) {
+    it(`demo: ${flags.join(" ")} is refused and never touches the keyring fixer`, async () => {
+      let fixerCalls = 0;
+      const count = (): null => {
+        fixerCalls += 1;
+        return null;
+      };
+      await runDoctor(
+        flags,
+        makeDeps({
+          getCliPlatformPaths: (): CliPlatformPaths => ({ ...FAKE_PATHS, demo: true }),
+          fixKeyringDeps: makeFixKeyringDeps({
+            statMode: count,
+            homeDir: () => {
+              fixerCalls += 1;
+              return "/home/tester";
+            },
+            listDir: () => {
+              fixerCalls += 1;
+              return [];
+            },
+            exec: {
+              findSecretTool: () => {
+                fixerCalls += 1;
+                return "/usr/bin/secret-tool";
+              },
+              lookupStderr: () => "",
+              hasBinary: () => {
+                fixerCalls += 1;
+                return true;
+              },
+              runQuery: () => {
+                fixerCalls += 1;
+                return { code: 0, stdout: "", stderr: "" };
+              },
+            },
+          }),
+        }),
+      );
+      expect(out.stderr).toContain(DEMO_FIX_KEYRING_REFUSAL);
+      expect(out.stderr).toContain("in-memory vault");
+      expect(out.stdout).not.toMatch(/not applicable|0700|already exists/i);
+      expect(out.stdout).not.toContain("Gateway:");
+      expect(fixerCalls).toBe(0);
+      expect(process.exitCode).toBe(1);
+    });
+  }
 
   it("--fix-keyring --dry-run reports the plan without exit-2 refusal noise", async () => {
     await runDoctor(

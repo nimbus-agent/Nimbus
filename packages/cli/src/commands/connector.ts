@@ -14,6 +14,7 @@ import { parseDurationToMs } from "../lib/parse-duration.ts";
 import { BATCH_RPC_TIMEOUT_MS, INTERACTIVE_RPC_TIMEOUT_MS } from "../lib/rpc-timeouts.ts";
 import { stripTrailingSlashes } from "../lib/strip-trailing-slashes.ts";
 import { withGatewayIpc } from "../lib/with-gateway-ipc.ts";
+import { getCliPlatformPaths } from "../paths.ts";
 
 type SyncStatus = {
   serviceId: string;
@@ -972,7 +973,14 @@ async function runConnectorList(opts: { json?: boolean } = {}): Promise<void> {
     return;
   }
   if (rows.length === 0) {
-    console.log("No connectors registered yet. Use: nimbus connector auth <service>");
+    // In the demo root this is ALWAYS empty — the seeder writes items directly and registers no
+    // connector — and `connector auth` is refused there (I41 clause 6), so the real-install hint
+    // would name a refused command. Derived from `CliPlatformPaths.demo`, never the env var.
+    console.log(
+      getCliPlatformPaths().demo === true
+        ? "The demo has no connectors — its data is seeded by `nimbus demo`, not synced from a service."
+        : "No connectors registered yet. Use: nimbus connector auth <service>",
+    );
     return;
   }
   const errCap = 40;
