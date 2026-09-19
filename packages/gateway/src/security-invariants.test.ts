@@ -4554,4 +4554,51 @@ describe("I41 — a demo-rooted process never reaches the real install", () => {
       /autoUpdateRegistryUrl !== "" &&\s*!autoUpdateDisabled &&\s*bootPolicyFor\(paths\)\.extensionsAutoUpdate\s*\) \{/,
     );
   });
+
+  test("clause 5/6 wiring: assemble.ts hands the IPC server `demo: paths.demo === true` in the options literal, never reassigned, before the ONE createIpcServer call", async () => {
+    // `ctx.options.demo` is what BOTH the `demo.seed` claim (clause 5) and the `dispatchMethod`
+    // write gate (clause 6) read; the sub-dispatcher tests above prove they honour it, and this is
+    // the link that sets it from the resolved paths. Dropping the line leaves `demo` undefined —
+    // every demo gateway would then answer `demo.seed` with Method not found and admit every
+    // refused write, and every test that builds its own ctx would still pass.
+    const src = await read("packages/gateway/src/platform/assemble.ts");
+    const literalAt = src.indexOf("const ipcOpts: Parameters<typeof createIpcServer>[0] = {");
+    expect(literalAt).toBeGreaterThan(-1);
+    const literalEnd = src.indexOf("\n  };", literalAt);
+    expect(literalEnd).toBeGreaterThan(literalAt);
+    expect(src.slice(literalAt, literalEnd)).toMatch(/\n {4}demo: paths\.demo === true,\n/);
+    // Exactly one `demo:` key in the whole file's IPC wiring, and no later override.
+    expect(src.match(/\bdemo: paths\.demo === true\b/g)?.length).toBe(1);
+    expect(src).not.toMatch(/ipcOpts\.demo\s*=/);
+    expect(src).not.toMatch(/ipcOpts\s*=\s*\{/);
+    // ORDER: the literal is built before the one server construction that consumes it.
+    // (Code lines only: two `//` comments in the file also name `createIpcServer(`.)
+    expect(src.match(/^(?![ \t]*\/\/).*\bcreateIpcServer\(/gm)?.length).toBe(1);
+    const serverAt = src.indexOf("const ipc = createIpcServer(ipcOpts);");
+    expect(serverAt).toBeGreaterThan(literalEnd);
+  });
+
+  test("clause 6 wiring: createEmbeddingRuntimeNonBlocking returns null on the boot policy BEFORE it builds any runtime", async () => {
+    // The boot-path half of the embedding gate (`index.reembed` is the other half, pinned above).
+    // Behind this check, `createDeferredEmbeddingRuntime` → `createEmbeddingRuntime` would load or
+    // download the local MiniLM model on a demo gateway.
+    const src = await read("packages/gateway/src/embedding/create-embedding-runtime.ts");
+    expect(src).toMatch(/import \{ bootPolicyFor \} from "\.\.\/platform\/demo-boot\.ts";/);
+    const fnAt = src.indexOf("export function createEmbeddingRuntimeNonBlocking(");
+    expect(fnAt).toBeGreaterThan(-1);
+    const fnEnd = src.indexOf("\n}\n", fnAt);
+    expect(fnEnd).toBeGreaterThan(fnAt);
+    const body = src.slice(fnAt, fnEnd);
+    // The FIRST statement of the body is the guard, on the function's own `paths` parameter, and
+    // it returns — not logs, not falls through.
+    expect(body).toMatch(
+      /\): EmbeddingRuntime \| null \{\s*if \(!bootPolicyFor\(paths\)\.embeddingRuntime\) \{\s*return null;\s*\}/,
+    );
+    // ORDER: the guard precedes every runtime construction in the body.
+    const guardAt = body.indexOf("if (!bootPolicyFor(paths).embeddingRuntime)");
+    for (const construction of ["createDeferredEmbeddingRuntime(", "createEmbeddingRuntime(db"]) {
+      const at = body.indexOf(construction);
+      expect(at).toBeGreaterThan(guardAt);
+    }
+  });
 });
