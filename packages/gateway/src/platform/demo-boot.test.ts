@@ -18,6 +18,10 @@ describe("bootPolicyFor", () => {
       reapAppContainers: true,
       envSidecars: true,
       syncScheduler: true,
+      updaterStartupCheck: true,
+      telemetryFlush: true,
+      embeddingRuntime: true,
+      extensionsAutoUpdate: true,
     });
   });
 
@@ -26,6 +30,10 @@ describe("bootPolicyFor", () => {
       reapAppContainers: false,
       envSidecars: false,
       syncScheduler: false,
+      updaterStartupCheck: false,
+      telemetryFlush: false,
+      embeddingRuntime: false,
+      extensionsAutoUpdate: false,
     });
   });
 });

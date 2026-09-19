@@ -807,6 +807,37 @@ describe("createEmbeddingRuntimeNonBlocking", () => {
     }
   });
 
+  test("a demo gateway gets no embedding runtime at all (never downloads the model)", () => {
+    const h = makeHarness({ migrateTo: 30 });
+    try {
+      const demoPaths: PlatformPaths = { ...h.paths, demo: true };
+      let routingFactoryCalls = 0;
+      const rt = createEmbeddingRuntimeNonBlocking(
+        h.db,
+        demoPaths,
+        silentLogger,
+        defaultToml("hybrid"),
+        true,
+        h.vault,
+        {
+          overrides: {
+            // Would be reached by the hybrid path's model load if the demo gate did not
+            // short-circuit FIRST — never invoked proves the runtime was refused before any
+            // download seam ran.
+            routingRuntimeFactory: () => {
+              routingFactoryCalls += 1;
+              return new Promise<EmbeddingRuntime | null>(() => {});
+            },
+          },
+        },
+      );
+      expect(rt).toBeNull();
+      expect(routingFactoryCalls).toBe(0);
+    } finally {
+      h.cleanup();
+    }
+  });
+
   test("NIMBUS_SKIP_EMBEDDING_RUNTIME=1 still means no runtime at all", () => {
     const h = makeHarness({ migrateTo: 30 });
     const prev = process.env["NIMBUS_SKIP_EMBEDDING_RUNTIME"];

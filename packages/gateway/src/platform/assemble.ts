@@ -1957,7 +1957,11 @@ function maybeStartAutoUpdateRuntime(deps: {
   let autoUpdateRuntime: AutoUpdateRuntime | undefined;
   const autoUpdateRegistryUrl = (process.env["NIMBUS_EXTENSIONS_REGISTRY_URL"] ?? "").trim();
   const autoUpdateDisabled = process.env["NIMBUS_EXTENSIONS_DISABLE_AUTO_UPDATE"] === "1";
-  if (autoUpdateRegistryUrl !== "" && !autoUpdateDisabled) {
+  if (
+    autoUpdateRegistryUrl !== "" &&
+    !autoUpdateDisabled &&
+    bootPolicyFor(paths).extensionsAutoUpdate
+  ) {
     const extensionsCfg = loadNimbusExtensionsFromConfigDir(paths.configDir);
     autoUpdateRuntime = createAutoUpdateRuntime({
       db,
@@ -4284,18 +4288,22 @@ export async function assemblePlatformServices(
       );
   }
 
-  wireUpdaterIntoIpc(paths.configDir, ipc, syncLogger);
+  if (bootPolicy.updaterStartupCheck) {
+    wireUpdaterIntoIpc(paths.configDir, ipc, syncLogger);
+  }
 
   const gatewayAssemblyMs = Math.max(0, Math.round(performance.now() - assemblyStartedMs));
-  const telemetryStop = startTelemetryFlushScheduler({
-    dataDir: paths.dataDir,
-    activeTomlPath,
-    getDatabase: () => db,
-    gatewayVersion: GATEWAY_VERSION,
-    logger: syncLogger,
-    coldStartMs: gatewayAssemblyMs,
-  });
-  sidecarStops.push(telemetryStop.stop);
+  if (bootPolicy.telemetryFlush) {
+    const telemetryStop = startTelemetryFlushScheduler({
+      dataDir: paths.dataDir,
+      activeTomlPath,
+      getDatabase: () => db,
+      gatewayVersion: GATEWAY_VERSION,
+      logger: syncLogger,
+      coldStartMs: gatewayAssemblyMs,
+    });
+    sidecarStops.push(telemetryStop.stop);
+  }
 
   return {
     vault,
