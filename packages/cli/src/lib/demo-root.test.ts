@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
+import { createHash } from "node:crypto";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 
 import type { CliPlatformPaths } from "../paths.ts";
 import {
@@ -68,9 +69,20 @@ describe("demoSocketPathFor (cli mirror)", () => {
     expect(demoSocketPathFor(pipe, join("A", "demo"))).toBe(s);
     expect(demoSocketPathFor(pipe, join("B", "demo"))).not.toBe(s);
   });
-  test("unix socket: same directory, demo basename", () => {
+  test("unix socket: same directory, demo basename with a -<12 hex> suffix derived from the demo root", () => {
     const real = join("run", "nimbus-gateway.sock");
-    expect(demoSocketPathFor(real, "x")).toBe(join(dirname(real), "nimbus-gateway-demo.sock"));
+    const s = demoSocketPathFor(real, join("A", "demo"));
+    expect(dirname(s)).toBe(dirname(real));
+    expect(basename(s)).toMatch(/^nimbus-gateway-demo-[0-9a-f]{12}\.sock$/);
+  });
+
+  test("unix socket: suffix deterministic per root, distinct across roots — two demo roots sharing a socket directory must not collide", () => {
+    const real = join("run", "nimbus-gateway.sock");
+    const a1 = demoSocketPathFor(real, join("A", "demo"));
+    const a2 = demoSocketPathFor(real, join("A", "demo"));
+    const b = demoSocketPathFor(real, join("B", "demo"));
+    expect(a1).toBe(a2);
+    expect(a1).not.toBe(b);
   });
 });
 
@@ -85,11 +97,12 @@ describe("deriveDemoPaths (cli mirror)", () => {
       tempDir: join(tmpdir(), "nimbus"),
     };
     const root = demoRootFor(real.dataDir);
+    const hash = createHash("sha256").update(root, "utf8").digest("hex").slice(0, 12);
     expect(deriveDemoPaths(real)).toEqual({
       configDir: join(root, "config"),
       dataDir: join(root, "data"),
       logDir: join(root, "data", "logs"),
-      socketPath: join("R", "run", "nimbus-gateway-demo.sock"),
+      socketPath: join("R", "run", `nimbus-gateway-demo-${hash}.sock`),
       extensionsDir: join(root, "data", "extensions"),
       tempDir: join(tmpdir(), DEMO_TEMP_DIRNAME),
       demo: true,

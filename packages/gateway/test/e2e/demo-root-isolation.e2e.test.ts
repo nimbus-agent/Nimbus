@@ -6,7 +6,7 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync } from "node:fs";
 import net from "node:net";
 import { tmpdir } from "node:os";
-import { isAbsolute, join, relative } from "node:path";
+import { basename, dirname, isAbsolute, join, relative } from "node:path";
 
 const ENTRY = join(import.meta.dir, "..", "..", "src", "index.ts");
 const BOOT_TIMEOUT_MS = 60_000;
@@ -203,7 +203,8 @@ describe("I41 e2e: the real gateway entry, demo-rooted", () => {
       expect(socketPath).toMatch(/^\\\\\.\\pipe\\nimbus-gateway-demo-[0-9a-f]{12}$/);
     } else {
       const dir = process.platform === "darwin" ? dirs.tmp : dirs.run;
-      expect(socketPath).toBe(join(dir, "nimbus-gateway-demo.sock"));
+      expect(dirname(socketPath)).toBe(dir);
+      expect(basename(socketPath)).toMatch(/^nimbus-gateway-demo-[0-9a-f]{12}\.sock$/);
     }
   });
 

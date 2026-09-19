@@ -17,7 +17,7 @@ export const DEMO_ENV = "NIMBUS_DEMO";
 export const DEMO_DIRNAME = "demo";
 export const DEMO_TEMP_DIRNAME = "nimbus-demo";
 
-const DEMO_UNIX_SOCKET_BASENAME = "nimbus-gateway-demo.sock";
+const DEMO_UNIX_SOCKET_PREFIX = "nimbus-gateway-demo";
 /** A demo process honouring either of these would open the REAL config/Vault or dial the REAL gateway. */
 const REAL_ROOT_OVERRIDES = ["NIMBUS_CONFIG_DIR", "NIMBUS_GATEWAY_SOCKET"] as const;
 
@@ -50,18 +50,20 @@ export function demoRootFor(realDataDir: string): string {
 }
 
 /**
- * The demo IPC endpoint. A Windows named pipe is MACHINE-global, so a fixed name would let a
- * process booted on temp roots (a test) reach a developer's live demo gateway; the suffix is a
- * hash of the demo root, so each root owns its own pipe and the CLI and gateway still agree.
- * Pipe detection reuses `dirs.ts`'s case-insensitive `isWindowsNamedPipe`, the gateway's one
- * definition of "is this a pipe".
+ * The demo IPC endpoint. The suffix is a hash of the demo root on EVERY OS, so each demo root owns
+ * its own endpoint and the CLI and gateway still agree: a Windows named pipe is MACHINE-global, so a
+ * fixed name would let a process booted on temp roots (a test) reach a developer's live demo
+ * gateway, and a unix socket's DIRECTORY can just as easily be shared by two demo roots (e.g. the
+ * same `XDG_RUNTIME_DIR` with two different `XDG_DATA_HOME`s), so a fixed basename there would let
+ * two demo gateways collide on one socket. Pipe detection reuses `dirs.ts`'s case-insensitive
+ * `isWindowsNamedPipe`, the gateway's one definition of "is this a pipe".
  */
 export function demoSocketPathFor(realSocketPath: string, demoRoot: string): string {
+  const h = createHash("sha256").update(demoRoot, "utf8").digest("hex").slice(0, 12);
   if (isWindowsNamedPipe(realSocketPath)) {
-    const h = createHash("sha256").update(demoRoot, "utf8").digest("hex").slice(0, 12);
     return `${realSocketPath}-demo-${h}`;
   }
-  return join(dirname(realSocketPath), DEMO_UNIX_SOCKET_BASENAME);
+  return join(dirname(realSocketPath), `${DEMO_UNIX_SOCKET_PREFIX}-${h}.sock`);
 }
 
 /** Every path relocated inside `<realDataDir>/demo`; no real path lies inside it (I41 clause 1). */

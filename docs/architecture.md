@@ -149,7 +149,8 @@ export interface PlatformPaths {
 `<dataDir>/demo`, resolved by `platform/demo-root.ts` (mirrored in `cli/src/lib/demo-root.ts`, held
 equal by `scripts/parity/demo-root.parity.test.ts`). Every config/data/log/extensions path moves into
 that subtree, `tempDir` becomes `<tmpdir>/nimbus-demo`, and the IPC endpoint gets a demo name (hashed
-from the demo root on Windows, where pipes are machine-global). The resolvers mark the result
+from the demo root on every OS — Windows pipes are machine-global, and a unix socket's directory can
+be shared by two demo roots). The resolvers mark the result
 `PlatformPaths.demo = true`, and that field — never the env var — is the one signal the rest of the
 gateway reads: the vault factory returns an in-memory `EphemeralVault`, and `platform/demo-boot.ts`
 switches off the Windows AppContainer boot reap and the env-selected HTTP/metrics sidecars, the three

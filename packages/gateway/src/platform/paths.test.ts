@@ -292,4 +292,17 @@ describe("NIMBUS_DEMO=1 relocates every resolver into <realDataDir>/demo", () =>
       expect(() => resolve()).toThrow("NIMBUS_CONFIG_DIR");
     });
   }
+
+  // The reviewer's requested regression: on Linux, socketPath is derived from XDG_RUNTIME_DIR while
+  // dataDir (and so the demo root) is derived from XDG_DATA_HOME. Two demo roots that share a socket
+  // directory but differ in data directory must still resolve to two DIFFERENT sockets, or the
+  // second gateway cannot bind and a CLI can reach the OTHER demo's gateway.
+  test("linux: two demo roots sharing XDG_RUNTIME_DIR but differing in XDG_DATA_HOME resolve to different socketPaths", () => {
+    process.env["NIMBUS_DEMO"] = "1";
+    process.env["XDG_DATA_HOME"] = join(FAKE_TMPDIR, "xdg-data-one");
+    const one = createLinuxPaths();
+    process.env["XDG_DATA_HOME"] = join(FAKE_TMPDIR, "xdg-data-two");
+    const two = createLinuxPaths();
+    expect(one.socketPath).not.toBe(two.socketPath);
+  });
 });

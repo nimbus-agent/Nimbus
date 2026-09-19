@@ -15,7 +15,7 @@ export const DEMO_TEMP_DIRNAME = "nimbus-demo";
 
 /** Lower-case; compared against a lower-cased path, matching the gateway's `isWindowsNamedPipe`. */
 const WINDOWS_PIPE_PREFIX = "\\\\.\\pipe\\";
-const DEMO_UNIX_SOCKET_BASENAME = "nimbus-gateway-demo.sock";
+const DEMO_UNIX_SOCKET_PREFIX = "nimbus-gateway-demo";
 const REAL_ROOT_OVERRIDES = ["NIMBUS_CONFIG_DIR", "NIMBUS_GATEWAY_SOCKET"] as const;
 
 export type EnvReader = (name: string) => string | undefined;
@@ -48,12 +48,21 @@ export function demoRootFor(realDataDir: string): string {
   return join(realDataDir, DEMO_DIRNAME);
 }
 
+/**
+ * The demo IPC endpoint. The suffix is a hash of the demo root on EVERY OS, so each demo root owns
+ * its own endpoint and the CLI and gateway still agree: a Windows named pipe is MACHINE-global, so a
+ * fixed name would let a process booted on temp roots (a test) reach a developer's live demo
+ * gateway, and a unix socket's DIRECTORY can just as easily be shared by two demo roots (e.g. the
+ * same `XDG_RUNTIME_DIR` with two different `XDG_DATA_HOME`s), so a fixed basename there would let
+ * two demo gateways collide on one socket. Pipe detection is the gateway's `isWindowsNamedPipe`
+ * inlined, since the CLI may not import gateway source.
+ */
 export function demoSocketPathFor(realSocketPath: string, demoRoot: string): string {
+  const h = createHash("sha256").update(demoRoot, "utf8").digest("hex").slice(0, 12);
   if (realSocketPath.toLowerCase().startsWith(WINDOWS_PIPE_PREFIX)) {
-    const h = createHash("sha256").update(demoRoot, "utf8").digest("hex").slice(0, 12);
     return `${realSocketPath}-demo-${h}`;
   }
-  return join(dirname(realSocketPath), DEMO_UNIX_SOCKET_BASENAME);
+  return join(dirname(realSocketPath), `${DEMO_UNIX_SOCKET_PREFIX}-${h}.sock`);
 }
 
 export function deriveDemoPaths(real: CliPlatformPaths): CliPlatformPaths {
