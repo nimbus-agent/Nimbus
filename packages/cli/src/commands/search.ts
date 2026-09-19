@@ -1,4 +1,5 @@
 import { IPCClient } from "../ipc-client/index.ts";
+import { gatewayStartCommand } from "../lib/gateway-not-running.ts";
 import { readGatewayState } from "../lib/gateway-process.ts";
 import { parseSearchRankedResponse } from "../lib/search-ranked-response.ts";
 import { getCliPlatformPaths } from "../paths.ts";
@@ -94,7 +95,9 @@ export async function runSearch(args: string[]): Promise<void> {
   const paths = getCliPlatformPaths();
   const state = await readGatewayState(paths);
   if (state === undefined) {
-    throw new Error("Gateway is not running (start with: nimbus start)");
+    throw new Error(
+      `Gateway is not running (start with: ${gatewayStartCommand(paths.demo === true)})`,
+    );
   }
   const client = new IPCClient(state.socketPath);
   try {

@@ -1,3 +1,4 @@
+import { gatewayStartCommand } from "../lib/gateway-not-running.ts";
 import {
   type AdapterDeps,
   createProductionDeps,
@@ -5,6 +6,7 @@ import {
   runMcpServerStdio,
   TOOL_SPECS,
 } from "../mcp/adapter.ts";
+import { getCliPlatformPaths } from "../paths.ts";
 
 export const MCP_SERVER_CONFIG = {
   mcpServers: {
@@ -54,7 +56,7 @@ function wrapList(names: readonly string[], width: number): string {
  * `session.declareKind` support is not knowable here. Printing a live verdict would mean opening a
  * connection just to render help. The counts are derived from the spec lists, so they cannot drift.
  */
-export function formatHelp(): string {
+export function formatHelp(demo: boolean = false): string {
   const names = TOOL_SPECS.map((s) => s.name);
   const indexToolCount = INDEX_TOOL_SPECS.length;
   const agentToolCount = TOOL_SPECS.length - indexToolCount;
@@ -68,7 +70,7 @@ Read-only tools (${String(names.length)}):
 ${wrapList(names, HELP_WIDTH)}
 
 Every tool is read-only: none reaches a write or HITL-gated action. The Gateway
-must be running (start it with: nimbus start).
+must be running (start it with: ${gatewayStartCommand(demo)}).
 
 On a Gateway too old to support session.declareKind, the ${String(agentToolCount)} agent tools are
 withheld and only the ${String(indexToolCount)} index tools are served: such a Gateway cannot record an
@@ -105,7 +107,7 @@ export async function runMcpServer(
 ): Promise<void> {
   const parsed = parseMcpServerArgs(args);
   if (parsed.kind === "help") {
-    console.log(formatHelp());
+    console.log(formatHelp(getCliPlatformPaths().demo === true));
     return;
   }
   if (parsed.kind === "config") {

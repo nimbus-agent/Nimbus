@@ -2,9 +2,17 @@ import { platform } from "node:os";
 
 import { PlatformInitError } from "../platform/errors.ts";
 import type { PlatformPaths } from "../platform/paths.ts";
+import { EphemeralVault } from "./ephemeral.ts";
 import type { NimbusVault } from "./nimbus-vault.ts";
 
 export async function createNimbusVault(paths: PlatformPaths): Promise<NimbusVault> {
+  // I41 clause 3: a demo-rooted process never opens the OS credential store. On macOS (Keychain,
+  // fixed service `dev.nimbus`) and Linux (libsecret) that store is NOT under configDir, so path
+  // isolation alone would hand a demo gateway the owner's real credentials.
+  if (paths.demo === true) {
+    return new EphemeralVault();
+  }
+
   const p = platform();
   switch (p) {
     case "win32":

@@ -12,6 +12,8 @@ const TRACKED_ENV_KEYS = [
   "APPDATA",
   "LOCALAPPDATA",
   "NIMBUS_CONFIG_DIR",
+  "NIMBUS_DEMO",
+  "NIMBUS_GATEWAY_SOCKET",
   "TMPDIR",
   "XDG_CONFIG_HOME",
   "XDG_DATA_HOME",
@@ -235,5 +237,72 @@ describe("NIMBUS_GATEWAY_SOCKET override", () => {
     const before = createLinuxPaths().socketPath;
     process.env["NIMBUS_GATEWAY_SOCKET"] = "";
     expect(createLinuxPaths().socketPath).toBe(before);
+  });
+});
+
+describe("NIMBUS_DEMO=1 relocates every resolver into <realDataDir>/demo", () => {
+  let snapshot: Record<string, string | undefined>;
+  // HOME/USERPROFILE are saved and restored HERE rather than added to TRACKED_ENV_KEYS: `clearEnv()`
+  // deletes every tracked key in the OTHER describes' beforeEach, and those tests compute their
+  // expectations from the real `homedir()`.
+  let savedHome: string | undefined;
+  let savedUserProfile: string | undefined;
+  beforeEach(() => {
+    snapshot = snapshotEnv();
+    clearEnv();
+    savedHome = process.env["HOME"];
+    savedUserProfile = process.env["USERPROFILE"];
+    process.env["HOME"] = join(FAKE_TMPDIR, "home");
+    process.env["USERPROFILE"] = join(FAKE_TMPDIR, "home");
+    process.env["APPDATA"] = join(FAKE_TMPDIR, "roaming");
+    process.env["LOCALAPPDATA"] = join(FAKE_TMPDIR, "local");
+    process.env["XDG_CONFIG_HOME"] = join(FAKE_TMPDIR, "xdg-config");
+    process.env["XDG_DATA_HOME"] = join(FAKE_TMPDIR, "xdg-data");
+    process.env["XDG_RUNTIME_DIR"] = join(FAKE_TMPDIR, "run");
+    process.env["TMPDIR"] = FAKE_TMPDIR;
+  });
+  afterEach(() => {
+    restoreEnv(snapshot);
+    if (savedHome === undefined) delete process.env["HOME"];
+    else process.env["HOME"] = savedHome;
+    if (savedUserProfile === undefined) delete process.env["USERPROFILE"];
+    else process.env["USERPROFILE"] = savedUserProfile;
+  });
+
+  const RESOLVERS = [
+    ["win32", createWindowsPaths],
+    ["darwin", createDarwinPaths],
+    ["linux", createLinuxPaths],
+  ] as const;
+
+  for (const [os, resolve] of RESOLVERS) {
+    test(`${os}: demo paths are the derivation of the real ones`, () => {
+      const real = resolve();
+      process.env["NIMBUS_DEMO"] = "1";
+      const demo = resolve();
+      expect(demo.demo).toBe(true);
+      expect(demo.configDir).toBe(join(real.dataDir, "demo", "config"));
+      expect(demo.dataDir).toBe(join(real.dataDir, "demo", "data"));
+      expect(real.demo).toBeUndefined();
+    });
+
+    test(`${os}: refuses NIMBUS_DEMO=1 with NIMBUS_CONFIG_DIR`, () => {
+      process.env["NIMBUS_DEMO"] = "1";
+      process.env["NIMBUS_CONFIG_DIR"] = join(FAKE_TMPDIR, "elsewhere");
+      expect(() => resolve()).toThrow("NIMBUS_CONFIG_DIR");
+    });
+  }
+
+  // The reviewer's requested regression: on Linux, socketPath is derived from XDG_RUNTIME_DIR while
+  // dataDir (and so the demo root) is derived from XDG_DATA_HOME. Two demo roots that share a socket
+  // directory but differ in data directory must still resolve to two DIFFERENT sockets, or the
+  // second gateway cannot bind and a CLI can reach the OTHER demo's gateway.
+  test("linux: two demo roots sharing XDG_RUNTIME_DIR but differing in XDG_DATA_HOME resolve to different socketPaths", () => {
+    process.env["NIMBUS_DEMO"] = "1";
+    process.env["XDG_DATA_HOME"] = join(FAKE_TMPDIR, "xdg-data-one");
+    const one = createLinuxPaths();
+    process.env["XDG_DATA_HOME"] = join(FAKE_TMPDIR, "xdg-data-two");
+    const two = createLinuxPaths();
+    expect(one.socketPath).not.toBe(two.socketPath);
   });
 });

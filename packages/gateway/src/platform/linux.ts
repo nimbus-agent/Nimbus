@@ -335,7 +335,9 @@ export function assertLinuxSecretToolAvailable(
 }
 
 export async function create(): Promise<PlatformServices> {
-  assertLinuxSecretToolAvailable();
   const paths = createLinuxPaths();
+  if (paths.demo !== true) {
+    assertLinuxSecretToolAvailable();
+  }
   return assemblePlatformServices(paths);
 }

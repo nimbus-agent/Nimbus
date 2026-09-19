@@ -20,6 +20,7 @@ These flags are accepted by most commands, which silently ignore any dash-argume
 | `--version`, `-v` | Print Nimbus version and exit |
 | `NO_COLOR` (env var, not a flag) | Disable ANSI colour output. There is no `--no-color` flag. |
 | `--json` | Machine-readable JSON output — **per-command**, not global. Only the commands whose Options table or examples list it change their output; anywhere else it is silently ignored (top level, `--json` only suppresses the interactive banner). |
+| `--demo` | Run this command against the isolated **demo root** (`<data dir>/demo`) instead of your real install: its own config, data and logs, plus a separate IPC endpoint and an in-memory (never-persisted) vault in place of the OS credential store. Global — stripped before the command runs, so `nimbus --demo status` runs `status`. Equivalent to `NIMBUS_DEMO=1`. The demo root starts empty. See invariant I41. |
 
 ### The `--json` contract
 
@@ -4745,7 +4746,8 @@ nimbus lan remove abc123
 |---|---|
 | `NIMBUS_TELEMETRY_ENABLED` | Override `[telemetry].enabled` |
 | `NIMBUS_TELEMETRY_ENDPOINT` | Override `[telemetry].endpoint` |
-| `NIMBUS_CONFIG_DIR` | Override the platform config directory — **config only**. There is no data-directory override: the data directory is not relocatable by any `NIMBUS_*` variable (on Linux it follows `XDG_DATA_HOME`). |
+| `NIMBUS_CONFIG_DIR` | Override the platform config directory — **config only**. There is no data-directory override: the data directory is not relocatable by any `NIMBUS_*` variable except `NIMBUS_DEMO=1`, which moves config, data and logs into the isolated demo subtree `<dataDir>/demo` (invariant I41; the one exception is a gateway launched directly from a shell that exports `NIMBUS_GATEWAY_LOG_PATH`, which `nimbus --demo start` always overrides) rather than repointing the real ones (on Linux the real data directory follows `XDG_DATA_HOME`) — and additionally uses a separate IPC endpoint and an in-memory vault, neither of which lives under that subtree. |
+| `NIMBUS_DEMO` | `1` runs the CLI and any Gateway it starts against the isolated demo root (invariant I41). Unset, empty or `0` is off; any other value is refused. Cannot be combined with `NIMBUS_CONFIG_DIR` or `NIMBUS_GATEWAY_SOCKET` — the combination is refused, because a demo process honouring either would reach your real config, Vault or gateway. A demo Gateway opens no OS credential store (an in-memory vault), does not reap Windows AppContainer profiles, and ignores `NIMBUS_HTTP_PORT` / `NIMBUS_METRICS_PORT`. |
 | `NIMBUS_PROFILE` | Set the active profile at launch |
 | `NIMBUS_EMBEDDING_MODEL_DIR` | Path to pre-downloaded MiniLM model weights (headless bundle) |
 | `NIMBUS_EMBEDDINGS` | Set to `false` to disable background embedding generation after index upserts |

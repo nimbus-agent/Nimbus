@@ -78,10 +78,11 @@ import {
   runWorkflowFromFile,
 } from "./commands/index.ts";
 import { createCliFileLogger } from "./lib/cli-logger.ts";
-import { getCliPlatformPaths } from "./paths.ts";
+import { applyDemoFlag } from "./lib/demo-flag.ts";
+import { type CliPlatformPaths, getCliPlatformPaths } from "./paths.ts";
 import { NIMBUS_VERSION } from "./version.ts";
 
-const rawArgv = process.argv.slice(2);
+const rawArgv = applyDemoFlag(process.argv.slice(2), process.env);
 const isInteractiveShell = process.stdin.isTTY === true && process.stdout.isTTY === true;
 
 const isPiped = process.stdout.isTTY !== true;
@@ -201,8 +202,18 @@ async function dispatchCommand(command: string, args: string[]): Promise<void> {
 }
 
 async function main(): Promise<void> {
+  let paths: CliPlatformPaths;
+  try {
+    paths = getCliPlatformPaths();
+  } catch (e) {
+    // A path-resolution refusal (an ambiguous NIMBUS_DEMO value, or NIMBUS_DEMO combined with a
+    // real-root override) must reach the user as a message rather than an unhandled rejection —
+    // and nothing is logged, because the log directory is exactly what failed to resolve.
+    console.error(e instanceof Error ? e.message : String(e));
+    process.exitCode = 1;
+    return;
+  }
   if (!shouldSuppressBanner) intro("Nimbus");
-  const paths = getCliPlatformPaths();
   const { logger } = await createCliFileLogger(paths);
   logger.info({ event: "cli.invoke", argv: process.argv }, "invoke");
 

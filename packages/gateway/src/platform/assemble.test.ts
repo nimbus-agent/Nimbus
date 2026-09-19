@@ -878,4 +878,41 @@ describe("assemblePlatformServices — in-process assembly", () => {
     expect(warning.key).toBe("tone");
     expect(warning.value).toBe("tree");
   }, 30000);
+
+  // I-3(a) (final review, 2026-09-18): `clipHttpBaseUrl` used to be set from `clipHttpPort`
+  // OUTSIDE the `bootPolicy` gate, so a demo gateway with NIMBUS_HTTP_PORT set (inherited from
+  // whatever launched it) still advertised an HTTP origin over `clip.pair`'s `gatewayUrl` even
+  // though `bootPolicy.envSidecars` is false and no HTTP sidecar is listening there — `nimbus
+  // --demo clip pair` would print a URL nothing serves, possibly the REAL gateway's port.
+  it("a demo-rooted gateway with NIMBUS_HTTP_PORT set advertises no clip gatewayUrl", async () => {
+    const paths: PlatformPaths = { ...makePaths(), demo: true };
+    rmSync(paths.configDir, { recursive: true, force: true });
+    mkdirSync(paths.configDir, { recursive: true });
+
+    const discoverFreePort = (): number => {
+      const probe = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch: () => new Response("ok") });
+      const p = probe.port;
+      probe.stop();
+      if (typeof p !== "number") {
+        throw new Error("discoverFreePort: probe did not bind a TCP port");
+      }
+      return p;
+    };
+    const originalHttpPort = process.env["NIMBUS_HTTP_PORT"];
+    processEnvSet("NIMBUS_HTTP_PORT", String(discoverFreePort()));
+    try {
+      services = await assemblePlatformServices(paths, makeInMemoryVault());
+      await services.ipc.start();
+
+      const raw = await rpcOverSocket(services.ipc.listenPath, "clip.pair");
+      const res = JSON.parse(raw) as {
+        result?: { gatewayUrl?: unknown };
+        error?: { message?: string };
+      };
+      expect(res.error).toBeUndefined();
+      expect(res.result?.gatewayUrl).toBeUndefined();
+    } finally {
+      processEnvSet("NIMBUS_HTTP_PORT", originalHttpPort);
+    }
+  }, 30000);
 });

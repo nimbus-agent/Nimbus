@@ -1,4 +1,5 @@
 import { IPCClient } from "../ipc-client/index.ts";
+import { gatewayNotRunningMessage } from "../lib/gateway-not-running.ts";
 import { readGatewayState } from "../lib/gateway-process.ts";
 import { getCliPlatformPaths } from "../paths.ts";
 import { flagValue } from "./_agent-brief-cli.ts";
@@ -230,11 +231,12 @@ export async function runTailCommand(
   deps: TailCommandDeps = defaultTailDeps,
 ): Promise<void> {
   const parsed = parseTailArgs(args);
+  const demo = getCliPlatformPaths().demo === true;
 
   const state = await deps.readState();
 
   if (state === undefined) {
-    deps.writeErr("Gateway is not running. Start with: nimbus start\n");
+    deps.writeErr(`${gatewayNotRunningMessage(demo)}\n`);
     deps.onExit(1);
     return;
   }
@@ -247,7 +249,7 @@ export async function runTailCommand(
     // anymore — rejects here rather than at `readState()` above. From the operator's perspective
     // both mean the same thing, so both get the same documented message rather than a raw
     // connection-error stack trace.
-    deps.writeErr("Gateway is not running. Start with: nimbus start\n");
+    deps.writeErr(`${gatewayNotRunningMessage(demo)}\n`);
     deps.onExit(1);
     return;
   }

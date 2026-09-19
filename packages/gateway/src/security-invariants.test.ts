@@ -1,9 +1,9 @@
 import { Database } from "bun:sqlite";
-import { describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { readdir, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join, relative, resolve, sep } from "node:path";
+import { isAbsolute, join, relative, resolve, sep } from "node:path";
 import {
   checkAgentEmitterImportConfinement,
   checkEgressChokepointConfinement,
@@ -49,6 +49,13 @@ import { XaiProvider } from "./llm/xai-provider.ts";
 import { understandArtifact } from "./multimodal/media-gate.ts";
 import { createGrant, MediaGrantRefusedError } from "./multimodal/media-grant-store.ts";
 import type { VlmProvider } from "./multimodal/vlm/vlm-types.ts";
+import { bootPolicyFor } from "./platform/demo-boot.ts";
+import {
+  createDarwinPaths,
+  createLinuxPaths,
+  createWindowsPaths,
+  type PlatformPaths,
+} from "./platform/paths.ts";
 import { type LocalBaseline, PolicyGate } from "./policy/policy-gate.ts";
 import { signPolicy } from "./policy/policy-signing.ts";
 import { PolicyStore } from "./policy/policy-store.ts";
@@ -70,6 +77,8 @@ import { TribalClusterStore } from "./tribal/cluster-store.ts";
 import { captureToKnowledgeBase } from "./tribal/tribal-write-gate.ts";
 import { encodeBase64 } from "./util/base64.ts";
 import { generateEd25519Keypair } from "./util/ed25519.ts";
+import { EphemeralVault } from "./vault/ephemeral.ts";
+import { createNimbusVault } from "./vault/factory.ts";
 import type { NimbusVault } from "./vault/nimbus-vault.ts";
 
 function baseInvariantWriteCtx() {
@@ -4206,5 +4215,144 @@ describe("I40 — a saved generated tool is durable only under a live signature,
     // every already-approved saved tool's signature verifying after the sweep runs.
     expect(await vault.get(TOOLGEN_SIGNING_PRIVKEY)).toBe("priv-seed");
     expect(await vault.get(TOOLGEN_SIGNING_PUBKEY)).toBe("pub-key");
+  });
+});
+
+describe("I41 — a demo-rooted process never reaches the real install", () => {
+  // HOME/USERPROFILE too: `createDarwinPaths` reads `homedir()`, which follows these in-process
+  // (verified 2026-09-18 on Bun 1.3.14) — so without them the darwin resolver computes paths under
+  // the developer's REAL home. Nothing is written here, but the Global Constraint is unconditional.
+  const ENV_KEYS = [
+    "HOME",
+    "USERPROFILE",
+    "APPDATA",
+    "LOCALAPPDATA",
+    "XDG_CONFIG_HOME",
+    "XDG_DATA_HOME",
+    "XDG_RUNTIME_DIR",
+    "TMPDIR",
+    "NIMBUS_DEMO",
+    "NIMBUS_CONFIG_DIR",
+    "NIMBUS_GATEWAY_SOCKET",
+  ] as const;
+  let saved: Record<string, string | undefined> = {};
+  let currentRoot: string | undefined;
+
+  beforeEach(() => {
+    saved = {};
+    for (const k of ENV_KEYS) {
+      saved[k] = process.env[k];
+      delete process.env[k];
+    }
+    const root = mkdtempSync(join(tmpdir(), "nimbus-i41-"));
+    currentRoot = root;
+    process.env["HOME"] = join(root, "home");
+    process.env["USERPROFILE"] = join(root, "home");
+    process.env["APPDATA"] = join(root, "roaming");
+    process.env["LOCALAPPDATA"] = join(root, "local");
+    process.env["XDG_CONFIG_HOME"] = join(root, "xdg-config");
+    process.env["XDG_DATA_HOME"] = join(root, "xdg-data");
+    process.env["XDG_RUNTIME_DIR"] = join(root, "run");
+    process.env["TMPDIR"] = join(root, "tmp");
+  });
+
+  afterEach(() => {
+    for (const k of ENV_KEYS) {
+      const v = saved[k];
+      if (v === undefined) delete process.env[k];
+      else process.env[k] = v;
+    }
+    if (currentRoot !== undefined) {
+      rmSync(currentRoot, { recursive: true, force: true });
+      currentRoot = undefined;
+    }
+  });
+
+  function isInside(child: string, parent: string): boolean {
+    const rel = relative(parent, child);
+    return rel !== "" && !rel.startsWith("..") && !isAbsolute(rel);
+  }
+
+  /**
+   * Clause (1)+(2). A SUBTREE rule, not "nothing under the real configDir": on macOS configDir and
+   * dataDir are the same directory, so the demo root necessarily sits under the real config dir.
+   * What matters is that every demo path is inside a subtree that holds no real path.
+   */
+  function isolationViolations(real: PlatformPaths, demo: PlatformPaths): string[] {
+    const demoRoot = join(real.dataDir, "demo");
+    const out: string[] = [];
+    for (const k of ["configDir", "dataDir", "logDir", "extensionsDir"] as const) {
+      if (!isInside(demo[k], demoRoot)) out.push(`demo ${k} is outside the demo root: ${demo[k]}`);
+      if (real[k] === demoRoot || isInside(real[k], demoRoot)) {
+        out.push(`real ${k} lies inside the demo root: ${real[k]}`);
+      }
+    }
+    if (demo.tempDir === real.tempDir) out.push(`tempDir is shared: ${demo.tempDir}`);
+    if (demo.socketPath === real.socketPath) out.push(`socket is shared: ${demo.socketPath}`);
+    return out;
+  }
+
+  const RESOLVERS = [
+    ["win32", createWindowsPaths],
+    ["darwin", createDarwinPaths],
+    ["linux", createLinuxPaths],
+  ] as const;
+
+  for (const [os, resolve] of RESOLVERS) {
+    test(`clauses 1–2 (${os}): every demo path is inside <realDataDir>/demo and no real path is`, () => {
+      const real = resolve();
+      process.env["NIMBUS_DEMO"] = "1";
+      const demo = resolve();
+      expect(demo.demo).toBe(true);
+      expect(isolationViolations(real, demo)).toEqual([]);
+    });
+
+    test(`negative control (${os}): without the flag the same check reports violations`, () => {
+      const real = resolve();
+      const violations = isolationViolations(real, resolve());
+      expect(violations.length).toBeGreaterThan(0);
+      // `length > 0` alone is satisfiable by the tempDir/socket equality checks even if
+      // `isInside` were broken (e.g. always returning `true`) — assert a SUBTREE violation is
+      // actually present, so a broken `isInside` fails this test rather than passing vacuously.
+      expect(violations).toContain(`demo configDir is outside the demo root: ${real.configDir}`);
+    });
+
+    test(`refusal (${os}): demo + a real-root override never resolves at all`, () => {
+      process.env["NIMBUS_DEMO"] = "1";
+      process.env["NIMBUS_GATEWAY_SOCKET"] = join(tmpdir(), "elsewhere.sock");
+      expect(() => resolve()).toThrow("NIMBUS_GATEWAY_SOCKET");
+    });
+  }
+
+  test("clause 3: a demo-rooted process gets an EphemeralVault, never an OS credential store", async () => {
+    process.env["NIMBUS_DEMO"] = "1";
+    const demo = createLinuxPaths();
+    const vault = await createNimbusVault(demo);
+    expect(vault).toBeInstanceOf(EphemeralVault);
+  });
+
+  test("clause 4: the demo boot policy disables the reap and the env sidecars (negative control: real enables both)", () => {
+    const real = createLinuxPaths();
+    process.env["NIMBUS_DEMO"] = "1";
+    const demo = createLinuxPaths();
+    expect(bootPolicyFor(real)).toEqual({ reapAppContainers: true, envSidecars: true });
+    expect(bootPolicyFor(demo)).toEqual({ reapAppContainers: false, envSidecars: false });
+  });
+
+  test("clause 4 wiring: assemble.ts calls the reap and the sidecars exactly once each, each behind the policy", async () => {
+    const src = await read("packages/gateway/src/platform/assemble.ts");
+    expect(src.match(/reapAppContainersAtBoot\(/g)?.length).toBe(1);
+    expect(src).toMatch(/if \(bootPolicy\.reapAppContainers\) \{\s*void reapAppContainersAtBoot\(/);
+    expect(src.match(/collectSidecarsFromEnv\(db,/g)?.length).toBe(1);
+    expect(src).toMatch(/if \(bootPolicy\.envSidecars\) \{\s*collectSidecarsFromEnv\(db,/);
+    expect(src).toContain("const bootPolicy = bootPolicyFor(paths);");
+  });
+
+  test("clause 3 wiring: linux.ts resolves paths before probing the real OS keyring, and skips the probe entirely in demo mode", async () => {
+    const src = await read("packages/gateway/src/platform/linux.ts");
+    expect(src.match(/assertLinuxSecretToolAvailable\(\)/g)?.length).toBe(1);
+    expect(src).toMatch(
+      /const paths = createLinuxPaths\(\);\s*if \(paths\.demo !== true\) \{\s*assertLinuxSecretToolAvailable\(\);\s*\}/,
+    );
   });
 });

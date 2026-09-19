@@ -6,12 +6,20 @@
  * would close a runtime cycle. A separate module breaks it without reaching for a dynamic import.
  */
 
-export const GATEWAY_DOWN_MESSAGE = "Nimbus Gateway is not running. Start it with: nimbus start";
+import { gatewayStartCommand } from "../lib/gateway-not-running.ts";
+
+/** The "gateway is down" message, demo-aware (see `lib/gateway-not-running.ts`). */
+export function gatewayDownMessage(demo: boolean): string {
+  return `Nimbus Gateway is not running. Start it with: ${gatewayStartCommand(demo)}`;
+}
+
+/** Non-demo default, kept for callers that have no `demo` signal available. */
+export const GATEWAY_DOWN_MESSAGE = gatewayDownMessage(false);
 
 /** Thrown when the adapter cannot reach the Gateway (no state file, or connect failed). */
 export class GatewayUnavailableError extends Error {
-  constructor() {
-    super(GATEWAY_DOWN_MESSAGE);
+  constructor(opts: { demo?: boolean } = {}) {
+    super(gatewayDownMessage(opts.demo === true));
     this.name = "GatewayUnavailableError";
   }
 }

@@ -16,6 +16,7 @@ afterAll(() => {
 
 const { createNimbusVault } = await import("./factory.ts");
 const { PlatformInitError } = await import("../platform/errors.ts");
+const { EphemeralVault } = await import("./ephemeral.ts");
 
 describe("createNimbusVault factory", () => {
   test("createNimbusVault is an async function", () => {
@@ -36,5 +37,14 @@ describe("createNimbusVault factory", () => {
     expect(err.message).toContain("Unsupported platform for vault");
     expect(err).toBeInstanceOf(PlatformInitError);
     expect(err).toBeInstanceOf(Error);
+  });
+
+  test("a demo-rooted process gets an EphemeralVault — decided BEFORE the OS switch", async () => {
+    // node:os is mocked to "freebsd" above, so a non-demo call throws (previous test). A demo
+    // call must still succeed: that proves the demo check precedes the platform switch, i.e. a
+    // demo process never reaches ANY OS credential store.
+    const v = await createNimbusVault({ demo: true } as unknown as PlatformPaths);
+    expect(v).toBeInstanceOf(EphemeralVault);
+    expect(await v.listKeys()).toEqual([]);
   });
 });

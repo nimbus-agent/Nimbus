@@ -18,6 +18,19 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
 
 ## Post-Phase-6 deliveries
 
+- **2026-09-18 — An isolated demo root: `nimbus --demo …` / `NIMBUS_DEMO=1` (invariant I41).** The
+  first half of the First-Run row's seeded-sandbox work: a second, throwaway Nimbus inside `<data dir>/demo`
+  with its own config, data, logs and IPC endpoint, which the synthetic-org corpus will be seeded into
+  next. Path isolation turned out not to be isolation: on macOS the Vault is the Keychain under a
+  fixed service name and on Linux it is libsecret, neither under the config dir, so a demo gateway
+  would have READ the owner's credentials — and the toolgen credential sweep that runs at every boot
+  and shutdown would have DELETED the owner's `toolgen.*` credentials. The Windows AppContainer boot
+  reap is scoped by the gateway's OWN index, so a demo boot would have deleted the real gateway's
+  extension profiles; and the HTTP/metrics sidecars are env-selected. A demo gateway therefore opens
+  an in-memory vault, skips the reap, and starts neither sidecar. `NIMBUS_DEMO` refuses an ambiguous
+  value and refuses to combine with `NIMBUS_CONFIG_DIR` / `NIMBUS_GATEWAY_SOCKET`. No schema
+  migration, no new egress class, no new IPC method. Design: `SECURITY-INVARIANTS.md` § I41.
+
 - **2026-09-17 — `nimbus connector auth <service>` stops sending you back to itself (#1531).** For
   50 token/API-key and local-setting connectors (Stripe, Vercel, Snowflake, Elasticsearch,
   `localdb`, …) the command had no handler. It fell through to the OAuth path, which threw an

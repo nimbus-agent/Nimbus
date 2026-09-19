@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 
 import type { IPCClient } from "../ipc-client/index.ts";
 import { hasFlag, shiftFlag } from "../lib/flag-parsing.ts";
+import { gatewayNotRunningMessage } from "../lib/gateway-not-running.ts";
 import { readGatewayState } from "../lib/gateway-process.ts";
 import { registerInteractiveCliIpcHandlers } from "../lib/interactive-ipc-handlers.ts";
 import { createIpcClient, INTERACTIVE_RPC_TIMEOUT_MS } from "../lib/rpc-timeouts.ts";
@@ -94,7 +95,7 @@ export async function runWorkflowFromFile(args: string[]): Promise<void> {
   const paths = getCliPlatformPaths();
   const state = await readGatewayState(paths);
   if (state === undefined) {
-    throw new Error("Gateway is not running. Start with: nimbus start");
+    throw new Error(gatewayNotRunningMessage(paths.demo === true));
   }
 
   // `workflow.run` is awaited by the Gateway for the whole run, and a HITL step is

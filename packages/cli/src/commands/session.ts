@@ -1,4 +1,5 @@
 import { IPCClient } from "../ipc-client/index.ts";
+import { gatewayNotRunningMessage } from "../lib/gateway-not-running.ts";
 import { readGatewayState } from "../lib/gateway-process.ts";
 import { getCliPlatformPaths } from "../paths.ts";
 
@@ -7,7 +8,7 @@ export async function runSession(args: string[]): Promise<void> {
   const paths = getCliPlatformPaths();
   const state = await readGatewayState(paths);
   if (state === undefined) {
-    throw new Error("Gateway is not running. Start with: nimbus start");
+    throw new Error(gatewayNotRunningMessage(paths.demo === true));
   }
 
   const client = new IPCClient(state.socketPath);

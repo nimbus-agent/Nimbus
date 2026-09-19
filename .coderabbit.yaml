@@ -2,7 +2,7 @@
 #
 # The four satellite repos (nimbus-sdk, nimbus-client, nimbus-vscode,
 # nimbus-web-clipper) have each carried a tuned config since they were created.
-# This monorepo — the one with 38 live security invariants and a structural HITL
+# This monorepo — the one with 40 live security invariants and a structural HITL
 # gate — got stock review until now. That is instance 2 of the pattern named at
 # the top of docs/infrastructure-roadmap.md, running satellites -> monorepo.
 #
@@ -12,8 +12,8 @@
 # scripts/structure-audit/*; this file tells the reviewer what the repo's
 # invariants MEAN so its prose comments are useful rather than generic.
 #
-# Invariant ids below refer to docs/SECURITY-INVARIANTS.md (I1-I40; I28 is
-# reserved, so the LIVE count is 39, not 40 — do not derive one number from the
+# Invariant ids below refer to docs/SECURITY-INVARIANTS.md (I1-I41; I28 is
+# reserved, so the LIVE count is 40, not 41 — do not derive one number from the
 # other by hand). Keep them in sync — scripts/structure-audit/check-coderabbit-config.test.ts
 # fails if this file cites an invariant that does not exist there.
 language: en-US
