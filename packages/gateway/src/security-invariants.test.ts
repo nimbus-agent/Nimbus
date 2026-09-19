@@ -4335,8 +4335,16 @@ describe("I41 — a demo-rooted process never reaches the real install", () => {
     const real = createLinuxPaths();
     process.env["NIMBUS_DEMO"] = "1";
     const demo = createLinuxPaths();
-    expect(bootPolicyFor(real)).toEqual({ reapAppContainers: true, envSidecars: true });
-    expect(bootPolicyFor(demo)).toEqual({ reapAppContainers: false, envSidecars: false });
+    expect(bootPolicyFor(real)).toEqual({
+      reapAppContainers: true,
+      envSidecars: true,
+      syncScheduler: true,
+    });
+    expect(bootPolicyFor(demo)).toEqual({
+      reapAppContainers: false,
+      envSidecars: false,
+      syncScheduler: false,
+    });
   });
 
   test("clause 4 wiring: assemble.ts calls the reap and the sidecars exactly once each, each behind the policy", async () => {
