@@ -3,8 +3,9 @@
 // gateway.json it never wrote. This is the only place allowed to import both.
 import { describe, expect, test } from "bun:test";
 import { join } from "node:path";
-
+import * as cliBanner from "../../packages/cli/src/lib/demo-banner.ts";
 import * as cli from "../../packages/cli/src/lib/demo-root.ts";
+import * as gwSeed from "../../packages/gateway/src/demo/seed.ts";
 import * as gw from "../../packages/gateway/src/platform/demo-root.ts";
 
 const REALS = [
@@ -96,5 +97,9 @@ describe("demo-root parity: CLI mirror ≡ gateway", () => {
     expect(cli.DEMO_ENV).toBe(gw.DEMO_ENV);
     expect(cli.DEMO_DIRNAME).toBe(gw.DEMO_DIRNAME);
     expect(cli.DEMO_TEMP_DIRNAME).toBe(gw.DEMO_TEMP_DIRNAME);
+  });
+
+  test("the seed marker filename agrees — the CLI banner reads what the gateway seeder writes", () => {
+    expect(cliBanner.DEMO_SEED_MARKER).toBe(gwSeed.DEMO_SEED_MARKER);
   });
 });

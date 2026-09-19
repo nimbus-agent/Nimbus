@@ -14,6 +14,7 @@ export const COMMAND_NAMES = [
   "data",
   "db",
   "decisions",
+  "demo",
   "deploy",
   "diag",
   "doctor",
