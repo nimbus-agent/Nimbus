@@ -2,7 +2,13 @@ import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 
 import { createMockIpcClient } from "../../test/helpers/mock-ipc-client.ts";
 import { createStreamCapture } from "../../test/helpers/stream-capture.ts";
-import { awaitAgentBrief, renderAgentBrief, resolveBriefTimeoutMs } from "./agent-brief-render.ts";
+import {
+  awaitAgentBrief,
+  briefTextFor,
+  demoizeBriefCommands,
+  renderAgentBrief,
+  resolveBriefTimeoutMs,
+} from "./agent-brief-render.ts";
 
 // ---------------------------------------------------------------------------
 // renderAgentBrief
@@ -53,6 +59,16 @@ describe("renderAgentBrief — empty_index gap", () => {
     expect(capture.stderrChunks.join("")).toContain("No data indexed yet");
     expect(capture.stdoutChunks).toHaveLength(0);
   });
+
+  it("demo: writes the demo-seed message instead of the connector-sync hint", () => {
+    expect(() =>
+      renderAgentBrief("brief", makeFindings({ emptyIndex: true }), false, true),
+    ).toThrow("process.exit(1)");
+    const err = capture.stderrChunks.join("");
+    expect(err).toContain("The demo index is empty — run nimbus demo to seed it.");
+    expect(err).not.toContain("nimbus connector sync");
+    expect(capture.stdoutChunks).toHaveLength(0);
+  });
 });
 
 describe("renderAgentBrief — normal (non-json, non-empty-index)", () => {
@@ -64,6 +80,66 @@ describe("renderAgentBrief — normal (non-json, non-empty-index)", () => {
   it("does not write to stderr in the normal path", () => {
     renderAgentBrief("a brief", makeFindings(), false);
     expect(capture.stderrChunks).toHaveLength(0);
+  });
+});
+
+const BRIEF_WITH_COMMANDS =
+  "## Gaps\n- run `nimbus connector sync github` first\n- or `nimbus owners --refresh`\n";
+
+describe("demoizeBriefCommands", () => {
+  it("rewrites every backticked real-install command to target the demo", () => {
+    expect(demoizeBriefCommands(BRIEF_WITH_COMMANDS)).toBe(
+      "## Gaps\n- run `nimbus --demo connector sync github` first\n- or `nimbus --demo owners --refresh`\n",
+    );
+  });
+
+  it("leaves a command that already targets the demo, and `nimbus demo …`, unchanged", () => {
+    const text = "`nimbus --demo why x` then `nimbus demo stop` or `nimbus demo reset`";
+    expect(demoizeBriefCommands(text)).toBe(text);
+  });
+
+  it("is idempotent", () => {
+    const once = demoizeBriefCommands(BRIEF_WITH_COMMANDS);
+    expect(demoizeBriefCommands(once)).toBe(once);
+  });
+
+  it("does not touch un-backticked prose or other backticked text", () => {
+    const text = "the nimbus team ran `git log` and nimbus connector sync by hand";
+    expect(demoizeBriefCommands(text)).toBe(text);
+  });
+});
+
+describe("briefTextFor", () => {
+  it("is the verbatim brief outside the demo", () => {
+    expect(briefTextFor(BRIEF_WITH_COMMANDS, false)).toBe(BRIEF_WITH_COMMANDS);
+  });
+
+  it("is the demoized brief in the demo", () => {
+    expect(briefTextFor(BRIEF_WITH_COMMANDS, true)).toBe(demoizeBriefCommands(BRIEF_WITH_COMMANDS));
+  });
+});
+
+describe("renderAgentBrief — demo command rewrite", () => {
+  it("demo: prints demo-safe commands", () => {
+    renderAgentBrief(BRIEF_WITH_COMMANDS, makeFindings(), false, true);
+    const out = capture.stdoutChunks.join("");
+    expect(out).toContain("`nimbus --demo connector sync github`");
+    expect(out).not.toMatch(/`nimbus (?!--demo\b|demo\b)/);
+  });
+
+  it("non-demo: prints the brief verbatim", () => {
+    renderAgentBrief(BRIEF_WITH_COMMANDS, makeFindings(), false, false);
+    expect(capture.stdoutChunks.join("")).toBe(`${BRIEF_WITH_COMMANDS}\n`);
+  });
+
+  it("demo + --json: findings are byte-identical to the non-demo output", () => {
+    const findings = { gaps: [], remediation: "run `nimbus connector sync github`" };
+    renderAgentBrief(BRIEF_WITH_COMMANDS, findings, true, false);
+    const plain = capture.stdoutChunks.join("");
+    capture.stdoutChunks.length = 0;
+    renderAgentBrief(BRIEF_WITH_COMMANDS, findings, true, true);
+    expect(capture.stdoutChunks.join("")).toBe(plain);
+    expect(plain).toContain("`nimbus connector sync github`");
   });
 });
 

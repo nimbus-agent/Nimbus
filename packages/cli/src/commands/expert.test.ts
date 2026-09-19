@@ -173,6 +173,57 @@ describe("runExpertCli — dispatcher", () => {
     expect(stderrChunks.join("")).toContain("No data indexed yet");
   });
 
+  describe("--demo: empty_index gap", () => {
+    const originalDemo = process.env["NIMBUS_DEMO"];
+    const originalConfigDir = process.env["NIMBUS_CONFIG_DIR"];
+    const originalSocket = process.env["NIMBUS_GATEWAY_SOCKET"];
+
+    beforeEach(() => {
+      delete process.env["NIMBUS_CONFIG_DIR"];
+      delete process.env["NIMBUS_GATEWAY_SOCKET"];
+      process.env["NIMBUS_DEMO"] = "1";
+    });
+    afterEach(() => {
+      if (originalDemo === undefined) delete process.env["NIMBUS_DEMO"];
+      else process.env["NIMBUS_DEMO"] = originalDemo;
+      if (originalConfigDir === undefined) delete process.env["NIMBUS_CONFIG_DIR"];
+      else process.env["NIMBUS_CONFIG_DIR"] = originalConfigDir;
+      if (originalSocket === undefined) delete process.env["NIMBUS_GATEWAY_SOCKET"];
+      else process.env["NIMBUS_GATEWAY_SOCKET"] = originalSocket;
+    });
+
+    it("prints the demo-seed hint instead of the connector-sync hint", async () => {
+      const handlers = new Map<string, (params: unknown) => void>();
+      setFixture({
+        gatewayState: { socketPath: FAKE_SOCKET_PATH },
+        ipcClient: {
+          call: async (method: string) => {
+            if (method === "agents.expert") {
+              setTimeout(() => {
+                handlers.get("expert.briefReady")?.({
+                  sessionId: "sess-1",
+                  brief: "brief",
+                  findings: makeValidExpertBrief({ emptyIndex: true }),
+                });
+              }, 0);
+              return { sessionId: "sess-1" };
+            }
+            return undefined;
+          },
+          connect: async () => {},
+          disconnect: async () => {},
+          onNotification: (event: string, handler: (params: unknown) => void) => {
+            handlers.set(event, handler);
+          },
+        },
+      });
+      await expect(runExpertCli(["topic"])).rejects.toThrow(/process\.exit/);
+      const err = stderrChunks.join("");
+      expect(err).toContain("The demo index is empty — run nimbus demo to seed it.");
+      expect(err).not.toContain("nimbus connector sync");
+    });
+  });
+
   it("exits 2 when briefReady payload is malformed", async () => {
     const handlers = new Map<string, (params: unknown) => void>();
     setFixture({

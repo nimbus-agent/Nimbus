@@ -85,6 +85,13 @@ function toRejectionError(err: unknown): Error {
   return new Error(syncFailureUserMessage(err));
 }
 
+export class SyncDisabledError extends Error {
+  constructor(serviceId: string) {
+    super(`ERR_SYNC_DISABLED: syncing is disabled in this gateway, so ${serviceId} cannot sync`);
+    this.name = "SyncDisabledError";
+  }
+}
+
 export class SyncScheduler {
   private readonly db: Database;
   private readonly sched: SchedulerStateRepository;
@@ -123,6 +130,7 @@ export class SyncScheduler {
   private readonly appendSyncEgress:
     | ((row: { destination: string; sourceType: "sync"; method: string }) => void)
     | undefined;
+  private readonly syncDisabled: boolean;
 
   constructor(
     syncContext: SyncRuntimeContext,
@@ -143,6 +151,11 @@ export class SyncScheduler {
        * fail-closed, no row means no sync.
        */
       appendSyncEgress?: (row: { destination: string; sourceType: "sync"; method: string }) => void;
+      /**
+       * A scheduler that must never run a job — a demo-rooted gateway (invariant I41). `forceSync`
+       * rejects; `register`, `start`, `tick` and `pump` do nothing.
+       */
+      syncDisabled?: boolean;
     },
   ) {
     this.db = syncContext.db;
@@ -156,6 +169,7 @@ export class SyncScheduler {
     this.connectivityProbeHost = options?.connectivityProbeHost;
     this.isOnlineFn = options?.isOnline ?? (() => isOnline(this.connectivityProbeHost));
     this.appendSyncEgress = options?.appendSyncEgress;
+    this.syncDisabled = options?.syncDisabled === true;
     if (options?.initialOnline !== undefined) {
       this._online = options.initialOnline;
     }
@@ -218,6 +232,9 @@ export class SyncScheduler {
   }
 
   register(connector: Syncable, intervalOverrideMs?: number): void {
+    if (this.syncDisabled) {
+      return;
+    }
     const now = Date.now();
     const existing = this.sched.loadState(connector.serviceId);
     const interval = intervalOverrideMs ?? existing?.interval_ms ?? connector.defaultIntervalMs;
@@ -251,6 +268,9 @@ export class SyncScheduler {
   }
 
   start(): void {
+    if (this.syncDisabled) {
+      return;
+    }
     if (this.started || this.stopped) {
       return;
     }
@@ -310,6 +330,9 @@ export class SyncScheduler {
   }
 
   async forceSync(serviceId: string): Promise<void> {
+    if (this.syncDisabled) {
+      return Promise.reject(new SyncDisabledError(serviceId));
+    }
     return new Promise((resolve, reject) => {
       const list = this.forceWaiters.get(serviceId) ?? [];
       list.push((err?: unknown) => {
@@ -454,7 +477,7 @@ export class SyncScheduler {
   }
 
   private tick(): void {
-    if (this.stopped) {
+    if (this.stopped || this.syncDisabled) {
       return;
     }
     if (!this._online) {
@@ -524,7 +547,7 @@ export class SyncScheduler {
   }
 
   private pump(): void {
-    if (this.stopped) {
+    if (this.stopped || this.syncDisabled) {
       return;
     }
     while (this.runningGlobal < this.config.maxConcurrentSyncs && this.queue.length > 0) {

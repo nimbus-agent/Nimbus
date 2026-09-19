@@ -6,6 +6,7 @@ import { createLocalEmbedder } from "../embedding/model.ts";
 import { createOpenAIEmbedder } from "../embedding/openai-embedder.ts";
 import { SqliteEmbeddingPipeline } from "../embedding/pipeline.ts";
 import type { Embedder, IndexedItem } from "../embedding/types.ts";
+import { bootPolicyFor } from "../platform/demo-boot.ts";
 import { processEnvGet } from "../platform/env-access.ts";
 import type { PlatformPaths } from "../platform/paths.ts";
 import type { NimbusVault } from "../vault/nimbus-vault.ts";
@@ -24,7 +25,7 @@ export class IndexReembedRpcError extends Error {
 export type IndexReembedRpcContext = {
   db: Database;
   vault: NimbusVault;
-  paths: Pick<PlatformPaths, "dataDir">;
+  paths: Pick<PlatformPaths, "dataDir" | "demo">;
   logger: Logger;
   notify: (method: string, params: unknown) => void;
   /** @internal test seam: override pipeline construction in runReembed */
@@ -309,6 +310,22 @@ export async function dispatchIndexReembedRpc(
   params: unknown,
   ctx: IndexReembedRpcContext,
 ): Promise<RpcMissOrHit> {
+  // Every `index.reembed*` method passes through here before any embedder is resolved or any job
+  // starts. `resolveEmbedder`'s `local`/`Xenova/all-MiniLM-L6-v2` arm calls `createLocalEmbedder`
+  // DIRECTLY (never through the boot-path `createEmbeddingRuntimeNonBlocking` gate), so a demo
+  // gateway's `[embedding] enabled` config cannot stop it — this is the one other place the
+  // model would be downloaded. Branch on `ctx.paths` via `bootPolicyFor`, never the env var.
+  // `bootPolicyFor` takes `Pick<PlatformPaths, "demo">`, so this context's deliberately narrow
+  // `paths` (just `dataDir`/`demo`) passes as-is — no widening cast.
+  if (
+    (method === "index.reembed" || method === "index.reembedCancel") &&
+    !bootPolicyFor(ctx.paths).embeddingRuntime
+  ) {
+    throw new IndexReembedRpcError(
+      -32603,
+      "ERR_EMBEDDINGS_DISABLED: embeddings are disabled in the demo root (it makes no outbound calls), so there is nothing to re-embed.",
+    );
+  }
   return dispatchByMethod<IndexReembedRpcContext>(method, params, ctx, {
     "index.reembed": handleReembed,
     "index.reembedCancel": (p) => handleReembedCancel(p),

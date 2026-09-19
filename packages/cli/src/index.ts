@@ -17,6 +17,7 @@ import {
   runData,
   runDb,
   runDecisionsCommand,
+  runDemo,
   runDeployCli,
   runDiag,
   runDoctor,
@@ -78,6 +79,7 @@ import {
   runWorkflowFromFile,
 } from "./commands/index.ts";
 import { createCliFileLogger } from "./lib/cli-logger.ts";
+import { demoBannerLine, readDemoSeedMarker } from "./lib/demo-banner.ts";
 import { applyDemoFlag } from "./lib/demo-flag.ts";
 import { type CliPlatformPaths, getCliPlatformPaths } from "./paths.ts";
 import { NIMBUS_VERSION } from "./version.ts";
@@ -115,6 +117,7 @@ const COMMAND_HANDLERS: Readonly<Record<string, CommandHandler>> = {
   changelog: runChangelogCommand,
   conflicts: runConflictsCli,
   decisions: runDecisionsCommand,
+  demo: runDemo,
   expert: runExpertCli,
   ghost: runGhostCli,
   glossary: runGlossaryCommand,
@@ -212,6 +215,11 @@ async function main(): Promise<void> {
     console.error(e instanceof Error ? e.message : String(e));
     process.exitCode = 1;
     return;
+  }
+  // Spec § 5: every `--demo` command says, on stderr, that it is looking at synthetic data.
+  // `nimbus demo` itself prints its own framing instead.
+  if (paths.demo === true && rawArgv[0] !== "demo") {
+    process.stderr.write(`${demoBannerLine(readDemoSeedMarker(paths.dataDir), Date.now())}\n`);
   }
   if (!shouldSuppressBanner) intro("Nimbus");
   const { logger } = await createCliFileLogger(paths);

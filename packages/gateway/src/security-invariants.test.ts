@@ -37,8 +37,14 @@ import {
 import { CURRENT_SCHEMA_VERSION, LocalIndex } from "./index/local-index.ts";
 import { runIndexedSchemaMigrations } from "./index/migrations/runner.ts";
 import { dispatchAgentsRpc } from "./ipc/agents-rpc.ts";
+import { ConsentCoordinatorImpl } from "./ipc/consent.ts";
+import { createStreamRegistry } from "./ipc/engine-ask-stream.ts";
 import { HttpWriteRateLimiter } from "./ipc/http-rate-limit.ts";
+import { dispatchIndexReembedRpc } from "./ipc/index-reembed-rpc.ts";
 import { ClientKindStore } from "./ipc/server/client-kind.ts";
+import { phase4RpcSkipped, type ServerCtx } from "./ipc/server/context.ts";
+import { demoRefusal } from "./ipc/server/demo-gate.ts";
+import { tryDispatchDemoRpc } from "./ipc/server/dispatchers.ts";
 import { AnthropicProvider } from "./llm/anthropic-provider.ts";
 import { GeminiProvider } from "./llm/gemini-provider.ts";
 import { LlamaCppProvider } from "./llm/llamacpp-provider.ts";
@@ -59,6 +65,11 @@ import {
 import { type LocalBaseline, PolicyGate } from "./policy/policy-gate.ts";
 import { signPolicy } from "./policy/policy-signing.ts";
 import { PolicyStore } from "./policy/policy-store.ts";
+import { ProviderRateLimiter } from "./sync/rate-limiter.ts";
+import { SyncScheduler } from "./sync/scheduler.ts";
+import { unboundSyncCapabilities } from "./sync/sync-capabilities.ts";
+import type { SyncRuntimeContext } from "./sync/types.ts";
+import { openMemoryIndexDatabase } from "./testing/bun-test-support.ts";
 import { artifactDigest, canonicalArtifactBytes } from "./toolgen/toolgen-artifact.ts";
 import { sweepToolgenCredentials } from "./toolgen/toolgen-credential-sweep.ts";
 import { toolCredentialKey } from "./toolgen/toolgen-credentials.ts";
@@ -4335,8 +4346,24 @@ describe("I41 — a demo-rooted process never reaches the real install", () => {
     const real = createLinuxPaths();
     process.env["NIMBUS_DEMO"] = "1";
     const demo = createLinuxPaths();
-    expect(bootPolicyFor(real)).toEqual({ reapAppContainers: true, envSidecars: true });
-    expect(bootPolicyFor(demo)).toEqual({ reapAppContainers: false, envSidecars: false });
+    expect(bootPolicyFor(real)).toEqual({
+      reapAppContainers: true,
+      envSidecars: true,
+      syncScheduler: true,
+      updaterStartupCheck: true,
+      telemetryFlush: true,
+      embeddingRuntime: true,
+      extensionsAutoUpdate: true,
+    });
+    expect(bootPolicyFor(demo)).toEqual({
+      reapAppContainers: false,
+      envSidecars: false,
+      syncScheduler: false,
+      updaterStartupCheck: false,
+      telemetryFlush: false,
+      embeddingRuntime: false,
+      extensionsAutoUpdate: false,
+    });
   });
 
   test("clause 4 wiring: assemble.ts calls the reap and the sidecars exactly once each, each behind the policy", async () => {
@@ -4354,5 +4381,224 @@ describe("I41 — a demo-rooted process never reaches the real install", () => {
     expect(src).toMatch(
       /const paths = createLinuxPaths\(\);\s*if \(paths\.demo !== true\) \{\s*assertLinuxSecretToolAvailable\(\);\s*\}/,
     );
+  });
+
+  // Clause (5): `demo.*` is claimed only by a demo-rooted gateway; everywhere else the namespace
+  // is unclaimed and the request falls through to JSON-RPC `-32601 Method not found`. The live
+  // socket-level proof (a real `createIpcServer` answering `demo.seed` one way with `demo: true`
+  // and the other way without it) lives in `ipc/server/server.test.ts` — this is the lighter unit
+  // pin over the sub-dispatcher itself, plus the LAN denylist entry.
+
+  function demoDispatchCtx(demo: boolean | undefined): ServerCtx {
+    const db = new Database(":memory:");
+    return {
+      options: {
+        listenPath: "",
+        vault: fakeVault(),
+        version: "test",
+        localIndex: { getDatabase: () => db },
+        configDir: "/demo-config",
+        dataDir: "/demo-data",
+        ...(demo === undefined ? {} : { demo }),
+      },
+      consentImpl: new ConsentCoordinatorImpl(() => undefined),
+      startedAtMs: Date.now(),
+      streamRegistry: createStreamRegistry(),
+      broadcastNotification: () => {},
+      getAgentInvokeHandler: () => undefined,
+      getWorkflowRunHandler: () => undefined,
+      getClientKind: () => "unknown",
+      // `as unknown as ServerCtx`, not `any`: tryDispatchDemoRpc reads only `ctx.options`, never
+      // the class-typed `localIndex` field beyond `.getDatabase()`, so a hand-built fake is safe.
+    } as unknown as ServerCtx;
+  }
+
+  test("clause 5: tryDispatchDemoRpc claims demo.seed ONLY when ctx.options.demo === true", async () => {
+    // Not demo-rooted (undefined, then explicitly false): falls through to the skip sentinel —
+    // the caller's `Method not found`, not a runtime refusal — even though localIndex/configDir/
+    // dataDir are all present, so the gate is `demo === true` and not merely "deps configured".
+    expect(await tryDispatchDemoRpc(demoDispatchCtx(undefined), "demo.seed", {})).toBe(
+      phase4RpcSkipped,
+    );
+    expect(await tryDispatchDemoRpc(demoDispatchCtx(false), "demo.seed", {})).toBe(
+      phase4RpcSkipped,
+    );
+
+    // Demo-rooted: the method is CLAIMED — it reaches real seeding logic rather than the skip
+    // sentinel. An invalid-params rejection is the observable: it can only fire from inside
+    // `dispatchDemoRpc`'s own `requireSeedParams`, which is unreachable from the skip path.
+    await expect(
+      tryDispatchDemoRpc(demoDispatchCtx(true), "demo.seed", { nowMs: "not-a-number" }),
+    ).rejects.toThrow(/ERR_INVALID_PARAMS/);
+  });
+
+  test("clause 5: checkLanMethodAllowed refuses demo.seed over LAN", async () => {
+    const { checkLanMethodAllowed } = await import("./ipc/lan-rpc.ts");
+    const peer = { peerId: "peer:x", writeAllowed: true };
+    expect(() => checkLanMethodAllowed("demo.seed", peer)).toThrow(/ERR_METHOD_NOT_ALLOWED/);
+  });
+
+  // Clause (6): a demo-rooted gateway is inert — its scheduler is constructed but can never run a
+  // job, four host-global boot actions are skipped, and a write gate refuses everything outside a
+  // small connector-read allow-list plus three explicitly named writes.
+
+  test("clause 6: a SyncScheduler constructed with syncDisabled rejects forceSync with ERR_SYNC_DISABLED", async () => {
+    const pino = (await import("pino")).default;
+    const db = openMemoryIndexDatabase();
+    const ctx: SyncRuntimeContext = {
+      ...unboundSyncCapabilities(),
+      db,
+      vault: fakeVault(),
+      logger: pino({ level: "silent" }),
+      rateLimiter: new ProviderRateLimiter(),
+      sandboxCwd: tmpdir(),
+      credentialFor: () => ({ credential: "personal" }),
+      runTeamList: async () => [],
+      depth: "full",
+    };
+    const scheduler = new SyncScheduler(ctx, undefined, { syncDisabled: true });
+    // No `register()` first: `forceSync` checks `syncDisabled` before it ever consults whether a
+    // syncable is registered, so an unregistered service still proves the reject fires FIRST.
+    await expect(scheduler.forceSync("demo-svc")).rejects.toThrow("ERR_SYNC_DISABLED");
+  });
+
+  test("clause 6: index.reembed refuses ERR_EMBEDDINGS_DISABLED on a demo gateway", async () => {
+    // `resolveEmbedder`'s local arm calls `createLocalEmbedder` directly, bypassing the boot-path
+    // `createEmbeddingRuntimeNonBlocking` gate — this is the OTHER place a demo gateway could
+    // otherwise download the MiniLM model or make outbound calls. The throw fires before `db`/
+    // `vault`/`logger` are ever touched, so a minimal fake ctx is enough to pin it.
+    await expect(
+      dispatchIndexReembedRpc(
+        "index.reembed",
+        {},
+        // Not `any`: unreachable fields — the demo check throws before `db`/`vault`/`logger` are
+        // ever read, so this minimal fake never needs to satisfy their real types.
+        {
+          paths: { dataDir: "/demo-data", demo: true },
+          notify: () => {},
+        } as unknown as Parameters<typeof dispatchIndexReembedRpc>[2],
+      ),
+    ).rejects.toThrow(/ERR_EMBEDDINGS_DISABLED/);
+  });
+
+  test("clause 6: demoRefusal refuses connector.auth with ERR_DEMO_FORBIDDEN, but admits the three read methods", () => {
+    const refusal = demoRefusal("connector.auth");
+    expect(refusal).toBeDefined();
+    expect(refusal?.message).toContain("ERR_DEMO_FORBIDDEN");
+    expect(demoRefusal("connector.listStatus")).toBeUndefined();
+    expect(demoRefusal("connector.status")).toBeUndefined();
+    expect(demoRefusal("connector.healthHistory")).toBeUndefined();
+    for (const m of ["vault.set", "vault.delete", "data.import", "extension.install"]) {
+      expect(demoRefusal(m)?.message).toContain("ERR_DEMO_FORBIDDEN");
+    }
+  });
+
+  test("clause 6 wiring: server.ts calls demoRefusal inside `if (ctx.options.demo === true)` before any dispatcher", async () => {
+    const src = await read("packages/gateway/src/ipc/server/server.ts");
+    const fnAt = src.indexOf("async function dispatchMethod(");
+    const guardAt = src.indexOf("if (ctx.options.demo === true) {");
+    const refusalAt = src.indexOf("const refusal = demoRefusal(method);");
+    const firstDispatcherAt = src.indexOf("tryDispatchSessionRpc(");
+    expect(fnAt).toBeGreaterThan(-1);
+    expect(guardAt).toBeGreaterThan(-1);
+    expect(refusalAt).toBeGreaterThan(-1);
+    expect(firstDispatcherAt).toBeGreaterThan(-1);
+    expect(fnAt).toBeLessThan(guardAt);
+    expect(guardAt).toBeLessThan(refusalAt);
+    expect(refusalAt).toBeLessThan(firstDispatcherAt);
+  });
+
+  test("clause 6 wiring: assemble.ts starts the sync scheduler exactly once, and only inside `if (syncEnabled)`", async () => {
+    const src = await read("packages/gateway/src/platform/assemble.ts");
+    expect(src.match(/syncScheduler\.start\(\);/g)?.length).toBe(1);
+    // Bounded quantifier, not `[\s\S]*?` unbounded: assemble.ts has TWO `if (syncEnabled) {`
+    // blocks, and the first (filesystem-root registration) closes long before `start()`. An
+    // unbounded scan would happily stretch across both and pass even if `start()` sat outside
+    // every guard — the bound is what forces the match onto the block that actually wraps it.
+    expect(src).toMatch(/if \(syncEnabled\) \{[\s\S]{0,400}?syncScheduler\.start\(\);\s*\}/);
+  });
+
+  test("clause 6 wiring: the ONE SyncScheduler in assemble.ts is constructed with syncDisabled when the policy says so", async () => {
+    // The start() pin above is not enough on its own: `forceSync` and each job's
+    // `.finally → tick()` bypass `start()` entirely, so a demo scheduler is inert only because it
+    // is BUILT with `syncDisabled`. Deleting this spread would leave a never-started scheduler that
+    // `connector.sync`'s `forceSync` still drives — and no other test here would notice.
+    const src = await read("packages/gateway/src/platform/assemble.ts");
+    expect(src.match(/new SyncScheduler\(/g)?.length).toBe(1);
+    expect(src).toContain("const syncEnabled = bootPolicyFor(paths).syncScheduler;");
+    // Inside the constructor call itself: sliced from `new SyncScheduler(` to the call's own close
+    // (the first `});` at the statement's two-space indent — the options object's callbacks close
+    // deeper), so a matching spread in some LATER call cannot satisfy this.
+    const start = src.indexOf("const syncScheduler = new SyncScheduler(syncContext, undefined, {");
+    expect(start).toBeGreaterThan(-1);
+    const end = src.indexOf("\n  });", start);
+    expect(end).toBeGreaterThan(start);
+    expect(src.slice(start, end)).toContain("...(syncEnabled ? {} : { syncDisabled: true }),");
+  });
+
+  test("clause 6 wiring: assemble.ts gates the updater startup check, the telemetry flush and the extensions auto-update daemon on the boot policy", async () => {
+    const src = await read("packages/gateway/src/platform/assemble.ts");
+    // Call COUNTS first, like the reap/sidecar pins: a guarded call proves nothing if a second,
+    // unguarded one sits elsewhere in the file. `wireUpdaterIntoIpc`'s own definition is excluded
+    // by the lookbehind; `startTelemetryFlushScheduler` is only imported here, with no paren.
+    expect(src.match(/(?<!function )wireUpdaterIntoIpc\(/g)?.length).toBe(1);
+    expect(src.match(/function wireUpdaterIntoIpc\(/g)?.length).toBe(1);
+    expect(src.match(/startTelemetryFlushScheduler\(/g)?.length).toBe(1);
+    expect(src).toMatch(/if \(bootPolicy\.updaterStartupCheck\) \{\s*wireUpdaterIntoIpc\(/);
+    expect(src).toMatch(
+      /if \(bootPolicy\.telemetryFlush\) \{\s*const telemetryStop = startTelemetryFlushScheduler\(/,
+    );
+    // `extensionsAutoUpdate` is one of three ANDed preconditions (registry URL configured, not
+    // env-disabled), not a lone `if (bootPolicy.X)` — pin the exact conjunction, not just presence.
+    expect(src).toMatch(
+      /autoUpdateRegistryUrl !== "" &&\s*!autoUpdateDisabled &&\s*bootPolicyFor\(paths\)\.extensionsAutoUpdate\s*\) \{/,
+    );
+  });
+
+  test("clause 5/6 wiring: assemble.ts hands the IPC server `demo: paths.demo === true` in the options literal, never reassigned, before the ONE createIpcServer call", async () => {
+    // `ctx.options.demo` is what BOTH the `demo.seed` claim (clause 5) and the `dispatchMethod`
+    // write gate (clause 6) read; the sub-dispatcher tests above prove they honour it, and this is
+    // the link that sets it from the resolved paths. Dropping the line leaves `demo` undefined —
+    // every demo gateway would then answer `demo.seed` with Method not found and admit every
+    // refused write, and every test that builds its own ctx would still pass.
+    const src = await read("packages/gateway/src/platform/assemble.ts");
+    const literalAt = src.indexOf("const ipcOpts: Parameters<typeof createIpcServer>[0] = {");
+    expect(literalAt).toBeGreaterThan(-1);
+    const literalEnd = src.indexOf("\n  };", literalAt);
+    expect(literalEnd).toBeGreaterThan(literalAt);
+    expect(src.slice(literalAt, literalEnd)).toMatch(/\n {4}demo: paths\.demo === true,\n/);
+    // Exactly one `demo:` key in the whole file's IPC wiring, and no later override.
+    expect(src.match(/\bdemo: paths\.demo === true\b/g)?.length).toBe(1);
+    expect(src).not.toMatch(/ipcOpts\.demo\s*=/);
+    expect(src).not.toMatch(/ipcOpts\s*=\s*\{/);
+    // ORDER: the literal is built before the one server construction that consumes it.
+    // (Code lines only: two `//` comments in the file also name `createIpcServer(`.)
+    expect(src.match(/^(?![ \t]*\/\/).*\bcreateIpcServer\(/gm)?.length).toBe(1);
+    const serverAt = src.indexOf("const ipc = createIpcServer(ipcOpts);");
+    expect(serverAt).toBeGreaterThan(literalEnd);
+  });
+
+  test("clause 6 wiring: createEmbeddingRuntimeNonBlocking returns null on the boot policy BEFORE it builds any runtime", async () => {
+    // The boot-path half of the embedding gate (`index.reembed` is the other half, pinned above).
+    // Behind this check, `createDeferredEmbeddingRuntime` → `createEmbeddingRuntime` would load or
+    // download the local MiniLM model on a demo gateway.
+    const src = await read("packages/gateway/src/embedding/create-embedding-runtime.ts");
+    expect(src).toMatch(/import \{ bootPolicyFor \} from "\.\.\/platform\/demo-boot\.ts";/);
+    const fnAt = src.indexOf("export function createEmbeddingRuntimeNonBlocking(");
+    expect(fnAt).toBeGreaterThan(-1);
+    const fnEnd = src.indexOf("\n}\n", fnAt);
+    expect(fnEnd).toBeGreaterThan(fnAt);
+    const body = src.slice(fnAt, fnEnd);
+    // The FIRST statement of the body is the guard, on the function's own `paths` parameter, and
+    // it returns — not logs, not falls through.
+    expect(body).toMatch(
+      /\): EmbeddingRuntime \| null \{\s*if \(!bootPolicyFor\(paths\)\.embeddingRuntime\) \{\s*return null;\s*\}/,
+    );
+    // ORDER: the guard precedes every runtime construction in the body.
+    const guardAt = body.indexOf("if (!bootPolicyFor(paths).embeddingRuntime)");
+    for (const construction of ["createDeferredEmbeddingRuntime(", "createEmbeddingRuntime(db"]) {
+      const at = body.indexOf(construction);
+      expect(at).toBeGreaterThan(guardAt);
+    }
   });
 });

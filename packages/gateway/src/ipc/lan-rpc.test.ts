@@ -369,3 +369,29 @@ describe("clip over LAN (I5 / I30 — pairing must stay owner-opened)", () => {
     expect(thrown?.message).toMatch(/ERR_METHOD_NOT_ALLOWED/);
   });
 });
+
+describe("demo over LAN (I41 clause 5 — the demo seeder is local CLI only)", () => {
+  test("forbids demo.seed over LAN regardless of grant-write", () => {
+    for (const peer of [
+      { peerId: "p1", writeAllowed: true },
+      { peerId: "p1", writeAllowed: false },
+    ]) {
+      let thrown: LanError | undefined;
+      try {
+        checkLanMethodAllowed("demo.seed", peer);
+      } catch (e) {
+        thrown = e as LanError;
+      }
+      expect(thrown).toBeInstanceOf(LanError);
+      expect(thrown?.rpcCode).toBe(-32601);
+      expect(thrown?.message).toMatch(/ERR_METHOD_NOT_ALLOWED/);
+    }
+  });
+
+  // Negative control: the namespace entry is doing the work, not a coincidental broader match.
+  test("agents.ownership is still allowed", () => {
+    expect(() =>
+      checkLanMethodAllowed("agents.ownership", { peerId: "p1", writeAllowed: false }),
+    ).not.toThrow();
+  });
+});

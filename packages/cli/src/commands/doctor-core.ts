@@ -3,6 +3,7 @@ import { platform } from "node:os";
 import { join } from "node:path";
 
 import type { IPCClient } from "../ipc-client/index.ts";
+import { nimbusCommand } from "../lib/demo-hint.ts";
 import { gatewayStartCommand } from "../lib/gateway-not-running.ts";
 import type { CliPlatformPaths } from "../paths.ts";
 import { type FixKeyringDeps, runFixKeyringCommand } from "./doctor-fix-keyring.ts";
@@ -426,7 +427,14 @@ function doctorPrintBunCheck(): number {
   return 2;
 }
 
-function doctorPrintVaultCheck(): number {
+/** The demo gateway's Vault is an `EphemeralVault` — nothing to probe on disk or over D-Bus. */
+const DEMO_VAULT_LINE = "Vault: in-memory (demo root) — the OS credential store is not used";
+
+function doctorPrintVaultCheck(demo: boolean): number {
+  if (demo) {
+    console.log(DEMO_VAULT_LINE);
+    return 0;
+  }
   // One probe per run: the Secret Service reads shell out, so never re-probe
   // just to render the line.
   const status = doctorVaultStatus(platform());
@@ -729,11 +737,29 @@ function printAndScoreLines(lines: readonly string[]): number {
   return exit;
 }
 
+/** Printed instead of running `--fix-keyring` in the demo root (I41 clause 3). */
+export const DEMO_FIX_KEYRING_REFUSAL =
+  "Refusing --fix-keyring in the demo: the demo uses an in-memory vault, not the OS keyring. " +
+  "Run `nimbus doctor --fix-keyring` without --demo to repair the real keyring.";
+
 export async function runDoctor(args: string[], deps: DoctorCoreDeps): Promise<void> {
+  // Resolved FIRST, before any branch: `--fix-keyring` must know whether this is the demo root,
+  // and that is decided by the resolved paths' `demo` field — never the env var.
+  const paths = deps.getCliPlatformPaths();
+
   // Strictly opt-in: a plain `nimbus doctor` never touches `fixKeyringDeps` and
   // stays read-only. Only an explicit `--fix-keyring` runs the fixer, and it
   // replaces the normal diagnostic sweep rather than running alongside it.
   if (args.includes("--fix-keyring")) {
+    // The fixer acts on the HOST keyring (Linux libsecret/D-Bus), which is not under any demo
+    // root: a demo gateway's vault is the in-process EphemeralVault (I41 clause 3), so there is
+    // nothing demo-side to repair and everything real to damage. Refused, dry run included, so
+    // the demo never even probes the real keyring.
+    if (paths.demo === true) {
+      console.error(DEMO_FIX_KEYRING_REFUSAL);
+      process.exitCode = 1;
+      return;
+    }
     const dryRun = args.includes("--dry-run");
     const result = runFixKeyringCommand(platform(), deps.fixKeyringDeps, { dryRun });
     for (const line of result.lines) {
@@ -743,14 +769,13 @@ export async function runDoctor(args: string[], deps: DoctorCoreDeps): Promise<v
     return;
   }
 
-  const paths = deps.getCliPlatformPaths();
   let exit = 0;
   exit = Math.max(exit, doctorPrintBunCheck());
 
   console.log(`Data dir: ${paths.dataDir}`);
   console.log(`Gateway state file: ${deps.gatewayStatePath(paths)}`);
 
-  exit = Math.max(exit, doctorPrintVaultCheck());
+  exit = Math.max(exit, doctorPrintVaultCheck(paths.demo === true));
 
   const voiceCfg = loadVoiceConfigFromDir(paths.configDir);
   const voiceLines = doctorVoiceLines(voiceCfg, {
@@ -779,7 +804,7 @@ export async function runDoctor(args: string[], deps: DoctorCoreDeps): Promise<v
     exit = Math.max(exit, 2);
   } else {
     console.log(
-      `[fail] Gateway: stale state (pid ${String(state.pid)} is not running) — try nimbus stop or remove the state file.`,
+      `[fail] Gateway: stale state (pid ${String(state.pid)} is not running) — try ${nimbusCommand("stop", paths.demo === true)} or remove the state file.`,
     );
     exit = Math.max(exit, 2);
   }

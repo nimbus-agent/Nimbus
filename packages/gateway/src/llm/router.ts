@@ -1,4 +1,4 @@
-import { LlmProviderError } from "./provider-error.ts";
+import { LlmProviderError, NoLlmProviderError } from "./provider-error.ts";
 import { RouteAvailabilityProbe } from "./route-availability.ts";
 import { makeRouteId } from "./route-id.ts";
 import type {
@@ -401,7 +401,7 @@ export class LlmRouter {
     // a fallback redirect has still tried something, and must report THAT failure rather than the
     // misleading "no provider available".
     if (attempted.size === 0) {
-      throw new Error(`No LLM provider available for task: ${opts.task}`);
+      throw new NoLlmProviderError(opts.task);
     }
     throw lastError;
   }

@@ -1,5 +1,5 @@
 import { IPCClient } from "../ipc-client/index.ts";
-import { resolveBriefTimeoutMs } from "../lib/agent-brief-render.ts";
+import { briefTextFor, resolveBriefTimeoutMs } from "../lib/agent-brief-render.ts";
 import { gatewayNotRunningMessage } from "../lib/gateway-not-running.ts";
 import { readGatewayState } from "../lib/gateway-process.ts";
 import { registerInteractiveCliIpcHandlers } from "../lib/interactive-ipc-handlers.ts";
@@ -122,7 +122,7 @@ export async function runAgentBriefCli<TFindings>(
     if (spec.json) {
       process.stdout.write(`${JSON.stringify(findings, null, 2)}\n`);
     } else {
-      process.stdout.write(`${brief}\n`);
+      process.stdout.write(`${briefTextFor(brief, paths.demo === true)}\n`);
     }
   } catch (err) {
     process.stderr.write(`${err instanceof Error ? err.message : String(err)}\n`);

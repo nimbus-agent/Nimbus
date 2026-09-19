@@ -18,6 +18,102 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
 
 ## Post-Phase-6 deliveries
 
+- **2026-09-19 — `nimbus demo` seeds a synthetic org and tours it; the demo gateway is now inert
+  (invariant I41 clauses 5–6).** The second half of the First-Run row's seeded-sandbox work, on top
+  of 2026-09-18's isolated demo root (#1545). `demo/corpus/acme.ts` builds a fixed, fictional "Acme"
+  org — one connected storyline (a ticket → its PR → a deploy → the P1 it causes → an earlier
+  same-service incident) plus background data — with every timestamp an offset from the seed's
+  `nowMs` (never an absolute epoch) and every email/URL/domain ending `.example`. `demo/seed.ts`'s
+  `seedDemoCorpus` writes it through the SAME production write APIs a real connector sync would use
+  (`upsertIndexedItem`, `insertPerson`, `upsertBlameLines`, `annotateDeployment`, plus a live run of
+  the ownership/glossary/decisions extraction passes) — never hand-crafted rows — and refuses with
+  `ERR_DEMO_ALREADY_SEEDED` against a non-empty index. It is reachable only over the new
+  `demo.seed` IPC method (CLI-only, LAN-forbidden, absent from the Tauri allowlist), claimed
+  exclusively by a demo-rooted gateway. `nimbus demo` recreates the demo root, starts the gateway,
+  seeds it, restarts (so config-time reads see the seeded `nimbus.toml`), then tours three built-in
+  agent briefs (`oncall` → `why` → `owners`) unless `--no-tour` is given; `nimbus demo stop` and
+  `nimbus demo reset` wind it back down. A demo-rooted gateway now also refuses every `connector.*`
+  method except three reads (`listStatus`/`status`/`healthHistory`), plus `vault.set`, `vault.delete`,
+  `data.import`, and `extension.install`, with `ERR_DEMO_FORBIDDEN`; `nimbus --demo init` refuses
+  outright before touching the gateway. No schema migration, no new egress class; one new IPC method
+  (`demo.seed`, demo-only).
+
+  Two findings from designing this half, recorded because both contradicted the obvious
+  implementation: **(§ 11.2) an unstarted sync scheduler still syncs.** `tick()`/`pump()` return
+  early only on `stopped`, never on "never started"; `forceSync` needs no `start()` either; and
+  every finished job's own `.finally` calls `tick()` — so simply not calling `start()` on a demo
+  gateway's scheduler would let one `connector.sync` or `index.rebody` call run a job and then
+  re-animate the whole schedule with no timer behind it. The fix is a `syncDisabled` constructor
+  option the scheduler itself enforces (`ERR_SYNC_DISABLED`), keyed on that option rather than on
+  `!started`. **A demo gateway still made outbound calls at boot even with the config it writes.**
+  The updater's `checkOnStartup` and the env-selected telemetry flush run before any seeded
+  `nimbus.toml` exists to disable them — config the seeder writes cannot switch off work the boot
+  path already started doing. `platform/demo-boot.ts`'s `bootPolicyFor(paths)` gates both (plus the
+  embedding-runtime model download and the extension auto-update daemon) as CODE branches on
+  `paths.demo`, not config, closing the gap.
+
+  A third finding is a disclosed data-shape limit, not a defect: **the demo's oncall brief has an
+  honestly empty CI lane.** `annotateDeployment` (the same production API a real deploy annotation
+  uses) stores `ci_run_external_id = NULL`, so `oncall`'s CI-run lane for the story deploy renders
+  empty in the tour — the corpus does not hand-craft a row to hide that, since no real deploy
+  annotation carries one either.
+
+  The follow-up hint sweep fixed every pasted command that could put a `--demo` user back against
+  the real install or a refused command: `nimbus vault get` (admin console/token), the
+  connector-auth/sync onboarding hints (`start`, agent-brief-render, `expert`), the doctor vault
+  probe and its `nimbus stop` stale-state hint, the TUI/MCP gateway-down message, and `run-ask`'s
+  empty-index guidance (now `nimbus demo` instead of `nimbus connector auth github/google/slack`).
+  One unrelated real bug surfaced and was fixed alongside them: `nimbus index health`'s confidence
+  line named the nonexistent `nimbus sync` (there is no such command) instead of
+  `nimbus connector sync <service>`.
+
+  Two `ask` defects surfaced while capturing `nimbus --demo ask`'s behaviour for the docs. First,
+  and demo-specific: `ask`'s own local "no connectors registered" pre-check keyed on
+  `connector.listStatus` being empty. That method is on the demo gate's allow-list — it is not
+  refused — but the seeder never registers a connector (it writes items directly), so the list is
+  always empty and `ask` was unreachable on a seeded demo no matter how much data it held. The CLI
+  now skips that pre-check in a demo root — a demo special case, deliberately — and lets the
+  gateway's own item-count-based empty-index check answer instead. Second, and unrelated to the
+  demo: `LlmRouter.generate` with zero eligible routes threw a bare `Error`, which
+  `agentErrorFromCaughtError` could not recognise (it matches known vendor HTTP failure substrings),
+  so it fell through to the raw, unsanitised router message on **every** fresh install with no LLM
+  configured. A new typed `NoLlmProviderError` (`llm/provider-error.ts`) fixes that for everyone —
+  and, under `[llm] enforce_air_gap`, now maps to the `air_gap` refusal rather than "no API key",
+  since there an empty route table means remote routes were refused, not absent. On a demo gateway
+  the no-LLM refusal is its own wording (pointing at `nimbus --demo standup`/`expert`/`decisions`
+  rather than the real install's "edit `nimbus.toml`, `nimbus stop && nimbus start`" text, which as
+  printed would touch the real gateway), and it is chosen by the GATEWAY — `runAsk`, from
+  `PlatformPaths.demo` — so the REPL, the TUI (`engine.askStream`) and `nimbus prove "<q>"` get it
+  too, not only `nimbus ask`.
+
+  The final review fixed four more places a demo user could be led out of the demo:
+  `nimbus demo stop` (and every `nimbus demo` re-run) no longer signals the recorded pid unless the
+  recorded socket answers — `gateway.json` survives a reboot, and the pid may since belong to an
+  unrelated process (on Windows SIGTERM is `TerminateProcess`). A live pid with a dead socket is
+  told apart by boot time: a state file from before the last boot is removed as stale, one written
+  since then is a hung demo gateway, and the command aborts naming its pid rather than deleting the
+  root under it and starting a second one; `nimbus --demo connector list` and
+  `nimbus --demo index health` stop naming `connector auth`/`connector sync`; the `nimbus --demo
+  start` seed hint is keyed on the seed marker rather than on connectors (so a seeded demo is no
+  longer told to seed it); and `nimbus --demo doctor --fix-keyring` refuses, since the fixer acts on
+  the host keyring and the demo's vault is in memory. The demo e2e now points the telemetry and
+  updater endpoints at a local recorder and fails on any request to either — it had left the
+  telemetry endpoint at the production default, so a regression would have posted to production
+  from CI and still passed. Making it able to catch an updater request surfaced a pre-existing
+  bug, fixed for every install: `NIMBUS_UPDATER_URL` and `NIMBUS_UPDATER_DISABLE` were applied only
+  when a `nimbus.toml` existed, so on a first boot — exactly when the startup update check runs —
+  neither did anything.
+
+  Review of the PR closed four more gaps. A brief printed under `--demo` named its remediation
+  commands without `--demo` (the tour's own oncall `## Gaps` suggests `nimbus ask`), so pasting one
+  reached the real install; the CLI now rewrites every backticked `nimbus <cmd>` in a printed demo
+  brief to `nimbus --demo <cmd>` on every brief-printing path, leaving `--json` findings untouched.
+  `nimbus demo` validates its whole argv first (`nimbus demo --no-tour stop` used to recreate the
+  root), and a failed seed stops the gateway it just started. The seeder now validates the whole
+  corpus — person keys, blame coverage and commits, deployment sha format (via
+  `annotateDeployment`'s own `validateDeploymentSha`) — before writing anything, so a malformed
+  corpus leaves no files, config or index rows behind.
+
 - **2026-09-18 — An isolated demo root: `nimbus --demo …` / `NIMBUS_DEMO=1` (invariant I41).** The
   first half of the First-Run row's seeded-sandbox work: a second, throwaway Nimbus inside `<data dir>/demo`
   with its own config, data, logs and IPC endpoint, which the synthetic-org corpus will be seeded into

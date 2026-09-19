@@ -43,6 +43,8 @@ Who wrote this line, when, and in which commit — answered from your local git 
 
 That is the whole first run. Much of what follows is what becomes available once you connect the tools you already use.
 
+No repo handy, or just want to see it work first? `nimbus demo` seeds a synthetic "Acme" org — people, PRs, incidents, deployments — into an isolated demo root that never touches your real config or data, then tours on-call triage, `why`, and `owners` against it. `nimbus demo stop` stops the demo gateway; `nimbus demo reset` removes the whole demo root.
+
 ---
 
 Nimbus is an open-source, local-first AI agent built for engineers who run systems in production. A headless **Nimbus Gateway** runs on your machine, maintains a private SQLite index across your entire developer toolchain — source control, CI/CD, cloud infrastructure, monitoring, and incident management — and executes multi-step tasks on your behalf. Every write, send, or delete requires your explicit approval before it runs.

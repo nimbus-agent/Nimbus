@@ -646,6 +646,9 @@ async function createSchedulerWithMesh(opts: SchedulerWithMeshOpts): Promise<{
     glossaryLlm,
     decisionLlm,
   } = opts;
+  // I41 clause (6), spec § 11.2: a demo gateway's scheduler exists (IPC and the post-sync
+  // refreshers are built alongside it) but can never run a job.
+  const syncEnabled = bootPolicyFor(paths).syncScheduler;
   const syncAnomaly = new AnomalyDetectorStub({
     windowSize: 64,
     onNotify: (e) => {
@@ -838,16 +841,19 @@ async function createSchedulerWithMesh(opts: SchedulerWithMeshOpts): Promise<{
     // never a Promise) so a throw here aborts the run before any outbound call, matching the
     // fail-closed contract `sync/scheduler.ts`'s own doc comment states for this seam.
     appendSyncEgress: (row) => recordSyncEgress(db, { ...row, now: Date.now() }),
+    ...(syncEnabled ? {} : { syncDisabled: true }),
   });
   const tomlRoots = loadNimbusFilesystemRootsFromConfigDir(paths.configDir);
   const registeredRoots = loadRegisteredRoots(paths.configDir);
-  registerFilesystemRootSyncables(
-    syncScheduler,
-    localIndex,
-    paths.configDir,
-    tomlRoots,
-    registeredRoots,
-  );
+  if (syncEnabled) {
+    registerFilesystemRootSyncables(
+      syncScheduler,
+      localIndex,
+      paths.configDir,
+      tomlRoots,
+      registeredRoots,
+    );
+  }
   const connectorMesh = await createLazyConnectorMesh(paths, vault, {
     listUserMcpConnectors: () => listUserMcpConnectors(db),
     healthDb: db,
@@ -872,12 +878,14 @@ async function createSchedulerWithMesh(opts: SchedulerWithMeshOpts): Promise<{
       syncScheduler.register(connector, intervalOverrideMs);
     },
   };
-  registerConnectorMeshSyncables(policyFilteredRegistrar, connectorMesh, {
-    pagerdutyMaxPagesPerSync: pagerdutyCfg.maxPagesPerSync,
-    workdayConfig: workdayCfg,
-  });
-  registerUserMcpSyncablesFromDatabase(db, policyFilteredRegistrar, connectorMesh);
-  syncScheduler.start();
+  if (syncEnabled) {
+    registerConnectorMeshSyncables(policyFilteredRegistrar, connectorMesh, {
+      pagerdutyMaxPagesPerSync: pagerdutyCfg.maxPagesPerSync,
+      workdayConfig: workdayCfg,
+    });
+    registerUserMcpSyncablesFromDatabase(db, policyFilteredRegistrar, connectorMesh);
+    syncScheduler.start();
+  }
   evaluateWatchersStartupCatchUp(db, Date.now(), (t, b) => notifications.show(t, b), watcherOpts);
   return {
     syncScheduler,
@@ -1949,7 +1957,11 @@ function maybeStartAutoUpdateRuntime(deps: {
   let autoUpdateRuntime: AutoUpdateRuntime | undefined;
   const autoUpdateRegistryUrl = (process.env["NIMBUS_EXTENSIONS_REGISTRY_URL"] ?? "").trim();
   const autoUpdateDisabled = process.env["NIMBUS_EXTENSIONS_DISABLE_AUTO_UPDATE"] === "1";
-  if (autoUpdateRegistryUrl !== "" && !autoUpdateDisabled) {
+  if (
+    autoUpdateRegistryUrl !== "" &&
+    !autoUpdateDisabled &&
+    bootPolicyFor(paths).extensionsAutoUpdate
+  ) {
     const extensionsCfg = loadNimbusExtensionsFromConfigDir(paths.configDir);
     autoUpdateRuntime = createAutoUpdateRuntime({
       db,
@@ -3398,6 +3410,7 @@ export async function assemblePlatformServices(
     localIndex,
     dataDir: paths.dataDir,
     configDir: paths.configDir,
+    demo: paths.demo === true,
     extensionsDir: paths.extensionsDir,
     openUrl: openUrlInDefaultBrowser,
     syncScheduler,
@@ -4276,18 +4289,22 @@ export async function assemblePlatformServices(
       );
   }
 
-  wireUpdaterIntoIpc(paths.configDir, ipc, syncLogger);
+  if (bootPolicy.updaterStartupCheck) {
+    wireUpdaterIntoIpc(paths.configDir, ipc, syncLogger);
+  }
 
   const gatewayAssemblyMs = Math.max(0, Math.round(performance.now() - assemblyStartedMs));
-  const telemetryStop = startTelemetryFlushScheduler({
-    dataDir: paths.dataDir,
-    activeTomlPath,
-    getDatabase: () => db,
-    gatewayVersion: GATEWAY_VERSION,
-    logger: syncLogger,
-    coldStartMs: gatewayAssemblyMs,
-  });
-  sidecarStops.push(telemetryStop.stop);
+  if (bootPolicy.telemetryFlush) {
+    const telemetryStop = startTelemetryFlushScheduler({
+      dataDir: paths.dataDir,
+      activeTomlPath,
+      getDatabase: () => db,
+      gatewayVersion: GATEWAY_VERSION,
+      logger: syncLogger,
+      coldStartMs: gatewayAssemblyMs,
+    });
+    sidecarStops.push(telemetryStop.stop);
+  }
 
   return {
     vault,

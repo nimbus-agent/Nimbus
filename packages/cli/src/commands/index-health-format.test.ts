@@ -66,6 +66,33 @@ describe("formatIndexHealth — the confidence line", () => {
     // The failure this guards: rendering `null` as 0 and telling a new user their brand-new
     // install scores zero out of a hundred.
     expect(out).not.toContain("0/100");
+    // Real bug, not demo-specific: `nimbus sync` is not a registered command
+    // (COMMAND_NAMES has no `sync`) — the hint must name a command that exists.
+    expect(out).toContain("nimbus connector sync <service>");
+    expect(out).not.toContain("nimbus sync`");
+  });
+
+  test("an empty DEMO index points at `nimbus demo`, never the refused connector sync", () => {
+    const out = formatIndexHealth(
+      report({
+        totalItems: 0,
+        connectors: [],
+        confidence: null,
+        confidenceUnavailableReason: "empty_index",
+        embeddingCoveragePercent: 0,
+        confidenceInputs: {
+          embeddingCoveragePercent: 0,
+          freshItemPercent: 0,
+          coverageWeight: 0.6,
+          freshnessWeight: 0.4,
+        },
+      }),
+      { nowMs: NOW, noColor: true, demo: true },
+    );
+    expect(out).toMatch(/demo index is empty/i);
+    expect(out).toContain("`nimbus demo`");
+    expect(out).not.toContain("connector sync");
+    expect(out).not.toContain("0/100");
   });
 
   test("a low score is called out as low", () => {

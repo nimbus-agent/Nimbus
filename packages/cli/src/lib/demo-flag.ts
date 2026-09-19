@@ -7,11 +7,17 @@
  *
  * Only an exact `--demo` token counts; no command defines its own `--demo` (checked 2026-09-18),
  * so stripping it globally shadows nothing.
+ *
+ * The `demo` subcommand also implies the demo root, with no `--demo` flag needed — it must, since
+ * `nimbus demo` resolves paths (via `getCliPlatformPaths()`) before it can do anything at all, and
+ * a demo tour that required typing `nimbus --demo demo` would be a strange first command.
  */
 export const DEMO_FLAG = "--demo";
 
 export function applyDemoFlag(argv: readonly string[], env: NodeJS.ProcessEnv): string[] {
-  if (!argv.includes(DEMO_FLAG)) return [...argv];
-  env["NIMBUS_DEMO"] = "1";
-  return argv.filter((a) => a !== DEMO_FLAG);
+  const out = argv.filter((a) => a !== DEMO_FLAG);
+  if (argv.includes(DEMO_FLAG) || out[0] === "demo") {
+    env["NIMBUS_DEMO"] = "1";
+  }
+  return out;
 }

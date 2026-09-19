@@ -98,6 +98,13 @@ export type InitDeps = {
   gatewayLogTail: () => GatewayLogTail | null;
   log: (line: string) => void;
   error: (line: string) => void;
+  /**
+   * `CliPlatformPaths.demo === true` (never the env var directly). The demo root is set up by
+   * `nimbus demo`, not by `init`'s onboarding — which would call the refused `connector auth` and
+   * write a `nimbus.toml` the seeder then overwrites — so `runInit` refuses outright when this is
+   * `true`, before touching the gateway or the config file.
+   */
+  inDemoRoot: boolean;
 };
 
 const HELP_LINES: readonly string[] = [
@@ -487,12 +494,27 @@ async function initOutcome(args: string[], deps: InitDeps): Promise<InitOutcome>
   return await indexRepository(deps, plan.repoRoot);
 }
 
+/**
+ * The demo root is seeded by `nimbus demo`, never by `init`'s onboarding: its wizard would call
+ * `connector auth` (refused by a demo-rooted gateway) and write a `nimbus.toml` the seeder then
+ * overwrites. Refusing here — before `initOutcome` runs — is what keeps `init` from spawning a
+ * gateway or touching the config file in demo mode at all.
+ */
+export const DEMO_INIT_REFUSAL =
+  "The demo root is set up by `nimbus demo`, not `init` — run `nimbus demo` to seed the synthetic org, or run `nimbus init` without --demo for your real install.";
+
 export async function runInit(args: string[], deps: InitDeps = defaultInitDeps()): Promise<void> {
   if (hasFlag(args, "--help") || hasFlag(args, "-h")) {
     for (const line of HELP_LINES) {
       deps.log(line);
     }
     process.exitCode = INIT_EXIT.ok;
+    return;
+  }
+
+  if (deps.inDemoRoot) {
+    deps.error(DEMO_INIT_REFUSAL);
+    process.exitCode = INIT_EXIT.usage;
     return;
   }
 
@@ -570,5 +592,6 @@ export function defaultInitDeps(paths: CliPlatformPaths = getCliPlatformPaths())
     error: (line) => {
       console.error(line);
     },
+    inDemoRoot: paths.demo === true,
   };
 }

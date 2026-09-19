@@ -176,6 +176,7 @@ const FORBIDDEN_OVER_LAN = new Set([
   // surfaces too (the browser extension talks to the bearer-authed HTTP surface, never LAN
   // JSON-RPC), so forbidding the namespace costs no legitimate caller anything.
   "clip",
+  "demo", // the demo seeder — local CLI only (I41)
   // NOTE: egress.prune is deliberately NOT forbidden here — like federation.purge above, it is
   // HITL-gated inside its own handler (handlePrune in egress-rpc.ts calls
   // ctx.requestPruneApproval(beforeTs) and returns { approved: false, prunedCount: 0 } on denial),

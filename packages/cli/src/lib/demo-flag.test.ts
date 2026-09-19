@@ -38,6 +38,30 @@ describe("applyDemoFlag", () => {
     ]);
     expect(env["NIMBUS_DEMO"]).toBeUndefined();
   });
+
+  test("the `demo` subcommand itself implies the demo root, with no --demo flag", () => {
+    const env: NodeJS.ProcessEnv = {};
+    expect(applyDemoFlag(["demo"], env)).toEqual(["demo"]);
+    expect(env["NIMBUS_DEMO"]).toBe("1");
+  });
+
+  test("a `demo` subcommand's own arguments are preserved", () => {
+    const env: NodeJS.ProcessEnv = {};
+    expect(applyDemoFlag(["demo", "stop"], env)).toEqual(["demo", "stop"]);
+    expect(env["NIMBUS_DEMO"]).toBe("1");
+  });
+
+  test("a leading --demo before `demo` is stripped same as any other command", () => {
+    const env: NodeJS.ProcessEnv = {};
+    expect(applyDemoFlag(["--demo", "demo"], env)).toEqual(["demo"]);
+    expect(env["NIMBUS_DEMO"]).toBe("1");
+  });
+
+  test("a command that is merely named `status` does not imply the demo root", () => {
+    const env: NodeJS.ProcessEnv = {};
+    expect(applyDemoFlag(["status"], env)).toEqual(["status"]);
+    expect(env["NIMBUS_DEMO"]).toBeUndefined();
+  });
 });
 
 describe("GatewayNotRunningError", () => {

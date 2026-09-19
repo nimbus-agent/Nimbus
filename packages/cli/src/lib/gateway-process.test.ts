@@ -255,3 +255,27 @@ describe("readGatewayState", () => {
     expect(onDisk.pid).toBe(pid);
   });
 });
+
+describe("gw-state-helpers.ts stays a byte-identical copy of gateway-process.ts", () => {
+  // Every test above exercises `gw-state-helpers.ts` — the unmocked twin — because
+  // `test/helpers/cli-mocks.ts` replaces `gateway-process.ts` process-wide via `mock.module`
+  // (see the header of `gw-state-helpers.ts`). Production runs BOTH: 40+ commands import
+  // `gateway-process.ts`, while `stop-and-wait.ts` imports the twin. So a fix landed in only one
+  // of them would ship untested in the other, with nothing here to notice. Comparing source is
+  // what fails the moment they diverge; a behavioural comparison could not, since one side is
+  // mocked in the very run that would perform it.
+  it("the twin's code, below its explanatory header, equals gateway-process.ts exactly", () => {
+    const read = (name: string): string =>
+      readFileSync(join(import.meta.dir, name), "utf8").replaceAll("\r\n", "\n");
+    const original = read("gateway-process.ts");
+    const twin = read("gw-state-helpers.ts");
+    const codeStart = twin.indexOf("\nimport ");
+    expect(codeStart).toBeGreaterThan(-1);
+    // Everything before the first import must be the header comment and nothing else, so no code
+    // can hide above the compared region.
+    for (const line of twin.slice(0, codeStart).split("\n")) {
+      expect(line === "" || line.startsWith("//")).toBe(true);
+    }
+    expect(twin.slice(codeStart + 1)).toBe(original);
+  });
+});

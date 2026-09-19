@@ -113,6 +113,35 @@ describe("runIndexHealth — output", () => {
     expect(text).not.toContain("0/100");
   });
 
+  test("in the demo root the empty-index hint points at `nimbus demo` (from paths.demo)", async () => {
+    // `getCliPlatformPaths()` reads `NIMBUS_DEMO` for real; the command branches on the resolved
+    // `paths.demo`. Nothing is read or written at those paths — the IPC client is a mock.
+    const saved = {
+      demo: process.env["NIMBUS_DEMO"],
+      configDir: process.env["NIMBUS_CONFIG_DIR"],
+      socket: process.env["NIMBUS_GATEWAY_SOCKET"],
+    };
+    delete process.env["NIMBUS_CONFIG_DIR"];
+    delete process.env["NIMBUS_GATEWAY_SOCKET"];
+    process.env["NIMBUS_DEMO"] = "1";
+    try {
+      const { client } = createMockIpcClient([EMPTY_REPORT]);
+      await runIndexHealth(client, []);
+      const text = out.join("");
+      expect(text).toMatch(/demo index is empty/i);
+      expect(text).not.toContain("connector sync");
+    } finally {
+      for (const [k, v] of [
+        ["NIMBUS_DEMO", saved.demo],
+        ["NIMBUS_CONFIG_DIR", saved.configDir],
+        ["NIMBUS_GATEWAY_SOCKET", saved.socket],
+      ] as const) {
+        if (v === undefined) delete process.env[k];
+        else process.env[k] = v;
+      }
+    }
+  });
+
   test("renders a populated report with its connector row", async () => {
     const { client } = createMockIpcClient([
       {

@@ -2,6 +2,7 @@ import { render as inkRender } from "ink";
 
 import { IPCClient } from "../ipc-client/index.ts";
 import { createCliFileLogger } from "../lib/cli-logger.ts";
+import { gatewayNotRunningMessage } from "../lib/gateway-not-running.ts";
 import { readGatewayState } from "../lib/gateway-process.ts";
 import { getCliPlatformPaths } from "../paths.ts";
 import { App } from "../tui/App.tsx";
@@ -26,7 +27,7 @@ export async function runTui(args: string[]): Promise<void> {
   const paths = getCliPlatformPaths();
   const state = await readGatewayState(paths);
   if (state === undefined) {
-    process.stderr.write("Gateway is not running. Start with: nimbus start\n");
+    process.stderr.write(`${gatewayNotRunningMessage(paths.demo === true)}\n`);
     process.exitCode = 1;
     return;
   }

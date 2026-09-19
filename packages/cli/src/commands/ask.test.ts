@@ -259,6 +259,59 @@ describe("runAsk — happy paths", () => {
   });
 });
 
+describe("runAsk — demo root: skips the connector-registered pre-check", () => {
+  // Mirrors expert.test.ts's `--demo: empty_index gap` pattern: `getCliPlatformPaths()` reads
+  // `NIMBUS_DEMO` for real (it is not mocked), so the env var is the legitimate way to drive it
+  // here — the production rule against reading the env var directly applies to `ask.ts` itself,
+  // which must (and does) branch on `paths.demo`, never on this var.
+  const originalDemo = process.env["NIMBUS_DEMO"];
+  const originalConfigDir = process.env["NIMBUS_CONFIG_DIR"];
+  const originalSocket = process.env["NIMBUS_GATEWAY_SOCKET"];
+
+  beforeEach(() => {
+    stdoutChunks.length = 0;
+    installStreamCapture();
+    delete process.env["NIMBUS_CONFIG_DIR"];
+    delete process.env["NIMBUS_GATEWAY_SOCKET"];
+    process.env["NIMBUS_DEMO"] = "1";
+  });
+  afterEach(() => {
+    clearFixture();
+    restoreStreams();
+    if (originalDemo === undefined) delete process.env["NIMBUS_DEMO"];
+    else process.env["NIMBUS_DEMO"] = originalDemo;
+    if (originalConfigDir === undefined) delete process.env["NIMBUS_CONFIG_DIR"];
+    else process.env["NIMBUS_CONFIG_DIR"] = originalConfigDir;
+    if (originalSocket === undefined) delete process.env["NIMBUS_GATEWAY_SOCKET"];
+    else process.env["NIMBUS_GATEWAY_SOCKET"] = originalSocket;
+  });
+
+  it("calls agent.invoke straight away — even with an empty connector.listStatus — and never prints the real-install hint", async () => {
+    const calls: Array<{ method: string; params: unknown }> = [];
+    setFixture({
+      gatewayState: { socketPath: FAKE_SOCKET_PATH },
+      ipcClient: {
+        call: async (method: string, params: unknown) => {
+          calls.push({ method, params });
+          // An empty array would trigger the real-install hint outside a demo root — see the
+          // non-demo "prints onboarding hint" test above, which pins that it still does.
+          if (method === "connector.listStatus") return [];
+          if (method === "agent.invoke") return { reply: "" };
+          return undefined;
+        },
+        connect: async () => {},
+        disconnect: async () => {},
+        onNotification: () => {},
+      },
+    });
+    await runAsk(["what", "is", "going", "on"]);
+    expect(calls.map((c) => c.method)).toEqual(["agent.invoke"]);
+    const out = stdoutChunks.join("");
+    expect(out).not.toContain("No connectors are registered");
+    expect(out).not.toContain("nimbus connector auth github");
+  });
+});
+
 describe("runAsk — no LLM configured", () => {
   // Mirrors NO_LLM_SENTINEL in gateway/src/engine/gateway-agent-error.ts, which
   // has its own test pinning the constant. The CLI cannot import gateway source
@@ -309,5 +362,68 @@ describe("runAsk — no LLM configured", () => {
     // so the top-level handler still reports it.
     fixtureThatRejectsInvoke("Anthropic rate limit hit.");
     await expect(runAsk(["hello"])).rejects.toThrow(/rate limit/);
+  });
+});
+
+describe("runAsk — no LLM configured, demo root (fix round 2)", () => {
+  // Same demo-env-var pattern as the "runAsk — demo root" block above.
+  const originalDemo = process.env["NIMBUS_DEMO"];
+  const originalConfigDir = process.env["NIMBUS_CONFIG_DIR"];
+  const originalSocket = process.env["NIMBUS_GATEWAY_SOCKET"];
+  const SENTINEL = "Nimbus needs an LLM for this command.";
+  // Restored, not zeroed: the test sets exit code 1, and forcing 0 afterwards would also
+  // overwrite a non-zero code an earlier test in the same process left behind. `?? 0` on restore
+  // because Bun does not reset an exit code on `process.exitCode = undefined` (it stays 1).
+  let priorExitCode: typeof process.exitCode;
+
+  beforeEach(() => {
+    priorExitCode = process.exitCode;
+    stdoutChunks.length = 0;
+    stderrChunks.length = 0;
+    installStreamCapture();
+    delete process.env["NIMBUS_CONFIG_DIR"];
+    delete process.env["NIMBUS_GATEWAY_SOCKET"];
+    process.env["NIMBUS_DEMO"] = "1";
+  });
+  afterEach(() => {
+    clearFixture();
+    restoreStreams();
+    process.exitCode = priorExitCode ?? 0;
+    if (originalDemo === undefined) delete process.env["NIMBUS_DEMO"];
+    else process.env["NIMBUS_DEMO"] = originalDemo;
+    if (originalConfigDir === undefined) delete process.env["NIMBUS_CONFIG_DIR"];
+    else process.env["NIMBUS_CONFIG_DIR"] = originalConfigDir;
+    if (originalSocket === undefined) delete process.env["NIMBUS_GATEWAY_SOCKET"];
+    else process.env["NIMBUS_GATEWAY_SOCKET"] = originalSocket;
+  });
+
+  it("prints the gateway's demo guidance verbatim — the CLI no longer carries its own copy", async () => {
+    // The demo variant is chosen by the GATEWAY now (`runAsk`, from `PlatformPaths.demo`), so
+    // the REPL, the TUI and `nimbus prove` get it too. The CLI prints whatever arrives, exactly.
+    const gatewayDemoMessage = [
+      `${SENTINEL} The demo does not configure one.`,
+      "",
+      "Everything in the tour works without one — try:",
+      "  nimbus --demo standup",
+    ].join("\n");
+    setFixture({
+      gatewayState: { socketPath: FAKE_SOCKET_PATH },
+      ipcClient: {
+        call: async (method: string) => {
+          // No `connector.listStatus` call is expected at all in a demo root (fix round 1) —
+          // returning something here would mask that regression rather than catch it.
+          if (method === "agent.invoke") {
+            throw new Error(gatewayDemoMessage);
+          }
+          return undefined;
+        },
+        connect: async () => {},
+        disconnect: async () => {},
+        onNotification: () => {},
+      },
+    });
+    await runAsk(["what", "is", "going", "on"]);
+    expect(stderrChunks.join("")).toBe(`${gatewayDemoMessage}\n`);
+    expect(process.exitCode).toBe(1);
   });
 });

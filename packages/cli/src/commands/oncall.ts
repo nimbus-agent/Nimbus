@@ -1,6 +1,6 @@
 import { toPlainText, toSlackMrkdwn } from "../format/slack-markdown.ts";
 import { IPCClient } from "../ipc-client/index.ts";
-import { awaitAgentBrief, type PendingBrief } from "../lib/agent-brief-render.ts";
+import { awaitAgentBrief, briefTextFor, type PendingBrief } from "../lib/agent-brief-render.ts";
 import { gatewayNotRunningMessage } from "../lib/gateway-not-running.ts";
 import { readGatewayState } from "../lib/gateway-process.ts";
 import { registerInteractiveCliIpcHandlers } from "../lib/interactive-ipc-handlers.ts";
@@ -181,7 +181,9 @@ export async function fetchOncallBrief(params: OncallFetchParams): Promise<Oncal
     pending = awaitAgentBrief(client, "oncall", isOncallBriefLike);
     const { sessionId } = await client.call<{ sessionId: string }>("agents.oncall", params);
     pending.bindSession(sessionId);
-    return await pending.result;
+    const result = await pending.result;
+    // Demo-safe commands in the Markdown only; `findings` (the `--json` output) is untouched.
+    return { ...result, brief: briefTextFor(result.brief, paths.demo === true) };
   } catch (err) {
     process.stderr.write(`${err instanceof Error ? err.message : String(err)}\n`);
     return process.exit(2);

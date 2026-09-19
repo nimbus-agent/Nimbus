@@ -1,9 +1,11 @@
 import { describe, expect, test } from "bun:test";
 
+import { NoLlmProviderError } from "../llm/provider-error.ts";
 import type { AgentProviderName } from "./gateway-agent-error.ts";
 import {
   agentErrorFromCaughtError,
   agentErrorFromHttpResponse,
+  DEMO_NO_LLM_CONFIGURED_MESSAGE,
   GatewayAgentUnavailableError,
   NO_LLM_SENTINEL,
 } from "./gateway-agent-error.ts";
@@ -176,6 +178,63 @@ describe("agentErrorFromCaughtError", () => {
   test("preserves provider when supplied", () => {
     const e = agentErrorFromCaughtError(new Error("401 Unauthorized"), "openai");
     expect(e?.provider).toBe("openai");
+  });
+
+  test("NoLlmProviderError (zero eligible routes) → no_api_key, the NO_LLM_SENTINEL guidance", () => {
+    // The router throws this when NO route was even eligible for the task (no key configured, no
+    // local model reachable) — checked by `instanceof`, ahead of every message-substring branch
+    // above, since it is a real type rather than vendor-failure text to sniff. Before this, the
+    // bare `Error("No LLM provider available for task: ...")` matched none of the branches above
+    // and fell through to `null`, which surfaced as a raw, unsanitised error to the CLI instead of
+    // the guided message.
+    const e = agentErrorFromCaughtError(new NoLlmProviderError("agent_step"));
+    expect(e).not.toBeNull();
+    expect(e?.reason).toBe("no_api_key");
+    expect(e?.message).toContain(NO_LLM_SENTINEL);
+  });
+
+  test("NoLlmProviderError under enforce_air_gap → air_gap, not the 'set an API key' guidance", () => {
+    // Air-gap holds every remote route back, so an empty route table there usually means a key
+    // EXISTS and was refused — `no_api_key`'s advice would send the owner after the wrong thing.
+    // The caller passes the fact; the mapper reads no config.
+    const e = agentErrorFromCaughtError(new NoLlmProviderError("agent_step"), undefined, {
+      enforceAirGap: true,
+    });
+    expect(e?.reason).toBe("air_gap");
+    expect(e?.message).toContain("enforce_air_gap");
+    expect(e?.message).not.toContain(NO_LLM_SENTINEL);
+  });
+
+  test("an explicit enforceAirGap: false keeps no_api_key", () => {
+    const e = agentErrorFromCaughtError(new NoLlmProviderError("agent_step"), undefined, {
+      enforceAirGap: false,
+    });
+    expect(e?.reason).toBe("no_api_key");
+  });
+});
+
+describe("the demo variant of the no-LLM guidance (I41)", () => {
+  test("no_api_key + demo: starts with the sentinel, names only --demo commands, no restart advice", () => {
+    const e = new GatewayAgentUnavailableError({ reason: "no_api_key", demo: true });
+    expect(e.message.startsWith(NO_LLM_SENTINEL)).toBe(true);
+    expect(e.message).toBe(DEMO_NO_LLM_CONFIGURED_MESSAGE);
+    expect(e.message).toContain("The demo does not configure one.");
+    expect(e.message).toContain("nimbus --demo standup");
+    expect(e.message).not.toContain("nimbus stop");
+    expect(e.message).not.toContain("nimbus.toml");
+  });
+
+  test("no_api_key without demo: the real-install guidance, unchanged", () => {
+    const e = new GatewayAgentUnavailableError({ reason: "no_api_key" });
+    expect(e.message.startsWith(NO_LLM_SENTINEL)).toBe(true);
+    expect(e.message).toContain("nimbus stop && nimbus start");
+    expect(e.message).not.toContain("--demo");
+  });
+
+  test("demo does not change any other reason's message", () => {
+    expect(new GatewayAgentUnavailableError({ reason: "air_gap", demo: true }).message).toBe(
+      new GatewayAgentUnavailableError({ reason: "air_gap" }).message,
+    );
   });
 });
 

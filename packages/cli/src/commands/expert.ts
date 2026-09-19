@@ -1,5 +1,10 @@
 import { IPCClient } from "../ipc-client/index.ts";
-import { resolveBriefTimeoutMs } from "../lib/agent-brief-render.ts";
+import {
+  briefTextFor,
+  DEMO_EMPTY_INDEX_HINT,
+  EMPTY_INDEX_HINT,
+  resolveBriefTimeoutMs,
+} from "../lib/agent-brief-render.ts";
 import { gatewayNotRunningMessage } from "../lib/gateway-not-running.ts";
 import { readGatewayState } from "../lib/gateway-process.ts";
 import { registerInteractiveCliIpcHandlers } from "../lib/interactive-ipc-handlers.ts";
@@ -89,10 +94,10 @@ export async function runExpertCli(args: string[]): Promise<void> {
       return;
     }
     if (findings.gaps.some((g) => g.category === "empty_index")) {
-      process.stderr.write("No data indexed yet — run `nimbus connector sync <service>` first.\n");
+      process.stderr.write(paths.demo === true ? DEMO_EMPTY_INDEX_HINT : EMPTY_INDEX_HINT);
       process.exit(1);
     }
-    process.stdout.write(`${brief}\n`);
+    process.stdout.write(`${briefTextFor(brief, paths.demo === true)}\n`);
   } catch (err) {
     process.stderr.write(`${err instanceof Error ? err.message : String(err)}\n`);
     process.exit(2);

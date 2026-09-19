@@ -14,13 +14,26 @@ const base: PlatformPaths = {
 
 describe("bootPolicyFor", () => {
   test("a real gateway reaps AppContainers and honours the env sidecars", () => {
-    expect(bootPolicyFor(base)).toEqual({ reapAppContainers: true, envSidecars: true });
+    expect(bootPolicyFor(base)).toEqual({
+      reapAppContainers: true,
+      envSidecars: true,
+      syncScheduler: true,
+      updaterStartupCheck: true,
+      telemetryFlush: true,
+      embeddingRuntime: true,
+      extensionsAutoUpdate: true,
+    });
   });
 
   test("a demo gateway does neither", () => {
     expect(bootPolicyFor({ ...base, demo: true })).toEqual({
       reapAppContainers: false,
       envSidecars: false,
+      syncScheduler: false,
+      updaterStartupCheck: false,
+      telemetryFlush: false,
+      embeddingRuntime: false,
+      extensionsAutoUpdate: false,
     });
   });
 });

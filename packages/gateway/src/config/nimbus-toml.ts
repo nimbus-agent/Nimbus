@@ -768,7 +768,11 @@ export function parseNimbusUpdaterToml(
 }
 
 export function loadNimbusUpdaterFromPath(tomlPath: string): NimbusUpdaterToml {
-  return loadTomlSection(tomlPath, DEFAULT_NIMBUS_UPDATER_TOML, parseNimbusUpdaterToml);
+  // The fallback goes through `parseNimbusUpdaterToml` too, so `NIMBUS_UPDATER_URL` and
+  // `NIMBUS_UPDATER_DISABLE` apply whether or not a `nimbus.toml` exists. With the bare defaults
+  // as the fallback they were silently ignored on every install that has no config file yet —
+  // exactly a first boot, when the startup update check runs.
+  return loadTomlSection(tomlPath, parseNimbusUpdaterToml(""), parseNimbusUpdaterToml);
 }
 
 export function loadNimbusUpdaterFromConfigDir(configDir: string): NimbusUpdaterToml {

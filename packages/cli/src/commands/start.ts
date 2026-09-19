@@ -3,6 +3,7 @@ import { unlink } from "node:fs/promises";
 import { join } from "node:path";
 import { spinner } from "@clack/prompts";
 import { IPCClient } from "../ipc-client/index.ts";
+import { readDemoSeedMarker } from "../lib/demo-banner.ts";
 import { GatewayLogTailer, truncatePreview } from "../lib/gateway-log-tail.ts";
 import {
   ensureGatewayDirs,
@@ -10,11 +11,14 @@ import {
   isProcessAlive,
   readGatewayState,
 } from "../lib/gateway-process.ts";
+import {
+  probeSocketReachable as probeClientReachable,
+  SOCKET_PROBE_TIMEOUT_MS,
+} from "../lib/socket-probe.ts";
 import { spawnGateway } from "../lib/spawn-gateway.ts";
 import { getCliPlatformPaths } from "../paths.ts";
 
 const ONBOARDING_MARKER = ".nimbus-post-start-onboarding";
-const SOCKET_PROBE_TIMEOUT_MS = 2000;
 const DEFAULT_READY_WAIT_TIMEOUT_MS = 60_000;
 const READY_POLL_INTERVAL_MS = 250;
 
@@ -30,25 +34,8 @@ function resolveReadyWaitTimeoutMs(): number {
   return n;
 }
 
-async function probeSocketReachable(socketPath: string, timeoutMs: number): Promise<boolean> {
-  const client = new IPCClient(socketPath);
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  try {
-    const timeout = new Promise<never>((_, reject) => {
-      timer = setTimeout(() => {
-        reject(new Error("probe timeout"));
-      }, timeoutMs);
-    });
-    await Promise.race([client.connect(), timeout]);
-    return true;
-  } catch {
-    return false;
-  } finally {
-    if (timer !== undefined) {
-      clearTimeout(timer);
-    }
-    await client.disconnect().catch(() => {});
-  }
+function probeSocketReachable(socketPath: string, timeoutMs: number): Promise<boolean> {
+  return probeClientReachable(new IPCClient(socketPath), timeoutMs);
 }
 
 async function waitForGatewayReady(
@@ -102,7 +89,8 @@ async function sleep(ms: number): Promise<void> {
   await new Promise<void>((r) => setTimeout(r, ms));
 }
 
-async function printOnboardingHintIfNoConnectors(
+/** The real-install first-run hint: shown once, when no connector is registered yet. */
+export async function printOnboardingHintIfNoConnectors(
   client: IPCClient,
   markerPath: string,
 ): Promise<void> {
@@ -121,10 +109,30 @@ async function printOnboardingHintIfNoConnectors(
   }
 }
 
+/**
+ * The demo root's first-run hint, keyed on the demo SEED marker (`demo-seed.json`, read through
+ * `lib/demo-banner.ts` — the same reader the banner uses), never on connectors or the onboarding
+ * marker. A demo index has no connector rows even when seeded (the seeder writes items directly),
+ * and `nimbus demo` starts its gateway with `--no-wizard`, so it never writes the onboarding
+ * marker either: keyed on either, the hint told a user with a fully seeded demo to seed it.
+ */
+export function printDemoSeedHintIfUnseeded(dataDir: string): void {
+  if (readDemoSeedMarker(dataDir) !== undefined) return;
+  console.log("");
+  console.log("Seed the synthetic org with: nimbus demo");
+}
+
 async function maybePrintFirstRunHints(
   paths: ReturnType<typeof getCliPlatformPaths>,
 ): Promise<void> {
   if (!process.stdout.isTTY || process.env["CI"] === "true") {
+    return;
+  }
+  // Derived from `CliPlatformPaths.demo`, never the env var. In the demo root, connector
+  // auth/sync are refused by the gateway, so the real-install hint below would be wrong twice
+  // over: wrong install AND a refused command.
+  if (paths.demo === true) {
+    printDemoSeedHintIfUnseeded(paths.dataDir);
     return;
   }
   const markerPath = join(paths.dataDir, ONBOARDING_MARKER);

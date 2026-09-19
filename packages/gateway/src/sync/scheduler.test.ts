@@ -1210,3 +1210,56 @@ describe("per-service capability binding", () => {
     expect(asked).toEqual(["jira.api_token"]);
   });
 });
+
+describe("syncDisabled", () => {
+  // A demo-rooted gateway's scheduler must never run a job (I41 clause 6, spec § 11.2):
+  // `syncDisabled` is the choke point inside the scheduler itself, not `!started` — `forceSync`
+  // needs no `start()` and every finished job's `.finally` re-triggers `tick()`.
+  function recordingSyncable(serviceId: string): { syncable: Syncable; calls: () => number } {
+    let calls = 0;
+    const syncable: Syncable = {
+      serviceId,
+      defaultIntervalMs: 25,
+      initialSyncDepthDays: 30,
+      async sync(): Promise<SyncResult> {
+        calls += 1;
+        return { cursor: null, itemsUpserted: 0, itemsDeleted: 0, hasMore: false, durationMs: 0 };
+      },
+    };
+    return { syncable, calls: () => calls };
+  }
+
+  test("forceSync rejects with ERR_SYNC_DISABLED and never runs the syncable", async () => {
+    const db = openMemoryIndexDatabase();
+    const ctx = testContext(db);
+    const { syncable: fake, calls: fakeSyncCalls } = recordingSyncable("demo-svc");
+    const scheduler = new SyncScheduler(ctx, undefined, { syncDisabled: true });
+    scheduler.register(fake);
+    await expect(scheduler.forceSync(fake.serviceId)).rejects.toThrow("ERR_SYNC_DISABLED");
+    expect(fakeSyncCalls()).toBe(0);
+  });
+
+  test("register writes no scheduler state and start() schedules nothing", async () => {
+    const db = openMemoryIndexDatabase();
+    const ctx = testContext(db);
+    const { syncable: fake, calls: fakeSyncCalls } = recordingSyncable("demo-svc");
+    const scheduler = new SyncScheduler(ctx, undefined, { syncDisabled: true });
+    scheduler.register(fake);
+    scheduler.start();
+    await sleep(80); // > 3 of the 25 ms tick intervals
+    expect(fakeSyncCalls()).toBe(0);
+    expect(scheduler.getStatus()).toEqual([]);
+    await scheduler.stop();
+  });
+
+  test("without the option, behaviour is unchanged (negative control)", async () => {
+    const db = openMemoryIndexDatabase();
+    const ctx = testContext(db);
+    const { syncable: fake, calls: fakeSyncCalls } = recordingSyncable("demo-svc");
+    const scheduler = new SyncScheduler(ctx, undefined, {});
+    scheduler.register(fake);
+    await scheduler.forceSync(fake.serviceId);
+    expect(fakeSyncCalls()).toBe(1);
+    await scheduler.stop();
+  });
+});

@@ -15,7 +15,7 @@
 
 import type { z } from "zod";
 import type { IpcCallable } from "./client-surface.ts";
-import { GATEWAY_DOWN_MESSAGE, GatewayUnavailableError, isDisconnectError } from "./errors.ts";
+import { GatewayUnavailableError, gatewayDownMessage, isDisconnectError } from "./errors.ts";
 
 export interface ToolResult {
   [key: string]: unknown;
@@ -36,6 +36,13 @@ export interface AdapterDeps {
    * stub; absent means "no known reason", which is the correct reading for a hand-built deps.
    */
   agentToolsDisabledReason?(): string | undefined;
+  /**
+   * Whether this connection targets a demo-rooted gateway (`CliPlatformPaths.demo === true`).
+   * Optional, defaulting to `false` — a hand-built test fake or an old `ConnectionEnv`-built deps
+   * object stays valid without a stub. Read by the mid-connection-drop path in `runTool` so a
+   * `--demo` user is told to restart the demo gateway, never the real one.
+   */
+  demo?: boolean;
 }
 
 export interface ToolSpec {
@@ -87,7 +94,7 @@ export async function runTool(
     return await fn(client);
   } catch (e) {
     if (isDisconnectError(e)) {
-      return errorResult(GATEWAY_DOWN_MESSAGE);
+      return errorResult(gatewayDownMessage(deps.demo === true));
     }
     return errorResult(`Nimbus: ${e instanceof Error ? e.message : String(e)}`);
   }

@@ -5,6 +5,7 @@ import type { Logger } from "pino";
 import type { NimbusEmbeddingToml } from "../config/nimbus-toml.ts";
 import { wrapLedgeredEmbedder } from "../egress/embedding-egress.ts";
 import { readIndexedUserVersion } from "../index/migrations/runner.ts";
+import { bootPolicyFor } from "../platform/demo-boot.ts";
 import { processEnvGet } from "../platform/env-access.ts";
 import type { PlatformPaths } from "../platform/paths.ts";
 import type { NimbusVault } from "../vault/nimbus-vault.ts";
@@ -163,6 +164,9 @@ export function createEmbeddingRuntimeNonBlocking(
   vault: NimbusVault,
   deps: EmbeddingRuntimeDeps = {},
 ): EmbeddingRuntime | null {
+  if (!bootPolicyFor(paths).embeddingRuntime) {
+    return null;
+  }
   if (!embeddingRuntimeWanted(db, tomlEmbedding, envAllowsEmbeddings)) {
     return null;
   }

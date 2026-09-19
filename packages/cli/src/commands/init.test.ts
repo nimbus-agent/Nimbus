@@ -139,6 +139,7 @@ function fakeDeps(over: Partial<InitDeps> = {}): { deps: InitDeps; rec: Recorded
     }),
     log: (l) => rec.out.push(l),
     error: (l) => rec.err.push(l),
+    inDemoRoot: false,
     ...over,
   };
   return { deps, rec };
@@ -166,6 +167,29 @@ test("exits non-zero outside a git repository", async () => {
   await runInit([], deps);
   expect(process.exitCode).toBe(1);
   expect(rec.err.join("\n")).toContain("git repository");
+});
+
+test("--demo: refuses before doing anything — no gateway spawn, no config write, no wizard", async () => {
+  const { deps, rec } = fakeDeps({ inDemoRoot: true });
+  await runInit([], deps);
+  expect(process.exitCode).toBe(INIT_EXIT.usage);
+  expect(rec.err.join("\n")).toBe(
+    "The demo root is set up by `nimbus demo`, not `init` — run `nimbus demo` to seed the synthetic org, or run `nimbus init` without --demo for your real install.",
+  );
+  // None of init's deps ran: no gateway spawn, no sync, and (since applyInitPlan/appendFilesystemRoot
+  // is never reached) no nimbus.toml write either.
+  expect(rec.started).toBe(0);
+  expect(rec.synced).toBe(0);
+  expect(existsSync(join(configDir, "nimbus.toml"))).toBe(false);
+});
+
+test("--demo: even --no-sync and --help-shaped args still refuse (the check is unconditional)", async () => {
+  const { deps, rec } = fakeDeps({ inDemoRoot: true });
+  await runInit(["--no-sync"], deps);
+  expect(process.exitCode).toBe(INIT_EXIT.usage);
+  expect(rec.started).toBe(0);
+  expect(rec.synced).toBe(0);
+  expect(existsSync(join(configDir, "nimbus.toml"))).toBe(false);
 });
 
 test("a gateway already running when a NEW root is added is told to restart, not killed", async () => {

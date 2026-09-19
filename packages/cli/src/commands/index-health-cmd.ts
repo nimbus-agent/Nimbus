@@ -1,4 +1,5 @@
 import type { IPCClient } from "../ipc-client/index.ts";
+import { getCliPlatformPaths } from "../paths.ts";
 import { formatIndexHealth, type IndexHealthReport } from "./index-health-format.ts";
 
 function takeFlagValue(args: string[], flag: string): string | undefined {
@@ -38,5 +39,6 @@ export async function runIndexHealth(client: IPCClient, args: string[]): Promise
   const noColorEnv = process.env["NO_COLOR"];
   const noColor = (noColorEnv !== undefined && noColorEnv !== "") || process.stdout.isTTY !== true;
   const all = args.includes("--all");
-  process.stdout.write(formatIndexHealth(report, { nowMs: Date.now(), noColor, all }));
+  const demo = getCliPlatformPaths().demo === true;
+  process.stdout.write(formatIndexHealth(report, { nowMs: Date.now(), noColor, all, demo }));
 }

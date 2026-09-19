@@ -21,6 +21,7 @@ import {
   TOOL_SPECS,
 } from "./adapter.ts";
 import { supportsClose, supportsNotifications } from "./client-surface.ts";
+import { gatewayDownMessage } from "./errors.ts";
 
 describe("clampLimit", () => {
   it("defaults to 20 when undefined", () => {
@@ -1142,6 +1143,41 @@ test("an unexpected transport close fails a solitary brief in flight", async () 
   // the disconnect path rather than by an incapable-transport report, so it is also what pins the
   // wrapper's `onNotification` forwarding. Concentrating that in one test would be fragile.
   expect(out.content[0]?.text).toBe(GATEWAY_DOWN_MESSAGE);
+}, 5000);
+
+test("demo: an unexpected transport close names the demo gateway, not the real one", async () => {
+  let fireClose: ((err: Error) => void) | undefined;
+  const raw = {
+    onNotification(_m: string, _h: (p: unknown) => void): void {},
+    offNotification(_m: string, _h: (p: unknown) => void): void {},
+    onClose(h: (err: Error) => void): void {
+      fireClose = h;
+    },
+    offClose(_h: (err: Error) => void): void {},
+    async call<T>(): Promise<T> {
+      return { sessionId: "s1" } as T;
+    },
+    async disconnect(): Promise<void> {},
+  };
+  // `demo: true` is the ONLY difference from the non-demo case above — everything else
+  // (createDeps's shape, the disconnect trigger) is identical, which is what isolates the fix to
+  // the `deps.demo` plumbing rather than some other behavioural drift.
+  const deps = createDeps({
+    readState: async () => ({ socketPath: "/tmp/sock" }),
+    connect: async () => raw,
+    demo: true,
+  });
+
+  const inFlight = spec("explainWhy").run(deps, { ref: "x" });
+  await flush();
+
+  expect(fireClose).toBeDefined();
+  fireClose?.(new Error("IPC connection closed"));
+
+  const out = await inFlight;
+  expect(out.isError).toBe(true);
+  expect(out.content[0]?.text).toBe(gatewayDownMessage(true));
+  expect(out.content[0]?.text).not.toBe(GATEWAY_DOWN_MESSAGE);
 }, 5000);
 
 test("a connection with no onClose still connects (guard's false arm)", async () => {

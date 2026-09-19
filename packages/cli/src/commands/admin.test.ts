@@ -97,4 +97,22 @@ describe("runAdminCommand", () => {
     expect(out).toContain(`nimbus vault get ${ADMIN_TOKEN_VAULT_KEY}`);
     expect(out).not.toContain("?token=");
   });
+
+  it("demo: console prints the in-memory-vault hint instead of a vault get command", async () => {
+    const { client, calls } = fakeClient();
+    await runAdminCommand(client, { kind: "console" }, true);
+    expect(calls).toHaveLength(0);
+    const out = cap.stdoutChunks.join("");
+    expect(out).toBe("The demo root's vault is in-memory; it holds no admin token.\n");
+    expect(out).not.toContain("nimbus vault get");
+  });
+
+  it("demo: token prints the in-memory-vault hint instead of a vault get command", async () => {
+    const { client, calls } = fakeClient();
+    await runAdminCommand(client, { kind: "token" }, true);
+    expect(calls).toHaveLength(0);
+    const out = cap.stdoutChunks.join("");
+    expect(out).toBe("The demo root's vault is in-memory; it holds no admin token.\n");
+    expect(out).not.toContain("nimbus vault get");
+  });
 });

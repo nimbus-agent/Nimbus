@@ -24,6 +24,7 @@ Usage:
 
 GETTING STARTED
   nimbus init [--no-sync]   Index the current git repo — no credentials, no LLM. Start here.
+  nimbus demo [--no-tour|stop|reset]  Try Nimbus on a synthetic org in an isolated demo root
   nimbus start [--no-wizard] Start gateway (background); omit first-run hint with --no-wizard
   nimbus stop               Stop gateway
   nimbus status [--verbose] [--drift] [--json]   Ping gateway; --verbose adds health + index metrics

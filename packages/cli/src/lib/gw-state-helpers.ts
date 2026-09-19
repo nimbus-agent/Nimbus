@@ -4,12 +4,17 @@
 // `test/helpers/cli-mocks.ts` replaces it via `mock.module(".../gateway-process.ts")`.
 // Bun's `mock.module` is process-global, so in the combined `bun test packages/cli/src`
 // run that global stub leaks into every test file. `gateway-process.test.ts` needs the
-// REAL implementation, so it imports this independent copy instead.
+// REAL implementation, so it imports this independent copy instead — and so does
+// `stop-and-wait.ts`: `stopAndWaitForExit` exists specifically to synchronize with the real OS
+// process a real gateway state file names, so it must never see the fixture-driven fake, in
+// production OR under test. A caller that wants to skip that goes through `DemoDeps.stop`
+// (dependency injection) instead.
 //
 // A re-export facade (`export * from "./gateway-process.ts"`) does NOT work: Bun's
 // mock follows the re-export and shadows the target too (verified — PR #592). The only
 // arrangement that keeps the test on the real code is a physically independent module
-// that shares nothing with the mocked one. Keep these two files in sync by hand.
+// that shares nothing with the mocked one. Keep these two files in sync by hand —
+// `gateway-process.test.ts` fails if the code below this header ever differs from it.
 
 import { existsSync } from "node:fs";
 import { mkdir } from "node:fs/promises";
