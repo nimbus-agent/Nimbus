@@ -33,6 +33,9 @@ const SECTION_ANCHORS: readonly (readonly (string | RegExp)[])[] = [
   [/Dana( Okafor)?|dana\.okafor@acme\.example/, "## Gaps"],
 ];
 
+/** Printed only after the third brief returned; its absence means the tour stopped early. */
+const CLOSING_HINT = "The demo gateway is still running";
+
 const SECTION_NAMES = ["oncall", "why", "owners"] as const;
 
 /** The spinner writes cursor-control sequences even into a redirected stdout. */
@@ -69,6 +72,9 @@ export function checkDemoTour(rawStdout: string): string[] {
   }
   for (const f of FORBIDDEN) {
     if (out.includes(f)) failures.push(`the output contains a failure marker: ${f}`);
+  }
+  if (!out.includes(CLOSING_HINT)) {
+    failures.push("the closing hint is missing, so the tour stopped before it finished");
   }
   if (at.some((i) => i < 0)) return failures;
 

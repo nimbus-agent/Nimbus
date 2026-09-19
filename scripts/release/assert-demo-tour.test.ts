@@ -53,6 +53,13 @@ describe("checkDemoTour", () => {
     expect(checkDemoTour(empty)[0]).toContain("empty org");
   });
 
+  test("fails when the tour stops after the third brief's body but before the closing hint", () => {
+    const cut = GOOD.slice(0, GOOD.indexOf("The demo gateway is still running"));
+    expect(checkDemoTour(cut)).toEqual([
+      "the closing hint is missing, so the tour stopped before it finished",
+    ]);
+  });
+
   test("fails when the headers are out of order", () => {
     const swapped = GOOD.replace("[1/3] On-call triage", "[TMP]")
       .replace("[3/3] Who owns this code", "[1/3] On-call triage")

@@ -145,15 +145,25 @@ useful than a bare pass.
   machine has no `gpg`. On a clean Windows machine the second is the expected result, and the
   question is whether the message makes that clear to someone who has never heard of GPG.
 - Whether `nimbus` resolved in the NEW shell without editing `PATH` by hand.
-- `nimbus demo`: exit code, wall-clock time to the first brief, and whether all three headers
-  (`[1/3]`, `[2/3]`, `[3/3]`) appeared.
+- `nimbus demo`: exit code, wall-clock time to the first brief, and whether each brief is COMPLETE,
+  not merely announced. A header can print above a brief that then fails or is cut short, so check
+  the body under each one for the same anchors `scripts/release/assert-demo-tour.ts` requires in CI:
+  - under `[1/3] On-call triage`: `payment-service`, the pull request number `412`, and a closing
+    `## Gaps` section
+  - under `[2/3] Why this line changed`: an `## Authorship` section, the ticket `PAY-231`, and a
+    closing `## Gaps` section
+  - under `[3/3] Who owns this code`: Dana Okafor as an owner, and a closing `## Gaps` section
+
+  The output must also contain no `Gateway is not running` line, and must end with the
+  "The demo gateway is still running" hint — its absence means the tour stopped early.
 - Anything that made you hesitate. If you, knowing the product, paused — a stranger stops.
 
 ## Pass criteria
 
 1. The documented command was run exactly as written, with nothing installed beforehand.
 2. `nimbus --version` works in a new shell.
-3. `nimbus demo` exits 0 and prints all three briefs.
+3. `nimbus demo` exits 0 and prints all three briefs COMPLETE — every anchor listed under *What to
+   record* is present under its own header, not only the three headers.
 4. Every prompt that appeared is already described in the install docs for that OS
    ([Windows](../install-windows-unsigned.md), [macOS](../install-macos-unsigned.md)). A prompt
    the docs do not mention is a docs defect and fails the gate until it is written down.
