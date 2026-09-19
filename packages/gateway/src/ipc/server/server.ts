@@ -28,6 +28,7 @@ import {
   type ServerCtx,
   sessionRpcSkipped,
 } from "./context.ts";
+import { demoRefusal } from "./demo-gate.ts";
 import {
   tryDispatchAutomationRpc,
   tryDispatchConnectorRpc,
@@ -143,6 +144,14 @@ export function createIpcServer(options: CreateIpcServerOptions): IPCServer {
   ): Promise<unknown> {
     const { method } = req;
     const params = req.params;
+
+    // I41 clause (6): a demo-rooted gateway refuses writes that would bring real credentials or
+    // real data into a root labelled "not your data". The one routing choke point: the refused
+    // methods are spread across four dispatchers.
+    if (ctx.options.demo === true) {
+      const refusal = demoRefusal(method);
+      if (refusal !== undefined) throw refusal;
+    }
 
     if (method === "session.declareKind") {
       const p = params as { kind?: unknown } | undefined;

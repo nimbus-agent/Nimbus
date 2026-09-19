@@ -827,6 +827,60 @@ describe("createIpcServer — RPC dispatch arms", () => {
     expect(second.result?.kind).toBe("cli");
   });
 
+  // I41 clause 6: demo-rooted gateway refuses writes outside the read allow-list
+  test.skipIf(platform() === "win32")(
+    "a demo-rooted gateway refuses connector.auth with ERR_DEMO_FORBIDDEN",
+    async () => {
+      server = createIpcServer({
+        listenPath,
+        vault: createMockVault(),
+        version: "0.0.0-test",
+        demo: true,
+      });
+      await server.start();
+
+      const line = await exchangeFirstNdjsonLine(
+        listenPath,
+        `${JSON.stringify({
+          jsonrpc: "2.0",
+          id: 43,
+          method: "connector.auth",
+          params: {},
+        })}\n`,
+      );
+      const res = JSON.parse(line) as { error?: { code: number; message: string } };
+      expect(res.error).toBeDefined();
+      expect(res.error?.code).toBe(-32000);
+      expect(res.error?.message).toContain("ERR_DEMO_FORBIDDEN");
+    },
+  );
+
+  test.skipIf(platform() === "win32")(
+    "a non-demo gateway does NOT refuse connector.auth with ERR_DEMO_FORBIDDEN",
+    async () => {
+      server = createIpcServer({
+        listenPath,
+        vault: createMockVault(),
+        version: "0.0.0-test",
+        demo: false,
+      });
+      await server.start();
+
+      const line = await exchangeFirstNdjsonLine(
+        listenPath,
+        `${JSON.stringify({
+          jsonrpc: "2.0",
+          id: 42,
+          method: "connector.auth",
+          params: {},
+        })}\n`,
+      );
+      const res = JSON.parse(line) as { error?: { code: number; message: string } };
+      // connector.auth will fail for another reason (missing params), but NOT with ERR_DEMO_FORBIDDEN
+      expect(res.error?.message).not.toContain("ERR_DEMO_FORBIDDEN");
+    },
+  );
+
   // Proves the wiring, not the class: `client-kind.test.ts` already proves ClientKindStore.forget()
   // clears an entry when called directly. This test proves the production callsite — attachSession's
   // real disconnect callback in server.ts — actually calls it when a live connection closes. A test
