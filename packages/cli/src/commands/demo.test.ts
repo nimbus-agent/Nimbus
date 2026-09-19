@@ -1,8 +1,12 @@
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterAll, afterEach, describe, expect, test } from "bun:test";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+import { createStreamCapture } from "../../test/helpers/stream-capture.ts";
+import { GatewayNotRunningError } from "../lib/with-gateway-ipc.ts";
 import type { CliPlatformPaths } from "../paths.ts";
-import { type DemoDeps, type DemoSeedSummary, runDemo } from "./demo.ts";
+import { type DemoDeps, type DemoSeedSummary, defaultDemoDeps, runDemo } from "./demo.ts";
 
 const DEMO_DATA_DIR = join("demo-root", "data");
 
@@ -166,5 +170,107 @@ describe("runDemo", () => {
     await runDemo(["bogus"], deps);
     expect(calls).toEqual([]);
     expect(process.exitCode).toBe(1);
+  });
+});
+
+// ── The production deps ──────────────────────────────────────────────────────────────────────
+// Every case below runs on a fresh directory under the OS temp dir, or refuses before any path is
+// touched. None reaches the real install: no case resolves a real root and then does I/O on it,
+// and none can spawn a gateway (the one `start` case refuses at path resolution, its first line).
+
+const tempRoots: string[] = [];
+afterAll(() => {
+  for (const r of tempRoots) rmSync(r, { recursive: true, force: true });
+});
+
+function tempDemoPaths(): CliPlatformPaths {
+  const root = mkdtempSync(join(tmpdir(), "nimbus-demo-cmd-"));
+  tempRoots.push(root);
+  const dataDir = join(root, "data");
+  return {
+    configDir: join(root, "config"),
+    dataDir,
+    logDir: join(dataDir, "logs"),
+    socketPath: join(root, "fake.sock"),
+    extensionsDir: join(dataDir, "extensions"),
+    tempDir: join(root, "tmp"),
+    demo: true,
+  };
+}
+
+/** Run `fn` with `NIMBUS_DEMO` set to `value` (or unset), restoring the previous value after. */
+async function withNimbusDemoEnv(
+  value: string | undefined,
+  fn: () => Promise<void>,
+): Promise<void> {
+  const prev = process.env["NIMBUS_DEMO"];
+  if (value === undefined) delete process.env["NIMBUS_DEMO"];
+  else process.env["NIMBUS_DEMO"] = value;
+  try {
+    await fn();
+  } finally {
+    if (prev === undefined) delete process.env["NIMBUS_DEMO"];
+    else process.env["NIMBUS_DEMO"] = prev;
+  }
+}
+
+describe("defaultDemoDeps", () => {
+  test("runDemo with the DEFAULT deps refuses a non-demo root before stopping or deleting anything", async () => {
+    // Without NIMBUS_DEMO the default `paths` resolves the REAL root, which must never reach
+    // `stop` / `removeDir` — the internal-error refusal is the only thing standing between a
+    // mis-dispatched `nimbus demo reset` and the user's real data directory.
+    await withNimbusDemoEnv(undefined, async () => {
+      await expect(runDemo(["reset"])).rejects.toThrow(/NIMBUS_DEMO not set/);
+    });
+  });
+
+  test("stop reports not-running for a root with no gateway state file", async () => {
+    expect(await defaultDemoDeps.stop(tempDemoPaths())).toBe("not-running");
+  });
+
+  test("removeDir deletes a populated directory tree", () => {
+    const { dataDir } = tempDemoPaths();
+    mkdirSync(join(dataDir, "logs"), { recursive: true });
+    writeFileSync(join(dataDir, "logs", "gateway.log"), "x");
+    defaultDemoDeps.removeDir(dataDir);
+    expect(existsSync(dataDir)).toBe(false);
+  });
+
+  test("start refuses at path resolution on an ambiguous NIMBUS_DEMO — no gateway is spawned", async () => {
+    await withNimbusDemoEnv("yes", async () => {
+      await expect(defaultDemoDeps.start()).rejects.toThrow(/must be 1 or unset/);
+    });
+  });
+
+  test("seed with no running demo gateway rejects with the demo-root not-running message", async () => {
+    const err = await defaultDemoDeps.seed(tempDemoPaths()).then(
+      () => undefined,
+      (e: unknown) => e,
+    );
+    expect(err).toBeInstanceOf(GatewayNotRunningError);
+    expect((err as Error).message).toContain("(demo root)");
+  });
+
+  test("why forwards the tour ref to `nimbus why`, whose own validation runs first", async () => {
+    await expect(defaultDemoDeps.why("https://user:pw@example.com/acme/pull/1")).rejects.toThrow(
+      /must not contain userinfo/,
+    );
+  });
+
+  test("owners forwards the tour path to `nimbus owners`, whose own argument parser runs first", async () => {
+    await expect(defaultDemoDeps.owners("--not-a-flag")).rejects.toThrow(
+      /Unrecognised flag: --not-a-flag/,
+    );
+  });
+
+  test("out writes to stdout verbatim", () => {
+    const cap = createStreamCapture();
+    cap.install();
+    try {
+      defaultDemoDeps.out("hello demo\n");
+    } finally {
+      cap.restore();
+    }
+    expect(cap.stdoutChunks.join("")).toBe("hello demo\n");
   });
 });

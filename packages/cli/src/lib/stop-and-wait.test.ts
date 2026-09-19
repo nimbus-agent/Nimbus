@@ -62,6 +62,45 @@ describe("stopAndWaitForExit", () => {
     }
   });
 
+  test("a stale state file naming a dead pid: not-running, and the stale file is removed", async () => {
+    const dataDir = tempDataDir();
+    const child = Bun.spawn([process.execPath, "-e", "0"]);
+    await child.exited;
+    const pid = child.pid;
+    expect(isProcessAlive(pid)).toBe(false);
+    await writeFile(
+      join(dataDir, "gateway.json"),
+      JSON.stringify({ pid, socketPath: "x" }),
+      "utf8",
+    );
+
+    const result = await stopAndWaitForExit(fakePaths(dataDir));
+
+    expect(result).toBe("not-running");
+    expect(await Bun.file(join(dataDir, "gateway.json")).exists()).toBe(false);
+  });
+
+  test("with default options it still signals, waits and cleans up", async () => {
+    const dataDir = tempDataDir();
+    const child = Bun.spawn([process.execPath, "-e", "setInterval(() => {}, 1000)"]);
+    try {
+      const pid = child.pid;
+      await writeFile(
+        join(dataDir, "gateway.json"),
+        JSON.stringify({ pid, socketPath: "x" }),
+        "utf8",
+      );
+
+      const result = await stopAndWaitForExit(fakePaths(dataDir));
+
+      expect(result).toBe("stopped");
+      expect(isProcessAlive(pid)).toBe(false);
+      expect(await Bun.file(join(dataDir, "gateway.json")).exists()).toBe(false);
+    } finally {
+      child.kill();
+    }
+  });
+
   // SIGTERM cannot be ignored on Windows — there is no way to construct the "process refuses to
   // die" case there, so the deadline-exceeded path is POSIX-only.
   test.skipIf(process.platform === "win32")(
