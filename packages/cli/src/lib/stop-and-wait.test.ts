@@ -10,7 +10,7 @@ import type { CliPlatformPaths } from "../paths.ts";
 // Real, unmocked functions — see the comment in stop-and-wait.ts for why this test (and the
 // module under test) deliberately avoid the mockable `gateway-process.ts`.
 import { isProcessAlive } from "./gw-state-helpers.ts";
-import { StopTimeoutError, stopAndWaitForExit } from "./stop-and-wait.ts";
+import { BOOT_TIME_SKEW_MS, StopTimeoutError, stopAndWaitForExit } from "./stop-and-wait.ts";
 
 function fakePaths(dataDir: string): CliPlatformPaths {
   return {
@@ -94,9 +94,10 @@ describe("stopAndWaitForExit", () => {
     }
   });
 
-  test("a live pid whose socket does NOT answer is never signalled: state removed, not-running", async () => {
+  test("a live pid, dead socket, state file from a PREVIOUS boot: never signalled, state removed, not-running", async () => {
     // The reboot case: `gateway.json` survived, and the OS reused its pid for an unrelated
-    // process. Our own idle child plays that process; nothing listens on the recorded socket.
+    // process. Our own idle child plays that process; nothing listens on the recorded socket, and
+    // the injected boot instant puts the state file's real mtime well before this "boot".
     const dataDir = tempDataDir();
     const child = spawnIdleChild();
     try {
@@ -111,6 +112,7 @@ describe("stopAndWaitForExit", () => {
       const result = await stopAndWaitForExit(fakePaths(dataDir), {
         pollMs: 20,
         probeTimeoutMs: 500,
+        bootTimeMs: () => Date.now() + BOOT_TIME_SKEW_MS + 60_000,
       });
 
       expect(result).toBe("not-running");
@@ -119,6 +121,88 @@ describe("stopAndWaitForExit", () => {
       await new Promise((r) => setTimeout(r, 200));
       expect(isProcessAlive(pid)).toBe(true);
       expect(child.exitCode).toBeNull();
+    } finally {
+      child.kill();
+    }
+  });
+
+  test("a live pid, dead socket, state file from THIS boot: unresponsive, never signalled, state kept", async () => {
+    // A hung demo gateway: alive, socket dead, state written since boot. Real stat and real
+    // `os.uptime()` — the file was just written, so it is from this boot by construction.
+    const dataDir = tempDataDir();
+    const child = spawnIdleChild();
+    try {
+      const pid = child.pid;
+      await writeFile(
+        join(dataDir, "gateway.json"),
+        JSON.stringify({ pid, socketPath: socketPathIn(dataDir) }),
+        "utf8",
+      );
+
+      const result = await stopAndWaitForExit(fakePaths(dataDir), {
+        pollMs: 20,
+        probeTimeoutMs: 500,
+      });
+
+      expect(result).toEqual({ status: "unresponsive", pid });
+      expect(await Bun.file(join(dataDir, "gateway.json")).exists()).toBe(true);
+      await new Promise((r) => setTimeout(r, 200));
+      expect(isProcessAlive(pid)).toBe(true);
+      expect(child.exitCode).toBeNull();
+    } finally {
+      child.kill();
+    }
+  });
+
+  test("the skew margin errs toward THIS boot: a state file up to BOOT_TIME_SKEW_MS before boot is unresponsive", async () => {
+    const dataDir = tempDataDir();
+    const child = spawnIdleChild();
+    try {
+      const pid = child.pid;
+      await writeFile(
+        join(dataDir, "gateway.json"),
+        JSON.stringify({ pid, socketPath: socketPathIn(dataDir) }),
+        "utf8",
+      );
+      const bootMs = 1_000_000_000_000;
+
+      const withinMargin = await stopAndWaitForExit(fakePaths(dataDir), {
+        probeTimeoutMs: 500,
+        bootTimeMs: () => bootMs,
+        stateFileMtimeMs: async () => bootMs - BOOT_TIME_SKEW_MS + 1,
+      });
+      expect(withinMargin).toEqual({ status: "unresponsive", pid });
+      expect(await Bun.file(join(dataDir, "gateway.json")).exists()).toBe(true);
+
+      const pastMargin = await stopAndWaitForExit(fakePaths(dataDir), {
+        probeTimeoutMs: 500,
+        bootTimeMs: () => bootMs,
+        stateFileMtimeMs: async () => bootMs - BOOT_TIME_SKEW_MS - 1,
+      });
+      expect(pastMargin).toBe("not-running");
+      expect(await Bun.file(join(dataDir, "gateway.json")).exists()).toBe(false);
+      expect(isProcessAlive(pid)).toBe(true);
+    } finally {
+      child.kill();
+    }
+  });
+
+  test("a state file that cannot be stat'ed after the probe is treated as gone: not-running", async () => {
+    const dataDir = tempDataDir();
+    const child = spawnIdleChild();
+    try {
+      const pid = child.pid;
+      await writeFile(
+        join(dataDir, "gateway.json"),
+        JSON.stringify({ pid, socketPath: socketPathIn(dataDir) }),
+        "utf8",
+      );
+      const result = await stopAndWaitForExit(fakePaths(dataDir), {
+        probeTimeoutMs: 500,
+        stateFileMtimeMs: async () => undefined,
+      });
+      expect(result).toBe("not-running");
+      expect(isProcessAlive(pid)).toBe(true);
     } finally {
       child.kill();
     }

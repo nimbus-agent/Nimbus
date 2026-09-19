@@ -6,7 +6,14 @@ import { join } from "node:path";
 import { createStreamCapture } from "../../test/helpers/stream-capture.ts";
 import { GatewayNotRunningError } from "../lib/with-gateway-ipc.ts";
 import type { CliPlatformPaths } from "../paths.ts";
-import { type DemoDeps, type DemoSeedSummary, defaultDemoDeps, runDemo } from "./demo.ts";
+import {
+  type DemoDeps,
+  DemoGatewayUnresponsiveError,
+  type DemoSeedSummary,
+  defaultDemoDeps,
+  parseDemoArgs,
+  runDemo,
+} from "./demo.ts";
 
 const DEMO_DATA_DIR = join("demo-root", "data");
 
@@ -165,11 +172,110 @@ describe("runDemo", () => {
     expect(calls).toEqual(["stop", "removeDir(demo-root)", "start", "seed", "stop", "start"]);
   });
 
-  test("(f) an unknown subcommand prints usage and sets exit code 1", async () => {
-    const { deps, calls } = fakeDeps();
-    await runDemo(["bogus"], deps);
-    expect(calls).toEqual([]);
-    expect(process.exitCode).toBe(1);
+  test.each([
+    [["bogus"]],
+    [["--no-tour", "stop"]],
+    [["stop", "--no-tour"]],
+    [["reset", "now"]],
+    [["stop", "stop"]],
+    [["--no-tour", "--no-tour"]],
+    [["--json"]],
+  ])(
+    "(f) %p is refused with the usage text before anything is stopped, deleted or started",
+    async (args) => {
+      let pathsCalls = 0;
+      const { deps, calls, out } = fakeDeps({
+        paths: () => {
+          pathsCalls += 1;
+          return demoPaths();
+        },
+      });
+      await expect(runDemo(args, deps)).rejects.toThrow(
+        /Usage: nimbus demo \[--no-tour\] \| nimbus demo stop \| nimbus demo reset/,
+      );
+      expect(calls).toEqual([]);
+      expect(out).toEqual([]);
+      expect(pathsCalls).toBe(0);
+    },
+  );
+
+  test("(f) parseDemoArgs accepts exactly the four valid forms", () => {
+    expect(parseDemoArgs([])).toBe("run");
+    expect(parseDemoArgs(["--no-tour"])).toBe("run-no-tour");
+    expect(parseDemoArgs(["stop"])).toBe("stop");
+    expect(parseDemoArgs(["reset"])).toBe("reset");
+    expect(() => parseDemoArgs(["reset", "--no-tour"])).toThrow(/Unexpected arguments/);
+  });
+
+  const UNRESPONSIVE = { status: "unresponsive", pid: 4242 } as const;
+
+  test.each([[[] as string[]], [["--no-tour"]], [["reset"]], [["stop"]]])(
+    "(h) %p aborts on an unresponsive demo gateway without deleting or starting anything",
+    async (args) => {
+      const { deps, calls, out } = fakeDeps({
+        stop: async () => {
+          calls.push("stop");
+          return UNRESPONSIVE;
+        },
+      });
+      const err = await runDemo(args, deps).then(
+        () => undefined,
+        (e: unknown) => e,
+      );
+      expect(err).toBeInstanceOf(DemoGatewayUnresponsiveError);
+      expect((err as Error).message).toContain("pid 4242");
+      expect((err as Error).message).toContain("end that process, then rerun `nimbus demo`");
+      expect(calls).toEqual(["stop"]);
+      expect(out).toEqual([]);
+    },
+  );
+
+  test("(h) an unresponsive gateway at the post-seed restart aborts before the second start", async () => {
+    let n = 0;
+    const { deps, calls } = fakeDeps({
+      stop: async () => {
+        calls.push("stop");
+        n += 1;
+        return n === 1 ? "not-running" : UNRESPONSIVE;
+      },
+    });
+    await expect(runDemo([], deps)).rejects.toThrow(DemoGatewayUnresponsiveError);
+    expect(calls).toEqual(["stop", "removeDir(demo-root)", "start", "seed", "stop"]);
+  });
+
+  test("(i) a failed seed stops the gateway it started, then rethrows the seed error", async () => {
+    const seedError = new Error("ERR_DEMO_ALREADY_SEEDED: boom");
+    const { deps, calls } = fakeDeps({
+      seed: async () => {
+        calls.push("seed");
+        throw seedError;
+      },
+    });
+    const err = await runDemo(["--no-tour"], deps).then(
+      () => undefined,
+      (e: unknown) => e,
+    );
+    expect(err).toBe(seedError);
+    expect(calls).toEqual(["stop", "removeDir(demo-root)", "start", "seed", "stop"]);
+  });
+
+  test("(i) a failed seed whose cleanup stop ALSO fails still reports the seed error", async () => {
+    const seedError = new Error("seed failed");
+    let n = 0;
+    const { deps, calls } = fakeDeps({
+      stop: async () => {
+        calls.push("stop");
+        n += 1;
+        if (n > 1) throw new Error("stop failed");
+        return "not-running";
+      },
+      seed: async () => {
+        calls.push("seed");
+        throw seedError;
+      },
+    });
+    await expect(runDemo([], deps)).rejects.toBe(seedError);
+    expect(calls).toEqual(["stop", "removeDir(demo-root)", "start", "seed", "stop"]);
   });
 });
 
