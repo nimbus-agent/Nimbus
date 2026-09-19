@@ -158,6 +158,63 @@ switches off the Windows AppContainer boot reap and the env-selected HTTP/metric
 pieces of host-global state path isolation cannot reach. Rationale and bounds:
 `SECURITY-INVARIANTS.md` § I41.
 
+**The demo gateway is inert.** `platform/demo-boot.ts`'s `bootPolicyFor(paths)` returns one boolean
+per host-global boot action — `syncScheduler`, `updaterStartupCheck`, `telemetryFlush`,
+`embeddingRuntime`, `extensionsAutoUpdate`, plus the two above — every one of them `!demo`, and every
+consumer reads it fresh via its own `bootPolicyFor(paths)` call rather than a value threaded through
+(`assemble.ts` itself for `syncScheduler`/`updaterStartupCheck`/`telemetryFlush`/
+`extensionsAutoUpdate`; `embedding/create-embedding-runtime.ts` and `ipc/index-reembed-rpc.ts` each
+call it independently for `embeddingRuntime`, since the model-download decision has two entry
+points, boot and a live `index.reembed` call) — so a demo-rooted gateway skips all five. The sync
+scheduler is the one that cannot
+simply be skipped: `createSchedulerWithMesh` also builds the connector mesh and the
+glossary/decisions/ownership refreshers, which ~15 other type sites assume exist, so a demo gateway
+still **constructs** the scheduler — with `syncDisabled`, registering no syncable, and never calling
+`start()`. `syncDisabled` is a real chokepoint inside the scheduler itself, not a boot-time
+convenience: `tick()`/`pump()` no-op and `forceSync` refuses with `ERR_SYNC_DISABLED`, keyed on that
+constructor option rather than on whether `start()` was ever called — `tick()`/`pump()` otherwise
+return early only on `stopped`, and every finished job's own `.finally` calls `tick()`, so an
+unstarted-but-not-disabled scheduler would re-animate its own schedule the first time anything ran
+one job on it. `ipc/server/demo-gate.ts`'s `demoRefusal(method)` is the separate IPC-layer gate: an
+allow-list of three `connector.*` reads plus a deny-list of four writes (`vault.set`, `vault.delete`,
+`data.import`, `extension.install`), returning `ERR_DEMO_FORBIDDEN` (`-32000`) for everything else
+under `connector.*` — so a connector method added later is refused until someone decides otherwise,
+rather than silently becoming a way to bring real credentials into a root labelled "not your data".
+
+**`demo.seed`.** `ipc/demo-rpc.ts`'s `dispatchDemoRpc` is the inner, pure dispatcher for the `demo.*`
+namespace; it is reachable at all only through `ipc/server/dispatchers.ts`'s `tryDispatchDemoRpc`,
+which claims the namespace exclusively when `ctx.options.demo === true` — an ordinary gateway never
+routes into `demo.*`, and the method is additionally LAN-forbidden and absent from the Tauri
+allowlist, so it is CLI-only on a demo-rooted process. `demo.seed` calls `demo/seed.ts`'s
+`seedDemoCorpus`, which refuses with `ERR_DEMO_ALREADY_SEEDED` (`-32010`) against a non-empty
+`item` table — a second, structural guard independent of the IPC routing above, since an
+already-seeded (or, in principle, real) index must never be silently truncated and reseeded.
+
+**The corpus.** `demo/corpus/acme.ts` builds a fixed, fictional "Acme" org — one connected storyline
+(a ticket → its PR → a deploy → the incident it causes → the same-service incident three weeks
+earlier) that every tour brief reaches from a different angle, plus enough background data for the
+non-tour agents. Two rules keep it inert data rather than a rehearsal for a real leak: every
+timestamp in the corpus is an **offset** from the seed's `nowMs`, never an absolute epoch number, so
+the whole org always looks like it happened relative to today; and every email, URL, and domain ends
+in `.example` (RFC 2606). `demo/seed.ts`'s `seedDemoCorpus` writes the corpus through the **same
+production write APIs a real connector sync would use** — `upsertIndexedItem`, `insertPerson`,
+`upsertBlameLines`, `annotateDeployment`, plus a live run of the `runOwnershipPass` /
+`runGlossaryPass` / `runDecisionPass` extraction passes — rather than hand-crafted rows, so the
+graph edges, blame rollups, deployment/DORA rows, and glossary/decision extractions the demo ships
+with come from the same populators a real sync would drive, not a copy that could silently drift
+from what those populators actually do. It also writes the demo's own `nimbus.toml` (embedding and
+the updater both disabled, one `[[filesystem.roots]]` pointing at a workspace of seeded files under
+the demo root) and, last, the seed marker `<dataDir>/demo-seed.json` (`{ corpus: "acme", version: 1,
+seededAtMs }`) that `nimbus demo`'s banner reads to report seeded/stale/unseeded.
+
+**`nimbus demo`'s recreate-then-seed flow** (`packages/cli/src/commands/demo.ts`) is what ties the
+above together for an evaluator: stop any running demo gateway, delete the demo root outright (the
+seeder above never truncates, so re-seeding means rebuilding), start a fresh demo gateway, call
+`demo.seed`, **restart** the demo gateway a second time (so every config-time read — `me`,
+filesystem roots, DORA service bindings — sees the `nimbus.toml` the seeder just wrote, since a live
+gateway does not re-read those at runtime), then tour three built-in agent briefs
+(`oncall` → `why` → `owners`) against the seeded org unless `--no-tour` is given.
+
 ## Package Dependency Rules
 
 To maintain strict subsystem isolation and ensure cross-platform portability, Nimbus enforces the following import rules:

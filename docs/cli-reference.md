@@ -78,6 +78,105 @@ Two behaviours worth knowing:
 
 ---
 
+## Demo Sandbox
+
+### `nimbus demo`
+
+```bash
+nimbus demo                # recreate the demo root, seed it, tour three briefs
+nimbus demo --no-tour      # recreate and seed only — skip the tour
+nimbus demo stop
+nimbus demo reset
+```
+
+Seeds a synthetic "Acme" org — people, issues, commits, pull requests, reviews, CI runs,
+deployments, incidents, and chat messages, all with timestamps offset from "now" so the data always
+looks current — into the isolated demo root (`--demo` / `NIMBUS_DEMO=1`; see the `--demo` global
+flag above and invariant **I41**), then tours three built-in agent briefs against it. It never
+touches your real config, data, or vault, and the demo gateway makes no outbound call of any kind,
+at boot or afterward (see below).
+
+What plain `nimbus demo` does, in order:
+
+1. Stops any running demo gateway and **recreates the demo root from scratch**. The seeder never
+   truncates an already-seeded index — `demo.seed` refuses with `ERR_DEMO_ALREADY_SEEDED` on a
+   non-empty one — so re-seeding means removing and rebuilding the whole root, every time, even if
+   it already held data.
+2. Starts the demo gateway and seeds it once over the CLI-only, LAN-forbidden `demo.seed` IPC
+   method, writing the corpus through the same production write APIs a real connector sync would
+   use (`upsertIndexedItem`, `insertPerson`, `upsertBlameLines`, `annotateDeployment`, plus the
+   ownership/glossary/decisions extraction passes) — never hand-crafted rows.
+3. Restarts the demo gateway, so every config-time read (`me`, filesystem roots, the DORA service
+   bindings) sees the `nimbus.toml` the seeder just wrote — a live gateway does not re-read those at
+   runtime.
+4. Unless `--no-tour` is given, tours three agent briefs in order, each preceded by a
+   `── [n/3] <title>` header naming the exact command, printed verbatim before it runs:
+   `nimbus --demo oncall`, `nimbus --demo why src/retry/backoff.ts:42`,
+   `nimbus --demo owners src/retry`.
+5. Prints a closing list of four more commands that work without an LLM: `nimbus --demo standup`,
+   `nimbus --demo expert payments`, `nimbus --demo decisions`,
+   `nimbus --demo stats deployment-frequency --service payment-service`.
+
+`nimbus demo stop` stops the demo gateway without touching the seeded data — for walking away
+without losing anything (plain `nimbus demo` re-seeds from scratch on its next run regardless).
+`nimbus demo reset` stops it and deletes the whole demo root; nothing else on disk is touched.
+
+**Banner.** Every `--demo` command prints one line to stderr, never stdout, so piped output stays
+clean:
+
+| State | Line |
+|---|---|
+| Seeded, fresh | `DEMO — synthetic "Acme" org, not your data · seeded <age> · nimbus demo reset to remove` |
+| Seeded, stale (older than 24h) | `DEMO — synthetic "Acme" org · seeded <age> (stale — briefs may be empty) · run nimbus demo to re-seed` |
+| Not seeded yet | `DEMO — not seeded yet · run nimbus demo` |
+
+**Refused in the demo.** A demo-rooted gateway serves only three `connector.*` reads
+(`connector.listStatus`, `connector.status`, `connector.healthHistory`) and refuses every other
+`connector.*` method, plus `vault.set`, `vault.delete`, `data.import`, and `extension.install`, with
+`ERR_DEMO_FORBIDDEN` (JSON-RPC code `-32000`) — none of these may be allowed to bring real
+credentials or real data into a root that is supposed to hold only the synthetic org.
+`nimbus --demo init` refuses outright, before touching the gateway or `nimbus.toml`, for the same
+reason: its onboarding would otherwise call a refused command and overwrite the seeder's config.
+Rationale: invariant **I41** (`SECURITY-INVARIANTS.md`).
+
+**No outbound call.** A demo gateway's sync scheduler is constructed but never started and registers
+no syncable — `forceSync`/`tick`/`pump` all refuse, keyed on a `syncDisabled` constructor option,
+not on whether `start()` was ever called, so a caller that bypassed the IPC refusal above still
+could not run a sync. The updater startup check, telemetry flush, embedding-runtime model download,
+and extension auto-update daemon are all skipped at boot. `nimbus demo` makes no real network
+request.
+
+**`nimbus --demo ask`.** The demo's seeded `nimbus.toml` configures no `[llm]` section, so on the
+**seeded** demo `ask` exits `1` and prints, to stderr:
+
+```text
+Nimbus needs an LLM for this command, and the demo does not configure one.
+
+Everything in the tour works without one — try:
+  nimbus --demo standup
+  nimbus --demo expert payments
+  nimbus --demo decisions
+
+`ask` works on your real install once an LLM is configured (see nimbus doctor).
+```
+
+On an **unseeded** demo (before the first `nimbus demo` run, or right after `nimbus demo reset`),
+`ask` instead exits `0` and prints the demo's own empty-index hint to stdout, which points at
+`nimbus demo` rather than the real install's `nimbus connector auth …`:
+
+```text
+No data indexed yet.
+
+This is the demo root. Seed the synthetic "Acme" org with:
+  nimbus demo
+```
+
+Every other command in the tour and the closing list renders its brief deterministically, with no
+LLM at all — `ask` is the one command in the demo that genuinely needs a model, because it is the
+one command everywhere, demo or real install, that genuinely needs one.
+
+---
+
 ## Gateway Lifecycle
 
 ### `nimbus start`
