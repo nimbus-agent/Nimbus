@@ -286,11 +286,19 @@ describe("nimbus demo: the whole flow, end to end, on temp roots", () => {
           `--- stderr (first 15 lines) ---\n${r.stderr.split("\n").slice(0, 15).join("\n")}`,
       );
       expect(typeof r.code).toBe("number");
-      expect(`${r.stdout}${r.stderr}`.trim().length).toBeGreaterThan(0);
+      const combined = `${r.stdout}${r.stderr}`;
+      expect(combined.trim().length).toBeGreaterThan(0);
       // A demo hint must never name a command the demo gateway itself refuses (I41 clause 6) —
       // fix round 1: `ask.ts` now skips the real-install connector-registered pre-check entirely
       // in a demo root, so this text (and its `connector auth` guidance) must not appear here.
-      expect(`${r.stdout}${r.stderr}`).not.toContain("nimbus connector auth");
+      expect(combined).not.toContain("nimbus connector auth");
+      // fix round 2: the demo seeds no `[llm]` section, so `ask` now reaches the gateway (round
+      // 1) and fails with the guided no-LLM message rather than a raw router error — and, since
+      // this is a demo root, the DEMO variant of that message (never the real-install one, which
+      // would say to edit nimbus.toml and run `nimbus stop && nimbus start` — dropping `--demo`
+      // and stopping the REAL gateway).
+      expect(combined).toContain("Nimbus needs an LLM for this command");
+      expect(combined).not.toContain("nimbus stop");
     },
     ASK_TIMEOUT_MS + 10_000,
   );

@@ -364,3 +364,63 @@ describe("runAsk — no LLM configured", () => {
     await expect(runAsk(["hello"])).rejects.toThrow(/rate limit/);
   });
 });
+
+describe("runAsk — no LLM configured, demo root (fix round 2)", () => {
+  // Same demo-env-var pattern as the "runAsk — demo root" block above.
+  const originalDemo = process.env["NIMBUS_DEMO"];
+  const originalConfigDir = process.env["NIMBUS_CONFIG_DIR"];
+  const originalSocket = process.env["NIMBUS_GATEWAY_SOCKET"];
+  const SENTINEL = "Nimbus needs an LLM for this command.";
+
+  beforeEach(() => {
+    stdoutChunks.length = 0;
+    stderrChunks.length = 0;
+    installStreamCapture();
+    delete process.env["NIMBUS_CONFIG_DIR"];
+    delete process.env["NIMBUS_GATEWAY_SOCKET"];
+    process.env["NIMBUS_DEMO"] = "1";
+  });
+  afterEach(() => {
+    clearFixture();
+    restoreStreams();
+    process.exitCode = 0;
+    if (originalDemo === undefined) delete process.env["NIMBUS_DEMO"];
+    else process.env["NIMBUS_DEMO"] = originalDemo;
+    if (originalConfigDir === undefined) delete process.env["NIMBUS_CONFIG_DIR"];
+    else process.env["NIMBUS_CONFIG_DIR"] = originalConfigDir;
+    if (originalSocket === undefined) delete process.env["NIMBUS_GATEWAY_SOCKET"];
+    else process.env["NIMBUS_GATEWAY_SOCKET"] = originalSocket;
+  });
+
+  it("prints the demo variant, not the real-install message, and never names nimbus stop or nimbus.toml", async () => {
+    setFixture({
+      gatewayState: { socketPath: FAKE_SOCKET_PATH },
+      ipcClient: {
+        call: async (method: string) => {
+          // No `connector.listStatus` call is expected at all in a demo root (fix round 1) —
+          // returning something here would mask that regression rather than catch it.
+          if (method === "agent.invoke") {
+            throw new Error(
+              [
+                SENTINEL,
+                "",
+                "  Hosted — set ANTHROPIC_API_KEY...restart with: nimbus stop && nimbus start",
+              ].join("\n"),
+            );
+          }
+          return undefined;
+        },
+        connect: async () => {},
+        disconnect: async () => {},
+        onNotification: () => {},
+      },
+    });
+    await runAsk(["what", "is", "going", "on"]);
+    const err = stderrChunks.join("");
+    expect(err).toContain("Nimbus needs an LLM for this command");
+    expect(err).toContain("nimbus --demo standup");
+    expect(err).not.toContain("nimbus stop");
+    expect(err).not.toContain("nimbus.toml");
+    expect(process.exitCode).toBe(1);
+  });
+});
