@@ -2,7 +2,13 @@
 // gateway entry — on temp OS roots. `demo-root-isolation.e2e.test.ts` proves the per-function I41
 // isolation properties against a directly-spawned gateway; this test proves the user-facing
 // SEQUENCE actually works: seed, the three-brief tour, ordinary `--demo` commands, the refusal
-// gate, the HTTP sidecar staying off, and a clean stop — all through the same CLI a person types.
+// gate, the HTTP sidecar staying off, a re-run over a live demo gateway, a clean stop, and — via a
+// local recorder standing in for the telemetry and updater endpoints — no outbound request from
+// any demo gateway, all through the same CLI a person types.
+//
+// Run it with no `dist/nimbus-gateway*` in the checkout: the CLI prefers a compiled gateway there
+// over the source entry (`cli/src/lib/resolve-gateway-launch.ts`), so a stale local build would be
+// what this test exercises. CI has no `dist/` in this job.
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import net from "node:net";
@@ -108,6 +114,23 @@ function isAlive(pid: number): boolean {
 let env: Record<string, string>;
 let httpPort = 0;
 
+/**
+ * A local stand-in for EVERY outbound endpoint a booting gateway would contact on its own (spec
+ * § 11.3): the telemetry flush (`NIMBUS_TELEMETRY_ENDPOINT`, `config/telemetry-toml.ts`) and the
+ * updater's startup manifest check (`NIMBUS_UPDATER_URL`, `config/nimbus-toml.ts`'s
+ * `parseNimbusUpdaterToml`). Both are env overrides read at boot, which is the path that matters:
+ * the seeder writes the demo `nimbus.toml` only AFTER the first boot, so a TOML-based redirect
+ * could not cover the first gateway at all. Without this, a regression that re-enabled either
+ * would POST to production from CI and every assertion here would still pass.
+ */
+type RecordedRequest = { method: string; url: string };
+const outbound: RecordedRequest[] = [];
+let outboundServer: ReturnType<typeof Bun.serve> | undefined;
+
+function expectNoOutboundRequests(): void {
+  expect(outbound).toEqual([]);
+}
+
 type CliResult = { code: number; stdout: string; stderr: string };
 
 /** Spawns the real CLI entry with the shared temp-root env. Kills and reports if it hangs. */
@@ -141,6 +164,15 @@ async function cli(args: string[], timeoutMs = CLI_TIMEOUT_MS): Promise<CliResul
 
 beforeAll(async () => {
   httpPort = await freePort();
+  outboundServer = Bun.serve({
+    hostname: "127.0.0.1",
+    port: 0,
+    fetch(req) {
+      outbound.push({ method: req.method, url: req.url });
+      return new Response("{}", { status: 404 });
+    },
+  });
+  const outboundBase = `http://127.0.0.1:${String(outboundServer.port)}`;
   env = { ...(process.env as Record<string, string>) };
   for (const k of [
     "NIMBUS_CONFIG_DIR",
@@ -150,6 +182,13 @@ beforeAll(async () => {
     "NIMBUS_GATEWAY_LOG_PATH",
     "OPENAI_API_KEY",
     "ANTHROPIC_API_KEY",
+    // Either would make a regression here pass for the wrong reason: the first switches the
+    // updater off by config, the second makes `createUpdaterFromConfig` decline to build one
+    // (a package-manager install). With both absent, only the demo boot policy stands between
+    // a booting gateway and the recorder below.
+    "NIMBUS_UPDATER_DISABLE",
+    "NIMBUS_DISTRIBUTION_CHANNEL",
+    "NODE_ENV",
   ]) {
     delete env[k];
   }
@@ -168,9 +207,13 @@ beforeAll(async () => {
     TEMP: dirs.tmp,
     TMP: dirs.tmp,
     NIMBUS_SKIP_EMBEDDING_RUNTIME: "1",
-    // These two must be ignored by a demo boot (I41 clause 4/spec § 11.3) — proven by test 5
-    // (HTTP sidecar) and by the demo gateway never touching a telemetry endpoint.
+    // These must be ignored by a demo boot (I41 clause 4/spec § 11.3) — proven by test 5 (HTTP
+    // sidecar) and by `outbound` staying empty (telemetry flush + updater startup check). The
+    // telemetry flush ticks once IMMEDIATELY at boot and the updater checks on startup, so a
+    // regression in either gate is recorded within the first boot of test 1.
     NIMBUS_TELEMETRY_ENABLED: "1",
+    NIMBUS_TELEMETRY_ENDPOINT: `${outboundBase}/telemetry`,
+    NIMBUS_UPDATER_URL: `${outboundBase}/latest.json`,
     NIMBUS_HTTP_PORT: String(httpPort),
   });
 
@@ -202,6 +245,7 @@ afterAll(async () => {
       /* best effort */
     }
   }
+  await outboundServer?.stop(true);
   try {
     // Retries are for a lagging Windows handle release, not for flakiness.
     rmSync(root, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
@@ -215,7 +259,12 @@ describe("nimbus demo: the whole flow, end to end, on temp roots", () => {
     "1. `nimbus demo` seeds and tours: exit 0, three headers in order, exact commands, real content, ## Gaps",
     async () => {
       const r = await cli(["demo"], DEMO_TIMEOUT_MS);
-      expect(r.code).toBe(0);
+      if (r.code !== 0) {
+        throw new Error(
+          `\`nimbus demo\` exited ${String(r.code)}\n` +
+            `--- stdout ---\n${r.stdout.slice(-2000)}\n--- stderr ---\n${r.stderr.slice(-2000)}`,
+        );
+      }
 
       const h1 = "── [1/3] On-call triage";
       const h2 = "── [2/3] Why this line changed";
@@ -252,6 +301,40 @@ describe("nimbus demo: the whole flow, end to end, on temp roots", () => {
       expect(r.stdout).toContain(
         "nimbus --demo stats deployment-frequency --service payment-service",
       );
+
+      // Two demo gateways booted above (seed, then restart). Neither may have flushed
+      // telemetry or checked for an update — spec § 11.3's "no outbound call".
+      expectNoOutboundRequests();
+    },
+    DEMO_TIMEOUT_MS + 30_000,
+  );
+
+  test(
+    "1b. `nimbus demo --no-tour` run AGAIN while the first demo gateway is still up: exit 0 (spec § 6, the Windows EBUSY case)",
+    async () => {
+      // The re-run must stop the live gateway and WAIT for its process to exit before it deletes
+      // and recreates the root — on Windows an immediate delete hits EBUSY on nimbus.db. It
+      // leaves a running, freshly seeded demo gateway behind, which every later test relies on.
+      const pidBefore = readGatewayPid(demoDataDir);
+      expect(pidBefore).toBeDefined();
+      if (pidBefore !== undefined) expect(isAlive(pidBefore)).toBe(true);
+
+      const r = await cli(["demo", "--no-tour"], DEMO_TIMEOUT_MS);
+      if (r.code !== 0) {
+        throw new Error(
+          `second \`nimbus demo --no-tour\` exited ${String(r.code)}\n` +
+            `--- stdout ---\n${r.stdout.slice(-2000)}\n--- stderr ---\n${r.stderr.slice(-2000)}`,
+        );
+      }
+      expect(r.stdout).toContain('Seeded the synthetic "Acme" org');
+      expect(r.stdout).not.toContain("── [1/3]");
+
+      const pidAfter = readGatewayPid(demoDataDir);
+      expect(pidAfter).toBeDefined();
+      expect(pidAfter).not.toBe(pidBefore);
+      if (pidBefore !== undefined) expect(isAlive(pidBefore)).toBe(false);
+      if (pidAfter !== undefined) expect(isAlive(pidAfter)).toBe(true);
+      expectNoOutboundRequests();
     },
     DEMO_TIMEOUT_MS + 30_000,
   );
@@ -299,6 +382,10 @@ describe("nimbus demo: the whole flow, end to end, on temp roots", () => {
       // and stopping the REAL gateway).
       expect(combined).toContain("Nimbus needs an LLM for this command");
       expect(combined).not.toContain("nimbus stop");
+      // Final fix wave: the demo variant now comes from the GATEWAY (`runAsk`), so this is the
+      // same text the REPL, the TUI and `nimbus prove` receive.
+      expect(combined).toContain("The demo does not configure one.");
+      expect(combined).not.toContain("nimbus.toml");
     },
     ASK_TIMEOUT_MS + 10_000,
   );
@@ -346,5 +433,9 @@ describe("nimbus demo: the whole flow, end to end, on temp roots", () => {
     const { dataDir, others } = realNimbusDirs();
     const stray = [dataDir, ...others].flatMap(filesUnder).filter((f) => !isInside(f, demoRoot));
     expect(stray).toEqual([]);
+  });
+
+  test("8. across the whole run, no demo gateway contacted the telemetry or updater endpoint", () => {
+    expectNoOutboundRequests();
   });
 });
