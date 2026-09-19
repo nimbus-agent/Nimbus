@@ -1,8 +1,4 @@
 import { unlink } from "node:fs/promises";
-// The REAL client, deliberately not `../ipc-client/index.ts`: the CLI command tests replace that
-// facade process-wide via `mock.module`, and this probe must see the real socket even in that
-// combined run — the same reason state is read through `gw-state-helpers.ts` below.
-import { IPCClient } from "@nimbus-dev/client";
 
 import type { CliPlatformPaths } from "../paths.ts";
 // Deliberately `gw-state-helpers.ts`, NOT `gateway-process.ts`: `test/helpers/cli-mocks.ts`
@@ -13,7 +9,9 @@ import type { CliPlatformPaths } from "../paths.ts";
 // real gateway state file names; a caller that wants to skip that goes through `DemoDeps.stop`
 // (dependency injection) instead of relying on this module being mockable.
 import { gatewayStatePath, isProcessAlive, readGatewayState } from "./gw-state-helpers.ts";
-import { probeSocketReachable, SOCKET_PROBE_TIMEOUT_MS } from "./socket-probe.ts";
+// `rawSocketClient`, not an `IPCClient`: the CLI command tests mock `IPCClient` process-wide, and
+// the mock reaches even a direct `@nimbus-dev/client` import — see `socket-probe.ts`.
+import { probeSocketReachable, rawSocketClient, SOCKET_PROBE_TIMEOUT_MS } from "./socket-probe.ts";
 
 export class StopTimeoutError extends Error {
   constructor(pid: number, ms: number) {
@@ -54,7 +52,7 @@ export async function stopAndWaitForExit(
     state === undefined ||
     !isProcessAlive(state.pid) ||
     !(await probeSocketReachable(
-      new IPCClient(state.socketPath),
+      rawSocketClient(state.socketPath),
       opts.probeTimeoutMs ?? SOCKET_PROBE_TIMEOUT_MS,
     ))
   ) {
