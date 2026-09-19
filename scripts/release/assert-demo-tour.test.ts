@@ -60,6 +60,39 @@ describe("checkDemoTour", () => {
     ]);
   });
 
+  test("a brief that carries ## Gaps but then continues with another section does not CLOSE with it", () => {
+    const i2 = GOOD.indexOf("── [2/3]");
+    const i3 = GOOD.indexOf("── [3/3]");
+    const why = GOOD.slice(i2, i3).replace("_generated in", "## Appendix\n\n_generated in");
+    const f = checkDemoTour(GOOD.slice(0, i2) + why + GOOD.slice(i3));
+    expect(f).toEqual([
+      "the why brief does not CLOSE with ## Gaps; its last section is ## Appendix",
+    ]);
+  });
+
+  test("trailing output after the closing block fails, however complete the tour looked", () => {
+    const f = checkDemoTour(`${GOOD}\nerror: gateway exited unexpectedly\n`);
+    expect(f).toEqual([
+      "the output does not end with the closing block; its last line is: error: gateway exited unexpectedly",
+    ]);
+  });
+
+  test("a closing block cut short after its first line fails", () => {
+    const cut = GOOD.slice(0, GOOD.indexOf("  nimbus --demo standup"));
+    expect(checkDemoTour(cut).some((m) => m.includes("does not end with the closing block"))).toBe(
+      true,
+    );
+  });
+
+  test("a closing hint printed BEFORE the third brief fails", () => {
+    const i3 = GOOD.indexOf("── [3/3]");
+    const hint = GOOD.indexOf("The demo gateway is still running");
+    const moved = GOOD.slice(0, i3) + GOOD.slice(hint) + GOOD.slice(i3, hint);
+    expect(checkDemoTour(moved)).toContain(
+      "the closing hint appears before the third brief, not after it",
+    );
+  });
+
   test("fails when the headers are out of order", () => {
     const swapped = GOOD.replace("[1/3] On-call triage", "[TMP]")
       .replace("[3/3] Who owns this code", "[1/3] On-call triage")

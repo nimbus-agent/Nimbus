@@ -36,6 +36,9 @@ const SECTION_ANCHORS: readonly (readonly (string | RegExp)[])[] = [
 /** Printed only after the third brief returned; its absence means the tour stopped early. */
 const CLOSING_HINT = "The demo gateway is still running";
 
+/** The last line of the closing block; nothing but blank lines may follow it. */
+const FINAL_LINE_PREFIX = "Stop it with";
+
 const SECTION_NAMES = ["oncall", "why", "owners"] as const;
 
 /** The spinner writes cursor-control sequences even into a redirected stdout. */
@@ -73,8 +76,11 @@ export function checkDemoTour(rawStdout: string): string[] {
   for (const f of FORBIDDEN) {
     if (out.includes(f)) failures.push(`the output contains a failure marker: ${f}`);
   }
-  if (!out.includes(CLOSING_HINT)) {
+  const hintAt = out.indexOf(CLOSING_HINT);
+  if (hintAt < 0) {
     failures.push("the closing hint is missing, so the tour stopped before it finished");
+  } else {
+    failures.push(...checkClosingBlock(out, hintAt, Math.max(...at)));
   }
   if (at.some((i) => i < 0)) return failures;
 
@@ -83,14 +89,47 @@ export function checkDemoTour(rawStdout: string): string[] {
     failures.push("the three tour headers are out of order");
     return failures;
   }
-  const sections = [out.slice(i1, i2), out.slice(i2, i3), out.slice(i3)];
+  // The third brief ends where the closing block begins, so the block's own text cannot satisfy
+  // (or break) an assertion about the brief.
+  const end3 = hintAt > i3 ? hintAt : out.length;
+  const sections = [out.slice(i1, i2), out.slice(i2, i3), out.slice(i3, end3)];
   sections.forEach((body, n) => {
+    const name = SECTION_NAMES[n] ?? "?";
     for (const anchor of SECTION_ANCHORS[n] ?? []) {
-      if (!has(body, anchor)) {
-        failures.push(`the ${SECTION_NAMES[n] ?? "?"} brief is missing ${String(anchor)}`);
-      }
+      if (!has(body, anchor)) failures.push(`the ${name} brief is missing ${String(anchor)}`);
+    }
+    const last = lastLevelTwoHeading(body);
+    // A brief with no ## Gaps at all is already reported above as a missing anchor.
+    if (body.includes("## Gaps") && last !== "## Gaps") {
+      failures.push(`the ${name} brief does not CLOSE with ## Gaps; its last section is ${last}`);
     }
   });
+  return failures;
+}
+
+/** The final `## ` heading of a brief, or undefined when it has none (reported as a missing anchor). */
+function lastLevelTwoHeading(body: string): string | undefined {
+  const headings = body.split(/\r?\n/).filter((l) => l.startsWith("## "));
+  return headings.at(-1)?.trim();
+}
+
+/** The closing block must come after the third brief, and the output must END with it. */
+function checkClosingBlock(out: string, hintAt: number, lastHeaderAt: number): string[] {
+  const failures: string[] = [];
+  if (hintAt < lastHeaderAt) {
+    failures.push("the closing hint appears before the third brief, not after it");
+  }
+  const finalLine = out
+    .slice(hintAt)
+    .split(/\r?\n/)
+    .map((l) => l.trim())
+    .filter((l) => l !== "")
+    .at(-1);
+  if (finalLine?.startsWith(FINAL_LINE_PREFIX) !== true) {
+    failures.push(
+      `the output does not end with the closing block; its last line is: ${finalLine ?? "(none)"}`,
+    );
+  }
   return failures;
 }
 

@@ -58,6 +58,20 @@ That is necessary and not sufficient, because a GitHub runner is not a stranger'
 So the manual run is a one-time confirmation per OS, repeated when the installer changes — not a
 per-release chore.
 
+## Before you start — which release you are testing
+
+Every command on this page installs from `releases/latest`, so the run tests whatever release is
+latest at that moment, not `main`. Two floors apply:
+
+- **v7.27.0** is the first release that contains `nimbus demo`. On anything older, criterion 3
+  fails because the command does not exist, which says nothing about the install.
+- **v7.27.1** is the first release with the `nimbus start` readiness fix. On v7.27.0 the tour can
+  die at step 1 with `Gateway is not running`, roughly one fresh run in five.
+
+So check the latest release on the Releases page first, and make `nimbus --version` the first
+thing you record. If it prints less than 7.27.1, stop and wait for the next release rather than
+recording a failure that is already fixed.
+
 ## Windows — a local VM with a snapshot
 
 Windows 11 Home has neither Windows Sandbox nor Hyper-V Manager, and an Azure Windows 11 image
