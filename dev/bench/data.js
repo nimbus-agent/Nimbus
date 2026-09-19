@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1789843178213,
+  "lastUpdate": 1789845117413,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "44e1c384243354593ecbcea32df5b4af6a843b0c",
-          "message": "feat(graph): make resolves, mentions and correlates_with real (why-lens step 1a) (#813)\n\n## What this does\n\nThree graph relation types — `resolves`, `mentions`, `correlates_with` —\nwere declared in the SQLite schema but written by **no populator**. Any\nquery traversing them returned zero rows on every index, forever. This\nmakes them real, so the upcoming `nimbus why <file>:<line>` agent (step\n1b) can answer \"who wrote this, why, what drove it, what depends on it\"\nfrom the local index.\n\n| Edge | Traversal |\n| --- | --- |\n| `resolves` | PR title+body → issue (numeric refs and ticket keys, both\nforges) |\n| `mentions` | chat message → issue / commit |\n| `correlates_with` | deployment → incident, 2h same-service window |\n\nAlso lands: `incident` and `deployment` graph entities (which had\n**never** existed, despite both being indexed as items and listed in\n`ITEM_LINKED_ENTITY_TYPES`), a service-identity binding so\ncross-provider identifiers resolve to one nimbus service, and a\ntransactional backfill so the new edges reach already-indexed history\nrather than only newly-synced data.\n\nSpec: `docs/superpowers/specs/2026-07-23-nimbus-why-lens-design.md`\nPlan: `docs/superpowers/plans/2026-07-23-why-lens-1a-populator-edges.md`\n\n## Scope\n\nNo new migration, no new table, no new invariant, no new HITL action\ntype, no CLI/IPC surface. Every relation type and table already existed\n— this is populator work.\n\n## The reason this is larger than \"emit three edges\"\n\nEvery per-task suite passed against **fixtures that no connector\nemits**. Whole-branch review caught that two of the three edge types\nwere correct in code and unreachable against real connector data:\n\n- `correlates_with` keyed on `metadata.service`, which **no connector\nwrites** — PagerDuty writes `pagerduty_service_id`, Vercel writes\n`name`, the CI path writes `nimbus_service_id` and bypassed the\npopulator entirely.\n- The `resolves` numeric path built `${repo}#${n}` (the **PR**\nexternalId shape) while GitHub indexes issues as `${repo}#issue-${n}`.\n\nBoth are fixed and verified end-to-end against metadata copied verbatim\nfrom connector source. A standing rule is now recorded in the plan:\n**regression tests are seeded from the connector's own\n`externalId`/metadata builders, never hand-written shapes.**\n\nThree further defects were each correct in isolation and defeated by\nanother part of this same branch — the backfill deleted the edges the\nresolver created; the `expert.ts` gap-note probe was satisfied by this\nbranch's own `resolves` edges; the environment gate was undone by a `??\nmetadata.service` fallback. All three passed their own tests.\n\n## Correctness choices worth review\n\n- **`occurredAtForItem` throws** rather than defaulting to `Date.now()`.\nA fabricated timestamp would feed the correlation window and produce a\n*confidently wrong* causal claim; an exception is loud and local.\nUnreachable on the production path (`upsertIndexedItem` writes the row\nfirst, synchronously, on the same handle).\n- **The deployment environment gate fails closed.** A deployment with no\nderivable environment does not correlate. The alternative rested on\n\"Vercel always writes `target`\", which this repo's own connector\ndescription contradicts (`target (production/staging)`). Fail-closed\ncosts nothing real — the CI path *requires* `environment`, and Prefect\ncan't bind on any key anyway — and removes a dependency on an unverified\nAPI vocabulary.\n- **No `LIMIT` on counterpart lookup.** Each side clears its whole\ndirection before re-emitting, so a cap made `clear` and `emit`\nasymmetric and silently destroyed edges the other side created\n(reproduced: 30 → 20 after a re-sync). The 2h same-service window\nalready bounds the result.\n- **`${order}` interpolation** in `timelineCounterparts` is the sole\nexception to the bound-parameter rule — SQL keywords cannot be bound,\nand it is re-derived through a ternary from an `\"ASC\" | \"DESC\"` union,\nso it holds even if the parameter type widens.\n- **`SyncContext.resolveServiceId` is optional.** ~80 connectors\nconstruct `SyncContext`; absence preserves prior behaviour exactly.\n\n## Verification\n\n`tsc --noEmit` clean · **762 tests, 0 fail** · `biome` clean over 2920\nfiles · `audit:boundaries`, `audit:invariants`, `audit:any`,\n`audit:cross-platform`, `audit:doc-refs`, `audit:status-drift`,\n`audit:readme-cli`, `lint:markdown` all pass.\n\nEvery retirement guard was mutation-tested: reverting it fails exactly\nits own test and no other.\n\nRebased onto `main` with zero conflicts; the code diff is byte-identical\npre- and post-rebase.\n\n## Known-deferred (recorded for step 1b)\n\n- `annotateDeployment`'s DORA eligibility uses a raw `includes()` with\nno `production → prod` alias, so it now disagrees with correlation about\n\"production\".\n- `subIncidentResolved` still has no query of its own; it goes silent\nthe day something emits `resolves → incident`. Pre-existing structure,\nunchanged here.\n- Ticket-key extraction matches prose (`UTF-8`, `RFC-2119`, `SHA-256`) —\na precision issue, each costing one unindexed scan.\n- `REGRAPH_TYPE_ORDER` omits `obsidian_note` (near-zero risk: ordering\nonly matters when the target entity does not yet exist).\n- `regraphAllItems` has no CLI surface yet — `nimbus index regraph` is\nstep 1b.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n\n## Summary by CodeRabbit\n\n- **New Features**\n- Graph relationships now capture issue resolutions, message mentions,\nand incident–deployment correlations.\n- Added configurable service identity matching for more accurate\ndeployment and incident associations.\n  - Added graph backfill support for existing indexed data.\n  - Vercel deployment records now include repository information.\n\n- **Bug Fixes**\n  - Resynchronizing items no longer removes unrelated relationships.\n  - Malformed metrics configuration no longer prevents gateway startup.\n\n- **Documentation**\n- Added design and implementation plans for the Why Lens and `nimbus\nwhy` experience.\n\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude Opus 4.8 (1M context) <noreply@anthropic.com>",
-          "timestamp": "2026-07-23T13:25:54Z",
-          "tree_id": "7c1d19307234f8610eb65cd6e70234a44e26377f",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/44e1c384243354593ecbcea32df5b4af6a843b0c"
-        },
-        "date": 1784813894036,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 308.9695420499982,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 308.90081495000595,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 340.85898029999953,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "47a6f62280a071e6e352be9e26907484b587cf63",
+          "message": "test(e2e): pick the demo no-sidecar sentinel port outside the ephemeral range (#1552)\n\n## What\n\nThe release PR #1551 went red on one test: `demo-tour.e2e.test.ts` test\n5, \"the env-selected HTTP sidecar never started\", got\n`canConnect(httpPort) === true`. `main` itself is green; the same code\npassed on `main`, on #1549 and on #1550.\n\n## Cause\n\nThe test picked its port with `listen(0)`, read the number and closed\nthe listener. That returns an EPHEMERAL port, and the kernel hands\nephemeral ports to every later `listen(0)`. These suites run in one\nprocess with the whole repo, where dozens of tests bind port 0 in the\nminute or two between the pick and the assertion. When one of them lands\non the released number, \"nothing listens here\" is false with no sidecar\nanywhere. `demo-root-isolation.e2e.test.ts` had the identical shape and\nthe identical exposure.\n\n## Fix\n\nA shared `pickSentinelPort` helper picks a verified-free loopback port\nin 20000 to 29999, below every OS's ephemeral range: Linux starts at\n32768, macOS and Windows at 49152. No `listen(0)` can return a port from\nthere, so the port stays free unless the code under test binds it. The\nassertion is unchanged and stays strict.\n\nI considered identifying the listener instead, since `GET /v1/health`\nanswers `gateway: read_only_http`. Rejected: other tests start real\nread-only HTTP servers on ephemeral ports, so identity alone keeps a\nsmaller version of the same collision.\n\nThe helper's own test pins the premise: 64 concurrent `listen(0)` binds\nmust all land outside the sentinel range. If a runner image ever moves\nits ephemeral range down, that fails loudly instead of the collision\nquietly returning.\n\n## Verification\n\n- both demo e2e suites: 15 pass, 0 fail\n- `sentinel-port.test.ts`: 2 pass\n- `bun run typecheck:tests`: 0 new errors\n- `bun run preflight:fast`: passed\n- Not reproduced locally: the collision itself needs the whole-repo\nLinux run and luck. The mechanism is read from the code, and the single\nobserved failure matches it.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n\n## Summary by CodeRabbit\n\n- **Tests**\n- Added end-to-end coverage for selecting bindable sentinel ports within\nthe configured range.\n- Verified concurrent ephemeral ports remain outside the sentinel range.\n- Updated demo isolation and tour tests to use consistent sentinel-port\nallocation.\n  - Improved cleanup behavior for test servers when assertions fail.\n\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\nCo-authored-by: Claude Fable 5.1 <noreply@anthropic.com>",
+          "timestamp": "2026-09-19T22:04:29+03:00",
+          "tree_id": "afbad66f136ed8dac1a9662b81a2582024610558",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/47a6f62280a071e6e352be9e26907484b587cf63"
+        },
+        "date": 1789845114714,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 230.34492540000173,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 225.73074554999874,
             "unit": "ms"
           }
         ]
