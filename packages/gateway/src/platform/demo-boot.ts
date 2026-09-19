@@ -36,7 +36,11 @@ export type BootPolicy = {
   readonly extensionsAutoUpdate: boolean;
 };
 
-export function bootPolicyFor(paths: PlatformPaths): BootPolicy {
+/**
+ * Takes only the one field it reads, so a caller holding a narrowed paths shape (e.g. the reembed
+ * RPC context's `Pick<PlatformPaths, "dataDir" | "demo">`) passes it without a widening cast.
+ */
+export function bootPolicyFor(paths: Pick<PlatformPaths, "demo">): BootPolicy {
   const demo = paths.demo === true;
   return {
     reapAppContainers: !demo,

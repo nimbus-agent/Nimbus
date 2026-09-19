@@ -4518,8 +4518,32 @@ describe("I41 — a demo-rooted process never reaches the real install", () => {
     expect(src).toMatch(/if \(syncEnabled\) \{[\s\S]{0,400}?syncScheduler\.start\(\);\s*\}/);
   });
 
+  test("clause 6 wiring: the ONE SyncScheduler in assemble.ts is constructed with syncDisabled when the policy says so", async () => {
+    // The start() pin above is not enough on its own: `forceSync` and each job's
+    // `.finally → tick()` bypass `start()` entirely, so a demo scheduler is inert only because it
+    // is BUILT with `syncDisabled`. Deleting this spread would leave a never-started scheduler that
+    // `connector.sync`'s `forceSync` still drives — and no other test here would notice.
+    const src = await read("packages/gateway/src/platform/assemble.ts");
+    expect(src.match(/new SyncScheduler\(/g)?.length).toBe(1);
+    expect(src).toContain("const syncEnabled = bootPolicyFor(paths).syncScheduler;");
+    // Inside the constructor call itself: sliced from `new SyncScheduler(` to the call's own close
+    // (the first `});` at the statement's two-space indent — the options object's callbacks close
+    // deeper), so a matching spread in some LATER call cannot satisfy this.
+    const start = src.indexOf("const syncScheduler = new SyncScheduler(syncContext, undefined, {");
+    expect(start).toBeGreaterThan(-1);
+    const end = src.indexOf("\n  });", start);
+    expect(end).toBeGreaterThan(start);
+    expect(src.slice(start, end)).toContain("...(syncEnabled ? {} : { syncDisabled: true }),");
+  });
+
   test("clause 6 wiring: assemble.ts gates the updater startup check, the telemetry flush and the extensions auto-update daemon on the boot policy", async () => {
     const src = await read("packages/gateway/src/platform/assemble.ts");
+    // Call COUNTS first, like the reap/sidecar pins: a guarded call proves nothing if a second,
+    // unguarded one sits elsewhere in the file. `wireUpdaterIntoIpc`'s own definition is excluded
+    // by the lookbehind; `startTelemetryFlushScheduler` is only imported here, with no paren.
+    expect(src.match(/(?<!function )wireUpdaterIntoIpc\(/g)?.length).toBe(1);
+    expect(src.match(/function wireUpdaterIntoIpc\(/g)?.length).toBe(1);
+    expect(src.match(/startTelemetryFlushScheduler\(/g)?.length).toBe(1);
     expect(src).toMatch(/if \(bootPolicy\.updaterStartupCheck\) \{\s*wireUpdaterIntoIpc\(/);
     expect(src).toMatch(
       /if \(bootPolicy\.telemetryFlush\) \{\s*const telemetryStop = startTelemetryFlushScheduler\(/,

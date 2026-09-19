@@ -13,7 +13,8 @@
 // A re-export facade (`export * from "./gateway-process.ts"`) does NOT work: Bun's
 // mock follows the re-export and shadows the target too (verified — PR #592). The only
 // arrangement that keeps the test on the real code is a physically independent module
-// that shares nothing with the mocked one. Keep these two files in sync by hand.
+// that shares nothing with the mocked one. Keep these two files in sync by hand —
+// `gateway-process.test.ts` fails if the code below this header ever differs from it.
 
 import { existsSync } from "node:fs";
 import { mkdir } from "node:fs/promises";

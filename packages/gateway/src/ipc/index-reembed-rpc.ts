@@ -315,12 +315,11 @@ export async function dispatchIndexReembedRpc(
   // DIRECTLY (never through the boot-path `createEmbeddingRuntimeNonBlocking` gate), so a demo
   // gateway's `[embedding] enabled` config cannot stop it — this is the one other place the
   // model would be downloaded. Branch on `ctx.paths` via `bootPolicyFor`, never the env var.
-  // `bootPolicyFor` reads only `.demo` (see `platform/demo-boot.ts`); the cast is safe because
-  // `IndexReembedRpcContext.paths` deliberately carries just `dataDir`/`demo`, not a full
-  // `PlatformPaths` (this RPC context has no legitimate use for the other fields).
+  // `bootPolicyFor` takes `Pick<PlatformPaths, "demo">`, so this context's deliberately narrow
+  // `paths` (just `dataDir`/`demo`) passes as-is — no widening cast.
   if (
     (method === "index.reembed" || method === "index.reembedCancel") &&
-    !bootPolicyFor(ctx.paths as PlatformPaths).embeddingRuntime
+    !bootPolicyFor(ctx.paths).embeddingRuntime
   ) {
     throw new IndexReembedRpcError(
       -32603,
