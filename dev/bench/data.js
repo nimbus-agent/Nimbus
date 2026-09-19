@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1789846161834,
+  "lastUpdate": 1789850044721,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "f65e2fcde3b1f1b9d0fb0ff2075e9f0612558a2b",
-          "message": "docs: Stage 2a spike findings — don't build the why lens yet (#815)\n\nDocs-only: the read-only data-quality spike the approved Stage 2 design\ncalled for (spec merged in #814), run against the live local index\n(nimbus.db, schema V44).\n\n**Recommendation: don't build the hover `why` lens yet.** Measured on a\nreal, actively-used machine:\n\n- `git_blame_line` (V32): **0 rows** — the lens's first hop has no data\nat all.\n- 546 items across only 5 services; PR→issue graph joins exist for 5\nissues; **1** person entity.\n- PR titles are literally `\"PR #220\"` — nothing human-readable to hover.\n- No Slack/PagerDuty/Jira lane has any data.\n\nThe report records the prerequisites (blame pipeline populated +\ninvestigated, PR title enrichment, at least one conversation/incident\nlane live) and a re-run bar (≥60% blame→PR resolution on a\nrecently-active repo) before the lens is worth building. Feeds roadmap\nOpen Decision #3.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n## Summary by CodeRabbit\n\n* **Documentation**\n* Added a new Stage 2a data-quality findings page based on read-only\nchecks against the live local index.\n* Documented current coverage across graph entities/relations, including\nlane-by-lane impact and why the hover “why” lens can’t be reliably built\nyet.\n* Listed the prerequisites and coverage thresholds required to revisit\nthe investigation, including fixes needed for missing blame and\nconversation/incident context.\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude Fable 5 <noreply@anthropic.com>",
-          "timestamp": "2026-07-23T21:29:33+03:00",
-          "tree_id": "5bf8733ea33598933a79b651d171578b93e974dd",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/f65e2fcde3b1f1b9d0fb0ff2075e9f0612558a2b"
-        },
-        "date": 1784832136524,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 299.60910229999934,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 301.57516455000075,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 227.1965786999979,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "ab9aef563782b4d42c0a6d033a7bff5d364f75b2",
+          "message": "ci(release): run nimbus demo against the published binary on all three OSes (#1550)\n\n## What\n\n`released-install-smoke.yml` installed from published assets on Linux,\nmacOS and Windows and then stopped at `nimbus --version`. Nothing\nanywhere ran a RELEASED gateway on macOS or Windows: `install-smoke.yml`\ncovers first run against freshly built binaries on a PR, and the e2e\nsuite runs from source.\n\nThe `documented-install` job now goes one step further on each OS. It\nruns `nimbus demo`, requires exit 0, then judges the output with a new\nscript:\n\n- the seed line reports a non-empty org\n- the three tour headers appear, in order, each with its command line\n- each brief carries its own anchors inside its own section:\n`payment-service`, `412` and `## Gaps` for oncall, `## Authorship`,\n`PAY-231` and `## Gaps` for why, Dana Okafor and `## Gaps` for owners\n- no failure marker such as \"Gateway is not running\"\n- `nimbus --demo egress --json` shows a verified chain, a covered window\nand zero outbound rows. An unverifiable or indeterminate ledger fails;\nit is never read as zero\n\nThe demo needs no credentials, no model and no network, so the step is\ndeterministic. The Linux leg runs with no D-Bus session and no keyring,\nwhich also proves I41's ephemeral-vault claim against a published\nbinary.\n\n## Decisions\n\n- **One assertion script, not inline greps.**\n`scripts/release/assert-demo-tour.ts` is unit-tested against a real\ncapture, spinner escape sequences included, and every negative case is a\nmutation of that capture. It imports only `node:fs`, so the job needs a\nsparse checkout and Bun but no `bun install`.\n- **One bash step on all three OSes.** A pwsh redirect re-decodes the\nbinary's UTF-8 stdout through the console code page and would mangle the\nbox-drawing tour headers into a false failure.\n- **No skip branch.** A release without `nimbus demo` is a red job. This\nmust therefore merge AFTER the release carrying `nimbus demo` is\npublished, and the workflow should be dispatched by hand once after\nmerge, since a new step's first scheduled run is otherwise a week away.\n- The one-liner job is untouched and stays install-only.\n\n## It already found a bug\n\nCapturing the fixture surfaced a readiness race in `nimbus start`, 1\nfailure in 5 fresh-root runs: the tour died at step 1 with \"Gateway is\nnot running\". Fixed separately in #1549. The script rejects that real\nfailed capture, and a test pins the shape.\n\n## Also\n\n`docs/release/gate-1-fresh-machine.md`: the manual half of Gate 1. It\nsays what CI cannot see on a runner, mainly SmartScreen, Defender and\nGatekeeper prompts that nobody has ever recorded, and gives run sheets\nfor a local Windows 11 evaluation VM with a snapshot and for a rented\nMac.\n\n## Verification\n\n- `bun test scripts/release/assert-demo-tour.test.ts`: 20 pass\n- script run against the real good capture exits 0, against the real\nfailed capture exits 1\n- script run from a simulated sparse checkout with no `node_modules`\nexits 0\n- `bun run preflight:fast`: passed, including workflow-lint,\naction-sha-pins and doc-refs\n- Not yet proven: the workflow step itself on the three runners. That\nneeds a published release with `nimbus demo` and a manual dispatch.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n## Summary by CodeRabbit\n\n- **Documentation**\n- Added a fresh-machine release validation runbook for Linux, macOS, and\nWindows.\n- Documented installer setup, first-run demo commands, security prompts,\nPATH checks, expected results, and pass criteria.\n\n- **Quality Improvements**\n  - Expanded published-install smoke testing across major platforms.\n- Added validation for demo-tour output and egress reports, including\nfailure handling and clean first-run behavior.\n- Added deterministic demo-tour examples and coverage for invalid,\nincomplete, and non-interactive output scenarios.\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude Fable 5.1 <noreply@anthropic.com>",
+          "timestamp": "2026-09-19T20:21:39Z",
+          "tree_id": "ffeb8c0a8e29e49beb67e82686ae24e493744569",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/ab9aef563782b4d42c0a6d033a7bff5d364f75b2"
+        },
+        "date": 1789850039662,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 331.88711055000095,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 325.5713046500008,
             "unit": "ms"
           }
         ]
