@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1789840860972,
+  "lastUpdate": 1789843178213,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "cc2b07fb65e49bacc8cc208d8b84986527d2ae65",
-          "message": "fix(ipc): the connector HITL prompts named params no caller sends (#811)\n\nCloses #808.\n\nBoth HITL-gated `connector.*` methods built their consent payload from\nparameter keys that no caller sends, so every field was `undefined`:\n\n| Method | Gate read | Handler actually reads |\n| --- | --- | --- |\n| `connector.addMcp` | `command`, `args` | `serviceId`, `commandLine`\n(derives command/args itself via `parseUserMcpCommandLine`) |\n| `connector.remove` | `service` | `serviceId` (via\n`requireRegisteredSchedulerServiceId`) |\n\n## Why this is more than a blank prompt\n\n`JSON.stringify` drops `undefined`, so `\"payload\":{}` reached all three\nsinks `executor.gate()` feeds:\n\n- the owner's consent prompt\n- the audit row (`auditPayload` → `redactAuditPayload({ action })`)\n- the BLAKE3-chained I29 egress-ledger row (`buildEgressEntry({ action,\n... })`)\n\nFor the one action class that causes the gateway to **spawn an arbitrary\nlocal process**, the prompt showed nothing about which binary was being\nauthorized — and `nimbus prove` over a window containing an `addMcp`\ncould attest that *an* addMcp was approved but not *which command*,\nwhich is most of what the proof is for.\n\n**I2/I3 were never violated.** The gate fires, on `action.type`, for\nboth methods; the frozen-set membership check is correct. What failed is\nthe *informed* half of human-in-the-loop. A gate the owner cannot read\nis a gate the owner learns to click through.\n\n## The fix\n\nEach payload now names the keys its handler consumes. `addMcp` shows the\nraw `commandLine` rather than a re-derived `command` + `args` — it is\nwhat the caller asked for, so the prompt cannot disagree with what the\nhandler goes on to parse.\n\n## Why it survived until now\n\nThe test stub recorded only `{ type }` from the gate call and threw the\npayload away, so every existing assertion looked past the one field that\nwas empty. It now records the full action.\n\nBoth new guards assert through a **JSON round-trip**, because that is\nthe transform the audit and egress sinks apply: a payload of\nall-`undefined` fields passes a naive `toEqual({})` and is precisely the\nbug.\n\n**Red-proven** — against the unfixed source, 3 failures (the two new\nguards plus the strengthened existing assertion), each reporting a\nreceived payload of `{}`.\n\n## Verification\n\n- `bun test packages/gateway/src/ipc/connector-rpc-routing.test.ts` — 15\npass\n- `bun test packages/gateway/src/engine/ packages/gateway/src/egress/\npackages/gateway/src/security-invariants.test.ts` — 501 pass, 0 fail\n(the gate's three consumers)\n- `bun run typecheck` — clean; `bunx biome check packages scripts` —\n2909 files, clean\n- `scripts/structure-audit/check-nimbus-invariants.ts` — exit 0\n\n**Unrelated pre-existing failure, not introduced here:**\n`handleConnectorAuth > google_drive reaches its provider arm...` times\nout in the combined `bun test packages/gateway/src/ipc/` run but passes\nin isolation. Confirmed identical on unmodified `main`. Filing\nseparately rather than folding a flake fix into a security change.\n\nFound while exposing `connector.*` in `@nimbus-dev/client` (Stage 1 wave\n1g).\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nCo-authored-by: Claude Opus 4.8 (1M context) <noreply@anthropic.com>",
-          "timestamp": "2026-07-23T15:25:16+03:00",
-          "tree_id": "f822a10aa892a9edc8a81c7eee1ea9c248b8c91c",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/cc2b07fb65e49bacc8cc208d8b84986527d2ae65"
-        },
-        "date": 1784810204874,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 296.64958349999944,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 303.5437580999991,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 328.1173081000023,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "4267055986ab9e6e12bc85543a8e0e9fa0f4f838",
+          "message": "fix(cli): nimbus start waits for the gateway state file, not only the socket (#1549)\n\n## What\n\n`nimbus start` reported \"Gateway started\" as soon as the IPC socket\nanswered. The gateway binds its socket first and writes `gateway.json`\nafterwards, and every other command reads that file before it connects,\nreporting \"Gateway is not running\" when the file is absent. A command\nrun immediately after a start could land in the gap between the two.\n\nFound by running `nimbus demo` on a fresh root while preparing a\nreleased first-run CI gate: the tour died at step 1 with \"Gateway is not\nrunning (demo root)\" and exit 1, while `nimbus --demo egress` a few\nseconds later reached the same gateway without trouble. It reproduced on\n1 of 5 fresh-root runs on a fast Windows machine. It is not\ndemo-specific: any script doing `nimbus start && nimbus <cmd>` can hit\nit, and a slow machine makes the gap wider.\n\n## Fix\n\n`waitForGatewayReady` now requires both conditions: the socket answers\nand `gateway.json` names the pid that was spawned. A state file left by\na different gateway process does not count. The function takes its\ncollaborators by injection, so the four cases are unit-tested directly:\nsocket up with the file still absent, a file naming another pid, a file\npresent with the socket silent, and a dead child.\n\nThe gateway side is unchanged. Writing the state file before binding\nwould only move the race to the other side, where a reader finds the\nfile and then fails to connect.\n\n## Verification\n\n- New `waitForGatewayReady` tests, red before the change and green\nafter.\n- `bun test packages/cli/src`: 3270 pass, 0 fail.\n- `bun run preflight:fast`: passed.\n- Real `nimbus demo` from source on fresh temp roots: 8 of 8 clean after\nthe fix. At a 1 in 5 failure rate that is supporting evidence only; the\nunit tests are what pin the behaviour.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n\n## Summary by CodeRabbit\n\n- **Bug Fixes**\n- Improved gateway startup reliability by confirming the service is\nresponsive and running the expected process before reporting readiness.\n- Startup now detects unavailable services, unexpected process state,\nand early process exits more accurately, reducing misleading successful\nlaunches and unnecessary waiting.\n\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\nCo-authored-by: Claude Fable 5.1 <noreply@anthropic.com>",
+          "timestamp": "2026-09-19T21:26:58+03:00",
+          "tree_id": "2cced889438cb741eb2a71e3432f76d700f9cbaf",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/4267055986ab9e6e12bc85543a8e0e9fa0f4f838"
+        },
+        "date": 1789843174600,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 342.1828868000022,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 340.85898029999953,
             "unit": "ms"
           }
         ]
