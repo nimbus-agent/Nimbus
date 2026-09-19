@@ -15,6 +15,8 @@ import net from "node:net";
 import { tmpdir } from "node:os";
 import { isAbsolute, join, relative } from "node:path";
 
+import { pickSentinelPort } from "./_fixtures/sentinel-port.ts";
+
 const CLI_ENTRY = join(import.meta.dir, "..", "..", "..", "cli", "src", "index.ts");
 const BOOT_TIMEOUT_MS = 60_000;
 const DEMO_TIMEOUT_MS = 180_000;
@@ -51,18 +53,6 @@ function realNimbusDirs(): { dataDir: string; others: string[] } {
 
 const demoRoot = join(realNimbusDirs().dataDir, "demo");
 const demoDataDir = join(demoRoot, "data");
-
-function freePort(): Promise<number> {
-  return new Promise((resolve, reject) => {
-    const s = net.createServer();
-    s.once("error", reject);
-    s.listen(0, "127.0.0.1", () => {
-      const addr = s.address();
-      const port = typeof addr === "object" && addr !== null ? addr.port : 0;
-      s.close(() => resolve(port));
-    });
-  });
-}
 
 /** Every file under `dir` (none when `dir` is absent) — listed, never stat-then-read. */
 function filesUnder(dir: string): string[] {
@@ -170,7 +160,7 @@ async function cli(args: string[], timeoutMs = CLI_TIMEOUT_MS): Promise<CliResul
 }
 
 beforeAll(async () => {
-  httpPort = await freePort();
+  httpPort = await pickSentinelPort();
   outboundServer = Bun.serve({
     hostname: "127.0.0.1",
     port: 0,
