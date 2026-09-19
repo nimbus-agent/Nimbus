@@ -1,0 +1,138 @@
+[?25l[90m│[39m
+[35m◒[39m  Waiting for Gateway IPC (0s) — --- 2026-09-19T17:33:33.567Z nimbus: spawning 
+gateway (<path>…[1A[1G[J[35m◐[39m  Waiting for Gateway IPC (0s) — --- 2026-09-19T17:33:33.567Z nimbus: spawning 
+[?25hSocket: \\.\pipe\nimbus-gateway-demo-c662c96848de
+Log:    <demo-root>\data\logs\gateway-2026-09-19.log
+Seeded the synthetic "Acme" org: 8 people, 132 items.
+[?25l[90m│[39m
+[?25hSocket: \\.\pipe\nimbus-gateway-demo-c662c96848de
+Log:    <demo-root>\data\logs\gateway-2026-09-19.log
+
+── [1/3] On-call triage ────────────────────────────────
+$ nimbus --demo oncall
+# On-call
+
+_incident: payment-service: 5xx rate above 5% on /v1/charges — triggered_
+_chat window: last 1d (2026-09-18 17:33Z → 2026-09-19 17:33Z)_
+Incident status comes from the last PagerDuty sync, which ran 2 minutes ago — so an incident shown here as open may have been closed since.
+The deployment below is the last one recorded before this incident opened. That is timing alone — nothing in the index links a deployment to an incident, so it is a place to look rather than a cause.
+
+## Incident
+
+- **Status:** triggered
+- **Severity:** P1
+- **Urgency:** high
+- **Opened:** 2026-09-19 16:55Z
+- **Assigned to:** sam.rivera@acme.example
+- **Service:** payment-service
+
+## Last deployment before the alert
+
+- **Deployment:** Deploy payment-service → prod (4ec7667)
+- **Started:** 2026-09-19 16:46Z
+- **Environment:** prod
+- **Result:** success
+- **Commit:** `4ec76675c08dd6fd996aca09cc9840fe28fc5b7b`
+
+## Change in that deployment
+
+- **Pull request:** [Cap PSP retry backoff at 8s (PAY-231)](https://github.example/acme/payments/pull/412)
+- **Merged:** 2026-09-19 14:33Z
+- **Size:** +18 −6 across 2 files
+
+## CI
+
+_None found._
+
+## Chat
+
+- payment-service errors are all PSP timeouts. Same shape as the incident three... — 2026-09-19 17:11Z
+- PR #412 (PAY-231) went out to payment-service about ten minutes before the al... — 2026-09-19 17:02Z
+- Paged: payment-service 5xx above 5% on /v1/charges. Looking now. — 2026-09-19 16:58Z
+
+## Prior incidents on this service
+
+_2 earlier incidents on this service._
+
+- payment-service: settlement job failing after deploy — opened 2026-09-08 19:53Z, closed 2026-09-08 19:53Z by omar.haddad@acme.example
+- payment-service: charge latency p99 above 4s — opened 2026-08-29 17:33Z, closed 2026-08-29 17:33Z by lee.chen@acme.example
+
+## Gaps
+
+- How any earlier incident was resolved is absent and cannot be listed: an incident is indexed with its status as its entire body, so no resolution note, remediation step or postmortem link exists anywhere in the index. Prior incidents below can say who closed one and when, never what they did. (No action available today — the PagerDuty connector indexes no resolution narrative. Where your team writes postmortems into a connected wiki, `nimbus --demo ask` over that content is the closest available answer.)
+- The contents of the change below are absent: no connector indexes a patch, a changed-file list or a commit message body, so a pull request is described by its title and its added/removed line counts and nothing more. Those counts say how big a change was, never what it did. (No action available today — open the linked pull request to read the diff.)
+- Only PagerDuty incidents are covered. OpsGenie has no Nimbus connector, so if your team pages through it this brief has nothing to select from and its silence is not evidence that nobody is paged. (No action available today — no OpsGenie connector exists to configure.)
+
+_generated in 0.0 s_
+
+_Rendered deterministically — no eligible LLM provider was available for this brief. Depends on both `[llm]` (whether a provider is configured and reachable) and `[agents] synthesis` (whether it may be used here)._
+
+
+── [2/3] Why this line changed ─────────────────────────
+$ nimbus --demo why src/retry/backoff.ts:42
+# Why
+`src/retry/backoff.ts:42` in `<demo-root>\workspace\acme-payments`
+
+## Authorship
+- **Dana Okafor · 4ec76675c08d** — 2026-09-19
+  Cap PSP retry backoff at 8s (PAY-231)
+
+## Pull request
+- **[#412 Cap PSP retry backoff at 8s (PAY-231)](https://github.example/acme/payments/pull/412)** — 2026-09-19
+  Opened by Dana Okafor · Reviewed by Lee Chen
+
+## Ticket
+- **PAY-231 PAY-231: retry storms on card-authorization timeouts** — 2026-09-10
+  Referenced from the merged PR.
+
+## Discussion
+- **PR #412 (PAY-231) went out to payment-service about ten minutes before the al...** — 2026-09-19
+  PR #412 (PAY-231) went out to payment-service about ten minutes before the alert. Checking whether the 8s cap is involved.
+- **The PSP brown-out last month is why PAY-231 exists.** — 2026-09-08
+  The PSP brown-out last month is why PAY-231 exists.
+
+## Gaps
+
+- `affects` edges are defined in the schema but not yet emitted by the graph populator. (No populator emits `affects`; driver attribution is temporal (48 h window), not causal.)
+- No indexed code symbols for this file — enable code_index on the root and sync.
+
+_generated in 0.0 s_
+
+_Rendered deterministically — no eligible LLM provider was available for this brief. Depends on both `[llm]` (whether a provider is configured and reachable) and `[agents] synthesis` (whether it may be used here)._
+
+
+── [3/3] Who owns this code ────────────────────────────
+$ nimbus --demo owners src/retry
+## Ownership · src/retry
+### Owners — src/retry
+
+  1. Dana Okafor                  100.0%
+      (1 of 1 contributor(s) clear the share floor)
+
+### Directory — src
+
+  1. Dana Okafor                  82.6%
+  2. Priya Nair                   6.8%
+  3. Lee Chen                     5.4%
+  4. Marco Bianchi                5.3%
+      (4 of 4 contributor(s) clear the share floor)
+
+### Coverage
+
+  roots 1/1 · files 3 · excluded 0 · services 0
+
+## Gaps
+
+- Blame measures who wrote lines, not who is accountable. There is no CODEOWNERS and no on-call rotation in the index, and reviewer data (`reviewed` edges from GitHub PR reviews) is not factored into this ranking — so this is authorship-derived ownership. (Treat the ranking as a starting point for who to ask, not as an approval list.)
+
+_generated in 0.0 s_
+
+_Rendered deterministically — no eligible LLM provider was available for this brief. Depends on both `[llm]` (whether a provider is configured and reachable) and `[agents] synthesis` (whether it may be used here)._
+
+
+The demo gateway is still running on the synthetic org. Try:
+  nimbus --demo standup
+  nimbus --demo expert payments
+  nimbus --demo decisions
+  nimbus --demo stats deployment-frequency --service payment-service
+Stop it with `nimbus demo stop`; remove everything with `nimbus demo reset`.
