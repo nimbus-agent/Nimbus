@@ -161,11 +161,13 @@ describe("seedDemoCorpus corpus-integrity guards", () => {
   test("an item naming an unknown author refuses, and nothing is written", async () => {
     const { db, configDir, dataDir } = fresh();
     const message = buildAcmeCorpus().messages.find((m) => m.authorKey !== undefined);
-    if (message === undefined) throw new Error("corpus has no authored message");
-    const mutable = message as { authorKey?: string };
+    const original = message?.authorKey;
+    if (message === undefined || original === undefined) {
+      throw new Error("corpus has no authored message");
+    }
+    const mutable = message as { authorKey: string };
     await withCorpusEdit(
       () => {
-        const original = mutable.authorKey;
         mutable.authorKey = "nobody";
         return () => {
           mutable.authorKey = original;
