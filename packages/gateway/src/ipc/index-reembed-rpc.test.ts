@@ -92,6 +92,63 @@ describe("dispatchIndexReembedRpc", () => {
   });
 });
 
+describe("dispatchIndexReembedRpc — demo gateway refuses to re-embed (no outbound model download)", () => {
+  test("index.reembed on a demo ctx.paths rejects with ERR_EMBEDDINGS_DISABLED and never resolves an embedder", async () => {
+    const { ctx: base } = freshCtx();
+    let sinkFactoryCalls = 0;
+    const demoCtx: IndexReembedRpcContext = {
+      ...base,
+      paths: { dataDir: base.paths.dataDir, demo: true },
+      // The DI seam `runReembed` uses to build the pipeline once an embedder has been resolved.
+      // If the demo gate fires before `resolveEmbedder`/`runReembed` run at all, this is never
+      // called — the same "loader seam never invoked" proof the boot-path gate uses.
+      _sinkFactory: () => {
+        sinkFactoryCalls += 1;
+        return { embedItem: async () => {} };
+      },
+    };
+    await expect(
+      dispatchIndexReembedRpc(
+        "index.reembed",
+        { model: "Xenova/all-MiniLM-L6-v2", batchSize: 100 },
+        demoCtx,
+      ),
+    ).rejects.toMatchObject({
+      message: expect.stringContaining(
+        "ERR_EMBEDDINGS_DISABLED: embeddings are disabled in the demo root (it makes no outbound calls), so there is nothing to re-embed.",
+      ),
+    });
+    expect(sinkFactoryCalls).toBe(0);
+  });
+
+  test("index.reembedCancel on a demo ctx.paths also refuses (same gate covers every index.reembed* method)", async () => {
+    const { ctx: base } = freshCtx();
+    const demoCtx: IndexReembedRpcContext = {
+      ...base,
+      paths: { dataDir: base.paths.dataDir, demo: true },
+    };
+    await expect(
+      dispatchIndexReembedRpc("index.reembedCancel", { jobId: "reembed_x" }, demoCtx),
+    ).rejects.toMatchObject({
+      message: expect.stringContaining("ERR_EMBEDDINGS_DISABLED"),
+    });
+  });
+
+  test("negative control: a non-demo ctx.paths still dry-runs normally (unchanged behaviour)", async () => {
+    // Reuses the existing passing "dryRun returns { jobId } and emits done notification" shape —
+    // proves the demo gate is additive and does not alter the real-gateway path.
+    const { ctx, events } = freshCtx();
+    const out = await dispatchIndexReembedRpc(
+      "index.reembed",
+      { model: "Xenova/all-MiniLM-L6-v2", dryRun: true, batchSize: 100 },
+      ctx,
+    );
+    expect(out.kind).toBe("hit");
+    await new Promise((r) => setTimeout(r, 50));
+    expect(events.find((e) => e.method === "index.reembedDone")).toBeDefined();
+  });
+});
+
 const SAMPLE_ITEM: IndexedItem = {
   id: "x:1",
   service: "x",
