@@ -59,9 +59,9 @@ export async function probeSocketReachable(
   } catch {
     return false;
   } finally {
-    if (timer !== undefined) {
-      clearTimeout(timer);
-    }
+    // The executor above runs synchronously, so `timer` is always assigned by now;
+    // `clearTimeout` accepts `undefined` regardless.
+    clearTimeout(timer);
     await client.disconnect().catch(() => {});
   }
 }
