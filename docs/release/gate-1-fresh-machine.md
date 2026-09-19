@@ -21,10 +21,18 @@ That is necessary and not sufficient, because a GitHub runner is not a stranger'
 
 - It has `git`, `gpg`, several runtimes and a populated `PATH` preinstalled. #1167 was exactly a
   missing-capability bug, and a machine that already has everything cannot find one.
-- No person is there to see a SmartScreen, Defender or Gatekeeper prompt. **Nobody has ever
-  recorded what those prompts say for a Nimbus binary.** That is the main thing a manual run adds.
+- Windows runner images switch Defender real-time monitoring off for speed. An unsigned
+  single-file binary is a plausible false positive, and the failure is silent: the exe is
+  quarantined and the next command reports "not found". Only a machine with stock Defender
+  settings can see that. It needs Defender ON, not a person watching.
 - It never opens a new shell, so it cannot tell whether the `PATH` change the installer makes
   survives into the next terminal.
+- No person is there to see a SmartScreen or Gatekeeper dialog. **Nobody has ever recorded what
+  those say for a Nimbus binary.** Expect them on the BROWSER-DOWNLOAD path, not the one-liner:
+  both key on a download marker (Mark-of-the-Web, `com.apple.quarantine`) that a browser sets and
+  that `irm`/`Invoke-WebRequest` and `curl` are not expected to. That expectation is itself
+  unverified, which is a reason to look once. This is the only part that needs an interactive
+  session; everything above needs only a clean machine with default security settings.
 
 So the manual run is a one-time confirmation per OS, repeated when the installer changes — not a
 per-release chore.
@@ -77,6 +85,15 @@ nimbus --version
 nimbus demo
 nimbus demo reset
 ```
+
+## The browser-download path (both OSes, after the one-liner run)
+
+Revert to the clean state, then install the way someone who distrusts piping a script into a
+shell would: download the archive from the Releases page **in a browser**, extract it with the
+OS's own file manager, and run the installer it contains, following
+[Windows](../install-windows-unsigned.md) or [macOS](../install-macos-unsigned.md). This is where
+SmartScreen and Gatekeeper are expected to appear, and the question is whether those two pages
+describe what actually shows up.
 
 ## What to record
 
