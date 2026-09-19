@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1789818494424,
+  "lastUpdate": 1789840860972,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "f3aa6ce6334da9363fe8611a726826e4f9f1e02b",
-          "message": "docs(ecosystem): record Stage 1 complete — client surface 15 → 52 methods (#807)\n\nStage 1 of `docs/ecosystem-roadmap.md` is complete. All eight waves\nshipped across `@nimbus-dev/client` 0.7.0 → 0.11.0 in eight days;\n`agents.*`, `connector.*` and `workflow.*` — three namespaces the\ndiagnosis named as built-but-unreachable — are now reachable from npm.\n\n**Docs-only. No gateway code changed.**\n\n## What this PR does\n\nPer the document's own update rule (\"when a client method ships, move it\nfrom Stage 1's table to a shipped list and note the client version that\ncarries it\"):\n\n- Stage 1's wave table becomes a **shipped list** with the client\nversion and PR per wave.\n- The **diagnosis section keeps its original numbers** behind a\nsuperseded banner rather than being rewritten. It is the argument that\njustified the sequencing; editing it after the fact would erase the\nevidence for why the work was ordered this way.\n- **Open decision 4** (client throughput ~1.25 methods/month gates every\nstage) is *answered*, not deleted: 37 methods in 8 days. That figure\nmeasured attention, not difficulty — so Stages 2 and 3 should not be\nsequenced as though throughput-bound.\n- Two contract facts are written down because both were found by reading\ngateway source, not docs: `agents.*` resolve from a `<agent>.briefReady`\n**notification** (subscribe-before-call), and HITL-gated connector\nmethods **do not deny uniformly** (`addMcp`/`remove` resolve\n`{status:\"rejected\"}`; `reindex({depth:\"full\"})` rejects).\n- Three **gateway-side gaps** found during the client work are recorded\nas deliberately open, since each is a gateway change rather than a\nclient one.\n\n`docs/CHANGELOG.md` gets the matching dated entry, which also picks up\nthe gateway-side brief-shape drift gate (#806) that landed with this\nworkstream and was not yet logged.\n\n## Verification\n\n- `markdownlint-cli2` — 0 errors (the TOC anchor was checked; that is\nwhy the heading carries no status emoji)\n- `lychee --offline` — 0 errors across both files\n- `audit:doc-refs` — 606 refs across 15 docs, all resolve\n- `audit:status-drift` — OK\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nCo-authored-by: Claude Opus 4.8 (1M context) <noreply@anthropic.com>",
-          "timestamp": "2026-07-23T14:58:51+03:00",
-          "tree_id": "4e6c45262d5dfc09a0c9a98bd1dd5534999ae8a8",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/f3aa6ce6334da9363fe8611a726826e4f9f1e02b"
-        },
-        "date": 1784808667647,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 322.1471976999986,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 322.0625382999911,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 322.16020490000085,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "306811640+nimbus-release-bot[bot]@users.noreply.github.com",
+            "name": "nimbus-release-bot[bot]",
+            "username": "nimbus-release-bot[bot]"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "f3615e045ba824d2ea5a96d8b3c97b41689828b9",
+          "message": "chore: release main (#1546)\n\n:robot: I have created a release *beep* *boop*\n---\n\n\n<details><summary>7.27.0</summary>\n\n##\n[7.27.0](https://github.com/nimbus-agent/Nimbus/compare/v7.26.0...v7.27.0)\n(2026-09-19)\n\n\n### Features\n\n* **cli:** nimbus demo — a seeded synthetic org and a three-brief tour\n([#1547](https://github.com/nimbus-agent/Nimbus/issues/1547))\n([b238a13](https://github.com/nimbus-agent/Nimbus/commit/b238a1386312746994a8a3ab4e668464c5dd1e5d))\n* isolated demo root for nimbus --demo (invariant I41)\n([#1545](https://github.com/nimbus-agent/Nimbus/issues/1545))\n([8791c19](https://github.com/nimbus-agent/Nimbus/commit/8791c1990e85f27364e0c8110da43709fba9b07f))\n</details>\n\n---\nThis PR was generated with [Release\nPlease](https://github.com/googleapis/release-please). See\n[documentation](https://github.com/googleapis/release-please#release-please).\n\nCo-authored-by: nimbus-release-bot[bot] <306811640+nimbus-release-bot[bot]@users.noreply.github.com>",
+          "timestamp": "2026-09-19T20:45:19+03:00",
+          "tree_id": "d86bc74ec266cebee8e526a89152e010211555ca",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/f3615e045ba824d2ea5a96d8b3c97b41689828b9"
+        },
+        "date": 1789840857361,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 327.8629594500013,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 328.1173081000023,
             "unit": "ms"
           }
         ]
