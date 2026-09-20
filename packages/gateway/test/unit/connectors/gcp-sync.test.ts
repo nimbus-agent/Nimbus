@@ -114,11 +114,12 @@ describe("gcp-sync — with shared fixture", () => {
       ]);
     });
 
-    test("env contains GOOGLE_APPLICATION_CREDENTIALS = cred path", async () => {
+    test("env contains GOOGLE_APPLICATION_CREDENTIALS and CLOUDSDK_AUTH_CREDENTIAL_FILE_OVERRIDE = cred path", async () => {
       fixture.spawnMock.respond("gcloud", { exitCode: 0, stdout: "{}" });
       await createGcpSyncable(ENSURE_MCP).sync(fixture.createSyncContext("gcp"), null);
       const env = fixture.spawnMock.calls[0]!.env;
       expect(env["GOOGLE_APPLICATION_CREDENTIALS"]).toBe(CRED_PATH);
+      expect(env["CLOUDSDK_AUTH_CREDENTIAL_FILE_OVERRIDE"]).toBe(CRED_PATH);
     });
 
     test("non-zero exit → http-empty pass cursor (preserves prior cursor)", async () => {

@@ -51,12 +51,13 @@ describe("runGcloudCommand", () => {
     expect(res.text).toBe("boom");
   });
 
-  test("passes the argv through and scopes GOOGLE_APPLICATION_CREDENTIALS into the env (I1)", async () => {
+  test("passes the argv through and scopes both GOOGLE_APPLICATION_CREDENTIALS and CLOUDSDK_AUTH_CREDENTIAL_FILE_OVERRIDE into the env (I1)", async () => {
     const { calls } = stubSpawn(() => ({ exitCode: 0, stdout: "[]" }));
     await runGcloudCommand(["gcloud", "x"], "/path/to/creds.json");
     expect(calls).toHaveLength(1);
     expect(calls[0]!.argv).toEqual(["gcloud", "x"]);
     expect(calls[0]!.env["GOOGLE_APPLICATION_CREDENTIALS"]).toBe("/path/to/creds.json");
+    expect(calls[0]!.env["CLOUDSDK_AUTH_CREDENTIAL_FILE_OVERRIDE"]).toBe("/path/to/creds.json");
   });
 
   test("degrades to { ok:false, text:'' } when spawn throws (gcloud missing)", async () => {

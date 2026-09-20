@@ -1,11 +1,13 @@
 import { extensionProcessEnv } from "../../extensions/spawn-env.ts";
 import { spawnCapture } from "../../platform/spawn-capture.ts";
+import { gcloudKeyFileEnv } from "./gcp-auth.ts";
 
 /**
- * Spawn a `gcloud` CLI command with Application Default Credentials pointed at
- * `credPath` (via `GOOGLE_APPLICATION_CREDENTIALS`), capturing stdout. Returns
- * `{ ok, text }`; a missing `gcloud`, a non-zero exit and a spawn failure all come back as
- * `ok: false`, so a Syncable caller degrades gracefully. The env is scoped through
+ * Spawn a gcloud CLI command authenticated as the service-account key at credPath
+ * (gcloudKeyFileEnv sets CLOUDSDK_AUTH_CREDENTIAL_FILE_OVERRIDE, which gcloud reads, plus
+ * GOOGLE_APPLICATION_CREDENTIALS for client libraries), capturing stdout. Returns `{ ok,
+ * text }`; a missing `gcloud`, a non-zero exit and a spawn failure all come back as `ok:
+ * false`, so a Syncable caller degrades gracefully. The env is scoped through
  * `extensionProcessEnv` (invariant I1). Each connector keeps its own argv builder +
  * credential loader.
  *
@@ -20,7 +22,7 @@ export async function runGcloudCommand(
   credPath: string,
 ): Promise<{ ok: boolean; text: string }> {
   const r = await spawnCapture(argv, {
-    env: extensionProcessEnv({ GOOGLE_APPLICATION_CREDENTIALS: credPath }),
+    env: extensionProcessEnv(gcloudKeyFileEnv(credPath)),
   });
   return { ok: r.ok, text: r.stdout };
 }

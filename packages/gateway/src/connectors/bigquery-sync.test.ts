@@ -1,9 +1,10 @@
 import type { Database } from "bun:sqlite";
-import { expect, test } from "bun:test";
+import { afterEach, describe, expect, test } from "bun:test";
+import { MockSpawn } from "../../test/helpers/mock-spawn.ts";
 import { ProviderRateLimiter } from "../sync/rate-limiter.ts";
 import type { SyncContext } from "../sync/types.ts";
 import type { NimbusVault } from "../vault/nimbus-vault.ts";
-import { createBigquerySyncable } from "./bigquery-sync.ts";
+import { createBigquerySyncable, gcloudPrintAccessToken } from "./bigquery-sync.ts";
 import {
   createMemoryIndexDb,
   createStubVault,
@@ -1148,5 +1149,20 @@ describeWithFetchRestore("bigquery-sync — mintAccessToken throws", () => {
     await expect(
       sync.sync(syncTestContext(db, gcpVault("/creds.json", "my-project"), "bigquery"), null),
     ).rejects.toThrow("gcloud not found");
+  });
+});
+
+describe("gcloudPrintAccessToken — authenticates as the configured key", () => {
+  let spawn: MockSpawn;
+  afterEach(() => spawn.restore());
+
+  test("sets CLOUDSDK_AUTH_CREDENTIAL_FILE_OVERRIDE, the variable gcloud reads", async () => {
+    spawn = new MockSpawn();
+    spawn.respond("gcloud", { exitCode: 0, stdout: "ya29.token\n" });
+    spawn.install();
+    expect(await gcloudPrintAccessToken("/keys/bq.json")).toBe("ya29.token");
+    const env = spawn.calls[0]!.env;
+    expect(env["CLOUDSDK_AUTH_CREDENTIAL_FILE_OVERRIDE"]).toBe("/keys/bq.json");
+    expect(env["GOOGLE_APPLICATION_CREDENTIALS"]).toBe("/keys/bq.json");
   });
 });

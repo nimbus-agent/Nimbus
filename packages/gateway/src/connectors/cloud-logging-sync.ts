@@ -18,10 +18,11 @@ function pass1Cursor(): string {
 }
 
 /**
- * Mints nothing — `gcloud logging` is a native CLI that reads Application
- * Default Credentials from `GOOGLE_APPLICATION_CREDENTIALS`. Shells
- * `gcloud logging sinks list --project <p> --format json` and returns the raw
- * stdout. Returns `{ ok: false }` when gcloud is missing or exits non-zero —
+ * Mints nothing — `gcloud logging` is a native CLI that authenticates as the configured
+ * service-account key through runGcloudCommand (gcloudKeyFileEnv — gcloud reads
+ * CLOUDSDK_AUTH_CREDENTIAL_FILE_OVERRIDE, not the ADC variable). Shells `gcloud logging
+ * sinks list --project <p> --format json` and returns the raw stdout. Returns
+ * `{ ok: false }` when gcloud is missing or exits non-zero —
  * the caller degrades gracefully (no throw past the Syncable boundary),
  * mirroring gcp-sync's `!res.ok` posture.
  */

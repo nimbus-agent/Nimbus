@@ -7,6 +7,7 @@ import {
 } from "../sync/pass-cursor-sync-result.ts";
 import { type Syncable, type SyncContext, type SyncResult, syncNoopResult } from "../sync/types.ts";
 import { connectorFetch } from "./_lib/fetch-outcome.ts";
+import { gcloudKeyFileEnv } from "./_lib/gcp-auth.ts";
 import { mapBigqueryTableToItem } from "./bigquery-table-mapping.ts";
 import { encodeNimbusJsonCursor } from "./nimbus-json-cursor.ts";
 import { asRecord, stringField } from "./unknown-record.ts";
@@ -31,15 +32,14 @@ function pass1Cursor(): string {
 
 /**
  * Mints a short-lived GCP access token by shelling `gcloud auth print-access-token`
- * with `GOOGLE_APPLICATION_CREDENTIALS` pointed at the configured service-account
- * key (gcloud respects this for Application Default Credentials). Returns null when
+ * as the configured service account via `gcloudKeyFileEnv`. Returns null when
  * gcloud is missing or exits non-zero — the caller degrades gracefully (no throw
  * past the Syncable boundary), mirroring gcp-sync's `!res.ok` posture.
  */
-async function gcloudPrintAccessToken(credPath: string): Promise<string | null> {
+export async function gcloudPrintAccessToken(credPath: string): Promise<string | null> {
   try {
     const r = await spawnCapture(["gcloud", "auth", "print-access-token"], {
-      env: extensionProcessEnv({ GOOGLE_APPLICATION_CREDENTIALS: credPath }),
+      env: extensionProcessEnv(gcloudKeyFileEnv(credPath)),
     });
     if (!r.ok) {
       return null;

@@ -21,13 +21,13 @@ function pass1Cursor(): string {
 }
 
 /**
- * Mints nothing — `gcloud ai` is a native CLI that reads Application Default
- * Credentials from `GOOGLE_APPLICATION_CREDENTIALS`. Shells
- * `gcloud ai models list --region <r> --project <p> --format json` and returns
- * the raw stdout. Returns `{ ok: false }` when gcloud is missing or exits
- * non-zero — the caller degrades gracefully (no throw past the Syncable
- * boundary), mirroring cloud-logging-sync's posture. The `<region>` is guarded
- * by the caller before this runs.
+ * Mints nothing — `gcloud ai` is a native CLI that authenticates as the configured
+ * service-account key through runGcloudCommand (gcloudKeyFileEnv — gcloud reads
+ * CLOUDSDK_AUTH_CREDENTIAL_FILE_OVERRIDE, not the ADC variable). Shells `gcloud ai models
+ * list --region <r> --project <p> --format json` and returns the raw stdout. Returns
+ * `{ ok: false }` when gcloud is missing or exits non-zero — the caller degrades
+ * gracefully (no throw past the Syncable boundary), mirroring cloud-logging-sync's
+ * posture. The `<region>` is guarded by the caller before this runs.
  */
 function gcloudAiModelsList(
   credPath: string,
