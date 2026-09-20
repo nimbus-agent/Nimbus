@@ -1,15 +1,14 @@
 {
-  "generatedAt": "2026-09-20T16:32:22.615Z",
+  "generatedAt": "2026-09-20T16:42:34.281Z",
   "knownBlindSpots": [
-    "imap and protonmail write item rows through a generic cross-file mapper called with plain function-call arguments rather than an inline `{ service, type, metadata }` object literal, so their real writes produce zero WriterEmission rows here. An `imap:*`/`protonmail:*` entry in unmatchedItemReads is this blind spot, not a confirmed dead lane.",
-    "pagerduty-sync.ts's buildPagerdutyMetadata sets four keys — opened_at_ms, pagerduty_service_id, severity, urgency — via a conditional `metadata[\"key\"] = value;` bracket assignment AFTER the object literal is built (`if (cond) metadata[\"opened_at_ms\"] = openedAtMs;`), a fourth metadata-authoring shape extractWriterEmissions does not resolve (it recognizes an inline object literal, a one-hop identifier, and a one-hop same-file call — never a later mutation onto an already-built object). pagerduty's WriterEmission for `incident` therefore omits all four keys even though the connector genuinely writes them at runtime. Any `incident`-scoped unmatched/partial row for one of these four keys is this blind spot, not a confirmed dead lane — the same caution the imap/protonmail entry above states, for a different root cause (a writer-side resolution gap rather than a zero-row gap)."
+    "imap and protonmail write item rows through a generic cross-file mapper called with plain function-call arguments rather than an inline `{ service, type, metadata }` object literal, so their real writes produce zero WriterEmission rows here. An `imap:*`/`protonmail:*` entry in unmatchedItemReads is this blind spot, not a confirmed dead lane."
   ],
   "sqlLiteralScopeNote": "A raw scan of packages/gateway/src/**/*.ts (minus *.test.ts) with extractSqlLiterals finds 483 SQL-shaped literals. This artifact's file set additionally excludes *-sql.ts files (an existing, repo-wide iterateSourceFiles() convention, not specific to this gate), which drops exactly 4 literals in 4 files: index/entity-metadata-v54-sql.ts, index/fleet-subjects-v63-sql.ts, index/glossary-manual-v46-sql.ts, index/unified-item-v3-sql.ts. Three are schema DDL (their only SQL-shaped text is an internal FTS-sync SELECT inside a CREATE TRIGGER body); the fourth is a one-time graph_entity migration UPDATE, already out of scope by table. None is a live read predicate reachable at runtime, so this fully explains the 483-vs-479 gap with zero effect on reads/writes/unmatchedItemReads below.",
   "counts": {
     "reads": 401,
     "writes": 117,
-    "unmatchedItemReads": 109,
-    "totalAbsence": 99,
+    "unmatchedItemReads": 83,
+    "totalAbsence": 73,
     "partialCoverage": 10,
     "ambiguousReadCount": 122,
     "parameterizedReads": 19
@@ -3251,7 +3250,8 @@
         "name",
         "kind",
         "file",
-        "repoRoot"
+        "repoRoot",
+        "excerptStartLine"
       ],
       "file": "packages/gateway/src/connectors/filesystem-v2-sync.ts",
       "line": 351
@@ -3786,7 +3786,8 @@
         "created_at",
         "updated_at",
         "tags",
-        "canonical_url"
+        "canonical_url",
+        "summary"
       ],
       "file": "packages/gateway/src/connectors/mlflow-model-mapping.ts",
       "line": 141
@@ -3913,7 +3914,11 @@
         "assignee_emails",
         "resolved_by_email",
         "unattributed_actors",
-        "meta_v"
+        "meta_v",
+        "opened_at_ms",
+        "pagerduty_service_id",
+        "severity",
+        "urgency"
       ],
       "file": "packages/gateway/src/connectors/pagerduty-sync.ts",
       "line": 108
@@ -4568,14 +4573,6 @@
     {
       "table": "item",
       "kind": "metadata-key",
-      "value": "excerptStartLine",
-      "file": "packages/gateway/src/security/scan.ts",
-      "line": 78,
-      "matchState": "unmatched"
-    },
-    {
-      "table": "item",
-      "kind": "metadata-key",
       "value": "created_at_ms",
       "file": "packages/gateway/src/premortem/cohort.test-helpers.ts",
       "line": 48,
@@ -4688,46 +4685,6 @@
     {
       "table": "item",
       "kind": "metadata-key",
-      "value": "opened_at_ms",
-      "file": "packages/gateway/src/preflight/preflight.ts",
-      "line": 107,
-      "matchState": "unmatched"
-    },
-    {
-      "table": "item",
-      "kind": "metadata-key",
-      "value": "pagerduty_service_id",
-      "file": "packages/gateway/src/preflight/preflight.ts",
-      "line": 136,
-      "matchState": "unmatched"
-    },
-    {
-      "table": "item",
-      "kind": "metadata-key",
-      "value": "urgency",
-      "file": "packages/gateway/src/preflight/preflight.ts",
-      "line": 138,
-      "matchState": "unmatched"
-    },
-    {
-      "table": "item",
-      "kind": "metadata-key",
-      "value": "severity",
-      "file": "packages/gateway/src/preflight/preflight.ts",
-      "line": 139,
-      "matchState": "unmatched"
-    },
-    {
-      "table": "item",
-      "kind": "metadata-key",
-      "value": "severity",
-      "file": "packages/gateway/src/preflight/preflight.ts",
-      "line": 140,
-      "matchState": "unmatched"
-    },
-    {
-      "table": "item",
-      "kind": "metadata-key",
       "value": "workflow_name",
       "file": "packages/gateway/src/preflight/preflight.ts",
       "line": 166,
@@ -4804,65 +4761,9 @@
     {
       "table": "item",
       "kind": "metadata-key",
-      "value": "opened_at_ms",
-      "file": "packages/gateway/src/preflight/preflight.ts",
-      "line": 123,
-      "matchState": "unmatched"
-    },
-    {
-      "table": "item",
-      "kind": "metadata-key",
-      "value": "pagerduty_service_id",
-      "file": "packages/gateway/src/preflight/preflight.ts",
-      "line": 125,
-      "matchState": "unmatched"
-    },
-    {
-      "table": "item",
-      "kind": "metadata-key",
       "value": "mergeable_state",
       "file": "packages/gateway/src/preflight/preflight.ts",
       "line": 262,
-      "matchState": "unmatched"
-    },
-    {
-      "table": "item",
-      "kind": "metadata-key",
-      "value": "pagerduty_service_id",
-      "file": "packages/gateway/src/metrics/dora.ts",
-      "line": 304,
-      "matchState": "unmatched"
-    },
-    {
-      "table": "item",
-      "kind": "metadata-key",
-      "value": "opened_at_ms",
-      "file": "packages/gateway/src/metrics/dora.ts",
-      "line": 377,
-      "matchState": "unmatched"
-    },
-    {
-      "table": "item",
-      "kind": "metadata-key",
-      "value": "pagerduty_service_id",
-      "file": "packages/gateway/src/metrics/dora.ts",
-      "line": 382,
-      "matchState": "unmatched"
-    },
-    {
-      "table": "item",
-      "kind": "metadata-key",
-      "value": "opened_at_ms",
-      "file": "packages/gateway/src/metrics/dora.ts",
-      "line": 383,
-      "matchState": "unmatched"
-    },
-    {
-      "table": "item",
-      "kind": "metadata-key",
-      "value": "opened_at_ms",
-      "file": "packages/gateway/src/metrics/dora.ts",
-      "line": 384,
       "matchState": "unmatched"
     },
     {
@@ -4895,22 +4796,6 @@
       "value": "merge_commit_sha",
       "file": "packages/gateway/src/metrics/dora.ts",
       "line": 215,
-      "matchState": "unmatched"
-    },
-    {
-      "table": "item",
-      "kind": "metadata-key",
-      "value": "opened_at_ms",
-      "file": "packages/gateway/src/metrics/dora.ts",
-      "line": 313,
-      "matchState": "unmatched"
-    },
-    {
-      "table": "item",
-      "kind": "metadata-key",
-      "value": "pagerduty_service_id",
-      "file": "packages/gateway/src/metrics/dora.ts",
-      "line": 315,
       "matchState": "unmatched"
     },
     {
@@ -5071,14 +4956,6 @@
     {
       "table": "item",
       "kind": "metadata-key",
-      "value": "excerptStartLine",
-      "file": "packages/gateway/src/connectors/filesystem-v2-sync.ts",
-      "line": 348,
-      "matchState": "unmatched"
-    },
-    {
-      "table": "item",
-      "kind": "metadata-key",
       "value": "creationTimestamp",
       "file": "packages/gateway/src/connectors/flux-resource-mapping.ts",
       "line": 70,
@@ -5191,38 +5068,6 @@
     {
       "table": "item",
       "kind": "metadata-key",
-      "value": "summary",
-      "file": "packages/gateway/src/connectors/mlflow-model-mapping.ts",
-      "line": 139,
-      "matchState": "unmatched"
-    },
-    {
-      "table": "item",
-      "kind": "metadata-key",
-      "value": "opened_at_ms",
-      "file": "packages/gateway/src/connectors/pagerduty-sync.ts",
-      "line": 88,
-      "matchState": "unmatched"
-    },
-    {
-      "table": "item",
-      "kind": "metadata-key",
-      "value": "pagerduty_service_id",
-      "file": "packages/gateway/src/connectors/pagerduty-sync.ts",
-      "line": 89,
-      "matchState": "unmatched"
-    },
-    {
-      "table": "item",
-      "kind": "metadata-key",
-      "value": "urgency",
-      "file": "packages/gateway/src/connectors/pagerduty-sync.ts",
-      "line": 91,
-      "matchState": "unmatched"
-    },
-    {
-      "table": "item",
-      "kind": "metadata-key",
       "value": "next_cursor",
       "file": "packages/gateway/src/connectors/slack-sync.ts",
       "line": 196,
@@ -5298,25 +5143,9 @@
     {
       "table": "item",
       "kind": "metadata-key",
-      "value": "pagerduty_service_id",
-      "file": "packages/gateway/src/agents/oncall-queries.ts",
-      "line": 184,
-      "matchState": "unmatched"
-    },
-    {
-      "table": "item",
-      "kind": "metadata-key",
       "value": "merge_commit_sha",
       "file": "packages/gateway/src/agents/oncall-queries.ts",
       "line": 313,
-      "matchState": "unmatched"
-    },
-    {
-      "table": "item",
-      "kind": "metadata-key",
-      "value": "pagerduty_service_id",
-      "file": "packages/gateway/src/agents/oncall-queries.ts",
-      "line": 458,
       "matchState": "unmatched"
     },
     {
@@ -5433,38 +5262,6 @@
       "value": "merged",
       "file": "packages/gateway/src/agents/standup-queries.ts",
       "line": 360,
-      "matchState": "unmatched"
-    },
-    {
-      "table": "item",
-      "kind": "metadata-key",
-      "value": "excerptStartLine",
-      "file": "packages/gateway/src/agents/_lib/demo-symbol.ts",
-      "line": 14,
-      "matchState": "unmatched"
-    },
-    {
-      "table": "item",
-      "kind": "metadata-key",
-      "value": "excerptStartLine",
-      "file": "packages/gateway/src/agents/_lib/demo-symbol.ts",
-      "line": 20,
-      "matchState": "unmatched"
-    },
-    {
-      "table": "item",
-      "kind": "metadata-key",
-      "value": "excerptStartLine",
-      "file": "packages/gateway/src/agents/_lib/why-subject.ts",
-      "line": 74,
-      "matchState": "unmatched"
-    },
-    {
-      "table": "item",
-      "kind": "metadata-key",
-      "value": "excerptStartLine",
-      "file": "packages/gateway/src/agents/_lib/why-subject.ts",
-      "line": 86,
       "matchState": "unmatched"
     }
   ],

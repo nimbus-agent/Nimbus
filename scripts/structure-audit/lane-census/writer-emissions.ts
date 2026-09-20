@@ -317,24 +317,34 @@ function matchCallExpression(text: string): string | undefined {
   return m?.[1];
 }
 
+/** A `const NAME = <expr>;` match: the RHS text, plus where the statement ends (just past its `;`). */
+type ConstDeclaration = { readonly exprText: string; readonly declEnd: number };
+
 /**
  * Finds the first `const NAME = <expr>;` in `text` (module-level or local — this is a whole-text
  * search, not scope-aware, which is the deliberate approximation this whole file makes: precise
  * enough for the flat, mostly-single-scope shape real connector files use, and consistent with
- * `alias-binding.ts`/`read-sites.ts`'s own regex-over-text approach rather than a real parser) and
- * returns the RHS expression text, up to the `;` that closes the statement at bracket depth 0 (so
- * an object/array/call literal's own internal `;`-free structure — or, for `metadata:`, simply the
- * lack of one — never truncates the capture early).
+ * `alias-binding.ts`/`read-sites.ts`'s own regex-over-text approach rather than a real parser),
+ * returning both the RHS expression text — up to the `;` that closes the statement at bracket
+ * depth 0, so an object/array/call literal's own internal `;`-free structure never truncates the
+ * capture early — and the index right after that `;`, which `resolveTopLevelIdentifierMetadataKeys`
+ * / `resolveInBodyIdentifierMetadataKeys` use to look for further bracket/dot-assignment statements
+ * in the same enclosing scope.
  */
-function findConstDeclarationExpr(name: string, text: string): string | undefined {
+function findConstDeclaration(name: string, text: string): ConstDeclaration | undefined {
   const re = new RegExp(`\\bconst\\s+${escapeRegExp(name)}\\b\\s*(?::[^=;]*)?=\\s*`);
   const m = re.exec(text);
   if (m === null) {
     return undefined;
   }
   const start = m.index + m[0].length;
-  const end = findTopLevelSemicolon(text, start);
-  return text.slice(start, end).trim();
+  const semi = findTopLevelSemicolon(text, start);
+  return { exprText: text.slice(start, semi).trim(), declEnd: Math.min(semi + 1, text.length) };
+}
+
+/** `findConstDeclaration`, RHS text only — the `service:`/`type:` resolution path never needs `declEnd`. */
+function findConstDeclarationExpr(name: string, text: string): string | undefined {
+  return findConstDeclaration(name, text)?.exprText;
 }
 
 /** Index of the first `;` at bracket depth 0 from `start`, or `text.length` if the statement never closes. */
@@ -379,6 +389,13 @@ function findTopLevelSemicolon(text: string, start: number): number {
  *    (the shape `pagerduty-sync.ts` actually uses) a local variable the body assigns the object to
  *    and then returns by name — resolved by the SAME identifier lookup, scoped to the callee's own
  *    body first so it does not pick up an unrelated same-named const elsewhere in the file.
+ * In both of the identifier cases, the literal's keys are extended with any `name["literalKey"] =
+ * …` / `name.literalKey = …` assignment found LATER IN THE SAME ENCLOSING SCOPE as the
+ * declaration — the shape `pagerduty-sync.ts`'s `buildPagerdutyMetadata` uses to set
+ * `opened_at_ms`/`pagerduty_service_id`/`severity`/`urgency` conditionally, after building the base
+ * object literal. A conditional assignment still counts: the key is emitted on at least some writer
+ * rows, and a read scoped to it is not reading a dead lane. See `findExtraAssignedKeys` for what is
+ * deliberately NOT chased (a computed key, an object spread) and why.
  * Anything else (a property-access expression, `a ?? b`, …) resolves to no keys — `[]`, not
  * `__UNRESOLVED__`: `__UNRESOLVED__` is reserved for `itemType`, since a writer with an
  * unresolvable TYPE cannot be attributed to any read lane at all, where a writer with unresolvable
@@ -395,9 +412,7 @@ function resolveMetadataKeys(exprTextRaw: string, src: string): readonly string[
 
   const ident = matchBareIdentifier(exprText);
   if (ident !== undefined) {
-    const declExpr = findConstDeclarationExpr(ident, src);
-    const keys = declExpr === undefined ? undefined : tryObjectLiteralTopLevelKeys(declExpr);
-    return keys ?? [];
+    return resolveTopLevelIdentifierMetadataKeys(ident, src);
   }
 
   const callee = matchCallExpression(exprText);
@@ -406,6 +421,133 @@ function resolveMetadataKeys(exprTextRaw: string, src: string): readonly string[
   }
 
   return [];
+}
+
+/**
+ * For a `metadata: identifier` value resolved at file scope (not through a same-file call): finds
+ * `identifier`'s `const` declaration anywhere in the file, then extends its literal keys with any
+ * bracket/dot assignment to that same identifier found later in the SMALLEST enclosing `{ … }`
+ * block the declaration itself sits in — realistically its own function body, but found
+ * structurally (the smallest brace pair containing the declaration) rather than assumed, so a
+ * declaration nested one level deeper (inside an `if`, say) is not over-scoped to the whole
+ * function.
+ */
+function resolveTopLevelIdentifierMetadataKeys(ident: string, src: string): readonly string[] {
+  const decl = findConstDeclaration(ident, src);
+  if (decl === undefined) {
+    return [];
+  }
+  const literalKeys = tryObjectLiteralTopLevelKeys(decl.exprText);
+  if (literalKeys === undefined) {
+    return [];
+  }
+  const enclosing = findEnclosingBraceRange(src, decl.declEnd) ?? { start: 0, end: src.length };
+  const tail = src.slice(decl.declEnd, enclosing.end);
+  return mergeUniqueKeys(literalKeys, findExtraAssignedKeys(ident, tail));
+}
+
+/**
+ * For a `metadata: callee(...)` value whose callee's `return name;` names a local `const`: the
+ * SAME literal-plus-extra-assignments resolution as `resolveTopLevelIdentifierMetadataKeys`, but
+ * scoped to `body` (the callee's OWN function body, already the exact right scope — no enclosing-
+ * block lookup needed) when the declaration is found there, falling back to the pre-existing
+ * whole-file lookup (unscoped extra-assignment scan included) only when it is not.
+ */
+function resolveInBodyIdentifierMetadataKeys(
+  ident: string,
+  body: string,
+  src: string,
+): readonly string[] {
+  const declInBody = findConstDeclaration(ident, body);
+  if (declInBody !== undefined) {
+    const literalKeys = tryObjectLiteralTopLevelKeys(declInBody.exprText);
+    if (literalKeys === undefined) {
+      return [];
+    }
+    const tail = body.slice(declInBody.declEnd);
+    return mergeUniqueKeys(literalKeys, findExtraAssignedKeys(ident, tail));
+  }
+  return resolveTopLevelIdentifierMetadataKeys(ident, src);
+}
+
+/** `a` with every `b` entry appended that is not already present, order preserved. */
+function mergeUniqueKeys(a: readonly string[], b: readonly string[]): readonly string[] {
+  const out = [...a];
+  for (const key of b) {
+    if (!out.includes(key)) {
+      out.push(key);
+    }
+  }
+  return out;
+}
+
+/**
+ * Finds every `varName["literalKey"] = …` / `varName.literalKey = …` assignment in `scopeText` —
+ * the metadata-authoring shape a connector uses to add keys CONDITIONALLY after building the base
+ * object literal. `(?!=)` after the `=` excludes `==`/`===`/`!==` reads, so `if (meta["k"] !==
+ * undefined)` is never mistaken for a write. Built fresh per call, no shared module-level regex —
+ * Task 1.2's hazard (a shared `g`-flagged RegExp across nested/recursive scans hangs `bun test`
+ * rather than failing it) applies here too.
+ *
+ * Deliberately NOT chased, per feasibility: a computed key (`metadata[someExpr] = …`) and an
+ * object spread (`{ ...apiResponse }`) are genuinely open-world — the key set depends on runtime
+ * data or another service's response shape, not on anything sitting in the source as a literal —
+ * unlike a literal key already sitting right there in the assignment.
+ */
+function findExtraAssignedKeys(varName: string, scopeText: string): readonly string[] {
+  const re = new RegExp(
+    `\\b${escapeRegExp(varName)}\\s*(?:\\[\\s*(['"])([A-Za-z0-9_]+)\\1\\s*\\]|\\.([A-Za-z_$][A-Za-z0-9_$]*))\\s*=(?!=)`,
+    "g",
+  );
+  const out: string[] = [];
+  let m: RegExpExecArray | null = re.exec(scopeText);
+  while (m !== null) {
+    const key = m[2] ?? m[3];
+    if (key !== undefined) {
+      out.push(key);
+    }
+    m = re.exec(scopeText);
+  }
+  return out;
+}
+
+/**
+ * The smallest `{ … }` span in `src` that strictly contains `pos` — the nearest enclosing block or
+ * function body. A single full-source pass over every brace pair (not just object literals), kept
+ * because it needs EVERY block (an `if`, a `for`, a function body), not just the value-literal
+ * subset `findObjectLiterals` restricts itself to.
+ */
+function findEnclosingBraceRange(
+  src: string,
+  pos: number,
+): { readonly start: number; readonly end: number } | undefined {
+  const stack: number[] = [];
+  let best: { start: number; end: number } | undefined;
+  let i = 0;
+  while (i < src.length) {
+    const ch = src[i];
+    if (ch === "'" || ch === '"' || ch === "`") {
+      i = skipStringOrTemplate(src, i);
+      continue;
+    }
+    if (ch === "{") {
+      stack.push(i);
+      i++;
+      continue;
+    }
+    if (ch === "}") {
+      const start = stack.pop();
+      if (start !== undefined && start < pos && i > pos) {
+        if (best === undefined || i - start < best.end - best.start) {
+          best = { start, end: i };
+        }
+      }
+      i++;
+      continue;
+    }
+    i++;
+  }
+  return best;
 }
 
 /** If `text` (trimmed) is itself an object literal, its top-level key names; else `undefined`. */
@@ -454,11 +596,7 @@ function resolveMetadataKeysFromCall(calleeName: string, src: string): readonly 
   if (ident === undefined) {
     return [];
   }
-  const localDecl = findConstDeclarationExpr(ident, body) ?? findConstDeclarationExpr(ident, src);
-  if (localDecl === undefined) {
-    return [];
-  }
-  return tryObjectLiteralTopLevelKeys(localDecl) ?? [];
+  return resolveInBodyIdentifierMetadataKeys(ident, body, src);
 }
 
 /**

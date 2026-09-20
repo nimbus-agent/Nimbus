@@ -363,18 +363,6 @@ const KNOWN_BLIND_SPOTS: readonly string[] = [
     "function-call arguments rather than an inline `{ service, type, metadata }` object literal, " +
     "so their real writes produce zero WriterEmission rows here. An `imap:*`/`protonmail:*` entry " +
     "in unmatchedItemReads is this blind spot, not a confirmed dead lane.",
-  // Found while verifying the pagerduty:incident:opened_at_ms lane against a real coordinator
-  // expectation (it should read as MATCHED, not unmatched — it does not, and this is why).
-  "pagerduty-sync.ts's buildPagerdutyMetadata sets four keys — opened_at_ms, " +
-    'pagerduty_service_id, severity, urgency — via a conditional `metadata["key"] = value;` ' +
-    'bracket assignment AFTER the object literal is built (`if (cond) metadata["opened_at_ms"] ' +
-    "= openedAtMs;`), a fourth metadata-authoring shape extractWriterEmissions does not resolve " +
-    "(it recognizes an inline object literal, a one-hop identifier, and a one-hop same-file call " +
-    "— never a later mutation onto an already-built object). pagerduty's WriterEmission for " +
-    "`incident` therefore omits all four keys even though the connector genuinely writes them at " +
-    "runtime. Any `incident`-scoped unmatched/partial row for one of these four keys is this " +
-    "blind spot, not a confirmed dead lane — the same caution the imap/protonmail entry above " +
-    "states, for a different root cause (a writer-side resolution gap rather than a zero-row gap).",
 ];
 
 /**

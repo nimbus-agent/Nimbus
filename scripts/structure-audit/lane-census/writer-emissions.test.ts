@@ -67,7 +67,7 @@ describe("extractWriterEmissions", () => {
     expect(out[0]?.itemType).toBe("__UNRESOLVED__");
   });
 
-  test("a same-file call resolves through its own local const return", () => {
+  test("a same-file call resolves through its own local const return, including a later dot-assigned key", () => {
     const src = [
       "function buildMeta(row) {",
       "  const metadata = { status: row.status, incidentId: row.id };",
@@ -77,7 +77,46 @@ describe("extractWriterEmissions", () => {
       'ctx.upsertItem({ service: "pagerduty", type: "incident", metadata: buildMeta(row) });',
     ].join("\n");
     const keys = [...(extractWriterEmissions("pd.ts", src)[0]?.metadataKeys ?? [])].sort();
-    expect(keys).toEqual(["incidentId", "status"]);
+    expect(keys).toEqual(["incidentId", "status", "urgency"]);
+  });
+
+  test("a conditional bracket-assigned key after the base literal is captured (pagerduty's real shape)", () => {
+    const src = [
+      "function buildPagerdutyMetadata(row) {",
+      "  const metadata = { status: row.status, incidentId: row.id };",
+      "  if (Number.isFinite(openedAtMs)) metadata['opened_at_ms'] = openedAtMs;",
+      '  if (serviceId !== undefined) metadata["pagerduty_service_id"] = serviceId;',
+      "  return metadata;",
+      "}",
+      'ctx.upsertItem({ service: "pagerduty", type: "incident", metadata: buildPagerdutyMetadata(row) });',
+    ].join("\n");
+    const keys = [...(extractWriterEmissions("pd2.ts", src)[0]?.metadataKeys ?? [])].sort();
+    expect(keys).toEqual(["incidentId", "opened_at_ms", "pagerduty_service_id", "status"]);
+  });
+
+  test("a bracket-assigned key after a top-level local const (no call hop) is captured", () => {
+    const src = [
+      "function build() {",
+      '  const metadata = { name: "x" };',
+      "  if (cond) {",
+      '    metadata["summary"] = "y";',
+      "  }",
+      '  return { service: "mlflow", type: "ml_model", metadata };',
+      "}",
+    ].join("\n");
+    const keys = [...(extractWriterEmissions("mlflow.ts", src)[0]?.metadataKeys ?? [])].sort();
+    expect(keys).toEqual(["name", "summary"]);
+  });
+
+  test("a bracket-assigned key in an unrelated scope is NOT attributed to a same-named metadata var elsewhere", () => {
+    const src = [
+      "function unrelated() {",
+      "  const meta = fetchApiThing();",
+      "  meta.threadId = 1;",
+      "}",
+      'ctx.upsertItem({ service: "x", type: "y", metadata: { a: 1 } });',
+    ].join("\n");
+    expect(extractWriterEmissions("unrelated.ts", src)[0]?.metadataKeys).toEqual(["a"]);
   });
 
   test("a quoted metadata key is captured", () => {
