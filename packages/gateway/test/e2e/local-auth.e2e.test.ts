@@ -12,6 +12,9 @@
 // No real network call: gh's adoption path here is DENIED, so `gh auth token` is never spawned
 // and no credential probe reaches api.github.com. The gh-APPROVE path (which would probe GitHub)
 // is already covered by unit tests with an injected probe. `aws` probes nothing either way.
+// `gcloud` probes nothing either way either — `connectorAuthGcp`'s gcloud arm only writes Vault
+// keys and registers the sync schedule (see its own doc comment in `ipc/connector-rpc-handlers/
+// auth.ts`), so its APPROVE path here needs no injected probe to stay network-free.
 //
 // Embeddings are skipped (NIMBUS_SKIP_EMBEDDING_RUNTIME=1); nothing here needs the index.
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
@@ -138,7 +141,7 @@ const SHIM = join(import.meta.dir, "_fixtures", "local-auth-shim.ts");
  * script subsequently sets for its child).
  */
 function writeShims(binDir: string, shimLog: string): void {
-  for (const name of ["gh", "aws", "kubectl"]) {
+  for (const name of ["gh", "aws", "kubectl", "gcloud"]) {
     if (process.platform === "win32") {
       writeFileSync(
         join(binDir, `${name}.cmd`),
@@ -233,14 +236,14 @@ describe("local auth over a real gateway", () => {
       "connector.detectLocalAuth",
       {},
     );
-    // gcloud has no shim on PATH here (only gh/aws/kubectl get one — see `writeShims`), so it
-    // reports `cli_not_found` rather than a login; that is still the real routing exercising a
-    // real `detectGcloud` call, not a stub.
+    // The gcloud shim reports an active account with no default project, so `detectGcloud`
+    // returns `needs_project` — a real `gcloud config list --format json` round-trip through
+    // the real routing, not a stub.
     expect(findings.map((f) => [f.source, f.status])).toEqual([
       ["gh", "available"],
       ["aws", "available"],
       ["kubectl", "available"],
-      ["gcloud", "cli_not_found"],
+      ["gcloud", "needs_project"],
     ]);
   });
 
@@ -274,6 +277,24 @@ describe("local auth over a real gateway", () => {
     client.clearNotificationHandlers();
   });
 
+  test("an APPROVED gcloud adoption stores the auth source and project (no network)", async () => {
+    let prompt = "";
+    client.onNotification("consent.request", (params) => {
+      prompt = String(params["prompt"] ?? "");
+      void client.call("consent.respond", { requestId: params["requestId"], approved: true });
+    });
+    // `needs_project` (the first test above) is still offerable — `resolveTarget`
+    // (adopt-local-auth.ts) accepts a caller-supplied project on top of it.
+    const out = await client.call<{ ok?: boolean; service?: string }>("connector.adoptLocalAuth", {
+      source: "gcloud",
+      project: "acme-prod",
+    });
+    expect(out).toMatchObject({ ok: true, service: "gcp" });
+    expect(prompt).toContain("connector.adoptLocalAuth");
+    expect(prompt).toContain("Nothing is copied");
+    client.clearNotificationHandlers();
+  });
+
   test("the approved values are in the gateway's own vault", async () => {
     proc?.kill();
     await proc?.exited.catch(() => {});
@@ -281,5 +302,7 @@ describe("local auth over a real gateway", () => {
     expect(await vault.get("aws.profile")).toBe("dev");
     expect(await vault.get("aws.default_region")).toBe("eu-west-1");
     expect(await vault.get("github.pat")).toBeNull();
+    expect(await vault.get("gcp.auth_source")).toBe("gcloud");
+    expect(await vault.get("gcp.project_id")).toBe("acme-prod");
   });
 });

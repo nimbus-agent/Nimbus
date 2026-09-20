@@ -18,6 +18,37 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
 
 ## Post-Phase-6 deliveries
 
+- **2026-09-20 — `nimbus connector detect` learns a `gcloud` login mode, closing the follow-up the
+  same day's gh/aws/kubectl delivery (below) deferred.** A GCP connector
+  (`gcp`/`bigquery`/`cloud_logging`/`vertex_ai` and their four lazy-mesh MCP servers) can now
+  authenticate as the owner's own `gcloud auth login` session instead of a service-account key file
+  — `GcpAuth` (`connectors/_lib/gcp-auth.ts`) is `{ kind: "key" }` or `{ kind: "gcloud" }`, and
+  `resolveGcpAuth` has a KEY ALWAYS WINS rule: a configured `gcp.credentials_json_path` takes
+  precedence over `gcp.auth_source = "gcloud"` even when both are on file, since a key is the more
+  specific instruction. The gcloud arm of the `connector.auth` IPC handler (`connectorAuthGcp` in
+  `ipc/connector-rpc-handlers/auth.ts`) writes `gcp.auth_source`/`gcp.project_id` and
+  unconditionally deletes any stored `gcp.credentials_json_path` so gcloud mode actually takes
+  effect; the reverse direction (a stored key) deletes `gcp.auth_source`. It is reachable only
+  through `nimbus connector detect`'s adoption flow, not as its own `nimbus connector auth gcp`
+  flag — that command keeps its existing `--gcp-credentials-json` key-path flow unchanged. Neither
+  write makes an outbound request, so there is nothing for `verifyBeforeStoreWithScopes` to probe
+  and no `sync`-class egress row for gcloud mode specifically. `detectGcloud`
+  (`connectors/local-auth/detect-gcloud.ts`) runs `gcloud
+  config list --format json` — local only, no network — and can report `available`, `needs_project`
+  (an active login with no default project) or `not_logged_in`; `needs_project` is the one
+  non-`available` status `adoptLocalAuth`'s `usable()` still offers, since the owner can supply a
+  project at adopt time. `nimbus connector detect --source gcloud --project <id>` and the
+  interactive walk (which prompts for a project id only when gcloud has none of its own) both land
+  on the same `connector.adoptLocalAuth` HITL action type the gh/aws/kubectl sources already use
+  (I2 frozen set, I3 — now four sources under one action type), with a consent summary that
+  discloses the specific side effect of clearing a stored key path only when one is actually on
+  file. `sync/connector-configured.ts`'s `isConnectorConfigured` was widened to match: GCP now
+  counts as configured when EITHER a key path OR `auth_source = "gcloud"` is set, alongside
+  `project_id`. Every `gcloud` spawn this touches already runs through the spawn-env helper the
+  "GCP service-account key actually applies" fix below introduced (`gcloudAuthEnv`, built on top of
+  `gcloudKeyFileEnv`), so gcloud mode and key mode share one env-building path rather than
+  diverging. No schema migration, no new invariant, no new egress class.
+
 - **2026-09-20 — `nimbus connector detect` reuses an existing `gh`/`aws`/`kubectl` login instead of
   minting a new credential.** `connectors/local-auth/` detects what each CLI already has configured
   (gh's `hosts.yml`; `aws configure list-profiles`; `kubectl config get-contexts`/`current-context`)
