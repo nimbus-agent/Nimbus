@@ -407,8 +407,12 @@ async function run(): Promise<void> {
   const totalPartial = census.unmatchedItemReads.filter((r) => r.matchState === "partial").length;
 
   const outPath = auditOutputPath("index-lane-census.json");
+  // No `generatedAt` (or any other run-varying field): every sibling artifact in
+  // docs/structure-audit/ is content-stable across repeated runs on an unchanged tree, and git
+  // already records who/when a real change landed. A timestamp here would make `audit:lane-census`
+  // dirty the working tree on every invocation — the exact kind of artifact noise that trains a
+  // reviewer to skim diffs, which is precisely when a real census change goes unnoticed.
   const artifact = {
-    generatedAt: new Date().toISOString(),
     knownBlindSpots: KNOWN_BLIND_SPOTS,
     sqlLiteralScopeNote: SQL_LITERAL_SCOPE_NOTE,
     counts: {

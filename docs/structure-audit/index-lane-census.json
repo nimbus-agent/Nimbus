@@ -1,5 +1,4 @@
 {
-  "generatedAt": "2026-09-20T16:42:34.281Z",
   "knownBlindSpots": [
     "imap and protonmail write item rows through a generic cross-file mapper called with plain function-call arguments rather than an inline `{ service, type, metadata }` object literal, so their real writes produce zero WriterEmission rows here. An `imap:*`/`protonmail:*` entry in unmatchedItemReads is this blind spot, not a confirmed dead lane."
   ],
