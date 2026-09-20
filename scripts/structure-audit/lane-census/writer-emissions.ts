@@ -184,7 +184,7 @@ function parseTopLevelProps(body: string): readonly ObjectProp[] {
     if (part === "" || part.startsWith("...")) {
       continue;
     }
-    const quoted = /^(['"])((?:\\.|(?!\1)[\s\S])*)\1\s*:\s*([\s\S]*)$/.exec(part);
+    const quoted = /^(['"])((?:\\[\s\S]|(?!\1)[^\\])*)\1\s*:\s*([\s\S]*)$/.exec(part);
     if (quoted !== null) {
       out.push({ key: quoted[2] ?? "", valueText: (quoted[3] ?? "").trim() });
       continue;

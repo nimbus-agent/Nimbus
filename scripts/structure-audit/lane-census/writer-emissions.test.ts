@@ -170,4 +170,16 @@ describe("extractWriterEmissions", () => {
     const out = extractWriterEmissions("redos-ternary.ts", src);
     expect(out[0]?.itemType).toBe("__UNRESOLVED__");
   });
+
+  test("a malformed quoted property KEY does not hang on catastrophic regex backtracking", () => {
+    // Same overlapping-alternation shape as the three above, but in `parseTopLevelProps`'s
+    // quoted-KEY regex (`"key": value`) rather than a value resolver — the key/value splitter
+    // parses the same untrusted-shaped object-literal source text. The malformed key never
+    // resolves to a `service` prop, so the object is silently skipped (no `service`/`type` pair
+    // found) rather than crashing or hanging.
+    const escapedRun = "\\_".repeat(5_000);
+    const src = `ctx.upsertItem({ "${escapedRun}"x: "v", type: "y" });`;
+    const out = extractWriterEmissions("redos-quoted-key.ts", src);
+    expect(out).toHaveLength(0);
+  });
 });
