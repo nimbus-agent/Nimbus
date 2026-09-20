@@ -81,30 +81,49 @@ const CONNECTORS_DIR = resolve(import.meta.dir, "..");
  * The marker is the exact argv literal `"gcloud"` (double-quoted, matching how every real spawn
  * site writes it — `["gcloud", ...]`), not the bare word: `gcloud-runner.ts` and
  * `first-party-manifests.ts` both name gcloud in backtick-quoted prose, and matching on the word
- * alone would flag documentation as a spawn site. Used only as a cheap file-level pre-filter below
- * — the real per-occurrence check is `lineHasGcloudArgvLiteral`.
+ * alone would flag documentation as a spawn site.
+ *
+ * This is deliberately a BROAD inclusion check, not a shape allowlist: a guard whose job is
+ * catching a future MISTAKE must not require the mistake to look like one of today's known-good
+ * shapes. An earlier version of this guard narrowed the marker to "looks like `["gcloud"` or a
+ * standalone array element" — a real spawn site written as `const bin = "gcloud"; …
+ * spawnCapture([bin, …])` (an ordinary refactor: extracting the literal into a named constant)
+ * matches neither shape and the spawn call itself carries no `"gcloud"` literal at all, so that
+ * version went BLIND to it. See the "constant extraction" test below, which pins that this marker
+ * catches it. Any line the marker matches that is NOT a real spawn site must instead be excluded by
+ * `isKnownSafeGcloudTypeLiteral` — a narrow, named exception, never a loosening of this check.
  */
 const GCLOUD_ARGV_MARKER = '"gcloud"';
 
 /**
- * True only when a double-quoted `"gcloud"` on this line looks like an actual spawn-argv element
- * — either `["gcloud"` (the array opens on the same line, the shape every one-line spawn call
- * uses: `spawnCapture(["gcloud", ...])`) or a standalone `"gcloud",` / `"gcloud"` element on its
- * OWN line (the shape a multi-line argv array uses — `vertex-ai-sync.ts`'s
- * `const argv = [\n  "gcloud",\n  ...`).
- *
- * `GcpAuth`'s local-login support introduced a SECOND, legitimate use of the double-quoted literal
- * `"gcloud"`: a TypeScript string-literal TYPE, never a spawned argv element — `local-auth-env.ts`'s
- * `Record<"gh" | "aws" | "gcloud", ...>` / `source: "gh" | "aws" | "gcloud"` and `gcp-auth.ts`'s
- * `GcpAuth` discriminant `{ readonly kind: "gcloud" }`. None of those three lines matches either
- * argv shape above (no `[` immediately before the quote, and the line carries other tokens besides
- * the literal), so this predicate — not the bare substring check `GCLOUD_ARGV_MARKER` alone —
- * decides both `spawnSites` membership and offender detection below.
+ * The non-spawn uses of the double-quoted literal `"gcloud"` this repo's source carries today, all
+ * introduced by `GcpAuth`'s local-login support, none of them a spawned argv element — two
+ * TypeScript string-literal TYPES, a value comparison/construction, and a passthrough-env call.
+ * Each check is a specific substring that ONLY that introduced line produces — not a general "this
+ * looks like a type" heuristic — because a broad allowlist here would silently swallow a real
+ * future spawn site that happens to share a token with one of these. In particular, none of these
+ * checks is a bare `= "gcloud"` substring: `gcp-auth.ts`'s own `authSource?.trim() === "gcloud"`
+ * contains that via the last `=` of `===`, so a check that loose would false-positive-EXCLUDE (here,
+ * exclusion is the dangerous direction) other `= "gcloud"`-shaped code this file cannot anticipate.
+ * A new legitimate literal use of `"gcloud"` needs its OWN new narrow check added here (with a
+ * comment naming the line it exempts); this function does not grow by loosening an existing entry
+ * to cover it.
  */
-function lineHasGcloudArgvLiteral(line: string): boolean {
-  if (line.includes('["gcloud"')) return true;
-  const trimmed = line.trim();
-  return trimmed === '"gcloud",' || trimmed === '"gcloud"';
+function isKnownSafeGcloudTypeLiteral(line: string): boolean {
+  // `local-auth-env.ts`'s `PASSTHROUGH: Readonly<Record<"gh" | "aws" | "gcloud", ...>>` key type
+  // and `cliEnvFor`'s `source: "gh" | "aws" | "gcloud"` parameter type both spell this exact
+  // three-member union literally.
+  if (line.includes('"gh" | "aws" | "gcloud"')) return true;
+  // `gcp-auth.ts`'s `GcpAuth` discriminated-union member TYPE `{ readonly kind: "gcloud" }`.
+  if (line.includes('readonly kind: "gcloud"')) return true;
+  // `gcp-auth.ts`'s `resolveGcpAuth`: `authSource?.trim() === "gcloud" ? { kind: "gcloud" } : null`
+  // — comparing `authSource` against the literal and constructing the matching `GcpAuth` VALUE,
+  // never a spawn.
+  if (line.includes('=== "gcloud" ? { kind: "gcloud" }')) return true;
+  // `gcp-auth.ts`'s `gcloudAuthEnv`: `cliEnvFor("gcloud", env)` — passing the literal as the
+  // `source` argument to the passthrough-env helper, never spawning anything itself.
+  if (line.includes('cliEnvFor("gcloud"')) return true;
+  return false;
 }
 
 /**
@@ -169,14 +188,15 @@ async function scanGcloudSpawnSites(
     const relPath = relative(dir, abs).split(sep).join("/");
     const lines = contents.split("\n");
     // Per OCCURRENCE, not per file: a line can in principle carry the marker more than once, and
-    // each one is its own spawn site that must independently be credentialed. Only a line where
-    // `lineHasGcloudArgvLiteral` recognises the argv SHAPE counts — a file that merely mentions
-    // the double-quoted literal as a TypeScript string-literal type (never as a spawned argv
-    // element) is not a spawn site at all, so it must not appear in `spawnSites` either.
+    // each one is its own spawn site that must independently be credentialed. A line excluded by
+    // `isKnownSafeGcloudTypeLiteral` (a TypeScript string-literal type, never a spawned argv
+    // element) is not a spawn site at all, so it must not appear in `spawnSites` either — but every
+    // OTHER line carrying the marker counts, whatever shape it takes.
     let sawArgvSite = false;
     for (let i = 0; i < lines.length; i++) {
       const line = lines[i] as string;
-      if (!lineHasGcloudArgvLiteral(line)) continue;
+      if (!line.includes(GCLOUD_ARGV_MARKER)) continue;
+      if (isKnownSafeGcloudTypeLiteral(line)) continue;
       sawArgvSite = true;
       if (siteIsCredentialed(lines, i)) continue;
       offenders.push(
@@ -254,6 +274,34 @@ describe("gcloud spawn totality — a future gcloud spawn site cannot skip the c
       // whole file.
       expect(fixtureOffenders[0]).toContain('"gcloud", "config", "list"');
       expect(fixtureOffenders[0]).not.toContain("print-access-token");
+    } finally {
+      await rm(fixtureDir, { recursive: true, force: true });
+    }
+  });
+
+  // Pins RECALL, not just precision: a shape-allowlist version of this guard (matching only
+  // `["gcloud"` or a standalone array element) went BLIND to a spawn site whose `"gcloud"` literal
+  // was extracted into a named constant first — an ORDINARY refactor, not an adversarial case, and
+  // the single most likely way this guard gets silently bypassed in practice. The spawn call itself
+  // (`spawnCapture([bin, …])`) carries no `"gcloud"` literal at all; only the constant assignment
+  // does, so the broad per-occurrence marker (not a shape check) is what has to catch it.
+  test("catches a gcloud literal extracted into a constant before being spread into the spawn call", async () => {
+    const fixture =
+      "export async function constantExtractionSite() {\n" +
+      '  const bin = "gcloud";\n' +
+      '  const r = await spawnCapture([bin, "config", "list"], {});\n' +
+      "  return r;\n" +
+      "}\n";
+    const fixtureDir = mkdtempSync(join(tmpdir(), "nimbus-gcp-auth-"));
+    try {
+      const fixturePath = resolve(fixtureDir, "__gcp_auth_const_extraction_fixture.ts");
+      await writeFile(fixturePath, fixture, "utf8");
+      const { offenders } = await scanGcloudSpawnSites(fixtureDir);
+      const fixtureOffenders = offenders.filter((o) =>
+        o.startsWith("__gcp_auth_const_extraction_fixture.ts:"),
+      );
+      expect(fixtureOffenders).toHaveLength(1);
+      expect(fixtureOffenders[0]).toContain('const bin = "gcloud"');
     } finally {
       await rm(fixtureDir, { recursive: true, force: true });
     }
