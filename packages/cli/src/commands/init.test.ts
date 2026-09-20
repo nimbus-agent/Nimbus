@@ -172,9 +172,20 @@ test("full happy path: adds the root, starts the gateway, syncs, prints a real l
 });
 
 test("after a successful index, init offers local-auth reuse with the TTY flag", async () => {
-  const { deps, rec } = fakeDeps({ interactive: true });
-  await runInit([], deps);
-  expect(rec.offered).toEqual([true]);
+  // Real CI runners (GitHub Actions included) set CI=true ambiently, and the offer gate reads
+  // it — without clearing it here this test only proves the offer fires on a developer machine
+  // that happens not to have CI set, and silently passes vacuously (or fails) depending on the
+  // runner. Isolate it exactly like the "CI=true skips" test below, just inverted.
+  const prevCi = process.env["CI"];
+  delete process.env["CI"];
+  try {
+    const { deps, rec } = fakeDeps({ interactive: true });
+    await runInit([], deps);
+    expect(rec.offered).toEqual([true]);
+  } finally {
+    if (prevCi === undefined) delete process.env["CI"];
+    else process.env["CI"] = prevCi;
+  }
 });
 
 test("--no-detect skips the offer", async () => {
@@ -203,14 +214,23 @@ test("--no-sync starts no gateway, so it runs no detection", async () => {
 });
 
 test("a failing offer does not fail init", async () => {
-  const { deps, rec } = fakeDeps({
-    offerLocalAuth: async () => {
-      throw new Error("gateway went away");
-    },
-  });
-  await runInit([], deps);
-  expect(process.exitCode).toBe(0);
-  expect(rec.err.join("\n")).toContain("Could not check for existing logins: gateway went away");
+  // Same ambient-CI isolation as above: the offer must actually run for this test to exercise
+  // its failure path at all.
+  const prevCi = process.env["CI"];
+  delete process.env["CI"];
+  try {
+    const { deps, rec } = fakeDeps({
+      offerLocalAuth: async () => {
+        throw new Error("gateway went away");
+      },
+    });
+    await runInit([], deps);
+    expect(process.exitCode).toBe(0);
+    expect(rec.err.join("\n")).toContain("Could not check for existing logins: gateway went away");
+  } finally {
+    if (prevCi === undefined) delete process.env["CI"];
+    else process.env["CI"] = prevCi;
+  }
 });
 
 test("--no-sync writes config and stops without touching the gateway", async () => {
