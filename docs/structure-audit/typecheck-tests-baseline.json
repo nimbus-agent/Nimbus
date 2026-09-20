@@ -35,9 +35,6 @@
     "packages/gateway/test/helpers/mock-spawn.test.ts": {
       "TS2532": 3
     },
-    "packages/gateway/test/helpers/mock-spawn.ts": {
-      "TS2379": 1
-    },
     "packages/gateway/test/integration/connectors/airflow-sync-fake-server.test.ts": {
       "TS2314": 1,
       "TS2739": 1

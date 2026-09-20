@@ -26,9 +26,12 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
   user who configured a service account believed they ran as it. `connectors/_lib/gcp-auth.ts`'s
   `gcloudKeyFileEnv` now also sets `CLOUDSDK_AUTH_CREDENTIAL_FILE_OVERRIDE`, the variable gcloud
   reads, and is the one place that pair is built. **Behaviour change:** with a key configured, syncs
-  now run as that service account; one that lacks a permission the personal login had will start
-  failing — correctly. No `nimbus-mcp-servers` change was needed: its gcloud spawns inherit the
-  gateway-supplied env.
+  now run as that service account; one that lacks a permission the personal login had will now show
+  it — but not loudly: `runGcloudCommand` discards stderr and `gcp-sync.ts` turns the failure into a
+  `logger.warn({serviceId}, "gcp sync: projects describe failed")`, returning a successful, empty
+  `SyncResult`, so the visible symptom is a green connector with a silently empty GCP index, not an
+  error. No `nimbus-mcp-servers` change was needed: its gcloud spawns inherit the gateway-supplied
+  env.
 
 - **2026-09-19 — `nimbus demo` seeds a synthetic org and tours it; the demo gateway is now inert
   (invariant I41 clauses 5–6).** The second half of the First-Run row's seeded-sandbox work, on top

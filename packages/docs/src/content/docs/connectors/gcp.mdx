@@ -1,9 +1,9 @@
 ---
 title: Google Cloud Platform
-description: Index GCP project metadata and act on Cloud Run + GKE through gcloud Application Default Credentials.
+description: Index GCP project metadata and act on Cloud Run + GKE through a gcloud service-account key.
 ---
 
-The GCP connector indexes project metadata into the local SQLite index and exposes a small read + HITL-gated write surface for Cloud Run and GKE. The MCP server shells out to the `gcloud` CLI using Application Default Credentials.
+The GCP connector indexes project metadata into the local SQLite index and exposes a small read + HITL-gated write surface for Cloud Run and GKE. The MCP server shells out to the `gcloud` CLI, authenticated as the configured service-account key.
 
 ---
 
@@ -18,7 +18,7 @@ The GCP connector indexes project metadata into the local SQLite index and expos
 nimbus connector auth gcp
 ```
 
-Stored in the Vault as `gcp.credentials_json_path` and `gcp.project_id`. The credentials JSON path is exported into the connector spawn as `GOOGLE_APPLICATION_CREDENTIALS`, which `gcloud` (and any Google client library) picks up as ADC.
+Stored in the Vault as `gcp.credentials_json_path` and `gcp.project_id`. The credentials JSON path is exported into the connector spawn as both `CLOUDSDK_AUTH_CREDENTIAL_FILE_OVERRIDE`, which `gcloud` reads for its own authentication, and `GOOGLE_APPLICATION_CREDENTIALS`, which Google client libraries pick up as Application Default Credentials.
 
 ## Read tools (no HITL)
 
