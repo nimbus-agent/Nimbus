@@ -52,6 +52,11 @@ describe("ghConfigDir — gh's own resolution order", () => {
   test("else ~/.config/gh", () => {
     expect(ghConfigDir(host())).toBe(join("/home/u", ".config", "gh"));
   });
+  test("blank GH_CONFIG_DIR falls through to the next resolution step", () => {
+    expect(ghConfigDir(host({ env: { GH_CONFIG_DIR: "   ", XDG_CONFIG_HOME: "/y" } }))).toBe(
+      join("/y", "gh"),
+    );
+  });
 });
 
 describe("parseGhHosts", () => {
@@ -74,6 +79,10 @@ describe("parseGhHosts", () => {
     expect(parseGhHosts(":\n  - [")).toEqual([]);
     expect(parseGhHosts("just a string")).toEqual([]);
     expect(parseGhHosts("")).toEqual([]);
+  });
+  test("a host entry whose value is not a mapping is skipped, not thrown", () => {
+    expect(parseGhHosts("github.com: some string\n")).toEqual([]);
+    expect(parseGhHosts("github.com:\n  - 1\n  - 2\n")).toEqual([]);
   });
 });
 
@@ -118,6 +127,25 @@ describe("detectGh", () => {
       "GitHub Enterprise needs github.api_base, which the GitHub connector does not have yet",
     );
     expect(ghe?.alreadyConfigured).toBe(false);
+  });
+
+  test("github.com listed with neither user nor users → not_logged_in", () => {
+    const findings = detectGh(
+      host({ readFile: () => "github.com:\n    git_protocol: https\n" }),
+      false,
+    );
+    expect(findings).toEqual([
+      {
+        source: "gh",
+        host: "github.com",
+        accounts: [],
+        activeAccount: null,
+        multiAccount: false,
+        status: "not_logged_in",
+        reason: "gh lists github.com with no account — run: gh auth login",
+        alreadyConfigured: false,
+      },
+    ]);
   });
 
   test("a plaintext oauth_token in hosts.yml never reaches a finding", () => {
