@@ -46,6 +46,7 @@ Index the git repository in the current directory. Needs no credentials, no API 
 cd ~/code/your-project
 nimbus init
 nimbus init --no-sync           # Write the config only; do not start or sync
+nimbus init --no-detect         # Skip the offer to reuse existing gh/aws/kubectl logins
 nimbus init --help              # Usage and the exit-code table
 ```
 
@@ -54,7 +55,12 @@ What it does:
 1. Verifies the current directory is a git repository (exits 1 if not, writing nothing).
 2. **Appends** a `[[filesystem.roots]]` block for it to `nimbus.toml` with `git_aware = true` and `code_index = true`. Appending — never rewriting — is deliberate: it cannot reorder keys, strip comments, or reformat anything you wrote. An existing file is copied to `nimbus.toml.bak` first.
 3. Starts the Gateway if it is not already running, then syncs the `filesystem` connector.
-4. Prints a real `file:line` from your own repository to try with [`nimbus why`](#nimbus-why).
+4. On a successful index, offers to reuse any local `gh`/`aws`/`kubectl` login it finds — the same
+   walk as [`nimbus connector detect`](#nimbus-connector-detect): interactively in a terminal, or a
+   one-line count of what it found on a non-TTY shell (nothing is adopted there). Skip it with
+   `--no-detect`; it also never runs under `--no-sync` (no gateway was started), in demo mode, or
+   with `CI=true` set.
+5. Prints a real `file:line` from your own repository to try with [`nimbus why`](#nimbus-why).
 
 Re-running is safe and idempotent — a root that is already configured reports `Already configured` and is not duplicated.
 
@@ -2590,6 +2596,37 @@ nimbus connector auth zoom
 The access token and rotating refresh token are stored in the OS keystore under `zoom.oauth`. Token rotation is handled automatically by the Gateway's single-flight refresh lock (Zoom invalidates the entire token chain on refresh-token reuse, so only one refresh runs at a time).
 
 The connector indexes both scheduled meetings (`zoom:meeting`) and cloud-recording AI transcripts (`zoom:transcript`, prose-heavy). The `cloud_recording:read:list_user_recordings` scope above covers transcripts — no re-consent is needed beyond the initial `nimbus connector auth zoom`. New transcripts are picked up on the next sync cycle; `nimbus connector reindex zoom` forces an immediate pass.
+
+---
+
+### `nimbus connector detect`
+
+Reuse a login you already have in `gh`, `aws` or `kubectl` instead of creating a token.
+
+```bash
+nimbus connector detect
+nimbus connector detect --source gh
+nimbus connector detect --replace
+nimbus connector detect --json
+```
+
+Lists what it finds, then — in a terminal — offers each one. With several gh accounts, AWS
+profiles or kube contexts it asks which (Enter takes the active one). Every adoption asks for
+your approval (`connector.adoptLocalAuth`, a HITL action); without a terminal nothing is adopted.
+
+| Source | What Nimbus stores | Stays in sync with the CLI? |
+| --- | --- | --- |
+| `gh` | a COPY of the token `gh auth token` prints, as `github.pat`, checked against GitHub first | No — `gh auth logout` does not disconnect Nimbus; run `detect --replace` after a re-login |
+| `aws` | the profile name (+ its region); no key is copied | Yes — the aws CLI resolves the profile at every sync |
+| `kubectl` | the kubeconfig path + context; nothing is copied | Yes — kubectl resolves it at every sync |
+
+Detection is local: it reads gh's `hosts.yml` and runs `aws configure list-profiles` and
+`kubectl config …`; it makes no network request. Adopting gh sends ONE request — the token check
+to `api.github.com/user` — recorded in the egress ledger (`nimbus prove`). GitHub Enterprise hosts
+are listed but not offered (the GitHub connector has no `api_base` yet). Refused under `--demo`.
+
+**`--json` is unstable** in this release: it prints the gateway's findings array as-is and may
+change shape.
 
 ---
 

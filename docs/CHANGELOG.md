@@ -18,6 +18,32 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
 
 ## Post-Phase-6 deliveries
 
+- **2026-09-20 — `nimbus connector detect` reuses an existing `gh`/`aws`/`kubectl` login instead of
+  minting a new credential.** `connectors/local-auth/` detects what each CLI already has configured
+  (gh's `hosts.yml`; `aws configure list-profiles`; `kubectl config get-contexts`/`current-context`)
+  with no network request, then — in a terminal, with the owner's approval on the new
+  `connector.adoptLocalAuth` HITL action type (I2 frozen set; one action type covers all three
+  sources per I3) — adopts one. The three sources are hybrid by design, not uniform: `gh` is a
+  ONE-TIME COPY of the token `gh auth token` prints into the Vault as `github.pat`, checked against
+  `api.github.com/user` first, so a later `gh auth logout` does NOT disconnect Nimbus — `nimbus
+  connector detect --replace` is the recovery path after a re-login; `aws` and `kubectl` instead
+  store only a reference (profile name / kubeconfig context) that the CLI resolves at every sync,
+  so they stay in sync with the underlying login automatically. `nimbus init` offers the same walk
+  after a successful index (`--no-detect` to skip; a one-line count on a non-TTY shell; never under
+  `--no-sync`, in demo mode, or with `CI=true`). New IPC: `connector.detectLocalAuth` (read-only)
+  and `connector.adoptLocalAuth` (HITL-gated), both CLI-only and added to `FORBIDDEN_OVER_LAN` (I5
+  — a new `connector.*` method is LAN-reachable by default unless named there). Refused under
+  `--demo`. Two pre-existing defects were fixed along the way, both independently interesting: (1)
+  the pre-store credential probe that `nimbus connector auth` (and now local-auth adoption) sends to
+  github/gitlab/bitbucket/jira/jenkins before storing a credential was UNLEDGERED — `nimbus prove`
+  could report `0` for a window in which a PAT had genuinely reached GitHub's servers; it now appends
+  one `sync`-class I29 row (`method='connector.credentialProbe'`) via the same `recordSyncEgress`
+  appender before the request, fail-closed, and the probe now also reports the token's granted
+  scopes. (2) Profile-only `aws` auth was silently DELETING a supplied `--region` instead of keeping
+  it. What did NOT ship: `gcloud` (its own follow-up PR), GitHub Enterprise hosts (listed by detect
+  but not offered — the GitHub connector has no `api_base` yet), and a stable `--json` schema
+  (explicitly documented unstable this release). No schema migration.
+
 - **2026-09-19 — `nimbus demo` seeds a synthetic org and tours it; the demo gateway is now inert
   (invariant I41 clauses 5–6).** The second half of the First-Run row's seeded-sandbox work, on top
   of 2026-09-18's isolated demo root (#1545). `demo/corpus/acme.ts` builds a fixed, fictional "Acme"

@@ -1846,6 +1846,27 @@ const streamReq: JSONRPCRequest = {
 //   depth: "metadata_only" | "summary" | "full", enabled: boolean
 // } }
 
+// Local-auth reuse (`nimbus connector detect`, `connectors/local-auth/`) — read gh/aws/kubectl's
+// own CLI-managed login state and, on approval, point Nimbus at it instead of minting a token.
+// connector.detectLocalAuth(params: { sources?: LocalAuthSource[] }) -> LocalAuthFinding[]
+//   Read-only: reads gh's hosts.yml, runs `aws configure list-profiles`, and `kubectl config …`;
+//   makes no network request. CLI-only — NOT renderer-exposed (I7) and FORBIDDEN_OVER_LAN (I5,
+//   this machine's local CLI logins are not a peer's business). `parseSources` validates before
+//   any host access, so an unknown source refuses before touching the filesystem.
+// connector.adoptLocalAuth(params: { source, account?, profile?, context?, replace? })
+//   -> AdoptSuccess | { status: "rejected", reason }
+//   HITL-gated (`connector.adoptLocalAuth`, I2 frozen set — one action type covers all three
+//   sources per I3, since the gate reads action.type only) via the same ToolExecutor gate every
+//   connector action uses; re-runs detection (read-only) before the gate, and only the gh source's
+//   post-approval step contacts the network (a `GET api.github.com/user` token check, ledgered by
+//   the `connector.credentialProbe` sync-class I29 appender — see § I29 above). CLI-only — NOT
+//   renderer-exposed (I7) and FORBIDDEN_OVER_LAN (I5, same reasoning as detect, doubled since this
+//   one writes Vault credentials). Refused under `--demo` (I41's `dispatchMethod` gate refuses
+//   every `connector.*` method outside its read allow-list). gh stores a COPY of the token (as
+//   `github.pat`) so a later `gh auth logout` does not disconnect Nimbus; aws/kubectl store only a
+//   profile name / kubeconfig context reference the CLI resolves at each sync, so they track the
+//   underlying login automatically. `--replace` is the recovery path after a gh re-login.
+
 // Session rehydration (Phase 4 WS6)
 // engine.getSessionTranscript(params: { sessionId, limit? }) -> { turns: AgentTurn[] }
 // engine.cancelStream(params: { streamId }) -> { ok: true }
