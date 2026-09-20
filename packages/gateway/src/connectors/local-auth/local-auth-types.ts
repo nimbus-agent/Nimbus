@@ -18,8 +18,16 @@ export type LocalAuthStatus =
   /** gcloud only: an active login with no default project — offerable, but a project must be named. */
   | "needs_project";
 
-/** A bare-word GCP project id: lowercase letters, digits, hyphens; 6-30 chars; no leading/trailing hyphen. */
-export const GCP_PROJECT_ID = /^[a-z][a-z0-9-]{4,28}[a-z0-9]$/;
+/**
+ * A GCP project id: lowercase letters, digits, hyphens; 6-30 chars; no leading/trailing hyphen —
+ * OR that same bare-id shape prefixed with a domain and a colon, the legacy domain-scoped form
+ * (`example.com:my-proj`), which is still a real, live GCP project id today, not a deprecated one.
+ * The domain prefix is dot-separated DNS labels; whatever follows the colon must still satisfy the
+ * exact bare-id rule, unchanged — this widens what is ACCEPTED, it does not loosen what a bare id
+ * (no colon) must look like.
+ */
+export const GCP_PROJECT_ID =
+  /^(?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)*:)?[a-z][a-z0-9-]{4,28}[a-z0-9]$/;
 
 interface FindingBase {
   readonly status: LocalAuthStatus;
