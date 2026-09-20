@@ -79,6 +79,15 @@ describe("extractSqlLiterals", () => {
     expect(extractSqlLiterals("const msg = `hello ${name}`;")).toHaveLength(0);
   });
 
+  test("finds SQL in a DOUBLE-quoted string", () => {
+    const src = 'db.query("SELECT service, type FROM item WHERE id = ?").get(id);';
+    expect(extractSqlLiterals(src)).toHaveLength(1);
+  });
+
+  test("finds SQL in a single-quoted string", () => {
+    expect(extractSqlLiterals("db.query('SELECT 1 FROM item LIMIT 1');")).toHaveLength(1);
+  });
+
   test("returns nothing for empty input", () => {
     expect(extractSqlLiterals("")).toHaveLength(0);
   });
@@ -93,6 +102,13 @@ Expected: FAIL — module not found.
 - [ ] **Step 3: Implement**
 
 A literal counts as SQL when it contains `SELECT` and `FROM` (case-insensitive) — narrow on purpose, since a false positive costs a spurious census row.
+
+**Scan all three quote styles, not just backticks.** Plenty of production SQL is plainly quoted —
+`agents/decisions.ts:33` is `db.query("SELECT service, type FROM item WHERE id = ?")` and
+`agents/expert.ts:284` is a quoted `graph_entity` read. A backtick-only scanner would silently omit
+every one of them, which is a blind spot shaped exactly like the bug class this gate exists to
+catch. Single- and double-quoted literals cannot contain `${…}`, so they skip the interpolation
+pass; they still need `\\` escape handling and must not be matched inside a comment.
 
 ```ts
 const SQL_SHAPE = /\bselect\b[\s\S]*\bfrom\b/i;
@@ -244,6 +260,12 @@ describe("extractReadTriples", () => {
     );
   });
 
+  test("an IN list emits one triple per literal", () => {
+    const src = "db.query(`SELECT 1 FROM item WHERE type IN ('ci_run', 'pipeline_run')`);";
+    const values = extractReadTriples("e.ts", src).map((t) => t.value).sort();
+    expect(values).toEqual(["ci_run", "pipeline_run"]);
+  });
+
   test("returns nothing for a file with no SQL", () => {
     expect(extractReadTriples("d.ts", "export const x = 1;")).toHaveLength(0);
   });
@@ -259,8 +281,15 @@ Expected: FAIL — module not found.
 
 ```ts
 const TYPE_CMP = /(?:\b([a-z_][a-z0-9_]*)\.)?\btype\s*=\s*'([a-z0-9_]+)'/gi;
+const TYPE_IN = /(?:\b([a-z_][a-z0-9_]*)\.)?\btype\s+in\s*\(\s*([^)]+)\)/gi;
 const META_KEY = /json_extract\(\s*(?:([a-z_][a-z0-9_]*)\.)?metadata\s*,\s*'\$\.([A-Za-z0-9_]+)'/gi;
 ```
+
+**`TYPE_IN` is not optional.** `agents/impact.ts:250` filters `type IN ('ci_run', 'pipeline_run')`
+and `agents/negotiate.ts` uses the form three times. An equality-only extractor omits them, and
+`impact.ts`'s lane is one of the two the spec cites as the *honest-limitation* contrast — missing it
+would leave the census unable to tell a disclosed dead lane from an undiscovered one. For each
+`TYPE_IN` match, split the captured list on `,` and emit one triple per quoted literal.
 
 For each literal, bind aliases once. An unqualified `type`/`metadata` resolves to the single bound table when exactly one is bound, and is **skipped** when more than one is — recording it as ambiguous would be worse than omitting it, and the ambiguous count goes in the artifact. A qualified name that binds to nothing is skipped the same way.
 
@@ -299,6 +328,12 @@ test("picks up a JS-side metadata read", () => {
   );
 });
 
+test("matches optional chaining and single quotes", () => {
+  const src = 'if (meta?.["conclusion"] !== "success") return; const b = metadata?.[\'branch\'];';
+  const values = extractReadTriples("dora.ts", src).map((t) => t.value).sort();
+  expect(values).toEqual(["branch", "conclusion"]);
+});
+
 test("a named helper contributes the keys it reads", () => {
   const src = [
     "function repoLikeMatchesUrn(metadata: Record<string, unknown>) {",
@@ -318,7 +353,19 @@ Expected: FAIL on the two new cases.
 
 - [ ] **Step 3: Implement**
 
-Add `/\bmeta(?:data)?\[\s*"([A-Za-z0-9_]+)"\s*\]/g` over the comment-stripped contents, attributed to `item` (only `item` rows carry a JSON `metadata` column read this way in v1). Run the same scan inside the body of any function whose name is in `METADATA_READER_HELPERS`, so a cross-file helper contributes at its definition site.
+```ts
+const JS_META_READ = /\bmeta(?:data)?(?:\?\.)?\[\s*['"]([A-Za-z0-9_]+)['"]\s*\]/g;
+```
+
+**The `(?:\?\.)?` and the `['"]` are both load-bearing, verified against the real file.**
+`metrics/dora.ts:110` reads `if (meta?.["conclusion"] !== "success") continue;` — optional chaining,
+which a `meta\[` pattern does not match. `conclusion` is one of the keys at the heart of the DORA
+bug, so a regex without that alternation would have missed the read on the very lane this gate was
+built for, and the census would have reported it clean.
+
+Run the scan over comment-stripped contents, attributed to `item` (only `item` rows carry a JSON
+`metadata` column read this way in v1). Run the same scan inside the body of any function whose name
+is in `METADATA_READER_HELPERS`, so a cross-file helper contributes at its definition site.
 
 **Do not** try to resolve which call site reaches which helper — that is a call graph, and the manifest exists precisely so the extractor does not need one.
 
@@ -397,6 +444,20 @@ Expected: FAIL — module not found.
 
 Find object literals carrying both `service:` and `type:`. Resolve each value in this order, stopping at the first hit: a string literal; a module-level `const NAME = "…" as const` in the same file; a ternary of two string literals (emit **both**); a local `const` holding either. Resolve `metadata:` to an object literal's top-level keys, following one hop when it is an identifier or a call whose callee is defined in the same file.
 
+**Key extraction must handle three property forms, because connectors use all of them:**
+
+| form | example | key |
+|---|---|---|
+| explicit | `{ workflowName: name }` | `workflowName` |
+| **shorthand** | `{ guildId, channelId }` | `guildId`, `channelId` |
+| quoted | `{ "sync_status": s }` | `sync_status` |
+
+Shorthand is confirmed in the tree (`discord-sync.ts:206`, `bigeye-dq-mapping.ts:55`) and an
+explicit-only extractor would report those writers as emitting **nothing** — which is worse than
+missing them, because a writer with zero keys makes every read of its metadata look unmatched, and
+the census would fill with false positives that train a reader to ignore it. (Quoted keys were not
+found in the mapping files during review; handled anyway, since the cost is one alternation.)
+
 Record anything unresolved as `itemType: "__UNRESOLVED__"` rather than dropping it — an unresolved writer must be visible in the artifact, not silently absent. Expected: exactly one, `_lib/item-builder.ts` (dead code, no production callers).
 
 - [ ] **Step 4: Run tests**
@@ -425,10 +486,23 @@ export type LaneCensus = {
   readonly writes: readonly WriterEmission[];
   readonly unmatchedItemReads: readonly ReadTriple[];  // item reads no writer satisfies
   readonly ambiguousReadCount: number;
+  readonly parameterizedReads: readonly { readonly file: string; readonly line: number }[];
 };
 ```
 
-`unmatchedItemReads` is the payload: a `type` triple with no writer emitting that type, or a `metadata-key` triple no writer emits for any type read alongside it.
+**A metadata key is matched against the `(type)` it was read beside, never against a global pool.**
+A `type` triple is unmatched when no writer emits that type. A `metadata-key` triple is unmatched
+when no writer that emits **the type read in the same SQL literal** also emits that key. Matching
+globally would be a hole big enough to swallow the original bug: `jira-sync` emitting `parent_key`
+on `issue` would make a `pr`-scoped read of `parent_key` look satisfied, which is the same
+cross-context false-match as `graph_entity`'s `commit` satisfying an `item` read. Where a literal
+reads a metadata key with **no** type predicate beside it, the triple is recorded as type-scoped
+`"__ANY__"` and matched against the union — and counted separately, because that is a weaker claim
+and should be visible as one.
+
+`parameterizedReads` lists every `type = ?` site by file and line. These are mostly generic
+user-supplied filters rather than product lanes, so they are **not** gated — but an un-enumerated
+blind spot grows quietly, and the artifact is where it stays visible.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -586,6 +660,20 @@ test("no duplicate service:type pairs", () => {
 
 - [ ] **Step 2: Run and watch it fail.** Expected: module not found.
 - [ ] **Step 3: Implement** the types and an initial map containing only the four confirmed bugs as `known-dead`, each against a real tracking issue in `nimbus-agent/Nimbus`.
+
+**`ci_run` gets four entries, one per service — never one monolithic entry.** This is spec §4.2.1
+made concrete, and it is what makes the DORA bug legible rather than averaged away:
+
+```ts
+{ service: "github_actions", itemType: "ci_run", requiredMetadataKeys: ["conclusion", "workflowName", "headBranch"], status: { kind: "known-dead", reason: "no repo key; DORA's repoLikeMatchesUrn cannot bind", issue: "#…" } },
+{ service: "gitlab",         itemType: "ci_run", requiredMetadataKeys: ["status"],  status: { kind: "known-dead", reason: "emits status, DORA reads conclusion", issue: "#…" } },
+{ service: "jenkins",        itemType: "ci_run", requiredMetadataKeys: ["result"],  status: { kind: "known-dead", reason: "emits result, DORA reads conclusion",  issue: "#…" } },
+{ service: "circleci",       itemType: "ci_run", requiredMetadataKeys: ["state"],   status: { kind: "known-dead", reason: "emits state, DORA reads conclusion",   issue: "#…" } },
+```
+
+One entry would have said "`ci_run` is covered" on the strength of the single service that half
+works. Four entries say the true thing: the outcome key is spelled four different ways and the
+reader knows one of them.
 - [ ] **Step 4: Run tests.** Expected: PASS.
 - [ ] **Step 5: Commit.**
 
@@ -688,9 +776,26 @@ test("a fully classified census yields zero violations", () => { /* anti-vacuity
 
 ---
 
-## Phase 3 — not in this plan
+## Phase 3 — shape known, contents not
 
-One PR per confirmed bug, each adding its canary and reclassifying its entry from `known-dead`. Sequenced after the census reports the true blast radius, because the count of unclassified reads from Task 1.7 is what sizes that work — planning it now would be guessing.
+One PR per confirmed bug, each adding its canary and reclassifying its entry from `known-dead`.
+The four are known today and can be named for roadmap tracking:
+
+| PR | Title | Target |
+|---|---|---|
+| 3a | `fix(connectors): emit repo on github_actions ci_run` | `github-actions-sync.ts` + the DORA canary |
+| 3b | `fix(preflight): read workflowName and headBranch, not workflow_name and branch` | `preflight.ts` + its tests |
+| 3c | `fix(agents): expert's commit lane discloses instead of reporting clean` | `expert.ts` + `detectMissingItemType` |
+| 3d | **design first** — `premortem`'s `opened_at_ms` on PR items | undecided: index the key, or re-source the timestamp |
+
+**3d is not a known fix and must not be planned as one.** `opened_at_ms` has exactly one writer
+(`pagerduty-sync.ts`, on incidents), and `item` carries no `created_at` — so "index it on PR sync"
+and "re-source the query from a different timestamp" are different products, not different
+patches. It gets a design pass before it gets a task list.
+
+**And the list stays open.** These four are what the *reconnaissance* found; Task 1.7 reports how
+many unclassified reads actually exist, and that number sizes Phase 3. Fixing the four named here
+while the census reports thirty would be treating the sample as the population.
 
 ---
 
