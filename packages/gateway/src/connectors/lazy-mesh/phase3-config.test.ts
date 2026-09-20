@@ -2946,3 +2946,26 @@ describe("AWS-family regional connectors (athena / cloudwatch / sagemaker)", () 
     expectSandboxed(spec2, "api.sagemaker.ap-south-1.amazonaws.com");
   });
 });
+
+describe("GCP MCP spawns authenticate as the configured key (gcloud reads CLOUDSDK_AUTH_CREDENTIAL_FILE_OVERRIDE)", () => {
+  const cases = [
+    ["gcp", phase3AddGcpMcp],
+    ["bigquery", phase3AddBigqueryMcp],
+    ["cloud_logging", phase3AddCloudLoggingMcp],
+    ["vertex_ai", phase3AddVertexAiMcp],
+  ] as const;
+
+  for (const [serverId, add] of cases) {
+    test(`${serverId}: both credential variables carry the key path`, async () => {
+      const vault = createMockVault();
+      await vault.set("gcp.credentials_json_path", "/etc/gcp.json");
+      await vault.set("gcp.project_id", "acme-prod");
+      const servers: Record<string, ServerSpec> = {};
+      await add(vault, servers, SANDBOX_CWD);
+      const spec = servers[serverId];
+      expect(spec).toBeDefined();
+      expect(spec?.env?.["CLOUDSDK_AUTH_CREDENTIAL_FILE_OVERRIDE"]).toBe("/etc/gcp.json");
+      expect(spec?.env?.["GOOGLE_APPLICATION_CREDENTIALS"]).toBe("/etc/gcp.json");
+    });
+  }
+});

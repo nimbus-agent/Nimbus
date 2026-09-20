@@ -1,5 +1,6 @@
 import { extensionProcessEnv } from "../../extensions/spawn-env.ts";
 import type { NimbusVault } from "../../vault/nimbus-vault.ts";
+import { gcloudKeyFileEnv } from "../_lib/gcp-auth.ts";
 import { readConnectorSecret } from "../connector-vault.ts";
 import { manifestForFirstParty, manifestWithExtraNetworkHosts } from "./first-party-manifests.ts";
 import { connectorSpawn } from "./keys.ts";
@@ -67,7 +68,7 @@ export async function phase3AddGcpMcp(
   servers["gcp"] = wrap(
     {
       ...connectorSpawn("gcp"),
-      env: extensionProcessEnv({ GOOGLE_APPLICATION_CREDENTIALS: gcpPath }),
+      env: extensionProcessEnv({ ...gcloudKeyFileEnv(gcpPath) }),
     },
     "gcp",
     sandboxCwd,
@@ -89,7 +90,7 @@ export async function phase3AddBigqueryMcp(
     {
       ...connectorSpawn("bigquery"),
       env: extensionProcessEnv({
-        GOOGLE_APPLICATION_CREDENTIALS: gcpPath,
+        ...gcloudKeyFileEnv(gcpPath),
         ...(projectId === "" ? {} : { BIGQUERY_PROJECT: projectId }),
       }),
     },
@@ -196,7 +197,7 @@ export async function phase3AddCloudLoggingMcp(
     {
       ...connectorSpawn("cloud-logging"),
       env: extensionProcessEnv({
-        GOOGLE_APPLICATION_CREDENTIALS: gcpPath,
+        ...gcloudKeyFileEnv(gcpPath),
         ...(projectId === "" ? {} : { GOOGLE_CLOUD_PROJECT: projectId }),
       }),
     },
@@ -232,7 +233,7 @@ export async function phase3AddVertexAiMcp(
     {
       ...connectorSpawn("vertex-ai"),
       env: extensionProcessEnv({
-        GOOGLE_APPLICATION_CREDENTIALS: gcpPath,
+        ...gcloudKeyFileEnv(gcpPath),
         VERTEX_AI_REGION: safeRegion,
         ...(projectId === "" ? {} : { GOOGLE_CLOUD_PROJECT: projectId }),
       }),
