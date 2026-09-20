@@ -19,7 +19,7 @@ if (key in answers) {
   process.exit(0);
 }
 if (as === "gh" && cmd.startsWith("auth token")) {
-  process.stdout.write("gho_e2eE2Ee2eE2Ee2eE2Ee2eE2Ee2e\n");
+  process.stdout.write("nimbus_SENTINEL_e2etest_token_0123\n");
   process.exit(0);
 }
 process.stderr.write(`shim: unexpected ${key}\n`);

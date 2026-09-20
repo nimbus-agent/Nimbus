@@ -7,7 +7,7 @@ import { ConnectorRpcError } from "../../ipc/connector-rpc-shared.ts";
 import { adoptLocalAuth, parseAdoptRequest } from "./adopt-local-auth.ts";
 import type { LocalAuthHostDeps, RunCli } from "./local-auth-host.ts";
 
-const TOKEN = "gho_SENTINELtokenSENTINELtoken0123456789";
+const TOKEN = "nimbus_SENTINEL_not_a_real_token_0123456789";
 const MULTI = "github.com:\n    users:\n        octocat:\n        work-user:\n    user: octocat\n";
 
 interface Harness {
