@@ -2,6 +2,13 @@
 
 All notable changes to the `nimbus` core (headless Gateway + CLI binary + first-party MCP connectors) are documented in this file. release-please appends new entries between this header and the most recent version below when a release PR merges.
 
+## [7.29.0](https://github.com/nimbus-agent/Nimbus/compare/v7.28.0...v7.29.0) (2026-09-20)
+
+
+### Features
+
+* **connectors:** gcloud login mode for the GCP connectors, detected and adopted ([#1557](https://github.com/nimbus-agent/Nimbus/issues/1557)) ([d01e198](https://github.com/nimbus-agent/Nimbus/commit/d01e198c3af72a188621ad407911a367ceb13c79))
+
 ## [7.28.0](https://github.com/nimbus-agent/Nimbus/compare/v7.27.1...v7.28.0) (2026-09-20)
 
 
