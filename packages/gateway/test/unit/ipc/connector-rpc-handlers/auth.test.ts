@@ -1734,3 +1734,54 @@ describe("credential probe egress (I29 — connector.credentialProbe)", () => {
     db.close();
   });
 });
+
+describe("connector.auth gcp — gcloud login mode", () => {
+  test("stores auth_source + project and clears a key path", async () => {
+    const { db, vault, localIndex } = freshDeps();
+    await vault.set("gcp.credentials_json_path", "/old.json");
+    await handleConnectorAuth(
+      makeCtx({ service: "gcp", authSource: "gcloud", projectId: "acme-prod" }, vault, localIndex),
+    );
+    expect(await vault.get("gcp.auth_source")).toBe("gcloud");
+    expect(await vault.get("gcp.project_id")).toBe("acme-prod");
+    expect(await vault.get("gcp.credentials_json_path")).toBeNull();
+    db.close();
+  });
+
+  test("gcloud mode without a project is refused and writes nothing", async () => {
+    const { db, vault, localIndex } = freshDeps();
+    await expect(
+      handleConnectorAuth(makeCtx({ service: "gcp", authSource: "gcloud" }, vault, localIndex)),
+    ).rejects.toThrow(/project/);
+    expect(await vault.get("gcp.auth_source")).toBeNull();
+    db.close();
+  });
+
+  test("key mode clears a previous gcloud auth_source", async () => {
+    const { db, vault, localIndex } = freshDeps();
+    await vault.set("gcp.auth_source", "gcloud");
+    await handleConnectorAuth(
+      makeCtx(
+        { service: "gcp", credentialsJsonPath: "/k.json", projectId: "p" },
+        vault,
+        localIndex,
+      ),
+    );
+    expect(await vault.get("gcp.auth_source")).toBeNull();
+    db.close();
+  });
+
+  test("neither mode appends a credentialProbe egress row — gcp has no probe", async () => {
+    const { db, vault, localIndex } = freshDeps();
+    await handleConnectorAuth(
+      makeCtx({ service: "gcp", authSource: "gcloud", projectId: "acme-prod" }, vault, localIndex),
+    );
+    const probeRows = db
+      .query<{ destination: string; method: string }, []>(
+        "SELECT destination, method FROM egress_ledger WHERE method = 'connector.credentialProbe'",
+      )
+      .all();
+    expect(probeRows).toEqual([]);
+    db.close();
+  });
+});

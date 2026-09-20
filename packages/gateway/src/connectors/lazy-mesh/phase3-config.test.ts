@@ -2969,3 +2969,26 @@ describe("GCP MCP spawns authenticate as the configured key (gcloud reads CLOUDS
     });
   }
 });
+
+describe("GCP MCP spawns support gcloud login mode (no key file configured)", () => {
+  const cases = [
+    ["gcp", phase3AddGcpMcp],
+    ["bigquery", phase3AddBigqueryMcp],
+    ["cloud_logging", phase3AddCloudLoggingMcp],
+    ["vertex_ai", phase3AddVertexAiMcp],
+  ] as const;
+
+  for (const [serverId, add] of cases) {
+    test(`${serverId}: starts in gcloud login mode with no credential override`, async () => {
+      const vault = createMockVault();
+      await vault.set("gcp.auth_source", "gcloud");
+      await vault.set("gcp.project_id", "acme-prod");
+      const servers: Record<string, ServerSpec> = {};
+      await add(vault, servers, SANDBOX_CWD);
+      const spec = servers[serverId];
+      expect(spec).toBeDefined();
+      expect(spec?.env?.["CLOUDSDK_AUTH_CREDENTIAL_FILE_OVERRIDE"]).toBeUndefined();
+      expect(spec?.env?.["GOOGLE_APPLICATION_CREDENTIALS"]).toBeUndefined();
+    });
+  }
+});
