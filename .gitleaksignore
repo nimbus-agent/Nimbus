@@ -51,3 +51,9 @@ ff3ab297ae365f7e2a499b21ffbb3111a79f9cc8:packages/gateway/src/platform/assemble.
 # Commit 8896570d's version of THIS file briefly carried a secret-shaped example in the
 # comment above (since rewritten); gitleaks full-history scan still flags that old revision.
 8896570d0ebd24206fcaeb6503fb5abb5abcae56:.gitleaksignore:generic-api-key:46
+
+# Phase 7 local-auth adoption tests (2026-09-20) — synthetic test sentinel shaped like a GitHub
+# OAuth token (`gho_` + 36 hex digits) used to verify that a token cannot be leaked into a result,
+# an error message or the consent request payload. HEAD no longer contains any token-shaped value,
+# but the historical commit retains the pattern, so the fingerprint is pinned here. Never a real credential.
+8e96e39cb85c020a226c846555af87f6c28d9c51:packages/gateway/src/connectors/local-auth/adopt-local-auth.test.ts:github-oauth:10
