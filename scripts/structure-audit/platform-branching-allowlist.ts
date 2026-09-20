@@ -226,4 +226,9 @@ export const PLATFORM_BRANCHING_ALLOWLIST: readonly PlatformFileEntry[] = [
     gate: "none",
     why: "per-OS socket path + config/data/extensions dir resolution; no coverage-threshold gate targets packages/cli/src directly",
   },
+  {
+    file: "packages/gateway/src/connectors/local-auth/local-auth-host.ts",
+    gate: "none",
+    why: "defaultLocalAuthHostDeps() exposes process.platform as an injected field (LocalAuthHostDeps.platform) so per-OS branching lives in each detector's own pure function under test, never here; no coverage-threshold gate targets src/connectors/local-auth today",
+  },
 ];

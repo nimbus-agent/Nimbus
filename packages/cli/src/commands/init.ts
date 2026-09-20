@@ -16,6 +16,11 @@ import { readGatewayState } from "../lib/gateway-process.ts";
 import { appendFilesystemRoot, hasFilesystemRoot } from "../lib/toml-append.ts";
 import { withGatewayIpc } from "../lib/with-gateway-ipc.ts";
 import { type CliPlatformPaths, getCliPlatformPaths } from "../paths.ts";
+import {
+  defaultConnectorDetectDeps,
+  runConnectorDetect,
+  summarizeLocalLogins,
+} from "./connector-detect.ts";
 import { runStart } from "./start.ts";
 
 export type InitOptions = { cwd: string; configDir: string };
@@ -105,16 +110,21 @@ export type InitDeps = {
    * `true`, before touching the gateway or the config file.
    */
   inDemoRoot: boolean;
+  /** stdin and stdout are both a TTY — adoption prompts only then. */
+  interactive: boolean;
+  /** Offer to reuse local CLI logins (the `nimbus connector detect` walk, or a one-line count). */
+  offerLocalAuth: (interactive: boolean) => Promise<void>;
 };
 
 const HELP_LINES: readonly string[] = [
   "nimbus init — index the git repository in the current directory",
   "",
   "Usage:",
-  "  nimbus init [--no-sync]",
+  "  nimbus init [--no-sync] [--no-detect]",
   "",
   "Flags:",
   "  --no-sync   write nimbus.toml only; do not start the Gateway and do not index",
+  "  --no-detect do not offer to reuse existing gh/aws/kubectl logins",
   "  --help      this message",
   "",
   "Exit codes:",
@@ -172,6 +182,7 @@ export function nextStepLines(demo: DemoSymbolLike | null, gatewayRunning: boole
     "",
     "Next:",
     ...steps,
+    "  nimbus connector detect",
     "  nimbus connector sync filesystem",
     "  nimbus why <file>:<line>",
   ];
@@ -520,6 +531,19 @@ export async function runInit(args: string[], deps: InitDeps = defaultInitDeps()
 
   const outcome = await initOutcome(args, deps);
   reportOutcome(outcome, deps);
+  // `CI=true` skips it for the same reason `start.ts`'s first-run hint does: detection spawns up
+  // to three CLIs, each with a 10 s bound, and a pipeline gains nothing from a login it cannot
+  // approve. A non-TTY developer shell still gets the one-line count.
+  if (outcome.kind === "indexed" && !hasFlag(args, "--no-detect") && process.env["CI"] !== "true") {
+    try {
+      await deps.offerLocalAuth(deps.interactive);
+    } catch (e) {
+      // The index succeeded; failing to LOOK for logins must not turn that into a failed init.
+      deps.error(
+        `Could not check for existing logins: ${e instanceof Error ? e.message : String(e)}`,
+      );
+    }
+  }
   // Assigned unconditionally: the exit code is derived from the outcome that
   // was just reported, so no earlier writer (runStart's failure signal, say)
   // can leave the two disagreeing.
@@ -593,5 +617,15 @@ export function defaultInitDeps(paths: CliPlatformPaths = getCliPlatformPaths())
       console.error(line);
     },
     inDemoRoot: paths.demo === true,
+    interactive: process.stdin.isTTY === true && process.stdout.isTTY === true,
+    offerLocalAuth: async (interactive) => {
+      const detectDeps = defaultConnectorDetectDeps(paths);
+      if (interactive) {
+        await runConnectorDetect([], detectDeps);
+        return;
+      }
+      const line = summarizeLocalLogins(await detectDeps.detect(undefined));
+      if (line !== null) console.log(line);
+    },
   };
 }

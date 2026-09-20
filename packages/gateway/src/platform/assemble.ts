@@ -833,10 +833,11 @@ async function createSchedulerWithMesh(opts: SchedulerWithMeshOpts): Promise<{
       ownershipRefresher?.trigger();
     },
     // I29/D22(b): the scheduled-sync closure around the `sync` egress class's shared appender —
-    // one of FOUR production callers of `recordSyncEgress` (the other three: `sync/targeted-fetch.ts`,
-    // wired below in this file, and `multimodal/cloud-url-resolver.ts` +
-    // `multimodal/cloud-bytes.ts`, which share one closure wired by
-    // `multimodal/build-media-pass-deps.ts`) — appending one `sync` row per paginated RUN, before
+    // one of FIVE production callers of `recordSyncEgress` (the other four: `sync/targeted-fetch.ts`,
+    // wired below in this file; `multimodal/cloud-url-resolver.ts` + `multimodal/cloud-bytes.ts`,
+    // which share one closure wired by `multimodal/build-media-pass-deps.ts`; and
+    // `ipc/connector-rpc-handlers/auth.ts`'s `verifyBeforeStoreWithScopes`, called directly before
+    // the pre-store credential probe) — appending one `sync` row per paginated RUN, before
     // `connector.sync(...)` in `runJob`. Kept synchronous (`recordSyncEgress` returns `undefined`,
     // never a Promise) so a throw here aborts the run before any outbound call, matching the
     // fail-closed contract `sync/scheduler.ts`'s own doc comment states for this seam.
@@ -2901,10 +2902,11 @@ function bootResolveFetchableIntoHttpSidecar(deps: {
  * `egress/sync-egress.ts`'s `recordSyncEgress` — never the raw `appendEgressEntry`, which D22(b)
  * confines to `egress/*`. A THIRD closure around the same appender is wired separately, outside
  * this file, by `multimodal/build-media-pass-deps.ts`'s `buildCloudBytesDeps` — and it serves TWO
- * of the class's four appenders, since `media-pass.ts` hands that one closure to both
+ * of the class's five appenders, since `media-pass.ts` hands that one closure to both
  * `multimodal/cloud-url-resolver.ts` (the credentialed byte-URL resolve round-trip) and
  * `multimodal/cloud-bytes.ts` (the byte-fetch attempt itself), neither of which is a targeted item
- * fetch.
+ * fetch. The FIFTH appender, `ipc/connector-rpc-handlers/auth.ts`'s `verifyBeforeStoreWithScopes`,
+ * calls `recordSyncEgress` directly rather than through a closure this file assembles.
  */
 function bootTargetedFetchIntoHttpSidecar(deps: {
   db: Database;

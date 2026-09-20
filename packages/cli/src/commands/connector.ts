@@ -15,6 +15,7 @@ import { BATCH_RPC_TIMEOUT_MS, INTERACTIVE_RPC_TIMEOUT_MS } from "../lib/rpc-tim
 import { stripTrailingSlashes } from "../lib/strip-trailing-slashes.ts";
 import { withGatewayIpc } from "../lib/with-gateway-ipc.ts";
 import { getCliPlatformPaths } from "../paths.ts";
+import { runConnectorDetect } from "./connector-detect.ts";
 
 type SyncStatus = {
   serviceId: string;
@@ -507,6 +508,9 @@ function applyAwsConnectorAuth(
       );
     }
     p.awsProfile = prof;
+    if (reg !== "") {
+      p.awsDefaultRegion = reg;
+    }
   }
 }
 
@@ -1307,6 +1311,9 @@ export async function runConnector(args: string[]): Promise<void> {
     case "auth":
       await runConnectorAuth(tail);
       return;
+    case "detect":
+      await runConnectorDetect(tail);
+      return;
     case "add": {
       const mode = tail[0]?.trim() ?? "";
       if (mode === "--mcp") {
@@ -1348,6 +1355,7 @@ function printConnectorHelp(): void {
 
 Usage:
   nimbus connector auth <service> [--port <n>] [--scopes a,b] [--token <pat>] [--api-base <url>] [--help]
+  nimbus connector detect [--json] [--source gh|aws|kubectl] [--replace]   Reuse gh/aws/kubectl logins you already have
   nimbus connector add --mcp <mcp_id> <command...>   Register a user MCP server (id must be mcp_*)
   nimbus connector list [--json]
   nimbus connector history <service> [--limit N]

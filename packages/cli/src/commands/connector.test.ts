@@ -1459,15 +1459,26 @@ describe("runConnector auth — env-fallback success + secondary error branches"
     clearFixture();
   });
 
-  function fixtureOk(serviceId: string): void {
+  function fixtureOk(serviceId: string): ReturnType<typeof createMockIpcClient> {
     const mock = createMockIpcClient([{ ok: true, serviceId, scopesGranted: [] }]);
     setFixture({ gatewayState: { socketPath: FAKE_SOCKET_PATH }, ipcClient: mock.client });
+    return mock;
   }
 
   it("aws profile-only path (no key pair) succeeds", async () => {
     fixtureOk("aws");
     await runConnector(["auth", "aws", "--aws-profile", "myprofile"]);
     expect(out.stdout).toContain("Stored: aws (not verified)");
+  });
+
+  it("aws profile-only path forwards a supplied --aws-region", async () => {
+    const mock = fixtureOk("aws");
+    await runConnector(["auth", "aws", "--aws-profile", "myprofile", "--aws-region", "eu-west-1"]);
+    expect(out.stdout).toContain("Stored: aws (not verified)");
+    expect(mock.calls[0]).toEqual({
+      method: "connector.auth",
+      params: { service: "aws", awsProfile: "myprofile", awsDefaultRegion: "eu-west-1" },
+    });
   });
 
   it("aws key pair without region OR profile throws the region/profile error", async () => {

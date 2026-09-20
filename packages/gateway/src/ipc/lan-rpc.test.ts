@@ -395,3 +395,12 @@ describe("demo over LAN (I41 clause 5 — the demo seeder is local CLI only)", (
     ).not.toThrow();
   });
 });
+
+test("both local-auth methods are refused over LAN; a sibling connector read is not", () => {
+  const peer = { peerId: "p", writeAllowed: true };
+  for (const m of ["connector.detectLocalAuth", "connector.adoptLocalAuth"]) {
+    expect(() => checkLanMethodAllowed(m, peer)).toThrow(LanError);
+  }
+  // Negative control: the denylist is not simply refusing every connector.* method.
+  expect(() => checkLanMethodAllowed("connector.listStatus", peer)).not.toThrow();
+});

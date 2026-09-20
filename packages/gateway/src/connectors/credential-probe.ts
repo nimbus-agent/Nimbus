@@ -13,7 +13,7 @@ import type { ConnectorServiceId } from "./connector-catalog.ts";
 export const PROBE_TIMEOUT_MS = 10_000;
 
 export type ProbeVerdict =
-  | { readonly kind: "valid" }
+  | { readonly kind: "valid"; readonly scopes?: readonly string[] }
   | { readonly kind: "rejected"; readonly httpStatus: number }
   | { readonly kind: "unconfirmed" };
 
@@ -66,6 +66,26 @@ export const CREDENTIAL_PROBES: Partial<Record<ConnectorServiceId, CredentialPro
     },
   }),
 };
+
+/** True exactly when `runCredentialProbe(serviceId, …)` would make an outbound request. */
+export function hasCredentialProbe(serviceId: ConnectorServiceId): boolean {
+  return CREDENTIAL_PROBES[serviceId] !== undefined;
+}
+
+const SCOPE_TOKEN = /^[a-z0-9_:-]+$/;
+
+/**
+ * GitHub's `X-OAuth-Scopes` response header → the scope names it lists. Each comma-separated token
+ * is kept only if it is scope-SHAPED (`repo`, `read:org`, `admin:repo_hook`); anything else is
+ * dropped, never echoed — the same "never return provider text" rule as `runCredentialProbe`.
+ */
+export function parseOAuthScopes(header: string | null): readonly string[] {
+  if (header === null) return [];
+  return header
+    .split(",")
+    .map((s) => s.trim())
+    .filter((s) => SCOPE_TOKEN.test(s));
+}
 
 /**
  * Maps a probe response status to a verdict.
@@ -130,7 +150,11 @@ export async function runCredentialProbe(
       headers: req.headers,
       signal: AbortSignal.timeout(PROBE_TIMEOUT_MS),
     });
-    return verdictForProbeResponse(res.status);
+    const verdict = verdictForProbeResponse(res.status);
+    if (verdict.kind === "valid" && serviceId === "github") {
+      return { kind: "valid", scopes: parseOAuthScopes(res.headers.get("x-oauth-scopes")) };
+    }
+    return verdict;
   } catch {
     return { kind: "unconfirmed" };
   }

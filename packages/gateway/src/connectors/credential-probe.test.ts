@@ -3,6 +3,8 @@ import { expect, test } from "bun:test";
 import { basicAuthHeader } from "./atlassian-api-sync-helpers.ts";
 import {
   CREDENTIAL_PROBES,
+  hasCredentialProbe,
+  parseOAuthScopes,
   runCredentialProbe,
   verdictForProbeResponse,
 } from "./credential-probe.ts";
@@ -126,4 +128,43 @@ test("jenkins falls back to an empty base_url/username/api_token when all three 
   const req = CREDENTIAL_PROBES["jenkins"]?.({});
   expect(req?.url).toBe("/api/json");
   expect(req?.headers["Authorization"]).toBe(basicAuthHeader("", ""));
+});
+
+test("parseOAuthScopes keeps only scope-shaped tokens — never raw header text", () => {
+  expect(parseOAuthScopes("repo, read:org, workflow, gist")).toEqual([
+    "repo",
+    "read:org",
+    "workflow",
+    "gist",
+  ]);
+  expect(parseOAuthScopes("admin:repo_hook")).toEqual(["admin:repo_hook"]);
+  expect(parseOAuthScopes(null)).toEqual([]);
+  expect(parseOAuthScopes("")).toEqual([]);
+  // Anything that is not a scope name is dropped, not echoed.
+  expect(parseOAuthScopes("repo, <script>, Bearer ghp_abc, ok")).toEqual(["repo", "ok"]);
+});
+
+test("hasCredentialProbe is true exactly for the services CREDENTIAL_PROBES covers", () => {
+  expect(hasCredentialProbe("github")).toBe(true);
+  expect(hasCredentialProbe("jenkins")).toBe(true);
+  expect(hasCredentialProbe("aws")).toBe(false);
+  expect(hasCredentialProbe("kubernetes")).toBe(false);
+  for (const id of Object.keys(CREDENTIAL_PROBES)) {
+    expect(hasCredentialProbe(id as Parameters<typeof hasCredentialProbe>[0])).toBe(true);
+  }
+});
+
+test("a valid GitHub probe carries the X-OAuth-Scopes the token actually has", async () => {
+  const fetchFn = async (): Promise<Response> =>
+    new Response("{}", { status: 200, headers: { "X-OAuth-Scopes": "repo, read:org" } });
+  expect(await runCredentialProbe("github", { pat: "ghp_x" }, fetchFn)).toEqual({
+    kind: "valid",
+    scopes: ["repo", "read:org"],
+  });
+});
+
+test("a valid non-GitHub probe carries no scopes field at all", async () => {
+  const fetchFn = async (): Promise<Response> =>
+    new Response("{}", { status: 200, headers: { "X-OAuth-Scopes": "api" } });
+  expect(await runCredentialProbe("gitlab", { pat: "glpat" }, fetchFn)).toEqual({ kind: "valid" });
 });
