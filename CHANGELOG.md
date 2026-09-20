@@ -2,6 +2,18 @@
 
 All notable changes to the `nimbus` core (headless Gateway + CLI binary + first-party MCP connectors) are documented in this file. release-please appends new entries between this header and the most recent version below when a release PR merges.
 
+## [7.28.0](https://github.com/nimbus-agent/Nimbus/compare/v7.27.1...v7.28.0) (2026-09-20)
+
+
+### Features
+
+* **connectors:** nimbus connector detect — reuse existing gh, aws and kubectl logins ([#1554](https://github.com/nimbus-agent/Nimbus/issues/1554)) ([44a57ad](https://github.com/nimbus-agent/Nimbus/commit/44a57ad2ebc442bcaee6c5cd69736a136de14d4f))
+
+
+### Bug Fixes
+
+* **connectors:** gcloud spawns authenticate as the configured GCP service-account key ([#1553](https://github.com/nimbus-agent/Nimbus/issues/1553)) ([e1d16b1](https://github.com/nimbus-agent/Nimbus/commit/e1d16b119a40364bd436773966672434de283077))
+
 ## [7.27.1](https://github.com/nimbus-agent/Nimbus/compare/v7.27.0...v7.27.1) (2026-09-19)
 
 
