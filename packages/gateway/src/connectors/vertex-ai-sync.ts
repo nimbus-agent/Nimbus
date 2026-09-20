@@ -1,6 +1,7 @@
 import type { Syncable, SyncContext, SyncResult } from "../sync/types.ts";
 import { isSafeCliArg, runSinglePassCliShellSync } from "./_lib/cli-shell-sync.ts";
 import { runGcloudCommand } from "./_lib/gcloud-runner.ts";
+import { type GcpAuth, resolveGcpAuth } from "./_lib/gcp-auth.ts";
 import { encodeNimbusJsonCursor } from "./nimbus-json-cursor.ts";
 import { mapVertexAiModelToItem } from "./vertex-ai-model-mapping.ts";
 
@@ -21,16 +22,17 @@ function pass1Cursor(): string {
 }
 
 /**
- * Mints nothing — `gcloud ai` is a native CLI that authenticates as the configured
- * service-account key through runGcloudCommand (gcloudKeyFileEnv — gcloud reads
- * CLOUDSDK_AUTH_CREDENTIAL_FILE_OVERRIDE, not the ADC variable). Shells `gcloud ai models
+ * Mints nothing — `gcloud ai` is a native CLI that authenticates per `auth` through
+ * runGcloudCommand (gcloudAuthEnv — for a service-account key, gcloud reads
+ * CLOUDSDK_AUTH_CREDENTIAL_FILE_OVERRIDE, not the ADC variable; for the owner's own
+ * `gcloud auth login`, no credential variable is set at all). Shells `gcloud ai models
  * list --region <r> --project <p> --format json` and returns the raw stdout. Returns
  * `{ ok: false }` when gcloud is missing or exits non-zero — the caller degrades
  * gracefully (no throw past the Syncable boundary), mirroring cloud-logging-sync's
  * posture. The `<region>` is guarded by the caller before this runs.
  */
 function gcloudAiModelsList(
-  credPath: string,
+  auth: GcpAuth,
   project: string,
   region: string,
 ): Promise<{ ok: boolean; text: string }> {
@@ -46,7 +48,7 @@ function gcloudAiModelsList(
     "--format",
     "json",
   ];
-  return runGcloudCommand(argv, credPath);
+  return runGcloudCommand(argv, auth);
 }
 
 /**
@@ -55,7 +57,7 @@ function gcloudAiModelsList(
  * regional Vertex AI surface adding a `region` parameter.
  */
 export type RunGcloud = (
-  credPath: string,
+  auth: GcpAuth,
   project: string,
   region: string,
 ) => Promise<{ ok: boolean; text: string }>;
@@ -67,15 +69,18 @@ export type VertexAiSyncableOptions = {
 };
 
 interface VertexAiCreds {
-  readonly credPath: string;
+  readonly auth: GcpAuth;
   readonly project: string;
   readonly region: string;
 }
 
 async function loadCreds(ctx: SyncContext): Promise<VertexAiCreds | null> {
-  const credPath = (await ctx.getSharedSecret("gcp", "credentials_json_path"))?.trim() ?? "";
+  const auth = resolveGcpAuth(
+    await ctx.getSharedSecret("gcp", "credentials_json_path"),
+    await ctx.getSharedSecret("gcp", "auth_source"),
+  );
   const project = (await ctx.getSharedSecret("gcp", "project_id"))?.trim() ?? "";
-  if (credPath === "" || project === "") {
+  if (auth === null || project === "") {
     return null;
   }
   // Region is an OPTIONAL non-secret gcp config key; default + flag-guard it.
@@ -84,7 +89,7 @@ async function loadCreds(ctx: SyncContext): Promise<VertexAiCreds | null> {
   if (!isSafeCliArg(region)) {
     return null;
   }
-  return { credPath, project, region };
+  return { auth, project, region };
 }
 
 export function createVertexAiSyncable(options: VertexAiSyncableOptions): Syncable {
@@ -101,7 +106,7 @@ export function createVertexAiSyncable(options: VertexAiSyncableOptions): Syncab
         maxPages: 1,
         runCliPage: async (creds) => {
           await ctx.rateLimiter.acquire(SERVICE_ID);
-          const res = await run(creds.credPath, creds.project, creds.region);
+          const res = await run(creds.auth, creds.project, creds.region);
           if (!res.ok) {
             ctx.logger.warn(
               { serviceId: SERVICE_ID },

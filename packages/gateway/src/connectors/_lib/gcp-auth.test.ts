@@ -138,12 +138,12 @@ function isKnownSafeGcloudTypeLiteral(line: string): boolean {
  * wraps.
  *
  * The two sizes below are derived from the four real call sites, not picked arbitrarily:
- *  - `bigquery-sync.ts` / `gcp-sync.ts` call `gcloudKeyFileEnv(` on the line immediately AFTER
+ *  - `bigquery-sync.ts` / `gcp-sync.ts` call `gcloudAuthEnv(` on the line immediately AFTER
  *    the literal (+1).
  *  - `cloud-logging-sync.ts` opens `runGcloudCommand(` on the line immediately BEFORE the literal
  *    (-1) — the argv array is itself the first argument to the call.
  *  - `vertex-ai-sync.ts` builds its argv as a multi-line array starting at the literal and closes
- *    with `runGcloudCommand(argv, credPath)` 11 lines AFTER it.
+ *    with `runGcloudCommand(argv, auth)` 11 lines AFTER it.
  * `WINDOW_BEFORE`/`WINDOW_AFTER` cover the worst of those (-1, +11) with a small margin, not a
  * round number — big enough that a reasonably reformatted call site doesn't false-positive, small
  * enough that it can't reach across to an unrelated spawn site elsewhere in the same file (the
@@ -153,21 +153,29 @@ const WINDOW_BEFORE = 4;
 const WINDOW_AFTER = 16;
 
 /**
- * Every file that spawns gcloud must build its child env through `gcloudKeyFileEnv` — either
+ * Every file that spawns gcloud must build its child env through `gcloudAuthEnv` — either
  * directly, or indirectly via `_lib/gcloud-runner.ts`'s `runGcloudCommand`, which itself is built
- * on `gcloudKeyFileEnv` (asserted separately, below). That indirection is real today:
- * `cloud-logging-sync.ts` and `vertex-ai-sync.ts` never name `gcloudKeyFileEnv` themselves and
- * call `runGcloudCommand` instead, while `bigquery-sync.ts` and `gcp-sync.ts` call
- * `gcloudKeyFileEnv` directly. A site with NEITHER nearby has built its own env some other way —
- * the exact shape of the bug this branch fixed, where a spawn set only
- * `GOOGLE_APPLICATION_CREDENTIALS` and silently ran as whatever account `gcloud auth login` last
- * activated.
+ * on `gcloudAuthEnv` (asserted separately, below). `gcloudAuthEnv` itself delegates to
+ * `gcloudKeyFileEnv` for key-mode auth, so a site that still names `gcloudKeyFileEnv` directly
+ * (there is none left in production, but the check stays permissive rather than narrowing) is
+ * credentialed too. That indirection is real today: `cloud-logging-sync.ts` and
+ * `vertex-ai-sync.ts` never name a credentialing helper themselves and call `runGcloudCommand`
+ * instead, while `bigquery-sync.ts` and `gcp-sync.ts` call `gcloudAuthEnv` directly (the local
+ * gcloud-login mode `GcpAuth` support added has no key file to pass — `gcloudAuthEnv` is the one
+ * helper that covers both auth modes at a direct spawn site). A site with NONE of these nearby
+ * has built its own env some other way — the exact shape of the bug this branch fixed, where a
+ * spawn set only `GOOGLE_APPLICATION_CREDENTIALS` and silently ran as whatever account
+ * `gcloud auth login` last activated.
  */
 function siteIsCredentialed(lines: readonly string[], occurrenceLine: number): boolean {
   const start = Math.max(0, occurrenceLine - WINDOW_BEFORE);
   const end = Math.min(lines.length, occurrenceLine + WINDOW_AFTER + 1);
   const window = lines.slice(start, end).join("\n");
-  return window.includes("gcloudKeyFileEnv(") || window.includes("runGcloudCommand(");
+  return (
+    window.includes("gcloudKeyFileEnv(") ||
+    window.includes("runGcloudCommand(") ||
+    window.includes("gcloudAuthEnv(")
+  );
 }
 
 async function scanGcloudSpawnSites(

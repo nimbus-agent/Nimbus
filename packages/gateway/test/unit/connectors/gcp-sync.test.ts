@@ -85,6 +85,32 @@ describe("gcp-sync — credential short-circuits", () => {
   });
 });
 
+describe("gcp-sync — gcloud login mode", () => {
+  test("gcloud login mode: syncs with no key file and no credential override", async () => {
+    await withIsolatedFixture(async (iso) => {
+      await iso.vault.set("gcp.auth_source", "gcloud");
+      await iso.vault.set("gcp.project_id", PROJECT_ID);
+      iso.spawnMock.respond("gcloud", { exitCode: 0, stdout: "{}" });
+      await createGcpSyncable(ENSURE_MCP).sync(iso.createSyncContext("gcp"), null);
+      expect(iso.spawnMock.calls.length).toBeGreaterThan(0);
+      expect(iso.spawnMock.calls[0]?.env["CLOUDSDK_AUTH_CREDENTIAL_FILE_OVERRIDE"]).toBeUndefined();
+      expect(iso.spawnMock.calls[0]?.env["GOOGLE_APPLICATION_CREDENTIALS"]).toBeUndefined();
+    });
+  });
+
+  test("a configured key path wins over auth_source=gcloud", async () => {
+    await withIsolatedFixture(async (iso) => {
+      await iso.vault.set("gcp.credentials_json_path", CRED_PATH);
+      await iso.vault.set("gcp.auth_source", "gcloud");
+      await iso.vault.set("gcp.project_id", PROJECT_ID);
+      iso.spawnMock.respond("gcloud", { exitCode: 0, stdout: "{}" });
+      await createGcpSyncable(ENSURE_MCP).sync(iso.createSyncContext("gcp"), null);
+      expect(iso.spawnMock.calls[0]?.env["CLOUDSDK_AUTH_CREDENTIAL_FILE_OVERRIDE"]).toBe(CRED_PATH);
+      expect(iso.spawnMock.calls[0]?.env["GOOGLE_APPLICATION_CREDENTIALS"]).toBe(CRED_PATH);
+    });
+  });
+});
+
 describe("gcp-sync — with shared fixture", () => {
   let fixture: ConnectorSyncFixture;
 
