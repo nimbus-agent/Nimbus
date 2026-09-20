@@ -1,6 +1,8 @@
 import { describe, expect, test } from "bun:test";
+import { mkdtempSync } from "node:fs";
 import { readdir, readFile, rm, writeFile } from "node:fs/promises";
-import { relative, resolve, sep } from "node:path";
+import { tmpdir } from "node:os";
+import { join, relative, resolve, sep } from "node:path";
 
 import { gcloudKeyFileEnv } from "./gcp-auth.ts";
 
@@ -162,13 +164,13 @@ describe("gcloud spawn totality — a future gcloud spawn site cannot skip the c
       '  const r = await spawnCapture(["gcloud", "config", "list"], {});\n' +
       "  return r;\n" +
       "}\n";
-    const fixtureDir = resolve(CONNECTORS_DIR, "_lib");
+    const fixtureDir = mkdtempSync(join(tmpdir(), "nimbus-gcp-auth-"));
     const fixturePath = resolve(fixtureDir, "__gcp_auth_two_site_fixture.ts");
     await writeFile(fixturePath, fixture, "utf8");
     try {
-      const { offenders } = await scanGcloudSpawnSites(CONNECTORS_DIR);
+      const { offenders } = await scanGcloudSpawnSites(fixtureDir);
       const fixtureOffenders = offenders.filter((o) =>
-        o.startsWith("_lib/__gcp_auth_two_site_fixture.ts:"),
+        o.startsWith("__gcp_auth_two_site_fixture.ts:"),
       );
       expect(fixtureOffenders).toHaveLength(1);
       // The offender names the uncredentialed site's own argv, not the credentialed one's —
@@ -177,7 +179,7 @@ describe("gcloud spawn totality — a future gcloud spawn site cannot skip the c
       expect(fixtureOffenders[0]).toContain('"gcloud", "config", "list"');
       expect(fixtureOffenders[0]).not.toContain("print-access-token");
     } finally {
-      await rm(fixturePath, { force: true });
+      await rm(fixtureDir, { recursive: true, force: true });
     }
   });
 });
