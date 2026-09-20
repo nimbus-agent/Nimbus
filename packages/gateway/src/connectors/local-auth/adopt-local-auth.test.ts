@@ -398,6 +398,64 @@ describe("adoptLocalAuth — gcloud", () => {
     expect(String(h.gated[0]?.payload?.["summary"])).toContain("acme-prod");
   });
 
+  // I-1 (CLI/gateway precedence disagreement): `resolveTarget`'s `req.project ?? f.project` is
+  // the correct rule — an explicit request wins over gcloud's own detected default. This pins
+  // both directions at the gateway so a regression here cannot go unnoticed the way the CLI's
+  // reversed precedence did.
+  test("available + an owner-supplied project → the explicit project wins over the detected default", async () => {
+    const h = harness();
+    const out = await adoptLocalAuth(
+      { source: "gcloud", project: "explicit-override", replace: false },
+      h.deps({
+        run: async (argv) => {
+          const cmd = argv.join(" ");
+          if (cmd === "gcloud config list --format json") {
+            return {
+              ok: true,
+              stdout: JSON.stringify({
+                core: { account: "me@example.com", project: "detected-default" },
+              }),
+              stderr: "",
+              code: 0,
+            };
+          }
+          return { ok: false, stdout: "", stderr: "", code: 1 };
+        },
+      }),
+    );
+    expect(h.authed).toEqual([
+      { service: "gcp", authSource: "gcloud", projectId: "explicit-override" },
+    ]);
+    expect(out).toMatchObject({ ok: true, source: "gcloud", service: "gcp" });
+  });
+
+  test("available with no explicit project → the detected default is used", async () => {
+    const h = harness();
+    const out = await adoptLocalAuth(
+      { source: "gcloud", replace: false },
+      h.deps({
+        run: async (argv) => {
+          const cmd = argv.join(" ");
+          if (cmd === "gcloud config list --format json") {
+            return {
+              ok: true,
+              stdout: JSON.stringify({
+                core: { account: "me@example.com", project: "detected-default" },
+              }),
+              stderr: "",
+              code: 0,
+            };
+          }
+          return { ok: false, stdout: "", stderr: "", code: 1 };
+        },
+      }),
+    );
+    expect(h.authed).toEqual([
+      { service: "gcp", authSource: "gcloud", projectId: "detected-default" },
+    ]);
+    expect(out).toMatchObject({ ok: true, source: "gcloud", service: "gcp" });
+  });
+
   test("needs_project with no project → ERR_LOCAL_AUTH_SOURCE_UNAVAILABLE, no gate", async () => {
     const h = harness();
     await expect(adoptLocalAuth({ source: "gcloud", replace: false }, h.deps())).rejects.toThrow(

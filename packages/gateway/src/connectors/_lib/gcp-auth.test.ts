@@ -135,6 +135,22 @@ const GCLOUD_ARGV_MARKER = '"gcloud"';
  * argv element's.
  */
 function isNonSpawnLiteral(line: string): boolean {
+  // GENERAL recall fix, checked before every specific exclusion below: a line that ALSO opens a
+  // real argv array with the gcloud literal must never be erased here, however many non-spawn
+  // substrings (like `cliEnvFor("gcloud"`) it happens to also contain on the SAME line — erasing
+  // it skips `sawArgvSite = true` entirely, which is worse than merely exempting it, since the
+  // line then never enters `spawnSites` and can never be checked for credentialing at all.
+  // Demonstrated: `return await spawnCapture(["gcloud", "info"], { env: cliEnvFor("gcloud",
+  // process.env) });` — the shortest way to write a NEW gcloud spawn following detect-gcloud.ts's
+  // own pattern, not an adversarial construction — carries both `["gcloud"` and `cliEnvFor("gcloud"`
+  // on one line, and ran this suite to a clean pass with the file not even entering `spawnSites`
+  // before this guard existed. This check SUBSUMES every specific exclusion below rather than
+  // narrowing any of them: a genuine non-spawn use of the `"gcloud"` literal (a type union, a
+  // value comparison, an object property, a switch-arm label, a passthrough-env call) never also
+  // opens an argv array on the same line, so this can only ever REDUCE what gets erased here, never
+  // widen it — see the `cliEnvFor` + real-argv collision fixture below, which pins that a line
+  // matching BOTH this and a specific exclusion is scanned as a real, exempt-or-offending site.
+  if (line.includes('["gcloud"')) return false;
   // `local-auth-env.ts`'s `PASSTHROUGH: Readonly<Record<"gh" | "aws" | "gcloud", ...>>` key type
   // and `cliEnvFor`'s `source: "gh" | "aws" | "gcloud"` parameter type both spell this exact
   // three-member union literally.
@@ -488,6 +504,36 @@ describe("gcloud spawn totality — a future gcloud spawn site cannot skip the c
       );
       expect(fixtureOffenders).toHaveLength(1);
       expect(fixtureOffenders[0]).toContain('deps.which("gcloud") ? "gcloud" : "gcloud.cmd"');
+    } finally {
+      await rm(fixtureDir, { recursive: true, force: true });
+    }
+  });
+
+  // Pins RECALL a third time, against the hole a review round demonstrated in the `cliEnvFor`
+  // exclusion: `isNonSpawnLiteral` was TEXT-only and applied BEFORE `sawArgvSite = true`, so a
+  // line matching one of its specific substrings was erased from the scan entirely — not merely
+  // exempted — even when that same line ALSO carried a real argv literal. `cliEnvFor("gcloud"` is
+  // exactly such a substring, and `["gcloud", "info"], { env: cliEnvFor("gcloud", process.env) }`
+  // is the shortest way to write a NEW gcloud spawn following detect-gcloud.ts's own established
+  // pattern — not adversarial. Before the general `["gcloud"` guard at the top of
+  // `isNonSpawnLiteral`, this fixture ran the whole suite to 13 pass / 0 fail and the file did not
+  // even enter `spawnSites`; now the line is scanned as a real, unexempt, uncredentialed site.
+  test("a line combining a real argv literal with the cliEnvFor exclusion text is still scanned", async () => {
+    const fixture =
+      "export async function envHelperCollisionSite() {\n" +
+      '  return await spawnCapture(["gcloud", "info"], { env: cliEnvFor("gcloud", process.env) });\n' +
+      "}\n";
+    const fixtureDir = mkdtempSync(join(tmpdir(), "nimbus-gcp-auth-"));
+    try {
+      const fixturePath = resolve(fixtureDir, "__gcp_auth_env_helper_collision_fixture.ts");
+      await writeFile(fixturePath, fixture, "utf8");
+      const { offenders, spawnSites } = await scanGcloudSpawnSites(fixtureDir);
+      const fixtureOffenders = offenders.filter((o) =>
+        o.startsWith("__gcp_auth_env_helper_collision_fixture.ts:"),
+      );
+      expect(fixtureOffenders).toHaveLength(1);
+      expect(fixtureOffenders[0]).toContain('["gcloud", "info"]');
+      expect(spawnSites).toContain("__gcp_auth_env_helper_collision_fixture.ts");
     } finally {
       await rm(fixtureDir, { recursive: true, force: true });
     }

@@ -1876,8 +1876,9 @@ const streamReq: JSONRPCRequest = {
 //   deletes any stored `gcp.credentials_json_path` (`connectors/_lib/gcp-auth.ts`'s
 //   `resolveGcpAuth`: a configured key path always wins over `auth_source`, so leaving one in
 //   place would make adopting gcloud mode silently do nothing). The consent payload discloses that
-//   clear, but only when a key path is actually on file. `connector auth gcp --credentials-json`
-//   is the reverse direction: it writes `gcp.credentials_json_path` and deletes `gcp.auth_source`.
+//   clear, but only when a key path is actually on file. `connector auth gcp
+//   --gcp-credentials-json` is the reverse direction: it writes `gcp.credentials_json_path` and
+//   deletes `gcp.auth_source`.
 
 // Session rehydration (Phase 4 WS6)
 // engine.getSessionTranscript(params: { sessionId, limit? }) -> { turns: AgentTurn[] }

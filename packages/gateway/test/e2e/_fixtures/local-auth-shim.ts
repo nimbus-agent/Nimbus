@@ -1,4 +1,5 @@
-// Fake gh / aws / kubectl for local-auth.e2e.test.ts. Selected by the wrapper that invokes it.
+// Fake gh / aws / kubectl / gcloud for local-auth.e2e.test.ts. Selected by the wrapper that
+// invokes it.
 import { appendFileSync } from "node:fs";
 
 const as = process.argv[2] ?? "";

@@ -241,9 +241,13 @@ async function chooseOne(
 ): Promise<AdoptParams | null> {
   switch (f.source) {
     case "gcloud": {
+      // Explicit flag wins over the detected default, matching the gateway
+      // (`resolveTarget` in adopt-local-auth.ts: `req.project ?? f.project`) — an owner who
+      // passes `--project` to override a wrong `gcloud config` default must not be silently
+      // overridden right back by the very default they are overriding.
       const project =
-        f.project ??
         opts.project ??
+        f.project ??
         (await deps.ask("  gcloud: which GCP project id? [Enter = skip] "));
       return project === "" ? null : { source: "gcloud", project, replace: false };
     }

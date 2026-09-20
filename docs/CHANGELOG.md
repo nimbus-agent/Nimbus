@@ -33,11 +33,11 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
   flag — that command keeps its existing `--gcp-credentials-json` key-path flow unchanged. Neither
   write makes an outbound request, so there is nothing for `verifyBeforeStoreWithScopes` to probe
   and no `sync`-class egress row for gcloud mode specifically. `detectGcloud`
-  (`connectors/local-auth/detect-gcloud.ts`) runs `gcloud
-  config list --format json` — local only, no network — and can report `available`, `needs_project`
-  (an active login with no default project) or `not_logged_in`; `needs_project` is the one
-  non-`available` status `adoptLocalAuth`'s `usable()` still offers, since the owner can supply a
-  project at adopt time. `nimbus connector detect --source gcloud --project <id>` and the
+  (`connectors/local-auth/detect-gcloud.ts`) runs `gcloud config list --format json` — local only,
+  no network — and can report `available`, `needs_project` (an active login with no default
+  project), `not_logged_in`, or `cli_not_found` (gcloud itself is not on `PATH`); `needs_project` is
+  the one non-`available` status `adoptLocalAuth`'s `usable()` still offers, since the owner can
+  supply a project at adopt time. `nimbus connector detect --source gcloud --project <id>` and the
   interactive walk (which prompts for a project id only when gcloud has none of its own) both land
   on the same `connector.adoptLocalAuth` HITL action type the gh/aws/kubectl sources already use
   (I2 frozen set, I3 — now four sources under one action type), with a consent summary that

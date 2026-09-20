@@ -132,7 +132,7 @@ const RUNNER = join(import.meta.dir, "_fixtures", "gateway-runner.ts");
 const SHIM = join(import.meta.dir, "_fixtures", "local-auth-shim.ts");
 
 /**
- * The CLI child processes (`gh`/`aws`/`kubectl`) spawn through `extensionProcessEnv()` (I1),
+ * The CLI child processes (`gh`/`aws`/`kubectl`/`gcloud`) spawn through `extensionProcessEnv()` (I1),
  * which scopes the child env down to a fixed baseline (`PATH`, `HOME`, `TEMP`, …) plus whatever
  * `cliEnvFor` explicitly forwards — `NIMBUS_SHIM_LOG` is neither, so setting it on the GATEWAY's
  * own spawn env never reaches these shims. Each wrapper bakes the log path into its own script

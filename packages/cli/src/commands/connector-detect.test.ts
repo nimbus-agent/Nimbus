@@ -303,6 +303,36 @@ describe("nimbus connector detect — gcloud", () => {
     expect(d.adopted).toEqual([{ source: "gcloud", project: "acme-prod", replace: false }]);
   });
 
+  // I-1 regression: the explicit flag must win over gcloud's own detected default, matching the
+  // gateway's `resolveTarget` (`req.project ?? f.project`) — proven wrong once (the flag was
+  // silently dropped whenever the finding already carried a project), so both directions of
+  // `available` + `--project` are pinned here rather than just the no-flag case above.
+  test("--project overrides an available finding's own detected default project", async () => {
+    const gcloudAvailable: FindingWire = {
+      source: "gcloud",
+      status: "available",
+      alreadyConfigured: false,
+      account: "me@example.com",
+      project: "detected-default",
+    };
+    const d = deps({ detect: async () => [gcloudAvailable] });
+    await runConnectorDetect(["--project", "explicit-override"], d.deps);
+    expect(d.adopted).toEqual([{ source: "gcloud", project: "explicit-override", replace: false }]);
+  });
+
+  test("without --project, an available finding's own detected default is used", async () => {
+    const gcloudAvailable: FindingWire = {
+      source: "gcloud",
+      status: "available",
+      alreadyConfigured: false,
+      account: "me@example.com",
+      project: "detected-default",
+    };
+    const d = deps({ detect: async () => [gcloudAvailable] });
+    await runConnectorDetect([], d.deps);
+    expect(d.adopted).toEqual([{ source: "gcloud", project: "detected-default", replace: false }]);
+  });
+
   test("--source gcloud is accepted and renders as its own kind — not the kubectl fallback branch", async () => {
     const sourcesAsked: Array<readonly string[] | undefined> = [];
     const d = deps({

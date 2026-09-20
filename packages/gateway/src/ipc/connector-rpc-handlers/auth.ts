@@ -391,10 +391,16 @@ async function connectorAuthGcp(
     if (project === "") {
       throw new ConnectorRpcError(-32602, "gcloud login mode needs a GCP project id (projectId)");
     }
+    // Three untransacted Vault ops — ordered so every INTERMEDIATE state is a valid old-or-new
+    // configuration, and the only irreversible op (the delete) goes LAST. Writing auth_source then
+    // project_id first means a failure after either leaves a configured key-mode setup untouched
+    // (project_id merely written early has no effect until auth_source and the key are both gone);
+    // only once both writes have succeeded is the key path deleted, so a failure never strands the
+    // owner with gcloud mode half-configured and no key path to fall back to.
     await writeConnectorSecret(vault, "gcp", "auth_source", "gcloud");
+    await writeConnectorSecret(vault, "gcp", "project_id", project);
     // A key path would WIN over auth_source (resolveGcpAuth), so it must go for this to take effect.
     await deleteConnectorSecret(vault, "gcp", "credentials_json_path");
-    await writeConnectorSecret(vault, "gcp", "project_id", project);
     localIndex.ensureConnectorSchedulerRegistration(
       "gcp",
       defaultSyncIntervalMsForService("gcp"),

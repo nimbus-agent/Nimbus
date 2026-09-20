@@ -1771,10 +1771,20 @@ describe("connector.auth gcp — gcloud login mode", () => {
     db.close();
   });
 
+  // M-7: this test's name says "neither mode" — it must actually exercise both, not just the
+  // gcloud arm (the original version called `handleConnectorAuth` once, with `authSource:
+  // "gcloud"`, and could not have failed for a key-mode call it never made).
   test("neither mode appends a credentialProbe egress row — gcp has no probe", async () => {
     const { db, vault, localIndex } = freshDeps();
     await handleConnectorAuth(
       makeCtx({ service: "gcp", authSource: "gcloud", projectId: "acme-prod" }, vault, localIndex),
+    );
+    await handleConnectorAuth(
+      makeCtx(
+        { service: "gcp", credentialsJsonPath: "/k.json", projectId: "acme-prod" },
+        vault,
+        localIndex,
+      ),
     );
     const probeRows = db
       .query<{ destination: string; method: string }, []>(
