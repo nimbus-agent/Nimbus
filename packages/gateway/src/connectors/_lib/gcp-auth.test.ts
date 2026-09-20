@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { readdir, readFile } from "node:fs/promises";
+import { readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { relative, resolve, sep } from "node:path";
 
 import { gcloudKeyFileEnv } from "./gcp-auth.ts";
@@ -35,17 +35,47 @@ const CONNECTORS_DIR = resolve(import.meta.dir, "..");
 const GCLOUD_ARGV_MARKER = '"gcloud"';
 
 /**
+ * Window around each INDIVIDUAL `"gcloud"` argv occurrence — not a file-wide check — because a
+ * file-wide check has two ways to pass without proving anything: a file with two spawn sites
+ * passes when only one of them calls the credential helper, and a spawn site passes because the
+ * helper is merely mentioned somewhere else in the file (a comment, an unrelated call). Windowing
+ * around the OCCURRENCE is the established shape for this kind of per-site check in this repo —
+ * see `checkSpawnInvariant`'s 6-line forward window in
+ * `scripts/structure-audit/check-nimbus-invariants.ts` for I1 — but that window is forward-only,
+ * which doesn't fit here: a `runGcloudCommand(...)` call can open BEFORE the `"gcloud"` literal it
+ * wraps.
+ *
+ * The two sizes below are derived from the four real call sites, not picked arbitrarily:
+ *  - `bigquery-sync.ts` / `gcp-sync.ts` call `gcloudKeyFileEnv(` on the line immediately AFTER
+ *    the literal (+1).
+ *  - `cloud-logging-sync.ts` opens `runGcloudCommand(` on the line immediately BEFORE the literal
+ *    (-1) — the argv array is itself the first argument to the call.
+ *  - `vertex-ai-sync.ts` builds its argv as a multi-line array starting at the literal and closes
+ *    with `runGcloudCommand(argv, credPath)` 11 lines AFTER it.
+ * `WINDOW_BEFORE`/`WINDOW_AFTER` cover the worst of those (-1, +11) with a small margin, not a
+ * round number — big enough that a reasonably reformatted call site doesn't false-positive, small
+ * enough that it can't reach across to an unrelated spawn site elsewhere in the same file (the
+ * two-site fixture below proves that bound holds).
+ */
+const WINDOW_BEFORE = 4;
+const WINDOW_AFTER = 16;
+
+/**
  * Every file that spawns gcloud must build its child env through `gcloudKeyFileEnv` — either
  * directly, or indirectly via `_lib/gcloud-runner.ts`'s `runGcloudCommand`, which itself is built
  * on `gcloudKeyFileEnv` (asserted separately, below). That indirection is real today:
  * `cloud-logging-sync.ts` and `vertex-ai-sync.ts` never name `gcloudKeyFileEnv` themselves and
  * call `runGcloudCommand` instead, while `bigquery-sync.ts` and `gcp-sync.ts` call
- * `gcloudKeyFileEnv` directly. A file naming NEITHER has built its own env some other way — the
- * exact shape of the bug this branch fixed, where a spawn set only `GOOGLE_APPLICATION_CREDENTIALS`
- * and silently ran as whatever account `gcloud auth login` last activated.
+ * `gcloudKeyFileEnv` directly. A site with NEITHER nearby has built its own env some other way —
+ * the exact shape of the bug this branch fixed, where a spawn set only
+ * `GOOGLE_APPLICATION_CREDENTIALS` and silently ran as whatever account `gcloud auth login` last
+ * activated.
  */
-function referencesTheSharedCredentialHelper(contents: string): boolean {
-  return contents.includes("gcloudKeyFileEnv") || contents.includes("runGcloudCommand");
+function siteIsCredentialed(lines: readonly string[], occurrenceLine: number): boolean {
+  const start = Math.max(0, occurrenceLine - WINDOW_BEFORE);
+  const end = Math.min(lines.length, occurrenceLine + WINDOW_AFTER + 1);
+  const window = lines.slice(start, end).join("\n");
+  return window.includes("gcloudKeyFileEnv(") || window.includes("runGcloudCommand(");
 }
 
 async function scanGcloudSpawnSites(
@@ -65,11 +95,18 @@ async function scanGcloudSpawnSites(
     if (!contents.includes(GCLOUD_ARGV_MARKER)) continue;
     const relPath = relative(dir, abs).split(sep).join("/");
     spawnSites.push(relPath);
-    if (!referencesTheSharedCredentialHelper(contents)) {
+    const lines = contents.split("\n");
+    // Per OCCURRENCE, not per file: a line can in principle carry the marker more than once, and
+    // each one is its own spawn site that must independently be credentialed.
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i] as string;
+      if (!line.includes(GCLOUD_ARGV_MARKER)) continue;
+      if (siteIsCredentialed(lines, i)) continue;
       offenders.push(
-        `${relPath} spawns gcloud but never references gcloudKeyFileEnv (directly, or via ` +
-          "runGcloudCommand) — it authenticates as whatever account `gcloud auth login` last " +
-          "activated, silently ignoring the configured service-account key.",
+        `${relPath}:${i + 1} spawns gcloud without gcloudKeyFileEnv or runGcloudCommand within ` +
+          `${WINDOW_BEFORE} lines before / ${WINDOW_AFTER} lines after (\`${line.trim()}\`) — it ` +
+          "authenticates as whatever account `gcloud auth login` last activated, silently " +
+          "ignoring the configured service-account key.",
       );
     }
   }
@@ -84,7 +121,7 @@ describe("gcloud spawn totality — a future gcloud spawn site cannot skip the c
   // spawn site added later that builds its own env and forgets the override, which is exactly how
   // this bug existed in the first place. This is a totality guard for that gap, not a substitute
   // for the behavioural tests above.
-  test("every non-test file under connectors/ with a gcloud argv literal references the shared credential helper", async () => {
+  test("every non-test file under connectors/ with a gcloud argv literal has that SPECIFIC site credentialed", async () => {
     const { spawnSites, offenders } = await scanGcloudSpawnSites(CONNECTORS_DIR);
     expect(offenders).toEqual([]);
     // Guard the guard: if the scan found nothing at all, the assertion above is vacuous. Asserted
@@ -97,5 +134,50 @@ describe("gcloud spawn totality — a future gcloud spawn site cannot skip the c
       "gcp-sync.ts",
       "vertex-ai-sync.ts",
     ]);
+  });
+
+  // Proves the per-site enforcement actually catches the scenario it was strengthened for: a
+  // single file with TWO gcloud spawn sites where only one calls the credential helper. The old
+  // file-wide `referencesTheSharedCredentialHelper` check passed this shape — the file contains
+  // `gcloudKeyFileEnv` SOMEWHERE, so the whole file read as compliant even though the second site
+  // never goes near it. The two sites here are placed `WINDOW_BEFORE + WINDOW_AFTER + 1` lines
+  // apart (comfortably past both windows) specifically so neither site's window can reach the
+  // other's marker.
+  test("catches a file with two gcloud spawn sites where only one is credentialed", async () => {
+    const gapLines = WINDOW_BEFORE + WINDOW_AFTER + 10;
+    const filler = Array.from({ length: gapLines }, (_, n) => `// filler line ${n}`).join("\n");
+    const fixture =
+      'import { gcloudKeyFileEnv } from "./gcp-auth.ts";\n' +
+      "\n" +
+      "export async function credentialedSite(credPath: string) {\n" +
+      '  const r = await spawnCapture(["gcloud", "auth", "print-access-token"], {\n' +
+      "    env: gcloudKeyFileEnv(credPath),\n" +
+      "  });\n" +
+      "  return r;\n" +
+      "}\n" +
+      "\n" +
+      `${filler}\n` +
+      "\n" +
+      "export async function uncredentialedSite() {\n" +
+      '  const r = await spawnCapture(["gcloud", "config", "list"], {});\n' +
+      "  return r;\n" +
+      "}\n";
+    const fixtureDir = resolve(CONNECTORS_DIR, "_lib");
+    const fixturePath = resolve(fixtureDir, "__gcp_auth_two_site_fixture.ts");
+    await writeFile(fixturePath, fixture, "utf8");
+    try {
+      const { offenders } = await scanGcloudSpawnSites(CONNECTORS_DIR);
+      const fixtureOffenders = offenders.filter((o) =>
+        o.startsWith("_lib/__gcp_auth_two_site_fixture.ts:"),
+      );
+      expect(fixtureOffenders).toHaveLength(1);
+      // The offender names the uncredentialed site's own argv, not the credentialed one's —
+      // proof the scan is pinpointing the specific site rather than flagging (or clearing) the
+      // whole file.
+      expect(fixtureOffenders[0]).toContain('"gcloud", "config", "list"');
+      expect(fixtureOffenders[0]).not.toContain("print-access-token");
+    } finally {
+      await rm(fixturePath, { force: true });
+    }
   });
 });
