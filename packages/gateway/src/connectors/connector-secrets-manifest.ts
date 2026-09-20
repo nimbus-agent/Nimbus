@@ -28,7 +28,10 @@ export const CONNECTOR_VAULT_SECRET_KEYS = {
   // `gcp.region` is an OPTIONAL non-secret config key (Vertex AI is regional;
   // default us-central1). It is listed here so it is a known/allowed gcp vault
   // key and is cleared when the gcp connector is removed — it is never required.
-  gcp: ["gcp.credentials_json_path", "gcp.project_id", "gcp.region"],
+  // `gcp.auth_source` is non-secret (`"gcloud"` = use the owner's gcloud login
+  // instead of a key file); it is on this list so `connector.remove gcp` clears
+  // it and the D11 vault-key rule knows it.
+  gcp: ["gcp.credentials_json_path", "gcp.project_id", "gcp.region", "gcp.auth_source"],
   iac: ["iac.enabled"],
   grafana: ["grafana.url", "grafana.api_token"],
   sentry: ["sentry.auth_token", "sentry.org_slug", "sentry.url"],

@@ -2,6 +2,7 @@
 
 import { resolveGoogleOAuthVaultKey } from "../auth/google-access-token.ts";
 import { hasUsableAwsCredentials } from "../connectors/_lib/aws-cli.ts";
+import { loadGcpAuthFromVault } from "../connectors/_lib/gcp-auth.ts";
 import { CONNECTOR_VAULT_SECRET_KEYS } from "../connectors/connector-secrets-manifest.ts";
 import { readConnectorSecret } from "../connectors/connector-vault.ts";
 import type { NimbusVault } from "../vault/nimbus-vault.ts";
@@ -20,19 +21,20 @@ async function hasMicrosoftOAuthVaultKey(vault: NimbusVault): Promise<boolean> {
 
 /**
  * Mirrors `bigquery-sync.ts` / `cloud-logging-sync.ts` / `vertex-ai-sync.ts`'s shared `loadCreds`
- * gate exactly: BOTH `gcp.credentials_json_path` AND `gcp.project_id` must be present. `gcp.region`
- * is an OPTIONAL non-secret config key (Vertex AI defaults to `us-central1` when unset) and is
- * deliberately NOT part of this check — a vault carrying only a region would not let any of the
- * three connectors' `loadCreds` produce usable credentials either. Reads via `readConnectorSecret`
- * (the same helper each connector's own `loadCreds` uses) rather than a raw `vault.get` template,
- * so the allow-listed key constructor stays the sole place `service.key` strings are assembled.
+ * gate exactly: configured = (a key path OR `auth_source = "gcloud"`) AND `gcp.project_id` present.
+ * `gcp.region` is an OPTIONAL non-secret config key (Vertex AI defaults to `us-central1` when
+ * unset) and is deliberately NOT part of this check — a vault carrying only a region would not let
+ * any of the three connectors' `loadCreds` produce usable credentials either. Reads via
+ * `loadGcpAuthFromVault`/`readConnectorSecret` (the same helpers each connector's own `loadCreds`
+ * uses) rather than a raw `vault.get` template, so the allow-listed key constructor stays the sole
+ * place `service.key` strings are assembled.
  */
 async function isGcpCredentialConfigured(vault: NimbusVault): Promise<boolean> {
-  const [credPath, project] = await Promise.all([
-    readConnectorSecret(vault, "gcp", "credentials_json_path"),
+  const [auth, project] = await Promise.all([
+    loadGcpAuthFromVault(vault),
     readConnectorSecret(vault, "gcp", "project_id"),
   ]);
-  return (credPath?.trim() ?? "") !== "" && (project?.trim() ?? "") !== "";
+  return auth !== null && (project?.trim() ?? "") !== "";
 }
 
 /** `github_actions` reads the same key `readConnectorSecret(vault, "github", "pat")` reads before any GitHub API call. */

@@ -50,4 +50,12 @@ describe("cliEnvFor", () => {
     expect(cliEnvFor("aws", { AWS_CONFIG_FILE: "  " })).toEqual({});
     expect(cliEnvFor("gh", {})).toEqual({});
   });
+
+  test("gcloud forwards CLOUDSDK_CONFIG only", () => {
+    expect(
+      cliEnvFor("gcloud", { CLOUDSDK_CONFIG: "/cfg/gcloud", GOOGLE_APPLICATION_CREDENTIALS: "/x" }),
+    ).toEqual({
+      CLOUDSDK_CONFIG: "/cfg/gcloud",
+    });
+  });
 });

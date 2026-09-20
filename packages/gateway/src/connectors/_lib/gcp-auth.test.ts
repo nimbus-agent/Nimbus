@@ -4,7 +4,13 @@ import { readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, relative, resolve, sep } from "node:path";
 
-import { gcloudKeyFileEnv } from "./gcp-auth.ts";
+import { createMockVault } from "../../vault/mock.ts";
+import {
+  gcloudAuthEnv,
+  gcloudKeyFileEnv,
+  loadGcpAuthFromVault,
+  resolveGcpAuth,
+} from "./gcp-auth.ts";
 
 describe("gcloudKeyFileEnv", () => {
   test("sets the variable the gcloud CLI reads, not only the ADC one it ignores", () => {
@@ -22,6 +28,49 @@ describe("gcloudKeyFileEnv", () => {
   });
 });
 
+describe("resolveGcpAuth", () => {
+  test("a key path wins over auth_source — the explicit service account is more specific", () => {
+    expect(resolveGcpAuth("/k.json", "gcloud")).toEqual({ kind: "key", credPath: "/k.json" });
+  });
+  test("auth_source = gcloud with no key → the user's gcloud login", () => {
+    expect(resolveGcpAuth(null, "gcloud")).toEqual({ kind: "gcloud" });
+    expect(resolveGcpAuth("  ", " gcloud ")).toEqual({ kind: "gcloud" });
+  });
+  test("neither → null (not configured)", () => {
+    expect(resolveGcpAuth(null, null)).toBeNull();
+    expect(resolveGcpAuth("", "something-else")).toBeNull();
+  });
+});
+
+describe("gcloudAuthEnv", () => {
+  test("key mode sets both credential variables plus CLOUDSDK_CONFIG passthrough", () => {
+    expect(
+      gcloudAuthEnv({ kind: "key", credPath: "/k.json" }, { CLOUDSDK_CONFIG: "/cfg/gcloud" }),
+    ).toEqual({
+      CLOUDSDK_CONFIG: "/cfg/gcloud",
+      GOOGLE_APPLICATION_CREDENTIALS: "/k.json",
+      CLOUDSDK_AUTH_CREDENTIAL_FILE_OVERRIDE: "/k.json",
+    });
+  });
+  test("gcloud mode sets NO credential override — gcloud uses its own active login", () => {
+    expect(gcloudAuthEnv({ kind: "gcloud" }, { CLOUDSDK_CONFIG: "/cfg/gcloud" })).toEqual({
+      CLOUDSDK_CONFIG: "/cfg/gcloud",
+    });
+    expect(gcloudAuthEnv({ kind: "gcloud" }, {})).toEqual({});
+  });
+});
+
+describe("loadGcpAuthFromVault", () => {
+  test("reads gcp.credentials_json_path and gcp.auth_source", async () => {
+    const v = createMockVault();
+    expect(await loadGcpAuthFromVault(v)).toBeNull();
+    await v.set("gcp.auth_source", "gcloud");
+    expect(await loadGcpAuthFromVault(v)).toEqual({ kind: "gcloud" });
+    await v.set("gcp.credentials_json_path", "/k.json");
+    expect(await loadGcpAuthFromVault(v)).toEqual({ kind: "key", credPath: "/k.json" });
+  });
+});
+
 // `_lib/gcp-auth.test.ts` lives at `packages/gateway/src/connectors/_lib/`, one directory below
 // the tree this scan needs — `resolve(import.meta.dir, "..")` is `connectors/`, the parent of
 // every gcloud-spawning connector file (and of `_lib/` itself, so `gcloud-runner.ts` and this file
@@ -32,9 +81,31 @@ const CONNECTORS_DIR = resolve(import.meta.dir, "..");
  * The marker is the exact argv literal `"gcloud"` (double-quoted, matching how every real spawn
  * site writes it — `["gcloud", ...]`), not the bare word: `gcloud-runner.ts` and
  * `first-party-manifests.ts` both name gcloud in backtick-quoted prose, and matching on the word
- * alone would flag documentation as a spawn site.
+ * alone would flag documentation as a spawn site. Used only as a cheap file-level pre-filter below
+ * — the real per-occurrence check is `lineHasGcloudArgvLiteral`.
  */
 const GCLOUD_ARGV_MARKER = '"gcloud"';
+
+/**
+ * True only when a double-quoted `"gcloud"` on this line looks like an actual spawn-argv element
+ * — either `["gcloud"` (the array opens on the same line, the shape every one-line spawn call
+ * uses: `spawnCapture(["gcloud", ...])`) or a standalone `"gcloud",` / `"gcloud"` element on its
+ * OWN line (the shape a multi-line argv array uses — `vertex-ai-sync.ts`'s
+ * `const argv = [\n  "gcloud",\n  ...`).
+ *
+ * `GcpAuth`'s local-login support introduced a SECOND, legitimate use of the double-quoted literal
+ * `"gcloud"`: a TypeScript string-literal TYPE, never a spawned argv element — `local-auth-env.ts`'s
+ * `Record<"gh" | "aws" | "gcloud", ...>` / `source: "gh" | "aws" | "gcloud"` and `gcp-auth.ts`'s
+ * `GcpAuth` discriminant `{ readonly kind: "gcloud" }`. None of those three lines matches either
+ * argv shape above (no `[` immediately before the quote, and the line carries other tokens besides
+ * the literal), so this predicate — not the bare substring check `GCLOUD_ARGV_MARKER` alone —
+ * decides both `spawnSites` membership and offender detection below.
+ */
+function lineHasGcloudArgvLiteral(line: string): boolean {
+  if (line.includes('["gcloud"')) return true;
+  const trimmed = line.trim();
+  return trimmed === '"gcloud",' || trimmed === '"gcloud"';
+}
 
 /**
  * Window around each INDIVIDUAL `"gcloud"` argv occurrence — not a file-wide check — because a
@@ -96,13 +167,17 @@ async function scanGcloudSpawnSites(
     const contents = await readFile(abs, "utf8");
     if (!contents.includes(GCLOUD_ARGV_MARKER)) continue;
     const relPath = relative(dir, abs).split(sep).join("/");
-    spawnSites.push(relPath);
     const lines = contents.split("\n");
     // Per OCCURRENCE, not per file: a line can in principle carry the marker more than once, and
-    // each one is its own spawn site that must independently be credentialed.
+    // each one is its own spawn site that must independently be credentialed. Only a line where
+    // `lineHasGcloudArgvLiteral` recognises the argv SHAPE counts — a file that merely mentions
+    // the double-quoted literal as a TypeScript string-literal type (never as a spawned argv
+    // element) is not a spawn site at all, so it must not appear in `spawnSites` either.
+    let sawArgvSite = false;
     for (let i = 0; i < lines.length; i++) {
       const line = lines[i] as string;
-      if (!line.includes(GCLOUD_ARGV_MARKER)) continue;
+      if (!lineHasGcloudArgvLiteral(line)) continue;
+      sawArgvSite = true;
       if (siteIsCredentialed(lines, i)) continue;
       offenders.push(
         `${relPath}:${i + 1} spawns gcloud without gcloudKeyFileEnv or runGcloudCommand within ` +
@@ -111,6 +186,7 @@ async function scanGcloudSpawnSites(
           "ignoring the configured service-account key.",
       );
     }
+    if (sawArgvSite) spawnSites.push(relPath);
   }
   return { spawnSites, offenders };
 }
