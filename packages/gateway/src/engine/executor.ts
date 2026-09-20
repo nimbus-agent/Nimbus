@@ -133,6 +133,11 @@ const HITL_REQUIRED_BACKING = new Set<string>([
   "incident.resolve",
   "data.delete",
   "connector.remove",
+  // Local-auth reuse: lifts a credential (gh) or points a connector at the owner's own CLI login
+  // (aws/kubectl) — the owner never typed this secret, so the consent lives here, in the executor
+  // (Non-Negotiable 2), not in a CLI prompt. One type covers every source (I3: the gate reads
+  // action.type only). Gate site: connectors/local-auth/adopt-local-auth.ts.
+  "connector.adoptLocalAuth",
   "extension.autoUpdate",
   "extension.downgrade",
   "extension.install",

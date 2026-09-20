@@ -2,6 +2,7 @@ import { Database } from "bun:sqlite";
 import { describe, expect, test } from "bun:test";
 import type { ProbeVerdict } from "../connectors/credential-probe.ts";
 import { LocalIndex } from "../index/local-index.ts";
+import { createMockVault } from "../vault/mock.ts";
 import type { NimbusVault } from "../vault/nimbus-vault.ts";
 import { dispatchConnectorRpc } from "./connector-rpc.ts";
 import { handleConnectorAuth } from "./connector-rpc-handlers/auth.ts";
@@ -422,5 +423,33 @@ describe("connector.auth — credential probe runs before any Vault write", () =
     });
     expect(writes).toContain("pagerduty.api_token");
     expect((hit.value as { verified: string | null }).verified).toBeNull();
+  });
+});
+
+describe("connector.detectLocalAuth / connector.adoptLocalAuth routing", () => {
+  test("adoptLocalAuth without a toolExecutor is an internal error, never an ungated write", async () => {
+    await expect(
+      dispatchConnectorRpc({
+        method: "connector.adoptLocalAuth",
+        params: { source: "aws", profile: "dev" },
+        vault: createMockVault(),
+        localIndex: makeIndex(),
+        openUrl: async () => {},
+        syncScheduler: undefined,
+      }),
+    ).rejects.toThrow(/requires a toolExecutor/);
+  });
+
+  test("detectLocalAuth rejects an unknown source before touching the host", async () => {
+    await expect(
+      dispatchConnectorRpc({
+        method: "connector.detectLocalAuth",
+        params: { sources: ["svn"] },
+        vault: createMockVault(),
+        localIndex: makeIndex(),
+        openUrl: async () => {},
+        syncScheduler: undefined,
+      }),
+    ).rejects.toThrow(/sources must be an array/);
   });
 });

@@ -251,6 +251,13 @@ describe("I2 — HITL frozen-set membership", () => {
     expect(src).toMatch(/"extension\.autoUpdate"/);
     expect(src).toMatch(/"extension\.downgrade"/);
   });
+
+  test("connector.adoptLocalAuth is in the I2 HITL frozen set", async () => {
+    const { HITL_REQUIRED } = await import("./engine/executor.ts");
+    expect(HITL_REQUIRED.has("connector.adoptLocalAuth")).toBe(true);
+    const src = await read("packages/gateway/src/connectors/local-auth/adopt-local-auth.ts");
+    expect(src).toMatch(/ADOPT_ACTION_TYPE = "connector\.adoptLocalAuth"/);
+  });
 });
 
 describe("I3 — HITL gate consults action.type (not payload.mcpToolId)", () => {
@@ -480,6 +487,17 @@ describe("I5 — LAN method allowlist is intrinsic to LanServer", () => {
     // entry this method ships reachable by any paired peer, handing them the owner's question
     // text and the titles of the owner's indexed items (spec §3.2).
     expect(() => checkLanMethodAllowed("ask.explainLast", peer)).toThrow(/ERR_METHOD_NOT_ALLOWED/);
+  });
+
+  test("FORBIDDEN_OVER_LAN names both local-auth methods (a new connector.* method is LAN-reachable by default)", async () => {
+    const src = await read("packages/gateway/src/ipc/lan-rpc.ts");
+    expect(src).toMatch(/"connector\.detectLocalAuth"/);
+    expect(src).toMatch(/"connector\.adoptLocalAuth"/);
+    const { checkLanMethodAllowed } = await import("./ipc/lan-rpc.ts");
+    const peer = { peerId: "peer:x", writeAllowed: true };
+    expect(() => checkLanMethodAllowed("connector.adoptLocalAuth", peer)).toThrow(
+      /ERR_METHOD_NOT_ALLOWED/,
+    );
   });
 });
 
