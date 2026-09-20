@@ -7,6 +7,7 @@ import {
 import { type SyncContext, type SyncResult, syncNoopResult } from "../../sync/types.ts";
 import type { NimbusVault } from "../../vault/nimbus-vault.ts";
 import { readConnectorSecret } from "../connector-vault.ts";
+import { cliEnvFor } from "../local-auth/local-auth-env.ts";
 import { asRecord, stringField } from "../unknown-record.ts";
 
 interface AwsCredentialFields {
@@ -120,7 +121,7 @@ export async function awsCliJson(
   // `sagemaker` spawn one of these PER INDEXED ITEM via `runAwsCliPaginatedWalk`, so the
   // unhidden version flashed dozens of windows per sync tick. See `platform/spawn-capture.ts`.
   const r = await spawnCapture(["aws", ...args, "--output", "json"], {
-    env: extensionProcessEnv(extra),
+    env: extensionProcessEnv({ ...cliEnvFor("aws", process.env), ...extra }),
   });
   return { ok: r.ok, text: r.stdout };
 }
