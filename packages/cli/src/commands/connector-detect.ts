@@ -82,7 +82,10 @@ function parseOpts(tail: readonly string[]): Opts {
       sources.push(v as Source);
       i += 1;
     } else if (a === "--project") {
-      const v = tail[i + 1];
+      // Trimmed here for the same reason `readLine` trims the interactive answer (below) — a
+      // whitespace-only value is not a project id, and the two paths must agree on what counts
+      // as "empty" rather than one silently forwarding " " to the gateway.
+      const v = tail[i + 1]?.trim();
       if (v === undefined || v === "") throw new Error(USAGE);
       project = v;
       i += 1;
@@ -91,15 +94,32 @@ function parseOpts(tail: readonly string[]): Opts {
   return { json, replace, sources: sources.length === 0 ? undefined : sources, project };
 }
 
+/**
+ * The rendered "what" half of a finding's line — one arm per `Source`. A `switch` rather than a
+ * ternary chain so a fifth source added to `Source` without its own case here fails
+ * `bun run typecheck` (the `never` assignment in `default`) instead of silently falling through
+ * to the last arm — which is exactly how a gcloud finding once rendered as `contexts:` before
+ * `Source` included `"gcloud"` at all.
+ */
+function findingWhat(f: FindingWire): string {
+  switch (f.source) {
+    case "gh":
+      return `${f.host ?? "github.com"}  ${(f.accounts ?? []).join(", ")}`;
+    case "aws":
+      return `profiles: ${(f.profiles ?? []).join(", ")}`;
+    case "kubectl":
+      return `${f.kubeconfig ?? ""}  contexts: ${(f.contexts ?? []).join(", ")}`;
+    case "gcloud":
+      return `${f.account ?? ""}  project: ${f.project ?? "(none)"}`;
+    default: {
+      const _exhaustive: never = f.source;
+      return _exhaustive;
+    }
+  }
+}
+
 function describeFinding(f: FindingWire): string {
-  const what =
-    f.source === "gh"
-      ? `${f.host ?? "github.com"}  ${(f.accounts ?? []).join(", ")}`
-      : f.source === "aws"
-        ? `profiles: ${(f.profiles ?? []).join(", ")}`
-        : f.source === "gcloud"
-          ? `${f.account ?? ""}  project: ${f.project ?? "(none)"}`
-          : `${f.kubeconfig ?? ""}  contexts: ${(f.contexts ?? []).join(", ")}`;
+  const what = findingWhat(f);
   const state =
     f.status === "available"
       ? f.alreadyConfigured
@@ -109,45 +129,72 @@ function describeFinding(f: FindingWire): string {
   return `  ${f.source.padEnd(8)} ${what}  ·  ${state}`;
 }
 
-/** gcloud's `needs_project` is offerable too — an active login with no default project just needs
- * the owner to name one. Scoped to gcloud specifically, mirroring the gateway's own `usable()`
- * carve-out (`adopt-local-auth.ts`) — `needs_project` has no meaning for gh/aws/kubectl. */
-function adoptable(f: FindingWire, replace: boolean): boolean {
-  const offerable =
-    f.status === "available" || (f.source === "gcloud" && f.status === "needs_project");
-  return offerable && (replace || !f.alreadyConfigured);
+/**
+ * Whether this finding's STATUS is one Nimbus can ever offer, ignoring `alreadyConfigured`/
+ * `replace` — the one fact `adoptable()` and the "already configured" hint below must agree on.
+ * They used to check this independently and drifted: `adoptable()` learned to offer gcloud's
+ * `needs_project`, the hint did not, so a re-adopt-after-`gcloud config unset project` finding
+ * was correctly withheld from the offer list but printed no explanation why. Shared here so the
+ * two cannot drift again — same discipline as this file's `GCP_PROJECT_ID` validator, which lives
+ * once on the gateway side rather than as two regexes that could disagree.
+ *
+ * gcloud's `needs_project` counts as offerable — an active login with no default project just
+ * needs the owner to name one. Scoped to gcloud specifically, mirroring the gateway's own
+ * `usable()` carve-out (`adopt-local-auth.ts`) — `needs_project` has no meaning for gh/aws/kubectl.
+ */
+function isOfferableStatus(f: FindingWire): boolean {
+  return f.status === "available" || (f.source === "gcloud" && f.status === "needs_project");
 }
 
-/** Candidates for the numbered pick, and the one Enter chooses. */
+function adoptable(f: FindingWire, replace: boolean): boolean {
+  return isOfferableStatus(f) && (replace || !f.alreadyConfigured);
+}
+
+/** Candidates for the numbered pick, and the one Enter chooses. gcloud never reaches this —
+ * `chooseOne` handles it directly, before calling `choices()` — but the `"gcloud"` case still has
+ * to be handled explicitly (not folded into `default`) for the exhaustiveness check below to mean
+ * anything: without it, `default` would already be reachable today and the `never` assignment
+ * would never catch a REAL new member. */
 function choices(f: FindingWire): {
   key: "account" | "profile" | "context";
   items: string[];
   preselect: number;
 } {
-  if (f.source === "gh") {
-    const items = f.accounts ?? [];
-    return { key: "account", items, preselect: Math.max(0, items.indexOf(f.activeAccount ?? "")) };
+  switch (f.source) {
+    case "gh": {
+      const items = f.accounts ?? [];
+      return {
+        key: "account",
+        items,
+        preselect: Math.max(0, items.indexOf(f.activeAccount ?? "")),
+      };
+    }
+    case "aws": {
+      const items = f.profiles ?? [];
+      return { key: "profile", items, preselect: Math.max(0, items.indexOf("default")) };
+    }
+    case "kubectl": {
+      const items = f.contexts ?? [];
+      return {
+        key: "context",
+        items,
+        preselect: Math.max(0, items.indexOf(f.currentContext ?? "")),
+      };
+    }
+    case "gcloud":
+      throw new Error("choices() does not support gcloud — chooseOne handles it directly");
+    default: {
+      const _exhaustive: never = f.source;
+      throw new Error(_exhaustive);
+    }
   }
-  if (f.source === "aws") {
-    const items = f.profiles ?? [];
-    return { key: "profile", items, preselect: Math.max(0, items.indexOf("default")) };
-  }
-  const items = f.contexts ?? [];
-  return { key: "context", items, preselect: Math.max(0, items.indexOf(f.currentContext ?? "")) };
 }
 
-async function chooseOne(
+/** The generic numbered-pick path shared by gh/aws/kubectl. */
+async function chooseFromList(
   f: FindingWire,
   deps: ConnectorDetectDeps,
-  opts: Opts,
 ): Promise<AdoptParams | null> {
-  if (f.source === "gcloud") {
-    const project =
-      f.project ??
-      opts.project ??
-      (await deps.ask("  gcloud: which GCP project id? [Enter = skip] "));
-    return project === "" ? null : { source: "gcloud", project, replace: false };
-  }
   const c = choices(f);
   let chosen = c.items[c.preselect];
   if (c.items.length > 1) {
@@ -169,9 +216,46 @@ async function chooseOne(
   if (chosen === undefined) return null;
   // `replace` is set by the caller from --replace — one source of truth. Built per key, not with a
   // computed property, which would widen the object past `AdoptParams`.
-  if (c.key === "account") return { source: f.source, account: chosen, replace: false };
-  if (c.key === "profile") return { source: f.source, profile: chosen, replace: false };
-  return { source: f.source, context: chosen, replace: false };
+  switch (c.key) {
+    case "account":
+      return { source: f.source, account: chosen, replace: false };
+    case "profile":
+      return { source: f.source, profile: chosen, replace: false };
+    case "context":
+      return { source: f.source, context: chosen, replace: false };
+    default: {
+      const _exhaustive: never = c.key;
+      return _exhaustive;
+    }
+  }
+}
+
+/**
+ * The `Source`-level dispatch, itself exhaustive: a fifth source added without a case here (or in
+ * `findingWhat`/`choices` above) fails `bun run typecheck`, not just a manual review.
+ */
+async function chooseOne(
+  f: FindingWire,
+  deps: ConnectorDetectDeps,
+  opts: Opts,
+): Promise<AdoptParams | null> {
+  switch (f.source) {
+    case "gcloud": {
+      const project =
+        f.project ??
+        opts.project ??
+        (await deps.ask("  gcloud: which GCP project id? [Enter = skip] "));
+      return project === "" ? null : { source: "gcloud", project, replace: false };
+    }
+    case "gh":
+    case "aws":
+    case "kubectl":
+      return chooseFromList(f, deps);
+    default: {
+      const _exhaustive: never = f.source;
+      return _exhaustive;
+    }
+  }
 }
 
 function referenceHint(p: AdoptParams): string {
@@ -225,7 +309,7 @@ export async function runConnectorDetect(
   for (const f of findings) deps.log(describeFinding(f));
   const offer = findings.filter((f) => adoptable(f, opts.replace));
   for (const f of findings) {
-    if (f.status === "available" && f.alreadyConfigured && !opts.replace) {
+    if (isOfferableStatus(f) && f.alreadyConfigured && !opts.replace) {
       deps.log(
         `  ${SERVICE_NAME[f.source]} is already configured — pass --replace to overwrite it.`,
       );

@@ -329,4 +329,36 @@ describe("nimbus connector detect — gcloud", () => {
     await expect(runConnectorDetect(["--project"], deps().deps)).rejects.toThrow(/Usage/);
     await expect(runConnectorDetect(["--project", ""], deps().deps)).rejects.toThrow(/Usage/);
   });
+
+  test("a whitespace-only --project value is a usage error, matching an empty one", async () => {
+    await expect(runConnectorDetect(["--project", "   "], deps().deps)).rejects.toThrow(/Usage/);
+  });
+
+  test("--project trims surrounding whitespace before it reaches AdoptParams", async () => {
+    const d = deps({ detect: async () => [GCLOUD_NEEDS] });
+    await runConnectorDetect(["--project", "  acme-prod  "], d.deps);
+    expect(d.adopted).toEqual([{ source: "gcloud", project: "acme-prod", replace: false }]);
+  });
+
+  // Re-adopt-after-unset: the owner adopted gcloud once (gcp becomes configured), then ran
+  // `gcloud config unset project`. detect now reports `needs_project` + `alreadyConfigured`.
+  // `adoptable()` correctly withholds it without --replace, but the "already configured" hint
+  // must still fire — it used to gate on `status === "available"` only and stayed silent here,
+  // leaving the owner with nothing but the raw "needs project" reason line.
+  test("a needs_project finding that is already configured prints the --replace hint, not silence", async () => {
+    const reconfigured: FindingWire = { ...GCLOUD_NEEDS, alreadyConfigured: true };
+    const d = deps({ detect: async () => [reconfigured] });
+    await runConnectorDetect([], d.deps);
+    expect(d.adopted).toEqual([]);
+    expect(d.out.join("\n")).toContain(
+      "gcp is already configured — pass --replace to overwrite it.",
+    );
+  });
+
+  test("--replace re-offers a needs_project finding that is already configured", async () => {
+    const reconfigured: FindingWire = { ...GCLOUD_NEEDS, alreadyConfigured: true };
+    const d = deps({ answers: ["acme-prod"], detect: async () => [reconfigured] });
+    await runConnectorDetect(["--replace"], d.deps);
+    expect(d.adopted).toEqual([{ source: "gcloud", project: "acme-prod", replace: true }]);
+  });
 });
