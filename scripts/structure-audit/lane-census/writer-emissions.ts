@@ -281,13 +281,21 @@ function stripTrailingAsConst(text: string): string {
   return text.replace(/\s+as\s+const\s*$/, "").trim();
 }
 
-/** Whole-string match: is `text` exactly one quoted string literal? Returns its (raw, unescaped) contents. */
+/**
+ * Whole-string match: is `text` exactly one quoted string literal? Returns its (raw, unescaped)
+ * contents.
+ *
+ * The two alternatives in each escape-aware group are kept disjoint (a backslash-escape `\\[\s\S]`
+ * vs. "any other char" with backslash excluded) so the engine can never re-split the same input two
+ * ways — an overlapping pair (e.g. `\\.` alongside a lookahead-only alternative that also accepts a
+ * backslash) is exponential-backtracking-prone on a long run of unmatched escapes.
+ */
 function matchStringLiteral(text: string): string | undefined {
-  const m = /^(['"])((?:\\.|(?!\1)[\s\S])*)\1$/.exec(text);
+  const m = /^(['"])((?:\\[\s\S]|(?!\1)[^\\])*)\1$/.exec(text);
   if (m !== null) {
     return m[2] ?? "";
   }
-  const tpl = /^`((?:\\.|[^`])*)`$/.exec(text);
+  const tpl = /^`((?:\\[\s\S]|[^\\`])*)`$/.exec(text);
   if (tpl !== null && !tpl[1]?.includes("${")) {
     return tpl[1] ?? "";
   }
@@ -297,7 +305,7 @@ function matchStringLiteral(text: string): string | undefined {
 /** Whole-string match: is `text` exactly `<cond> ? "<a>" : "<b>"`? Returns `[a, b]`. */
 function matchTernaryOfLiterals(text: string): readonly [string, string] | undefined {
   const m =
-    /^[\s\S]+?\?\s*(['"])((?:\\.|(?!\1)[\s\S])*)\1\s*:\s*(['"])((?:\\.|(?!\3)[\s\S])*)\3$/.exec(
+    /^[\s\S]+?\?\s*(['"])((?:\\[\s\S]|(?!\1)[^\\])*)\1\s*:\s*(['"])((?:\\[\s\S]|(?!\3)[^\\])*)\3$/.exec(
       text,
     );
   if (m === null) {

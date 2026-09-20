@@ -142,4 +142,32 @@ describe("extractWriterEmissions", () => {
     expect(WRITER_INCLUDE).toContain("packages/gateway/src/connectors/");
     expect(WRITER_INCLUDE).toContain("packages/gateway/src/deployment/annotate.ts");
   });
+
+  // A `\_`-pair run followed by trailing garbage after the real closing delimiter makes the
+  // whole-string match fail only at the very end — the classic backtracking-blowup shape for an
+  // alternation whose two branches overlap (both used to accept a bare backslash). Before the fix,
+  // `matchStringLiteral`/`matchTernaryOfLiterals` could re-split a run like this exponentially many
+  // ways before giving up; disjoint alternatives make the failure linear instead. Asserted on the
+  // resolved value (behaviour), not elapsed time — a hang here fails via bun's own test timeout
+  // rather than a wall-clock assertion that would itself be flaky on a slow runner.
+  test("a malformed quoted-string value does not hang on catastrophic regex backtracking", () => {
+    const escapedRun = "\\_".repeat(5_000);
+    const src = `ctx.upsertItem({ service: "${escapedRun}"x, type: "y" });`;
+    const out = extractWriterEmissions("redos-quote.ts", src);
+    expect(out[0]?.service).toBe("__UNRESOLVED__");
+  });
+
+  test("a malformed template-literal value does not hang on catastrophic regex backtracking", () => {
+    const escapedRun = "\\_".repeat(5_000);
+    const src = "ctx.upsertItem({ service: `" + escapedRun + '`x, type: "y" });';
+    const out = extractWriterEmissions("redos-template.ts", src);
+    expect(out[0]?.service).toBe("__UNRESOLVED__");
+  });
+
+  test("a malformed ternary branch does not hang on catastrophic regex backtracking", () => {
+    const escapedRun = "\\_".repeat(5_000);
+    const src = `ctx.upsertItem({ service: "x", type: flag ? "${escapedRun}"z : "b" });`;
+    const out = extractWriterEmissions("redos-ternary.ts", src);
+    expect(out[0]?.itemType).toBe("__UNRESOLVED__");
+  });
 });

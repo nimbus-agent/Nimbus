@@ -18,6 +18,18 @@ const SQL_SHAPE = /\bselect\b[\s\S]*\bfrom\b/i;
 const INTERP = /\$\{[^}]*\}/g;
 
 /**
+ * `__INTERP__` plus one `\n` per newline the replaced span contained, so line counts derived from
+ * the shortened `sql` afterwards stay exact. `[^}]` (deliberately, so `${…}` doesn't need to track
+ * brace nesting) includes newlines — a multi-line interpolation collapsed to the bare token would
+ * otherwise delete those newlines and report every later line in the same literal too early.
+ */
+function neutraliseInterp(span: string): string {
+  let newlines = 0;
+  for (const ch of span) if (ch === "\n") newlines++;
+  return `__INTERP__${"\n".repeat(newlines)}`;
+}
+
+/**
  * Scan `contents` for SQL string literals across all three JS/TS quoting styles — backtick
  * template literals, double-quoted, and single-quoted. A backtick-only scanner is a blind spot
  * shaped exactly like the bug class this whole gate exists to catch: plenty of production SQL is
@@ -38,7 +50,7 @@ export function extractSqlLiterals(contents: string): readonly SqlLiteral[] {
       if (end === -1) break;
       const raw = src.slice(i + 1, end);
       if (SQL_SHAPE.test(raw)) {
-        out.push({ sql: raw.replace(INTERP, "__INTERP__"), line: lineAt(src, i) });
+        out.push({ sql: raw.replace(INTERP, neutraliseInterp), line: lineAt(src, i) });
       }
       i = end;
       continue;

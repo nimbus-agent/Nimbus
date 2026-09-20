@@ -56,6 +56,24 @@ describe("extractReadTriples", () => {
     expect(out).toEqual([{ table: "item", kind: "type", value: "commit", file: "h.ts", line: 4 }]);
   });
 
+  test("a multi-line interpolation does not shift the line of a predicate that follows it", () => {
+    // `${…}` neutralisation must preserve one `\n` per newline it swallows — otherwise every
+    // predicate after a multi-line interpolation reports too early, corrupting the census's
+    // primary output (`file:line`).
+    const src = [
+      "db.query(`",
+      "  SELECT id",
+      "  FROM item i",
+      "  WHERE i.service = ${",
+      "    condition",
+      "  }",
+      "  AND i.type = 'commit'",
+      "`);",
+    ].join("\n");
+    const out = extractReadTriples("i.ts", src);
+    expect(out).toEqual([{ table: "item", kind: "type", value: "commit", file: "i.ts", line: 7 }]);
+  });
+
   test("picks up a JS-side metadata read", () => {
     const src = [
       "const meta = JSON.parse(row.metadata) as Record<string, unknown>;",

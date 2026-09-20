@@ -33,7 +33,7 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
   `preflight/preflight.ts:166` but every `ci_run` writer emits `workflowName` instead; `branch` is
   read at `preflight.ts:168`/`:175` and only PARTIALLY covered — of four `ci_run` writers only
   `circleci` emits it, `github_actions` writes `headBranch`; and `opened_at_ms` is read
-  unscoped at `agents/premortem.ts:199`/`:205` with no writer for it, while the identically-named
+  `pr`-scoped at `agents/premortem.ts:199`/`:205` with no `pr` writer for it, while the identically-named
   key IS matched at `metrics/dora.ts`'s incident-scoped read, proving the census's per-literal
   type-scoping is sound rather than a blanket key-name match. Current numbers over
   `packages/gateway/src/**`: 401 reads, 117 writes, 83 unmatched item reads (73 total-absence + 10

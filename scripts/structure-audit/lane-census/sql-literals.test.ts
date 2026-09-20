@@ -41,4 +41,22 @@ describe("extractSqlLiterals", () => {
   test("returns nothing for empty input", () => {
     expect(extractSqlLiterals("")).toHaveLength(0);
   });
+
+  test("a multi-line interpolation is neutralised without deleting its newlines", () => {
+    // Collapsing a multi-line `${…}` span to the bare `__INTERP__` token would delete the
+    // newlines it contained, so every later `\n` count derived from `.sql` (read-sites.ts's
+    // `lineFor`) would undercount and report a downstream predicate's line too early.
+    const src = [
+      "db.query(`",
+      "  SELECT id FROM item",
+      "  WHERE service = ${",
+      "    condition",
+      "  }",
+      "`);",
+    ].join("\n");
+    const out = extractSqlLiterals(src);
+    expect(out[0]?.sql).toBe(
+      ["", "  SELECT id FROM item", "  WHERE service = __INTERP__", "", "", ""].join("\n"),
+    );
+  });
 });
