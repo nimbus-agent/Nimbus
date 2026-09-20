@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1789850044721,
+  "lastUpdate": 1789892959088,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "a67dbf4f1d6d01cb9ff3ac26668258072ef1ac70",
-          "message": "docs(ecosystem-roadmap): record Stage 2 delivery (#816)\n\nDocs-only. Updates the ecosystem roadmap per its own update rules now\nthat Stage 2 is fully merged:\n\n- **Stage 2 section**: status banner (VS Code slice complete\n2026-07-23), a shipped table mapping each item to its PR and the\nextension release that carries it (0.7.0: consumption #45 + 2e-core #46;\n0.8.0: 2d #47 + 2b #49; 0.9.0: 2c #50), the diagnosis kept as written.\n- **2a recorded as spiked-not-built** with a pointer to the merged\nfindings (#815), the prerequisites, and the reproducible re-run bar.\n- **Left-open list**: the deferred 2e tail, the untouched cross-client\nitems (statuspage/raycast), and the two gateway-side follow-ups the\nspike surfaced (empty `git_blame_line` pipeline, id-only PR titles).\n- **The headline**: dated status note — the moat and multiplier shipped,\nthe banner didn't; Stage 3's story leads with what exists.\n- **Open decision 3**: sharpened (not closed) by the spike.\n\nVerification: markdownlint 0 errors; lychee 37/37 links OK.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nCo-authored-by: Claude Fable 5 <noreply@anthropic.com>",
-          "timestamp": "2026-07-23T21:36:43+03:00",
-          "tree_id": "1e5ff1cd01020e1605c9b7b8e21994f26840e9d0",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/a67dbf4f1d6d01cb9ff3ac26668258072ef1ac70"
-        },
-        "date": 1784832866561,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 323.08504090000025,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 315.9056830499918,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 325.5713046500008,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "44a57ad2ebc442bcaee6c5cd69736a136de14d4f",
+          "message": "feat(connectors): nimbus connector detect — reuse existing gh, aws and kubectl logins (#1554)\n\n## Summary\n\n`nimbus connector detect` (and a `nimbus init` hook) reuse a login you\nalready have in `gh`,\n`aws` or `kubectl` instead of making you create a new token — one\nkeypress instead of an OAuth\nflow, uniquely possible because Nimbus is local.\n\nDetection is fully local: it reads gh's `hosts.yml` and runs `aws\nconfigure list-profiles` /\n`kubectl config get-contexts` — no network request. Adoption is\nHITL-gated\n(`connector.adoptLocalAuth`, a new entry in the I2 frozen action-type\nset) and asks per source.\n\n**The three sources are hybrid by design, not uniform:**\n\n| Source | What Nimbus stores | Stays in sync with the CLI? |\n| --- | --- | --- |\n| `gh` | a ONE-TIME COPY of the token `gh auth token` prints, as\n`github.pat` | No — `gh auth logout` does **not** disconnect Nimbus;\n`nimbus connector detect --replace` is the recovery path after a\nre-login |\n| `aws` | only the profile name (+ region) | Yes — the aws CLI resolves\nthe profile at every sync |\n| `kubectl` | only the kubeconfig path + context | Yes — kubectl\nresolves it at every sync |\n\ngh needs a copy because there is no \"aws CLI resolves it live\"\nequivalent for a PAT; aws/kubectl\ndeliberately store nothing so a credential rotation on the CLI side just\nworks.\n\n## New HITL action type + LAN denylist\n\n- `connector.adoptLocalAuth` added to `HITL_REQUIRED_BACKING` (I2) — one\naction type covers all\n  three sources (I3: the gate reads `action.type` only).\n- Both `connector.detectLocalAuth` (read) and `connector.adoptLocalAuth`\n(HITL-gated write) added\nto `FORBIDDEN_OVER_LAN` (I5) — a new `connector.*` method is\nLAN-reachable by default unless\n  named there, so this had to be explicit.\n- Both refuse under `--demo` via the existing `connector.*` demo-gate\nallow-list (I41).\n\n## Two pre-existing defects fixed along the way\n\nEach is independently interesting and predates this feature, surfaced\nwhile building it:\n\n1. **The pre-store credential probe was unledgered.** `nimbus connector\nauth <service>` (and now\nlocal-auth adoption) sends the caller's credential to\ngithub/gitlab/bitbucket/jira/jenkins\n*before* storing it, to verify it works — and nothing recorded that\noutbound request. `nimbus\nprove` could report `0` for a window in which a PAT had genuinely\nreached GitHub's servers.\n`verifyBeforeStoreWithScopes` now appends one `sync`-class I29 egress\nrow\n(`method='connector.credentialProbe'`) via the existing\n`recordSyncEgress` appender, BEFORE the\nrequest, fail-closed. The probe now also reports the token's granted\nscopes back\n   (`scopesGranted`, previously always `[]`).\n2. **Profile-only `aws` auth silently deleted a supplied\n`--aws-region`.**\n`persistAwsProfileOnly` (gateway) now keeps a caller-supplied region\ninstead of clearing it;\nthe no-region path is unchanged (still clears a stale one). A\nwhole-branch review caught that\nthis alone wasn't sufficient: the CLI's profile-only branch\n(`connector.ts`'s\n`applyAwsConnectorAuth`) computed the region from `--aws-region` but\nnever forwarded it in that\nbranch, so `nimbus connector auth aws --aws-profile X --aws-region Y`\nstill lost `Y` end to\nend. Now fixed on both sides, with a CLI test asserting the IPC params\ncarry\n`awsDefaultRegion`, and the consent-prompt wording and CHANGELOG entry\ncorrected to name the\nreal flags (`--aws-profile`/`--aws-region`, not `--profile`/`--region`).\n\n## What did NOT ship\n\n- **gcloud** — its own follow-up PR (PR 2 of this feature), gated on\nthis PR merging.\n- **GitHub Enterprise hosts** — `nimbus connector detect` lists a GHE\nhost it finds in `hosts.yml`\nbut does not offer to adopt it; the GitHub connector has no `api_base`\nyet.\n- **A stable `--json` schema** — documented as unstable this release; it\nprints the gateway's\n  findings array as-is and may change shape.\n\n## Gate results — reported honestly\n\n**`preflight:fast`** — ran clean twice (before and after the fixes\nbelow): all ~33 static gates\ngreen, `preflight PASSED`.\n\n**`bun run verify:docker --changed`** — Docker was available; ran to\ncompletion, GREEN: 890 pass,\n0 fail across the 25 changed test files, including the Linux leg of\n`packages/gateway/test/e2e/local-auth.e2e.test.ts` (previously never run\noff Windows). The FIRST\nrun of this caught a real bug (see below); the second, after the fix, is\nfully green.\n\n**`bun run preflight`** (full, including `test:ci`) — **not completed to\na single final result.**\nI ran it once in the background; it reached `test:ci`'s Windows retry\nloop\n(`runInitialUnitTestsWithCoverage`, which retries the whole\n`packages/gateway packages/cli packages/mcp-connectors scripts\n--coverage` run up to twice on\nWindows) and was mid-way through attempt 2 when I stopped it to\nprioritize getting this PR open\nrather than blocking further on a ~20-minute gate. Its FIRST\n(interrupted) attempt surfaced two\nreal, fixable defects (both now fixed and independently re-confirmed\ngreen — see below), alongside\nthe two failures the task brief said to expect and not withhold on:\n`packages/gateway/src/platform/sandbox/win32.test.ts`'s\n`createWin32SandboxRunner` \"reports itself\nas not fully active\" / \"explains the degradation instead of returning\nnull\" — pre-existing,\nreproduces on unmodified `main` per the brief's own control run (23839\npass, 2 fail).\n\nTwo real, fixable failures that first attempt surfaced, both fixed on\nthis branch:\n\n- `packages/cli/src/commands/init.test.ts`'s two new local-auth-offer\ntests never isolated the\nambient `CI` env var, and `test:ci` itself sets `CI=true` on every `bun\ntest` it runs\n(`scripts/lib/ci-tests.ts`) — same as real CI, which GitHub Actions sets\nambiently too — so the\noffer gate (which refuses under `CI=true` by design) suppressed the\noffer and both tests failed.\nFixed (`751c3c79`) by clearing/restoring `CI` around each test, the same\ntechnique the existing\n\"CI=true skips\" test already used in reverse. Confirmed green both\nlocally (`bun test\npackages/cli/src/commands/init.test.ts`, 64/64) and via a clean\n`verify:docker --changed` run.\n- `docs/demos/snapshots/zero-config.{txt,hash}` — the committed\ncast-driver snapshot for `nimbus\ninit`'s \"Next:\" steps — went stale the moment `nimbus connector detect`\nwas inserted into that\nlist (an earlier commit on this branch), and\n`scripts/cast-driver/e2e.test.ts` failed with a\nDRIFT report under `test:ci`/`preflight` (never caught by\n`preflight:fast`, which doesn't run\nthis suite). Fixed (`699486fd`) via `bun run record-casts --\n--update-snapshots`; `--check` now\n  passes.\n\n**`audit:coverage-floor` / the lcov build — completed, and CONFIRMED\nCLEAN.** Two full\nDocker-Linux-authoritative-equivalent builds ran locally\n(`bun run audit:coverage-floor:build-lcov`, each merging 5 shards into\n`coverage/lcov.info`).\n\nThe FIRST run (before the fix below) reported **8 violations**: the same\n**7 pre-existing,\nplatform-specific ones** a control run on this branch's base already\nestablished\n(`packages/cli/src/lib/stop-and-wait.ts`,\n`packages/gateway/src/ipc/server/socket-listeners.ts`,\n`packages/gateway/src/platform/linux.ts` line+branch,\n`packages/gateway/src/platform/sandbox/win32-reap.ts` line+branch,\n`packages/gateway/src/platform/sandbox/win32.ts` branch) — **plus one\nthis branch introduced**:\n`packages/gateway/src/ipc/connector-rpc.ts` at 75.68% line coverage\n(28/37; branch coverage was\nalready fine at 92.86%). Cause: the two new `connector.detectLocalAuth`\n/\n`connector.adoptLocalAuth` switch cases in the routing dispatcher were\nexercised only by direct\nunit tests of the functions they call, never through\n`dispatchConnectorRpc` itself — the existing\nrouting tests covered only the two error paths (missing `toolExecutor`,\nunknown source), both of\nwhich throw *before* reaching the switch-case bodies.\n\nFixed (`792417bb`): added two routing-level tests to\n`connector-rpc.test.ts` that drive both cases\nthrough the real dispatcher — one for `detectLocalAuth`'s success path\n(deterministic on every\nmachine/OS, since `detectAws` never throws: an absent CLI is a valid\n`status`, not an error) and\none for `adoptLocalAuth`, using a `PATH=\"\"` override to force every\nlocal CLI to report \"not\nfound\" deterministically (the same technique the CI-env isolation fix\nabove uses, so it does not\ndepend on whether the machine running it happens to have a working\naws/gh/kubectl login).\n\n**Re-ran the full lcov build a SECOND time** after that fix (`bun run\naudit:coverage-floor:build-lcov` → `bun run audit:coverage-floor`): now\nreports **exactly the same\n7 pre-existing violations and nothing else** — `connector-rpc.ts` no\nlonger appears. Its own\nnumbers moved from 28/37 (75.68%) to **34/37 lines (91.89%) / 27/28\nbranches (96.43%)**.\n\nAuthoritative per-file numbers (from this second, clean run) for every\nfile the task brief named:\n\n| File | Line | Branch |\n| --- | --- | --- |\n| `connectors/local-auth/adopt-local-auth.ts` | 65/66 = 98.48% | 66/69 =\n95.65% |\n| `connectors/local-auth/detect-aws.ts` | 14/14 = 100% | 10/10 = 100% |\n| `connectors/local-auth/detect-gh.ts` | 40/40 = 100% | 35/35 = 100% |\n| `connectors/local-auth/detect-kubectl.ts` | 22/22 = 100% | 16/18 =\n88.89% |\n| `connectors/local-auth/detect-local-auth.ts` | 11/11 = 100% | 11/11 =\n100% |\n| `connectors/local-auth/local-auth-env.ts` | 8/8 = 100% | 9/9 = 100% |\n| `connectors/local-auth/local-auth-host.ts` | 8/8 = 100% | no branches\n|\n| `connectors/local-auth/local-auth-types.ts` | 3/3 = 100% | no branches\n|\n| `ipc/connector-rpc.ts` (modified, not new) | 34/37 = 91.89% | 27/28 =\n96.43% |\n| `cli/src/commands/connector-detect.ts` | 84/92 = 91.30% | 94/112 =\n83.93% |\n| `cli/src/lib/read-line.ts` | 4/4 = 100% | 1/1 = 100% |\n\nEvery file clears both the 85% line and 80% branch floor. **The floor is\nCI-Linux-authoritative**\n— both builds above ran on a Windows dev machine (via the same\n`build-lcov.sh`/`check.ts` scripts\nCI runs), so this is strong local evidence, not a substitute for CI's\nown Ubuntu run.\n\n## Manual acceptance (brief Step 6)\n\n**Not run.** I did not get to the manual walkthrough (`nimbus start` →\n`nimbus connector detect`\n→ adopt aws/kubectl, deny gh → `nimbus prove` / `nimbus egress --json`)\nin an isolated\n`LOCALAPPDATA` before this PR was opened. Separately worth noting for\nwhoever runs it: this dev\nmachine's `kubectl` has no configured contexts at all (`kubectl config\nget-contexts` returns\nempty), so a real walkthrough here would need either a genuine\nkubeconfig or a temporary one\npointed to via `KUBECONFIG` to exercise the kubectl adopt path — `aws`\ndoes have a usable\n`default` profile here.\n\n## Before pushing\n\nConfirmed `docs/superpowers/` is absent from the branch\n(`git diff --stat origin/main -- docs/superpowers` prints nothing).\n\n---\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n## Summary by CodeRabbit\n\n- **New Features**\n- Added `nimbus connector detect` to find existing GitHub, AWS, and\nKubernetes logins locally.\n- Interactive users can select and securely adopt detected credentials\nwith consent; JSON output and source filtering are supported.\n- `nimbus init` can offer local-login reuse, with `--no-detect` to skip\ndetection.\n- Adoption results report verification status, GitHub scopes, and\nAWS/Kubernetes authentication details.\n- **Security**\n- Local credential detection and adoption are restricted to local CLI\nuse and require approval.\n- Credential probes are recorded before authentication and fail closed\nif recording fails.\n- **Bug Fixes**\n  - AWS profile-only authentication now preserves supplied regions.\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude Haiku 4.5 <noreply@anthropic.com>",
+          "timestamp": "2026-09-20T08:11:23Z",
+          "tree_id": "edf5f21550b43a7d309f847bf29fbbfc3d1190c5",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/44a57ad2ebc442bcaee6c5cd69736a136de14d4f"
+        },
+        "date": 1789892955102,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 330.9334453999967,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 331.13517595000013,
             "unit": "ms"
           }
         ]
