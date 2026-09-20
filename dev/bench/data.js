@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1789913016702,
+  "lastUpdate": 1789916988098,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "940cb2e01c5c8ecb853c2d359c203022457a7efd",
-          "message": "feat(agents): the why lens — why agent, whyPeek, on-demand blame + index regraph (step 1b) (#820)\n\n## Why lens — step 1b\n\nFollows the merged **1a** (#813), which made `resolves` / `mentions` /\n`correlates_with` real graph edges. This slice adds the agent that reads\nthem.\n\n### What ships\n- **`why` built-in agent** — six parallel lanes over the 1a graph edges\n(pull-request · ticket · discussion · driver · downstream · blame),\nmirroring `impact.ts`'s parallel sub-agent skeleton. Read-only,\nHITL-free, honest degradation with gap notes.\n- **`agents.whyPeek`** — sub-300ms line-anchored peek.\n- **On-demand single-line `git blame`** — root-fenced (spawns only\ninside `[[filesystem.roots]]`), cached, one bounded 20 s subprocess per\ncold line.\n- **Subject resolution** — `parseRef` / `matchConfiguredRoot` /\n`resolveWhySubject` (path or symbol → blame subject), with a red-proven\npath-escape fence on both the caller-path and symbol branches.\n- **`index.regraph` IPC + `nimbus index regraph` CLI** —\nresolver-threaded graph backfill (threads `configDir` through so\n`correlates_with` and friends survive).\n- **`nimbus why <path[:line] | symbol> [--line N] [--peek] [--json]`\nCLI.**\n- **IPC + Tauri allowlist** — `agents.why` / `agents.whyPeek` (allowlist\n99 → 101, TS mirror updated).\n- **1a-backlog fixes** — ticket-key prose stoplist (SHA-256 etc. no\nlonger extracted as ticket keys) + `obsidian_note` in the regraph type\norder.\n- Reuses the shared reverse-`depends_on` traversal, refactored out of\n`impact.ts` in the same PR (impact's suite passes unchanged).\n\n### Verification\n- **Whole-branch fresh-context review: no blockers.** All six cross-task\nchecks passed against re-derived populator source (lane SQL shapes,\n`resolves` both-endpoint scoping, the spawn fence, connector-verbatim\nfixtures, cross-surface drift, the `configDir` resolver wiring). Two\nreview nits fixed: the symbol-branch `file` containment fence\n(red-proven) and a whyPeek fixture `state` value corrected to the\nconnector-verbatim `\"closed\"`.\n- Gates green: tsc (gateway+cli), biome, `audit:structure` (invariants),\ncross-platform, doc-refs, readme-cli, lychee; gateway 730 / cli 34 /\nwhy.e2e 4 tests pass.\n- **Coverage floor: ok (0 violations)** — reproduced CI-faithfully via\nthe tar-into-container method (a mounted-volume Docker run under-reports\nand is unreliable).\n\n### Known-inert by design\nThe `downstream` lane ships structurally empty: the populator emits\n`depends_on` only at workspace→package granularity, never symbol→symbol,\nso `reverseDependsOn(symbolId)` returns nothing today. The lane degrades\nwith an honest gap note (remediation: symbol-level `depends_on` is a\npopulator follow-up) — this is loud-failure-over-plausible-wrong-answer,\nnot a dead lane.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n---------\n\nCo-authored-by: Claude Fable 5 <noreply@anthropic.com>",
-          "timestamp": "2026-07-24T05:07:17+03:00",
-          "tree_id": "09e168d8bcf006b91f90852173b5852ad2345909",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/940cb2e01c5c8ecb853c2d359c203022457a7efd"
-        },
-        "date": 1784860085783,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 303.42266929999823,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 304.4242296000022,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 333.8410196000048,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "95571be3d48f1d57da4633f16b22db2111af6583",
+          "message": "chore(diagnostics): promote the local-auth detect verification script (#1559)\n\nPromotes the ad-hoc acceptance script written while building `nimbus\nconnector detect` into\n`scripts/diagnostics/`, alongside the two single-platform diagnostics\nscripts already there\n(`test-google-oauth-refresh.ps1`, `macos-sandbox-bisect.sh`) and\nfollowing the first one's\ncomment-based-help idiom.\n\nIt drives the one path no automated test covers: a real gateway, real\nlocal `gh` / `aws` /\n`kubectl` installs, the interactive numbered pick, and the consent\nprompt.\n\n## Why it was not repo-worthy as written\n\nIt writes `kubernetes.kubeconfig` / `kubernetes.context` into the\n**real** Vault. `configDir` is\n`%APPDATA%\\Nimbus` and no environment variable relocates it — overriding\n`LOCALAPPDATA` moves the\ndatabase, logs and extensions but *not* credentials, so the\nobvious-looking sandbox is a trap. The\nheader now says so, and adds that `nimbus --demo` is not a substitute\neither: a demo-rooted gateway\nrefuses `connector.*` with `ERR_DEMO_FORBIDDEN` under invariant I41, so\ndetect and adopt cannot run\nunder it at all. That saves the next reader an hour.\n\nThe script now **refuses to run** when the `kubernetes` connector is\nalready configured, printing\nwhat is on file and telling the operator to remove it first. Clobbering\na credential that might be\nreal is worse than not running. It gates on the finding's own\n`alreadyConfigured` flag — the same\nsignal `adopt-local-auth.ts` refuses on — rather than re-deriving \"is it\nconfigured\" independently.\nRefusal exits `2`, distinct from pass and fail.\n\n## A check that cannot fail must not report success\n\n`gcloud` is the fourth detect source as of #1557, but it is not\ninstalled on most machines that will\nrun this, including the one it was written on. The script always\nexercises the shape, asserts the\none status it can actually reach (`cli_not_found`), and **skips the\nother three by name** with the\nreason. `SKIP` is a distinct state with its own count, and the summary\nreads\n`N passed, N skipped, N failed` under the heading \"not run, not\nasserted, not counted as passed\".\n\n## Two assertions kept deliberately, with the reasoning inline\n\n- The liveness probe is a **real IPC call**, never `nimbus status` —\nwhich prints \"not running\" and\nstill exits `0`, so its exit code is not a liveness signal, and a stale\n`gateway.json` makes it\n  worse.\n- The interactive pick asserts a **non-default** choice. `accept-alpha`\nis both option 1 and the\nEnter default, so an `accept-alpha` result cannot distinguish \"keystroke\nread\" from \"keystroke\nsilently dropped\"; the fixture picks option 2 and expects `accept-beta`.\n\n## Also\n\n`#Requires -Version 5.1`, and one real 5.1 trap fixed along the way:\nunder 5.1 a native command's\nstderr merged via `2>&1` becomes a terminating error when\n`$ErrorActionPreference = 'Stop'`, so a\nharmless `bun` warning would have crashed the run instead of returning\nthe `{Ok; Text}` its callers\ncheck. The override is scoped to that one call with a comment. The\nworktree path is derived from\n`$PSScriptRoot` rather than one developer's checkout. Cleanup already\nran in a single `try/finally`\ncovering failure and Ctrl-C, not just the happy path; that is now stated\nrather than implied.\n\n## Verification\n\n`audit:doc-refs` (1544 refs), `audit:cross-platform`, `preflight:fast`\n34/34 — all pass. The\nPowerShell parses (`Parser::ParseFile`). **The script itself was not\nexecuted end to end**: it needs\na live gateway and would write to the real Vault. No doc references it,\nso nothing new for\n`audit:doc-refs` to resolve.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n\n## Summary by CodeRabbit\n\n* **New Features**\n* Added a diagnostic utility for validating Kubernetes connector\ndetection, adoption, contexts, statuses, and credential handling.\n* Added optional interactive validation for selecting and naming\nKubernetes contexts.\n* Added support for skipping interactive checks and retaining the\nadopted connector for further inspection.\n* **Bug Fixes**\n* Improved handling of unavailable gcloud installations by\ndistinguishing skipped checks from failures.\n* Added safe cleanup and restoration after diagnostic runs, including\nwhen checks fail or are refused.\n\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>",
+          "timestamp": "2026-09-20T14:56:50Z",
+          "tree_id": "8ffd47171df7c95593245ab6f3de00dac4c23120",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/95571be3d48f1d57da4633f16b22db2111af6583"
+        },
+        "date": 1789916983953,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 342.5776175500061,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 342.5872428500035,
             "unit": "ms"
           }
         ]
