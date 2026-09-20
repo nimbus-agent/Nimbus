@@ -1,6 +1,10 @@
 import type { LazyConnectorMesh } from "../connectors/lazy-mesh/index.ts";
+import { adoptLocalAuth, parseAdoptRequest } from "../connectors/local-auth/adopt-local-auth.ts";
+import { detectLocalAuth, parseSources } from "../connectors/local-auth/detect-local-auth.ts";
+import { defaultLocalAuthHostDeps } from "../connectors/local-auth/local-auth-host.ts";
 import type { ToolExecutor } from "../engine/executor.ts";
 import type { LocalIndex } from "../index/local-index.ts";
+import { isConnectorConfigured } from "../sync/connector-configured.ts";
 import type { SyncScheduler } from "../sync/scheduler.ts";
 import type { NimbusVault } from "../vault/nimbus-vault.ts";
 import {
@@ -109,6 +113,30 @@ export async function dispatchConnectorRpc(options: {
       return handleConnectorSync(ctx);
     case "connector.auth":
       return handleConnectorAuth(ctx);
+    case "connector.detectLocalAuth": {
+      const sources = parseSources(rec?.["sources"]);
+      const findings = await detectLocalAuth(sources, {
+        host: defaultLocalAuthHostDeps(),
+        isConfigured: (svc) => isConnectorConfigured(vault, svc),
+      });
+      return { kind: "hit", value: findings };
+    }
+    case "connector.adoptLocalAuth": {
+      if (toolExecutor === undefined) {
+        throw new ConnectorRpcError(-32603, "connector.adoptLocalAuth requires a toolExecutor");
+      }
+      const req = parseAdoptRequest(rec);
+      const value = await adoptLocalAuth(req, {
+        detect: {
+          host: defaultLocalAuthHostDeps(),
+          isConfigured: (svc) => isConnectorConfigured(vault, svc),
+        },
+        gate: (action) => toolExecutor.gate(action),
+        // The token travels in-process only, inside this synthetic rec; it never crosses IPC.
+        authenticate: (authRec) => handleConnectorAuth({ ...ctx, rec: authRec }),
+      });
+      return { kind: "hit", value };
+    }
     default:
       return { kind: "miss" };
   }

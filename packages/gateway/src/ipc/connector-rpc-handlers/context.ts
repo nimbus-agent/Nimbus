@@ -57,4 +57,10 @@ export type ConnectorRpcHandlerContext = {
     serviceId: ConnectorServiceId,
     creds: Record<string, string>,
   ) => Promise<ProbeVerdict | null>;
+  /**
+   * Test seam. Omitted in production, where `auth.ts` appends one `sync`-class egress row
+   * (`method: "connector.credentialProbe"`) through `recordSyncEgress` on the index's database
+   * before any probe request (I29). Injected only to prove the fail-closed arm.
+   */
+  appendProbeEgress?: (serviceId: ConnectorServiceId) => void;
 };

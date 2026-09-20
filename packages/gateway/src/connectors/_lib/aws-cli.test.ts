@@ -1,7 +1,15 @@
-import { describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, test } from "bun:test";
+import { EventEmitter } from "node:events";
 
+import { spawnCaptureInternals } from "../../platform/spawn-capture.ts";
 import type { SyncContext } from "../../sync/types.ts";
 import {
+  createMemoryIndexDb,
+  createStubVault,
+  syncTestContext,
+} from "../connector-sync-test-helpers.ts";
+import {
+  awsCliJson,
   awsNextToken,
   type BaseWalkState,
   extractArray,
@@ -9,6 +17,58 @@ import {
   type RunAwsCli,
   runAwsCliPaginatedWalk,
 } from "./aws-cli.ts";
+
+type CaptureSpawn = typeof spawnCaptureInternals.spawn;
+
+const realSpawn = spawnCaptureInternals.spawn;
+afterEach(() => {
+  spawnCaptureInternals.spawn = realSpawn;
+});
+
+/** Replace the spawn seam with a fake; returns the captured argv + env. */
+function stubSpawn(
+  impl: (
+    argv: string[],
+    opts: { env: Record<string, string> },
+  ) => {
+    exitCode: number;
+    stdout: string;
+  },
+): { calls: { argv: string[]; env: Record<string, string> }[] } {
+  const calls: { argv: string[]; env: Record<string, string> }[] = [];
+  spawnCaptureInternals.spawn = ((
+    cmd: string,
+    args: readonly string[],
+    opts?: { env?: Record<string, string> },
+  ) => {
+    const argv = [cmd, ...args];
+    const env = opts?.env ?? {};
+    calls.push({ argv, env });
+    const r = impl(argv, { env });
+    return fakeChild(r.exitCode, r.stdout);
+  }) as unknown as CaptureSpawn;
+  return { calls };
+}
+
+/**
+ * A `node:child_process` stand-in — see `gcloud-runner.test.ts`, which this pattern is copied
+ * from: the connector CLI runners spawn via `platform/spawn-capture.ts`, not `Bun.spawn`.
+ */
+function fakeChild(exitCode: number, stdout: string): unknown {
+  const proc = new EventEmitter() as EventEmitter & {
+    stdout: EventEmitter;
+    stderr: EventEmitter;
+    kill: () => void;
+  };
+  proc.stdout = new EventEmitter();
+  proc.stderr = new EventEmitter();
+  proc.kill = (): void => {};
+  queueMicrotask(() => {
+    if (stdout !== "") proc.stdout.emit("data", Buffer.from(stdout));
+    proc.emit("close", exitCode);
+  });
+  return proc;
+}
 
 const CTX = {} as SyncContext;
 const PASS_1 = "cursor-1";
@@ -137,5 +197,30 @@ describe("runAwsCliPaginatedWalk", () => {
     const { spec } = baseSpec({ maxItems: 2 });
     const res = await runAwsCliPaginatedWalk(CTX, null, run, spec);
     expect(res.itemsUpserted).toBe(2);
+  });
+});
+
+describe("awsCliJson", () => {
+  test("forwards AWS_CONFIG_FILE so a non-default config the detector saw is the one the sync reads", async () => {
+    const prev = process.env["AWS_CONFIG_FILE"];
+    process.env["AWS_CONFIG_FILE"] = "/cfg/aws/config";
+    try {
+      const { calls } = stubSpawn(() => ({ exitCode: 0, stdout: "[]" }));
+      const db = createMemoryIndexDb();
+      const vault = createStubVault({
+        "aws.access_key_id": null,
+        "aws.secret_access_key": null,
+        "aws.default_region": null,
+        "aws.profile": "dev",
+      });
+      const ctx = syncTestContext(db, vault, "aws");
+      const res = await awsCliJson(ctx, ["s3api", "list-buckets"]);
+      expect(res.ok).toBe(true);
+      expect(calls).toHaveLength(1);
+      expect(calls[0]!.env["AWS_CONFIG_FILE"]).toBe("/cfg/aws/config");
+    } finally {
+      if (prev === undefined) delete process.env["AWS_CONFIG_FILE"];
+      else process.env["AWS_CONFIG_FILE"] = prev;
+    }
   });
 });

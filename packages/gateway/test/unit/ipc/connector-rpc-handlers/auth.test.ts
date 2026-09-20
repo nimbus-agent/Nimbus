@@ -1,5 +1,6 @@
 import { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import type { ConnectorServiceId } from "../../../../src/connectors/connector-catalog.ts";
 import { LocalIndex } from "../../../../src/index/local-index.ts";
 import { handleConnectorAuth } from "../../../../src/ipc/connector-rpc-handlers/auth.ts";
 import type { ConnectorRpcHandlerContext } from "../../../../src/ipc/connector-rpc-handlers/context.ts";
@@ -941,6 +942,26 @@ describe("handleConnectorAuth — aws", () => {
   });
 });
 
+describe("aws profile-only auth and the region", () => {
+  test("a supplied region is stored, not deleted", async () => {
+    const { db, vault, localIndex } = freshDeps();
+    await handleConnectorAuth(
+      makeCtx({ service: "aws", profile: "dev", defaultRegion: "eu-west-1" }, vault, localIndex),
+    );
+    expect(await vault.get("aws.profile")).toBe("dev");
+    expect(await vault.get("aws.default_region")).toBe("eu-west-1");
+    db.close();
+  });
+
+  test("no region supplied still clears a stale one (unchanged behaviour)", async () => {
+    const { db, vault, localIndex } = freshDeps();
+    await vault.set("aws.default_region", "us-east-1");
+    await handleConnectorAuth(makeCtx({ service: "aws", profile: "dev" }, vault, localIndex));
+    expect(await vault.get("aws.default_region")).toBeNull();
+    db.close();
+  });
+});
+
 describe("handleConnectorAuth — azure", () => {
   let db: Database;
   let vault: MockVault;
@@ -1658,5 +1679,58 @@ describe("handleConnectorAuth — unknown service name", () => {
     };
 
     await expect(handleConnectorAuth(ctx)).rejects.toMatchObject({ rpcCode: -32602 });
+  });
+});
+
+describe("credential probe egress (I29 — connector.credentialProbe)", () => {
+  function probeRows(db: Database): Array<{ destination: string; method: string }> {
+    return db
+      .query<{ destination: string; method: string }, []>(
+        "SELECT destination, method FROM egress_ledger WHERE method = 'connector.credentialProbe'",
+      )
+      .all();
+  }
+
+  test("github: one sync row naming the service is appended BEFORE the probe request", async () => {
+    const { db, vault, localIndex } = freshDeps();
+    let rowsWhenProbed = -1;
+    const ctx = {
+      ...makeCtx({ service: "github", token: "ghp_fixture" }, vault, localIndex),
+      runCredentialProbe: async () => {
+        rowsWhenProbed = probeRows(db).length;
+        return { kind: "valid" as const, scopes: ["repo", "read:org"] };
+      },
+    };
+    const hit = await handleConnectorAuth(ctx);
+    expect(rowsWhenProbed).toBe(1);
+    expect(probeRows(db)).toEqual([{ destination: "github", method: "connector.credentialProbe" }]);
+    expect((hit.value as { scopesGranted: string[] }).scopesGranted).toEqual(["repo", "read:org"]);
+    db.close();
+  });
+
+  test("an append failure aborts: the probe never runs and nothing is stored", async () => {
+    const { db, vault, localIndex } = freshDeps();
+    let probed = false;
+    const ctx = {
+      ...makeCtx({ service: "github", token: "ghp_fixture" }, vault, localIndex),
+      appendProbeEgress: (_id: ConnectorServiceId): void => {
+        throw new Error("ledger unavailable");
+      },
+      runCredentialProbe: async () => {
+        probed = true;
+        return { kind: "valid" as const };
+      },
+    };
+    await expect(handleConnectorAuth(ctx)).rejects.toThrow(/ledger unavailable/);
+    expect(probed).toBe(false);
+    expect(await vault.get("github.pat")).toBeNull();
+    db.close();
+  });
+
+  test("a service with no probe appends nothing (aws makes no probe request)", async () => {
+    const { db, vault, localIndex } = freshDeps();
+    await handleConnectorAuth(makeCtx({ service: "aws", profile: "dev" }, vault, localIndex));
+    expect(probeRows(db)).toEqual([]);
+    db.close();
   });
 });

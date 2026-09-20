@@ -86,6 +86,10 @@ describe("printOnboardingHintIfNoConnectors", () => {
     await printOnboardingHintIfNoConnectors(client, join(dir, "marker"));
     expect(out.stdout).toContain("nimbus connector auth github");
     expect(out.stdout).toContain("nimbus connector sync github");
+    expect(out.stdout).toContain("nimbus connector detect");
+    expect(out.stdout.indexOf("nimbus connector detect")).toBeLessThan(
+      out.stdout.indexOf("nimbus connector auth github"),
+    );
     expect(out.stdout).toContain("nimbus doctor");
     expect(out.stdout).not.toContain("nimbus demo");
   });

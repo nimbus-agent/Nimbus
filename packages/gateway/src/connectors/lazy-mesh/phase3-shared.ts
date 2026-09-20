@@ -11,6 +11,7 @@ import { extensionProcessEnv } from "../../extensions/spawn-env.ts";
 import type { NimbusVault } from "../../vault/nimbus-vault.ts";
 import type { ConnectorServiceId } from "../connector-catalog.ts";
 import { type ConnectorSecretKeyOf, readConnectorSecret } from "../connector-vault.ts";
+import { cliEnvFor } from "../local-auth/local-auth-env.ts";
 import {
   hostnameFromUrl,
   manifestForFirstParty,
@@ -180,7 +181,7 @@ export async function loadAwsCreds(vault: NimbusVault): Promise<AwsCreds> {
   const reg = await readSecret(vault, "aws", "default_region");
   const prof = await readSecret(vault, "aws", "profile");
   const ok = (ak !== "" && sk !== "" && (reg !== "" || prof !== "")) || (prof !== "" && ak === "");
-  const env: Record<string, string> = {};
+  const env: Record<string, string> = { ...cliEnvFor("aws", process.env) };
   if (ak !== "") {
     env["AWS_ACCESS_KEY_ID"] = ak;
   }

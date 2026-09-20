@@ -1,5 +1,5 @@
 {"version":2,"width":120,"height":40,"timestamp":1700000000,"env":{"SHELL":"/bin/sh","TERM":"dumb"}}
-[0.235,"o","## Investigation\n\nThe p95 latency on the checkout endpoint rose from 120ms to 380ms over the past 2 hours. Top contributors:\n\n- 3 slow database queries on `orders` table (no recent index changes)\n- 1 retry storm against the payment-gateway connector\n\nInvestigation complete.\n\n"]
-[0.231,"o","Drafting incident summary for #ops...\n"]
-[0.232,"o","[consent.request] Post to Slack #ops requires consent\n[scripted: approve]\n"]
-[0.232,"o","Posted to #ops.\n"]
+[0.306,"o","## Investigation\n\nThe p95 latency on the checkout endpoint rose from 120ms to 380ms over the past 2 hours. Top contributors:\n\n- 3 slow database queries on `orders` table (no recent index changes)\n- 1 retry storm against the payment-gateway connector\n\nInvestigation complete.\n\n"]
+[0.309,"o","Drafting incident summary for #ops...\n"]
+[0.309,"o","[consent.request] Post to Slack #ops requires consent\n[scripted: approve]\n"]
+[0.309,"o","Posted to #ops.\n"]

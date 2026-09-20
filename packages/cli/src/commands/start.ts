@@ -115,6 +115,9 @@ export async function printOnboardingHintIfNoConnectors(
   if (Array.isArray(rows) && rows.length === 0) {
     console.log("");
     console.log("Next — connect a service so the index has data to search:");
+    console.log(
+      "  nimbus connector detect        # reuse gh / aws / kubectl logins you already have",
+    );
     console.log("  nimbus connector auth github");
     console.log("  nimbus connector sync github");
     console.log("  nimbus doctor");

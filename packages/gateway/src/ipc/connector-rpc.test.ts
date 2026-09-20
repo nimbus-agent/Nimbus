@@ -1,7 +1,9 @@
 import { Database } from "bun:sqlite";
 import { describe, expect, test } from "bun:test";
 import type { ProbeVerdict } from "../connectors/credential-probe.ts";
+import type { ToolExecutor } from "../engine/executor.ts";
 import { LocalIndex } from "../index/local-index.ts";
+import { createMockVault } from "../vault/mock.ts";
 import type { NimbusVault } from "../vault/nimbus-vault.ts";
 import { dispatchConnectorRpc } from "./connector-rpc.ts";
 import { handleConnectorAuth } from "./connector-rpc-handlers/auth.ts";
@@ -35,9 +37,12 @@ function baseCtx(overrides: Partial<ConnectorRpcHandlerContext> = {}): Connector
 }
 
 function fakeLocalIndex(opts: { onReauth?: (id: string) => void } = {}): LocalIndex {
+  const db = new Database(":memory:");
+  LocalIndex.ensureSchema(db);
   return {
     ensureConnectorSchedulerRegistration: () => {},
     markConnectorReauthenticated: (id: string) => opts.onReauth?.(id),
+    getDatabase: () => db,
   } as unknown as LocalIndex;
 }
 
@@ -419,5 +424,95 @@ describe("connector.auth — credential probe runs before any Vault write", () =
     });
     expect(writes).toContain("pagerduty.api_token");
     expect((hit.value as { verified: string | null }).verified).toBeNull();
+  });
+});
+
+describe("connector.detectLocalAuth / connector.adoptLocalAuth routing", () => {
+  test("adoptLocalAuth without a toolExecutor is an internal error, never an ungated write", async () => {
+    await expect(
+      dispatchConnectorRpc({
+        method: "connector.adoptLocalAuth",
+        params: { source: "aws", profile: "dev" },
+        vault: createMockVault(),
+        localIndex: makeIndex(),
+        openUrl: async () => {},
+        syncScheduler: undefined,
+      }),
+    ).rejects.toThrow(/requires a toolExecutor/);
+  });
+
+  test("detectLocalAuth rejects an unknown source before touching the host", async () => {
+    await expect(
+      dispatchConnectorRpc({
+        method: "connector.detectLocalAuth",
+        params: { sources: ["svn"] },
+        vault: createMockVault(),
+        localIndex: makeIndex(),
+        openUrl: async () => {},
+        syncScheduler: undefined,
+      }),
+    ).rejects.toThrow(/sources must be an array/);
+  });
+
+  test("detectLocalAuth with a valid source reaches the real detector and returns one finding", async () => {
+    // No unit test elsewhere drives `detectLocalAuth` THROUGH the real dispatcher — every other
+    // test either throws before this line (above) or exercises `detectLocalAuth` directly,
+    // bypassing routing entirely. `detectAws` never throws (an absent/misconfigured CLI is a
+    // valid `status`, not an error), so this is deterministic on every machine and OS regardless
+    // of whether the aws CLI is actually installed here — only the finding's `status` varies,
+    // which this test does not assert on. PATH is still forced empty, the same technique the
+    // adopt sibling test below uses: without it, a machine/CI runner with a real `aws` binary on
+    // PATH spawns a real subprocess (worst case `LOCAL_AUTH_CLI_TIMEOUT_MS` = 10s) instead of a
+    // deterministic, instant "not found".
+    const prevPath = process.env["PATH"];
+    process.env["PATH"] = "";
+    try {
+      const hit = await dispatchConnectorRpc({
+        method: "connector.detectLocalAuth",
+        params: { sources: ["aws"] },
+        vault: createMockVault(),
+        localIndex: makeIndex(),
+        openUrl: async () => {},
+        syncScheduler: undefined,
+      });
+      expect(hit.kind).toBe("hit");
+      const value = (hit as { kind: "hit"; value: unknown }).value;
+      expect(Array.isArray(value)).toBe(true);
+      const findings = value as Array<{ source: string }>;
+      expect(findings).toHaveLength(1);
+      expect(findings[0]?.source).toBe("aws");
+    } finally {
+      if (prevPath === undefined) delete process.env["PATH"];
+      else process.env["PATH"] = prevPath;
+    }
+  });
+
+  test("adoptLocalAuth with a toolExecutor reaches real target resolution and refuses cleanly", async () => {
+    // Same gap as above, mirrored for adopt: no test reaches past the toolExecutor-undefined
+    // check into the real `adoptLocalAuth` call. Forcing PATH empty makes every local CLI report
+    // "not found" DETERMINISTICALLY — the same technique the CI-env isolation fix in
+    // packages/cli/src/commands/init.test.ts uses — so this does not depend on whether THIS
+    // machine (dev box or CI runner) happens to have a working aws/gh/kubectl login configured.
+    const prevPath = process.env["PATH"];
+    process.env["PATH"] = "";
+    try {
+      const toolExecutor = {
+        gate: async () => "proceed" as const,
+      } as unknown as ToolExecutor;
+      await expect(
+        dispatchConnectorRpc({
+          method: "connector.adoptLocalAuth",
+          params: { source: "aws" },
+          vault: createMockVault(),
+          localIndex: makeIndex(),
+          openUrl: async () => {},
+          syncScheduler: undefined,
+          toolExecutor,
+        }),
+      ).rejects.toThrow(/ERR_LOCAL_AUTH_SOURCE_UNAVAILABLE/);
+    } finally {
+      if (prevPath === undefined) delete process.env["PATH"];
+      else process.env["PATH"] = prevPath;
+    }
   });
 });
