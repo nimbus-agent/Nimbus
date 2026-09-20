@@ -165,9 +165,9 @@ describe("gcloud spawn totality — a future gcloud spawn site cannot skip the c
       "  return r;\n" +
       "}\n";
     const fixtureDir = mkdtempSync(join(tmpdir(), "nimbus-gcp-auth-"));
-    const fixturePath = resolve(fixtureDir, "__gcp_auth_two_site_fixture.ts");
-    await writeFile(fixturePath, fixture, "utf8");
     try {
+      const fixturePath = resolve(fixtureDir, "__gcp_auth_two_site_fixture.ts");
+      await writeFile(fixturePath, fixture, "utf8");
       const { offenders } = await scanGcloudSpawnSites(fixtureDir);
       const fixtureOffenders = offenders.filter((o) =>
         o.startsWith("__gcp_auth_two_site_fixture.ts:"),
