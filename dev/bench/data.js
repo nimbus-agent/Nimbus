@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1789916988098,
+  "lastUpdate": 1789927701827,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "a36afddee8c7211756a127c85203619f5cd8818d",
-          "message": "ci(infra): fix ruleset-drift bypass-actor false-positive; P1 gate green (#821)\n\n## What & why\n\nFollow-up to #818 (P1 — Org CI Foundation). P1's `org-drift-sweep` had\nits **first live post-merge run**, which surfaced one issue in the\n`ruleset-drift` job.\n\n**Finding:** the job's credential is a repo-scoped `nimbus-release-bot`\nApp installation token with `Administration: read`. GitHub returns an\n**empty `bypass_actors`** to that token for org-level actors\n(`OrganizationAdmin`), so the `bypass_actor_types` diff false-failed on\n`Nimbus` / `nimbus-vscode` / `nimbus-web-clipper` — the repos that carry\nthat bypass — even though an org-owner token sees the actor exactly as\ndeclared.\n\nI tried the coverage-preserving path first (per plan): adding\n`organization-administration: read` to the token. **Proven live on this\nbranch that it does NOT restore visibility.** Reading the field\notherwise requires `Administration: write`, which a read-only audit gate\nmust not hold.\n\n## Changes\n\n- **Workflow:** revert the token step to `Administration: read` only\n(least privilege), with a comment recording the limitation.\n- **Script:** drop `bypass_actors` from `diffRuleset` (with rationale),\nand simplify the desired-file schema to a flat `repos` list (no per-repo\noverrides). Every other check — enforcement,\n`ref_name.include`/`exclude`, required rule types, PR params — reads\nreliably under the App token.\n- **JSON/roadmap:** record the intended bypass shape + the deferral\n(audit bypass actors from a higher-privilege context later) so the check\nisn't silently lost.\n- **Roadmap:** mark **P1 done** — the gate is proven green end-to-end.\n\n## Live proof\n\n`org-drift-sweep` dispatched on this branch (run `30060920603`) is\n**fully green**: all 8 `sha-pins` jobs + `ruleset-drift`\n(`audit:ruleset-drift: OK (5 repos)`). The gate now goes red only on\nreal drift.\n\n## Local verification\n\n`13 tests pass` · live gate `OK (5 repos)` · biome/scripts-tsc clean ·\n`audit:action-sha-pins: OK` · markdown `0 errors` · doc-refs resolve.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n\n## Summary by CodeRabbit\n\n* **Documentation**\n* Clarified ruleset drift coverage, limitations, and planned handling of\nbypass actors.\n  * Updated infrastructure roadmap status and rollout details.\n\n* **Chores**\n  * Simplified shared ruleset configuration across repositories.\n* Improved drift auditing to focus on supported ruleset settings and\nconditions.\n\n* **Tests**\n* Updated validation to reflect the revised ruleset configuration and\nbypass-actor handling.\n\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude Opus 4.8 (1M context) <noreply@anthropic.com>",
-          "timestamp": "2026-07-24T06:31:27+03:00",
-          "tree_id": "76c353cdb91f548ac5d215ce9b5384a664195d77",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/a36afddee8c7211756a127c85203619f5cd8818d"
-        },
-        "date": 1784864668278,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 317.2423739999998,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 323.25755139999967,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 342.5872428500035,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "306811640+nimbus-release-bot[bot]@users.noreply.github.com",
+            "name": "nimbus-release-bot[bot]",
+            "username": "nimbus-release-bot[bot]"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "8e6bc62793aab614e4a9a902d6eb31454d6f3731",
+          "message": "chore: release main (#1560)\n\n:robot: I have created a release *beep* *boop*\n---\n\n\n<details><summary>7.29.0</summary>\n\n##\n[7.29.0](https://github.com/nimbus-agent/Nimbus/compare/v7.28.0...v7.29.0)\n(2026-09-20)\n\n\n### Features\n\n* **connectors:** gcloud login mode for the GCP connectors, detected and\nadopted ([#1557](https://github.com/nimbus-agent/Nimbus/issues/1557))\n([d01e198](https://github.com/nimbus-agent/Nimbus/commit/d01e198c3af72a188621ad407911a367ceb13c79))\n</details>\n\n---\nThis PR was generated with [Release\nPlease](https://github.com/googleapis/release-please). See\n[documentation](https://github.com/googleapis/release-please#release-please).\n\nCo-authored-by: nimbus-release-bot[bot] <306811640+nimbus-release-bot[bot]@users.noreply.github.com>",
+          "timestamp": "2026-09-20T20:56:10+03:00",
+          "tree_id": "ba59a5d1b335f58f01556515378eb9e4f224cf30",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/8e6bc62793aab614e4a9a902d6eb31454d6f3731"
+        },
+        "date": 1789927697836,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 324.99252804999907,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 327.77626690001125,
             "unit": "ms"
           }
         ]
