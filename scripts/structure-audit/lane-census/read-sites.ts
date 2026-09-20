@@ -71,6 +71,16 @@ function functionHeadRegex(): RegExp {
  * feasibility and not yet verified end to end. The manifest exists precisely so the extractor
  * never has to resolve which call site reaches which helper (that is a call graph, out of scope
  * here) — it scans the DEFINITION wherever one appears and attributes the keys there.
+ *
+ * **Currently subsumed, stated rather than left implicit:** `collectJsMetadataReads`'s whole-file
+ * pass already scans every byte of a file, including a listed helper's own body, so today this
+ * manifest does no work a plain whole-file scan would not already do on its own — the two named
+ * helpers' bodies use the literal `metadata["key"]` shape the whole-file regex already matches.
+ * It is retained, not because it is load-bearing yet, but because it becomes load-bearing the
+ * moment the direct pass narrows to a bounded per-call-site window (the shape the design spec
+ * describes, §4.2.2) instead of the whole file — at that point a same-file helper's keys stop
+ * being visible except through this manifest. Until then, this is a defensive/forward-declared
+ * mechanism, not an active one.
  */
 export const METADATA_READER_HELPERS: readonly string[] = [
   "repoLikeMatchesUrn",
@@ -209,6 +219,20 @@ function collectMetadataKey(
  * necessarily overlap; `addUniqueTriple` is what keeps that overlap from surfacing as duplicate
  * rows while still making the manifest's promise ("a helper contributes its keys at its definition
  * site") true by construction, not by accident of the whole-file pass's reach.
+ *
+ * **The blanket `item` attribution is a measured bound, not a structural guarantee.** `graph_entity`
+ * and `graph_relation` both carry their own `metadata TEXT` column (`index/graph-v7-sql.ts:8,23`),
+ * so a file that parses ONE of those rows' metadata the same way (`meta["key"]`/`metadata["key"]`,
+ * with or without `?.`) would be misattributed to `item` here — the exact cross-table conflation
+ * this whole gate exists to prevent, arriving through the JS door instead of the SQL one the rest
+ * of this file guards against with `resolveTable`. Measured against every non-test file under
+ * `packages/gateway/src`, not assumed: zero of them contain a JS metadata read that touches only
+ * graph tables — every real match found (`negotiate.ts`, `graph-populator.ts`) reads `item.metadata`
+ * (or an `IndexedItemGraphInput`'s `row.metadata`, itself an item field) even in files that are
+ * otherwise all about `graph_entity`/`graph_relation`. This breaks the day someone parses a
+ * `graph_entity.metadata` or `graph_relation.metadata` value with this same JS shape in a non-test
+ * file — re-measure before trusting `item` attribution again if that ever happens, rather than
+ * assuming this comment is still true.
  */
 function collectJsMetadataReads(contents: string, file: string, out: ReadTriple[]): void {
   const stripped = stripComments(contents);
