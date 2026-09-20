@@ -11,7 +11,7 @@ export type SpawnCall = {
 
 type Stub = {
   readonly binary: string;
-  readonly argvMatch?: (argv: readonly string[]) => boolean;
+  readonly argvMatch?: ((argv: readonly string[]) => boolean) | undefined;
   readonly response: () => { exitCode: number; stdout: string; stderr: string };
 };
 
