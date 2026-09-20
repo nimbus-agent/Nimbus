@@ -35,9 +35,12 @@ function baseCtx(overrides: Partial<ConnectorRpcHandlerContext> = {}): Connector
 }
 
 function fakeLocalIndex(opts: { onReauth?: (id: string) => void } = {}): LocalIndex {
+  const db = new Database(":memory:");
+  LocalIndex.ensureSchema(db);
   return {
     ensureConnectorSchedulerRegistration: () => {},
     markConnectorReauthenticated: (id: string) => opts.onReauth?.(id),
+    getDatabase: () => db,
   } as unknown as LocalIndex;
 }
 

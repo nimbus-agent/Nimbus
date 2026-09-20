@@ -2283,8 +2283,10 @@ describe("I29 — egress-ledger completeness over the executor chokepoint", () =
     // (A THIRD closure around the same appender landed in a later commit than this raise, and
     // serves TWO more callers: `multimodal/cloud-url-resolver.ts`'s append before the credentialed
     // byte-URL resolve round-trip and `multimodal/cloud-bytes.ts`'s per-attempt cloud byte-fetch
-    // append — so the class has FOUR callers behind one appender. Neither changes the `per-run`
-    // granularity, since neither is weaker than the scheduler's already-weakest shape.)
+    // append. A later commit added a FIFTH caller directly, with no closure of its own:
+    // `ipc/connector-rpc-handlers/auth.ts`'s `verifyBeforeStoreWithScopes`, before the pre-store
+    // credential probe — so the class has FIVE callers behind one appender. None changes the
+    // `per-run` granularity, since none is weaker than the scheduler's already-weakest shape.)
     // `model` is now the FIFTH non-`none` class, backed by FOUR appenders: the route-table
     // provider wrapper (`egress/model-egress.ts`'s `wrapLedgeredProvider`, applied at
     // `LlmRegistry.addRoute`, covering `LlmRouter.generate`/`generateMarkdown`/every
@@ -2567,6 +2569,41 @@ describe("I29 — egress-ledger completeness over the executor chokepoint", () =
     // Locality is DERIVED, never a parameter (I34).
     expect(src).toContain("if (provider.isLocal)");
     expect(src).not.toMatch(/\bisLocal\s*:\s*boolean\s*[,)]/);
+  });
+
+  test("the pre-store credential probe appends one sync row BEFORE its request (connector.credentialProbe)", async () => {
+    const { Database } = await import("bun:sqlite");
+    const { LocalIndex } = await import("./index/local-index.ts");
+    const { createMockVault } = await import("./vault/mock.ts");
+    const { handleConnectorAuth } = await import("./ipc/connector-rpc-handlers/auth.ts");
+    const db = new Database(":memory:");
+    try {
+      LocalIndex.ensureSchema(db);
+      const count = (): number =>
+        db
+          .query<{ n: number }, []>(
+            "SELECT COUNT(*) AS n FROM egress_ledger WHERE method = 'connector.credentialProbe'",
+          )
+          .get()?.n ?? 0;
+      let atProbe = -1;
+      await handleConnectorAuth({
+        rec: { service: "github", token: "ghp_invariant" },
+        vault: createMockVault(),
+        localIndex: new LocalIndex(db),
+        openUrl: async () => {},
+        syncScheduler: undefined,
+        connectorMesh: undefined,
+        runCredentialProbe: async () => {
+          atProbe = count();
+          return { kind: "valid" };
+        },
+      });
+      expect(atProbe).toBe(1);
+      const src = await read("packages/gateway/src/ipc/connector-rpc-handlers/auth.ts");
+      expect(src).toMatch(/method: "connector\.credentialProbe"/);
+    } finally {
+      db.close();
+    }
   });
 });
 

@@ -46,12 +46,14 @@ describe("coverage vector", () => {
     // `mcp` and `http` are per-call because ONE appender (`recordAgentBriefEgress`) serves both
     // transports and its dispatcher condition ships alongside this entry. `sync` is `per-run`
     // (weaker than per-call) because its ONE appender (`egress/sync-egress.ts`'s
-    // `recordSyncEgress`) backs FOUR callers with different shapes: `sync/scheduler.ts` appends
+    // `recordSyncEgress`) backs FIVE callers with different shapes: `sync/scheduler.ts` appends
     // once per paginated RUN (many upstream calls per row), `sync/targeted-fetch.ts` appends once
     // per CALL, `multimodal/cloud-url-resolver.ts` appends once before the credentialed round-trip
-    // that resolves a Photos/OneDrive byte URL, and `multimodal/cloud-bytes.ts` appends once per
+    // that resolves a Photos/OneDrive byte URL, `multimodal/cloud-bytes.ts` appends once per
     // cloud byte-fetch ATTEMPT — so one Photos candidate contributes two rows for its two real
-    // requests. The vector reports the weakest of the four, matching how `weakestCoverage` merges
+    // requests — and `ipc/connector-rpc-handlers/auth.ts`'s `verifyBeforeStoreWithScopes` appends
+    // once before the pre-store credential probe sent to github/gitlab/bitbucket/jira/jenkins.
+    // The vector reports the weakest of the five, matching how `weakestCoverage` merges
     // markers from different binaries. `model` is per-call and now backed by FOUR appenders: the
     // route-table provider wrapper (`egress/model-egress.ts`'s `wrapLedgeredProvider`, applied at
     // `LlmRegistry.addRoute`), the Mastra engine agent (`egress/mastra-model-egress.ts`'s

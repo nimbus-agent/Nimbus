@@ -79,7 +79,7 @@ export function pruneOrphanedUnderstandings(db: Database): number {
  *
  * One function rather than two calls at the call site so a future third derived artifact cannot be
  * added to one sweep and forgotten in the other — the same reason the egress exclusion list lives
- * inside `recordSyncEgress` rather than at each of its four call sites.
+ * inside `recordSyncEgress` rather than at each of its five call sites.
  */
 export function pruneOrphanedMedia(
   db: Database,

@@ -39,7 +39,8 @@ import {
   writeConnectorSecret,
   writePerServiceOAuthKey,
 } from "../../connectors/connector-vault.ts";
-import { runCredentialProbe } from "../../connectors/credential-probe.ts";
+import { hasCredentialProbe, runCredentialProbe } from "../../connectors/credential-probe.ts";
+import { recordSyncEgress } from "../../egress/sync-egress.ts";
 import type { LocalIndex } from "../../index/local-index.ts";
 import { stripTrailingSlashes } from "../../string/strip-trailing-slashes.ts";
 import type { NimbusVault } from "../../vault/nimbus-vault.ts";
@@ -93,13 +94,17 @@ function oauthRedirectPortFromRec(rec: Record<string, unknown> | undefined): num
 
 type VerifiedState = "verified" | "unverified" | null;
 
-function authSuccess(id: ConnectorServiceId, verified: VerifiedState = null): ConnectorRpcHit {
+function authSuccess(
+  id: ConnectorServiceId,
+  verified: VerifiedState = null,
+  scopes: readonly string[] = [],
+): ConnectorRpcHit {
   return {
     kind: "hit",
     value: {
       ok: true,
       serviceId: id,
-      scopesGranted: [] as string[],
+      scopesGranted: [...scopes],
       verified,
     },
   };
@@ -113,16 +118,33 @@ function authSuccess(id: ConnectorServiceId, verified: VerifiedState = null): Co
  * `writeConnectorSecret` is what makes "nothing was stored" true, and is what
  * stops a typo'd token clobbering a working stored one. Throwing here aborts the
  * handler before any write.
+ *
+ * I29: when the service HAS a probe, one `sync`-class egress row (`connector.credentialProbe`,
+ * destination = the service id) is appended BEFORE the request. An append failure throws, so the
+ * probe never runs and nothing is stored — the same fail-closed shape as every other appender. A
+ * service with no probe makes no request and appends nothing.
  */
-async function verifyBeforeStore(
+async function verifyBeforeStoreWithScopes(
   ctx: ConnectorRpcHandlerContext,
   serviceId: ConnectorServiceId,
   creds: Record<string, string>,
-): Promise<VerifiedState> {
+): Promise<{ readonly state: VerifiedState; readonly scopes: readonly string[] }> {
+  if (hasCredentialProbe(serviceId)) {
+    const append =
+      ctx.appendProbeEgress ??
+      ((id: ConnectorServiceId): void => {
+        recordSyncEgress(ctx.localIndex.getDatabase(), {
+          destination: id,
+          method: "connector.credentialProbe",
+          now: Date.now(),
+        });
+      });
+    append(serviceId);
+  }
   const probe = ctx.runCredentialProbe ?? runCredentialProbe;
   const verdict = await probe(serviceId, creds);
   if (verdict === null) {
-    return null;
+    return { state: null, scopes: [] };
   }
   if (verdict.kind === "rejected") {
     // Names the service and the status ONLY. A provider body or request URL can
@@ -134,9 +156,17 @@ async function verifyBeforeStore(
   }
   if (verdict.kind === "valid") {
     ctx.localIndex.markConnectorReauthenticated(serviceId);
-    return "verified";
+    return { state: "verified", scopes: verdict.scopes ?? [] };
   }
-  return "unverified";
+  return { state: "unverified", scopes: [] };
+}
+
+async function verifyBeforeStore(
+  ctx: ConnectorRpcHandlerContext,
+  serviceId: ConnectorServiceId,
+  creds: Record<string, string>,
+): Promise<VerifiedState> {
+  return (await verifyBeforeStoreWithScopes(ctx, serviceId, creds)).state;
 }
 
 async function connectorAuthGithub(ctx: ConnectorRpcHandlerContext): Promise<ConnectorRpcHit> {
@@ -145,7 +175,7 @@ async function connectorAuthGithub(ctx: ConnectorRpcHandlerContext): Promise<Con
   if (token === "") {
     throw new ConnectorRpcError(-32602, "Missing personalAccessToken for github");
   }
-  const verified = await verifyBeforeStore(ctx, "github", { pat: token });
+  const probed = await verifyBeforeStoreWithScopes(ctx, "github", { pat: token });
   await writeConnectorSecret(ctx.vault, "github", "pat", token);
   const now = Date.now();
   ctx.localIndex.ensureConnectorSchedulerRegistration(
@@ -158,7 +188,7 @@ async function connectorAuthGithub(ctx: ConnectorRpcHandlerContext): Promise<Con
     defaultSyncIntervalMsForService("github_actions"),
     now,
   );
-  return authSuccess("github", verified);
+  return authSuccess("github", probed.state, probed.scopes);
 }
 
 async function connectorAuthGitlab(ctx: ConnectorRpcHandlerContext): Promise<ConnectorRpcHit> {
