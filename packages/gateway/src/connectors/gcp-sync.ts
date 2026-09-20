@@ -7,6 +7,7 @@ import {
   syncPassCursorSuccess,
 } from "../sync/pass-cursor-sync-result.ts";
 import { type Syncable, type SyncContext, type SyncResult, syncNoopResult } from "../sync/types.ts";
+import { gcloudKeyFileEnv } from "./_lib/gcp-auth.ts";
 import { encodeNimbusJsonCursor } from "./nimbus-json-cursor.ts";
 import { asRecord, stringField } from "./unknown-record.ts";
 
@@ -35,7 +36,7 @@ async function gcloudJson(
   // console-subsystem child pops a visible window on every sync tick. See
   // `platform/spawn-capture.ts`.
   const r = await spawnCapture(["gcloud", ...args, "--format", "json"], {
-    env: extensionProcessEnv({ GOOGLE_APPLICATION_CREDENTIALS: credPath }),
+    env: extensionProcessEnv(gcloudKeyFileEnv(credPath)),
   });
   return { ok: r.ok, text: r.stdout };
 }

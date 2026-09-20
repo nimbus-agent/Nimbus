@@ -57,6 +57,7 @@ describe("runGcloudCommand", () => {
     expect(calls).toHaveLength(1);
     expect(calls[0]!.argv).toEqual(["gcloud", "x"]);
     expect(calls[0]!.env["GOOGLE_APPLICATION_CREDENTIALS"]).toBe("/path/to/creds.json");
+    expect(calls[0]!.env["CLOUDSDK_AUTH_CREDENTIAL_FILE_OVERRIDE"]).toBe("/path/to/creds.json");
   });
 
   test("degrades to { ok:false, text:'' } when spawn throws (gcloud missing)", async () => {
