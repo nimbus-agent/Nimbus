@@ -115,12 +115,25 @@ test("does NOT name `nimbus start` when the gateway is already up", () => {
   expect(nextStepLines(null, true).join("\n")).not.toContain("nimbus start");
 });
 
+test("next steps name connector detect after nimbus start", () => {
+  const lines = nextStepLines(null, false);
+  expect(lines.indexOf("  nimbus connector detect")).toBeGreaterThan(
+    lines.indexOf("  nimbus start"),
+  );
+});
+
 // ------------------------------------------------------------------ runInit
 
-type Recorded = { out: string[]; err: string[]; started: number; synced: number };
+type Recorded = {
+  out: string[];
+  err: string[];
+  started: number;
+  synced: number;
+  offered: boolean[];
+};
 
 function fakeDeps(over: Partial<InitDeps> = {}): { deps: InitDeps; rec: Recorded } {
-  const rec: Recorded = { out: [], err: [], started: 0, synced: 0 };
+  const rec: Recorded = { out: [], err: [], started: 0, synced: 0, offered: [] };
   const deps: InitDeps = {
     cwd: repo,
     configDir,
@@ -140,6 +153,10 @@ function fakeDeps(over: Partial<InitDeps> = {}): { deps: InitDeps; rec: Recorded
     log: (l) => rec.out.push(l),
     error: (l) => rec.err.push(l),
     inDemoRoot: false,
+    interactive: false,
+    offerLocalAuth: async (interactive) => {
+      rec.offered.push(interactive);
+    },
     ...over,
   };
   return { deps, rec };
@@ -152,6 +169,48 @@ test("full happy path: adds the root, starts the gateway, syncs, prints a real l
   expect(rec.started).toBe(1);
   expect(rec.synced).toBe(1);
   expect(rec.out.join("\n")).toContain("nimbus why src/auth.ts:42");
+});
+
+test("after a successful index, init offers local-auth reuse with the TTY flag", async () => {
+  const { deps, rec } = fakeDeps({ interactive: true });
+  await runInit([], deps);
+  expect(rec.offered).toEqual([true]);
+});
+
+test("--no-detect skips the offer", async () => {
+  const { deps, rec } = fakeDeps();
+  await runInit(["--no-detect"], deps);
+  expect(rec.offered).toEqual([]);
+});
+
+test("CI=true skips the offer — init must not spawn three CLIs in a pipeline", async () => {
+  const prev = process.env["CI"];
+  process.env["CI"] = "true";
+  try {
+    const { deps, rec } = fakeDeps();
+    await runInit([], deps);
+    expect(rec.offered).toEqual([]);
+  } finally {
+    if (prev === undefined) delete process.env["CI"];
+    else process.env["CI"] = prev;
+  }
+});
+
+test("--no-sync starts no gateway, so it runs no detection", async () => {
+  const { deps, rec } = fakeDeps();
+  await runInit(["--no-sync"], deps);
+  expect(rec.offered).toEqual([]);
+});
+
+test("a failing offer does not fail init", async () => {
+  const { deps, rec } = fakeDeps({
+    offerLocalAuth: async () => {
+      throw new Error("gateway went away");
+    },
+  });
+  await runInit([], deps);
+  expect(process.exitCode).toBe(0);
+  expect(rec.err.join("\n")).toContain("Could not check for existing logins: gateway went away");
 });
 
 test("--no-sync writes config and stops without touching the gateway", async () => {
