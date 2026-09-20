@@ -108,6 +108,16 @@ const GCLOUD_ARGV_MARKER = '"gcloud"';
  * A new legitimate literal use of `"gcloud"` needs its OWN new narrow check added here (with a
  * comment naming the line it exempts); this function does not grow by loosening an existing entry
  * to cover it.
+ *
+ * Task 2.4 (detect + adopt the owner's gcloud login) added a second wave of these, all listed
+ * below the original four. None of the new checks is a bare `"gcloud",` substring either, for the
+ * same reason as above but concretely observed this time: `local-auth-types.ts`'s
+ * `LOCAL_AUTH_SOURCES` array formats "gcloud" alone on its own line — `  "gcloud",` — which is
+ * BYTE-IDENTICAL to `vertex-ai-sync.ts`'s own multi-line argv array formatting one of its REAL
+ * spawn elements the same way (`argv = ["gcloud", "ai", …]` written one element per line). A check
+ * that loose would have EXCLUDED that real spawn site from ever being scanned, which is why the
+ * array element there instead carries a trailing comment (`"gcloud", // a LocalAuthSource id …`)
+ * making its line text impossible to confuse with an argv element's.
  */
 function isKnownSafeGcloudTypeLiteral(line: string): boolean {
   // `local-auth-env.ts`'s `PASSTHROUGH: Readonly<Record<"gh" | "aws" | "gcloud", ...>>` key type
@@ -123,6 +133,45 @@ function isKnownSafeGcloudTypeLiteral(line: string): boolean {
   // `gcp-auth.ts`'s `gcloudAuthEnv`: `cliEnvFor("gcloud", env)` — passing the literal as the
   // `source` argument to the passthrough-env helper, never spawning anything itself.
   if (line.includes('cliEnvFor("gcloud"')) return true;
+  // `local-auth-types.ts`'s `LocalAuthSource` union TYPE:
+  // `"gh" | "aws" | "kubectl" | "gcloud"`.
+  if (line.includes('"gh" | "aws" | "kubectl" | "gcloud"')) return true;
+  // `local-auth-types.ts`'s `LOCAL_AUTH_SOURCES` array element: `"gcloud", // a LocalAuthSource
+  // id …` — the trailing comment is deliberate (see the doc comment above this function) so this
+  // check cannot also match a real spawn site's own bare `"gcloud",` array element.
+  if (line.includes('"gcloud", // a LocalAuthSource id')) return true;
+  // `local-auth-types.ts`'s `GcloudFinding.source` field TYPE and `adopt-local-auth.ts`'s `Target`
+  // union member carrying the same field: both spell `readonly source: "gcloud";` — a TypeScript
+  // string-literal type, never a spawn.
+  if (line.includes('readonly source: "gcloud";')) return true;
+  // The `case "gcloud":` switch-arm LABEL — never a spawn — recurring across
+  // `detect-local-auth.ts`'s `detectOne` and `adopt-local-auth.ts`'s `resolveTarget` /
+  // `consentPayload` / `authRecord`, one switch statement per exhaustive `LocalAuthSource` match.
+  if (line.includes('case "gcloud":')) return true;
+  // `adopt-local-auth.ts`'s `resolveTarget`: `x.source === "gcloud"` — a `GcloudFinding` lookup
+  // predicate over already-detected findings, never a spawn.
+  if (line.includes('x.source === "gcloud"')) return true;
+  // `adopt-local-auth.ts`'s `resolveTarget`/`consentPayload`: `source: "gcloud",` — constructing
+  // the `Target`/consent-payload VALUE (an object property, never an argv array element — a real
+  // spawn argv never carries a `source:` key).
+  if (line.includes('source: "gcloud",')) return true;
+  // `adopt-local-auth.ts`'s `authRecord`: `authSource: "gcloud",` — the synthetic record handed to
+  // `connector.auth`'s gcp arm, never a spawn.
+  if (line.includes('authSource: "gcloud",')) return true;
+  // `detect-gcloud.ts`'s `detectGcloud`: `const base = { source: "gcloud" as const, … }` — the
+  // shared finding-base VALUE every status branch spreads, never a spawn.
+  if (line.includes('source: "gcloud" as const')) return true;
+  // `detect-gcloud.ts`'s `detectGcloud`: `deps.which("gcloud")` — a PATH-resolution check, not a
+  // spawn (nothing is executed; it only asks whether the binary exists).
+  if (line.includes('which("gcloud")')) return true;
+  // `detect-gcloud.ts`'s `detectGcloud`: `["gcloud", "config", "list", "--format", "json"]` — this
+  // IS a real spawn argv, but a LOCAL-ONLY one that reads gcloud's own config and makes no API
+  // call (see the function's doc comment) — there is no configured `GcpAuth` yet at detection time
+  // to authenticate AS, so `gcloudAuthEnv`/`gcloudKeyFileEnv` do not apply here; the adjacent
+  // `cliEnvFor("gcloud", deps.env)` call (excluded above) is the correct, narrower env for this
+  // site. The full argv is matched verbatim so this exclusion cannot drift onto a differently
+  // shaped spawn later.
+  if (line.includes('["gcloud", "config", "list", "--format", "json"]')) return true;
   return false;
 }
 

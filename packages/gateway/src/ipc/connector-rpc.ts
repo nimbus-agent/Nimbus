@@ -1,3 +1,4 @@
+import { readConnectorSecret } from "../connectors/connector-vault.ts";
 import type { LazyConnectorMesh } from "../connectors/lazy-mesh/index.ts";
 import { adoptLocalAuth, parseAdoptRequest } from "../connectors/local-auth/adopt-local-auth.ts";
 import { detectLocalAuth, parseSources } from "../connectors/local-auth/detect-local-auth.ts";
@@ -134,6 +135,7 @@ export async function dispatchConnectorRpc(options: {
         gate: (action) => toolExecutor.gate(action),
         // The token travels in-process only, inside this synthetic rec; it never crosses IPC.
         authenticate: (authRec) => handleConnectorAuth({ ...ctx, rec: authRec }),
+        readGcpKeyPath: () => readConnectorSecret(vault, "gcp", "credentials_json_path"),
       });
       return { kind: "hit", value };
     }

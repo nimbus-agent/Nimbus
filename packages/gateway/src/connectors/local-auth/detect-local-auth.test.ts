@@ -18,7 +18,7 @@ function host(): LocalAuthHostDeps {
 
 describe("parseSources", () => {
   test("absent → every source", () => {
-    expect(parseSources(undefined)).toEqual(["gh", "aws", "kubectl"]);
+    expect(parseSources(undefined)).toEqual(["gh", "aws", "kubectl", "gcloud"]);
   });
   test("a valid subset, de-duplicated, in canonical order", () => {
     expect(parseSources(["kubectl", "gh", "gh"])).toEqual(["gh", "kubectl"]);
