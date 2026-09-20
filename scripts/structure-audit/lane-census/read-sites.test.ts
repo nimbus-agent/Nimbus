@@ -55,4 +55,34 @@ describe("extractReadTriples", () => {
     const out = extractReadTriples("h.ts", src);
     expect(out).toEqual([{ table: "item", kind: "type", value: "commit", file: "h.ts", line: 4 }]);
   });
+
+  test("picks up a JS-side metadata read", () => {
+    const src = [
+      "const meta = JSON.parse(row.metadata) as Record<string, unknown>;",
+      'if (meta["conclusion"] !== "success") return null;',
+    ].join("\n");
+    const out = extractReadTriples("e.ts", src);
+    expect(out).toContainEqual(
+      expect.objectContaining({ table: "item", kind: "metadata-key", value: "conclusion" }),
+    );
+  });
+
+  test("matches optional chaining and single quotes", () => {
+    const src = 'if (meta?.["conclusion"] !== "success") return; const b = metadata?.[\'branch\'];';
+    const values = extractReadTriples("dora.ts", src)
+      .map((t) => t.value)
+      .sort();
+    expect(values).toEqual(["branch", "conclusion"]);
+  });
+
+  test("a named helper contributes the keys it reads", () => {
+    const src = [
+      "function repoLikeMatchesUrn(metadata: Record<string, unknown>) {",
+      '  return metadata["repo"] === "x" || metadata["project"] === "y";',
+      "}",
+    ].join("\n");
+    const values = extractReadTriples("f.ts", src).map((t) => t.value);
+    expect(values).toContain("repo");
+    expect(values).toContain("project");
+  });
 });
