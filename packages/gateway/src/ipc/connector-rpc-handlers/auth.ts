@@ -303,10 +303,17 @@ async function persistAwsAccessKeyPair(
   }
 }
 
-async function persistAwsProfileOnly(vault: NimbusVault, prof: string): Promise<void> {
+async function persistAwsProfileOnly(vault: NimbusVault, prof: string, reg: string): Promise<void> {
   await deleteConnectorSecret(vault, "aws", "access_key_id");
   await deleteConnectorSecret(vault, "aws", "secret_access_key");
-  await deleteConnectorSecret(vault, "aws", "default_region");
+  // A supplied region is KEPT: the lazy-mesh AWS spawn needs it for regional sandbox hosts
+  // (`phase3-shared.ts` `loadAwsCreds`). It used to be deleted unconditionally, which silently
+  // dropped `--region` on `nimbus connector auth aws --profile X --region Y`.
+  if (reg === "") {
+    await deleteConnectorSecret(vault, "aws", "default_region");
+  } else {
+    await writeConnectorSecret(vault, "aws", "default_region", reg);
+  }
   await writeConnectorSecret(vault, "aws", "profile", prof);
 }
 
@@ -334,7 +341,7 @@ async function connectorAuthAws(
         "Missing AWS credentials: access key + secret + region/profile, or profile-only (connector.auth aws …)",
       );
     }
-    await persistAwsProfileOnly(vault, prof);
+    await persistAwsProfileOnly(vault, prof, reg);
   }
   const interval = defaultSyncIntervalMsForService("aws");
   localIndex.ensureConnectorSchedulerRegistration("aws", interval, Date.now());

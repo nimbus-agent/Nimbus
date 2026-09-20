@@ -942,6 +942,26 @@ describe("handleConnectorAuth — aws", () => {
   });
 });
 
+describe("aws profile-only auth and the region", () => {
+  test("a supplied region is stored, not deleted", async () => {
+    const { db, vault, localIndex } = freshDeps();
+    await handleConnectorAuth(
+      makeCtx({ service: "aws", profile: "dev", defaultRegion: "eu-west-1" }, vault, localIndex),
+    );
+    expect(await vault.get("aws.profile")).toBe("dev");
+    expect(await vault.get("aws.default_region")).toBe("eu-west-1");
+    db.close();
+  });
+
+  test("no region supplied still clears a stale one (unchanged behaviour)", async () => {
+    const { db, vault, localIndex } = freshDeps();
+    await vault.set("aws.default_region", "us-east-1");
+    await handleConnectorAuth(makeCtx({ service: "aws", profile: "dev" }, vault, localIndex));
+    expect(await vault.get("aws.default_region")).toBeNull();
+    db.close();
+  });
+});
+
 describe("handleConnectorAuth — azure", () => {
   let db: Database;
   let vault: MockVault;
