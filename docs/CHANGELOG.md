@@ -18,6 +18,39 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
 
 ## Post-Phase-6 deliveries
 
+- **2026-09-20 — index lane census (B4 bug-hunt audit), report-only.** A new table-aware static
+  census, `bun run audit:lane-census` (`scripts/structure-audit/check-index-lane-coverage.ts`),
+  extracts what production code READS from the `item` table — `item.type` literals, `json_extract`
+  metadata keys, and JS-side `meta["k"]` reads — and what every connector WRITES, then diffs the
+  two. **It gates nothing**: it always exits `0` and only writes
+  `docs/structure-audit/index-lane-census.json` for a human or a future gate to read: this PR is
+  the census, not the gate — that is PR 2 of this initiative. It reproduces all four bugs the B4
+  bug-hunt confirmed by hand, pinned by
+  `scripts/structure-audit/check-index-lane-coverage.acceptance.test.ts` against the real tree:
+  `item.type='commit'` is read at `agents/expert.ts:386` but nothing ever writes it (the only
+  `commit`-shaped writer, `filesystem-v2-sync.ts`, writes `git_commit`, and `graph-populator.ts`'s
+  `commit` write lands in the unrelated `graph_entity` table); `workflow_name` is read at
+  `preflight/preflight.ts:166` but every `ci_run` writer emits `workflowName` instead; `branch` is
+  read at `preflight.ts:168`/`:175` and only PARTIALLY covered — of four `ci_run` writers only
+  `circleci` emits it, `github_actions` writes `headBranch`; and `opened_at_ms` is read
+  unscoped at `agents/premortem.ts:199`/`:205` with no writer for it, while the identically-named
+  key IS matched at `metrics/dora.ts`'s incident-scoped read, proving the census's per-literal
+  type-scoping is sound rather than a blanket key-name match. Current numbers over
+  `packages/gateway/src/**`: 401 reads, 117 writes, 83 unmatched item reads (73 total-absence + 10
+  partial), 122 ambiguous reads, 19 parameterized reads it cannot resolve statically. Two
+  structural guards are pinned alongside the four bugs: a `demo/` writer is never counted (the
+  demo corpus's fabricated `repo` key would otherwise mask a real gap and make DORA look clean),
+  and `graph_entity`'s `commit` write appears in the artifact's `reads` list but is never
+  misreported as an `unmatchedItemReads` entry, confirming the table-aware diff does not conflate
+  `item` with the graph tables. **Known blind spot, disclosed in the artifact itself:** `imap` and
+  `protonmail` write item rows through a generic cross-file mapper called with plain function-call
+  arguments rather than an inline object literal, so their real writes produce zero emission rows
+  here — a future finding naming either service needs a manual check, not a census read. **Scope
+  is `item` only**; `graph_entity`/`graph_relation` reads are recorded in the artifact for
+  completeness but are never diffed against writes or gated. No schema migration, no new
+  invariant, no new egress class, no HITL action type — nothing here leaves the machine or writes
+  to the index.
+
 - **2026-09-20 — `nimbus connector detect` learns a `gcloud` login mode, closing the follow-up the
   same day's gh/aws/kubectl delivery (below) deferred.** A GCP connector
   (`gcp`/`bigquery`/`cloud_logging`/`vertex_ai` and their four lazy-mesh MCP servers) can now
