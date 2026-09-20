@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
   Acceptance check for `nimbus connector detect` (PR #1554, `gcloud` source PR #1557) — the
   interactive numbered pick and the consent-prompt handoff that no automated test covers.
@@ -45,6 +45,14 @@
 .PARAMETER KeepConnector
   Do not remove the kubernetes connector at the end.
 
+.PARAMETER ReuseGateway
+  Allow this script to talk to a gateway it did not start. `connector detect` reaches whatever
+  gateway `gateway.json` currently points at — that could be a leftover process from a different
+  worktree, or one running a stale `dist/` build — and every result below would look green while
+  reflecting a different checkout's code. Without this switch, an already-running gateway is a
+  REFUSAL (exit 2), not a silent reuse: `nimbus stop` first for a trustworthy run, or pass this
+  switch to acknowledge the results may not reflect $Worktree.
+
 .EXAMPLE
   .\verify-local-auth-detect.ps1
 .EXAMPLE
@@ -56,7 +64,8 @@
 param(
     [string] $Worktree = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path,
     [switch] $SkipInteractive,
-    [switch] $KeepConnector
+    [switch] $KeepConnector,
+    [switch] $ReuseGateway
 )
 
 $ErrorActionPreference = 'Stop'
@@ -202,8 +211,24 @@ current-context: accept-alpha
         $startedGateway = $true
         Pass 'gateway started' 'this script started it and will stop it at the end'
         $detect = Invoke-Nimbus @('connector', 'detect', '--json', '--source', 'kubectl')
+    } elseif (-not $ReuseGateway) {
+        # A gateway answered that this script did NOT start. `connector detect` reaches whatever
+        # gateway `gateway.json` currently points at — a leftover process from another worktree, or
+        # one running a stale dist/ build — and every check below would look green while actually
+        # exercising a different checkout's code (precedent: dist/nimbus-gateway.exe silently
+        # shadowing source in e2e runs). Refuse by default rather than guess at build identity —
+        # there is no reliable handle for that, and a wrong guess is worse than this refusal.
+        Write-Head 'REFUSED — an existing gateway is already running'
+        Write-Host '  This script did not start it, so the results below might reflect a different' -ForegroundColor Red
+        Write-Host '  checkout''s code rather than the one at ' -NoNewline -ForegroundColor Red
+        Write-Host $Worktree -ForegroundColor Red
+        Write-Host ''
+        Write-Host '  Run `nimbus stop` first for a trustworthy result, then re-run this script, or' -ForegroundColor White
+        Write-Host '  pass -ReuseGateway to proceed anyway, acknowledging that risk.' -ForegroundColor White
+        $script:Refused = $true
+        throw 'gateway'
     } else {
-        Pass 'gateway answered' 'already running; left running at the end'
+        Pass 'gateway answered' 'already running (not started by this script; -ReuseGateway acknowledged the risk) — left running at the end'
     }
 
     Write-Head 'Detection (automated)'
@@ -318,9 +343,16 @@ current-context: accept-alpha
                 }
                 Skip 'gcloud available / needs_project / not_logged_in' 'gcloud is not installed on this machine — cannot exercise the logged-in, project-selection or not-logged-in paths from here.' 'Install the gcloud CLI (and log in / out as needed) on a machine that has it, then re-run.'
             } else {
-                # gcloud IS installed here: whichever of the other three statuses it reports is a
-                # real exercise of that path, not a skip.
-                Pass 'gcloud is installed — live status observed' "status=$($gcloudFinding.status)"
+                # gcloud IS installed here, so cli_not_found would be a genuine detection bug, not
+                # an honest report — Get-Command already proved gcloud is on PATH. Require one of
+                # the three "gcloud was found" statuses and Fail on cli_not_found (or anything else
+                # unexpected) rather than passing whatever came back.
+                $liveStatuses = @('available', 'needs_project', 'not_logged_in')
+                if ($gcloudFinding.status -in $liveStatuses) {
+                    Pass 'gcloud is installed — live status observed' "status=$($gcloudFinding.status)"
+                } else {
+                    Fail 'gcloud is installed — live status observed' "Got status=$($gcloudFinding.status) but gcloud IS on PATH." "Expected one of: $($liveStatuses -join ', '). cli_not_found here means detection could not find a gcloud that Get-Command did."
+                }
             }
         }
     }
@@ -346,9 +378,14 @@ current-context: accept-alpha
 
         Push-Location $Worktree
         try {
+            # Set BEFORE invoking, not after: a normal nonzero child exit still reaches an
+            # after-the-call assignment, but a PowerShell TERMINATING error during the invocation
+            # does not. If adoption already wrote the connector into the real vault before such an
+            # error, cleanup must still know to remove it — leaving it flagged unattempted would
+            # leave real credentials behind.
+            $script:AdoptionAttempted = $true
             & bun 'packages/cli/src/index.ts' connector detect --source kubectl
             $interactiveOk = ($LASTEXITCODE -eq 0)
-            $script:AdoptionAttempted = $true
         } finally {
             Pop-Location
         }
@@ -401,6 +438,10 @@ current-context: accept-alpha
             } catch {
                 Fail 're-detect parses' 'Could not parse the second detect output.' ($after.Text.Trim())
             }
+        } else {
+            # Without this branch, a failed re-detect call fell through silently and the script
+            # could still print SUCCESS having never actually verified alreadyConfigured.
+            Fail 're-detect reports kubernetes as configured' 'The re-detect command exited non-zero.' ($after.Text.Trim())
         }
 
         Write-Host ''
@@ -417,11 +458,18 @@ current-context: accept-alpha
 
     # Only worth removing if the interactive walk actually ran — otherwise nothing was adopted and
     # a failed removal is noise that reads like a second problem.
+    #
+    # A cleanup failure here is recorded with Fail, not just printed as guidance: this script's
+    # whole safety premise is guaranteed cleanup (see .DESCRIPTION), so a failed removal leaving
+    # real Vault credentials behind — or a leftover `nimbus stop` leaving the gateway running —
+    # must not still exit 0 as though everything landed. The by-hand guidance stays too; it is
+    # useful, it just must not be the only consequence.
     if ($script:AdoptionAttempted -and -not $KeepConnector) {
         $removed = Invoke-Nimbus @('connector', 'remove', 'kubernetes', '--yes')
         if ($removed.Ok) {
             Write-Host '  kubernetes connector removed (vault keys cleared)' -ForegroundColor DarkGray
         } else {
+            Fail 'kubernetes connector removed during cleanup' 'connector remove exited non-zero — real Vault credentials may remain.' ($removed.Text.Trim())
             Write-Host '  could not remove the kubernetes connector — remove it by hand:' -ForegroundColor Yellow
             Write-Host "      cd $Worktree; bun packages/cli/src/index.ts connector remove kubernetes --yes" -ForegroundColor Yellow
         }
@@ -430,8 +478,14 @@ current-context: accept-alpha
     }
 
     if ($startedGateway) {
-        Invoke-Nimbus @('stop') | Out-Null
-        Write-Host '  gateway stopped' -ForegroundColor DarkGray
+        $stopped = Invoke-Nimbus @('stop')
+        if ($stopped.Ok) {
+            Write-Host '  gateway stopped' -ForegroundColor DarkGray
+        } else {
+            Fail 'gateway stopped during cleanup' 'nimbus stop exited non-zero — a gateway this script started may still be running.' ($stopped.Text.Trim())
+            Write-Host '  could not stop the gateway — stop it by hand:' -ForegroundColor Yellow
+            Write-Host "      cd $Worktree; bun packages/cli/src/index.ts stop" -ForegroundColor Yellow
+        }
     }
 
     if ($movedDist -and (Test-Path -LiteralPath $movedDist)) {
@@ -450,6 +504,19 @@ current-context: accept-alpha
 
     if ($script:Refused) {
         Write-Host 'REFUSED — see above. Nothing was written, adopted or removed.' -ForegroundColor Red
+        # A refusal can still be followed by a real cleanup failure (e.g. this script started the
+        # gateway to run the already-configured check, then `nimbus stop` itself failed) — surface
+        # that rather than letting the REFUSED message be the only thing printed.
+        if ($script:Failures.Count -gt 0) {
+            Write-Host ''
+            Write-Host 'Cleanup also hit a problem:' -ForegroundColor Red
+            foreach ($f in $script:Failures) {
+                Write-Host ''
+                Write-Host "  $($f.Step)" -ForegroundColor Red
+                Write-Host "    what went wrong: $($f.Why)"
+                if ($f.Fix) { Write-Host "    what to do:      $($f.Fix)" }
+            }
+        }
         exit 2
     }
 
