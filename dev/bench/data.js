@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1789892959088,
+  "lastUpdate": 1789895687230,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "465bee092dcc732d72b52fd9b93adeb758edceba",
-          "message": "feat(github): enrich fallback 'PR #N' titles via pull-detail fetch (#817)\n\n## Stage 2a un-park — PR A of 3 (PR-title enrichment)\n\n**Root cause.** Indexed GitHub PRs showed id-only titles like `PR #220`\nbecause the GitHub **events feed** (`PullRequestEvent` →\n`payload.pull_request`) genuinely delivers no `title`, and the only\nindexed-`pr` writer falls back to `` `PR #${num}` ``. The rows are not\nstale-from-old-code — the source data lacked the field. (Root-caused\nagainst the live dev-machine index + config + source; see the Stage 2a\nun-park design/plan on `dev/asafgolombek/stage2a-gateway-unpark`.)\n\n**Fix.** A best-effort, post-sync enrichment pass in the GitHub\nconnector. Each sync tick, up to **10** `pr` rows whose stored title is\nstill the exact `` `PR #${num}` `` fallback (newest-first) are\nre-fetched via `GET /repos/{owner}/{repo}/pulls/{number}` and\nre-upserted with their real title. One code path covers both the\nexisting 79 fallback rows and any freshly-ingested title-less event (≤1\nsync-tick latency). Source-independent — no new cloud dependency beyond\nthe user's existing PAT.\n\n### Behavior / safety\n- **Exact-match only.** `title LIKE 'PR #%'` pre-filter, then a JS\n`title === \\`PR #${num}\\`` check — a real title like `\"PR #1 revert\"` is\nnever clobbered (test included).\n- **Best-effort.** Non-OK / 404 / malformed-JSON / non-object-JSON\nresponses skip that row and leave the fallback intact. A\n`RateLimitError` propagates (honors backoff); any other error is logged\nnon-fatal and the sync tick still succeeds.\n- **Bounded.** ≤10 fetches/tick, sequential through the shared rate\nlimiter — no request storm.\n- On a `304 Not Modified` events response the tick returns early and\nenrichment resumes next non-304 tick (backfill is not time-critical).\n\n### Tests\n9 unit tests (injected `fetch`): enrich-only-fallback newest-first,\ncap-at-10 ordering, failed-fetch untouched, no-fallback no-op, `PR #1\nrevert` not clobbered, 401 → `UnauthenticatedError`, 403/rate-limit\npropagation, malformed-JSON skip, non-object-JSON skip.\n\n### Verification (local, pre-push)\n- `github-sync.ts` coverage: **97.6% line / 90.1% branch / 100% fn**\n(well above the 85%/80% floor).\n- typecheck ✓, biome ✓ (2921 files), static invariant audit ✓,\ncross-platform audit ✓, lychee ✓ (CHANGELOG links).\n- No migration; no IPC/CLI surface change; gateway-only.\n\nPart of the Stage 2a `why`-lens substrate work (PR B = whole-file blame\nindexer, PR C = root registration follow). Do not merge without the\nusual CI pass.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n\n## Summary by CodeRabbit\n\n- **New Features**\n- GitHub pull requests now receive accurate titles when event data only\nincludes an ID-based placeholder.\n- Recent placeholder-titled pull requests are automatically enriched\nwith details from GitHub.\n\n- **Bug Fixes**\n  - Prevents valid pull request titles from being overwritten.\n- Handles unavailable, malformed, unauthorized, and rate-limited\nresponses safely.\n\n- **Documentation**\n  - Added a changelog entry describing the GitHub connector enhancement.\n\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude Opus 4.8 (1M context) <noreply@anthropic.com>",
-          "timestamp": "2026-07-24T01:21:08Z",
-          "tree_id": "0fc001ed68ee55ee9bed7020646d6be25bb99d5e",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/465bee092dcc732d72b52fd9b93adeb758edceba"
-        },
-        "date": 1784856892614,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 316.09650654999496,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 319.1348873499992,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 331.13517595000013,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "e1d16b119a40364bd436773966672434de283077",
+          "message": "fix(connectors): gcloud spawns authenticate as the configured GCP service-account key (#1553)\n\n## Summary\n\nThe gcloud CLI does not read `GOOGLE_APPLICATION_CREDENTIALS` for its\nown authentication — that\nvariable is Application Default Credentials, read only by Google's\nclient **libraries**. gcloud's\nown override is `CLOUDSDK_AUTH_CREDENTIAL_FILE_OVERRIDE`\n(https://docs.cloud.google.com/sdk/docs/authenticate). Every `gcloud`\nspawn in this repo set only\n`GOOGLE_APPLICATION_CREDENTIALS`, so `gcp.credentials_json_path` was\n**required and inert**: the\n`gcp`/`bigquery`/`cloud_logging`/`vertex_ai` syncs and their four\nlazy-mesh MCP servers ran as\nwhatever account `gcloud auth login` had last activated — or failed when\nthere was none — while a\nuser who configured a service account believed they ran as it.\n\nBoth variables are now set together, from one place:\n`connectors/_lib/gcp-auth.ts`'s\n`gcloudKeyFileEnv(credPath)` returns both\n`GOOGLE_APPLICATION_CREDENTIALS` (still needed for any\nclient library a spawned connector loads) and\n`CLOUDSDK_AUTH_CREDENTIAL_FILE_OVERRIDE` (the one\ngcloud itself reads), so a future spawn site cannot set one and forget\nthe other.\n\n**Eight sites changed**, all switched to `gcloudKeyFileEnv()`:\n- `connectors/_lib/gcloud-runner.ts` — the shared gcloud CLI runner\n- `connectors/gcp-sync.ts`\n- `connectors/bigquery-sync.ts`\n- `connectors/lazy-mesh/phase3-cloud.ts` — the four lazy-mesh MCP spawn\nsites\n(`phase3AddGcpMcp`, `phase3AddBigqueryMcp`, `phase3AddCloudLoggingMcp`,\n`phase3AddVertexAiMcp`)\n\nPlus comment-only corrections in `cloud-logging-sync.ts` and\n`vertex-ai-sync.ts` (both already\ndelegate to the shared runner; only their comments referenced the old\nsingle-variable behaviour).\n\n## Behaviour change (not breaking)\n\nWith a service-account key configured, syncs and MCP servers now run\n**as that service account**.\nOne that lacks a permission the personal `gcloud auth login` session had\nwill now show it — but\nnot loudly: `runGcloudCommand` discards stderr, and `gcp-sync.ts` turns\nthe failure into a\n`logger.warn({serviceId}, \"gcp sync: projects describe failed\")`,\nreturning a successful, empty\n`SyncResult`. So the visible symptom is a green connector with a\nsilently empty GCP index, not an\nerror — the identity was silently wrong before, and now the sync is\nsilently empty instead. Nothing\nan existing, correctly-scoped setup needs to change, so this carries no\n`!` / `BREAKING CHANGE:`\nmarker.\n\n## `nimbus-mcp-servers` needs no change\n\nThat package's gcloud spawns merge `process.env` into the child's\nenvironment, so they inherit\nwhatever the gateway sets in `phase3-cloud.ts` — no pin bump needed\nthere. That package isn't\ninstalled in this worktree, so nothing here pins that behaviour: a\nfuture `nimbus-mcp-servers`\nrelease that scoped its child env instead of inheriting `process.env`\nwould silently re-open the\nMCP leg of this same bug.\n\n## Pre-existing sandbox bound (not introduced here)\n\nAll four GCP MCP manifests already declare `filesystem: { read: [],\nwrite: [] }`, so under an\nenforcing sandbox the confined MCP server cannot read a key file at all\nregardless of which env\nvar names it. The four in-process syncs\n(`gcp`/`bigquery`/`cloud_logging`/`vertex_ai`) get the\nfull benefit of this fix; the MCP leg only does where the sandbox is\ndegraded or absent. This\npredates this branch and is unrelated to the env-var fix itself.\n\n## Local gate note\n\n`bun run preflight:fast` passes clean (33/33 gates). `bun run test:ci`\nfails the same **2 of\n23936** tests on this branch **and on unmodified `main`**, when the\nWindows sandbox helper\n(`nimbus-sandbox-helper.exe`) is built locally:\n`packages/gateway/src/platform/sandbox/win32.test.ts` —\n`createWin32SandboxRunner > reports\nitself as not fully active when the default helper path has nothing at\nit` and `> explains the\ndegradation instead of returning null`. 23846 pass. The failures are\norder-dependent in the\nsingle-process whole-repo `bun test` run — two other files\n(`test/integration/platform/sandbox/exec-sandbox.test.ts`,\n`test/e2e/exec-e2e.test.ts`) set\n`NIMBUS_SANDBOX_HELPER_PATH` at module load time, and `win32.test.ts`'s\nown\n`beforeEach`/`afterEach` isolation against that doesn't fully hold\nacross the full 1593-file run;\nthe file passes cleanly in isolation (10/10). This predates this branch\nand is unrelated to this\ndiff — confirmed by running the identical full suite against a clean\n`main` checkout with the\nsame locally-built helper, which reproduces the same two failures. Not\nclaiming the full\n`preflight` was green; it fails only on this pre-existing,\nenvironment-specific gap.\n\nAlso included: a one-line, type-only fix to `test/helpers/mock-spawn.ts`\n(`Stub.argvMatch` widened\nto accept `| undefined`), required because this branch's own\n`bigquery-sync.test.ts` change newly\nimports that helper from a file `tsc --noEmit` already checks, exposing\na latent\n`exactOptionalPropertyTypes` violation that had no prior import path\ninto the checked set.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n## Summary by CodeRabbit\n\n* **Bug Fixes**\n* GCP, BigQuery, Cloud Logging, and Vertex AI integrations now\nconsistently use configured service-account credentials for both client\nlibraries and `gcloud` commands.\n* Insufficient service-account permissions now produce a warning and an\notherwise successful empty sync; the connector remains operational,\nthough the GCP index may appear empty.\n\n* **Documentation**\n* Updated authentication guidance to describe service-account key usage\nand credential handling across supported GCP integrations.\n\n* **Tests**\n* Added coverage for credential propagation across GCP-backed connectors\nand command execution.\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>",
+          "timestamp": "2026-09-20T09:02:57Z",
+          "tree_id": "f97994a8c17eb29c2844a7f683e426af7c5dbdee",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/e1d16b119a40364bd436773966672434de283077"
+        },
+        "date": 1789895683269,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 321.76568470000313,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 328.0389577999969,
             "unit": "ms"
           }
         ]
