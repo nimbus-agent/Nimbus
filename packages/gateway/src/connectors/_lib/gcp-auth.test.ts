@@ -91,16 +91,27 @@ const CONNECTORS_DIR = resolve(import.meta.dir, "..");
  * matches neither shape and the spawn call itself carries no `"gcloud"` literal at all, so that
  * version went BLIND to it. See the "constant extraction" test below, which pins that this marker
  * catches it. Any line the marker matches that is NOT a real spawn site must instead be excluded by
- * `isKnownSafeGcloudTypeLiteral` — a narrow, named exception, never a loosening of this check.
+ * `isNonSpawnLiteral`, and a line that IS a real spawn site but is deliberately excused from the
+ * credentialing rule by `isExemptSpawnSite` — both narrow, named exceptions, neither a loosening
+ * of this check.
  */
 const GCLOUD_ARGV_MARKER = '"gcloud"';
 
 /**
- * The non-spawn uses of the double-quoted literal `"gcloud"` this repo's source carries today, all
- * introduced by `GcpAuth`'s local-login support, none of them a spawned argv element — two
- * TypeScript string-literal TYPES, a value comparison/construction, and a passthrough-env call.
- * Each check is a specific substring that ONLY that introduced line produces — not a general "this
- * looks like a type" heuristic — because a broad allowlist here would silently swallow a real
+ * The non-spawn uses of the double-quoted literal `"gcloud"` this repo's source carries — never a
+ * spawned argv element, whatever file they appear in: TypeScript string-literal TYPES, value
+ * comparisons/constructions, switch-arm labels, and a passthrough-env call. A line matched here
+ * takes NO further part in the scan — it never becomes a `sawArgvSite`, so it can never appear in
+ * `spawnSites` and never needs a credentialing check. That is the dividing line from
+ * `isExemptSpawnSite` below: THIS function is for lines that are not spawns at all; that one is for
+ * a line that genuinely IS a spawn argv but is deliberately excused from the credentialing rule.
+ * Collapsing the two was the bug a review round found (see `isExemptSpawnSite`'s doc comment) —
+ * the original single-function version applied its spawn exemption as bare TEXT with no file
+ * check, so the same argv string pasted into any other file under `connectors/` — exactly what a
+ * new GCP connector reading a config value would plausibly write — was silently exempted too.
+ *
+ * Each check here is a specific substring that ONLY that introduced line produces — not a general
+ * "this looks like a type" heuristic — because a broad allowlist here would silently swallow a real
  * future spawn site that happens to share a token with one of these. In particular, none of these
  * checks is a bare `= "gcloud"` substring: `gcp-auth.ts`'s own `authSource?.trim() === "gcloud"`
  * contains that via the last `=` of `===`, so a check that loose would false-positive-EXCLUDE (here,
@@ -109,17 +120,21 @@ const GCLOUD_ARGV_MARKER = '"gcloud"';
  * comment naming the line it exempts); this function does not grow by loosening an existing entry
  * to cover it.
  *
- * Task 2.4 (detect + adopt the owner's gcloud login) added a second wave of these, all listed
- * below the original four. None of the new checks is a bare `"gcloud",` substring either, for the
- * same reason as above but concretely observed this time: `local-auth-types.ts`'s
- * `LOCAL_AUTH_SOURCES` array formats "gcloud" alone on its own line — `  "gcloud",` — which is
- * BYTE-IDENTICAL to `vertex-ai-sync.ts`'s own multi-line argv array formatting one of its REAL
- * spawn elements the same way (`argv = ["gcloud", "ai", …]` written one element per line). A check
- * that loose would have EXCLUDED that real spawn site from ever being scanned, which is why the
- * array element there instead carries a trailing comment (`"gcloud", // a LocalAuthSource id …`)
- * making its line text impossible to confuse with an argv element's.
+ * Task 2.4 (detect + adopt the owner's gcloud login) added a second wave of these. None of the new
+ * checks is a bare `"gcloud",` substring, for the same reason as above but concretely observed this
+ * time: `local-auth-types.ts`'s `LOCAL_AUTH_SOURCES` array formats "gcloud" alone on its own line —
+ * `  "gcloud",` — which is NOT byte-identical to `vertex-ai-sync.ts`'s own multi-line argv array
+ * formatting one of its REAL spawn elements the same way (`argv = ["gcloud", "ai", …]` written one
+ * element per line; the two source lines differ in leading-indent width, two spaces vs four) but IS
+ * identical after trimming, which is all a substring `.includes` check on the bare literal can see
+ * — the surrounding indentation plays no part in whether it matches. A check that loose would have
+ * excluded that real spawn site from ever being scanned — collapsing `spawnSites` from four entries
+ * to ZERO, since every one of the four real sites' argv includes a bare `"gcloud",` element
+ * somewhere — which is why the array element here instead carries a trailing comment
+ * (`"gcloud", // a LocalAuthSource id …`) making its line text impossible to confuse with a real
+ * argv element's.
  */
-function isKnownSafeGcloudTypeLiteral(line: string): boolean {
+function isNonSpawnLiteral(line: string): boolean {
   // `local-auth-env.ts`'s `PASSTHROUGH: Readonly<Record<"gh" | "aws" | "gcloud", ...>>` key type
   // and `cliEnvFor`'s `source: "gh" | "aws" | "gcloud"` parameter type both spell this exact
   // three-member union literally.
@@ -130,8 +145,11 @@ function isKnownSafeGcloudTypeLiteral(line: string): boolean {
   // — comparing `authSource` against the literal and constructing the matching `GcpAuth` VALUE,
   // never a spawn.
   if (line.includes('=== "gcloud" ? { kind: "gcloud" }')) return true;
-  // `gcp-auth.ts`'s `gcloudAuthEnv`: `cliEnvFor("gcloud", env)` — passing the literal as the
-  // `source` argument to the passthrough-env helper, never spawning anything itself.
+  // `detect-gcloud.ts`'s `detectGcloud`: `cliEnvFor("gcloud", deps.env)` — passing the literal as
+  // the `source` argument to the passthrough-env helper, never spawning anything itself. (This
+  // line sits immediately after `detectGcloud`'s one real, exempt spawn argv — see
+  // `isExemptSpawnSite` — but is itself a SEPARATE marker occurrence with no argv content of its
+  // own, so it needs its own exclusion regardless of that neighbour.)
   if (line.includes('cliEnvFor("gcloud"')) return true;
   // `local-auth-types.ts`'s `LocalAuthSource` union TYPE:
   // `"gh" | "aws" | "kubectl" | "gcloud"`.
@@ -151,6 +169,11 @@ function isKnownSafeGcloudTypeLiteral(line: string): boolean {
   // `adopt-local-auth.ts`'s `resolveTarget`: `x.source === "gcloud"` — a `GcloudFinding` lookup
   // predicate over already-detected findings, never a spawn.
   if (line.includes('x.source === "gcloud"')) return true;
+  // `adopt-local-auth.ts`'s `usable()`: `req.source === "gcloud" && finding.status ===
+  // "needs_project"` — scoping the `needs_project` carve-out to the gcloud request specifically
+  // (fix for a review finding: the carve-out was union-wide before). A comparison over an
+  // already-parsed `AdoptRequest`, never a spawn.
+  if (line.includes('req.source === "gcloud" &&')) return true;
   // `adopt-local-auth.ts`'s `resolveTarget`/`consentPayload`: `source: "gcloud",` — constructing
   // the `Target`/consent-payload VALUE (an object property, never an argv array element — a real
   // spawn argv never carries a `source:` key).
@@ -161,17 +184,54 @@ function isKnownSafeGcloudTypeLiteral(line: string): boolean {
   // `detect-gcloud.ts`'s `detectGcloud`: `const base = { source: "gcloud" as const, … }` — the
   // shared finding-base VALUE every status branch spreads, never a spawn.
   if (line.includes('source: "gcloud" as const')) return true;
-  // `detect-gcloud.ts`'s `detectGcloud`: `deps.which("gcloud")` — a PATH-resolution check, not a
-  // spawn (nothing is executed; it only asks whether the binary exists).
-  if (line.includes('which("gcloud")')) return true;
-  // `detect-gcloud.ts`'s `detectGcloud`: `["gcloud", "config", "list", "--format", "json"]` — this
-  // IS a real spawn argv, but a LOCAL-ONLY one that reads gcloud's own config and makes no API
-  // call (see the function's doc comment) — there is no configured `GcpAuth` yet at detection time
-  // to authenticate AS, so `gcloudAuthEnv`/`gcloudKeyFileEnv` do not apply here; the adjacent
-  // `cliEnvFor("gcloud", deps.env)` call (excluded above) is the correct, narrower env for this
-  // site. The full argv is matched verbatim so this exclusion cannot drift onto a differently
-  // shaped spawn later.
-  if (line.includes('["gcloud", "config", "list", "--format", "json"]')) return true;
+  // `detect-gcloud.ts`'s `detectGcloud`: `if (!deps.which("gcloud")) {` — matched on the FULL
+  // negated-check shape, not the bare `which("gcloud")` substring: a bare substring match was
+  // demonstrated to also swallow an adversarial line reusing that substring to smuggle a real
+  // argv-bound literal past the scan, e.g.
+  // `const bin = deps.which("gcloud") ? "gcloud" : "gcloud.cmd";` followed by
+  // `spawnCapture([bin, …])` — a ternary whose TRUE branch is a live argv value, which a
+  // `which("gcloud")`-only match would have excluded on the same line as collateral damage. The
+  // negation makes this exclusion match only the one real PATH-existence check (nothing is
+  // executed; it only asks whether the binary exists), never a ternary or another expression
+  // shape built around `which(`.
+  if (line.includes('!deps.which("gcloud")')) return true;
+  return false;
+}
+
+/**
+ * A REAL spawn argv occurrence — unlike every check in `isNonSpawnLiteral` above, a line matching
+ * this function genuinely spawns `gcloud`, and DOES belong in `spawnSites` — but is deliberately
+ * excused from the credentialing requirement (`gcloudAuthEnv`/`gcloudKeyFileEnv`/
+ * `runGcloudCommand` need not appear nearby) because there is a specific, stated reason that site
+ * cannot silently authenticate as the wrong account.
+ *
+ * Keyed on BOTH the file and the exact argv text — never argv text alone. A review round
+ * demonstrated why: with the single combined predicate this replaced, a scratch file placed
+ * anywhere else under `connectors/` containing the SAME argv
+ * (`spawnCapture(["gcloud", "config", "list", "--format", "json"], {})`) — exactly what a
+ * differently-written GCP connector reading its own configured project might plausibly spawn —
+ * ran the guard to a clean 11 pass / 0 fail, silently exempting a genuinely uncredentialed site
+ * that happened to share detect-gcloud.ts's argv text. Scoping the exemption to the one file where
+ * the "no `GcpAuth` exists yet" reasoning actually holds closes that hole; a text-only match cannot
+ * distinguish "this specific detector, before any auth mode is chosen" from "any future spawn that
+ * reads a project id the same way".
+ */
+function isExemptSpawnSite(relFile: string, line: string): boolean {
+  // `local-auth/detect-gcloud.ts`'s `detectGcloud`: `["gcloud", "config", "list", "--format",
+  // "json"]` — a LOCAL-ONLY read of gcloud's own config, no API call, and — unlike the four real
+  // credentialed sites — no configured `GcpAuth` exists yet at DETECTION time to authenticate AS
+  // (detection precedes adoption; it reports whichever account is currently active, not one Nimbus
+  // has been told to use), so `gcloudAuthEnv`/`gcloudKeyFileEnv` do not apply. The companion
+  // `cliEnvFor("gcloud", deps.env)` call on the next line is the correct, narrower env for this
+  // site and is excluded separately by `isNonSpawnLiteral` (it carries no argv content itself).
+  // The full argv text is matched verbatim, and only inside this one file, so this exemption
+  // cannot drift onto a differently shaped — or differently located — spawn later.
+  if (
+    relFile === "local-auth/detect-gcloud.ts" &&
+    line.includes('["gcloud", "config", "list", "--format", "json"]')
+  ) {
+    return true;
+  }
   return false;
 }
 
@@ -246,15 +306,18 @@ async function scanGcloudSpawnSites(
     const lines = contents.split("\n");
     // Per OCCURRENCE, not per file: a line can in principle carry the marker more than once, and
     // each one is its own spawn site that must independently be credentialed. A line excluded by
-    // `isKnownSafeGcloudTypeLiteral` (a TypeScript string-literal type, never a spawned argv
-    // element) is not a spawn site at all, so it must not appear in `spawnSites` either — but every
-    // OTHER line carrying the marker counts, whatever shape it takes.
+    // `isNonSpawnLiteral` (a TypeScript string-literal type, never a spawned argv element) is not a
+    // spawn site at all, so it must not appear in `spawnSites` either. A line matched by
+    // `isExemptSpawnSite` IS a real spawn site — it DOES appear in `spawnSites` — but is skipped
+    // past the credentialing check specifically, for a stated reason. Every OTHER line carrying the
+    // marker counts, whatever shape it takes.
     let sawArgvSite = false;
     for (let i = 0; i < lines.length; i++) {
       const line = lines[i] as string;
       if (!line.includes(GCLOUD_ARGV_MARKER)) continue;
-      if (isKnownSafeGcloudTypeLiteral(line)) continue;
+      if (isNonSpawnLiteral(line)) continue;
       sawArgvSite = true;
+      if (isExemptSpawnSite(relPath, line)) continue;
       if (siteIsCredentialed(lines, i)) continue;
       offenders.push(
         `${relPath}:${i + 1} spawns gcloud without gcloudKeyFileEnv or runGcloudCommand within ` +
@@ -280,13 +343,18 @@ describe("gcloud spawn totality — a future gcloud spawn site cannot skip the c
     const { spawnSites, offenders } = await scanGcloudSpawnSites(CONNECTORS_DIR);
     expect(offenders).toEqual([]);
     // Guard the guard: if the scan found nothing at all, the assertion above is vacuous. Asserted
-    // against the four known sites by name, not just a non-zero count, so a globbing mistake that
+    // against the five known sites by name, not just a non-zero count, so a globbing mistake that
     // silently drops one of them (e.g. the recursion missing `_lib/` or a directory rename) is
-    // itself a failure rather than a quieter, smaller passing scan.
+    // itself a failure rather than a quieter, smaller passing scan. `local-auth/detect-gcloud.ts`
+    // is the fifth: a real spawn site (`isExemptSpawnSite` excuses it from the credentialing
+    // check, but it still SETS `sawArgvSite` and belongs here) — a combined predicate that instead
+    // skipped it before `sawArgvSite = true` would make this list four again while the site stayed
+    // silently uncredentialable-and-unchecked, which is exactly the shape the review round caught.
     expect(spawnSites.sort()).toEqual([
       "bigquery-sync.ts",
       "cloud-logging-sync.ts",
       "gcp-sync.ts",
+      "local-auth/detect-gcloud.ts",
       "vertex-ai-sync.ts",
     ]);
   });
@@ -359,6 +427,67 @@ describe("gcloud spawn totality — a future gcloud spawn site cannot skip the c
       );
       expect(fixtureOffenders).toHaveLength(1);
       expect(fixtureOffenders[0]).toContain('const bin = "gcloud"');
+    } finally {
+      await rm(fixtureDir, { recursive: true, force: true });
+    }
+  });
+
+  // Pins that `isExemptSpawnSite`'s exemption is FILE-scoped, not text-scoped — the defect a
+  // review round demonstrated in the predecessor combined function: a scratch file anywhere else
+  // under `connectors/` carrying `detect-gcloud.ts`'s exact argv text
+  // (`["gcloud", "config", "list", "--format", "json"]`) — exactly what a differently-written GCP
+  // connector reading its own configured project might plausibly spawn — must still be flagged,
+  // since THAT site has no "no GcpAuth exists yet" justification and nothing here proves it is
+  // uncredentialed by coincidence.
+  test("the detect-gcloud.ts exemption does not follow its argv text into a different file", async () => {
+    const fixture =
+      "export async function readsConfiguredProject() {\n" +
+      '  const r = await spawnCapture(["gcloud", "config", "list", "--format", "json"], {});\n' +
+      "  return r;\n" +
+      "}\n";
+    const fixtureDir = mkdtempSync(join(tmpdir(), "nimbus-gcp-auth-"));
+    try {
+      // Deliberately NOT named `detect-gcloud.ts` and not under a `local-auth/` subdirectory —
+      // the whole point is that `isExemptSpawnSite`'s file check must fail here.
+      const fixturePath = resolve(fixtureDir, "__gcp_auth_other_gcp_connector_fixture.ts");
+      await writeFile(fixturePath, fixture, "utf8");
+      const { offenders, spawnSites } = await scanGcloudSpawnSites(fixtureDir);
+      const fixtureOffenders = offenders.filter((o) =>
+        o.startsWith("__gcp_auth_other_gcp_connector_fixture.ts:"),
+      );
+      expect(fixtureOffenders).toHaveLength(1);
+      expect(fixtureOffenders[0]).toContain('"gcloud", "config", "list", "--format", "json"');
+      expect(spawnSites).toContain("__gcp_auth_other_gcp_connector_fixture.ts");
+    } finally {
+      await rm(fixtureDir, { recursive: true, force: true });
+    }
+  });
+
+  // Pins RECALL again, this time against the specific hole a review round demonstrated in the
+  // `which("gcloud")` exclusion: a bare substring match on `which("gcloud")` also matched a line
+  // that USES that same substring incidentally while smuggling a real, argv-bound literal past the
+  // scan on its ternary's TRUE branch — a Windows-flavoured "pick the right binary name" shape, and
+  // an ordinary way to write this, not an adversarial one. Tightening the exclusion to the full
+  // negated-check shape (`!deps.which("gcloud")`) — the one real production line — means this
+  // ternary line no longer matches `isNonSpawnLiteral` at all, so it is scanned as a real
+  // (uncredentialed, unexempt) site.
+  test('catches a which("gcloud") ternary that picks a live argv literal on its true branch', async () => {
+    const fixture =
+      "export async function windowsBinaryNameSite(deps: { which: (b: string) => boolean }) {\n" +
+      '  const bin = deps.which("gcloud") ? "gcloud" : "gcloud.cmd";\n' +
+      '  const r = await spawnCapture([bin, "auth", "print-access-token"], {});\n' +
+      "  return r;\n" +
+      "}\n";
+    const fixtureDir = mkdtempSync(join(tmpdir(), "nimbus-gcp-auth-"));
+    try {
+      const fixturePath = resolve(fixtureDir, "__gcp_auth_which_ternary_fixture.ts");
+      await writeFile(fixturePath, fixture, "utf8");
+      const { offenders } = await scanGcloudSpawnSites(fixtureDir);
+      const fixtureOffenders = offenders.filter((o) =>
+        o.startsWith("__gcp_auth_which_ternary_fixture.ts:"),
+      );
+      expect(fixtureOffenders).toHaveLength(1);
+      expect(fixtureOffenders[0]).toContain('deps.which("gcloud") ? "gcloud" : "gcloud.cmd"');
     } finally {
       await rm(fixtureDir, { recursive: true, force: true });
     }

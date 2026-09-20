@@ -228,15 +228,19 @@ describe("local auth over a real gateway", () => {
     }
   });
 
-  test("detect lists all three through the real routing", async () => {
+  test("detect lists every source through the real routing", async () => {
     const findings = await client.call<Array<{ source: string; status: string }>>(
       "connector.detectLocalAuth",
       {},
     );
+    // gcloud has no shim on PATH here (only gh/aws/kubectl get one — see `writeShims`), so it
+    // reports `cli_not_found` rather than a login; that is still the real routing exercising a
+    // real `detectGcloud` call, not a stub.
     expect(findings.map((f) => [f.source, f.status])).toEqual([
       ["gh", "available"],
       ["aws", "available"],
       ["kubectl", "available"],
+      ["gcloud", "cli_not_found"],
     ]);
   });
 

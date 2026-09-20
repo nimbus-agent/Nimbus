@@ -47,6 +47,23 @@ describe("detectGcloud", () => {
     expect(f.project).toBeNull();
   });
 
+  test("a project NUMBER (not an id) → needs_project, agreeing with resolveTarget's GCP_PROJECT_ID check", async () => {
+    // `gcloud config set project` accepts a project number as readily as a project id, and
+    // `core.project` echoes back whatever was set. Detect and adopt must agree on what counts as
+    // "a project" — an owner whose default is a number is asked to name an id, the same shape
+    // `adopt-local-auth.ts`'s `resolveTarget` would otherwise refuse at adopt time.
+    const run: RunCli = async () => ({
+      ok: true,
+      stdout: JSON.stringify({ core: { account: "me@example.com", project: "123456789012" } }),
+      stderr: "",
+      code: 0,
+    });
+    const f = await detectGcloud(host(run), false);
+    expect(f.status).toBe("needs_project");
+    expect(f.project).toBeNull();
+    expect(f.reason).toContain("123456789012");
+  });
+
   test("no active account → not_logged_in naming gcloud auth login", async () => {
     const run: RunCli = async () => ({
       ok: true,

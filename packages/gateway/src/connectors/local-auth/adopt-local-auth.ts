@@ -113,8 +113,13 @@ function usable<F extends LocalAuthFinding>(finding: F | undefined, req: AdoptRe
     return fail(LOCAL_AUTH_ERR.unsupported, finding.reason ?? "unsupported");
   }
   // gcloud's `needs_project` is still offerable — an active login with no default project just
-  // needs the owner to name one; every other non-`available` status is a hard refusal.
-  if (finding.status !== "available" && finding.status !== "needs_project") {
+  // needs the owner to name one. Scoped to the gcloud source specifically, not union-wide:
+  // `needs_project` exists only on `GcloudFinding` today, but a future gh/aws finding reusing
+  // that status word for some OTHER meaning (they have no "project" concept) must not be
+  // silently waved through here on the strength of gcloud's carve-out.
+  const isOfferableGcloudNeedsProject =
+    req.source === "gcloud" && finding.status === "needs_project";
+  if (finding.status !== "available" && !isOfferableGcloudNeedsProject) {
     return fail(LOCAL_AUTH_ERR.sourceUnavailable, finding.reason ?? finding.status);
   }
   if (finding.alreadyConfigured && !req.replace) {

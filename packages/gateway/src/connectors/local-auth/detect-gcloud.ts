@@ -1,6 +1,6 @@
 import { cliEnvFor } from "./local-auth-env.ts";
 import type { LocalAuthHostDeps } from "./local-auth-host.ts";
-import type { GcloudFinding } from "./local-auth-types.ts";
+import { GCP_PROJECT_ID, type GcloudFinding } from "./local-auth-types.ts";
 
 function str(v: unknown): string | null {
   return typeof v === "string" && v.trim() !== "" ? v.trim() : null;
@@ -38,17 +38,17 @@ export async function detectGcloud(
     core = {};
   }
   const account = str(core["account"]);
-  const project = str(core["project"]);
+  const rawProject = str(core["project"]);
   if (account === null) {
     return {
       ...base,
       account: null,
-      project,
+      project: rawProject,
       status: "not_logged_in",
       reason: "gcloud has no active account — run: gcloud auth login",
     };
   }
-  if (project === null) {
+  if (rawProject === null) {
     return {
       ...base,
       account,
@@ -57,5 +57,21 @@ export async function detectGcloud(
       reason: "gcloud has no default project — name one to use",
     };
   }
-  return { ...base, account, project, status: "available" };
+  // `resolveTarget` (adopt-local-auth.ts) enforces this same `GCP_PROJECT_ID` shape on whatever
+  // project ends up chosen, owner-supplied or detected — the two surfaces must agree on what a
+  // "project id" is. `gcloud config set project` accepts a project NUMBER too
+  // (`gcloud.config.core.project` has no id-vs-number distinction of its own), so without this
+  // check an owner whose default project is a number would see `available` here and then a
+  // confusing `ERR_INVALID_PARAMS` at adopt time — this reports `needs_project` instead, so the
+  // owner is asked to name a project id up front, on the same surface that will validate it.
+  if (!GCP_PROJECT_ID.test(rawProject)) {
+    return {
+      ...base,
+      account,
+      project: null,
+      status: "needs_project",
+      reason: `gcloud's default project "${rawProject}" is not a project id (it may be a project number) — name a project id to use`,
+    };
+  }
+  return { ...base, account, project: rawProject, status: "available" };
 }

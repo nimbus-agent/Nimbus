@@ -32,7 +32,11 @@ describe("parseSources", () => {
 describe("detectLocalAuth", () => {
   test("runs the requested detectors and marks alreadyConfigured per service", async () => {
     const asked: string[] = [];
-    const findings = await detectLocalAuth(["gh", "aws", "kubectl"], {
+    // Includes "gcloud" so `LOCAL_AUTH_SERVICE.gcloud = "gcp"` is actually exercised here — a
+    // prior version of this test requested only gh/aws/kubectl, so a wrong mapping (e.g. reusing
+    // "gcp" for the wrong source, or a typo) would compute `alreadyConfigured` from the wrong
+    // connector with this whole suite still green.
+    const findings = await detectLocalAuth(["gh", "aws", "kubectl", "gcloud"], {
       host: host(),
       isConfigured: async (svc) => {
         asked.push(svc);
@@ -43,8 +47,11 @@ describe("detectLocalAuth", () => {
       ["gh", "available", false],
       ["aws", "available", true],
       ["kubectl", "cli_not_found", false],
+      // `host()`'s `run` always answers non-JSON stdout, so `detectGcloud` falls through to
+      // `not_logged_in` regardless — the point of this row is `asked` below, not this status.
+      ["gcloud", "not_logged_in", false],
     ]);
-    expect(asked.sort()).toEqual(["aws", "github", "kubernetes"]);
+    expect(asked.sort()).toEqual(["aws", "gcp", "github", "kubernetes"]);
   });
 
   test("only the requested sources run", async () => {

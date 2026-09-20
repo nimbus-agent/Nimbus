@@ -439,4 +439,20 @@ describe("adoptLocalAuth — gcloud", () => {
     const summary = String(h.gated[0]?.payload?.["summary"]);
     expect(summary).not.toContain("clears");
   });
+
+  // The test above (`configured: false`, the harness default) is not a shape production can ever
+  // produce: `isConnectorConfigured` reads ANY configured `gcp.*` secret, so a stored key path
+  // makes `alreadyConfigured` true, and `usable()` refuses BEFORE consent unless `replace` is set.
+  // The clause is therefore reachable ONLY on the `--replace` path — this test drives that exact
+  // shape, so a regression that only shows up once `alreadyConfigured`/`replace` are threaded
+  // correctly (as opposed to the isolated `consentPayload` logic above) has somewhere to fail.
+  test("a stored key path with replace=true (the only production-reachable shape) → still discloses the clear", async () => {
+    const h = harness();
+    await adoptLocalAuth(
+      { source: "gcloud", project: "acme-prod", replace: true },
+      h.deps({ gcpKeyPath: "/keys/sa.json", configured: true }),
+    );
+    const summary = String(h.gated[0]?.payload?.["summary"]);
+    expect(summary).toContain("clears the GCP service-account key path");
+  });
 });
