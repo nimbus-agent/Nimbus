@@ -25,6 +25,22 @@
  * `"__ANY__"`: matched against the union of every key any writer emits under any type, which is
  * strictly weaker, and every such read is counted in `ambiguousReadCount` so that weaker confidence
  * stays visible in the artifact rather than blending into the strict-scope numbers.
+ *
+ * **Per-type scoping alone is not enough — matching is per-type AND per-service.** A read shaped
+ * `WHERE service IN (…) AND type = 'ci_run' AND json_extract(metadata, '$.branch') = ?` reaches
+ * every service in that IN-list at runtime, a set this census cannot resolve statically (the
+ * placeholders are parameters). What it CAN do is fail closed: a metadata-key triple is matched
+ * only when EVERY distinct service that writes the scoped type also emits that key — one covering
+ * writer is not coverage, it is a partial match, and a partial match is exactly the shape of the
+ * `github_actions` DORA-conclusion bug and the `preflight.ts`/`branch` bug this gate exists to
+ * catch (of four `ci_run` writers, only `circleci` emits `branch`; a per-type-only check that
+ * "some writer emits it" would have hidden that). A read whose scope type has writers but not
+ * ALL of them emit the key is recorded with `matchState: "partial"` and the list of services that
+ * DO emit it — visibly weaker than a bare `"unmatched"` (a key genuinely emitted nowhere under the
+ * scope type), and the caller (Task 1.7's coverage map keys its per-service entries off exactly
+ * this list) needs to be able to tell the two apart. A `type IN (...)` read scopes to more than one
+ * type; it is only matched when EVERY writer of EVERY scoped type emits the key — anything short of
+ * that is a partial match against the union of every emitting service found across all scoped types.
  */
 
 import type { FileEntry } from "./check-nimbus-invariants.ts";
@@ -40,11 +56,27 @@ import { auditOutputPath, iterateSourceFiles } from "./lib.ts";
 
 export type ParameterizedRead = { readonly file: string; readonly line: number };
 
+export type MatchState = "unmatched" | "partial";
+
+/**
+ * A `ReadTriple` (Task 1.3/1.4's committed interface, unmodified) plus this file's verdict on it.
+ * `matchState: "unmatched"` — for `kind: "type"`, no writer emits the type at all; for
+ * `kind: "metadata-key"`, no writer of the scoped type(s) emits the key either (total absence).
+ * `matchState: "partial"` — `kind: "metadata-key"` only: at least one writer of a scoped type
+ * emits the key, but at least one other writer of a scoped type does not — `partialCoverage` lists
+ * the distinct services that DO. A partial match is still an unmatched read: the gate this feeds
+ * treats "one writer covers it" as a defect, not coverage.
+ */
+export type UnmatchedReadTriple = ReadTriple & {
+  readonly matchState: MatchState;
+  readonly partialCoverage?: readonly string[];
+};
+
 export type LaneCensus = {
   readonly reads: readonly ReadTriple[];
   readonly writes: readonly WriterEmission[];
-  /** `item` reads (only — `graph_entity`/`graph_relation` are never gated in v1) no writer satisfies. */
-  readonly unmatchedItemReads: readonly ReadTriple[];
+  /** `item` reads (only — `graph_entity`/`graph_relation` are never gated in v1) no writer fully satisfies. */
+  readonly unmatchedItemReads: readonly UnmatchedReadTriple[];
   /**
    * Count of `item` metadata-key reads that carried no type predicate anywhere in their enclosing
    * SQL literal (or, for a JS-side `meta["key"]` read, no enclosing SQL literal at all) — the
@@ -150,27 +182,81 @@ function scopeTypesFor(
   return types;
 }
 
-/** The writer corpus, indexed for both strict per-type matching and the weaker `"__ANY__"` union check. */
+/**
+ * The writer corpus, indexed for strict per-type-AND-per-service matching plus the weaker
+ * `"__ANY__"` union check. `servicesByType` is every DISTINCT service (not row) that writes a
+ * given type — a service with two emission rows for the same type counts once, since "does this
+ * writer/connector emit the key" is the question, not "does this call site". `emittingServicesByType`
+ * is, per type, the subset of those services with at least one emission row that includes the key.
+ */
 type WriterIndex = {
   readonly writtenTypes: ReadonlySet<string>;
-  readonly keysByType: ReadonlyMap<string, ReadonlySet<string>>;
+  readonly servicesByType: ReadonlyMap<string, ReadonlySet<string>>;
+  readonly emittingServicesByType: ReadonlyMap<string, ReadonlyMap<string, ReadonlySet<string>>>;
   readonly allKeys: ReadonlySet<string>;
 };
 
 function buildWriterIndex(writes: readonly WriterEmission[]): WriterIndex {
   const writtenTypes = new Set<string>();
-  const keysByType = new Map<string, Set<string>>();
+  const servicesByType = new Map<string, Set<string>>();
+  const emittingServicesByType = new Map<string, Map<string, Set<string>>>();
   const allKeys = new Set<string>();
+
   for (const w of writes) {
     writtenTypes.add(w.itemType);
-    const keys = keysByType.get(w.itemType) ?? new Set<string>();
+
+    const services = servicesByType.get(w.itemType) ?? new Set<string>();
+    services.add(w.service);
+    servicesByType.set(w.itemType, services);
+
+    const keyMap = emittingServicesByType.get(w.itemType) ?? new Map<string, Set<string>>();
     for (const key of w.metadataKeys) {
-      keys.add(key);
       allKeys.add(key);
+      const emitters = keyMap.get(key) ?? new Set<string>();
+      emitters.add(w.service);
+      keyMap.set(key, emitters);
     }
-    keysByType.set(w.itemType, keys);
+    emittingServicesByType.set(w.itemType, keyMap);
   }
-  return { writtenTypes, keysByType, allKeys };
+
+  return { writtenTypes, servicesByType, emittingServicesByType, allKeys };
+}
+
+/** Per-scope-type coverage of `key`: every distinct service that writes `type`, and the subset that emits `key`. */
+type TypeCoverage = {
+  readonly writingServices: ReadonlySet<string>;
+  readonly emittingServices: ReadonlySet<string>;
+};
+
+function coverageForType(idx: WriterIndex, type: string, key: string): TypeCoverage {
+  const writingServices = idx.servicesByType.get(type) ?? new Set<string>();
+  const emittingServices = idx.emittingServicesByType.get(type)?.get(key) ?? new Set<string>();
+  return { writingServices, emittingServices };
+}
+
+/**
+ * Matches a metadata-key triple against every type in `scopeTypes` (non-empty — the `"__ANY__"`
+ * case is handled by the caller before this is reached): fully matched only when EVERY distinct
+ * service writing EVERY scoped type also emits the key. Anything short of that returns the union
+ * of emitting services found across all scoped types — empty when the key is emitted nowhere in
+ * scope (`matchState` becomes `"unmatched"` at the call site), non-empty when at least one writer
+ * covers it but not all do (`"partial"`).
+ */
+function matchMetadataKeyAcrossTypes(
+  idx: WriterIndex,
+  scopeTypes: ReadonlySet<string>,
+  key: string,
+): { readonly matched: boolean; readonly emittingServices: readonly string[] } {
+  const emitting = new Set<string>();
+  let fullyCovered = true;
+  for (const type of scopeTypes) {
+    const { writingServices, emittingServices } = coverageForType(idx, type, key);
+    for (const s of emittingServices) emitting.add(s);
+    if (writingServices.size === 0 || emittingServices.size < writingServices.size) {
+      fullyCovered = false;
+    }
+  }
+  return { matched: fullyCovered, emittingServices: [...emitting].sort() };
 }
 
 /**
@@ -207,7 +293,7 @@ export function collectLaneCensus(files: readonly FileEntry[]): LaneCensus {
 
   const writerIndex = buildWriterIndex(writes);
 
-  const unmatchedItemReads: ReadTriple[] = [];
+  const unmatchedItemReads: UnmatchedReadTriple[] = [];
   let ambiguousReadCount = 0;
 
   for (const { fileReads, spans } of perFile) {
@@ -221,7 +307,7 @@ export function collectLaneCensus(files: readonly FileEntry[]): LaneCensus {
 
       if (triple.kind === "type") {
         if (!writerIndex.writtenTypes.has(triple.value)) {
-          unmatchedItemReads.push(triple);
+          unmatchedItemReads.push({ ...triple, matchState: "unmatched" });
         }
         continue;
       }
@@ -229,18 +315,27 @@ export function collectLaneCensus(files: readonly FileEntry[]): LaneCensus {
       // kind === "metadata-key"
       const scopeTypes = scopeTypesFor(triple, spans, typeTriples);
       if (scopeTypes.size === 0) {
+        // "__ANY__" scope: unchanged from the per-type design — checked against the weaker
+        // global union (any writer of any type emitting the key counts), never per-service,
+        // since there is no type context here to check per-writer coverage against.
         ambiguousReadCount++;
         if (!writerIndex.allKeys.has(triple.value)) {
-          unmatchedItemReads.push(triple);
+          unmatchedItemReads.push({ ...triple, matchState: "unmatched" });
         }
         continue;
       }
 
-      const satisfied = [...scopeTypes].some(
-        (type) => writerIndex.keysByType.get(type)?.has(triple.value) ?? false,
+      const { matched, emittingServices } = matchMetadataKeyAcrossTypes(
+        writerIndex,
+        scopeTypes,
+        triple.value,
       );
-      if (!satisfied) {
-        unmatchedItemReads.push(triple);
+      if (!matched) {
+        unmatchedItemReads.push(
+          emittingServices.length > 0
+            ? { ...triple, matchState: "partial", partialCoverage: emittingServices }
+            : { ...triple, matchState: "unmatched" },
+        );
       }
     }
   }
@@ -268,7 +363,46 @@ const KNOWN_BLIND_SPOTS: readonly string[] = [
     "function-call arguments rather than an inline `{ service, type, metadata }` object literal, " +
     "so their real writes produce zero WriterEmission rows here. An `imap:*`/`protonmail:*` entry " +
     "in unmatchedItemReads is this blind spot, not a confirmed dead lane.",
+  // Found while verifying the pagerduty:incident:opened_at_ms lane against a real coordinator
+  // expectation (it should read as MATCHED, not unmatched — it does not, and this is why).
+  "pagerduty-sync.ts's buildPagerdutyMetadata sets four keys — opened_at_ms, " +
+    'pagerduty_service_id, severity, urgency — via a conditional `metadata["key"] = value;` ' +
+    'bracket assignment AFTER the object literal is built (`if (cond) metadata["opened_at_ms"] ' +
+    "= openedAtMs;`), a fourth metadata-authoring shape extractWriterEmissions does not resolve " +
+    "(it recognizes an inline object literal, a one-hop identifier, and a one-hop same-file call " +
+    "— never a later mutation onto an already-built object). pagerduty's WriterEmission for " +
+    "`incident` therefore omits all four keys even though the connector genuinely writes them at " +
+    "runtime. Any `incident`-scoped unmatched/partial row for one of these four keys is this " +
+    "blind spot, not a confirmed dead lane — the same caution the imap/protonmail entry above " +
+    "states, for a different root cause (a writer-side resolution gap rather than a zero-row gap).",
 ];
+
+/**
+ * Reconciles a raw `packages/gateway/src/**\/*.ts` (minus `*.test.ts`) SQL-literal count of 483
+ * against this artifact's file set, which is `iterateSourceFiles()` scoped to `packages/gateway/src/`
+ * and additionally excludes `*-sql.ts` files (`lib.ts`'s `iterateGlob`, a repo-wide convention every
+ * other structure-audit script already relies on, not something this file introduced). The
+ * difference — 4 literals in exactly 4 `*-sql.ts` files (`index/entity-metadata-v54-sql.ts`,
+ * `index/fleet-subjects-v63-sql.ts`, `index/glossary-manual-v46-sql.ts`,
+ * `index/unified-item-v3-sql.ts`) — is fully explained and has ZERO effect on this artifact's
+ * `reads`/`writes`/`unmatchedItemReads`: three are pure schema DDL (`CREATE TABLE`/`VIEW`/`TRIGGER`)
+ * whose only SQL-shaped literal is an internal FTS-sync `SELECT` inside a trigger body, never a
+ * production read predicate; the fourth, `entity-metadata-v54-sql.ts`, is a one-time migration
+ * `UPDATE graph_entity SET ... WHERE type IN (...)` — a real `type IN (...)` predicate, but scoped
+ * to `graph_entity`, which this artifact already excludes from `unmatchedItemReads` by table (see
+ * the module doc comment), and it is historical migration SQL, not a live read site, which is
+ * precisely what `-sql.ts` exclusion exists to filter out repo-wide.
+ */
+const SQL_LITERAL_SCOPE_NOTE =
+  "A raw scan of packages/gateway/src/**/*.ts (minus *.test.ts) with extractSqlLiterals finds " +
+  "483 SQL-shaped literals. This artifact's file set additionally excludes *-sql.ts files (an " +
+  "existing, repo-wide iterateSourceFiles() convention, not specific to this gate), which drops " +
+  "exactly 4 literals in 4 files: index/entity-metadata-v54-sql.ts, index/fleet-subjects-v63-sql.ts, " +
+  "index/glossary-manual-v46-sql.ts, index/unified-item-v3-sql.ts. Three are schema DDL (their only " +
+  "SQL-shaped text is an internal FTS-sync SELECT inside a CREATE TRIGGER body); the fourth is a " +
+  "one-time graph_entity migration UPDATE, already out of scope by table. None is a live read " +
+  "predicate reachable at runtime, so this fully explains the 483-vs-479 gap with zero effect on " +
+  "reads/writes/unmatchedItemReads below.";
 
 async function run(): Promise<void> {
   const files: FileEntry[] = [];
@@ -279,14 +413,23 @@ async function run(): Promise<void> {
 
   const census = collectLaneCensus(files);
 
+  const totalUnmatched = census.unmatchedItemReads.filter(
+    (r) => r.matchState === "unmatched",
+  ).length;
+  const totalPartial = census.unmatchedItemReads.filter((r) => r.matchState === "partial").length;
+
   const outPath = auditOutputPath("index-lane-census.json");
   const artifact = {
     generatedAt: new Date().toISOString(),
     knownBlindSpots: KNOWN_BLIND_SPOTS,
+    sqlLiteralScopeNote: SQL_LITERAL_SCOPE_NOTE,
     counts: {
       reads: census.reads.length,
       writes: census.writes.length,
       unmatchedItemReads: census.unmatchedItemReads.length,
+      // Breakdown of the row above by matchState — total absence vs. some-but-not-all-writers.
+      totalAbsence: totalUnmatched,
+      partialCoverage: totalPartial,
       ambiguousReadCount: census.ambiguousReadCount,
       parameterizedReads: census.parameterizedReads.length,
     },
@@ -300,7 +443,8 @@ async function run(): Promise<void> {
 
   console.log(
     `index-lane census: ${census.reads.length} reads, ${census.writes.length} writes, ` +
-      `${census.unmatchedItemReads.length} unmatched item reads, ` +
+      `${census.unmatchedItemReads.length} unmatched item reads ` +
+      `(${totalUnmatched} total absence, ${totalPartial} partial coverage), ` +
       `${census.ambiguousReadCount} ambiguous (__ANY__-scoped), ` +
       `${census.parameterizedReads.length} parameterized → ${outPath}`,
   );

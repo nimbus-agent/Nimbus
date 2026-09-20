@@ -1,12 +1,16 @@
 {
-  "generatedAt": "2026-09-20T16:21:35.582Z",
+  "generatedAt": "2026-09-20T16:32:22.615Z",
   "knownBlindSpots": [
-    "imap and protonmail write item rows through a generic cross-file mapper called with plain function-call arguments rather than an inline `{ service, type, metadata }` object literal, so their real writes produce zero WriterEmission rows here. An `imap:*`/`protonmail:*` entry in unmatchedItemReads is this blind spot, not a confirmed dead lane."
+    "imap and protonmail write item rows through a generic cross-file mapper called with plain function-call arguments rather than an inline `{ service, type, metadata }` object literal, so their real writes produce zero WriterEmission rows here. An `imap:*`/`protonmail:*` entry in unmatchedItemReads is this blind spot, not a confirmed dead lane.",
+    "pagerduty-sync.ts's buildPagerdutyMetadata sets four keys — opened_at_ms, pagerduty_service_id, severity, urgency — via a conditional `metadata[\"key\"] = value;` bracket assignment AFTER the object literal is built (`if (cond) metadata[\"opened_at_ms\"] = openedAtMs;`), a fourth metadata-authoring shape extractWriterEmissions does not resolve (it recognizes an inline object literal, a one-hop identifier, and a one-hop same-file call — never a later mutation onto an already-built object). pagerduty's WriterEmission for `incident` therefore omits all four keys even though the connector genuinely writes them at runtime. Any `incident`-scoped unmatched/partial row for one of these four keys is this blind spot, not a confirmed dead lane — the same caution the imap/protonmail entry above states, for a different root cause (a writer-side resolution gap rather than a zero-row gap)."
   ],
+  "sqlLiteralScopeNote": "A raw scan of packages/gateway/src/**/*.ts (minus *.test.ts) with extractSqlLiterals finds 483 SQL-shaped literals. This artifact's file set additionally excludes *-sql.ts files (an existing, repo-wide iterateSourceFiles() convention, not specific to this gate), which drops exactly 4 literals in 4 files: index/entity-metadata-v54-sql.ts, index/fleet-subjects-v63-sql.ts, index/glossary-manual-v46-sql.ts, index/unified-item-v3-sql.ts. Three are schema DDL (their only SQL-shaped text is an internal FTS-sync SELECT inside a CREATE TRIGGER body); the fourth is a one-time graph_entity migration UPDATE, already out of scope by table. None is a live read predicate reachable at runtime, so this fully explains the 483-vs-479 gap with zero effect on reads/writes/unmatchedItemReads below.",
   "counts": {
     "reads": 401,
     "writes": 117,
-    "unmatchedItemReads": 99,
+    "unmatchedItemReads": 109,
+    "totalAbsence": 99,
+    "partialCoverage": 10,
     "ambiguousReadCount": 122,
     "parameterizedReads": 19
   },
@@ -4566,693 +4570,902 @@
       "kind": "metadata-key",
       "value": "excerptStartLine",
       "file": "packages/gateway/src/security/scan.ts",
-      "line": 78
+      "line": 78,
+      "matchState": "unmatched"
     },
     {
       "table": "item",
       "kind": "metadata-key",
       "value": "created_at_ms",
       "file": "packages/gateway/src/premortem/cohort.test-helpers.ts",
-      "line": 48
+      "line": 48,
+      "matchState": "unmatched"
     },
     {
       "table": "item",
       "kind": "metadata-key",
       "value": "parent_key",
       "file": "packages/gateway/src/premortem/cohort.ts",
-      "line": 59
+      "line": 59,
+      "matchState": "unmatched"
     },
     {
       "table": "item",
       "kind": "metadata-key",
       "value": "created_at_ms",
       "file": "packages/gateway/src/premortem/cohort.ts",
-      "line": 117
+      "line": 117,
+      "matchState": "unmatched"
     },
     {
       "table": "item",
       "kind": "metadata-key",
       "value": "resolved_at_ms",
       "file": "packages/gateway/src/premortem/cohort.ts",
-      "line": 118
+      "line": 118,
+      "matchState": "unmatched"
     },
     {
       "table": "item",
       "kind": "metadata-key",
       "value": "status_category",
       "file": "packages/gateway/src/premortem/cohort.ts",
-      "line": 119
+      "line": 119,
+      "matchState": "unmatched"
     },
     {
       "table": "item",
       "kind": "metadata-key",
       "value": "issue_type",
       "file": "packages/gateway/src/premortem/cohort.ts",
-      "line": 123
+      "line": 123,
+      "matchState": "unmatched"
     },
     {
       "table": "item",
       "kind": "metadata-key",
       "value": "status_category",
       "file": "packages/gateway/src/premortem/cohort.ts",
-      "line": 124
+      "line": 124,
+      "matchState": "unmatched"
     },
     {
       "table": "item",
       "kind": "metadata-key",
       "value": "resolved_at_ms",
       "file": "packages/gateway/src/premortem/cohort.ts",
-      "line": 125
+      "line": 125,
+      "matchState": "unmatched"
     },
     {
       "table": "item",
       "kind": "metadata-key",
       "value": "resolved_at_ms",
       "file": "packages/gateway/src/premortem/cohort.ts",
-      "line": 127
+      "line": 127,
+      "matchState": "unmatched"
     },
     {
       "table": "item",
       "kind": "metadata-key",
       "value": "parent_key",
       "file": "packages/gateway/src/premortem/epic-services.ts",
-      "line": 61
+      "line": 61,
+      "matchState": "unmatched"
     },
     {
       "table": "item",
       "kind": "metadata-key",
       "value": "parent_key",
       "file": "packages/gateway/src/premortem/epic-services.ts",
-      "line": 112
+      "line": 112,
+      "matchState": "unmatched"
     },
     {
       "table": "item",
       "kind": "metadata-key",
       "value": "status_category",
       "file": "packages/gateway/src/premortem/theme-discover.ts",
-      "line": 40
+      "line": 40,
+      "matchState": "unmatched"
     },
     {
       "table": "item",
       "kind": "metadata-key",
       "value": "issue_type",
       "file": "packages/gateway/src/premortem/theme-discover.ts",
-      "line": 41
+      "line": 41,
+      "matchState": "unmatched"
     },
     {
       "table": "item",
       "kind": "metadata-key",
       "value": "resolved_at_ms",
       "file": "packages/gateway/src/premortem/theme-discover.ts",
-      "line": 58
+      "line": 58,
+      "matchState": "unmatched"
     },
     {
       "table": "item",
       "kind": "metadata-key",
       "value": "opened_at_ms",
       "file": "packages/gateway/src/preflight/preflight.ts",
-      "line": 107
+      "line": 107,
+      "matchState": "unmatched"
     },
     {
       "table": "item",
       "kind": "metadata-key",
       "value": "pagerduty_service_id",
       "file": "packages/gateway/src/preflight/preflight.ts",
-      "line": 136
+      "line": 136,
+      "matchState": "unmatched"
     },
     {
       "table": "item",
       "kind": "metadata-key",
       "value": "urgency",
       "file": "packages/gateway/src/preflight/preflight.ts",
-      "line": 138
+      "line": 138,
+      "matchState": "unmatched"
     },
     {
       "table": "item",
       "kind": "metadata-key",
       "value": "severity",
       "file": "packages/gateway/src/preflight/preflight.ts",
-      "line": 139
+      "line": 139,
+      "matchState": "unmatched"
     },
     {
       "table": "item",
       "kind": "metadata-key",
       "value": "severity",
       "file": "packages/gateway/src/preflight/preflight.ts",
-      "line": 140
+      "line": 140,
+      "matchState": "unmatched"
     },
     {
       "table": "item",
       "kind": "metadata-key",
       "value": "workflow_name",
       "file": "packages/gateway/src/preflight/preflight.ts",
-      "line": 166
+      "line": 166,
+      "matchState": "unmatched"
+    },
+    {
+      "table": "item",
+      "kind": "metadata-key",
+      "value": "headSha",
+      "file": "packages/gateway/src/preflight/preflight.ts",
+      "line": 168,
+      "matchState": "partial",
+      "partialCoverage": [
+        "github_actions"
+      ]
+    },
+    {
+      "table": "item",
+      "kind": "metadata-key",
+      "value": "branch",
+      "file": "packages/gateway/src/preflight/preflight.ts",
+      "line": 168,
+      "matchState": "partial",
+      "partialCoverage": [
+        "circleci"
+      ]
+    },
+    {
+      "table": "item",
+      "kind": "metadata-key",
+      "value": "branch",
+      "file": "packages/gateway/src/preflight/preflight.ts",
+      "line": 175,
+      "matchState": "partial",
+      "partialCoverage": [
+        "circleci"
+      ]
+    },
+    {
+      "table": "item",
+      "kind": "metadata-key",
+      "value": "conclusion",
+      "file": "packages/gateway/src/preflight/preflight.ts",
+      "line": 176,
+      "matchState": "partial",
+      "partialCoverage": [
+        "github_actions"
+      ]
     },
     {
       "table": "item",
       "kind": "metadata-key",
       "value": "mergeable_state",
       "file": "packages/gateway/src/preflight/preflight.ts",
-      "line": 229
+      "line": 229,
+      "matchState": "unmatched"
     },
     {
       "table": "item",
       "kind": "metadata-key",
       "value": "mergeable_state",
       "file": "packages/gateway/src/preflight/preflight.ts",
-      "line": 236
+      "line": 236,
+      "matchState": "unmatched"
     },
     {
       "table": "item",
       "kind": "metadata-key",
       "value": "mergeable_state",
       "file": "packages/gateway/src/preflight/preflight.ts",
-      "line": 244
+      "line": 244,
+      "matchState": "unmatched"
     },
     {
       "table": "item",
       "kind": "metadata-key",
       "value": "opened_at_ms",
       "file": "packages/gateway/src/preflight/preflight.ts",
-      "line": 123
+      "line": 123,
+      "matchState": "unmatched"
     },
     {
       "table": "item",
       "kind": "metadata-key",
       "value": "pagerduty_service_id",
       "file": "packages/gateway/src/preflight/preflight.ts",
-      "line": 125
+      "line": 125,
+      "matchState": "unmatched"
     },
     {
       "table": "item",
       "kind": "metadata-key",
       "value": "mergeable_state",
       "file": "packages/gateway/src/preflight/preflight.ts",
-      "line": 262
+      "line": 262,
+      "matchState": "unmatched"
     },
     {
       "table": "item",
       "kind": "metadata-key",
       "value": "pagerduty_service_id",
       "file": "packages/gateway/src/metrics/dora.ts",
-      "line": 304
+      "line": 304,
+      "matchState": "unmatched"
     },
     {
       "table": "item",
       "kind": "metadata-key",
       "value": "opened_at_ms",
       "file": "packages/gateway/src/metrics/dora.ts",
-      "line": 377
+      "line": 377,
+      "matchState": "unmatched"
     },
     {
       "table": "item",
       "kind": "metadata-key",
       "value": "pagerduty_service_id",
       "file": "packages/gateway/src/metrics/dora.ts",
-      "line": 382
+      "line": 382,
+      "matchState": "unmatched"
     },
     {
       "table": "item",
       "kind": "metadata-key",
       "value": "opened_at_ms",
       "file": "packages/gateway/src/metrics/dora.ts",
-      "line": 383
+      "line": 383,
+      "matchState": "unmatched"
     },
     {
       "table": "item",
       "kind": "metadata-key",
       "value": "opened_at_ms",
       "file": "packages/gateway/src/metrics/dora.ts",
-      "line": 384
+      "line": 384,
+      "matchState": "unmatched"
     },
     {
       "table": "item",
       "kind": "metadata-key",
       "value": "merged",
       "file": "packages/gateway/src/metrics/dora.ts",
-      "line": 206
+      "line": 206,
+      "matchState": "unmatched"
     },
     {
       "table": "item",
       "kind": "metadata-key",
       "value": "merged_at",
       "file": "packages/gateway/src/metrics/dora.ts",
-      "line": 207
+      "line": 207,
+      "matchState": "unmatched"
     },
     {
       "table": "item",
       "kind": "metadata-key",
       "value": "labels",
       "file": "packages/gateway/src/metrics/dora.ts",
-      "line": 210
+      "line": 210,
+      "matchState": "unmatched"
     },
     {
       "table": "item",
       "kind": "metadata-key",
       "value": "merge_commit_sha",
       "file": "packages/gateway/src/metrics/dora.ts",
-      "line": 215
+      "line": 215,
+      "matchState": "unmatched"
     },
     {
       "table": "item",
       "kind": "metadata-key",
       "value": "opened_at_ms",
       "file": "packages/gateway/src/metrics/dora.ts",
-      "line": 313
+      "line": 313,
+      "matchState": "unmatched"
     },
     {
       "table": "item",
       "kind": "metadata-key",
       "value": "pagerduty_service_id",
       "file": "packages/gateway/src/metrics/dora.ts",
-      "line": 315
+      "line": 315,
+      "matchState": "unmatched"
+    },
+    {
+      "table": "item",
+      "kind": "metadata-key",
+      "value": "repo",
+      "file": "packages/gateway/src/metrics/stats.ts",
+      "line": 158,
+      "matchState": "partial",
+      "partialCoverage": [
+        "bitbucket"
+      ]
     },
     {
       "table": "item",
       "kind": "metadata-key",
       "value": "merged_at",
       "file": "packages/gateway/src/metrics/stats.ts",
-      "line": 159
+      "line": 159,
+      "matchState": "unmatched"
     },
     {
       "table": "item",
       "kind": "metadata-key",
       "value": "merged_at",
       "file": "packages/gateway/src/metrics/stats.ts",
-      "line": 160
+      "line": 160,
+      "matchState": "unmatched"
     },
     {
       "table": "item",
       "kind": "metadata-key",
       "value": "merged_at",
       "file": "packages/gateway/src/metrics/stats.ts",
-      "line": 161
+      "line": 161,
+      "matchState": "unmatched"
     },
     {
       "table": "item",
       "kind": "type",
       "value": "web_clip",
       "file": "packages/gateway/src/ipc/clip-rpc.ts",
-      "line": 122
+      "line": 122,
+      "matchState": "unmatched"
     },
     {
       "table": "item",
       "kind": "type",
       "value": "web_clip",
       "file": "packages/gateway/src/ipc/clip-rpc.ts",
-      "line": 128
+      "line": 128,
+      "matchState": "unmatched"
     },
     {
       "table": "item",
       "kind": "type",
       "value": "web_clip",
       "file": "packages/gateway/src/ipc/clip-rpc.ts",
-      "line": 135
+      "line": 135,
+      "matchState": "unmatched"
     },
     {
       "table": "item",
       "kind": "metadata-key",
       "value": "mode",
       "file": "packages/gateway/src/ipc/clip-rpc.ts",
-      "line": 87
+      "line": 87,
+      "matchState": "unmatched"
     },
     {
       "table": "item",
       "kind": "metadata-key",
       "value": "wordCount",
       "file": "packages/gateway/src/ipc/clip-rpc.ts",
-      "line": 88
+      "line": 88,
+      "matchState": "unmatched"
     },
     {
       "table": "item",
       "kind": "metadata-key",
       "value": "sourceWordCount",
       "file": "packages/gateway/src/ipc/clip-rpc.ts",
-      "line": 92
+      "line": 92,
+      "matchState": "unmatched"
     },
     {
       "table": "item",
       "kind": "metadata-key",
       "value": "sourceWordCount",
       "file": "packages/gateway/src/ipc/clip-rpc.ts",
-      "line": 93
+      "line": 93,
+      "matchState": "unmatched"
     },
     {
       "table": "item",
       "kind": "metadata-key",
       "value": "sourceWordCount",
       "file": "packages/gateway/src/ipc/clip-rpc.ts",
-      "line": 94
+      "line": 94,
+      "matchState": "unmatched"
     },
     {
       "table": "item",
       "kind": "metadata-key",
       "value": "bodyFetch",
       "file": "packages/gateway/src/index/item-store.ts",
-      "line": 310
+      "line": 310,
+      "matchState": "unmatched"
     },
     {
       "table": "item",
       "kind": "metadata-key",
       "value": "mime_type",
       "file": "packages/gateway/src/index/item-store.ts",
-      "line": 235
+      "line": 235,
+      "matchState": "unmatched"
     },
     {
       "table": "item",
       "kind": "metadata-key",
       "value": "size_bytes",
       "file": "packages/gateway/src/index/item-store.ts",
-      "line": 238
+      "line": 238,
+      "matchState": "unmatched"
     },
     {
       "table": "item",
       "kind": "metadata-key",
       "value": "lastModified",
       "file": "packages/gateway/src/identity/scim-service.ts",
-      "line": 28
+      "line": 28,
+      "matchState": "unmatched"
     },
     {
       "table": "item",
       "kind": "metadata-key",
       "value": "lastModified",
       "file": "packages/gateway/src/identity/scim-service.ts",
-      "line": 29
+      "line": 29,
+      "matchState": "unmatched"
     },
     {
       "table": "item",
       "kind": "metadata-key",
       "value": "merged",
       "file": "packages/gateway/src/graph/graph-populator.ts",
-      "line": 337
+      "line": 337,
+      "matchState": "unmatched"
     },
     {
       "table": "item",
       "kind": "metadata-key",
       "value": "creationTimestamp",
       "file": "packages/gateway/src/connectors/argocd-application-mapping.ts",
-      "line": 52
+      "line": 52,
+      "matchState": "unmatched"
     },
     {
       "table": "item",
       "kind": "metadata-key",
       "value": "excerptStartLine",
       "file": "packages/gateway/src/connectors/filesystem-v2-sync.ts",
-      "line": 348
+      "line": 348,
+      "matchState": "unmatched"
     },
     {
       "table": "item",
       "kind": "metadata-key",
       "value": "creationTimestamp",
       "file": "packages/gateway/src/connectors/flux-resource-mapping.ts",
-      "line": 70
+      "line": 70,
+      "matchState": "unmatched"
     },
     {
       "table": "item",
       "kind": "metadata-key",
       "value": "additions",
       "file": "packages/gateway/src/connectors/github-sync.ts",
-      "line": 649
+      "line": 649,
+      "matchState": "unmatched"
     },
     {
       "table": "item",
       "kind": "metadata-key",
       "value": "run_id",
       "file": "packages/gateway/src/connectors/great-expectations-sync.ts",
-      "line": 38
+      "line": 38,
+      "matchState": "unmatched"
     },
     {
       "table": "item",
       "kind": "metadata-key",
       "value": "run_id",
       "file": "packages/gateway/src/connectors/great-expectations-sync.ts",
-      "line": 50
+      "line": 50,
+      "matchState": "unmatched"
     },
     {
       "table": "item",
       "kind": "metadata-key",
       "value": "active_batch_definition",
       "file": "packages/gateway/src/connectors/great-expectations-sync.ts",
-      "line": 65
+      "line": 65,
+      "matchState": "unmatched"
     },
     {
       "table": "item",
       "kind": "metadata-key",
       "value": "batch_spec",
       "file": "packages/gateway/src/connectors/great-expectations-sync.ts",
-      "line": 75
+      "line": 75,
+      "matchState": "unmatched"
     },
     {
       "table": "item",
       "kind": "metadata-key",
       "value": "status_category",
       "file": "packages/gateway/src/connectors/jira-sync.ts",
-      "line": 396
+      "line": 396,
+      "matchState": "unmatched"
     },
     {
       "table": "item",
       "kind": "metadata-key",
       "value": "status_category",
       "file": "packages/gateway/src/connectors/jira-sync.ts",
-      "line": 410
+      "line": 410,
+      "matchState": "unmatched"
     },
     {
       "table": "item",
       "kind": "metadata-key",
       "value": "status_category_raw",
       "file": "packages/gateway/src/connectors/linear-sync.ts",
-      "line": 174
+      "line": 174,
+      "matchState": "unmatched"
     },
     {
       "table": "item",
       "kind": "metadata-key",
       "value": "status_category",
       "file": "packages/gateway/src/connectors/linear-sync.ts",
-      "line": 176
+      "line": 176,
+      "matchState": "unmatched"
     },
     {
       "table": "item",
       "kind": "metadata-key",
       "value": "created_at_ms",
       "file": "packages/gateway/src/connectors/linear-sync.ts",
-      "line": 180
+      "line": 180,
+      "matchState": "unmatched"
     },
     {
       "table": "item",
       "kind": "metadata-key",
       "value": "resolved_at_ms",
       "file": "packages/gateway/src/connectors/linear-sync.ts",
-      "line": 187
+      "line": 187,
+      "matchState": "unmatched"
     },
     {
       "table": "item",
       "kind": "metadata-key",
       "value": "due_at_ms",
       "file": "packages/gateway/src/connectors/linear-sync.ts",
-      "line": 191
+      "line": 191,
+      "matchState": "unmatched"
     },
     {
       "table": "item",
       "kind": "metadata-key",
       "value": "parent_key",
       "file": "packages/gateway/src/connectors/linear-sync.ts",
-      "line": 197
+      "line": 197,
+      "matchState": "unmatched"
     },
     {
       "table": "item",
       "kind": "metadata-key",
       "value": "summary",
       "file": "packages/gateway/src/connectors/mlflow-model-mapping.ts",
-      "line": 139
+      "line": 139,
+      "matchState": "unmatched"
     },
     {
       "table": "item",
       "kind": "metadata-key",
       "value": "opened_at_ms",
       "file": "packages/gateway/src/connectors/pagerduty-sync.ts",
-      "line": 88
+      "line": 88,
+      "matchState": "unmatched"
     },
     {
       "table": "item",
       "kind": "metadata-key",
       "value": "pagerduty_service_id",
       "file": "packages/gateway/src/connectors/pagerduty-sync.ts",
-      "line": 89
+      "line": 89,
+      "matchState": "unmatched"
     },
     {
       "table": "item",
       "kind": "metadata-key",
       "value": "urgency",
       "file": "packages/gateway/src/connectors/pagerduty-sync.ts",
-      "line": 91
+      "line": 91,
+      "matchState": "unmatched"
     },
     {
       "table": "item",
       "kind": "metadata-key",
       "value": "next_cursor",
       "file": "packages/gateway/src/connectors/slack-sync.ts",
-      "line": 196
+      "line": 196,
+      "matchState": "unmatched"
     },
     {
       "table": "item",
       "kind": "metadata-key",
       "value": "next_cursor",
       "file": "packages/gateway/src/connectors/slack-sync.ts",
-      "line": 354
+      "line": 354,
+      "matchState": "unmatched"
     },
     {
       "table": "item",
       "kind": "metadata-key",
       "value": "has_more",
       "file": "packages/gateway/src/connectors/zendesk-sync.ts",
-      "line": 75
+      "line": 75,
+      "matchState": "unmatched"
+    },
+    {
+      "table": "item",
+      "kind": "metadata-key",
+      "value": "state",
+      "file": "packages/gateway/src/agents/changelog-queries.ts",
+      "line": 323,
+      "matchState": "partial",
+      "partialCoverage": [
+        "bitbucket"
+      ]
     },
     {
       "table": "item",
       "kind": "type",
       "value": "commit",
       "file": "packages/gateway/src/agents/expert.ts",
-      "line": 386
+      "line": 386,
+      "matchState": "unmatched"
     },
     {
       "table": "item",
       "kind": "metadata-key",
       "value": "merged",
       "file": "packages/gateway/src/agents/negotiate.ts",
-      "line": 378
+      "line": 378,
+      "matchState": "unmatched"
     },
     {
       "table": "item",
       "kind": "metadata-key",
       "value": "additions",
       "file": "packages/gateway/src/agents/negotiate.ts",
-      "line": 379
+      "line": 379,
+      "matchState": "unmatched"
     },
     {
       "table": "item",
       "kind": "metadata-key",
       "value": "deletions",
       "file": "packages/gateway/src/agents/negotiate.ts",
-      "line": 385
+      "line": 385,
+      "matchState": "unmatched"
     },
     {
       "table": "item",
       "kind": "metadata-key",
       "value": "changed_files",
       "file": "packages/gateway/src/agents/negotiate.ts",
-      "line": 387
+      "line": 387,
+      "matchState": "unmatched"
     },
     {
       "table": "item",
       "kind": "metadata-key",
       "value": "pagerduty_service_id",
       "file": "packages/gateway/src/agents/oncall-queries.ts",
-      "line": 184
+      "line": 184,
+      "matchState": "unmatched"
     },
     {
       "table": "item",
       "kind": "metadata-key",
       "value": "merge_commit_sha",
       "file": "packages/gateway/src/agents/oncall-queries.ts",
-      "line": 313
+      "line": 313,
+      "matchState": "unmatched"
     },
     {
       "table": "item",
       "kind": "metadata-key",
       "value": "pagerduty_service_id",
       "file": "packages/gateway/src/agents/oncall-queries.ts",
-      "line": 458
+      "line": 458,
+      "matchState": "unmatched"
     },
     {
       "table": "item",
       "kind": "metadata-key",
       "value": "issue_type",
       "file": "packages/gateway/src/agents/premortem.ts",
-      "line": 78
+      "line": 78,
+      "matchState": "unmatched"
     },
     {
       "table": "item",
       "kind": "metadata-key",
       "value": "created_at_ms",
       "file": "packages/gateway/src/agents/premortem.ts",
-      "line": 79
+      "line": 79,
+      "matchState": "unmatched"
     },
     {
       "table": "item",
       "kind": "metadata-key",
       "value": "parent_key",
       "file": "packages/gateway/src/agents/premortem.ts",
-      "line": 98
+      "line": 98,
+      "matchState": "unmatched"
     },
     {
       "table": "item",
       "kind": "metadata-key",
       "value": "opened_at_ms",
       "file": "packages/gateway/src/agents/premortem.ts",
-      "line": 199
+      "line": 199,
+      "matchState": "unmatched"
     },
     {
       "table": "item",
       "kind": "metadata-key",
       "value": "merged_at",
       "file": "packages/gateway/src/agents/premortem.ts",
-      "line": 200
+      "line": 200,
+      "matchState": "unmatched"
     },
     {
       "table": "item",
       "kind": "metadata-key",
       "value": "opened_at_ms",
       "file": "packages/gateway/src/agents/premortem.ts",
-      "line": 205
+      "line": 205,
+      "matchState": "unmatched"
     },
     {
       "table": "item",
       "kind": "metadata-key",
       "value": "merged_at",
       "file": "packages/gateway/src/agents/premortem.ts",
-      "line": 206
+      "line": 206,
+      "matchState": "unmatched"
     },
     {
       "table": "item",
       "kind": "metadata-key",
       "value": "merged_at",
       "file": "packages/gateway/src/agents/premortem.ts",
-      "line": 207
+      "line": 207,
+      "matchState": "unmatched"
+    },
+    {
+      "table": "item",
+      "kind": "metadata-key",
+      "value": "thread_ts",
+      "file": "packages/gateway/src/agents/standup-queries.ts",
+      "line": 269,
+      "matchState": "partial",
+      "partialCoverage": [
+        "slack"
+      ]
+    },
+    {
+      "table": "item",
+      "kind": "metadata-key",
+      "value": "channel",
+      "file": "packages/gateway/src/agents/standup-queries.ts",
+      "line": 270,
+      "matchState": "partial",
+      "partialCoverage": [
+        "slack"
+      ]
+    },
+    {
+      "table": "item",
+      "kind": "metadata-key",
+      "value": "thread_ts",
+      "file": "packages/gateway/src/agents/standup-queries.ts",
+      "line": 271,
+      "matchState": "partial",
+      "partialCoverage": [
+        "slack"
+      ]
+    },
+    {
+      "table": "item",
+      "kind": "metadata-key",
+      "value": "state",
+      "file": "packages/gateway/src/agents/standup-queries.ts",
+      "line": 359,
+      "matchState": "partial",
+      "partialCoverage": [
+        "bitbucket"
+      ]
     },
     {
       "table": "item",
       "kind": "metadata-key",
       "value": "merged",
       "file": "packages/gateway/src/agents/standup-queries.ts",
-      "line": 360
+      "line": 360,
+      "matchState": "unmatched"
     },
     {
       "table": "item",
       "kind": "metadata-key",
       "value": "excerptStartLine",
       "file": "packages/gateway/src/agents/_lib/demo-symbol.ts",
-      "line": 14
+      "line": 14,
+      "matchState": "unmatched"
     },
     {
       "table": "item",
       "kind": "metadata-key",
       "value": "excerptStartLine",
       "file": "packages/gateway/src/agents/_lib/demo-symbol.ts",
-      "line": 20
+      "line": 20,
+      "matchState": "unmatched"
     },
     {
       "table": "item",
       "kind": "metadata-key",
       "value": "excerptStartLine",
       "file": "packages/gateway/src/agents/_lib/why-subject.ts",
-      "line": 74
+      "line": 74,
+      "matchState": "unmatched"
     },
     {
       "table": "item",
       "kind": "metadata-key",
       "value": "excerptStartLine",
       "file": "packages/gateway/src/agents/_lib/why-subject.ts",
-      "line": 86
+      "line": 86,
+      "matchState": "unmatched"
     }
   ],
   "ambiguousReadCount": 122,

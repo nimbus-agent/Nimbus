@@ -81,7 +81,29 @@ describe("collectLaneCensus", () => {
     ).toBe(true);
   });
 
-  test("a type IN (...) list scopes a sibling metadata key to ALL listed types", () => {
+  test("a type IN (...) list is matched only when EVERY writer of EVERY listed type emits the key", () => {
+    const files: FileEntry[] = [
+      {
+        relPath: "packages/gateway/src/agents/x.ts",
+        contents:
+          "db.query(`SELECT 1 FROM item i WHERE i.type IN ('pr', 'issue') AND json_extract(i.metadata, '$.k') = ?`);",
+      },
+      {
+        relPath: "packages/gateway/src/connectors/y-sync.ts",
+        contents: 'ctx.upsertItem({ service: "y1", type: "pr", metadata: { k: 1 } });',
+      },
+      {
+        relPath: "packages/gateway/src/connectors/z-sync.ts",
+        contents: 'ctx.upsertItem({ service: "y2", type: "issue", metadata: { k: 1 } });',
+      },
+    ];
+    const census = collectLaneCensus(files);
+    expect(census.unmatchedItemReads.some((r) => r.value === "k")).toBe(false);
+  });
+
+  test("a type IN (...) list where one listed type has NO writer at all is unmatched (not partial)", () => {
+    // `pr` has zero writers here, so it can never satisfy "every writer of pr emits k" — that is
+    // total absence for the pr leg, not one covering writer among several.
     const files: FileEntry[] = [
       {
         relPath: "packages/gateway/src/agents/x.ts",
@@ -94,7 +116,80 @@ describe("collectLaneCensus", () => {
       },
     ];
     const census = collectLaneCensus(files);
-    expect(census.unmatchedItemReads.some((r) => r.value === "k")).toBe(false);
+    const row = census.unmatchedItemReads.find((r) => r.value === "k");
+    expect(row).toBeDefined();
+    // `issue` DOES have an emitting writer, so this is a partial match (some coverage, not zero),
+    // and `partialCoverage` must name the service that covers it.
+    expect(row?.matchState).toBe("partial");
+    expect(row?.partialCoverage).toEqual(["y"]);
+  });
+
+  test("per-type-only matching is NOT enough — the branch/preflight hazard: one covering writer of four is a partial match, not coverage", () => {
+    // Mirrors the real production bug: of the ci_run writers, only circleci emits `branch` —
+    // github_actions emits `headBranch` instead. A per-type-only check ("some writer emits it")
+    // would have called this covered; the per-SERVICE rule must not.
+    const files: FileEntry[] = [
+      {
+        relPath: "packages/gateway/src/preflight/preflight.ts",
+        contents:
+          "db.query(`SELECT 1 FROM item WHERE service IN (?) AND type = 'ci_run' AND json_extract(metadata, '$.branch') = ?`);",
+      },
+      {
+        relPath: "packages/gateway/src/connectors/circleci-sync.ts",
+        contents: 'ctx.upsertItem({ service: "circleci", type: "ci_run", metadata: { branch } });',
+      },
+      {
+        relPath: "packages/gateway/src/connectors/github-actions-sync.ts",
+        contents:
+          'ctx.upsertItem({ service: "github_actions", type: "ci_run", metadata: { headBranch } });',
+      },
+    ];
+    const census = collectLaneCensus(files);
+    const row = census.unmatchedItemReads.find(
+      (r) => r.kind === "metadata-key" && r.value === "branch",
+    );
+    expect(row).toBeDefined();
+    expect(row?.matchState).toBe("partial");
+    expect(row?.partialCoverage).toEqual(["circleci"]);
+  });
+
+  test("a metadata key emitted by EVERY writer of its type is fully matched, not partial", () => {
+    const files: FileEntry[] = [
+      {
+        relPath: "packages/gateway/src/agents/x.ts",
+        contents:
+          "db.query(`SELECT 1 FROM item i WHERE i.type = 'ci_run' AND json_extract(i.metadata, '$.conclusion') = ?`);",
+      },
+      {
+        relPath: "packages/gateway/src/connectors/a-sync.ts",
+        contents: 'ctx.upsertItem({ service: "a", type: "ci_run", metadata: { conclusion: c } });',
+      },
+      {
+        relPath: "packages/gateway/src/connectors/b-sync.ts",
+        contents: 'ctx.upsertItem({ service: "b", type: "ci_run", metadata: { conclusion: c } });',
+      },
+    ];
+    const census = collectLaneCensus(files);
+    expect(census.unmatchedItemReads.some((r) => r.value === "conclusion")).toBe(false);
+  });
+
+  test("a totally-absent metadata key (zero emitting writers of its type) is unmatched, not partial", () => {
+    const files: FileEntry[] = [
+      {
+        relPath: "packages/gateway/src/agents/x.ts",
+        contents:
+          "db.query(`SELECT 1 FROM item i WHERE i.type = 'ci_run' AND json_extract(i.metadata, '$.repo') = ?`);",
+      },
+      {
+        relPath: "packages/gateway/src/connectors/a-sync.ts",
+        contents: 'ctx.upsertItem({ service: "a", type: "ci_run", metadata: { conclusion: c } });',
+      },
+    ];
+    const census = collectLaneCensus(files);
+    const row = census.unmatchedItemReads.find((r) => r.value === "repo");
+    expect(row).toBeDefined();
+    expect(row?.matchState).toBe("unmatched");
+    expect(row?.partialCoverage).toBeUndefined();
   });
 
   test("a JS-side metadata read with no type predicate is scoped __ANY__ and counted as ambiguous", () => {
