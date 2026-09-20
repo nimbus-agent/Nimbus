@@ -308,7 +308,7 @@ async function persistAwsProfileOnly(vault: NimbusVault, prof: string, reg: stri
   await deleteConnectorSecret(vault, "aws", "secret_access_key");
   // A supplied region is KEPT: the lazy-mesh AWS spawn needs it for regional sandbox hosts
   // (`phase3-shared.ts` `loadAwsCreds`). It used to be deleted unconditionally, which silently
-  // dropped `--region` on `nimbus connector auth aws --profile X --region Y`.
+  // dropped `--aws-region` on `nimbus connector auth aws --aws-profile X --aws-region Y`.
   if (reg === "") {
     await deleteConnectorSecret(vault, "aws", "default_region");
   } else {

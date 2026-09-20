@@ -39,8 +39,8 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
   could report `0` for a window in which a PAT had genuinely reached GitHub's servers; it now appends
   one `sync`-class I29 row (`method='connector.credentialProbe'`) via the same `recordSyncEgress`
   appender before the request, fail-closed, and the probe now also reports the token's granted
-  scopes. (2) Profile-only `aws` auth was silently DELETING a supplied `--region` instead of keeping
-  it. What did NOT ship: `gcloud` (its own follow-up PR), GitHub Enterprise hosts (listed by detect
+  scopes. (2) Profile-only `aws` auth (`nimbus connector auth aws --aws-profile <p> --aws-region <r>`)
+  was silently DELETING a supplied `--aws-region` instead of keeping it. What did NOT ship: `gcloud` (its own follow-up PR), GitHub Enterprise hosts (listed by detect
   but not offered — the GitHub connector has no `api_base` yet), and a stable `--json` schema
   (explicitly documented unstable this release). No schema migration.
 

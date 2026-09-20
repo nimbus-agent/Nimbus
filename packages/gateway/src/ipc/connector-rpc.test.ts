@@ -460,21 +460,31 @@ describe("connector.detectLocalAuth / connector.adoptLocalAuth routing", () => {
     // bypassing routing entirely. `detectAws` never throws (an absent/misconfigured CLI is a
     // valid `status`, not an error), so this is deterministic on every machine and OS regardless
     // of whether the aws CLI is actually installed here — only the finding's `status` varies,
-    // which this test does not assert on.
-    const hit = await dispatchConnectorRpc({
-      method: "connector.detectLocalAuth",
-      params: { sources: ["aws"] },
-      vault: createMockVault(),
-      localIndex: makeIndex(),
-      openUrl: async () => {},
-      syncScheduler: undefined,
-    });
-    expect(hit.kind).toBe("hit");
-    const value = (hit as { kind: "hit"; value: unknown }).value;
-    expect(Array.isArray(value)).toBe(true);
-    const findings = value as Array<{ source: string }>;
-    expect(findings).toHaveLength(1);
-    expect(findings[0]?.source).toBe("aws");
+    // which this test does not assert on. PATH is still forced empty, the same technique the
+    // adopt sibling test below uses: without it, a machine/CI runner with a real `aws` binary on
+    // PATH spawns a real subprocess (worst case `LOCAL_AUTH_CLI_TIMEOUT_MS` = 10s) instead of a
+    // deterministic, instant "not found".
+    const prevPath = process.env["PATH"];
+    process.env["PATH"] = "";
+    try {
+      const hit = await dispatchConnectorRpc({
+        method: "connector.detectLocalAuth",
+        params: { sources: ["aws"] },
+        vault: createMockVault(),
+        localIndex: makeIndex(),
+        openUrl: async () => {},
+        syncScheduler: undefined,
+      });
+      expect(hit.kind).toBe("hit");
+      const value = (hit as { kind: "hit"; value: unknown }).value;
+      expect(Array.isArray(value)).toBe(true);
+      const findings = value as Array<{ source: string }>;
+      expect(findings).toHaveLength(1);
+      expect(findings[0]?.source).toBe("aws");
+    } finally {
+      if (prevPath === undefined) delete process.env["PATH"];
+      else process.env["PATH"] = prevPath;
+    }
   });
 
   test("adoptLocalAuth with a toolExecutor reaches real target resolution and refuses cleanly", async () => {

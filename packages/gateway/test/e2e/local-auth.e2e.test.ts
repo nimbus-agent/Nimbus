@@ -266,7 +266,7 @@ describe("local auth over a real gateway", () => {
     });
     expect(out).toMatchObject({ ok: true, service: "aws" });
     expect(prompt).toContain("connector.adoptLocalAuth");
-    expect(prompt).toContain("Nothing is copied");
+    expect(prompt).toContain("No credentials are copied");
     client.clearNotificationHandlers();
   });
 

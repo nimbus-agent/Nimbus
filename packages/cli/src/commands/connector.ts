@@ -508,6 +508,9 @@ function applyAwsConnectorAuth(
       );
     }
     p.awsProfile = prof;
+    if (reg !== "") {
+      p.awsDefaultRegion = reg;
+    }
   }
 }
 

@@ -235,7 +235,7 @@ describe("adoptLocalAuth — references", () => {
     ]);
     expect(h.authed).toEqual([{ service: "aws", profile: "dev", defaultRegion: "eu-west-1" }]);
     expect(out).toMatchObject({ ok: true, source: "aws", service: "aws" });
-    expect(String(h.gated[0]?.payload?.["summary"])).toContain("Nothing is copied");
+    expect(String(h.gated[0]?.payload?.["summary"])).toContain("No credentials are copied");
   });
 
   test("kubectl: omitted context defaults to the current one; kubeconfig stored verbatim", async () => {

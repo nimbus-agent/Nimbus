@@ -175,7 +175,7 @@ export function consentPayload(t: Target): Record<string, unknown> {
       return {
         source: "aws",
         profile: t.profile,
-        summary: `Use AWS profile ${t.profile} for the aws connectors. Nothing is copied — the aws CLI resolves the profile at every sync.`,
+        summary: `Use AWS profile ${t.profile} for the aws connectors. No credentials are copied — only the profile name and its configured region; the aws CLI resolves the profile at every sync.`,
       };
     case "kubectl":
       return {
