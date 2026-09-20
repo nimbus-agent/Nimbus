@@ -1,6 +1,7 @@
 import type { Syncable, SyncContext, SyncResult } from "../sync/types.ts";
 import { runSinglePassCliShellSync } from "./_lib/cli-shell-sync.ts";
 import { runGcloudCommand } from "./_lib/gcloud-runner.ts";
+import { type GcpAuth, resolveGcpAuth } from "./_lib/gcp-auth.ts";
 import { mapCloudLoggingSinkToItem } from "./cloud-logging-sink-mapping.ts";
 import { encodeNimbusJsonCursor } from "./nimbus-json-cursor.ts";
 
@@ -18,21 +19,22 @@ function pass1Cursor(): string {
 }
 
 /**
- * Mints nothing — `gcloud logging` is a native CLI that authenticates as the configured
- * service-account key through runGcloudCommand (gcloudKeyFileEnv — gcloud reads
- * CLOUDSDK_AUTH_CREDENTIAL_FILE_OVERRIDE, not the ADC variable). Shells `gcloud logging
+ * Mints nothing — `gcloud logging` is a native CLI that authenticates per `auth` through
+ * runGcloudCommand (gcloudAuthEnv — for a service-account key, gcloud reads
+ * CLOUDSDK_AUTH_CREDENTIAL_FILE_OVERRIDE, not the ADC variable; for the owner's own
+ * `gcloud auth login`, no credential variable is set at all). Shells `gcloud logging
  * sinks list --project <p> --format json` and returns the raw stdout. Returns
  * `{ ok: false }` when gcloud is missing or exits non-zero —
  * the caller degrades gracefully (no throw past the Syncable boundary),
  * mirroring gcp-sync's `!res.ok` posture.
  */
 function gcloudLoggingSinksList(
-  credPath: string,
+  auth: GcpAuth,
   project: string,
 ): Promise<{ ok: boolean; text: string }> {
   return runGcloudCommand(
     ["gcloud", "logging", "sinks", "list", "--project", project, "--format", "json"],
-    credPath,
+    auth,
   );
 }
 
@@ -40,10 +42,7 @@ function gcloudLoggingSinksList(
  * Injectable gcloud runner — defaults to the shared spawn; tests pass a stub.
  * Mirrors cloudwatch-sync's `RunAwsCli` dependency-injection shape.
  */
-export type RunGcloud = (
-  credPath: string,
-  project: string,
-) => Promise<{ ok: boolean; text: string }>;
+export type RunGcloud = (auth: GcpAuth, project: string) => Promise<{ ok: boolean; text: string }>;
 
 export type CloudLoggingSyncableOptions = {
   ensureCloudLoggingMcpRunning: () => Promise<void>;
@@ -52,17 +51,20 @@ export type CloudLoggingSyncableOptions = {
 };
 
 interface CloudLoggingCreds {
-  readonly credPath: string;
+  readonly auth: GcpAuth;
   readonly project: string;
 }
 
 async function loadCreds(ctx: SyncContext): Promise<CloudLoggingCreds | null> {
-  const credPath = (await ctx.getSharedSecret("gcp", "credentials_json_path"))?.trim() ?? "";
+  const auth = resolveGcpAuth(
+    await ctx.getSharedSecret("gcp", "credentials_json_path"),
+    await ctx.getSharedSecret("gcp", "auth_source"),
+  );
   const project = (await ctx.getSharedSecret("gcp", "project_id"))?.trim() ?? "";
-  if (credPath === "" || project === "") {
+  if (auth === null || project === "") {
     return null;
   }
-  return { credPath, project };
+  return { auth, project };
 }
 
 export function createCloudLoggingSyncable(options: CloudLoggingSyncableOptions): Syncable {
@@ -79,7 +81,7 @@ export function createCloudLoggingSyncable(options: CloudLoggingSyncableOptions)
         maxPages: 1,
         runCliPage: async (creds) => {
           await ctx.rateLimiter.acquire(SERVICE_ID);
-          const res = await run(creds.credPath, creds.project);
+          const res = await run(creds.auth, creds.project);
           if (!res.ok) {
             ctx.logger.warn(
               { serviceId: SERVICE_ID },

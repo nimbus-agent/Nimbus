@@ -4,12 +4,13 @@ import { INTERACTIVE_RPC_TIMEOUT_MS } from "../lib/rpc-timeouts.ts";
 import { withGatewayIpc } from "../lib/with-gateway-ipc.ts";
 import type { CliPlatformPaths } from "../paths.ts";
 
-type Source = "gh" | "aws" | "kubectl";
-const SOURCES: readonly Source[] = ["gh", "aws", "kubectl"];
+type Source = "gh" | "aws" | "kubectl" | "gcloud";
+const SOURCES: readonly Source[] = ["gh", "aws", "kubectl", "gcloud"];
 const SERVICE_NAME: Readonly<Record<Source, string>> = {
   gh: "github",
   aws: "aws",
   kubectl: "kubernetes",
+  gcloud: "gcp",
 };
 
 /** The gateway's `LocalAuthFinding`, restated for the IPC boundary (no source imports). */
@@ -25,6 +26,8 @@ export interface FindingWire {
   kubeconfig?: string;
   contexts?: string[];
   currentContext?: string | null;
+  account?: string | null;
+  project?: string | null;
 }
 
 export type AdoptParams = {
@@ -32,6 +35,7 @@ export type AdoptParams = {
   account?: string;
   profile?: string;
   context?: string;
+  project?: string;
   replace: boolean;
 };
 
@@ -53,17 +57,20 @@ export interface ConnectorDetectDeps {
   log(line: string): void;
 }
 
-const USAGE = "Usage: nimbus connector detect [--json] [--source gh|aws|kubectl]... [--replace]";
+const USAGE =
+  "Usage: nimbus connector detect [--json] [--source gh|aws|kubectl|gcloud]... [--replace] [--project <id>]";
 
 interface Opts {
   readonly json: boolean;
   readonly replace: boolean;
   readonly sources: readonly Source[] | undefined;
+  readonly project: string | undefined;
 }
 
 function parseOpts(tail: readonly string[]): Opts {
   let json = false;
   let replace = false;
+  let project: string | undefined;
   const sources: Source[] = [];
   for (let i = 0; i < tail.length; i++) {
     const a = tail[i];
@@ -74,18 +81,45 @@ function parseOpts(tail: readonly string[]): Opts {
       if (v === undefined || !(SOURCES as readonly string[]).includes(v)) throw new Error(USAGE);
       sources.push(v as Source);
       i += 1;
+    } else if (a === "--project") {
+      // Trimmed here for the same reason `readLine` trims the interactive answer (below) — a
+      // whitespace-only value is not a project id, and the two paths must agree on what counts
+      // as "empty" rather than one silently forwarding " " to the gateway.
+      const v = tail[i + 1]?.trim();
+      if (v === undefined || v === "") throw new Error(USAGE);
+      project = v;
+      i += 1;
     } else throw new Error(USAGE);
   }
-  return { json, replace, sources: sources.length === 0 ? undefined : sources };
+  return { json, replace, sources: sources.length === 0 ? undefined : sources, project };
+}
+
+/**
+ * The rendered "what" half of a finding's line — one arm per `Source`. A `switch` rather than a
+ * ternary chain so a fifth source added to `Source` without its own case here fails
+ * `bun run typecheck` (the `never` assignment in `default`) instead of silently falling through
+ * to the last arm — which is exactly how a gcloud finding once rendered as `contexts:` before
+ * `Source` included `"gcloud"` at all.
+ */
+function findingWhat(f: FindingWire): string {
+  switch (f.source) {
+    case "gh":
+      return `${f.host ?? "github.com"}  ${(f.accounts ?? []).join(", ")}`;
+    case "aws":
+      return `profiles: ${(f.profiles ?? []).join(", ")}`;
+    case "kubectl":
+      return `${f.kubeconfig ?? ""}  contexts: ${(f.contexts ?? []).join(", ")}`;
+    case "gcloud":
+      return `${f.account ?? ""}  project: ${f.project ?? "(none)"}`;
+    default: {
+      const _exhaustive: never = f.source;
+      return _exhaustive;
+    }
+  }
 }
 
 function describeFinding(f: FindingWire): string {
-  const what =
-    f.source === "gh"
-      ? `${f.host ?? "github.com"}  ${(f.accounts ?? []).join(", ")}`
-      : f.source === "aws"
-        ? `profiles: ${(f.profiles ?? []).join(", ")}`
-        : `${f.kubeconfig ?? ""}  contexts: ${(f.contexts ?? []).join(", ")}`;
+  const what = findingWhat(f);
   const state =
     f.status === "available"
       ? f.alreadyConfigured
@@ -95,29 +129,72 @@ function describeFinding(f: FindingWire): string {
   return `  ${f.source.padEnd(8)} ${what}  ·  ${state}`;
 }
 
-function adoptable(f: FindingWire, replace: boolean): boolean {
-  return f.status === "available" && (replace || !f.alreadyConfigured);
+/**
+ * Whether this finding's STATUS is one Nimbus can ever offer, ignoring `alreadyConfigured`/
+ * `replace` — the one fact `adoptable()` and the "already configured" hint below must agree on.
+ * They used to check this independently and drifted: `adoptable()` learned to offer gcloud's
+ * `needs_project`, the hint did not, so a re-adopt-after-`gcloud config unset project` finding
+ * was correctly withheld from the offer list but printed no explanation why. Shared here so the
+ * two cannot drift again — same discipline as this file's `GCP_PROJECT_ID` validator, which lives
+ * once on the gateway side rather than as two regexes that could disagree.
+ *
+ * gcloud's `needs_project` counts as offerable — an active login with no default project just
+ * needs the owner to name one. Scoped to gcloud specifically, mirroring the gateway's own
+ * `usable()` carve-out (`adopt-local-auth.ts`) — `needs_project` has no meaning for gh/aws/kubectl.
+ */
+function isOfferableStatus(f: FindingWire): boolean {
+  return f.status === "available" || (f.source === "gcloud" && f.status === "needs_project");
 }
 
-/** Candidates for the numbered pick, and the one Enter chooses. */
+function adoptable(f: FindingWire, replace: boolean): boolean {
+  return isOfferableStatus(f) && (replace || !f.alreadyConfigured);
+}
+
+/** Candidates for the numbered pick, and the one Enter chooses. gcloud never reaches this —
+ * `chooseOne` handles it directly, before calling `choices()` — but the `"gcloud"` case still has
+ * to be handled explicitly (not folded into `default`) for the exhaustiveness check below to mean
+ * anything: without it, `default` would already be reachable today and the `never` assignment
+ * would never catch a REAL new member. */
 function choices(f: FindingWire): {
   key: "account" | "profile" | "context";
   items: string[];
   preselect: number;
 } {
-  if (f.source === "gh") {
-    const items = f.accounts ?? [];
-    return { key: "account", items, preselect: Math.max(0, items.indexOf(f.activeAccount ?? "")) };
+  switch (f.source) {
+    case "gh": {
+      const items = f.accounts ?? [];
+      return {
+        key: "account",
+        items,
+        preselect: Math.max(0, items.indexOf(f.activeAccount ?? "")),
+      };
+    }
+    case "aws": {
+      const items = f.profiles ?? [];
+      return { key: "profile", items, preselect: Math.max(0, items.indexOf("default")) };
+    }
+    case "kubectl": {
+      const items = f.contexts ?? [];
+      return {
+        key: "context",
+        items,
+        preselect: Math.max(0, items.indexOf(f.currentContext ?? "")),
+      };
+    }
+    case "gcloud":
+      throw new Error("choices() does not support gcloud — chooseOne handles it directly");
+    default: {
+      const _exhaustive: never = f.source;
+      throw new Error(_exhaustive);
+    }
   }
-  if (f.source === "aws") {
-    const items = f.profiles ?? [];
-    return { key: "profile", items, preselect: Math.max(0, items.indexOf("default")) };
-  }
-  const items = f.contexts ?? [];
-  return { key: "context", items, preselect: Math.max(0, items.indexOf(f.currentContext ?? "")) };
 }
 
-async function chooseOne(f: FindingWire, deps: ConnectorDetectDeps): Promise<AdoptParams | null> {
+/** The generic numbered-pick path shared by gh/aws/kubectl. */
+async function chooseFromList(
+  f: FindingWire,
+  deps: ConnectorDetectDeps,
+): Promise<AdoptParams | null> {
   const c = choices(f);
   let chosen = c.items[c.preselect];
   if (c.items.length > 1) {
@@ -139,14 +216,58 @@ async function chooseOne(f: FindingWire, deps: ConnectorDetectDeps): Promise<Ado
   if (chosen === undefined) return null;
   // `replace` is set by the caller from --replace — one source of truth. Built per key, not with a
   // computed property, which would widen the object past `AdoptParams`.
-  if (c.key === "account") return { source: f.source, account: chosen, replace: false };
-  if (c.key === "profile") return { source: f.source, profile: chosen, replace: false };
-  return { source: f.source, context: chosen, replace: false };
+  switch (c.key) {
+    case "account":
+      return { source: f.source, account: chosen, replace: false };
+    case "profile":
+      return { source: f.source, profile: chosen, replace: false };
+    case "context":
+      return { source: f.source, context: chosen, replace: false };
+    default: {
+      const _exhaustive: never = c.key;
+      return _exhaustive;
+    }
+  }
+}
+
+/**
+ * The `Source`-level dispatch, itself exhaustive: a fifth source added without a case here (or in
+ * `findingWhat`/`choices` above) fails `bun run typecheck`, not just a manual review.
+ */
+async function chooseOne(
+  f: FindingWire,
+  deps: ConnectorDetectDeps,
+  opts: Opts,
+): Promise<AdoptParams | null> {
+  switch (f.source) {
+    case "gcloud": {
+      // Explicit flag wins over the detected default, matching the gateway
+      // (`resolveTarget` in adopt-local-auth.ts: `req.project ?? f.project`) — an owner who
+      // passes `--project` to override a wrong `gcloud config` default must not be silently
+      // overridden right back by the very default they are overriding.
+      const project =
+        opts.project ??
+        f.project ??
+        (await deps.ask("  gcloud: which GCP project id? [Enter = skip] "));
+      return project === "" ? null : { source: "gcloud", project, replace: false };
+    }
+    case "gh":
+    case "aws":
+    case "kubectl":
+      return chooseFromList(f, deps);
+    default: {
+      const _exhaustive: never = f.source;
+      return _exhaustive;
+    }
+  }
 }
 
 function referenceHint(p: AdoptParams): string {
   if (p.source === "aws") {
     return `  The aws CLI must be able to authenticate profile ${p.profile ?? ""} when Nimbus syncs — run \`aws sso login --profile ${p.profile ?? ""}\` if it uses SSO.`;
+  }
+  if (p.source === "gcloud") {
+    return "  gcloud must be logged in as this account when Nimbus syncs — run `gcloud auth login` if the session expires.";
   }
   return `  kubectl must be able to reach context ${p.context ?? ""} when Nimbus syncs (refresh its login if it uses an exec plugin).`;
 }
@@ -192,7 +313,7 @@ export async function runConnectorDetect(
   for (const f of findings) deps.log(describeFinding(f));
   const offer = findings.filter((f) => adoptable(f, opts.replace));
   for (const f of findings) {
-    if (f.status === "available" && f.alreadyConfigured && !opts.replace) {
+    if (isOfferableStatus(f) && f.alreadyConfigured && !opts.replace) {
       deps.log(
         `  ${SERVICE_NAME[f.source]} is already configured — pass --replace to overwrite it.`,
       );
@@ -204,7 +325,7 @@ export async function runConnectorDetect(
     return;
   }
   for (const f of offer) {
-    const params = await chooseOne(f, deps);
+    const params = await chooseOne(f, deps, opts);
     if (params === null) continue;
     const withReplace = { ...params, replace: opts.replace };
     deps.log(`Connecting ${f.source} — approve the prompt to continue.`);

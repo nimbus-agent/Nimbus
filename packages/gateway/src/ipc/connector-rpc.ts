@@ -1,3 +1,4 @@
+import { readConnectorSecret } from "../connectors/connector-vault.ts";
 import type { LazyConnectorMesh } from "../connectors/lazy-mesh/index.ts";
 import { adoptLocalAuth, parseAdoptRequest } from "../connectors/local-auth/adopt-local-auth.ts";
 import { detectLocalAuth, parseSources } from "../connectors/local-auth/detect-local-auth.ts";
@@ -23,6 +24,19 @@ import {
 import { asRecord, ConnectorRpcError } from "./connector-rpc-shared.ts";
 
 export { ConnectorRpcError } from "./connector-rpc-shared.ts";
+
+/**
+ * Extracted from the `connector.adoptLocalAuth` case below and exported so the WIRING — which
+ * exact Vault key the gcloud consent clause's "will this clear a stored key?" question reads —
+ * can be pinned directly. An inline arrow at the call site typechecks and passes every
+ * `adopt-local-auth.test.ts` test whether it reads `gcp.credentials_json_path` (correct) or
+ * `gcp.project_id` (silently wrong: the clause would then fire whenever a project id is on file,
+ * disclosing a clear that will never happen) — that whole suite injects its own
+ * `readGcpKeyPath` stub and never exercises this line. See `connector-rpc.test.ts`.
+ */
+export function buildReadGcpKeyPath(vault: NimbusVault): () => Promise<string | null> {
+  return () => readConnectorSecret(vault, "gcp", "credentials_json_path");
+}
 
 export async function dispatchConnectorRpc(options: {
   method: string;
@@ -134,6 +148,7 @@ export async function dispatchConnectorRpc(options: {
         gate: (action) => toolExecutor.gate(action),
         // The token travels in-process only, inside this synthetic rec; it never crosses IPC.
         authenticate: (authRec) => handleConnectorAuth({ ...ctx, rec: authRec }),
+        readGcpKeyPath: buildReadGcpKeyPath(vault),
       });
       return { kind: "hit", value };
     }

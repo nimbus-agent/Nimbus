@@ -9,6 +9,8 @@ import { cliEnvFor } from "./local-auth-env.ts";
 import type { LocalAuthHostDeps } from "./local-auth-host.ts";
 import {
   type AwsFinding,
+  GCP_PROJECT_ID,
+  type GcloudFinding,
   type GhFinding,
   type KubectlFinding,
   LOCAL_AUTH_ERR,
@@ -26,6 +28,7 @@ export interface AdoptRequest {
   readonly account?: string;
   readonly profile?: string;
   readonly context?: string;
+  readonly project?: string;
   readonly replace: boolean;
 }
 
@@ -33,6 +36,12 @@ export interface AdoptLocalAuthDeps {
   readonly detect: DetectLocalAuthDeps;
   readonly gate: (action: PlannedAction) => Promise<ActionResult | "proceed">;
   readonly authenticate: (rec: Record<string, unknown>) => Promise<ConnectorRpcHit>;
+  /**
+   * The GCP service-account key path currently on file, if any — read fresh (never cached) so the
+   * gcloud-mode consent prompt can disclose whether adopting it will clear a stored key. `null`
+   * when none is configured.
+   */
+  readonly readGcpKeyPath: () => Promise<string | null>;
 }
 
 export interface AdoptSuccess {
@@ -64,11 +73,13 @@ export function parseAdoptRequest(rec: Record<string, unknown> | undefined): Ado
   const account = optionalString(r, "account");
   const profile = optionalString(r, "profile");
   const context = optionalString(r, "context");
+  const project = optionalString(r, "project");
   return {
     source: source as LocalAuthSource,
     ...(account === undefined ? {} : { account }),
     ...(profile === undefined ? {} : { profile }),
     ...(context === undefined ? {} : { context }),
+    ...(project === undefined ? {} : { project }),
     replace: r["replace"] === true,
   };
 }
@@ -101,7 +112,14 @@ function usable<F extends LocalAuthFinding>(finding: F | undefined, req: AdoptRe
   if (finding.status === "unsupported") {
     return fail(LOCAL_AUTH_ERR.unsupported, finding.reason ?? "unsupported");
   }
-  if (finding.status !== "available") {
+  // gcloud's `needs_project` is still offerable — an active login with no default project just
+  // needs the owner to name one. Scoped to the gcloud source specifically, not union-wide:
+  // `needs_project` exists only on `GcloudFinding` today, but a future gh/aws finding reusing
+  // that status word for some OTHER meaning (they have no "project" concept) must not be
+  // silently waved through here on the strength of gcloud's carve-out.
+  const isOfferableGcloudNeedsProject =
+    req.source === "gcloud" && finding.status === "needs_project";
+  if (finding.status !== "available" && !isOfferableGcloudNeedsProject) {
     return fail(LOCAL_AUTH_ERR.sourceUnavailable, finding.reason ?? finding.status);
   }
   if (finding.alreadyConfigured && !req.replace) {
@@ -116,7 +134,8 @@ function usable<F extends LocalAuthFinding>(finding: F | undefined, req: AdoptRe
 type Target =
   | { readonly source: "gh"; readonly finding: GhFinding; readonly account: string }
   | { readonly source: "aws"; readonly finding: AwsFinding; readonly profile: string }
-  | { readonly source: "kubectl"; readonly finding: KubectlFinding; readonly context: string };
+  | { readonly source: "kubectl"; readonly finding: KubectlFinding; readonly context: string }
+  | { readonly source: "gcloud"; readonly finding: GcloudFinding; readonly project: string };
 
 function resolveTarget(req: AdoptRequest, findings: readonly LocalAuthFinding[]): Target {
   switch (req.source) {
@@ -152,14 +171,46 @@ function resolveTarget(req: AdoptRequest, findings: readonly LocalAuthFinding[])
         context: pick(req.context, f.contexts, f.currentContext, "kube context"),
       };
     }
+    case "gcloud": {
+      // Never trust the earlier detect: the gcloud login CAN change between listing and keypress
+      // (spec § 5.1) — `f.project` is what THIS detect saw, re-run at the top of `adoptLocalAuth`.
+      const f = usable(
+        findings.find((x): x is GcloudFinding => x.source === "gcloud"),
+        req,
+      );
+      const project = req.project ?? f.project;
+      if (project === null) {
+        return fail(
+          LOCAL_AUTH_ERR.sourceUnavailable,
+          "gcloud has no default project — pass a project id",
+        );
+      }
+      if (!GCP_PROJECT_ID.test(project)) {
+        return fail("ERR_INVALID_PARAMS", `"${project}" is not a GCP project id`);
+      }
+      return { source: "gcloud", finding: f, project };
+    }
   }
 }
 
 /**
  * The consent text. It discloses only what is knowable LOCALLY: never the token's scopes, which
  * come back from the probe — and the probe runs after consent.
+ *
+ * gcloud mode is the one branch that is NOT self-contained: adopting it deletes any stored
+ * `gcp.credentials_json_path` unconditionally (`connectorAuthGcp` — a configured key always wins
+ * over the gcloud auth_source, so leaving the old path in place would make this change silently
+ * do nothing). That side effect has no field of its own on the consent payload and no CLI flag
+ * surfaces it, so without disclosing it here the owner would be approving a narrower act than the
+ * one actually performed. The clause is read fresh from the Vault and appended only when a key
+ * path is ACTUALLY on file — most owners adopting gcloud mode have never configured one, and
+ * telling them something will be cleared when nothing will teaches skimming, which is worse than
+ * the gap it closes.
  */
-export function consentPayload(t: Target): Record<string, unknown> {
+export async function consentPayload(
+  t: Target,
+  deps: Pick<AdoptLocalAuthDeps, "readGcpKeyPath">,
+): Promise<Record<string, unknown>> {
   switch (t.source) {
     case "gh":
       return {
@@ -184,6 +235,21 @@ export function consentPayload(t: Target): Record<string, unknown> {
         kubeconfig: t.finding.kubeconfig,
         summary: `Use kube context ${t.context} from ${t.finding.kubeconfig}. Nothing is copied — kubectl resolves it at every sync.`,
       };
+    case "gcloud": {
+      const storedKeyPath = await deps.readGcpKeyPath();
+      const willClearStoredKey = storedKeyPath !== null && storedKeyPath.trim() !== "";
+      return {
+        source: "gcloud",
+        account: t.finding.account,
+        project: t.project,
+        summary:
+          `Use your gcloud login ${t.finding.account ?? ""}, project ${t.project}, for the GCP connectors. ` +
+          "Nothing is copied — gcloud resolves the login at every sync." +
+          (willClearStoredKey
+            ? " This also clears the GCP service-account key path currently stored in the Vault — a stored key always wins over gcloud login, so leaving it in place would make this change silently do nothing."
+            : ""),
+      };
+    }
   }
 }
 
@@ -217,6 +283,8 @@ async function authRecord(t: Target, host: LocalAuthHostDeps): Promise<Record<st
     }
     case "kubectl":
       return { service: "kubernetes", kubeconfig: t.finding.kubeconfig, context: t.context };
+    case "gcloud":
+      return { service: "gcp", authSource: "gcloud", projectId: t.project };
   }
 }
 
@@ -231,7 +299,10 @@ export async function adoptLocalAuth(
 ): Promise<AdoptSuccess | ActionResult> {
   const findings = await detectLocalAuth([req.source], deps.detect);
   const target = resolveTarget(req, findings);
-  const gated = await deps.gate({ type: ADOPT_ACTION_TYPE, payload: consentPayload(target) });
+  const gated = await deps.gate({
+    type: ADOPT_ACTION_TYPE,
+    payload: await consentPayload(target, deps),
+  });
   if (gated !== "proceed") return gated;
   const hit = await deps.authenticate(await authRecord(target, deps.detect.host));
   const v = hit.value as { verified?: unknown; scopesGranted?: unknown };

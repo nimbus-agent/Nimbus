@@ -7,7 +7,7 @@ import {
   syncPassCursorSuccess,
 } from "../sync/pass-cursor-sync-result.ts";
 import { type Syncable, type SyncContext, type SyncResult, syncNoopResult } from "../sync/types.ts";
-import { gcloudKeyFileEnv } from "./_lib/gcp-auth.ts";
+import { type GcpAuth, gcloudAuthEnv, resolveGcpAuth } from "./_lib/gcp-auth.ts";
 import { encodeNimbusJsonCursor } from "./nimbus-json-cursor.ts";
 import { asRecord, stringField } from "./unknown-record.ts";
 
@@ -24,19 +24,12 @@ function pass1Cursor(): string {
   return encodeCursor({ pass: 1 });
 }
 
-async function gcloudJson(
-  ctx: SyncContext,
-  args: string[],
-): Promise<{ ok: boolean; text: string }> {
-  const credPath = (await ctx.getSecret("credentials_json_path"))?.trim() ?? "";
-  if (credPath === "") {
-    return { ok: false, text: "" };
-  }
+async function gcloudJson(auth: GcpAuth, args: string[]): Promise<{ ok: boolean; text: string }> {
   // `spawnCapture`, not `Bun.spawn`: the Gateway runs detached, so on Windows an unhidden
   // console-subsystem child pops a visible window on every sync tick. See
   // `platform/spawn-capture.ts`.
   const r = await spawnCapture(["gcloud", ...args, "--format", "json"], {
-    env: extensionProcessEnv(gcloudKeyFileEnv(credPath)),
+    env: extensionProcessEnv(gcloudAuthEnv(auth)),
   });
   return { ok: r.ok, text: r.stdout };
 }
@@ -54,8 +47,11 @@ export function createGcpSyncable(options: GcpSyncableOptions): Syncable {
     async sync(ctx: SyncContext, cursor: string | null): Promise<SyncResult> {
       const t0 = performance.now();
       await options.ensureGcpMcpRunning();
-      const credPath = await ctx.getSecret("credentials_json_path");
-      if (credPath === null || credPath.trim() === "") {
+      const auth = resolveGcpAuth(
+        await ctx.getSecret("credentials_json_path"),
+        await ctx.getSecret("auth_source"),
+      );
+      if (auth === null) {
         return syncNoopResult(cursor, t0);
       }
       const projectRaw = await ctx.getSecret("project_id");
@@ -65,7 +61,7 @@ export function createGcpSyncable(options: GcpSyncableOptions): Syncable {
       }
 
       await ctx.rateLimiter.acquire("gcp");
-      const res = await gcloudJson(ctx, ["projects", "describe", projectId]);
+      const res = await gcloudJson(auth, ["projects", "describe", projectId]);
       if (!res.ok) {
         ctx.logger.warn({ serviceId: SERVICE_ID }, "gcp sync: projects describe failed");
         return syncPassCursorHttpEmpty(t0, res.text.length, cursor, pass1Cursor());

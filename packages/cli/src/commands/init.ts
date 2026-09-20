@@ -124,7 +124,7 @@ const HELP_LINES: readonly string[] = [
   "",
   "Flags:",
   "  --no-sync   write nimbus.toml only; do not start the Gateway and do not index",
-  "  --no-detect do not offer to reuse existing gh/aws/kubectl logins",
+  "  --no-detect do not offer to reuse existing gh/aws/kubectl/gcloud logins",
   "  --help      this message",
   "",
   "Exit codes:",

@@ -19,6 +19,7 @@ interface Harness {
     configured?: boolean;
     hosts?: string;
     run?: RunCli;
+    gcpKeyPath?: string | null;
   }): Parameters<typeof adoptLocalAuth>[1];
 }
 
@@ -46,6 +47,13 @@ function harness(): Harness {
             return { ok: true, stdout: "kind-a\nprod-eu\n", stderr: "", code: 0 };
           if (cmd === "kubectl config current-context")
             return { ok: true, stdout: "prod-eu\n", stderr: "", code: 0 };
+          if (cmd === "gcloud config list --format json")
+            return {
+              ok: true,
+              stdout: JSON.stringify({ core: { account: "me@example.com" } }),
+              stderr: "",
+              code: 0,
+            };
           return { ok: false, stdout: "", stderr: "", code: 1 };
         });
       const host: LocalAuthHostDeps = {
@@ -75,6 +83,7 @@ function harness(): Harness {
             },
           };
         },
+        readGcpKeyPath: async () => opts.gcpKeyPath ?? null,
       };
     },
   };
@@ -103,6 +112,13 @@ describe("parseAdoptRequest", () => {
     expect(parseAdoptRequest({ source: "kubectl", context: "prod-eu", replace: false })).toEqual({
       source: "kubectl",
       context: "prod-eu",
+      replace: false,
+    });
+  });
+  test("reads a gcloud project selector", () => {
+    expect(parseAdoptRequest({ source: "gcloud", project: "acme-prod" })).toEqual({
+      source: "gcloud",
+      project: "acme-prod",
       replace: false,
     });
   });
@@ -316,6 +332,7 @@ describe("adoptLocalAuth — references", () => {
         authed.push(rec);
         return { kind: "hit", value: { ok: true, serviceId: rec["service"] } };
       },
+      readGcpKeyPath: async () => null,
     };
     await expect(adoptLocalAuth({ source: "gh", replace: false }, deps)).rejects.toThrow(
       /ERR_LOCAL_AUTH_SOURCE_UNAVAILABLE/,
@@ -356,6 +373,7 @@ describe("adoptLocalAuth — references", () => {
         authed.push(rec);
         return { kind: "hit", value: { ok: true, serviceId: rec["service"] } };
       },
+      readGcpKeyPath: async () => null,
     };
     const out = await adoptLocalAuth({ source: "kubectl", replace: false }, deps);
     expect(out).toEqual({
@@ -365,5 +383,134 @@ describe("adoptLocalAuth — references", () => {
       verified: null,
       scopes: [],
     });
+  });
+});
+
+describe("adoptLocalAuth — gcloud", () => {
+  test("needs_project + an owner-supplied project → gcloud login mode for that project", async () => {
+    const h = harness();
+    const out = await adoptLocalAuth(
+      { source: "gcloud", project: "acme-prod", replace: false },
+      h.deps(),
+    );
+    expect(h.authed).toEqual([{ service: "gcp", authSource: "gcloud", projectId: "acme-prod" }]);
+    expect(out).toMatchObject({ ok: true, source: "gcloud", service: "gcp" });
+    expect(String(h.gated[0]?.payload?.["summary"])).toContain("acme-prod");
+  });
+
+  // I-1 (CLI/gateway precedence disagreement): `resolveTarget`'s `req.project ?? f.project` is
+  // the correct rule — an explicit request wins over gcloud's own detected default. This pins
+  // both directions at the gateway so a regression here cannot go unnoticed the way the CLI's
+  // reversed precedence did.
+  test("available + an owner-supplied project → the explicit project wins over the detected default", async () => {
+    const h = harness();
+    const out = await adoptLocalAuth(
+      { source: "gcloud", project: "explicit-override", replace: false },
+      h.deps({
+        run: async (argv) => {
+          const cmd = argv.join(" ");
+          if (cmd === "gcloud config list --format json") {
+            return {
+              ok: true,
+              stdout: JSON.stringify({
+                core: { account: "me@example.com", project: "detected-default" },
+              }),
+              stderr: "",
+              code: 0,
+            };
+          }
+          return { ok: false, stdout: "", stderr: "", code: 1 };
+        },
+      }),
+    );
+    expect(h.authed).toEqual([
+      { service: "gcp", authSource: "gcloud", projectId: "explicit-override" },
+    ]);
+    expect(out).toMatchObject({ ok: true, source: "gcloud", service: "gcp" });
+  });
+
+  test("available with no explicit project → the detected default is used", async () => {
+    const h = harness();
+    const out = await adoptLocalAuth(
+      { source: "gcloud", replace: false },
+      h.deps({
+        run: async (argv) => {
+          const cmd = argv.join(" ");
+          if (cmd === "gcloud config list --format json") {
+            return {
+              ok: true,
+              stdout: JSON.stringify({
+                core: { account: "me@example.com", project: "detected-default" },
+              }),
+              stderr: "",
+              code: 0,
+            };
+          }
+          return { ok: false, stdout: "", stderr: "", code: 1 };
+        },
+      }),
+    );
+    expect(h.authed).toEqual([
+      { service: "gcp", authSource: "gcloud", projectId: "detected-default" },
+    ]);
+    expect(out).toMatchObject({ ok: true, source: "gcloud", service: "gcp" });
+  });
+
+  test("needs_project with no project → ERR_LOCAL_AUTH_SOURCE_UNAVAILABLE, no gate", async () => {
+    const h = harness();
+    await expect(adoptLocalAuth({ source: "gcloud", replace: false }, h.deps())).rejects.toThrow(
+      /ERR_LOCAL_AUTH_SOURCE_UNAVAILABLE/,
+    );
+    expect(h.gated).toEqual([]);
+  });
+
+  test("an owner-supplied project is shape-validated", async () => {
+    const h = harness();
+    await expect(
+      adoptLocalAuth({ source: "gcloud", project: "Not A Project!", replace: false }, h.deps()),
+    ).rejects.toThrow(/project id/);
+    expect(h.gated).toEqual([]);
+  });
+
+  // The REQUIRED deviation from the brief (task-2.4-brief.md line 152): adopting gcloud mode
+  // unconditionally clears any stored `gcp.credentials_json_path` (`connectorAuthGcp` — a
+  // configured key always wins over `auth_source: "gcloud"`), but nothing else in the consent
+  // payload discloses that. These two tests pin the disclosure being CONDITIONAL on a key path
+  // actually being on file, in both directions — present when there is something to clear, absent
+  // when there is nothing (never claiming a clear that will not happen).
+  test("a stored service-account key path → the summary discloses it will be cleared", async () => {
+    const h = harness();
+    await adoptLocalAuth(
+      { source: "gcloud", project: "acme-prod", replace: false },
+      h.deps({ gcpKeyPath: "/keys/sa.json" }),
+    );
+    const summary = String(h.gated[0]?.payload?.["summary"]);
+    expect(summary).toContain("clears the GCP service-account key path");
+  });
+
+  test("no stored key path → the summary says nothing about clearing one", async () => {
+    const h = harness();
+    await adoptLocalAuth(
+      { source: "gcloud", project: "acme-prod", replace: false },
+      h.deps({ gcpKeyPath: null }),
+    );
+    const summary = String(h.gated[0]?.payload?.["summary"]);
+    expect(summary).not.toContain("clears");
+  });
+
+  // The test above (`configured: false`, the harness default) is not a shape production can ever
+  // produce: `isConnectorConfigured` reads ANY configured `gcp.*` secret, so a stored key path
+  // makes `alreadyConfigured` true, and `usable()` refuses BEFORE consent unless `replace` is set.
+  // The clause is therefore reachable ONLY on the `--replace` path — this test drives that exact
+  // shape, so a regression that only shows up once `alreadyConfigured`/`replace` are threaded
+  // correctly (as opposed to the isolated `consentPayload` logic above) has somewhere to fail.
+  test("a stored key path with replace=true (the only production-reachable shape) → still discloses the clear", async () => {
+    const h = harness();
+    await adoptLocalAuth(
+      { source: "gcloud", project: "acme-prod", replace: true },
+      h.deps({ gcpKeyPath: "/keys/sa.json", configured: true }),
+    );
+    const summary = String(h.gated[0]?.payload?.["summary"]);
+    expect(summary).toContain("clears the GCP service-account key path");
   });
 });

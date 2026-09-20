@@ -2,6 +2,7 @@
 import { describe, expect, test } from "bun:test";
 
 import { CONNECTOR_VAULT_SECRET_KEYS } from "../connectors/connector-secrets-manifest.ts";
+import { createMockVault } from "../vault/mock.ts";
 import { isConnectorConfigured } from "./connector-configured.ts";
 
 /** `vault.get` calls the FULL key — the same shape `connector-secrets-manifest.ts` lists. */
@@ -132,6 +133,19 @@ describe("isConnectorConfigured", () => {
         ).toBe(true);
       });
     }
+
+    test("bigquery is configured by a gcloud login + project, with no key file", async () => {
+      const vault = createMockVault();
+      await vault.set("gcp.auth_source", "gcloud");
+      await vault.set("gcp.project_id", "acme-prod");
+      expect(await isConnectorConfigured(vault, "bigquery")).toBe(true);
+    });
+
+    test("a gcloud login without a project is NOT configured", async () => {
+      const vault = createMockVault();
+      await vault.set("gcp.auth_source", "gcloud");
+      expect(await isConnectorConfigured(vault, "bigquery")).toBe(false);
+    });
   });
 
   describe("athena/cloudwatch/sagemaker — the shared aws.* usable-credential formula", () => {

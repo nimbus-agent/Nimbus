@@ -1,15 +1,15 @@
 import { extensionProcessEnv } from "../../extensions/spawn-env.ts";
 import { spawnCapture } from "../../platform/spawn-capture.ts";
-import { gcloudKeyFileEnv } from "./gcp-auth.ts";
+import { type GcpAuth, gcloudAuthEnv } from "./gcp-auth.ts";
 
 /**
- * Spawn a gcloud CLI command authenticated as the service-account key at credPath
- * (gcloudKeyFileEnv sets CLOUDSDK_AUTH_CREDENTIAL_FILE_OVERRIDE, which gcloud reads, plus
- * GOOGLE_APPLICATION_CREDENTIALS for client libraries), capturing stdout. Returns `{ ok,
- * text }`; a missing `gcloud`, a non-zero exit and a spawn failure all come back as `ok:
- * false`, so a Syncable caller degrades gracefully. The env is scoped through
- * `extensionProcessEnv` (invariant I1). Each connector keeps its own argv builder +
- * credential loader.
+ * Spawn a gcloud CLI command authenticated per `auth` — either the configured service-account
+ * key (gcloudAuthEnv sets CLOUDSDK_AUTH_CREDENTIAL_FILE_OVERRIDE, which gcloud reads, plus
+ * GOOGLE_APPLICATION_CREDENTIALS for client libraries) or the owner's own `gcloud auth login`
+ * (no credential variable set at all) — capturing stdout. Returns `{ ok, text }`; a missing
+ * `gcloud`, a non-zero exit and a spawn failure all come back as `ok: false`, so a Syncable
+ * caller degrades gracefully. The env is scoped through `extensionProcessEnv` (invariant I1).
+ * Each connector keeps its own argv builder + credential loader.
  *
  * There is deliberately NO try/catch here. It had one while this spawned through `Bun.spawn`,
  * which throws on a missing executable; `spawnCapture` never rejects — a synchronous throw, an
@@ -19,10 +19,10 @@ import { gcloudKeyFileEnv } from "./gcp-auth.ts";
  */
 export async function runGcloudCommand(
   argv: string[],
-  credPath: string,
+  auth: GcpAuth,
 ): Promise<{ ok: boolean; text: string }> {
   const r = await spawnCapture(argv, {
-    env: extensionProcessEnv(gcloudKeyFileEnv(credPath)),
+    env: extensionProcessEnv(gcloudAuthEnv(auth)),
   });
   return { ok: r.ok, text: r.stdout };
 }

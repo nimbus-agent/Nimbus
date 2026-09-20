@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import { EventEmitter } from "node:events";
+import type { GcpAuth } from "../../../src/connectors/_lib/gcp-auth.ts";
 import { createVertexAiSyncable, type RunGcloud } from "../../../src/connectors/vertex-ai-sync.ts";
 import { spawnCaptureInternals } from "../../../src/platform/spawn-capture.ts";
 import {
@@ -16,15 +17,15 @@ const PASS_1_CURSOR = encodeCursor({ pass: 1 });
 
 const ENSURE = { ensureVertexAiMcpRunning: async (): Promise<void> => {} };
 
-/** Build a runGcloud stub returning canned JSON; records (credPath, project, region) calls. */
+/** Build a runGcloud stub returning canned JSON; records (auth, project, region) calls. */
 function makeRunner(seq: { ok?: boolean; body?: unknown }[]): {
   run: RunGcloud;
-  calls: { credPath: string; project: string; region: string }[];
+  calls: { auth: GcpAuth; project: string; region: string }[];
 } {
-  const calls: { credPath: string; project: string; region: string }[] = [];
+  const calls: { auth: GcpAuth; project: string; region: string }[] = [];
   let i = 0;
-  const run: RunGcloud = async (credPath, project, region) => {
-    calls.push({ credPath, project, region });
+  const run: RunGcloud = async (auth, project, region) => {
+    calls.push({ auth, project, region });
     const r = seq[Math.min(i, seq.length - 1)] ?? { ok: true, body: [] };
     i += 1;
     const ok = r.ok ?? true;
@@ -65,6 +66,20 @@ describe("vertex-ai-sync — credential short-circuit", () => {
     );
     expect(calls).toHaveLength(0);
   });
+
+  test("gcloud login mode reaches the runner as { kind: 'gcloud' }", async () => {
+    await fx.vault.set("gcp.auth_source", "gcloud");
+    await fx.vault.set("gcp.project_id", "my-project");
+    const { run, calls } = makeRunner([{ body: [{ displayName: "m" }] }]);
+    const res = await createVertexAiSyncable({ ...ENSURE, runGcloud: run }).sync(
+      fx.createSyncContext("vertex_ai"),
+      null,
+    );
+    expect(res.itemsUpserted).toBe(1);
+    expect(calls).toEqual([
+      { auth: { kind: "gcloud" }, project: "my-project", region: "us-central1" },
+    ]);
+  });
 });
 
 describe("vertex-ai-sync — model metadata walk", () => {
@@ -104,7 +119,7 @@ describe("vertex-ai-sync — model metadata walk", () => {
     // Exactly one gcloud invocation per cycle, with creds + project + default region.
     expect(calls).toHaveLength(1);
     expect(calls[0]).toEqual({
-      credPath: "/etc/gcp.json",
+      auth: { kind: "key", credPath: "/etc/gcp.json" },
       project: "my-project",
       region: "us-central1",
     });

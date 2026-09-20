@@ -1,6 +1,7 @@
 import { ConnectorRpcError } from "../../ipc/connector-rpc-shared.ts";
 import type { ConnectorServiceId } from "../connector-catalog.ts";
 import { detectAws } from "./detect-aws.ts";
+import { detectGcloud } from "./detect-gcloud.ts";
 import { detectGh } from "./detect-gh.ts";
 import { detectKubectl } from "./detect-kubectl.ts";
 import type { LocalAuthHostDeps } from "./local-auth-host.ts";
@@ -44,6 +45,8 @@ async function detectOne(
       return [await detectAws(deps.host, configured)];
     case "kubectl":
       return [await detectKubectl(deps.host, configured)];
+    case "gcloud":
+      return [await detectGcloud(deps.host, configured)];
   }
 }
 

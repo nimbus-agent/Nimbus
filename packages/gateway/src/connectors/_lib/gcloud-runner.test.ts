@@ -39,25 +39,39 @@ function stubSpawn(
 describe("runGcloudCommand", () => {
   test("returns ok + stdout text on exit code 0", async () => {
     stubSpawn(() => ({ exitCode: 0, stdout: '[{"a":1}]' }));
-    const res = await runGcloudCommand(["gcloud", "logging", "sinks", "list"], "/creds.json");
+    const res = await runGcloudCommand(["gcloud", "logging", "sinks", "list"], {
+      kind: "key",
+      credPath: "/creds.json",
+    });
     expect(res.ok).toBe(true);
     expect(res.text).toBe('[{"a":1}]');
   });
 
   test("returns ok:false on a non-zero exit code (text still captured)", async () => {
     stubSpawn(() => ({ exitCode: 1, stdout: "boom" }));
-    const res = await runGcloudCommand(["gcloud", "ai", "models", "list"], "/creds.json");
+    const res = await runGcloudCommand(["gcloud", "ai", "models", "list"], {
+      kind: "key",
+      credPath: "/creds.json",
+    });
     expect(res.ok).toBe(false);
     expect(res.text).toBe("boom");
   });
 
   test("passes the argv through and scopes both GOOGLE_APPLICATION_CREDENTIALS and CLOUDSDK_AUTH_CREDENTIAL_FILE_OVERRIDE into the env (I1)", async () => {
     const { calls } = stubSpawn(() => ({ exitCode: 0, stdout: "[]" }));
-    await runGcloudCommand(["gcloud", "x"], "/path/to/creds.json");
+    await runGcloudCommand(["gcloud", "x"], { kind: "key", credPath: "/path/to/creds.json" });
     expect(calls).toHaveLength(1);
     expect(calls[0]!.argv).toEqual(["gcloud", "x"]);
     expect(calls[0]!.env["GOOGLE_APPLICATION_CREDENTIALS"]).toBe("/path/to/creds.json");
     expect(calls[0]!.env["CLOUDSDK_AUTH_CREDENTIAL_FILE_OVERRIDE"]).toBe("/path/to/creds.json");
+  });
+
+  test("gcloud login mode spawns with neither credential variable set — gcloud uses its own active login", async () => {
+    const { calls } = stubSpawn(() => ({ exitCode: 0, stdout: "[]" }));
+    await runGcloudCommand(["gcloud", "x"], { kind: "gcloud" });
+    expect(calls).toHaveLength(1);
+    expect(calls[0]!.env["GOOGLE_APPLICATION_CREDENTIALS"]).toBeUndefined();
+    expect(calls[0]!.env["CLOUDSDK_AUTH_CREDENTIAL_FILE_OVERRIDE"]).toBeUndefined();
   });
 
   test("degrades to { ok:false, text:'' } when spawn throws (gcloud missing)", async () => {
@@ -66,7 +80,7 @@ describe("runGcloudCommand", () => {
     stubSpawn(() => {
       throw new Error("ENOENT: gcloud not found");
     });
-    const res = await runGcloudCommand(["gcloud", "x"], "/creds.json");
+    const res = await runGcloudCommand(["gcloud", "x"], { kind: "key", credPath: "/creds.json" });
     expect(res).toEqual({ ok: false, text: "" });
   });
 });

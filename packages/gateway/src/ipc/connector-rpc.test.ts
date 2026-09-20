@@ -5,7 +5,7 @@ import type { ToolExecutor } from "../engine/executor.ts";
 import { LocalIndex } from "../index/local-index.ts";
 import { createMockVault } from "../vault/mock.ts";
 import type { NimbusVault } from "../vault/nimbus-vault.ts";
-import { dispatchConnectorRpc } from "./connector-rpc.ts";
+import { buildReadGcpKeyPath, dispatchConnectorRpc } from "./connector-rpc.ts";
 import { handleConnectorAuth } from "./connector-rpc-handlers/auth.ts";
 import type { ConnectorRpcHandlerContext } from "./connector-rpc-handlers/context.ts";
 import { ConnectorRpcError } from "./connector-rpc-shared.ts";
@@ -514,5 +514,24 @@ describe("connector.detectLocalAuth / connector.adoptLocalAuth routing", () => {
       if (prevPath === undefined) delete process.env["PATH"];
       else process.env["PATH"] = prevPath;
     }
+  });
+});
+
+describe("buildReadGcpKeyPath", () => {
+  // Pins the WIRING at `connector.adoptLocalAuth`'s call site, not just `adoptLocalAuth`'s
+  // behaviour under an injected stub. `adopt-local-auth.test.ts`'s whole suite supplies its own
+  // `readGcpKeyPath` and never exercises this line — a swap from `gcp.credentials_json_path` to
+  // `gcp.project_id` here leaves that entire suite green while making the gcloud consent clause
+  // fire on a project id being configured rather than a key path, disclosing a clear that will
+  // never happen. This test would fail on that swap: after `gcp.project_id` alone is set, the
+  // middle assertion still expects `null`.
+  test("reads gcp.credentials_json_path specifically — a sibling gcp key must not affect it", async () => {
+    const vault = createMockVault();
+    const read = buildReadGcpKeyPath(vault);
+    expect(await read()).toBeNull();
+    await vault.set("gcp.project_id", "acme-prod");
+    expect(await read()).toBeNull();
+    await vault.set("gcp.credentials_json_path", "/keys/sa.json");
+    expect(await read()).toBe("/keys/sa.json");
   });
 });

@@ -1355,7 +1355,7 @@ function printConnectorHelp(): void {
 
 Usage:
   nimbus connector auth <service> [--port <n>] [--scopes a,b] [--token <pat>] [--api-base <url>] [--help]
-  nimbus connector detect [--json] [--source gh|aws|kubectl] [--replace]   Reuse gh/aws/kubectl logins you already have
+  nimbus connector detect [--json] [--source gh|aws|kubectl|gcloud] [--replace] [--project <id>]   Reuse gh/aws/kubectl/gcloud logins you already have
   nimbus connector add --mcp <mcp_id> <command...>   Register a user MCP server (id must be mcp_*)
   nimbus connector list [--json]
   nimbus connector history <service> [--limit N]

@@ -15,16 +15,17 @@
  * `nimbus start`. A gateway started some other way may not see a variable the user's interactive
  * shell sets; detection then reports what the gateway can actually use.
  */
-const PASSTHROUGH: Readonly<Record<"gh" | "aws", readonly string[]>> = Object.freeze({
+const PASSTHROUGH: Readonly<Record<"gh" | "aws" | "gcloud", readonly string[]>> = Object.freeze({
   gh: ["GH_CONFIG_DIR", "XDG_CONFIG_HOME"],
   aws: ["AWS_CONFIG_FILE", "AWS_SHARED_CREDENTIALS_FILE"],
+  gcloud: ["CLOUDSDK_CONFIG"],
 });
 
 /** Newer gh keeps its token in the Secret Service on Linux; `gh auth token` needs the bus. */
 const GH_KEYRING: readonly string[] = ["DBUS_SESSION_BUS_ADDRESS", "XDG_RUNTIME_DIR"];
 
 export function cliEnvFor(
-  source: "gh" | "aws",
+  source: "gh" | "aws" | "gcloud",
   env: Readonly<Record<string, string | undefined>>,
   opts: { readonly keyring?: boolean } = {},
 ): Record<string, string> {

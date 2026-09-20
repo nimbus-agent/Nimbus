@@ -373,11 +373,42 @@ async function connectorAuthAzure(
   return authSuccess("azure");
 }
 
+/**
+ * GCP has two auth modes. `authSource: "gcloud"` reuses the owner's own `gcloud auth login`
+ * session (`GcpAuth`'s `gcloud` kind — see `_lib/gcp-auth.ts`) and needs only a project id; a key
+ * path would WIN over it (`resolveGcpAuth`'s more-specific-wins rule), so any previously stored
+ * one is deleted here to make gcloud mode actually take effect. Neither mode makes an outbound
+ * request — this handler only writes Vault keys and registers the sync schedule — so there is
+ * nothing for `verifyBeforeStoreWithScopes` to probe and no `sync`-class egress row to append.
+ */
 async function connectorAuthGcp(
   rec: Record<string, unknown> | undefined,
   vault: NimbusVault,
   localIndex: LocalIndex,
 ): Promise<ConnectorRpcHit> {
+  if (extractStringField(rec?.["authSource"]) === "gcloud") {
+    const project = extractStringField(rec?.["gcpProjectId"] ?? rec?.["projectId"]);
+    if (project === "") {
+      throw new ConnectorRpcError(-32602, "gcloud login mode needs a GCP project id (projectId)");
+    }
+    // Three untransacted Vault ops — ordered so every INTERMEDIATE state is a valid old-or-new
+    // configuration, and the only irreversible op (the delete) goes LAST. Writing auth_source then
+    // project_id first means a failure after either leaves a configured key-mode setup untouched
+    // (project_id merely written early has no effect until auth_source and the key are both gone);
+    // only once both writes have succeeded is the key path deleted, so a failure never strands the
+    // owner with gcloud mode half-configured and no key path to fall back to.
+    await writeConnectorSecret(vault, "gcp", "auth_source", "gcloud");
+    await writeConnectorSecret(vault, "gcp", "project_id", project);
+    // A key path would WIN over auth_source (resolveGcpAuth), so it must go for this to take effect.
+    await deleteConnectorSecret(vault, "gcp", "credentials_json_path");
+    localIndex.ensureConnectorSchedulerRegistration(
+      "gcp",
+      defaultSyncIntervalMsForService("gcp"),
+      Date.now(),
+    );
+    return authSuccess("gcp");
+  }
+
   const pathRaw = rec?.["gcpCredentialsJsonPath"] ?? rec?.["credentialsJsonPath"] ?? rec?.["path"];
   const path = extractStringField(pathRaw);
   if (path === "") {
@@ -387,6 +418,7 @@ async function connectorAuthGcp(
     );
   }
   await writeConnectorSecret(vault, "gcp", "credentials_json_path", path);
+  await deleteConnectorSecret(vault, "gcp", "auth_source");
   const projRaw = rec?.["gcpProjectId"] ?? rec?.["projectId"];
   const proj = extractStringField(projRaw);
   if (proj === "") {

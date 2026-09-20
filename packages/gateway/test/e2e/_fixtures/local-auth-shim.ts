@@ -1,4 +1,5 @@
-// Fake gh / aws / kubectl for local-auth.e2e.test.ts. Selected by the wrapper that invokes it.
+// Fake gh / aws / kubectl / gcloud for local-auth.e2e.test.ts. Selected by the wrapper that
+// invokes it.
 import { appendFileSync } from "node:fs";
 
 const as = process.argv[2] ?? "";
@@ -12,6 +13,10 @@ const answers: Record<string, string> = {
   "aws configure get region --profile dev": "eu-west-1\n",
   "kubectl config get-contexts -o name": "kind-a\n",
   "kubectl config current-context": "kind-a\n",
+  // No default project on purpose: `detectGcloud` reports `needs_project` for this account, the
+  // one status besides `available` that `resolveTarget` (adopt-local-auth.ts) still offers —
+  // exercising the same "supply a project at adopt time" path the unit tests cover.
+  "gcloud config list --format json": `${JSON.stringify({ core: { account: "me@example.com" } })}\n`,
 };
 const key = `${as} ${cmd}`;
 if (key in answers) {

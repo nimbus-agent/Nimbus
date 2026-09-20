@@ -7,7 +7,7 @@ import {
 } from "../sync/pass-cursor-sync-result.ts";
 import { type Syncable, type SyncContext, type SyncResult, syncNoopResult } from "../sync/types.ts";
 import { connectorFetch } from "./_lib/fetch-outcome.ts";
-import { gcloudKeyFileEnv } from "./_lib/gcp-auth.ts";
+import { type GcpAuth, gcloudAuthEnv, resolveGcpAuth } from "./_lib/gcp-auth.ts";
 import { mapBigqueryTableToItem } from "./bigquery-table-mapping.ts";
 import { encodeNimbusJsonCursor } from "./nimbus-json-cursor.ts";
 import { asRecord, stringField } from "./unknown-record.ts";
@@ -32,14 +32,15 @@ function pass1Cursor(): string {
 
 /**
  * Mints a short-lived GCP access token by shelling `gcloud auth print-access-token`
- * as the configured service account via `gcloudKeyFileEnv`. Returns null when
- * gcloud is missing or exits non-zero — the caller degrades gracefully (no throw
- * past the Syncable boundary), mirroring gcp-sync's `!res.ok` posture.
+ * authenticated per `auth` — the configured service-account key, or the owner's own
+ * `gcloud auth login` — via `gcloudAuthEnv`. Returns null when gcloud is missing or
+ * exits non-zero — the caller degrades gracefully (no throw past the Syncable
+ * boundary), mirroring gcp-sync's `!res.ok` posture.
  */
-export async function gcloudPrintAccessToken(credPath: string): Promise<string | null> {
+export async function gcloudPrintAccessToken(auth: GcpAuth): Promise<string | null> {
   try {
     const r = await spawnCapture(["gcloud", "auth", "print-access-token"], {
-      env: extensionProcessEnv(gcloudKeyFileEnv(credPath)),
+      env: extensionProcessEnv(gcloudAuthEnv(auth)),
     });
     if (!r.ok) {
       return null;
@@ -52,7 +53,7 @@ export async function gcloudPrintAccessToken(credPath: string): Promise<string |
 }
 
 /** Injectable token-mint — defaults to the gcloud spawn; tests pass a stub. */
-export type MintAccessToken = (credPath: string) => Promise<string | null>;
+export type MintAccessToken = (auth: GcpAuth) => Promise<string | null>;
 
 export type BigquerySyncableOptions = {
   ensureBigqueryMcpRunning: () => Promise<void>;
@@ -61,17 +62,20 @@ export type BigquerySyncableOptions = {
 };
 
 interface BigqueryCreds {
-  readonly credPath: string;
+  readonly auth: GcpAuth;
   readonly project: string;
 }
 
 async function loadCreds(ctx: SyncContext): Promise<BigqueryCreds | null> {
-  const credPath = (await ctx.getSharedSecret("gcp", "credentials_json_path"))?.trim() ?? "";
+  const auth = resolveGcpAuth(
+    await ctx.getSharedSecret("gcp", "credentials_json_path"),
+    await ctx.getSharedSecret("gcp", "auth_source"),
+  );
   const project = (await ctx.getSharedSecret("gcp", "project_id"))?.trim() ?? "";
-  if (credPath === "" || project === "") {
+  if (auth === null || project === "") {
     return null;
   }
-  return { credPath, project };
+  return { auth, project };
 }
 
 function authHeaders(token: string): Record<string, string> {
@@ -293,7 +297,7 @@ export function createBigquerySyncable(options: BigquerySyncableOptions): Syncab
       }
 
       await ctx.rateLimiter.acquire(SERVICE_ID);
-      const token = await mint(creds.credPath);
+      const token = await mint(creds.auth);
       if (token === null) {
         ctx.logger.warn({ serviceId: SERVICE_ID }, "bigquery sync: gcloud token mint failed");
         // Preserve cursor; graceful empty pass (no throw past the Syncable boundary).

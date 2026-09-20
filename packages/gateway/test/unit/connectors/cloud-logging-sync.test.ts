@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import { EventEmitter } from "node:events";
+import type { GcpAuth } from "../../../src/connectors/_lib/gcp-auth.ts";
 import {
   createCloudLoggingSyncable,
   type RunGcloud,
@@ -19,15 +20,15 @@ const PASS_1_CURSOR = encodeCursor({ pass: 1 });
 
 const ENSURE = { ensureCloudLoggingMcpRunning: async (): Promise<void> => {} };
 
-/** Build a runGcloud stub returning canned JSON; records (credPath, project) calls. */
+/** Build a runGcloud stub returning canned JSON; records (auth, project) calls. */
 function makeRunner(seq: { ok?: boolean; body?: unknown }[]): {
   run: RunGcloud;
-  calls: { credPath: string; project: string }[];
+  calls: { auth: GcpAuth; project: string }[];
 } {
-  const calls: { credPath: string; project: string }[] = [];
+  const calls: { auth: GcpAuth; project: string }[] = [];
   let i = 0;
-  const run: RunGcloud = async (credPath, project) => {
-    calls.push({ credPath, project });
+  const run: RunGcloud = async (auth, project) => {
+    calls.push({ auth, project });
     const r = seq[Math.min(i, seq.length - 1)] ?? { ok: true, body: [] };
     i += 1;
     const ok = r.ok ?? true;
@@ -68,6 +69,18 @@ describe("cloud-logging-sync — credential short-circuit", () => {
     );
     expect(calls).toHaveLength(0);
   });
+
+  test("gcloud login mode reaches the runner as { kind: 'gcloud' }", async () => {
+    await fx.vault.set("gcp.auth_source", "gcloud");
+    await fx.vault.set("gcp.project_id", "my-project");
+    const { run, calls } = makeRunner([{ body: [{ name: "s" }] }]);
+    const res = await createCloudLoggingSyncable({ ...ENSURE, runGcloud: run }).sync(
+      fx.createSyncContext("cloud_logging"),
+      null,
+    );
+    expect(res.itemsUpserted).toBe(1);
+    expect(calls).toEqual([{ auth: { kind: "gcloud" }, project: "my-project" }]);
+  });
 });
 
 describe("cloud-logging-sync — sink metadata walk", () => {
@@ -104,7 +117,10 @@ describe("cloud-logging-sync — sink metadata walk", () => {
 
     // Exactly one gcloud invocation per cycle, with the configured creds + project.
     expect(calls).toHaveLength(1);
-    expect(calls[0]).toEqual({ credPath: "/etc/gcp.json", project: "my-project" });
+    expect(calls[0]).toEqual({
+      auth: { kind: "key", credPath: "/etc/gcp.json" },
+      project: "my-project",
+    });
 
     const rows = fx.db
       .query<{ external_id: string }, []>(

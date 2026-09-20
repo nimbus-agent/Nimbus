@@ -4,6 +4,7 @@ import { MockSpawn } from "../../test/helpers/mock-spawn.ts";
 import { ProviderRateLimiter } from "../sync/rate-limiter.ts";
 import type { SyncContext } from "../sync/types.ts";
 import type { NimbusVault } from "../vault/nimbus-vault.ts";
+import type { GcpAuth } from "./_lib/gcp-auth.ts";
 import { createBigquerySyncable, gcloudPrintAccessToken } from "./bigquery-sync.ts";
 import {
   createMemoryIndexDb,
@@ -27,10 +28,10 @@ function gcpVault(credPath: string, projectId: string) {
 }
 
 /** A no-op mintAccessToken that always returns a token. */
-const stubMint = async (_credPath: string): Promise<string | null> => "test-token";
+const stubMint = async (_auth: GcpAuth): Promise<string | null> => "test-token";
 
 /** A mintAccessToken that always returns null (simulates gcloud failure). */
-const failMint = async (_credPath: string): Promise<string | null> => null;
+const failMint = async (_auth: GcpAuth): Promise<string | null> => null;
 
 /** Minimal valid BQ dataset-list response (one dataset). */
 function makeDatasetsResponse(datasetIds: string[], nextPageToken?: string): string {
@@ -236,6 +237,39 @@ describeWithFetchRestore("bigquery-sync — happy path", () => {
     );
     expect(r.itemsUpserted).toBe(2);
     expectServiceItemCount(db, "bigquery", 2);
+  });
+});
+
+// ─── gcloud login mode ─────────────────────────────────────────────────────────
+
+describeWithFetchRestore("bigquery-sync — gcloud login mode", () => {
+  test("reaches mintAccessToken as { kind: 'gcloud' } when gcp.auth_source = gcloud", async () => {
+    const db = createMemoryIndexDb();
+    const seenAuths: GcpAuth[] = [];
+    const trackingMint = async (auth: GcpAuth): Promise<string | null> => {
+      seenAuths.push(auth);
+      return "test-token";
+    };
+
+    globalThis.fetch = (async (input: SyncTestFetchParams[0]): Promise<Response> => {
+      const url = urlFromFetchInput(input);
+      if (url.includes("/datasets?")) {
+        return new Response(makeDatasetsResponse([]), { status: 200 });
+      }
+      return new Response("{}", { status: 200 });
+    }) as typeof fetch;
+
+    const sync = createBigquerySyncable({
+      ensureBigqueryMcpRunning: async () => {},
+      mintAccessToken: trackingMint,
+    });
+    const vault = createStubVault({
+      "gcp.auth_source": "gcloud",
+      "gcp.project_id": "my-project",
+    });
+    const r = await sync.sync(syncTestContext(db, vault, "bigquery"), null);
+    expect(r.itemsUpserted).toBe(0);
+    expect(seenAuths).toEqual([{ kind: "gcloud" }]);
   });
 });
 
@@ -1132,7 +1166,7 @@ describeWithFetchRestore("bigquery-sync — ensureBigqueryMcpRunning", () => {
 
 describeWithFetchRestore("bigquery-sync — mintAccessToken throws", () => {
   test("propagates the error when an injected mintAccessToken throws (DI mint runs outside gcloudPrintAccessToken's catch)", async () => {
-    const throwMint = async (_credPath: string): Promise<string | null> => {
+    const throwMint = async (_auth: GcpAuth): Promise<string | null> => {
       const err: unknown = new Error("gcloud not found");
       throw err;
     };
@@ -1160,9 +1194,21 @@ describe("gcloudPrintAccessToken — authenticates as the configured key", () =>
     spawn = new MockSpawn();
     spawn.respond("gcloud", { exitCode: 0, stdout: "ya29.token\n" });
     spawn.install();
-    expect(await gcloudPrintAccessToken("/keys/bq.json")).toBe("ya29.token");
+    expect(await gcloudPrintAccessToken({ kind: "key", credPath: "/keys/bq.json" })).toBe(
+      "ya29.token",
+    );
     const env = spawn.calls[0]!.env;
     expect(env["CLOUDSDK_AUTH_CREDENTIAL_FILE_OVERRIDE"]).toBe("/keys/bq.json");
     expect(env["GOOGLE_APPLICATION_CREDENTIALS"]).toBe("/keys/bq.json");
+  });
+
+  test("gcloud login mode spawns with no credential override — uses the owner's active login", async () => {
+    spawn = new MockSpawn();
+    spawn.respond("gcloud", { exitCode: 0, stdout: "ya29.token\n" });
+    spawn.install();
+    expect(await gcloudPrintAccessToken({ kind: "gcloud" })).toBe("ya29.token");
+    const env = spawn.calls[0]!.env;
+    expect(env["CLOUDSDK_AUTH_CREDENTIAL_FILE_OVERRIDE"]).toBeUndefined();
+    expect(env["GOOGLE_APPLICATION_CREDENTIALS"]).toBeUndefined();
   });
 });

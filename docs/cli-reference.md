@@ -46,7 +46,7 @@ Index the git repository in the current directory. Needs no credentials, no API 
 cd ~/code/your-project
 nimbus init
 nimbus init --no-sync           # Write the config only; do not start or sync
-nimbus init --no-detect         # Skip the offer to reuse existing gh/aws/kubectl logins
+nimbus init --no-detect         # Skip the offer to reuse existing gh/aws/kubectl/gcloud logins
 nimbus init --help              # Usage and the exit-code table
 ```
 
@@ -55,7 +55,7 @@ What it does:
 1. Verifies the current directory is a git repository (exits 1 if not, writing nothing).
 2. **Appends** a `[[filesystem.roots]]` block for it to `nimbus.toml` with `git_aware = true` and `code_index = true`. Appending — never rewriting — is deliberate: it cannot reorder keys, strip comments, or reformat anything you wrote. An existing file is copied to `nimbus.toml.bak` first.
 3. Starts the Gateway if it is not already running, then syncs the `filesystem` connector.
-4. On a successful index, offers to reuse any local `gh`/`aws`/`kubectl` login it finds — the same
+4. On a successful index, offers to reuse any local `gh`/`aws`/`kubectl`/`gcloud` login it finds — the same
    walk as [`nimbus connector detect`](#nimbus-connector-detect): interactively in a terminal, or a
    one-line count of what it found on a non-TTY shell (nothing is adopted there). Skip it with
    `--no-detect`; it also never runs under `--no-sync` (no gateway was started), in demo mode, or
@@ -2601,29 +2601,41 @@ The connector indexes both scheduled meetings (`zoom:meeting`) and cloud-recordi
 
 ### `nimbus connector detect`
 
-Reuse a login you already have in `gh`, `aws` or `kubectl` instead of creating a token.
+Reuse a login you already have in `gh`, `aws`, `kubectl` or `gcloud` instead of creating a token.
 
 ```bash
 nimbus connector detect
 nimbus connector detect --source gh
+nimbus connector detect --source gcloud --project acme-prod
 nimbus connector detect --replace
 nimbus connector detect --json
 ```
 
 Lists what it finds, then — in a terminal — offers each one. With several gh accounts, AWS
-profiles or kube contexts it asks which (Enter takes the active one). Every adoption asks for
-your approval (`connector.adoptLocalAuth`, a HITL action); without a terminal nothing is adopted.
+profiles or kube contexts it asks which (Enter takes the active one); gcloud has no numbered pick —
+its login is whatever `gcloud config list` currently reports active. Every adoption asks for your
+approval (`connector.adoptLocalAuth`, a HITL action); without a terminal nothing is adopted.
 
 | Source | What Nimbus stores | Stays in sync with the CLI? |
 | --- | --- | --- |
 | `gh` | a COPY of the token `gh auth token` prints, as `github.pat`, checked against GitHub first | No — `gh auth logout` does not disconnect Nimbus; run `detect --replace` after a re-login |
 | `aws` | the profile name (+ its region); no key is copied | Yes — the aws CLI resolves the profile at every sync |
 | `kubectl` | the kubeconfig path + context; nothing is copied | Yes — kubectl resolves it at every sync |
+| `gcloud` | the account's login, and a project id; nothing is copied | Yes — gcloud resolves it at every sync |
 
-Detection is local: it reads gh's `hosts.yml` and runs `aws configure list-profiles` and
-`kubectl config …`; it makes no network request. Adopting gh sends ONE request — the token check
-to `api.github.com/user` — recorded in the egress ledger (`nimbus prove`). GitHub Enterprise hosts
-are listed but not offered (the GitHub connector has no `api_base` yet). Refused under `--demo`.
+`--project <id>` names the GCP project id to adopt. It is required when gcloud has no default
+project of its own (`gcloud config list` reports `needs_project` — still offerable, unlike every
+other non-`available` status) and optional otherwise, where it overrides gcloud's own default
+project for this adoption only. A project number, or anything that does not match a GCP project id
+shape, is refused rather than stored.
+
+Detection is local: it reads gh's `hosts.yml`, runs `aws configure list-profiles` and
+`kubectl config …`, and runs `gcloud config list --format json`; none of these makes a network
+request. Adopting gh sends ONE request — the token check to `api.github.com/user` — recorded in
+the egress ledger (`nimbus prove`); adopting gcloud makes none (`connector.auth gcp`'s gcloud arm
+only writes Vault keys, so there is nothing to probe and no egress row for it). GitHub Enterprise
+hosts are listed but not offered (the GitHub connector has no `api_base` yet). Refused under
+`--demo`.
 
 **`--json` is unstable** in this release: it prints the gateway's findings array as-is and may
 change shape.
