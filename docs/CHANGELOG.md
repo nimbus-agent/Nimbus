@@ -18,6 +18,18 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
 
 ## Post-Phase-6 deliveries
 
+- **2026-09-20 — the GCP service-account key actually applies.** Every `gcloud` spawn — the
+  `gcp`/`bigquery`/`cloud_logging`/`vertex_ai` syncs and their four lazy-mesh MCP servers — set only
+  `GOOGLE_APPLICATION_CREDENTIALS`, an Application Default Credentials variable the gcloud CLI does
+  not read for its own auth. So `gcp.credentials_json_path` was required and inert: syncs ran as
+  whichever account `gcloud auth login` had last activated, or failed when there was none, while a
+  user who configured a service account believed they ran as it. `connectors/_lib/gcp-auth.ts`'s
+  `gcloudKeyFileEnv` now also sets `CLOUDSDK_AUTH_CREDENTIAL_FILE_OVERRIDE`, the variable gcloud
+  reads, and is the one place that pair is built. **Behaviour change:** with a key configured, syncs
+  now run as that service account; one that lacks a permission the personal login had will start
+  failing — correctly. No `nimbus-mcp-servers` change was needed: its gcloud spawns inherit the
+  gateway-supplied env.
+
 - **2026-09-19 — `nimbus demo` seeds a synthetic org and tours it; the demo gateway is now inert
   (invariant I41 clauses 5–6).** The second half of the First-Run row's seeded-sandbox work, on top
   of 2026-09-18's isolated demo root (#1545). `demo/corpus/acme.ts` builds a fixed, fictional "Acme"
