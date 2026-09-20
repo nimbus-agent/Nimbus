@@ -116,7 +116,7 @@ export async function printOnboardingHintIfNoConnectors(
     console.log("");
     console.log("Next — connect a service so the index has data to search:");
     console.log(
-      "  nimbus connector detect        # reuse gh / aws / kubectl logins you already have",
+      "  nimbus connector detect        # reuse gh / aws / kubectl / gcloud logins you already have",
     );
     console.log("  nimbus connector auth github");
     console.log("  nimbus connector sync github");

@@ -28,6 +28,14 @@ const KUBE: FindingWire = {
   reason: "kubectl is not installed (not found on PATH)",
   alreadyConfigured: false,
 };
+const GCLOUD_NEEDS: FindingWire = {
+  source: "gcloud",
+  status: "needs_project",
+  reason: "gcloud has no default project — name one to use",
+  alreadyConfigured: false,
+  account: "me@example.com",
+  project: null,
+};
 
 function deps(over: Partial<ConnectorDetectDeps> & { answers?: string[] } = {}): {
   deps: ConnectorDetectDeps;
@@ -244,5 +252,81 @@ describe("nimbus connector detect — additional branches", () => {
     await runConnectorDetect([], d.deps);
     expect(d.adopted).toEqual([{ source: "kubectl", context: "ctx-a", replace: false }]);
     expect(d.out.join("\n")).toContain("kubectl must be able to reach context ctx-a");
+  });
+});
+
+describe("nimbus connector detect — gcloud", () => {
+  test("needs_project asks for a project id and adopts with it", async () => {
+    const d = deps({ answers: ["acme-prod"], detect: async () => [GCLOUD_NEEDS] });
+    await runConnectorDetect([], d.deps);
+    expect(d.adopted).toEqual([{ source: "gcloud", project: "acme-prod", replace: false }]);
+  });
+
+  test("--project supplies it non-interactively-in-spirit (no question asked)", async () => {
+    let asked = 0;
+    const d = deps({
+      detect: async () => [GCLOUD_NEEDS],
+      ask: async () => {
+        asked += 1;
+        return "";
+      },
+    });
+    await runConnectorDetect(["--project", "acme-prod"], d.deps);
+    expect(asked).toBe(0);
+    expect(d.adopted).toEqual([{ source: "gcloud", project: "acme-prod", replace: false }]);
+  });
+
+  test("an empty project answer skips gcloud", async () => {
+    const d = deps({ answers: [""], detect: async () => [GCLOUD_NEEDS] });
+    await runConnectorDetect([], d.deps);
+    expect(d.adopted).toEqual([]);
+  });
+
+  test("an already-available gcloud finding (default project known) adopts it without asking", async () => {
+    const gcloudAvailable: FindingWire = {
+      source: "gcloud",
+      status: "available",
+      alreadyConfigured: false,
+      account: "me@example.com",
+      project: "acme-prod",
+    };
+    let asked = 0;
+    const d = deps({
+      detect: async () => [gcloudAvailable],
+      ask: async () => {
+        asked += 1;
+        return "";
+      },
+    });
+    await runConnectorDetect([], d.deps);
+    expect(asked).toBe(0);
+    expect(d.adopted).toEqual([{ source: "gcloud", project: "acme-prod", replace: false }]);
+  });
+
+  test("--source gcloud is accepted and renders as its own kind — not the kubectl fallback branch", async () => {
+    const sourcesAsked: Array<readonly string[] | undefined> = [];
+    const d = deps({
+      answers: [""],
+      detect: async (s) => {
+        sourcesAsked.push(s);
+        return [GCLOUD_NEEDS];
+      },
+    });
+    await runConnectorDetect(["--source", "gcloud"], d.deps);
+    const text = d.out.join("\n");
+    expect(text).toContain("me@example.com  project: (none)");
+    expect(text).not.toContain("contexts:");
+    expect(sourcesAsked).toEqual([["gcloud"]]);
+  });
+
+  test("the gcloud reference hint names the login it must stay signed into", async () => {
+    const d = deps({ answers: ["acme-prod"], detect: async () => [GCLOUD_NEEDS] });
+    await runConnectorDetect([], d.deps);
+    expect(d.out.join("\n")).toContain("gcloud must be logged in as this account");
+  });
+
+  test("--project with an unknown flag or missing value is a usage error", async () => {
+    await expect(runConnectorDetect(["--project"], deps().deps)).rejects.toThrow(/Usage/);
+    await expect(runConnectorDetect(["--project", ""], deps().deps)).rejects.toThrow(/Usage/);
   });
 });
