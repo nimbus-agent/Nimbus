@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1789963545095,
+  "lastUpdate": 1789966404761,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "306811640+nimbus-release-bot[bot]@users.noreply.github.com",
-            "name": "nimbus-release-bot[bot]",
-            "username": "nimbus-release-bot[bot]"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "8b8b877b34693e15556c769ba7daac8bcb8a849b",
-          "message": "chore: release main (#823)\n\n:robot: I have created a release *beep* *boop*\n---\n\n\n<details><summary>0.26.0</summary>\n\n##\n[0.26.0](https://github.com/nimbus-agent/Nimbus/compare/v0.25.0...v0.26.0)\n(2026-07-24)\n\n\n### Features\n\n* **agents:** the why lens — why agent, whyPeek, on-demand blame + index\nregraph (step 1b)\n([#820](https://github.com/nimbus-agent/Nimbus/issues/820))\n([940cb2e](https://github.com/nimbus-agent/Nimbus/commit/940cb2e01c5c8ecb853c2d359c203022457a7efd))\n* **blame:** whole-file 90-day blame indexer (Stage 2a un-park PR B)\n([#819](https://github.com/nimbus-agent/Nimbus/issues/819))\n([4bcc076](https://github.com/nimbus-agent/Nimbus/commit/4bcc0767d5e1bb452789baff27f6aee98c517a91))\n* **github:** enrich fallback 'PR #N' titles via pull-detail fetch\n([#817](https://github.com/nimbus-agent/Nimbus/issues/817))\n([465bee0](https://github.com/nimbus-agent/Nimbus/commit/465bee092dcc732d72b52fd9b93adeb758edceba))\n* **graph:** make resolves, mentions and correlates_with real (why-lens\nstep 1a) ([#813](https://github.com/nimbus-agent/Nimbus/issues/813))\n([44e1c38](https://github.com/nimbus-agent/Nimbus/commit/44e1c384243354593ecbcea32df5b4af6a843b0c))\n* nimbus index add + filesystem.ensureRoot — register blame roots (Stage\n2a PR C) ([#822](https://github.com/nimbus-agent/Nimbus/issues/822))\n([67a9f75](https://github.com/nimbus-agent/Nimbus/commit/67a9f75cd2765c3f3f751b9db90f04f718fa265a))\n\n\n### Bug Fixes\n\n* **agents:** report why a janitor resourceRef was rejected\n([#805](https://github.com/nimbus-agent/Nimbus/issues/805))\n([1b002b5](https://github.com/nimbus-agent/Nimbus/commit/1b002b516180b8ba039a5279d8db50d03e7e9227))\n* **ipc:** the connector HITL prompts named params no caller sends\n([#811](https://github.com/nimbus-agent/Nimbus/issues/811))\n([cc2b07f](https://github.com/nimbus-agent/Nimbus/commit/cc2b07fb65e49bacc8cc208d8b84986527d2ae65))\n* **secrets:** VSCE_PAT deadline is its expiry (2026-09-20), not the\ndecommission ([#803](https://github.com/nimbus-agent/Nimbus/issues/803))\n([bdb79f8](https://github.com/nimbus-agent/Nimbus/commit/bdb79f858de97f7e68d519de62c2c32d496866ff))\n</details>\n\n---\nThis PR was generated with [Release\nPlease](https://github.com/googleapis/release-please). See\n[documentation](https://github.com/googleapis/release-please#release-please).\n\nCo-authored-by: nimbus-release-bot[bot] <306811640+nimbus-release-bot[bot]@users.noreply.github.com>",
-          "timestamp": "2026-07-24T07:20:50+03:00",
-          "tree_id": "4d36414269f9125b879c1f898fcda47766d5d62f",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/8b8b877b34693e15556c769ba7daac8bcb8a849b"
-        },
-        "date": 1784867557257,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 297.594913349998,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 296.36859405000143,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 338.77973940000885,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "306811640+nimbus-release-bot[bot]@users.noreply.github.com",
+            "name": "nimbus-release-bot[bot]",
+            "username": "nimbus-release-bot[bot]"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "21b55028626ad7cfe8f45dbac5c72b5608757825",
+          "message": "chore: release main (#1562)\n\n:robot: I have created a release *beep* *boop*\n---\n\n\n<details><summary>7.30.0</summary>\n\n##\n[7.30.0](https://github.com/nimbus-agent/Nimbus/compare/v7.29.0...v7.30.0)\n(2026-09-21)\n\n\n### Features\n\n* **audit:** index lane census (report-only)\n([#1561](https://github.com/nimbus-agent/Nimbus/issues/1561))\n([863f621](https://github.com/nimbus-agent/Nimbus/commit/863f621f23cfecd36d68462595478f9dbb40a249))\n</details>\n\n---\nThis PR was generated with [Release\nPlease](https://github.com/googleapis/release-please). See\n[documentation](https://github.com/googleapis/release-please#release-please).\n\nCo-authored-by: nimbus-release-bot[bot] <306811640+nimbus-release-bot[bot]@users.noreply.github.com>",
+          "timestamp": "2026-09-21T07:40:41+03:00",
+          "tree_id": "fe18ed7499d60cd11a8e73537f60f4c687b8eada",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/21b55028626ad7cfe8f45dbac5c72b5608757825"
+        },
+        "date": 1789966401180,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 331.13030025000114,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 334.7013718500042,
             "unit": "ms"
           }
         ]
