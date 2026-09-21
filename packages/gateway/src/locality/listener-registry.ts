@@ -4,14 +4,21 @@
  * honest if a listener that is not actually open is absent, never reported "closed": `live()`
  * calls each registered PROBE fresh on every read, so it can never report a stale snapshot.
  *
- * Each of the five listen sites (`ipc`, `http`, `lan`, `metrics`, `oauth_callback`) registers a
- * probe right after its own `listen`/`serve` call succeeds and unregisters on every stop path
- * (success, error, and — for `oauth_callback` — timeout). A probe returning `null` means "not
- * listening right now" without the caller having to remember to unregister eagerly; `live()` also
- * treats a THROWING probe as `null` rather than letting one broken site crash the whole panel.
+ * Each of the five listen sites the static rule D31 polices (`ipc`, `http`, `lan`, `metrics`,
+ * `oauth_callback`) registers a probe right after its own `listen`/`serve` call succeeds and
+ * unregisters on every stop path (success, error, and — for `oauth_callback` — timeout). A probe
+ * returning `null` means "not listening right now" without the caller having to remember to
+ * unregister eagerly; `live()` also treats a THROWING probe as `null` rather than letting one
+ * broken site crash the whole panel.
+ *
+ * A SIXTH listener, `mdns` (`federation/mdns-discovery-provider.ts`'s `MdnsDiscoveryProvider`,
+ * which binds UDP 5353 multicast via the `bonjour-service` library), registers BY HAND rather than
+ * through D31: that rule can only see the three call shapes it scans for
+ * (`Bun.serve`/`Bun.listen`/`net.createServer`), and a library opening a socket internally is
+ * invisible to a text scan. Its registration is proven only by its own test.
  */
 
-export type ListenerName = "ipc" | "http" | "lan" | "metrics" | "oauth_callback";
+export type ListenerName = "ipc" | "http" | "lan" | "metrics" | "oauth_callback" | "mdns";
 
 export interface ListenerReport {
   readonly name: ListenerName;

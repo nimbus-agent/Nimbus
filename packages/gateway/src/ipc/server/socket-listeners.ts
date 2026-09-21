@@ -99,11 +99,13 @@ export async function startWin32NetServer(
       onFault?.({ event: "close" });
     }
   });
-  const unregisterListener = registerListener(() => ({
-    name: "ipc",
-    address: listenPath,
-    loopback: true,
-  }));
+  // `netServer.listening` is read LIVE on every probe call, not captured once — a post-listen
+  // fault (an unrequested 'close'/'error', logged above as `pipe_server_close`/`pipe_server_error`)
+  // leaves this server closed without anything calling `unregisterListener`, and a constant probe
+  // would keep reporting a closed pipe as open until the next deliberate `stop()`.
+  const unregisterListener = registerListener(() =>
+    netServer.listening ? { name: "ipc", address: listenPath, loopback: true } : null,
+  );
   return {
     netServer,
     winSockets,

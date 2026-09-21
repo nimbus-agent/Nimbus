@@ -2022,13 +2022,20 @@ export function checkSqliteRuntimeInit(files: readonly FileEntry[]): Violation[]
 //
 // `nimbus wow`'s locality panel shows the owner which listeners are open RIGHT NOW and whether
 // each is loopback, read live off `processListeners.live()`. That panel is only honest if the
-// registry actually reflects every socket the gateway can open — a fifth listen site added
-// tomorrow with no `registerListener()` call would make the panel silently incomplete rather than
+// registry reflects what it claims to — a listen site among the three shapes below, added
+// tomorrow with no `registerListener()` call, would make the panel silently incomplete rather than
 // visibly broken, the same failure shape D30's `ensureFullSqlite()` gap was.
 //
+// STATED BOUND: this rule polices exactly the three CALL SHAPES named below — it cannot see a
+// socket a LIBRARY opens internally (today: `bonjour-service`'s `new Bonjour()` inside
+// `federation/mdns-discovery-provider.ts`, which binds UDP 5353 multicast). That registration is
+// by HAND, proven only by its own test, and is outside this rule's reach the same way D27(b)'s
+// `media_grant` table confinement and D29(c)'s `toolgen.` Vault-key prefix are — capability
+// confinement, not a text scan, is the real defense there.
+//
 // WRITTEN AS WHAT CANNOT PASS, not as an allow-list of what may — same reasoning as D30: a new
-// listen site is a violation on the day it is written, with nothing for anyone to remember to add
-// to a list.
+// listen site among the three shapes below is a violation on the day it is written, with nothing
+// for anyone to remember to add to a list.
 //
 // WHAT COUNTS AS "opens a listening socket": `Bun.serve(`, `Bun.listen(` (including a generic
 // argument, `Bun.listen<State>(`) and `net.createServer(`. A `typeof Bun.listen<…>` / `typeof
@@ -2041,7 +2048,17 @@ export function checkSqliteRuntimeInit(files: readonly FileEntry[]): Violation[]
 // from under it.
 const D31_TYPEOF_QUERY_RE = /\btypeof\s+Bun\.(?:serve|listen)(?:\s*<[^<>]*>)?/g;
 const D31_LISTEN_RE = /\bBun\.(?:serve|listen)\b|\bcreateServer\s*\(/g;
-const D31_REGISTER = "registerListener";
+// Matches the CALL, anchored on a non-identifier character (or start of text) immediately
+// before it — never a bare substring. `unregisterListener` (the handle every one of the five
+// sites hands back to its own stop path) CONTAINS "registerListener" as a substring, so an
+// earlier `stripped.includes("registerListener")` short-circuited the whole scan for any file
+// that merely NAMES an unregister handle, without ever calling `registerListener(` itself —
+// `server.ts` passed for the wrong reason (skipped before the `typeof` blanking below ever ran),
+// and a future file that stores an unregister handle and opens a socket without registering
+// would have been clean too. The negative lookbehind is what rules that out: `(?<!e)` on its own
+// would also reject a real call written as `registerListener(` at the very start of a file, so it
+// is scoped to identifier characters specifically.
+const D31_REGISTER_CALL_RE = /(?<![A-Za-z0-9_$])registerListener\s*\(/;
 
 /** Blank every match of `re` in `text`, replacing non-newline characters with spaces so every
  * later line number (and every later match offset) is unaffected. */
@@ -2055,7 +2072,7 @@ export function checkListenerRegistryConfinement(files: readonly FileEntry[]): V
     if (f.relPath.endsWith(".test.ts")) continue;
     if (!f.relPath.startsWith("packages/gateway/src/")) continue;
     const stripped = stripComments(f.contents);
-    if (stripped.includes(D31_REGISTER)) continue;
+    if (D31_REGISTER_CALL_RE.test(stripped)) continue;
     const scanned = blankMatches(stripped, D31_TYPEOF_QUERY_RE);
     const original = f.contents.split("\n");
     for (const m of scanned.matchAll(new RegExp(D31_LISTEN_RE.source, "g"))) {

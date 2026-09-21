@@ -2509,6 +2509,23 @@ describe("D31-listener-registry-registration — a listen site registers with th
     ).toBe(true);
   });
 
+  test("flags a file that only NAMES unregisterListener (never CALLS registerListener) and opens a real Bun.serve( socket", () => {
+    // Regression: an earlier version matched the bare SUBSTRING "registerListener", and
+    // "unregisterListener" contains that substring — so a file that merely reads back an
+    // earlier unregister handle (never calling registerListener itself) passed clean.
+    expect(
+      flagged([
+        file(
+          ROGUE,
+          "export function stop(h: { unregisterListener: () => void }) {\n" +
+            "  const off = h.unregisterListener;\n" +
+            "  off();\n" +
+            "  return Bun.serve({ port: 0 });\n}",
+        ),
+      ]),
+    ).toBe(true);
+  });
+
   test("flags a net.createServer( call with no registerListener", () => {
     expect(
       flagged([
@@ -2529,6 +2546,40 @@ describe("D31-listener-registry-registration — a listen site registers with th
           ROGUE,
           "let bunListener: ReturnType<typeof Bun.listen<State>> | undefined;\n" +
             "export function open() {\n  bunListener = Bun.listen<State>({ port: 0, socket: {} });\n  return bunListener;\n}",
+        ),
+      ]),
+    ).toBe(true);
+  });
+
+  test("server.ts's exact shape — a typeof type query plus the identifier unregisterIpcListener, no real call — is CLEAN only via the typeof exemption", () => {
+    // A fixture copy of ipc/server/server.ts's own shape: it carries `typeof Bun.listen<...>`
+    // ONLY as a type query (no real Bun.listen call lives in server.ts itself — the real calls
+    // live in socket-listeners.ts) plus the identifier `unregisterIpcListener`, and it must be
+    // clean BECAUSE the typeof query is blanked before matching, not because of anything the
+    // `unregisterIpcListener`/`unregisterListener` identifiers themselves would satisfy — the
+    // anchored registerListener-CALL check (Important finding 1) does not accept an unregister
+    // identifier as proof of registration.
+    expect(
+      flagged([
+        file(
+          ROGUE,
+          "let bunListener: ReturnType<typeof Bun.listen<State>> | undefined;\n" +
+            "let unregisterIpcListener: (() => void) | undefined;\n" +
+            "export function stop(): void {\n  unregisterIpcListener?.();\n  unregisterIpcListener = undefined;\n}",
+        ),
+      ]),
+    ).toBe(false);
+  });
+
+  test("the same server.ts-shaped fixture PLUS a real Bun.listen<S>({ call is a violation — the exemption never hides a real call", () => {
+    expect(
+      flagged([
+        file(
+          ROGUE,
+          "let bunListener: ReturnType<typeof Bun.listen<State>> | undefined;\n" +
+            "let unregisterIpcListener: (() => void) | undefined;\n" +
+            "export function start(): void {\n  bunListener = Bun.listen<State>({ port: 0, socket: {} });\n}\n" +
+            "export function stop(): void {\n  unregisterIpcListener?.();\n  unregisterIpcListener = undefined;\n}",
         ),
       ]),
     ).toBe(true);
