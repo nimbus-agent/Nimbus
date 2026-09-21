@@ -96,4 +96,44 @@ describe("runAgentCli", () => {
     expect(stderrChunks.join("")).toContain("stale socket");
     expect(disconnected).toBe(true);
   });
+
+  it("an empty_index gap exits 1 with the hint only — the catch does not re-label it", async () => {
+    const handlers = new Map<string, (params: unknown) => void>();
+    setFixture({
+      gatewayState: { socketPath: FAKE_SOCKET_PATH },
+      ipcClient: {
+        connect: async () => {},
+        disconnect: async () => {},
+        call: async () => {
+          setTimeout(() => {
+            handlers.get("x.briefReady")?.({
+              sessionId: "s",
+              brief: "brief text",
+              findings: { gaps: [{ category: "empty_index" }] },
+            });
+          }, 0);
+          return { sessionId: "s" };
+        },
+        onNotification: (event: string, handler: (params: unknown) => void) => {
+          handlers.set(event, handler);
+        },
+      },
+    });
+    await expect(
+      runAgentCli({
+        agentName: "x",
+        ipcMethod: "agents.x",
+        callParams: {},
+        guard: isAnyBrief,
+        json: false,
+      }),
+    ).rejects.toMatchObject({
+      name: "CliExit",
+      code: 1,
+    });
+    const stderr = stderrChunks.join("");
+    expect(stderr).toContain("No data indexed yet");
+    expect(stderr).not.toContain("exit 1");
+    expect(stderr).not.toContain("process.exit");
+  });
 });

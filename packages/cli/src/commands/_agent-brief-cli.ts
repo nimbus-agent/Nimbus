@@ -126,6 +126,11 @@ export async function runAgentBriefCli<TFindings>(
       process.stdout.write(`${briefTextFor(brief, paths.demo === true)}\n`);
     }
   } catch (err) {
+    // `spec.beforeCall`/`spec.onResult` are caller-supplied extension points (see decisions.ts,
+    // glossary.ts, owners.ts, preflight.ts) — none throws CliExit today, but re-labelling one that
+    // did would silently swallow its code and print a stray message, exactly as runAgentCli's catch
+    // would have done for renderAgentBrief's empty-index CliExit(1).
+    if (err instanceof CliExit) throw err;
     process.stderr.write(`${err instanceof Error ? err.message : String(err)}\n`);
     throw new CliExit(2);
   } finally {

@@ -175,8 +175,11 @@ describe("runImpactCli — dispatcher", () => {
         },
       },
     });
-    await expect(runImpactCli(["src/x.ts"])).rejects.toMatchObject({ name: "CliExit", code: 2 });
-    expect(stderrChunks.join("")).toContain("No data indexed yet");
+    await expect(runImpactCli(["src/x.ts"])).rejects.toMatchObject({ name: "CliExit", code: 1 });
+    const stderr = stderrChunks.join("");
+    expect(stderr).toContain("No data indexed yet");
+    expect(stderr).not.toContain("exit 1");
+    expect(stderr).not.toContain("process.exit");
   });
 
   it("exits 2 when impact.briefError fires", async () => {

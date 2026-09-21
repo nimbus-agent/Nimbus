@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 
 import { clearFixture, FAKE_SOCKET_PATH, setFixture } from "../../test/helpers/cli-mocks.ts";
 import { createStreamCapture } from "../../test/helpers/stream-capture.ts";
+import { CliExit } from "../lib/cli-exit.ts";
 
 const mod = await import("./_agent-brief-cli.ts");
 const { runAgentBriefCli } = mod;
@@ -112,5 +113,56 @@ describe("runAgentBriefCli — a fast briefError (F30)", () => {
 
     await expect(runAgentBriefCli(spec)).rejects.toMatchObject({ name: "CliExit", code: 2 });
     expect(out.stderrChunks.join("")).toContain("pre-mortem: 'S2' was not found");
+  });
+});
+
+/** A gateway that delivers a valid brief straight away, so `spec.onResult` runs. */
+function respondingClient(handlers: Handlers, findings: unknown, brief = "brief text") {
+  return {
+    connect: (): void => {},
+    disconnect: (): void => {},
+    onNotification: (event: string, handler: (params: unknown) => void): void => {
+      handlers[event] = handler;
+    },
+    call: async (): Promise<unknown> => {
+      setTimeout(() => {
+        handlers["premortem.briefReady"]?.({ sessionId: "s1", brief, findings });
+      }, 0);
+      return { sessionId: "s1" };
+    },
+  };
+}
+
+describe("runAgentBriefCli — a CliExit raised by a caller-supplied extension point", () => {
+  beforeEach(() => {
+    out.stdoutChunks.length = 0;
+    out.stderrChunks.length = 0;
+    out.install();
+  });
+  afterEach(() => {
+    out.restore();
+    clearFixture();
+  });
+
+  // `spec.beforeCall`/`spec.onResult` are open extension points (see decisions.ts, glossary.ts,
+  // owners.ts, preflight.ts) — none throws CliExit today, but the catch must not re-label one that
+  // did: that would print a stray message and turn an intended exit 1 into exit 2, the same defect
+  // `runAgentCli`'s catch had for `renderAgentBrief`'s empty-index CliExit(1).
+  it("a CliExit(1) thrown from onResult propagates unchanged, with no stray stderr line", async () => {
+    const handlers: Handlers = {};
+    setFixture({
+      gatewayState: { socketPath: FAKE_SOCKET_PATH },
+      ipcClient: respondingClient(handlers, { ok: true }),
+    });
+
+    await expect(
+      runAgentBriefCli({
+        ...spec,
+        onResult: () => {
+          throw new CliExit(1);
+        },
+      }),
+    ).rejects.toMatchObject({ name: "CliExit", code: 1 });
+    expect(out.stderrChunks.join("")).toBe("");
   });
 });

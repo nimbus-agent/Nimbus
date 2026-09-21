@@ -4,6 +4,7 @@ import {
   type BriefNotificationSource,
   type PendingBrief,
 } from "./agent-brief-router.ts";
+import { CliExit } from "./cli-exit.ts";
 
 // Re-exported so callers (agent-cli-dispatcher.ts) can import the return type of
 // `awaitAgentBrief` from this module instead of reaching into the router directly.
@@ -107,7 +108,7 @@ export function briefTextFor(brief: string, demo: boolean): string {
 /**
  * Renders an agent brief to stdout/stderr. Shared across catchup and impact:
  * - `--json` → JSON-stringify findings to stdout
- * - gap category `empty_index` → stderr message + process.exit(1)
+ * - gap category `empty_index` → stderr message + throws CliExit(1)
  * - else → print brief to stdout (demo-safe commands when `demo`, see `demoizeBriefCommands`)
  *
  * `demo` must come from the caller's `CliPlatformPaths.demo === true`, never the env var directly.
@@ -124,7 +125,7 @@ export function renderAgentBrief<T extends { gaps: readonly { category: string }
   }
   if (findings.gaps.some((g) => g.category === "empty_index")) {
     process.stderr.write(demo ? DEMO_EMPTY_INDEX_HINT : EMPTY_INDEX_HINT);
-    process.exit(1);
+    throw new CliExit(1);
   }
   process.stdout.write(`${briefTextFor(brief, demo)}\n`);
 }

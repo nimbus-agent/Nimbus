@@ -46,6 +46,10 @@ export async function runAgentCli<B extends { gaps: readonly { category: string 
     const { brief, findings } = await pending.result;
     renderAgentBrief(brief, findings, opts.json, paths.demo === true);
   } catch (err) {
+    // A CliExit raised inside the try (renderAgentBrief's empty-index hint) already wrote its own
+    // message and carries its own code. Re-labelling it here would print a stray "exit 1" and turn
+    // exit 1 into exit 2 — which is what the stubbed-exit tests pinned by accident for months.
+    if (err instanceof CliExit) throw err;
     process.stderr.write(`${err instanceof Error ? err.message : String(err)}\n`);
     throw new CliExit(2);
   } finally {

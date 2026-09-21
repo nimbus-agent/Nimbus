@@ -184,8 +184,11 @@ describe("runCatchupCli — dispatcher", () => {
         },
       },
     });
-    await expect(runCatchupCli([])).rejects.toMatchObject({ name: "CliExit", code: 2 });
-    expect(stderrChunks.join("")).toContain("No data indexed yet");
+    await expect(runCatchupCli([])).rejects.toMatchObject({ name: "CliExit", code: 1 });
+    const stderr = stderrChunks.join("");
+    expect(stderr).toContain("No data indexed yet");
+    expect(stderr).not.toContain("exit 1");
+    expect(stderr).not.toContain("process.exit");
   });
 
   it("forwards --service to the agents.catchup IPC call", async () => {
