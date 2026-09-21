@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1789927701827,
+  "lastUpdate": 1789963545095,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "67a9f75cd2765c3f3f751b9db90f04f718fa265a",
-          "message": "feat: nimbus index add + filesystem.ensureRoot — register blame roots (Stage 2a PR C) (#822)\n\n## Stage 2a un-park — PR C of 3 (editor/CLI root registration)\n\n**Problem.** The blame indexer (PR B, #819) and git-commit/symbol\nsyncables only run on paths in `[[filesystem.roots]]`. On the live\nmachine that array is empty, so nothing gets blamed — and the only way\nto add a root was to hand-edit `nimbus.toml`. This PR makes registering\na repo a one-liner.\n\n**What it adds.**\n- **`nimbus index add <path>`** — resolves the path and calls the new\n`filesystem.ensureRoot` IPC method (generic `IPCClient.call`, no\n`@nimbus-dev/client` change). Reports `Registered blame root: <path>` or\n`Already registered: <path>`.\n- **`filesystem.ensureRoot` IPC** — narrows `{ path }`, canonicalizes\n(real-path + strips the Windows `\\?\\` long-path prefix so `repo_root`\nmatches `git -C`), requires an existing directory with a `.git` entry\n(structurally rejecting `C:\\` / `/`), and persists to\n`registered-roots.json`. Fail-closed on missing `configDir`.\n- **`registered-roots-store`** — persist/load + `mergeRoots(toml,\nregistered)`: dedupe by canonical path (case-folded on win32), **TOML\nwins** on collision, skip any root whose folder is gone (stderr\nwarning). Registered roots are blame-oriented (git-aware, no code-index,\nno dependency graph).\n- **Assembly wiring** — the `fsV2Roots` load site now merges TOML +\nregistered roots, so a registered repo feeds the existing\nfilesystem/git-commit/blame syncables on the next Gateway start (TOML\nwins).\n\n### Security\n- `filesystem.*` added to `FORBIDDEN_OVER_LAN` (invariant I5) — a remote\npeer can never register an indexing root on your machine. Enforcement\ntest added to `security-invariants.test.ts`; static invariant audit\ngreen.\n- Not exposed to the Tauri renderer (CLI-only), consistent with\n`index.reembed`.\n\n### Tests\n- `registered-roots-store.test.ts` (10): idempotent add, round-trip,\n`mergeRoots` (TOML-wins / missing-skip), `canonicalizeRootPath`,\nmalformed-JSON / non-array / non-string-element handling.\n- `filesystem-rpc.test.ts` (7): miss, bad params, non-resolving path,\nnon-git dir, file-not-dir, idempotent register.\n- `dispatchers.test.ts`: `filesystem.ensureRoot` reached via the Phase-4\nchain + the `configDir`-missing error bubbles.\n- `index-cmd.test.ts` (+6): usage errors, gateway-down, resolved-path\ncall, `Already registered`.\n\n### Verification (local, pre-push, CI-Linux-authoritative floor)\n- New files above floor: `registered-roots-store.ts` 100% line / 83.3%\nbranch (remaining 2 branches are win32-only), `filesystem-rpc.ts`\n100/100, `index-cmd.ts` 100 line / 94.1% branch.\n- typecheck ✓ (gateway + cli), biome ✓ (2947 files), invariant audit ✓,\n`audit:readme-cli` ✓, `audit:doc-refs` ✓ (610 refs), lychee ✓.\n- Rebased cleanly onto current `main` (resolved with #819 blame indexer\n+ #820 why-lens/index-regraph — both `tryDispatchIndexRegraphRpc` and\n`tryDispatchFilesystemRpc`, and both `index add` / `index regraph` CLI\nsubcommands, coexist).\n- The only floor/test failures in the full local run are pre-existing\nenvironment cases in files this PR does not touch (updater factory\ndetects a package-manager install on this dev box; OAuth-arm timeout) —\ngreen on CI Ubuntu.\n\nCompletes the Stage 2a un-park trio (A #817 titles, B #819 blame\nindexer, C root registration). Do not merge without the usual CI pass.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n## Summary by CodeRabbit\n\n- **New Features**\n- Added `nimbus index add <path>` to register an existing local Git repo\nas a blame/index root.\n- Registered roots persist to be applied on the next Gateway start,\nmerging with `nimbus.toml` (with `nimbus.toml` taking precedence).\n- Command output is idempotent, indicating newly added vs already\nregistered roots.\n- **Bug Fixes**\n- Validates inputs, requires an existing directory containing `.git`,\nand blocks the action over LAN.\n- **Documentation**\n  - Updated CLI reference plus IPC/architecture notes and the changelog.\n- **Tests**\n- Added end-to-end coverage for the command and IPC dispatch, plus\nregistered-roots load/merge/canonicalization cases.\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude Opus 4.8 (1M context) <noreply@anthropic.com>",
-          "timestamp": "2026-07-24T03:53:25Z",
-          "tree_id": "62e49737d9057d2461a20405d5d64444184bcaab",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/67a9f75cd2765c3f3f751b9db90f04f718fa265a"
-        },
-        "date": 1784865905603,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 310.19247414999626,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 308.8217696499992,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 327.77626690001125,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "863f621f23cfecd36d68462595478f9dbb40a249",
+          "message": "feat(audit): index lane census (report-only) (#1561)\n\n## Summary\n\n- Adds a table-aware static census (`bun run audit:lane-census`,\n`scripts/structure-audit/check-index-lane-coverage.ts`) that extracts\nwhat production code\nREADS from the `item` table (`item.type` literals, `json_extract`\nmetadata keys, JS-side\n`meta[\"k\"]` reads) and what every connector WRITES, then diffs the two.\n- **Report-only: it always exits `0` and gates nothing.** It only writes\n`docs/structure-audit/index-lane-census.json` for a human (or a future\ngate — PR 2) to read.\n- Reproduces all four bugs confirmed by hand in the B4 bug-hunt, pinned\nby\n`scripts/structure-audit/check-index-lane-coverage.acceptance.test.ts`\nagainst the real tree:\n\n  | key | state | where |\n  |---|---|---|\n| `commit` | unmatched | `agents/expert.ts:386` — nothing writes\n`item.type='commit'`; the only commit-shaped writer,\n`filesystem-v2-sync.ts`, writes `git_commit`, and `graph-populator.ts`'s\n`commit` write lands in `graph_entity`, a different table |\n| `workflow_name` | unmatched | `preflight/preflight.ts:166` — every\n`ci_run` writer emits `workflowName` instead |\n| `branch` | **partial** (`partialCoverage: [\"circleci\"]`) |\n`preflight.ts:168`, `:175` — of four `ci_run` writers only `circleci`\nemits `branch`; `github_actions` writes `headBranch` |\n| `opened_at_ms` | unmatched | `agents/premortem.ts:199`, `:205` only —\nthe same key IS **matched** at `metrics/dora.ts`'s incident-scoped read,\nwhich proves the census scopes per-literal type rather than matching on\nkey name alone |\n\n- Current numbers over `packages/gateway/src/**`: 401 reads, 117 writes,\n83 unmatched item reads\n(73 total-absence + 10 partial), 122 ambiguous reads, 19 parameterized\nreads it cannot resolve\n  statically.\n\n## Structural guards the acceptance test pins\n\n- **No `demo/` writer is ever counted.** `demo/corpus/acme.ts` writes a\n`repo` key the real\nconnector does not, which would otherwise mask a real gap and make DORA\nlook artificially clean.\n- **`graph_entity`'s `commit` write appears in the artifact's `reads`\nlist but is never\nmisreported as an `unmatchedItemReads` entry** — confirming the\ntable-aware diff does not\n  conflate `item` with the graph tables.\n\n## Known blind spot (disclosed in the artifact itself)\n\n`imap` and `protonmail` write item rows through a generic cross-file\nmapper called with plain\nfunction-call arguments rather than an inline `{ service, type, metadata\n}` object literal, so\ntheir real writes produce zero `WriterEmission` rows here. An\n`imap:*`/`protonmail:*` entry in\n`unmatchedItemReads` is this blind spot showing, not a confirmed dead\nlane — it needs a manual\ncheck, not a census read.\n\n## Scope\n\n`item` only. `graph_entity`/`graph_relation` reads are censused for the\nartifact (recorded for\ncompleteness) but are never diffed against writes or gated.\n\n## Docs\n\n- CHANGELOG bullet dated 2026-09-20.\n- Roadmap: the B4 row (*Maintenance-initiative follow-ups*) now records\nthat the audit ran and the\ncensus landed report-only — **the checkbox stays unticked**, since the\ngate (turning these\nfindings into an enforced CI check) is still pending, separate follow-up\nwork.\n\n## Stripped from this branch before merge\n\nThe four `docs/superpowers/` spec + plan files that lived on this branch\nduring development\n(specs and plans never land on `main` — squash-merge takes the net diff,\nso deleting them in a\ncommit here is sufficient) are gone from the diff. They remain\nrecoverable at\n`08420078b4017c3390b7bc7cfc8164b8f29849d1`:\n\n```\ngit show 08420078b4017c3390b7bc7cfc8164b8f29849d1:docs/superpowers/specs/2026-09-20-index-lane-coverage-design.md\ngit show 08420078b4017c3390b7bc7cfc8164b8f29849d1:docs/superpowers/specs/2026-09-20-index-lane-coverage-review.md\ngit show 08420078b4017c3390b7bc7cfc8164b8f29849d1:docs/superpowers/plans/2026-09-20-index-lane-coverage.md\ngit show 08420078b4017c3390b7bc7cfc8164b8f29849d1:docs/superpowers/plans/2026-09-20-index-lane-coverage-review.md\n```\n\nVerified `git diff --name-only origin/main...HEAD | grep superpowers` is\nempty.\n\n## Test plan\n\n- [x] `bun run preflight:fast` — green\n- [x] `bun run preflight` — see PR discussion for the machine-local\nsandbox exception noted below\n- [x]\n`scripts/structure-audit/check-index-lane-coverage.acceptance.test.ts`\n(8 pass) and the full\n      `scripts/structure-audit/` suite (927 pass) — no regressions\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n## Summary by CodeRabbit\n\n* **New Features**\n* Added a report-only audit comparing production data reads with\nconnector writes and generating a JSON coverage report.\n* The audit identifies unmatched and partially covered fields, reports\nambiguity and known blind spots, and always completes successfully.\n* Supports SQL and JavaScript read patterns, aliases, metadata access,\nand connector write emissions.\n\n* **Documentation**\n  * Documented the audit, findings, scope, and deferred CI enforcement.\n\n* **Tests**\n* Added comprehensive coverage for extraction, matching, alias handling,\nSQL parsing, and confirmed coverage gaps.\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>\nCo-authored-by: AsafGolombek <asafgolombek@users.noreply.github.com>",
+          "timestamp": "2026-09-21T03:53:30Z",
+          "tree_id": "4d7984debf8e0fd4bb794ff0e78f5900644c2da5",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/863f621f23cfecd36d68462595478f9dbb40a249"
+        },
+        "date": 1789963541179,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 337.64239119999945,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 338.77973940000885,
             "unit": "ms"
           }
         ]
