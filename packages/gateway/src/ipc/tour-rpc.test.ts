@@ -1,7 +1,9 @@
 import type { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { userInfo } from "node:os";
 import { openMigratedMemoryDb } from "../index/migrated-db-template.ts";
-import { dispatchTourRpc, TourRpcError } from "./tour-rpc.ts";
+import { insertPerson } from "../people/person-store.ts";
+import { buildSelectorCtx, dispatchTourRpc, TourRpcError } from "./tour-rpc.ts";
 
 describe("dispatchTourRpc", () => {
   let db: Database;
@@ -33,4 +35,34 @@ describe("dispatchTourRpc", () => {
       );
     });
   }
+
+  // The tour must never offer a step (`standup`) that then refuses when the owner actually runs
+  // it: `nimbus standup` never resolves identity via OS username in production, so `tour.plan`
+  // must not either, even though `resolveSelfPerson` supports that tier. Built with the current
+  // machine's REAL OS username on purpose — the point is that a person who WOULD match it still
+  // does not resolve, because `osUsername` is never sent at all, not because this fixture happens
+  // to miss. `runGit` is injected returning no email so the outcome cannot depend on whether the
+  // machine running this test happens to have a matching `git config user.email`.
+  test('a person reachable only via OS username does not resolve — matches "nimbus standup"', async () => {
+    const osUsername = userInfo().username;
+    insertPerson(db, {
+      id: "p-os-only",
+      displayName: "OS-only person",
+      canonicalEmail: null,
+      githubLogin: osUsername,
+      gitlabLogin: null,
+      slackHandle: null,
+      linearMemberId: null,
+      jiraAccountId: null,
+      notionUserId: null,
+      bitbucketUuid: null,
+      linked: false,
+      metadata: {},
+    });
+    const selectorCtx = buildSelectorCtx({
+      ...ctx,
+      runGit: async () => null,
+    });
+    expect(await selectorCtx.resolveSelf()).toBeNull();
+  });
 });

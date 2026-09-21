@@ -1,5 +1,5 @@
 import type { Database } from "bun:sqlite";
-import { userInfo } from "node:os";
+import type { GitRunner } from "../agents/_lib/self-person.ts";
 import { resolveSelfPerson } from "../agents/_lib/self-person.ts";
 import { buildTourPlan } from "../agents/_lib/tour-plan.ts";
 import type { TourSelectorCtx } from "../agents/_lib/tour-selectors.ts";
@@ -32,6 +32,9 @@ export type TourRpcContext = {
   readonly configDir: string | undefined;
   readonly demo: boolean;
   readonly nowMs: () => number;
+  /** Injected in tests so no `git` subprocess runs and the real machine's config cannot leak into
+   *  a fixture's expectations; production passes nothing. */
+  readonly runGit?: GitRunner;
 };
 
 /** Defaults to {@link TOUR_STEPS_DEFAULT} when absent; refuses (never clamps) outside 1..6. */
@@ -53,21 +56,21 @@ function requireSteps(params: unknown): number {
   return raw;
 }
 
-function safeOsUsername(): string {
-  try {
-    return userInfo().username;
-  } catch {
-    return "";
-  }
-}
-
 /**
  * Reads `nimbus.toml` fresh on every call — mirroring `handleStandup`/`handleDecisions`/`whyRoots`
  * in `ipc/agents-rpc.ts` — so a `[user]`/`[decisions]`/`[[filesystem.roots]]` edit applies without
  * a gateway restart, and delegates identity resolution to the SAME loader + fields `handleStandup`
  * uses, so `nimbus wow` and `nimbus standup` cannot disagree about who "me" is.
+ *
+ * Deliberately narrower than `resolveSelfPerson` itself supports: `handleStandup`
+ * (`ipc/agents-rpc.ts` ~:589-610) never obtains or passes an OS username to `emitStandupBrief`, so
+ * `nimbus standup`'s OS-username resolution tier never fires in production even though the
+ * primitive has one. `tour.plan` must never offer a `standup` step that then refuses when the
+ * owner actually runs it, so its notion of "me" has to be the SAME (narrower) one — passing
+ * `osUsername` here would let `tour.plan` resolve a person `nimbus standup` cannot. If
+ * `handleStandup` ever starts passing an OS username, this site must change with it.
  */
-function buildSelectorCtx(ctx: TourRpcContext): TourSelectorCtx {
+export function buildSelectorCtx(ctx: TourRpcContext): TourSelectorCtx {
   const { configDir } = ctx;
   const fsRoots =
     configDir === undefined
@@ -78,7 +81,6 @@ function buildSelectorCtx(ctx: TourRpcContext): TourSelectorCtx {
     configDir === undefined ? 0 : (loadNimbusDecisionsFromConfigDir(configDir).minConfidence ?? 0);
   const mePersonId =
     configDir === undefined ? undefined : loadNimbusUserFromConfigDir(configDir).mePersonId;
-  const osUsername = safeOsUsername();
   return {
     db: ctx.db,
     nowMs: ctx.nowMs(),
@@ -91,7 +93,7 @@ function buildSelectorCtx(ctx: TourRpcContext): TourSelectorCtx {
       try {
         const resolution = await resolveSelfPerson(ctx.db, {
           ...(mePersonId === undefined ? {} : { override: mePersonId }),
-          osUsername,
+          ...(ctx.runGit === undefined ? {} : { runGit: ctx.runGit }),
         });
         return resolution.personId;
       } catch {
