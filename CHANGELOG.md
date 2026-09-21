@@ -2,6 +2,13 @@
 
 All notable changes to the `nimbus` core (headless Gateway + CLI binary + first-party MCP connectors) are documented in this file. release-please appends new entries between this header and the most recent version below when a release PR merges.
 
+## [7.30.0](https://github.com/nimbus-agent/Nimbus/compare/v7.29.0...v7.30.0) (2026-09-21)
+
+
+### Features
+
+* **audit:** index lane census (report-only) ([#1561](https://github.com/nimbus-agent/Nimbus/issues/1561)) ([863f621](https://github.com/nimbus-agent/Nimbus/commit/863f621f23cfecd36d68462595478f9dbb40a249))
+
 ## [7.29.0](https://github.com/nimbus-agent/Nimbus/compare/v7.28.0...v7.29.0) (2026-09-20)
 
 
