@@ -1,4 +1,5 @@
 import type { IPCClient } from "../ipc-client/index.ts";
+import { CliExit } from "../lib/cli-exit.ts";
 import { GatewayNotRunningError, withGatewayIpc } from "../lib/with-gateway-ipc.ts";
 import { briefTimeoutMs, flagValue, runAgentBriefCli } from "./_agent-brief-cli.ts";
 
@@ -410,7 +411,7 @@ export async function runGlossaryCommand(
       // a genuine agent-call failure, not a precondition failure, so it keeps
       // exit 2 — the same shape `runAgentBriefCli`'s catch uses for the same
       // distinction.
-      process.exit(err instanceof GatewayNotRunningError ? 1 : 2);
+      throw new CliExit(err instanceof GatewayNotRunningError ? 1 : 2);
     }
     return;
   }

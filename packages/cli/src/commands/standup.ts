@@ -1,6 +1,7 @@
 import { toPlainText, toSlackMrkdwn } from "../format/slack-markdown.ts";
 import { IPCClient } from "../ipc-client/index.ts";
 import { awaitAgentBrief, briefTextFor, type PendingBrief } from "../lib/agent-brief-render.ts";
+import { CliExit } from "../lib/cli-exit.ts";
 import { gatewayNotRunningMessage } from "../lib/gateway-not-running.ts";
 import { readGatewayState } from "../lib/gateway-process.ts";
 import { registerInteractiveCliIpcHandlers } from "../lib/interactive-ipc-handlers.ts";
@@ -125,7 +126,7 @@ export async function fetchStandupBrief(params: StandupFetchParams): Promise<Sta
   const state = await readGatewayState(paths);
   if (state === undefined) {
     process.stderr.write(`${gatewayNotRunningMessage(paths.demo === true)}\n`);
-    process.exit(1);
+    throw new CliExit(1);
   }
 
   const client = new IPCClient(state.socketPath);
@@ -141,7 +142,7 @@ export async function fetchStandupBrief(params: StandupFetchParams): Promise<Sta
     return { ...result, brief: briefTextFor(result.brief, paths.demo === true) };
   } catch (err) {
     process.stderr.write(`${err instanceof Error ? err.message : String(err)}\n`);
-    return process.exit(2);
+    throw new CliExit(2);
   } finally {
     pending?.cancel();
     await client.disconnect();
