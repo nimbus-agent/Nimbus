@@ -108,13 +108,20 @@ describe("extractWriterEmissions", () => {
     expect(keys).toEqual(["name", "summary"]);
   });
 
+  // The metadata expression here MUST be a bare identifier, not an inline `{ a: 1 }`:
+  // `resolveMetadataKeys` returns early on an object literal and never reaches
+  // `resolveTopLevelIdentifierMetadataKeys`, which is where the scope handling this test exists to
+  // pin actually lives. Written with a literal, this test passes whatever that code does.
   test("a bracket-assigned key in an unrelated scope is NOT attributed to a same-named metadata var elsewhere", () => {
     const src = [
+      "function build() {",
+      "  const meta = { a: 1 };",
+      '  return { service: "x", type: "y", metadata: meta };',
+      "}",
       "function unrelated() {",
       "  const meta = fetchApiThing();",
       "  meta.threadId = 1;",
       "}",
-      'ctx.upsertItem({ service: "x", type: "y", metadata: { a: 1 } });',
     ].join("\n");
     expect(extractWriterEmissions("unrelated.ts", src)[0]?.metadataKeys).toEqual(["a"]);
   });
