@@ -2,8 +2,9 @@
  * A command's request to end the process with `code` AFTER it has already written its own message.
  *
  * Thrown instead of calling `process.exit(code)` so that a caller running several commands in one
- * process — `nimbus wow`, `nimbus demo`, `nimbus init`'s tour hook — can survive one of them
- * failing. It also lets `finally` blocks (IPC disconnects) run, which `process.exit` skipped.
+ * process can survive one of them failing, and so that `finally` blocks (IPC disconnects) run —
+ * `process.exit` skipped them. `main()` turns an uncaught `CliExit` into `process.exitCode` and
+ * prints nothing more. Only the agent-brief commands are converted; other commands still exit directly.
  */
 export class CliExit extends Error {
   readonly code: number;

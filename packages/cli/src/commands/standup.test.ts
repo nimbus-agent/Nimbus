@@ -194,7 +194,7 @@ describe("runStandupCommand", () => {
 });
 
 describe("fetchStandupBrief", () => {
-  const out = createStreamCapture({ captureExit: true });
+  const out = createStreamCapture();
 
   beforeEach(() => {
     out.stdoutChunks.length = 0;

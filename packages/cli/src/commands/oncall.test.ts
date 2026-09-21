@@ -198,7 +198,7 @@ describe("runOncallCommand", () => {
 });
 
 describe("fetchOncallBrief", () => {
-  const out = createStreamCapture({ captureExit: true });
+  const out = createStreamCapture();
 
   beforeEach(() => {
     out.stdoutChunks.length = 0;

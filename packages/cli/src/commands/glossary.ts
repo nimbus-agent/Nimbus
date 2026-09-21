@@ -402,6 +402,10 @@ export async function runGlossaryCommand(
       );
       process.stdout.write(`${renderRebuildPreview(counts, sample)}\n`);
     } catch (err) {
+      // Mirrors `agent-cli-dispatcher.ts` / `_agent-brief-cli.ts`'s own catches: a `CliExit`
+      // already carries its own printed message and its own code — re-labelling it here would
+      // print a stray "exit N" and re-code it to 1 or 2 regardless of what it actually was.
+      if (err instanceof CliExit) throw err;
       process.stderr.write(`${err instanceof Error ? err.message : String(err)}\n`);
       // A gateway-not-running precondition failure gets the same exit code
       // every other command uses for it (`_agent-brief-cli.ts`'s own

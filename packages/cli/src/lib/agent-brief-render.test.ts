@@ -15,7 +15,7 @@ import { CliExit } from "./cli-exit.ts";
 // renderAgentBrief
 // ---------------------------------------------------------------------------
 
-const capture = createStreamCapture({ captureExit: true });
+const capture = createStreamCapture();
 
 beforeEach(() => {
   capture.install();
@@ -57,12 +57,14 @@ describe("renderAgentBrief — empty_index gap", () => {
     expect(() => renderAgentBrief("brief", makeFindings({ emptyIndex: true }), false)).toThrow(
       CliExit,
     );
+    let caught: unknown;
     try {
       renderAgentBrief("brief", makeFindings({ emptyIndex: true }), false);
     } catch (e) {
-      expect(e).toBeInstanceOf(CliExit);
-      expect((e as CliExit).code).toBe(1);
+      caught = e;
     }
+    expect(caught).toBeInstanceOf(CliExit);
+    expect((caught as CliExit).code).toBe(1);
     expect(capture.stderrChunks.join("")).toContain("No data indexed yet");
     expect(capture.stdoutChunks).toHaveLength(0);
   });

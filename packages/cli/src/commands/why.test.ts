@@ -75,7 +75,7 @@ const {
   stderrChunks,
   install: installStreamCapture,
   restore: restoreStreams,
-} = createStreamCapture({ captureExit: true });
+} = createStreamCapture();
 
 afterAll(() => {
   restoreStreams();

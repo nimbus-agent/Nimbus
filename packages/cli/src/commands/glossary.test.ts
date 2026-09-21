@@ -667,6 +667,36 @@ describe("runGlossaryCommand — rebuild-preview error exit code", () => {
     expect(stderrBuf).toContain("Gateway is not running");
   });
 
+  test("a CliExit thrown through the DI seam propagates untouched, not re-coded or re-printed", async () => {
+    // Nothing in the real `try` throws a `CliExit` today — `withGatewayIpc` and
+    // `readRebuildPreview` both throw plain `Error`s. This drives the guard added for
+    // parity with `agent-cli-dispatcher.ts` / `_agent-brief-cli.ts`'s own catches: without
+    // it, this CliExit(1) would be caught, its own "exit 1" message printed to stderr, and
+    // re-thrown as CliExit(2) — silently turning a code-1 failure into a code-2 one.
+    let stderrBuf = "";
+    const origStderrWrite = process.stderr.write.bind(process.stderr);
+    process.stderr.write = ((chunk: string): boolean => {
+      stderrBuf += chunk;
+      return true;
+    }) as typeof process.stderr.write;
+    let err: unknown;
+    try {
+      await runGlossaryCommand(["--rebuild"], {
+        withGatewayIpc: async () => {
+          throw new CliExit(1);
+        },
+        runAgentBriefCli: async <T>(_spec: AgentBriefCliSpec<T>): Promise<void> => {},
+      });
+    } catch (e) {
+      err = e;
+    } finally {
+      process.stderr.write = origStderrWrite;
+    }
+    expect(err).toBeInstanceOf(CliExit);
+    expect((err as CliExit).code).toBe(1);
+    expect(stderrBuf).toBe("");
+  });
+
   test("a readRebuildPreview timeout throws CliExit(2) with the sibling error shape", async () => {
     const { client } = makeFakeIpcClient();
     let stderrBuf = "";
