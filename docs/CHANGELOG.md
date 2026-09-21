@@ -18,11 +18,14 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
 
 ## Post-Phase-6 deliveries
 
-- **2026-09-21 — `nimbus wow`, a guided tour of the real local index.** Up to six deterministic
+- **2026-09-21 — `nimbus wow`, a guided tour of whatever index the gateway holds.** `nimbus wow`
+  has no seed path of its own: it tours the real, indexed substrate on a normal install, or — under
+  the global `--demo` flag (`nimbus --demo wow`) — the synthetic Acme org `nimbus demo` seeds, with
+  the tour's own `command` strings rendering `nimbus --demo …` in that case. Up to six deterministic
   per-kind selectors (`oncall`/`why`/`owners`/`standup`/`decisions`/`glossary`), each asking "is
-  there something in THIS index worth showing, and with what arguments?" against the owner's own
-  substrate — never the synthetic Acme org `nimbus demo` seeds — run through the same agent CLI
-  commands a person would type themselves, then close on a locality panel: which listeners are
+  there something in THIS index worth showing, and with what arguments?" against whichever
+  substrate is live, run through the same agent CLI commands a person would type themselves, then
+  close on a locality panel: which listeners are
   open right now, what the index holds, and how much left the machine while the tour ran. Two new
   IPC methods, `tour.plan(params: { steps?: 1..6 })` and `locality.report(params: {})`, both
   **CLI-only** — `FORBIDDEN_OVER_LAN` (I5) and absent from the Tauri `ALLOWED_METHODS` (I7, still

@@ -2441,8 +2441,13 @@ const streamReq: JSONRPCRequest = {
 //   `more`, never dropped.
 // locality.report(params: {}) -> LocalityReport { listeners, inventory, db: { path, bytes }, t1 }
 //   `nimbus wow`'s closing honesty panel. `listeners` is `locality/listener-registry.ts`'s
-//   `live()` — every registered probe called FRESH on this call, so a listener that closed a
-//   moment ago is never reported as still open. `inventory` is per-service item counts, sorted by
+//   `live()` — every registered probe called FRESH on this call, so a listener that closed
+//   THROUGH ITS OWN STOP PATH a moment ago is never reported as still open. That qualifier
+//   matters: only the Windows named-pipe `ipc` probe reads real socket state
+//   (`netServer.listening`); every other probe — the POSIX `ipc` socket included — is
+//   registration bookkeeping (a fixed object, or a field cleared only by `stop()`), so a fault
+//   that closes a socket WITHOUT going through `stop()` is invisible to `live()` on all of them.
+//   `inventory` is per-service item counts, sorted by
 //   count then service name. `db.bytes` sums the main SQLite file plus `-wal`/`-shm` (WAL mode
 //   keeps live pages in `-wal`, so summing only the main file would under-report a busy database).
 //   `t1` is the gateway's own clock at report time — the RIGHT edge of the tour's proof window;
