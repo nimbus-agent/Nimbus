@@ -96,7 +96,9 @@ const INVENTORY_SHOWN_MAX = 6;
  */
 function renderInventoryLine(inventory: LocalityReport["inventory"]): string {
   const totalItems = inventory.reduce((sum, r) => sum + r.items, 0);
-  const header = `  ${grouped(totalItems)} items across ${grouped(inventory.length)} services`;
+  const header =
+    `  ${grouped(totalItems)} item${totalItems === 1 ? "" : "s"} across ` +
+    `${grouped(inventory.length)} service${inventory.length === 1 ? "" : "s"}`;
   if (inventory.length === 0) return header;
   const shown = inventory.slice(0, INVENTORY_SHOWN_MAX);
   const parts = shown.map((r) => `${r.service} ${grouped(r.items)}`);
@@ -118,7 +120,7 @@ const NEXT_COMMAND_COLUMN_WIDTH = 25;
  * that line.
  */
 export function renderLocalityPanel(loc: LocalityReport, proofText: string): string {
-  const lines: string[] = ["Listeners (open right now):"];
+  const lines: string[] = ["Listeners the gateway has open right now:"];
   for (const l of loc.listeners) lines.push(renderListenerLine(l));
   lines.push("Local index:");
   lines.push(`  ${loc.db.path}  (${formatBytes(loc.db.bytes)})`);

@@ -24,8 +24,7 @@ Usage:
 
 GETTING STARTED
   nimbus init [--no-sync]   Index the current git repo — no credentials, no LLM. Start here.
-  nimbus wow [--steps N] [--no-proof] [--json]   A guided tour of what Nimbus knows, ending
-                              on proof of what left your machine
+  nimbus wow [flags]        Guided tour of the index, ending on proof of what left your machine
   nimbus demo [--no-tour|stop|reset]  Try Nimbus on a synthetic org in an isolated demo root
   nimbus start [--no-wizard] Start gateway (background); omit first-run hint with --no-wizard
   nimbus stop               Stop gateway

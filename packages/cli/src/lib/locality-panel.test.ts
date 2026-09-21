@@ -122,6 +122,15 @@ describe("renderLocalityPanel — local index inventory", () => {
     expect(text).toContain("github 2,150");
   });
 
+  test("n=1 is singular for both items and services", () => {
+    const text = renderLocalityPanel(
+      locWith({ inventory: [{ service: "github", items: 1 }] }),
+      "P",
+    );
+    expect(text).toContain("1 item across 1 service:");
+    expect(text).not.toContain("1 items across 1 services");
+  });
+
   test("more than six services caps the printed list at the top six, then '+N more'", () => {
     const inventory = Array.from({ length: 8 }, (_, i) => ({
       service: `svc${String(i)}`,

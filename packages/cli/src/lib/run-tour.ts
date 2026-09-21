@@ -74,7 +74,7 @@ export async function runTour(
   for (const [i, step] of steps.entries()) {
     out(tourHeader(i + 1, total, step.title, step.command));
     const runner = runners[step.kind];
-    if (typeof runner !== "function") {
+    if (!Object.hasOwn(runners, step.kind) || typeof runner !== "function") {
       err(`unknown tour step kind: ${String(step.kind)}\n`);
       results.push({ kind: step.kind, ok: false });
       continue;

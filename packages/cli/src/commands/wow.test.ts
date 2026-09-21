@@ -224,6 +224,20 @@ describe("runWow", () => {
     await expect(run).rejects.toMatchObject({ name: "CliExit", code: 2 });
   });
 
+  // M11: nothing previously pinned that the parsed `--steps` VALUE actually reaches
+  // `deps.plan(N)` — only that an out-of-range value refused. `planWith(0)` keeps each call on
+  // the "Nothing indexed yet" early-return path, so no locality/prove call is made either.
+  test("--steps N reaches deps.plan(N); with no flag it defaults to 3", async () => {
+    const seen: number[] = [];
+    const fakePlan = async (steps: number): Promise<TourPlan> => {
+      seen.push(steps);
+      return planWith(0);
+    };
+    await runWow(["--steps", "5"], deps({ plan: fakePlan }));
+    await runWow([], deps({ plan: fakePlan }));
+    expect(seen).toEqual([5, 3]);
+  });
+
   test("a successful tour with proof shown does not throw", async () => {
     await expect(runWow([], deps({ plan: async () => planWith(2) }))).resolves.toBeUndefined();
   });
@@ -239,7 +253,7 @@ describe("runWow", () => {
     await runWow(["--no-proof"], deps({ plan: async () => planWith(1), out: (s) => out.push(s) }));
     const text = out.join("");
     expect(text).toContain("[1/1]");
-    expect(text).not.toContain("Listeners (open right now):");
+    expect(text).not.toContain("Listeners the gateway has open right now:");
   });
 
   test("skipped steps print as 'Not shown: <kind> (<reason>)'", async () => {
@@ -342,8 +356,11 @@ describe("runWow", () => {
   });
 
   // RULING (fix round 1): the panel prints its own rule-line header, immediately before
-  // "Listeners (open right now):" — the same shape `tourHeader` renders for its first line, minus
-  // the blank-line lead and the `$ command` line, with no change to `tourHeader` itself.
+  // "Listeners the gateway has open right now:" — the same shape `tourHeader` renders for its
+  // first line, minus the blank-line lead and the `$ command` line, with no change to
+  // `tourHeader` itself. (I1: the heading was scoped from the unqualified "Listeners (open right
+  // now):" — a gateway-spawned CHILD PROCESS, such as Chromium's CDP debugging port during a
+  // `nimbus computer` browser session, can hold a real listening socket this panel never sees.)
   test("the panel prints its own rule-line header immediately before 'Listeners', ending the step sequence at N/N", async () => {
     const out: string[] = [];
     await runWow([], deps({ plan: async () => planWith(1), out: (s) => out.push(s) }));
@@ -352,7 +369,7 @@ describe("runWow", () => {
     // `run-tour.test.ts`'s own header test uses — so this cannot pass merely by echoing the
     // implementation back at itself.
     const expectedRuleLine = "── [2/2] Where your data is ".padEnd(56, "─");
-    expect(text).toContain(`\n${expectedRuleLine}\nListeners (open right now):`);
+    expect(text).toContain(`\n${expectedRuleLine}\nListeners the gateway has open right now:`);
   });
 
   test("--no-proof prints no panel header (there is no panel at all)", async () => {
@@ -379,8 +396,8 @@ describe("runWow", () => {
     );
     await expect(run).rejects.toMatchObject({ name: "CliExit", code: 1 });
     const text = out.join("");
-    expect(text).toContain("Listeners (open right now):");
-    expect(text).toContain("10 items across 1 services"); // the default locWith() inventory line
+    expect(text).toContain("Listeners the gateway has open right now:");
+    expect(text).toContain("10 items across 1 service"); // the default locWith() inventory line
     expect(text).toContain("Outbound activity during this tour (gateway-wide):");
     expect(text).toContain("proof unavailable — the egress.proveWindow call failed: boom");
     expect(text).not.toContain("in the covered classes:"); // never routed through formatProveResult

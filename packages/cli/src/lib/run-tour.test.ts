@@ -100,12 +100,14 @@ async function runInFreshProcess(
     ? [process.execPath, "--preload", ISTANBUL_REGISTER, "-e", code]
     : [process.execPath, "-e", code];
   const proc = Bun.spawn(args, { stdout: "pipe", stderr: "pipe" });
-  const [out, , exitCode] = await Promise.all([
+  const [out, errText, exitCode] = await Promise.all([
     new Response(proc.stdout).text(),
     new Response(proc.stderr).text(),
     proc.exited,
   ]);
-  if (exitCode !== 0) throw new Error(`fresh-process child exited ${String(exitCode)}: ${out}`);
+  if (exitCode !== 0) {
+    throw new Error(`fresh-process child exited ${String(exitCode)}: ${out}\n${errText}`);
+  }
   return JSON.parse(out) as { exitCode: number | null; results: TourStepResult[] };
 }
 
@@ -287,6 +289,36 @@ describe("runTour", () => {
     ]);
     expect(errs.join("")).toContain("unknown tour step kind: bogus");
   });
+
+  // M4: `runners["constructor"]` and `runners["toString"]` resolve to `Object.prototype`
+  // members through the JS prototype chain — both pass a bare `typeof runner === "function"`
+  // guard, get invoked, return without throwing, and were reported `ok: true`: a fabricated
+  // success for a kind that was never a real tour step. `Object.hasOwn` (own-property only,
+  // never the prototype chain) is what tells the two apart from a genuine registered runner.
+  for (const bogusKind of ["constructor", "toString"]) {
+    test(`kind: "${bogusKind}" is reported unknown, not fabricated as ok:true`, async () => {
+      const errs: string[] = [];
+      const badStep = {
+        kind: bogusKind,
+        title: `T-${bogusKind}`,
+        command: `nimbus ${bogusKind}`,
+        args: ["x"],
+        reason: "r",
+      } as unknown as TourStep;
+      const res = await runTour(
+        [badStep, step("why")],
+        runners({}),
+        () => {},
+        (s) => errs.push(s),
+        2,
+      );
+      expect(res).toEqual([
+        { kind: bogusKind as unknown as TourStepKind, ok: false },
+        { kind: "why", ok: true },
+      ]);
+      expect(errs.join("")).toContain(`unknown tour step kind: ${bogusKind}`);
+    });
+  }
 
   test("header is byte-exact: leading blank line, padded rule, and the literal command line", () => {
     // Computed independently of `tourHeader` — the same visible shape `demo.ts`'s `header()`
