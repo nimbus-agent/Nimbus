@@ -285,6 +285,7 @@ nimbus lan remove <peerId>
 
 ```bash
 nimbus init [--no-sync]                   # index the git repo in the CWD — no credentials, no API key, no LLM
+nimbus wow [--steps N] [--no-proof]       # guided tour of whatever the gateway has indexed, closing on the locality panel
 ```
 
 Appends a `[[filesystem.roots]]` block to `nimbus.toml` (never rewrites; backs up to `nimbus.toml.bak`), starts the Gateway, syncs the `filesystem` connector, then prints a real `file:line` from your own repo to try with `nimbus why`. Idempotent.

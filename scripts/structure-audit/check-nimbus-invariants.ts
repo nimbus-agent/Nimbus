@@ -2026,12 +2026,22 @@ export function checkSqliteRuntimeInit(files: readonly FileEntry[]): Violation[]
 // tomorrow with no `registerListener()` call, would make the panel silently incomplete rather than
 // visibly broken, the same failure shape D30's `ensureFullSqlite()` gap was.
 //
-// STATED BOUND: this rule polices exactly the three CALL SHAPES named below — it cannot see a
-// socket a LIBRARY opens internally (today: `bonjour-service`'s `new Bonjour()` inside
-// `federation/mdns-discovery-provider.ts`, which binds UDP 5353 multicast). That registration is
-// by HAND, proven only by its own test, and is outside this rule's reach the same way D27(b)'s
-// `media_grant` table confinement and D29(c)'s `toolgen.` Vault-key prefix are — capability
-// confinement, not a text scan, is the real defense there.
+// STATED BOUND: this rule polices exactly the three CALL SHAPES named below, in a GATEWAY-PROCESS
+// file — it cannot see two other kinds of open socket. One: a socket a LIBRARY opens internally
+// (today: `bonjour-service`'s `new Bonjour()` inside `federation/mdns-discovery-provider.ts`,
+// which binds UDP 5353 multicast). That registration is by HAND, proven only by its own test, and
+// is outside this rule's reach the same way D27(b)'s `media_grant` table confinement and D29(c)'s
+// `toolgen.` Vault-key prefix are — capability confinement, not a text scan, is the real defense
+// there. Two: a socket a gateway-SPAWNED CHILD PROCESS opens on its own — today,
+// `computer-use/cu-lanes/browser-launch.ts` launches Chromium with `--remote-debugging-port=0`
+// during a live `nimbus computer` browser session, a real loopback CDP listening socket no
+// gateway file itself calls `Bun.serve`/`Bun.listen`/`net.createServer` for, so this rule never
+// sees it either. That is why the locality panel's own heading reads "Listeners the gateway has
+// open right now:" rather than an unqualified "Listeners" claim.
+//
+// THE EXEMPTION IS FILE-LEVEL, not call-level — the same granularity as D30's `ensureFullSqlite()`
+// check: ONE `registerListener(` call anywhere in a file exempts EVERY `Bun.serve`/`Bun.listen`/
+// `net.createServer` call in that same file from this scan, not only the call nearest it.
 //
 // WRITTEN AS WHAT CANNOT PASS, not as an allow-list of what may — same reasoning as D30: a new
 // listen site among the three shapes below is a violation on the day it is written, with nothing

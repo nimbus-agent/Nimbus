@@ -126,8 +126,13 @@ must gate on ledger health should use `nimbus egress verify`, not `nimbus wow`'s
 
 **IPC:** `tour.plan(params: { steps?: 1..6 })` and `locality.report(params: {})`. Both are **CLI-only**: the `tour` and `locality` namespaces are `FORBIDDEN_OVER_LAN` (I5) and neither method is in the Tauri `ALLOWED_METHODS` (I7 — still 105). Read-only, no HITL, no new egress class — the panel's own proof line is produced by the existing `egress.proveWindow` method, not a new one.
 
-**Two residuals of the locality panel, stated rather than hidden:**
+**Three residuals of the locality panel, stated rather than hidden:**
 
+- **A socket opened by a gateway-SPAWNED CHILD PROCESS is not in the registry.** Today that is
+  Chromium's DevTools debugging port (`--remote-debugging-port=0`) during a live `nimbus computer`
+  browser session — a default-off capability, open only while that session is live, bound to
+  loopback. The panel lists the gateway process's own listeners only, which is why its heading
+  reads "Listeners the gateway has open right now:" rather than an unqualified "Listeners".
 - **`oauth_callback` is transient.** It is registered only for the lifetime of an in-flight OAuth authorization (`auth/pkce.ts`) and unregistered the moment that flow ends, so it will essentially never appear on a `nimbus wow` panel — its absence means no OAuth flow was in progress at that instant, not that the mechanism is broken.
 - **Only the Windows named-pipe `ipc` probe reads the server's real state** (`netServer.listening`, live on every call), so an unrequested fault there is reflected immediately. Every other probe — the POSIX `ipc` socket included — reflects registration bookkeeping rather than a liveness check: `http`, `metrics` and `oauth_callback` each return a fixed object for as long as they stay registered; `lan` and `mdns` read only their own `this.instance` / `this.bonjour` field, which nothing but that listener's own deliberate `stop()` clears. In every one of these cases, a listener reports open until its stop path unregisters it — a fault that closes the underlying socket without going through `stop()` is invisible to the panel on all of them.
 
