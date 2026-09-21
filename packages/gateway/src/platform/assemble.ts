@@ -426,7 +426,10 @@ function loadOpenapiConfig(configDir: string): OpenapiConfig {
 
 type EmbeddingRuntime = ConcreteEmbeddingRuntime | null;
 
-function openGatewaySqlite(dataDir: string, sidecarStops: Array<() => void>): Database {
+function openGatewaySqlite(
+  dataDir: string,
+  sidecarStops: Array<() => void>,
+): { db: Database; dbPath: string } {
   const dbPath = join(dataDir, "nimbus.db");
   // Before the first `new Database(...)` in this process: on macOS `Database.setCustomSQLite`
   // only works while no database is open, and without it `loadExtension` — and therefore
@@ -439,7 +442,7 @@ function openGatewaySqlite(dataDir: string, sidecarStops: Array<() => void>): Da
   LocalIndex.ensureSchema(db, { backupDir: join(dataDir, "backups"), dbPath });
   const stopLatency = startLatencyFlushScheduler(db);
   sidecarStops.push(() => stopLatency.stop());
-  return db;
+  return { db, dbPath };
 }
 
 /**
@@ -3168,7 +3171,7 @@ export async function assemblePlatformServices(
   // this same boot is what cleans it up, not a later restart.
   const sandboxRunner = await createSandboxRunner();
   const hostActivity = await createHostActivity();
-  const db = openGatewaySqlite(paths.dataDir, sidecarStops);
+  const { db, dbPath } = openGatewaySqlite(paths.dataDir, sidecarStops);
   // I29: record what THIS binary is built to observe, before anything can emit egress. Without a
   // covering marker `proveWindow` reports `indeterminate` rather than a false zero, so this append
   // is what makes a clean window provable. Safe here: openGatewaySqlite ran LocalIndex.ensureSchema,
@@ -3410,6 +3413,7 @@ export async function assemblePlatformServices(
     vault,
     version: GATEWAY_VERSION,
     localIndex,
+    dbPath,
     dataDir: paths.dataDir,
     configDir: paths.configDir,
     demo: paths.demo === true,

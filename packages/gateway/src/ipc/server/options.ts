@@ -72,6 +72,12 @@ export type CreateIpcServerOptions = {
   sessionMemoryStore?: SessionMemoryStore;
   dataDir?: string;
   configDir?: string;
+  // `locality.report`'s on-disk size claim (B7, "nimbus wow"). The SAME path
+  // `openGatewaySqlite` opened `db` from — never recomputed from `dataDir`, so this can never
+  // drift from the file the gateway is actually reading/writing. Absent on a gateway assembled
+  // without that helper (e.g. a bespoke test harness); the dispatcher fails loudly rather than
+  // reporting a fabricated size when it is unset.
+  dbPath?: string;
   /** true only when the gateway is demo-rooted (`PlatformPaths.demo`); enables the demo refusal
    *  gate and the demo-only `demo.*` namespace — invariant I41 */
   demo?: boolean;
