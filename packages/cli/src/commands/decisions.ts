@@ -1,4 +1,5 @@
 import type { IPCClient } from "../ipc-client/index.ts";
+import { CliExit } from "../lib/cli-exit.ts";
 import { parseDurationToMs } from "../lib/parse-duration.ts";
 import { flagValue, runAgentBriefCli } from "./_agent-brief-cli.ts";
 
@@ -226,7 +227,7 @@ export async function runDecisionsCommand(
         "remember — a candidate you previously rejected will be re-extracted and may\n" +
         "reappear. This cannot be undone. Re-run with --yes to confirm.\n",
     );
-    process.exit(2);
+    throw new CliExit(2);
   }
 
   const runsPass = parsed.refresh || parsed.rebuild;

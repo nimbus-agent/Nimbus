@@ -1,5 +1,6 @@
-import { afterEach, describe, expect, test } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import type { IPCClient } from "../ipc-client/index.ts";
+import { CliExit } from "../lib/cli-exit.ts";
 import { GatewayNotRunningError } from "../lib/with-gateway-ipc.ts";
 import type { AgentBriefCliSpec } from "./_agent-brief-cli.ts";
 import {
@@ -634,34 +635,7 @@ describe("runGlossaryCommand — dispatch (DI, no mock.module)", () => {
 });
 
 describe("runGlossaryCommand — rebuild-preview error exit code", () => {
-  // `process.exit()` really terminates the process — even inside a test —
-  // so it must be stubbed to throw instead of firing for real. The stub
-  // replaces `process.exit` entirely (never calling through to the real
-  // one) and is restored in `afterEach`, so it can never leak into another
-  // test file in the combined `bun test packages/cli/src` run. This test
-  // never touches `process.exitCode` (the documented leak vector — a test
-  // that sets it must reset it in `afterEach`); it only intercepts the
-  // `process.exit` function reference itself, so there is nothing to reset
-  // there, but `process.exitCode` is defensively zeroed anyway as a
-  // second line of defence against any other code path that might set it.
-  let originalExit: typeof process.exit;
-
-  afterEach(() => {
-    process.exit = originalExit;
-    process.exitCode = 0;
-  });
-
-  function stubExit(): { exitCalls: number[] } {
-    originalExit = process.exit;
-    const exitCalls: number[] = [];
-    process.exit = ((code?: number): never => {
-      exitCalls.push(code ?? -1);
-      throw new Error(`process.exit(${code ?? ""})`);
-    }) as typeof process.exit;
-    return { exitCalls };
-  }
-
-  test("a GatewayNotRunningError from withGatewayIpc exits 1, not 2", async () => {
+  test("a GatewayNotRunningError from withGatewayIpc throws CliExit(1), not 2", async () => {
     // Pins the other half of the split this task's e2e regression test caught:
     // a gateway-not-running precondition failure must exit 1 (matching every
     // other command's "gateway not running" code, `docs/cli-reference.md`),
@@ -669,31 +643,61 @@ describe("runGlossaryCommand — rebuild-preview error exit code", () => {
     // malformed payload) still exits 2. Without both sides pinned, a later
     // "simplification" collapsing the two exit codes back into one would only
     // be caught by whichever side happens to still have a test.
-    const { exitCalls } = stubExit();
     let stderrBuf = "";
     const origStderrWrite = process.stderr.write.bind(process.stderr);
     process.stderr.write = ((chunk: string): boolean => {
       stderrBuf += chunk;
       return true;
     }) as typeof process.stderr.write;
+    let err: unknown;
     try {
-      await expect(
-        runGlossaryCommand(["--rebuild"], {
-          withGatewayIpc: async () => {
-            throw new GatewayNotRunningError();
-          },
-          runAgentBriefCli: async <T>(_spec: AgentBriefCliSpec<T>): Promise<void> => {},
-        }),
-      ).rejects.toThrow("process.exit(1)");
+      await runGlossaryCommand(["--rebuild"], {
+        withGatewayIpc: async () => {
+          throw new GatewayNotRunningError();
+        },
+        runAgentBriefCli: async <T>(_spec: AgentBriefCliSpec<T>): Promise<void> => {},
+      });
+    } catch (e) {
+      err = e;
     } finally {
       process.stderr.write = origStderrWrite;
     }
-    expect(exitCalls).toEqual([1]);
+    expect(err).toBeInstanceOf(CliExit);
+    expect((err as CliExit).code).toBe(1);
     expect(stderrBuf).toContain("Gateway is not running");
   });
 
-  test("a readRebuildPreview timeout exits 2 with the sibling error shape", async () => {
-    const { exitCalls } = stubExit();
+  test("a CliExit thrown through the DI seam propagates untouched, not re-coded or re-printed", async () => {
+    // Nothing in the real `try` throws a `CliExit` today — `withGatewayIpc` and
+    // `readRebuildPreview` both throw plain `Error`s. This drives the guard added for
+    // parity with `agent-cli-dispatcher.ts` / `_agent-brief-cli.ts`'s own catches: without
+    // it, this CliExit(1) would be caught, its own "exit 1" message printed to stderr, and
+    // re-thrown as CliExit(2) — silently turning a code-1 failure into a code-2 one.
+    let stderrBuf = "";
+    const origStderrWrite = process.stderr.write.bind(process.stderr);
+    process.stderr.write = ((chunk: string): boolean => {
+      stderrBuf += chunk;
+      return true;
+    }) as typeof process.stderr.write;
+    let err: unknown;
+    try {
+      await runGlossaryCommand(["--rebuild"], {
+        withGatewayIpc: async () => {
+          throw new CliExit(1);
+        },
+        runAgentBriefCli: async <T>(_spec: AgentBriefCliSpec<T>): Promise<void> => {},
+      });
+    } catch (e) {
+      err = e;
+    } finally {
+      process.stderr.write = origStderrWrite;
+    }
+    expect(err).toBeInstanceOf(CliExit);
+    expect((err as CliExit).code).toBe(1);
+    expect(stderrBuf).toBe("");
+  });
+
+  test("a readRebuildPreview timeout throws CliExit(2) with the sibling error shape", async () => {
     const { client } = makeFakeIpcClient();
     let stderrBuf = "";
     const origStderrWrite = process.stderr.write.bind(process.stderr);
@@ -701,26 +705,27 @@ describe("runGlossaryCommand — rebuild-preview error exit code", () => {
       stderrBuf += chunk;
       return true;
     }) as typeof process.stderr.write;
+    let err: unknown;
     try {
-      await expect(
-        runGlossaryCommand(["--rebuild"], {
-          withGatewayIpc: async (fn) => fn(client),
-          runAgentBriefCli: async <T>(_spec: AgentBriefCliSpec<T>): Promise<void> => {},
-          // Force the real timeout branch inside readRebuildPreview without a
-          // real 30s wait — no notification is ever fired, so this genuinely
-          // drives the timer to expiry, not a compile-only check.
-          rebuildPreviewTimeoutMs: 5,
-        }),
-      ).rejects.toThrow("process.exit(2)");
+      await runGlossaryCommand(["--rebuild"], {
+        withGatewayIpc: async (fn) => fn(client),
+        runAgentBriefCli: async <T>(_spec: AgentBriefCliSpec<T>): Promise<void> => {},
+        // Force the real timeout branch inside readRebuildPreview without a
+        // real 30s wait — no notification is ever fired, so this genuinely
+        // drives the timer to expiry, not a compile-only check.
+        rebuildPreviewTimeoutMs: 5,
+      });
+    } catch (e) {
+      err = e;
     } finally {
       process.stderr.write = origStderrWrite;
     }
-    expect(exitCalls).toEqual([2]);
+    expect(err).toBeInstanceOf(CliExit);
+    expect((err as CliExit).code).toBe(2);
     expect(stderrBuf).toContain("Agent timed out after 0 s");
   });
 
-  test("a malformed agents.glossary response exits 2 with the sibling error shape", async () => {
-    const { exitCalls } = stubExit();
+  test("a malformed agents.glossary response throws CliExit(2) with the sibling error shape", async () => {
     const { client, fire } = makeFakeIpcClient();
     let stderrBuf = "";
     const origStderrWrite = process.stderr.write.bind(process.stderr);
@@ -728,17 +733,21 @@ describe("runGlossaryCommand — rebuild-preview error exit code", () => {
       stderrBuf += chunk;
       return true;
     }) as typeof process.stderr.write;
+    let err: unknown;
     try {
       const resultPromise = runGlossaryCommand(["--rebuild"], {
         withGatewayIpc: async (fn) => fn(client),
         runAgentBriefCli: async <T>(_spec: AgentBriefCliSpec<T>): Promise<void> => {},
       });
       fire("glossary.briefReady", { findings: { stats: { total: 1 }, entries: [] } });
-      await expect(resultPromise).rejects.toThrow("process.exit(2)");
+      await resultPromise;
+    } catch (e) {
+      err = e;
     } finally {
       process.stderr.write = origStderrWrite;
     }
-    expect(exitCalls).toEqual([2]);
+    expect(err).toBeInstanceOf(CliExit);
+    expect((err as CliExit).code).toBe(2);
     expect(stderrBuf).toContain("Malformed glossary.briefReady payload");
   });
 });

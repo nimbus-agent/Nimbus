@@ -86,6 +86,26 @@ describe("nimbus glossary e2e (no-Gateway smoke)", () => {
     expect(out.stderr).not.toContain("Gateway is not running");
   });
 
+  test("main()'s CliExit arm is distinct from its generic error arm at the process level", async () => {
+    // `nimbus decisions --rebuild` (no `--yes`) reaches `throw new CliExit(2)` in
+    // `commands/decisions.ts` before any IPC client is constructed (the
+    // `parsed.rebuild && !parsed.yes` guard runs right after arg parsing), so this
+    // needs no gateway — same shape as this file's other no-gateway cases.
+    //
+    // This is the process-level counterpart to the pure `classifyTopLevelError` unit
+    // test: every other subprocess assertion on a failure path expects exit code 1,
+    // which the generic arm in `index.ts`'s `main()` ALSO produces, so nothing here
+    // would go red if the `instanceof CliExit` check ever stopped matching (e.g. a
+    // bundling/duplicate-module miss). Exit code 2, a silent stderr (no re-printed
+    // "exit 2" Error message), and a skipped "Done." outro are the three signals
+    // only the `cli-exit` arm produces.
+    const out = await runCli(["decisions", "--rebuild"]);
+    expect(out.code).toBe(2); // the generic arm would give 1
+    expect(out.stderr).toContain("Re-run with --yes to confirm.");
+    expect(out.stderr).not.toContain("exit 2"); // CliExit's own Error message must never be printed
+    expect(out.stdout).not.toContain("Done."); // the outro is skipped on a CliExit
+  });
+
   test("help text mentions 'glossary' subcommand", async () => {
     const proc = Bun.spawn({
       cmd: [process.execPath, "run", cliEntry, "help"],

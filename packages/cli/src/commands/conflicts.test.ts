@@ -57,7 +57,7 @@ const {
   stderrChunks,
   install: installStreamCapture,
   restore: restoreStreams,
-} = createStreamCapture({ captureExit: true });
+} = createStreamCapture();
 
 afterAll(() => {
   restoreStreams();
@@ -89,7 +89,10 @@ describe("runConflictsCli — dispatcher", () => {
 
   it("exits 1 when gateway is not running", async () => {
     setFixture({});
-    await expect(runConflictsCli(["src/api.ts"])).rejects.toThrow("process.exit(1)");
+    await expect(runConflictsCli(["src/api.ts"])).rejects.toMatchObject({
+      name: "CliExit",
+      code: 1,
+    });
     expect(stderrChunks.join("")).toContain("Gateway is not running");
   });
 
@@ -175,7 +178,10 @@ describe("runConflictsCli — dispatcher", () => {
         },
       },
     });
-    await expect(runConflictsCli(["src/api.ts"])).rejects.toThrow("process.exit(2)");
+    await expect(runConflictsCli(["src/api.ts"])).rejects.toMatchObject({
+      name: "CliExit",
+      code: 2,
+    });
     expect(stderrChunks.join("")).toContain("graph lookup failed");
   });
 
@@ -234,7 +240,10 @@ describe("runConflictsCli — dispatcher", () => {
         },
       },
     });
-    await expect(runConflictsCli(["src/api.ts"])).rejects.toThrow("process.exit(2)");
+    await expect(runConflictsCli(["src/api.ts"])).rejects.toMatchObject({
+      name: "CliExit",
+      code: 2,
+    });
     expect(stderrChunks.join("")).toContain("Malformed");
   });
 });

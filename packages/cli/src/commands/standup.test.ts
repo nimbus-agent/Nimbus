@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 
 import { clearFixture, FAKE_SOCKET_PATH, setFixture } from "../../test/helpers/cli-mocks.ts";
 import { createStreamCapture } from "../../test/helpers/stream-capture.ts";
+import { CliExit } from "../lib/cli-exit.ts";
 import {
   fetchStandupBrief,
   isStandupBriefLike,
@@ -193,7 +194,7 @@ describe("runStandupCommand", () => {
 });
 
 describe("fetchStandupBrief", () => {
-  const out = createStreamCapture({ captureExit: true });
+  const out = createStreamCapture();
 
   beforeEach(() => {
     out.stdoutChunks.length = 0;
@@ -208,7 +209,8 @@ describe("fetchStandupBrief", () => {
   test("exits 1 when the gateway is not running", async () => {
     setFixture({});
     const err = await fetchStandupBrief({ sinceMs: DAY_MS }).catch((e: unknown) => e);
-    expect(err instanceof Error ? err.message : String(err)).toContain("process.exit(1)");
+    expect(err).toBeInstanceOf(CliExit);
+    expect((err as CliExit).code).toBe(1);
     expect(out.stderrChunks.join("")).toContain("Gateway is not running");
   });
 
@@ -230,7 +232,8 @@ describe("fetchStandupBrief", () => {
       },
     });
     const err = await fetchStandupBrief({ sinceMs: DAY_MS }).catch((e: unknown) => e);
-    expect(err instanceof Error ? err.message : String(err)).toContain("process.exit(2)");
+    expect(err).toBeInstanceOf(CliExit);
+    expect((err as CliExit).code).toBe(2);
     const stderr = out.stderrChunks.join("");
     expect(stderr).toContain("ERR_STANDUP_IDENTITY_UNRESOLVED");
     expect(stderr).toContain("[user] mePersonId");

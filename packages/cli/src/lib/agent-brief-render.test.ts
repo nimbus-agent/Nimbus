@@ -9,12 +9,13 @@ import {
   renderAgentBrief,
   resolveBriefTimeoutMs,
 } from "./agent-brief-render.ts";
+import { CliExit } from "./cli-exit.ts";
 
 // ---------------------------------------------------------------------------
 // renderAgentBrief
 // ---------------------------------------------------------------------------
 
-const capture = createStreamCapture({ captureExit: true });
+const capture = createStreamCapture();
 
 beforeEach(() => {
   capture.install();
@@ -52,10 +53,18 @@ describe("renderAgentBrief — json mode", () => {
 });
 
 describe("renderAgentBrief — empty_index gap", () => {
-  it("writes the sync-first message to stderr and exits with code 1", () => {
+  it("writes the sync-first message to stderr and throws CliExit(1)", () => {
     expect(() => renderAgentBrief("brief", makeFindings({ emptyIndex: true }), false)).toThrow(
-      "process.exit(1)",
+      CliExit,
     );
+    let caught: unknown;
+    try {
+      renderAgentBrief("brief", makeFindings({ emptyIndex: true }), false);
+    } catch (e) {
+      caught = e;
+    }
+    expect(caught).toBeInstanceOf(CliExit);
+    expect((caught as CliExit).code).toBe(1);
     expect(capture.stderrChunks.join("")).toContain("No data indexed yet");
     expect(capture.stdoutChunks).toHaveLength(0);
   });
@@ -63,7 +72,7 @@ describe("renderAgentBrief — empty_index gap", () => {
   it("demo: writes the demo-seed message instead of the connector-sync hint", () => {
     expect(() =>
       renderAgentBrief("brief", makeFindings({ emptyIndex: true }), false, true),
-    ).toThrow("process.exit(1)");
+    ).toThrow(CliExit);
     const err = capture.stderrChunks.join("");
     expect(err).toContain("The demo index is empty — run nimbus demo to seed it.");
     expect(err).not.toContain("nimbus connector sync");

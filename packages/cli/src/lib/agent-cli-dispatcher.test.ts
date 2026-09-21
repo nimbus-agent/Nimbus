@@ -6,7 +6,9 @@ import { createStreamCapture } from "../../test/helpers/stream-capture.ts";
 const mod = await import("./agent-cli-dispatcher.ts");
 const { runAgentCli } = mod;
 
-const { stderrChunks, install, restore } = createStreamCapture({ captureExit: true });
+// `runAgentCli` now throws `CliExit` on failure instead of calling `process.exit`, so the
+// stream capture no longer needs to trap it.
+const { stderrChunks, install, restore } = createStreamCapture();
 
 afterAll(() => {
   restore();
@@ -36,7 +38,7 @@ describe("runAgentCli", () => {
         guard: isAnyBrief,
         json: false,
       }),
-    ).rejects.toThrow("process.exit(1)");
+    ).rejects.toMatchObject({ name: "CliExit", code: 1 });
     expect(stderrChunks.join("")).toContain("Gateway is not running");
   });
 
@@ -61,7 +63,7 @@ describe("runAgentCli", () => {
         guard: isAnyBrief,
         json: false,
       }),
-    ).rejects.toThrow("process.exit(2)");
+    ).rejects.toMatchObject({ name: "CliExit", code: 2 });
     expect(stderrChunks.join("")).toContain("plain string failure");
   });
 
@@ -90,8 +92,78 @@ describe("runAgentCli", () => {
         guard: isAnyBrief,
         json: false,
       }),
-    ).rejects.toThrow("process.exit(2)");
+    ).rejects.toMatchObject({ name: "CliExit", code: 2 });
     expect(stderrChunks.join("")).toContain("stale socket");
     expect(disconnected).toBe(true);
+  });
+
+  it("a rejecting disconnect() in the finally does not replace the pending CliExit(2)", async () => {
+    setFixture({
+      gatewayState: { socketPath: FAKE_SOCKET_PATH },
+      ipcClient: {
+        connect: async () => {},
+        // The cleanup now RUNS on the failure path (process.exit used to skip it), so a throw
+        // here would otherwise win over the CliExit and surface as a printed error + exit 1.
+        disconnect: async () => {
+          throw new Error("socket already torn down");
+        },
+        call: async () => {
+          throw new Error("rpc failed");
+        },
+        onNotification: () => {},
+      },
+    });
+    await expect(
+      runAgentCli({
+        agentName: "x",
+        ipcMethod: "agents.x",
+        callParams: {},
+        guard: isAnyBrief,
+        json: false,
+      }),
+    ).rejects.toMatchObject({ name: "CliExit", code: 2 });
+    const stderr = stderrChunks.join("");
+    expect(stderr).toContain("rpc failed");
+    expect(stderr).not.toContain("socket already torn down");
+  });
+
+  it("an empty_index gap exits 1 with the hint only — the catch does not re-label it", async () => {
+    const handlers = new Map<string, (params: unknown) => void>();
+    setFixture({
+      gatewayState: { socketPath: FAKE_SOCKET_PATH },
+      ipcClient: {
+        connect: async () => {},
+        disconnect: async () => {},
+        call: async () => {
+          setTimeout(() => {
+            handlers.get("x.briefReady")?.({
+              sessionId: "s",
+              brief: "brief text",
+              findings: { gaps: [{ category: "empty_index" }] },
+            });
+          }, 0);
+          return { sessionId: "s" };
+        },
+        onNotification: (event: string, handler: (params: unknown) => void) => {
+          handlers.set(event, handler);
+        },
+      },
+    });
+    await expect(
+      runAgentCli({
+        agentName: "x",
+        ipcMethod: "agents.x",
+        callParams: {},
+        guard: isAnyBrief,
+        json: false,
+      }),
+    ).rejects.toMatchObject({
+      name: "CliExit",
+      code: 1,
+    });
+    const stderr = stderrChunks.join("");
+    expect(stderr).toContain("No data indexed yet");
+    expect(stderr).not.toContain("exit 1");
+    expect(stderr).not.toContain("process.exit");
   });
 });

@@ -1,6 +1,8 @@
 import { IPCClient } from "../ipc-client/index.ts";
 import { getCliPlatformPaths } from "../paths.ts";
 import { awaitAgentBrief, type PendingBrief, renderAgentBrief } from "./agent-brief-render.ts";
+import { CliExit } from "./cli-exit.ts";
+import { disconnectQuietly } from "./disconnect-quietly.ts";
 import { gatewayNotRunningMessage } from "./gateway-not-running.ts";
 import { readGatewayState } from "./gateway-process.ts";
 import { registerInteractiveCliIpcHandlers } from "./interactive-ipc-handlers.ts";
@@ -27,7 +29,7 @@ export async function runAgentCli<B extends { gaps: readonly { category: string 
   const state = await readGatewayState(paths);
   if (state === undefined) {
     process.stderr.write(`${gatewayNotRunningMessage(paths.demo === true)}\n`);
-    process.exit(1);
+    throw new CliExit(1);
   }
 
   const client = new IPCClient(state.socketPath);
@@ -45,10 +47,14 @@ export async function runAgentCli<B extends { gaps: readonly { category: string 
     const { brief, findings } = await pending.result;
     renderAgentBrief(brief, findings, opts.json, paths.demo === true);
   } catch (err) {
+    // A CliExit raised inside the try (renderAgentBrief's empty-index hint) already wrote its own
+    // message and carries its own code. Re-labelling it here would print a stray "exit 1" and turn
+    // exit 1 into exit 2 — which is what the stubbed-exit tests pinned by accident for months.
+    if (err instanceof CliExit) throw err;
     process.stderr.write(`${err instanceof Error ? err.message : String(err)}\n`);
-    process.exit(2);
+    throw new CliExit(2);
   } finally {
     pending?.cancel();
-    await client.disconnect();
+    await disconnectQuietly(client);
   }
 }

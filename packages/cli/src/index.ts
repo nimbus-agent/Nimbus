@@ -78,6 +78,7 @@ import {
   runWorkflowCli,
   runWorkflowFromFile,
 } from "./commands/index.ts";
+import { classifyTopLevelError } from "./lib/cli-exit.ts";
 import { createCliFileLogger } from "./lib/cli-logger.ts";
 import { demoBannerLine, readDemoSeedMarker } from "./lib/demo-banner.ts";
 import { applyDemoFlag } from "./lib/demo-flag.ts";
@@ -233,7 +234,14 @@ async function main(): Promise<void> {
       await dispatchCommand(command, args);
     }
   } catch (e) {
-    const msg = e instanceof Error ? e.message : String(e);
+    const cls = classifyTopLevelError(e);
+    if (cls.kind === "cli-exit") {
+      // The throwing site already wrote its message. Print nothing, and skip the "Done." outro —
+      // `process.exit` never reached it, so showing it after a failure would be a regression.
+      process.exitCode = cls.code;
+      logger.info({ event: "cli.exit", exitCode: cls.code }, "command exited");
+      return;
+    }
     logger.error(
       {
         event: "cli.error",
@@ -242,9 +250,9 @@ async function main(): Promise<void> {
             ? { type: e.name, message: e.message, stack: e.stack }
             : { message: String(e) },
       },
-      msg,
+      cls.message,
     );
-    console.error(msg);
+    console.error(cls.message);
     process.exitCode = 1;
   } finally {
     logger.info({ event: "cli.finished", exitCode: process.exitCode ?? 0 }, "finished");

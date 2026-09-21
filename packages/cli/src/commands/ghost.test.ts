@@ -50,7 +50,7 @@ const {
   stderrChunks,
   install: installStreamCapture,
   restore: restoreStreams,
-} = createStreamCapture({ captureExit: true });
+} = createStreamCapture();
 
 afterAll(() => {
   restoreStreams();
@@ -82,7 +82,10 @@ describe("runGhostCli — dispatcher", () => {
 
   it("exits 1 when gateway is not running", async () => {
     setFixture({});
-    await expect(runGhostCli(["src/auth.ts"])).rejects.toThrow("process.exit(1)");
+    await expect(runGhostCli(["src/auth.ts"])).rejects.toMatchObject({
+      name: "CliExit",
+      code: 1,
+    });
     expect(stderrChunks.join("")).toContain("Gateway is not running");
   });
 
@@ -168,7 +171,10 @@ describe("runGhostCli — dispatcher", () => {
         },
       },
     });
-    await expect(runGhostCli(["src/auth.ts"])).rejects.toThrow("process.exit(2)");
+    await expect(runGhostCli(["src/auth.ts"])).rejects.toMatchObject({
+      name: "CliExit",
+      code: 2,
+    });
     expect(stderrChunks.join("")).toContain("traversal failed");
   });
 
@@ -224,7 +230,10 @@ describe("runGhostCli — dispatcher", () => {
         },
       },
     });
-    await expect(runGhostCli(["src/auth.ts"])).rejects.toThrow("process.exit(2)");
+    await expect(runGhostCli(["src/auth.ts"])).rejects.toMatchObject({
+      name: "CliExit",
+      code: 2,
+    });
     expect(stderrChunks.join("")).toContain("Agent failed");
   });
 
@@ -253,7 +262,10 @@ describe("runGhostCli — dispatcher", () => {
         },
       },
     });
-    await expect(runGhostCli(["src/auth.ts"])).rejects.toThrow("process.exit(2)");
+    await expect(runGhostCli(["src/auth.ts"])).rejects.toMatchObject({
+      name: "CliExit",
+      code: 2,
+    });
     expect(stderrChunks.join("")).toContain("Malformed");
   });
 
@@ -281,7 +293,10 @@ describe("runGhostCli — dispatcher", () => {
         },
       },
     });
-    await expect(runGhostCli(["src/auth.ts"])).rejects.toThrow("process.exit(2)");
+    await expect(runGhostCli(["src/auth.ts"])).rejects.toMatchObject({
+      name: "CliExit",
+      code: 2,
+    });
     expect(stderrChunks.join("")).toContain("Malformed");
   });
 
@@ -307,7 +322,10 @@ describe("runGhostCli — dispatcher", () => {
         },
       },
     });
-    await expect(runGhostCli(["src/auth.ts"])).rejects.toThrow("process.exit(2)");
+    await expect(runGhostCli(["src/auth.ts"])).rejects.toMatchObject({
+      name: "CliExit",
+      code: 2,
+    });
     expect(stderrChunks.join("")).toContain("Malformed");
   });
 
@@ -324,7 +342,10 @@ describe("runGhostCli — dispatcher", () => {
         onNotification: () => {},
       },
     });
-    await expect(runGhostCli(["src/auth.ts"])).rejects.toThrow("process.exit(2)");
+    await expect(runGhostCli(["src/auth.ts"])).rejects.toMatchObject({
+      name: "CliExit",
+      code: 2,
+    });
     expect(stderrChunks.join("")).toContain("ECONNREFUSED");
   });
 });

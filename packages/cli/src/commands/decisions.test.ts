@@ -1,5 +1,6 @@
-import { afterEach, describe, expect, test } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import type { IPCClient } from "../ipc-client/index.ts";
+import { CliExit } from "../lib/cli-exit.ts";
 import type { AgentBriefCliSpec } from "./_agent-brief-cli.ts";
 import {
   isDecisionsBriefLike,
@@ -310,25 +311,7 @@ describe("runDecisionsCommand — dispatch (DI, no mock.module)", () => {
 });
 
 describe("runDecisionsCommand — rebuild without --yes", () => {
-  let originalExit: typeof process.exit;
-
-  afterEach(() => {
-    process.exit = originalExit;
-    process.exitCode = 0;
-  });
-
-  function stubExit(): { exitCalls: number[] } {
-    originalExit = process.exit;
-    const exitCalls: number[] = [];
-    process.exit = ((code?: number): never => {
-      exitCalls.push(code ?? -1);
-      throw new Error(`process.exit(${code ?? ""})`);
-    }) as typeof process.exit;
-    return { exitCalls };
-  }
-
-  test("--rebuild without --yes exits 2 and never reaches runAgentBriefCli", async () => {
-    const { exitCalls } = stubExit();
+  test("--rebuild without --yes throws CliExit(2) and never reaches runAgentBriefCli", async () => {
     let stderrBuf = "";
     let briefCliCalled = false;
     const origStderrWrite = process.stderr.write.bind(process.stderr);
@@ -336,18 +319,20 @@ describe("runDecisionsCommand — rebuild without --yes", () => {
       stderrBuf += chunk;
       return true;
     }) as typeof process.stderr.write;
+    let err: unknown;
     try {
-      await expect(
-        runDecisionsCommand(["--rebuild"], {
-          runAgentBriefCli: async <T>(_spec: AgentBriefCliSpec<T>): Promise<void> => {
-            briefCliCalled = true;
-          },
-        }),
-      ).rejects.toThrow("process.exit(2)");
+      await runDecisionsCommand(["--rebuild"], {
+        runAgentBriefCli: async <T>(_spec: AgentBriefCliSpec<T>): Promise<void> => {
+          briefCliCalled = true;
+        },
+      });
+    } catch (e) {
+      err = e;
     } finally {
       process.stderr.write = origStderrWrite;
     }
-    expect(exitCalls).toEqual([2]);
+    expect(err).toBeInstanceOf(CliExit);
+    expect((err as CliExit).code).toBe(2);
     expect(briefCliCalled).toBe(false);
     // Not just "some warning appeared" — the two facts a user needs before
     // typing --yes: vetoes are cleared, and that specific loss is permanent.

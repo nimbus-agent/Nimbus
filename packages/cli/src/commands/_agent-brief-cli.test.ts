@@ -2,13 +2,14 @@ import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 
 import { clearFixture, FAKE_SOCKET_PATH, setFixture } from "../../test/helpers/cli-mocks.ts";
 import { createStreamCapture } from "../../test/helpers/stream-capture.ts";
+import { CliExit } from "../lib/cli-exit.ts";
 
 const mod = await import("./_agent-brief-cli.ts");
 const { runAgentBriefCli } = mod;
 
-// `runAgentBriefCli` ends a failure with `process.exit(2)`, which would take the test runner with
-// it. `captureExit` turns that into a throw so the exit path is observable.
-const out = createStreamCapture({ captureExit: true });
+// `runAgentBriefCli` ends a failure by throwing `CliExit(2)` rather than calling
+// `process.exit`, so the stream capture no longer needs to trap it.
+const out = createStreamCapture();
 
 /**
  * F30 — a fast `briefError` printed Bun's unhandled-rejection stack, with compiled source frames,
@@ -91,7 +92,7 @@ describe("runAgentBriefCli — a fast briefError (F30)", () => {
     };
     globalThis.addEventListener("unhandledrejection", onUnhandled);
     try {
-      await expect(runAgentBriefCli(spec)).rejects.toThrow("process.exit(2)");
+      await expect(runAgentBriefCli(spec)).rejects.toMatchObject({ name: "CliExit", code: 2 });
       // Let the microtask queue drain — an unhandled rejection is reported a tick after the fact.
       await new Promise((r) => setTimeout(r, 10));
     } finally {
@@ -110,7 +111,58 @@ describe("runAgentBriefCli — a fast briefError (F30)", () => {
       ipcClient: rejectingDuringCall(handlers, "pre-mortem: 'S2' was not found"),
     });
 
-    await expect(runAgentBriefCli(spec)).rejects.toThrow("process.exit(2)");
+    await expect(runAgentBriefCli(spec)).rejects.toMatchObject({ name: "CliExit", code: 2 });
     expect(out.stderrChunks.join("")).toContain("pre-mortem: 'S2' was not found");
+  });
+});
+
+/** A gateway that delivers a valid brief straight away, so `spec.onResult` runs. */
+function respondingClient(handlers: Handlers, findings: unknown, brief = "brief text") {
+  return {
+    connect: (): void => {},
+    disconnect: (): void => {},
+    onNotification: (event: string, handler: (params: unknown) => void): void => {
+      handlers[event] = handler;
+    },
+    call: async (): Promise<unknown> => {
+      setTimeout(() => {
+        handlers["premortem.briefReady"]?.({ sessionId: "s1", brief, findings });
+      }, 0);
+      return { sessionId: "s1" };
+    },
+  };
+}
+
+describe("runAgentBriefCli — a CliExit raised by a caller-supplied extension point", () => {
+  beforeEach(() => {
+    out.stdoutChunks.length = 0;
+    out.stderrChunks.length = 0;
+    out.install();
+  });
+  afterEach(() => {
+    out.restore();
+    clearFixture();
+  });
+
+  // `spec.beforeCall`/`spec.onResult` are open extension points (see decisions.ts, glossary.ts,
+  // owners.ts, preflight.ts) — none throws CliExit today, but the catch must not re-label one that
+  // did: that would print a stray message and turn an intended exit 1 into exit 2, the same defect
+  // `runAgentCli`'s catch had for `renderAgentBrief`'s empty-index CliExit(1).
+  it("a CliExit(1) thrown from onResult propagates unchanged, with no stray stderr line", async () => {
+    const handlers: Handlers = {};
+    setFixture({
+      gatewayState: { socketPath: FAKE_SOCKET_PATH },
+      ipcClient: respondingClient(handlers, { ok: true }),
+    });
+
+    await expect(
+      runAgentBriefCli({
+        ...spec,
+        onResult: () => {
+          throw new CliExit(1);
+        },
+      }),
+    ).rejects.toMatchObject({ name: "CliExit", code: 1 });
+    expect(out.stderrChunks.join("")).toBe("");
   });
 });

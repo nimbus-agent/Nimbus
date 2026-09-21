@@ -1,5 +1,7 @@
 import { IPCClient } from "../ipc-client/index.ts";
 import { briefTextFor, resolveBriefTimeoutMs } from "../lib/agent-brief-render.ts";
+import { CliExit } from "../lib/cli-exit.ts";
+import { disconnectQuietly } from "../lib/disconnect-quietly.ts";
 import { gatewayNotRunningMessage } from "../lib/gateway-not-running.ts";
 import { readGatewayState } from "../lib/gateway-process.ts";
 import { registerInteractiveCliIpcHandlers } from "../lib/interactive-ipc-handlers.ts";
@@ -93,7 +95,7 @@ export async function runAgentBriefCli<TFindings>(
   const state = await readGatewayState(paths);
   if (state === undefined) {
     process.stderr.write(`${gatewayNotRunningMessage(paths.demo === true)}\n`);
-    process.exit(1);
+    throw new CliExit(1);
   }
 
   const client = new IPCClient(state.socketPath);
@@ -125,11 +127,16 @@ export async function runAgentBriefCli<TFindings>(
       process.stdout.write(`${briefTextFor(brief, paths.demo === true)}\n`);
     }
   } catch (err) {
+    // `spec.beforeCall`/`spec.onResult` are caller-supplied extension points (see decisions.ts,
+    // glossary.ts, owners.ts, preflight.ts) — none throws CliExit today, but re-labelling one that
+    // did would silently swallow its code and print a stray message, exactly as runAgentCli's catch
+    // would have done for renderAgentBrief's empty-index CliExit(1).
+    if (err instanceof CliExit) throw err;
     process.stderr.write(`${err instanceof Error ? err.message : String(err)}\n`);
-    process.exit(2);
+    throw new CliExit(2);
   } finally {
     if (timeout !== undefined) clearTimeout(timeout);
     // IPCClient.disconnect() is safe even when connect() was never called (null socket guards).
-    await client.disconnect();
+    await disconnectQuietly(client);
   }
 }
