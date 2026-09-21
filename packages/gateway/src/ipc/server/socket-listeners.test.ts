@@ -4,6 +4,7 @@ import net from "node:net";
 import { platform, tmpdir } from "node:os";
 import { join } from "node:path";
 
+import { processListeners } from "../../locality/listener-registry.ts";
 import type { ClientSession, SessionWrite } from "../session.ts";
 import {
   chmodListenSocketBestEffort,
@@ -140,6 +141,7 @@ describe("startWin32NetServer (cross-platform via unix socket on POSIX)", () => 
         expect(handle.netServer.listening).toBe(true);
         expect(handle.winSockets.size).toBe(0);
       } finally {
+        handle.unregisterListener();
         await new Promise<void>((resolve) => handle.netServer.close(() => resolve()));
       }
     },
@@ -180,6 +182,7 @@ describe("startWin32NetServer (cross-platform via unix socket on POSIX)", () => 
 
         expect(handle.winSockets.size).toBe(0);
       } finally {
+        handle.unregisterListener();
         await new Promise<void>((resolve) => handle.netServer.close(() => resolve()));
       }
     },
@@ -219,8 +222,30 @@ describe("startWin32NetServer (cross-platform via unix socket on POSIX)", () => 
           /* best-effort */
         }
       } finally {
+        handle.unregisterListener();
         await new Promise<void>((resolve) => handle.netServer.close(() => resolve()));
       }
+    },
+  );
+
+  test.skipIf(platform() === "win32")(
+    "registers an 'ipc' listener in the live registry while open, gone after stop",
+    async () => {
+      const state = makeStubState();
+      const stubSession = makeStubSession(state, () => {});
+      const attach = (_write: SessionWrite): ClientSession => stubSession;
+
+      const handle = await startWin32NetServer(socketPath, attach);
+      try {
+        // Filtered by OUR OWN address, since processListeners is process-global.
+        expect(processListeners.live().filter((l) => l.address === socketPath)).toEqual([
+          { name: "ipc", address: socketPath, loopback: true },
+        ]);
+      } finally {
+        handle.unregisterListener();
+        await new Promise<void>((resolve) => handle.netServer.close(() => resolve()));
+      }
+      expect(processListeners.live().some((l) => l.address === socketPath)).toBe(false);
     },
   );
 });
@@ -269,6 +294,7 @@ describe("startWin32NetServer post-listen faults", () => {
       expect(faults).toEqual([{ event: "error", message: "pipe went away" }]);
     } finally {
       handle.markExpectedClose();
+      handle.unregisterListener();
       await new Promise<void>((resolve) => handle.netServer.close(() => resolve()));
     }
   });
@@ -276,6 +302,7 @@ describe("startWin32NetServer post-listen faults", () => {
   test("an unrequested 'close' is reported as a fault", async () => {
     const faults: string[] = [];
     const handle = await startWin32NetServer(listenPath(), attach, (f) => faults.push(f.event));
+    handle.unregisterListener();
     await new Promise<void>((resolve) => handle.netServer.close(() => resolve()));
     expect(faults).toEqual(["close"]);
   });
@@ -284,6 +311,7 @@ describe("startWin32NetServer post-listen faults", () => {
     const faults: string[] = [];
     const handle = await startWin32NetServer(listenPath(), attach, (f) => faults.push(f.event));
     handle.markExpectedClose();
+    handle.unregisterListener();
     await new Promise<void>((resolve) => handle.netServer.close(() => resolve()));
     expect(faults).toEqual([]);
   });
@@ -295,6 +323,7 @@ describe("startWin32NetServer post-listen faults", () => {
       await expect(startWin32NetServer(p, attach)).rejects.toThrow();
     } finally {
       first.markExpectedClose();
+      first.unregisterListener();
       await new Promise<void>((resolve) => first.netServer.close(() => resolve()));
     }
   });
@@ -329,7 +358,7 @@ describe("startBunUnixListener (POSIX-only)", () => {
         return makeStubSession(state, write);
       };
 
-      const listener = startBunUnixListener(socketPath, attach);
+      const handle = startBunUnixListener(socketPath, attach);
       try {
         await new Promise<void>((resolve, reject) => {
           const client = net.connect(socketPath, () => {
@@ -349,11 +378,32 @@ describe("startBunUnixListener (POSIX-only)", () => {
         expect(state.disposed).toBe(true);
       } finally {
         try {
-          listener.stop();
+          handle.unregisterListener();
+          handle.listener.stop();
         } catch {
           /* best-effort */
         }
       }
+    },
+  );
+
+  test.skipIf(platform() === "win32")(
+    "registers an 'ipc' listener in the live registry while open, gone after stop",
+    () => {
+      const state = makeStubState();
+      const attach = (write: SessionWrite): ClientSession => makeStubSession(state, write);
+
+      const handle = startBunUnixListener(socketPath, attach);
+      try {
+        // Filtered by OUR OWN address, since processListeners is process-global.
+        expect(processListeners.live().filter((l) => l.address === socketPath)).toEqual([
+          { name: "ipc", address: socketPath, loopback: true },
+        ]);
+      } finally {
+        handle.unregisterListener();
+        handle.listener.stop();
+      }
+      expect(processListeners.live().some((l) => l.address === socketPath)).toBe(false);
     },
   );
 });

@@ -2017,6 +2017,60 @@ export function checkSqliteRuntimeInit(files: readonly FileEntry[]): Violation[]
   return out;
 }
 
+// D31: a file that OPENS a listening socket registers it with the live `ListenerRegistry`
+// (`locality/listener-registry.ts`), tied to no invariant, exactly as D30 is not.
+//
+// `nimbus wow`'s locality panel shows the owner which listeners are open RIGHT NOW and whether
+// each is loopback, read live off `processListeners.live()`. That panel is only honest if the
+// registry actually reflects every socket the gateway can open — a fifth listen site added
+// tomorrow with no `registerListener()` call would make the panel silently incomplete rather than
+// visibly broken, the same failure shape D30's `ensureFullSqlite()` gap was.
+//
+// WRITTEN AS WHAT CANNOT PASS, not as an allow-list of what may — same reasoning as D30: a new
+// listen site is a violation on the day it is written, with nothing for anyone to remember to add
+// to a list.
+//
+// WHAT COUNTS AS "opens a listening socket": `Bun.serve(`, `Bun.listen(` (including a generic
+// argument, `Bun.listen<State>(`) and `net.createServer(`. A `typeof Bun.listen<…>` / `typeof
+// Bun.serve` TYPE QUERY — the shape `ipc/server/server.ts` carries at
+// `ReturnType<typeof Bun.listen<BunSessionData>>` — opens nothing at runtime and must not force a
+// registration; it is blanked out (character-for-character, so line numbers of a REAL call later
+// in the same file are unaffected) before the main pattern is matched, so a file that carries only
+// the type query is clean, and a file that carries BOTH the type query and a real
+// `Bun.listen<State>({` call is still caught by the real call once the type query is blanked out
+// from under it.
+const D31_TYPEOF_QUERY_RE = /\btypeof\s+Bun\.(?:serve|listen)(?:\s*<[^<>]*>)?/g;
+const D31_LISTEN_RE = /\bBun\.(?:serve|listen)\b|\bcreateServer\s*\(/g;
+const D31_REGISTER = "registerListener";
+
+/** Blank every match of `re` in `text`, replacing non-newline characters with spaces so every
+ * later line number (and every later match offset) is unaffected. */
+function blankMatches(text: string, re: RegExp): string {
+  return text.replace(re, (m) => m.replace(/[^\n]/g, " "));
+}
+
+export function checkListenerRegistryConfinement(files: readonly FileEntry[]): Violation[] {
+  const out: Violation[] = [];
+  for (const f of files) {
+    if (f.relPath.endsWith(".test.ts")) continue;
+    if (!f.relPath.startsWith("packages/gateway/src/")) continue;
+    const stripped = stripComments(f.contents);
+    if (stripped.includes(D31_REGISTER)) continue;
+    const scanned = blankMatches(stripped, D31_TYPEOF_QUERY_RE);
+    const original = f.contents.split("\n");
+    for (const m of scanned.matchAll(new RegExp(D31_LISTEN_RE.source, "g"))) {
+      const line = scanned.slice(0, m.index).split("\n").length;
+      out.push({
+        rule: "D31-listener-registry-registration",
+        file: f.relPath,
+        line,
+        snippet: (original[line - 1] ?? "").trim(),
+      });
+    }
+  }
+  return out;
+}
+
 export function checkEgressChokepointConfinement(files: readonly FileEntry[]): Violation[] {
   const out: Violation[] = [];
   for (const f of files) {
@@ -2292,6 +2346,14 @@ export const RULE_ANCHORS: readonly string[] = [
   // by virtue of defining `ensureFullSqlite` and whose presence would therefore prove nothing.
   // Same shape as the D23/D28/D29 anchors above.
   "packages/gateway/src/embedding/embedding-worker.ts",
+  // D31 — anchored on one of the five real listen sites, a file the rule SCANS: it carries a real
+  // `Bun.serve(` call AND names `registerListener`, so the rule has to read it and confirm the
+  // registration is there rather than reporting clean on an empty scan. Not
+  // `locality/listener-registry.ts`, which the rule does not exempt by name (D31 has no
+  // definition-file allow-list at all, unlike D22(f)/(g) and D29) but which contains no listen
+  // call of its own and so would prove nothing about whether the rule can see one. Same shape as
+  // the D23/D28/D29/D30 anchors above.
+  "packages/gateway/src/ipc/http-server.ts",
 ];
 
 /** Fail loudly when the scanned set cannot support the rules about to run. */
@@ -2618,6 +2680,15 @@ async function run(): Promise<void> {
     for (const e of v) {
       console.error(
         `::error file=${e.file},line=${e.line}::D30 a file that can open a SQLite database does not call ensureFullSqlite() (platform/sqlite-runtime.ts). Database.setCustomSQLite is process-wide and only works before the first open, and a Worker is a separate realm — without the call, sqlite-vec cannot load on macOS and this process has no vector search, hybrid ranking or session-memory recall (issue #1029). Add the call before the open; in packages/cli or packages/ui the answer is that no database should be opened there at all: ${e.snippet}`,
+      );
+    }
+    if (v.length > 0) exit = 1;
+  }
+  if (mode === "binary-only" || mode === "all") {
+    const v = checkListenerRegistryConfinement(files);
+    for (const e of v) {
+      console.error(
+        `::error file=${e.file},line=${e.line}::D31 a listen site does not register with the live ListenerRegistry (locality/listener-registry.ts). The 'nimbus wow' locality panel reads processListeners.live() to show which listeners are open right now and whether each is loopback — a listen site that never registers makes that panel silently incomplete rather than visibly broken. Call registerListener() right after listen succeeds and unregister on every stop path: ${e.snippet}`,
       );
     }
     if (v.length > 0) exit = 1;

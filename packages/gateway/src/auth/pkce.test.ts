@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 
+import { processListeners } from "../locality/listener-registry.ts";
 import {
   createMemoryVault,
   googlePkceOpenUrlCompleter,
@@ -128,6 +129,49 @@ describe("runPKCEFlow", () => {
     expect(threw).toContain("invalid_grant");
     expect(threw.includes(secretAccess)).toBe(false);
     expect(threw.includes(secretRefresh)).toBe(false);
+  });
+
+  test("registers the oauth_callback listener while the local callback server is open, and unregisters after", async () => {
+    // Filtered by OUR OWN address, since processListeners is process-global — another test's
+    // callback server could be open concurrently in theory, and this must not assert on it.
+    let capturedAddress: string | undefined;
+    const openUrl = async (url: string): Promise<void> => {
+      const u = new URL(url);
+      const redirectUri = u.searchParams.get("redirect_uri");
+      expect(redirectUri).not.toBeNull();
+      const port = new URL(redirectUri as string).port;
+      capturedAddress = `127.0.0.1:${port}`;
+      expect(processListeners.live().filter((l) => l.address === capturedAddress)).toEqual([
+        { name: "oauth_callback", address: capturedAddress, loopback: true },
+      ]);
+      await googlePkceOpenUrlCompleter("mock-auth-code", { expectAccountsHost: true })(url);
+    };
+
+    await runPKCEFlow({
+      clientId: "test-client",
+      scopes: ["openid", "email"],
+      provider: "google",
+      vault: createMemoryVault(),
+      openUrl,
+      fetchImpl: async (input) => {
+        const s = requestUrlString(input);
+        if (isHttpsTokenEndpoint(s, "oauth2.googleapis.com", "/token")) {
+          return new Response(
+            JSON.stringify({
+              access_token: "access",
+              refresh_token: "refresh",
+              expires_in: 3600,
+              scope: "openid email",
+            }),
+            { status: 200, headers: { "Content-Type": "application/json" } },
+          );
+        }
+        return new Response("not found", { status: 404 });
+      },
+    });
+
+    expect(capturedAddress).toBeDefined();
+    expect(processListeners.live().some((l) => l.address === capturedAddress)).toBe(false);
   });
 
   test("Microsoft flow: token exchange failure does not echo secrets in thrown message", async () => {

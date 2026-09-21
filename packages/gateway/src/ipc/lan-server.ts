@@ -1,4 +1,6 @@
 import type { Socket, TCPSocketListener } from "bun";
+import { isLoopbackHost } from "../llm/base-url-locality.ts";
+import { registerListener } from "../locality/listener-registry.ts";
 import type { BoxKeypair } from "./lan-crypto.ts";
 import { openBoxFrame, sealBoxFrame } from "./lan-crypto.ts";
 import { checkLanMethodAllowed, LanError } from "./lan-rpc.ts";
@@ -46,6 +48,7 @@ interface SessionState {
 
 export class LanServer {
   private instance: TCPSocketListener<SessionState> | undefined;
+  private unregisterListener: (() => void) | undefined;
 
   constructor(private readonly opts: LanServerOptions) {}
 
@@ -67,11 +70,19 @@ export class LanServer {
         error: () => {},
       },
     });
+    this.unregisterListener = registerListener(() => {
+      const a = this.listenAddr();
+      return a === undefined
+        ? null
+        : { name: "lan", address: `${a.host}:${String(a.port)}`, loopback: isLoopbackHost(a.host) };
+    });
   }
 
   async stop(): Promise<void> {
     this.instance?.stop(true);
     this.instance = undefined;
+    this.unregisterListener?.();
+    this.unregisterListener = undefined;
   }
 
   listenAddr(): { host: string; port: number } | undefined {

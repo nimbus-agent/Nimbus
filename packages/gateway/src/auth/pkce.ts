@@ -1,5 +1,7 @@
 import pino from "pino";
 
+import { isLoopbackHost } from "../llm/base-url-locality.ts";
+import { registerListener } from "../locality/listener-registry.ts";
 import { validateVaultKeyOrThrow } from "../vault/key-format.ts";
 import type { NimbusVault } from "../vault/nimbus-vault.ts";
 import {
@@ -191,13 +193,19 @@ async function runOnLocalPort(
   const state = randomUrlSafeString(16);
   const completion: { value?: OAuthCompletion } = {};
 
+  const bindHost = "127.0.0.1";
   const server = Bun.serve({
-    hostname: "127.0.0.1",
+    hostname: bindHost,
     port: bindPort,
     fetch(req) {
       return handlePkceCallbackRequest(req, state, completion);
     },
   });
+  const unregisterListener = registerListener(() => ({
+    name: "oauth_callback",
+    address: `${bindHost}:${String(server.port)}`,
+    loopback: isLoopbackHost(bindHost),
+  }));
   const redirectUri = `http://127.0.0.1:${String(server.port)}${CALLBACK_PATH}`;
   const authUrl = buildAuthorizeUrl(descriptor, {
     clientId: options.clientId,
@@ -241,6 +249,7 @@ async function runOnLocalPort(
     return result;
   } finally {
     clearTimeout(abortTimer);
+    unregisterListener();
     server.stop();
   }
 }

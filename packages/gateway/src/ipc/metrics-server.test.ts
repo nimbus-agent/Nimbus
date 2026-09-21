@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { openSeededInMemoryDb } from "../../test/helpers/migrated-db-seed.ts";
 import { transitionHealth } from "../connectors/health.ts";
 import { CURRENT_SCHEMA_VERSION } from "../index/local-index.ts";
+import { processListeners } from "../locality/listener-registry.ts";
 import { type MetricsServerHandle, startMetricsServer } from "./metrics-server.ts";
 
 function makeDbWithItems(items: Array<{ id: string; service: string }>): Database {
@@ -148,5 +149,16 @@ describe("startMetricsServer", () => {
     handle.stop();
     expect(() => handle?.stop()).not.toThrow();
     handle = null;
+  });
+
+  test("registers a 'metrics' listener in the live registry while open, gone after stop", () => {
+    handle = startMetricsServer(() => db, 0);
+    const address = `127.0.0.1:${String(handle.port)}`;
+    // Filtered by OUR OWN address, since processListeners is process-global.
+    expect(processListeners.live().filter((l) => l.address === address)).toEqual([
+      { name: "metrics", address, loopback: true },
+    ]);
+    handle.stop();
+    expect(processListeners.live().some((l) => l.address === address)).toBe(false);
   });
 });

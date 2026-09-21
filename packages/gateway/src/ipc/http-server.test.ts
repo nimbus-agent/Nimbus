@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { CURRENT_SCHEMA_VERSION } from "../index/local-index.ts";
 import { runIndexedSchemaMigrations } from "../index/migrations/runner.ts";
+import { processListeners } from "../locality/listener-registry.ts";
 import type { StatusReaders } from "./admin-status-rpc.ts";
 import { startReadOnlyHttpServer } from "./http-server.ts";
 
@@ -372,6 +373,17 @@ describe("startReadOnlyHttpServer — lifecycle and dispatcher arms", () => {
     });
     expect(res.status).toBe(400);
     await res.text();
+  });
+
+  it("registers an 'http' listener in the live registry while open, gone after stop", () => {
+    handle = startReadOnlyHttpServer(dbPath, 0);
+    const address = `127.0.0.1:${String(handle.port)}`;
+    // Filtered by OUR OWN address, since processListeners is process-global.
+    expect(processListeners.live().filter((l) => l.address === address)).toEqual([
+      { name: "http", address, loopback: true },
+    ]);
+    handle.stop();
+    expect(processListeners.live().some((l) => l.address === address)).toBe(false);
   });
 });
 
