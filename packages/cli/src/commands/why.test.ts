@@ -107,7 +107,7 @@ describe("runWhyCli — dispatcher (full brief)", () => {
 
   it("exits 1 when gateway is not running", async () => {
     setFixture({});
-    await expect(runWhyCli(["src/a.ts:42"])).rejects.toThrow("process.exit(1)");
+    await expect(runWhyCli(["src/a.ts:42"])).rejects.toMatchObject({ name: "CliExit", code: 1 });
     expect(stderrChunks.join("")).toContain("Gateway is not running");
   });
 
@@ -262,7 +262,7 @@ describe("runWhyCli — dispatcher (full brief)", () => {
         },
       },
     });
-    await expect(runWhyCli(["src/a.ts:42"])).rejects.toThrow("process.exit(2)");
+    await expect(runWhyCli(["src/a.ts:42"])).rejects.toMatchObject({ name: "CliExit", code: 2 });
     expect(stderrChunks.join("")).toContain("blame lookup failed");
   });
 });

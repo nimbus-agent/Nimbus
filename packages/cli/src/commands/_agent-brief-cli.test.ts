@@ -6,9 +6,9 @@ import { createStreamCapture } from "../../test/helpers/stream-capture.ts";
 const mod = await import("./_agent-brief-cli.ts");
 const { runAgentBriefCli } = mod;
 
-// `runAgentBriefCli` ends a failure with `process.exit(2)`, which would take the test runner with
-// it. `captureExit` turns that into a throw so the exit path is observable.
-const out = createStreamCapture({ captureExit: true });
+// `runAgentBriefCli` ends a failure by throwing `CliExit(2)` rather than calling
+// `process.exit`, so the stream capture no longer needs to trap it.
+const out = createStreamCapture();
 
 /**
  * F30 — a fast `briefError` printed Bun's unhandled-rejection stack, with compiled source frames,
@@ -91,7 +91,7 @@ describe("runAgentBriefCli — a fast briefError (F30)", () => {
     };
     globalThis.addEventListener("unhandledrejection", onUnhandled);
     try {
-      await expect(runAgentBriefCli(spec)).rejects.toThrow("process.exit(2)");
+      await expect(runAgentBriefCli(spec)).rejects.toMatchObject({ name: "CliExit", code: 2 });
       // Let the microtask queue drain — an unhandled rejection is reported a tick after the fact.
       await new Promise((r) => setTimeout(r, 10));
     } finally {
@@ -110,7 +110,7 @@ describe("runAgentBriefCli — a fast briefError (F30)", () => {
       ipcClient: rejectingDuringCall(handlers, "pre-mortem: 'S2' was not found"),
     });
 
-    await expect(runAgentBriefCli(spec)).rejects.toThrow("process.exit(2)");
+    await expect(runAgentBriefCli(spec)).rejects.toMatchObject({ name: "CliExit", code: 2 });
     expect(out.stderrChunks.join("")).toContain("pre-mortem: 'S2' was not found");
   });
 });

@@ -71,7 +71,7 @@ describe("runJanitorCli — dispatcher", () => {
 
   it("exits 1 when the gateway is not running", async () => {
     setFixture({});
-    await expect(runJanitorCli(["i-12345"])).rejects.toThrow("process.exit(1)");
+    await expect(runJanitorCli(["i-12345"])).rejects.toMatchObject({ name: "CliExit", code: 1 });
     expect(stderrChunks.join("")).toContain("Gateway is not running");
   });
 
@@ -138,7 +138,7 @@ describe("runJanitorCli — dispatcher", () => {
       event: "janitor.briefError",
       payload: { error: "fan-out failed" },
     });
-    await expect(runJanitorCli(["i-12345"])).rejects.toThrow("process.exit(2)");
+    await expect(runJanitorCli(["i-12345"])).rejects.toMatchObject({ name: "CliExit", code: 2 });
     expect(stderrChunks.join("")).toContain("fan-out failed");
   });
 
@@ -147,7 +147,7 @@ describe("runJanitorCli — dispatcher", () => {
       event: "janitor.briefReady",
       payload: { brief: 42, findings: {} },
     });
-    await expect(runJanitorCli(["i-12345"])).rejects.toThrow("process.exit(2)");
+    await expect(runJanitorCli(["i-12345"])).rejects.toMatchObject({ name: "CliExit", code: 2 });
     expect(stderrChunks.join("")).toContain("Malformed");
   });
 });

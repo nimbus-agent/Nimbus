@@ -74,7 +74,10 @@ describe("runPreflightCli — run mode", () => {
 
   it("exits 1 when the gateway is not running", async () => {
     setFixture({});
-    await expect(runPreflightCli(["HEAD", "--namespace", "n"])).rejects.toThrow("process.exit(1)");
+    await expect(runPreflightCli(["HEAD", "--namespace", "n"])).rejects.toMatchObject({
+      name: "CliExit",
+      code: 1,
+    });
     expect(stderrChunks.join("")).toContain("Gateway is not running");
   });
 
@@ -160,19 +163,28 @@ describe("runPreflightCli — run mode", () => {
       event: "preflight.briefError",
       payload: { error: "downstream unreachable" },
     });
-    await expect(runPreflightCli(["HEAD", "--namespace", "n"])).rejects.toThrow("process.exit(2)");
+    await expect(runPreflightCli(["HEAD", "--namespace", "n"])).rejects.toMatchObject({
+      name: "CliExit",
+      code: 2,
+    });
     expect(stderrChunks.join("")).toContain("downstream unreachable");
   });
 
   it("exits 2 with a generic message when briefError payload is not an object", async () => {
     preflightFixture({ event: "preflight.briefError", payload: 42 });
-    await expect(runPreflightCli(["HEAD", "--namespace", "n"])).rejects.toThrow("process.exit(2)");
+    await expect(runPreflightCli(["HEAD", "--namespace", "n"])).rejects.toMatchObject({
+      name: "CliExit",
+      code: 2,
+    });
     expect(stderrChunks.join("")).toContain("Agent failed");
   });
 
   it("exits 2 when the briefReady payload is not an object", async () => {
     preflightFixture({ event: "preflight.briefReady", payload: 42 });
-    await expect(runPreflightCli(["HEAD", "--namespace", "n"])).rejects.toThrow("process.exit(2)");
+    await expect(runPreflightCli(["HEAD", "--namespace", "n"])).rejects.toMatchObject({
+      name: "CliExit",
+      code: 2,
+    });
     expect(stderrChunks.join("")).toContain("Malformed");
   });
 });

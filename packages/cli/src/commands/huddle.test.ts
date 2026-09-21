@@ -100,7 +100,7 @@ describe("runHuddleCli — dispatcher", () => {
 
   it("exits 1 when gateway is not running", async () => {
     setFixture({});
-    await expect(runHuddleCli([])).rejects.toThrow("process.exit(1)");
+    await expect(runHuddleCli([])).rejects.toMatchObject({ name: "CliExit", code: 1 });
     expect(stderrChunks.join("")).toContain("Gateway is not running");
   });
 
@@ -186,7 +186,7 @@ describe("runHuddleCli — dispatcher", () => {
         },
       },
     });
-    await expect(runHuddleCli([])).rejects.toThrow("process.exit(2)");
+    await expect(runHuddleCli([])).rejects.toMatchObject({ name: "CliExit", code: 2 });
     expect(stderrChunks.join("")).toContain("peers not found");
   });
 
@@ -277,7 +277,7 @@ describe("runHuddleCli — dispatcher", () => {
         },
       },
     });
-    await expect(runHuddleCli([])).rejects.toThrow("process.exit(2)");
+    await expect(runHuddleCli([])).rejects.toMatchObject({ name: "CliExit", code: 2 });
     expect(stderrChunks.join("")).toContain("Malformed");
   });
 });

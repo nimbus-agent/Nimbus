@@ -6,7 +6,9 @@ import { createStreamCapture } from "../../test/helpers/stream-capture.ts";
 const mod = await import("./agent-cli-dispatcher.ts");
 const { runAgentCli } = mod;
 
-const { stderrChunks, install, restore } = createStreamCapture({ captureExit: true });
+// `runAgentCli` now throws `CliExit` on failure instead of calling `process.exit`, so the
+// stream capture no longer needs to trap it.
+const { stderrChunks, install, restore } = createStreamCapture();
 
 afterAll(() => {
   restore();
@@ -36,7 +38,7 @@ describe("runAgentCli", () => {
         guard: isAnyBrief,
         json: false,
       }),
-    ).rejects.toThrow("process.exit(1)");
+    ).rejects.toMatchObject({ name: "CliExit", code: 1 });
     expect(stderrChunks.join("")).toContain("Gateway is not running");
   });
 
@@ -61,7 +63,7 @@ describe("runAgentCli", () => {
         guard: isAnyBrief,
         json: false,
       }),
-    ).rejects.toThrow("process.exit(2)");
+    ).rejects.toMatchObject({ name: "CliExit", code: 2 });
     expect(stderrChunks.join("")).toContain("plain string failure");
   });
 
@@ -90,7 +92,7 @@ describe("runAgentCli", () => {
         guard: isAnyBrief,
         json: false,
       }),
-    ).rejects.toThrow("process.exit(2)");
+    ).rejects.toMatchObject({ name: "CliExit", code: 2 });
     expect(stderrChunks.join("")).toContain("stale socket");
     expect(disconnected).toBe(true);
   });

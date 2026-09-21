@@ -95,7 +95,7 @@ describe("runCatchupCli — dispatcher", () => {
 
   it("exits 1 when gateway is not running", async () => {
     setFixture({});
-    await expect(runCatchupCli([])).rejects.toThrow("process.exit(1)");
+    await expect(runCatchupCli([])).rejects.toMatchObject({ name: "CliExit", code: 1 });
     expect(stderrChunks.join("")).toContain("Gateway is not running");
   });
 
@@ -184,7 +184,7 @@ describe("runCatchupCli — dispatcher", () => {
         },
       },
     });
-    await expect(runCatchupCli([])).rejects.toThrow(/process\.exit/);
+    await expect(runCatchupCli([])).rejects.toMatchObject({ name: "CliExit", code: 2 });
     expect(stderrChunks.join("")).toContain("No data indexed yet");
   });
 
@@ -240,7 +240,7 @@ describe("runCatchupCli — dispatcher", () => {
         },
       },
     });
-    await expect(runCatchupCli([])).rejects.toThrow("process.exit(2)");
+    await expect(runCatchupCli([])).rejects.toMatchObject({ name: "CliExit", code: 2 });
     expect(stderrChunks.join("")).toContain("llm down");
   });
 
@@ -268,7 +268,7 @@ describe("runCatchupCli — dispatcher", () => {
         },
       },
     });
-    await expect(runCatchupCli([])).rejects.toThrow("process.exit(2)");
+    await expect(runCatchupCli([])).rejects.toMatchObject({ name: "CliExit", code: 2 });
     expect(stderrChunks.join("")).toContain("Malformed");
   });
 });

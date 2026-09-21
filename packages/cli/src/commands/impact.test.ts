@@ -85,7 +85,7 @@ describe("runImpactCli — dispatcher", () => {
 
   it("exits 1 when gateway is not running", async () => {
     setFixture({});
-    await expect(runImpactCli(["src/x.ts"])).rejects.toThrow("process.exit(1)");
+    await expect(runImpactCli(["src/x.ts"])).rejects.toMatchObject({ name: "CliExit", code: 1 });
     expect(stderrChunks.join("")).toContain("Gateway is not running");
   });
 
@@ -175,7 +175,7 @@ describe("runImpactCli — dispatcher", () => {
         },
       },
     });
-    await expect(runImpactCli(["src/x.ts"])).rejects.toThrow(/process\.exit/);
+    await expect(runImpactCli(["src/x.ts"])).rejects.toMatchObject({ name: "CliExit", code: 2 });
     expect(stderrChunks.join("")).toContain("No data indexed yet");
   });
 
@@ -200,7 +200,7 @@ describe("runImpactCli — dispatcher", () => {
         },
       },
     });
-    await expect(runImpactCli(["src/x.ts"])).rejects.toThrow("process.exit(2)");
+    await expect(runImpactCli(["src/x.ts"])).rejects.toMatchObject({ name: "CliExit", code: 2 });
     expect(stderrChunks.join("")).toContain("graph traversal failed");
   });
 
@@ -263,7 +263,7 @@ describe("runImpactCli — dispatcher", () => {
         },
       },
     });
-    await expect(runImpactCli(["src/x.ts"])).rejects.toThrow("process.exit(2)");
+    await expect(runImpactCli(["src/x.ts"])).rejects.toMatchObject({ name: "CliExit", code: 2 });
     expect(stderrChunks.join("")).toContain("Malformed");
   });
 });
