@@ -2429,7 +2429,7 @@ const streamReq: JSONRPCRequest = {
 
 // --- `nimbus wow` — a guided tour of the real local index (2026-09-21) ---
 // tour.plan(params: { steps?: 1..6 }) -> TourPlan { steps, more, skipped, t0 }
-//   Six deterministic per-kind selectors (why/owners/oncall/standup/decisions/glossary), each
+//   Six deterministic per-kind selectors (oncall/why/owners/standup/decisions/glossary), each
 //   asking "is there something in THIS index worth showing, and with what arguments?" against
 //   whichever index the gateway holds — `wow` has no seed path of its own: its own indexed data
 //   on a real install, or the synthetic Acme org `nimbus demo` seeds under the global `--demo`
