@@ -480,7 +480,22 @@ The B1 security audit completed in Phase 4. Three more initiatives are active or
 
 - [x] **B2 — Perf bench (Phase 1)** — S8/S9/S10 drivers implemented; reference-machine baseline established; wired into CI via `_perf.yml`.
 - [x] **B3 — Structure audit (Phases 1 & 2)** — Phase 1 tooling (`check-nimbus-invariants.ts`, `count-any-usage.ts`) implemented; Phase 2 ranking and findings documented in `docs/structure-audit/baseline.md`.
-- [ ] **B4 — Bug-hunt audit** — ranked by user-facing impact / engineering cost.
+- [ ] **B4 — Bug-hunt audit** — ranked by user-facing impact / engineering cost. **2026-09-20: the
+  audit ran and a report-only census landed; the gate is still pending.** A table-aware static
+  census (`bun run audit:lane-census`, `scripts/structure-audit/check-index-lane-coverage.ts`)
+  diffs what production code reads from `item` (type literals, `json_extract` metadata keys,
+  JS-side `meta["k"]` reads) against what every connector writes, and reproduces all four bugs the
+  hand audit found: an unmatched `commit` read (`agents/expert.ts:386`; the real writer emits
+  `git_commit`, and `graph-populator.ts`'s `commit` write lands in `graph_entity`, a different
+  table), an unmatched `workflow_name` read (`preflight/preflight.ts:166`; writers emit
+  `workflowName`), a partially-covered `branch` read (`preflight.ts:168`/`:175`; only the
+  `circleci` `ci_run` writer emits it, `github_actions` writes `headBranch`), and an unmatched
+  `opened_at_ms` read (`agents/premortem.ts:199`/`:205` only — the same key IS matched at
+  `metrics/dora.ts`'s incident-scoped read, which is what proves the census scopes per-literal
+  type rather than matching on key name alone). It always exits `0` and only writes
+  `docs/structure-audit/index-lane-census.json` — **this closes the audit half of the row, not the
+  row**: turning the census into an enforced CI gate over the found gaps is deferred follow-up
+  work, not yet scheduled.
 - [x] **B5 (high-priority) — WAL concurrency hardening** — **DONE (2026-07-21, #426).** Finding confirmed first on a live 21 MB gateway DB: `PRAGMA journal_mode` returned `delete`. `applyWritablePragmas()` (`db/writable-pragmas.ts`) now sets `journal_mode = WAL` + `busy_timeout` at all three production writable open sites (main writer, embedding worker, `I13` HTTP write handle); `journal_mode` is a file-level property, so read-only handles inherit WAL without setting it. The shutdown `wal_checkpoint(TRUNCATE)` is no longer a no-op. Regression guard ships with it: runtime tests assert `wal` is actually adopted on a file-backed handle, plus a per-site assertion that each production open site still calls the helper (the first version of that guard matched the leftover import and had to be tightened to the call). Backups were checked and are WAL-safe — they use `VACUUM INTO`, not a file copy.
 - [ ] **Third-party package upgrades** — npm + cargo crate upgrades **deferred from the toolchain refresh** (the refresh PR bumped runner OSes, Node, and Rust MSRV but left dependency upgrades for a focused follow-up).
 
