@@ -134,6 +134,22 @@ describe("why", () => {
       },
     });
   });
+
+  test("checks EVERY configured root, not just the first", async () => {
+    // Nothing is seeded under `rootA` at all — an implementation that read only `fsRoots[0]`
+    // and never looped past it would report a skip here instead of finding the symbol below.
+    const rootA = join("/", "repo-a");
+    const rootB = join("/", "repo-b");
+    seedSymbol(db, { repoRoot: rootB, file: "src/only.ts", name: "onlyHere", line: 7 });
+    const out = await TOUR_SELECTORS.why(ctx({ fsRoots: [rootA, rootB] }));
+    expect(out).toEqual({
+      ok: {
+        title: "Why this code exists",
+        args: [join(rootB, "src/only.ts"), "--line", "7"],
+        reason: "symbol `onlyHere`",
+      },
+    });
+  });
 });
 
 describe("owners", () => {
@@ -201,6 +217,48 @@ describe("owners", () => {
         reason: "1 files under ownership",
       },
     });
+  });
+
+  test("falls back to the root itself when there is no non-root directory", async () => {
+    // Only the root's own directory node exists — `nonRoot` is therefore empty and `pool` must
+    // fall back to `dirs` (i.e. the root), per the brief's "if there is no non-root directory,
+    // the root itself." A file directly under the root IS "under" it via the same `relative()`
+    // fence every other directory is ranked with.
+    const root = join("/", "repo");
+    dirNode(db, root, "");
+    fileNode(db, root, "top-level.ts");
+
+    const out = await TOUR_SELECTORS.owners(ctx({ ownershipRoots: [root] }));
+    expect(out).toEqual({
+      ok: { title: "Who owns this code", args: [root], reason: "1 files under ownership" },
+    });
+  });
+
+  test("skips when directories are indexed but no files are, even with roots configured", async () => {
+    // Distinct from the "no roots configured" skip above: here `ownershipRoots` is non-empty and
+    // `enumeratePaths` returns real directory subjects, so `dirs.length === 0` is FALSE and the
+    // skip is reached only through the `files.length === 0` half of the `||` — a branch neither
+    // of the other two skip tests exercises, since both leave `dirs` empty too and short-circuit
+    // before ever evaluating `files.length`.
+    const root = join("/", "repo");
+    dirNode(db, root, "src");
+
+    const out = await TOUR_SELECTORS.owners(ctx({ ownershipRoots: [root] }));
+    expect(out).toEqual({ skip: "no ownership pass data indexed" });
+  });
+
+  test("skips when no file lies under any non-root directory", async () => {
+    // `dirs` and `files` are both non-empty, but the only file sits directly under the root,
+    // which is EXCLUDED from `pool` because a non-root candidate (`empty-dir`) exists. The sole
+    // pool candidate therefore ranks at n=0, and `best.n === 0` must skip rather than "win" with
+    // zero files under ownership.
+    const root = join("/", "repo");
+    dirNode(db, root, "");
+    dirNode(db, root, "empty-dir");
+    fileNode(db, root, "top-level.ts");
+
+    const out = await TOUR_SELECTORS.owners(ctx({ ownershipRoots: [root] }));
+    expect(out).toEqual({ skip: "no ownership pass data indexed" });
   });
 });
 
@@ -275,15 +333,35 @@ describe("oncall", () => {
 
 describe("standup", () => {
   /** Mirrors `standup.test.ts`'s own `insertItem` — same rationale as `oncall`'s above: that file
-   * hand-inserts directly into `item` rather than through a connector-sync fixture. */
+   * hand-inserts directly into `item` rather than through a connector-sync fixture. Keeps the
+   * `meta` parameter the original carries (needed to seed `selectMergedPrs`'s `$.merged_at` /
+   * `selectTicketsOpened`'s `$.created_at_ms` event fields), even though the one populated-lane
+   * test below only needs a `message` row and passes none. */
   function insertItem(
     d: Database,
-    row: { id: string; type: string; service?: string; authorId: string; modifiedAt: number },
+    row: {
+      id: string;
+      type: string;
+      service?: string;
+      authorId: string;
+      modifiedAt: number;
+      meta?: unknown;
+    },
   ): void {
     d.run(
       `INSERT INTO item (id, service, type, external_id, title, url, modified_at, author_id, metadata, synced_at)
-       VALUES (?, ?, ?, ?, ?, NULL, ?, ?, NULL, ?)`,
-      [row.id, row.service ?? "slack", row.type, row.id, row.id, row.modifiedAt, row.authorId, 0],
+       VALUES (?, ?, ?, ?, ?, NULL, ?, ?, ?, ?)`,
+      [
+        row.id,
+        row.service ?? "slack",
+        row.type,
+        row.id,
+        row.id,
+        row.modifiedAt,
+        row.authorId,
+        row.meta === undefined ? null : JSON.stringify(row.meta),
+        0,
+      ],
     );
   }
 
