@@ -72,3 +72,4 @@ export { runVault } from "./vault.ts";
 export { runWatch } from "./watch.ts";
 export { runWhyCli } from "./why.ts";
 export { runWorkflowCli } from "./workflow.ts";
+export { runWow } from "./wow.ts";

@@ -12,7 +12,7 @@ export interface ProveCompleteness {
   readonly indeterminate: boolean;
 }
 
-type ProveResult = {
+export type ProveResult = {
   rows: EgressRow[];
   /** Total rows in the window. `rows` is a page of at most 1000 of them. */
   rowsTotal?: number;

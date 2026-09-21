@@ -75,6 +75,7 @@ export const COMMAND_NAMES = [
   "watch",
   "why",
   "workflow",
+  "wow",
 ] as const;
 
 export type CommandName = (typeof COMMAND_NAMES)[number];
