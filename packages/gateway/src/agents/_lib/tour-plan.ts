@@ -33,9 +33,26 @@ const SUBCOMMAND: Readonly<Record<TourStepKind, string>> = {
  */
 const BARE_SAFE_RE = /^[A-Za-z0-9._\-/\\:=+@]+$/;
 
+/**
+ * The QUOTED form escapes `\` before `"` — order matters: escaping `"` first would double the
+ * backslashes that step had just added. Escaping only the quote (the earlier bug) left an arg
+ * that ends in a backslash rendering as `"foo\"`, whose closing quote a POSIX shell reads as
+ * ESCAPED rather than closing the string, and `a\"b` round-tripped to the wrong value.
+ *
+ * This is correct for a POSIX shell's double-quote rules specifically. Bounds, stated rather than
+ * hidden: inside double quotes a POSIX shell still expands `$(...)` and backticks, so this is
+ * display-safe against metacharacters, not against command substitution in a value an owner
+ * already controls; `cmd.exe`/PowerShell do not treat `\` as an escape character at all, so a
+ * quoted Windows path shows doubled separators there (`C:\\my dir\\x.ts`) — cosmetic, since
+ * Windows path resolution tolerates a doubled `\` except as a leading UNC `\\server` prefix, which
+ * a doubled ordinary path never produces. The bare-safe path above is untouched either way: an
+ * ordinary Windows path with no spaces (`BARE_SAFE_RE`, which already includes `\`) still prints
+ * exactly as typed. This line is a DISPLAY string only — what actually runs is `args`, handed to
+ * the runner as an argv array and never re-parsed through a shell.
+ */
 function quoteForDisplay(arg: string): string {
   if (BARE_SAFE_RE.test(arg)) return arg;
-  return `"${arg.replace(/"/g, '\\"')}"`;
+  return `"${arg.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
 }
 
 /** `command` and `args` come from ONE value here, so the printed line and the executed step cannot drift. */
