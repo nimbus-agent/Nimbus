@@ -77,6 +77,7 @@ import {
   runWhyCli,
   runWorkflowCli,
   runWorkflowFromFile,
+  runWow,
 } from "./commands/index.ts";
 import { classifyTopLevelError } from "./lib/cli-exit.ts";
 import { createCliFileLogger } from "./lib/cli-logger.ts";
@@ -170,6 +171,7 @@ const COMMAND_HANDLERS: Readonly<Record<string, CommandHandler>> = {
   clip: runClip,
   computer: runComputer,
   tool: runTool,
+  wow: runWow,
 };
 
 const HELP_ALIASES = new Set(["help", "--help", "-h"]);

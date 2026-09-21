@@ -63,6 +63,7 @@ import {
   tryDispatchIndexRegraphRpc,
   tryDispatchLanRpc,
   tryDispatchLlmRpc,
+  tryDispatchLocalityRpc,
   tryDispatchMetricsRpc,
   tryDispatchPeopleRpc,
   tryDispatchPhase4Rpc,
@@ -73,6 +74,7 @@ import {
   tryDispatchReindexRpc,
   tryDispatchSessionRpc,
   tryDispatchTeamVaultRpc,
+  tryDispatchTourRpc,
   tryDispatchTribalRpc,
   tryDispatchUpdaterRpc,
   tryDispatchVoiceRpc,
@@ -767,6 +769,65 @@ describe("tryDispatchIndexDemoSymbolRpc", () => {
   });
 });
 
+describe("tryDispatchTourRpc", () => {
+  test("skips other methods", async () => {
+    const { ctx } = makeCtx();
+    expect(await tryDispatchTourRpc(ctx, "engine.ask", {})).toBe(phase4RpcSkipped);
+  });
+  test("throws when localIndex missing", async () => {
+    const { ctx } = makeCtx();
+    await expect(tryDispatchTourRpc(ctx, "tour.plan", {})).rejects.toThrow(/requires LocalIndex/);
+  });
+  test("delegates tour.plan with valid wiring", async () => {
+    const db = trackedDb();
+    const localIndex = new LocalIndex(db);
+    const { ctx } = makeCtx({ localIndex });
+    const out = await tryDispatchTourRpc(ctx, "tour.plan", {});
+    expect(out).toMatchObject({ steps: [], skipped: expect.any(Array) });
+  });
+  test("remaps a param error to the JSON-RPC invalid-params code", async () => {
+    const db = trackedDb();
+    const localIndex = new LocalIndex(db);
+    const { ctx } = makeCtx({ localIndex });
+    await expect(tryDispatchTourRpc(ctx, "tour.plan", { steps: 0 })).rejects.toThrow(
+      /steps must be an integer in 1\.\.6/,
+    );
+  });
+});
+
+describe("tryDispatchLocalityRpc", () => {
+  test("skips other methods", async () => {
+    const { ctx } = makeCtx();
+    expect(await tryDispatchLocalityRpc(ctx, "engine.ask", {})).toBe(phase4RpcSkipped);
+  });
+  test("throws when localIndex missing", async () => {
+    const { ctx } = makeCtx();
+    await expect(tryDispatchLocalityRpc(ctx, "locality.report", {})).rejects.toThrow(
+      /requires LocalIndex/,
+    );
+  });
+  test("throws when dbPath was never wired, rather than fabricating a size", async () => {
+    const db = trackedDb();
+    const localIndex = new LocalIndex(db);
+    const { ctx } = makeCtx({ localIndex });
+    await expect(tryDispatchLocalityRpc(ctx, "locality.report", {})).rejects.toThrow(
+      /requires a configured database path/,
+    );
+  });
+  test("delegates locality.report with valid wiring", async () => {
+    const db = trackedDb();
+    const localIndex = new LocalIndex(db);
+    const { ctx } = makeCtx({ localIndex, dbPath: ":memory:" });
+    const out = await tryDispatchLocalityRpc(ctx, "locality.report", {});
+    expect(out).toMatchObject({
+      listeners: expect.any(Array),
+      inventory: expect.any(Array),
+      db: { path: ":memory:", bytes: 0 },
+      t1: expect.any(Number),
+    });
+  });
+});
+
 describe("tryDispatchProfileRpc", () => {
   test("skips non-profile methods", async () => {
     const { ctx } = makeCtx();
@@ -1182,6 +1243,29 @@ describe("tryDispatchPhase4Rpc", () => {
       lastItemId: null,
       skippedByReason: expect.any(Object),
     });
+  });
+  test("tour.plan hit through chain (returns a TourPlan, not a skip)", async () => {
+    const db = trackedDb();
+    const localIndex = new LocalIndex(db);
+    const { ctx } = makeCtx({ localIndex });
+    const out = await tryDispatchPhase4Rpc(ctx, "tour.plan", {}, "c1");
+    // The regression this guards against: deleting the PHASE4_PLATFORM_DISPATCHERS entry (or the
+    // outer routing match on the served handler map) makes this come back `phase4RpcSkipped`
+    // instead of a real TourPlan — a unit test calling `dispatchTourRpc` directly cannot catch
+    // that, because it bypasses this outer layer entirely.
+    expect(out).not.toBe(phase4RpcSkipped);
+    expect(out).toMatchObject({ steps: [], skipped: expect.any(Array) });
+  });
+  test("locality.report hit through chain (returns a LocalityReport, not a skip)", async () => {
+    const db = trackedDb();
+    const localIndex = new LocalIndex(db);
+    const { ctx } = makeCtx({ localIndex, dbPath: ":memory:" });
+    const out = await tryDispatchPhase4Rpc(ctx, "locality.report", {}, "c1");
+    // Same regression this guards against as the tour.plan case above: a handler-only unit test
+    // (dispatchLocalityRpc directly) cannot catch the array entry or the outer routing match
+    // going missing — it would still come back `phase4RpcSkipped` over a real socket.
+    expect(out).not.toBe(phase4RpcSkipped);
+    expect(out).toMatchObject({ db: { path: ":memory:", bytes: 0 } });
   });
   test("media.understand derives its egress sourceId from the server-derived clientId/kind, not a hand-built one", async () => {
     // Same shape as `tryDispatchAgentsRpc`'s equivalent test above: `tryDispatchMediaRpc` has no

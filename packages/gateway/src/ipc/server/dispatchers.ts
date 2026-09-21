@@ -18,6 +18,7 @@ import { appendPreflightAudit, defaultRunCommand } from "../../federation/prefli
 import { writeScimBearer } from "../../identity/identity-vault.ts";
 import { isOperatorValid } from "../../identity/verifier.ts";
 import { CURRENT_SCHEMA_VERSION } from "../../index/local-index.ts";
+import { processListeners } from "../../locality/listener-registry.ts";
 import {
   type BuildMediaPassDepsInput,
   buildMediaPassDeps,
@@ -60,6 +61,7 @@ import { dispatchIndexReembedRpc, IndexReembedRpcError } from "../index-reembed-
 import { dispatchIndexRegraphRpc, IndexRegraphRpcError } from "../index-regraph-rpc.ts";
 import { generatePairingCode } from "../lan-pairing.ts";
 import { dispatchLlmRpc, LlmRpcError } from "../llm-rpc.ts";
+import { dispatchLocalityRpc, LocalityRpcError } from "../locality-rpc.ts";
 import { dispatchMediaRpc } from "../media-rpc.ts";
 import { dispatchMetricsRpc, MetricsRpcError } from "../metrics-rpc.ts";
 import { dispatchOwnershipRpc } from "../ownership-rpc.ts";
@@ -75,6 +77,7 @@ import { dispatchSessionRpc, SessionRpcError } from "../session-rpc.ts";
 import { dispatchShareRpc, ShareRpcError } from "../share-rpc.ts";
 import { dispatchTeamVaultRpc, TeamVaultRpcError } from "../teamvault-rpc.ts";
 import { dispatchToolgenRpc, ToolgenRpcError } from "../toolgen-rpc.ts";
+import { dispatchTourRpc, TourRpcError } from "../tour-rpc.ts";
 import { dispatchTribalRpc } from "../tribal-rpc.ts";
 import { dispatchUpdaterRpc, UpdaterRpcError } from "../updater-rpc.ts";
 import { dispatchVoiceRpc, VoiceRpcError } from "../voice-rpc.ts";
@@ -894,6 +897,73 @@ export async function tryDispatchIndexDemoSymbolRpc(
 }
 
 /**
+ * `tour.plan` — `nimbus wow`'s guided tour of the real local index. LAN-forbidden (I5) and absent
+ * from the Tauri allowlist (I7): it is a CLI onboarding affordance, matching `index.demoSymbol`.
+ */
+export async function tryDispatchTourRpc(
+  ctx: ServerCtx,
+  method: string,
+  params: unknown,
+): Promise<unknown> {
+  if (method !== "tour.plan") {
+    return phase4RpcSkipped;
+  }
+  if (ctx.options.localIndex === undefined) {
+    throw new RpcMethodError(-32603, "tour.plan requires LocalIndex");
+  }
+  try {
+    const out = await dispatchTourRpc(method, params, {
+      db: ctx.options.localIndex.getDatabase(),
+      configDir: ctx.options.configDir,
+      demo: ctx.options.demo === true,
+      nowMs: () => Date.now(),
+    });
+    if (out.kind === "hit") return out.value;
+  } catch (e) {
+    if (e instanceof TourRpcError) {
+      throw new RpcMethodError(e.rpcCode, e.message);
+    }
+    throw e;
+  }
+  return phase4RpcSkipped;
+}
+
+/**
+ * `locality.report` — `nimbus wow`'s locality panel: which listeners are open right now, a
+ * per-service inventory of the local index, and the index's real on-disk size. CLI-only: LAN-
+ * forbidden (I5, `ipc/lan-rpc.ts`) and absent from the Tauri allowlist (I7), matching `tour.plan`.
+ * The only site that touches `processListeners`/`Date.now()` — `buildLocalityReport` itself stays
+ * pure over injected deps.
+ */
+export async function tryDispatchLocalityRpc(
+  ctx: ServerCtx,
+  method: string,
+  params: unknown,
+): Promise<unknown> {
+  if (method !== "locality.report") {
+    return phase4RpcSkipped;
+  }
+  if (ctx.options.localIndex === undefined) {
+    throw new RpcMethodError(-32603, "locality.report requires LocalIndex");
+  }
+  try {
+    const out = await dispatchLocalityRpc(method, params, {
+      db: ctx.options.localIndex.getDatabase(),
+      dbPath: ctx.options.dbPath,
+      registry: processListeners,
+      nowMs: Date.now(),
+    });
+    if (out.kind === "hit") return out.value;
+  } catch (e) {
+    if (e instanceof LocalityRpcError) {
+      throw new RpcMethodError(e.rpcCode, e.message);
+    }
+    throw e;
+  }
+  return phase4RpcSkipped;
+}
+
+/**
  * `demo.*` — I41 clause (5). Claimed ONLY by a demo-rooted gateway: on a normal gateway the
  * namespace is left unclaimed and the request falls through to `Method not found`, so the seeding
  * code path is not reachable at all rather than refused at runtime.
@@ -1582,7 +1652,7 @@ async function dispatchPhase4TeamMetricsGroup(
   return tryDispatchDataRpc(ctx, method, params, clientId);
 }
 
-/** Third group: lan → profile → index-reembed → index-rebody → index-regraph → index-demoSymbol → demo → policy → chatops → tribal → share → egress → glossary → decisions → premortem → ownership → clip → admin. */
+/** Third group: lan → profile → index-reembed → index-rebody → index-regraph → index-demoSymbol → tour → locality → demo → policy → chatops → tribal → share → egress → glossary → decisions → premortem → ownership → clip → admin. */
 /**
  * The platform-group dispatchers, in probe order.
  *
@@ -1608,6 +1678,8 @@ const PHASE4_PLATFORM_DISPATCHERS: ReadonlyArray<
   tryDispatchIndexRebodyRpc,
   tryDispatchIndexRegraphRpc,
   tryDispatchIndexDemoSymbolRpc,
+  tryDispatchTourRpc,
+  tryDispatchLocalityRpc,
   tryDispatchDemoRpc,
   tryDispatchFilesystemRpc,
   tryDispatchPolicyRpc,

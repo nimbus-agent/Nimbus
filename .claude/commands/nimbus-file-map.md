@@ -287,7 +287,7 @@ Everything else follows the standard triple. These break from it in a way worth 
 |---|---|
 | `scripts/structure-audit/lib.ts` | Shared B3 helpers — `REPO_ROOT`, `stripComments`, `countAnyInSource`, `iterateSourceFiles` |
 | `scripts/structure-audit/check-doc-references.ts` | Doc-ref drift audit (broken `[text](path)` and backtick path refs) over CLAUDE/GEMINI + all of `docs/` + the skills; `DOCS_EXCLUDED_PREFIXES` names the few docs that are out and why |
-| `scripts/structure-audit/check-nimbus-invariants.ts` | Static-time complement to `security-invariants.test.ts` (I1 + vault-key allowlist + static rules D10–D30 — derive the range from the file, it has read low three times) |
+| `scripts/structure-audit/check-nimbus-invariants.ts` | Static-time complement to `security-invariants.test.ts` (I1 + vault-key allowlist + static rules D10–D31 — derive the range from the file, it has read low three times) |
 | `scripts/structure-audit/check-openapi-drift.ts` | OpenAPI drift detector — `v1.yaml` vs `HTTP_ROUTES` |
 | `docs/structure-audit/baseline.md` | Phase 1 baseline reference; per-dimension state + Phase 2 thresholds |
 
@@ -346,6 +346,15 @@ Everything else follows the standard triple. These break from it in a way worth 
 | `packages/gateway/src/fleet/fleet-digest.ts` | The change digest: pair selection, `compareSummaries`, and the Markdown renderer (`mdSafe` neutralises pipes/newlines from indexed titles) |
 | `packages/gateway/src/fleet/fleet-digest-extractors.ts` | The ELEVEN per-agent extractors + `FLEET_DIGEST_EXTRACTORS`, total over `EligibleAgentMethod` — a twelfth eligible agent is a compile error until its extractor exists |
 | `packages/gateway/src/ipc/agents-rpc.ts` `FLEET_ELIGIBILITY` | TOTAL over the served `agents.*` methods — 11 eligible; `negotiate` is `deferred`, NOT eligible |
+| `packages/gateway/src/agents/_lib/tour-plan.ts` | `buildTourPlan` — orders the six selectors by `TOUR_PRIORITY`, slices to `steps`, renders each `command` from the SAME kind+args it runs (never drifts) |
+| `packages/gateway/src/agents/_lib/tour-selectors.ts` | `TOUR_SELECTORS` — one per `TourStepKind`, each asking "is there something in THIS index worth showing?"; lives under `agents/_lib/` (not `agents/wow.ts`) because `D22(d)` forbids importing an `agents/<name>.ts` emitter or sibling query module from outside `ipc/agents-rpc.ts` |
+| `packages/gateway/src/agents/_lib/tour-types.ts` | `TourPlan`/`TourStep`/`TourSkip` wire shapes + `TOUR_STEPS_MIN`/`MAX`/`DEFAULT` (1/6/3) |
+| `packages/gateway/src/ipc/tour-rpc.ts` | `tour.plan` — CLI-only, `FORBIDDEN_OVER_LAN` (`I5`), absent from the Tauri allowlist (`I7`) |
+| `packages/gateway/src/locality/listener-registry.ts` | `registerListener`/`processListeners` — the live registry every real listen site probes into; static rule `D31` requires each to name a `registerListener(` call; `mdns` registers by hand (library-opened socket, invisible to the text scan) |
+| `packages/gateway/src/locality/locality-report.ts` | `buildLocalityReport` — pure over injected deps (`db`/`dbPath`/`registry`/`nowMs`), never calls `Date.now()` itself; sums the main SQLite file + `-wal`/`-shm` so a busy WAL-mode database is never under-reported |
+| `packages/gateway/src/ipc/locality-rpc.ts` | `locality.report` — CLI-only, `FORBIDDEN_OVER_LAN` (`I5`), absent from the Tauri allowlist (`I7`) |
+| `packages/cli/src/commands/wow.ts` | `nimbus wow [--steps 1..6] [--no-proof] [--json]` — refuses (never clamps) `--steps` outside range; the proof window is `{since: plan.t0, until: locality.t1}`, both gateway-clock values |
+| `packages/cli/src/lib/{run-tour,locality-panel}.ts` | `runTour` (per-step header + result, one `CliExit` swallowed per step) / `renderLocalityPanel` (the closing honesty panel, structural mirrors of the gateway wire shapes since the CLI cannot import gateway source) |
 
 ## Top-level docs
 

@@ -18,6 +18,7 @@ import {
   checkFleetClientKindConfinement,
   checkForwardShareConfinement,
   checkGeneratedManifestConfinement,
+  checkListenerRegistryConfinement,
   checkMediaGrantStoreConfinement,
   checkRemoteVlmConfinement,
   checkRunConfinedConfinement,
@@ -2479,5 +2480,183 @@ describe("D30-sqlite-runtime-init — a file that can open a database reaches th
         f.contents.includes("ensureFullSqlite"),
     );
     expect(openers.length).toBeGreaterThanOrEqual(10);
+  });
+});
+
+describe("D31-listener-registry-registration — a listen site registers with the live registry", () => {
+  const file = (relPath: string, contents: string): FileEntry => ({ relPath, contents });
+  const ROGUE = "packages/gateway/src/ipc/rogue-listener.ts";
+  const flagged = (files: readonly FileEntry[]): boolean =>
+    checkListenerRegistryConfinement(files).length > 0;
+
+  // ---- positive: what CANNOT pass -----------------------------------------------------------
+
+  test("flags a Bun.listen<State>({ call with no registerListener — the generic-argument shape a bare Bun\\.listen\\( scan would miss", () => {
+    expect(
+      flagged([
+        file(
+          ROGUE,
+          'import type { State } from "./options.ts";\n' +
+            "export function open() {\n  return Bun.listen<State>({ port: 0, socket: {} });\n}",
+        ),
+      ]),
+    ).toBe(true);
+  });
+
+  test("flags a Bun.serve( call with no registerListener", () => {
+    expect(
+      flagged([file(ROGUE, "export function open() {\n  return Bun.serve({ port: 0 });\n}")]),
+    ).toBe(true);
+  });
+
+  test("flags a file that only NAMES unregisterListener (never CALLS registerListener) and opens a real Bun.serve( socket", () => {
+    // Regression: an earlier version matched the bare SUBSTRING "registerListener", and
+    // "unregisterListener" contains that substring — so a file that merely reads back an
+    // earlier unregister handle (never calling registerListener itself) passed clean.
+    expect(
+      flagged([
+        file(
+          ROGUE,
+          "export function stop(h: { unregisterListener: () => void }) {\n" +
+            "  const off = h.unregisterListener;\n" +
+            "  off();\n" +
+            "  return Bun.serve({ port: 0 });\n}",
+        ),
+      ]),
+    ).toBe(true);
+  });
+
+  test("flags a net.createServer( call with no registerListener", () => {
+    expect(
+      flagged([
+        file(
+          ROGUE,
+          'import net from "node:net";\n' +
+            "export function open() {\n  return net.createServer(() => {});\n}",
+        ),
+      ]),
+    ).toBe(true);
+  });
+
+  test("a typeof Bun.listen<…> type query PLUS a real Bun.listen<State>({ call, no registerListener, is still a violation", () => {
+    // Ruling: stripping the type query must not hide a real call in the SAME file.
+    expect(
+      flagged([
+        file(
+          ROGUE,
+          "let bunListener: ReturnType<typeof Bun.listen<State>> | undefined;\n" +
+            "export function open() {\n  bunListener = Bun.listen<State>({ port: 0, socket: {} });\n  return bunListener;\n}",
+        ),
+      ]),
+    ).toBe(true);
+  });
+
+  test("server.ts's exact shape — a typeof type query plus the identifier unregisterIpcListener, no real call — is CLEAN only via the typeof exemption", () => {
+    // A fixture copy of ipc/server/server.ts's own shape: it carries `typeof Bun.listen<...>`
+    // ONLY as a type query (no real Bun.listen call lives in server.ts itself — the real calls
+    // live in socket-listeners.ts) plus the identifier `unregisterIpcListener`, and it must be
+    // clean BECAUSE the typeof query is blanked before matching, not because of anything the
+    // `unregisterIpcListener`/`unregisterListener` identifiers themselves would satisfy — the
+    // anchored registerListener-CALL check (Important finding 1) does not accept an unregister
+    // identifier as proof of registration.
+    expect(
+      flagged([
+        file(
+          ROGUE,
+          "let bunListener: ReturnType<typeof Bun.listen<State>> | undefined;\n" +
+            "let unregisterIpcListener: (() => void) | undefined;\n" +
+            "export function stop(): void {\n  unregisterIpcListener?.();\n  unregisterIpcListener = undefined;\n}",
+        ),
+      ]),
+    ).toBe(false);
+  });
+
+  test("the same server.ts-shaped fixture PLUS a real Bun.listen<S>({ call is a violation — the exemption never hides a real call", () => {
+    expect(
+      flagged([
+        file(
+          ROGUE,
+          "let bunListener: ReturnType<typeof Bun.listen<State>> | undefined;\n" +
+            "let unregisterIpcListener: (() => void) | undefined;\n" +
+            "export function start(): void {\n  bunListener = Bun.listen<State>({ port: 0, socket: {} });\n}\n" +
+            "export function stop(): void {\n  unregisterIpcListener?.();\n  unregisterIpcListener = undefined;\n}",
+        ),
+      ]),
+    ).toBe(true);
+  });
+
+  test("the violation names the file and the listen-call line", () => {
+    const v = checkListenerRegistryConfinement([
+      file(ROGUE, "const x = 1;\nBun.serve({ port: 0 });"),
+    ]);
+    expect(v).toHaveLength(1);
+    expect(v[0]?.rule).toBe("D31-listener-registry-registration");
+    expect(v[0]?.file).toBe(ROGUE);
+    expect(v[0]?.line).toBe(2);
+    expect(v[0]?.snippet).toBe("Bun.serve({ port: 0 });");
+  });
+
+  // ---- negative: what legitimately passes ----------------------------------------------------
+
+  test("accepts a listen call when the file also names registerListener", () => {
+    expect(
+      flagged([
+        file(
+          ROGUE,
+          'import { registerListener } from "../locality/listener-registry.ts";\n' +
+            "export function open() {\n" +
+            "  const l = Bun.listen<State>({ port: 0, socket: {} });\n" +
+            '  registerListener(() => ({ name: "ipc", address: "x", loopback: true }));\n' +
+            "  return l;\n}",
+        ),
+      ]),
+    ).toBe(false);
+  });
+
+  test("a fixture with ONLY a typeof Bun.listen<…> type query and no registerListener is clean — the query opens nothing", () => {
+    expect(
+      flagged([
+        file(
+          ROGUE,
+          "let bunListener: ReturnType<typeof Bun.listen<State>> | undefined;\n" +
+            "export function get() {\n  return bunListener;\n}",
+        ),
+      ]),
+    ).toBe(false);
+  });
+
+  test("ignores .test.ts", () => {
+    expect(
+      flagged([file("packages/gateway/src/ipc/rogue-listener.test.ts", "Bun.serve({ port: 0 });")]),
+    ).toBe(false);
+  });
+
+  test("ignores a file outside packages/gateway/src/", () => {
+    expect(flagged([file("packages/cli/src/rogue-listener.ts", "Bun.serve({ port: 0 });")])).toBe(
+      false,
+    );
+  });
+
+  /** Proves stripComments is exercised for THIS rule, not merely shared and untested here. */
+  test("does not flag a mention only inside a comment", () => {
+    expect(flagged([file(ROGUE, "// Bun.serve({ port: 0 });\nconst x = 1;")])).toBe(false);
+  });
+
+  // ---- the rule is live against the real tree ------------------------------------------------
+
+  test("every real listen site is registered (no violations in the scanned tree)", async () => {
+    const files: FileEntry[] = [];
+    for await (const f of iterateSourceFiles()) {
+      files.push({ relPath: f.relPath, contents: f.contents });
+    }
+    expect(checkListenerRegistryConfinement(files)).toEqual([]);
+    // Red-proof for the assertion above: the scan really did read files that carry the shape this
+    // rule polices, so the empty result is enforcement rather than an empty input.
+    const listenSites = files.filter(
+      (f) =>
+        f.relPath.startsWith("packages/gateway/src/") &&
+        /\bBun\.(?:serve|listen)\b|\bcreateServer\s*\(/.test(f.contents),
+    );
+    expect(listenSites.length).toBeGreaterThanOrEqual(5);
   });
 });

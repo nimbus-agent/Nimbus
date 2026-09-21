@@ -72,6 +72,9 @@ export function createIpcServer(options: CreateIpcServerOptions): IPCServer {
   let netServer: net.Server | undefined;
   let winSockets: Set<net.Socket> = new Set();
   let markExpectedClose: (() => void) | undefined;
+  // Set by whichever branch of start() actually binds — win32 pipe or unix socket — and cleared
+  // (called) on every stop path below, so the `ipc` listener never outlives the socket it names.
+  let unregisterIpcListener: (() => void) | undefined;
 
   function broadcastNotification(method: string, params: Record<string, unknown>): void {
     for (const session of sessions.values()) {
@@ -248,11 +251,14 @@ export function createIpcServer(options: CreateIpcServerOptions): IPCServer {
         netServer = handle.netServer;
         winSockets = handle.winSockets;
         markExpectedClose = handle.markExpectedClose;
+        unregisterIpcListener = handle.unregisterListener;
         return;
       }
 
       removeStaleUnixSocketIfPresent(options.listenPath);
-      bunListener = startBunUnixListener(options.listenPath, attachSession);
+      const handle = startBunUnixListener(options.listenPath, attachSession);
+      bunListener = handle.listener;
+      unregisterIpcListener = handle.unregisterListener;
       chmodListenSocketBestEffort(options.listenPath);
     },
 
@@ -263,6 +269,8 @@ export function createIpcServer(options: CreateIpcServerOptions): IPCServer {
         netServer = undefined;
         markExpectedClose?.();
         markExpectedClose = undefined;
+        unregisterIpcListener?.();
+        unregisterIpcListener = undefined;
         for (const sock of winSockets) {
           sock.destroy();
         }
@@ -276,6 +284,8 @@ export function createIpcServer(options: CreateIpcServerOptions): IPCServer {
       if (bunListener !== undefined) {
         const l = bunListener;
         bunListener = undefined;
+        unregisterIpcListener?.();
+        unregisterIpcListener = undefined;
         for (const sess of sessions.values()) {
           sess.dispose();
         }

@@ -46,19 +46,23 @@ export function isLoopbackBaseUrl(baseUrl: string): boolean {
  * The forms `URL.hostname` can actually hand back — it has already NORMALISED the host, which
  * removes most of the spelling variety a matcher would otherwise have to chase:
  *
- * - case is folded (`LOCALHOST` → `localhost`);
+ * - case is folded (`LOCALHOST` → `localhost`) by `URL` itself; this function folds case too,
+ *   so a caller reaching it directly with a hostname that never went through `URL` (as
+ *   `isLoopbackHost` is a named export in its own right, not only `isLoopbackBaseUrl`'s
+ *   internal helper) gets the same answer either way;
  * - an IPv6 literal keeps its brackets (`"[::1]"`), so they are stripped here;
  * - IPv6 is compressed (`[0:0:0:0:0:0:0:1]` → `[::1]`) and an IPv4-mapped address is re-spelled
  *   in HEX (`[::ffff:127.0.0.1]` → `[::ffff:7f00:1]`), which is why the mapped branch matches
  *   `7f` — the high byte of the embedded IPv4 address, i.e. 127 — rather than a dotted quad;
- * - a syntactically invalid IPv4 (`127.0.0.999`) makes the `URL` constructor THROW, and the
- *   caller's catch already answers `false` for it.
+ * - a syntactically invalid IPv4 (`127.0.0.999`) makes the `URL` constructor THROW, and
+ *   `isLoopbackBaseUrl`'s catch already answers `false` for it — called directly (bypassing
+ *   `URL`), the same string instead falls through to `isLoopbackIpv4`'s digit-group check below.
  *
  * Matching only what the normaliser emits keeps every branch here reachable; a branch for
  * `0:0:0:0:0:0:0:1` would be dead code that looks like coverage.
  */
-function isLoopbackHost(hostname: string): boolean {
-  const host = hostname.replace(/^\[/, "").replace(/\]$/, "");
+export function isLoopbackHost(hostname: string): boolean {
+  const host = hostname.replace(/^\[/, "").replace(/\]$/, "").toLowerCase();
   if (host === "localhost") return true;
   if (host === "::1") return true;
   if (/^::ffff:7f[0-9a-f]{2}:[0-9a-f]{1,4}$/.test(host)) return true;

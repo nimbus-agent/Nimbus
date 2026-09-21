@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
+import { processListeners } from "../locality/listener-registry.ts";
 import { generateBoxKeypair, openBoxFrame, sealBoxFrame } from "./lan-crypto.ts";
 import { LanServer } from "./lan-server.ts";
 
@@ -41,6 +42,21 @@ describe("LanServer boot/stop", () => {
     server = makeServer();
     await server.start();
     await expect(server.stop()).resolves.toBeUndefined();
+    server = undefined;
+  });
+
+  test("registers a 'lan' listener in the live registry while open, gone after stop", async () => {
+    server = makeServer();
+    await server.start();
+    const addr = server.listenAddr();
+    expect(addr).toBeTruthy();
+    const address = `${addr?.host}:${String(addr?.port)}`;
+    // Filtered by OUR OWN address, since processListeners is process-global.
+    expect(processListeners.live().filter((l) => l.address === address)).toEqual([
+      { name: "lan", address, loopback: true },
+    ]);
+    await server.stop();
+    expect(processListeners.live().some((l) => l.address === address)).toBe(false);
     server = undefined;
   });
 });

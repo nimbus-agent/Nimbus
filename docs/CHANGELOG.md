@@ -18,6 +18,44 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
 
 ## Post-Phase-6 deliveries
 
+- **2026-09-21 — `nimbus wow`, a guided tour of whatever index the gateway holds.** `nimbus wow`
+  has no seed path of its own: it tours the real, indexed substrate on a normal install, or — under
+  the global `--demo` flag (`nimbus --demo wow`) — the synthetic Acme org `nimbus demo` seeds, with
+  the tour's own `command` strings rendering `nimbus --demo …` in that case. Up to six deterministic
+  per-kind selectors (`oncall`/`why`/`owners`/`standup`/`decisions`/`glossary`), each asking "is
+  there something in THIS index worth showing, and with what arguments?" against whichever
+  substrate is live, run through the same agent CLI commands a person would type themselves, then
+  close on a locality panel: which listeners are
+  open right now, what the index holds, and how much left the machine while the tour ran. Two new
+  IPC methods, `tour.plan(params: { steps?: 1..6 })` and `locality.report(params: {})`, both
+  **CLI-only** — `FORBIDDEN_OVER_LAN` (I5) and absent from the Tauri `ALLOWED_METHODS` (I7, still
+  105). `--steps` is refused, never clamped, outside `1..6` in both the CLI parser and the gateway
+  handler; an empty plan (nothing offerable) prints a pointer to `nimbus init` and exits `0` rather
+  than a panel with nothing behind it; `--json` emits `{ plan, locality }` and makes no proof call.
+  **The proof line is a gateway-wide TIME WINDOW, not attribution to the tour's own commands** —
+  `{since: plan.t0, until: locality.t1}`, both gateway-clock values, reused verbatim against the
+  existing `egress.proveWindow`. No migration, no new invariant, no new egress class, no new HITL
+  action type.
+  New static rule **D31** requires every non-test gateway file that opens a listening socket
+  (`Bun.serve`/`Bun.listen`/`net.createServer`) to name a `registerListener(` call into the new
+  `locality/listener-registry.ts` — a live registry the panel's `listeners` array reads fresh on
+  every call, never a cached snapshot — so a new listen site among those three shapes cannot
+  silently miss the panel. Five of the six real listen sites (`ipc`, `http`, `lan`, `metrics`,
+  `oauth_callback`) register through that rule; the sixth, `mdns`
+  (`federation/mdns-discovery-provider.ts`'s `bonjour-service` UDP 5353 multicast bind), opens
+  inside a library and is invisible to the text scan, so it registers by hand instead, proven only
+  by its own test. The six selectors live under `agents/_lib/tour-*.ts`, not `agents/wow.ts` —
+  static rule D22(d) forbids any file outside `ipc/agents-rpc.ts` from importing an
+  `agents/<name>.ts` emitter or sibling query module (its regex also matches
+  `agents/standup-queries.ts` / `agents/oncall-queries.ts`), and a selector needs exactly those
+  query modules to ask its question against the real index.
+  The closing E2E test proves the outer routing entry, not only the handler: a call to
+  `dispatchTourRpc`/`dispatchLocalityRpc` directly compiles clean and passes every unit test
+  without a matching entry in `ipc/server/dispatchers.ts`'s outer method-routing match, and returns
+  `Method not found` over a real socket — `packages/gateway/test/e2e/wow.e2e.test.ts` boots a real,
+  demo-rooted gateway subprocess and drives both methods, plus a real `nimbus --demo wow` CLI
+  spawn, over a real socket/pipe.
+
 - **2026-09-20 — index lane census (B4 bug-hunt audit), report-only.** A new table-aware static
   census, `bun run audit:lane-census` (`scripts/structure-audit/check-index-lane-coverage.ts`),
   extracts what production code READS from the `item` table — `item.type` literals, `json_extract`

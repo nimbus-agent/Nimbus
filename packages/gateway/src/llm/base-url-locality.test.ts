@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
-import { isLoopbackBaseUrl } from "./base-url-locality.ts";
+import { isLoopbackBaseUrl, isLoopbackHost } from "./base-url-locality.ts";
 import { LlamaCppProvider } from "./llamacpp-provider.ts";
 import { OllamaProvider } from "./ollama-provider.ts";
 import { LlmRouter, type LlmRouterConfig } from "./router.ts";
@@ -45,6 +45,23 @@ describe("isLoopbackBaseUrl", () => {
       expect(isLoopbackBaseUrl(url)).toBe(false);
     }
   });
+});
+
+describe("isLoopbackHost", () => {
+  for (const h of ["127.0.0.1", "127.8.9.1", "localhost", "LOCALHOST", "::1", "[::1]"]) {
+    test(`${h} is loopback`, () => expect(isLoopbackHost(h)).toBe(true));
+  }
+  for (const h of [
+    "0.0.0.0",
+    "::",
+    "192.168.1.20",
+    "10.0.0.5",
+    "example.com",
+    "",
+    "127.0.0.1.evil.com",
+  ]) {
+    test(`${h} is NOT loopback`, () => expect(isLoopbackHost(h)).toBe(false));
+  }
 });
 
 describe("provider isLocal is derived from the base URL, not hardcoded", () => {

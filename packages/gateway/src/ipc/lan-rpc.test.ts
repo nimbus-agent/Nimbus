@@ -396,6 +396,15 @@ describe("demo over LAN (I41 clause 5 — the demo seeder is local CLI only)", (
   });
 });
 
+describe("tour and locality over LAN (nimbus wow)", () => {
+  test("tour.* and locality.* are refused over LAN; agents.ownership is still admitted", () => {
+    const peer = { peerId: "p", writeAllowed: true };
+    expect(() => checkLanMethodAllowed("tour.plan", peer)).toThrow(/not callable over LAN/);
+    expect(() => checkLanMethodAllowed("locality.report", peer)).toThrow(/not callable over LAN/);
+    expect(() => checkLanMethodAllowed("agents.ownership", peer)).not.toThrow(); // negative control
+  });
+});
+
 test("both local-auth methods are refused over LAN; a sibling connector read is not", () => {
   const peer = { peerId: "p", writeAllowed: true };
   for (const m of ["connector.detectLocalAuth", "connector.adoptLocalAuth"]) {

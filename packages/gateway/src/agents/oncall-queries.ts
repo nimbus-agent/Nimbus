@@ -157,6 +157,21 @@ export function selectIncidentById(db: Database, itemId: string): OncallIncident
 }
 
 /**
+ * The most recently opened incident, whatever its status. Backs the guided tour (`tour.plan`),
+ * which shows `oncall --incident <id>` and therefore wants ANY briefable incident, not an active one.
+ */
+export function selectNewestIncident(db: Database): OncallIncident | null {
+  const raw = db
+    .query(`SELECT ${INCIDENT_COLUMNS} FROM item i WHERE i.type = 'incident'`)
+    .all() as RawItemRow[];
+  const sorted = raw
+    .map(toIncident)
+    .filter((i): i is OncallIncident => i !== null)
+    .sort(byOpenedThenId);
+  return sorted[0] ?? null;
+}
+
+/**
  * Active incidents on any of the given PagerDuty services, newest first.
  *
  * Backs the `--service` path, which is also the only shape an EXTERNAL caller may use — see

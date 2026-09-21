@@ -1,5 +1,7 @@
 import pino from "pino";
 
+import { isLoopbackHost } from "../llm/base-url-locality.ts";
+import { registerListener } from "../locality/listener-registry.ts";
 import { validateVaultKeyOrThrow } from "../vault/key-format.ts";
 import type { NimbusVault } from "../vault/nimbus-vault.ts";
 import {
@@ -191,27 +193,40 @@ async function runOnLocalPort(
   const state = randomUrlSafeString(16);
   const completion: { value?: OAuthCompletion } = {};
 
+  const bindHost = "127.0.0.1";
   const server = Bun.serve({
-    hostname: "127.0.0.1",
+    hostname: bindHost,
     port: bindPort,
     fetch(req) {
       return handlePkceCallbackRequest(req, state, completion);
     },
   });
-  const redirectUri = `http://127.0.0.1:${String(server.port)}${CALLBACK_PATH}`;
-  const authUrl = buildAuthorizeUrl(descriptor, {
-    clientId: options.clientId,
-    scopes: options.scopes,
-    redirectUri,
-    state,
-    ...(codeChallenge !== undefined && { codeChallenge }),
-  });
+  const unregisterListener = registerListener(() => ({
+    name: "oauth_callback",
+    address: `${bindHost}:${String(server.port)}`,
+    loopback: isLoopbackHost(bindHost),
+  }));
 
-  const abortTimer = setTimeout(() => {
-    completion.value ??= { error: "timeout" };
-  }, AUTH_TIMEOUT_MS);
-
+  // Everything fallible that follows the server/registration pair lives INSIDE this try, so the
+  // shared `finally` below (unregister + stop) always runs — including if `buildAuthorizeUrl`
+  // itself throws. It did not used to: `redirectUri`/`authUrl`/`abortTimer` sat between the
+  // registration above and this try, so a throw there leaked both the listening server and its
+  // registry entry for the life of the process, with nothing left to close either.
+  let abortTimer: ReturnType<typeof setTimeout> | undefined;
   try {
+    const redirectUri = `http://127.0.0.1:${String(server.port)}${CALLBACK_PATH}`;
+    const authUrl = buildAuthorizeUrl(descriptor, {
+      clientId: options.clientId,
+      scopes: options.scopes,
+      redirectUri,
+      state,
+      ...(codeChallenge !== undefined && { codeChallenge }),
+    });
+
+    abortTimer = setTimeout(() => {
+      completion.value ??= { error: "timeout" };
+    }, AUTH_TIMEOUT_MS);
+
     await options.openUrl(authUrl.toString());
     while (completion.value === undefined) {
       await new Promise((r) => setTimeout(r, 50));
@@ -240,7 +255,10 @@ async function runOnLocalPort(
     await persistOAuthTokensToVaultKey(options.vault, descriptor.vaultKey, result);
     return result;
   } finally {
-    clearTimeout(abortTimer);
+    // `abortTimer` is only ever assigned inside the try above, so a throw from `buildAuthorizeUrl`
+    // (before it is set) leaves it undefined here — nothing to clear, and unregister/stop still run.
+    if (abortTimer !== undefined) clearTimeout(abortTimer);
+    unregisterListener();
     server.stop();
   }
 }

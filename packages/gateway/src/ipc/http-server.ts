@@ -26,6 +26,7 @@ import { buildItemListSql, parseRelativeSinceToWindowMs } from "../index/item-li
 import { resolveItemByUrl } from "../index/resolve-by-url.ts";
 import { resolveFileByRemote } from "../index/resolve-file-by-remote.ts";
 import { RESOLVE_IDS_MAX_BATCH, resolveItemsByIds } from "../index/resolve-ids.ts";
+import { registerListener } from "../locality/listener-registry.ts";
 import {
   type ParsedDoraRepoUrn,
   parseDoraRepoUrn,
@@ -1497,9 +1498,15 @@ export function startReadOnlyHttpServer(
       `startReadOnlyHttpServer: Bun.serve did not bind a TCP port (server.port=${String(actualPort)})`,
     );
   }
+  const unregisterListener = registerListener(() => ({
+    name: "http",
+    address: `127.0.0.1:${String(actualPort)}`,
+    loopback: true,
+  }));
   return {
     port: actualPort,
     stop(): void {
+      unregisterListener();
       try {
         server.stop();
       } catch {

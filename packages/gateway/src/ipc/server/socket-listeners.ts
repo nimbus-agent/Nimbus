@@ -2,6 +2,7 @@ import type { EventEmitter } from "node:events";
 import { chmodSync, existsSync, unlinkSync } from "node:fs";
 import net from "node:net";
 
+import { registerListener } from "../../locality/listener-registry.ts";
 import type { ClientSession, SessionWrite } from "../session.ts";
 import type { BunSessionData } from "./options.ts";
 
@@ -31,6 +32,8 @@ export type Win32ListenerHandle = {
   winSockets: Set<net.Socket>;
   /** Call before a deliberate `close()` so the resulting 'close' is not reported as a fault. */
   markExpectedClose: () => void;
+  /** Unregisters this pipe's `ListenerRegistry` probe. Call on every stop path. */
+  unregisterListener: () => void;
 };
 
 function attachWin32Socket(
@@ -96,20 +99,34 @@ export async function startWin32NetServer(
       onFault?.({ event: "close" });
     }
   });
+  // `netServer.listening` is read LIVE on every probe call, not captured once — a post-listen
+  // fault (an unrequested 'close'/'error', logged above as `pipe_server_close`/`pipe_server_error`)
+  // leaves this server closed without anything calling `unregisterListener`, and a constant probe
+  // would keep reporting a closed pipe as open until the next deliberate `stop()`.
+  const unregisterListener = registerListener(() =>
+    netServer.listening ? { name: "ipc", address: listenPath, loopback: true } : null,
+  );
   return {
     netServer,
     winSockets,
     markExpectedClose: (): void => {
       expectedClose = true;
     },
+    unregisterListener,
   };
 }
+
+export type BunUnixListenerHandle = {
+  listener: ReturnType<typeof Bun.listen<BunSessionData>>;
+  /** Unregisters this socket's `ListenerRegistry` probe. Call on every stop path. */
+  unregisterListener: () => void;
+};
 
 export function startBunUnixListener(
   listenPath: string,
   attachSession: AttachSessionFn,
-): ReturnType<typeof Bun.listen<BunSessionData>> {
-  return Bun.listen<BunSessionData>({
+): BunUnixListenerHandle {
+  const listener = Bun.listen<BunSessionData>({
     unix: listenPath,
     socket: {
       open(socket) {
@@ -131,4 +148,10 @@ export function startBunUnixListener(
       },
     },
   });
+  const unregisterListener = registerListener(() => ({
+    name: "ipc",
+    address: listenPath,
+    loopback: true,
+  }));
+  return { listener, unregisterListener };
 }

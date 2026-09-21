@@ -1,4 +1,5 @@
 import BonjourLib from "bonjour-service";
+import { registerListener } from "../locality/listener-registry.ts";
 import type { DiscoveredPeer, DiscoveryProvider } from "./discovery.ts";
 
 const SERVICE_TYPE = "nimbus"; // bonjour-service advertises this as _nimbus._tcp
@@ -35,6 +36,9 @@ export class MdnsDiscoveryProvider implements DiscoveryProvider {
   private readonly seen = new Map<string, DiscoveredPeer>();
   private readonly manual: DiscoveredPeer[] = [];
   private readonly makeBonjour: BonjourFactory;
+  // Registered BY HAND (D31 cannot see a socket a library opens internally — see
+  // locality/listener-registry.ts's module doc). Unregisters on every stop() path.
+  private unregisterListener: (() => void) | undefined;
 
   constructor(makeBonjour: BonjourFactory = defaultBonjourFactory) {
     this.makeBonjour = makeBonjour;
@@ -52,6 +56,11 @@ export class MdnsDiscoveryProvider implements DiscoveryProvider {
         });
       }
     });
+    this.unregisterListener = registerListener(() =>
+      this.bonjour === undefined
+        ? null
+        : { name: "mdns", address: "udp *:5353 (mDNS multicast)", loopback: false },
+    );
   }
 
   async stop(): Promise<void> {
@@ -59,6 +68,8 @@ export class MdnsDiscoveryProvider implements DiscoveryProvider {
     this.bonjour?.destroy();
     this.browser = undefined;
     this.bonjour = undefined;
+    this.unregisterListener?.();
+    this.unregisterListener = undefined;
   }
 
   async list(): Promise<readonly DiscoveredPeer[]> {

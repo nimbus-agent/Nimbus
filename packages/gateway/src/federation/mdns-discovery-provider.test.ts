@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 
+import { processListeners } from "../locality/listener-registry.ts";
 import type { DiscoveredPeer } from "./discovery.ts";
 import {
   type BonjourLike,
@@ -52,6 +53,7 @@ describe("MdnsDiscoveryProvider", () => {
     expect(await provider.list()).toEqual([
       { instanceName: "peer-a", host: "10.0.0.5", port: 8080 },
     ]);
+    await provider.stop(); // processListeners is process-global — leave nothing registered behind
   });
 
   test("start() falls back to service.host when addresses is empty/undefined", async () => {
@@ -62,6 +64,7 @@ describe("MdnsDiscoveryProvider", () => {
     expect(await provider.list()).toEqual([
       { instanceName: "peer-b", host: "peer-b.local", port: 9090 },
     ]);
+    await provider.stop();
   });
 
   test("start() ignores a service with no usable host", async () => {
@@ -70,6 +73,7 @@ describe("MdnsDiscoveryProvider", () => {
     await provider.start();
     fake.emit({ name: "peer-c", port: 1234 }); // no addresses, no host
     expect(await provider.list()).toEqual([]);
+    await provider.stop();
   });
 
   test("start() ignores a service with a non-numeric port", async () => {
@@ -78,6 +82,7 @@ describe("MdnsDiscoveryProvider", () => {
     await provider.start();
     fake.emit({ name: "peer-d", host: "peer-d.local" }); // port undefined
     expect(await provider.list()).toEqual([]);
+    await provider.stop();
   });
 
   test("list() merges discovered + manual peers", async () => {
@@ -91,6 +96,7 @@ describe("MdnsDiscoveryProvider", () => {
       { instanceName: "peer-e", host: "e.local", port: 1 },
       manual,
     ]);
+    await provider.stop();
   });
 
   test("advertise() before start is a no-op; after start it publishes", async () => {
@@ -101,6 +107,21 @@ describe("MdnsDiscoveryProvider", () => {
     await provider.start();
     await provider.advertise("me", 7070);
     expect(fake.published).toEqual([{ name: "me", type: "nimbus", port: 7070 }]);
+    await provider.stop();
+  });
+
+  test("registers an 'mdns' listener in the live registry while started, gone after stop", async () => {
+    const fake = makeFakeBonjour();
+    const provider = new MdnsDiscoveryProvider(() => fake.bonjour);
+    await provider.start();
+    // No real mDNS socket in this test — driven entirely through the BonjourFactory DI seam.
+    // Filtered by NAME rather than a per-instance address, since the mdns report's address is a
+    // fixed string (there is exactly one mDNS listener per process, unlike the per-port sites).
+    expect(processListeners.live().filter((l) => l.name === "mdns")).toEqual([
+      { name: "mdns", address: "udp *:5353 (mDNS multicast)", loopback: false },
+    ]);
+    await provider.stop();
+    expect(processListeners.live().some((l) => l.name === "mdns")).toBe(false);
   });
 
   test("stop() stops the browser, destroys bonjour, and resets (idempotent)", async () => {
