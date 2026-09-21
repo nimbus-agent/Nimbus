@@ -22,6 +22,14 @@ export interface LocalityReport {
   readonly t1: number;
 }
 
+/** Thrown by {@link buildLocalityReport} when the MAIN database file cannot be statted. */
+export class LocalityReportError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "LocalityReportError";
+  }
+}
+
 /** Default `statSize`: `statSync` in a try/catch, `null` on any error (ENOENT included). */
 function defaultStatSize(path: string): number | null {
   try {
@@ -35,13 +43,28 @@ function defaultStatSize(path: string): number | null {
  * `path` main file + `-wal` + `-shm`, each counted only if it exists. WAL mode (which
  * `openGatewaySqlite` turns on for every real gateway) keeps live pages in the `-wal` file, not
  * the main one, so summing only the main file would under-report a database that just got busier.
+ *
+ * Tolerating a failed stat is right for `-wal`/`-shm` — their absence is normal (no WAL churn
+ * yet). It is WRONG for the MAIN file: a wired, non-`:memory:` `dbPath` whose main file cannot be
+ * statted is a real problem (the gateway's own database is gone or unreadable), and silently
+ * reporting `(0 B)` beside a real path would be a false statement on the locality panel — the
+ * same fail-loudly ruling `locality-rpc.ts`'s `requireDbPath` applies one level up, for an
+ * unwired `dbPath` entirely.
  */
 function dbBytes(path: string, statSize: (p: string) => number | null): number {
   if (path === ":memory:") return 0;
   let total = 0;
   for (const suffix of ["", "-wal", "-shm"]) {
     const size = statSize(`${path}${suffix}`);
-    if (size !== null) total += size;
+    if (size === null) {
+      if (suffix === "") {
+        throw new LocalityReportError(
+          `locality.report could not stat the main database file: ${path}`,
+        );
+      }
+      continue;
+    }
+    total += size;
   }
   return total;
 }

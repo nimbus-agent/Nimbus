@@ -77,8 +77,15 @@ export function buildSelectorCtx(ctx: TourRpcContext): TourSelectorCtx {
       ? []
       : loadNimbusFilesystemRootsFromConfigDir(configDir).map((r) => r.path);
   const roots = configDir === undefined ? [] : ownershipRoots(configDir);
+  // `NimbusDecisionsToml.minConfidence` is a non-optional `number` (0.3 default), so `?? 0` on
+  // the configured value could never fire — and disagreed with `handleDecisions`' own default
+  // (`ipc/agents-rpc.ts`) if it somehow had. The `configDir === undefined` arm here already
+  // matches what `handleDecisions` effectively does in that case: `decisionsMinConfidenceDefault`
+  // returns `undefined`, `defaultMinConfidence` is omitted from the options object entirely, and
+  // `agents/decisions.ts`'s `input.minConfidence ?? ctx.defaultMinConfidence ?? 0` falls back to
+  // the same literal `0`.
   const decisionsMinConfidence =
-    configDir === undefined ? 0 : (loadNimbusDecisionsFromConfigDir(configDir).minConfidence ?? 0);
+    configDir === undefined ? 0 : loadNimbusDecisionsFromConfigDir(configDir).minConfidence;
   const mePersonId =
     configDir === undefined ? undefined : loadNimbusUserFromConfigDir(configDir).mePersonId;
   return {

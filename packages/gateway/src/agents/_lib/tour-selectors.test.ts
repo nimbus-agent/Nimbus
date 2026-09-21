@@ -5,6 +5,7 @@ import {
   markExtracted,
   upsertCandidate as upsertDecisionCandidate,
 } from "../../decisions/decision-store.ts";
+import { enumeratePaths } from "../../fleet/fleet-sweep-enumerators.ts";
 import {
   computeTermStats,
   markConsolidated,
@@ -173,9 +174,15 @@ describe("owners", () => {
     });
   }
 
-  test("skips when no git-aware roots are configured", async () => {
+  test("skips when no git-aware roots are configured, echoing the enumerator's own reason", async () => {
+    // Obtained from `enumeratePaths` itself, never hand-copied — the two causes
+    // ("no roots configured" vs. "the ownership pass has not run yet") have opposite fixes, and a
+    // literal copy here would silently stop pinning `selectOwners` to the real enumerator string
+    // the moment that string changed.
+    const expected = enumeratePaths(db, [], "path", null).emptyReason;
+    if (expected === null) throw new Error("enumeratePaths with no roots must set emptyReason");
     expect(await TOUR_SELECTORS.owners(ctx({ ownershipRoots: [] }))).toEqual({
-      skip: "no ownership pass data indexed",
+      skip: expected,
     });
   });
 
@@ -214,7 +221,7 @@ describe("owners", () => {
       ok: {
         title: "Who owns this code",
         args: [join(root, "src-old")],
-        reason: "1 files under ownership",
+        reason: "1 file under ownership",
       },
     });
   });
@@ -230,7 +237,7 @@ describe("owners", () => {
 
     const out = await TOUR_SELECTORS.owners(ctx({ ownershipRoots: [root] }));
     expect(out).toEqual({
-      ok: { title: "Who owns this code", args: [root], reason: "1 files under ownership" },
+      ok: { title: "Who owns this code", args: [root], reason: "1 file under ownership" },
     });
   });
 

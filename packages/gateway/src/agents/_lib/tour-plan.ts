@@ -25,8 +25,17 @@ const SUBCOMMAND: Readonly<Record<TourStepKind, string>> = {
   glossary: "glossary",
 };
 
+/**
+ * Chars that never need shell quoting on either a POSIX shell or `cmd.exe`/PowerShell — letters,
+ * digits, and the punctuation an absolute path or a flag can carry (`._-/\:=+@`). Anything outside
+ * this set (a space, `;`, `|`, `&`, a quote, …) gets wrapped in double quotes so the printed
+ * `command` line does the SAME thing when pasted as the tour just did, rather than something else.
+ */
+const BARE_SAFE_RE = /^[A-Za-z0-9._\-/\\:=+@]+$/;
+
 function quoteForDisplay(arg: string): string {
-  return /\s/.test(arg) ? `"${arg}"` : arg;
+  if (BARE_SAFE_RE.test(arg)) return arg;
+  return `"${arg.replace(/"/g, '\\"')}"`;
 }
 
 /** `command` and `args` come from ONE value here, so the printed line and the executed step cannot drift. */

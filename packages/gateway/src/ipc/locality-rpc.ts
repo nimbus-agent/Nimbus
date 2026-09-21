@@ -1,6 +1,10 @@
 import type { Database } from "bun:sqlite";
 import type { ListenerRegistry } from "../locality/listener-registry.ts";
-import { buildLocalityReport, type LocalityReport } from "../locality/locality-report.ts";
+import {
+  buildLocalityReport,
+  type LocalityReport,
+  LocalityReportError,
+} from "../locality/locality-report.ts";
 import { dispatchByMethod, type RpcMissOrHit } from "./_lib/dispatch-by-method.ts";
 
 export class LocalityRpcError extends Error {
@@ -34,12 +38,23 @@ function requireDbPath(dbPath: string | undefined): string {
 
 function handleLocalityReport(_params: unknown, ctx: LocalityRpcContext): LocalityReport {
   const dbPath = requireDbPath(ctx.dbPath);
-  return buildLocalityReport({
-    db: ctx.db,
-    dbPath,
-    registry: ctx.registry,
-    nowMs: ctx.nowMs,
-  });
+  try {
+    return buildLocalityReport({
+      db: ctx.db,
+      dbPath,
+      registry: ctx.registry,
+      nowMs: ctx.nowMs,
+    });
+  } catch (e) {
+    // A wired `dbPath` whose MAIN file cannot be statted is the same class of fact as an unwired
+    // `dbPath` above — the panel must fail loudly rather than print `(0 B)` beside a real path —
+    // so it is mapped to the SAME -32603 shape here rather than left to propagate as the raw
+    // `LocalityReportError`.
+    if (e instanceof LocalityReportError) {
+      throw new LocalityRpcError(-32603, e.message);
+    }
+    throw e;
+  }
 }
 
 export async function dispatchLocalityRpc(

@@ -65,7 +65,12 @@ export function startMetricsServer(getDb: () => Database, port: number): Metrics
     },
   });
 
-  const actualPort = server.port ?? port;
+  const actualPort = server.port;
+  if (typeof actualPort !== "number") {
+    throw new TypeError(
+      `startMetricsServer: Bun.serve did not bind a TCP port (server.port=${String(actualPort)})`,
+    );
+  }
   const unregisterListener = registerListener(() => ({
     name: "metrics",
     address: `127.0.0.1:${String(actualPort)}`,

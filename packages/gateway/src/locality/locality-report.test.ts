@@ -7,7 +7,7 @@ import { upsertIndexedItemForSync } from "../index/item-store.ts";
 import { CURRENT_SCHEMA_VERSION } from "../index/local-index.ts";
 import { runIndexedSchemaMigrations } from "../index/migrations/runner.ts";
 import { createListenerRegistry } from "./listener-registry.ts";
-import { buildLocalityReport } from "./locality-report.ts";
+import { buildLocalityReport, LocalityReportError } from "./locality-report.ts";
 
 function freshIndexedDb(): Database {
   const db = new Database(":memory:");
@@ -15,7 +15,7 @@ function freshIndexedDb(): Database {
   return db;
 }
 
-test("bytes sums main + wal + shm and tolerates missing files", () => {
+test("bytes sums main + wal and tolerates a missing -shm", () => {
   const db = freshIndexedDb();
   const sizes: Record<string, number> = { "/d/n.db": 100, "/d/n.db-wal": 40 };
   const r = buildLocalityReport({
@@ -27,6 +27,23 @@ test("bytes sums main + wal + shm and tolerates missing files", () => {
   });
   expect(r.db).toEqual({ path: "/d/n.db", bytes: 140 });
   expect(r.t1).toBe(9);
+  db.close();
+});
+
+// M5: tolerance for a failed stat is right for `-wal`/`-shm` (absence is normal) but WRONG for
+// the MAIN file — silently reporting `(0 B)` beside a real, wired `dbPath` would be a false
+// statement on the panel. A MAIN-file stat failure must fail loudly instead.
+test("a MAIN-file stat failure throws, rather than reporting 0 B beside a real path", () => {
+  const db = freshIndexedDb();
+  expect(() =>
+    buildLocalityReport({
+      db,
+      dbPath: "/d/missing.db",
+      registry: createListenerRegistry(),
+      nowMs: 9,
+      statSize: () => null,
+    }),
+  ).toThrow(LocalityReportError);
   db.close();
 });
 
@@ -50,14 +67,15 @@ test("without an injected statSize, the real statSync sums main + wal bytes", ()
   }
 });
 
-test("without an injected statSize, a non-existent db path reports zero bytes", () => {
+test("without an injected statSize, a non-existent db path throws rather than reporting zero bytes", () => {
   const dir = mkdtempSync(join(tmpdir(), "nimbus-locality-report-"));
   try {
     const dbPath = join(dir, "does-not-exist.db");
     const db = freshIndexedDb();
-    const r = buildLocalityReport({ db, dbPath, registry: createListenerRegistry(), nowMs: 1 });
+    expect(() =>
+      buildLocalityReport({ db, dbPath, registry: createListenerRegistry(), nowMs: 1 }),
+    ).toThrow(LocalityReportError);
     db.close();
-    expect(r.db).toEqual({ path: dbPath, bytes: 0 });
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

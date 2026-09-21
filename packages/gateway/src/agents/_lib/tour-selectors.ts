@@ -68,7 +68,12 @@ function selectWhy(ctx: TourSelectorCtx): TourSelectorResult {
 }
 
 function selectOwners(ctx: TourSelectorCtx): TourSelectorResult {
-  const { subjects } = enumeratePaths(ctx.db, ctx.ownershipRoots, "path", null);
+  const { subjects, emptyReason } = enumeratePaths(ctx.db, ctx.ownershipRoots, "path", null);
+  // No subjects at all: `enumeratePaths` itself already knows WHY (no git-aware roots configured
+  // vs. the ownership pass never having run vs. every node lying outside the configured roots) —
+  // two opposite fixes collapsed into one generic message otherwise. `finish()` guarantees
+  // `emptyReason` is non-null whenever `subjects` is empty; the `??` is a defensive fallback only.
+  if (subjects.length === 0) return { skip: emptyReason ?? "no ownership pass data indexed" };
   const files: string[] = [];
   const dirs: string[] = [];
   for (const s of subjects) {
@@ -76,6 +81,9 @@ function selectOwners(ctx: TourSelectorCtx): TourSelectorResult {
     if (p === undefined) continue;
     (s.key.startsWith("paths:file:") ? files : dirs).push(p);
   }
+  // Subjects exist, but this selector needs BOTH a file and a directory to rank ownership —
+  // `enumeratePaths` has nothing more specific to say here (its own `emptyReason` is null once
+  // subjects is non-empty), so this stays the generic message.
   if (dirs.length === 0 || files.length === 0) return { skip: "no ownership pass data indexed" };
   const roots = new Set(ctx.ownershipRoots);
   const nonRoot = dirs.filter((d) => !roots.has(d));
@@ -96,7 +104,7 @@ function selectOwners(ctx: TourSelectorCtx): TourSelectorResult {
     ok: {
       title: "Who owns this code",
       args: [best.d],
-      reason: `${String(best.n)} files under ownership`,
+      reason: `${String(best.n)} file${best.n === 1 ? "" : "s"} under ownership`,
     },
   };
 }

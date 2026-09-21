@@ -61,3 +61,27 @@ test("command carries --demo on a demo gateway; args never do", async () => {
   }
   expect(p.steps[0]?.command).toContain('"a b"'); // an arg with a space is quoted for display
 });
+
+// M1: `quoteForDisplay` used to quote whitespace only — an arg like `a;rm -rf x.ts` (no leading
+// space) rendered BARE, so a printed `command` line did something else entirely when pasted. Now
+// anything outside a safe bare-argument charset is quoted, with an embedded `"` escaped.
+test("quoting: shell metacharacters are quoted, safe paths and flags stay bare", async () => {
+  const winPath = String.raw`C:\repo\src\auth.ts`;
+  const posixPath = "/repo/src/auth.ts";
+  const args = ["a b", "a;rm -rf x.ts", 'foo"bar', winPath, posixPath, "--line"];
+  const p = await buildTourPlan(ctx, { steps: 6, demo: false, selectors: all(() => ok(args)) });
+  const step = p.steps[0];
+  // args must remain byte-identical to the selector's own output — quoting is display-only.
+  expect(step?.args).toEqual(args);
+
+  const command = step?.command ?? "";
+  expect(command).toContain('"a b"');
+  expect(command).toContain('"a;rm -rf x.ts"');
+  expect(command).toContain(String.raw`"foo\"bar"`);
+  expect(command).toContain(winPath);
+  expect(command).not.toContain(`"${winPath}"`);
+  expect(command).toContain(posixPath);
+  expect(command).not.toContain(`"${posixPath}"`);
+  expect(command).toContain("--line");
+  expect(command).not.toContain('"--line"');
+});
