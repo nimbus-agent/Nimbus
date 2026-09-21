@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1790007342697,
+  "lastUpdate": 1790017314409,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "6252a26a152ac63eaec788d12c77c1cad2b5685a",
-          "message": "docs(ecosystem-roadmap): Stage 4 + un-park the why lens + connector-split decision (#828)\n\n## What\n\nExtends `docs/ecosystem-roadmap.md` with the next tranche of surface\nwork, without violating the document's charter (it owns **how gateway\ncapability reaches a human** — client surfaces and delivery — never\ngateway capability itself, which stays in `roadmap.md`).\n\n## Changes\n\n- **Stage 2a rewritten** — \"spiked, not built\" → **\"prerequisites\nshipped, the data gate remains.\"** Records the shipped un-park trio\n(PR-title enrichment #817, blame lane #819, `ensureRoot` #822) and the\nwhy agent (#820). **Gate B (surface) is now cleared** by the SDK→client\nhop — `agents.why`/`whyPeek` promoted to `@nimbus-dev/sdk` 1.6.0 and\nexposed via `@nimbus-dev/client` 0.12.0 (`agentsWhy`/`agentsWhyPeek`,\ngateway re-export #825). Only **Gate A** (the ≥60% blame→PR data\nre-validation on a live repo) remains.\n- **New Stage 4 — \"reach the surfaces still dark\"** — a gate-per-row\ntable for the `why` lens (hover UI), `nimbus-postmortem` (surface only;\nthe agent is net-new gateway work, linked to `roadmap.md`),\n`nimbus-raycast`, and `nimbus-statuspage`. Supersedes the old\n\"Cross-client\" bullet under *Left open from Stage 2*.\n- **Open decision 5** — \"Do the 95 connectors leave the monorepo?\" with\nmotive, cost, a hold recommendation, and a gate — plus a *proposed*\n`nimbus-mcp-servers` repo-map row. Recorded as a spec-sized decision,\n**not** committed as a stage.\n- Contents TOC + cross-references wired.\n\n## Charter check\n\n`nimbus-sandbox` and `nimbus-quorum` (from the source brainstorm) were\ndeliberately **excluded** — both are gateway capability (and quorum\nalready shipped under I21), so they belong in `roadmap.md`, not here.\n\n## Gates (run locally, whole-branch scope)\n\n- `bun run lint:markdown` — **0 errors** (116 files)\n- `lychee --config lychee.toml 'docs/**/*.md' '*.md'` — **0 errors**\n(1089 OK)\n- `bun run audit:doc-refs` — **all 611 refs resolve**\n\nDocs-only; no code paths touched.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nCo-authored-by: Claude Opus 4.8 (1M context) <noreply@anthropic.com>",
-          "timestamp": "2026-07-24T06:35:58Z",
-          "tree_id": "1da67ca0cdf53dcda0915e045961490e0bf677f2",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/6252a26a152ac63eaec788d12c77c1cad2b5685a"
-        },
-        "date": 1784875950604,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 299.1170983499993,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 301.201220149998,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 332.3867421000068,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "306811640+nimbus-release-bot[bot]@users.noreply.github.com",
+            "name": "nimbus-release-bot[bot]",
+            "username": "nimbus-release-bot[bot]"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "588afb4c84dd49a5d1c2e95268f71187c3b4c1b3",
+          "message": "chore: release main (#1567)\n\n:robot: I have created a release *beep* *boop*\n---\n\n\n<details><summary>7.31.0</summary>\n\n##\n[7.31.0](https://github.com/nimbus-agent/Nimbus/compare/v7.30.0...v7.31.0)\n(2026-09-21)\n\n\n### Features\n\n* **cli:** nimbus wow — a guided tour of your own index, ending on a\nlocality proof\n([#1565](https://github.com/nimbus-agent/Nimbus/issues/1565))\n([8c78849](https://github.com/nimbus-agent/Nimbus/commit/8c788493e72711cebc38ec9f42726fb2c758bbcc))\n</details>\n\n---\nThis PR was generated with [Release\nPlease](https://github.com/googleapis/release-please). See\n[documentation](https://github.com/googleapis/release-please#release-please).\n\nCo-authored-by: nimbus-release-bot[bot] <306811640+nimbus-release-bot[bot]@users.noreply.github.com>",
+          "timestamp": "2026-09-21T21:49:49+03:00",
+          "tree_id": "890cc11433db5c265f16baba6da81e30e2cada1f",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/588afb4c84dd49a5d1c2e95268f71187c3b4c1b3"
+        },
+        "date": 1790017309667,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 329.10882275000074,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 333.3142169000039,
             "unit": "ms"
           }
         ]
