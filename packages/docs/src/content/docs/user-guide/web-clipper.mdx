@@ -1,11 +1,12 @@
 ---
-title: Web clipper
+title: Nimbus Companion (browser extension)
 description: Clip the readable article or your current selection straight into your private Nimbus index, from Chrome or Firefox.
 ---
 
 import { Aside, CardGrid, LinkCard } from "@astrojs/starlight/components";
 
-The Nimbus **web clipper** is a Chrome + Firefox (MV3) browser extension that
+**Nimbus Companion** — published as "Nimbus Web Clipper" until September 2026 —
+is a Chrome + Firefox (MV3) browser extension that
 saves what you read into your private, local-first Nimbus index — straight from
 the browser. A clipped article or selection becomes a `nimbus:web_clip` item,
 searchable alongside your Drive files, email, and bookmarks.
@@ -17,11 +18,12 @@ no cloud calls.
 <Aside type="note">
 The extension is developed in its own repository,
 [nimbus-agent/nimbus-web-clipper](https://github.com/nimbus-agent/nimbus-web-clipper),
-and releases independently of the Gateway. **`v0.1.0` is released** (2026-07-19):
-each tagged release attaches a packaged zip per browser target to its GitHub
-Release. Chrome Web Store and Firefox AMO publishing is automated but the live
-listings await their one-time store bootstrap, so today you install from the
-release zip or load it unpacked.
+and releases independently of the Gateway. Each tagged release is uploaded to
+the [Chrome Web Store](https://chromewebstore.google.com/detail/nimbus-web-clipper/kkfdgphcalcdbnpgknplfbflffalbcnk) and
+[Firefox Add-ons](https://addons.mozilla.org/firefox/addon/nimbus-web-clipper/), and
+attaches a packaged zip per browser target to its GitHub Release. The store and
+repository addresses keep the original `nimbus-web-clipper` spelling; only the
+name changed.
 </Aside>
 
 ---
@@ -92,7 +94,9 @@ above are the full gateway-side pairing surface.
 
 ## Install
 
-Until the store listings go live, install from a
+Install from the [Chrome Web Store](https://chromewebstore.google.com/detail/nimbus-web-clipper/kkfdgphcalcdbnpgknplfbflffalbcnk)
+(Chrome, Edge, Brave) or [Firefox Add-ons](https://addons.mozilla.org/firefox/addon/nimbus-web-clipper/).
+To sideload instead, use a
 [release zip](https://github.com/nimbus-agent/nimbus-web-clipper/releases) or
 build it yourself from the
 [nimbus-web-clipper](https://github.com/nimbus-agent/nimbus-web-clipper) repo:
@@ -124,7 +128,7 @@ nimbus search "WAL checkpointing"
 
 The extension collects no data and contacts only your local gateway — no
 telemetry, no cloud. See the
-[web clipper privacy policy](/user-guide/web-clipper-privacy/).
+[Nimbus Companion privacy policy](/user-guide/web-clipper-privacy/).
 
 ---
 

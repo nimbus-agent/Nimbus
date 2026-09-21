@@ -931,7 +931,7 @@ Nimbus is a gateway plus a set of surfaces that talk to it. All of these are sep
 | [nimbus-mcp](https://github.com/nimbus-agent/nimbus-mcp) | `@nimbus-dev/mcp` (npm, MIT) — the launcher that exposes your local index and agents to any MCP client; listed in the official MCP Registry as `io.github.nimbus-agent/nimbus` |
 | [create-nimbus-connector](https://github.com/nimbus-agent/create-nimbus-connector) | Scaffolding generator for a new connector |
 | [nimbus-vscode](https://github.com/nimbus-agent/nimbus-vscode) | VS Code / Open VSX extension |
-| [nimbus-web-clipper](https://github.com/nimbus-agent/nimbus-web-clipper) | Chrome + Firefox MV3 web clipper; the gateway-side surface stays in this repo |
+| [nimbus-web-clipper](https://github.com/nimbus-agent/nimbus-web-clipper) | **Nimbus Companion** — the Chrome + Firefox MV3 browser extension (formerly "Nimbus Web Clipper"; the repo slug is unchanged); the gateway-side surface stays in this repo |
 | [nimbus-raycast](https://github.com/nimbus-agent/nimbus-raycast) | Raycast extension — quick-ask over the local gateway |
 | [awesome-nimbus](https://github.com/nimbus-agent/awesome-nimbus) | Curated connectors, recipes, extensions and resources |
 
