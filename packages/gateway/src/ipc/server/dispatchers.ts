@@ -75,6 +75,7 @@ import { dispatchSessionRpc, SessionRpcError } from "../session-rpc.ts";
 import { dispatchShareRpc, ShareRpcError } from "../share-rpc.ts";
 import { dispatchTeamVaultRpc, TeamVaultRpcError } from "../teamvault-rpc.ts";
 import { dispatchToolgenRpc, ToolgenRpcError } from "../toolgen-rpc.ts";
+import { dispatchTourRpc, TourRpcError } from "../tour-rpc.ts";
 import { dispatchTribalRpc } from "../tribal-rpc.ts";
 import { dispatchUpdaterRpc, UpdaterRpcError } from "../updater-rpc.ts";
 import { dispatchVoiceRpc, VoiceRpcError } from "../voice-rpc.ts";
@@ -894,6 +895,38 @@ export async function tryDispatchIndexDemoSymbolRpc(
 }
 
 /**
+ * `tour.plan` — `nimbus wow`'s guided tour of the real local index. LAN-forbidden (I5) and absent
+ * from the Tauri allowlist (I7): it is a CLI onboarding affordance, matching `index.demoSymbol`.
+ */
+export async function tryDispatchTourRpc(
+  ctx: ServerCtx,
+  method: string,
+  params: unknown,
+): Promise<unknown> {
+  if (method !== "tour.plan") {
+    return phase4RpcSkipped;
+  }
+  if (ctx.options.localIndex === undefined) {
+    throw new RpcMethodError(-32603, "tour.plan requires LocalIndex");
+  }
+  try {
+    const out = await dispatchTourRpc(method, params, {
+      db: ctx.options.localIndex.getDatabase(),
+      configDir: ctx.options.configDir,
+      demo: ctx.options.demo === true,
+      nowMs: () => Date.now(),
+    });
+    if (out.kind === "hit") return out.value;
+  } catch (e) {
+    if (e instanceof TourRpcError) {
+      throw new RpcMethodError(e.rpcCode, e.message);
+    }
+    throw e;
+  }
+  return phase4RpcSkipped;
+}
+
+/**
  * `demo.*` — I41 clause (5). Claimed ONLY by a demo-rooted gateway: on a normal gateway the
  * namespace is left unclaimed and the request falls through to `Method not found`, so the seeding
  * code path is not reachable at all rather than refused at runtime.
@@ -1582,7 +1615,7 @@ async function dispatchPhase4TeamMetricsGroup(
   return tryDispatchDataRpc(ctx, method, params, clientId);
 }
 
-/** Third group: lan → profile → index-reembed → index-rebody → index-regraph → index-demoSymbol → demo → policy → chatops → tribal → share → egress → glossary → decisions → premortem → ownership → clip → admin. */
+/** Third group: lan → profile → index-reembed → index-rebody → index-regraph → index-demoSymbol → tour → demo → policy → chatops → tribal → share → egress → glossary → decisions → premortem → ownership → clip → admin. */
 /**
  * The platform-group dispatchers, in probe order.
  *
@@ -1608,6 +1641,7 @@ const PHASE4_PLATFORM_DISPATCHERS: ReadonlyArray<
   tryDispatchIndexRebodyRpc,
   tryDispatchIndexRegraphRpc,
   tryDispatchIndexDemoSymbolRpc,
+  tryDispatchTourRpc,
   tryDispatchDemoRpc,
   tryDispatchFilesystemRpc,
   tryDispatchPolicyRpc,

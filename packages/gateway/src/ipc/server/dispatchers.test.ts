@@ -73,6 +73,7 @@ import {
   tryDispatchReindexRpc,
   tryDispatchSessionRpc,
   tryDispatchTeamVaultRpc,
+  tryDispatchTourRpc,
   tryDispatchTribalRpc,
   tryDispatchUpdaterRpc,
   tryDispatchVoiceRpc,
@@ -767,6 +768,32 @@ describe("tryDispatchIndexDemoSymbolRpc", () => {
   });
 });
 
+describe("tryDispatchTourRpc", () => {
+  test("skips other methods", async () => {
+    const { ctx } = makeCtx();
+    expect(await tryDispatchTourRpc(ctx, "engine.ask", {})).toBe(phase4RpcSkipped);
+  });
+  test("throws when localIndex missing", async () => {
+    const { ctx } = makeCtx();
+    await expect(tryDispatchTourRpc(ctx, "tour.plan", {})).rejects.toThrow(/requires LocalIndex/);
+  });
+  test("delegates tour.plan with valid wiring", async () => {
+    const db = trackedDb();
+    const localIndex = new LocalIndex(db);
+    const { ctx } = makeCtx({ localIndex });
+    const out = await tryDispatchTourRpc(ctx, "tour.plan", {});
+    expect(out).toMatchObject({ steps: [], skipped: expect.any(Array) });
+  });
+  test("remaps a param error to the JSON-RPC invalid-params code", async () => {
+    const db = trackedDb();
+    const localIndex = new LocalIndex(db);
+    const { ctx } = makeCtx({ localIndex });
+    await expect(tryDispatchTourRpc(ctx, "tour.plan", { steps: 0 })).rejects.toThrow(
+      /steps must be an integer in 1\.\.6/,
+    );
+  });
+});
+
 describe("tryDispatchProfileRpc", () => {
   test("skips non-profile methods", async () => {
     const { ctx } = makeCtx();
@@ -1182,6 +1209,18 @@ describe("tryDispatchPhase4Rpc", () => {
       lastItemId: null,
       skippedByReason: expect.any(Object),
     });
+  });
+  test("tour.plan hit through chain (returns a TourPlan, not a skip)", async () => {
+    const db = trackedDb();
+    const localIndex = new LocalIndex(db);
+    const { ctx } = makeCtx({ localIndex });
+    const out = await tryDispatchPhase4Rpc(ctx, "tour.plan", {}, "c1");
+    // The regression this guards against: deleting the PHASE4_PLATFORM_DISPATCHERS entry (or the
+    // outer routing match on the served handler map) makes this come back `phase4RpcSkipped`
+    // instead of a real TourPlan — a unit test calling `dispatchTourRpc` directly cannot catch
+    // that, because it bypasses this outer layer entirely.
+    expect(out).not.toBe(phase4RpcSkipped);
+    expect(out).toMatchObject({ steps: [], skipped: expect.any(Array) });
   });
   test("media.understand derives its egress sourceId from the server-derived clientId/kind, not a hand-built one", async () => {
     // Same shape as `tryDispatchAgentsRpc`'s equivalent test above: `tryDispatchMediaRpc` has no

@@ -179,6 +179,9 @@ const FORBIDDEN_OVER_LAN = new Set([
   // JSON-RPC), so forbidding the namespace costs no legitimate caller anything.
   "clip",
   "demo", // the demo seeder — local CLI only (I41)
+  // `nimbus wow` — a paired peer has no use for this machine's tour plan or listener list.
+  "tour",
+  "locality",
   // NOTE: egress.prune is deliberately NOT forbidden here — like federation.purge above, it is
   // HITL-gated inside its own handler (handlePrune in egress-rpc.ts calls
   // ctx.requestPruneApproval(beforeTs) and returns { approved: false, prunedCount: 0 } on denial),
