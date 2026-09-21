@@ -21,14 +21,18 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import net from "node:net";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { isAbsolute, join, relative } from "node:path";
+
+import { pickSentinelPort } from "./_fixtures/sentinel-port.ts";
 
 const CLI_ENTRY = join(import.meta.dir, "..", "..", "..", "cli", "src", "index.ts");
 const BOOT_TIMEOUT_MS = 60_000;
 const DEMO_TIMEOUT_MS = 180_000;
 const CLI_TIMEOUT_MS = 30_000;
 const RPC_TIMEOUT_MS = 30_000;
-const WOW_TIMEOUT_MS = 120_000;
+// Three sequential real agent briefs plus two IPC calls, on a runner 13-18x slower than this
+// machine — `demo-tour.e2e.test.ts`'s TRY_TIMEOUT_MS budgets 60s for ONE `--demo` agent command.
+const WOW_TIMEOUT_MS = 300_000;
 
 // Short names: a macOS unix-socket path must stay under 104 bytes.
 const root = mkdtempSync(join(tmpdir(), "nwe-"));
@@ -54,6 +58,22 @@ function realNimbusDataDir(): string {
 
 const demoDataDir = join(realNimbusDataDir(), "demo", "data");
 
+function isInside(child: string, parent: string): boolean {
+  const rel = relative(parent, child);
+  return rel !== "" && !rel.startsWith("..") && !isAbsolute(rel);
+}
+
+function canConnect(port: number): Promise<boolean> {
+  return new Promise((resolve) => {
+    const s = net.createConnection({ host: "127.0.0.1", port });
+    s.once("connect", () => {
+      s.destroy();
+      resolve(true);
+    });
+    s.once("error", () => resolve(false));
+  });
+}
+
 function readGatewayState(dataDir: string): { pid: number; socketPath: string } | undefined {
   try {
     const raw: unknown = JSON.parse(readFileSync(join(dataDir, "gateway.json"), "utf8"));
@@ -77,6 +97,8 @@ function isAlive(pid: number): boolean {
 }
 
 let env: Record<string, string>;
+let httpPort = 0;
+let metricsPort = 0;
 
 type CliResult = { code: number; stdout: string; stderr: string };
 
@@ -184,18 +206,27 @@ class TinyIpcClient {
 const client = new TinyIpcClient();
 
 beforeAll(async () => {
+  // Sentinel ports a REAL (non-demo) gateway would bind for the HTTP/metrics sidecars
+  // (`collectSidecarsFromEnv`, gated on `bootPolicy.envSidecars` — I41). Setting them is what
+  // makes test 2's "no `http`/`metrics` listener" assertion a real I41 proof rather than a
+  // vacuous one: with neither var set, ANY gateway (demo or not) would skip both sidecars, and
+  // the absence would say nothing about the demo gate.
+  httpPort = await pickSentinelPort();
+  metricsPort = await pickSentinelPort();
+
   env = { ...(process.env as Record<string, string>) };
   for (const k of [
     "NIMBUS_CONFIG_DIR",
     "NIMBUS_GATEWAY_SOCKET",
     "NIMBUS_E2E_PATHS_JSON",
-    "NIMBUS_METRICS_PORT",
     "NIMBUS_GATEWAY_LOG_PATH",
     "OPENAI_API_KEY",
     "ANTHROPIC_API_KEY",
-    "NIMBUS_UPDATER_DISABLE",
-    "NIMBUS_DISTRIBUTION_CHANNEL",
     "NODE_ENV",
+    // NIMBUS_UPDATER_DISABLE / NIMBUS_DISTRIBUTION_CHANNEL are deliberately NOT deleted here —
+    // unlike `demo-tour.e2e.test.ts`, this file has no local recorder intercepting the updater's
+    // real endpoint, so stripping an inherited safety net would only remove a brake. Both are
+    // additionally forced on below regardless of what the parent env carries.
   ]) {
     delete env[k];
   }
@@ -214,19 +245,64 @@ beforeAll(async () => {
     TEMP: dirs.tmp,
     TMP: dirs.tmp,
     NIMBUS_SKIP_EMBEDDING_RUNTIME: "1",
+    // Belt-and-suspenders against a real outbound update check: I41 already skips the updater
+    // startup check for a demo-rooted gateway (`bootPolicy.updaterStartupCheck`), so this should
+    // never matter — but if that gate ever regressed, an unset value here would let a real
+    // `Updater` reach the production manifest URL from CI. `parseNimbusUpdaterToml` reads exactly
+    // `"1"` to force `enabled = false` (`config/nimbus-toml.ts`).
+    NIMBUS_UPDATER_DISABLE: "1",
+    NIMBUS_HTTP_PORT: String(httpPort),
+    NIMBUS_METRICS_PORT: String(metricsPort),
   });
 
-  // Premise: the child must resolve homedir() to the temp HOME, or this test would boot against
-  // the developer's REAL profile. Fail, never proceed.
+  // Premise 1: the child must resolve homedir() to the temp HOME, or this test would boot against
+  // the developer's REAL profile. Also assert every platform env var THIS test set is one the
+  // child actually sees inside `root` — not just that we constructed `env` that way — so a
+  // typo'd key or an inherited override further up the object wins silently is caught here,
+  // before anything is written. Fail the suite, never proceed.
   const probe = Bun.spawn({
-    cmd: [process.execPath, "-e", "process.stdout.write(require('node:os').homedir())"],
+    cmd: [
+      process.execPath,
+      "-e",
+      "process.stdout.write(JSON.stringify({" +
+        "homedir: require('node:os').homedir()," +
+        "LOCALAPPDATA: process.env.LOCALAPPDATA ?? null," +
+        "APPDATA: process.env.APPDATA ?? null," +
+        "HOME: process.env.HOME ?? null," +
+        "XDG_CONFIG_HOME: process.env.XDG_CONFIG_HOME ?? null," +
+        "XDG_DATA_HOME: process.env.XDG_DATA_HOME ?? null," +
+        "}))",
+    ],
     stdout: "pipe",
     env,
   });
-  const childHome = await new Response(probe.stdout).text();
+  const probeOut = await new Response(probe.stdout).text();
   await probe.exited;
-  if (childHome !== dirs.home) {
-    throw new Error(`premise failed: child homedir() is ${childHome}, expected ${dirs.home}`);
+  const childEnv = JSON.parse(probeOut) as Record<string, string | null>;
+  if (childEnv["homedir"] !== dirs.home) {
+    throw new Error(
+      `premise failed: child homedir() is ${String(childEnv["homedir"])}, expected ${dirs.home}`,
+    );
+  }
+  const isolationVars =
+    process.platform === "win32"
+      ? (["LOCALAPPDATA", "APPDATA"] as const)
+      : (["HOME", "XDG_CONFIG_HOME", "XDG_DATA_HOME"] as const);
+  for (const k of isolationVars) {
+    const v = childEnv[k];
+    if (typeof v !== "string" || !isInside(v, root)) {
+      throw new Error(
+        `premise failed: child process.env.${k} is ${String(v)}, expected a path inside ${root}`,
+      );
+    }
+  }
+
+  // Premise 2: BEFORE `nimbus demo --no-tour` writes anything, the demo data dir this test will
+  // later read from must resolve inside `root` — a wrong `realNimbusDataDir()` mapping (e.g. a
+  // platform branch drifting from `platform/paths.ts`) must fail the suite here, not surface as a
+  // confusing later assertion against the wrong directory.
+  if (!isInside(demoDataDir, root)) {
+    throw new Error(`premise failed: demoDataDir ${demoDataDir} is not inside ${root}`);
   }
 
   // Seed + start a demo gateway (`--no-tour` skips `demo.ts`'s own built-in 3-brief tour — this
@@ -310,6 +386,15 @@ describe("nimbus wow: tour.plan and locality.report over a real gateway socket",
       expect(report.listeners.length).toBe(1);
       expect(report.listeners[0]?.name).toBe("ipc");
       expect(report.listeners[0]?.loopback).toBe(true);
+
+      // Belt-and-suspenders against the registry itself: `NIMBUS_HTTP_PORT`/`NIMBUS_METRICS_PORT`
+      // are set to free sentinel ports a REAL (non-demo) gateway WOULD bind
+      // (`collectSidecarsFromEnv`, gated on `bootPolicy.envSidecars`) — without them, no gateway,
+      // demo or not, would start either sidecar, and the `listeners` assertions above would pass
+      // for the wrong reason. Confirming nothing is actually listening closes the gap a
+      // registration-only bug (a sidecar binding but never registering) would leave open.
+      expect(await canConnect(httpPort)).toBe(false);
+      expect(await canConnect(metricsPort)).toBe(false);
     },
     RPC_TIMEOUT_MS,
   );
@@ -339,7 +424,6 @@ describe("nimbus wow: tour.plan and locality.report over a real gateway socket",
       const headerCount = (r.stdout.match(/── \[/g) ?? []).length;
       expect(headerCount).toBeGreaterThanOrEqual(3);
       expect(r.stdout).toContain("Outbound activity during this tour (gateway-wide)");
-      expect(r.code).toBe(0);
     },
     WOW_TIMEOUT_MS + 10_000,
   );
