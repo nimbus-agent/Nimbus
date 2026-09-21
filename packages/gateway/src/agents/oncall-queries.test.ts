@@ -9,6 +9,7 @@ import {
   selectCiRunForDeployment,
   selectIncidentById,
   selectLastDeploymentBefore,
+  selectNewestIncident,
   selectPriorIncidents,
   selectServiceMessages,
 } from "./oncall-queries.ts";
@@ -248,6 +249,20 @@ describe("selectIncidentById", () => {
     const d = db();
     insertIncident(d, { id: "inc-done", status: "resolved" });
     expect(selectIncidentById(d, "inc-done")?.status).toBe("resolved");
+  });
+});
+
+describe("selectNewestIncident", () => {
+  test("returns the most recently opened incident regardless of status", () => {
+    const d = db();
+    insertIncident(d, { id: "inc-older", status: "triggered", openedAtMs: 1_000 });
+    insertIncident(d, { id: "inc-newer", status: "resolved", openedAtMs: 2_000 });
+    expect(selectNewestIncident(d)?.id).toBe("inc-newer");
+  });
+
+  test("is null on an index with no incidents", () => {
+    const d = db();
+    expect(selectNewestIncident(d)).toBeNull();
   });
 });
 
