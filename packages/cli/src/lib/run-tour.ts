@@ -31,12 +31,21 @@ export interface TourStepResult {
 }
 
 /**
+ * The single rule-line shape both `tourHeader` (a full step banner) and `nimbus wow`'s own panel
+ * header (a rule line with no `$ command` beneath it) render from — kept in one function so the
+ * two cannot drift apart.
+ */
+export function tourRule(n: number, total: number, title: string): string {
+  const lead = `── [${String(n)}/${String(total)}] ${title} `;
+  return lead.padEnd(56, "─");
+}
+
+/**
  * `demo.ts`'s `header()` generalised with an explicit `total`: the tour's own proof panel is
  * step `steps.length + 1` of a total the header text itself has no other way to know.
  */
 export function tourHeader(n: number, total: number, title: string, command: string): string {
-  const lead = `── [${String(n)}/${String(total)}] ${title} `;
-  return `\n${lead.padEnd(56, "─")}\n$ ${command}\n`;
+  return `\n${tourRule(n, total, title)}\n$ ${command}\n`;
 }
 
 /**

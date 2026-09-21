@@ -13,6 +13,7 @@ import {
   type TourStep,
   type TourStepKind,
   tourHeader,
+  tourRule,
 } from "./run-tour.ts";
 
 const step = (kind: TourStepKind): TourStep => ({
@@ -195,6 +196,20 @@ describe("runTour", () => {
     // the implementation back at itself.
     const expected = `\n${"── [2/4] Why ".padEnd(56, "─")}\n$ nimbus why a\n`;
     expect(tourHeader(2, 4, "Why", "nimbus why a")).toBe(expected);
+  });
+
+  // Added for `nimbus wow`'s panel header (fix round 1): the panel needs the same rule-line shape
+  // as a step header, but with no `$ command` line beneath it. `tourRule` is the sibling
+  // `tourHeader` itself uses for its first line, so the two cannot drift apart.
+  test("tourRule renders the padded rule line alone — no leading blank line, no $ command", () => {
+    const expected = "── [2/4] Why ".padEnd(56, "─");
+    expect(tourRule(2, 4, "Why")).toBe(expected);
+  });
+
+  test("tourHeader's first line is exactly what tourRule produces, so the two cannot drift", () => {
+    const header = tourHeader(3, 5, "Standup", "nimbus standup");
+    const rule = tourRule(3, 5, "Standup");
+    expect(header).toBe(`\n${rule}\n$ nimbus standup\n`);
   });
 
   test("defaultTourRunners binds every kind to the real command it names", () => {

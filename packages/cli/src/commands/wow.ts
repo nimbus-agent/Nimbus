@@ -6,9 +6,13 @@ import {
   type TourRunners,
   type TourStep,
   type TourStepKind,
+  tourRule,
 } from "../lib/run-tour.ts";
 import { withGatewayIpc } from "../lib/with-gateway-ipc.ts";
 import { formatProveResult, type ProveResult } from "./prove.ts";
+
+/** The panel's own step title, used only to build its `tourRule` header line. */
+const PANEL_TITLE = "Where your data is";
 
 export { PANEL_COMMANDS, renderLocalityPanel };
 
@@ -120,9 +124,18 @@ export function parseWowArgs(args: readonly string[]): WowArgs {
  *
  * The proof window is EXACTLY `{since: plan.t0, until: locality.t1}` — both edges are GATEWAY
  * clock values read from the two prior calls, never `Date.now()` computed here, so the window
- * matches what the gateway itself can account for.
+ * matches what the gateway itself can account for. `locality()` is called only AFTER every tour
+ * step has run, and `prove()` only after `locality()` resolves — that order is load-bearing (an
+ * `until` computed before the tour finished would understate what the tour itself did) and is
+ * pinned by a call-order test in `wow.test.ts`, not just by fixed-fixture assertions that a
+ * hoisted call would still satisfy.
  */
 export async function runWow(args: string[], deps: WowDeps = defaultWowDeps): Promise<void> {
+  if (args.includes("--help") || args.includes("-h")) {
+    deps.out(`${WOW_USAGE}\n`);
+    return;
+  }
+
   let parsed: WowArgs;
   try {
     parsed = parseWowArgs(args);
@@ -149,15 +162,29 @@ export async function runWow(args: string[], deps: WowDeps = defaultWowDeps): Pr
   const total = plan.steps.length + (parsed.noProof ? 0 : 1);
   const results = await runTour(plan.steps, deps.runners, deps.out, deps.err, total);
 
+  // A failed `prove()` call must not discard the locality report already in hand: the panel still
+  // prints in full, with a distinct "proof unavailable" fact under the outbound-activity heading —
+  // a DIFFERENT fact from `formatProveResult`'s "indeterminate — cannot prove zero egress" (the
+  // call itself failed, vs. the chain being unverifiable), so it is never routed through
+  // `formatProveResult` and never carries a count.
+  let proveFailed = false;
   if (!parsed.noProof) {
     const locality = await deps.locality();
-    const window = await deps.prove(plan.t0, locality.t1);
-    const proofText = formatProveResult({
-      delta: window.completeness.outboundEgressEvents,
-      completeness: window.completeness,
-      chainOk: window.verify.ok,
-      label: "during this tour",
-    });
+    let proofText: string;
+    try {
+      const window = await deps.prove(plan.t0, locality.t1);
+      proofText = formatProveResult({
+        delta: window.completeness.outboundEgressEvents,
+        completeness: window.completeness,
+        chainOk: window.verify.ok,
+        label: "during this tour",
+      });
+    } catch (e) {
+      proveFailed = true;
+      const message = e instanceof Error ? e.message : String(e);
+      proofText = `proof unavailable — the egress.proveWindow call failed: ${message}`;
+    }
+    deps.out(`\n${tourRule(total, total, PANEL_TITLE)}\n`);
     deps.out(renderLocalityPanel(locality, proofText));
   }
 
@@ -171,9 +198,9 @@ export async function runWow(args: string[], deps: WowDeps = defaultWowDeps): Pr
     }
   }
 
-  // Printed AFTER the panel and the skip/more lists — the brief's ordering — so a failed step
-  // never hides the honesty panel or the plan's own disclosures behind it.
-  if (results.some((r) => !r.ok)) {
+  // Printed AFTER the panel and the skip/more lists — the brief's ordering — so a failed step (or
+  // a failed prove call) never hides the honesty panel or the plan's own disclosures behind it.
+  if (results.some((r) => !r.ok) || proveFailed) {
     throw new CliExit(1);
   }
 }
