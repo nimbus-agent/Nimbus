@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1789983217064,
+  "lastUpdate": 1789999015879,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "f6d516a57a75b95c33924e6222e9a369c5c37315",
-          "message": "refactor(agents): consume promoted why types from sdk 1.6.0 + roadmap (why-lens step 2) (#825)\n\n## Why-lens step 2 — gateway half\n\nThe `why` lens shipped on the gateway + CLI in #820; **step 2** promotes\nits types into `@nimbus-dev/sdk` (single source of truth) and exposes it\nthrough `@nimbus-dev/client`. This is the gateway slice of that hop.\n\n### What this PR does\n- **Consume the promoted types** — bumps `@nimbus-dev/sdk` to `^1.6.0`\n(published) and re-exports `WhyBrief` / `WhyFinding` / `WhyLane` /\n`WhySubject` / `WhyPeek` + `isWhyBrief` from `agents/_lib/findings.ts`.\n`agents/_lib/why-types.ts` drops its local duplicate definitions and\nre-exports the five from `findings.ts`, keeping only `WhyInput` (the\nclient-local request shape). Pure type-move — no behavior change\n(`why.ts`/`why-peek.ts`/`agents-rpc.ts` untouched; `tsc` is the proof\nthe shapes still line up).\n- **9th agent in the fixture generator** — adds `why` to\n`scripts/gen-agent-brief-fixtures.ts` PARAMS and regenerates\n`agent-brief-shape.snapshot.json` (why-only addition), so the\ngateway-generated golden fixture that `@nimbus-dev/client`'s conformance\ngate consumes carries the `why` brief.\n- **Roadmap truth-pass** — records the lens as built + client-reachable\nin `docs/ecosystem-roadmap.md`, retiring the stale \"spiked, not built\"\nframing for the reachability claim.\n- Carries the step-2 design spec, implementation plan, and the\ndesign/plan review notes.\n\n### Verification\n- Baseline 228 gateway-agent tests → 228 after the swap (exact match);\nfull why suite (agents + `agents-rpc.why` + `why.e2e`) **232 pass / 0\nfail**.\n- `tsc -p packages/gateway/tsconfig.json` clean; `audit:structure`\ndependency-cruiser OK (no import cycle from the re-export);\n`agent-brief-shape.test.ts` 10/10.\n- biome clean; `lint:markdown` 0 errors; doc-refs + readme-cli green.\n\n### Companion PRs (the rest of step 2)\n- `@nimbus-dev/sdk` **1.6.0** — promoted types (merged + published).\n- `@nimbus-dev/client` **0.12.0** — `agentsWhy` + `agentsWhyPeek`\n(nimbus-client#31).\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n## Summary by CodeRabbit\n\n* **New Features**\n* Shipped client-accessible “why” lens support, including brief and peek\nviews, routed through the gateway for the step 2 SDK→client path.\n* Extended the “why” result typing surface to align responses across\ngateway and supporting tooling.\n* Expanded “why” brief schema coverage and added new fixture parameters\nfor better response coverage.\n* **Documentation**\n* Updated the ecosystem roadmap with Stage 2a delivery status and\nclarified remaining banner/hover work.\n* Added/updated implementation plans and design reviews for the\nSDK→client integration and verification gates.\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude Opus 4.8 (1M context) <noreply@anthropic.com>",
-          "timestamp": "2026-07-24T09:17:20+03:00",
-          "tree_id": "a59ca14dcb9dbf97391dbce3aaf7a829eaa90008",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/f6d516a57a75b95c33924e6222e9a369c5c37315"
-        },
-        "date": 1784874564357,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 316.95318305,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 314.69893029999366,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 337.0874059499973,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "38209d308efd714baa8d8b5d9c5fbe56c6521f9e",
+          "message": "docs(clipper): the browser extension is now Nimbus Companion (#1564)\n\n## Why\n\nThe browser extension was renamed **Nimbus Web Clipper → Nimbus\nCompanion** (nimbus-agent/nimbus-web-clipper#119, cut as its 0.10.0 in\nnimbus-agent/nimbus-web-clipper#120). The old name collided in every\nstore search with Nimbus Web Inc's unrelated \"Web Clipper (Nimbus)\".\nThese pages are what the store listings link to, so they should carry\nthe new name.\n\n## What\n\n- `user-guide/web-clipper.mdx`, `user-guide/web-clipper-privacy.mdx` —\ntitle, intro and cross-links renamed, each noting the former name once.\n- `astro.config.mjs` — sidebar label.\n- `docs/README.md` — satellite-repo table row.\n- Install notes corrected: they still said `v0.1.0` and that the store\nlistings \"await their one-time store bootstrap\". Both stores are live;\nthe page now links them and keeps sideloading as the alternative.\n\n## Deliberately unchanged\n\n- **Page URLs** (`/user-guide/web-clipper/`,\n`/user-guide/web-clipper-privacy/`) — the store listings, the\nextension's `package.json` homepage and its privacy-policy link all\npoint at them.\n- Repo slug and store URL slugs — identifiers, not branding.\n- Gateway code comments and historical roadmap/changelog entries — \"web\nclipper\" there names the feature (`/v1/clips`, `nimbus clip pair`), not\nthe product.\n\n## Not in this PR\n\nThe guide's \"What it does\" still describes only clipping + related\nitems; the extension has since grown page recognition, agent lanes,\nbriefs and the egress ledger. Refreshing that is a content job of its\nown.\n\n## Verification\n\n`bun run lint:markdown` (0 issues) and `bun run docs:build` (56 pages)\ngreen locally.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nCo-authored-by: Claude Fable 5.1 <noreply@anthropic.com>",
+          "timestamp": "2026-09-21T13:44:31Z",
+          "tree_id": "2e6640da30ca98032656c78558d69c0ff630089f",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/38209d308efd714baa8d8b5d9c5fbe56c6521f9e"
+        },
+        "date": 1789999012332,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 331.534213099999,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 331.03746030000036,
             "unit": "ms"
           }
         ]
