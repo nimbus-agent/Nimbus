@@ -84,6 +84,46 @@ Two behaviours worth knowing:
 
 ---
 
+### `nimbus wow`
+
+A guided tour of **your own real local index** — not the synthetic Acme org `nimbus demo` seeds. Up to six deterministic, per-kind selectors (`oncall` / `why` / `owners` / `standup` / `decisions` / `glossary`) each ask "is there something in this index worth showing, and with what arguments?" against the real substrate, run the winning ones through the same agent CLI commands you would type yourself, then close on a locality panel: which listeners are open right now, what the index holds, and how much left the machine while the tour ran.
+
+```bash
+nimbus wow
+nimbus wow --steps 5
+nimbus wow --no-proof
+nimbus wow --json
+```
+
+**Options:**
+
+| Flag | Description |
+|---|---|
+| `--steps <n>` | How many of the offerable steps to run, `1`–`6`. **Refused, never clamped**, outside that range (exit `2`) — both here and in the gateway's own `tour.plan` handler, so a client-side bypass would only be caught a round-trip later. Default `3`. |
+| `--no-proof` | Skip the closing locality panel (and the `egress.proveWindow` call it would have made). The tour's step headers still count correctly without it — `[1/3]` rather than `[1/4]`, since the panel no longer occupies a slot. |
+| `--json` | Emit `{ plan, locality }` — the raw `tour.plan` and `locality.report` results — instead of running anything. **No tour step runs and no proof call is made** in this mode; it is a plan-and-panel-data dump, not a dry run of the human output. |
+
+Any other flag is refused (exit `2`), same as an out-of-range `--steps`.
+
+**What "worth showing" means, per step:** `oncall` needs an indexed incident; `why` needs an indexed symbol under a configured `[[filesystem.roots]]` path; `owners` needs ownership-pass data for a non-root directory; `standup` needs activity attributed to you (via `resolveSelfPerson`, below) in the last 24 hours; `decisions` needs an extracted decision in the last 90 days; `glossary` needs a consolidated term. A kind with nothing to show is skipped, never padded with an empty brief — the tour prints `Not shown: <kind> (<reason>)` for each, and any offerable step beyond `--steps` is listed under `Also try:` with its exact command.
+
+**An empty plan is not an error.** If none of the six kinds has anything to offer — the most common reason being a fresh gateway with nothing indexed yet — `nimbus wow` prints a pointer to [`nimbus init`](#nimbus-init) and exits `0`. No locality panel, no proof call: there is nothing yet to be honest about.
+
+**Exit codes:** `0` when every step that ran succeeded (or the plan was empty, or `--json` was used). `1` when any step failed — the locality panel (unless `--no-proof`) and the skip/more lists still print first, since a failed step must never hide the tour's own disclosures. `2` on a bad argument (`--steps` outside `1`–`6`, a missing `--steps` value, or an unrecognised flag) — refused before any gateway call.
+
+**The proof line is a time window, not attribution.** The window is exactly `{since: plan.t0, until: locality.t1}` — `t0` is the gateway's own clock when `tour.plan` ran, `t1` is its clock when `locality.report` ran, and both are gateway-side values, never `Date.now()` computed in the CLI. It answers "how much left this machine, gateway-wide, while the tour was running" — **not** "how much this tour's own three commands sent." A concurrent sync, a background fleet run, or another client's `nimbus ask` during the same window would show up on the same line, and the panel does not (and cannot) separate them out. `nimbus prove --sign`, `nimbus egress` and `nimbus egress verify` — named at the foot of the panel — are how to inspect the same window (or a different one) in full.
+
+**IPC:** `tour.plan(params: { steps?: 1..6 })` and `locality.report(params: {})`. Both are **CLI-only**: the `tour` and `locality` namespaces are `FORBIDDEN_OVER_LAN` (I5) and neither method is in the Tauri `ALLOWED_METHODS` (I7 — still 105). Read-only, no HITL, no new egress class — the panel's own proof line is produced by the existing `egress.proveWindow` method, not a new one.
+
+**Two residuals of the locality panel, stated rather than hidden:**
+
+- **`oauth_callback` is transient.** It is registered only for the lifetime of an in-flight OAuth authorization (`auth/pkce.ts`) and unregistered the moment that flow ends, so it will essentially never appear on a `nimbus wow` panel — its absence means no OAuth flow was in progress at that instant, not that the mechanism is broken.
+- **The `ipc` listener's liveness differs by platform.** On Windows the probe reads the pipe server's own `listening` property live, so an unrequested fault is reflected immediately. On POSIX, `Bun.listen`'s unix-socket handle exposes no such property, so the probe cannot observe an unrequested fault after the fact — it can report the IPC socket as open even immediately following one. Every other listener (`http`, `lan`, `metrics`, `oauth_callback`, `mdns`) is probed by an explicit liveness check with no such gap.
+
+**Identity for the `standup` step is resolved exactly as [`nimbus standup`](#nimbus-standup) resolves it** — `[user] mePersonId`, then `git config user.email`; **never** the OS username tier `resolveSelfPerson` also supports, since `nimbus standup` itself never reaches it in production. `nimbus wow` and `nimbus standup` cannot disagree about who "me" is.
+
+---
+
 ## Demo Sandbox
 
 ### `nimbus demo`

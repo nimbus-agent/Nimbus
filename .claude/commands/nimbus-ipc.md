@@ -472,6 +472,21 @@ Handlers: `packages/gateway/src/ipc/clip-rpc.ts`. CLI: `nimbus clip pair|status|
 
 ---
 
+### `tour.*` / `locality.*` — `nimbus wow` guided tour (2026-09-21)
+
+A guided tour of the real local index, closing on an honesty panel. Both namespaces are **CLI-only** — `FORBIDDEN_OVER_LAN` (I5) and absent from the Tauri `ALLOWED_METHODS` (I7, still 105). Read-only, no HITL, no new egress class (the panel's proof line reuses `egress.proveWindow` above).
+
+| Method | Type | Description |
+|---|---|---|
+| `tour.plan` | request | Plans up to `params.steps` (1..6, default 3, refused — never clamped — outside that range) of six deterministic per-kind selectors (`why`/`owners`/`oncall`/`standup`/`decisions`/`glossary`) against the real index. Returns `{ steps, more, skipped, t0 }` — `t0` is the gateway's own clock, the LEFT edge of the tour's proof window |
+| `locality.report` | request | The closing panel's data: `{ listeners, inventory, db, t1 }` — which listeners (`locality/listener-registry.ts`) are open RIGHT NOW (probed fresh, never cached), per-service item counts, on-disk index size, and `t1`, the RIGHT edge of the proof window |
+
+The six selectors live under `agents/_lib/tour-*.ts`, not `agents/wow.ts` — static rule D22(d) forbids any file outside `ipc/agents-rpc.ts` from importing an `agents/<name>.ts` emitter or sibling query module, and a selector needs exactly those query modules (`agents/standup-queries.ts`, `agents/oncall-queries.ts`). `locality/` (`listener-registry.ts` + `locality-report.ts`) is a top-level directory, not under `ipc/`, because the registry is a plain module every real listen site imports directly, including `ipc/lan-server.ts` and `ipc/http-server.ts` themselves — sitting inside `ipc/` would be an import cycle. See static rule **D31** (every non-test gateway file opening a listening socket must name a `registerListener(` call) in `docs/SECURITY-INVARIANTS.md` and `CLAUDE.md`'s "Static complement" paragraph.
+
+Handlers: `packages/gateway/src/ipc/{tour-rpc,locality-rpc}.ts`. CLI: `nimbus wow [--steps 1..6] [--no-proof] [--json]`.
+
+---
+
 ### `audit.*` — Audit log (read-only; CLI-only)
 
 | Method | Type | Description |
