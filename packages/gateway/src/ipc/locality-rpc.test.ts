@@ -84,3 +84,29 @@ test("throws the same -32603 shape when the main db file cannot be statted", asy
   ).rejects.toThrow(LocalityRpcError);
   db.close();
 });
+
+// Gate fix (coverage floor): `handleLocalityReport`'s catch maps ONLY a `LocalityReportError` to
+// the -32603 shape above; anything else must propagate UNCHANGED (the `throw e;` rethrow arm).
+// A bare, deliberately UNMIGRATED `Database` has no `item` table, so `collectInventory`'s own
+// `SELECT … FROM item` throws a real SQLite error that has nothing to do with `dbBytes` at all —
+// `dbPath: ":memory:"` makes the size path a no-op before any stat is ever attempted, so this is
+// the one thrown value in this file guaranteed not to be a `LocalityReportError`.
+test("rethrows a non-LocalityReportError (e.g. a missing item table) unchanged, never mapped to -32603", async () => {
+  const db = new Database(":memory:"); // NOT migrated — no `item` table, deliberately
+  try {
+    const result = dispatchLocalityRpc(
+      "locality.report",
+      {},
+      {
+        db,
+        dbPath: ":memory:",
+        registry: createListenerRegistry(),
+        nowMs: 1,
+      },
+    );
+    await expect(result).rejects.not.toBeInstanceOf(LocalityRpcError);
+    await expect(result).rejects.toThrow(/item/);
+  } finally {
+    db.close();
+  }
+});
