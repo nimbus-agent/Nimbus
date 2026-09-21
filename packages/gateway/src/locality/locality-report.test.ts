@@ -1,5 +1,8 @@
 import { Database } from "bun:sqlite";
 import { expect, test } from "bun:test";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { upsertIndexedItemForSync } from "../index/item-store.ts";
 import { CURRENT_SCHEMA_VERSION } from "../index/local-index.ts";
 import { runIndexedSchemaMigrations } from "../index/migrations/runner.ts";
@@ -25,6 +28,39 @@ test("bytes sums main + wal + shm and tolerates missing files", () => {
   expect(r.db).toEqual({ path: "/d/n.db", bytes: 140 });
   expect(r.t1).toBe(9);
   db.close();
+});
+
+// Every test above either injects `statSize` or passes `dbPath: ":memory:"` (which `dbBytes`
+// short-circuits on before `statSize` — default or injected — is ever called), so the DEFAULT
+// `statSize` (real `statSync` in a try/catch) has never actually run. These two use a real
+// temp-dir file instead, and close the DB before their own `finally` removes that dir.
+test("without an injected statSize, the real statSync sums main + wal bytes", () => {
+  const dir = mkdtempSync(join(tmpdir(), "nimbus-locality-report-"));
+  try {
+    const dbPath = join(dir, "n.db");
+    writeFileSync(dbPath, "x".repeat(100));
+    writeFileSync(`${dbPath}-wal`, "y".repeat(40));
+    // No "-shm" sibling: also exercises the catch (ENOENT) arm for real, for that one suffix.
+    const db = freshIndexedDb();
+    const r = buildLocalityReport({ db, dbPath, registry: createListenerRegistry(), nowMs: 1 });
+    db.close();
+    expect(r.db).toEqual({ path: dbPath, bytes: 140 });
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("without an injected statSize, a non-existent db path reports zero bytes", () => {
+  const dir = mkdtempSync(join(tmpdir(), "nimbus-locality-report-"));
+  try {
+    const dbPath = join(dir, "does-not-exist.db");
+    const db = freshIndexedDb();
+    const r = buildLocalityReport({ db, dbPath, registry: createListenerRegistry(), nowMs: 1 });
+    db.close();
+    expect(r.db).toEqual({ path: dbPath, bytes: 0 });
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 });
 
 test(":memory: reports zero bytes and never stats", () => {

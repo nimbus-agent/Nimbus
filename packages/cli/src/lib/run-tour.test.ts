@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { join, resolve } from "node:path";
 import { runDecisionsCommand } from "../commands/decisions.ts";
 import { runGlossaryCommand } from "../commands/glossary.ts";
 import { runOncallCommand } from "../commands/oncall.ts";
@@ -12,6 +13,7 @@ import {
   type TourRunners,
   type TourStep,
   type TourStepKind,
+  type TourStepResult,
   tourHeader,
   tourRule,
 } from "./run-tour.ts";
@@ -35,6 +37,77 @@ const runners = (over: Partial<TourRunners>): TourRunners => ({
   glossary: noop,
   ...over,
 });
+
+const RUN_TOUR_PATH = join(import.meta.dir, "run-tour.ts");
+// lib -> src -> cli -> packages -> repo root.
+const REPO_ROOT = resolve(import.meta.dir, "..", "..", "..", "..");
+const ISTANBUL_REGISTER = join(REPO_ROOT, "scripts", "coverage", "istanbul-register.ts");
+
+// True only when THIS process was itself launched with the istanbul preload (i.e. we are
+// running under `audit:coverage-floor:build-lcov`, not an ordinary `bun test`) — checked so the
+// coverage side-channel below (see `runInFreshProcess`) never spawns an extra, instrumented
+// child, or touches the repo's `coverage/.nyc-tmp` directory, on a plain dev/CI test run.
+const PARENT_COVERAGE_ACTIVE =
+  (globalThis as { __coverage__?: unknown }).__coverage__ !== undefined;
+
+/**
+ * Runs `runTour` for one "why" step in a BRAND-NEW bun process, where `process.exitCode` is
+ * genuinely `undefined` — the ambient every real `nimbus wow` invocation actually starts from,
+ * and NOT reproducible in this shared test process: once any code anywhere in a process assigns
+ * `process.exitCode` a real number, Bun's own setter silently ignores every later
+ * undefined/null assignment for the rest of that process's life (verified: assigning `undefined`
+ * after a real number leaves the old number in place). `runnerBody` is inlined verbatim as the
+ * "why" runner's source.
+ *
+ * Only when `PARENT_COVERAGE_ACTIVE`, the child is ALSO instrumented with the same istanbul
+ * preload `audit:coverage-floor:build-lcov` uses and, best-effort, drops its coverage shard into
+ * the SAME `coverage/.nyc-tmp` directory that run's merge step reads — otherwise this file's only
+ * branches reachable from a fresh ambient would be invisible to the coverage-floor gate purely
+ * because they execute on the far side of a process boundary, never because they're untested. An
+ * ordinary test run spawns a plain, uninstrumented child instead.
+ */
+async function runInFreshProcess(
+  runnerBody: string,
+): Promise<{ exitCode: number | null; results: TourStepResult[] }> {
+  const shardDump = PARENT_COVERAGE_ACTIVE
+    ? `
+    try {
+      const cov = globalThis.__coverage__;
+      if (cov) {
+        const fs = await import("node:fs");
+        const path = await import("node:path");
+        const dir = path.resolve(${JSON.stringify(REPO_ROOT)}, "coverage", ".nyc-tmp");
+        fs.mkdirSync(dir, { recursive: true });
+        fs.writeFileSync(path.resolve(dir, \`\${process.pid}-run-tour-fresh.json\`), JSON.stringify(cov));
+      }
+    } catch {
+      // Best-effort only — must not fail this test over a coverage-plumbing hiccup.
+    }`
+    : "";
+  const code = `
+    const mod = await import(${JSON.stringify(RUN_TOUR_PATH)});
+    const results = await mod.runTour(
+      [{ kind: "why", title: "T", command: "c", args: [], reason: "r" }],
+      { why: ${runnerBody} },
+      () => {},
+      () => {},
+      1,
+    );
+    process.stdout.write(JSON.stringify({ exitCode: process.exitCode ?? null, results }));
+    ${shardDump}
+  `;
+  const args = PARENT_COVERAGE_ACTIVE
+    ? [process.execPath, "--preload", ISTANBUL_REGISTER, "-e", code]
+    : [process.execPath, "-e", code];
+  const proc = Bun.spawn(args, { stdout: "pipe", stderr: "pipe" });
+  const [out, , exitCode] = await Promise.all([
+    new Response(proc.stdout).text(),
+    new Response(proc.stderr).text(),
+    proc.exited,
+  ]);
+  if (exitCode !== 0) throw new Error(`fresh-process child exited ${String(exitCode)}: ${out}`);
+  return JSON.parse(out) as { exitCode: number | null; results: TourStepResult[] };
+}
 
 describe("runTour", () => {
   // Every test in this file may write the REAL `process.exitCode` (no isolation — see
@@ -146,6 +219,31 @@ describe("runTour", () => {
       );
       expect(process.exitCode).toBe(3);
       expect(res[0]?.ok).toBe(false);
+    });
+  });
+
+  // These two run the real "why" runner (and every fallback it exercises) in a genuinely fresh
+  // process — the ambient every real `nimbus wow` invocation actually starts from, and the one
+  // case this shared test process can never reproduce on its own (see `runInFreshProcess`).
+  describe("a fresh process, where process.exitCode was never set", () => {
+    test("a runner that never touches exitCode leaves it undefined, and runTour restores 0", async () => {
+      const { exitCode, results } = await runInFreshProcess("async () => {}");
+      // (undefined ?? 0) === 0 is true, so the step is ok, and the `before ?? 0` restore in
+      // `finally` turns the still-undefined ambient into the real number 0 — never `undefined`
+      // itself, which is what makes 0 the one value that reliably lands at process exit.
+      expect(exitCode).toBe(0);
+      expect(results).toEqual([{ kind: "why", ok: true }]);
+    });
+
+    test("a runner that sets a non-zero code fails the step and still restores to 0", async () => {
+      const { exitCode, results } = await runInFreshProcess(
+        "async () => { process.exitCode = 5; }",
+      );
+      // (5 ?? 0) === 0 is false and (5 ?? 0) === (undefined ?? 0) is 5 === 0, also false, so the
+      // step is ok:false; `before` (captured before the runner ran) was undefined, so the
+      // `finally` restore is `undefined ?? 0` = 0, not the runner's leftover 5.
+      expect(exitCode).toBe(0);
+      expect(results).toEqual([{ kind: "why", ok: false }]);
     });
   });
 

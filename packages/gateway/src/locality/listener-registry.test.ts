@@ -37,6 +37,37 @@ describe("createListenerRegistry", () => {
       "metrics:127.0.0.1:2",
     ]);
   });
+
+  // The comparator's tie-break arms: the test above only ever asks the comparator to place items
+  // that are ALREADY out of order, which never exercises the "leave it where it is" (false) side
+  // of either the name or the address comparison. Registering two reports already in ASCENDING
+  // order forces that side too, and a full tie (same name AND address) forces the final `return
+  // 0` — neither observable from the OUTPUT order alone (a comparator returning the wrong
+  // constant on either side of a tie can still sort two elements correctly), so each asserts the
+  // full report is still present, not dropped.
+  test("live() keeps two already-ascending, same-name reports in their address order", () => {
+    const r = createListenerRegistry();
+    r.register(() => ({ name: "http", address: "127.0.0.1:1", loopback: true }));
+    r.register(() => ({ name: "http", address: "127.0.0.1:9", loopback: true }));
+    expect(r.live().map((l) => l.address)).toEqual(["127.0.0.1:1", "127.0.0.1:9"]);
+  });
+
+  test("live() keeps two already-ascending, differently-named reports in their name order", () => {
+    const r = createListenerRegistry();
+    r.register(() => ({ name: "http", address: "a", loopback: true }));
+    r.register(() => ({ name: "metrics", address: "a", loopback: true }));
+    expect(r.live().map((l) => l.name)).toEqual(["http", "metrics"]);
+  });
+
+  test("live() keeps BOTH reports when two probes report the identical name and address", () => {
+    const r = createListenerRegistry();
+    r.register(() => ({ name: "http", address: "127.0.0.1:1", loopback: true }));
+    r.register(() => ({ name: "http", address: "127.0.0.1:1", loopback: true }));
+    expect(r.live()).toEqual([
+      { name: "http", address: "127.0.0.1:1", loopback: true },
+      { name: "http", address: "127.0.0.1:1", loopback: true },
+    ]);
+  });
 });
 
 describe("processListeners / registerListener", () => {
