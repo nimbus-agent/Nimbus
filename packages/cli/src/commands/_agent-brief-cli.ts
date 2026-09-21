@@ -1,6 +1,7 @@
 import { IPCClient } from "../ipc-client/index.ts";
 import { briefTextFor, resolveBriefTimeoutMs } from "../lib/agent-brief-render.ts";
 import { CliExit } from "../lib/cli-exit.ts";
+import { disconnectQuietly } from "../lib/disconnect-quietly.ts";
 import { gatewayNotRunningMessage } from "../lib/gateway-not-running.ts";
 import { readGatewayState } from "../lib/gateway-process.ts";
 import { registerInteractiveCliIpcHandlers } from "../lib/interactive-ipc-handlers.ts";
@@ -136,6 +137,6 @@ export async function runAgentBriefCli<TFindings>(
   } finally {
     if (timeout !== undefined) clearTimeout(timeout);
     // IPCClient.disconnect() is safe even when connect() was never called (null socket guards).
-    await client.disconnect();
+    await disconnectQuietly(client);
   }
 }

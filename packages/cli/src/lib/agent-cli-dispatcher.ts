@@ -2,6 +2,7 @@ import { IPCClient } from "../ipc-client/index.ts";
 import { getCliPlatformPaths } from "../paths.ts";
 import { awaitAgentBrief, type PendingBrief, renderAgentBrief } from "./agent-brief-render.ts";
 import { CliExit } from "./cli-exit.ts";
+import { disconnectQuietly } from "./disconnect-quietly.ts";
 import { gatewayNotRunningMessage } from "./gateway-not-running.ts";
 import { readGatewayState } from "./gateway-process.ts";
 import { registerInteractiveCliIpcHandlers } from "./interactive-ipc-handlers.ts";
@@ -54,6 +55,6 @@ export async function runAgentCli<B extends { gaps: readonly { category: string 
     throw new CliExit(2);
   } finally {
     pending?.cancel();
-    await client.disconnect();
+    await disconnectQuietly(client);
   }
 }

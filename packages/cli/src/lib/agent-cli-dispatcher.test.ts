@@ -97,6 +97,36 @@ describe("runAgentCli", () => {
     expect(disconnected).toBe(true);
   });
 
+  it("a rejecting disconnect() in the finally does not replace the pending CliExit(2)", async () => {
+    setFixture({
+      gatewayState: { socketPath: FAKE_SOCKET_PATH },
+      ipcClient: {
+        connect: async () => {},
+        // The cleanup now RUNS on the failure path (process.exit used to skip it), so a throw
+        // here would otherwise win over the CliExit and surface as a printed error + exit 1.
+        disconnect: async () => {
+          throw new Error("socket already torn down");
+        },
+        call: async () => {
+          throw new Error("rpc failed");
+        },
+        onNotification: () => {},
+      },
+    });
+    await expect(
+      runAgentCli({
+        agentName: "x",
+        ipcMethod: "agents.x",
+        callParams: {},
+        guard: isAnyBrief,
+        json: false,
+      }),
+    ).rejects.toMatchObject({ name: "CliExit", code: 2 });
+    const stderr = stderrChunks.join("");
+    expect(stderr).toContain("rpc failed");
+    expect(stderr).not.toContain("socket already torn down");
+  });
+
   it("an empty_index gap exits 1 with the hint only — the catch does not re-label it", async () => {
     const handlers = new Map<string, (params: unknown) => void>();
     setFixture({

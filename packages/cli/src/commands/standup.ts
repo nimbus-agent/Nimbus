@@ -2,6 +2,7 @@ import { toPlainText, toSlackMrkdwn } from "../format/slack-markdown.ts";
 import { IPCClient } from "../ipc-client/index.ts";
 import { awaitAgentBrief, briefTextFor, type PendingBrief } from "../lib/agent-brief-render.ts";
 import { CliExit } from "../lib/cli-exit.ts";
+import { disconnectQuietly } from "../lib/disconnect-quietly.ts";
 import { gatewayNotRunningMessage } from "../lib/gateway-not-running.ts";
 import { readGatewayState } from "../lib/gateway-process.ts";
 import { registerInteractiveCliIpcHandlers } from "../lib/interactive-ipc-handlers.ts";
@@ -145,7 +146,7 @@ export async function fetchStandupBrief(params: StandupFetchParams): Promise<Sta
     throw new CliExit(2);
   } finally {
     pending?.cancel();
-    await client.disconnect();
+    await disconnectQuietly(client);
   }
 }
 
