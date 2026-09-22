@@ -163,9 +163,9 @@ nimbus demo reset
 Seeds a synthetic "Acme" org — people, issues, commits, pull requests, reviews, CI runs,
 deployments, incidents, and chat messages, all with timestamps offset from "now" so the data always
 looks current — into the isolated demo root (`--demo` / `NIMBUS_DEMO=1`; see the `--demo` global
-flag above and invariant **I41**), then tours three built-in agent briefs against it. It never
-touches your real config, data, or vault, and the demo gateway makes no outbound call of any kind,
-at boot or afterward (see below).
+flag above and invariant **I41**), then tours three built-in agent briefs against it and closes on
+the locality panel. It never touches your real config, data, or vault, and the demo gateway makes
+no outbound call of any kind, at boot or afterward (see below).
 
 What plain `nimbus demo` does, in order:
 
