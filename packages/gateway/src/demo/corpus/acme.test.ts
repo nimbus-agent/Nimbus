@@ -2,7 +2,15 @@ import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
-import { ACME_TOUR, buildAcmeCorpus } from "./acme.ts";
+import { ACME_TOUR_STEPS, buildAcmeCorpus } from "./acme.ts";
+
+/** The single arg of the step whose kind is `kind` — the tour's own target for that step. */
+function soleArg(kind: (typeof ACME_TOUR_STEPS)[number]["kind"]): string {
+  const step = ACME_TOUR_STEPS.find((s) => s.kind === kind);
+  if (step === undefined) throw new Error(`no ${kind} step in ACME_TOUR_STEPS`);
+  expect(step.args).toHaveLength(1);
+  return step.args[0] as string;
+}
 
 const corpus = buildAcmeCorpus();
 const SOURCE = readFileSync(join(import.meta.dir, "acme.ts"), "utf8");
@@ -50,17 +58,27 @@ describe("acme corpus hygiene", () => {
   });
 
   test("the tour targets exist: why-line 42 is the capped delay, owners dir has a file", () => {
-    const [file, line] = ACME_TOUR.whyRef.split(":");
+    const [file, line] = soleArg("why").split(":");
     const f = corpus.files.find((x) => x.path === file);
     expect(f?.lines[Number(line) - 1]).toContain("MAX_BACKOFF_MS");
-    expect(corpus.files.some((x) => x.path.startsWith(`${ACME_TOUR.ownersPath}/`))).toBe(true);
+    expect(corpus.files.some((x) => x.path.startsWith(`${soleArg("owners")}/`))).toBe(true);
+  });
+
+  test("the oncall step targets the indexed id of the paging incident", () => {
+    const step = ACME_TOUR_STEPS.find((s) => s.kind === "oncall");
+    expect(step?.args[0]).toBe("--incident");
+    // The step must name the INDEX item id, not the raw PagerDuty id — `nimbus oncall --incident`
+    // looks the item up by primary key, so a bare `PDEMO412` would select nothing.
+    const incidentId = step?.args[1];
+    const page = corpus.incidents.find((i) => `pagerduty:${i.externalId}` === incidentId);
+    expect(page?.title).toContain("payment-service");
   });
 
   test("all blame under the owners dir is ONE author (bus factor 1)", () => {
     const authorBySha = new Map(corpus.commits.map((c) => [c.sha, c.authorKey]));
     const authors = new Set(
       corpus.files
-        .filter((f) => f.path.startsWith(`${ACME_TOUR.ownersPath}/`))
+        .filter((f) => f.path.startsWith(`${soleArg("owners")}/`))
         .flatMap((f) => f.blame.map((s) => authorBySha.get(s))),
     );
     expect([...authors]).toEqual(["dana"]);
