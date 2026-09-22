@@ -18,6 +18,37 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
 
 ## Post-Phase-6 deliveries
 
+- **2026-09-22 — `nimbus init` and `nimbus demo` end on the guided tour.** This PR wires the
+  2026-09-21 `nimbus wow` tour into the two existing first-run surfaces. In `nimbus init`: after a
+  successful index (never under `--no-sync`, and never after an outcome that indexed nothing), a
+  TTY (stdin AND stdout) is asked `Run the tour now?` — default yes, cancel counts as no — and on
+  yes `nimbus wow` runs in-process, sharing the terminal. Any failure of the tour (`confirmTour`
+  itself rejecting, or `runTour` throwing partway through) prints one hint line —
+  ``Run `nimbus wow` any time for a guided tour of what was just indexed.`` — and never changes
+  `init`'s own exit code, which was already decided from the indexing outcome before the tour offer
+  runs. On a non-TTY shell, or a "no" answer, nothing extra prints: `nextStepLines`
+  already names `nimbus wow` as the last line of the closing `Try it:` / `Next:` block. In
+  `nimbus demo`: the three fixed tour steps (`oncall` → `why` → `owners`) now run through the same
+  shared `runTour` `nimbus wow` uses, so the two surfaces cannot behave differently on the same
+  brief; headers read `── [n/4] <title>` rather than `/3`, since the closing panel now counts as
+  the tour's own fourth step; the `oncall` step's printed and executed command names its incident
+  (`nimbus --demo oncall --incident pagerduty:PDEMO412`) instead of a bare `oncall`; and the run
+  closes on the same `[4/4] Where your data is` locality panel `nimbus wow` prints, its proof
+  window `{since: t0, until: t1}` stamped by the gateway on both edges — `t0` when seeding finished,
+  `t1` when the panel itself ran — spanning the post-seed restart, so the Killer Demo's "0 outbound
+  network calls" is a produced fact on every run rather than a claim. A step that fails, or a
+  failed `egress.proveWindow` call behind the panel, still exits `1`, but only AFTER the panel and
+  the closing four-command list have both printed — a failure must never hide the honesty panel or
+  the closing suggestions behind it. `demo.seed`'s result shape gained `tour: TourStep[]`, built by
+  the gateway's own `tourStepFor` (`agents/_lib/tour-plan.ts`) — the same construction `tour.plan`
+  uses, so the printed command and the executed argv cannot drift — plus `t0`. The
+  `released-install-smoke.yml` release judge (`scripts/release/assert-demo-tour.ts`), its fixture,
+  and `docs/release/gate-1-fresh-machine.md` moved with it. No migration, no new invariant, no new
+  egress class, no Tauri allowlist change. **What did NOT ship:** LLM-chosen tour step selection,
+  tour steps for `preflight`/`premortem`/`negotiate`, tour history or completion telemetry, and
+  `~/code`-wide multi-repo discovery (`nimbus init` still indexes only the current directory; a
+  second repository is still its own `[[filesystem.roots]]` edit).
+
 - **2026-09-21 — `nimbus wow`, a guided tour of whatever index the gateway holds.** `nimbus wow`
   has no seed path of its own: it tours the real, indexed substrate on a normal install, or — under
   the global `--demo` flag (`nimbus --demo wow`) — the synthetic Acme org `nimbus demo` seeds, with

@@ -368,8 +368,9 @@ nimbus init
 
 `nimbus init` adds the repo to `nimbus.toml` with code indexing enabled, starts
 the gateway, indexes the repo, and prints a real `file:line` from your own code
-to try with `nimbus why`. It appends to your config rather than rewriting it, so
-existing settings and comments survive (and it keeps a `nimbus.toml.bak`).
+to try with `nimbus why`, and, in a terminal, offers to run `nimbus wow` right
+away. It appends to your config rather than rewriting it, so existing settings
+and comments survive (and it keeps a `nimbus.toml.bak`).
 
 Indexing, `nimbus why`, and the agent briefs all work with **no LLM
 configured**. An LLM is needed only for `nimbus ask` and for prose synthesis of
