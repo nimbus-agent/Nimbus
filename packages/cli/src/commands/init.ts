@@ -570,13 +570,20 @@ export async function runInit(args: string[], deps: InitDeps = defaultInitDeps()
       );
     }
   }
-  // The tour is offered only on the arm that actually indexed something — `--no-sync`,
-  // not-a-repo, an unavailable gateway, a restart-required root and a failed sync all skip it,
-  // since `nimbus wow` needs a real substrate to tour. A "no" answer, or a non-interactive shell,
-  // prints nothing extra here: `nextStepLines` already names `nimbus wow` for this outcome. The
-  // whole thing — including the prompt itself — is wrapped in one catch: `runTour`'s contract is
-  // that anything after the config write degrades to the generic hint rather than failing `init`.
-  if (outcome.kind === "indexed") {
+  // The tour is offered only on the arm that actually indexed something with a `file:line`
+  // target — `--no-sync`, not-a-repo, an unavailable gateway, a restart-required root and a
+  // failed sync all skip it, since `nimbus wow` needs a real substrate to tour. An `indexed`
+  // outcome whose `demo` came back null skips it too: `nimbus wow`'s own `why` step reads the
+  // same substrate `pickDemo` just read (both call `pickDemoSymbol`), so a null symbol here means
+  // the tour's own plan would come back empty as well, and offering it would print "Nothing
+  // indexed yet — run `nimbus init` in a repo." immediately after `init` just indexed this
+  // repository. `CI=true` gets the same guard `offerLocalAuth` gets above, for the same reason: a
+  // CI runner that allocates a TTY (`docker run -it`, some self-hosted runners) would otherwise
+  // hang on `confirm`. A "no" answer, a non-interactive shell, or a skipped offer prints nothing
+  // extra here: `nextStepLines` already names `nimbus wow` for this outcome. The whole thing —
+  // including the prompt itself — is wrapped in one catch: `runTour`'s contract is that anything
+  // after the config write degrades to the generic hint rather than failing `init`.
+  if (outcome.kind === "indexed" && outcome.demo !== null && process.env["CI"] !== "true") {
     try {
       if (deps.interactive && (await deps.confirmTour())) {
         await deps.runTour();

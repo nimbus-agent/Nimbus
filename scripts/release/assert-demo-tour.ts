@@ -156,11 +156,11 @@ function lastLevelTwoHeading(body: string): string | undefined {
   return headings.at(-1)?.trim();
 }
 
-/** The closing block must come after the third brief, and the output must END with it. */
+/** The closing block must come after the last tour header (the `[4/4]` panel), and the output must END with it. */
 function checkClosingBlock(out: string, hintAt: number, lastHeaderAt: number): string[] {
   const failures: string[] = [];
   if (hintAt < lastHeaderAt) {
-    failures.push("the closing hint appears before the third brief, not after it");
+    failures.push("the closing hint appears before the last tour header, not after it");
   }
   const finalLine = out
     .slice(hintAt)

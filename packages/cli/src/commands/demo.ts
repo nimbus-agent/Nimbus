@@ -180,7 +180,11 @@ export async function runDemo(args: string[], deps: DemoDeps = defaultDemoDeps):
     ].join("\n"),
   );
   // Raised only AFTER the panel and the closing block have printed (mirrors `runWow`): a failed
-  // step must not hide the honesty panel, and the release gate requires the output to END with
-  // the closing block whatever the exit code.
+  // step must not hide the honesty panel, and a failed `prove()` call still lets the panel and
+  // the closing block print (see `printLocalityPanel`'s own doc comment) — in both of those cases
+  // the output ends with the closing block whatever the exit code. The one case that is NOT true
+  // of: a failing `locality()` call itself, which sits outside `printLocalityPanel`'s own `try`
+  // and throws straight through this function before the closing block below ever prints — kept
+  // that way deliberately for parity with `nimbus wow`.
   if (failed) throw new CliExit(1);
 }

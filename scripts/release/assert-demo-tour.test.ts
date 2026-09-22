@@ -113,12 +113,12 @@ describe("checkDemoTour", () => {
     );
   });
 
-  test("a closing hint printed BEFORE the third brief fails", () => {
+  test("a closing hint printed BEFORE the last tour header fails", () => {
     const i3 = GOOD.indexOf("── [3/4]");
     const hint = GOOD.indexOf("The demo gateway is still running");
     const moved = GOOD.slice(0, i3) + GOOD.slice(hint) + GOOD.slice(i3, hint);
     expect(checkDemoTour(moved)).toContain(
-      "the closing hint appears before the third brief, not after it",
+      "the closing hint appears before the last tour header, not after it",
     );
   });
 

@@ -62,12 +62,19 @@ What it does:
    with `CI=true` set.
 5. Prints a real `file:line` from your own repository to try with [`nimbus why`](#nimbus-why).
 6. On a TTY (both stdin and stdout), after step 4, asks `Run the tour now?` (default yes) and runs
-   [`nimbus wow`](#nimbus-wow) in-process, sharing the same terminal and streams. Any failure of the
-   tour — a "no" is not one — prints a one-line hint,
-   ``Run `nimbus wow` any time for a guided tour of what was just indexed.``, and never changes
-   `init`'s own exit code. On a non-TTY shell, or after a "no" answer, nothing extra is printed here:
-   the closing `Try it:` / `Next:` block (step 5) already ends with `nimbus wow` on its own last
-   line. `--no-sync` never offers it — no gateway was started, so there is nothing to tour.
+   [`nimbus wow`](#nimbus-wow) in-process, sharing the same terminal and streams. The offer is made
+   only when step 5 actually found a `file:line` target — a repository the index has nothing to
+   show for gets the `nimbus wow` next-step line only, since `nimbus wow`'s own tour reads the
+   same substrate step 5 just read and would otherwise open by telling you to run `nimbus init`
+   again. It is also skipped with `CI=true` set, the same guard step 4 uses, since a CI runner that
+   allocates a TTY would otherwise hang on the prompt. Any failure of the tour — a "no" is not
+   one — prints a one-line hint, ``Run `nimbus wow` any time for a guided tour of what was just
+   indexed.``, and never changes `init`'s own exit code. On a non-TTY shell, after a "no" answer,
+   or when the offer is skipped, nothing extra is printed here: the closing `Try it:` / `Next:`
+   block (step 5) already ends with `nimbus wow` on its own last line. `--no-sync` never offers
+   it — no gateway was started, so there is nothing to tour. Output order on a TTY run that says
+   yes: the `Try it:` block (step 5, with its `file:line`) prints before the offer, so that line
+   sits above the tour's own output rather than scrolling past it.
 
 Re-running is safe and idempotent — a root that is already configured reports `Already configured` and is not duplicated.
 

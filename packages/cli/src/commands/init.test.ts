@@ -343,6 +343,42 @@ test("interactive + yes + runTour sets process.exitCode then throws a plain Erro
   expect(process.exitCode ?? 0).toBe(0);
 });
 
+test("indexed with no demo symbol: the tour is never offered, since its own plan would come back empty too", async () => {
+  const prevCi = process.env["CI"];
+  delete process.env["CI"];
+  try {
+    const { deps, rec } = fakeDeps({
+      interactive: true,
+      confirmTourAnswer: true,
+      demoSymbol: async () => null,
+    });
+    await runInit([], deps);
+    expect(rec.confirmedTour).toBe(0);
+    expect(rec.ranTour).toBe(0);
+    expect(process.exitCode ?? 0).toBe(0);
+    // The generic next-step block still names `nimbus wow` — only the offer itself is skipped.
+    expect(rec.out.join("\n")).toContain("nimbus wow");
+  } finally {
+    if (prevCi === undefined) delete process.env["CI"];
+    else process.env["CI"] = prevCi;
+  }
+});
+
+test("CI=true skips the tour offer even with a demo symbol and interactive: true", async () => {
+  const prev = process.env["CI"];
+  process.env["CI"] = "true";
+  try {
+    const { deps, rec } = fakeDeps({ interactive: true, confirmTourAnswer: true });
+    await runInit([], deps);
+    expect(rec.confirmedTour).toBe(0);
+    expect(rec.ranTour).toBe(0);
+    expect(process.exitCode ?? 0).toBe(0);
+  } finally {
+    if (prev === undefined) delete process.env["CI"];
+    else process.env["CI"] = prev;
+  }
+});
+
 test("--no-sync (config-only) with interactive: true never offers the tour", async () => {
   const { deps, rec } = fakeDeps({ interactive: true, confirmTourAnswer: true });
   await runInit(["--no-sync"], deps);
