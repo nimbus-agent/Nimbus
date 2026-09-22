@@ -20,8 +20,10 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
 
 - **2026-09-22 — `nimbus init` and `nimbus demo` end on the guided tour.** This PR wires the
   2026-09-21 `nimbus wow` tour into the two existing first-run surfaces. In `nimbus init`: after a
-  successful index (never under `--no-sync`, and never after an outcome that indexed nothing), a
-  TTY (stdin AND stdout) is asked `Run the tour now?` — default yes, cancel counts as no — and on
+  successful index that found a `file:line` target (never under `--no-sync`, never after an
+  outcome that indexed nothing or found nothing to suggest, and never with `CI=true` set — an
+  indexed repo with nothing to show still gets the `nimbus wow` next-step line, just not the
+  offer), a TTY (stdin AND stdout) is asked `Run the tour now?` — default yes, cancel counts as no — and on
   yes `nimbus wow` runs in-process, sharing the terminal. Any failure of the tour (`confirmTour`
   itself rejecting, or `runTour` throwing partway through) prints one hint line —
   ``Run `nimbus wow` any time for a guided tour of what was just indexed.`` — and never changes

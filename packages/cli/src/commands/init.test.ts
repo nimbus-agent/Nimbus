@@ -205,6 +205,38 @@ function fakeDeps(
   return { deps, rec };
 }
 
+/**
+ * Runs `fn` with `CI` unset, restoring whatever value (or absence) it had before — even if `fn`
+ * throws. Real CI runners (GitHub Actions included, and the Docker harness `verify:docker` runs
+ * under) set `CI=true` ambiently, and every guard in `runInit` that reads it (`offerLocalAuth`,
+ * the tour offer) would otherwise skip the exact code path a test means to exercise — so any test
+ * that expects a TTY-only prompt to actually run needs this, not just the tests that assert the
+ * guard itself. Without it, a test can pass on a developer shell that happens not to have `CI`
+ * set and fail (or silently exercise the wrong branch) on every CI runner and the Docker harness.
+ */
+async function withCiUnset(fn: () => Promise<void>): Promise<void> {
+  const prev = process.env["CI"];
+  delete process.env["CI"];
+  try {
+    await fn();
+  } finally {
+    if (prev === undefined) delete process.env["CI"];
+    else process.env["CI"] = prev;
+  }
+}
+
+/** The inverse of `withCiUnset`, for tests that assert the `CI=true` guard itself. */
+async function withCiTrue(fn: () => Promise<void>): Promise<void> {
+  const prev = process.env["CI"];
+  process.env["CI"] = "true";
+  try {
+    await fn();
+  } finally {
+    if (prev === undefined) delete process.env["CI"];
+    else process.env["CI"] = prev;
+  }
+}
+
 test("full happy path: adds the root, starts the gateway, syncs, prints a real location", async () => {
   const { deps, rec } = fakeDeps();
   await runInit([], deps);
@@ -215,20 +247,15 @@ test("full happy path: adds the root, starts the gateway, syncs, prints a real l
 });
 
 test("after a successful index, init offers local-auth reuse with the TTY flag", async () => {
-  // Real CI runners (GitHub Actions included) set CI=true ambiently, and the offer gate reads
-  // it — without clearing it here this test only proves the offer fires on a developer machine
-  // that happens not to have CI set, and silently passes vacuously (or fails) depending on the
-  // runner. Isolate it exactly like the "CI=true skips" test below, just inverted.
-  const prevCi = process.env["CI"];
-  delete process.env["CI"];
-  try {
+  // The offer gate reads `CI` — without clearing it here this test only proves the offer fires
+  // on a developer machine that happens not to have CI set, and silently passes vacuously (or
+  // fails) depending on the runner. Isolate it exactly like the "CI=true skips" test below, just
+  // inverted.
+  await withCiUnset(async () => {
     const { deps, rec } = fakeDeps({ interactive: true });
     await runInit([], deps);
     expect(rec.offered).toEqual([true]);
-  } finally {
-    if (prevCi === undefined) delete process.env["CI"];
-    else process.env["CI"] = prevCi;
-  }
+  });
 });
 
 test("--no-detect skips the offer", async () => {
@@ -238,16 +265,11 @@ test("--no-detect skips the offer", async () => {
 });
 
 test("CI=true skips the offer — init must not spawn three CLIs in a pipeline", async () => {
-  const prev = process.env["CI"];
-  process.env["CI"] = "true";
-  try {
+  await withCiTrue(async () => {
     const { deps, rec } = fakeDeps();
     await runInit([], deps);
     expect(rec.offered).toEqual([]);
-  } finally {
-    if (prev === undefined) delete process.env["CI"];
-    else process.env["CI"] = prev;
-  }
+  });
 });
 
 test("--no-sync starts no gateway, so it runs no detection", async () => {
@@ -259,9 +281,7 @@ test("--no-sync starts no gateway, so it runs no detection", async () => {
 test("a failing offer does not fail init", async () => {
   // Same ambient-CI isolation as above: the offer must actually run for this test to exercise
   // its failure path at all.
-  const prevCi = process.env["CI"];
-  delete process.env["CI"];
-  try {
+  await withCiUnset(async () => {
     const { deps, rec } = fakeDeps({
       offerLocalAuth: async () => {
         throw new Error("gateway went away");
@@ -270,10 +290,7 @@ test("a failing offer does not fail init", async () => {
     await runInit([], deps);
     expect(process.exitCode).toBe(0);
     expect(rec.err.join("\n")).toContain("Could not check for existing logins: gateway went away");
-  } finally {
-    if (prevCi === undefined) delete process.env["CI"];
-    else process.env["CI"] = prevCi;
-  }
+  });
 });
 
 // ------------------------------------------------- runInit: the tour offer
@@ -290,63 +307,65 @@ test("non-interactive: the tour is never offered, but the next-step line names i
 });
 
 test("interactive + yes: the tour runs exactly once, after offerLocalAuth", async () => {
-  const prevCi = process.env["CI"];
-  delete process.env["CI"];
-  try {
+  await withCiUnset(async () => {
     const { deps, rec } = fakeDeps({ interactive: true, confirmTourAnswer: true });
     await runInit([], deps);
     expect(rec.confirmedTour).toBe(1);
     expect(rec.ranTour).toBe(1);
     expect(rec.order).toEqual(["offerLocalAuth", "confirmTour", "runTour"]);
     expect(process.exitCode ?? 0).toBe(0);
-  } finally {
-    if (prevCi === undefined) delete process.env["CI"];
-    else process.env["CI"] = prevCi;
-  }
+  });
 });
 
 test("interactive + no: the tour is not run, and the failure hint is not printed either", async () => {
-  const { deps, rec } = fakeDeps({ interactive: true, confirmTourAnswer: false });
-  await runInit([], deps);
-  expect(rec.confirmedTour).toBe(1);
-  expect(rec.ranTour).toBe(0);
-  // A plain "no" throws nothing, so the hook's catch never runs — TOUR_HINT is for a FAILED
-  // attempt, not a declined one.
-  expect(rec.out).not.toContain(TOUR_HINT);
-  expect(process.exitCode ?? 0).toBe(0);
+  // The tour offer is itself CI-gated (finding 2 of the final review), so this must run with CI
+  // unset for `confirmTour` to be reached at all — without it this test passed on a developer
+  // shell only by accident, and would have silently asserted the wrong branch under `CI=true`.
+  await withCiUnset(async () => {
+    const { deps, rec } = fakeDeps({ interactive: true, confirmTourAnswer: false });
+    await runInit([], deps);
+    expect(rec.confirmedTour).toBe(1);
+    expect(rec.ranTour).toBe(0);
+    // A plain "no" throws nothing, so the hook's catch never runs — TOUR_HINT is for a FAILED
+    // attempt, not a declined one.
+    expect(rec.out).not.toContain(TOUR_HINT);
+    expect(process.exitCode ?? 0).toBe(0);
+  });
 });
 
 test("interactive + yes + runTour throws CliExit: the hint prints, exit code stays 0", async () => {
-  const { deps, rec } = fakeDeps({
-    interactive: true,
-    confirmTourAnswer: true,
-    runTourThrows: () => {
-      throw new CliExit(1);
-    },
+  await withCiUnset(async () => {
+    const { deps, rec } = fakeDeps({
+      interactive: true,
+      confirmTourAnswer: true,
+      runTourThrows: () => {
+        throw new CliExit(1);
+      },
+    });
+    await runInit([], deps);
+    expect(rec.out).toContain(TOUR_HINT);
+    expect(process.exitCode ?? 0).toBe(0);
   });
-  await runInit([], deps);
-  expect(rec.out).toContain(TOUR_HINT);
-  expect(process.exitCode ?? 0).toBe(0);
 });
 
 test("interactive + yes + runTour sets process.exitCode then throws a plain Error: hint prints, exit code stays 0", async () => {
-  const { deps, rec } = fakeDeps({
-    interactive: true,
-    confirmTourAnswer: true,
-    runTourThrows: () => {
-      process.exitCode = 1;
-      throw new Error("boom");
-    },
+  await withCiUnset(async () => {
+    const { deps, rec } = fakeDeps({
+      interactive: true,
+      confirmTourAnswer: true,
+      runTourThrows: () => {
+        process.exitCode = 1;
+        throw new Error("boom");
+      },
+    });
+    await runInit([], deps);
+    expect(rec.out).toContain(TOUR_HINT);
+    expect(process.exitCode ?? 0).toBe(0);
   });
-  await runInit([], deps);
-  expect(rec.out).toContain(TOUR_HINT);
-  expect(process.exitCode ?? 0).toBe(0);
 });
 
 test("indexed with no demo symbol: the tour is never offered, since its own plan would come back empty too", async () => {
-  const prevCi = process.env["CI"];
-  delete process.env["CI"];
-  try {
+  await withCiUnset(async () => {
     const { deps, rec } = fakeDeps({
       interactive: true,
       confirmTourAnswer: true,
@@ -358,25 +377,17 @@ test("indexed with no demo symbol: the tour is never offered, since its own plan
     expect(process.exitCode ?? 0).toBe(0);
     // The generic next-step block still names `nimbus wow` — only the offer itself is skipped.
     expect(rec.out.join("\n")).toContain("nimbus wow");
-  } finally {
-    if (prevCi === undefined) delete process.env["CI"];
-    else process.env["CI"] = prevCi;
-  }
+  });
 });
 
 test("CI=true skips the tour offer even with a demo symbol and interactive: true", async () => {
-  const prev = process.env["CI"];
-  process.env["CI"] = "true";
-  try {
+  await withCiTrue(async () => {
     const { deps, rec } = fakeDeps({ interactive: true, confirmTourAnswer: true });
     await runInit([], deps);
     expect(rec.confirmedTour).toBe(0);
     expect(rec.ranTour).toBe(0);
     expect(process.exitCode ?? 0).toBe(0);
-  } finally {
-    if (prev === undefined) delete process.env["CI"];
-    else process.env["CI"] = prev;
-  }
+  });
 });
 
 test("--no-sync (config-only) with interactive: true never offers the tour", async () => {
@@ -387,16 +398,18 @@ test("--no-sync (config-only) with interactive: true never offers the tour", asy
 });
 
 test("confirmTour itself rejecting: the hint prints, exit code stays 0", async () => {
-  const { deps, rec } = fakeDeps({
-    interactive: true,
-    confirmTour: async () => {
-      throw new Error("prompt aborted");
-    },
+  await withCiUnset(async () => {
+    const { deps, rec } = fakeDeps({
+      interactive: true,
+      confirmTour: async () => {
+        throw new Error("prompt aborted");
+      },
+    });
+    await runInit([], deps);
+    expect(rec.out).toContain(TOUR_HINT);
+    expect(rec.ranTour).toBe(0);
+    expect(process.exitCode ?? 0).toBe(0);
   });
-  await runInit([], deps);
-  expect(rec.out).toContain(TOUR_HINT);
-  expect(rec.ranTour).toBe(0);
-  expect(process.exitCode ?? 0).toBe(0);
 });
 
 test("--no-sync writes config and stops without touching the gateway", async () => {
