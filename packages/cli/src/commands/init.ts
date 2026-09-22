@@ -531,10 +531,12 @@ export const DEMO_INIT_REFUSAL =
   "The demo root is set up by `nimbus demo`, not `init` — run `nimbus demo` to seed the synthetic org, or run `nimbus init` without --demo for your real install.";
 
 /**
- * Printed whenever the tour was declined, not offered (non-interactive), or offered and then
- * failed — `runTour`'s own contract is that anything after the config write degrades to this
- * generic hint rather than failing `init`, so a thrown `CliExit` and a plain thrown `Error` both
- * land here rather than surfacing as an `init` failure.
+ * Printed only when the tour was actually attempted and something in it threw — `confirmTour`
+ * itself rejecting, or an accepted `runTour` failing partway through. `runTour`'s own contract is
+ * that anything after the config write degrades to this generic hint rather than failing `init`,
+ * so a thrown `CliExit` and a plain thrown `Error` both land here rather than surfacing as an
+ * `init` failure. A "no" answer or a non-interactive shell never reaches this: nothing throws, so
+ * the `catch` below never runs — `nextStepLines` already names `nimbus wow` for those cases.
  */
 export const TOUR_HINT = "Run `nimbus wow` any time for a guided tour of what was just indexed.";
 

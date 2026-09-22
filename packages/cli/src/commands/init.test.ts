@@ -278,12 +278,15 @@ test("a failing offer does not fail init", async () => {
 
 // ------------------------------------------------- runInit: the tour offer
 
-test("non-interactive: the tour is never offered, but the hint names it", async () => {
+test("non-interactive: the tour is never offered, but the next-step line names it", async () => {
   const { deps, rec } = fakeDeps({ interactive: false });
   await runInit([], deps);
   expect(rec.confirmedTour).toBe(0);
   expect(rec.ranTour).toBe(0);
+  // The "nimbus wow" mention here comes from `nextStepLines`, never from `TOUR_HINT` — nothing
+  // threw, so the hook's catch never ran. Assert both so this can't pass on the wrong line.
   expect(rec.out.join("\n")).toContain("nimbus wow");
+  expect(rec.out).not.toContain(TOUR_HINT);
 });
 
 test("interactive + yes: the tour runs exactly once, after offerLocalAuth", async () => {
@@ -302,11 +305,14 @@ test("interactive + yes: the tour runs exactly once, after offerLocalAuth", asyn
   }
 });
 
-test("interactive + no: the tour is not run", async () => {
+test("interactive + no: the tour is not run, and the failure hint is not printed either", async () => {
   const { deps, rec } = fakeDeps({ interactive: true, confirmTourAnswer: false });
   await runInit([], deps);
   expect(rec.confirmedTour).toBe(1);
   expect(rec.ranTour).toBe(0);
+  // A plain "no" throws nothing, so the hook's catch never runs — TOUR_HINT is for a FAILED
+  // attempt, not a declined one.
+  expect(rec.out).not.toContain(TOUR_HINT);
   expect(process.exitCode ?? 0).toBe(0);
 });
 
