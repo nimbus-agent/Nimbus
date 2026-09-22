@@ -10,6 +10,8 @@ import {
 } from "node:fs";
 import { join, resolve } from "node:path";
 
+import { confirm, isCancel } from "@clack/prompts";
+
 import { hasFlag } from "../lib/flag-parsing.ts";
 import { extractLatestMessage, truncatePreview } from "../lib/gateway-log-tail.ts";
 import { readGatewayState } from "../lib/gateway-process.ts";
@@ -22,6 +24,7 @@ import {
   summarizeLocalLogins,
 } from "./connector-detect.ts";
 import { runStart } from "./start.ts";
+import { runWow } from "./wow.ts";
 
 export type InitOptions = { cwd: string; configDir: string };
 
@@ -114,6 +117,10 @@ export type InitDeps = {
   interactive: boolean;
   /** Offer to reuse local CLI logins (the `nimbus connector detect` walk, or a one-line count). */
   offerLocalAuth: (interactive: boolean) => Promise<void>;
+  /** "Run the tour now?" — resolves true only on an explicit yes; cancel (Ctrl-C) is no. */
+  confirmTour: () => Promise<boolean>;
+  /** Runs `nimbus wow` in-process (shared streams/TTY). May throw anything, `CliExit` included. */
+  runTour: () => Promise<void>;
 };
 
 const HELP_LINES: readonly string[] = [
@@ -166,7 +173,14 @@ export function applyInitPlan(plan: InitPlan, opts: InitOptions): void {
  */
 export function nextStepLines(demo: DemoSymbolLike | null, gatewayRunning: boolean): string[] {
   if (demo !== null) {
-    return ["", "Try it:", `  nimbus why ${demo.file}:${String(demo.line)}   # ${demo.name}`];
+    const lines = [
+      "",
+      "Try it:",
+      `  nimbus why ${demo.file}:${String(demo.line)}   # ${demo.name}`,
+    ];
+    // Only when something was actually indexed — `nimbus wow` needs a real substrate to tour.
+    if (gatewayRunning) lines.push("  nimbus wow");
+    return lines;
   }
   // `nimbus start` FIRST when nothing started the gateway, because both commands below need one
   // and neither says so. `--no-sync` returns `config-only` without ever starting it, so this list
@@ -178,7 +192,7 @@ export function nextStepLines(demo: DemoSymbolLike | null, gatewayRunning: boole
   // the other deliberately started nothing — and a default would silently give the wrong list to
   // whichever caller forgot. Required makes a third caller a compile error instead.
   const steps = gatewayRunning ? [] : ["  nimbus start"];
-  return [
+  const lines = [
     "",
     "Next:",
     ...steps,
@@ -186,6 +200,8 @@ export function nextStepLines(demo: DemoSymbolLike | null, gatewayRunning: boole
     "  nimbus connector sync filesystem",
     "  nimbus why <file>:<line>",
   ];
+  if (gatewayRunning) lines.push("  nimbus wow");
+  return lines;
 }
 
 /**
@@ -514,6 +530,14 @@ async function initOutcome(args: string[], deps: InitDeps): Promise<InitOutcome>
 export const DEMO_INIT_REFUSAL =
   "The demo root is set up by `nimbus demo`, not `init` — run `nimbus demo` to seed the synthetic org, or run `nimbus init` without --demo for your real install.";
 
+/**
+ * Printed whenever the tour was declined, not offered (non-interactive), or offered and then
+ * failed — `runTour`'s own contract is that anything after the config write degrades to this
+ * generic hint rather than failing `init`, so a thrown `CliExit` and a plain thrown `Error` both
+ * land here rather than surfacing as an `init` failure.
+ */
+export const TOUR_HINT = "Run `nimbus wow` any time for a guided tour of what was just indexed.";
+
 export async function runInit(args: string[], deps: InitDeps = defaultInitDeps()): Promise<void> {
   if (hasFlag(args, "--help") || hasFlag(args, "-h")) {
     for (const line of HELP_LINES) {
@@ -544,9 +568,25 @@ export async function runInit(args: string[], deps: InitDeps = defaultInitDeps()
       );
     }
   }
+  // The tour is offered only on the arm that actually indexed something — `--no-sync`,
+  // not-a-repo, an unavailable gateway, a restart-required root and a failed sync all skip it,
+  // since `nimbus wow` needs a real substrate to tour. A "no" answer, or a non-interactive shell,
+  // prints nothing extra here: `nextStepLines` already names `nimbus wow` for this outcome. The
+  // whole thing — including the prompt itself — is wrapped in one catch: `runTour`'s contract is
+  // that anything after the config write degrades to the generic hint rather than failing `init`.
+  if (outcome.kind === "indexed") {
+    try {
+      if (deps.interactive && (await deps.confirmTour())) {
+        await deps.runTour();
+      }
+    } catch {
+      deps.log(TOUR_HINT);
+    }
+  }
   // Assigned unconditionally: the exit code is derived from the outcome that
   // was just reported, so no earlier writer (runStart's failure signal, say)
-  // can leave the two disagreeing.
+  // can leave the two disagreeing. This is also what resets process.exitCode after a runTour
+  // failure above — CliExit or otherwise — back to init's own, already-successful verdict.
   process.exitCode = initExitCode(outcome);
 }
 
@@ -627,5 +667,10 @@ export function defaultInitDeps(paths: CliPlatformPaths = getCliPlatformPaths())
       const line = summarizeLocalLogins(await detectDeps.detect(undefined));
       if (line !== null) console.log(line);
     },
+    confirmTour: async () => {
+      const answer = await confirm({ message: "Run the tour now?", initialValue: true });
+      return !isCancel(answer) && answer === true;
+    },
+    runTour: () => runWow([]),
   };
 }

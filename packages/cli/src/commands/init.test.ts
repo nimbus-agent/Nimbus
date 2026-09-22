@@ -3,6 +3,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+import { CliExit } from "../lib/cli-exit.ts";
 import type { CliPlatformPaths } from "../paths.ts";
 import {
   applyInitPlan,
@@ -18,6 +19,7 @@ import {
   nextStepLines,
   readGatewayLogTail,
   runInit,
+  TOUR_HINT,
 } from "./init.ts";
 
 let dir: string;
@@ -122,6 +124,20 @@ test("next steps name connector detect after nimbus start", () => {
   );
 });
 
+test("nextStepLines names `nimbus wow` last when the gateway is running (generic block)", () => {
+  const lines = nextStepLines(null, true);
+  expect(lines[lines.length - 1]).toBe("  nimbus wow");
+});
+
+test("nextStepLines names `nimbus wow` last when the gateway is running (concrete block)", () => {
+  const lines = nextStepLines({ file: "src/auth.ts", line: 42, name: "verifyToken" }, true);
+  expect(lines[lines.length - 1]).toBe("  nimbus wow");
+});
+
+test("nextStepLines omits `nimbus wow` when nothing is indexed (--no-sync)", () => {
+  expect(nextStepLines(null, false).join("\n")).not.toContain("nimbus wow");
+});
+
 // ------------------------------------------------------------------ runInit
 
 type Recorded = {
@@ -130,10 +146,26 @@ type Recorded = {
   started: number;
   synced: number;
   offered: boolean[];
+  confirmedTour: number;
+  ranTour: number;
+  /** Call order across the offerLocalAuth/confirmTour/runTour trio, for ordering assertions. */
+  order: string[];
 };
 
-function fakeDeps(over: Partial<InitDeps> = {}): { deps: InitDeps; rec: Recorded } {
-  const rec: Recorded = { out: [], err: [], started: 0, synced: 0, offered: [] };
+function fakeDeps(
+  over: Partial<InitDeps> & { confirmTourAnswer?: boolean; runTourThrows?: () => never } = {},
+): { deps: InitDeps; rec: Recorded } {
+  const { confirmTourAnswer, runTourThrows, ...depsOver } = over;
+  const rec: Recorded = {
+    out: [],
+    err: [],
+    started: 0,
+    synced: 0,
+    offered: [],
+    confirmedTour: 0,
+    ranTour: 0,
+    order: [],
+  };
   const deps: InitDeps = {
     cwd: repo,
     configDir,
@@ -156,8 +188,19 @@ function fakeDeps(over: Partial<InitDeps> = {}): { deps: InitDeps; rec: Recorded
     interactive: false,
     offerLocalAuth: async (interactive) => {
       rec.offered.push(interactive);
+      rec.order.push("offerLocalAuth");
     },
-    ...over,
+    confirmTour: async () => {
+      rec.confirmedTour += 1;
+      rec.order.push("confirmTour");
+      return confirmTourAnswer ?? false;
+    },
+    runTour: async () => {
+      rec.ranTour += 1;
+      rec.order.push("runTour");
+      if (runTourThrows) runTourThrows();
+    },
+    ...depsOver,
   };
   return { deps, rec };
 }
@@ -231,6 +274,87 @@ test("a failing offer does not fail init", async () => {
     if (prevCi === undefined) delete process.env["CI"];
     else process.env["CI"] = prevCi;
   }
+});
+
+// ------------------------------------------------- runInit: the tour offer
+
+test("non-interactive: the tour is never offered, but the hint names it", async () => {
+  const { deps, rec } = fakeDeps({ interactive: false });
+  await runInit([], deps);
+  expect(rec.confirmedTour).toBe(0);
+  expect(rec.ranTour).toBe(0);
+  expect(rec.out.join("\n")).toContain("nimbus wow");
+});
+
+test("interactive + yes: the tour runs exactly once, after offerLocalAuth", async () => {
+  const prevCi = process.env["CI"];
+  delete process.env["CI"];
+  try {
+    const { deps, rec } = fakeDeps({ interactive: true, confirmTourAnswer: true });
+    await runInit([], deps);
+    expect(rec.confirmedTour).toBe(1);
+    expect(rec.ranTour).toBe(1);
+    expect(rec.order).toEqual(["offerLocalAuth", "confirmTour", "runTour"]);
+    expect(process.exitCode ?? 0).toBe(0);
+  } finally {
+    if (prevCi === undefined) delete process.env["CI"];
+    else process.env["CI"] = prevCi;
+  }
+});
+
+test("interactive + no: the tour is not run", async () => {
+  const { deps, rec } = fakeDeps({ interactive: true, confirmTourAnswer: false });
+  await runInit([], deps);
+  expect(rec.confirmedTour).toBe(1);
+  expect(rec.ranTour).toBe(0);
+  expect(process.exitCode ?? 0).toBe(0);
+});
+
+test("interactive + yes + runTour throws CliExit: the hint prints, exit code stays 0", async () => {
+  const { deps, rec } = fakeDeps({
+    interactive: true,
+    confirmTourAnswer: true,
+    runTourThrows: () => {
+      throw new CliExit(1);
+    },
+  });
+  await runInit([], deps);
+  expect(rec.out).toContain(TOUR_HINT);
+  expect(process.exitCode ?? 0).toBe(0);
+});
+
+test("interactive + yes + runTour sets process.exitCode then throws a plain Error: hint prints, exit code stays 0", async () => {
+  const { deps, rec } = fakeDeps({
+    interactive: true,
+    confirmTourAnswer: true,
+    runTourThrows: () => {
+      process.exitCode = 1;
+      throw new Error("boom");
+    },
+  });
+  await runInit([], deps);
+  expect(rec.out).toContain(TOUR_HINT);
+  expect(process.exitCode ?? 0).toBe(0);
+});
+
+test("--no-sync (config-only) with interactive: true never offers the tour", async () => {
+  const { deps, rec } = fakeDeps({ interactive: true, confirmTourAnswer: true });
+  await runInit(["--no-sync"], deps);
+  expect(rec.confirmedTour).toBe(0);
+  expect(rec.ranTour).toBe(0);
+});
+
+test("confirmTour itself rejecting: the hint prints, exit code stays 0", async () => {
+  const { deps, rec } = fakeDeps({
+    interactive: true,
+    confirmTour: async () => {
+      throw new Error("prompt aborted");
+    },
+  });
+  await runInit([], deps);
+  expect(rec.out).toContain(TOUR_HINT);
+  expect(rec.ranTour).toBe(0);
+  expect(process.exitCode ?? 0).toBe(0);
 });
 
 test("--no-sync writes config and stops without touching the gateway", async () => {
