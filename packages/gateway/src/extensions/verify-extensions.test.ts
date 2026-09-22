@@ -7,6 +7,7 @@ import { join } from "node:path";
 import pino, { type Logger } from "pino";
 
 import {
+  cleanupExtensionTestDirs,
   setupFreshExtensionDb,
   stageSignedExtensionOnDisk,
 } from "../../test/fixtures/extension.ts";
@@ -52,6 +53,8 @@ function makeExtensionDir(
   const manifestHex = createHash("sha256").update(readFileSync(manifestPath)).digest("hex");
   return { dir, manifestHex, entryPath };
 }
+
+afterEach(cleanupExtensionTestDirs);
 
 describe("verifyExtensionsBestEffort", () => {
   test("no-op below schema v10", async () => {
