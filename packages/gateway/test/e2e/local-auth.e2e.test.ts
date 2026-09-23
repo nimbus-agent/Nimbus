@@ -193,20 +193,36 @@ describe("local auth over a real gateway", () => {
     "gcp.project_id",
   ] as const;
 
-  async function deleteAdoptedKeys(): Promise<void> {
+  /**
+   * Keys that were ALREADY in the store when this test started (a developer's real values on
+   * macOS/Linux). Teardown never touches these: if a pre-existing `aws.profile` made the adoption
+   * refuse with `ERR_LOCAL_AUTH_ALREADY_CONFIGURED`, the test fails loudly and the value stays.
+   */
+  const preExistingKeys = new Set<string>();
+
+  async function deleteKeysWrittenByThisTest(): Promise<void> {
     const vault = await createNimbusVault(paths);
-    for (const key of ADOPTED_VAULT_KEYS) await vault.delete(key);
+    for (const key of ADOPTED_VAULT_KEYS) {
+      if (!preExistingKeys.has(key)) await vault.delete(key);
+    }
   }
 
   beforeAll(async () => {
     for (const d of [binDir, paths.configDir, paths.dataDir, join(tmp, "gh"), join(tmp, "kube")]) {
       mkdirSync(d, { recursive: true });
     }
-    // Only on a CI runner, where the machine-global store can hold nothing but a previous
-    // attempt's residue. On a developer's macOS/Linux box a real `aws.profile` in the same store
-    // must stay put — there the gateway's own `ERR_LOCAL_AUTH_ALREADY_CONFIGURED` refusal fails
-    // this test loudly instead of the test silently overwriting a real credential.
-    if (process.env["CI"] !== undefined) await deleteAdoptedKeys();
+    const vault = await createNimbusVault(paths);
+    // Only on a CI runner (GitHub Actions and `verify:docker` both set exactly `CI=true`), where
+    // the machine-global store can hold nothing but a previous attempt's residue. `CI=false` or
+    // an empty `CI` is not a runner. On a developer's macOS/Linux box a real `aws.profile` in the
+    // same store must stay put: it is recorded below and excluded from teardown, and the
+    // gateway's own refusal fails this test loudly instead of the test overwriting it.
+    if (process.env["CI"] === "true") {
+      for (const key of ADOPTED_VAULT_KEYS) await vault.delete(key);
+    }
+    for (const key of ADOPTED_VAULT_KEYS) {
+      if ((await vault.get(key)) !== null) preExistingKeys.add(key);
+    }
     writeShims(binDir, shimLog);
     writeFileSync(
       join(tmp, "gh", "hosts.yml"),
@@ -250,9 +266,10 @@ describe("local auth over a real gateway", () => {
     client.close();
     proc?.kill();
     await proc?.exited.catch(() => {});
-    // Always — the keys this test wrote must not outlive it in a machine-global store. Before
-    // `rmSync`, since the Windows DPAPI store (and its `.entropy`) lives under `paths.configDir`.
-    await deleteAdoptedKeys();
+    // Always — the keys this test wrote must not outlive it in a machine-global store, and only
+    // those (a key that pre-existed is a developer's, whatever happened above). Before `rmSync`,
+    // since the Windows DPAPI store (and its `.entropy`) lives under `paths.configDir`.
+    await deleteKeysWrittenByThisTest();
     try {
       rmSync(tmp, { recursive: true, force: true });
     } catch {
