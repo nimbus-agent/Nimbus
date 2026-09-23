@@ -18,8 +18,8 @@
     "linkify-it": "5.0.2",
     "hono": "4.13.7",
     "@hono/node-server": "2.0.12",
-    "@mastra/core": "1.66.0",
-    "@mastra/mcp": "1.17.3",
+    "@mastra/core": "1.67.0",
+    "@mastra/mcp": "1.18.0",
     "undici": "7.29.0",
     "ip-address": "10.3.1",
     "shell-quote": "1.10.0",
@@ -35,7 +35,7 @@
     "body-parser": "2.3.0",
     "nodemailer": "9.1.1",
     "smol-toml": "1.8.0",
-    "zod": "4.6.2"
+    "zod": "4.6.5"
   },
   "workspaces": [
     "packages/admin-console",
