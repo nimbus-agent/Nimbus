@@ -177,9 +177,51 @@ describe("local auth over a real gateway", () => {
   let gatewayLog = "";
   const client = new TestIpcClient();
 
+  /**
+   * The Vault keys the two APPROVED adoptions below write. `paths.configDir` is a fresh temp dir,
+   * but only the Windows DPAPI store lives under it: the macOS Keychain (fixed service
+   * `dev.nimbus`, `vault/darwin.ts`) and Linux libsecret are MACHINE-GLOBAL, so on those platforms
+   * these keys outlive the temp dir and this process. CI's "retry once" re-runs the whole suite
+   * on the same VM, and attempt 1's writes made attempt 2's adoptions refuse with
+   * `ERR_LOCAL_AUTH_ALREADY_CONFIGURED` (macOS leg of run 35883006601) — a residue failure
+   * masquerading as a product one. Deleted before the gateway boots and again after it exits.
+   */
+  const ADOPTED_VAULT_KEYS = [
+    "aws.profile",
+    "aws.default_region",
+    "gcp.auth_source",
+    "gcp.project_id",
+  ] as const;
+
+  /**
+   * Keys that were ALREADY in the store when this test started (a developer's real values on
+   * macOS/Linux). Teardown never touches these: if a pre-existing `aws.profile` made the adoption
+   * refuse with `ERR_LOCAL_AUTH_ALREADY_CONFIGURED`, the test fails loudly and the value stays.
+   */
+  const preExistingKeys = new Set<string>();
+
+  async function deleteKeysWrittenByThisTest(): Promise<void> {
+    const vault = await createNimbusVault(paths);
+    for (const key of ADOPTED_VAULT_KEYS) {
+      if (!preExistingKeys.has(key)) await vault.delete(key);
+    }
+  }
+
   beforeAll(async () => {
     for (const d of [binDir, paths.configDir, paths.dataDir, join(tmp, "gh"), join(tmp, "kube")]) {
       mkdirSync(d, { recursive: true });
+    }
+    const vault = await createNimbusVault(paths);
+    // Only on a CI runner (GitHub Actions and `verify:docker` both set exactly `CI=true`), where
+    // the machine-global store can hold nothing but a previous attempt's residue. `CI=false` or
+    // an empty `CI` is not a runner. On a developer's macOS/Linux box a real `aws.profile` in the
+    // same store must stay put: it is recorded below and excluded from teardown, and the
+    // gateway's own refusal fails this test loudly instead of the test overwriting it.
+    if (process.env["CI"] === "true") {
+      for (const key of ADOPTED_VAULT_KEYS) await vault.delete(key);
+    }
+    for (const key of ADOPTED_VAULT_KEYS) {
+      if ((await vault.get(key)) !== null) preExistingKeys.add(key);
     }
     writeShims(binDir, shimLog);
     writeFileSync(
@@ -224,6 +266,10 @@ describe("local auth over a real gateway", () => {
     client.close();
     proc?.kill();
     await proc?.exited.catch(() => {});
+    // Always — the keys this test wrote must not outlive it in a machine-global store, and only
+    // those (a key that pre-existed is a developer's, whatever happened above). Before `rmSync`,
+    // since the Windows DPAPI store (and its `.entropy`) lives under `paths.configDir`.
+    await deleteKeysWrittenByThisTest();
     try {
       rmSync(tmp, { recursive: true, force: true });
     } catch {
