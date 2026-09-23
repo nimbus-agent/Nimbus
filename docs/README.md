@@ -337,7 +337,7 @@ Who wrote it and when, answered from your local git history. Connect GitHub, a t
 nimbus why src/auth.ts:42
 ```
 
-`nimbus init` prints a real `file:line` from your own repo to try first, and, in a terminal, offers to run `nimbus wow` right away. Authorship — who wrote it, when, from your local git history — works with no credentials and no LLM configured; the PR, ticket, and incident need those tools connected.
+When the index found one, `nimbus init` prints a real `file:line` from your own repo to try first and, in a terminal, offers to run `nimbus wow` right away; a repo the index has nothing to show for yet gets `nimbus wow` as a next step instead of the offer. Authorship — who wrote it, when, from your local git history — works with no credentials and no LLM configured; the PR, ticket, and incident need those tools connected.
 
 ### Optional: add an LLM
 

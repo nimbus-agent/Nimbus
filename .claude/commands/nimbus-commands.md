@@ -288,7 +288,7 @@ nimbus init [--no-sync]                          # index the git repo in the CWD
 nimbus wow [--steps 1..6] [--no-proof] [--json]  # guided tour of whatever the gateway has indexed, closing on the locality panel
 ```
 
-Appends a `[[filesystem.roots]]` block to `nimbus.toml` (never rewrites; backs up to `nimbus.toml.bak`), starts the Gateway, syncs the `filesystem` connector, then prints a real `file:line` from your own repo to try with `nimbus why`. On a TTY, after that, offers to run `nimbus wow` right away; every successful run — TTY or not, "yes" or "no" — also sees `nimbus wow` named as the closing `Try it:`/`Next:` block's last line, and a failed tour never changes `init`'s own exit code. Idempotent.
+Appends a `[[filesystem.roots]]` block to `nimbus.toml` (never rewrites; backs up to `nimbus.toml.bak`), starts the Gateway, syncs the `filesystem` connector, then prints a real `file:line` from your own repo to try with `nimbus why`. On a TTY, after that, offers to run `nimbus wow` right away; every run that indexed and found a target — TTY or not, "yes" or "no" — also sees `nimbus wow` named as the closing `Try it:`/`Next:` block's last line, and a failed tour never changes `init`'s own exit code. Idempotent.
 
 ### Phase 5 T3 — Team Intelligence built-in agents
 
