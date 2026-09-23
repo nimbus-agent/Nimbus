@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1790178608261,
+  "lastUpdate": 1790179713893,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "2ad7828df3fc467f23d3514c1f0b25ce17a86ade",
-          "message": "docs: mark ecosystem roadmap complete + prune shipped specs/plans (#831)\n\nPost-Stage-3 docs cleanup.\n\n- **`docs/ecosystem-roadmap.md`** — marked ✅ COMPLETE (Stages 0–3\ndelivered); the **Stage 4** section is removed, since the remaining\nsurfaces (why-lens hover UI, raycast, statuspage, postmortem) now live\nin each repo's own `ROADMAP.md`. The four dangling Stage-4 links are\nrepointed. Kept as the historical record.\n- **Pruned 73 shipped specs/plans** under\n`docs/superpowers/{specs,plans}` — spent scaffolding; the durable info\nis already in the canonical docs (`architecture.md` carries the why lens\n+ `agents.why`/`whyPeek` IPC; `cli-reference.md` the commands;\n`CHANGELOG.md` the dated entries; `SECURITY.md` the security model). The\n~16 references from kept docs are de-linked to plain text so nothing\ndangles.\n- **Currency:** release line `v0.24.0` → `v0.26.0` (CLAUDE + GEMINI); a\n`nimbus why` example added to the README quickstart.\n\nGates: doc-refs (612 refs resolve), markdownlint, lychee — all green.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n\n## Summary by CodeRabbit\n\n- **New Features**\n- Added a Quickstart example demonstrating line-provenance tracing with\nthe `nimbus why` command.\n\n- **Documentation**\n  - Updated the documented latest release from v0.24.0 to v0.26.0.\n- Refreshed changelog references, roadmap status, and contributor\nguidance.\n- Marked the ecosystem roadmap as complete and clarified ownership of\nremaining work.\n- Removed outdated implementation plans and design documents to keep\ndocumentation current.\n\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude Opus 4.8 (1M context) <noreply@anthropic.com>",
-          "timestamp": "2026-07-24T11:35:13+03:00",
-          "tree_id": "56fef51f7ba24cf40c74e9461d157193af7da328",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/2ad7828df3fc467f23d3514c1f0b25ce17a86ade"
-        },
-        "date": 1784882638084,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 244.62413434999434,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 242.48982294999513,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 337.032274700002,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "306811640+nimbus-release-bot[bot]@users.noreply.github.com",
+            "name": "nimbus-release-bot[bot]",
+            "username": "nimbus-release-bot[bot]"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "8c0f248065627123bd0a14a98067cfa702d10598",
+          "message": "chore: release main (#1571)\n\n:robot: I have created a release *beep* *boop*\n---\n\n\n<details><summary>7.32.0</summary>\n\n##\n[7.32.0](https://github.com/nimbus-agent/Nimbus/compare/v7.31.0...v7.32.0)\n(2026-09-23)\n\n\n### Features\n\n* **cli:** nimbus init and nimbus demo end on the guided tour\n([#1570](https://github.com/nimbus-agent/Nimbus/issues/1570))\n([fc8ce7c](https://github.com/nimbus-agent/Nimbus/commit/fc8ce7ce07de2ff8219d9647d922ae4576837a67))\n</details>\n\n---\nThis PR was generated with [Release\nPlease](https://github.com/googleapis/release-please). See\n[documentation](https://github.com/googleapis/release-please#release-please).\n\nCo-authored-by: nimbus-release-bot[bot] <306811640+nimbus-release-bot[bot]@users.noreply.github.com>",
+          "timestamp": "2026-09-23T18:39:33+03:00",
+          "tree_id": "35ed3d9449f3bb39a0e8e8f4e8bec969d0b07a6d",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/8c0f248065627123bd0a14a98067cfa702d10598"
+        },
+        "date": 1790179710223,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 325.6867537500017,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 308.8066824500056,
             "unit": "ms"
           }
         ]
