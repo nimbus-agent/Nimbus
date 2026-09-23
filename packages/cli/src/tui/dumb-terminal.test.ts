@@ -1,13 +1,12 @@
-import { afterAll, describe, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
-
-import { gatewayStatePath } from "../lib/gateway-process.ts";
-import { getCliPlatformPaths } from "../paths.ts";
+import { join, sep } from "node:path";
+import { pathToFileURL } from "node:url";
 
 const REPO_ROOT = join(import.meta.dir, "..", "..", "..", "..");
 const CLI_ENTRY = join(REPO_ROOT, "packages", "cli", "src", "index.ts");
+const PATHS_MODULE = join(REPO_ROOT, "packages", "cli", "src", "paths.ts");
 
 const BUN_EXECUTABLE = process.execPath;
 
@@ -50,32 +49,75 @@ function isolationEnv(): Record<string, string> {
 }
 
 /**
- * Resolve the isolated profile's paths THE WAY THE CHILD WILL — through the same
- * `getCliPlatformPaths()` under the same env — rather than re-deriving `dataDir`
- * by hand, which would drift from `paths.ts` the day its layout changed.
+ * The env every child in this file is spawned with. The three inputs
+ * `detectFallbackReason` reads from the env are pinned, never inherited: a
+ * developer's `NO_COLOR`, a runner's `CI=true` or an odd `TERM` would otherwise
+ * change WHICH reason fires and make the assertions host-dependent.
  */
-function isolatedPaths(): ReturnType<typeof getCliPlatformPaths> {
-  const saved = new Map<string, string | undefined>();
-  for (const [k, v] of Object.entries(isolationEnv())) {
-    saved.set(k, process.env[k]);
-    process.env[k] = v;
-  }
-  try {
-    return getCliPlatformPaths();
-  } finally {
-    for (const [k, v] of saved) {
-      if (v === undefined) delete process.env[k];
-      else process.env[k] = v;
-    }
-  }
+function childEnv(overrides: Record<string, string> = {}): Record<string, string | undefined> {
+  const env: Record<string, string | undefined> = { ...process.env, ...isolationEnv() };
+  delete env["NO_COLOR"];
+  delete env["CI"];
+  env["TERM"] = "xterm-256color";
+  Object.assign(env, overrides);
+  return env;
 }
 
-const paths = isolatedPaths();
-mkdirSync(paths.dataDir, { recursive: true });
-writeFileSync(
-  gatewayStatePath(paths),
-  JSON.stringify({ pid: 2_147_483_647, socketPath: UNREACHABLE_SOCKET }),
-);
+/**
+ * Resolve the isolated profile's `dataDir` THE WAY THE CHILD WILL: in a fresh
+ * process under `childEnv()`, through the same `getCliPlatformPaths()`.
+ *
+ * Not in this process. On darwin `dataDir` hangs off `homedir()`, and a first
+ * attempt that set `HOME` here and called `getCliPlatformPaths()` in-process
+ * resolved a DIFFERENT directory from the child (macOS leg of #1572): the child
+ * then found no state file and every test failed on "Gateway is not running" —
+ * and worse, the parent had written its `gateway.json` into the runner's REAL
+ * profile. A fresh child cannot disagree with the test children, whatever
+ * `homedir()` does with a `HOME` changed after startup. And the result is
+ * REFUSED unless it lies inside `ISOLATED_HOME`, so this file can never write a
+ * state file over a real one, on any platform, however `paths.ts` evolves.
+ */
+async function resolveIsolatedDataDir(): Promise<string> {
+  const script =
+    `import { getCliPlatformPaths } from ${JSON.stringify(pathToFileURL(PATHS_MODULE).href)};\n` +
+    "process.stdout.write(getCliPlatformPaths().dataDir);\n";
+  const proc = Bun.spawn([BUN_EXECUTABLE, "-e", script], {
+    env: childEnv(),
+    stdin: "ignore",
+    stdout: "pipe",
+    stderr: "pipe",
+    windowsHide: true,
+  });
+  const [out, err, code] = await Promise.all([
+    new Response(proc.stdout as ReadableStream<Uint8Array>).text(),
+    new Response(proc.stderr as ReadableStream<Uint8Array>).text(),
+    proc.exited,
+  ]);
+  if (code !== 0) {
+    throw new Error(`resolving the isolated dataDir failed (exit ${code}):\n${err}`);
+  }
+  const dataDir = out.trim();
+  const roots = [ISOLATED_HOME, realpathSync(ISOLATED_HOME)];
+  const inside = roots.some((root) => dataDir === root || dataDir.startsWith(root + sep));
+  if (!inside) {
+    throw new Error(
+      `refusing to seed a gateway.json: the child resolved dataDir ${dataDir}, which is outside ` +
+        `the isolated profile ${ISOLATED_HOME}`,
+    );
+  }
+  return dataDir;
+}
+
+beforeAll(async () => {
+  const dataDir = await resolveIsolatedDataDir();
+  mkdirSync(dataDir, { recursive: true });
+  // The shape `readGatewayState` accepts (`lib/gateway-process.ts`): a finite pid
+  // and a socket path. The pid is never consulted on this path; the socket is dead.
+  writeFileSync(
+    join(dataDir, "gateway.json"),
+    JSON.stringify({ pid: 2_147_483_647, socketPath: UNREACHABLE_SOCKET }),
+  );
+});
 
 // A cold `bun run` of the CLI entry (transpile + module graph load) can take several
 // seconds on a loaded CI runner — notably Windows, where this file's first spawn is
@@ -110,19 +152,10 @@ interface RunResult {
 // there is one, is attributable rather than a coin toss between the two. stdin is
 // ignored rather than piped: nothing writes to it, and that is one fewer pipe to set up.
 async function run(overrides: Record<string, string> = {}): Promise<RunResult> {
-  const env: Record<string, string | undefined> = { ...process.env, ...isolationEnv() };
-  // The three inputs `detectFallbackReason` reads from the env are pinned, never
-  // inherited: a developer's `NO_COLOR`, a runner's `CI=true` or an odd `TERM` would
-  // otherwise change WHICH reason fires and make the assertions below host-dependent.
-  delete env["NO_COLOR"];
-  delete env["CI"];
-  env["TERM"] = "xterm-256color";
-  Object.assign(env, overrides);
-
   let proc: ReturnType<typeof Bun.spawn>;
   try {
     proc = Bun.spawn([BUN_EXECUTABLE, "run", CLI_ENTRY, "tui"], {
-      env,
+      env: childEnv(overrides),
       stdin: "ignore",
       stdout: "pipe",
       stderr: "pipe",
