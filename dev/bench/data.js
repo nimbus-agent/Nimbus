@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1790017314409,
+  "lastUpdate": 1790177229272,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "98cc6e4f335273de5838fdd7947bfe72ff9bdaed",
-          "message": "docs: ecosystem Stage 3 — distribution (launch messaging + roadmap status) (#830)\n\nStage 3 (Distribution) copy that lives in this repo, plus the\nspec/plan/reviews.\n\n- **`docs/launch-messaging.md`** — reusable messaging sheet (three\npillars: banner=`why` lens, moat=egress receipts, multiplier=LM tools)\nwith load-bearing **honesty guardrails** (the egress ledger records the\nagent's *dispatched actions* at the I29 chokepoint — never \"everything\nthat left your machine\").\n- **Stage 3 roadmap status** — marketplace re-cut ✅, cross-link ROADMAPs\n✅, launch trust-story ✅; **demo GIF ⏳ deferred** (gated on the Stage 4\nhover UI).\n\nCopy/metadata only — nothing published or posted. **Companion PRs:**\nnimbus-vscode (marketplace re-cut) + nimbus-client/-sdk/-web-clipper\n(ROADMAP cross-links).\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n---------\n\nCo-authored-by: Claude Opus 4.8 (1M context) <noreply@anthropic.com>",
-          "timestamp": "2026-07-24T07:27:58Z",
-          "tree_id": "a7f19c20990b2f87cba3d02c447e8df9dcf42133",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/98cc6e4f335273de5838fdd7947bfe72ff9bdaed"
-        },
-        "date": 1784878800435,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 296.5569919000012,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 296.9728493500028,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 333.3142169000039,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "fc8ce7ce07de2ff8219d9647d922ae4576837a67",
+          "message": "feat(cli): nimbus init and nimbus demo end on the guided tour (#1570)\n\nPR 2 of 3 for `nimbus wow` (after #1563 `CliExit` and #1565 the tour\nitself). Closes the First-Run rows the feature was built for: `nimbus\ninit` and `nimbus demo` now both end on the guided tour and its locality\npanel.\n\n## What changed\n\n**`nimbus demo` runs its three fixed steps through the shared `runTour`\nand closes on the locality panel.**\n- `demo.seed` returns `tour: TourStep[]` (`oncall` → `why` → `owners`)\nbuilt by a new exported `tourStepFor` in `agents/_lib/tour-plan.ts` —\nthe SAME construction `tour.plan` uses, so the printed `command` and the\nexecuted `args` come from one value and cannot drift. It also returns\n`t0`, the gateway clock read after seeding finished.\n- The `oncall` step now names its incident (`nimbus --demo oncall\n--incident pagerduty:PDEMO412`, derived from the one\n`PAGING_INCIDENT_ID` constant via `itemPrimaryKey`); `why` keeps\n`src/retry/backoff.ts:42`; `owners` keeps `src/retry`. Headers are\n`[1/4]`…`[3/4]`, and `[4/4] Where your data is` is the same panel\n`nimbus wow` prints: listeners open right now, the on-disk index, and\n`egress.proveWindow` over `[t0, t1]` — both edges gateway-stamped,\nspanning the post-seed restart (the seeding gateway's boot marker covers\n`t0`, the restarted one's marker lies inside the window, so the count is\nclaimable rather than `indeterminate`). A demo gateway is inert (I41),\nso the Killer Demo's \"0 outbound network calls\" is now a **produced**\nfact on every run, rendered only through `formatProveResult`.\n- `printLocalityPanel` (`cli/src/lib/locality-panel.ts`) is extracted\nfrom `wow.ts` and shared; `wow.test.ts` is untouched and still pins the\nlocality-after-steps / prove-after-locality call order.\n- A failed step or a failed `egress.proveWindow` call exits `1` AFTER\nthe panel and the closing block print (mirrors `nimbus wow`).\n- The release smoke judge (`scripts/release/assert-demo-tour.ts`), its\nunit test, its real-capture fixture (re-recorded from a real run on a\ntemp root — no developer paths), the demo e2e, and\n`docs/release/gate-1-fresh-machine.md` all moved with the output. The\njudge's panel anchors are OS-agnostic headings, not listener addresses.\n\n**`nimbus init` offers the tour on a TTY.**\n- After the local-login offer, when the index produced a `file:line`\ntarget and stdin+stdout are TTYs and `CI` is not `true`: `Run the tour\nnow?` (default yes, cancel = no) → `runWow([])` in-process. The prompt\nand the tour sit in one `try`; any throw prints `Run \\`nimbus wow\\` any\ntime for a guided tour of what was just indexed.` and `init`'s exit code\nis unchanged (the existing final `initExitCode(outcome)` assignment is\nthe reset). Every `indexed` outcome's `Try it:`/`Next:` block now ends\nwith `nimbus wow`; `--no-sync` never offers it.\n- The offer is gated on a found demo symbol because the tour's `why`\nselector reads the SAME substrate as `init`'s own hint — with no symbol\nthe plan is empty and `nimbus wow` would tell the user to run the\ncommand they just ran (caught by the whole-branch review, not by any\ntask view).\n\n**Docs.** Roadmap ticks for *Zero-auth local-first wow* (bound: one\nrepository via `init`, not `~/code`), *\"Prove it's local\"* (bound: the\npanel lists the gateway PROCESS's listeners; a child's socket —\nChromium's DevTools port — is not in it) and *`nimbus wow` guided tour*\n(not shipped: LLM-chosen selection, `preflight`/`premortem`/`negotiate`\nsteps, tour history/telemetry); *Screenshot-worthy output* stays open.\nCLI reference (`init`, Demo Sandbox), architecture.md, CLAUDE.md +\nGEMINI.md (mirrored sentence), CHANGELOG, `docs/README.md` +\n`install.mdx` quickstarts, `nimbus-commands.md`.\n\nNo migration, no new invariant, no new egress class, no new IPC method,\nno HITL action type, no Tauri allowlist change (`ALLOWED_METHODS` still\n105). `demo.seed` is CLI-only and ships in the same binary as its one\nconsumer, so the result-shape change has no skew surface. Not a `!`:\nnothing an existing user does changes.\n\n## Rulings that deviate from the plan (spec is the authority; plan text\nsaid both \"keep the gate's asserted strings\" and \"headers become `/4`\")\n- The judge/fixture/gate-1 doc follow the OUTPUT. The `release:\npublished` run checks out the tag it tests, so judge and binary move\ntogether. **Known cost:** a `schedule`/`workflow_dispatch` run of\n`released-install-smoke.yml` between this merge and the next release\njudges the `/4` judge against the last `/3` binary and is red; that job\nis not one of the ten required checks, and the next release clears it.\n- The demo `why` step keeps the relative ref (it resolves against the\nconfigured root; it is what the docs and gate print). Only `oncall`\nchanged shape.\n- `init` reuses its existing `interactive` dep rather than a new\n`isTTY`.\n\n## Verification\n- `bun test packages/gateway packages/cli scripts` (whole-repo, ONE\nprocess — the PR cross-platform legs' command) at the final head: 24333\npass / 90 skip / 0 fail.\n- `bun run preflight` (full): every gate green except\n`audit:coverage-floor`, whose 7 Windows violations are all in untouched\nplatform-sensitive files (`socket-listeners.ts`, `linux.ts`,\n`win32-reap.ts`, `win32.ts`, `stop-and-wait.ts`) — the known Windows\nfalse-violation set; the floor is CI-Linux-authoritative. Every touched\nfile clears it on Windows (`demo.ts` 94.9/88.6, `init.ts` 91.2/85.4,\n`wow.ts` 91.9/94.3, `locality-panel.ts` 100/100, `tour-plan.ts` 100/100,\n`acme.ts` 100/85.7, `seed.ts` 98.9/86.4, `demo-rpc.ts` 88.0/87.5).\n- `bun run verify:docker --changed` (oven/bun:1.3, `CI=true` as on a\nrunner): the 10 touched test files incl. `demo-tour.e2e` — 245 pass / 0\nfail at the final head. This run caught the one defect the reviews did\nnot: four `init` tour tests passed only with `CI` unset once the\n`CI=true` guard landed; fixed with a shared clear-and-restore helper and\nre-proven under both values.\n- The demo e2e on Windows from source (no `dist/` gateway): 10 pass.\n- Reviews: one task review per task (two fix rounds: a wrong doc comment\non `TOUR_HINT`; two stale doc hits the sweep missed) + one whole-branch\nreview (one Important, fixed: the empty-plan gate above; six minors\ntaken in the same wave) + two scoped re-reviews of the fix wave.\n\n## Follow-ups (not this PR)\n- **`github-actions` vs `github_actions` inventory split** — the panel's\ninventory line shows both. This is NOT demo-only:\n`deployment/annotate.ts` writes `item.service = input.provider`\n(`\"github-actions\"`) while the connector indexes `ci_run` under\n`\"github_actions\"`, so any real install that annotates deployments and\nsyncs the connector shows the same split and an inflated service count.\nA rename is a migration; PR 1's panel is what surfaced it.\n- `printLocalityPanel` has no direct unit test (covered through both\ncallers); `demo.test.ts`'s `cleanProof()` fake hand-lists coverage\nclasses (a third copy of the list).\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n## Summary by CodeRabbit\n\n* **New Features**\n* `nimbus init` can offer an interactive `nimbus wow` tour after\nsuccessful indexing finds a target.\n* `nimbus demo` now includes a locality panel with gateway listeners,\nlocal data details, and zero-egress proof.\n* Demo tours include incident-specific on-call commands and consistent\nguided-tour steps.\n\n* **Bug Fixes**\n* Tour failures during `init` display a helpful hint without changing\nthe indexing result. Tour or proof failures in `demo` display the panel\nand closing suggestions before exiting with a failure status.\n\n* **Documentation**\n* Updated quick-start, CLI, architecture, roadmap, and release\ndocumentation to describe guided tours and locality verification.\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude Fable 5.1 <noreply@anthropic.com>",
+          "timestamp": "2026-09-23T15:17:50Z",
+          "tree_id": "8b2dc9cd14d06d7e41c9e2dfa7ba38c195c3873b",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/fc8ce7ce07de2ff8219d9647d922ae4576837a67"
+        },
+        "date": 1790177224442,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 258.965750900004,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 259.9134253500022,
             "unit": "ms"
           }
         ]
