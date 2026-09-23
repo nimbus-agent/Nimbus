@@ -1,6 +1,8 @@
 import type { Database } from "bun:sqlite";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
+import { tourStepFor } from "../agents/_lib/tour-plan.ts";
+import type { TourStep } from "../agents/_lib/tour-types.ts";
 import { loadNimbusFilesystemRootsFromConfigDir } from "../config/filesystem-toml.ts";
 import {
   DEFAULT_NIMBUS_OWNERSHIP_TOML,
@@ -17,7 +19,7 @@ import { NIMBUS_PERSON_NAMESPACE_UUID, uuidV5 } from "../people/person-id.ts";
 import { insertPerson } from "../people/person-store.ts";
 import { type BlameRow, upsertBlameLines } from "../security/blame-store.ts";
 
-import { ACME_TOUR, buildAcmeCorpus } from "./corpus/acme.ts";
+import { ACME_TOUR_STEPS, buildAcmeCorpus } from "./corpus/acme.ts";
 import type {
   At,
   DemoCommit,
@@ -79,7 +81,12 @@ export interface DemoSeedResult {
     readonly blameLines: number;
     readonly deployments: number;
   };
-  readonly tour: { readonly whyRef: string; readonly ownersPath: string };
+  /**
+   * The demo tour, in the same `TourStep` wire shape `tour.plan` returns for `nimbus wow` — built
+   * with `demo: true`, so each `command` carries `--demo` for display while `args` (what the
+   * runner executes) never does.
+   */
+  readonly tour: readonly TourStep[];
   readonly workspaceRoot: string;
 }
 
@@ -422,7 +429,9 @@ export async function seedDemoCorpus(
       blameLines,
       deployments: corpus.deployments.length,
     },
-    tour: ACME_TOUR,
+    // `demo: true` unconditionally — this is the demo seeder, and every command it prints is one
+    // the user would run with `--demo`.
+    tour: ACME_TOUR_STEPS.map((s) => tourStepFor(s.kind, s, true)),
     workspaceRoot: repoRoot,
   };
 }

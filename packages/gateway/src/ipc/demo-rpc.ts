@@ -39,13 +39,19 @@ function requireSeedParams(params: unknown): { nowMs?: number } {
 
 async function handleDemoSeed(params: unknown, ctx: DemoRpcContext): Promise<unknown> {
   const p = requireSeedParams(params);
-  const nowMs = p.nowMs ?? (ctx.now ?? Date.now)();
+  const now = ctx.now ?? Date.now;
+  const nowMs = p.nowMs ?? now();
   try {
-    return await seedDemoCorpus(ctx.db, {
+    const result = await seedDemoCorpus(ctx.db, {
       configDir: ctx.configDir,
       dataDir: ctx.dataDir,
       nowMs,
     });
+    // `t0` is the GATEWAY clock at the moment seeding FINISHED — the `since` edge of the window
+    // `nimbus demo` then proves over. Read here rather than reusing `nowMs`, which is the
+    // corpus's own time base (and is caller-supplied when `params.nowMs` is given), so nothing
+    // the seeder itself did can fall inside the proof window.
+    return { ...result, t0: now() };
   } catch (e) {
     if (e instanceof DemoSeedRefusedError) {
       throw new DemoRpcError(-32010, e.message);
