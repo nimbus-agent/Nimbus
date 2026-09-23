@@ -177,10 +177,36 @@ describe("local auth over a real gateway", () => {
   let gatewayLog = "";
   const client = new TestIpcClient();
 
+  /**
+   * The Vault keys the two APPROVED adoptions below write. `paths.configDir` is a fresh temp dir,
+   * but only the Windows DPAPI store lives under it: the macOS Keychain (fixed service
+   * `dev.nimbus`, `vault/darwin.ts`) and Linux libsecret are MACHINE-GLOBAL, so on those platforms
+   * these keys outlive the temp dir and this process. CI's "retry once" re-runs the whole suite
+   * on the same VM, and attempt 1's writes made attempt 2's adoptions refuse with
+   * `ERR_LOCAL_AUTH_ALREADY_CONFIGURED` (macOS leg of run 35883006601) — a residue failure
+   * masquerading as a product one. Deleted before the gateway boots and again after it exits.
+   */
+  const ADOPTED_VAULT_KEYS = [
+    "aws.profile",
+    "aws.default_region",
+    "gcp.auth_source",
+    "gcp.project_id",
+  ] as const;
+
+  async function deleteAdoptedKeys(): Promise<void> {
+    const vault = await createNimbusVault(paths);
+    for (const key of ADOPTED_VAULT_KEYS) await vault.delete(key);
+  }
+
   beforeAll(async () => {
     for (const d of [binDir, paths.configDir, paths.dataDir, join(tmp, "gh"), join(tmp, "kube")]) {
       mkdirSync(d, { recursive: true });
     }
+    // Only on a CI runner, where the machine-global store can hold nothing but a previous
+    // attempt's residue. On a developer's macOS/Linux box a real `aws.profile` in the same store
+    // must stay put — there the gateway's own `ERR_LOCAL_AUTH_ALREADY_CONFIGURED` refusal fails
+    // this test loudly instead of the test silently overwriting a real credential.
+    if (process.env["CI"] !== undefined) await deleteAdoptedKeys();
     writeShims(binDir, shimLog);
     writeFileSync(
       join(tmp, "gh", "hosts.yml"),
@@ -224,6 +250,9 @@ describe("local auth over a real gateway", () => {
     client.close();
     proc?.kill();
     await proc?.exited.catch(() => {});
+    // Always — the keys this test wrote must not outlive it in a machine-global store. Before
+    // `rmSync`, since the Windows DPAPI store (and its `.entropy`) lives under `paths.configDir`.
+    await deleteAdoptedKeys();
     try {
       rmSync(tmp, { recursive: true, force: true });
     } catch {

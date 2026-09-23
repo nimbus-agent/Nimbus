@@ -1,5 +1,4 @@
 import { afterAll, describe, expect, test } from "bun:test";
-import { spawnSync } from "node:child_process";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -43,50 +42,108 @@ function isolationEnv(): NodeJS.ProcessEnv {
   };
 }
 
-function run(env: NodeJS.ProcessEnv = {}): {
+// A cold `bun run` of the CLI entry (transpile + module graph load) can take several
+// seconds on a loaded CI runner — notably Windows, where this file's first spawn is
+// the cold one. Generous headroom, and each test declares a timeout ABOVE it so the
+// deadline can fire and be reported by name before bun:test gives up on the test.
+const SPAWN_DEADLINE_MS = 30_000;
+const TEST_TIMEOUT_MS = 45_000;
+
+interface RunResult {
   code: number;
   stdout: string;
   stderr: string;
   error: Error | undefined;
-} {
-  const result = spawnSync(BUN_EXECUTABLE, ["run", CLI_ENTRY, "tui"], {
-    env: { ...process.env, ...isolationEnv(), ...env },
-    stdio: ["pipe", "pipe", "pipe"],
-    encoding: "utf-8",
-    // A cold `bun run` of the CLI entry (transpile + module graph load) can exceed
-    // a few seconds on a loaded CI runner — notably Windows, where this was the
-    // first (cold) spawn in the file. A tight timeout killed the process before any
-    // output, surfacing as a confusing `combined.length === 0` failure. Give it
-    // generous headroom; each test runs a single spawn well within the suite timeout.
-    timeout: 30_000,
-  });
-  return {
-    code: result.status ?? -1,
-    stdout: result.stdout ?? "",
-    stderr: result.stderr ?? "",
-    error: result.error,
-  };
+}
+
+// Spawned asynchronously with an explicit deadline, NOT `spawnSync({ timeout })`.
+//
+// On the Windows push leg the FIRST spawn in this file intermittently failed with
+// `spawnSync <bun.exe> ETIMEDOUT` about 10 ms in — on both attempts of `main` runs
+// 35623124409, 35880499482 and 35883179641, while the two later spawns in the same
+// file passed every time, on the same Bun 1.3.14 the green runs around them used.
+// Two mechanisms produce that exact error object and nothing on it tells them apart:
+// Bun's own spawnSync deadline, and libuv translating a Windows `ERROR_SEM_TIMEOUT`
+// from stdio pipe setup into `UV_ETIMEDOUT`. An async spawn takes the sync-deadline
+// path out of the picture entirely, and leaves a pipe-setup failure as a THROWN spawn
+// error that the first assertion below reports by name — so the next occurrence, if
+// there is one, is attributable rather than a coin toss between the two. stdin is
+// ignored rather than piped: nothing writes to it, and that is one fewer pipe to set up.
+async function run(env: NodeJS.ProcessEnv = {}): Promise<RunResult> {
+  let proc: ReturnType<typeof Bun.spawn>;
+  try {
+    proc = Bun.spawn([BUN_EXECUTABLE, "run", CLI_ENTRY, "tui"], {
+      env: { ...process.env, ...isolationEnv(), ...env },
+      stdin: "ignore",
+      stdout: "pipe",
+      stderr: "pipe",
+      windowsHide: true,
+    });
+  } catch (e) {
+    return {
+      code: -1,
+      stdout: "",
+      stderr: "",
+      error: e instanceof Error ? e : new Error(String(e)),
+    };
+  }
+  let timedOut = false;
+  const deadline = setTimeout(() => {
+    timedOut = true;
+    proc.kill();
+  }, SPAWN_DEADLINE_MS);
+  try {
+    const [stdout, stderr, code] = await Promise.all([
+      new Response(proc.stdout as ReadableStream<Uint8Array>).text(),
+      new Response(proc.stderr as ReadableStream<Uint8Array>).text(),
+      proc.exited,
+    ]);
+    return {
+      code,
+      stdout,
+      stderr,
+      error: timedOut
+        ? new Error(`nimbus tui did not exit within ${SPAWN_DEADLINE_MS} ms and was killed`)
+        : undefined,
+    };
+  } finally {
+    clearTimeout(deadline);
+  }
 }
 
 describe("nimbus tui fallback behavior", () => {
-  test("TERM=dumb prints fallback notice and does not attempt Ink render", () => {
-    const { stdout, stderr, error } = run({ TERM: "dumb" });
-    // Surface a spawn timeout/error explicitly rather than as an opaque empty-output assertion.
-    expect(error).toBeUndefined();
-    const combined = stdout + stderr;
-    expect(combined.length).toBeGreaterThan(0);
-    expect(combined).not.toContain("Sub-Tasks");
-  });
+  test(
+    "TERM=dumb prints fallback notice and does not attempt Ink render",
+    async () => {
+      const { stdout, stderr, error } = await run({ TERM: "dumb" });
+      // Surface a spawn failure or deadline explicitly rather than as an opaque empty-output assertion.
+      expect(error).toBeUndefined();
+      const combined = stdout + stderr;
+      expect(combined.length).toBeGreaterThan(0);
+      expect(combined).not.toContain("Sub-Tasks");
+    },
+    TEST_TIMEOUT_MS,
+  );
 
-  test("non-TTY stdout falls back gracefully", () => {
-    const { stdout, stderr } = run();
-    const combined = stdout + stderr;
-    expect(combined).not.toContain("Sub-Tasks");
-  });
+  test(
+    "non-TTY stdout falls back gracefully",
+    async () => {
+      const { stdout, stderr, error } = await run();
+      expect(error).toBeUndefined();
+      const combined = stdout + stderr;
+      expect(combined).not.toContain("Sub-Tasks");
+    },
+    TEST_TIMEOUT_MS,
+  );
 
-  test("CI=true prints fallback notice", () => {
-    const { stdout, stderr } = run({ CI: "true" });
-    const combined = stdout + stderr;
-    expect(combined).not.toContain("Sub-Tasks");
-  });
+  test(
+    "CI=true prints fallback notice",
+    async () => {
+      const { stdout, stderr, error } = await run({ CI: "true" });
+      expect(error).toBeUndefined();
+      const combined = stdout + stderr;
+      expect(combined).not.toContain("Sub-Tasks");
+    },
+    TEST_TIMEOUT_MS,
+  );
 });
