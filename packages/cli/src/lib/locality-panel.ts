@@ -1,4 +1,6 @@
+import { formatProveResult, type ProveResult } from "../commands/prove.ts";
 import { formatBytes } from "./format-bytes.ts";
+import { tourRule } from "./run-tour.ts";
 
 /**
  * Structural mirror of the gateway's `locality/listener-registry.ts` +
@@ -132,4 +134,58 @@ export function renderLocalityPanel(loc: LocalityReport, proofText: string): str
     lines.push(`  ${c.padEnd(NEXT_COMMAND_COLUMN_WIDTH)}${PANEL_COMMAND_DESCRIPTIONS[c]}`);
   }
   return `${lines.join("\n")}\n`;
+}
+
+/** The panel's own step title, used only to build its `tourRule` header line. */
+const PANEL_TITLE = "Where your data is";
+
+export interface LocalityPanelDeps {
+  readonly locality: () => Promise<LocalityReport>;
+  readonly prove: (since: number, until: number) => Promise<ProveResult>;
+  readonly out: (s: string) => void;
+}
+
+/**
+ * Prints the panel's `[total/total] Where your data is` rule line, then the panel itself — the
+ * ONE sequence `nimbus wow` and `nimbus demo` both close on, so the two surfaces cannot drift into
+ * proving different things about the same gateway.
+ *
+ * The proof window is EXACTLY `{since: t0, until: locality.t1}` — both edges are GATEWAY clock
+ * values the caller read from prior calls, never a `Date.now()` computed here, so the window
+ * matches what the gateway itself can account for. `locality()` is called first and `prove()` only
+ * after it resolves: an `until` obtained before the tour finished would understate what the tour
+ * did. Callers must therefore invoke this only AFTER every step has run — a bound the callers'
+ * own call-order tests pin, since this function cannot see the steps.
+ *
+ * A failed `prove()` call must not discard the locality report already in hand: the panel still
+ * prints in full, with a distinct "proof unavailable" fact under the outbound-activity heading — a
+ * DIFFERENT fact from `formatProveResult`'s "indeterminate — cannot prove zero egress" (the call
+ * itself failed, vs. the chain being unverifiable), so it is never routed through
+ * `formatProveResult` and never carries a count. The caller decides what a failure means for the
+ * exit code; the returned `proveFailed` is how it finds out.
+ */
+export async function printLocalityPanel(
+  deps: LocalityPanelDeps,
+  t0: number,
+  total: number,
+): Promise<{ proveFailed: boolean }> {
+  const locality = await deps.locality();
+  let proveFailed = false;
+  let proofText: string;
+  try {
+    const window = await deps.prove(t0, locality.t1);
+    proofText = formatProveResult({
+      delta: window.completeness.outboundEgressEvents,
+      completeness: window.completeness,
+      chainOk: window.verify.ok,
+      label: "during this tour",
+    });
+  } catch (e) {
+    proveFailed = true;
+    const message = e instanceof Error ? e.message : String(e);
+    proofText = `proof unavailable — the egress.proveWindow call failed: ${message}`;
+  }
+  deps.out(`\n${tourRule(total, total, PANEL_TITLE)}\n`);
+  deps.out(renderLocalityPanel(locality, proofText));
+  return { proveFailed };
 }

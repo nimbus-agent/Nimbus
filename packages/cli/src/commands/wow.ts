@@ -1,18 +1,19 @@
 import { CliExit } from "../lib/cli-exit.ts";
-import { type LocalityReport, PANEL_COMMANDS, renderLocalityPanel } from "../lib/locality-panel.ts";
+import {
+  type LocalityReport,
+  PANEL_COMMANDS,
+  printLocalityPanel,
+  renderLocalityPanel,
+} from "../lib/locality-panel.ts";
 import {
   defaultTourRunners,
   runTour,
   type TourRunners,
   type TourStep,
   type TourStepKind,
-  tourRule,
 } from "../lib/run-tour.ts";
 import { withGatewayIpc } from "../lib/with-gateway-ipc.ts";
-import { formatProveResult, type ProveResult } from "./prove.ts";
-
-/** The panel's own step title, used only to build its `tourRule` header line. */
-const PANEL_TITLE = "Where your data is";
+import type { ProveResult } from "./prove.ts";
 
 export { PANEL_COMMANDS, renderLocalityPanel };
 
@@ -162,30 +163,15 @@ export async function runWow(args: string[], deps: WowDeps = defaultWowDeps): Pr
   const total = plan.steps.length + (parsed.noProof ? 0 : 1);
   const results = await runTour(plan.steps, deps.runners, deps.out, deps.err, total);
 
-  // A failed `prove()` call must not discard the locality report already in hand: the panel still
-  // prints in full, with a distinct "proof unavailable" fact under the outbound-activity heading —
-  // a DIFFERENT fact from `formatProveResult`'s "indeterminate — cannot prove zero egress" (the
-  // call itself failed, vs. the chain being unverifiable), so it is never routed through
-  // `formatProveResult` and never carries a count.
+  // The locality/prove/panel sequence lives in `printLocalityPanel` — `nimbus demo` closes on the
+  // same one, and a second copy here is a second place for the window edges to drift.
   let proveFailed = false;
   if (!parsed.noProof) {
-    const locality = await deps.locality();
-    let proofText: string;
-    try {
-      const window = await deps.prove(plan.t0, locality.t1);
-      proofText = formatProveResult({
-        delta: window.completeness.outboundEgressEvents,
-        completeness: window.completeness,
-        chainOk: window.verify.ok,
-        label: "during this tour",
-      });
-    } catch (e) {
-      proveFailed = true;
-      const message = e instanceof Error ? e.message : String(e);
-      proofText = `proof unavailable — the egress.proveWindow call failed: ${message}`;
-    }
-    deps.out(`\n${tourRule(total, total, PANEL_TITLE)}\n`);
-    deps.out(renderLocalityPanel(locality, proofText));
+    ({ proveFailed } = await printLocalityPanel(
+      { locality: deps.locality, prove: deps.prove, out: deps.out },
+      plan.t0,
+      total,
+    ));
   }
 
   for (const skip of plan.skipped) {

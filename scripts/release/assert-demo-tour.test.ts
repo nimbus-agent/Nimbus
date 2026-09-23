@@ -34,17 +34,46 @@ describe("checkDemoTour", () => {
     const died = `${GOOD.slice(0, i)}$ nimbus --demo oncall\nGateway is not running (demo root). Start with: nimbus --demo start\n`;
     const f = checkDemoTour(died);
     expect(f.some((m) => m.includes("Gateway is not running"))).toBe(true);
-    expect(f.some((m) => m.includes("header 2/3"))).toBe(true);
+    expect(f.some((m) => m.includes("header 2/4"))).toBe(true);
   });
 
   test.each([
-    ["── [1/3] On-call triage", "header 1/3"],
-    ["── [2/3] Why this line changed", "header 2/3"],
-    ["── [3/3] Who owns this code", "header 3/3"],
+    ["── [1/4] On-call triage", "header 1/4"],
+    ["── [2/4] Why this line changed", "header 2/4"],
+    ["── [3/4] Who owns this code", "header 3/4"],
+    ["── [4/4] Where your data is", "header 4/4"],
     ["$ nimbus --demo why src/retry/backoff.ts:42", "command line"],
+    ["$ nimbus --demo oncall --incident pagerduty:PDEMO412", "command line"],
   ])("fails when %p is absent", (needle, expected) => {
     const f = checkDemoTour(GOOD.replace(needle, "x"));
     expect(f.some((m) => m.includes(expected))).toBe(true);
+  });
+
+  test.each([
+    "Listeners the gateway has open right now:",
+    "Outbound activity during this tour (gateway-wide):",
+    "outbound egress events during this tour, in the covered classes: 0",
+  ])("fails when the locality panel loses %p", (needle) => {
+    const f = checkDemoTour(GOOD.replace(needle, "x"));
+    expect(f).toContain(`the locality panel is missing: ${needle}`);
+  });
+
+  test("a panel whose proof line is indeterminate fails — a zero it cannot substantiate is not a pass", () => {
+    const mutated = GOOD.replace(
+      /outbound egress events during this tour, in the covered classes: 0[^\n]*/,
+      "indeterminate — cannot prove zero egress: the egress chain is unverifiable",
+    );
+    const f = checkDemoTour(mutated);
+    expect(f).toContain("the panel could not prove zero egress: its proof line is indeterminate");
+  });
+
+  test("a panel whose prove call failed outright fails too, distinctly from indeterminate", () => {
+    const mutated = GOOD.replace(
+      /outbound egress events during this tour, in the covered classes: 0[^\n]*/,
+      "proof unavailable — the egress.proveWindow call failed: boom",
+    );
+    const f = checkDemoTour(mutated);
+    expect(f).toContain("the panel could not prove zero egress: the proveWindow call failed");
   });
 
   test("fails when the seed line is absent, and when it reports an empty org", () => {
@@ -61,8 +90,8 @@ describe("checkDemoTour", () => {
   });
 
   test("a brief that carries ## Gaps but then continues with another section does not CLOSE with it", () => {
-    const i2 = GOOD.indexOf("── [2/3]");
-    const i3 = GOOD.indexOf("── [3/3]");
+    const i2 = GOOD.indexOf("── [2/4]");
+    const i3 = GOOD.indexOf("── [3/4]");
     const why = GOOD.slice(i2, i3).replace("_generated in", "## Appendix\n\n_generated in");
     const f = checkDemoTour(GOOD.slice(0, i2) + why + GOOD.slice(i3));
     expect(f).toEqual([
@@ -84,26 +113,26 @@ describe("checkDemoTour", () => {
     );
   });
 
-  test("a closing hint printed BEFORE the third brief fails", () => {
-    const i3 = GOOD.indexOf("── [3/3]");
+  test("a closing hint printed BEFORE the last tour header fails", () => {
+    const i3 = GOOD.indexOf("── [3/4]");
     const hint = GOOD.indexOf("The demo gateway is still running");
     const moved = GOOD.slice(0, i3) + GOOD.slice(hint) + GOOD.slice(i3, hint);
     expect(checkDemoTour(moved)).toContain(
-      "the closing hint appears before the third brief, not after it",
+      "the closing hint appears before the last tour header, not after it",
     );
   });
 
   test("fails when the headers are out of order", () => {
-    const swapped = GOOD.replace("[1/3] On-call triage", "[TMP]")
-      .replace("[3/3] Who owns this code", "[1/3] On-call triage")
-      .replace("[TMP]", "[3/3] Who owns this code");
-    expect(checkDemoTour(swapped)).toContain("the three tour headers are out of order");
+    const swapped = GOOD.replace("[1/4] On-call triage", "[TMP]")
+      .replace("[3/4] Who owns this code", "[1/4] On-call triage")
+      .replace("[TMP]", "[3/4] Who owns this code");
+    expect(checkDemoTour(swapped)).toContain("the four tour headers are out of order");
   });
 
   test("an anchor counts only inside its OWN brief", () => {
     // PAY-231 also appears in the oncall brief; removing it from the why section alone must fail.
-    const i2 = GOOD.indexOf("── [2/3]");
-    const i3 = GOOD.indexOf("── [3/3]");
+    const i2 = GOOD.indexOf("── [2/4]");
+    const i3 = GOOD.indexOf("── [3/4]");
     const mutated =
       GOOD.slice(0, i2) + GOOD.slice(i2, i3).replaceAll("PAY-231", "X") + GOOD.slice(i3);
     expect(GOOD.slice(0, i2)).toContain("PAY-231");
@@ -111,7 +140,7 @@ describe("checkDemoTour", () => {
   });
 
   test("fails when a brief loses its ## Gaps section", () => {
-    const i3 = GOOD.indexOf("── [3/3]");
+    const i3 = GOOD.indexOf("── [3/4]");
     const mutated = GOOD.slice(0, i3) + GOOD.slice(i3).replace("## Gaps", "## Notes");
     expect(checkDemoTour(mutated)).toEqual(["the owners brief is missing ## Gaps"]);
   });

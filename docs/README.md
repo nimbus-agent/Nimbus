@@ -37,13 +37,14 @@
 ```bash
 nimbus init            # index the repo you're standing in — no account, no API key
 nimbus why src/auth.ts:42
+nimbus wow             # guided tour of what just got indexed; ends by showing which sockets are open and what left the machine
 ```
 
 Who wrote this line, when, and in which commit — answered from your local git history, with no LLM configured, no API key, and no cloud account. Connect GitHub and a ticket tracker (Jira or Linear) and an incident tool, and the same command extends its answer with the pull request that carried the change, the ticket that asked for it, and the incident it touched.
 
 That is the whole first run. Much of what follows is what becomes available once you connect the tools you already use.
 
-No repo handy, or just want to see it work first? `nimbus demo` seeds a synthetic "Acme" org — people, PRs, incidents, deployments — into an isolated demo root that never touches your real config or data, then tours on-call triage, `why`, and `owners` against it. `nimbus demo stop` stops the demo gateway; `nimbus demo reset` removes the whole demo root.
+No repo handy, or just want to see it work first? `nimbus demo` seeds a synthetic "Acme" org — people, PRs, incidents, deployments — into an isolated demo root that never touches your real config or data, then tours on-call triage, `why` and `owners` and closes on the locality panel. `nimbus demo stop` stops the demo gateway; `nimbus demo reset` removes the whole demo root.
 
 ---
 
@@ -336,7 +337,7 @@ Who wrote it and when, answered from your local git history. Connect GitHub, a t
 nimbus why src/auth.ts:42
 ```
 
-`nimbus init` prints a real `file:line` from your own repo to try first. Authorship — who wrote it, when, from your local git history — works with no credentials and no LLM configured; the PR, ticket, and incident need those tools connected.
+When the index found one, `nimbus init` prints a real `file:line` from your own repo to try first and, in a terminal, offers to run `nimbus wow` right away; a repo the index has nothing to show for yet gets `nimbus wow` as a next step instead of the offer. Authorship — who wrote it, when, from your local git history — works with no credentials and no LLM configured; the PR, ticket, and incident need those tools connected.
 
 ### Optional: add an LLM
 

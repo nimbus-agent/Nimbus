@@ -1,4 +1,4 @@
-import { TOUR_SELECTORS, type TourSelectorCtx } from "./tour-selectors.ts";
+import { TOUR_SELECTORS, type TourCandidate, type TourSelectorCtx } from "./tour-selectors.ts";
 import type { TourPlan, TourSkip, TourStep, TourStepKind } from "./tour-types.ts";
 
 export const TOUR_PRIORITY = [
@@ -65,6 +65,23 @@ function renderCommand(kind: TourStepKind, args: readonly string[], demo: boolea
   ].join(" ");
 }
 
+/**
+ * The ONE place a {@link TourStep} is constructed from a selected candidate. `buildTourPlan`
+ * (`nimbus wow`) and the demo seeder (`demo/seed.ts`, always `demo: true`) both go through it, so
+ * the `command` line a user is shown and the `args` the runner actually executes are derived from
+ * one value on both surfaces and cannot drift apart. `renderCommand` stays private for that
+ * reason — a second caller rendering its own line is exactly the drift this prevents.
+ */
+export function tourStepFor(kind: TourStepKind, candidate: TourCandidate, demo: boolean): TourStep {
+  return {
+    kind,
+    title: candidate.title,
+    args: candidate.args,
+    reason: candidate.reason,
+    command: renderCommand(kind, candidate.args, demo),
+  };
+}
+
 export async function buildTourPlan(
   ctx: TourSelectorCtx,
   opts: { steps: number; demo: boolean; selectors?: typeof TOUR_SELECTORS },
@@ -78,13 +95,7 @@ export async function buildTourPlan(
       if ("skip" in r) {
         skipped.push({ kind, reason: r.skip });
       } else {
-        candidates.push({
-          kind,
-          title: r.ok.title,
-          args: r.ok.args,
-          reason: r.ok.reason,
-          command: renderCommand(kind, r.ok.args, opts.demo),
-        });
+        candidates.push(tourStepFor(kind, r.ok, opts.demo));
       }
     } catch {
       skipped.push({ kind, reason: "selector error" });

@@ -61,6 +61,20 @@ What it does:
    `--no-detect`; it also never runs under `--no-sync` (no gateway was started), in demo mode, or
    with `CI=true` set.
 5. Prints a real `file:line` from your own repository to try with [`nimbus why`](#nimbus-why).
+6. On a TTY (both stdin and stdout), after step 4, asks `Run the tour now?` (default yes) and runs
+   [`nimbus wow`](#nimbus-wow) in-process, sharing the same terminal and streams. The offer is made
+   only when step 5 actually found a `file:line` target — a repository the index has nothing to
+   show for gets the `nimbus wow` next-step line only, since `nimbus wow`'s own tour reads the
+   same substrate step 5 just read and would otherwise open by telling you to run `nimbus init`
+   again. It is also skipped with `CI=true` set, the same guard step 4 uses, since a CI runner that
+   allocates a TTY would otherwise hang on the prompt. Any failure of the tour — a "no" is not
+   one — prints a one-line hint, ``Run `nimbus wow` any time for a guided tour of what was just
+   indexed.``, and never changes `init`'s own exit code. On a non-TTY shell, after a "no" answer,
+   or when the offer is skipped, nothing extra is printed here: the closing `Try it:` / `Next:`
+   block (step 5) already ends with `nimbus wow` on its own last line. `--no-sync` never offers
+   it — no gateway was started, so there is nothing to tour. Output order on a TTY run that says
+   yes: the `Try it:` block (step 5, with its `file:line`) prints before the offer, so that line
+   sits above the tour's own output rather than scrolling past it.
 
 Re-running is safe and idempotent — a root that is already configured reports `Already configured` and is not duplicated.
 
@@ -72,6 +86,8 @@ Exit codes:
 | `1` | The current directory is not a git repository. Nothing was written. |
 | `2` | The Gateway never became ready, so **nothing was indexed**. The failure names what happened, inlines the tail of the gateway log, and tells you what to run next. |
 | `3` | The Gateway is reachable but this repository was still not indexed — the `filesystem` sync failed, or a Gateway that is already running has to be restarted before it can see the new root. |
+
+A failed guided tour cannot turn a successful `init`'s exit `0` into anything else — the tour offer runs entirely after the exit code for indexing has already been decided.
 
 Two behaviours worth knowing:
 
@@ -145,7 +161,7 @@ must gate on ledger health should use `nimbus egress verify`, not `nimbus wow`'s
 ### `nimbus demo`
 
 ```bash
-nimbus demo                # recreate the demo root, seed it, tour three briefs
+nimbus demo                # recreate the demo root, seed it, tour three briefs and the locality panel
 nimbus demo --no-tour      # recreate and seed only — skip the tour
 nimbus demo stop
 nimbus demo reset
@@ -154,9 +170,9 @@ nimbus demo reset
 Seeds a synthetic "Acme" org — people, issues, commits, pull requests, reviews, CI runs,
 deployments, incidents, and chat messages, all with timestamps offset from "now" so the data always
 looks current — into the isolated demo root (`--demo` / `NIMBUS_DEMO=1`; see the `--demo` global
-flag above and invariant **I41**), then tours three built-in agent briefs against it. It never
-touches your real config, data, or vault, and the demo gateway makes no outbound call of any kind,
-at boot or afterward (see below).
+flag above and invariant **I41**), then tours three built-in agent briefs against it and closes on
+the locality panel. It never touches your real config, data, or vault, and the demo gateway makes
+no outbound call of any kind, at boot or afterward (see below).
 
 What plain `nimbus demo` does, in order:
 
@@ -171,9 +187,10 @@ What plain `nimbus demo` does, in order:
 3. Restarts the demo gateway, so every config-time read (`me`, filesystem roots, the DORA service
    bindings) sees the `nimbus.toml` the seeder just wrote — a live gateway does not re-read those at
    runtime.
-4. Unless `--no-tour` is given, tours three agent briefs in order, each preceded by a
-   `── [n/3] <title>` header naming the exact command, printed verbatim before it runs:
-   `nimbus --demo oncall`, `nimbus --demo why src/retry/backoff.ts:42`,
+4. Unless `--no-tour` is given, tours three agent briefs in order — through the same shared
+   `runTour` [`nimbus wow`](#nimbus-wow) uses — each preceded by a `── [n/4] <title>` header naming
+   the exact command, printed verbatim before it runs: `nimbus --demo oncall --incident
+   pagerduty:PDEMO412`, `nimbus --demo why src/retry/backoff.ts:42`,
    `nimbus --demo owners src/retry`. A backticked command named inside a brief — a `## Gaps`
    remediation such as `nimbus owners --refresh` — is printed as `nimbus --demo owners --refresh`,
    so pasting it reaches the demo gateway, never your real install; one the demo refuses (e.g.
@@ -181,9 +198,20 @@ What plain `nimbus demo` does, in order:
    applies to every agent brief a `--demo` command prints, and only to the printed Markdown:
    `--json` findings are the gateway's bytes, unchanged, and a command written without backticks is
    not recognised.
-5. Prints a closing list of four more commands that work without an LLM: `nimbus --demo standup`,
+5. Unless `--no-tour` is given, closes on the `── [4/4] Where your data is` locality panel — the
+   **same panel** [`nimbus wow`](#nimbus-wow) prints: which listeners are open right now, what the
+   index holds, and a proof line over the exact window `{since: t0, until: t1}`, both gateway-clock
+   values — `t0` stamped the moment seeding finished, `t1` stamped when the panel itself ran — so the
+   window spans the post-seed restart in step 3. Every egress class reads zero on a demo gateway
+   because it is inert (I41, above): nothing here is a claim about a normal install.
+6. Prints a closing list of four more commands that work without an LLM: `nimbus --demo standup`,
    `nimbus --demo expert payments`, `nimbus --demo decisions`,
    `nimbus --demo stats deployment-frequency --service payment-service`.
+
+A step that fails, or a failed `egress.proveWindow` call behind the panel, exits `1` — but only
+**after** the panel (step 5) and the closing list (step 6) have both printed, the same rule
+[`nimbus wow`](#nimbus-wow) follows: a failure must never hide the honesty panel or the closing
+suggestions behind it.
 
 `nimbus demo stop` stops the demo gateway without touching the seeded data — for walking away
 without losing anything (plain `nimbus demo` re-seeds from scratch on its next run regardless).

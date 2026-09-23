@@ -1,6 +1,8 @@
 import { createHash } from "node:crypto";
 
+import type { TourStepKind } from "../../agents/_lib/tour-types.ts";
 import { PAGERDUTY_INCIDENT_META_VERSION } from "../../connectors/pagerduty-attribution.ts";
+import { itemPrimaryKey } from "../../index/item-key.ts";
 import {
   DAY,
   type DemoCommit,
@@ -57,7 +59,54 @@ const SERVICES: readonly DemoService[] = [
   { id: "ledger-worker", repo: "acme/ledger", pagerdutyServiceId: "PLEDDEMO" },
 ];
 
-export const ACME_TOUR = { whyRef: "src/retry/backoff.ts:42", ownersPath: "src/retry" } as const;
+/**
+ * The PagerDuty id of the storyline's paging incident. ONE source: the incident definition below
+ * and the tour's `oncall` step both read it, so the step can never name an incident the corpus
+ * does not seed.
+ */
+const PAGING_INCIDENT_ID = "PDEMO412";
+
+/**
+ * The demo tour, as selector CANDIDATES — `seedDemoCorpus` turns each into a `TourStep` through
+ * `tourStepFor(kind, candidate, true)`, the same constructor `nimbus wow`'s planner uses, so the
+ * printed `command` and the executed `args` come from one value here.
+ *
+ * Unlike `nimbus wow`'s selectors these are FIXED: the demo corpus is deterministic, so the three
+ * steps that tell its one storyline are chosen here rather than rediscovered from the index. The
+ * order is the order the story reads in: the page, then the line that caused it, then who owns
+ * that code. The titles are byte-identical to the headers the release gate
+ * (`scripts/release/assert-demo-tour.ts`) greps for.
+ *
+ * `why` deliberately keeps a RELATIVE ref: `nimbus why` resolves it against the configured root,
+ * and that relative form is what the docs and the release gate print.
+ */
+export const ACME_TOUR_STEPS = [
+  {
+    kind: "oncall",
+    title: "On-call triage",
+    // The INDEX item id, not the raw PagerDuty id — `nimbus oncall --incident` looks the item up
+    // by primary key.
+    args: ["--incident", itemPrimaryKey("pagerduty", PAGING_INCIDENT_ID)],
+    reason: "the open P1 on payment-service",
+  },
+  {
+    kind: "why",
+    title: "Why this line changed",
+    args: ["src/retry/backoff.ts:42"],
+    reason: "the capped-backoff line",
+  },
+  {
+    kind: "owners",
+    title: "Who owns this code",
+    args: ["src/retry"],
+    reason: "bus factor 1",
+  },
+] as const satisfies readonly {
+  kind: TourStepKind;
+  title: string;
+  args: readonly string[];
+  reason: string;
+}[];
 
 const SHA_RETRY_BASE = sha("retry-base");
 const SHA_412 = sha("pr-412");
@@ -294,7 +343,7 @@ function emailOf(key: string): string {
 
 const STORY_INCIDENTS: readonly DemoItem[] = [
   incident(
-    "PDEMO412",
+    PAGING_INCIDENT_ID,
     "payment-service: 5xx rate above 5% on /v1/charges",
     -38 * MINUTE,
     "triggered",

@@ -162,11 +162,16 @@ useful than a bare pass.
 - `nimbus demo`: exit code, wall-clock time to the first brief, and whether each brief is COMPLETE,
   not merely announced. A header can print above a brief that then fails or is cut short, so check
   the body under each one for the same anchors `scripts/release/assert-demo-tour.ts` requires in CI:
-  - under `[1/3] On-call triage`: `payment-service`, the pull request number `412`, and a closing
-    `## Gaps` section
-  - under `[2/3] Why this line changed`: an `## Authorship` section, the ticket `PAY-231`, and a
+  - under `[1/4] On-call triage` (its command line names `--incident`): `payment-service`, the
+    pull request number `412`, and a closing `## Gaps` section
+  - under `[2/4] Why this line changed`: an `## Authorship` section, the ticket `PAY-231`, and a
     closing `## Gaps` section
-  - under `[3/3] Who owns this code`: Dana Okafor as an owner, and a closing `## Gaps` section
+  - under `[3/4] Who owns this code`: Dana Okafor as an owner, and a closing `## Gaps` section
+  - under `[4/4] Where your data is`: the two headings `Listeners the gateway has open right now:`
+    and `Outbound activity during this tour (gateway-wide):`, and a proof line reading
+    `outbound egress events during this tour, in the covered classes: 0`. An `indeterminate` or
+    `proof unavailable` line there is a failure, not a variant — the demo makes no outbound call,
+    so it must be able to prove that.
 
   The output must also contain no `Gateway is not running` line, and must end with the
   "The demo gateway is still running" hint — its absence means the tour stopped early.
@@ -176,8 +181,9 @@ useful than a bare pass.
 
 1. The documented command was run exactly as written, with nothing installed beforehand.
 2. `nimbus --version` works in a new shell.
-3. `nimbus demo` exits 0 and prints all three briefs COMPLETE — every anchor listed under *What to
-   record* is present under its own header, not only the three headers.
+3. `nimbus demo` exits 0 and prints all three briefs COMPLETE and the locality panel — every
+   anchor listed under *What to record* is present under its own header, not only the four
+   headers.
 4. Every prompt that appeared is already described in the install docs for that OS
    ([Windows](../install-windows-unsigned.md), [macOS](../install-macos-unsigned.md)). A prompt
    the docs do not mention is a docs defect and fails the gate until it is written down.

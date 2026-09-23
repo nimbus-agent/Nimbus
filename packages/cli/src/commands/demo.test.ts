@@ -4,6 +4,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { createStreamCapture } from "../../test/helpers/stream-capture.ts";
+import { CliExit } from "../lib/cli-exit.ts";
+import type { LocalityReport } from "../lib/locality-panel.ts";
+import { defaultTourRunners, type TourRunners } from "../lib/run-tour.ts";
 import { GatewayNotRunningError } from "../lib/with-gateway-ipc.ts";
 import type { CliPlatformPaths } from "../paths.ts";
 import {
@@ -14,6 +17,7 @@ import {
   parseDemoArgs,
   runDemo,
 } from "./demo.ts";
+import type { ProveResult } from "./prove.ts";
 
 const DEMO_DATA_DIR = join("demo-root", "data");
 
@@ -29,18 +33,90 @@ function demoPaths(): CliPlatformPaths {
   };
 }
 
+/**
+ * The three steps `demo.seed` now returns — the SAME `TourStep` shape `tour.plan` returns for
+ * `nimbus wow`, built gateway-side by `tourStepFor(kind, candidate, true)`, so `command` carries
+ * `--demo` and `args` never does.
+ */
 const SEED: DemoSeedSummary = {
   counts: { people: 5, items: 42 },
-  tour: { whyRef: "src/retry/backoff.ts:42", ownersPath: "src/retry" },
+  tour: [
+    {
+      kind: "oncall",
+      title: "On-call triage",
+      command: "nimbus --demo oncall --incident pagerduty:PDEMO412",
+      args: ["--incident", "pagerduty:PDEMO412"],
+      reason: "the open P1 on payment-service",
+    },
+    {
+      kind: "why",
+      title: "Why this line changed",
+      command: "nimbus --demo why src/retry/backoff.ts:42",
+      args: ["src/retry/backoff.ts:42"],
+      reason: "the capped-backoff line",
+    },
+    {
+      kind: "owners",
+      title: "Who owns this code",
+      command: "nimbus --demo owners src/retry",
+      args: ["src/retry"],
+      reason: "bus factor 1",
+    },
+  ],
+  t0: 1000,
 };
+
+const LOCALITY: LocalityReport = {
+  listeners: [{ name: "ipc", address: "npipe:...", loopback: true }],
+  inventory: [{ service: "github", items: 10 }],
+  db: { path: join("demo-root", "data", "nimbus.db"), bytes: 1024 },
+  t1: 2000,
+};
+
+/** A verified, fully covered, zero-egress window — what a demo gateway must always report. */
+function cleanProof(): ProveResult {
+  return {
+    rows: [],
+    completeness: {
+      coverage: {
+        browser: "none",
+        chatops: "none",
+        mcp: "none",
+        http: "none",
+        task: "none",
+        session: "none",
+        sync: "none",
+        model: "none",
+        peer: "none",
+      },
+      outboundEgressEvents: 0,
+      indeterminate: false,
+    },
+    verify: { ok: true, verifiedRows: 0 },
+  };
+}
 
 function fakeDeps(overrides: Partial<DemoDeps> = {}): {
   deps: DemoDeps;
   calls: string[];
   out: string[];
+  err: string[];
+  proveWindows: Array<[number, number]>;
 } {
   const calls: string[] = [];
   const out: string[] = [];
+  const err: string[] = [];
+  const proveWindows: Array<[number, number]> = [];
+  // Every kind records its OWN name plus the argv it received, so the call log proves WHICH step
+  // ran with WHICH arguments rather than only that "a runner" ran.
+  const runners = Object.fromEntries(
+    (["why", "owners", "oncall", "standup", "decisions", "glossary"] as const).map((kind) => [
+      kind,
+      async (args: string[]) => {
+        calls.push(`${kind}(${args.join(" ")})`);
+      },
+    ]),
+  ) as TourRunners;
   const deps: DemoDeps = {
     paths: () => demoPaths(),
     stop: async (p) => {
@@ -60,21 +136,27 @@ function fakeDeps(overrides: Partial<DemoDeps> = {}): {
       void p;
       return SEED;
     },
-    oncall: async () => {
-      calls.push("oncall");
+    runners,
+    locality: async (p) => {
+      calls.push("locality");
+      void p;
+      return LOCALITY;
     },
-    why: async (ref) => {
-      calls.push(`why(${ref})`);
-    },
-    owners: async (dir) => {
-      calls.push(`owners(${dir})`);
+    prove: async (p, since, until) => {
+      calls.push(`prove(${String(since)},${String(until)})`);
+      proveWindows.push([since, until]);
+      void p;
+      return cleanProof();
     },
     out: (s) => {
       out.push(s);
     },
+    err: (s) => {
+      err.push(s);
+    },
     ...overrides,
   };
-  return { deps, calls, out };
+  return { deps, calls, out, err, proveWindows };
 }
 
 const originalExitCode = process.exitCode;
@@ -89,7 +171,7 @@ describe("runDemo", () => {
     await expect(runDemo([], deps)).rejects.toThrow(/NIMBUS_DEMO not set/);
   });
 
-  test("(a) default run: stop, removeDir(demo root), start, seed, stop, start, then the 3-brief tour", async () => {
+  test("(a) default run: stop, removeDir(demo root), start, seed, stop, start, the 3-step tour, then the panel", async () => {
     const { deps, calls, out } = fakeDeps();
     await runDemo([], deps);
 
@@ -100,32 +182,107 @@ describe("runDemo", () => {
       "seed",
       "stop",
       "start",
-      "oncall",
-      `why(${SEED.tour.whyRef})`,
-      `owners(${SEED.tour.ownersPath})`,
+      "oncall(--incident pagerduty:PDEMO412)",
+      "why(src/retry/backoff.ts:42)",
+      "owners(src/retry)",
+      "locality",
+      "prove(1000,2000)",
     ]);
 
     const joined = out.join("");
-    expect(joined).toContain("nimbus --demo oncall");
-    expect(joined).toContain(`nimbus --demo why ${SEED.tour.whyRef}`);
-    expect(joined).toContain(`nimbus --demo owners ${SEED.tour.ownersPath}`);
-    const oncallIdx = joined.indexOf("nimbus --demo oncall");
-    const whyIdx = joined.indexOf(`nimbus --demo why ${SEED.tour.whyRef}`);
-    const ownersIdx = joined.indexOf(`nimbus --demo owners ${SEED.tour.ownersPath}`);
+    // The panel is step 4 of 4 — the total reaches the brief headers through `runTour`, so all
+    // four say `/4`.
+    expect(joined).toContain("── [1/4] On-call triage");
+    expect(joined).toContain("── [2/4] Why this line changed");
+    expect(joined).toContain("── [3/4] Who owns this code");
+    expect(joined).toContain("── [4/4] Where your data is");
+
+    const oncallIdx = joined.indexOf("$ nimbus --demo oncall --incident pagerduty:PDEMO412");
+    const whyIdx = joined.indexOf("$ nimbus --demo why src/retry/backoff.ts:42");
+    const ownersIdx = joined.indexOf("$ nimbus --demo owners src/retry");
     expect(oncallIdx).toBeGreaterThan(-1);
     expect(oncallIdx).toBeLessThan(whyIdx);
     expect(whyIdx).toBeLessThan(ownersIdx);
+
+    // The panel prints after the last brief and BEFORE the closing block, which stays last — the
+    // release gate requires the output to END with the `Stop it with` line.
+    const panelIdx = joined.indexOf("Listeners the gateway has open right now:");
+    const closingIdx = joined.indexOf("The demo gateway is still running");
+    expect(ownersIdx).toBeLessThan(panelIdx);
+    expect(panelIdx).toBeLessThan(closingIdx);
+    expect(joined.trimEnd().endsWith("remove everything with `nimbus demo reset`.")).toBe(true);
   });
 
-  test("(b) --no-tour skips the three brief calls", async () => {
+  test("(a) the proof window is exactly the GATEWAY's t0..t1, never a CLI-side clock", async () => {
+    const { deps, proveWindows } = fakeDeps();
+    await runDemo([], deps);
+    expect(proveWindows).toEqual([[SEED.t0, LOCALITY.t1]]);
+  });
+
+  test("(b) --no-tour runs no step and makes no locality or prove call", async () => {
     const { deps, calls, out } = fakeDeps();
     await runDemo(["--no-tour"], deps);
 
     expect(calls).toEqual(["stop", "removeDir(demo-root)", "start", "seed", "stop", "start"]);
     const joined = out.join("");
-    expect(joined).not.toContain("oncall");
-    expect(joined).not.toContain("nimbus --demo why");
-    expect(joined).not.toContain("nimbus --demo owners");
+    expect(joined).not.toContain("[1/4]");
+    expect(joined).not.toContain("Where your data is");
+    expect(joined).not.toContain("Listeners the gateway has open right now:");
+  });
+
+  test("a failing step still runs the others, prints the panel and the closing block, then CliExit(1)", async () => {
+    const { deps, calls, out } = fakeDeps();
+    const failing: TourRunners = {
+      ...deps.runners,
+      why: async () => {
+        calls.push("why(boom)");
+        throw new CliExit(2);
+      },
+    };
+    const run = runDemo([], { ...deps, runners: failing });
+    await expect(run).rejects.toMatchObject({ name: "CliExit", code: 1 });
+
+    expect(calls).toEqual([
+      "stop",
+      "removeDir(demo-root)",
+      "start",
+      "seed",
+      "stop",
+      "start",
+      "oncall(--incident pagerduty:PDEMO412)",
+      "why(boom)",
+      "owners(src/retry)",
+      "locality",
+      "prove(1000,2000)",
+    ]);
+    const joined = out.join("");
+    expect(joined).toContain("── [3/4] Who owns this code");
+    expect(joined).toContain("Listeners the gateway has open right now:");
+    expect(joined).toContain("The demo gateway is still running");
+  });
+
+  test("a failed prove call still prints the panel and the closing block, then CliExit(1)", async () => {
+    const { deps, out } = fakeDeps({
+      prove: async () => {
+        throw new Error("boom");
+      },
+    });
+    const run = runDemo([], deps);
+    await expect(run).rejects.toMatchObject({ name: "CliExit", code: 1 });
+
+    const joined = out.join("");
+    expect(joined).toContain("Listeners the gateway has open right now:");
+    expect(joined).toContain("proof unavailable — the egress.proveWindow call failed: boom");
+    expect(joined).not.toContain("in the covered classes:");
+    expect(joined).toContain("The demo gateway is still running");
+  });
+
+  test("a clean tour prints the zero-egress proof line and resolves", async () => {
+    const { deps, out } = fakeDeps();
+    await expect(runDemo([], deps)).resolves.toBeUndefined();
+    expect(out.join("")).toContain(
+      "outbound egress events during this tour, in the covered classes: 0",
+    );
   });
 
   test("(c) `stop` calls only stop", async () => {
@@ -357,16 +514,28 @@ describe("defaultDemoDeps", () => {
     expect((err as Error).message).toContain("(demo root)");
   });
 
-  test("why forwards the tour ref to `nimbus why`, whose own validation runs first", async () => {
-    await expect(defaultDemoDeps.why("https://user:pw@example.com/acme/pull/1")).rejects.toThrow(
-      /must not contain userinfo/,
-    );
+  // The tour is no longer dispatched through per-step deps: `nimbus demo` runs the SAME runner
+  // table `nimbus wow` does, so a step cannot behave differently on one surface than on the other.
+  test("runners IS defaultTourRunners — the demo shares the `nimbus wow` runner table", () => {
+    expect(defaultDemoDeps.runners).toBe(defaultTourRunners);
   });
 
-  test("owners forwards the tour path to `nimbus owners`, whose own argument parser runs first", async () => {
-    await expect(defaultDemoDeps.owners("--not-a-flag")).rejects.toThrow(
-      /Unrecognised flag: --not-a-flag/,
+  test("locality with no running demo gateway rejects with the demo-root not-running message", async () => {
+    const err = await defaultDemoDeps.locality(tempDemoPaths()).then(
+      () => undefined,
+      (e: unknown) => e,
     );
+    expect(err).toBeInstanceOf(GatewayNotRunningError);
+    expect((err as Error).message).toContain("(demo root)");
+  });
+
+  test("prove with no running demo gateway rejects with the demo-root not-running message", async () => {
+    const err = await defaultDemoDeps.prove(tempDemoPaths(), 1, 2).then(
+      () => undefined,
+      (e: unknown) => e,
+    );
+    expect(err).toBeInstanceOf(GatewayNotRunningError);
+    expect((err as Error).message).toContain("(demo root)");
   });
 
   test("out writes to stdout verbatim", () => {
@@ -378,5 +547,16 @@ describe("defaultDemoDeps", () => {
       cap.restore();
     }
     expect(cap.stdoutChunks.join("")).toBe("hello demo\n");
+  });
+
+  test("err writes to stderr verbatim", () => {
+    const cap = createStreamCapture();
+    cap.install();
+    try {
+      defaultDemoDeps.err("bad demo\n");
+    } finally {
+      cap.restore();
+    }
+    expect(cap.stderrChunks.join("")).toBe("bad demo\n");
   });
 });
