@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1790179713893,
+  "lastUpdate": 1790190001337,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "distinct": true,
-          "id": "a91d73ec67e9ccf839761ce4447890d3bc7492a0",
-          "message": "ci(cla): add CLA Assistant workflow",
-          "timestamp": "2026-07-24T15:28:21+03:00",
-          "tree_id": "0c97e912e7fa20fb4e06072897e1cb9c583909ae",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/a91d73ec67e9ccf839761ce4447890d3bc7492a0"
-        },
-        "date": 1784896607270,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 200.06206120000314,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 188.0152399499995,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 308.8066824500056,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "55f92024b3d74e113e27aadbd2b4519528b08fc5",
+          "message": "test(ci): local-auth e2e clears its machine-global Vault keys; tui fallback spawns async with an explicit deadline (#1572)\n\n## Summary\n\nTwo test-hermeticity defects that reddened CI without a product change\nbehind\neither. Both surfaced on 2026-09-23: the first on the macOS PR leg of\n#1568,\nthe second on the Windows push leg of `main` (run 35883179641).\n\n### 1. `local-auth.e2e.test.ts` leaked its Vault writes into a\nmachine-global store\n\nThe test adopts `aws` and `gcloud` through a real gateway, which writes\n`aws.profile`, `aws.default_region`, `gcp.auth_source` and\n`gcp.project_id`\ninto the Vault. `paths.configDir` is a fresh temp dir, but only the\nWindows\nDPAPI store lives under it. The macOS Keychain uses the fixed service\n`dev.nimbus` and Linux libsecret is likewise machine-global, so those\nkeys\noutlive the temp dir and the process.\n\nCI retries the whole suite once on the same VM. On the macOS leg of run\n35883006601, attempt 1 failed on an unrelated test, and attempt 2 then\nfailed\nBOTH adoptions with `ERR_LOCAL_AUTH_ALREADY_CONFIGURED`, because attempt\n1's\nkeys were still in the Keychain. A residue failure wearing a product\nfailure's\nerror code.\n\nFix: the four keys are deleted in `afterAll` unconditionally, so they\nnever\noutlive the test, and in `beforeAll` on CI only. The CI guard is\ndeliberate:\non a developer's macOS or Linux box a real `aws.profile` sits in the\nsame\nstore, and there the gateway's existing refusal fails the test loudly\nrather\nthan the test silently overwriting a real credential.\n\n### 2. `dumb-terminal.test.ts` intermittently failed its first spawn on\nWindows\n\nThe `TERM=dumb` case failed with `spawnSync bun.exe ETIMEDOUT` about 10\nms\ninto a 30 s timeout, on both attempts of `main` runs 35623124409,\n35880499482 and 35883179641. The two later spawns in the same file\npassed\nevery time, and the green runs on either side used the same Bun 1.3.14,\nso\nit is not a version regression. Two local experiments ruled out a stale\nevent-loop clock as the cause.\n\nWhat remains is a two-way ambiguity the error object cannot resolve.\nBun's\nown spawnSync deadline and libuv's translation of a Windows\n`ERROR_SEM_TIMEOUT` from stdio pipe setup into `UV_ETIMEDOUT` build the\nsame\nerror, with the same `code`, `errno`, `syscall`, `path` and `spawnargs`.\n\nFix: the test spawns asynchronously with an explicit deadline and\n`stdin`\nignored. That removes Bun's sync-deadline path from the picture, and\nleaves\na pipe-setup failure as a thrown spawn error the first assertion reports\nby\nname. Stated honestly: this is a fix for one mechanism and a diagnostic\nfor\nthe other. If the failure recurs it will now say which one it is.\n\n### 3. The three `nimbus tui` fallback tests were vacuous\n\nFound by review on this PR. `runTui` reads `gateway.json` BEFORE it\ninspects\nthe terminal, and the isolated profile the tests spawn into had no such\nfile, so every run printed \"Gateway is not running\", exited 1, and never\ncalled `detectFallbackReason`. The tests passed on the absence of\n\"Sub-Tasks\" alone, which a gateway-not-running exit satisfies trivially.\n\nFix: the isolated profile now carries a `gateway.json` that points at a\nsocket nothing listens on. That `dataDir` is resolved in a fresh child\nunder the\nexact env the test children get (resolving it in-process gave a\ndifferent\ndirectory on darwin, where `dataDir` hangs off `homedir()`), and the\nseed is\nrefused unless it lies inside the isolated temp root, so the file can\nnever\nwrite over a real state file. `runTui` then gets past the state check,\nprints the fallback\nnotice, which each test now asserts verbatim with its reason, and the\nREPL\nit falls back to fails fast on the dead socket, about 0.4 s, rather than\nhanging. `NO_COLOR`, `CI` and `TERM` are pinned in the child env rather\nthan inherited, so the reason that fires no longer depends on the host.\n\nOne honest limit: through a pipe the detector reports `non-TTY` before\nit\nreaches `CI`, so the `CI=true` case asserts `non-TTY` and says why. The\n`CI=true` reason itself is pinned by the unit test in\n`detect-fallback.test.ts`.\n\n## Verification\n\n- `bun test packages/cli/src/tui/dumb-terminal.test.ts`: 3 pass, each\nnow\nasserting the verbatim fallback notice; without the seeded state file\nthe\nnotice is never printed (verified live), so the assertion is a real one.\n- `bun test packages/gateway/test/e2e/local-auth.e2e.test.ts`: 5 pass,\nrun\n  twice back to back, once with `CI=true` and once without, so both the\n  `beforeAll` delete and the DPAPI delete-on-missing-key path executed.\n- `bun run typecheck:tests`: ok, 0 new. Biome clean. `bun run\npreflight:fast`\n  passed.\n- Neither original failure reproduces on Windows, where the DPAPI store\nis\nper-config-dir. The macOS Keychain path is exercised only by the CI\nlegs.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n## Summary by CodeRabbit\n\n* **Tests**\n* Expanded terminal fallback coverage across piped and CI environments,\nwith checks for the expected fallback message and no terminal UI output.\nTest runs now detect launch failures and timeouts.\n* Updated authentication test cleanup to preserve credentials that\nexisted before the test while removing credentials created during\ntesting.\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude Fable 5.1 <noreply@anthropic.com>",
+          "timestamp": "2026-09-23T21:47:09+03:00",
+          "tree_id": "6d675c0442f1f25274df366f080bfce239a40b12",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/55f92024b3d74e113e27aadbd2b4519528b08fc5"
+        },
+        "date": 1790189996375,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 339.89038350000084,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 341.06460790000057,
             "unit": "ms"
           }
         ]
