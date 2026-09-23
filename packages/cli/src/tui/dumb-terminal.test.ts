@@ -59,6 +59,10 @@ function childEnv(overrides: Record<string, string> = {}): Record<string, string
   delete env["NO_COLOR"];
   delete env["CI"];
   env["TERM"] = "xterm-256color";
+  // A developer's exported `NIMBUS_DEMO=1` would trip I41's refusal of demo mode combined
+  // with `NIMBUS_GATEWAY_SOCKET` (which the isolation sets), and every child would exit
+  // before the terminal check. The demo root is not what this file tests.
+  delete env["NIMBUS_DEMO"];
   Object.assign(env, overrides);
   return env;
 }
