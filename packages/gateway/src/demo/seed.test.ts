@@ -58,7 +58,16 @@ describe("seedDemoCorpus", () => {
       r.counts.items + r.counts.deployments,
     );
     expect(count(db, "SELECT COUNT(*) AS n FROM item WHERE service = 'nimbus'")).toBeGreaterThan(0);
-    expect(r.tour).toEqual({ whyRef: "src/retry/backoff.ts:42", ownersPath: "src/retry" });
+    // The tour is the same `TourStep[]` shape `tour.plan` returns for `nimbus wow`, always with
+    // `demo: true`: `command` carries `--demo` (it is printed for the user to paste) and `args`
+    // — what the runner actually executes — never does.
+    expect(r.tour.map((s) => s.kind)).toEqual(["oncall", "why", "owners"]);
+    expect(r.tour.map((s) => s.command)).toEqual([
+      "nimbus --demo oncall --incident pagerduty:PDEMO412",
+      "nimbus --demo why src/retry/backoff.ts:42",
+      "nimbus --demo owners src/retry",
+    ]);
+    for (const s of r.tour) expect(s.args).not.toContain("--demo");
 
     // The files `why` needs on disk exist under the configured root, read back through the real loader.
     const [root] = loadNimbusFilesystemRootsFromConfigDir(configDir);

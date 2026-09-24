@@ -12,16 +12,37 @@
  */
 import { readFileSync } from "node:fs";
 
+// Four headers, not three: the locality panel is the tour's own last step, so every header counts
+// it. The fourth has no brief under it — its body is checked by `checkPanel` instead.
 const HEADERS = [
-  "── [1/3] On-call triage",
-  "── [2/3] Why this line changed",
-  "── [3/3] Who owns this code",
+  "── [1/4] On-call triage",
+  "── [2/4] Why this line changed",
+  "── [3/4] Who owns this code",
+  "── [4/4] Where your data is",
 ] as const;
 
 const COMMANDS = [
-  "$ nimbus --demo oncall",
+  "$ nimbus --demo oncall --incident pagerduty:PDEMO412",
   "$ nimbus --demo why src/retry/backoff.ts:42",
   "$ nimbus --demo owners src/retry",
+] as const;
+
+/**
+ * The locality panel's own anchors. The proof fragment is the `formatProveResult`
+ * (`packages/cli/src/commands/prove.ts`) wording for `delta 0` / `chainOk true` /
+ * `indeterminate false`, cut before the variable `(scope: …)` tail — a demo gateway makes no
+ * outbound call, so this is the ONLY proof line it may print.
+ */
+const PANEL_ANCHORS = [
+  "Listeners the gateway has open right now:",
+  "Outbound activity during this tour (gateway-wide):",
+  "outbound egress events during this tour, in the covered classes: 0",
+] as const;
+
+/** A panel carrying either of these is a failure, never a variant — see `checkPanel`. */
+const PANEL_FORBIDDEN = [
+  ["indeterminate", "the panel could not prove zero egress: its proof line is indeterminate"],
+  ["proof unavailable", "the panel could not prove zero egress: the proveWindow call failed"],
 ] as const;
 
 /** Text that means a step failed even when the process still exited 0. */
@@ -68,7 +89,11 @@ export function checkDemoTour(rawStdout: string): string[] {
 
   const at = HEADERS.map((h) => out.indexOf(h));
   at.forEach((i, n) => {
-    if (i < 0) failures.push(`tour header ${String(n + 1)}/3 is missing: ${HEADERS[n] ?? ""}`);
+    if (i < 0) {
+      failures.push(
+        `tour header ${String(n + 1)}/${String(HEADERS.length)} is missing: ${HEADERS[n] ?? ""}`,
+      );
+    }
   });
   for (const c of COMMANDS) {
     if (!out.includes(c)) failures.push(`the tour did not print its command line: ${c}`);
@@ -84,15 +109,15 @@ export function checkDemoTour(rawStdout: string): string[] {
   }
   if (at.some((i) => i < 0)) return failures;
 
-  const [i1, i2, i3] = at as [number, number, number];
-  if (!(i1 < i2 && i2 < i3)) {
-    failures.push("the three tour headers are out of order");
+  const [i1, i2, i3, i4] = at as [number, number, number, number];
+  if (!(i1 < i2 && i2 < i3 && i3 < i4)) {
+    failures.push("the four tour headers are out of order");
     return failures;
   }
-  // The third brief ends where the closing block begins, so the block's own text cannot satisfy
-  // (or break) an assertion about the brief.
-  const end3 = hintAt > i3 ? hintAt : out.length;
-  const sections = [out.slice(i1, i2), out.slice(i2, i3), out.slice(i3, end3)];
+  // Each brief ends where the NEXT header begins — the third at the panel's header, so the
+  // panel's own text cannot satisfy (or break) an assertion about the brief.
+  const sections = [out.slice(i1, i2), out.slice(i2, i3), out.slice(i3, i4)];
+  failures.push(...checkPanel(out, i4, hintAt));
   sections.forEach((body, n) => {
     const name = SECTION_NAMES[n] ?? "?";
     for (const anchor of SECTION_ANCHORS[n] ?? []) {
@@ -107,17 +132,35 @@ export function checkDemoTour(rawStdout: string): string[] {
   return failures;
 }
 
+/**
+ * The locality panel: the slice from its own `[4/4]` header to the closing hint. A demo gateway
+ * makes no outbound call at all, so the panel must carry the ZERO/verified proof line — an
+ * `indeterminate` chain, or a `proveWindow` call that failed outright, is a gate failure rather
+ * than an acceptable variant, since either means the demo cannot substantiate its own claim.
+ */
+function checkPanel(out: string, panelAt: number, hintAt: number): string[] {
+  const body = out.slice(panelAt, hintAt > panelAt ? hintAt : out.length);
+  const failures: string[] = [];
+  for (const anchor of PANEL_ANCHORS) {
+    if (!body.includes(anchor)) failures.push(`the locality panel is missing: ${anchor}`);
+  }
+  for (const [needle, message] of PANEL_FORBIDDEN) {
+    if (body.includes(needle)) failures.push(message);
+  }
+  return failures;
+}
+
 /** The final `## ` heading of a brief, or undefined when it has none (reported as a missing anchor). */
 function lastLevelTwoHeading(body: string): string | undefined {
   const headings = body.split(/\r?\n/).filter((l) => l.startsWith("## "));
   return headings.at(-1)?.trim();
 }
 
-/** The closing block must come after the third brief, and the output must END with it. */
+/** The closing block must come after the last tour header (the `[4/4]` panel), and the output must END with it. */
 function checkClosingBlock(out: string, hintAt: number, lastHeaderAt: number): string[] {
   const failures: string[] = [];
   if (hintAt < lastHeaderAt) {
-    failures.push("the closing hint appears before the third brief, not after it");
+    failures.push("the closing hint appears before the last tour header, not after it");
   }
   const finalLine = out
     .slice(hintAt)
@@ -179,7 +222,9 @@ export function main(argv: readonly string[], read: (p: string) => string): numb
   }
   const failures = [...checkDemoTour(read(tour)), ...checkEgressReport(read(egress))];
   if (failures.length === 0) {
-    console.log("demo tour: three briefs rendered, zero outbound egress, chain verified");
+    console.log(
+      "demo tour: three briefs + the locality panel rendered, zero outbound egress, chain verified",
+    );
     return 0;
   }
   for (const f of failures) console.error(`::error::demo tour: ${f}`);

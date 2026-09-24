@@ -263,23 +263,33 @@ describe("nimbus demo: the whole flow, end to end, on temp roots", () => {
         );
       }
 
-      const h1 = "── [1/3] On-call triage";
-      const h2 = "── [2/3] Why this line changed";
-      const h3 = "── [3/3] Who owns this code";
+      // Four steps, not three: the locality panel is the tour's own last step, so every header
+      // counts it.
+      const h1 = "── [1/4] On-call triage";
+      const h2 = "── [2/4] Why this line changed";
+      const h3 = "── [3/4] Who owns this code";
+      const h4 = "── [4/4] Where your data is";
       const i1 = r.stdout.indexOf(h1);
       const i2 = r.stdout.indexOf(h2);
       const i3 = r.stdout.indexOf(h3);
+      const i4 = r.stdout.indexOf(h4);
       expect(i1).toBeGreaterThanOrEqual(0);
       expect(i2).toBeGreaterThan(i1);
       expect(i3).toBeGreaterThan(i2);
+      expect(i4).toBeGreaterThan(i3);
 
-      expect(r.stdout).toContain("$ nimbus --demo oncall");
+      expect(r.stdout).toContain("$ nimbus --demo oncall --incident pagerduty:PDEMO412");
       expect(r.stdout).toContain("$ nimbus --demo why src/retry/backoff.ts:42");
       expect(r.stdout).toContain("$ nimbus --demo owners src/retry");
 
+      const hintAt = r.stdout.indexOf("The demo gateway is still running");
+      expect(hintAt).toBeGreaterThan(i4);
       const onCallSection = r.stdout.slice(i1, i2);
       const whySection = r.stdout.slice(i2, i3);
-      const ownersSection = r.stdout.slice(i3);
+      // The owners brief ENDS at the panel header — without that bound the panel's own text would
+      // be free to satisfy (or break) an assertion about the brief.
+      const ownersSection = r.stdout.slice(i3, i4);
+      const panelSection = r.stdout.slice(i4, hintAt);
 
       expect(onCallSection).toContain("payment-service");
       expect(onCallSection).toContain("412");
@@ -290,6 +300,19 @@ describe("nimbus demo: the whole flow, end to end, on temp roots", () => {
 
       expect(ownersSection).toMatch(/Dana( Okafor)?|dana\.okafor@acme\.example/);
       expect(ownersSection).toContain("## Gaps");
+
+      // The locality panel: the listener list (the demo gateway always has at least its own IPC
+      // socket open), and a proof line that a demo gateway must always be able to make — the
+      // `formatProveResult` wording for delta 0 / chain verified / not indeterminate. An
+      // `indeterminate` or `proof unavailable` panel would be a real failure, not a variant.
+      expect(panelSection).toContain("Listeners the gateway has open right now:");
+      expect(panelSection).toMatch(/^ {2}local socket\s+\S/m);
+      expect(panelSection).toContain("Outbound activity during this tour (gateway-wide):");
+      expect(panelSection).toContain(
+        "outbound egress events during this tour, in the covered classes: 0",
+      );
+      expect(panelSection).not.toContain("indeterminate");
+      expect(panelSection).not.toContain("proof unavailable");
 
       // Every command a brief names targets the demo: no backticked `nimbus <cmd>` survives that
       // is not `nimbus --demo …` (or `nimbus demo stop|reset`, which selects the demo on its own).
@@ -328,7 +351,8 @@ describe("nimbus demo: the whole flow, end to end, on temp roots", () => {
         );
       }
       expect(r.stdout).toContain('Seeded the synthetic "Acme" org');
-      expect(r.stdout).not.toContain("── [1/3]");
+      expect(r.stdout).not.toContain("── [1/4]");
+      expect(r.stdout).not.toContain("Where your data is");
 
       const pidAfter = readGatewayPid(demoDataDir);
       expect(pidAfter).toBeDefined();

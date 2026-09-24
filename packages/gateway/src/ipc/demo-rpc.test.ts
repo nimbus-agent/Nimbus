@@ -78,6 +78,29 @@ describe("dispatchDemoRpc", () => {
     expect(value.seededAtMs).toBe(nowMs);
   });
 
+  // `t0` is the `since` edge of the demo's proof window: it must be read AFTER seeding finished,
+  // so nothing the seeder itself did can fall inside the window the CLI then proves over.
+  test("demo.seed returns t0, read from the gateway clock AFTER seeding finished", async () => {
+    const { db, configDir, dataDir } = fresh();
+    const ticks: number[] = [];
+    // A monotonically advancing injected clock: every read is a new, larger value, so a `t0`
+    // captured before `seedDemoCorpus` ran would be < the seeding `nowMs` and fail below.
+    let n = 1_700_000_000_000;
+    const now = (): number => {
+      n += 1_000;
+      ticks.push(n);
+      return n;
+    };
+    const out = await dispatchDemoRpc("demo.seed", undefined, { db, configDir, dataDir, now });
+    expect(out.kind).toBe("hit");
+    if (out.kind !== "hit") throw new Error("unreachable");
+    const value = out.value as { seededAtMs: number; t0: number };
+    expect(ticks).toHaveLength(2);
+    expect(value.seededAtMs).toBe(ticks[0] as number);
+    expect(value.t0).toBe(ticks[1] as number);
+    expect(value.t0).toBeGreaterThanOrEqual(value.seededAtMs);
+  });
+
   test("rejects a non-numeric, non-finite, or negative nowMs", async () => {
     const { db, configDir, dataDir } = fresh();
     for (const bad of [Number.NaN, Number.POSITIVE_INFINITY, -1, null, [], {}]) {

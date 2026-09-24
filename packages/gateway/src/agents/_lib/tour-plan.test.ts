@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { buildTourPlan, TOUR_PRIORITY } from "./tour-plan.ts";
+import { buildTourPlan, TOUR_PRIORITY, tourStepFor } from "./tour-plan.ts";
 import type { TourSelectorCtx, TourSelectorResult } from "./tour-selectors.ts";
 import type { TourStepKind } from "./tour-types.ts";
 import { TOUR_STEP_KINDS } from "./tour-types.ts";
@@ -45,6 +45,22 @@ test("a throwing selector is a skip, not a failed plan", async () => {
   const p = await buildTourPlan(ctx, { steps: 6, demo: false, selectors: sel });
   expect(p.skipped).toEqual([{ kind: "why", reason: "selector error" }]);
   expect(p.steps).toHaveLength(5);
+});
+
+// `tourStepFor` is the ONE construction path for a `TourStep` — `buildTourPlan` (`nimbus wow`)
+// and the demo seeder both go through it, so the printed `command` and the executed `args` cannot
+// drift between the two surfaces.
+test("tourStepFor renders --demo into command when demo is true, and never into args", () => {
+  const candidate = { title: "On-call triage", args: ["--incident", "pagerduty:P1"], reason: "r" };
+  const demoStep = tourStepFor("oncall", candidate, true);
+  expect(demoStep.command).toBe("nimbus --demo oncall --incident pagerduty:P1");
+  expect(demoStep.args).toEqual(candidate.args);
+  expect(demoStep.args).not.toContain("--demo");
+  expect(demoStep).toMatchObject({ kind: "oncall", title: "On-call triage", reason: "r" });
+
+  const plainStep = tourStepFor("oncall", candidate, false);
+  expect(plainStep.command).toBe("nimbus oncall --incident pagerduty:P1");
+  expect(plainStep.args).not.toContain("--demo");
 });
 
 test("command carries --demo on a demo gateway; args never do", async () => {

@@ -194,6 +194,9 @@ allowlist, so it is CLI-only on a demo-rooted process. `demo.seed` calls `demo/s
 `seedDemoCorpus`, which refuses with `ERR_DEMO_ALREADY_SEEDED` (`-32010`) against a non-empty
 `item` table — a second, structural guard independent of the IPC routing above, since an
 already-seeded (or, in principle, real) index must never be silently truncated and reseeded.
+It returns the three tour steps as `TourStep[]` built by `agents/_lib/tour-plan.ts`'s
+`tourStepFor` — the same construction `tour.plan` uses, so the printed command and the executed
+argv cannot drift — plus `t0`, the gateway clock when seeding finished.
 
 **The corpus.** `demo/corpus/acme.ts` builds a fixed, fictional "Acme" org — one connected storyline
 (a ticket → its PR → a deploy → the incident it causes → the same-service incident three weeks
@@ -217,8 +220,9 @@ above together for an evaluator: stop any running demo gateway, delete the demo 
 seeder above never truncates, so re-seeding means rebuilding), start a fresh demo gateway, call
 `demo.seed`, **restart** the demo gateway a second time (so every config-time read — `me`,
 filesystem roots, DORA service bindings — sees the `nimbus.toml` the seeder just wrote, since a live
-gateway does not re-read those at runtime), then tour three built-in agent briefs
-(`oncall` → `why` → `owners`) against the seeded org unless `--no-tour` is given.
+gateway does not re-read those at runtime), then run the three seeded steps (`oncall` → `why` →
+`owners`) through the CLI's shared `runTour` and close on the locality panel (`printLocalityPanel`,
+`packages/cli/src/lib/locality-panel.ts`) unless `--no-tour` is given.
 
 ## Package Dependency Rules
 
