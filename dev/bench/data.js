@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1790190001337,
+  "lastUpdate": 1790718690648,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "distinct": true,
-          "id": "7176dd498255a9175037303efbf677684c8482e5",
-          "message": "ci(cla): fix allowlist casing + claude, client-id",
-          "timestamp": "2026-07-24T15:39:12+03:00",
-          "tree_id": "c8c8ab348d44661aa753434f4f433b54e9ff5ed5",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/7176dd498255a9175037303efbf677684c8482e5"
-        },
-        "date": 1784897449927,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 301.32821305000505,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 301.80192215000096,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 341.06460790000057,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "beec82653ff9b0be85c073112b35b58a01754436",
+          "message": "fix(deps): override past five new moderate advisories (ip-address, nodemailer, undici, markdown-it) (#1577)\n\n## Why\n\n`Dependency audit` (a required check) went red repo-wide on 2026-09-29\non newly published advisories — every open Dependabot PR (#1573–#1576)\ninherited it without causing it:\n\n| Package | Advisory | Affected | Pinned before | Now |\n| --- | --- | --- | --- | --- |\n| ip-address | GHSA-rpw4-54j3-4h4q, GHSA-2vr4-cq9g-pvrc | <=10.5.0 |\n10.3.1 | 10.7.2 |\n| nodemailer | GHSA-6vj9-mwq6-2f5v | >=5.0.0 <10.0.2 | 9.1.1 | 10.0.12 |\n| undici | GHSA-3wwx-pv8p-q78v | >=7.28.0 <7.29.1 | 7.29.0 | 7.29.1 |\n| markdown-it | GHSA-253c-mchw-3w2r | <14.3.1 | 14.3.0 (via\nmarkdownlint-cli2 exact pin) | 14.3.1 (new override) |\n\nAll fixed by upgrading via root `overrides` (step 1 of\n`accepted-advisories.ts`'s preference order) — no acceptance rows added.\n\n**nodemailer 9 → 10** is a major, but its only breaking change is\n\"Node.js 20+ required\" (irrelevant under Bun). It's an optional\ndependency of `@nimbus-dev/connectors` (apple / imap / protonmail SMTP);\nsmoke-tested that `import { createTransport } from \"nodemailer\"`\nresolves and a `jsonTransport` send succeeds under Bun 1.3.\n\n## Verification\n\n- `bun audit` → No vulnerabilities found\n- `bun run audit:advisories` → OK (0 live advisories)\n- `bun run audit:js-licenses` → all under the allowlist\n- `bun run preflight:fast` → PASSED (incl. `audit:override-drift`)\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n\n## Summary by CodeRabbit\n\n* **Chores**\n* Updated internal package configuration. No user-facing changes to\nfeatures or behavior.\n\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\nCo-authored-by: Claude Opus 5.5 (1M context) <noreply@anthropic.com>",
+          "timestamp": "2026-09-29T21:34:38Z",
+          "tree_id": "6a2489ba13cb7a466125ead5ed29410429fe18fb",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/beec82653ff9b0be85c073112b35b58a01754436"
+        },
+        "date": 1790718686473,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 318.9864755499999,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 320.190248699997,
             "unit": "ms"
           }
         ]
