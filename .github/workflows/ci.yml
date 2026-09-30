@@ -253,14 +253,27 @@ jobs:
     # per-attempt cap exists to prevent. Raise both together or neither.
     #
     # The binding arithmetic, which the 600 s → 900 s raise did not state and therefore
-    # could not check: `setup + 2 × cap <= ceiling`. Measured setup overhead on
-    # windows-2025 is ~270 s (job 975 s vs. capped step 709 s on the same run), so at a
-    # 25-minute cap the worst case is 270 + 3000 = 3270 s ≈ 54.5 min — hence 60. That
-    # leaves 330 s, 9.2 % of the ceiling; the 1080 s / 48-minute pair left 450 s, 15.6 %,
-    # so this margin is the THINNER of the two and is kept only because the ceiling is a
-    # backstop the per-attempt cap should always beat. A cap raised alone would have been
-    # silently useless: the second attempt could never finish.
-    timeout-minutes: 60
+    # could not check: `setup + typecheck retry + 2 × cap <= ceiling`, every term a BOUND
+    # or a measured worst, never a typical value.
+    #
+    #   setup            465 s  Job time minus the capped test step, windows-2025, ten
+    #                           successful runs 2026-09-29/30: 213 · 221 · 225 · 226 · 263
+    #                           · 289 · 293 · 303 · 322 · 465. The earlier figure, ~270 s,
+    #                           was ONE run and sits at this sample's median; the 465 s run
+    #                           spent 398 s in dependency setup alone.
+    #   typecheck retry  125 s  One attempt killed at its 120 s cap + the 5 s pause. The
+    #                           attempt that then passes is already inside `setup`. Two
+    #                           killed attempts fail the job before any test runs, so this
+    #                           is the most a retry can add to a job that still reaches
+    #                           the tests.
+    #   tests           3005 s  2 × 1500 s cap + the 5 s pause between attempts.
+    #
+    # 465 + 125 + 3005 = 3595 s ≈ 59.9 min — so 60 would have been 5 s from cancelling the
+    # second attempt, and this is 65: 305 s spare, 7.8 % of the ceiling. (The 1080 s /
+    # 48-minute pair was sized against the 270 s figure and against an UNCAPPED typecheck,
+    # so its stated 450 s margin was not a bound at all.) A cap raised alone would have
+    # been silently useless: the second attempt could never finish.
+    timeout-minutes: 65
     permissions:
       contents: read
 
@@ -306,10 +319,17 @@ jobs:
         # its astro-sync content-type generation flakes a 60s Vite timeout on slow
         # macOS runners. Full workspace typecheck (incl. docs) still runs once on
         # Ubuntu in _test-suite.yml. Retry-once mirrors the unit-tests step below.
+        #
+        # Each attempt is capped at 120 s, for the same reason the test attempts are: an
+        # uncapped step has no place in the job ceiling's arithmetic (see `timeout-minutes`
+        # above), and a wedged `tsc` would otherwise eat the time the second test attempt
+        # needs. Measured over 22 legs on 2026-09-29/30 this step takes 6–11 s on both
+        # OSes, so 120 s is more than ten times a healthy run. A kill exits 124 and is
+        # retried like any other failure.
         run: |
           set +e
           for attempt in 1 2; do
-            bun run typecheck:no-docs
+            bun scripts/run-with-timeout.ts 120 bun run typecheck:no-docs
             code=$?
             if [ "$code" -eq 0 ]; then exit 0; fi
             if [ "$attempt" -eq 2 ]; then echo "Both attempts failed (exit $code)"; exit "$code"; fi
