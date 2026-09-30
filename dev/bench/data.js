@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1790720740269,
+  "lastUpdate": 1790734377914,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "7d2129e62387e4de74159befbc6db1f85440d9fa",
-          "message": "fix(security)!: clear all high advisories (react-router v8, postcss, brace-expansion) + scope cla.yml permissions (#835)\n\nTakes the repo from **4 high advisories to 0**. `bun audit --audit-level\nhigh` and `Trivy vulnerability scan` are both **required checks** and\nwere already failing on `main`, so this also unblocks #834 and #836.\n\n## Advisories cleared\n\n| Advisory | Package | Fix |\n| --- | --- | --- |\n| GHSA-r28c-9q8g-f849 | postcss 8.5.15 | pinned **8.5.23** via\n`overrides` (transitive: astro/vite) |\n| GHSA-chx6-hx7r-mcp5 — DoS, inefficient route matching | react-router\n7.17.0 | **7.18.1** |\n| GHSA-mh99-v99m-4gvg | brace-expansion | override was pinned to exactly\n**5.0.7**, but the advisory range is `<=5.0.7` — the pin *was* the\nvulnerable version. Now **5.0.8** |\n| GHSA-qwww-vcr4-c8h2 — RSC CSRF | react-router | **v8.3.0 migration**,\nsee below |\n\nNote that `bun audit` surfaced more than GitHub's code-scanning alerts\ndid — the brace-expansion and route-matching-DoS advisories were not in\nthe Code Scanning list.\n\n## The react-router v8 migration\n\nGHSA-qwww-vcr4-c8h2's only fix is 8.3.0, and **there is no\n`react-router-dom` 8.x** — v8 discontinued the separate DOM package and\nfolded it into `react-router`. So this swaps the dependency and rewrites\nthe module specifier across **35 files** (15 `src` + 20 `test`).\n\n**No API changes were required.** Every symbol in use exists in v8 under\nthe same name: `createBrowserRouter`, `createRoutesFromElements`,\n`RouterProvider`, `Route`, `Navigate`, `Outlet`, `Link`, `NavLink`,\n`MemoryRouter`, `Routes`, `useNavigate`, `useLocation`,\n`useSearchParams`, and the `NavigateFunction` type.\n\nMarked `!` because the UI's routing dependency crosses a major version.\nNo public API is affected, and the Tauri desktop app is\nPhase-13-deferred.\n\n## Scorecard `TokenPermissions` — `cla.yml` (#151, #152)\n\n`actions` / `pull-requests` / `statuses: write` were declared at **top\nlevel**, so every job inherited them. They now sit on the single `cla`\njob; the workflow default drops to `contents: read`. Capabilities are\nunchanged, so the live required `cla` gate keeps working.\n\nThe other 9 `TokenPermissions` alerts are job-level writes that are\nstructurally required (`contents: write` for release-please, `checks:\nwrite` for test-report publishing). Scorecard scores *any* write as 0,\nso they can't be satisfied without breaking those jobs — left for a\ndismiss-with-justification decision.\n\n## Verification\n\n- **`bun audit --audit-level high`: clean, exit 0** (was 4 high)\n- `packages/ui` vitest: **506 tests across 74 files, all pass**\n- `packages/ui` `tsc --noEmit` clean; **full monorepo typecheck exit 0**\n- `vite build` succeeds (183 modules transformed)\n- `biome check` clean on 2957 files; lockfile passes `--frozen-lockfile`\n\n## Rider worth calling out\n\n`bun install` deduped `@nimbus-dev/sdk` to a single hoisted **1.6.0**,\ncollapsing ~100 per-connector 1.4.0/1.5.0 entries (hence the large\n`bun.lock` delta). All 94 connectors declare `^1.3.0` and the gateway\n`^1.6.0`, so this is semver-legal and unavoidable through bun's\nresolver.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n---------\n\nCo-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>",
-          "timestamp": "2026-07-26T13:25:41Z",
-          "tree_id": "c0ab691a2e1d7a3f74fcc77bc8068ad48d15f2c3",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/7d2129e62387e4de74159befbc6db1f85440d9fa"
-        },
-        "date": 1785073076084,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 304.1363660999985,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 307.1924319500089,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 252.6208087000028,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "32774e778c7d28cf5178b68851dd2a861890a787",
+          "message": "chore(deps): drop the redundant @mastra/core and @mastra/mcp root overrides (#1581)\n\n## Why\n\nRoot `overrides` exists to force a *transitive* dependency onto a chosen\nversion. `@mastra/core` and `@mastra/mcp` have exactly one consumer in\nthe tree: `packages/gateway`, which declares both directly. The only\nother edge is `@mastra/mcp`'s peer on `@mastra/core`, which resolves to\nthat same single copy. So these two overrides lift nothing. The lockfile\nalready pins the exact versions.\n\nWhat they *did* do was break every Dependabot PR that touched Mastra.\nDependabot edits `dependencies` but has no notion of `overrides`, so\neach bump tripped `audit:override-drift` and needed the same hand-pushed\ncommit, \"move the @mastra override pin with the declaration\": #1144,\n#1238, #1331, #1515, and now #1574 (superseded by #1580) and #1575.\nWorse, Dependabot regenerates grouped PRs whenever `main`'s lockfile\nmoves. #1574 was closed as superseded minutes after a fixup was pushed\nto it, and the fixup went with it.\n\nThe drift gate's own header lists this resolution: \"delete an override\nthat has no reason to exist\".\n\n## Effect\n\n- Installed tree unchanged: `bun.lock` loses only the two override\nentries; `@mastra/core@1.67.0` and `@mastra/mcp@1.18.0` still resolve\nexactly as before.\n- `audit:override-drift` OK, `bun audit` clean, `preflight:fast` PASSED.\n\nAfter this lands, the Mastra bumps in #1580 and #1575 pass the drift\ngate with no manual commit.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n\n## Summary by CodeRabbit\n\n* **Chores**\n  * Removed version overrides for `@mastra/core` and `@mastra/mcp`.\n\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\nCo-authored-by: Claude Opus 5.5 (1M context) <noreply@anthropic.com>",
+          "timestamp": "2026-09-30T01:59:25Z",
+          "tree_id": "b2f257bb19aff93883984c3349ceee78b4c3ba9c",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/32774e778c7d28cf5178b68851dd2a861890a787"
+        },
+        "date": 1790734373371,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 351.98007605000276,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 347.2620213499998,
             "unit": "ms"
           }
         ]
