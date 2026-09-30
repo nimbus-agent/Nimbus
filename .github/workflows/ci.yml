@@ -255,8 +255,10 @@ jobs:
     # The binding arithmetic, which the 600 s → 900 s raise did not state and therefore
     # could not check: `setup + 2 × cap <= ceiling`. Measured setup overhead on
     # windows-2025 is ~270 s (job 975 s vs. capped step 709 s on the same run), so at a
-    # 25-minute cap the worst case is 270 + 3000 = 3270 s ≈ 54.5 min — hence 60, the same
-    # ~10 % margin the 1080 s / 48-minute pair carried. A cap raised alone would have been
+    # 25-minute cap the worst case is 270 + 3000 = 3270 s ≈ 54.5 min — hence 60. That
+    # leaves 330 s, 9.2 % of the ceiling; the 1080 s / 48-minute pair left 450 s, 15.6 %,
+    # so this margin is the THINNER of the two and is kept only because the ceiling is a
+    # backstop the per-attempt cap should always beat. A cap raised alone would have been
     # silently useless: the second attempt could never finish.
     timeout-minutes: 60
     permissions:
