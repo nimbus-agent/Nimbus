@@ -230,21 +230,21 @@ jobs:
       matrix:
         os: [macos-15, windows-2025]
     runs-on: ${{ matrix.os }}
-    # Backstop only — each test attempt has its own 15-min wall-clock cap (see the
+    # Backstop only — each test attempt has its own 25-min wall-clock cap (see the
     # unit-tests step), so a hang fails fast via retry rather than burning this
     # ceiling. Sized for setup + retried typecheck + 2 capped test attempts:
-    # 2 × 18 min of tests alone is 36 min, so this MUST stay above that or a
+    # 2 × 25 min of tests alone is 50 min, so this MUST stay above that or a
     # double-timeout is cancelled at the job ceiling ("The operation was canceled")
     # instead of surfacing the wrapper's exit 124 — the very failure mode the
     # per-attempt cap exists to prevent. Raise both together or neither.
     #
-    # The binding arithmetic, which the previous raise (600 s → 900 s) did not state and
-    # therefore could not check: `setup + 2 × cap <= ceiling`. Measured setup overhead on
-    # windows-2025 is ~270 s (job 975 s vs. capped step 709 s on the same run), so at an
-    # 18-minute cap the worst case is 270 + 2160 = 2430 s ≈ 40.5 min — which is why 40 was
-    # no longer enough and this is 48. A cap raised alone would have been silently useless:
-    # the second attempt could never finish.
-    timeout-minutes: 48
+    # The binding arithmetic, which the 600 s → 900 s raise did not state and therefore
+    # could not check: `setup + 2 × cap <= ceiling`. Measured setup overhead on
+    # windows-2025 is ~270 s (job 975 s vs. capped step 709 s on the same run), so at a
+    # 25-minute cap the worst case is 270 + 3000 = 3270 s ≈ 54.5 min — hence 60, the same
+    # ~10 % margin the 1080 s / 48-minute pair carried. A cap raised alone would have been
+    # silently useless: the second attempt could never finish.
+    timeout-minutes: 60
     permissions:
       contents: read
 
@@ -336,7 +336,7 @@ jobs:
         # true hang; assertion failures fail in <1 s regardless of `--timeout`,
         # so this does not mask logic bugs.
         #
-        # Each attempt is additionally wrapped in a 15-minute wall-clock timeout
+        # Each attempt is additionally wrapped in a wall-clock timeout (1500 s — see below)
         # (`scripts/run-with-timeout.ts` — portable because GNU `timeout` is not on
         # the macOS runner). `--timeout 60000` is PER-TEST and does not fire on a
         # hung-at-exit `bun test` (a lingering timer keeps the process alive after
@@ -346,12 +346,22 @@ jobs:
         # runs — recovering a transient hang in minutes instead of burning the full
         # ceiling.
         #
-        # The cap is 1080 s (18 min). It was 900 s from 2026-08-14, and 600 s before
-        # that; each value expired the same way, and the 900 s comment left an explicit
-        # tripwire — "re-check this number if a healthy run ever exceeds ~700 s" — which
-        # has now fired.
+        # The cap is 1500 s (25 min). It was 1080 s from 2026-08-28, 900 s from 2026-08-14
+        # and 600 s before that; each value expired the same way, and each comment's
+        # tripwire fired before the number was changed. The 1080 s tripwire — "re-check if
+        # a healthy run exceeds ~850 s" — fired by 2026-09-29. Healthy windows-2025 test
+        # steps over that PR batch: 795 · 845 · 1019 · 1036 · 1044 · 1047 · 1063 · 1069 ·
+        # 1079 s, i.e. the cap had become the median. Four legs that day (#1575 ×2, #1580,
+        # #1581) were killed at 1080 s with ZERO failing tests, one of them having got
+        # further through the suite than a run that passed — slowness, not a hang. macOS on
+        # the same runs: 334–520 s, far inside any of these caps.
         #
-        # Measured on windows-2025, capped step only, SUCCESSFUL runs:
+        # 1500 s puts the worst healthy run (1079 s) at 72 %; with the ~28 % variance
+        # measured below, its top of swing is ~1381 s — inside the cap rather than sitting
+        # on it. Re-check if a healthy run exceeds ~1200 s.
+        #
+        # History — the measurement behind the 1080 s cap (windows-2025, capped step only,
+        # SUCCESSFUL runs):
         #   519 s · 538 s · 560 s · 637 s · 669 s · 698 s · 709 s
         # The runner's variance is ~28 % on identical work (404 s then 516 s on
         # consecutive runs of the same commit set), so a worst healthy run of 709 s
@@ -361,14 +371,14 @@ jobs:
         # confirm plain slowness, and `exit 124` is a wall-clock kill with ZERO failing
         # tests, so it reads like a mystery failure to whoever triages it.
         #
-        # 1080 s puts the worst observed healthy run at 66 % of the cap, which absorbs
-        # the measured variance instead of sitting inside it. It cannot be raised alone —
-        # see the `timeout-minutes: 48` note above for the `setup + 2 × cap <= ceiling`
-        # constraint the last raise missed.
+        # The cap cannot be raised alone — see the `timeout-minutes` note above for the
+        # `setup + 2 × cap <= ceiling` constraint the 900 s raise missed.
         #
-        # Re-check if a healthy run exceeds ~850 s. The durable fix remains making the
-        # suite faster: it has grown from 11,166 tests / 796 files to 19,525 / 1,379 in
-        # under a month, and raising the cap a fourth time is not a plan.
+        # This is the FOURTH raise, and the note on the third said a fourth "is not a plan".
+        # It still isn't: it buys time against a cap that had become a coin-flip on every
+        # PR. The durable fix remains making the Windows suite faster — the e2e tree alone
+        # spends 15–22 s per gateway boot there — without breaking the one-process parity
+        # with the push leg that this job exists to keep.
         # A SILENT retry is the expensive kind. Attempt 1 costs a full suite run — on
         # windows-2025 that was 882 s in run 32452626344, where ONE test
         # (`briefs/brief-e2e.test.ts`'s leak check) timed out and the retry passed, so the job
@@ -383,7 +393,7 @@ jobs:
         run: |
           set +e
           for attempt in 1 2; do
-            bun scripts/run-with-timeout.ts 1080 bun test packages/gateway packages/cli scripts --timeout 60000 > "${RUNNER_TEMP}/attempt-${attempt}.log" 2>&1
+            bun scripts/run-with-timeout.ts 1500 bun test packages/gateway packages/cli scripts --timeout 60000 > "${RUNNER_TEMP}/attempt-${attempt}.log" 2>&1
             code=$?
             cat "${RUNNER_TEMP}/attempt-${attempt}.log"
             if [ "$code" -eq 0 ]; then
