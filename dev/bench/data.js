@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1790751455118,
+  "lastUpdate": 1790755177952,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "306811640+nimbus-release-bot[bot]@users.noreply.github.com",
-            "name": "nimbus-release-bot[bot]",
-            "username": "nimbus-release-bot[bot]"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "4f2728ca868759cb19aeeed3bdb182e2f3ad4cd7",
-          "message": "chore: release main (#839)\n\n:robot: I have created a release *beep* *boop*\n---\n\n\n<details><summary>1.0.0</summary>\n\n##\n[1.0.0](https://github.com/nimbus-agent/Nimbus/compare/v0.27.0...v1.0.0)\n(2026-07-26)\n\n\n### ⚠ BREAKING CHANGES\n\n* **security:** clear all high advisories (react-router v8, postcss,\nbrace-expansion) + scope cla.yml permissions\n([#835](https://github.com/nimbus-agent/Nimbus/issues/835))\n\n### Features\n\n* **infra:** P2 Release Train Phase 1 — release-staleness gate\n([#836](https://github.com/nimbus-agent/Nimbus/issues/836))\n([98b0327](https://github.com/nimbus-agent/Nimbus/commit/98b03278380e946c36c4ae2c0038321969d2ff83))\n\n\n### Bug Fixes\n\n* **release:** reconcile step never detected a missing tag (gh writes\n422 to stdout)\n([#834](https://github.com/nimbus-agent/Nimbus/issues/834))\n([ffcec8e](https://github.com/nimbus-agent/Nimbus/commit/ffcec8eab8370ab6b8f908e0646a0f3975bd2194))\n* **release:** request workflows:write so the App can create the release\ntag ([#837](https://github.com/nimbus-agent/Nimbus/issues/837))\n([2be97d7](https://github.com/nimbus-agent/Nimbus/commit/2be97d743861edb2764d707f349522161f9cf077))\n* **security:** clear all high advisories (react-router v8, postcss,\nbrace-expansion) + scope cla.yml permissions\n([#835](https://github.com/nimbus-agent/Nimbus/issues/835))\n([7d2129e](https://github.com/nimbus-agent/Nimbus/commit/7d2129e62387e4de74159befbc6db1f85440d9fa))\n</details>\n\n---\nThis PR was generated with [Release\nPlease](https://github.com/googleapis/release-please). See\n[documentation](https://github.com/googleapis/release-please#release-please).\n\nCo-authored-by: nimbus-release-bot[bot] <306811640+nimbus-release-bot[bot]@users.noreply.github.com>",
-          "timestamp": "2026-07-26T15:16:06Z",
-          "tree_id": "e6c32dbaf866c76644e6bf62071695de6bfdc5da",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/4f2728ca868759cb19aeeed3bdb182e2f3ad4cd7"
-        },
-        "date": 1785079661464,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 305.522008749998,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 307.84873534999895,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 342.79131339999765,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "19327c5298a86c28d35363ee637a0263d7036f17",
+          "message": "fix(deps): override past new brace-expansion and fast-uri advisories (#1586)\n\n## Why\n\n`Dependency audit` (required) went red repo-wide again, a day after\n#1577, on newly published advisories. It's blocking every open PR\n(#1583/#1584/#1585 included):\n\n| Package | Advisory | Severity | Affected | Pinned before | Now |\n| --- | --- | --- | --- | --- | --- |\n| brace-expansion | GHSA-qhr7-859c-m2p7 | high | 4.x below 5.0.11 |\n5.0.9 | 5.0.12 |\n| brace-expansion | GHSA-6j4f-fj2g-mc7p | high | 4.x below 5.0.10 |\n5.0.9 | 5.0.12 |\n| fast-uri | GHSA-hrr3-gc8f-f4qj | moderate | 3.x below 3.1.8 | 3.1.7 |\n3.1.8 |\n\nBoth are root `overrides` pins, so the fix is moving the pin (step 1 of\n`accepted-advisories.ts`'s order of preference). Both are same-major\npatch bumps; the `brace-expansion` override already forces 5.x over\n`minimatch@9`'s `^2` range, and that is unchanged.\n\nThis is exactly the failure the `main-health-alert` job in #1584 exists\nto surface: on `main`, it opens an issue the first nightly this happens.\n\n## Verification\n\n`bun audit`: no vulnerabilities; `audit:advisories` OK (0 live);\n`audit:js-licenses` OK; `audit:override-drift` OK; `preflight:fast`\nPASSED.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n\n## Summary by CodeRabbit\n\n* **Chores**\n* Applied routine maintenance updates. No changes to app behavior or\npublic interfaces are included in this release.\n\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\nCo-authored-by: Claude Opus 5.5 (1M context) <noreply@anthropic.com>",
+          "timestamp": "2026-09-30T07:49:19Z",
+          "tree_id": "f9b9a9853e85f5886bc767863afb8d7f9553e466",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/19327c5298a86c28d35363ee637a0263d7036f17"
+        },
+        "date": 1790755173450,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 309.8551724000023,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 309.5584471499882,
             "unit": "ms"
           }
         ]
