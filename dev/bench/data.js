@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1790755177952,
+  "lastUpdate": 1790758143101,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "f7f4fdc01184151b99945e84c0915f56ee14a243",
-          "message": "docs(infra): close P2 Phase 1 (sweep run 30210246814) + correct the VSCE_PAT date (#841)\n\nTwo things, both from the sweep dispatched at 16:21Z.\n\n## P2 Phase 1 is done — green in CI\n\nRun\n[`30210246814`](https://github.com/nimbus-agent/Nimbus/actions/runs/30210246814):\nthe `release-staleness` job ran on `main` and **passed**. That completes\nthe bar this file sets — red-proved on a real phantom, green after it\nwas fixed, then green in the scheduled harness. Not \"the code merged\".\n\nP2 row flips to `✅ Phase 1 done (run 30210246814)`; Phase 2\n(dependency-DAG edges) is specced, reviewed, planned and plan-reviewed\non `dev/asafgolombek/p2-phase2-dep-dag` but not implemented.\n\n## The same run surfaced a different defect — recorded, not fixed here\n\n`cla-coverage` **failed at the App-token mint**, so its audit step was\nskipped and never ran at all:\n\n```\nFailed to create token for \"...,nimbus-agent/awesome-nimbus\": There is at least\none repository that does not exist or is not accessible to the parent installation.\n```\n\nConfirmed by elimination — `ruleset-drift` requests the same five repos\n**minus** `awesome-nimbus` and minted fine. The CLA program grew its\ngated list to six; the `nimbus-release-bot` installation stayed at five.\n\nNote *when* this appeared: P6a's green sweep was 11 jobs, and\n`cla-coverage` + `release-staleness` are the 12th and 13th — so this was\n**`cla-coverage`'s first-ever real execution**. That is the fifth\ninstance of the pattern at the top of this file, and the second today.\n\n**Fix is org-owner, not code:** add `awesome-nimbus` to the\n`nimbus-release-bot` App's repository access.\n\n## VSCE_PAT date correction\n\n`2026-09-20`, not `2026-12-01` — roughly eight weeks out rather than\nfour months.\n\nThe SSoT is `scripts/release/credential-registry.ts`, whose note is\nexplicit: the December date is the Azure DevOps **global-PAT\ndecommission**, which does not apply because the token was confirmed\n**org-scoped** in the ADO portal (2026-07-22, nimbus-vscode#34). The\nbinding date is the token's own expiry.\n\nI introduced the wrong date in #838. The registry note warns against\nexactly that substitution — at 90-day lead it would have stayed silent\npast the expiry that actually bites.\n\n## Verification\n\n`lint:markdown` 0 errors · `audit:doc-refs` 617/617 resolve · lychee\nclean including `--include-fragments`.\n\nDocs-only.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nCo-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>",
-          "timestamp": "2026-07-26T16:30:36Z",
-          "tree_id": "001797af06e5c57906f5bdd17c02015f4b4ae53e",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/f7f4fdc01184151b99945e84c0915f56ee14a243"
-        },
-        "date": 1785084141918,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 308.4715909000024,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 308.5732611999985,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 309.5584471499882,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "b78b44a44be5e4fb4eecf26f1c42e9092ed678f3",
+          "message": "ci: report every required check on merge_group so the merge queue can be enabled (#1583)\n\n## Why\n\nThe General ruleset requires branches to be **up to date** before\nmerging, and auto-merge does not update a BEHIND branch. So every merge\nsends every other open PR back through a full ~40-minute CI cycle, with\nsomeone clicking \"update branch\" in between. Clearing five Dependabot\nPRs on 09-29/30 took three rounds of this.\n\nGitHub's merge queue replaces that: a queued PR is tested once on top of\nthe real tip of `main` and lands automatically. But the queue waits for\n**every required context** to report on the `merge_group` event, and\ntoday none of our workflows listen for it, so enabling the queue now\nwould stall every merge. This PR makes all 10 required contexts report\non queue entries. The ruleset change that turns the queue on follows as\na separate step, after this lands.\n\n## What reports on `merge_group`\n\n| Required context | Workflow | On a queue entry |\n| --- | --- | --- |\n| PR quality — required gates | `ci.yml` | Runs the full PR gate on the\nmerged result. Release safety reports `skipped`, since it reads the PR\nbody/title, which a queue event does not carry and which were already\nchecked at PR time. |\n| Dependency audit, Trivy, Gitleaks, Gateway audit JSON, Cargo audit,\nCargo deny | `security.yml` | Run as on a PR. Rust-change detection now\ntakes `merge_group.base_sha` as its base, so the cargo scans still skip\nwhen no Rust changed. |\n| Analyze (javascript-typescript), Analyze (rust) | `codeql.yml` | Run\nas on a PR. |\n| cla | `cla.yml` | New `cla-merge-queue` job, `name: cla`, with no\ntoken and `permissions: {}`: passes, since the PR had to pass `cla` to\nenter the queue. Concurrency is now keyed on `merge_group.head_sha`, so\nqueue runs don't evict each other from the shared `cla-` group. |\n\nAlso: `SONAR_TOKEN` is withheld on queue runs. The Sonar gate already\njudged the PR's new code, and a queue run would otherwise upload a\nbranch analysis for every throwaway `gh-readonly-queue/*` ref.\n\n## Verification\n\n- `audit:workflow-lint` OK (25 workflows); the 11 test files that parse\nthese workflows pass (219 tests); `preflight:fast` PASSED.\n- On a PR this change is a no-op for every job; only the `merge_group`\nevent gains behaviour. The real proof is the first queued merge after\nthe ruleset flip. If a context fails to report there, the queue can be\nswitched back off in the ruleset in one call.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n\n## Summary by CodeRabbit\n\n* **Improvements**\n* Merge queue entries now receive the project’s build, cross-platform,\ncode-quality, and security checks before merging.\n* CLA status is reported in merge queue checks based on verification\ncompleted during the pull request.\n  * Release-safety checks remain limited to pull requests.\n\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\nCo-authored-by: Claude Opus 5.5 (1M context) <noreply@anthropic.com>",
+          "timestamp": "2026-09-30T08:35:38Z",
+          "tree_id": "382fc5ce6841b7293ac4337b3c0cc69d19b619cd",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/b78b44a44be5e4fb4eecf26f1c42e9092ed678f3"
+        },
+        "date": 1790758138635,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 341.25136255000467,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 332.7334636499942,
             "unit": "ms"
           }
         ]
