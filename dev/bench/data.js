@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1790758143101,
+  "lastUpdate": 1790766087950,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "7ce8815952858b16f367b98941539375e0af105e",
-          "message": "fix(ci): stop pending-run eviction silently cancelling main's validation (#840)\n\n## What this fixes\n\nStarted from \"3 open HIGH Code Scanning alerts\". Those turned out to be\n**stale, not live** — pinned to `d9f0a1df` (07-25), before #835 upgraded\nthe packages. `bun.lock` already had react-router 8.3.0 / postcss 8.5.23\n/ brace-expansion 5.0.8 and `bun audit --audit-level high` was clean.\nRe-scanning `main` closed all three as `state=fixed`.\n\nBut *why* a merged fix left alerts open for a day turned out to be three\nreal gaps.\n\n### 1. Pushes to `main` lost their CI run entirely — 33 of 60 (55%)\n\n`ci.yml` set `cancel-in-progress: false` for pushes, intending \"never\ncancel a merge\". That flag only protects the **in-progress** run. GitHub\npermits one *pending* run per concurrency group and cancels \"any\npreviously pending workflow in the group\" when a newer one arrives — so\nconsecutive merges evicted each other **while queued**.\n\nThe tell: the cancelled runs have **zero jobs**.\n\n```\n$ gh api repos/nimbus-agent/Nimbus/actions/runs/30207835838/jobs --jq .total_count\n0\n```\n\nAll six merges on 07-26 were cancelled this way, so the commits that\nactually shipped — **v1.0.0 among them** — were never validated\npost-merge.\n\nThe existing comment in `ci.yml` had already diagnosed the symptom\n(\"Measured at 22 cancelled / 40 runs\") and tuned `cancel-in-progress`\naccordingly. But that flag was never the mechanism, so the bug outlived\nthe fix written for it.\n\n**Fix:** pushes get a per-SHA group and never share one; PRs keep the\nper-ref group so superseded runs still cancel.\n\n```yaml\ngroup: ${{ github.workflow }}-${{ github.ref }}-${{ github.event_name == 'pull_request' && 'pr' || github.sha }}\ncancel-in-progress: ${{ github.event_name == 'pull_request' }}\n```\n\n### 2. `codeql.yml` had the same bug — with a security consequence\n\nAn evicted push run never re-uploads main's SARIF, so CodeQL alerts\nsilently go stale against a commit that no longer exists (5 of 40 push\nruns). Same per-SHA fix. The PR-ref cancel-on-supersede behaviour and\nits \"1 configuration not found\" race rationale are preserved\ndeliberately.\n\n### 3. `security.yml` never ran on push at all\n\nTrivy uploads SARIF **per ref**, so main's alerts only refreshed on the\nnightly cron. That is the direct cause of the stale alerts above — and\nit cuts both ways: a vulnerability *reaching* main would have been\nequally invisible for up to 24h. Now scans on merge too, with the same\nper-SHA concurrency.\n\n### 4. `main` was failing its own preflight (pre-existing)\n\n#835 added `CLA_BOT_CLIENT_ID` / `CLA_BOT_PRIVATE_KEY` to `cla.yml`\nwithout manifest entries, so `audit:consumed-by` had been red on `main`,\nblocking `preflight` for everyone. Confirmed pre-existing by stashing.\nBoth registered as org-scoped `visibility: selected`, verified against\nthe live org rather than assumed; pinned test counts updated (36→38\nentries, ORG 4→6).\n\n## Docs\n\n- `CLAUDE.md` + `GEMINI.md` — said `Latest release v0.26.0`; actual is\n**v1.0.0**. Updated both (CLAUDE.md requires the mirror), noting the\nmajor bump came from the react-router v8 advisory sweep, not a product\nbreak.\n- `README.md` — **no change needed**; it carries no version references\nand `audit:readme-cli` / `audit:doc-refs` pass.\n\n## Verification\n\n- `bun run preflight` (full CI parity) — all 19 static/audit gates\ngreen; the `build` gate fails **locally on Windows only** (see below)\n- lychee, exactly as `docs-quality` invokes it: **1049 links, 0 errors**\n- `bun test scripts/release/credential-*.test.ts` — 39 pass\n- Code Scanning + Dependabot: **0 open alerts**\n- Coverage-floor not run: it scans\n`packages/{gateway,cli,mcp-connectors}` only; this diff touches\n`.github/`, `scripts/release/`, and root `*.md`\n\n## Honest limits\n\n**The concurrency fix is verified by inspection, not live.** The YAML\nparses and the expressions resolve to the intended per-event groups, but\nper-SHA push behaviour cannot be proven until this merges and a real\npush event fires. The first merge after this lands is the actual test.\n\n**Pre-existing Windows-only build break, not actioned here.** `bun run\nbuild` fails locally on Windows in the docs package:\n\n```\n@nimbus/docs build: Export named 'forEach' not found in module 'node_modules\\neotraverse\\dist\\index.js'\n```\n\nConfirmed **not** caused by this branch — reproduces identically on a\nclean detached `origin/main`, and survives a fresh `bun install`. CI is\nunaffected: `Build all packages` passes on `ubuntu-24.04` in the\n`Static` job (verified on run `30207946388`). Worth a separate look\ngiven the platform-equality non-negotiable, but it is out of scope for\nthis PR.\n\n**Unrelated finding, not actioned:** `CLA_BOT_APP_ID` exists as an org\nsecret but no workflow reads it — a leftover from the deprecated\n`app-id` input, same story as the already-deleted `RELEASE_BOT_APP_ID`.\nDeleting it is an org mutation, so I left it alone. If you want it gone,\ndeleting it and marking the entry `forbidden` would match the existing\npattern.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n\n## Summary by CodeRabbit\n\n* **New Features**\n* Security scans now run automatically for direct updates to the main\ndevelopment branches.\n* Security workflow runs are better coordinated, reducing stale or\nconflicting results.\n\n* **Documentation**\n* Updated project documentation to reflect the v1.0.0 release dated July\n26, 2026.\n\n* **Chores**\n* Expanded credential coverage for release automation and updated\nvalidation checks accordingly.\n\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\nCo-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>",
-          "timestamp": "2026-07-26T19:33:56+03:00",
-          "tree_id": "a7c2dd8bbb2ef66c2571f006a55880867f9a61f2",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/7ce8815952858b16f367b98941539375e0af105e"
-        },
-        "date": 1785084869849,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 318.3474624000006,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 319.417680700004,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 332.7334636499942,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "6b6a364f7d3c5f02c636da41632c58329e812457",
+          "message": "ci: shepherd Dependabot PRs to merge on their own, and alert when main goes red (#1584)\n\n## Why\n\nClearing one week's Dependabot batch (#1573–#1576) took two days, seven\nsuperseded PR numbers and a dozen hand-pushed fixes, and none of the\nfailures was a real incompatibility. This PR closes the causes at the\nsource, so Dependabot PRs merge on their own. The merge-queue half is\n#1583.\n\n## What changes\n\n**1. Dependabot shepherd** (`dependabot-shepherd.yml`, hourly, plus\n`scripts/dependabot/`)\n- Replaces each Dependabot description with a parse-safe summary\n(`dependabot-body.ts`) and enables auto-merge, which enqueues the PR,\nwhen **every** bump is non-breaking. A major, or a 0.x minor, is held\nfor a human, with the reason logged.\n- Scheduled rather than `on: pull_request`, on purpose. A\nDependabot-triggered run gets only Dependabot secrets, so it can't mint\nthe release-bot App token. And a merge done under `GITHUB_TOKEN` would\nland on `main` without triggering its `push` workflows: CI,\nrelease-please and Security.\n- It never checks out PR code; it only reads PR metadata and writes a\ndescription plus an auto-merge request. Token scope is `contents` +\n`pull-requests` write on `Nimbus` only. It's registered as a consumer of\nboth `RELEASE_BOT_*` secrets in `credential-registry.ts`.\n\n**2. The Release-safety parse gate judges the body that lands.** For a\nDependabot-authored PR (`PR_AUTHOR` is now passed in),\n`check-pr-message-parses` judges the same summary the shepherd writes,\nnot the upstream release notes that get replaced. Humans are judged\nexactly as before.\n\n**3. `main`-health alert** (new `main-health-alert` job in\n`security.yml`). A red push or nightly Security run on `main` opens one\n\"Security gate is red on main\" issue, comments on it while the run stays\nred, and closes it on the first green run. On 09-29 the nightly went red\nat 07:55 UTC, four hours before Dependabot opened four PRs that all\ninherited it, and nothing reported it. It lives in `security.yml` rather\nthan a `workflow_run` consumer because `audit:workflow-run-triggers`\ncorrectly forbids consuming a fork-reachable upstream.\n\n**4. `audit:override-drift` refuses redundant overrides.** If a pinned\npackage is declared directly and nothing in `bun.lock` depends on it\ntransitively, the pin lifts nothing and only breaks Dependabot bumps.\nThe rule found `tar`: its transitive consumers left with the connectors\non 2026-08-27, so the pin is dropped here. Installed `tar` is still\n7.5.22, and `bun audit` is clean.\n\n**5. Docs:** CLAUDE.md/GEMINI.md CI gating, the `nimbus-preflight` skill\n(its \"one check gates the merge\" was already stale), `dependabot.yml`'s\nheader, and a CHANGELOG entry.\n\n## Verification\n\n- `planForPr` run over this repo's **real** last 12 Dependabot PRs: the\nminor/patch groups (#1579, #1576, #1573, #1569, #1519) would be\nsummarised and enqueued. The majors (#1575 `@mastra/mcp` 2, #1518, #1517\n`imapflow` 2, which really did need a code fix) and #1568's 0.x-minor\n`@nimbus-dev/client` would be held.\n- **That real-data run caught a bug the fixtures could not.** GitHub\nspells the author `dependabot[bot]` in REST webhook payloads but\n`app/dependabot` in `gh`'s GraphQL output. Matching only the first\nclassified every real Dependabot PR as not-Dependabot. Fixed with\n`isDependabotLogin`, and each consumer's test now uses the spelling that\nconsumer really receives.\n- The summary is tested against the **real #1580 body**, recovered from\nthe PR's edit history: its premise is asserted first (the raw body fails\nthe real release-please parser at 758:8), then the summary parses and\nnames all 17 bumps.\n- `bun scripts/dependabot/shepherd.ts --dry-run` against the live repo\nsucceeds (0 open PRs right now).\n- 88 tests pass across the new and changed suites; `preflight:fast`\nPASSED; `audit:workflow-lint` OK.\n\n## Not covered by a test\n\nThe workflow YAML itself (the App-token mint, the `gh` writes under that\ntoken, and the issue job) only runs on GitHub. The first scheduled run\nafter merge is its real test. `workflow_dispatch` with `dry_run: true`\nis available to check it by hand.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n## Summary by CodeRabbit\n\n* **New Features**\n* Dependabot pull requests receive standardized, parseable summaries.\nEligible non-breaking updates can be automatically queued for merging;\nmajor updates and minor updates to 0.x packages remain for human review.\n* Dependabot updates are reviewed hourly, with a manual dry-run option\nto preview planned changes.\n* Security check failures on the main branch open or update an alert\nissue, which closes when checks pass.\n* **Improvements**\n* Pull requests use a merge queue, with all ten required checks run\nbefore merging. Auto-merge queues eligible pull requests once they’re\ngreen.\n* Dependency override checks flag pins that are not used by any\ninstalled package.\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude Opus 5.5 (1M context) <noreply@anthropic.com>",
+          "timestamp": "2026-09-30T10:03:02Z",
+          "tree_id": "0ab30ac46c5f3f6b9f3c81c898355217191879a1",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/6b6a364f7d3c5f02c636da41632c58329e812457"
+        },
+        "date": 1790766083191,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 331.10365660000207,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 331.3087317000063,
             "unit": "ms"
           }
         ]
