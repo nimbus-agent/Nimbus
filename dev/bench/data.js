@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1790766087950,
+  "lastUpdate": 1790772058902,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "306811640+nimbus-release-bot[bot]@users.noreply.github.com",
-            "name": "nimbus-release-bot[bot]",
-            "username": "nimbus-release-bot[bot]"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "6c7de11a9252cb3fa2094de331b5de7a4e2e6d34",
-          "message": "chore: release main (#842)\n\n:robot: I have created a release *beep* *boop*\n---\n\n\n<details><summary>1.0.1</summary>\n\n##\n[1.0.1](https://github.com/nimbus-agent/Nimbus/compare/v1.0.0...v1.0.1)\n(2026-07-26)\n\n\n### Bug Fixes\n\n* **ci:** stop pending-run eviction silently cancelling main's\nvalidation ([#840](https://github.com/nimbus-agent/Nimbus/issues/840))\n([7ce8815](https://github.com/nimbus-agent/Nimbus/commit/7ce8815952858b16f367b98941539375e0af105e))\n</details>\n\n---\nThis PR was generated with [Release\nPlease](https://github.com/googleapis/release-please). See\n[documentation](https://github.com/googleapis/release-please#release-please).\n\nCo-authored-by: nimbus-release-bot[bot] <306811640+nimbus-release-bot[bot]@users.noreply.github.com>",
-          "timestamp": "2026-07-26T16:56:25Z",
-          "tree_id": "4e8b3ac5259a3b6acde9bfd29fee85024fa47ea5",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/6c7de11a9252cb3fa2094de331b5de7a4e2e6d34"
-        },
-        "date": 1785085646739,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 209.75418539999774,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 211.68152849999242,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 331.3087317000063,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "1738f5a3b0e8cd232eeedd399eb50f9cc04c0260",
+          "message": "ci: raise the cross-platform per-attempt test cap to 1500 s and the job ceiling to 65 min (#1585)\n\n## Why\n\nThe cross-platform Windows leg had turned into a coin-flip on **every**\nPR, whatever the PR changed. Its per-attempt test cap is 1080 s, and\nhealthy `windows-2025` test steps over the 09-29/30 PR batch took:\n\n`795 · 845 · 1019 · 1036 · 1044 · 1047 · 1063 · 1069 · 1079 s`\n\nThe cap had become the median. Four legs in that batch (#1575 ×2, #1580,\n#1581) were killed at 1080 s with **zero failing tests** (`exit 124` on\nboth attempts). One of them had passed more tests before the kill than a\nrun that went green, which rules out a hang. The comment on the cap had\nset its own tripwire, \"re-check if a healthy run exceeds ~850 s\", and it\nhad fired. macOS on the same runs took 334–520 s, far inside the cap.\n\n## Change\n\n- Per-attempt cap **1080 → 1500 s**. The worst healthy run (1079 s) sits\nat 72%, and at the ~28% run-to-run variance the workflow already\ndocuments, its top of swing is ~1381 s, inside the cap.\n- Job ceiling **48 → 65 min**, from the rule the job comment now spells\nout term by term: `setup + typecheck retry + 2 × cap <= ceiling`, each\nterm a bound or a measured worst. Setup is 465 s, the worst of ten\nsuccessful `windows-2025` runs, where the earlier ~270 s figure was a\nsingle run at the median. That gives 465 + 125 + 3005 = 3595 s, which is\n59.9 min, so 60 would have sat 5 s from cancelling the second attempt.\n65 leaves 305 s. A cap raised alone would be useless, because the second\nattempt could never finish.\n- The `Typecheck` step's attempts are now capped at 120 s each. It was\nuncapped, so it had no bound to put in that sum. It takes 6–11 s on both\nOSes.\n- Comments updated with the new measurements and a new tripwire (~1200\ns). Also fixed a stale \"15-minute\" cap in the step comment.\n\nThis is the fourth raise, and the previous comment said a fourth \"is not\na plan\". That's still true, and the comment now says so. This buys time;\nthe durable fix is a faster Windows suite (the e2e tree alone spends\n15–22 s per gateway boot there) that keeps the one-process parity with\nthe push leg.\n\nUnchanged: the test command, its paths and the retry logic, so\n`scripts/ci/cross-platform-parity.test.ts` (which compares positional\npaths only) is unaffected.\n\n## Verification\n\n`bun test scripts/ci` (142 pass, including the parity tests),\n`audit:workflow-lint` OK, `preflight:fast` PASSED. The real test is this\nPR's own Windows leg.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n## Summary by CodeRabbit\n\n* **Chores**\n* Extended the time allowed for cross-platform automated checks to\ncomplete. Type checks now have up to 120 seconds per attempt, with two\nattempts retained, and each test-suite attempt can run for up to 1,500\nseconds. The overall check window is now 65 minutes. These updates\naffect automated validation; app features and user-facing behavior\nremain unchanged.\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude Opus 5.5 (1M context) <noreply@anthropic.com>",
+          "timestamp": "2026-09-30T11:56:57Z",
+          "tree_id": "d866b47bdea6e6802196256d08464b59a123a6b2",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/1738f5a3b0e8cd232eeedd399eb50f9cc04c0260"
+        },
+        "date": 1790772054437,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 212.84799769999844,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 208.50445965000182,
             "unit": "ms"
           }
         ]
