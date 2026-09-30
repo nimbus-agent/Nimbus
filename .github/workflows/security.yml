@@ -10,6 +10,11 @@ on:
     branches: [main, develop]
   pull_request:
     branches: [main, develop]
+  # Six of this workflow's jobs are required contexts in the General ruleset,
+  # so they must also report on merge-queue entries — a required check that
+  # never reports on a queue entry stalls every merge.
+  merge_group:
+    types: [checks_requested]
   schedule:
     # Nightly at 02:00 UTC
     - cron: "0 2 * * *"
@@ -367,11 +372,11 @@ jobs:
       # check — the only thing it fails closed on is skipping work.
       - name: Detect Rust changes
         id: rust-changed
-        if: github.event_name == 'pull_request'
+        if: github.event_name == 'pull_request' || github.event_name == 'merge_group'
         shell: bash
         run: |
           set -uo pipefail
-          base="${{ github.event.pull_request.base.sha }}"
+          base="${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}"
           if [[ -z "${base}" ]] || ! git cat-file -e "${base}^{commit}" 2>/dev/null; then
             echo "base sha unavailable — running the Rust scans"
             echo "rust=true" >> "${GITHUB_OUTPUT}"
