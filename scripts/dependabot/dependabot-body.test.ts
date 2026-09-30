@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { githubSquashMessage, parseFailure } from "../release/check-pr-message-parses.ts";
 import {
+  incompleteBumpsReason,
   isBreakingBump,
   isDependabotLogin,
   parseBumps,
@@ -88,6 +89,82 @@ describe("parseBumps", () => {
   test("release-note text that merely LOOKS like an Updates line inside a blockquote is not read", () => {
     const body = "Updates `a` from 1.0.0 to 1.0.1\n> Updates `b` from 1.0.0 to 9.0.0";
     expect(parseBumps("t", body).map((b) => b.name)).toEqual(["a"]);
+  });
+});
+
+describe("incompleteBumpsReason", () => {
+  const TWO = "chore(deps): bump the g group with 2 updates";
+  const A = "Updates `a` from 1.0.0 to 1.0.1";
+
+  test("whole lists are whole: every real shape, and the real #1580 body", () => {
+    expect(incompleteBumpsReason(NPM_GROUP_TITLE, NPM_GROUP_BODY)).toBeUndefined();
+    expect(incompleteBumpsReason(CARGO_GROUP_TITLE, CARGO_GROUP_BODY)).toBeUndefined();
+    expect(incompleteBumpsReason(SINGLE_TITLE, SINGLE_BODY)).toBeUndefined();
+    const real = readFileSync(
+      join(import.meta.dir, "fixtures", "pr-1580-original-body.txt"),
+      "utf8",
+    );
+    expect(
+      incompleteBumpsReason(
+        "chore(deps): bump the all-minor-patch group across 1 directory with 17 updates",
+        real,
+      ),
+    ).toBeUndefined();
+  });
+
+  test("the security-fix note is read, on both line shapes and in both wordings", () => {
+    const body = [
+      "Updates `a` from 1.0.0 to 1.0.1 **This update includes a security fix.**",
+      "Updates `b` from 0.4.0 to 0.5.0 **This update includes security fixes.**",
+    ].join("\n");
+    expect(parseBumps(TWO, body)).toEqual([
+      { name: "a", from: "1.0.0", to: "1.0.1" },
+      { name: "b", from: "0.4.0", to: "0.5.0" },
+    ]);
+    expect(incompleteBumpsReason(TWO, body)).toBeUndefined();
+    expect(
+      parseBumps("t", "Bumps [c](u) from 1.0.0 to 2.0.0. **This update includes a security fix.**"),
+    ).toEqual([{ name: "c", from: "1.0.0", to: "2.0.0" }]);
+  });
+
+  test("an announced change no pattern can read makes the list partial", () => {
+    expect(incompleteBumpsReason(TWO, `${A}\nUpdates \`b\` to 2.0.0`)).toContain("unreadable line");
+    expect(incompleteBumpsReason(TWO, `${A}\nRemoves \`b\``)).toContain("unreadable line");
+  });
+
+  test("a count that disagrees with the title makes the list partial — in either direction", () => {
+    expect(incompleteBumpsReason(TWO, A)).toContain("announces 2 updates and 1 could be read");
+    const three = `${A}\nUpdates \`b\` from 1.0.0 to 1.0.1\nUpdates \`c\` from 1.0.0 to 1.0.1`;
+    expect(incompleteBumpsReason(TWO, three)).toContain("announces 2 updates and 3 could be read");
+  });
+
+  test("one name with two version changes is partial: the first would hide the second", () => {
+    const body = `${A}\nUpdates \`a\` from 0.4.0 to 0.5.0\nUpdates \`b\` from 1.0.0 to 1.0.1`;
+    expect(incompleteBumpsReason(TWO, body)).toContain("two different version changes");
+  });
+
+  test("a partial list is never summarised, so the bump it missed is not erased", () => {
+    expect(summaryBody(TWO, A)).toBeUndefined();
+  });
+
+  test("the description's own count outranks the title's — the real #902 disagreement", () => {
+    // #902: title "with 27 updates", description "with 25 updates" and 25 table rows.
+    const title = "chore(deps): bump the g group across 1 directory with 3 updates";
+    const body = `Bumps the g group with 2 updates in the / directory:\n\n${A}\nUpdates \`b\` from 1.0.0 to 1.0.1`;
+    expect(incompleteBumpsReason(title, body)).toBeUndefined();
+    expect(incompleteBumpsReason(title, `${body}\nUpdates \`c\` from 1.0.0 to 1.0.1`)).toContain(
+      "announces 2 updates and 3 could be read",
+    );
+  });
+
+  test("a summary is held to its OWN header, never the title, so it cannot un-qualify itself", () => {
+    const three = "chore(deps): bump the g group with 3 updates";
+    const summary = summaryBody(TWO, `${A}\nUpdates \`b\` from 1.0.0 to 1.0.1`) ?? "";
+    expect(incompleteBumpsReason(three, summary)).toBeUndefined();
+    const truncated = summary.replace("- `b` 1.0.0 -> 1.0.1\n", "");
+    expect(incompleteBumpsReason(three, truncated)).toContain(
+      "announces 2 updates and 1 could be read",
+    );
   });
 });
 

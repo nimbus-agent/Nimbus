@@ -119,11 +119,39 @@ export function githubSquashMessage(
  * shepherd replaces it with `summaryBody` before it enables auto-merge, because Dependabot quotes
  * upstream release notes verbatim and those routinely carry an unbalanced `(` (#1574, #1580).
  * Judging the raw notes would fail a PR on text that never lands; judging the summary checks the
- * text that does. When no bump can be read the shepherd leaves the body alone, and so does this.
+ * text that does. When no bump can be read, or the list may be partial, the shepherd leaves the
+ * body alone, and so does this.
+ *
+ * STATED BOUND. This judges a body the shepherd has not necessarily WRITTEN yet, so a green
+ * result here does not prove the description on the PR parses right now. The alternative —
+ * judging the raw body until the shepherd rewrites it — cannot work in this workflow: the gate
+ * runs on `opened`/`synchronize`/`reopened`/`labeled`, not `edited`, so the shepherd's rewrite
+ * would never turn a red check green, and adding `edited` would re-run the whole PR gate on
+ * every description edit. The gap is a person merging a Dependabot PR by hand before the hourly
+ * shepherd has reached it; `pendingRewriteFailure` makes that visible as a warning on the run.
  */
 export function effectiveBody(title: string, body: string, author: string | undefined): string {
   if (!isDependabotLogin(author)) return body;
   return summaryBody(title, body) ?? body;
+}
+
+/**
+ * The parse failure of the description AS IT STANDS, when the gate is judging a different body
+ * in its place — i.e. the PR passes only on the strength of a rewrite that has not happened.
+ * `undefined` when the two are the same text or the standing one parses anyway.
+ */
+export function pendingRewriteFailure(
+  title: string,
+  body: string,
+  author: string | undefined,
+  prNumber: number | undefined,
+): string | undefined {
+  const effective = effectiveBody(title, body, author);
+  if (effective === body.replace(/\r\n/g, "\n")) return undefined;
+  return (
+    parseFailure(githubSquashMessage(title, body, prNumber)) ??
+    parseFailure(squashMessage(title, body, prNumber))
+  );
 }
 
 /** The parser's own error, or undefined when the message parses. */
@@ -180,6 +208,12 @@ function main(): void {
 
   const failure = parseFailure(message);
   if (failure === undefined) {
+    const pending = pendingRewriteFailure(title, process.env["PR_BODY"] ?? "", author, n);
+    if (pending !== undefined) {
+      console.log(
+        `::warning::The description on this PR right now does NOT parse (${pending}). This check passed on the summary the Dependabot shepherd replaces it with on its next hourly run — do not merge by hand before the description starts with the shepherd's summary marker, or release-please drops the commit.`,
+      );
+    }
     console.log("check-pr-message-parses: OK — the squash commit will parse.");
     return;
   }

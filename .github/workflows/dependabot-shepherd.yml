@@ -59,10 +59,15 @@ jobs:
           private-key: ${{ secrets.RELEASE_BOT_PRIVATE_KEY }}
           owner: nimbus-agent
           repositories: Nimbus
-          # Editing a PR description and enabling auto-merge need exactly these
-          # two; nothing else is requested.
+          # Editing a PR description and enabling auto-merge need the first two.
+          # `workflows` is for the `github-actions` ecosystem: its PRs change
+          # `.github/workflows/**`, and GitHub refuses to let an App merge a
+          # workflow-file change without it. These inputs only NARROW what the
+          # App installation already holds (it holds all three); nothing else
+          # is requested.
           permission-contents: write
           permission-pull-requests: write
+          permission-workflows: write
       - name: Shepherd
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}

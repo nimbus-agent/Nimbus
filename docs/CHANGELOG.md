@@ -29,12 +29,21 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
   nothing, but breaks every Dependabot bump of it, since Dependabot cannot edit `overrides`:
   `@mastra/core`/`@mastra/mcp` cost the same hand fix on #1144, #1238, #1331, #1515 and #1574.
   #1581 dropped those two; `audit:override-drift` now REFUSES any such pin (it found one more,
-  `tar`, whose transitive consumers left with the connectors on 2026-08-27, dropped here).
+  `tar`, whose transitive consumers left with the connectors on 2026-08-27, dropped here); a
+  lockfile with an entry it cannot read makes that question indeterminate, never a finding.
   **(3)** Dependabot quotes upstream release notes, the PR body is the squash commit's body, and an
   unbalanced `(` fails the Release-safety parse gate. `scripts/dependabot/dependabot-body.ts`
   builds a parse-safe summary; the gate judges that summary for a Dependabot-authored PR, and
   **(4)** the hourly `dependabot-shepherd.yml` writes it onto the PR and enables auto-merge when
-  every bump is non-breaking; a major, or a 0.x minor, is left for a human. It runs on a schedule
+  every bump is non-breaking; a major, or a 0.x minor, is left for a human. So is a group whose
+  bump list may be PARTIAL (an `Updates`/`Removes` line no pattern reads, one name with two
+  version changes, or a count that disagrees with the description's own) — "every bump is
+  non-breaking" cannot be said of a list with a hole in it, and summarising a partial list would
+  erase the missing bump for good, so neither write happens. The request is bound to the head
+  commit that was classified (`--match-head-commit`), and one a bot enabled is withdrawn when a
+  later Dependabot refresh makes the PR stop qualifying. Stated bound: the gate judges a summary
+  the shepherd may not have written yet — it cannot re-run on a description edit — so it warns
+  when the description standing on the PR does not parse. It runs on a schedule
   with the release-bot App token rather than on `pull_request`, because a Dependabot-triggered run
   cannot read Actions secrets and a merge under `GITHUB_TOKEN` would skip `main`'s `push`
   workflows. **(5)** "Require branches to be up to date" re-ran every open PR's ~40-minute CI after

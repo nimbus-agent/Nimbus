@@ -4,6 +4,7 @@ import {
   excerpt,
   githubSquashMessage,
   parseFailure,
+  pendingRewriteFailure,
   positionOf,
   squashMessage,
   WRAP_COLUMNS,
@@ -220,5 +221,32 @@ describe("effectiveBody — a Dependabot PR is judged on the body it lands with"
 
   test("an unreadable Dependabot body is judged as-is, matching the shepherd leaving it alone", () => {
     expect(effectiveBody("chore: x", "free (text", "dependabot[bot]")).toBe("free (text");
+  });
+
+  test("a possibly partial group is judged as-is too — the shepherd will not rewrite it", () => {
+    const group = "chore(deps): bump the g group with 2 updates";
+    const partial = "Updates `a` from 1.0.0 to 1.0.1\n<details>(unclosed</details>";
+    expect(effectiveBody(group, partial, "dependabot[bot]")).toBe(partial);
+  });
+});
+
+describe("pendingRewriteFailure — a pass that rests on a rewrite not yet made is reported", () => {
+  const title = "chore(deps): bump @mastra/mcp from 1.18.0 to 2.1.0";
+  const raw =
+    "Bumps [@mastra/mcp](https://example.test) from 1.18.0 to 2.1.0.\n<details>(unclosed</details>";
+
+  test("Dependabot, raw notes still on the PR and unparseable: the standing failure is returned", () => {
+    expect(pendingRewriteFailure(title, raw, "dependabot[bot]", 1575)).toBeDefined();
+  });
+
+  test("once the shepherd's summary IS the description there is nothing pending", () => {
+    const written = effectiveBody(title, raw, "dependabot[bot]");
+    expect(pendingRewriteFailure(title, written, "dependabot[bot]", 1575)).toBeUndefined();
+  });
+
+  test("raw notes that parse anyway, and any human PR, report nothing", () => {
+    const fine = "Bumps [@mastra/mcp](https://example.test) from 1.18.0 to 2.1.0.";
+    expect(pendingRewriteFailure(title, fine, "dependabot[bot]", 1575)).toBeUndefined();
+    expect(pendingRewriteFailure(title, raw, "asafgolombek", 1575)).toBeUndefined();
   });
 });

@@ -330,10 +330,35 @@ describe("redundant overrides — a pin only this repo's own manifests consume",
     expect(auditOverrideDrift(root)).toEqual({ ok: true, errors: [] });
   });
 
+  test.each([
+    ["a registry entry with no metadata object", ["consumer@1.0.0", "", null, "sha512-x"]],
+    ["an entry that is not a tuple", { name: "consumer" }],
+    ["a tuple with no package id", [null, "", {}, "sha512-x"]],
+  ])("%s: the consumer question is indeterminate, never a finding", (_label, entry) => {
+    manifests();
+    // Without the unreadable entry this exact lock IS a finding (first test above), so a pass
+    // here is the entry being refused, not the rule having nothing to say.
+    writeLock({
+      "@mastra/core": ["@mastra/core@1.67.0", "", {}, "sha512-x"],
+      consumer: entry,
+    });
+    expect(transitiveConsumers(readLockPackages(root) ?? {}, "@mastra/core")).toBeNull();
+    expect(auditOverrideDrift(root)).toEqual({ ok: true, errors: [] });
+  });
+
+  test("a workspace link and an entry with its metadata at another index are both read", () => {
+    const lock = {
+      gateway: ["gateway@workspace:packages/gateway"],
+      forked: ["forked@github:o/r#abc", { dependencies: { "@mastra/core": "^1.0.0" } }, "abc"],
+    };
+    expect(transitiveConsumers(lock, "@mastra/core")).toEqual(["forked"]);
+    expect(transitiveConsumers(lock, "zod")).toEqual([]);
+  });
+
   test("the real repository's lockfile parses and names real consumers", () => {
     const lock = readLockPackages(join(import.meta.dir, "..", ".."));
     expect(lock).not.toBeNull();
     // zod is pinned AND declared directly, and is legitimately lifted for transitive copies.
-    expect(transitiveConsumers(lock ?? {}, "zod").length).toBeGreaterThan(0);
+    expect(transitiveConsumers(lock ?? {}, "zod")?.length).toBeGreaterThan(0);
   });
 });

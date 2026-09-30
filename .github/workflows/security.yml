@@ -431,6 +431,15 @@ jobs:
       always() && github.ref == 'refs/heads/main'
       && (github.event_name == 'push' || github.event_name == 'schedule')
     needs: [audit, trivy-scan, gateway-security-contracts, cargo-audit, cargo-deny, gitleaks]
+    # One at a time, repo-wide. The workflow-level group is per-COMMIT on push, so
+    # two merges landing close together run this job in parallel, and "look for
+    # the issue, then create it" is two separate calls: both would find none and
+    # open one each. A queued run waits rather than being cancelled; if a third
+    # arrives it replaces the one still waiting, which loses nothing — the newer
+    # run reports the newer state of `main`.
+    concurrency:
+      group: security-main-health-alert
+      cancel-in-progress: false
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     permissions:
