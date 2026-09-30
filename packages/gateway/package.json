@@ -17,7 +17,7 @@
   },
   "dependencies": {
     "@mastra/core": "^1.71.0",
-    "@mastra/mcp": "^1.18.0",
+    "@mastra/mcp": "^2.1.0",
     "@nimbus-dev/connectors": "^0.2.1",
     "@nimbus-dev/sdk": "^2.0.0",
     "@noble/hashes": "^2.4.0",
