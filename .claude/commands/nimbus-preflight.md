@@ -20,14 +20,28 @@ description: >
 
 ## Merging — the gate only protects `main` if you wait for it
 
-**One check gates the merge:** `PR quality — required gates`, an `if: always()` aggregator that
-`needs:` every other PR job. Adding, renaming or matrix-ing a gate therefore never needs a ruleset
-edit — but it also means a single green tick is the *only* thing standing between a red leg and
-`main`.
+**Ten checks gate the merge, and one of them is an aggregator.** `PR quality — required gates` is an
+`if: always()` job that `needs:` every other `ci.yml` PR job, so adding, renaming or matrix-ing a gate
+inside that workflow never needs a ruleset edit. The other nine (six Security contexts, two CodeQL
+`Analyze (…)`, `cla`) are named in the ruleset individually — re-derive the list with
+`gh api repos/nimbus-agent/Nimbus/rulesets/14784377` rather than trusting prose.
 
-**The bypass is silent.** The _General_ ruleset (14784377) lists that check as required with
-`strict_required_status_checks_policy: true`, and its sole bypass actor is `OrganizationAdmin` with
-`bypass_mode: "always"`. For a repo admin the merge button stays enabled while checks are pending,
+**`main` merges through a merge queue.** A queued PR is re-tested on top of the real tip of `main`
+and lands automatically, so nobody has to click "update branch" and re-run every other open PR after
+each merge. The cost is a rule: **every required context must also run on the `merge_group` event** —
+a required check that never reports on a queue entry stalls EVERY merge. So a new required check, or a
+new job in `pr-quality-required`'s `needs:`, must accept `merge_group` too (see the `merge_group:`
+comment in `ci.yml`). `gh pr merge <n> --squash --auto` is how you enqueue.
+
+**Dependabot PRs are shepherded, not hand-merged.** `dependabot-shepherd.yml` runs hourly with the
+release-bot App token: it replaces each Dependabot description with a parse-safe summary
+(`scripts/dependabot/dependabot-body.ts`, which the Release-safety gate judges instead of the raw
+upstream release notes) and enqueues every PR whose bumps are all non-breaking. A major — or a 0.x
+minor — is left for a human. If one is still red, the cause is almost never the bump: check the
+nightly Security issue ("Security gate is red on main") and `audit:override-drift` first.
+
+**The bypass is silent.** The _General_ ruleset (14784377) lists those checks as required, and its
+sole bypass actor is `OrganizationAdmin` with `bypass_mode: "always"`. For a repo admin the merge button stays enabled while checks are pending,
 and using it produces **no bypass annotation anywhere on the PR**. Nothing in the UI distinguishes
 "merged green" from "merged before the gate reported".
 

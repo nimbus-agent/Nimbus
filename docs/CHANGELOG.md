@@ -18,6 +18,33 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
 
 ## Post-Phase-6 deliveries
 
+- **2026-09-30 — Dependabot PRs merge themselves; `main` merges through a merge queue.** Clearing
+  one week's Dependabot batch (#1573–#1576) took two days, seven superseded PR numbers and a dozen
+  hand-pushed fixes, and none of the failures was a real incompatibility. Five causes, each now
+  closed at its source. **(1)** A newly published advisory turns the required `Dependency audit`
+  red on `main` overnight; the 09-29 nightly failed at 07:55 UTC, four hours before Dependabot
+  opened its PRs, and nothing reported it. `security.yml`'s new `main-health-alert` job opens one
+  "Security gate is red on main" issue on a red push/nightly run and closes it on the next green
+  one. **(2)** A root `overrides` pin on a package only this repo's own manifests consume lifts
+  nothing, but breaks every Dependabot bump of it, since Dependabot cannot edit `overrides`:
+  `@mastra/core`/`@mastra/mcp` cost the same hand fix on #1144, #1238, #1331, #1515 and #1574.
+  #1581 dropped those two; `audit:override-drift` now REFUSES any such pin (it found one more,
+  `tar`, whose transitive consumers left with the connectors on 2026-08-27, dropped here).
+  **(3)** Dependabot quotes upstream release notes, the PR body is the squash commit's body, and an
+  unbalanced `(` fails the Release-safety parse gate. `scripts/dependabot/dependabot-body.ts`
+  builds a parse-safe summary; the gate judges that summary for a Dependabot-authored PR, and
+  **(4)** the hourly `dependabot-shepherd.yml` writes it onto the PR and enables auto-merge when
+  every bump is non-breaking; a major, or a 0.x minor, is left for a human. It runs on a schedule
+  with the release-bot App token rather than on `pull_request`, because a Dependabot-triggered run
+  cannot read Actions secrets and a merge under `GITHUB_TOKEN` would skip `main`'s `push`
+  workflows. **(5)** "Require branches to be up to date" re-ran every open PR's ~40-minute CI after
+  each merge, and auto-merge does not update a BEHIND branch; `main` now uses a merge queue, which
+  #1583 prepared by making all ten required contexts report on `merge_group`. One thing found only
+  by running the shepherd's planner over this repo's real PR history, never by its fixtures: GitHub
+  spells the Dependabot author `dependabot[bot]` in REST webhook payloads but `app/dependabot` in
+  `gh`'s GraphQL output, and matching only the first classified every real Dependabot PR as
+  "not authored by Dependabot".
+
 - **2026-09-22 — `nimbus init` and `nimbus demo` end on the guided tour.** This PR wires the
   2026-09-21 `nimbus wow` tour into the two existing first-run surfaces. In `nimbus init`: after a
   successful index that found a `file:line` target (never under `--no-sync`, never after an

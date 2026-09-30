@@ -50,6 +50,7 @@
  */
 
 import { parser } from "@conventional-commits/parser";
+import { isDependabotLogin, summaryBody } from "../dependabot/dependabot-body.ts";
 
 /**
  * The column GitHub hard-wraps a squash commit BODY at. Derived, not guessed: of the widths tried
@@ -111,6 +112,20 @@ export function githubSquashMessage(
   return squashMessage(title, wrapBody(body.replace(/\r\n/g, "\n")), prNumber);
 }
 
+/**
+ * The body this PR will actually be squashed with.
+ *
+ * For a PR opened by Dependabot that is NOT the body in the event payload: the Dependabot
+ * shepherd replaces it with `summaryBody` before it enables auto-merge, because Dependabot quotes
+ * upstream release notes verbatim and those routinely carry an unbalanced `(` (#1574, #1580).
+ * Judging the raw notes would fail a PR on text that never lands; judging the summary checks the
+ * text that does. When no bump can be read the shepherd leaves the body alone, and so does this.
+ */
+export function effectiveBody(title: string, body: string, author: string | undefined): string {
+  if (!isDependabotLogin(author)) return body;
+  return summaryBody(title, body) ?? body;
+}
+
 /** The parser's own error, or undefined when the message parses. */
 export function parseFailure(message: string): string | undefined {
   try {
@@ -141,7 +156,13 @@ export function excerpt(message: string, at: { line: number; col: number }): str
 
 function main(): void {
   const title = process.env["PR_TITLE"] ?? "";
-  const body = process.env["PR_BODY"] ?? "";
+  const author = process.env["PR_AUTHOR"];
+  const body = effectiveBody(title, process.env["PR_BODY"] ?? "", author);
+  if (isDependabotLogin(author)) {
+    console.log(
+      "check-pr-message-parses: Dependabot PR — judging the summary body the shepherd lands it with.",
+    );
+  }
   const numberRaw = process.env["PR_NUMBER"];
   if (title.trim() === "") {
     console.error("::error::PR_TITLE is empty — refusing to report a clean parse on no input.");

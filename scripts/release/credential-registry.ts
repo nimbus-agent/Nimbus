@@ -134,6 +134,7 @@ export const CREDENTIAL_REGISTRY: readonly CredentialEntry[] = [
     consumedBy: [
       ".github/workflows/release.yml",
       ".github/workflows/release-please.yml",
+      ".github/workflows/dependabot-shepherd.yml",
       ".github/workflows/publish-package-managers.yml",
       ".github/workflows/publish-linux-repo.yml",
       ".github/workflows/secret-health.yml",
@@ -155,6 +156,7 @@ export const CREDENTIAL_REGISTRY: readonly CredentialEntry[] = [
     consumedBy: [
       ".github/workflows/release.yml",
       ".github/workflows/release-please.yml",
+      ".github/workflows/dependabot-shepherd.yml",
       "nimbus-client/.github/workflows/release.yml",
       "nimbus-sdk/.github/workflows/release.yml",
     ],

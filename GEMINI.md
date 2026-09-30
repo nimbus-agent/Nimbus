@@ -159,6 +159,15 @@ advisories, the same sha having passed hours earlier. **When a check is red and 
 should not matter, re-derive the list from the ruleset** (`gh api
 repos/nimbus-agent/Nimbus/rulesets/14784377`) rather than trusting the prose.
 
+**`main` merges through a merge queue, so every required context must also run on `merge_group`.**
+A queued PR is re-tested on the real tip of `main` and lands on its own, replacing the old
+"branch must be up to date" rule that re-ran every open PR after each merge. The price is that a
+required check which never reports on a queue entry stalls EVERY merge — so a new required context,
+or a new job in `pr-quality-required`'s `needs:`, must accept `merge_group` as well. Dependabot PRs
+are handled by `dependabot-shepherd.yml` (hourly): it replaces each description with a parse-safe
+summary and enqueues every PR whose bumps are all non-breaking, leaving majors for a human. A red
+required check on `main` itself opens (and later closes) a "Security gate is red on main" issue.
+
 **A failing step HIDES every later step in the same job.** Both of these jobs are step sequences,
 and a red one reports only its first failure — so "one gate is red" routinely means several are,
 serialised one CI round-trip apart. `Dependency audit` runs `bun audit` → `audit:advisories` →
@@ -203,7 +212,7 @@ at temp-dir SQLite work, so every wall-clock assumption in a test is a different
   3. If any check/test fails, fix the issue locally before presenting the solution to the user. Do not declare success or stop if there are failing checks.
   4. Ensure any newly added/modified code adheres to all Non-Negotiables and Security Invariants.
 - **Branch hygiene:** never commit on `main`/`develop` — `git switch -c dev/<you>/<topic>` and verify `git rev-parse --abbrev-ref HEAD` first. `bun run hooks:install` adds a pre-commit guard + pre-push `preflight:fast`.
-- **Never merge with checks still running — that is the main cause of red `main`.** The _General_ ruleset (14784377) requires `PR quality — required gates`, but its only bypass actor is `OrganizationAdmin` with `bypass_mode: "always"` — so for a repo admin the merge button stays live while checks are pending and **GitHub reports nothing when it is used**. Precedent: #1298 merged 2026-08-21 at 17:47:15Z; its required gate did not even _start_ until 17:57:44Z and then failed, putting two broken tests on `main` and reding the release PR (#1301) minutes later. Wait for `PR quality — required gates` to report green, or use **auto-merge** (`gh pr merge --squash --auto`) so GitHub does the waiting. When triaging a red `main`, **compare the merge timestamp against the required check's `started_at` before assuming a flake** — `gh api repos/nimbus-agent/Nimbus/commits/<sha>/check-runs` — because a merge-before-green looks exactly like a post-merge regression.
+- **Never merge with checks still running — that is the main cause of red `main`.** The _General_ ruleset (14784377) requires `PR quality — required gates`, but its only bypass actor is `OrganizationAdmin` with `bypass_mode: "always"` — so for a repo admin the merge button stays live while checks are pending and **GitHub reports nothing when it is used**. Precedent: #1298 merged 2026-08-21 at 17:47:15Z; its required gate did not even _start_ until 17:57:44Z and then failed, putting two broken tests on `main` and reding the release PR (#1301) minutes later. Wait for `PR quality — required gates` to report green, or use **auto-merge** (`gh pr merge --squash --auto`), which enqueues the PR in the merge queue once it is green, so GitHub does the waiting. When triaging a red `main`, **compare the merge timestamp against the required check's `started_at` before assuming a flake** — `gh api repos/nimbus-agent/Nimbus/commits/<sha>/check-runs` — because a merge-before-green looks exactly like a post-merge regression.
 - **Commit messages are discarded on merge — the PR title and description ARE the commit.** Squash is the only merge method enabled (`allow_merge_commit` and `allow_rebase_merge` are both off), and the squash commit is built from `PR_TITLE` + `PR_BODY`. Whatever you write in a local commit message never reaches `main`, so: put the conventional-commit type in the **PR title**, because that subject line is what release-please parses for the version bump; put reasoning, and any git trailer you need to survive, in the **PR description**, because that becomes the permanent commit body. A corollary worth remembering in reverse: a bare `Release-As:` line left in a PR description forces a release nobody asked for, so keep it inline or quoted unless a version bump is the intent.
 - **A `!` means a USER must act — not that the change felt significant.** `main` went from
   `v2.21.0` to `v7.0.0` in two days across five majors, and exactly ONE of them

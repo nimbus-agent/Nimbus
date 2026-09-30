@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import {
+  effectiveBody,
   excerpt,
   githubSquashMessage,
   parseFailure,
@@ -197,5 +198,27 @@ describe("the real-PR corpus — bodies as the workflow feeds them, not as they 
       .filter((c) => parseFailure(squashMessage(c.title, c.body, c.number)) === undefined)
       .map((c) => c.number);
     expect(missed).toEqual(expect.arrayContaining([1218, 1234]));
+  });
+});
+
+describe("effectiveBody — a Dependabot PR is judged on the body it lands with", () => {
+  const title = "chore(deps): bump @mastra/mcp from 1.18.0 to 2.1.0";
+  const raw =
+    "Bumps [@mastra/mcp](https://example.test) from 1.18.0 to 2.1.0.\n<details>(unclosed</details>";
+
+  test("Dependabot: the raw notes fail the parser, the effective body passes", () => {
+    expect(parseFailure(githubSquashMessage(title, raw, 1575))).toBeDefined();
+    const body = effectiveBody(title, raw, "dependabot[bot]");
+    expect(body).not.toBe(raw);
+    expect(parseFailure(githubSquashMessage(title, body, 1575))).toBeUndefined();
+  });
+
+  test("any other author is judged on exactly what they wrote — the gate is not loosened for humans", () => {
+    expect(effectiveBody(title, raw, "asafgolombek")).toBe(raw);
+    expect(effectiveBody(title, raw, undefined)).toBe(raw);
+  });
+
+  test("an unreadable Dependabot body is judged as-is, matching the shepherd leaving it alone", () => {
+    expect(effectiveBody("chore: x", "free (text", "dependabot[bot]")).toBe("free (text");
   });
 });

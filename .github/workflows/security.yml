@@ -406,3 +406,73 @@ jobs:
 
       - name: Run gitleaks
         run: gitleaks detect --source . --no-banner --redact --verbose --exit-code 1
+
+  # ── Tell someone when `main` goes red ──────────────────────────────────────
+  #
+  # A newly published advisory turns `Dependency audit` red on `main` overnight
+  # with no change to the repo. On 2026-09-29 the nightly run failed at 07:55
+  # UTC and nothing reported it; Dependabot opened four PRs four hours later and
+  # every one inherited the red required check. (#1475 hit the same thing on
+  # 2026-09-09.) This job turns that failure into ONE open issue, commented on
+  # while it stays red and closed by the first green run, so the fix lands on
+  # `main` BEFORE a batch of PRs piles up behind it.
+  #
+  # Push and schedule runs on `main` only: a PR or queue run that fails is that
+  # PR's own business and already visible on it. Keyed on the issue TITLE, so a
+  # red streak is one issue, not one per night.
+  main-health-alert:
+    name: Report Security status on main
+    if: >-
+      always() && github.ref == 'refs/heads/main'
+      && (github.event_name == 'push' || github.event_name == 'schedule')
+    needs: [audit, trivy-scan, gateway-security-contracts, cargo-audit, cargo-deny, gitleaks]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      issues: write
+    steps:
+      - name: Harden Runner
+        uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1 # v2.21.1
+        with:
+          egress-policy: audit
+      - name: Open, update or close the tracking issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          EVENT: ${{ github.event_name }}
+          SHA: ${{ github.sha }}
+          RESULTS: >-
+            audit=${{ needs.audit.result }}
+            trivy-scan=${{ needs.trivy-scan.result }}
+            gateway-security-contracts=${{ needs.gateway-security-contracts.result }}
+            cargo-audit=${{ needs.cargo-audit.result }}
+            cargo-deny=${{ needs.cargo-deny.result }}
+            gitleaks=${{ needs.gitleaks.result }}
+        run: |
+          set -euo pipefail
+          title="Security gate is red on main"
+          failed=$(printf '%s\n' ${RESULTS} | grep -E '=(failure|cancelled)$' | cut -d= -f1 | paste -sd, - || true)
+          existing=$(gh issue list --repo "$REPO" --state open --search "\"$title\" in:title" \
+            --json number,title --jq ".[] | select(.title == \"$title\") | .number" | head -1)
+
+          if [[ -n "$failed" ]]; then
+            body="The \`${EVENT}\` Security run on \`main\` @ \`${SHA:0:12}\` failed: **${failed}**.
+          Run: ${RUN_URL}
+
+          These are required checks, so every open PR inherits this until \`main\` is fixed. A new advisory usually means a root \`overrides\` bump in \`package.json\`; see \`scripts/structure-audit/accepted-advisories.ts\` for the order of preference.
+
+          This issue closes itself on the next green Security run on \`main\`."
+            if [[ -n "$existing" ]]; then
+              gh issue comment "$existing" --repo "$REPO" --body "Still red — ${EVENT} run @ \`${SHA:0:12}\`: **${failed}**. ${RUN_URL}"
+              echo "::warning::Security is red on main (${failed}); commented on #${existing}"
+            else
+              gh issue create --repo "$REPO" --title "$title" --label security --body "$body"
+              echo "::warning::Security is red on main (${failed}); opened a tracking issue"
+            fi
+          elif [[ -n "$existing" ]]; then
+            gh issue close "$existing" --repo "$REPO" --comment "Green again — ${EVENT} run @ \`${SHA:0:12}\`: ${RUN_URL}"
+            echo "Security green on main; closed #${existing}"
+          else
+            echo "Security green on main; nothing to report"
+          fi

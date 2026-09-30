@@ -200,6 +200,43 @@ export function collectPins(repoRoot: string): Record<string, unknown> {
   return pins;
 }
 
+/**
+ * `bun.lock`'s `packages` section, or `null` when there is no readable lockfile.
+ *
+ * The file is JSON with trailing commas, so they are stripped before parsing. Only the
+ * INSTALLED packages are read — the `workspaces` section holds this repo's own manifests,
+ * i.e. exactly the direct declarations the redundancy question has to see past.
+ */
+export function readLockPackages(repoRoot: string): Record<string, unknown> | null {
+  const path = join(repoRoot, "bun.lock");
+  if (!existsSync(path)) return null;
+  try {
+    const parsed: unknown = JSON.parse(readFileSync(path, "utf8").replace(/,(\s*[}\]])/g, "$1"));
+    if (!isRecord(parsed) || !isRecord(parsed["packages"])) return null;
+    return parsed["packages"];
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Installed packages that depend on `name` themselves — the consumers an override exists to
+ * reach. A lock entry is `[ "<name>@<version>", <registry>, { dependencies, … }, <integrity> ]`.
+ */
+export function transitiveConsumers(lockPackages: Record<string, unknown>, name: string): string[] {
+  const out: string[] = [];
+  for (const [key, entry] of Object.entries(lockPackages)) {
+    if (!Array.isArray(entry)) continue;
+    const meta: unknown = entry[2];
+    if (!isRecord(meta)) continue;
+    const consumes = DEPENDENCY_FIELDS.some(
+      (field) => stringRecord(meta[field])[name] !== undefined,
+    );
+    if (consumes) out.push(key);
+  }
+  return out;
+}
+
 export function auditOverrideDrift(repoRoot: string): AuditResult {
   const errors: string[] = [];
   if (readJson(join(repoRoot, "package.json")) === null) {
@@ -214,12 +251,27 @@ export function auditOverrideDrift(repoRoot: string): AuditResult {
     throw err;
   }
 
+  const lockPackages = readLockPackages(repoRoot);
   for (const [name, pin] of Object.entries(collectPins(repoRoot))) {
     const declarations = collectDeclarations(repoRoot, manifests, name);
     // A transitive-only override has no declaration to contradict. That is the
     // normal case — most of this repo's pins exist precisely because nothing
     // declares the package directly — and it is not a finding.
     if (declarations.length === 0) continue;
+
+    // An override on a package that ONLY this repo's own manifests consume lifts
+    // nothing: the lockfile already pins the exact version a direct declaration
+    // resolves to. What it does do is break every Dependabot bump of that package —
+    // Dependabot moves the declaration but cannot edit `overrides`, so the bump trips
+    // the check below and needs the same hand-pushed "move the pin" commit, which is
+    // what @mastra/core and @mastra/mcp cost on #1144, #1238, #1331, #1515 and #1574
+    // before #1581 deleted them. Skipped without a lockfile rather than guessed at.
+    if (lockPackages !== null && transitiveConsumers(lockPackages, name).length === 0) {
+      errors.push(
+        `overrides["${name}"] has no transitive consumer in bun.lock — only this repo's own manifests (${declarations.map((d) => d.file).join(", ")}) depend on "${name}", so the override lifts nothing and only makes every Dependabot bump of it fail this gate. Drop the override; the lockfile already pins the version.`,
+      );
+      continue;
+    }
 
     if (typeof pin !== "string") {
       errors.push(
