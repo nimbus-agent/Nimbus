@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1790774923591,
+  "lastUpdate": 1790776778927,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "fd1e7ae03019158cbd3796d9e4933263d8687ea1",
-          "message": "feat(audit): action-pin freshness — pinned is not the same as current (#847)\n\n## Summary\n\n`audit:action-sha-pins` proves every `uses:` is a 40-hex SHA rather than\na moving tag. It is **structurally unable** to notice that the SHA is\ntwo years old — to that gate, an ancient pin and a fresh pin are\nidentical.\n\nP1's first sweep recorded exactly this (`harden-runner` v2.20.0 vs\nv2.19.4, `actions/checkout` v7.0.1 vs v7.0.0), classified it as\n*staleness* rather than *unpinning*, and deferred a freshness check as\n**\"Plan B\"**. This is that check.\n\nThe two gates stay separate on purpose: **pinning is a security\nproperty** (a moving tag is a supply-chain hole) and is checkable\noffline, so it stays in the local fast tier. **Freshness is a\nmaintenance property** needing network, so it runs in the scheduled\nsweep.\n\n## ⚠️ Ships RED on three real stale pins\n\nA sweep gate, so red here does **not** block PRs:\n\n```\n::error::actions/cache is pinned to 27d5ce7 but v6.1.0 has been out 33d (> 30d grace) — .github/workflows/ci.yml\n::error::dtolnay/rust-toolchain is pinned to 29eef33 but v1 has been out 338d (> 30d grace) — .github/workflows/codeql.yml\n::error::actions/attest-build-provenance is pinned to a2bbfa2 but v4.1.1 has been out 30d (> 30d grace) — .github/workflows/release.yml\n```\n\nBumping them is separate, reviewed work — a pin bump needs its own CI\nrun to prove the new SHA behaves.\n\n## Three corrections that came from running it\n\nEach changed a reported number, and each is the kind of thing that only\nshows up on contact with the real graph.\n\n**1. Grace is measured from the target commit's date, not the release's\n`published_at`.** Many actions ship a **rolling major tag**:\n`dtolnay/rust-toolchain`'s latest release is `v1` from 2022, but the tag\nhas moved many times since. Using the release date reported *\"v1 has\nbeen out 1472d\"* — technically true, wildly misleading, and it makes the\ngrace window meaningless for every rolling-tag action. The commit's own\ndate answers the question the gate is actually asking — *how long has\nthe thing you should be pinned to been available?* — and now reports\n**338d**.\n\n**2. A repo that publishes no releases is skipped, not reported\n`indeterminate`.** Our own `nimbus-agent/.github` composite actions have\nnone. There is nothing to be behind, and no amount of retrying changes\nthat, so warning forever would be pure noise. (Same lesson as the\n`unverifiable` verdict in #845: a permanent unknown must not be reported\nas a transient one.)\n\n**3. `daysSince` fails closed to `+Infinity`, not `-Infinity`.** My\nfirst version had the sign inverted, so an unreadable date made the age\n*smaller* than grace and reported the pin as **current** — fail-open,\nthe exact inversion the release-train's `ageHours` comment warns about.\nThe tests caught it; the comment now explains why the direction matters.\n\n## Design notes\n\n- **Grace: 30 days**, not the release train's 6 hours. Different failure\nclasses — a release-train edge is an automated pipeline that should\npropagate in minutes, so hours of lag is a defect; an action pin moves\nwhen a human or Dependabot gets to it, and a 6-hour window would mean a\npermanently red sweep.\n- **Annotated tags are dereferenced.** A release tag can point at a *tag\nobject*, not a commit; comparing the pin against the tag object's SHA\nwould report every annotated-tag action as stale forever.\n- **Tag-pinned refs are ignored** — an unpinned ref is\n`audit:action-sha-pins`'s finding, and reporting it here too would\ndouble-count one defect.\n- **One release lookup per distinct action**, cached — the same action\nappears in a dozen workflows and the API is rate-limited.\n- Two *different* pins of the same action are both kept: that divergence\nis itself drift worth seeing.\n\n## Testing\n\n- `bun test scripts/` — **654 pass, 20 skip, 0 fail** (24 new)\n- `bunx tsc -p scripts/tsconfig.json --noEmit` — exit 0\n- biome — clean\n- Live run above; no-`gh` degradation returns `::warning::` + exit 0\nlocally, red under `--strict`\n\n## Type of Change\n\n- [x] New feature (non-breaking change that adds functionality)\n- [x] CI / tooling\n\n## Non-Negotiables Checklist\n\n- [x] `bun run typecheck` — exit 0\n- [x] `bun run lint` (Biome) — clean via `bunx biome check\n--error-on-warnings scripts .github`\n- [x] All existing tests pass — 654\n- [x] New behaviour is covered by tests — 24\n- [x] No `any` — external JSON narrowed with `isRecord`\n- [x] No credentials in logs/IPC/config — all reads public\n- [x] Platform-specific code behind `PlatformServices` — n/a\n- [x] HITL gate untouched — n/a\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)",
-          "timestamp": "2026-07-26T21:11:08+03:00",
-          "tree_id": "02e392dbe52879c83282a777cef711a1494085e6",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/fd1e7ae03019158cbd3796d9e4933263d8687ea1"
-        },
-        "date": 1785090207642,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 320.44236949999976,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 322.02784270000774,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 325.19704340000135,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "306811640+nimbus-release-bot[bot]@users.noreply.github.com",
+            "name": "nimbus-release-bot[bot]",
+            "username": "nimbus-release-bot[bot]"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "502856cec7384929d3b1e496fb8635178b2a1c3c",
+          "message": "chore: release main (#1590)\n\n:robot: I have created a release *beep* *boop*\n---\n\n\n<details><summary>7.32.2</summary>\n\n##\n[7.32.2](https://github.com/nimbus-agent/Nimbus/compare/v7.32.1...v7.32.2)\n(2026-09-30)\n\n\n### Bug Fixes\n\n* **deps:** override past new brace-expansion and fast-uri advisories\n([#1586](https://github.com/nimbus-agent/Nimbus/issues/1586))\n([19327c5](https://github.com/nimbus-agent/Nimbus/commit/19327c5298a86c28d35363ee637a0263d7036f17))\n</details>\n\n---\nThis PR was generated with [Release\nPlease](https://github.com/googleapis/release-please). See\n[documentation](https://github.com/googleapis/release-please#release-please).\n\nCo-authored-by: nimbus-release-bot[bot] <306811640+nimbus-release-bot[bot]@users.noreply.github.com>",
+          "timestamp": "2026-09-30T13:25:18Z",
+          "tree_id": "ba2a9023e2cff9300f2f83c4db31bb5470ed841c",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/502856cec7384929d3b1e496fb8635178b2a1c3c"
+        },
+        "date": 1790776773743,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 319.69416070000443,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 318.49790589999685,
             "unit": "ms"
           }
         ]
