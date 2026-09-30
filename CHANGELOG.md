@@ -2,6 +2,13 @@
 
 All notable changes to the `nimbus` core (headless Gateway + CLI binary + first-party MCP connectors) are documented in this file. release-please appends new entries between this header and the most recent version below when a release PR merges.
 
+## [7.32.2](https://github.com/nimbus-agent/Nimbus/compare/v7.32.1...v7.32.2) (2026-09-30)
+
+
+### Bug Fixes
+
+* **deps:** override past new brace-expansion and fast-uri advisories ([#1586](https://github.com/nimbus-agent/Nimbus/issues/1586)) ([19327c5](https://github.com/nimbus-agent/Nimbus/commit/19327c5298a86c28d35363ee637a0263d7036f17))
+
 ## [7.32.1](https://github.com/nimbus-agent/Nimbus/compare/v7.32.0...v7.32.1) (2026-09-30)
 
 
