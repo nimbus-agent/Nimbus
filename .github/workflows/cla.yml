@@ -5,6 +5,10 @@ on:
     types: [created]
   pull_request_target:
     types: [opened, synchronize, reopened]
+  # `cla` is a required context in the General ruleset, and a merge-queue entry
+  # has no PR of its own to sign — see `cla-merge-queue` below.
+  merge_group:
+    types: [checks_requested]
 
 # Least privilege at the workflow level: every job starts read-only. The single
 # `cla` job re-grants exactly the writes contributor-assistant needs, so the
@@ -13,7 +17,10 @@ permissions:
   contents: read
 
 concurrency:
-  group: cla-${{ github.event.pull_request.number || github.event.issue.number }}
+  # A queue entry has neither a PR nor an issue number; without its own SHA every
+  # queue run would share the group `cla-`, and a newer pending one would evict
+  # the older — leaving that entry's required `cla` context unreported.
+  group: cla-${{ github.event.pull_request.number || github.event.issue.number || github.event.merge_group.head_sha }}
   cancel-in-progress: false
 
 jobs:
@@ -57,3 +64,21 @@ jobs:
           allowlist: 'bot*,asafgolombek,claude'
           custom-pr-sign-comment: 'I have read the CLA Document and I hereby sign the CLA'
           custom-notsigned-prcomment: 'Thanks for your PR. Before it can be merged, please sign the [Individual CLA](https://github.com/nimbus-agent/.github/blob/main/CLA/ICLA.md) by commenting exactly: **I have read the CLA Document and I hereby sign the CLA**. Contributing on behalf of an employer? See the [Corporate CLA](https://github.com/nimbus-agent/.github/blob/main/CLA/CCLA.md).'
+
+  # The merge queue re-runs every required context on the MERGED result, and
+  # `cla` is one of them. A queue entry has no PR to sign or comment on, and it
+  # only exists because its PR already passed `cla` — the queue admits a PR only
+  # once every required check is green on it. So this job reports the same
+  # context name and passes. It holds no token and no write permission: it
+  # cannot sign, and it cannot vouch for anything the PR-time check did not.
+  cla-merge-queue:
+    name: cla
+    if: github.event_name == 'merge_group'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions: {}
+    steps:
+      - name: CLA was verified on the PR before it entered the queue
+        env:
+          QUEUE_REF: ${{ github.event.merge_group.head_ref }}
+        run: echo "merge_group ${QUEUE_REF} — CLA already verified at PR time"

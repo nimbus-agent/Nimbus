@@ -200,6 +200,67 @@ export function collectPins(repoRoot: string): Record<string, unknown> {
   return pins;
 }
 
+/**
+ * `bun.lock`'s `packages` section, or `null` when there is no readable lockfile.
+ *
+ * The file is JSON with trailing commas, so they are stripped before parsing. Only the
+ * INSTALLED packages are read — the `workspaces` section holds this repo's own manifests,
+ * i.e. exactly the direct declarations the redundancy question has to see past.
+ */
+export function readLockPackages(repoRoot: string): Record<string, unknown> | null {
+  const path = join(repoRoot, "bun.lock");
+  if (!existsSync(path)) return null;
+  try {
+    const parsed: unknown = JSON.parse(readFileSync(path, "utf8").replace(/,(\s*[}\]])/g, "$1"));
+    if (!isRecord(parsed) || !isRecord(parsed["packages"])) return null;
+    return parsed["packages"];
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * The metadata objects of one lock entry, or `null` when the entry is not a shape this gate
+ * knows how to read.
+ *
+ * A registry entry is `[ "<name>@<version>", <registry>, { dependencies, … }, <integrity> ]`
+ * and a workspace link is the one-element `[ "<name>@workspace:<path>" ]`, whose dependencies
+ * live in the `workspaces` section instead. Other sources put the object at a different index,
+ * so every object in the tuple is read rather than one position. What is refused is a
+ * multi-element entry with NO object in it: that is not "this package depends on nothing", it
+ * is an entry whose dependencies cannot be seen.
+ */
+function lockEntryMetas(entry: unknown): Record<string, unknown>[] | null {
+  if (!Array.isArray(entry) || typeof entry[0] !== "string") return null;
+  if (entry.length === 1) return [];
+  const metas = entry.filter(isRecord);
+  return metas.length === 0 ? null : metas;
+}
+
+/**
+ * Installed packages that depend on `name` themselves — the consumers an override exists to
+ * reach — or `null` when the answer is INDETERMINATE because some lock entry could not be read.
+ *
+ * `null` is not an empty list and must never be treated as one. "No consumer" is a claim about
+ * every installed package; an entry this cannot read might be the consumer, so an unreadable
+ * lockfile degrades to "unknown", never to a finding that tells the author to delete a pin.
+ */
+export function transitiveConsumers(
+  lockPackages: Record<string, unknown>,
+  name: string,
+): string[] | null {
+  const out: string[] = [];
+  for (const [key, entry] of Object.entries(lockPackages)) {
+    const metas = lockEntryMetas(entry);
+    if (metas === null) return null;
+    const consumes = metas.some((meta) =>
+      DEPENDENCY_FIELDS.some((field) => stringRecord(meta[field])[name] !== undefined),
+    );
+    if (consumes) out.push(key);
+  }
+  return out;
+}
+
 export function auditOverrideDrift(repoRoot: string): AuditResult {
   const errors: string[] = [];
   if (readJson(join(repoRoot, "package.json")) === null) {
@@ -214,12 +275,30 @@ export function auditOverrideDrift(repoRoot: string): AuditResult {
     throw err;
   }
 
+  const lockPackages = readLockPackages(repoRoot);
   for (const [name, pin] of Object.entries(collectPins(repoRoot))) {
     const declarations = collectDeclarations(repoRoot, manifests, name);
     // A transitive-only override has no declaration to contradict. That is the
     // normal case — most of this repo's pins exist precisely because nothing
     // declares the package directly — and it is not a finding.
     if (declarations.length === 0) continue;
+
+    // An override on a package that ONLY this repo's own manifests consume lifts
+    // nothing: the lockfile already pins the exact version a direct declaration
+    // resolves to. What it does do is break every Dependabot bump of that package —
+    // Dependabot moves the declaration but cannot edit `overrides`, so the bump trips
+    // the check below and needs the same hand-pushed "move the pin" commit, which is
+    // what @mastra/core and @mastra/mcp cost on #1144, #1238, #1331, #1515 and #1574
+    // before #1581 deleted them. Skipped without a lockfile, or with one that has an entry
+    // this cannot read, rather than guessed at: only a complete scan that found nobody is
+    // evidence that nobody is there.
+    const consumers = lockPackages === null ? null : transitiveConsumers(lockPackages, name);
+    if (consumers !== null && consumers.length === 0) {
+      errors.push(
+        `overrides["${name}"] has no transitive consumer in bun.lock — only this repo's own manifests (${declarations.map((d) => d.file).join(", ")}) depend on "${name}", so the override lifts nothing and only makes every Dependabot bump of it fail this gate. Drop the override; the lockfile already pins the version.`,
+      );
+      continue;
+    }
 
     if (typeof pin !== "string") {
       errors.push(

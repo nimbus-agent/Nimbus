@@ -8,6 +8,8 @@ import {
   collectDeclarations,
   collectPins,
   NegatedWorkspaceEntryError,
+  readLockPackages,
+  transitiveConsumers,
   workspaceManifests,
 } from "./check-override-drift.ts";
 
@@ -272,5 +274,91 @@ describe("the real repository", () => {
   test("root overrides agree with every declared range", () => {
     const result = auditOverrideDrift(join(import.meta.dir, "..", ".."));
     expect(result.errors).toEqual([]);
+  });
+});
+
+describe("redundant overrides — a pin only this repo's own manifests consume", () => {
+  /** A bun.lock in the real on-disk shape: JSON with trailing commas, a workspaces section, packages. */
+  function writeLock(packages: Record<string, unknown>): void {
+    const body = JSON.stringify({ lockfileVersion: 1, workspaces: { "": {} }, packages }, null, 2);
+    writeFileSync(join(root, "bun.lock"), body.replace(/\n(\s*)([}\]])/g, ",\n$1$2"));
+  }
+  function manifests(): void {
+    write("package.json", {
+      overrides: { "@mastra/core": "1.67.0" },
+      workspaces: ["packages/gateway"],
+    });
+    write("packages/gateway/package.json", { dependencies: { "@mastra/core": "^1.67.0" } });
+  }
+
+  test("fails when nothing installed depends on the pinned package — the @mastra/core shape", () => {
+    manifests();
+    writeLock({
+      "@mastra/core": ["@mastra/core@1.67.0", "", { dependencies: { zod: "^4.0.0" } }, "sha512-x"],
+      zod: ["zod@4.6.5", "", {}, "sha512-y"],
+    });
+    const result = auditOverrideDrift(root);
+    expect(result.ok).toBe(false);
+    expect(result.errors).toHaveLength(1);
+    expect(result.errors[0]).toContain('overrides["@mastra/core"] has no transitive consumer');
+    expect(result.errors[0]).toContain("packages/gateway/package.json");
+  });
+
+  test("passes when an installed package also depends on it — the pin is doing real work", () => {
+    manifests();
+    writeLock({
+      "@mastra/core": ["@mastra/core@1.67.0", "", {}, "sha512-x"],
+      "@mastra/mcp": [
+        "@mastra/mcp@1.18.0",
+        "",
+        { peerDependencies: { "@mastra/core": ">=1.0.0" } },
+        "sha512-z",
+      ],
+    });
+    expect(auditOverrideDrift(root)).toEqual({ ok: true, errors: [] });
+  });
+
+  test("a transitive-only override is untouched by this rule — nothing declares it, so nothing drifts", () => {
+    write("package.json", { overrides: { undici: "7.29.1" }, workspaces: [] });
+    writeLock({ undici: ["undici@7.29.1", "", {}, "sha512-u"] });
+    expect(auditOverrideDrift(root)).toEqual({ ok: true, errors: [] });
+  });
+
+  test("no lockfile: the rule is skipped rather than guessed at", () => {
+    manifests();
+    expect(readLockPackages(root)).toBeNull();
+    expect(auditOverrideDrift(root)).toEqual({ ok: true, errors: [] });
+  });
+
+  test.each([
+    ["a registry entry with no metadata object", ["consumer@1.0.0", "", null, "sha512-x"]],
+    ["an entry that is not a tuple", { name: "consumer" }],
+    ["a tuple with no package id", [null, "", {}, "sha512-x"]],
+  ])("%s: the consumer question is indeterminate, never a finding", (_label, entry) => {
+    manifests();
+    // Without the unreadable entry this exact lock IS a finding (first test above), so a pass
+    // here is the entry being refused, not the rule having nothing to say.
+    writeLock({
+      "@mastra/core": ["@mastra/core@1.67.0", "", {}, "sha512-x"],
+      consumer: entry,
+    });
+    expect(transitiveConsumers(readLockPackages(root) ?? {}, "@mastra/core")).toBeNull();
+    expect(auditOverrideDrift(root)).toEqual({ ok: true, errors: [] });
+  });
+
+  test("a workspace link and an entry with its metadata at another index are both read", () => {
+    const lock = {
+      gateway: ["gateway@workspace:packages/gateway"],
+      forked: ["forked@github:o/r#abc", { dependencies: { "@mastra/core": "^1.0.0" } }, "abc"],
+    };
+    expect(transitiveConsumers(lock, "@mastra/core")).toEqual(["forked"]);
+    expect(transitiveConsumers(lock, "zod")).toEqual([]);
+  });
+
+  test("the real repository's lockfile parses and names real consumers", () => {
+    const lock = readLockPackages(join(import.meta.dir, "..", ".."));
+    expect(lock).not.toBeNull();
+    // zod is pinned AND declared directly, and is legitimately lifted for transitive copies.
+    expect(transitiveConsumers(lock ?? {}, "zod")?.length).toBeGreaterThan(0);
   });
 });
