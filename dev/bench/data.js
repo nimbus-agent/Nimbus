@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1790740905356,
+  "lastUpdate": 1790751455118,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "5a5690ebc10b2b01e758113657b75ca0db33c295",
-          "message": "docs(infra): bring the infrastructure roadmap up to date with 2026-07-26 (#838)\n\nSeveral rows in `docs/infrastructure-roadmap.md` had gone stale against\nreality. Given this file's own rule — *\"a sub-program is done when its\ngate is green in CI, not when its code merges\"* — that is a correctness\nproblem rather than cosmetics.\n\n## Changes\n\n**Status table**\n- **P6** — CLA is done *and now actually executing*; only the\nbypass-actor audit remains. (The row still said \"Remaining: CLA\".)\n- **P2** — Phase 1 red-proved on a real phantom and green after (`OK (5\nedges current)`).\n- **P5** — notes the second gate today's findings specify.\n\n**CLA progress log** — the entire \"Pending apply (org-owner)\" checklist\nwas applied 2026-07-24; rewritten as delivered, with the App id, the\n`cla-signatures` branch, and the fact that the required context name is\n**`cla`** (the job name, not \"CLA Assistant\").\n\nCritically, it now records that **the gate was dead on `Nimbus` for two\ndays**: 23 of 23 runs were `startup_failure` because the repo's Actions\nallowlist did not permit `contributor-assistant/github-action`, so the\nrequired `cla` context was never reported and **every PR was\nunmergeable**. Plus the retrigger gotcha — `startup_failure` runs cannot\nbe `gh run rerun`'d; close+reopen is the way.\n\n**P2 progress log** — records the three nested defects the red thread\nuncovered, each hidden by the one above it:\n\n1. the phantom itself (`v0.27.0` merged, never tagged);\n2. #824's auto-reconcile had been a **silent no-op since it shipped** —\n`gh` writes its error body to *stdout*, so `$(... || true)` left the\n\"tag missing\" probe non-empty and the create branch never ran (fixed\n#834);\n3. with that fixed, the create hit `403` — GitHub refuses to let an App\ncreate a ref at a commit whose `.github/workflows/**` differs from the\ndefault branch without **`Workflows: write`** (fixed #837).\n\nWith the diagnostics that cracked each, since they generalise: the\n`X-Accepted-Github-Permissions` response header,\n`rulesets/rule-suites?ref=…` returning `[]` as proof a ruleset was *not*\ninvolved, and the Workflows-vs-Actions permission confusion in the App\nUI.\n\n**Pattern table** — adds the CLA outage as a **fourth instance**, and a\nshort section arguing it is the sharpest one yet. A control that was\nwritten, deployed, made *required*, and red-proved on another repo, yet\nnever executed once. It defeats a weaker reading of this file's own bar:\n*\"the gate is green\"* is not the test, *\"the gate ran\"* is.\n`cla-coverage` was green throughout — it verifies a control's\n**presence**, which cannot detect that the control is structurally\nunable to **execute**.\n\n**New P5 progress log** — captures the two gates today implies, so the\nmotivation survives: `audit:actions-allowlist` (would have caught the\noutage on day zero; also guards the full-replace fragility of that API),\nand the health-probe **permission-superset** rule from #837 (a\npermission the probe omits is one it cannot detect being revoked). Plus\nthe `VSCE_PAT` **2026-12-01** expiry.\n\n## Still outstanding after this\n\nThe P2 log carries one deliberate placeholder: the scheduled-sweep run\nnumber. The gate is green locally against live state, so dispatching\n`org-drift-sweep.yml` and recording that number is the last formality\nbefore P2 Phase 1 is formally done.\n\n## Verification\n\n`lint:markdown` 0 errors · `audit:doc-refs` 616/616 resolve · lychee 5/5\nOK including `--include-fragments` for the two new internal anchors.\n\nDocs-only.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nCo-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>",
-          "timestamp": "2026-07-26T17:48:55+03:00",
-          "tree_id": "d7c47f28309c71cfc51dbd83fa09c479e0d7e4a7",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/5a5690ebc10b2b01e758113657b75ca0db33c295"
-        },
-        "date": 1785078796014,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 323.05936464999866,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 327.8437593999955,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 342.27765130000114,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "306811640+nimbus-release-bot[bot]@users.noreply.github.com",
+            "name": "nimbus-release-bot[bot]",
+            "username": "nimbus-release-bot[bot]"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "b8cadb5c8641bb27c0df11a5b7d02d5cca2f63c8",
+          "message": "chore: release main (#1578)\n\n:robot: I have created a release *beep* *boop*\n---\n\n\n<details><summary>7.32.1</summary>\n\n##\n[7.32.1](https://github.com/nimbus-agent/Nimbus/compare/v7.32.0...v7.32.1)\n(2026-09-30)\n\n\n### Bug Fixes\n\n* **deps:** override past five new moderate advisories (ip-address,\nnodemailer, undici, markdown-it)\n([#1577](https://github.com/nimbus-agent/Nimbus/issues/1577))\n([beec826](https://github.com/nimbus-agent/Nimbus/commit/beec82653ff9b0be85c073112b35b58a01754436))\n</details>\n\n---\nThis PR was generated with [Release\nPlease](https://github.com/googleapis/release-please). See\n[documentation](https://github.com/googleapis/release-please#release-please).\n\nCo-authored-by: nimbus-release-bot[bot] <306811640+nimbus-release-bot[bot]@users.noreply.github.com>",
+          "timestamp": "2026-09-30T09:44:03+03:00",
+          "tree_id": "b0bd142b475c09800dd56373f79cbf05ad383acd",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/b8cadb5c8641bb27c0df11a5b7d02d5cca2f63c8"
+        },
+        "date": 1790751451081,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 339.0945685500046,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 342.79131339999765,
             "unit": "ms"
           }
         ]
