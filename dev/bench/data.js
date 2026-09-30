@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1790736149368,
+  "lastUpdate": 1790737856002,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "ffcec8eab8370ab6b8f908e0646a0f3975bd2194",
-          "message": "fix(release): reconcile step never detected a missing tag (gh writes 422 to stdout) (#834)\n\nThe phantom-release guard added in #824 has been a **silent no-op since\nit shipped**. `v0.27.0` has been unreleased since 2026-07-24 as a direct\nresult.\n\n## The bug\n\n```bash\nexisting=$(gh api \"repos/$REPO/commits/$tag\" --jq \".sha\" 2>/dev/null || true)\n```\n\n`gh` writes its JSON error body to **stdout**, not stderr. On a missing\ntag it exits 1 *and* prints the 422 body — so `$existing` is non-empty,\nthe `[ -z \"$existing\" ]` → \"create the tag\" branch never runs, and\ncontrol falls to the \"tag points elsewhere\" guard, which `continue`s.\n\nThe live warning quotes the raw error JSON where a commit sha belongs:\n\n```\n::warning::v0.27.0 exists but points at {\"message\":\"No commit found for SHA: v0.27.0\",\n...,\"status\":\"422\"}, not PR #827's merge commit 1e0b98df; not relabelling — needs manual review.\n```\n\n(run `30105358184`). #824 was already live when #827 merged, so the\nrecovery ran and did nothing.\n\n## The fix\n\nAssign only on a zero exit, and require the result to look like a commit\nsha so no future error-body shape can impersonate a resolved tag.\n\n## Verification (against live state, read-only)\n\n| | old capture | fixed capture |\n| --- | --- | --- |\n| missing tag `v0.27.0` | `{\"message\":\"No commit found...}` → wrong\nbranch | `\"\"` → **`WOULD CREATE: v0.27.0 at 1e0b98df for PR #827`** |\n| existing tag `v0.26.0` | resolves | resolves to `8b8b877b…` —\npoints-elsewhere guard still works |\n\nAlso `bash -n` clean, and the non-match path verified safe under `set\n-euo pipefail`.\n\n## Follow-up\n\nThis does not itself tag `v0.27.0` — the pipeline stays stuck until\neither this merges and the next `release-please` run reconciles it, or\nthe manual playbook is run:\n\n```bash\ngit tag v0.27.0 1e0b98df && git push origin v0.27.0\ngh pr edit 827 --add-label \"autorelease: tagged\" --remove-label \"autorelease: pending\"\n```\n\nFound by the new `audit:release-staleness` gate on its first live run\n(see the P2 Release Train PR).\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n\n## Summary by CodeRabbit\n\n* **Bug Fixes**\n  * Improved release recovery when a version tag is missing.\n* Ensured phantom releases are correctly created and pending release\nitems are relabeled after recovery.\n* Prevented API error responses from being misinterpreted as valid tags.\n\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>",
-          "timestamp": "2026-07-26T16:47:48+03:00",
-          "tree_id": "ade0d06583f4b5125da3af819b8711423e1132da",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/ffcec8eab8370ab6b8f908e0646a0f3975bd2194"
-        },
-        "date": 1785074888332,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 259.163999750002,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 256.31118184999906,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 316.89030944999797,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "49699333+dependabot[bot]@users.noreply.github.com",
+            "name": "dependabot[bot]",
+            "username": "dependabot[bot]"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "8a544dbcae5f6e5c762df751851960735a63d530",
+          "message": "chore(deps): bump the all-minor-patch group across 1 directory with 21 updates (#1582)\n\nBumps the all-minor-patch group with 21 updates:\n\n- dependency-cruiser 18.3.1 -> 18.4.0\n- jscpd 5.3.0 -> 5.3.2\n- knip 6.37.0 -> 6.38.0\n- markdownlint-cli2 0.23.2 -> 0.23.3\n- @mastra/core 1.67.0 -> 1.71.0\n- hyparquet 1.31.1 -> 1.31.2\n- imapflow 2.0.5 -> 2.0.7\n- tsdav 2.3.3 -> 2.3.4\n- fast-check 4.10.1 -> 4.10.2\n- @modelcontextprotocol/sdk 1.30.0 -> 1.30.1\n- @tauri-apps/api 2.11.1 -> 2.12.0\n- @tauri-apps/plugin-clipboard-manager 2.3.3 -> 2.4.0\n- @tauri-apps/plugin-dialog 2.7.3 -> 2.8.0\n- @tauri-apps/plugin-fs 2.5.2 -> 2.6.0\n- react-window 2.3.1 -> 2.3.3\n- @tauri-apps/cli 2.11.4 -> 2.12.0\n- @vitest/coverage-v8 5.0.1 -> 5.0.2\n- jsdom 30.1.0 -> 30.1.1\n- vitest 5.0.1 -> 5.0.2\n- @astrojs/starlight 0.42.2 -> 0.42.4\n- astro 7.3.3 -> 7.3.5\n\nThe original Dependabot body quoted upstream release notes whose\nparentheses break the squash-commit parse gate, so it was replaced with\nthis summary.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nSigned-off-by: dependabot[bot] <support@github.com>\nCo-authored-by: dependabot[bot] <49699333+dependabot[bot]@users.noreply.github.com>\nCo-authored-by: Asaf <asafgolombek@gmail.com>",
+          "timestamp": "2026-09-30T03:01:28Z",
+          "tree_id": "5fdc8876735b6883675292d47274eae7f1b7d171",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/8a544dbcae5f6e5c762df751851960735a63d530"
+        },
+        "date": 1790737851435,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 272.58405434999986,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 273.23587480000094,
             "unit": "ms"
           }
         ]
