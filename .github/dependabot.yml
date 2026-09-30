@@ -20,6 +20,11 @@
 # deliberately left out of it: a major needs to be read, and burying one in a
 # 30-package PR is how a breaking change lands unnoticed. The major-only groups
 # after it exist where packages must move together or not at all.
+#
+# What happens AFTER a PR opens is not configured here: `dependabot-shepherd.yml`
+# (hourly) replaces each description with a parse-safe summary and enqueues every
+# PR whose bumps are all non-breaking in the merge queue; majors wait for a human.
+# The grouping above is what keeps that to a handful of PRs a week.
 version: 2
 updates:
   - package-ecosystem: "bun"

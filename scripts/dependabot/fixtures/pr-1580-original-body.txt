@@ -1,0 +1,656 @@
+Bumps the all-minor-patch group with 17 updates in the / directory:
+
+| Package | From | To |
+| --- | --- | --- |
+| [dependency-cruiser](https://github.com/sverweij/dependency-cruiser) | `18.3.1` | `18.4.0` |
+| [jscpd](https://github.com/kucherenko/jscpd/tree/HEAD/rust/jscpd) | `5.3.0` | `5.3.2` |
+| [knip](https://github.com/webpro-nl/knip/tree/HEAD/packages/knip) | `6.37.0` | `6.38.0` |
+| [markdownlint-cli2](https://github.com/DavidAnson/markdownlint-cli2) | `0.23.2` | `0.23.3` |
+| [@mastra/core](https://github.com/mastra-ai/mastra/tree/HEAD/packages/core) | `1.67.0` | `1.71.0` |
+| [imapflow](https://github.com/postalsys/imapflow) | `2.0.5` | `2.0.7` |
+| [tsdav](https://github.com/natelindev/tsdav) | `2.3.3` | `2.3.4` |
+| [fast-check](https://github.com/dubzzz/fast-check/tree/HEAD/packages/fast-check) | `4.10.1` | `4.10.2` |
+| [@modelcontextprotocol/sdk](https://github.com/modelcontextprotocol/typescript-sdk) | `1.30.0` | `1.30.1` |
+| [@tauri-apps/api](https://github.com/tauri-apps/tauri) | `2.11.1` | `2.12.0` |
+| [react-window](https://github.com/bvaughn/react-window) | `2.3.1` | `2.3.3` |
+| [@tauri-apps/cli](https://github.com/tauri-apps/tauri) | `2.11.4` | `2.12.0` |
+| [@vitest/coverage-v8](https://github.com/vitest-dev/vitest/tree/HEAD/packages/coverage-v8) | `5.0.1` | `5.0.2` |
+| [jsdom](https://github.com/jsdom/jsdom) | `30.1.0` | `30.1.1` |
+| [vitest](https://github.com/vitest-dev/vitest/tree/HEAD/packages/vitest) | `5.0.1` | `5.0.2` |
+| [@astrojs/starlight](https://github.com/withastro/starlight/tree/HEAD/packages/starlight) | `0.42.2` | `0.42.4` |
+| [astro](https://github.com/withastro/astro/tree/HEAD/packages/astro) | `7.3.3` | `7.3.5` |
+
+
+Updates `dependency-cruiser` from 18.3.1 to 18.4.0
+<details>
+<summary>Release notes</summary>
+<p><em>Sourced from <a href="https://github.com/sverweij/dependency-cruiser/releases">dependency-cruiser's releases</a>.</em></p>
+<blockquote>
+<h2>v18.4.0</h2>
+<h2>✨ features</h2>
+<p>To improve visibility of the state of the <em>baseline</em> (<em>.dependency-cruiser-known-violations.json</em>)...</p>
+<ul>
+<li>...the <em>err</em>, <em>err-html</em> and <em>markdown</em> reporters now show the number of stale entries in the baseline.
+(c617e580/ e9ad4ce6/ be91a27c/ 993ac9df)</li>
+<li>... the <em>err</em>, <em>null</em>, <em>azure-devops</em> and <em>teamcity</em> reporters can exit with a non-zero exit code when the baseline contains stale entries (set <em>baseline.staleEntriesSeverity</em> to <em>error</em> to enable).<br />
+(<a href="https://redirect.github.com/sverweij/dependency-cruiser/issues/1100">#1100</a> / 0dbd7610)</li>
+<li>... the new <em>baseline-mode</em> 'format' sorts the baseline so future diffs are easier to read after manual edits.
+(077d4431/ 3e465ea1)</li>
+</ul>
+<p>Thanks to <a href="https://github.com/yunusdim"><code>@​yunusdim</code></a> and <a href="https://github.com/BPScott"><code>@​BPScott</code></a> for the raising the issues and providing the suggestions and feedback that birthed these 🙇.</p>
+<h2>📖 documentation</h2>
+<ul>
+<li>e41450b9 doc(cli): adds note to --baseline that severities are ignored on comparison</li>
+</ul>
+<h2>👷 maintenance</h2>
+<ul>
+<li>9f402bbb/ ab42c712 chore(npm): updates all external devDependencies</li>
+<li>c9d8fb5d chore(npm): adds upem policy to prevent accidents when <code>@​types/node</code> publishes a super-old version as 'latest'</li>
+</ul>
+</blockquote>
+</details>
+<details>
+<summary>Commits</summary>
+<ul>
+<li><a href="https://github.com/sverweij/dependency-cruiser/commit/7c22858071cc4491321c735ff11894d90648ee6e"><code>7c22858</code></a> 18.4.0</li>
+<li><a href="https://github.com/sverweij/dependency-cruiser/commit/9f402bbbd039f8365b1a610c28c940ddcdbe906f"><code>9f402bb</code></a> chore(npm): updates all external devDependencies</li>
+<li><a href="https://github.com/sverweij/dependency-cruiser/commit/993ac9df118d55d928e2d371e37ec8c845e71979"><code>993ac9d</code></a> feat(report/markdown): adds baseline stale count (<a href="https://redirect.github.com/sverweij/dependency-cruiser/issues/1101">#1101</a>)</li>
+<li><a href="https://github.com/sverweij/dependency-cruiser/commit/c9d8fb5d9126c0fbfbd3ee5b0305f0456ea2a0d4"><code>c9d8fb5</code></a> chore(npm): adds upem policy to prevent accidents when <code>@​types/node</code> publishes ...</li>
+<li><a href="https://github.com/sverweij/dependency-cruiser/commit/0dbd7610658f42f40a3f789bb040acd05edff8f2"><code>0dbd761</code></a> feat: adds option to make stale entries in the baseline a non-zero-exit-code ...</li>
+<li><a href="https://github.com/sverweij/dependency-cruiser/commit/be91a27c8be61cfeacdf1c00b35d390f4eacf285"><code>be91a27</code></a> feat(report/err-html): adds baseline stale count and table (<a href="https://redirect.github.com/sverweij/dependency-cruiser/issues/1099">#1099</a>)</li>
+<li><a href="https://github.com/sverweij/dependency-cruiser/commit/e9ad4ce6adba1c9e62c11580221a81df3d33aa4a"><code>e9ad4ce</code></a> feat(report/err): adds stale baseline count (<a href="https://redirect.github.com/sverweij/dependency-cruiser/issues/1098">#1098</a>)</li>
+<li><a href="https://github.com/sverweij/dependency-cruiser/commit/c617e58095938c962597745e617d587c03cf8bdc"><code>c617e58</code></a> feat(analyze): adds baseline stats to the summary (<a href="https://redirect.github.com/sverweij/dependency-cruiser/issues/1097">#1097</a>)</li>
+<li><a href="https://github.com/sverweij/dependency-cruiser/commit/3e465ea166214bf1210699150e421b8f5b74d58c"><code>3e465ea</code></a> feat(baseline): renames baseline-mode 'view' to 'format' &amp; sorts the baseline...</li>
+<li><a href="https://github.com/sverweij/dependency-cruiser/commit/077d4431cbe4fa52f8e41c05dd1a1cb196c26638"><code>077d443</code></a> feat(baseline): adds dry-run ('view') mode (<a href="https://redirect.github.com/sverweij/dependency-cruiser/issues/1096">#1096</a>)</li>
+<li>Additional commits viewable in <a href="https://github.com/sverweij/dependency-cruiser/compare/v18.3.1...v18.4.0">compare view</a></li>
+</ul>
+</details>
+<br />
+
+Updates `jscpd` from 5.3.0 to 5.3.2
+<details>
+<summary>Release notes</summary>
+<p><em>Sourced from <a href="https://github.com/kucherenko/jscpd/releases">jscpd's releases</a>.</em></p>
+<blockquote>
+<h2>Release v5.3.2</h2>
+<h3>New Features</h3>
+<ul>
+<li><strong>Rust dead code, read from the compiler.</strong> jscpd does not parse Rust, and does not need to. Every <code>cargo build</code> already prints lines like <code>function </code>reprint<code> is never used</code>, with real name resolution, trait dispatch and macro expansion behind them. The dead-code run now reads that output, from the JSON of <code>cargo check</code> (or <code>build</code>, <code>clippy</code>, <code>test --no-run</code>), and reports it next to everything else, through the same categories, reporters and <code>--min-confidence</code>, at 100% confidence.
+<ul>
+<li><code>basta</code> takes <code>--rust-diagnostics &lt;file&gt;</code>, or <code>-</code> for a pipe: <code>cargo check --all-targets --message-format=json | basta . --rust-diagnostics -</code>.</li>
+<li>jscpd takes the same flag for <code>--dead-code</code>, <code>--dashboard</code> and <code>--health</code>, so a Rust project gets its health badge from the check it already runs: <code>cargo check --all-targets --message-format=json | jscpd . --health --rust-diagnostics - --reporters badge</code>. The dead-code section of the config file takes the file as <code>rustDiagnostics</code>.</li>
+<li>Neither tool runs cargo itself, because that would execute the project's build scripts and procedural macros.</li>
+<li>The compiler's span covers only the name, so the item's real size is read from the source. An item that <code>--all-targets</code> reports twice is counted once. A diagnostic inside a macro expansion, or for a crate outside the scanned paths, is left out.</li>
+<li>A finding from a test target is handled like a test file in any other language: reported only with <code>--include-tests</code>, at 85%.</li>
+<li>In a workspace, cargo writes paths relative to the workspace root, and they are resolved as such. A relative <code>manifest_path</code> in a hand-edited or copied file is resolved from where the file lives.</li>
+<li>The compiler never reports a <code>pub</code> item of a library, and it has no notion of an unused file, so jscpd reports neither for Rust.</li>
+<li>The dashboard's dead-code heading no longer names three languages, and a project with no language the run could read says so in its health score.</li>
+<li>See <a href="https://github.com/kucherenko/jscpd/tree/HEAD/rust/jscpd/blob/fixtures/dead-code-demo/README.md#rust-from-the-compiler"><code>fixtures/dead-code-demo</code></a>. (<a href="https://redirect.github.com/kucherenko/jscpd/pull/1089">#1089</a>)</li>
+</ul>
+</li>
+</ul>
+<h3>Bug Fixes</h3>
+<ul>
+<li>
+<p><strong>Text around an embedded code block was counted as code.</strong> A <code>ts</code> block in a markdown file, a <code>&lt;script&gt;</code> in a single-file component: jscpd scans these under the embedded language's own format, and the block keeps the line numbers of the file it lives in. The statistics read those numbers as if the block ran the whole way, which put the markdown prose and the component templates into the embedded language's line counts — both the total and the duplicated lines. On a repository with about 3600 markdown files the typescript row said 51.30% of lines were duplicated where the same code, scanned with <code>-f typescript</code>, said 3.37%. Neither number was a typo and both came from the same run.</p>
+<p>An embedded source now counts the lines its blocks occupy, and a clone counts the block lines it covers rather than everything its fragment reaches across. The two percentage columns agree again, which is the quickest way to check a run: they measure the same duplication, so when the line column sits far below the token column it is counting text that holds no code. Ordinary files are counted exactly as before. See <a href="https://github.com/kucherenko/jscpd/tree/HEAD/rust/jscpd/blob/fixtures/embedded-stats-demo/README.md"><code>fixtures/embedded-stats-demo</code></a>. (<a href="https://redirect.github.com/kucherenko/jscpd/pull/1091">#1091</a>, closes <a href="https://redirect.github.com/kucherenko/jscpd/issues/1090">#1090</a>)</p>
+</li>
+<li>
+<p><strong>Every clone was one line short.</strong> Duplicated lines came from <code>end - start</code>, so a clone covering lines 10 through 19 counted nine — while the console printed <code>10 lines</code> for it, from its own arithmetic. Line counts are inclusive now, and the header and the table come from one place. Expect duplicated-line totals to rise by about one line per clone, and percentages with them. (<a href="https://redirect.github.com/kucherenko/jscpd/pull/1091">#1091</a>)</p>
+</li>
+</ul>
+<h3>Other</h3>
+<ul>
+<li>The dead-code engine in this release is basta 0.3.0, which is also published on its own: <a href="https://www.npmjs.com/package/basta"><code>basta</code> on npm</a>, <a href="https://crates.io/crates/basta">crates.io</a> and <a href="https://github.com/kucherenko/basta/releases/tag/v0.3.0">GitHub</a>.</li>
+</ul>
+<h2>Published Packages</h2>
+<ul>
+<li><code>basta@0.3.0</code> on crates.io</li>
+<li><code>cpd-core@0.1.18</code> on crates.io</li>
+<li><code>cpd-finder@0.1.18</code> on crates.io</li>
+<li><code>cpd-reporter@0.1.19</code> on crates.io</li>
+<li><code>cpd-tokenizer@0.1.17</code> on crates.io</li>
+<li><code>jscpd@5.3.2</code> on crates.io</li>
+<li><code>cpd@5.3.2</code> on npm</li>
+<li><code>jscpd@5.3.2</code> on npm</li>
+<li><code>jscpd-darwin-arm64@5.3.2</code> on npm</li>
+<li><code>jscpd-darwin-x64@5.3.2</code> on npm</li>
+<li><code>jscpd-linux-x64-gnu@5.3.2</code> on npm</li>
+<li><code>jscpd-linux-arm64-gnu@5.3.2</code> on npm</li>
+<li><code>jscpd-linux-x64-musl@5.3.2</code> on npm</li>
+<li><code>jscpd-linux-arm64-musl@5.3.2</code> on npm</li>
+<li><code>jscpd-windows-x64-msvc@5.3.2</code> on npm</li>
+<li><code>jscpd-windows-arm64-msvc@5.3.2</code> on npm</li>
+<li><code>jscpd==5.3.2</code> on PyPI</li>
+</ul>
+<h2>Verify</h2>
+<!-- raw HTML omitted -->
+</blockquote>
+<p>... (truncated)</p>
+</details>
+<details>
+<summary>Commits</summary>
+<ul>
+<li><a href="https://github.com/kucherenko/jscpd/commit/beb552864d3342241fbcca0f2c46c6248b0426df"><code>beb5528</code></a> release: cpd-v5.3.2</li>
+<li><a href="https://github.com/kucherenko/jscpd/commit/e90cf5e17ecd3a835ebd65cb5355a2a6444549f9"><code>e90cf5e</code></a> release: cpd-v5.3.1</li>
+<li>See full diff in <a href="https://github.com/kucherenko/jscpd/commits/v5.3.2/rust/jscpd">compare view</a></li>
+</ul>
+</details>
+<br />
+
+Updates `knip` from 6.37.0 to 6.38.0
+<details>
+<summary>Release notes</summary>
+<p><em>Sourced from <a href="https://github.com/webpro-nl/knip/releases">knip's releases</a>.</em></p>
+<blockquote>
+<h2>Release 6.38.0</h2>
+<ul>
+<li>Include co-authors in docs contributor list (0c334100df59d89a512ad598ec50e7f62f6da0c3)</li>
+<li>Filter bots and agents from docs contributors (617f70d8179c6b8668ca41fe5df77ced5e2b37c0)</li>
+<li>Update Eve plugin conventions (<a href="https://github.com/webpro-nl/knip/tree/HEAD/packages/knip/issues/2049">#2049</a>) (260dbb91a85f3a3bc2727e8f255d73df3737552c) - thanks <a href="https://github.com/matchai"><code>@​matchai</code></a>!</li>
+<li>Add <code>args</code> example to that doc page (50b271b98fc930a05a3b045a2f691486f9f06528)</li>
+<li>Add Turborepo plugin (<a href="https://github.com/webpro-nl/knip/tree/HEAD/packages/knip/issues/2055">#2055</a>) (e49d3db05f1d69ce7db3efcb8467a4af63c27379) - thanks <a href="https://github.com/changbaebang"><code>@​changbaebang</code></a>!</li>
+<li>Support <code>import-x/*</code> settings in ESLint plugin (<a href="https://github.com/webpro-nl/knip/tree/HEAD/packages/knip/issues/2050">#2050</a>) (1a34cf82a3d6a1202717ef910bedba55838e9dd9) - thanks <a href="https://github.com/bytedoe"><code>@​bytedoe</code></a>!</li>
+<li>Resolve file option in Mocha configuration files (<a href="https://github.com/webpro-nl/knip/tree/HEAD/packages/knip/issues/2051">#2051</a>) (9b5c5f60468c8a92a3e74adca5c0931f008677af) - thanks <a href="https://github.com/giaBaoJS"><code>@​giaBaoJS</code></a>!</li>
+<li>Support oxlint extends (<a href="https://github.com/webpro-nl/knip/tree/HEAD/packages/knip/issues/2054">#2054</a>) (a149a98219bb14b15f446fc5f8c4f815e28b2183) - thanks <a href="https://github.com/matthewnitschke-wk"><code>@​matthewnitschke-wk</code></a>!</li>
+<li>Fix import.meta handling in built-in compilers (<a href="https://github.com/webpro-nl/knip/tree/HEAD/packages/knip/issues/2059">#2059</a>) (8b0c85076bf3dce15ef5f3c0c4e58bfefdf59ded) - thanks <a href="https://github.com/vdavid"><code>@​vdavid</code></a>!</li>
+<li>Fix tag hints for enum and namespace members (<a href="https://github.com/webpro-nl/knip/tree/HEAD/packages/knip/issues/2061">#2061</a>) (8a8805e48945863248429d18b7f6c4e4b7dc9ebd) - thanks <a href="https://github.com/devYRPauli"><code>@​devYRPauli</code></a>!</li>
+<li>Flag unused member tags in tagged enums and namespaces (584e53ff3e0846fbfe04fa5b5bfefe2420576a34)</li>
+<li>feat: resolve MDX content mapper remarkPlugins (<a href="https://github.com/webpro-nl/knip/tree/HEAD/packages/knip/issues/2060">#2060</a>) (34dbccf25359f9e9fefe9d0be6ef2ec0252223cc) - thanks <a href="https://github.com/gioboa"><code>@​gioboa</code></a>!</li>
+<li>Refactor and separate concerns w/ new typescript-content-mapper plugin (11e94509bd0f350d747facf4003fc5b248d1b02d)</li>
+<li>Resolve mdx content mapper providerImportSource (7b5825117f97f2f87b7141509a254f88d0957cf7)</li>
+<li>Fix config → entry in plop plugin (25a380c9e1165b76583d69b48b5fa7cdf5db0ae2)</li>
+</ul>
+</blockquote>
+</details>
+<details>
+<summary>Commits</summary>
+<ul>
+<li><a href="https://github.com/webpro-nl/knip/commit/c0e42f83bda7664065465f2f3faca7af97c988ac"><code>c0e42f8</code></a> Release knip@6.38.0</li>
+<li><a href="https://github.com/webpro-nl/knip/commit/25a380c9e1165b76583d69b48b5fa7cdf5db0ae2"><code>25a380c</code></a> Fix config → entry in plop plugin</li>
+<li><a href="https://github.com/webpro-nl/knip/commit/7b5825117f97f2f87b7141509a254f88d0957cf7"><code>7b58251</code></a> Resolve mdx content mapper providerImportSource</li>
+<li><a href="https://github.com/webpro-nl/knip/commit/11e94509bd0f350d747facf4003fc5b248d1b02d"><code>11e9450</code></a> Refactor and separate concerns w/ new typescript-content-mapper plugin</li>
+<li><a href="https://github.com/webpro-nl/knip/commit/34dbccf25359f9e9fefe9d0be6ef2ec0252223cc"><code>34dbccf</code></a> feat: resolve MDX content mapper remarkPlugins (<a href="https://github.com/webpro-nl/knip/tree/HEAD/packages/knip/issues/2060">#2060</a>)</li>
+<li><a href="https://github.com/webpro-nl/knip/commit/584e53ff3e0846fbfe04fa5b5bfefe2420576a34"><code>584e53f</code></a> Flag unused member tags in tagged enums and namespaces</li>
+<li><a href="https://github.com/webpro-nl/knip/commit/8a8805e48945863248429d18b7f6c4e4b7dc9ebd"><code>8a8805e</code></a> Fix tag hints for enum and namespace members (<a href="https://github.com/webpro-nl/knip/tree/HEAD/packages/knip/issues/2061">#2061</a>)</li>
+<li><a href="https://github.com/webpro-nl/knip/commit/8b0c85076bf3dce15ef5f3c0c4e58bfefdf59ded"><code>8b0c850</code></a> Fix import.meta handling in built-in compilers (<a href="https://github.com/webpro-nl/knip/tree/HEAD/packages/knip/issues/2059">#2059</a>)</li>
+<li><a href="https://github.com/webpro-nl/knip/commit/a149a98219bb14b15f446fc5f8c4f815e28b2183"><code>a149a98</code></a> Support oxlint extends (<a href="https://github.com/webpro-nl/knip/tree/HEAD/packages/knip/issues/2054">#2054</a>)</li>
+<li><a href="https://github.com/webpro-nl/knip/commit/9b5c5f60468c8a92a3e74adca5c0931f008677af"><code>9b5c5f6</code></a> Resolve file option in Mocha configuration files (<a href="https://github.com/webpro-nl/knip/tree/HEAD/packages/knip/issues/2051">#2051</a>)</li>
+<li>Additional commits viewable in <a href="https://github.com/webpro-nl/knip/commits/knip@6.38.0/packages/knip">compare view</a></li>
+</ul>
+</details>
+<br />
+
+Updates `markdownlint-cli2` from 0.23.2 to 0.23.3
+<details>
+<summary>Changelog</summary>
+<p><em>Sourced from <a href="https://github.com/DavidAnson/markdownlint-cli2/blob/main/CHANGELOG.md">markdownlint-cli2's changelog</a>.</em></p>
+<blockquote>
+<h2>0.23.3</h2>
+<ul>
+<li>Update dependencies</li>
+</ul>
+</blockquote>
+</details>
+<details>
+<summary>Commits</summary>
+<ul>
+<li><a href="https://github.com/DavidAnson/markdownlint-cli2/commit/916ad0aaa108c64d294101002066f530ea170b10"><code>916ad0a</code></a> Update to version 0.23.3.</li>
+<li><a href="https://github.com/DavidAnson/markdownlint-cli2/commit/ed9cb417fa1b45a796abc3b1a033162aa76033e2"><code>ed9cb41</code></a> Freshen list of external custom rules included with the markdownlint-cli2-rul...</li>
+<li><a href="https://github.com/DavidAnson/markdownlint-cli2/commit/3fe0056e3d49a9ff938bd23f44f5b624afc983a3"><code>3fe0056</code></a> Remove test-main suite now that test-fs runs all the same tests (except 1 whi...</li>
+<li><a href="https://github.com/DavidAnson/markdownlint-cli2/commit/d52a859823fe180941da0ccbbadcec2538edb480"><code>d52a859</code></a> Update test case infrastructure to be able to run &quot;require&quot; tests when using ...</li>
+<li><a href="https://github.com/DavidAnson/markdownlint-cli2/commit/8a4b4be5bb70e396123528df88ea53758a964393"><code>8a4b4be</code></a> Bump eslint-plugin-jsdoc from 64.3.5 to 64.3.6</li>
+<li><a href="https://github.com/DavidAnson/markdownlint-cli2/commit/578caa6d3fbdbf351ad497773fa6435b7d129048"><code>578caa6</code></a> Update OutputFormatterOptions to include an FsPromisesLike parameter so outpu...</li>
+<li><a href="https://github.com/DavidAnson/markdownlint-cli2/commit/018d1eb7069ff04a4412bfcf36442067f90b9a67"><code>018d1eb</code></a> Update indirect playwright dependencies.</li>
+<li><a href="https://github.com/DavidAnson/markdownlint-cli2/commit/a3a26a8732235ddee782d178743ad1101c4a3946"><code>a3a26a8</code></a> Bump <code>@​playwright/test</code> from 1.62.1 to 1.63.0</li>
+<li><a href="https://github.com/DavidAnson/markdownlint-cli2/commit/75e71936605e16d50d270d1c2fcc793a1c7b714f"><code>75e7193</code></a> Bump eslint-plugin-jsdoc from 64.3.3 to 64.3.5</li>
+<li><a href="https://github.com/DavidAnson/markdownlint-cli2/commit/f1a682341c652208b4cec7a376b7e14a07ecec4b"><code>f1a6823</code></a> Bump eslint from 10.9.1 to 10.10.0</li>
+<li>Additional commits viewable in <a href="https://github.com/DavidAnson/markdownlint-cli2/compare/v0.23.2...v0.23.3">compare view</a></li>
+</ul>
+</details>
+<br />
+
+Updates `@mastra/core` from 1.67.0 to 1.71.0
+<details>
+<summary>Release notes</summary>
+<p><em>Sourced from <a href="https://github.com/mastra-ai/mastra/releases">@​mastra/core's releases</a>.</em></p>
+<blockquote>
+<h2>September 24, 2026</h2>
+<h2>Highlights</h2>
+<h3>Observability Capabilities Negotiation (Storage ↔ Server ↔ Client)</h3>
+<p>Servers now expose <code>observabilityStorageCapabilities</code> (via <code>GET /system/packages</code> and the new <code>GET /observability/capabilities</code>) so Studio/clients can detect which observability APIs a configured store actually supports—covering per-endpoint discovery flags plus <code>traceQuery</code>, <code>threadQuery</code>, <code>deltaPolling</code>, and more—without forcing storage upgrades.</p>
+<h3>Discovery-Backed Observability Filters &amp; Feature Declarations</h3>
+<p>Observability stores can now declare supported features via <code>getFeatures()</code> (including entity/service/environment/tag/metric discovery), letting Studio only call compatible endpoints; VNext stores and Oracle now report discovery support, and discovery routes return empty results (not 500s) when unsupported.</p>
+<h3>Trace Aggregation Planning API for Backends</h3>
+<p><code>planTraceAggregate()</code> validates and converts an <code>aggregateTraces()</code> request into a <code>TrustedTraceAggregatePlan</code> that any storage backend can execute without re-validating, enabling consistent query behavior and clearer validation errors across storage implementations.</p>
+<h3>Eager Tool Execution for Faster Streaming Runs</h3>
+<p>Tool calls now start as soon as their own arguments are complete (instead of waiting for the model to finish streaming the whole step), cutting idle time in multi-tool steps; can be disabled per run (and is now supported in stored agent default options).</p>
+<h3>New Integrations: Discord Channel + Sandbox Credential Materialization</h3>
+<p>Added <code>@mastra/discord</code> to connect agents to Discord (slash commands, DMs, mentions, encrypted token-at-rest), and <code>@mastra/connect environment()</code> to materialize Platform connection credentials into <code>{ env, onStart }</code> for authenticated tooling inside sandbox providers (e2b/Modal/Daytona/Docker/subprocess).</p>
+<h3>MongoDB Vector “Automated Embeddings” (Server-Side Embedding Generation)</h3>
+<p><code>MongoDBVector</code> now supports Automated Embeddings: create an <code>autoEmbed</code> index (e.g. Voyage) and then write plain text + search with <code>queryText</code>, with MongoDB generating embeddings server-side (no embedding provider wiring or dimension bookkeeping in your app).</p>
+<h3>Breaking Changes</h3>
+<ul>
+<li><code>@mastra/playground-ui</code> <code>TaskList</code> API: <code>title</code>, <code>TaskListHeader</code>, and <code>hideWhenEmpty</code> are removed.</li>
+</ul>
+<h2>Changelog</h2>
+<h3><a href="https://github.com/mastra-ai/mastra/blob/@mastra/core@1.71.0/packages/core/CHANGELOG.md">@​mastra/core@1.71.0</a></h3>
+<h4>Minor Changes</h4>
+<ul>
+<li>
+<p>Added per-endpoint discovery features that observability storage can declare from <code>getFeatures()</code>: <code>entity-type-discovery</code>, <code>entity-name-discovery</code>, <code>service-name-discovery</code>, <code>environment-discovery</code>, <code>tag-discovery</code> and <code>metric-discovery</code>. The in-memory observability store now declares <code>metrics</code>, <code>logs</code> and discovery support. (<a href="https://github.com/mastra-ai/mastra/tree/HEAD/packages/core/issues/25008">#25008</a>)</p>
+<p>Custom observability stores can declare what they support so Studio only calls those APIs:</p>
+<pre lang="ts"><code>import { ObservabilityStorage } from '@mastra/core/storage';
+<p>class MyObservabilityStore extends ObservabilityStorage {
+override getFeatures() {
+return ['logs', 'entity-name-discovery', 'tag-discovery'] as const;
+}
+}
+</code></pre></p>
+</li>
+<li>
+<p>Added <code>planTraceAggregate()</code>. It checks a parsed <code>aggregateTraces()</code> request and returns a <code>TrustedTraceAggregatePlan</code> that any storage backend can execute without re-validating the request. (<a href="https://github.com/mastra-ai/mastra/tree/HEAD/packages/core/issues/24868">#24868</a>)</p>
+<pre lang="ts"><code>import { parseTraceAggregateRequest, planTraceAggregate } from '@mastra/core/storage';
+<p>const plan = planTraceAggregate(parseTraceAggregateRequest(request), {
+scope: { organizationId: 'org_123' },
+</code></pre></p>
+</li>
+</ul>
+<!-- raw HTML omitted -->
+</blockquote>
+<p>... (truncated)</p>
+</details>
+<details>
+<summary>Commits</summary>
+<ul>
+<li><a href="https://github.com/mastra-ai/mastra/commit/6721bffd7eb2ab00df5494817d870db3b540698d"><code>6721bff</code></a> chore: version - exit prerelease mode</li>
+<li><a href="https://github.com/mastra-ai/mastra/commit/7f648656d2b24b214a899e8835b8286333c80a19"><code>7f64865</code></a> fix(core): run dataset schema regexes on a linear-time engine (<a href="https://github.com/mastra-ai/mastra/tree/HEAD/packages/core/issues/25044">#25044</a>)</li>
+<li><a href="https://github.com/mastra-ai/mastra/commit/87960fc4bb52fd6f0ade1bf24e53c75d37adff33"><code>87960fc</code></a> chore: version packages (alpha) (<a href="https://github.com/mastra-ai/mastra/tree/HEAD/packages/core/issues/24968">#24968</a>)</li>
+<li><a href="https://github.com/mastra-ai/mastra/commit/9ba23a23893622b72c76189199d02432590606c1"><code>9ba23a2</code></a> feat(observability): report feedback storage capability to clients (<a href="https://github.com/mastra-ai/mastra/tree/HEAD/packages/core/issues/25020">#25020</a>)</li>
+<li><a href="https://github.com/mastra-ai/mastra/commit/1e435dc84a9c1b35aa58d0ab9b14ff39fe13aab0"><code>1e435dc</code></a> feat(core): start tools as soon as their tool-call args complete (<a href="https://github.com/mastra-ai/mastra/tree/HEAD/packages/core/issues/25005">#25005</a>)</li>
+<li><a href="https://github.com/mastra-ai/mastra/commit/460704663e2869183e7dfff7efec49a4f2f47503"><code>4607046</code></a> Report observability storage capabilities to clients (<a href="https://github.com/mastra-ai/mastra/tree/HEAD/packages/core/issues/25008">#25008</a>)</li>
+<li><a href="https://github.com/mastra-ai/mastra/commit/b7f9616e443113c72de697900c7f9dc357e1d11c"><code>b7f9616</code></a> Fix event spans to end at startTime instead of remaining open (<a href="https://github.com/mastra-ai/mastra/tree/HEAD/packages/core/issues/24970">#24970</a>)</li>
+<li><a href="https://github.com/mastra-ai/mastra/commit/f62037ece183dbc46bffa2a6ca0047bf280e33fb"><code>f62037e</code></a> chore: version packages</li>
+<li><a href="https://github.com/mastra-ai/mastra/commit/b757896872edd74f71ec104be92273c5406265da"><code>b757896</code></a> fix(core): correct Workspace JSDoc path examples (<a href="https://github.com/mastra-ai/mastra/tree/HEAD/packages/core/issues/24988">#24988</a>)</li>
+<li><a href="https://github.com/mastra-ai/mastra/commit/f751e659f496e5e53ed38632c59c296fec2ccbe5"><code>f751e65</code></a> feat(core): add trusted planner for aggregateTraces() requests (<a href="https://github.com/mastra-ai/mastra/tree/HEAD/packages/core/issues/24868">#24868</a>)</li>
+<li>Additional commits viewable in <a href="https://github.com/mastra-ai/mastra/commits/@mastra/core@1.71.0/packages/core">compare view</a></li>
+</ul>
+</details>
+<br />
+
+Updates `imapflow` from 2.0.5 to 2.0.7
+<details>
+<summary>Changelog</summary>
+<p><em>Sourced from <a href="https://github.com/postalsys/imapflow/blob/master/CHANGELOG.md">imapflow's changelog</a>.</em></p>
+<blockquote>
+<h2><a href="https://github.com/postalsys/imapflow/compare/v2.0.6...v2.0.7">2.0.7</a> (2026-09-25)</h2>
+<h3>Bug Fixes</h3>
+<ul>
+<li><strong>fetch:</strong> keep body sections a server sends as quoted strings (<a href="https://github.com/postalsys/imapflow/commit/a4f2f181f978dea9e6c94195c1f4ddbe54d52fc7">a4f2f18</a>), closes <a href="https://redirect.github.com/postalsys/imapflow/issues/403">#403</a></li>
+</ul>
+<h2><a href="https://github.com/postalsys/imapflow/compare/v2.0.5...v2.0.6">2.0.6</a> (2026-09-22)</h2>
+<h3>Bug Fixes</h3>
+<ul>
+<li><strong>parser:</strong> split flags a server writes without the separating space (<a href="https://github.com/postalsys/imapflow/commit/96b202283ea5840842b4c9c94319b2b29cad829f">96b2022</a>)</li>
+</ul>
+</blockquote>
+</details>
+<details>
+<summary>Commits</summary>
+<ul>
+<li><a href="https://github.com/postalsys/imapflow/commit/cc1c79623487ff30e4714b90efe479e5ce80ebf4"><code>cc1c796</code></a> Merge pull request <a href="https://redirect.github.com/postalsys/imapflow/issues/404">#404</a> from postalsys/release-please--branches--master--comp...</li>
+<li><a href="https://github.com/postalsys/imapflow/commit/e58e682d06feaebed69e9593e3b9eefddd6c7e8f"><code>e58e682</code></a> chore(master): release 2.0.7 [skip-ci]</li>
+<li><a href="https://github.com/postalsys/imapflow/commit/a4f2f181f978dea9e6c94195c1f4ddbe54d52fc7"><code>a4f2f18</code></a> fix(fetch): keep body sections a server sends as quoted strings</li>
+<li><a href="https://github.com/postalsys/imapflow/commit/9a2f5737e7b9e661783fd98800fc6ab4c6fe8960"><code>9a2f573</code></a> Merge pull request <a href="https://redirect.github.com/postalsys/imapflow/issues/402">#402</a> from postalsys/release-please--branches--master--comp...</li>
+<li><a href="https://github.com/postalsys/imapflow/commit/d760ab00315d8aeac6cb0d4bcd83ef03af3c8588"><code>d760ab0</code></a> chore(master): release 2.0.6 [skip-ci]</li>
+<li><a href="https://github.com/postalsys/imapflow/commit/96b202283ea5840842b4c9c94319b2b29cad829f"><code>96b2022</code></a> fix(parser): split flags a server writes without the separating space</li>
+<li><a href="https://github.com/postalsys/imapflow/commit/ee97145402651951d795282ab92a91dfa048c5f8"><code>ee97145</code></a> chore(deps): update dev dependencies [skip ci]</li>
+<li>See full diff in <a href="https://github.com/postalsys/imapflow/compare/v2.0.5...v2.0.7">compare view</a></li>
+</ul>
+</details>
+<br />
+
+Updates `tsdav` from 2.3.3 to 2.3.4
+<details>
+<summary>Release notes</summary>
+<p><em>Sourced from <a href="https://github.com/natelindev/tsdav/releases">tsdav's releases</a>.</em></p>
+<blockquote>
+<h2>v2.3.4</h2>
+<h5>bug fixes</h5>
+<ul>
+<li>preserve custom XML attributes and namespaces on request root elements, and declare DAV namespaces when creating collections</li>
+<li>resolve child resource URLs correctly for collections without trailing slashes, including URLs with query strings or fragments</li>
+<li>accept CDATA and multiple href values during account discovery, and skip empty object hrefs before URL resolution</li>
+<li>filter calendar-query results to the requested object URLs when multi-get is disabled</li>
+<li>preserve bodyless requests when XML attributes are supplied and guard type helpers against null or undefined inputs</li>
+<li>restore reproducible root and documentation installs by moving pnpm overrides into workspace configuration and synchronizing lockfiles</li>
+</ul>
+<h5>improvements</h5>
+<ul>
+<li>expose freeBusyQuery on both client APIs and export additional account, request, constant, and sync type helpers</li>
+<li>correct the calendar object retrieval documentation and add regression coverage for public exports, XML attributes, and URL handling</li>
+</ul>
+<p><strong>Verification:</strong> 298 unit tests, 44 documentation tests, type checks, lint, package build, and documentation build passed for the merged changes. Live provider integration tests were not run.</p>
+</blockquote>
+</details>
+<details>
+<summary>Changelog</summary>
+<p><em>Sourced from <a href="https://github.com/natelindev/tsdav/blob/main/CHANGELOG.md">tsdav's changelog</a>.</em></p>
+<blockquote>
+<h2>v2.3.4</h2>
+<h5>bug fixes</h5>
+<ul>
+<li>preserve custom XML attributes and namespaces on request root elements, and declare DAV namespaces when creating collections</li>
+<li>resolve child resource URLs correctly for collections without trailing slashes, including URLs with query strings or fragments</li>
+<li>accept CDATA and multiple href values during account discovery, and skip empty object hrefs before URL resolution</li>
+<li>filter calendar-query results to the requested object URLs when multi-get is disabled</li>
+<li>preserve bodyless requests when XML attributes are supplied and guard type helpers against null or undefined inputs</li>
+<li>restore reproducible root and documentation installs by moving pnpm overrides into workspace configuration and synchronizing lockfiles</li>
+</ul>
+<h5>improvements</h5>
+<ul>
+<li>expose freeBusyQuery on both client APIs and export additional account, request, constant, and sync type helpers</li>
+<li>correct the calendar object retrieval documentation and add regression coverage for public exports, XML attributes, and URL handling</li>
+</ul>
+</blockquote>
+</details>
+<details>
+<summary>Commits</summary>
+<ul>
+<li><a href="https://github.com/natelindev/tsdav/commit/201de8799b092f1a6e4ea77917f09bc9d118fde2"><code>201de87</code></a> chore: release v2.3.4</li>
+<li><a href="https://github.com/natelindev/tsdav/commit/2106b3ec4e8ca86e09caa965dedde25f0f63a41c"><code>2106b3e</code></a> fix: resolve XML attributes, URL resolution, client API gaps, and exports (<a href="https://redirect.github.com/natelindev/tsdav/issues/280">#280</a>)</li>
+<li>See full diff in <a href="https://github.com/natelindev/tsdav/compare/v2.3.3...v2.3.4">compare view</a></li>
+</ul>
+</details>
+<br />
+
+Updates `fast-check` from 4.10.1 to 4.10.2
+<details>
+<summary>Release notes</summary>
+<p><em>Sourced from <a href="https://github.com/dubzzz/fast-check/releases">fast-check's releases</a>.</em></p>
+<blockquote>
+<h2>v4.10.2</h2>
+<p><em>Fix interrupt plugin (throwing)</em>
+[<a href="https://github.com/dubzzz/fast-check/tree/v4.10.2">Code</a>][<a href="https://github.com/dubzzz/fast-check/compare/v4.10.1...v4.10.2">Diff</a>]</p>
+<h2>Fixes</h2>
+<ul>
+<li>(<a href="https://redirect.github.com/dubzzz/fast-check/pull/7333">PR#7333</a>) Bug: Plugin <code>interruptAfterTimeLimit</code> crashes</li>
+</ul>
+</blockquote>
+</details>
+<details>
+<summary>Changelog</summary>
+<p><em>Sourced from <a href="https://github.com/dubzzz/fast-check/blob/main/packages/fast-check/CHANGELOG.md">fast-check's changelog</a>.</em></p>
+<blockquote>
+<h1>4.10.2</h1>
+<p><em>Fix interrupt plugin (throwing)</em>
+[<a href="https://github.com/dubzzz/fast-check/tree/v4.10.2">Code</a>][<a href="https://github.com/dubzzz/fast-check/compare/v4.10.1...v4.10.2">Diff</a>]</p>
+<h2>Fixes</h2>
+<ul>
+<li>(<a href="https://redirect.github.com/dubzzz/fast-check/pull/7333">PR#7333</a>) Bug: Plugin <code>interruptAfterTimeLimit</code> crashes</li>
+</ul>
+</blockquote>
+</details>
+<details>
+<summary>Commits</summary>
+<ul>
+<li><a href="https://github.com/dubzzz/fast-check/commit/c77afa8277a67250d798c52e61343b8ed5fd268b"><code>c77afa8</code></a> v4.10.2</li>
+<li><a href="https://github.com/dubzzz/fast-check/commit/1e80f3acacc0d9c1aaa15f83ee503c4c4137d4dc"><code>1e80f3a</code></a> v4.10.2</li>
+<li><a href="https://github.com/dubzzz/fast-check/commit/2df32657004ca4136bd858ea0418c387403a244c"><code>2df3265</code></a> 🐛 Plugin <code>interruptAfterTimeLimit</code> crashes (<a href="https://github.com/dubzzz/fast-check/tree/HEAD/packages/fast-check/issues/7333">#7333</a>)</li>
+<li>See full diff in <a href="https://github.com/dubzzz/fast-check/commits/v4.10.2/packages/fast-check">compare view</a></li>
+</ul>
+</details>
+<br />
+
+Updates `@modelcontextprotocol/sdk` from 1.30.0 to 1.30.1
+<details>
+<summary>Release notes</summary>
+<p><em>Sourced from <a href="https://github.com/modelcontextprotocol/typescript-sdk/releases">@​modelcontextprotocol/sdk's releases</a>.</em></p>
+<blockquote>
+<h2>1.30.1</h2>
+<h2>What's Changed</h2>
+<ul>
+<li>[v1.x] fix(server): read HTTP request bodies with a size limit and bound JSON-RPC batch length by <a href="https://github.com/maxisbey"><code>@​maxisbey</code></a> in <a href="https://redirect.github.com/modelcontextprotocol/typescript-sdk/pull/2717">modelcontextprotocol/typescript-sdk#2717</a></li>
+<li>fix(auth): preserve resource URI without trailing slash (<a href="https://redirect.github.com/modelcontextprotocol/typescript-sdk/issues/1968">#1968</a>) by <a href="https://github.com/MukundaKatta"><code>@​MukundaKatta</code></a> in <a href="https://redirect.github.com/modelcontextprotocol/typescript-sdk/pull/1972">modelcontextprotocol/typescript-sdk#1972</a></li>
+<li>chore: bump version to 1.30.1 by <a href="https://github.com/claude"><code>@​claude</code></a>[bot] in <a href="https://redirect.github.com/modelcontextprotocol/typescript-sdk/pull/2848">modelcontextprotocol/typescript-sdk#2848</a></li>
+</ul>
+<h2>New Contributors</h2>
+<ul>
+<li><a href="https://github.com/MukundaKatta"><code>@​MukundaKatta</code></a> made their first contribution in <a href="https://redirect.github.com/modelcontextprotocol/typescript-sdk/pull/1972">modelcontextprotocol/typescript-sdk#1972</a></li>
+</ul>
+<p><strong>Full Changelog</strong>: <a href="https://github.com/modelcontextprotocol/typescript-sdk/compare/1.30.0...1.30.1">https://github.com/modelcontextprotocol/typescript-sdk/compare/1.30.0...1.30.1</a></p>
+</blockquote>
+</details>
+<details>
+<summary>Commits</summary>
+<ul>
+<li><a href="https://github.com/modelcontextprotocol/typescript-sdk/commit/289ac2c3af7e1536160e80414296b175171a1a87"><code>289ac2c</code></a> chore: bump version to 1.30.1 (<a href="https://redirect.github.com/modelcontextprotocol/typescript-sdk/issues/2848">#2848</a>)</li>
+<li><a href="https://github.com/modelcontextprotocol/typescript-sdk/commit/12b425678a76cd54b0452a2ccf1e5dc7740f73ef"><code>12b4256</code></a> fix(auth): preserve resource URI without trailing slash (<a href="https://redirect.github.com/modelcontextprotocol/typescript-sdk/issues/1968">#1968</a>) (<a href="https://redirect.github.com/modelcontextprotocol/typescript-sdk/issues/1972">#1972</a>)</li>
+<li><a href="https://github.com/modelcontextprotocol/typescript-sdk/commit/a9f6eb709b85459d01e8f2a9e881fef2621756c1"><code>a9f6eb7</code></a> [v1.x] fix(server): read HTTP request bodies with a size limit and bound JSON...</li>
+<li>See full diff in <a href="https://github.com/modelcontextprotocol/typescript-sdk/compare/1.30.0...1.30.1">compare view</a></li>
+</ul>
+</details>
+<br />
+
+Updates `@tauri-apps/api` from 2.11.1 to 2.12.0
+<details>
+<summary>Release notes</summary>
+<p><em>Sourced from <a href="https://github.com/tauri-apps/tauri/releases">@​tauri-apps/api's releases</a>.</em></p>
+<blockquote>
+<h2><code>@​tauri-apps/api</code> v2.12.0</h2>
+<!-- raw HTML omitted -->
+<pre><code>All found vulnerabilities were already reviewed and decided to be ignored
+2 ignored: 2 high
+</code></pre>
+<!-- raw HTML omitted -->
+<h2>[2.12.0]</h2>
+<h3>New Features</h3>
+<ul>
+<li><a href="https://www.github.com/tauri-apps/tauri/commit/d8d02ba60c041fb0ab4f5631e8ea21ce7231a95a"><code>d8d02ba60</code></a> (<a href="https://redirect.github.com/tauri-apps/tauri/pull/14767">#14767</a>) Added the <code>exit</code> function to <code>@tauri-apps/api/app</code>, backed by the new <code>plugin:app|exit</code> command (<code>core:app:allow-exit</code> permission), to exit the app without requiring the <code>@tauri-apps/plugin-process</code> plugin.</li>
+<li><a href="https://www.github.com/tauri-apps/tauri/commit/990f77eb2f16b431dd5fd8b1059e6112647cca7a"><code>990f77eb2</code></a> (<a href="https://redirect.github.com/tauri-apps/tauri/pull/15961">#15961</a>) Added <code>JsImage</code> type alias and documented its relationship to the Rust <code>JsImage</code></li>
+<li><a href="https://www.github.com/tauri-apps/tauri/commit/29265557c7a42ef6a1f982e0ef738208df1f6dd3"><code>29265557c</code></a> (<a href="https://redirect.github.com/tauri-apps/tauri/pull/15410">#15410</a>) Added <code>noRedirectionBitmap</code> option to the <code>Window</code> and <code>WebviewWindow</code> constructors on Windows.</li>
+<li><a href="https://www.github.com/tauri-apps/tauri/commit/6edc2f4d49d2477649bf170aa2867276c25573da"><code>6edc2f4d4</code></a> (<a href="https://redirect.github.com/tauri-apps/tauri/pull/14926">#14926</a>) Added <code>Window::set_fullscreen_on_monitor</code>, <code>WebviewWindow::set_fullscreen_on_monitor</code> and the <code>setFullscreenOnMonitor</code> JavaScript API to make a window fullscreen on the monitor containing a given physical position, along with the <code>core:window:allow-set-fullscreen-on-monitor</code> permission.</li>
+</ul>
+<h3>Enhancements</h3>
+<ul>
+<li>
+<p><a href="https://www.github.com/tauri-apps/tauri/commit/be019795abc0316aa53f2519bfbf3e7624b9af2e"><code>be019795a</code></a> (<a href="https://redirect.github.com/tauri-apps/tauri/pull/14103">#14103</a>) Add ECMAScript Explicit Resource Management to Resource. You can now use the <code>using</code> syntax in supported browsers or with polyfills:</p>
+<pre lang="javascript"><code>import { create, BaseDirectory } from &quot;@tauri-apps/plugin-fs&quot;
+...
+{
+  await using file = await create(&quot;foo/bar.txt&quot;, { baseDir: BaseDirectory.AppConfig });
+  await file.write(new TextEncoder().encode(&quot;Hello world&quot;));
+  // Before `file` goes out of scope, it is disposed by calling `file[Symbol.asyncDispose]()` and awaited.
+}
+</code></pre>
+</li>
+<li>
+<p><a href="https://www.github.com/tauri-apps/tauri/commit/4a506565374a6a0b4b595e4cdb6d7db68136d765"><code>4a5065653</code></a> (<a href="https://redirect.github.com/tauri-apps/tauri/pull/14454">#14454</a>) Added <code>Regular</code> and <code>Clear</code> Liquid Glass window effects, and the <code>interactive</code> window effects option (macOS 27.0+) that enables the glass' visual response to user interactions.</p>
+</li>
+</ul>
+<h3>Bug Fixes</h3>
+<ul>
+<li><a href="https://www.github.com/tauri-apps/tauri/commit/4fabe2ff1bfe28bbcd3335546caf7db7ff970706"><code>4fabe2ff1</code></a> (<a href="https://redirect.github.com/tauri-apps/tauri/pull/16067">#16067</a>) Fix <code>Window.setBackgroundColor</code>, <code>Webview.setBackgroundColor</code> and <code>WebviewWindow.setBackgroundColor</code> sending a <code>color</code> argument while the <code>plugin:window|set_background_color</code> and <code>plugin:webview|set_webview_background_color</code> commands expect <code>label</code> and <code>value</code>. The color was always deserialized as <code>None</code>, so instead of applying the given color the call cleared the background of the calling window/webview.</li>
+<li><a href="https://www.github.com/tauri-apps/tauri/commit/32efd0232d868984ac8de9efebae19e464c7c536"><code>32efd0232</code></a> (<a href="https://redirect.github.com/tauri-apps/tauri/pull/15957">#15957</a>) <code>Image.rgba</code> now returns a more specific type <code>Promise&lt;Uint8Array&lt;ArrayBuffer&gt;&gt;</code> instead of the default <code>Promise&lt;Uint8Array&lt;ArrayBufferLike&gt;</code></li>
+</ul>
+<!-- raw HTML omitted -->
+<pre><code>$ pnpm build &amp;&amp; cd ./dist &amp;&amp; pnpm publish --access public --loglevel debug --no-git-checks
+$ rollup -c --configPlugin typescript
+^[[36m
+^[[1m./src/app.ts, ./src/core.ts, ./src/dpi.ts, ./src/event.ts, ./src/image.ts, ./src/index.ts, ./src/menu.ts, ./src/mocks.ts, ./src/path.ts, ./src/tray.ts, ./src/webview.ts, ./src/webviewWindow.ts, ./src/window.ts^[[22m → ^[[1m./dist, ./dist^[[22m...^[[39m
+^[[32mcreated ^[[1m./dist, ./dist^[[22m in ^[[1m757ms^[[22m^[[39m
+^[[36m
+&lt;/tr&gt;&lt;/table&gt; 
+</code></pre>
+</blockquote>
+<p>... (truncated)</p>
+</details>
+<details>
+<summary>Commits</summary>
+<ul>
+<li><a href="https://github.com/tauri-apps/tauri/commit/4f46cfc10da37f5deba2326569f86b0700d97835"><code>4f46cfc</code></a> fix(ci): pnpm publish should use &quot;debug&quot; loglevel instead of &quot;silly&quot;</li>
+<li><a href="https://github.com/tauri-apps/tauri/commit/726822c3d8afd38f87aff244200e64f5cb9513b5"><code>726822c</code></a> apply version updates (<a href="https://redirect.github.com/tauri-apps/tauri/issues/15634">#15634</a>)</li>
+<li><a href="https://github.com/tauri-apps/tauri/commit/9f8922a0388986c38158e531707115ce473a3fa2"><code>9f8922a</code></a> docs(core): extend app_directories_override documentation (<a href="https://redirect.github.com/tauri-apps/tauri/issues/16139">#16139</a>)</li>
+<li><a href="https://github.com/tauri-apps/tauri/commit/dc894d40c719c69741c7ab5d29c0ae1b5a9824cf"><code>dc894d4</code></a> chore: remove change file for unreleased fix (<a href="https://redirect.github.com/tauri-apps/tauri/issues/16140">#16140</a>)</li>
+<li><a href="https://github.com/tauri-apps/tauri/commit/152529eb8115e212deba5cc15e0a64fca821eb37"><code>152529e</code></a> Revert &quot;feat(core): add android activityEmbedding config (<a href="https://redirect.github.com/tauri-apps/tauri/issues/15255">#15255</a>)&quot; (<a href="https://redirect.github.com/tauri-apps/tauri/issues/16138">#16138</a>)</li>
+<li><a href="https://github.com/tauri-apps/tauri/commit/7456ddd829bc2c59556b95bf6b6fdad1d25d6d92"><code>7456ddd</code></a> Revert &quot;fix(core): proper unique identifier for menu items on channels store&quot;...</li>
+<li><a href="https://github.com/tauri-apps/tauri/commit/15468de79772c442a424c6e02658b872c0a24b38"><code>15468de</code></a> fix(bundler): recognize deb and rpm as self-contained updater targets (<a href="https://redirect.github.com/tauri-apps/tauri/issues/16064">#16064</a>)</li>
+<li><a href="https://github.com/tauri-apps/tauri/commit/8e7028331ad37ac2db74d4ec20e66be5cacf2c40"><code>8e70283</code></a> fix(bundler): update linuxdeploy and linuxdeploy-plugin-gtk (<a href="https://redirect.github.com/tauri-apps/tauri/issues/16062">#16062</a>)</li>
+<li><a href="https://github.com/tauri-apps/tauri/commit/1b91b7b7b3dad8b77bcaeadc6653250e04f0cb7b"><code>1b91b7b</code></a> fix(cli): list all locked crate versions in tauri info (<a href="https://redirect.github.com/tauri-apps/tauri/issues/16102">#16102</a>)</li>
+<li><a href="https://github.com/tauri-apps/tauri/commit/ff7cd8d863061aaa1c5932062b071db6b17af36e"><code>ff7cd8d</code></a> fix(cli): harden updater key generation and signing (<a href="https://redirect.github.com/tauri-apps/tauri/issues/16118">#16118</a>)</li>
+<li>Additional commits viewable in <a href="https://github.com/tauri-apps/tauri/compare/@tauri-apps/api-v2.11.1...@tauri-apps/api-v2.12.0">compare view</a></li>
+</ul>
+</details>
+<br />
+
+Updates `react-window` from 2.3.1 to 2.3.3
+<details>
+<summary>Release notes</summary>
+<p><em>Sourced from <a href="https://github.com/bvaughn/react-window/releases">react-window's releases</a>.</em></p>
+<blockquote>
+<h2>2.3.3</h2>
+<ul>
+<li>Fix small perf regression in version 2.3.2 that caused unnecessary size calculations when scrolling beyond cached bounds dynamic sized rows/columns</li>
+</ul>
+<h2>2.3.2</h2>
+<ul>
+<li>Improve <code>scrollToRow</code> accuracy for dynamic height rows</li>
+<li>Bugs fixes
+<ul>
+<li>Fix RTL scrolling and alignment</li>
+<li>Fix stale row measurements after keyed reordering</li>
+<li>Fixed dropped prop updates</li>
+<li>Use fractional percentage sizing</li>
+<li>Fix center alignment near list boundaries</li>
+</ul>
+</li>
+<li>Performance tweaks:
+<ul>
+<li>Improve scrolling performance by calculating fixed-size visible ranges directly and searching cached variable-size bounds instead of scanning from the beginning.</li>
+<li>Fixed-size jumps also avoid allocating bounds for preceding items.</li>
+</ul>
+</li>
+</ul>
+</blockquote>
+</details>
+<details>
+<summary>Changelog</summary>
+<p><em>Sourced from <a href="https://github.com/bvaughn/react-window/blob/main/CHANGELOG.md">react-window's changelog</a>.</em></p>
+<blockquote>
+<h2>2.3.3</h2>
+<ul>
+<li>Fix small perf regression in version 2.3.2 that caused unnecessary size calculations when scrolling beyond cached bounds dynamic sized rows/columns</li>
+</ul>
+<h2>2.3.2</h2>
+<ul>
+<li>Improve <code>scrollToRow</code> accuracy for dynamic height rows</li>
+<li>Bugs fixes
+<ul>
+<li>Fix RTL scrolling and alignment</li>
+<li>Fix stale row measurements after keyed reordering</li>
+<li>Fixed dropped prop updates</li>
+<li>Use fractional percentage sizing</li>
+<li>Fix center alignment near list boundaries</li>
+</ul>
+</li>
+<li>Performance tweaks:
+<ul>
+<li>Improve scrolling performance by calculating fixed-size visible ranges directly and searching cached variable-size bounds instead of scanning from the beginning.</li>
+<li>Fixed-size jumps also avoid allocating bounds for preceding items.</li>
+</ul>
+</li>
+</ul>
+</blockquote>
+</details>
+<details>
+<summary>Commits</summary>
+<ul>
+<li><a href="https://github.com/bvaughn/react-window/commit/a9500938d1a8b9abba78a658c438dc60bdcaf29c"><code>a950093</code></a> 2.3.2 -&gt; 2.3.3</li>
+<li><a href="https://github.com/bvaughn/react-window/commit/11256d8f933f7d90042b2786cd30edce513d0163"><code>11256d8</code></a> Perf regression bugfix (<a href="https://redirect.github.com/bvaughn/react-window/issues/916">#916</a>)</li>
+<li><a href="https://github.com/bvaughn/react-window/commit/ac0501531c760b83f023daf6591c550c5b399ccc"><code>ac05015</code></a> 2.3.1 -&gt; 2.3.2</li>
+<li><a href="https://github.com/bvaughn/react-window/commit/2b6fa18f14d4aba3f7255d3c1c3188a4b23cc471"><code>2b6fa18</code></a> Bug fixes (<a href="https://redirect.github.com/bvaughn/react-window/issues/915">#915</a>)</li>
+<li><a href="https://github.com/bvaughn/react-window/commit/43f77041eb498433be86935532c9189ed76ac72c"><code>43f7704</code></a> Improve scrollToRow accuracy for dynamic height rows (<a href="https://redirect.github.com/bvaughn/react-window/issues/914">#914</a>)</li>
+<li>See full diff in <a href="https://github.com/bvaughn/react-window/compare/2.3.1...2.3.3">compare view</a></li>
+</ul>
+</details>
+<br />
+
+Updates `@tauri-apps/cli` from 2.11.4 to 2.12.0
+<details>
+<summary>Release notes</summary>
+<p><em>Sourced from <a href="https://github.com/tauri-apps/tauri/releases">@​tauri-apps/cli's releases</a>.</em></p>
+<blockquote>
+<h2><code>@​tauri-apps/cli</code> v2.12.0</h2>
+<h2>[2.12.0]</h2>
+<h3>New Features</h3>
+<ul>
+<li>
+<p><a href="https://www.github.com/tauri-apps/tauri/commit/f6c1eb2533a0445e081c334931d67fee3e354c6f"><code>f6c1eb253</code></a> (<a href="https://redirect.github.com/tauri-apps/tauri/pull/15401">#15401</a>) Added <code>bundle.windows.bundleVCRuntime</code> to copy the Visual C++ runtime DLLs into Windows MSI and NSIS installers. The bundler locates the runtime through <code>VCTOOLS_REDIST_DIR</code> or the bundled <code>vswhere.exe</code>.</p>
+</li>
+<li>
+<p><a href="https://www.github.com/tauri-apps/tauri/commit/f76b1d3ae70d0ba0f0eba80b94b867593aa5ca8b"><code>f76b1d3ae</code></a> (<a href="https://redirect.github.com/tauri-apps/tauri/pull/15644">#15644</a>) The bundler now prints the size of each generated bundle next to its path in the <code>Finished N bundles at:</code> output (directories such as macOS <code>.app</code> bundles are measured recursively).</p>
+</li>
+<li>
+<p><a href="https://www.github.com/tauri-apps/tauri/commit/af465eae1ad99d7b16b8fdbf9aa96bf76d6b9a76"><code>af465eae1</code></a> (<a href="https://redirect.github.com/tauri-apps/tauri/pull/15619">#15619</a>) Add a <code>--no-binary-patching</code> flag to <code>tauri build</code> and <code>tauri bundle</code>. When set, the bundler skips patching the main executable with bundle type information (and the subsequent re-signing), leaving an already-signed binary untouched. Patching is only required when shipping multiple bundle types per platform that should each update with their own installer format.</p>
+</li>
+<li>
+<p><a href="https://www.github.com/tauri-apps/tauri/commit/0646cc1623608dfdaec8d1adbc08d0159b9c2369"><code>0646cc162</code></a> (<a href="https://redirect.github.com/tauri-apps/tauri/pull/15620">#15620</a>) Add a <code>--fit</code> option to <code>tauri icon</code> to accept non-square source images. <code>--fit cover</code> center-crops the source to a square (clipping the longer side) and <code>--fit contain</code> pads the shorter side with transparency. Non-square sources without <code>--fit</code> keep erroring, now with a hint pointing to the flag.</p>
+</li>
+<li>
+<p><a href="https://www.github.com/tauri-apps/tauri/commit/f6c1eb2533a0445e081c334931d67fee3e354c6f"><code>f6c1eb253</code></a> (<a href="https://redirect.github.com/tauri-apps/tauri/pull/15401">#15401</a>) Added <code>build.windows.staticVCRuntime</code> to control MSVC static runtime linking. The <code>STATIC_VCRUNTIME</code> environment variable is now deprecated and emits a migration warning when used.</p>
+</li>
+<li>
+<p><a href="https://www.github.com/tauri-apps/tauri/commit/f45ec0dcf83c139c8fdde5e61923a0e82836f756"><code>f45ec0dcf</code></a> Record the app version in the trusted comment of updater signatures, so a signed artifact is bound to the version it was released as.</p>
+<p>An update endpoint response is not signed, and the signature only covers the downloaded artifact, so the announced <code>version</code> on its own does not prove which release the <code>url</code> and <code>signature</code> point at. minisign covers the trusted comment with its global signature, which lets the updater plugin compare the two and reject a response that pairs a version number with a different release. Enable <code>requireSignedVersion</code> in the updater plugin configuration to enforce this.</p>
+<p><code>tauri build</code> fills the version in automatically, and <code>tauri plugin add updater</code> now enables <code>requireSignedVersion</code> for the project it is adding the plugin to. <code>tauri signer sign</code> gains an <code>--app-version</code> flag for signing updater artifacts by hand, and warns when it is omitted.</p>
+</li>
+</ul>
+<h3>Enhancements</h3>
+<ul>
+<li>
+<p><a href="https://www.github.com/tauri-apps/tauri/commit/e19121427332c8a14165999251cce415707a62fc"><code>e19121427</code></a> (<a href="https://redirect.github.com/tauri-apps/tauri/pull/15993">#15993</a>) Don't always rewrite <code>Cargo.toml</code> file from CRLF line endings to LF</p>
+</li>
+<li>
+<p><a href="https://www.github.com/tauri-apps/tauri/commit/aebf38c845b57bc5653eca677e2e2e044528ea73"><code>aebf38c84</code></a> (<a href="https://redirect.github.com/tauri-apps/tauri/pull/15694">#15694</a>) Migrate the Android Gradle scripts from the deprecated <code>kotlinOptions</code> DSL to <code>compilerOptions</code>, which is accepted by both Kotlin Gradle Plugin 1.9.x and 2.x. This lets projects move to Kotlin 2.x without hitting the hard error that 2.3+ raises on the old DSL.</p>
+<p>This increased the minimum supported Gradle version to 8.13, if your <code>gradle</code> is on an earlier version, delete <code>src-tauri/gen/android/gradle/wrapper/gradle-wrapper.properties</code> and re-run <code>tauri android init</code> to update it.</p>
+</li>
+<li>
+<p><a href="https://www.github.com/tauri-apps/tauri/commit/d89d8fa62302bd3553b66fd47ecfa046b2fc84ef"><code>d89d8fa62</code></a> (<a href="https://redirect.github.com/tauri-apps/tauri/pull/15780">#15780</a>) Warn during Android commands (<code>init</code>/<code>dev</code>/<code>build</code>) when the active Java version is too new for the Gradle version the project uses (e.g. Java 27 against the Gradle 9.6.1 the template ships, or Java 25 against a project still on Gradle 8.14), instead of letting the build fail later with a cryptic error. The warning points to the Gradle/Java compatibility matrix and suggests a supported JDK.</p>
+</li>
+<li>
+<p><a href="https://www.github.com/tauri-apps/tauri/commit/c3d21bd60c3355b284b23dee1a181c3423231182"><code>c3d21bd60</code></a> (<a href="https://redirect.github.com/tauri-apps/tauri/pull/15730">#15730</a>) Use <code>Theme.Material3.DayNight.NoActionBar</code> instead of <code>Theme.MaterialComponents.DayNight.NoActionBar</code> when running <code>tauri android init</code></p>
+</li>
+<li>
+<p><a href="https://www.github.com/tauri-apps/tauri/commit/f654f470c122e925e425424cea733f13d3306412"><code>f654f470c</code></a> (<a href="https://redirect.github.com/tauri-apps/tauri/pull/15862">#15862</a>) Update template to use <code>targetSdk = 37</code></p>
+</li>
+<li>
+<p><a href="https://www.github.com/tauri-apps/tauri/commit/cdaf7eab6c5fccc2a4812af18f58fd3530f3eedd"><code>cdaf7eab6</code></a> (<a href="https://redirect.github.com/tauri-apps/tauri/pull/15765">#15765</a>) Clarify that the <code>tauri init</code> frontend commands run before <code>tauri dev</code> and <code>tauri build</code>, and can be left empty when they are not needed.</p>
+</li>
+<li>
+<p><a href="https://www.github.com/tauri-apps/tauri/commit/d0f38df06a2f4406b388a336694aa18b3c6bf1a9"><code>d0f38df06</code></a> (<a href="https://redirect.github.com/tauri-apps/tauri/pull/15997">#15997</a>) When stdin is not a terminal, <code>tauri init</code> now automatically skips prompts, avoiding IO errors in CI and scripts. This eliminates the need to pass <code>--ci</code> explicitly in non-interactive environments.</p>
+</li>
+<li>
+<p><a href="https://www.github.com/tauri-apps/tauri/commit/ca160ad4808f477380cb0865a08a8ae781e37f85"><code>ca160ad48</code></a> (<a href="https://redirect.github.com/tauri-apps/tauri/pull/15895">#15895</a>) <code>tauri build</code> now warns when <code>productName</code> is still set to the default <code>tauri-app</code>, since it names the generated bundles and is written into install paths and metadata that are expected to be unique to your application. The config documentation for <code>productName</code> now lists what the field controls on each platform, and <code>identifier</code>'s documentation notes that the default value is rejected.</p>
+</li>
+<li>
+<p><a href="https://www.github.com/tauri-apps/tauri/commit/010f06baecd499c41321da3130e20147c50025f7"><code>010f06bae</code></a> (<a href="https://redirect.github.com/tauri-apps/tauri/pull/15737">#15737</a>) Document the <code>TAURI_SIGNING_PRIVATE_KEY_PATH</code> environment variable and clarify that <code>TAURI_SIGNING_PRIVATE_KEY</code> accepts a string or a path for the <code>build</code> and <code>bundle</code> command but must be the literal key string for the <code>signer sign</code> command, both in <code>ENVIRONMENT_VARIABLES.md</code> and in the <code>signer generate</code> command output.</p>
+</li>
+</ul>
+<h3>Bug Fixes</h3>
+<ul>
+<li><a href="https://www.github.com/tauri-apps/tauri/commit/9bad06b9f61996faed1c33709f1b8dd196602793"><code>9bad06b9f</code></a> (<a href="https://redirect.github.com/tauri-apps/tauri/pull/16096">#16096</a>) <code>tauri capability new</code> and <code>tauri permission new</code> now accept an <code>--out</code> path to a file that does not exist yet, trim comma-separated prompt answers (so <code>fs:default, core:default</code> works), report invalid permissions as errors instead of panicking, and reject identifiers that are not valid file names (such as <code>../../x</code>), which previously let them write outside of the capabilities or permissions directory.</li>
+<li><a href="https://www.github.com/tauri-apps/tauri/commit/9642b30879eda8bde35fa3c7606718ca0d364f2e"><code>9642b3087</code></a> (<a href="https://redirect.github.com/tauri-apps/tauri/pull/16117">#16117</a>) <code>tauri add</code> now honors <code>--tag</code>, <code>--rev</code> and <code>--branch</code> for official plugins instead of silently installing the registry version, and rejects passing more than one of them. With npm, the JS package requirement is now <code>~&lt;version&gt;</code> like the other package managers, instead of <code>&gt;=&lt;version&gt;</code> which allowed a later major version.</li>
+<li><a href="https://www.github.com/tauri-apps/tauri/commit/cada1cd4f3e59efb48b2c7a176d240846f55ad0d"><code>cada1cd4f</code></a> (<a href="https://redirect.github.com/tauri-apps/tauri/pull/16105">#16105</a>) Fix Android dev server port forwarding: <code>adb reverse --list</code> is now matched on the exact port (so <code>tcp:80</code> no longer matches <code>tcp:8080</code>), stale forwards on other connected devices are actually removed, and the forward verification gives up with a warning after a few attempts instead of retrying forever.</li>
+<li><a href="https://www.github.com/tauri-apps/tauri/commit/d5bd046583d066024ba073840007f4476e52a5fb"><code>d5bd04658</code></a> (<a href="https://redirect.github.com/tauri-apps/tauri/pull/16111">#16111</a>) Fix <code>bundle &gt; android &gt; debugApplicationIdSuffix</code> being written to the <code>signingConfigs</code> debug block instead of the <code>buildTypes</code> one, and keep the existing content of single-line debug blocks such as <code>getByName(&quot;debug&quot;) { isDebuggable = true }</code> instead of dropping it.</li>
+<li><a href="https://www.github.com/tauri-apps/tauri/commit/ba17da2e55184fe74990db64496b0d02e79cce09"><code>ba17da2e5</code></a> (<a href="https://redirect.github.com/tauri-apps/tauri/pull/16101">#16101</a>) <code>tauri icon</code> now generates 72x72 Android <code>hdpi</code> launcher icons (previously 49x49) and writes the Android launcher background color in <code>#RRGGBB</code>/<code>#AARRGGBB</code> notation instead of the raw CSS color string, which Android rejected or misread. Invalid SVG sources and <code>--png 0</code> now return an error instead of panicking.</li>
+<li><a href="https://www.github.com/tauri-apps/tauri/commit/272842a571a56401649db7aaa93ea400561a1661"><code>272842a57</code></a> (<a href="https://redirect.github.com/tauri-apps/tauri/pull/16128">#16128</a>) Fix error messages that printed placeholders such as <code>{t}</code> literally instead of the value, e.g. &quot;Could not find an Android device matching {t}&quot;.</li>
+<li><a href="https://www.github.com/tauri-apps/tauri/commit/10ad4e54e2f1272ee7bb08418dc386058532a5e8"><code>10ad4e54e</code></a> (<a href="https://redirect.github.com/tauri-apps/tauri/pull/16127">#16127</a>) The Bash completions generated by <code>tauri completions</code> no longer replace the completions of <code>cargo</code>, <code>npm</code>, <code>pnpm</code>, <code>yarn</code>, <code>bun</code> and <code>deno</code>. They now define a <code>_tauri_cli</code> function registered only for the <code>tauri</code> and <code>cargo-tauri</code> commands. Generating completions when running the <code>cargo-tauri</code> binary directly no longer panics.</li>
+<li><a href="https://www.github.com/tauri-apps/tauri/commit/0e4ded72a6a617fa16dff196e7fbd3716997e66f"><code>0e4ded72a</code></a> (<a href="https://redirect.github.com/tauri-apps/tauri/pull/16107">#16107</a>) Fix binaries in <code>src/bin</code> and <code>src/main.rs</code> being left out of bundles when <code>Cargo.toml</code> declares a <code>[[bin]]</code> target without a <code>path</code>.</li>
+<li><a href="https://www.github.com/tauri-apps/tauri/commit/8e0fa2e2f8859cdd38dc07cfc24a1b012ef29fc3"><code>8e0fa2e2f</code></a> (<a href="https://redirect.github.com/tauri-apps/tauri/pull/16097">#16097</a>) Fix the bundler using the host target triple when <code>--target</code> is not passed but <code>build.target</code> is set in <code>.cargo/config.toml</code>. The CLI now also accepts <code>build.target</code> as an array and honors the <code>CARGO_BUILD_TARGET</code> environment variable.</li>
+<li><a href="https://www.github.com/tauri-apps/tauri/commit/7bb0a542179bd4ccb17e0baf0dca2c3b2f3f7721"><code>7bb0a5421</code></a> (<a href="https://redirect.github.com/tauri-apps/tauri/pull/16120">#16120</a>) Fix the Cargo.toml feature rewrite corrupting a string dependency version that has a trailing comment or uses single quotes (e.g. <code>tauri = &quot;2&quot; # pin</code> became <code>&quot;2#pin&quot;</code>). The version value is now kept as-is and the comment is preserved.</li>
+<li><a href="https://www.github.com/tauri-apps/tauri/commit/e4630258e3184fceb60e6c548a7ec61fb81f885d"><code>e4630258e</code></a> (<a href="https://redirect.github.com/tauri-apps/tauri/pull/16114">#16114</a>) Fix the CLI's working directory being left changed to the config directory when the Tauri configuration fails to parse, for example when <code>tauri dev</code> reloads an invalid config.</li>
+<li><a href="https://www.github.com/tauri-apps/tauri/commit/1b91b7b7b3dad8b77bcaeadc6653250e04f0cb7b"><code>1b91b7b7b</code></a> (<a href="https://redirect.github.com/tauri-apps/tauri/pull/16102">#16102</a>) <code>tauri info</code> now logs a warning when it cannot check the latest crate version on crates.io instead of silently ignoring the failure, and no longer panics if crates.io returns a version it cannot parse.</li>
+<li><a href="https://www.github.com/tauri-apps/tauri/commit/1b91b7b7b3dad8b77bcaeadc6653250e04f0cb7b"><code>1b91b7b7b</code></a> (<a href="https://redirect.github.com/tauri-apps/tauri/pull/16102">#16102</a>) <code>tauri info</code> now lists every locked version of a Rust crate when <code>Cargo.lock</code> contains more than one, and no longer panics when the crates.io response cannot be parsed.</li>
+<li><a href="https://www.github.com/tauri-apps/tauri/commit/6507d0b8b360a41615139619eb39680e60d...
+
+_Description has been truncated_
