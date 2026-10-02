@@ -241,6 +241,7 @@ import { vendorApiKeyName } from "../llm/vendor-vault-keys.ts";
 import { XaiProvider } from "../llm/xai-provider.ts";
 import { SessionMemoryStore } from "../memory/session-memory-store.ts";
 import { buildServiceIdentityResolver } from "../metrics/service-identity.ts";
+import { assembleOncallPushRuntime, type OncallPushRuntime } from "../oncall-push/push-runtime.ts";
 import { runOwnershipPass } from "../ownership/ownership-pass.ts";
 import {
   createOwnershipRefresher,
@@ -636,6 +637,7 @@ async function createSchedulerWithMesh(opts: SchedulerWithMeshOpts): Promise<{
   decisionsRefresher: DecisionRefresher | undefined;
   ownershipRefresher: OwnershipRefresher | undefined;
   premortemRefresher: PremortemRefresher | undefined;
+  oncallPush: OncallPushRuntime;
 }> {
   const {
     paths,
@@ -810,6 +812,14 @@ async function createSchedulerWithMesh(opts: SchedulerWithMeshOpts): Promise<{
       })
     : undefined;
 
+  const oncallPush = assembleOncallPushRuntime({
+    db,
+    configDir: paths.configDir,
+    localIndex,
+    notify: (title, body) => notifications.show(title, body),
+    logger: syncLogger,
+  });
+
   const syncScheduler = new SyncScheduler(syncContext, undefined, {
     notify: async (title, body) => {
       await notifications.show(title, body);
@@ -834,6 +844,7 @@ async function createSchedulerWithMesh(opts: SchedulerWithMeshOpts): Promise<{
       decisionsRefresher?.trigger();
       premortemRefresher?.trigger();
       ownershipRefresher?.trigger();
+      oncallPush.trigger(serviceId); // returns at once for anything but pagerduty
     },
     // I29/D22(b): the scheduled-sync closure around the `sync` egress class's shared appender —
     // one of FIVE production callers of `recordSyncEgress` (the other four: `sync/targeted-fetch.ts`,
@@ -898,6 +909,7 @@ async function createSchedulerWithMesh(opts: SchedulerWithMeshOpts): Promise<{
     decisionsRefresher,
     ownershipRefresher,
     premortemRefresher,
+    oncallPush,
   };
 }
 
@@ -3367,6 +3379,7 @@ export async function assemblePlatformServices(
     decisionsRefresher,
     ownershipRefresher,
     premortemRefresher,
+    oncallPush,
   } = await createSchedulerWithMesh({
     paths,
     vault,
@@ -3390,6 +3403,8 @@ export async function assemblePlatformServices(
     ownershipRefresher,
     premortemRefresher,
   ]);
+
+  void oncallPush; // wired into ipcOpts in Task 8
 
   await verifyExtensionsBestEffort(db, syncLogger, connectorMesh, { vault });
 
