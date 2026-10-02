@@ -347,6 +347,12 @@ describe("PushStore", () => {
     expect(row).toMatchObject({ status: "ok", createdAt: 1000, retriedAt: 5000, failureCode: null, briefMarkdown: "# brief" });
   });
 
+  test("a FAILED retry records the new session id and code, stays failed", () => {
+    store.insert("pagerduty:P3", FAILED, 1000);
+    const row = store.applyRetry("pagerduty:P3", { status: "failed", sessionId: "s-retry", failureCode: "brief_error: boom" }, 6000);
+    expect(row).toMatchObject({ status: "failed", sessionId: "s-retry", failureCode: "brief_error: boom", createdAt: 1000, retriedAt: 6000 });
+  });
+
   test("recordDelivery merges per sink", () => {
     store.insert("pagerduty:P1", OK, 1000);
     store.recordDelivery("pagerduty:P1", "toast", { outcome: "delivered", at: 1 });
@@ -548,11 +554,13 @@ export class PushStore {
         [sessionId, md, json, nowMs, incidentId],
       );
     } else {
-      dbRun(this.db, "UPDATE pushed_brief SET failure_code = ?, retried_at = ? WHERE incident_id = ?", [
-        failureCode,
-        nowMs,
-        incidentId,
-      ]);
+      // A failed retry may still have opened a session before timing out; record the LATEST one so
+      // the row points at the attempt that actually ran. Status is restated, not assumed.
+      dbRun(
+        this.db,
+        "UPDATE pushed_brief SET session_id = ?, status = 'failed', failure_code = ?, retried_at = ? WHERE incident_id = ?",
+        [sessionId, failureCode, nowMs, incidentId],
+      );
     }
     return this.mustGet(incidentId);
   }
@@ -701,6 +709,16 @@ In `security-invariants.test.ts`, next to the fleet-kind tests at `:4060-4074`:
 ```
 
 Import `dispatchAgentsRpc` from `./ipc/agents-rpc.ts` and `createMemoryIndexDb` from `./connectors/connector-sync-test-helpers.ts` if they aren't imported already.
+
+In `packages/gateway/src/ipc/agents-rpc.test.ts`, the `describe("agents.oncall — the external shape bound")` block at `:1480` runs both `test.each` cases (zero-param REFUSED, explicit `--service` SERVED) over a hand-listed `EXTERNAL` array. `push` must get the same two assertions. It is **not** an external caller, though, so don't add it to `EXTERNAL`: that would mislabel it for any future test reusing the list. Add beside the two constants:
+
+```ts
+  // Kinds refused the owner-scoped shape. `push` is LOCAL (the gateway's own post-sync hook) but
+  // always names its incident, so it is refused the shape that would let it lose one.
+  const OWNER_SCOPED_REFUSED: readonly ClientKind[] = [...EXTERNAL, "push"];
+```
+
+and switch both `test.each(EXTERNAL.map(...))` calls to `test.each(OWNER_SCOPED_REFUSED.map(...))`. **Make the list impossible to leave incomplete:** add one test asserting that `[...OWNER_SCOPED_REFUSED, ...LOCAL]`, sorted, equals every `ClientKind`. Do that with a local exhaustive `const ALL: Record<ClientKind, true> = { cli: true, ui: true, unknown: true, fleet: true, push: true, mcp: true, http: true, chatops: true }` and `Object.keys(ALL)`, so a ninth kind is a compile error here rather than a silently untested one.
 
 - [ ] **Step 2: Run the tests to verify they fail**
 
@@ -1864,7 +1882,13 @@ Inside `onConnectorSyncSuccess`, right after the `evaluateWatchersAfterSync(...)
         oncallPush.trigger(serviceId); // returns at once for anything but pagerduty
 ```
 
-`oncallPush` must also reach the IPC options (Task 8) and the demo context (Task 10). Keep it in the scope where `ipcOpts` is built. If the two sites are in different functions, return it from the function that builds the scheduler, alongside what that function already returns, the same way `fleetRuntime` reaches `ipcOpts`. If `syncLogger`'s type does not match `{ error(obj, msg) }`, pass `{ error: (o, m) => syncLogger.error(o, m) }`.
+**They are in different functions, and this is how to thread it.** The `SyncScheduler` and `onConnectorSyncSuccess` live inside `async function createSchedulerWithMesh(opts: SchedulerWithMeshOpts): Promise<{ … }>` (`assemble.ts:632`). `ipcOpts` is built in `assemblePlatformServices`, which destructures that function's result at `~:3370` (`} = await createSchedulerWithMesh({`). So:
+1. Construct `oncallPush` inside `createSchedulerWithMesh` as shown above.
+2. Add `oncallPush: OncallPushRuntime` to that function's declared return type (`:632`) and to its `return { … }` object.
+3. Add `oncallPush` to the destructuring at `~:3370`.
+4. Task 8 then assigns `ipcOpts.oncallPushRpcCtx = { runtime: oncallPush };` from that destructured binding. Task 10's demo context reaches it through `ipcOpts.oncallPushRpcCtx`, so no further threading is needed.
+
+`createSchedulerWithMesh` has its own `opts` (`paths`, `db`, `localIndex`, `notifications`, `syncLogger` are destructured at `:640-651`), so every dependency above is already in scope there. If `syncLogger`'s type does not match `{ error(obj, msg) }`, pass `{ error: (o, m) => syncLogger.error(o, m) }`.
 
 - [ ] **Step 5: Run tests and typecheck.** Run: `bun test packages/gateway/src/oncall-push/ && bun run typecheck`. Expected: PASS.
 
