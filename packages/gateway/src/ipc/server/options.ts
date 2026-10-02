@@ -39,6 +39,7 @@ import type { BoxKeypair } from "../lan-crypto.ts";
 import type { PairingWindow } from "../lan-pairing.ts";
 import type { LanServer } from "../lan-server.ts";
 import type { MediaRpcCtx } from "../media-rpc.ts";
+import type { OncallPushRpcCtx } from "../oncall-push-rpc.ts";
 import type { PolicyRpcCtx } from "../policy-rpc.ts";
 import type { ClientSession } from "../session.ts";
 import type { ShareRpcCtx } from "../share-rpc.ts";
@@ -179,6 +180,9 @@ export type CreateIpcServerOptions = {
   // otherwise, and fleet.runNow refuses rather than silently doing nothing. The whole namespace is
   // LAN-forbidden (I5, `FORBIDDEN_OVER_LAN`) and absent from the Tauri allowlist (I7).
   fleetRpcCtx?: FleetRpcCtx;
+  // On-call pushed brief (2026-10-02). Backs the oncall.pushed* namespace; LAN-forbidden (I5), not
+  // Tauri-exposed (I7).
+  oncallPushRpcCtx?: OncallPushRpcCtx;
   // S2 runtime tool generation (I39). toolgen.create gates through the owner consent broker
   // (fail-closed on timeout/deny) inside `createGeneratedTool`; toolgen.approvalRespond is the
   // owner's answer channel. Present only when assembled at boot; the dispatcher skips cleanly when

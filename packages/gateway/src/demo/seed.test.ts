@@ -9,9 +9,11 @@ import { loadNimbusServiceConfigsFromConfigDir } from "../config/nimbus-toml.ts"
 import { AnnotateError } from "../deployment/annotate.ts";
 import { CURRENT_SCHEMA_VERSION } from "../index/local-index.ts";
 import { runIndexedSchemaMigrations } from "../index/migrations/runner.ts";
+import { assembleOncallPushRuntime } from "../oncall-push/push-runtime.ts";
+import { createUnimplementedNotifications } from "../platform/assemble.ts";
 import { buildAcmeCorpus } from "./corpus/acme.ts";
-import { DAY, type DemoPerson } from "./corpus/types.ts";
-import { DEMO_SEED_MARKER, DemoSeedRefusedError, seedDemoCorpus } from "./seed.ts";
+import { DAY, type DemoPerson, MINUTE } from "./corpus/types.ts";
+import { DEMO_SEED_MARKER, DemoSeedRefusedError, fireDemoPage, seedDemoCorpus } from "./seed.ts";
 
 let dbs: Database[] = [];
 let roots: string[] = [];
@@ -63,7 +65,7 @@ describe("seedDemoCorpus", () => {
     // — what the runner actually executes — never does.
     expect(r.tour.map((s) => s.kind)).toEqual(["oncall", "why", "owners"]);
     expect(r.tour.map((s) => s.command)).toEqual([
-      "nimbus --demo oncall --incident pagerduty:PDEMO412",
+      "nimbus --demo oncall pushed",
       "nimbus --demo why src/retry/backoff.ts:42",
       "nimbus --demo owners src/retry",
     ]);
@@ -84,14 +86,98 @@ describe("seedDemoCorpus", () => {
     const toml = readFileSync(join(configDir, "nimbus.toml"), "utf8");
     expect(toml).toContain("me_person_id");
     expect(toml).toMatch(/\[embedding\][\s\S]*enabled = false/);
+    expect(toml).toMatch(/\[oncall\.push\]\s*\nenabled = true/);
 
     const marker = JSON.parse(readFileSync(join(dataDir, DEMO_SEED_MARKER), "utf8")) as unknown;
     expect(marker).toEqual({ corpus: "acme", version: 1, seededAtMs: nowMs });
   });
 
-  test("the paging incident is linked to the demo persona through the graph", async () => {
+  test("the paging incident is NOT seeded; firePage writes it, pushes ONE brief, then the chatter", async () => {
     const { db, configDir, dataDir } = fresh();
-    await seedDemoCorpus(db, { configDir, dataDir, nowMs: 5 * DAY * 365 });
+    const nowMs = Date.now();
+    await seedDemoCorpus(db, { configDir, dataDir, nowMs });
+    expect(count(db, "SELECT COUNT(*) AS n FROM item WHERE id = 'pagerduty:PDEMO412'")).toBe(0);
+
+    // The runtime boots AFTER the seed, as the real gateway does after `nimbus demo`'s restart.
+    const rt = assembleOncallPushRuntime({
+      db,
+      configDir,
+      notifications: { show: () => {} },
+      logger: { error: () => {} },
+      now: () => nowMs + 5_000,
+    });
+    expect(rt.config.enabled).toBe(true); // writeDemoConfig enabled it
+    expect(rt.store.enabledAt()).toBe(nowMs + 5_000); // boot reconcile, before the page
+
+    const r = await fireDemoPage(db, rt, nowMs + 10_000);
+    expect(r.incidentId).toBe("pagerduty:PDEMO412");
+    expect(r.push).toMatchObject({ selected: 1, ok: 1, failed: 0 });
+    const brief = rt.store.get("pagerduty:PDEMO412");
+    expect(brief?.briefMarkdown).toContain("payment-service");
+    expect(brief?.briefMarkdown).toContain("412");
+    // The chatter is written AFTER the brief was assembled, so the pushed brief cannot quote it…
+    expect(brief?.briefMarkdown).not.toContain("Looking now");
+    // …but it is in the index for any later `nimbus oncall --incident`.
+    expect(
+      count(db, "SELECT COUNT(*) AS n FROM item WHERE body_preview LIKE '%Looking now%'"),
+    ).toBe(1);
+    // Idempotent: firing again pushes nothing new.
+    expect((await fireDemoPage(db, rt, nowMs + 20_000)).push.selected).toBe(0);
+  });
+
+  test("with the PRODUCTION notifier (delivers: false) the pushed toast records skipped, never delivered", async () => {
+    const { db, configDir, dataDir } = fresh();
+    const nowMs = Date.now();
+    await seedDemoCorpus(db, { configDir, dataDir, nowMs });
+    const infoCalls: unknown[] = [];
+    const logger = {
+      info: (...args: unknown[]) => void infoCalls.push(args),
+    } as unknown as Parameters<typeof createUnimplementedNotifications>[0];
+    // The exact object platform/assemble.ts builds and hands the runtime whole.
+    const notifications = createUnimplementedNotifications(logger);
+    expect(notifications.delivers).toBe(false);
+    const rt = assembleOncallPushRuntime({
+      db,
+      configDir,
+      notifications,
+      logger: { error: () => {} },
+      now: () => nowMs,
+    });
+    await fireDemoPage(db, rt, nowMs);
+    expect(rt.store.get("pagerduty:PDEMO412")?.delivery["toast"]).toMatchObject({
+      outcome: "skipped",
+      reason: "no OS notification implementation on this platform",
+    });
+    expect(infoCalls).toHaveLength(0); // show() was never even called
+  });
+
+  test("the story deploy finishes ~8 minutes before the page", async () => {
+    const { db, configDir, dataDir } = fresh();
+    const nowMs = Date.now();
+    await seedDemoCorpus(db, { configDir, dataDir, nowMs });
+    // annotateDeployment (deployment/annotate.ts) stores finished_at_ms in item.metadata.
+    const row = db
+      .query(
+        "SELECT json_extract(metadata, '$.finished_at_ms') AS f FROM item WHERE type = 'deployment' AND json_extract(metadata, '$.run_id') = '7412'",
+      )
+      .get() as { f: number } | null;
+    expect(row).not.toBeNull();
+    expect(row?.f).toBeGreaterThanOrEqual(nowMs - 9 * MINUTE);
+    expect(row?.f).toBeLessThanOrEqual(nowMs - 7 * MINUTE);
+  });
+
+  test("the fired page is linked to the demo persona through the graph", async () => {
+    const { db, configDir, dataDir } = fresh();
+    const nowMs = Date.now();
+    await seedDemoCorpus(db, { configDir, dataDir, nowMs });
+    const rt = assembleOncallPushRuntime({
+      db,
+      configDir,
+      notifications: { show: () => {} },
+      logger: { error: () => {} },
+      now: () => nowMs,
+    });
+    await fireDemoPage(db, rt, nowMs);
     const assigned = count(
       db,
       `SELECT COUNT(*) AS n FROM graph_relation r
@@ -110,16 +196,25 @@ describe("seedDemoCorpus", () => {
     ).rejects.toBeInstanceOf(DemoSeedRefusedError);
   });
 
-  test("windows rebase: a seed seven days later has the page inside oncall's 24h window of THAT now", async () => {
+  // The paging incident is no longer seeded (`fireDemoPage` writes it at fire time), so the rebase
+  // is pinned on the story deploy instead: it must land minutes before THAT seed's now.
+  test("windows rebase: a seed seven days later has the story deploy inside the last hour of THAT now", async () => {
     for (const nowMs of [5 * DAY * 365, 5 * DAY * 365 + 7 * DAY]) {
       const { db, configDir, dataDir } = fresh();
       await seedDemoCorpus(db, { configDir, dataDir, nowMs });
       const recent = count(
         db,
-        "SELECT COUNT(*) AS n FROM item WHERE service = 'pagerduty' AND modified_at >= ? AND modified_at <= ?",
-        [nowMs - DAY, nowMs],
+        "SELECT COUNT(*) AS n FROM item WHERE type = 'deployment' AND json_extract(metadata, '$.run_id') = '7412' AND json_extract(metadata, '$.finished_at_ms') BETWEEN ? AND ?",
+        [nowMs - 60 * MINUTE, nowMs],
       );
       expect(recent).toBe(1);
+      expect(
+        count(
+          db,
+          "SELECT COUNT(*) AS n FROM item WHERE service = 'pagerduty' AND modified_at >= ?",
+          [nowMs - DAY],
+        ),
+      ).toBe(0);
     }
   });
 });

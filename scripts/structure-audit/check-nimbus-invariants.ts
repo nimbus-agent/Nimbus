@@ -1000,7 +1000,7 @@ const D28_FLEET_KIND_ALLOWED = [
 // classification is `null`, a command map entry is a function reference, and a forbid-list entry is
 // a bare array element with no colon at all.
 const D28_FLEET_KIND_RE =
-  /\w*[Kk]ind\s*[:=]\s*"fleet"|:\s*ClientKind\s*=\s*"fleet"|"fleet"\s+as\s+ClientKind|\bdeclare\s*\([^)]*,\s*"fleet"|"fleet"\s*:\s*(?:null|")|\bfleet\s*:\s*null\b/;
+  /\w*[Kk]ind\s*[:=]\s*["']fleet["']|:\s*ClientKind\s*=\s*["']fleet["']|["']fleet["']\s+as\s+ClientKind|\bdeclare\s*\([^)]*,\s*["']fleet["']|["']fleet["']\s*:\s*(?:null|["'])|\bfleet\s*:\s*null\b/;
 
 export function checkFleetClientKindConfinement(files: readonly FileEntry[]): Violation[] {
   const out: Violation[] = [];
@@ -1023,6 +1023,48 @@ export function checkFleetClientKindConfinement(files: readonly FileEntry[]): Vi
       if (matched) {
         out.push({
           rule: "D28-fleet-client-kind",
+          file: f.relPath,
+          line: i + 1,
+          snippet: (original[i] ?? "").trim(),
+        });
+      }
+    }
+  }
+  return out;
+}
+
+const D28_PUSH_KIND_ALLOWED = [
+  "packages/gateway/src/ipc/server/client-kind.ts",
+  "packages/gateway/src/egress/egress-bearing-kinds.ts",
+  "packages/gateway/src/oncall-push/push-runner.ts",
+];
+// Same shapes as D28_FLEET_KIND_RE with "push" substituted. Both quote styles match in each rule:
+// a single-quoted `kind: 'push'` is the same assignment, and a double-quote-only regex passed it. The bare unquoted key matches only a
+// `null` VALUE, so OWNER_SCOPED_ONCALL_ALLOWED's `push: false` and every `arr.push(x)` stay clear.
+const D28_PUSH_KIND_RE =
+  /\w*[Kk]ind\s*[:=]\s*["']push["']|:\s*ClientKind\s*=\s*["']push["']|["']push["']\s+as\s+ClientKind|\bdeclare\s*\([^)]*,\s*["']push["']|["']push["']\s*:\s*(?:null|["'])|\bpush\s*:\s*null\b/;
+
+export function checkPushClientKindConfinement(files: readonly FileEntry[]): Violation[] {
+  const out: Violation[] = [];
+  for (const f of files) {
+    if (f.relPath.endsWith(".test.ts")) continue;
+    if (D28_PUSH_KIND_ALLOWED.includes(f.relPath)) continue;
+    const stripped = stripComments(f.contents).split("\n");
+    const original = f.contents.split("\n");
+    for (let i = 0; i < stripped.length; i++) {
+      const line = stripped[i] ?? "";
+      const next = stripped[i + 1] ?? "";
+      // The line alone, else the line joined with its successor. The joined form counts ONLY when
+      // the successor does not match on its own: otherwise a violation sitting wholly on line i+1
+      // would be reported twice — once here, at the wrong line number, and again at its own index.
+      // The first line has to actually contribute for the window to mean anything.
+      let matched = D28_PUSH_KIND_RE.test(line);
+      if (!matched && !D28_PUSH_KIND_RE.test(next)) {
+        matched = D28_PUSH_KIND_RE.test(`${line} ${next}`);
+      }
+      if (matched) {
+        out.push({
+          rule: "D28-push-client-kind",
           file: f.relPath,
           line: i + 1,
           snippet: (original[i] ?? "").trim(),
@@ -2357,6 +2399,9 @@ export const RULE_ANCHORS: readonly string[] = [
   // without an anchor of its own, D28 would report clean while scanning nothing the moment
   // `iterateSourceFiles()` stopped reaching `fleet/`.
   "packages/gateway/src/fleet/fleet-invoker.ts",
+  // D28 — second anchor, on `push-runner.ts`: the one file allowed to wear the `push` ClientKind
+  // (`kind: "push"`), scanned by the rule and then permitted, so D28 cannot go blind to it.
+  "packages/gateway/src/oncall-push/push-runner.ts",
   // D29 (a)/(b)/(c)/(d) — anchored on `toolgen-broker.ts`, a file all four rules SCAN (it names
   // none of `nimbus/fetch`, `buildGeneratedManifest`'s definition, a `toolgen.` vault-key template,
   // or a forbidden saved-tool identifier, so it is read and then reported clean) rather than on any
@@ -2582,6 +2627,13 @@ async function run(): Promise<void> {
       );
     }
     if (fleetKindViolations.length > 0) exit = 1;
+    const pushKindViolations = checkPushClientKindConfinement(files);
+    for (const e of pushKindViolations) {
+      console.error(
+        `::error file=${e.file},line=${e.line}::D28 push ClientKind breach — the on-call push attribution is named outside client-kind.ts/egress-bearing-kinds.ts/push-runner.ts, a second path able to file briefs as pushed work without the runner's checks: ${e.snippet}`,
+      );
+    }
+    if (pushKindViolations.length > 0) exit = 1;
   }
   if (mode === "binary-only" || mode === "all") {
     const actuationViolations = checkActuationConfinement(files);

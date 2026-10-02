@@ -6,7 +6,7 @@ import { parseTailArgs, renderEvent, runTailCommand, type TailCommandDeps } from
 describe("parseTailArgs", () => {
   test("defaults to every category and human output", () => {
     const a = parseTailArgs([]);
-    expect(a.categories).toEqual(["connector", "watcher", "sync", "extension", "hitl"]);
+    expect(a.categories).toEqual(["connector", "watcher", "sync", "extension", "hitl", "oncall"]);
     expect(a.json).toBe(false);
   });
 
@@ -56,7 +56,7 @@ describe("parseTailArgs", () => {
   test("--json sets the json flag without changing the default categories", () => {
     const a = parseTailArgs(["--json"]);
     expect(a.json).toBe(true);
-    expect(a.categories).toEqual(["connector", "watcher", "sync", "extension", "hitl"]);
+    expect(a.categories).toEqual(["connector", "watcher", "sync", "extension", "hitl", "oncall"]);
   });
 
   test("an unknown --flag fails fast naming it", () => {
@@ -412,6 +412,55 @@ describe("runTailCommand lifecycle", () => {
     expect(h.out[0]).toContain("[sync]");
     expect(h.out[0]).toContain("slack");
     expect(h.out.join("")).not.toContain("[connector]");
+    process.emit("SIGINT");
+    await done;
+  });
+
+  test("--filter oncall is accepted, and an oncall.briefPushed event renders its pointer line", async () => {
+    const h = harness();
+    const done = runTailCommand(["--filter", "oncall"], h.deps);
+    await nextMacrotask();
+    h.handlers["gateway.event"]?.({
+      kind: "oncall.briefPushed",
+      ts: 1_789_300_000_000,
+      payload: { incidentId: "pagerduty:A", status: "ok" },
+    });
+    h.handlers["gateway.event"]?.({
+      kind: "oncall.briefPushed",
+      ts: 1_789_300_000_000,
+      payload: { incidentId: "pagerduty:B", status: "failed" },
+    });
+    expect(h.out).toHaveLength(2);
+    expect(h.out[0]).toContain(
+      "[oncall] brief ready for pagerduty:A — nimbus oncall pushed pagerduty:A",
+    );
+    expect(h.out[1]).toContain("[oncall] brief FAILED for pagerduty:B");
+    process.emit("SIGINT");
+    await done;
+  });
+
+  test("oncall.briefPushed is suppressed under --filter sync (positive control included)", async () => {
+    const h = harness();
+    const done = runTailCommand(["--filter", "sync"], h.deps);
+    await nextMacrotask();
+    h.handlers["gateway.event"]?.({
+      kind: "oncall.briefPushed",
+      ts: 1,
+      payload: { incidentId: "pagerduty:A", status: "ok" },
+    });
+    h.handlers["gateway.event"]?.({
+      kind: "sync.completed",
+      ts: 1,
+      payload: {
+        serviceId: "slack",
+        itemsUpserted: 1,
+        itemsDeleted: 0,
+        durationMs: 1,
+        hasMore: false,
+      },
+    });
+    expect(h.out).toHaveLength(1);
+    expect(h.out[0]).toContain("[sync]");
     process.emit("SIGINT");
     await done;
   });

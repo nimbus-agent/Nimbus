@@ -649,6 +649,10 @@ const OWNER_SCOPED_ONCALL_ALLOWED: Readonly<Record<ClientKind, boolean>> = Objec
   ui: true,
   unknown: true,
   fleet: true,
+  // false, not true: the push runner ALWAYS names `incidentId`, so this entry is never consulted on
+  // the happy path — it exists so a push call that ever lost its incidentId is REFUSED rather than
+  // quietly briefing whatever the owner-scoped resolution picks.
+  push: false,
   mcp: false,
   http: false,
   chatops: false,

@@ -16,7 +16,8 @@ export type GatewayEventKind =
   | "sync.completed"
   | "extension.stateChanged"
   | "hitl.requested"
-  | "hitl.resolved";
+  | "hitl.resolved"
+  | "oncall.briefPushed";
 
 export interface GatewayEventNotification<P = Record<string, unknown>> {
   readonly kind: GatewayEventKind;
@@ -74,6 +75,12 @@ export interface ExtensionStateChangedPayload {
 export interface HitlRequestedPayload {
   readonly requestId: string;
   readonly actionType: string;
+}
+
+/** `oncall.briefPushed` — id + status ONLY, never brief text (spec § 2.5). */
+export interface OncallBriefPushedPayload {
+  readonly incidentId: string;
+  readonly status: "ok" | "failed";
 }
 
 export interface HitlResolvedPayload {

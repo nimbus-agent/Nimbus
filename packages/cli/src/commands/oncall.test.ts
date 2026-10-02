@@ -365,3 +365,22 @@ describe("parseOncallArgs — the 90d bound (CodeRabbit #1509)", () => {
     expect(parseOncallArgs(["--since", "90d"]).sinceMs).toBe(90 * DAY_MS);
   });
 });
+
+describe("runOncallCommand pushed dispatch", () => {
+  test("`pushed --bogus` never reaches the incident flag parser", async () => {
+    const cap = createStreamCapture();
+    cap.install();
+    let thrown: unknown;
+    try {
+      await runOncallCommand(["pushed", "--bogus"], deps({ brief: "" }));
+    } catch (e) {
+      thrown = e;
+    } finally {
+      cap.restore();
+    }
+    const err = cap.stderrChunks.join("");
+    expect(thrown).toBeInstanceOf(CliExit);
+    expect(err).toContain("Usage: nimbus oncall pushed");
+    expect(err).not.toContain("Unknown flag");
+  });
+});
