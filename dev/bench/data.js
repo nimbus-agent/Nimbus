@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1790776778927,
+  "lastUpdate": 1790955534910,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "80277e5de59edc05505f4ace92f63efab8bc0faa",
-          "message": "chore(deps): @nimbus-dev/client 0.5.0 → 0.12.1 in packages/cli (#848)\n\n## Summary\n\nClears the **last red edge** from the P2 Release Train Phase 2 gate\n(#843), which found the CLI resolving `@nimbus-dev/client` **0.5.0**\nagainst a published **0.12.1** — seven minors of drift accumulated\nacross the narrow-waist work, which nothing detected until the gate\nexisted. Owner-confirmed as drift, not a deliberate pin.\n\n**This needed a manifest edit, not a lockfile refresh.** A caret on a\n`0.x` version pins the **minor**, so `^0.5.0` could never resolve past\n`0.5.x` — the range was itself the blocker. That asymmetry is precisely\nwhy the Phase 2 gate reads the **lockfile** rather than the declared\nrange: a range misleads in both directions (`^1.2.0` permits a newer\n`1.3.0`; `^0.5.0` forbids `0.12.1`).\n\nContrast the sdk bumps in #843 / nimbus-client#38 / nimbus-vscode#58,\nwhich were caret-on-`1.x` and needed only `bun install`.\n\n## Why it turned out small\n\nSeven minors on a `0.x` is nominally high-risk, which is why I checked\ncall sites before assuming. The CLI's surface use is narrow —\n`IPCClient`, `MockClient`, `NimbusClient` — and `IPCClient` grew method\n**count** (15 → 32 across those releases) rather than changing shape.\nNothing needed adapting, including\n`packages/cli/src/tui/test-helpers/stub-client.ts`, which *implements*\nthe interface and was the most likely breakage.\n\n## Testing\n\n- **Full monorepo typecheck** — exit 0 (all packages)\n- **biome** — clean\n- `bun test packages/cli/src` — **1792 pass / 8 fail before AND after\nthe bump**, a zero delta\n\n### About those 8 failures\n\nThey are **pre-existing and Windows-local**, not caused by this change.\nI verified rather than assumed: stashed the bump, re-ran on clean\n`main`, and got the identical 14 pass / 8 fail in the same file.\n\nThey are all in `runUpdate dispatcher`\n(`packages/cli/src/commands/update.test.ts`), and they fail in isolation\ntoo — so this is *not* the known `mock.module` cross-file contamination.\nThe mock records **zero** IPC calls, meaning `withGatewayIpc` bails\nbefore dispatch, consistent with the named-pipe socket path on Windows.\nThere is no platform guard on the file and it is not excluded from CI,\nso Ubuntu CI should show them green.\n\nUnrelated to a dependency bump, so out of scope here — but worth its own\nlook, since a Windows-only failure in a TTY/socket path is exactly the\nclass the cross-platform non-negotiable exists to catch.\n\n## Type of Change\n\n- [x] Bug fix (non-breaking change that fixes an issue) — dependency\ndrift\n- [x] CI / tooling\n\n## Non-Negotiables Checklist\n\n- [x] `bun run typecheck` — exit 0 across the monorepo\n- [x] `bun run lint` (Biome) — clean\n- [x] All existing tests pass — zero delta vs `main` (see above)\n- [x] New behaviour is covered by tests — n/a, dependency bump with no\nsource change\n- [x] No `any` introduced — no source change\n- [x] No credentials in logs/IPC/config\n- [x] Platform-specific code behind `PlatformServices` — n/a\n- [x] HITL gate untouched\n\n## Notes for Reviewers\n\nAfter this and the three sdk bumps land, **every P2 Phase 2 edge should\nbe green**, which unblocks the sweep proof that Phase 2's definition of\n*done* requires (`org-drift-sweep.yml`, then record the run number in\nthe P2 progress log).\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)",
-          "timestamp": "2026-07-26T21:15:36+03:00",
-          "tree_id": "52a4e70b497a613c20987e4185b6c52b8e8dc5dd",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/80277e5de59edc05505f4ace92f63efab8bc0faa"
-        },
-        "date": 1785091098843,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 262.3882018999986,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 257.78689399999166,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 318.49790589999685,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "693f62ba1885418b3dfd57db9e619810c53f509a",
+          "message": "fix(deps): bump the devalue override to 5.9.4 for three new high advisories (#1593)\n\n`Dependency audit` and `Trivy vulnerability scan` — both required checks\n— went red repo-wide on 2026-10-01 when three high-severity `devalue`\nadvisories were published (GHSA-j22f-vq7h-c4qm, GHSA-mcm9-63f2-9j32,\nGHSA-x5rw-q4pp-hg5g; all affect `<= 5.9.2`, patched in `5.9.3`). `main`\nitself is red at `502856ce`, so every open PR is blocked until this\nlands.\n\nThe root `overrides` pinned `devalue` to `5.9.1`; this moves the pin to\n`5.9.4` (latest 5.x — `astro` asks for `^5.8.1`, so 6.x is not taken).\nLockfile diff is the two lines that name the version.\n\nVerified locally: `bun audit --audit-level high` → no vulnerabilities;\n`audit:advisories` OK; `audit:js-licenses` OK.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n\n## Summary by CodeRabbit\n\n* **Chores**\n* Updated a behind-the-scenes component. There are no changes to the\napp’s features, workflows, or appearance in this release.\n\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-10-02T14:47:34Z",
+          "tree_id": "4f1f9f57ff1d7086a7fcd7e5b4ccda324bf9d83c",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/693f62ba1885418b3dfd57db9e619810c53f509a"
+        },
+        "date": 1790955530162,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 343.26102269999717,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 339.93822985000077,
             "unit": "ms"
           }
         ]
