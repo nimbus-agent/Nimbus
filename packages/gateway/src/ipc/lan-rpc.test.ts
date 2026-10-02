@@ -136,6 +136,16 @@ describe("checkLanMethodAllowed", () => {
     ).not.toThrow();
   });
 
+  test("negative control: agents.oncall is NOT refused by the `oncall` namespace entry", () => {
+    // The check splits on the FIRST segment, so `agents.oncall` keys on `agents` (not forbidden,
+    // not a write method) — forbidding the `oncall` namespace must not take the agent with it.
+    for (const writeAllowed of [true, false]) {
+      expect(() =>
+        checkLanMethodAllowed("agents.oncall", { peerId: "p", writeAllowed }),
+      ).not.toThrow();
+    }
+  });
+
   /**
    * The whole `toolgen` namespace (S2 runtime tool generation), matching exec/computer/media/
    * fleet above. `toolgen.create` is RCE-class by definition -- it registers model-authored code

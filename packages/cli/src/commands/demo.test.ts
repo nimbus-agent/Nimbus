@@ -268,7 +268,7 @@ describe("runDemo", () => {
   );
 
   test.each([[[] as string[]], [["--no-tour"]]])(
-    "%p: a firePage rejection is reported and exits 1 without running the tour",
+    "%p: a firePage rejection is reported, stops the demo gateway, and exits 1 without touring",
     async (args) => {
       const { deps, calls, err } = fakeDeps({
         firePage: async () => {
@@ -285,10 +285,31 @@ describe("runDemo", () => {
         "stop",
         "start",
         "firePage",
+        "stop",
       ]);
       expect(err.join("")).toContain("boom");
     },
   );
+
+  test("a firePage rejection whose cleanup stop ALSO fails still exits 1 with the page error", async () => {
+    let n = 0;
+    const { deps, calls, err } = fakeDeps({
+      stop: async () => {
+        calls.push("stop");
+        n += 1;
+        if (n > 2) throw new Error("stop failed");
+        return "stopped";
+      },
+      firePage: async () => {
+        calls.push("firePage");
+        throw new Error("boom");
+      },
+    });
+    await expect(runDemo(["--no-tour"], deps)).rejects.toMatchObject({ name: "CliExit", code: 1 });
+    expect(calls.slice(-2)).toEqual(["firePage", "stop"]);
+    expect(err.join("")).toContain("boom");
+    expect(err.join("")).not.toContain("stop failed");
+  });
 
   test("a page that pushed no brief says so without a failure marker, still tours, then CliExit(1)", async () => {
     const { deps, calls, out } = fakeDeps({

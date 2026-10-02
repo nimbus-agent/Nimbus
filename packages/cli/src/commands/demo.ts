@@ -169,6 +169,9 @@ export async function runDemo(args: string[], deps: DemoDeps = defaultDemoDeps):
     deps.err(
       `The demo page could not be fired: ${err instanceof Error ? err.message : String(err)}\n`,
     );
+    // Same cleanup as the seed-failure path: do not leave the demo gateway running, and never let
+    // a failed stop replace the page error being reported.
+    await deps.stop(paths).catch(() => undefined);
     throw new CliExit(1);
   }
   const pushed = page.push.ok > 0;
