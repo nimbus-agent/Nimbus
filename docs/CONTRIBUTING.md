@@ -279,7 +279,7 @@ Verify the printed author, maintainer, created date, and version count look reas
 
 Nothing updates dependencies automatically. Dependabot version updates were retired on 2026-10-02. Each of its grouped PRs needed a full CI cycle, and clearing its last weekly batch (#1573–#1576) took two days and a dozen hand-pushed fixes, none of them for a real incompatibility. Dependencies now move in a **periodic manual bulk update**: one PR that takes every workspace and every ecosystem forward at once.
 
-Dependabot **alerts** stay on, so a vulnerable dependency still appears under the repository's **Security** tab, and the required `Dependency audit`, `Cargo audit (Tauri)` and `Cargo deny` checks still fail a pull request on a live advisory. When a newly published advisory turns `main` red, a `Security gate is red on main` issue opens on its own. The fix is usually a root `overrides` bump; `scripts/structure-audit/accepted-advisories.ts` records the order of preference.
+Dependabot **alerts** stay on, so a vulnerable dependency still appears under the repository's **Security** tab, and the required `Dependency audit` check still fails a pull request on a live npm advisory. `Cargo audit (Tauri)` and `Cargo deny` do the same for Rust, on every pull request that touches it and on every push and nightly run. When a newly published advisory turns `main` red, a `Security gate is red on main` issue opens on its own. The fix is usually a root `overrides` bump; `scripts/structure-audit/accepted-advisories.ts` records the order of preference.
 
 ### The procedure
 
