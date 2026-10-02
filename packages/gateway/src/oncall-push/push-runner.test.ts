@@ -280,4 +280,148 @@ describe("push runner", () => {
     expect(delivered).toHaveLength(1);
     expect(store.get(delivered[0]?.row.incidentId ?? "")).not.toBeNull();
   });
+
+  test("dispatch returning no usable sessionId is a failed 'no_session' row (null, non-object, empty string, missing key)", async () => {
+    for (const bad of [null, "s1", { sessionId: "" }, { other: 1 }, { sessionId: 7 }]) {
+      store.pruneOlderThan(Number.MAX_SAFE_INTEGER);
+      const dispatch: PushDispatch = async () => bad;
+      await makeRunner({ dispatch }).runner.run("pagerduty");
+      expect(store.get("pagerduty:PA")?.failureCode).toBe(
+        "no_session: agents.oncall returned no sessionId",
+      );
+    }
+  });
+
+  test("a briefError longer than the detail cap is clipped with an ellipsis; a missing error says unknown", async () => {
+    const long: PushDispatch = async (_m, _p, ctx) => {
+      queueMicrotask(() =>
+        ctx.notify("oncall.briefError", { sessionId: "s1", error: "x".repeat(600) }),
+      );
+      return { sessionId: "s1" };
+    };
+    await makeRunner({ dispatch: long }).runner.run("pagerduty");
+    const code = store.get("pagerduty:PA")?.failureCode ?? "";
+    expect(code).toBe(`brief_error: ${"x".repeat(500)}…`);
+
+    store.pruneOlderThan(Number.MAX_SAFE_INTEGER);
+    const bare: PushDispatch = async (_m, _p, ctx) => {
+      queueMicrotask(() => ctx.notify("oncall.briefError", { sessionId: "s1" }));
+      return { sessionId: "s1" };
+    };
+    await makeRunner({ dispatch: bare }).runner.run("pagerduty");
+    expect(store.get("pagerduty:PA")?.failureCode).toBe("brief_error: unknown");
+  });
+
+  test("a briefReady with no brief/findings keys stores an empty brief and '{}' findings", async () => {
+    const dispatch: PushDispatch = async (_m, _p, ctx) => {
+      queueMicrotask(() => ctx.notify("oncall.briefReady", { sessionId: "s1" }));
+      return { sessionId: "s1" };
+    };
+    await makeRunner({ dispatch }).runner.run("pagerduty");
+    expect(store.get("pagerduty:PA")).toMatchObject({
+      status: "ok",
+      briefMarkdown: "",
+      briefJson: "{}",
+    });
+  });
+
+  test("an unrelated notification method for the right session is ignored; a late duplicate after settle is ignored", async () => {
+    let notifyLater: () => void = () => {};
+    const dispatch: PushDispatch = async (_m, _p, ctx) => {
+      queueMicrotask(() => {
+        ctx.notify("oncall.progress", { sessionId: "s1" });
+        ctx.notify("oncall.briefReady", { sessionId: "s1", brief: "first", findings: {} });
+        ctx.notify("oncall.briefReady", { sessionId: "s1", brief: "second", findings: {} });
+      });
+      notifyLater = () => ctx.notify("oncall.briefError", { sessionId: "s1", error: "late" });
+      return { sessionId: "s1" };
+    };
+    await makeRunner({ dispatch }).runner.run("pagerduty");
+    notifyLater();
+    expect(store.get("pagerduty:PA")).toMatchObject({ status: "ok", briefMarkdown: "first" });
+  });
+
+  test("a dispatch that outlives the timeout: the timeout row has no session, and a later throw/return cannot overwrite it", async () => {
+    const slowThrow: PushDispatch = async () => {
+      await new Promise((r) => setTimeout(r, 60));
+      throw new Error("too late");
+    };
+    await makeRunner({ dispatch: slowThrow, timeoutMs: 15 }).runner.run("pagerduty");
+    expect(store.get("pagerduty:PA")).toMatchObject({
+      status: "failed",
+      failureCode: "timeout: no brief in 15ms",
+    });
+    await new Promise((r) => setTimeout(r, 80));
+    expect(store.get("pagerduty:PA")?.failureCode).toBe("timeout: no brief in 15ms");
+  });
+
+  test("a non-Error throw from dispatch is stringified and clipped in a 'refused' row", async () => {
+    const dispatch: PushDispatch = async () => {
+      throw "y".repeat(700);
+    };
+    await makeRunner({ dispatch }).runner.run("pagerduty");
+    expect(store.get("pagerduty:PA")?.failureCode).toBe(`refused: ${"y".repeat(500)}…`);
+  });
+
+  test("a candidate pushed by someone else mid-run is skipped, not re-inserted", async () => {
+    seedIncident("PB");
+    const seen: string[] = [];
+    const dispatch: PushDispatch = async (_m, params, ctx) => {
+      const id = (params as { incidentId: string }).incidentId;
+      seen.push(id);
+      if (seen.length === 1) {
+        const other = id === "pagerduty:PA" ? "pagerduty:PB" : "pagerduty:PA";
+        store.insert(other, { status: "failed", sessionId: null, failureCode: "x" }, T0);
+      }
+      queueMicrotask(() => ctx.notify("oncall.briefReady", { sessionId: "s", brief: "b" }));
+      return { sessionId: "s" };
+    };
+    const { runner, delivered } = makeRunner({ dispatch });
+    expect(await runner.run("pagerduty")).toEqual({ selected: 2, ok: 1, failed: 0 });
+    expect(seen).toHaveLength(1);
+    expect(delivered).toHaveLength(1);
+  });
+
+  test("retry: a failing applyRetry whose row still exists rethrows the ORIGINAL error", async () => {
+    await makeRunner({
+      dispatch: async () => {
+        throw new AgentsRpcError(-32000, "x");
+      },
+    }).runner.run("pagerduty");
+    class BrokenRetryStore extends PushStore {
+      override applyRetry(
+        ...a: Parameters<PushStore["applyRetry"]>
+      ): ReturnType<PushStore["applyRetry"]> {
+        void a;
+        throw new Error("disk full on retry");
+      }
+    }
+    const { runner } = makeRunner({
+      store: new BrokenRetryStore(db),
+      dispatch: readyDispatch([]),
+    });
+    await expect(runner.retry("pagerduty:PA")).rejects.toThrow("disk full on retry");
+  });
+
+  test("retry: a retried brief that fails again, or whose incident is gone from the index, is stored but NOT delivered", async () => {
+    await makeRunner({
+      dispatch: async () => {
+        throw new AgentsRpcError(-32000, "x");
+      },
+    }).runner.run("pagerduty");
+    const again = makeRunner({
+      dispatch: async () => {
+        throw new AgentsRpcError(-32000, "still broken");
+      },
+    });
+    const failedAgain = await again.runner.retry("pagerduty:PA");
+    expect(failedAgain.status).toBe("failed");
+    expect(again.delivered).toHaveLength(0);
+
+    store.insert("pagerduty:GONE", { status: "failed", sessionId: null, failureCode: "x" }, T0);
+    const gone = makeRunner({ dispatch: readyDispatch([]) });
+    const row = await gone.runner.retry("pagerduty:GONE");
+    expect(row.status).toBe("ok");
+    expect(gone.delivered).toHaveLength(0);
+  });
 });

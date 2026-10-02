@@ -294,3 +294,67 @@ test("notifyDelivers false → every toast skipped with the reason, notify never
   }
   expect(NO_NOTIFIER_REASON).toBe("no OS notification implementation on this platform");
 });
+
+test("an incident with no openedAtMs sorts as oldest: toasted after dated ones, and coalesced first when over the cap", async () => {
+  const toasts: string[] = [];
+  const undated = (id: string, status: "ok" | "failed"): PushDelivery => {
+    const d = item(id, status, 0);
+    return { ...d, incident: { ...d.incident, openedAtMs: null } };
+  };
+  const items = [
+    undated("pagerduty:u1", "ok"),
+    item("pagerduty:d1", "ok", 10),
+    item("pagerduty:d2", "ok", 20),
+    undated("pagerduty:u2", "ok"),
+  ];
+  await createPushDeliverer({
+    store,
+    notify: (_t, b) => {
+      toasts.push(b);
+    },
+    emit: () => {},
+    now: () => 1,
+  })(items);
+  expect(toasts.slice(0, 3).map((b) => b.split("nimbus oncall pushed ")[1])).toEqual([
+    "pagerduty:d2",
+    "pagerduty:d1",
+    "pagerduty:u1",
+  ]);
+  expect(store.get("pagerduty:u2")?.delivery["toast"]?.outcome).toBe("coalesced");
+});
+
+test("the summary uses the singular '1 brief ready' when exactly one brief was assembled", async () => {
+  const toasts: string[] = [];
+  const items = [
+    item("pagerduty:o1", "ok", 4),
+    item("pagerduty:o2", "failed", 3),
+    item("pagerduty:o3", "failed", 2),
+    item("pagerduty:o4", "failed", 1),
+  ];
+  await createPushDeliverer({
+    store,
+    notify: (_t, b) => {
+      toasts.push(b);
+    },
+    emit: () => {},
+    now: () => 1,
+  })(items);
+  expect(toasts[3]).toBe("4 P1 incidents paged (1 brief ready) — nimbus oncall pushed list");
+});
+
+test("a sink that throws a non-Error value is recorded failed with the stringified reason", async () => {
+  await createPushDeliverer({
+    store,
+    notify: () => {
+      throw "toast exploded";
+    },
+    emit: () => {
+      throw 42;
+    },
+    now: () => 3,
+  })([item("pagerduty:ne", "ok", 1)]);
+  expect(store.get("pagerduty:ne")?.delivery).toEqual({
+    event: { outcome: "failed", reason: "42", at: 3 },
+    toast: { outcome: "failed", reason: "toast exploded", at: 3 },
+  });
+});

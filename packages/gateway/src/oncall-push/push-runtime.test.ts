@@ -3,7 +3,15 @@ import { afterEach, beforeEach, expect, test } from "bun:test";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { createMemoryIndexDb } from "../connectors/connector-sync-test-helpers.ts";
+import {
+  createMemoryIndexDb,
+  createStubVault,
+  syncTestContext,
+} from "../connectors/connector-sync-test-helpers.ts";
+import { syncPagerdutyIncidentItems } from "../connectors/pagerduty-sync.ts";
+import { LocalIndex } from "../index/local-index.ts";
+import { setGatewayEventBroadcast } from "../ipc/gateway-events.ts";
+import { findPersonByCanonicalEmail } from "../people/person-store.ts";
 import { assembleOncallPushRuntime } from "./push-runtime.ts";
 import { PushStore } from "./push-store.ts";
 
@@ -80,4 +88,129 @@ test("boot prunes rows past retention even when push is DISABLED; a recent row s
 test("identityResolved reads [user] me_person_id like agents.oncall does", async () => {
   writeFileSync(join(configDir, "nimbus.toml"), '[user]\nme_person_id = "person-1"\n');
   expect(await boot().identityResolved()).toBe(true);
+});
+
+const T0 = Date.parse("2026-10-02T12:00:00.000Z");
+const ME = "me@acme.example";
+
+function seedP1(id: string): string {
+  const ctx = syncTestContext(db, createStubVault({ "pagerduty.api_token": "tok" }), "pagerduty");
+  syncPagerdutyIncidentItems(
+    ctx,
+    [
+      {
+        id,
+        status: "triggered",
+        title: `inc ${id}`,
+        priority: { name: "P1" },
+        created_at: new Date(T0).toISOString(),
+        updated_at: new Date(T0).toISOString(),
+        service: { id: "PSVC" },
+        assignments: [{ assignee: { id: "U1", type: "user", email: ME } }],
+      },
+    ],
+    new Date(T0 - DAY).toISOString(),
+    T0,
+    new Map(),
+  );
+  const me = findPersonByCanonicalEmail(db, ME);
+  if (me === null) throw new Error("fixture: no person");
+  return me.id;
+}
+
+test("run() drives the real pipeline end to end: default dispatch, brief stored, toast + event delivered, retry refused on ok", async () => {
+  const meId = seedP1("PRT");
+  writeFileSync(
+    join(configDir, "nimbus.toml"),
+    `[user]\nme_person_id = "${meId}"\n\n[oncall.push]\nenabled = true\n`,
+  );
+  const toasts: [string, string][] = [];
+  const rt = assembleOncallPushRuntime({
+    db,
+    configDir,
+    localIndex: new LocalIndex(db),
+    notifications: {
+      show: (t, b) => {
+        toasts.push([t, b]);
+      },
+    },
+    logger: { error: () => {} },
+    // Boot BEFORE the incident opened, so it is newer than enabled_at (spec § 4.1).
+    now: () => T0 - 1000,
+  });
+  const events: Record<string, unknown>[] = [];
+  setGatewayEventBroadcast((_m, p) => events.push(p));
+  try {
+    expect(await rt.run("pagerduty")).toEqual({ selected: 1, ok: 1, failed: 0 });
+  } finally {
+    setGatewayEventBroadcast(undefined);
+  }
+  expect(rt.store.get("pagerduty:PRT")?.status).toBe("ok");
+  expect(rt.store.get("pagerduty:PRT")?.briefMarkdown).toContain("## Gaps");
+  expect(toasts).toEqual([
+    ["Nimbus on-call", "inc PRT — brief ready: nimbus oncall pushed pagerduty:PRT"],
+  ]);
+  expect(events).toHaveLength(1);
+  expect(events[0]).toMatchObject({
+    kind: "oncall.briefPushed",
+    payload: { incidentId: "pagerduty:PRT", status: "ok" },
+  });
+  await expect(rt.retry("pagerduty:PRT")).rejects.toMatchObject({
+    code: "ERR_ONCALL_PUSH_NOT_FAILED",
+  });
+  expect(await rt.identityResolved()).toBe(true);
+});
+
+test("a notification service that does not deliver records the toast skipped; no throw", async () => {
+  const meId = seedP1("PSK");
+  writeFileSync(
+    join(configDir, "nimbus.toml"),
+    `[user]\nme_person_id = "${meId}"\n\n[oncall.push]\nenabled = true\n`,
+  );
+  let shown = 0;
+  const rt = assembleOncallPushRuntime({
+    db,
+    configDir,
+    notifications: {
+      delivers: false,
+      show: () => {
+        shown += 1;
+      },
+    },
+    logger: { error: () => {} },
+    now: () => T0 - 1000,
+  });
+  await rt.run("pagerduty");
+  expect(shown).toBe(0);
+  expect(rt.store.get("pagerduty:PSK")?.delivery["toast"]?.outcome).toBe("skipped");
+});
+
+test("trigger logs a non-Error rejection as its string form", async () => {
+  writeFileSync(join(configDir, "nimbus.toml"), "[oncall.push]\nenabled = true\n");
+  const errs: Record<string, unknown>[] = [];
+  const rt = assembleOncallPushRuntime({
+    db,
+    configDir,
+    notifications: { show: () => {} },
+    logger: { error: (o) => errs.push(o) },
+    now: () => 1000,
+  });
+  // Make the run reject with a NON-Error: the first store read throws a string.
+  (rt.store as { enabledAt: () => number | null }).enabledAt = () => {
+    throw "plain failure";
+  };
+  rt.trigger("pagerduty");
+  await new Promise((r) => setTimeout(r, 20));
+  expect(errs).toEqual([{ err: "plain failure" }]);
+});
+
+test("without a [user] override and the default clock, boot and identityResolved still work", async () => {
+  const rt = assembleOncallPushRuntime({
+    db,
+    configDir,
+    notifications: { show: () => {} },
+    logger: { error: () => {} },
+  });
+  expect(typeof (await rt.identityResolved())).toBe("boolean");
+  expect(await rt.run("github")).toMatchObject({ skipped: "not_pagerduty" });
 });
