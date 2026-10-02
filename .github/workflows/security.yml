@@ -10,11 +10,6 @@ on:
     branches: [main, develop]
   pull_request:
     branches: [main, develop]
-  # Six of this workflow's jobs are required contexts in the General ruleset,
-  # so they must also report on merge-queue entries — a required check that
-  # never reports on a queue entry stalls every merge.
-  merge_group:
-    types: [checks_requested]
   schedule:
     # Nightly at 02:00 UTC
     - cron: "0 2 * * *"
@@ -372,11 +367,11 @@ jobs:
       # check — the only thing it fails closed on is skipping work.
       - name: Detect Rust changes
         id: rust-changed
-        if: github.event_name == 'pull_request' || github.event_name == 'merge_group'
+        if: github.event_name == 'pull_request'
         shell: bash
         run: |
           set -uo pipefail
-          base="${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}"
+          base="${{ github.event.pull_request.base.sha }}"
           if [[ -z "${base}" ]] || ! git cat-file -e "${base}^{commit}" 2>/dev/null; then
             echo "base sha unavailable — running the Rust scans"
             echo "rust=true" >> "${GITHUB_OUTPUT}"
@@ -422,8 +417,8 @@ jobs:
   # while it stays red and closed by the first green run, so the fix lands on
   # `main` BEFORE a batch of PRs piles up behind it.
   #
-  # Push and schedule runs on `main` only: a PR or queue run that fails is that
-  # PR's own business and already visible on it. Keyed on the issue TITLE, so a
+  # Push and schedule runs on `main` only: a PR run that fails is that PR's own
+  # business and already visible on it. Keyed on the issue TITLE, so a
   # red streak is one issue, not one per night.
   main-health-alert:
     name: Report Security status on main

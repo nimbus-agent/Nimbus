@@ -6,15 +6,6 @@ on:
   pull_request:
     branches: [main, develop]
     types: [opened, synchronize, reopened, labeled]
-  # The merge queue on `main` (General ruleset) runs the PR gate a second time on
-  # the MERGED result before it lands, which is what replaced "require branches
-  # to be up to date": a queue entry is tested against the real tip of `main`
-  # instead of every open PR being re-based and re-run after each merge. Every
-  # `pr-quality-*` job therefore runs on `merge_group` too — a required check
-  # that never reports on a queue entry stalls EVERY merge, so anything added
-  # to `pr-quality-required`'s needs must accept this event as well.
-  merge_group:
-    types: [checks_requested]
 
 concurrency:
   # PRs share a per-ref group, so a superseded run is cancelled (cheap — the
@@ -76,8 +67,6 @@ jobs:
         run: |
           if [[ "${{ github.event_name }}" == "pull_request" ]]; then
             BASE="${{ github.event.pull_request.base.sha }}"
-          elif [[ "${{ github.event_name }}" == "merge_group" ]]; then
-            BASE="${{ github.event.merge_group.base_sha }}"
           else
             BASE="${{ github.event.before }}"
           fi
@@ -136,7 +125,7 @@ jobs:
     # never ran, so the 6 child contexts were never created and sat
     # "Expected — Waiting for status to be reported" forever, blocking the merge.
     # Test execution on code PRs is unchanged (code-changed=true → run-tests=true).
-    if: (github.event_name == 'pull_request' || github.event_name == 'merge_group')
+    if: github.event_name == 'pull_request'
     needs: filter
     uses: ./.github/workflows/_test-suite.yml
     with:
@@ -145,11 +134,8 @@ jobs:
       run-tests: ${{ needs.filter.outputs.code-changed == 'true' }}
     secrets:
       # Optional; the reusable workflow silently skips the SonarQube step
-      # when this is unset (e.g. on fork PRs). Withheld on `merge_group` on
-      # purpose: the Sonar gate already judged this PR's new code, and a queue
-      # run would upload a branch analysis for every throwaway
-      # `gh-readonly-queue/*` ref.
-      SONAR_TOKEN: ${{ github.event_name != 'merge_group' && secrets.SONAR_TOKEN || '' }}
+      # when this is unset (e.g. on fork PRs).
+      SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
     permissions:
       contents: read
       checks: write
@@ -159,7 +145,7 @@ jobs:
   # Rust/Tauri checks — ubuntu only, runs in parallel with pr-quality-ts
   pr-quality-rust:
     name: PR quality — Rust/Tauri (ubuntu-24.04)
-    if: (github.event_name == 'pull_request' || github.event_name == 'merge_group') && needs.filter.outputs.rust == 'true'
+    if: github.event_name == 'pull_request' && needs.filter.outputs.rust == 'true'
     needs: filter
     runs-on: ubuntu-24.04
     timeout-minutes: 30
@@ -237,7 +223,7 @@ jobs:
     # success without doing test work. Keep it that way — a job that does not
     # expand cannot report, and an unreported required-gate dependency blocks the
     # PR forever rather than failing it.
-    if: (github.event_name == 'pull_request' || github.event_name == 'merge_group')
+    if: github.event_name == 'pull_request'
     needs: filter
     strategy:
       fail-fast: false
@@ -515,7 +501,7 @@ jobs:
   # clean, so a green here cannot come from a preinstalled runtime.
   pr-quality-onnx-cleanroom:
     name: PR quality — ONNX clean room
-    if: (github.event_name == 'pull_request' || github.event_name == 'merge_group') && needs.filter.outputs.embedding-native == 'true'
+    if: github.event_name == 'pull_request' && needs.filter.outputs.embedding-native == 'true'
     needs: filter
     runs-on: ubuntu-24.04
     timeout-minutes: 15
@@ -544,7 +530,7 @@ jobs:
 
   pr-quality-duplication:
     name: PR quality — Duplication scan
-    if: (github.event_name == 'pull_request' || github.event_name == 'merge_group') && needs.filter.outputs.code-changed == 'true'
+    if: github.event_name == 'pull_request' && needs.filter.outputs.code-changed == 'true'
     needs: filter
     runs-on: ubuntu-24.04
     timeout-minutes: 10
@@ -588,7 +574,7 @@ jobs:
   # to runtime enforcement in `security-invariants.test.ts`.
   pr-quality-structure:
     name: PR quality — Structure audit
-    if: (github.event_name == 'pull_request' || github.event_name == 'merge_group')
+    if: github.event_name == 'pull_request'
     uses: ./.github/workflows/_structure.yml
     permissions:
       contents: read
@@ -614,11 +600,6 @@ jobs:
   # short scripts. It is in `pr-quality-required`'s needs list, so it blocks.
   pr-quality-release-safety:
     name: PR quality — Release safety
-    # PR-only, deliberately NOT on `merge_group`: both checks read the PR's own
-    # title/body/head ref from the event payload, which a queue event does not
-    # carry. It still gates the queue — a PR enters it only after this job
-    # passed on the PR — and on a queue run it reports `skipped`, which
-    # `pr-quality-required` counts as a pass.
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-24.04
     timeout-minutes: 10
@@ -684,7 +665,7 @@ jobs:
   # reported `failure` here.
   pr-quality-required:
     name: PR quality — required gates
-    if: always() && (github.event_name == 'pull_request' || github.event_name == 'merge_group')
+    if: always() && github.event_name == 'pull_request'
     needs:
       - filter
       - pr-quality-ts
