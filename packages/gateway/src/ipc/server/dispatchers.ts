@@ -985,10 +985,12 @@ export async function tryDispatchDemoRpc(
     return phase4RpcSkipped;
   }
   try {
+    const oncallPush = ctx.options.oncallPushRpcCtx?.runtime;
     const out = await dispatchDemoRpc(method, params, {
       db: localIndex.getDatabase(),
       configDir,
       dataDir,
+      ...(oncallPush === undefined ? {} : { oncallPush }),
     });
     if (out.kind === "hit") return out.value;
   } catch (e) {
