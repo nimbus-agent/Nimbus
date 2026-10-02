@@ -170,7 +170,7 @@ nimbus demo reset
 Seeds a synthetic "Acme" org — people, issues, commits, pull requests, reviews, CI runs,
 deployments, incidents, and chat messages, all with timestamps offset from "now" so the data always
 looks current — into the isolated demo root (`--demo` / `NIMBUS_DEMO=1`; see the `--demo` global
-flag above and invariant **I41**), restarts the demo gateway and fires a page — `demo.firePage`, an IPC method only a demo-rooted gateway claims — that runs the SAME on-call push path a real install uses (see [`nimbus oncall pushed`](#nimbus-oncall-pushed)); the page's brief is the tour's first step, and the gateway may raise a local OS notification (a desktop toast, not a network call). It then tours three built-in agent briefs against it and closes on
+flag above and invariant **I41**), restarts the demo gateway and fires a page — `demo.firePage`, an IPC method only a demo-rooted gateway claims — that runs the SAME on-call push path a real install uses (see [`nimbus oncall pushed`](#nimbus-oncall-pushed)); the page's brief is the tour's first step. The OS notification that path attempts is currently dropped — Nimbus has no platform notification implementation yet — so the brief surfaces through `nimbus oncall pushed` and the `oncall.briefPushed` event (`nimbus tail --filter oncall`). It then tours three built-in agent briefs against it and closes on
 the locality panel. It never touches your real config, data, or vault, and the demo gateway makes
 no outbound call of any kind, at boot or afterward (see below).
 
@@ -1064,7 +1064,7 @@ nimbus oncall --since 3d --format slack
 
 ### `nimbus oncall pushed`
 
-Read the brief the gateway assembled **on its own** when a P1 page reached you — the on-call push. This is the read side of an unattended pass: with `[oncall.push] enabled = true` (default **off**), every PagerDuty sync checks for an ACTIVE (`triggered`/`acknowledged`) incident assigned to you, with a severity in `{"p1"} ∪ [pagerduty] severity_p1_aliases` (or the `[oncall.push] severities` list, which replaces that set), that opened at or after the moment push was enabled (minus five minutes). Each such incident gets **one** brief, assembled exactly as [`nimbus oncall --incident`](#nimbus-oncall) would assemble it, stored, announced by a local OS notification and an `oncall.briefPushed` gateway event, and readable here.
+Read the brief the gateway assembled **on its own** when a P1 page reached you — the on-call push. This is the read side of an unattended pass: with `[oncall.push] enabled = true` (default **off**), every PagerDuty sync checks for an ACTIVE (`triggered`/`acknowledged`) incident assigned to you, with a severity in `{"p1"} ∪ [pagerduty] severity_p1_aliases` (or the `[oncall.push] severities` list, which replaces that set), that opened at or after the moment push was enabled (minus five minutes). Each such incident gets **one** brief, assembled exactly as [`nimbus oncall --incident`](#nimbus-oncall) would assemble it, stored, announced by an `oncall.briefPushed` gateway event, and readable here. The OS notification is attempted but currently dropped — Nimbus has no platform notification implementation yet, so the stored record shows the toast as `skipped` — which makes `nimbus tail --filter oncall` (the event) and this command the delivery surfaces today.
 
 ```bash
 nimbus oncall pushed
@@ -1091,10 +1091,10 @@ A brief that could not be assembled is stored as `FAILED` with its failure code 
 enabled = false          # default off
 severities = []          # [] = {"p1"} plus [pagerduty] severity_p1_aliases; a non-empty list REPLACES that set
 chatops_namespace = ""   # parsed, but has NO effect until ChatOps delivery ships (PR 2)
-retention_days = 90      # stored briefs older than this are pruned
+retention_days = 90      # stored briefs older than this are pruned at boot (even when disabled) and on each run
 ```
 
-**What a push never does.** It never runs synthesis — the stored brief is the deterministic render, so nothing is sent to a model. The notification and the `oncall.briefPushed` event carry only the incident id and an `ok`/`failed` status, never the brief. At most three notifications are raised per run, plus one summary. An incident with no recorded opening time is never pushed, enabling push never backfills history, and the gateway reconciles the enable moment at boot rather than trusting a timestamp from an earlier run.
+**What a push never does.** It never runs synthesis — the stored brief is the deterministic render, so nothing is sent to a model. The `oncall.briefPushed` event carries only `{incidentId, status}` (an `ok`/`failed` status), never the brief. The (currently dropped) notification would carry the incident title and id, never the brief, and would be capped at three per run plus one summary. An incident with no recorded opening time is never pushed, enabling push never backfills history, and the gateway reconciles the enable moment at boot rather than trusting a timestamp from an earlier run.
 
 **Bounds.** A GDPR purge does not sweep stored pushed briefs — retention is the bound, as for `fleet_brief`. **Not shipped:** delivery to ChatOps (planned PR 2), the desktop panel (PR 3), approving a mitigation from the push, and ranking a cascade of alerts. `nimbus tail --filter oncall` follows the event live; `nimbus doctor` warns when push is enabled but your identity is unresolved, since nothing could then ever be selected.
 
@@ -1116,12 +1116,12 @@ nimbus tail --filter connector,hitl --json
 
 | Flag | Description |
 |---|---|
-| `--filter <categories>` | Comma-separated, repeatable: `connector`, `watcher`, `sync`, `extension`, `hitl`, `oncall` (a pushed on-call brief, [`nimbus oncall pushed`](#nimbus-oncall-pushed)). Default (flag omitted): all five. An event of a kind this build does not recognise is never filtered out, even under a narrow `--filter` — a stream that silently drops what it does not recognise is worse than one unfamiliar line. |
+| `--filter <categories>` | Comma-separated, repeatable: `connector`, `watcher`, `sync`, `extension`, `hitl`, `oncall` (a pushed on-call brief, [`nimbus oncall pushed`](#nimbus-oncall-pushed)). Default (flag omitted): all six. An event of a kind this build does not recognise is never filtered out, even under a narrow `--filter` — a stream that silently drops what it does not recognise is worse than one unfamiliar line. |
 | `--json` | Emit the raw JSON-RPC notification (`{method, params}`) as one JSON object per line, instead of the human-readable rendering. |
 
 **`nimbus tail` is follow-only** — the same contract as `tail -f -n 0`. It shows only what happens *from the moment it connects*; there is no backfill of events that occurred before it started, and nothing it prints is persisted anywhere. Reaching for it after the fact (e.g. "what happened to that sync ten minutes ago?") will not work — that history exists only if some other subsystem records it (the egress ledger, `nimbus audit`), not here.
 
-**Deliberately excluded: per-item sync progress.** Every event on this stream is a `broadcastNotification` fan-out to *every* connected client, so a connector mid-sync emitting one event per item would flood every open `nimbus tail`, every desktop window and every other IPC client at once. The five categories above are the coarse-grained, operationally relevant subset; item-level detail stays out of the broadcast surface entirely.
+**Deliberately excluded: per-item sync progress.** Every event on this stream is a `broadcastNotification` fan-out to *every* connected client, so a connector mid-sync emitting one event per item would flood every open `nimbus tail`, every desktop window and every other IPC client at once. The six categories above are the coarse-grained, operationally relevant subset; item-level detail stays out of the broadcast surface entirely.
 
 **Extension events can carry an empty `extensionId`.** On an `extension.stateChanged` event whose `action` is `"update"`, an `extensionId` of `""` does not name an extension — it means the originating `extension.update` request named no target at all. The gateway emits the event anyway rather than throwing on malformed input, so a blank id on an `update` action is a request-shape signal, not an id to look up.
 

@@ -23,9 +23,11 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
   selects ACTIVE (`triggered`/`acknowledged`) incidents assigned to you whose severity is in
   `{"p1"} ∪ [pagerduty] severity_p1_aliases` (or `[oncall.push] severities`, which replaces that set)
   and that opened at or after the boot-reconciled `enabled_at` minus five minutes, assembles the
-  `nimbus oncall` brief once per incident, stores it, and tells you: a local OS notification (at most
-  three per run plus a summary) and an `oncall.briefPushed` gateway event carrying `{incidentId,
-  status}` only. Schema **V64**: `pushed_brief` (`incident_id` is the primary key, so the table is the
+  `nimbus oncall` brief once per incident, stores it, and emits an `oncall.briefPushed` gateway event
+  carrying `{incidentId, status}` only. The OS notification is attempted but currently dropped —
+  Nimbus has no platform notification implementation yet, so each row's toast is recorded `skipped`
+  rather than `delivered` — and `nimbus tail --filter oncall` (the event) and `nimbus oncall pushed`
+  are the delivery surfaces today. Schema **V64**: `pushed_brief` (`incident_id` is the primary key, so the table is the
   dedup) and the singleton `oncall_push_state`. **Synthesis never runs** — the stored brief is the
   deterministic render. Read it with `nimbus oncall pushed [list|<incident-id>] [--retry] [--json]`,
   follow it with `nimbus tail --filter oncall`; `nimbus doctor` warns when push is enabled but your
@@ -41,7 +43,7 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
   `agents/oncall-queries.ts` moved to `agents/_lib/oncall-queries.ts` because D22(d) treats
   `agents/<name>.ts` as emitters. **Bounds:** an incident with no `opened_at_ms` is never pushed;
   enabling never backfills history; a GDPR purge does not sweep `pushed_brief` (retention, 90 days by
-  default, is the bound, as for `fleet_brief`). **Not shipped:** ChatOps delivery (PR 2 —
+  default and pruned at every boot even with push disabled, is the bound, as for `fleet_brief`). **Not shipped:** ChatOps delivery (PR 2 —
   `chatops_namespace` is parsed and inert), the desktop panel (PR 3), approve-from-push, cascade
   ranking. Detail: [`architecture.md`](./architecture.md#on-call-pushed-brief-oncall-push-nimbus-oncall-pushed),
   [`cli-reference.md`](./cli-reference.md#nimbus-oncall-pushed).

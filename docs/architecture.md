@@ -1727,9 +1727,12 @@ key: one brief per incident, so the table is the dedup and no time cursor exists
 the stored brief is the deterministic render, so a push needs no model and cannot reach one. A failed assembly is
 stored as `status = 'failed'` with a `failure_code` and is retryable.
 
-**Delivery** (`push-sinks.ts`): a local OS notification — at most 3 per run plus one summary, so a burst does not
-become a flood — and one `oncall.briefPushed` event on the `gateway.event` stream carrying `{incidentId, status}`
-and nothing else (never the brief). The toast is a local desktop notification, not a network call. Read it with
+**Delivery** (`push-sinks.ts`): one `oncall.briefPushed` event on the `gateway.event` stream carrying
+`{incidentId, status}` and nothing else (never the brief), and an OS notification that is attempted but currently
+dropped — Nimbus has no platform notification implementation yet (`NotificationService.delivers` is `false`), so
+every row's toast is recorded `skipped` with that reason and no summary is sent. Were one implemented, it would be
+capped at 3 per run plus one summary and would carry the incident title and id, never the brief. Today the delivery
+surfaces are `nimbus tail --filter oncall` (the event) and `nimbus oncall pushed`. Read it with
 `nimbus oncall pushed [list|<incident-id>] [--retry] [--json]` through three CLI-only methods,
 `oncall.pushedList` / `oncall.pushedGet` / `oncall.pushedRetry`; the whole `oncall` namespace is LAN-forbidden and none
 is on the Tauri allowlist (still 105). `nimbus tail --filter oncall` follows the event and `nimbus doctor` warns when
@@ -1746,7 +1749,8 @@ gateway) that runs this SAME path end to end; the tour's first step is `nimbus -
 deploy finishes about eight minutes before the page, and the incident-channel chatter is written after the brief.
 
 **Bounds, stated rather than softened.** An incident with no `opened_at_ms` is never pushed. A GDPR purge does not
-sweep `pushed_brief`; retention (`retention_days`, 90 by default, pruned on each run) is the bound, the same as
+sweep `pushed_brief`; retention (`retention_days`, 90 by default, pruned at every gateway boot whether or not push is enabled, and
+again on each run) is the bound, the same as
 `fleet_brief`. **Not shipped:** ChatOps delivery (PR 2 — `chatops_namespace` is parsed and has no effect yet), the
 desktop panel (PR 3), approve-from-push, and cascade ranking. No new invariant and no new egress class.
 
