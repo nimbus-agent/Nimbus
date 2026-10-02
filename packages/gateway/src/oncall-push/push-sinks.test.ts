@@ -114,3 +114,139 @@ test("a throwing toast does not block the event, and is recorded as failed", asy
     at: 1,
   });
 });
+
+function throwingStore(failOn: (sink: string) => boolean): PushStore {
+  return new Proxy(store, {
+    get(target, prop, receiver) {
+      if (prop === "recordDelivery") {
+        return (id: string, sink: string, o: Parameters<PushStore["recordDelivery"]>[2]) => {
+          if (failOn(sink)) throw new Error("store down");
+          return target.recordDelivery(id, sink, o);
+        };
+      }
+      const v = Reflect.get(target, prop, receiver);
+      return typeof v === "function" ? v.bind(target) : v;
+    },
+  });
+}
+
+test("emit throws → every toast still goes out and the event is recorded failed", async () => {
+  const toasts: string[] = [];
+  await createPushDeliverer({
+    store,
+    notify: (_t, b) => {
+      toasts.push(b);
+    },
+    emit: () => {
+      throw new Error("bus closed");
+    },
+    now: () => 1,
+  })([item("pagerduty:A", "ok", 2), item("pagerduty:B", "ok", 1)]);
+  expect(toasts).toHaveLength(2);
+  expect(store.get("pagerduty:A")?.delivery["event"]).toEqual({
+    outcome: "failed",
+    reason: "bus closed",
+    at: 1,
+  });
+  expect(store.get("pagerduty:A")?.delivery["toast"]?.outcome).toBe("delivered");
+});
+
+test("notify returns a rejected promise → toast failed, event still delivered", async () => {
+  await createPushDeliverer({
+    store,
+    notify: () => Promise.reject(new Error("async no display")),
+    emit: () => {},
+    now: () => 1,
+  })([item("pagerduty:A", "ok", 1)]);
+  expect(store.get("pagerduty:A")?.delivery["toast"]).toEqual({
+    outcome: "failed",
+    reason: "async no display",
+    at: 1,
+  });
+  expect(store.get("pagerduty:A")?.delivery["event"]?.outcome).toBe("delivered");
+});
+
+test("recordDelivery throws → deliverer resolves; all toasts and events still attempted", async () => {
+  const items = [item("pagerduty:A", "ok", 2), item("pagerduty:B", "ok", 1)];
+  const toasts: string[] = [];
+  const events: unknown[] = [];
+  await createPushDeliverer({
+    store: throwingStore(() => true),
+    notify: (_t, b) => {
+      toasts.push(b);
+    },
+    emit: (p) => events.push(p),
+    now: () => 1,
+  })(items);
+  expect(events).toHaveLength(2);
+  expect(toasts).toHaveLength(2);
+});
+
+test("emit succeeds but its record throws → the event is not re-recorded as failed, later sinks run", async () => {
+  const attempted: string[] = [];
+  const recorded: string[] = [];
+  const inner = throwingStore((s) => s === "event");
+  const spy = new Proxy(inner, {
+    get(target, prop, receiver) {
+      if (prop === "recordDelivery") {
+        return (id: string, sink: string, o: { outcome: string }) => {
+          recorded.push(`${sink}:${o.outcome}`);
+          return (target.recordDelivery as (...a: unknown[]) => void)(id, sink, o);
+        };
+      }
+      return Reflect.get(target, prop, receiver);
+    },
+  });
+  await createPushDeliverer({
+    store: spy,
+    notify: (_t, b) => {
+      attempted.push(b);
+    },
+    emit: () => {},
+    now: () => 1,
+  })([item("pagerduty:A", "ok", 1)]);
+  expect(recorded).toEqual(["event:delivered", "toast:delivered"]);
+  expect(attempted).toHaveLength(1);
+});
+
+test("a throwing summary toast records overflow rows coalesced WITH the reason", async () => {
+  let calls = 0;
+  const items = [1, 2, 3, 4].map((n) => item(`pagerduty:${n}`, "ok", n));
+  await createPushDeliverer({
+    store,
+    notify: () => {
+      calls += 1;
+      if (calls === 4) throw new Error("summary boom");
+    },
+    emit: () => {},
+    now: () => 1,
+  })(items);
+  expect(store.get("pagerduty:1")?.delivery["toast"]).toEqual({
+    outcome: "coalesced",
+    reason: "summary toast failed: summary boom",
+    at: 1,
+  });
+});
+
+test("boundary: exactly 3 → 3 toasts, no summary; exactly 4 → 3 + summary + 1 coalesced", async () => {
+  const run = async (n: number): Promise<string[]> => {
+    const toasts: string[] = [];
+    const items = Array.from({ length: n }, (_, i) => item(`pagerduty:b${n}-${i}`, "ok", i + 1));
+    await createPushDeliverer({
+      store,
+      notify: (_t, b) => {
+        toasts.push(b);
+      },
+      emit: () => {},
+      now: () => 1,
+    })(items);
+    return toasts;
+  };
+  const three = await run(3);
+  expect(three).toHaveLength(3);
+  expect(three.some((b) => b.startsWith("Briefs ready for"))).toBe(false);
+  const four = await run(4);
+  expect(four).toHaveLength(4);
+  expect(four[3]).toContain("Briefs ready for 4 P1 incidents");
+  expect(store.get("pagerduty:b4-0")?.delivery["toast"]?.outcome).toBe("coalesced");
+});
