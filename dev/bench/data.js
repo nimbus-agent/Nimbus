@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1790955534910,
+  "lastUpdate": 1790969878442,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "a4316ae7b65f7b16ebdad05accace9bc33099aeb",
-          "message": "feat(audit): P5 gates — secret inventory + Actions allowlist (#845)\n\n## Summary\n\nTwo gates from **P5 Org Legibility**, plus the combined design spec for\nthe four-effort batch (the other three land as their own PRs).\n\n### `audit:secret-inventory` — local, runs on every PR\n\nAsserts every secret this repo's workflows consume appears in **both**\ninventories, and says **which** is missing:\n\n- `scripts/release/credential-registry.ts` — authoritative: owner, type,\nrotation policy, the `secret-health` watch-list.\n- `docs/ci-secrets.md` — the narrative consulted during an incident,\nwhich opens \"the canonical inventory of every GitHub Actions secret the\nNimbus workflows consume\".\n\nThe two failures need different repairs — \"add a row to a table\" vs\n\"this credential is unmanaged\" — so collapsing them into one message\nwould let the serious case hide behind the cosmetic one.\n\n**This axis was genuinely uncovered.** `credential-audit` compares *live\norg secrets* → registry. A secret referenced by a workflow but never\nrecorded is nobody's finding today.\n\n**One-directional on purpose.** `ci-secrets.md` is an *org-wide*\ninventory documenting `VSCE_PAT`/`OVSX_PAT`/`NPM_TOKEN`, consumed by\nother repos' workflows. Gating that direction would red on correct\nentries, and the only way to satisfy it would be deleting true\ninformation from the inventory.\n\n**Red-before → green-after inside this PR.** Five secrets were missing\nfrom the prose doc and are now documented:\n\n| Secret | Introduced by |\n| --- | --- |\n| `SECRET_AUDITOR_CLIENT_ID` / `_PRIVATE_KEY` | the secret-health probe\n**itself** |\n| `CLA_BOT_CLIENT_ID` / `_PRIVATE_KEY` | the CLA program |\n| `BENCHER_API_KEY` | the benchmark workflow |\n\nA correction worth flagging: I first wrote this up as row 3 of the\nroadmap's opening table (\"`ci-secrets.md` never grew to cover\n`secret-health.yml`'s own credentials\") still being unfixed. **Reading\nthe code disproved that** — all five were already in the registry, so\nthis was *narrative* drift, not unmanaged credentials. The spec records\nthe correction.\n\nUnlike the sweep gates, this one is local and deterministic (no token,\nno network), so it joins the preflight `fast` tier — and therefore had\nto be **green at merge**, since a red local gate breaks every subsequent\nPR.\n\n### `audit:actions-allowlist` — network, scheduled sweep\n\nThe gate for the two-day CLA outage:\n`contributor-assistant/github-action` was absent from the Actions\nallowlist, so GitHub rejected `cla.yml` **before any job ran** — 23\nconsecutive `startup_failure`s, a required check that never reported,\nevery PR silently unmergeable. `cla-coverage` was green throughout,\nbecause it verifies a control's *presence*, not its ability to\n*execute*.\n\n**Two halves, and running it live changed the design.**\n\nThe *pattern* half compares each `uses:` against `patterns_allowed` /\n`github_owned_allowed` / same-org. Live, `verified_allowed` is on and\nfive refs (`dessant/lock-threads`, `oven-sh/setup-bun`,\n`googleapis/release-please-action`, `bencherdev/bencher`) are covered\n**only** by it — and no API exposes verified-creator status. My first\nimplementation called that `indeterminate`, which under the program's\nown strict rule is red, making the gate **permanently red for a reason\nnobody can fix**. A gate that is always red is one everybody learns to\nignore, which is exactly the failure this sub-program exists to prevent.\nSo there is now a distinct `unverifiable` verdict that warns but never\nfails; `indeterminate` (a *transient* read failure, which can resolve\nnext run) stays strict-red.\n\nThe *direct* half is the one that actually closes the hole: **any\nworkflow whose most recent run ended in `startup_failure` is a hard\nfinding.** That requires no knowledge of verified status — GitHub\nrejecting the workflow *is* the observable symptom — and it catches\ncauses the pattern half cannot see at all, such as invalid workflow\nYAML. Scoped to each workflow's latest run, so a since-fixed historical\nfailure doesn't red the sweep forever.\n\nBoth are red-proved by **unit test** (including a fixture reproducing\nthe exact CLA case, where adding the pattern flips `not-permitted` →\n`ok`), because the allowlist has since been repaired and cannot\nred-prove against production. Live run is the green-after half:\n\n```\n::warning::audit:actions-allowlist: 5 action ref(s) covered only by verified_allowed (...) — no API exposes verified-creator status\naudit:actions-allowlist: OK — nimbus-agent/Nimbus: ...; no workflow is failing at startup\n```\n\n## Type of Change\n\n- [x] New feature (non-breaking change that adds functionality)\n- [x] CI / tooling\n\n## Non-Negotiables Checklist\n\n- [x] `bun run typecheck` — `bunx tsc -p scripts/tsconfig.json --noEmit`\nexit 0\n- [x] `bun run lint` (Biome) — clean via `bunx biome check\n--error-on-warnings scripts .github docs`; the packaged script reports\n\"Checked 0 files\" inside a `.claude/worktrees/` checkout, a known\nlocal-only false-fail\n- [x] All existing tests pass — **678 pass / 0 fail** across `scripts/`\n- [x] New behaviour is covered by tests — 16 (secret-inventory) + 32\n(actions-allowlist)\n- [x] No `any` — external JSON narrowed with `isRecord`\n- [x] No credentials in logs/IPC/config — the gates read secret\n**names**, never values\n- [x] Platform-specific code behind `PlatformServices` — n/a\n- [x] HITL gate untouched — n/a\n\n## Testing\n\n- `bun test scripts/` — 678 pass, 20 skip, 0 fail\n- `bunx tsc -p scripts/tsconfig.json --noEmit` — exit 0\n- `bun run lint:markdown` — 0 errors; `bun run audit:doc-refs` — 617\nrefs resolve\n- Live runs of both gates, plus the no-`gh` degradation path\n(`::warning::` + exit 0 locally)\n\n## Notes for Reviewers\n\nOne deliberate suppression: `biome-ignore-all\nlint/suspicious/noTemplateCurlyInString` in the secret-inventory tests.\nThe fixtures contain `${{ secrets.X }}` — GitHub Actions expressions,\nnot JS template literals — and writing them any other way would stop\ntesting the matcher against the exact syntax it must parse.\n\nThe spec\n(`docs/superpowers/specs/2026-07-26-p5-p3-infra-batch-design.md`) also\nrecords that **P3's stated gate is already met**: `_structure.yml` runs\n`audit:invariants` and all 17 static checks execute in CI; the one\nbranch `--binary-only` excludes is `db-run`, a census that always exits\n0. P3's real content is the monorepo's missing `.coderabbit.yaml`, which\nlands as its own PR.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n\n## Summary by CodeRabbit\n\n* **New Features**\n* Added automated audits for workflow secret inventory and Actions\nallowlist compliance.\n* Added checks for workflows that fail to start and for secrets missing\nfrom documentation or registration.\n  * Added commands and CI gates for running these audits.\n\n* **Documentation**\n  * Expanded the CI/CD secrets reference.\n  * Added an infrastructure batch design specification.\n\n* **Tests**\n* Added comprehensive coverage for secret inventory and Actions\nallowlist auditing.\n\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->",
-          "timestamp": "2026-07-26T21:39:26+03:00",
-          "tree_id": "fe1188b86b43b5412a4f5f57ea81e71e2aa5f619",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/a4316ae7b65f7b16ebdad05accace9bc33099aeb"
-        },
-        "date": 1785092995061,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 307.59834039999913,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 308.3867277999987,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 339.93822985000077,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "7a4feb5e79947b4e9a1b381bc84f7aa7409a282d",
+          "message": "feat(oncall): push the on-call brief when a P1 is assigned to you (#1592)\n\n## What this does\n\nWhen a PagerDuty sync shows a new P1 assigned to you, the gateway now\nruns `agents.oncall` for it unattended and stores the brief, so it is\nalready there when you look. This is Phase 17 W2's first half and the\nopening beat of the Killer Demo: a P1 fires and the assembled brief is\nalready waiting.\n\n- **Trigger.** After a PagerDuty sync, the gateway selects active\nincidents (triggered or acknowledged) assigned to the self-person. This\nuses the same `selectActiveAssignedIncidents` query `nimbus oncall`\nuses, so push and oncall cannot disagree about who \"me\" is. Severity\nmust be in `{\"p1\"}` plus `[pagerduty] severity_p1_aliases`, or in\n`[oncall.push] severities`, which replaces that set. The incident must\nhave opened at or after `enabled_at` minus a 5-minute grace window. It\nis DEFAULT OFF via `[oncall.push] enabled`.\n- **One brief per incident.** The new schema **V64** table\n`pushed_brief` has `incident_id` as its primary key, so the table itself\nis the dedup and there is no cursor to drift.\n`oncall_push_state.enabled_at` is reconciled at gateway boot, so\nenabling never backfills history and a disable then enable cycle never\nbackfills the gap.\n- **Deterministic and local.** A push dispatch omits the synthesis\nrunner by type: `PushDispatchContext` drops `runner`. The brief is the\ndeterministic render, no model is ever called on this path, and no\negress row is written.\n- **Delivery.** The `gateway.event` kind `oncall.briefPushed` carries\n`{incidentId, status}` only, never brief text. It is visible via `nimbus\ntail --filter oncall`. Read the brief back with `nimbus oncall pushed`,\n`nimbus oncall pushed list`, or `nimbus oncall pushed <id> [--retry]\n[--json]`. `nimbus doctor` warns when push is enabled but identity is\nunresolved.\n- **The OS notification is attempted but dropped today.** Nimbus has no\nplatform notification implementation: `createUnimplementedNotifications`\nis the only `NotificationService`. The toast sink therefore records\n`skipped` with that reason rather than claiming `delivered`.\n`NotificationService` gained an optional `delivers` flag for this.\n- **`nimbus demo` fires a simulated page.** `demo.firePage` is claimed\nonly by a demo-rooted gateway and runs the **same**\n`runtime.run(\"pagerduty\")` a real sync triggers. The tour's first step\nis now `nimbus --demo oncall pushed`. The story deploy finishes about 8\nminutes before the page, and the incident-channel chatter is written\nafter the brief, so the pushed brief is honestly assembled before anyone\ntyped. The locality panel still closes on zero outbound egress.\n\n## Security surface\n\n- **New derived `ClientKind` `push`.** It is absent from `RECOGNISED`,\nso no socket client can declare it, and\n`EGRESS_BEARING_CLIENT_KINDS.push` is `null`.\n`OWNER_SCOPED_ONCALL_ALLOWED.push` is `false`, so a push call that ever\nlost its `incidentId` is refused instead of briefing the owner-scoped\nresolution. A test asserts that every `ClientKind` is classified.\n- **Static rule D28** gains a `D28-push-client-kind` twin that confines\nthe `kind: \"push\"` assignment to `oncall-push/push-runner.ts`.\n- **The whole `oncall` IPC namespace is LAN-forbidden.** It is tested by\ncalling the check, with negative controls for `oncallish.read` and\n`agents.oncall`. It is **not** on the Tauri allowlist, which stays at\n105. A real-socket E2E proves the routing and was red-proved by removing\nthe dispatcher entry.\n- **`agents/oncall-queries.ts` moved to `agents/_lib/`.** It is a pure\nSELECT helper. D22(d) treats every `agents/<name>.ts` as an emitter, and\n`_lib/` is the rule's own home for helpers. No exemption was added to\nthe rule.\n\n## Stated bounds\n\n- A GDPR purge does not sweep `pushed_brief`. Retention, 90 days by\ndefault, is the bound, the same as `fleet_brief`. Pruning runs at boot\nregardless of `enabled` and on every run, so the bound holds even with\npush turned off.\n- An incident with no `opened_at_ms` is never pushed.\n- **Not shipped:** the ChatOps sink, which is PR 2; the desktop panel,\nwhich is PR 3; approve-from-push; and cascade root ranking.\n\n## Release-judge transition\n\n`scripts/release/assert-demo-tour.ts` accepts **both** the old\nfirst-step command, `--incident pagerduty:PDEMO412`, and the new `oncall\npushed`. The weekly smoke run judges the latest release with `main`'s\nscript, so the old form must keep passing until a release carrying this\nchange ships. The removal condition is in a comment beside the check.\n\n## Verification\n\n- Whole repo, `bun test packages/gateway packages/cli scripts`: 24,507\npass, 1 fail. The failure, `ResultStream > query entry has nimbus>\nprefix`, fails identically on untouched `main` in this environment.\n- typecheck, typecheck:tests (0 new), biome, the invariants audit,\ndoc-refs, status-drift and the platform-test-gaps audit are clean.\n- The demo-tour E2E passes, including the zero-egress panel line. The\noncall routing E2E passes.\n- **Not measured, stated plainly:** `verify:docker --changed` did not\nrun because the Docker daemon was down, so Linux was not reproduced\nlocally. The coverage floor was measured on Windows only, with the new\nfiles at or above 92% line and 94% branch. The Linux-authoritative\ncoverage gate in CI is the first authoritative measurement.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n## Summary by CodeRabbit\n\n* **New Features**\n* Added on-call brief pushes for eligible active PagerDuty incidents.\nPushes are off by default, and older incidents aren’t backfilled.\n* Added `nimbus oncall pushed` to view the latest brief, list or\nretrieve briefs, and retry failures.\n* Added on-call push events to `nimbus tail` and updated the demo to\nfire a page and showcase its brief.\n* **Documentation**\n* Updated CLI, setup, schema, and feature-status documentation with push\nbehavior and limitations, including 90-day retention and unavailable OS\nnotifications.\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-10-02T18:58:07Z",
+          "tree_id": "255238532cad5c2e886a5ebad3764ab7cdfdc635",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/7a4feb5e79947b4e9a1b381bc84f7aa7409a282d"
+        },
+        "date": 1790969873704,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 331.97226004999465,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 330.74920705000403,
             "unit": "ms"
           }
         ]
