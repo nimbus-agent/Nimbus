@@ -104,6 +104,26 @@ describe("extractFrontmatterAndBody — YAML non-object values fall back to empt
     expect(out.frontmatter).toEqual({});
     expect(out.body).toBe("numeric body");
   });
+
+  test("an EMPTY frontmatter block → empty frontmatter, body intact", () => {
+    // js-yaml 5's load() THROWS on empty input where 4.x returned undefined; the parse is
+    // wrapped, so an empty block must still degrade to {} rather than escape as an error.
+    const md = `---\n\n---\nbody after empty block`;
+    const out = parseNote("notes/x.md", md);
+    expect(out.frontmatter).toEqual({});
+    expect(out.body).toBe("body after empty block");
+  });
+});
+
+describe("extractFrontmatterAndBody — js-yaml 5 CORE schema semantics", () => {
+  test("a date-like value is kept as the string the note wrote, not coerced to a Date", () => {
+    // js-yaml 4's default schema resolved `2024-01-02` to a Date (persisted as the ISO
+    // `2024-01-02T00:00:00.000Z`); js-yaml 5 loads with the YAML 1.2 CORE schema, which has
+    // no timestamp type, so the user's own text survives into the stored frontmatter.
+    const md = `---\ncreated: 2024-01-02\n---\nbody`;
+    const out = parseNote("notes/x.md", md);
+    expect(out.frontmatter["created"]).toBe("2024-01-02");
+  });
 });
 
 describe("extractTitle — edge cases", () => {

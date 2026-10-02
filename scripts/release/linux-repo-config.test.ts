@@ -4,7 +4,7 @@ import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSyn
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import yaml from "js-yaml";
+import { load as loadYaml } from "js-yaml";
 
 import {
   APT_ARCH,
@@ -382,7 +382,7 @@ function workflowSteps(doc: unknown): WorkflowStep[] {
  */
 function parseWorkflowYaml(text: string): { steps: WorkflowStep[]; parseError: string | null } {
   try {
-    return { steps: workflowSteps(yaml.load(text)), parseError: null };
+    return { steps: workflowSteps(loadYaml(text)), parseError: null };
   } catch (err) {
     return { steps: [], parseError: err instanceof Error ? err.message : String(err) };
   }

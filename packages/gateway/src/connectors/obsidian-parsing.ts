@@ -1,5 +1,5 @@
 import { basename } from "node:path";
-import yaml from "js-yaml";
+import { load as loadYaml } from "js-yaml";
 
 const FRONTMATTER_RE = /^---\r?\n([\s\S]*?)\r?\n---\r?\n?/;
 const H1_RE = /^#\s+(\S.*)$/m;
@@ -28,7 +28,7 @@ function extractFrontmatterAndBody(source: string): { fm: Record<string, unknown
   const yamlSrc = m[1] ?? "";
   let parsed: unknown;
   try {
-    parsed = yaml.load(yamlSrc);
+    parsed = loadYaml(yamlSrc);
   } catch {
     parsed = null;
   }

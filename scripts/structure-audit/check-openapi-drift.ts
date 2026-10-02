@@ -2,7 +2,7 @@
 
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import yaml from "js-yaml";
+import { load as loadYaml } from "js-yaml";
 import { HTTP_ROUTES, type HttpRoute } from "../../packages/gateway/src/ipc/http-routes.ts";
 import { REPO_ROOT } from "./lib.ts";
 
@@ -25,7 +25,7 @@ export function findOpenApiDrift(schemaFile: string, routes: readonly HttpRoute[
   let parsed: unknown;
   try {
     const raw = readFileSync(schemaFile, "utf8");
-    parsed = yaml.load(raw, { filename: schemaFile });
+    parsed = loadYaml(raw, { filename: schemaFile });
   } catch (e) {
     return [
       {

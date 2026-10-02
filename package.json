@@ -9,7 +9,6 @@
   "overrides": {
     "sharp": "0.35.5",
     "protobufjs": "7.6.6",
-    "js-yaml": "4.3.2",
     "qs": "6.16.0",
     "nodemailer": "10.0.13",
     "zod": "4.6.5"
@@ -167,13 +166,12 @@
     "@types/istanbul-lib-coverage": "2.0.6",
     "@types/istanbul-lib-report": "3.0.3",
     "@types/istanbul-reports": "3.0.4",
-    "@types/js-yaml": "^4.0.9",
     "babel-plugin-istanbul": "8.0.0",
     "dependency-cruiser": "^18.5.0",
     "istanbul-lib-coverage": "3.2.2",
     "istanbul-lib-report": "3.0.1",
     "istanbul-reports": "3.2.0",
-    "js-yaml": "^4.3.2",
+    "js-yaml": "^5.4.2",
     "jscpd": "^5.4.0",
     "knip": "^6.39.0",
     "markdownlint-cli2": "^0.23.3",
