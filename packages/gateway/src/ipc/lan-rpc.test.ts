@@ -119,6 +119,23 @@ describe("checkLanMethodAllowed", () => {
     },
   );
 
+  test.each(["oncall.pushedList", "oncall.pushedGet", "oncall.pushedRetry"])(
+    "%s is not callable over LAN regardless of grant-write",
+    (method) => {
+      for (const writeAllowed of [true, false]) {
+        expect(() => checkLanMethodAllowed(method, { peerId: "p", writeAllowed })).toThrow(
+          /not callable over LAN/,
+        );
+      }
+    },
+  );
+
+  test("negative control: the match is the exact namespace, not a prefix", () => {
+    expect(() =>
+      checkLanMethodAllowed("oncallish.read", { peerId: "p", writeAllowed: false }),
+    ).not.toThrow();
+  });
+
   /**
    * The whole `toolgen` namespace (S2 runtime tool generation), matching exec/computer/media/
    * fleet above. `toolgen.create` is RCE-class by definition -- it registers model-authored code

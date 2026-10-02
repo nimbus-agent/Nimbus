@@ -54,6 +54,10 @@ const FORBIDDEN_OVER_LAN = new Set([
   // here worth preserving over the wire — a peer with a legitimate question has `federation.ask`,
   // which goes through the I17 query gate.
   "fleet",
+  // `oncall.pushed*` — the on-call pushed brief (2026-10-02). The WHOLE namespace: briefs carry the
+  // owner's incident, assignees and deploy history, and `pushedRetry` runs an agent. `agents.oncall`
+  // is a different namespace and is unaffected.
+  "oncall",
   // S2 runtime tool generation — the WHOLE namespace, matching exec/computer/media/fleet.
   // `toolgen.create` is RCE-class by definition (it registers model-authored code that then runs),
   // and `toolgen.approvalRespond` is the LOCAL owner answering a registration prompt — admitting it

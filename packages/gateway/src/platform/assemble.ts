@@ -3404,8 +3404,6 @@ export async function assemblePlatformServices(
     premortemRefresher,
   ]);
 
-  void oncallPush; // wired into ipcOpts in Task 8
-
   await verifyExtensionsBestEffort(db, syncLogger, connectorMesh, { vault });
 
   const { runtime: autoUpdateRuntime, disabled: autoUpdateDisabled } = maybeStartAutoUpdateRuntime({
@@ -3908,6 +3906,7 @@ export async function assemblePlatformServices(
     jobs: fleetRuntime.jobs,
     now: () => Date.now(),
   };
+  ipcOpts.oncallPushRpcCtx = { runtime: oncallPush };
 
   // I39 (S2 runtime tool generation): the sandboxed, owner-approved, session-ephemeral tool
   // registration surface. DEFAULT OFF -- `enabled` is read from `[tool_generation]`, and
