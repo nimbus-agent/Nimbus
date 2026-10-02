@@ -165,6 +165,7 @@ export function createOncallPushRunner(deps: OncallPushRunnerDeps): OncallPushRu
   const now = deps.now ?? Date.now;
   let inFlight: Promise<PushRunSummary> | undefined;
   let rerunRequested = false;
+  const retrying = new Map<string, Promise<PushedBriefRow>>();
 
   async function once(): Promise<PushRunSummary> {
     if (!deps.config.enabled) return { selected: 0, ok: 0, failed: 0, skipped: "disabled" };
@@ -214,6 +215,39 @@ export function createOncallPushRunner(deps: OncallPushRunnerDeps): OncallPushRu
     }
   }
 
+  async function doRetry(incidentId: string): Promise<PushedBriefRow> {
+    const existing = deps.store.get(incidentId);
+    if (existing === null)
+      throw new PushRetryRefusedError(
+        "ERR_ONCALL_PUSH_NOT_FOUND",
+        `no pushed brief for ${incidentId}`,
+      );
+    if (existing.status !== "failed") {
+      throw new PushRetryRefusedError(
+        "ERR_ONCALL_PUSH_NOT_FAILED",
+        `${incidentId} already has a brief; use nimbus oncall --incident ${incidentId}`,
+      );
+    }
+    const outcome = await briefIncident(deps, incidentId);
+    let row: PushedBriefRow;
+    try {
+      row = deps.store.applyRetry(incidentId, outcome, now());
+    } catch (e) {
+      // A retention prune can delete the row while the brief is being assembled; that is a
+      // not-found refusal, not an internal error.
+      if (deps.store.get(incidentId) === null) {
+        throw new PushRetryRefusedError(
+          "ERR_ONCALL_PUSH_NOT_FOUND",
+          `pushed brief for ${incidentId} was removed (retention) during the retry`,
+        );
+      }
+      throw e;
+    }
+    const incident = selectIncidentById(deps.db, incidentId);
+    if (row.status === "ok" && incident !== null) await deps.deliver([{ row, incident }]);
+    return row;
+  }
+
   return {
     async run(serviceId) {
       if (serviceId !== "pagerduty")
@@ -226,37 +260,16 @@ export function createOncallPushRunner(deps: OncallPushRunnerDeps): OncallPushRu
       return inFlight;
     },
 
-    async retry(incidentId) {
-      const existing = deps.store.get(incidentId);
-      if (existing === null)
-        throw new PushRetryRefusedError(
-          "ERR_ONCALL_PUSH_NOT_FOUND",
-          `no pushed brief for ${incidentId}`,
-        );
-      if (existing.status !== "failed") {
-        throw new PushRetryRefusedError(
-          "ERR_ONCALL_PUSH_NOT_FAILED",
-          `${incidentId} already has a brief; use nimbus oncall --incident ${incidentId}`,
-        );
-      }
-      const outcome = await briefIncident(deps, incidentId);
-      let row: PushedBriefRow;
-      try {
-        row = deps.store.applyRetry(incidentId, outcome, now());
-      } catch (e) {
-        // A retention prune can delete the row while the brief is being assembled; that is a
-        // not-found refusal, not an internal error.
-        if (deps.store.get(incidentId) === null) {
-          throw new PushRetryRefusedError(
-            "ERR_ONCALL_PUSH_NOT_FOUND",
-            `pushed brief for ${incidentId} was removed (retention) during the retry`,
-          );
-        }
-        throw e;
-      }
-      const incident = selectIncidentById(deps.db, incidentId);
-      if (row.status === "ok" && incident !== null) await deps.deliver([{ row, incident }]);
-      return row;
+    retry(incidentId) {
+      // Single-flight per incident: the `failed` check and the write are separated by a brief that
+      // can take PUSH_BRIEF_TIMEOUT_MS, so two concurrent retries would both pass the check, open
+      // two `agents.oncall` sessions, and race their writes. A second caller joins the attempt
+      // already running instead.
+      const pending = retrying.get(incidentId);
+      if (pending !== undefined) return pending;
+      const p = doRetry(incidentId).finally(() => retrying.delete(incidentId));
+      retrying.set(incidentId, p);
+      return p;
     },
   };
 }

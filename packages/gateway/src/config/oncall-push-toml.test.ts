@@ -44,6 +44,22 @@ describe("[oncall.push] config", () => {
     expect(parseNimbusTomlOncallPush("[oncall.push]\nretention_days = 0\n").retentionDays).toBe(90);
   });
 
+  test("an unparseable severities value keeps the default instead of throwing (boot path)", () => {
+    // A bare string, and a multi-line array — which this line-based parser sees as a lone `[`.
+    expect(
+      parseNimbusTomlOncallPush(
+        ["[oncall.push]", "enabled = true", 'severities = "P1"'].join("\n"),
+      ),
+    ).toEqual({ ...DEFAULT_ONCALL_PUSH_CONFIG, enabled: true });
+    const multi = parseNimbusTomlOncallPush(
+      ["[oncall.push]", "severities = [", '  "P1",', '  "sev-1",', "]", "retention_days = 30"].join(
+        "\n",
+      ),
+    );
+    expect(multi.severities).toEqual(DEFAULT_ONCALL_PUSH_CONFIG.severities);
+    expect(multi.retentionDays).toBe(30);
+  });
+
   test("load from a missing path → defaults", () => {
     const dir = mkdtempSync(join(tmpdir(), "oncall-push-toml-"));
     try {

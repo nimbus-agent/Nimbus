@@ -107,10 +107,12 @@ export class PushStore {
       );
     } else {
       // A failed retry may still have opened a session before timing out; record the LATEST one so
-      // the row points at the attempt that actually ran. Status is restated, not assumed.
+      // the row points at the attempt that actually ran. Status is restated, not assumed — and only
+      // over a row that is STILL failed, so a late failure can never downgrade an `ok` brief that a
+      // concurrent attempt wrote in the meantime (the caller then reads back the `ok` row).
       dbRun(
         this.db,
-        "UPDATE pushed_brief SET session_id = ?, status = 'failed', failure_code = ?, retried_at = ? WHERE incident_id = ?",
+        "UPDATE pushed_brief SET session_id = ?, status = 'failed', failure_code = ?, retried_at = ? WHERE incident_id = ? AND status = 'failed'",
         [sessionId, failureCode, nowMs, incidentId],
       );
     }

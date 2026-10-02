@@ -82,6 +82,22 @@ describe("PushStore", () => {
     });
   });
 
+  test("a FAILED retry never downgrades a row a concurrent attempt already made ok", () => {
+    store.insert("pagerduty:P4", FAILED, 1000);
+    store.applyRetry("pagerduty:P4", OK, 5000);
+    const row = store.applyRetry(
+      "pagerduty:P4",
+      { status: "failed", sessionId: "s-late", failureCode: "brief_error: late" },
+      6000,
+    );
+    expect(row).toMatchObject({
+      status: "ok",
+      failureCode: null,
+      briefMarkdown: "# brief",
+      retriedAt: 5000,
+    });
+  });
+
   test("recordDelivery merges per sink", () => {
     store.insert("pagerduty:P1", OK, 1000);
     store.recordDelivery("pagerduty:P1", "toast", { outcome: "delivered", at: 1 });

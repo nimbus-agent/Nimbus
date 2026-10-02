@@ -1000,7 +1000,7 @@ const D28_FLEET_KIND_ALLOWED = [
 // classification is `null`, a command map entry is a function reference, and a forbid-list entry is
 // a bare array element with no colon at all.
 const D28_FLEET_KIND_RE =
-  /\w*[Kk]ind\s*[:=]\s*"fleet"|:\s*ClientKind\s*=\s*"fleet"|"fleet"\s+as\s+ClientKind|\bdeclare\s*\([^)]*,\s*"fleet"|"fleet"\s*:\s*(?:null|")|\bfleet\s*:\s*null\b/;
+  /\w*[Kk]ind\s*[:=]\s*["']fleet["']|:\s*ClientKind\s*=\s*["']fleet["']|["']fleet["']\s+as\s+ClientKind|\bdeclare\s*\([^)]*,\s*["']fleet["']|["']fleet["']\s*:\s*(?:null|["'])|\bfleet\s*:\s*null\b/;
 
 export function checkFleetClientKindConfinement(files: readonly FileEntry[]): Violation[] {
   const out: Violation[] = [];
@@ -1038,10 +1038,11 @@ const D28_PUSH_KIND_ALLOWED = [
   "packages/gateway/src/egress/egress-bearing-kinds.ts",
   "packages/gateway/src/oncall-push/push-runner.ts",
 ];
-// Same shapes as D28_FLEET_KIND_RE with "push" substituted. The bare unquoted key matches only a
+// Same shapes as D28_FLEET_KIND_RE with "push" substituted. Both quote styles match in each rule:
+// a single-quoted `kind: 'push'` is the same assignment, and a double-quote-only regex passed it. The bare unquoted key matches only a
 // `null` VALUE, so OWNER_SCOPED_ONCALL_ALLOWED's `push: false` and every `arr.push(x)` stay clear.
 const D28_PUSH_KIND_RE =
-  /\w*[Kk]ind\s*[:=]\s*"push"|:\s*ClientKind\s*=\s*"push"|"push"\s+as\s+ClientKind|\bdeclare\s*\([^)]*,\s*"push"|"push"\s*:\s*(?:null|")|\bpush\s*:\s*null\b/;
+  /\w*[Kk]ind\s*[:=]\s*["']push["']|:\s*ClientKind\s*=\s*["']push["']|["']push["']\s+as\s+ClientKind|\bdeclare\s*\([^)]*,\s*["']push["']|["']push["']\s*:\s*(?:null|["'])|\bpush\s*:\s*null\b/;
 
 export function checkPushClientKindConfinement(files: readonly FileEntry[]): Violation[] {
   const out: Violation[] = [];

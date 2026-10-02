@@ -246,6 +246,25 @@ describe("push runner", () => {
       code: "ERR_ONCALL_PUSH_NOT_FAILED",
     });
   });
+  test("retry: two concurrent retries share ONE attempt — one dispatch, one delivery", async () => {
+    await makeRunner({
+      dispatch: async () => {
+        throw new AgentsRpcError(-32000, "x");
+      },
+    }).runner.run("pagerduty");
+    const calls: unknown[] = [];
+    const { runner, delivered } = makeRunner({ dispatch: readyDispatch(calls) });
+    const [a, b] = await Promise.all([runner.retry("pagerduty:PA"), runner.retry("pagerduty:PA")]);
+    expect(a).toEqual(b);
+    expect(a.status).toBe("ok");
+    expect(calls).toHaveLength(1);
+    expect(delivered).toHaveLength(1);
+    // The in-flight entry is released: a later retry sees the ok row and is refused.
+    await expect(runner.retry("pagerduty:PA")).rejects.toMatchObject({
+      code: "ERR_ONCALL_PUSH_NOT_FAILED",
+    });
+  });
+
   test("retry: a prune that deletes the row mid-retry is a NOT_FOUND refusal, not a raw error", async () => {
     const failing: PushDispatch = async () => {
       throw new AgentsRpcError(-32000, "x");

@@ -1104,7 +1104,7 @@ retention_days = 90      # stored briefs older than this are pruned at boot (eve
 
 ### `nimbus tail`
 
-Follow the gateway's operational event stream live: connector health transitions, watcher fires, sync completions, extension mutations and HITL prompts/resolutions — the categories a running gateway can tell a connected client about outside of a direct IPC call.
+Follow the gateway's operational event stream live: connector health transitions, watcher fires, sync completions, extension mutations, HITL prompts/resolutions and pushed on-call briefs — the categories a running gateway can tell a connected client about outside a direct IPC call.
 
 ```bash
 nimbus tail

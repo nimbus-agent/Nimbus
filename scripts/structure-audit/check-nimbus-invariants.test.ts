@@ -2215,6 +2215,10 @@ describe("D28 — push ClientKind confinement (oncall push)", () => {
   test("flags an object-literal kind outside the runner", () => {
     expect(flagged([file(ROGUE, `const caller = { clientId: id, kind: "push" };`)])).toBe(true);
   });
+  test("flags a SINGLE-quoted kind outside the runner", () => {
+    expect(flagged([file(ROGUE, "const caller = { clientId: id, kind: 'push' };")])).toBe(true);
+    expect(flagged([file(ROGUE, "const k = 'push' as ClientKind;")])).toBe(true);
+  });
   test("allows it in the runner", () => {
     expect(flagged([file(RUNNER, `caller: { clientId: "oncall-push", kind: "push" },`)])).toBe(
       false,
@@ -2244,6 +2248,10 @@ describe("D28 — fleet ClientKind confinement (I38)", () => {
     checkFleetClientKindConfinement(files).some((v) => v.rule === "D28-fleet-client-kind");
 
   // ---- positive: one per assignment shape the rule claims to cover -------------------------
+
+  test("flags a SINGLE-quoted kind outside the allow-list", () => {
+    expect(flagged([file(ROGUE, "const caller = { clientId: id, kind: 'fleet' };")])).toBe(true);
+  });
 
   test("flags the REAL egress classification shape copy-pasted elsewhere", () => {
     // The rule could not see this until the unquoted-key alternative was added: the map-key

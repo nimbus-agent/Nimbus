@@ -63,7 +63,15 @@ export function parseNimbusTomlOncallPush(source: string): NimbusOncallPushToml 
         break;
       }
       case "severities":
-        severities = lowerDeduped(parseStringArray(kv.valRaw));
+        // parseStringArray THROWS on a non-array value (`severities = "P1"`) and on a multi-line
+        // array, which this line-based parser sees as a bare `[`. This loader runs during gateway
+        // assembly, so an unparseable value keeps the default — like `enabled` and `retention_days`
+        // — rather than aborting boot over an optional, default-off section.
+        try {
+          severities = lowerDeduped(parseStringArray(kv.valRaw));
+        } catch {
+          // keep the default
+        }
         break;
       case "chatops_namespace":
         chatopsNamespace = parseString(kv.valRaw).trim();
