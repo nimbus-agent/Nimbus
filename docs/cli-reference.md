@@ -170,7 +170,7 @@ nimbus demo reset
 Seeds a synthetic "Acme" org — people, issues, commits, pull requests, reviews, CI runs,
 deployments, incidents, and chat messages, all with timestamps offset from "now" so the data always
 looks current — into the isolated demo root (`--demo` / `NIMBUS_DEMO=1`; see the `--demo` global
-flag above and invariant **I41**), then tours three built-in agent briefs against it and closes on
+flag above and invariant **I41**), restarts the demo gateway and fires a page — `demo.firePage`, an IPC method only a demo-rooted gateway claims — that runs the SAME on-call push path a real install uses (see [`nimbus oncall pushed`](#nimbus-oncall-pushed)); the page's brief is the tour's first step, and the gateway may raise a local OS notification (a desktop toast, not a network call). It then tours three built-in agent briefs against it and closes on
 the locality panel. It never touches your real config, data, or vault, and the demo gateway makes
 no outbound call of any kind, at boot or afterward (see below).
 
@@ -189,8 +189,8 @@ What plain `nimbus demo` does, in order:
    runtime.
 4. Unless `--no-tour` is given, tours three agent briefs in order — through the same shared
    `runTour` [`nimbus wow`](#nimbus-wow) uses — each preceded by a `── [n/4] <title>` header naming
-   the exact command, printed verbatim before it runs: `nimbus --demo oncall --incident
-   pagerduty:PDEMO412`, `nimbus --demo why src/retry/backoff.ts:42`,
+   the exact command, printed verbatim before it runs: `nimbus --demo oncall pushed`
+   (the brief the gateway itself pushed when the demo fired its page, below), `nimbus --demo why src/retry/backoff.ts:42`,
    `nimbus --demo owners src/retry`. A backticked command named inside a brief — a `## Gaps`
    remediation such as `nimbus owners --refresh` — is printed as `nimbus --demo owners --refresh`,
    so pasting it reaches the demo gateway, never your real install; one the demo refuses (e.g.
@@ -1062,9 +1062,49 @@ nimbus oncall --since 3d --format slack
 
 ---
 
+### `nimbus oncall pushed`
+
+Read the brief the gateway assembled **on its own** when a P1 page reached you — the on-call push. This is the read side of an unattended pass: with `[oncall.push] enabled = true` (default **off**), every PagerDuty sync checks for an ACTIVE (`triggered`/`acknowledged`) incident assigned to you, with a severity in `{"p1"} ∪ [pagerduty] severity_p1_aliases` (or the `[oncall.push] severities` list, which replaces that set), that opened at or after the moment push was enabled (minus five minutes). Each such incident gets **one** brief, assembled exactly as [`nimbus oncall --incident`](#nimbus-oncall) would assemble it, stored, announced by a local OS notification and an `oncall.briefPushed` gateway event, and readable here.
+
+```bash
+nimbus oncall pushed
+nimbus oncall pushed list
+nimbus oncall pushed "pagerduty:PXXXXX"
+nimbus oncall pushed "pagerduty:PXXXXX" --retry
+nimbus oncall pushed --json
+```
+
+| Form | What it does |
+|---|---|
+| `nimbus oncall pushed` | Print the newest pushed brief. With none, prints `No pushed briefs yet.` and exits `0` (an empty list is an answer); if push is off it says how to turn it on. |
+| `nimbus oncall pushed list` | One line per stored brief, newest first: time, `ok`/`FAILED`, incident id, title. |
+| `nimbus oncall pushed <incident-id>` | Print that incident's brief. Exits `1` when none is stored for the id. |
+| `--retry` | Only with an incident id: re-assemble a brief for that incident (the recovery path when a stored brief is `FAILED`). |
+| `--json` | Print the stored record as JSON. Exit codes are unchanged: a failed brief or a named id with no brief exits `1`. |
+
+A brief that could not be assembled is stored as `FAILED` with its failure code and is never silently dropped; the command prints the code and the exact `--retry` line, and exits `1`.
+
+**Configuration** (`nimbus.toml`):
+
+```toml
+[oncall.push]
+enabled = false          # default off
+severities = []          # [] = {"p1"} plus [pagerduty] severity_p1_aliases; a non-empty list REPLACES that set
+chatops_namespace = ""   # parsed, but has NO effect until ChatOps delivery ships (PR 2)
+retention_days = 90      # stored briefs older than this are pruned
+```
+
+**What a push never does.** It never runs synthesis — the stored brief is the deterministic render, so nothing is sent to a model. The notification and the `oncall.briefPushed` event carry only the incident id and an `ok`/`failed` status, never the brief. At most three notifications are raised per run, plus one summary. An incident with no recorded opening time is never pushed, enabling push never backfills history, and the gateway reconciles the enable moment at boot rather than trusting a timestamp from an earlier run.
+
+**Bounds.** A GDPR purge does not sweep stored pushed briefs — retention is the bound, as for `fleet_brief`. **Not shipped:** delivery to ChatOps (planned PR 2), the desktop panel (PR 3), approving a mitigation from the push, and ranking a cascade of alerts. `nimbus tail --filter oncall` follows the event live; `nimbus doctor` warns when push is enabled but your identity is unresolved, since nothing could then ever be selected.
+
+**CLI-only.** The three methods behind it (`oncall.pushedList`, `oncall.pushedGet`, `oncall.pushedRetry`) are not reachable over LAN, HTTP, MCP, ChatOps or the Tauri allowlist.
+
+---
+
 ### `nimbus tail`
 
-Follow the gateway's operational event stream live: connector health transitions, watcher fires, sync completions, extension mutations and HITL prompts/resolutions — the five categories a running gateway can tell a connected client about outside of a direct IPC call.
+Follow the gateway's operational event stream live: connector health transitions, watcher fires, sync completions, extension mutations and HITL prompts/resolutions — the categories a running gateway can tell a connected client about outside of a direct IPC call.
 
 ```bash
 nimbus tail
@@ -1076,7 +1116,7 @@ nimbus tail --filter connector,hitl --json
 
 | Flag | Description |
 |---|---|
-| `--filter <categories>` | Comma-separated, repeatable: `connector`, `watcher`, `sync`, `extension`, `hitl`. Default (flag omitted): all five. An event of a kind this build does not recognise is never filtered out, even under a narrow `--filter` — a stream that silently drops what it does not recognise is worse than one unfamiliar line. |
+| `--filter <categories>` | Comma-separated, repeatable: `connector`, `watcher`, `sync`, `extension`, `hitl`, `oncall` (a pushed on-call brief, [`nimbus oncall pushed`](#nimbus-oncall-pushed)). Default (flag omitted): all five. An event of a kind this build does not recognise is never filtered out, even under a narrow `--filter` — a stream that silently drops what it does not recognise is worse than one unfamiliar line. |
 | `--json` | Emit the raw JSON-RPC notification (`{method, params}`) as one JSON object per line, instead of the human-readable rendering. |
 
 **`nimbus tail` is follow-only** — the same contract as `tail -f -n 0`. It shows only what happens *from the moment it connects*; there is no backfill of events that occurred before it started, and nothing it prints is persisted anywhere. Reaching for it after the fact (e.g. "what happened to that sync ten minutes ago?") will not work — that history exists only if some other subsystem records it (the egress ledger, `nimbus audit`), not here.
@@ -3764,6 +3804,7 @@ nimbus doctor
 - Gateway IPC reachable
 - Configuration file validates
 - Index total item count (warns if zero — suggests connecting a service)
+- On-call push: when `[oncall.push] enabled = true`, warns if your identity is unresolved (no incident could ever be selected); otherwise reports it enabled
 - Per-connector health table
 - Voice (when `voice.enabled = true` in config): `whisper-cli` on PATH, `ffmpeg` on PATH, platform TTS available (`espeak-ng` on Linux, `say` on macOS, PowerShell SAPI on Windows)
 - Vector search: whether `sqlite-vec` actually loaded on the gateway's connection, and if not, why
