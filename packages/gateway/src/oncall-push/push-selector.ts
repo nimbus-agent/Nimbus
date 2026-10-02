@@ -1,6 +1,6 @@
 import type { Database } from "bun:sqlite";
+import { selectActiveAssignedIncidents } from "../agents/_lib/oncall-queries.ts";
 import type { OncallIncident } from "../agents/_lib/oncall-types.ts";
-import { selectActiveAssignedIncidents } from "../agents/oncall-queries.ts";
 import type { NimbusOncallPushToml } from "../config/oncall-push-toml.ts";
 
 /** Absorbs PagerDuty↔host clock skew at the enable boundary (spec § 2.2, predicate 5). */

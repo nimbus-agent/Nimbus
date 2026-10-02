@@ -1,6 +1,6 @@
 import type { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { selectActiveAssignedIncidents } from "../agents/oncall-queries.ts";
+import { selectActiveAssignedIncidents } from "../agents/_lib/oncall-queries.ts";
 import { DEFAULT_ONCALL_PUSH_CONFIG } from "../config/oncall-push-toml.ts";
 import {
   createMemoryIndexDb,

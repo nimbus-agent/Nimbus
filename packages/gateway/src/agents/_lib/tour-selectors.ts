@@ -15,7 +15,6 @@ import { listDecisions } from "../../decisions/decision-store.ts";
 import { enumeratePaths } from "../../fleet/fleet-sweep-enumerators.ts";
 import { listConsolidated } from "../../glossary/glossary-store.ts";
 import { codeUnitCompare } from "../../util/code-unit-compare.ts";
-import { selectNewestIncident } from "../oncall-queries.ts";
 import {
   selectActivePrs,
   selectIncidentsResponded,
@@ -26,6 +25,7 @@ import {
   type Window,
 } from "../standup-queries.ts";
 import { pickDemoSymbol } from "./demo-symbol.ts";
+import { selectNewestIncident } from "./oncall-queries.ts";
 import type { TourStepKind } from "./tour-types.ts";
 
 export interface TourCandidate {
