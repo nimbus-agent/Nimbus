@@ -129,7 +129,7 @@ describe("dispatchDemoRpc", () => {
     const oncallPush = assembleOncallPushRuntime({
       db,
       configDir,
-      notify: () => {},
+      notifications: { show: () => {} },
       logger: { error: () => {} },
       now: () => nowMs + 1_000,
     });

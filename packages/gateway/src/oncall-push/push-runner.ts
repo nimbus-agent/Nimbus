@@ -181,15 +181,20 @@ export function createOncallPushRunner(deps: OncallPushRunnerDeps): OncallPushRu
     });
     const items: PushDelivery[] = [];
     let ok = 0;
-    for (const incident of candidates) {
-      // Defensive: a duplicate candidate within one selection would make `insert` throw on the PK.
-      if (deps.store.has(incident.id)) continue;
-      const outcome = await briefIncident(deps, incident.id);
-      const row = deps.store.insert(incident.id, outcome, now());
-      if (row.status === "ok") ok += 1;
-      items.push({ row, incident });
+    try {
+      for (const incident of candidates) {
+        // Defensive: a duplicate candidate within one selection would make `insert` throw on the PK.
+        if (deps.store.has(incident.id)) continue;
+        const outcome = await briefIncident(deps, incident.id);
+        const row = deps.store.insert(incident.id, outcome, now());
+        if (row.status === "ok") ok += 1;
+        items.push({ row, incident });
+      }
+    } finally {
+      // A row already inserted is never reselected (alreadyPushed) and an ok row refuses retry, so
+      // an insert that throws mid-loop must not strand the rows before it undelivered.
+      if (items.length > 0) await deps.deliver(items);
     }
-    if (items.length > 0) await deps.deliver(items);
     return { selected: candidates.length, ok, failed: items.length - ok };
   }
 
@@ -235,7 +240,20 @@ export function createOncallPushRunner(deps: OncallPushRunnerDeps): OncallPushRu
         );
       }
       const outcome = await briefIncident(deps, incidentId);
-      const row = deps.store.applyRetry(incidentId, outcome, now());
+      let row: PushedBriefRow;
+      try {
+        row = deps.store.applyRetry(incidentId, outcome, now());
+      } catch (e) {
+        // A retention prune can delete the row while the brief is being assembled; that is a
+        // not-found refusal, not an internal error.
+        if (deps.store.get(incidentId) === null) {
+          throw new PushRetryRefusedError(
+            "ERR_ONCALL_PUSH_NOT_FOUND",
+            `pushed brief for ${incidentId} was removed (retention) during the retry`,
+          );
+        }
+        throw e;
+      }
       const incident = selectIncidentById(deps.db, incidentId);
       if (row.status === "ok" && incident !== null) await deps.deliver([{ row, incident }]);
       return row;

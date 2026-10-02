@@ -404,6 +404,7 @@ function createStubAutostart(): AutostartManager {
  */
 export function createUnimplementedNotifications(logger: Logger): NotificationService {
   return {
+    delivers: false,
     async show(title: string, _body: string): Promise<void> {
       logger.info(
         { event: "notification.dropped", title },
@@ -816,7 +817,8 @@ async function createSchedulerWithMesh(opts: SchedulerWithMeshOpts): Promise<{
     db,
     configDir: paths.configDir,
     localIndex,
-    notify: (title, body) => notifications.show(title, body),
+    // Passed WHOLE so the push sinks see `delivers: false` and record "skipped", not "delivered".
+    notifications,
     logger: syncLogger,
   });
 
@@ -825,6 +827,9 @@ async function createSchedulerWithMesh(opts: SchedulerWithMeshOpts): Promise<{
       await notifications.show(title, body);
     },
     onConnectorSyncSuccess: (serviceId, result, durationMs) => {
+      // FIRST: the scheduler calls this hook unguarded, so a throw below would skip the push;
+      // trigger() never throws (and returns at once for anything but pagerduty).
+      oncallPush.trigger(serviceId);
       const at = Date.now();
       syncAnomaly.recordSample(`sync:duration_ms:${serviceId}`, durationMs, at);
       syncAnomaly.recordSample(`sync:items_upserted:${serviceId}`, result.itemsUpserted, at);
@@ -844,7 +849,6 @@ async function createSchedulerWithMesh(opts: SchedulerWithMeshOpts): Promise<{
       decisionsRefresher?.trigger();
       premortemRefresher?.trigger();
       ownershipRefresher?.trigger();
-      oncallPush.trigger(serviceId); // returns at once for anything but pagerduty
     },
     // I29/D22(b): the scheduled-sync closure around the `sync` egress class's shared appender —
     // one of FIVE production callers of `recordSyncEgress` (the other four: `sync/targeted-fetch.ts`,

@@ -116,8 +116,13 @@ describe("selectPushCandidates", () => {
   });
 
   test("no opened_at_ms → never selected (cannot be placed in time)", () => {
-    const me = seed([{ id: "NT", priority: "P1", createdAt: null }]);
-    expect(selectPushCandidates(db, base(me))).toEqual([]);
+    // The control (identical but WITH created_at) proves the fixture is selectable at all, so an
+    // empty result cannot pass for a broken fixture.
+    const me = seed([
+      { id: "NT", priority: "P1", createdAt: null },
+      { id: "CTL", priority: "P1" },
+    ]);
+    expect(selectPushCandidates(db, base(me)).map((i) => i.id)).toEqual(["pagerduty:CTL"]);
   });
 
   test("parity: candidates are a subset of what `nimbus oncall` calls mine", () => {

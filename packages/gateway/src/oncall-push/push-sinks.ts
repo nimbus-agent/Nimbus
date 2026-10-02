@@ -5,10 +5,16 @@ import type { PushStore, SinkOutcome } from "./push-store.ts";
 /** Spec § 2.5: briefs are ALL stored; only human interruptions are capped. */
 export const PUSH_NOTIFY_CAP = 3;
 const TITLE = "Nimbus on-call";
+export const NO_NOTIFIER_REASON = "no OS notification implementation on this platform";
 
 export interface PushSinkDeps {
   readonly store: PushStore;
   readonly notify: (title: string, body: string) => void | Promise<void>;
+  /**
+   * Mirrors `NotificationService.delivers`: absent means true. `false` means `notify` would drop
+   * the notification, so no toast is attempted and every row's toast is recorded `skipped`.
+   */
+  readonly notifyDelivers?: boolean;
   readonly emit: (payload: OncallBriefPushedPayload) => void;
   readonly now: () => number;
 }
@@ -55,6 +61,13 @@ export function createPushDeliverer(
       );
       record(d.row.incidentId, "event", o);
     }
+    if (deps.notifyDelivers === false) {
+      // Honest record: nothing would be shown, so nothing is attempted and no summary is sent.
+      for (const d of items) {
+        record(d.row.incidentId, "toast", { outcome: "skipped", reason: NO_NOTIFIER_REASON });
+      }
+      return;
+    }
     const newestFirst = [...items].sort(
       (a, b) => (b.incident.openedAtMs ?? 0) - (a.incident.openedAtMs ?? 0),
     );
@@ -64,10 +77,12 @@ export function createPushDeliverer(
     }
     const rest = newestFirst.slice(PUSH_NOTIFY_CAP);
     if (rest.length === 0) return;
+    // Counts only rows whose brief was actually assembled; a failed row is paged, not "ready".
+    const ready = items.filter((d) => d.row.status === "ok").length;
     const summary = await attempt(() =>
       deps.notify(
         TITLE,
-        `Briefs ready for ${items.length} P1 incidents (${PUSH_NOTIFY_CAP} shown) — nimbus oncall pushed list`,
+        `${items.length} P1 incidents paged (${ready} brief${ready === 1 ? "" : "s"} ready) — nimbus oncall pushed list`,
       ),
     );
     const coalesced: Attempt =

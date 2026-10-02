@@ -15,6 +15,8 @@ import { createOncallPushRunner, type PushRunSummary } from "./push-runner.ts";
 import { createPushDeliverer } from "./push-sinks.ts";
 import { type PushedBriefRow, PushStore } from "./push-store.ts";
 
+const DAY_MS = 86_400_000;
+
 export interface OncallPushRuntime {
   readonly config: NimbusOncallPushToml;
   readonly store: PushStore;
@@ -29,7 +31,11 @@ export interface OncallPushBootDeps {
   readonly db: Database;
   readonly configDir: string;
   readonly localIndex?: LocalIndex;
-  readonly notify: (title: string, body: string) => void | Promise<void>;
+  /** Structurally `NotificationService`: `delivers: false` makes every toast record `skipped`. */
+  readonly notifications: {
+    show(title: string, body: string): void | Promise<void>;
+    readonly delivers?: boolean;
+  };
   readonly logger: { error(obj: Record<string, unknown>, msg: string): void };
   readonly now?: () => number;
 }
@@ -41,6 +47,10 @@ export function assembleOncallPushRuntime(deps: OncallPushBootDeps): OncallPushR
   // Spec § 4.1: reconciled at BOOT, never on the first run, so the first sync's incidents are
   // never older than enabled_at and a disable→enable cycle never backfills the gap.
   store.reconcileEnabledState(config.enabled, now());
+  // Retention is enforced at boot REGARDLESS of `enabled`: the per-run prune only runs on a
+  // PagerDuty-triggered run past its early returns, so a disabled push, an unresolved identity or
+  // a connector that stopped syncing would otherwise keep rows past `retention_days` forever.
+  store.pruneOlderThan(now() - config.retentionDays * DAY_MS);
 
   // The SAME identity source `agents.oncall` uses (configDir `[user]` override, then
   // resolveSelfPerson's git fallback), so push and oncall agree on "me".
@@ -63,7 +73,8 @@ export function assembleOncallPushRuntime(deps: OncallPushBootDeps): OncallPushR
     resolveSelf,
     deliver: createPushDeliverer({
       store,
-      notify: deps.notify,
+      notify: (title, body) => deps.notifications.show(title, body),
+      notifyDelivers: deps.notifications.delivers !== false,
       emit: (p) =>
         emitGatewayEvent("oncall.briefPushed", { incidentId: p.incidentId, status: p.status }),
       now,

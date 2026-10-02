@@ -246,4 +246,38 @@ describe("push runner", () => {
       code: "ERR_ONCALL_PUSH_NOT_FAILED",
     });
   });
+  test("retry: a prune that deletes the row mid-retry is a NOT_FOUND refusal, not a raw error", async () => {
+    const failing: PushDispatch = async () => {
+      throw new AgentsRpcError(-32000, "x");
+    };
+    await makeRunner({ dispatch: failing }).runner.run("pagerduty");
+    expect(store.get("pagerduty:PA")?.status).toBe("failed");
+    const pruning: PushDispatch = async (method, params, ctx) => {
+      // Retention runs between retry's get() and applyRetry().
+      store.pruneOlderThan(Number.MAX_SAFE_INTEGER);
+      return readyDispatch([])(method, params, ctx);
+    };
+    const { runner, delivered } = makeRunner({ dispatch: pruning });
+    await expect(runner.retry("pagerduty:PA")).rejects.toMatchObject({
+      code: "ERR_ONCALL_PUSH_NOT_FOUND",
+    });
+    expect(delivered).toHaveLength(0);
+  });
+
+  test("an insert that throws on the 2nd incident still delivers the 1st row, then rejects", async () => {
+    seedIncident("PB");
+    class FlakyStore extends PushStore {
+      private inserts = 0;
+      override insert(...a: Parameters<PushStore["insert"]>): ReturnType<PushStore["insert"]> {
+        this.inserts += 1;
+        if (this.inserts === 2) throw new Error("disk full");
+        return super.insert(...a);
+      }
+    }
+    const flaky = new FlakyStore(db);
+    const { runner, delivered } = makeRunner({ store: flaky, dispatch: readyDispatch([]) });
+    await expect(runner.run("pagerduty")).rejects.toThrow("disk full");
+    expect(delivered).toHaveLength(1);
+    expect(store.get(delivered[0]?.row.incidentId ?? "")).not.toBeNull();
+  });
 });

@@ -5,6 +5,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createMemoryIndexDb } from "../connectors/connector-sync-test-helpers.ts";
 import { assembleOncallPushRuntime } from "./push-runtime.ts";
+import { PushStore } from "./push-store.ts";
+
+const DAY = 86_400_000;
 
 let db: Database;
 let configDir: string;
@@ -13,7 +16,7 @@ const boot = (now = 1000) =>
   assembleOncallPushRuntime({
     db,
     configDir,
-    notify: () => {},
+    notifications: { show: () => {} },
     logger: {
       error: (_o, m) => {
         logs.push(m);
@@ -50,11 +53,28 @@ test("a disabled boot clears a prior enabled_at", () => {
   expect(boot(2).store.enabledAt()).toBeNull();
 });
 
-test("trigger never throws, even if the run rejects", async () => {
+test("trigger never throws, even if the run rejects — the rejection is logged", async () => {
   writeFileSync(join(configDir, "nimbus.toml"), "[oncall.push]\nenabled = true\n");
   const rt = boot();
+  // A real failure: the run's first store read (enabledAt) throws on a closed database.
+  db.close();
   expect(() => rt.trigger("pagerduty")).not.toThrow();
   await new Promise((r) => setTimeout(r, 20));
+  expect(logs).toContain("[oncall.push] run failed");
+  db = createMemoryIndexDb(); // afterEach closes it
+});
+
+test("boot prunes rows past retention even when push is DISABLED; a recent row survives", () => {
+  const now = 400 * DAY;
+  const seed = new PushStore(db);
+  const failed = { status: "failed", sessionId: null, failureCode: "timeout: x" } as const;
+  seed.insert("pagerduty:OLD", failed, now - 91 * DAY);
+  seed.insert("pagerduty:NEW", failed, now - 89 * DAY);
+  writeFileSync(join(configDir, "nimbus.toml"), "[oncall.push]\nenabled = false\n");
+  const rt = boot(now);
+  expect(rt.config.enabled).toBe(false);
+  expect(rt.store.get("pagerduty:OLD")).toBeNull();
+  expect(rt.store.get("pagerduty:NEW")).not.toBeNull();
 });
 
 test("identityResolved reads [user] me_person_id like agents.oncall does", async () => {

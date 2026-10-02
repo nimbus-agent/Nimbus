@@ -10,6 +10,7 @@ import { AnnotateError } from "../deployment/annotate.ts";
 import { CURRENT_SCHEMA_VERSION } from "../index/local-index.ts";
 import { runIndexedSchemaMigrations } from "../index/migrations/runner.ts";
 import { assembleOncallPushRuntime } from "../oncall-push/push-runtime.ts";
+import { createUnimplementedNotifications } from "../platform/assemble.ts";
 import { buildAcmeCorpus } from "./corpus/acme.ts";
 import { DAY, type DemoPerson, MINUTE } from "./corpus/types.ts";
 import { DEMO_SEED_MARKER, DemoSeedRefusedError, fireDemoPage, seedDemoCorpus } from "./seed.ts";
@@ -101,7 +102,7 @@ describe("seedDemoCorpus", () => {
     const rt = assembleOncallPushRuntime({
       db,
       configDir,
-      notify: () => {},
+      notifications: { show: () => {} },
       logger: { error: () => {} },
       now: () => nowMs + 5_000,
     });
@@ -122,6 +123,32 @@ describe("seedDemoCorpus", () => {
     ).toBe(1);
     // Idempotent: firing again pushes nothing new.
     expect((await fireDemoPage(db, rt, nowMs + 20_000)).push.selected).toBe(0);
+  });
+
+  test("with the PRODUCTION notifier (delivers: false) the pushed toast records skipped, never delivered", async () => {
+    const { db, configDir, dataDir } = fresh();
+    const nowMs = Date.now();
+    await seedDemoCorpus(db, { configDir, dataDir, nowMs });
+    const infoCalls: unknown[] = [];
+    const logger = {
+      info: (...args: unknown[]) => void infoCalls.push(args),
+    } as unknown as Parameters<typeof createUnimplementedNotifications>[0];
+    // The exact object platform/assemble.ts builds and hands the runtime whole.
+    const notifications = createUnimplementedNotifications(logger);
+    expect(notifications.delivers).toBe(false);
+    const rt = assembleOncallPushRuntime({
+      db,
+      configDir,
+      notifications,
+      logger: { error: () => {} },
+      now: () => nowMs,
+    });
+    await fireDemoPage(db, rt, nowMs);
+    expect(rt.store.get("pagerduty:PDEMO412")?.delivery["toast"]).toMatchObject({
+      outcome: "skipped",
+      reason: "no OS notification implementation on this platform",
+    });
+    expect(infoCalls).toHaveLength(0); // show() was never even called
   });
 
   test("the story deploy finishes ~8 minutes before the page", async () => {
@@ -146,7 +173,7 @@ describe("seedDemoCorpus", () => {
     const rt = assembleOncallPushRuntime({
       db,
       configDir,
-      notify: () => {},
+      notifications: { show: () => {} },
       logger: { error: () => {} },
       now: () => nowMs,
     });

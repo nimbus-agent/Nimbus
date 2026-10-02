@@ -2,7 +2,7 @@ import type { Database } from "bun:sqlite";
 import { afterEach, beforeEach, expect, test } from "bun:test";
 import { createMemoryIndexDb } from "../connectors/connector-sync-test-helpers.ts";
 import type { PushDelivery } from "./push-runner.ts";
-import { createPushDeliverer, PUSH_NOTIFY_CAP } from "./push-sinks.ts";
+import { createPushDeliverer, NO_NOTIFIER_REASON, PUSH_NOTIFY_CAP } from "./push-sinks.ts";
 import { PushStore } from "./push-store.ts";
 
 let db: Database;
@@ -91,7 +91,7 @@ test(`more than ${PUSH_NOTIFY_CAP}: newest ${PUSH_NOTIFY_CAP} toasted + one summ
     "pagerduty:4",
     "pagerduty:3",
   ]);
-  expect(toasts[3]).toBe("Briefs ready for 5 P1 incidents (3 shown) — nimbus oncall pushed list");
+  expect(toasts[3]).toBe("5 P1 incidents paged (5 briefs ready) — nimbus oncall pushed list");
   expect(toasts).toHaveLength(4);
   expect(events).toHaveLength(5);
   expect(store.get("pagerduty:1")?.delivery["toast"]?.outcome).toBe("coalesced");
@@ -244,9 +244,53 @@ test("boundary: exactly 3 → 3 toasts, no summary; exactly 4 → 3 + summary + 
   };
   const three = await run(3);
   expect(three).toHaveLength(3);
-  expect(three.some((b) => b.startsWith("Briefs ready for"))).toBe(false);
+  expect(three.some((b) => b.includes("incidents paged"))).toBe(false);
   const four = await run(4);
   expect(four).toHaveLength(4);
-  expect(four[3]).toContain("Briefs ready for 4 P1 incidents");
+  expect(four[3]).toContain("4 P1 incidents paged");
   expect(store.get("pagerduty:b4-0")?.delivery["toast"]?.outcome).toBe("coalesced");
+});
+
+test("the summary counts only ok rows as ready — a failed brief is paged, not ready", async () => {
+  const toasts: string[] = [];
+  const items = [
+    item("pagerduty:s1", "ok", 1),
+    item("pagerduty:s2", "failed", 2),
+    item("pagerduty:s3", "failed", 3),
+    item("pagerduty:s4", "ok", 4),
+    item("pagerduty:s5", "failed", 5),
+  ];
+  await createPushDeliverer({
+    store,
+    notify: (_t, b) => {
+      toasts.push(b);
+    },
+    emit: () => {},
+    now: () => 1,
+  })(items);
+  expect(toasts[3]).toBe("5 P1 incidents paged (2 briefs ready) — nimbus oncall pushed list");
+});
+
+test("notifyDelivers false → every toast skipped with the reason, notify never called, no summary, events delivered", async () => {
+  let notifyCalls = 0;
+  const events: unknown[] = [];
+  const items = [1, 2, 3, 4, 5].map((n) => item(`pagerduty:n${n}`, n === 2 ? "failed" : "ok", n));
+  await createPushDeliverer({
+    store,
+    notify: () => {
+      notifyCalls += 1;
+    },
+    notifyDelivers: false,
+    emit: (p) => events.push(p),
+    now: () => 7,
+  })(items);
+  expect(notifyCalls).toBe(0);
+  expect(events).toHaveLength(5);
+  for (const n of [1, 2, 3, 4, 5]) {
+    expect(store.get(`pagerduty:n${n}`)?.delivery).toEqual({
+      event: { outcome: "delivered", at: 7 },
+      toast: { outcome: "skipped", reason: NO_NOTIFIER_REASON, at: 7 },
+    });
+  }
+  expect(NO_NOTIFIER_REASON).toBe("no OS notification implementation on this platform");
 });
