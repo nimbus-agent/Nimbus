@@ -37,7 +37,7 @@ type RpcReply = {
 /**
  * A minimal JSON-RPC 2.0 client over the raw socket — request/response only, no notification
  * routing needed here (unlike `tail-stream.e2e.test.ts`'s `TailTestClient`), since
- * `ask.explainLast` and `agent.invoke` are both plain call/reply methods.
+ * `oncall.pushedList` and the `demo.firePage` miss probe are both plain call/reply methods.
  */
 class TinyIpcClient {
   private sock: net.Socket | undefined;
@@ -88,8 +88,7 @@ class TinyIpcClient {
   }
 
   /**
-   * Calls `method` and returns the result, throwing on a JSON-RPC error — the shape the task
-   * brief's illustrative snippet assumed.
+   * Calls `method` and returns the result, throwing on a JSON-RPC error.
    */
   async call<T>(method: string, params: unknown): Promise<T> {
     const reply = await this.raw(method, params);
@@ -123,7 +122,7 @@ async function startTestGateway(tag: string): Promise<{
   const env: Record<string, string> = {
     ...(process.env as Record<string, string>),
     NIMBUS_E2E_PATHS_JSON: JSON.stringify(paths),
-    // Neither `ask.explainLast` nor a fresh-index `agent.invoke` touches search or embeddings —
+    // `oncall.pushedList` on a default (push-disabled) gateway touches neither search nor embeddings —
     // skipping the runtime avoids a real (or stalled) MiniLM/CDN fetch slowing boot for no reason
     // relevant to what this test asserts.
     NIMBUS_SKIP_EMBEDDING_RUNTIME: "1",

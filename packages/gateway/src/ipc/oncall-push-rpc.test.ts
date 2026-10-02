@@ -5,7 +5,7 @@ import { createMemoryIndexDb } from "../connectors/connector-sync-test-helpers.t
 import { PushRetryRefusedError } from "../oncall-push/push-runner.ts";
 import type { OncallPushRuntime } from "../oncall-push/push-runtime.ts";
 import { PushStore } from "../oncall-push/push-store.ts";
-import { dispatchOncallPushRpc, OncallPushRpcError } from "./oncall-push-rpc.ts";
+import { dispatchOncallPushRpc } from "./oncall-push-rpc.ts";
 
 let db: Database;
 let store: PushStore;
@@ -95,7 +95,7 @@ test("retry maps refusals to named codes", async () => {
       { incidentId: "pagerduty:A" },
       { runtime: notFound },
     ),
-  ).rejects.toBeInstanceOf(OncallPushRpcError);
+  ).rejects.toMatchObject({ rpcCode: -32001 });
 });
 
 test("an unknown oncall.* method misses (falls through to Method not found)", async () => {
