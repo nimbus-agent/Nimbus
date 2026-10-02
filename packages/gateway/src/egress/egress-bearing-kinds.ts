@@ -44,6 +44,9 @@ export const EGRESS_BEARING_CLIENT_KINDS: Readonly<
   // when `[fleet] allow_remote` grants it, is ledgered by the `model` class at the provider
   // (`egress/model-egress.ts`), which is where the bytes actually leave.
   fleet: null,
+  // A pushed brief is written to local SQLite and shown in a local toast; nothing crosses the
+  // machine boundary on this path (the PR 2 ChatOps post is ledgered by the `chatops` class).
+  push: null,
 });
 
 /**

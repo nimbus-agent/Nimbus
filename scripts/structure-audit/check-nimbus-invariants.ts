@@ -1033,6 +1033,47 @@ export function checkFleetClientKindConfinement(files: readonly FileEntry[]): Vi
   return out;
 }
 
+const D28_PUSH_KIND_ALLOWED = [
+  "packages/gateway/src/ipc/server/client-kind.ts",
+  "packages/gateway/src/egress/egress-bearing-kinds.ts",
+  "packages/gateway/src/oncall-push/push-runner.ts",
+];
+// Same shapes as D28_FLEET_KIND_RE with "push" substituted. The bare unquoted key matches only a
+// `null` VALUE, so OWNER_SCOPED_ONCALL_ALLOWED's `push: false` and every `arr.push(x)` stay clear.
+const D28_PUSH_KIND_RE =
+  /\w*[Kk]ind\s*[:=]\s*"push"|:\s*ClientKind\s*=\s*"push"|"push"\s+as\s+ClientKind|\bdeclare\s*\([^)]*,\s*"push"|"push"\s*:\s*(?:null|")|\bpush\s*:\s*null\b/;
+
+export function checkPushClientKindConfinement(files: readonly FileEntry[]): Violation[] {
+  const out: Violation[] = [];
+  for (const f of files) {
+    if (f.relPath.endsWith(".test.ts")) continue;
+    if (D28_PUSH_KIND_ALLOWED.includes(f.relPath)) continue;
+    const stripped = stripComments(f.contents).split("\n");
+    const original = f.contents.split("\n");
+    for (let i = 0; i < stripped.length; i++) {
+      const line = stripped[i] ?? "";
+      const next = stripped[i + 1] ?? "";
+      // The line alone, else the line joined with its successor. The joined form counts ONLY when
+      // the successor does not match on its own: otherwise a violation sitting wholly on line i+1
+      // would be reported twice — once here, at the wrong line number, and again at its own index.
+      // The first line has to actually contribute for the window to mean anything.
+      let matched = D28_PUSH_KIND_RE.test(line);
+      if (!matched && !D28_PUSH_KIND_RE.test(next)) {
+        matched = D28_PUSH_KIND_RE.test(`${line} ${next}`);
+      }
+      if (matched) {
+        out.push({
+          rule: "D28-push-client-kind",
+          file: f.relPath,
+          line: i + 1,
+          snippet: (original[i] ?? "").trim(),
+        });
+      }
+    }
+  }
+  return out;
+}
+
 // D26(a) (I35): `performActuation` — the primitive that turns a model-proposed action into a real
 // interaction with the host — may be CALLED only from the computer-use gate (which performs the
 // config/policy checks, the sandbox assertion, the envelope check, the structural classification,
@@ -2582,6 +2623,13 @@ async function run(): Promise<void> {
       );
     }
     if (fleetKindViolations.length > 0) exit = 1;
+    const pushKindViolations = checkPushClientKindConfinement(files);
+    for (const e of pushKindViolations) {
+      console.error(
+        `::error file=${e.file},line=${e.line}::D28 push ClientKind breach — the on-call push attribution is named outside client-kind.ts/egress-bearing-kinds.ts/push-runner.ts, a second path able to file briefs as pushed work without the runner's checks: ${e.snippet}`,
+      );
+    }
+    if (pushKindViolations.length > 0) exit = 1;
   }
   if (mode === "binary-only" || mode === "all") {
     const actuationViolations = checkActuationConfinement(files);
