@@ -3,6 +3,7 @@ import { afterEach, beforeEach, expect, test } from "bun:test";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { resolveSelfPerson } from "../agents/_lib/self-person.ts";
 import {
   createMemoryIndexDb,
   createStubVault,
@@ -20,6 +21,16 @@ const DAY = 86_400_000;
 let db: Database;
 let configDir: string;
 const logs: string[] = [];
+/** Resolves when the logger is next called; fails (never passes) if that takes over 5s. */
+function nextLog(): { signal: Promise<void>; resolve: () => void } {
+  let resolve: () => void = () => {};
+  const signal = new Promise<void>((res, rej) => {
+    resolve = res;
+    setTimeout(() => rej(new Error("logger was never called within 5s")), 5000).unref();
+  });
+  return { signal, resolve };
+}
+let onLog: () => void = () => {};
 const boot = (now = 1000) =>
   assembleOncallPushRuntime({
     db,
@@ -28,6 +39,7 @@ const boot = (now = 1000) =>
     logger: {
       error: (_o, m) => {
         logs.push(m);
+        onLog();
       },
     },
     now: () => now,
@@ -37,6 +49,7 @@ beforeEach(() => {
   db = createMemoryIndexDb();
   configDir = mkdtempSync(join(tmpdir(), "oncall-push-rt-"));
   logs.length = 0;
+  onLog = () => {};
 });
 afterEach(() => {
   db.close();
@@ -66,8 +79,10 @@ test("trigger never throws, even if the run rejects — the rejection is logged"
   const rt = boot();
   // A real failure: the run's first store read (enabledAt) throws on a closed database.
   db.close();
+  const logged = nextLog();
+  onLog = logged.resolve;
   expect(() => rt.trigger("pagerduty")).not.toThrow();
-  await new Promise((r) => setTimeout(r, 20));
+  await logged.signal;
   expect(logs).toContain("[oncall.push] run failed");
   db = createMemoryIndexDb(); // afterEach closes it
 });
@@ -188,11 +203,17 @@ test("a notification service that does not deliver records the toast skipped; no
 test("trigger logs a non-Error rejection as its string form", async () => {
   writeFileSync(join(configDir, "nimbus.toml"), "[oncall.push]\nenabled = true\n");
   const errs: Record<string, unknown>[] = [];
+  const logged = nextLog();
   const rt = assembleOncallPushRuntime({
     db,
     configDir,
     notifications: { show: () => {} },
-    logger: { error: (o) => errs.push(o) },
+    logger: {
+      error: (o) => {
+        errs.push(o);
+        logged.resolve();
+      },
+    },
     now: () => 1000,
   });
   // Make the run reject with a NON-Error: the first store read throws a string.
@@ -200,17 +221,29 @@ test("trigger logs a non-Error rejection as its string form", async () => {
     throw "plain failure";
   };
   rt.trigger("pagerduty");
-  await new Promise((r) => setTimeout(r, 20));
+  await logged.signal;
   expect(errs).toEqual([{ err: "plain failure" }]);
 });
 
-test("without a [user] override and the default clock, boot and identityResolved still work", async () => {
+test("with a [user] override, identity resolves", async () => {
+  writeFileSync(
+    join(configDir, "nimbus.toml"),
+    `[user]
+me_person_id = "person-1"
+`,
+  );
+  const rt = boot();
+  expect(await rt.identityResolved()).toBe(true);
+});
+
+test("without a [user] override and the default clock, identity agrees with resolveSelfPerson", async () => {
   const rt = assembleOncallPushRuntime({
     db,
     configDir,
     notifications: { show: () => {} },
     logger: { error: () => {} },
   });
-  expect(typeof (await rt.identityResolved())).toBe("boolean");
+  const expected = (await resolveSelfPerson(db, {})).personId !== null;
+  expect(await rt.identityResolved()).toBe(expected);
   expect(await rt.run("github")).toMatchObject({ skipped: "not_pagerduty" });
 });

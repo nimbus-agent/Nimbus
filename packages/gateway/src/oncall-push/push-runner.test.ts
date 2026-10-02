@@ -342,16 +342,30 @@ describe("push runner", () => {
   });
 
   test("a dispatch that outlives the timeout: the timeout row has no session, and a later throw/return cannot overwrite it", async () => {
+    let releaseThrow: () => void = () => {};
+    const gate = new Promise<void>((r) => {
+      releaseThrow = r;
+    });
+    let lateThrowDone: () => void = () => {};
+    const lateThrowSettled = new Promise<void>((r) => {
+      lateThrowDone = r;
+    });
     const slowThrow: PushDispatch = async () => {
-      await new Promise((r) => setTimeout(r, 60));
-      throw new Error("too late");
+      try {
+        await gate;
+        throw new Error("too late");
+      } finally {
+        lateThrowDone();
+      }
     };
     await makeRunner({ dispatch: slowThrow, timeoutMs: 15 }).runner.run("pagerduty");
     expect(store.get("pagerduty:PA")).toMatchObject({
       status: "failed",
       failureCode: "timeout: no brief in 15ms",
     });
-    await new Promise((r) => setTimeout(r, 80));
+    releaseThrow();
+    await lateThrowSettled;
+    await new Promise((r) => setTimeout(r, 0)); // let the runner's catch run
     expect(store.get("pagerduty:PA")?.failureCode).toBe("timeout: no brief in 15ms");
   });
 
