@@ -2,6 +2,13 @@
 
 All notable changes to the `nimbus` core (headless Gateway + CLI binary + first-party MCP connectors) are documented in this file. release-please appends new entries between this header and the most recent version below when a release PR merges.
 
+## [7.32.3](https://github.com/nimbus-agent/Nimbus/compare/v7.32.2...v7.32.3) (2026-10-02)
+
+
+### Bug Fixes
+
+* **deps:** bump the devalue override to 5.9.4 for three new high advisories ([#1593](https://github.com/nimbus-agent/Nimbus/issues/1593)) ([693f62b](https://github.com/nimbus-agent/Nimbus/commit/693f62ba1885418b3dfd57db9e619810c53f509a))
+
 ## [7.32.2](https://github.com/nimbus-agent/Nimbus/compare/v7.32.1...v7.32.2) (2026-09-30)
 
 
