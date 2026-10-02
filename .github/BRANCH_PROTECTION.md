@@ -52,7 +52,8 @@ Scorecard uploads SARIF to **Security → Code scanning**. Findings such as **Br
 |--------------------|-----------------------------------|
 | **Branch-Protection** | Strong default-branch rule: require PR, required status checks (below), optional “include administrators”. |
 | **Code-Review** | Same rule: required approving reviews, optional CODEOWNERS reviews, dismiss stale reviews, “require approval of most recent push” if your plan offers it. |
-| **Maintained** | Steady **commits**, **releases**, and **issue/PR triage** (Scorecard looks at activity windows). **Dependabot** (`.github/dependabot.yml`) already helps. Repos **younger than ~90 days** often score **0** until that window passes — expected, not a misconfiguration. |
+| **Maintained** | Steady **commits**, **releases**, and **issue/PR triage** (Scorecard looks at activity windows). Repos **younger than ~90 days** often score **0** until that window passes — expected, not a misconfiguration. |
+| **Dependency-Update-Tool** | Scorecard looks for an update tool's config file. There is none by decision: Dependabot version updates were retired on 2026-10-02 and dependencies move in periodic manual bulk updates ([`docs/CONTRIBUTING.md` § Updating Dependencies](../docs/CONTRIBUTING.md#updating-dependencies)), which Scorecard cannot see. A low score here is expected, not a misconfiguration. |
 | **Fuzzing** | Continuous fuzzing Scorecard recognizes includes **[OSS-Fuzz](https://google.github.io/oss-fuzz/)** (separate application repo), **[ClusterFuzzLite](https://github.com/google/clusterfuzzlite)**, or **[OneFuzz](https://github.com/microsoft/onefuzz)** wiring — not a one-line repo change. |
 | **CII-Best-Practices** | Complete the [OpenSSF Best Practices](https://www.bestpractices.dev/) questionnaire for this repository (badge is optional). |
 
@@ -77,31 +78,28 @@ After workflows have run at least once, add as **required checks**:
 
 ## Currently active required checks (`General` ruleset on `main`)
 
-The `General` ruleset (id `14784377`) currently requires the following 10 checks to pass before a PR can merge to `main`. These names are matched **verbatim** against the Actions UI; renaming a job in the workflow YAML without updating the ruleset will break merges.
+The `General` ruleset (id `14784377`) requires the following 10 checks to pass before a PR can merge to `main` (re-derived from the live ruleset on 2026-10-02). These names are matched **verbatim** against the Actions UI; renaming a job in the workflow YAML without updating the ruleset will break merges.
 
 | Required check | Source workflow | Notes |
 |---|---|---|
-| `PR quality — TS/Bun (ubuntu-24.04) / Test — ubuntu-24.04` | `_test-suite.yml` (called by `ci.yml` on PR) | Unit tests + UI Vitest + integration + e2e on Ubuntu |
-| `PR quality — Duplication scan` | `ci.yml` | jscpd |
-| `Dependency audit` | `security.yml` | `bun audit` |
+| `PR quality — required gates` | `ci.yml` | The aggregator: an `if: always()` job that `needs:` every PR-quality job (TS/Bun suite, Rust/Tauri, the macOS + Windows cross-platform legs, duplication, ONNX clean room, structure audit, release safety) and fails unless each one succeeded or was legitimately skipped |
+| `Dependency audit` | `security.yml` | `bun audit`, then `audit:advisories`, then `audit:js-licenses` |
 | `Trivy vulnerability scan` | `security.yml` | filesystem scan + SARIF upload |
 | `Gitleaks secret scan` | `security.yml` | committed-secret detection |
 | `Gateway audit JSON + connector.remove vault restore` | `security.yml` | Gateway contract tests |
-| `Cargo audit (Tauri)` | `security.yml` | Rust dep advisories |
-| `Cargo deny (licenses + advisories + bans)` | `security.yml` | License + bans + registry pinning |
+| `Cargo audit (Tauri)` | `security.yml` | Rust dep advisories; reports `skipped`, which passes, on a PR that touches no Rust |
+| `Cargo deny (licenses + advisories + bans)` | `security.yml` | License + bans + registry pinning; skipped the same way |
 | `Analyze (javascript-typescript)` | `codeql.yml` | CodeQL JS/TS security-extended |
 | `Analyze (rust)` | `codeql.yml` | CodeQL Rust security-extended |
+| `cla` | `cla.yml` | CLA Assistant, on `pull_request_target` |
 
-**Conditional jobs intentionally excluded** from required checks — they skip on PRs that don't touch their domain, and a skipped check would block merge:
+**Merge rules around them:** squash is the only merge method, there is **no merge queue**, and **Require branches to be up to date** is off. A PR can merge as soon as these checks are green, and `gh pr merge <n> --squash --auto` merges it at that moment. A merge queue ran from 2026-09-30 to 2026-10-02 and was retired; no workflow reports on `merge_group` any more, so turning a queue back on would stall every merge until each required context did.
 
-- `PR quality — Rust/Tauri (ubuntu-24.04)` (skips when no `packages/ui/src-tauri/` change)
-- `E2E Desktop (PR) — ubuntu-24.04` (only on PRs labelled `ci:e2e-desktop`)
-- `Bench (${{ matrix.os }})` (only on `perf`-labelled PRs)
-- The 22 `Coverage — *` matrix jobs (granular signals folded into the parent `Test —` job's pass/fail)
+**Individual PR-quality jobs are deliberately not required contexts.** A job skipped by its own `if:` never expands the `${{ }}` in its name, so a required context named after a matrix leg or a reusable-workflow child (`PR quality — TS/Bun (ubuntu-24.04) / Test — ubuntu-24.04` used to be one) is never created on a PR that skips it, and that PR waits for it forever. `PR quality — required gates` has a static name and covers them all, so adding, renaming or matrix-ing a gate inside `ci.yml` needs no ruleset edit. Label-gated jobs such as `E2E Desktop (PR) — ubuntu-24.04` and the push-only `CI — *` matrix are outside it.
 
-**When job names change:** `gh api repos/asafgolombek/Nimbus/rulesets/14784377` exposes the current `required_status_checks` array. Update via `PUT repos/asafgolombek/Nimbus/rulesets/14784377` with the corrected `context` strings.
+**When job names change:** `gh api repos/nimbus-agent/Nimbus/rulesets/14784377` exposes the current `required_status_checks` array. Update via `PUT repos/nimbus-agent/Nimbus/rulesets/14784377` with the corrected `context` strings.
 
-**Solo-dev approval policy:** the same ruleset has `required_approving_review_count: 0` and `bypass_mode: pull_request` — PRs are mandatory, status checks are mandatory, but human approval is not (see `docs/SECURITY.md` and the threat model around AI-assisted review).
+**Solo-dev approval policy:** the same ruleset has `required_approving_review_count: 0`, and its only bypass actor is `OrganizationAdmin` with `bypass_mode: always` — PRs are mandatory, status checks are mandatory, but human approval is not (see `docs/SECURITY.md` and the threat model around AI-assisted review). The bypass is silent: an admin can merge with checks still pending and nothing on the PR records it, so wait for the checks or use auto-merge.
 
 ## Security features (org or repo)
 

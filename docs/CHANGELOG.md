@@ -18,6 +18,41 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
 
 ## Post-Phase-6 deliveries
 
+- **2026-10-02 — The merge queue and Dependabot are retired; dependencies move in manual bulk
+  updates.** The merge queue that went live on 2026-09-30 took seven entries before it was switched
+  off, and every one re-ran the whole PR gate on the merged result: 21 to 52 minutes of CI after
+  each PR was already green. It was retired as not worth that cost. The `merge_queue` rule is gone
+  from the General ruleset (14784377); its ten required contexts are unchanged, **Require branches
+  to be up to date** stays off, and `gh pr merge --squash --auto` now merges a PR directly once
+  they are green. What that gives up is stated in `CLAUDE.md`'s CI-gating section: a PR's checks
+  test it against `main` as `main` stood when they ran, so two individually green PRs can still
+  break `main` together. #1583's `merge_group` triggers and branches are removed from `ci.yml`,
+  `security.yml`, `codeql.yml` and `cla.yml`, its `cla-merge-queue` stand-in job included, and
+  `cla.yml` and `codeql.yml` are byte-identical to their pre-#1583 state again. **Dependabot is
+  retired with it.** Every open Dependabot PR is closed and security-update PRs are disabled in the
+  repository settings, while Dependabot *alerts* stay on. `.github/dependabot.yml`,
+  `dependabot-shepherd.yml` and `scripts/dependabot/` are deleted. `check-pr-message-parses` loses
+  its Dependabot special case, which judged a Dependabot PR on the summary the shepherd would
+  write, so every PR is again judged on the description it actually carries. The shepherd also
+  drops out of both `RELEASE_BOT_*` entries' `consumedBy`. Kept on purpose: `security.yml`'s
+  `main-health-alert` job; `audit:override-drift`'s redundant-override rule, since a pin nothing
+  consumes still turns every manual bump into a two-place edit; and the `"actions" | "dependabot"`
+  secret-product model in the credential registry, since GitHub's Dependabot secret namespace still
+  exists and the credential audit still reads it. What `dependabot.yml` knew is not lost:
+  `docs/CONTRIBUTING.md` gains an "Updating Dependencies" section with the manual procedure
+  (`bun outdated --filter="*"`; ranges edited in every workspace that declares a package, never
+  `bun update <pkg>` at the root; root `overrides` kept consistent, then `bun install --force`;
+  `cargo update` in `packages/ui/src-tauri`; action pins resolved from tag to commit SHA), the
+  packages that must move together (React with React DOM and their types, `@tauri-apps/*` with the
+  Rust `tauri` crates, `vitest` with `@vitest/*`, the `codeql-action` sub-actions, Biome with
+  `biome.json`'s `$schema`, `sharp` with its libvips license pins), and the three majors held back
+  (vite 8 with `@vitejs/plugin-react` 6, TypeScript 7 in `packages/docs`, js-yaml 5), each with how
+  to re-check its blocker. `.github/BRANCH_PROTECTION.md`'s required-check table was re-derived
+  from the live ruleset in the same change: it listed two checks the ruleset does not require and
+  missed `PR quality — required gates` and `cla`. One consequence to expect: OpenSSF Scorecard's
+  Dependency-Update-Tool check finds no update-tool config any more and will score low; that is
+  by decision, and `BRANCH_PROTECTION.md` now says so.
+
 - **2026-09-30 — Dependabot PRs merge themselves; `main` merges through a merge queue.** Clearing
   one week's Dependabot batch (#1573–#1576) took two days, seven superseded PR numbers and a dozen
   hand-pushed fixes, and none of the failures was a real incompatibility. Five causes, each now

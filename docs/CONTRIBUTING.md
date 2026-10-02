@@ -275,6 +275,44 @@ Verify the printed author, maintainer, created date, and version count look reas
 
 ---
 
+## Updating Dependencies
+
+Nothing updates dependencies automatically. Dependabot version updates were retired on 2026-10-02. Each of its grouped PRs needed a full CI cycle, and clearing its last weekly batch (#1573–#1576) took two days and a dozen hand-pushed fixes, none of them for a real incompatibility. Dependencies now move in a **periodic manual bulk update**: one PR that takes every workspace and every ecosystem forward at once.
+
+Dependabot **alerts** stay on, so a vulnerable dependency still appears under the repository's **Security** tab, and the required `Dependency audit`, `Cargo audit (Tauri)` and `Cargo deny` checks still fail a pull request on a live advisory. When a newly published advisory turns `main` red, a `Security gate is red on main` issue opens on its own. The fix is usually a root `overrides` bump; `scripts/structure-audit/accepted-advisories.ts` records the order of preference.
+
+### The procedure
+
+1. **Find what is behind.** `bun outdated --filter="*"` reports the direct dependencies of every workspace against their `latest` release. It says nothing about a transitive package that only a root `overrides` pin holds, which is most of them, so check each entry in the `overrides` block of `package.json` against its latest release separately.
+2. **Read before you take a major.** That includes a 0.x minor (`0.9` → `0.10`), which semver treats as breaking and which a `^0.9` range will not pick up anyway. Land each major as its own commit within the pass, so it can be reverted alone.
+3. **Edit the range by hand in every workspace manifest that declares the package**, then run `bun install`. `git grep -n '"<pkg>"' -- '*package.json'` finds every declaration. Never run `bun update <pkg>` at the repository root: in a workspace repo it adds `<pkg>` to the **root** `package.json` as a new direct dependency instead of bumping the workspace that declares it. Bumping one workspace and not another leaves two copies installed. Two copies of a peer dependency surface as a type error at your own call site that names neither copy; `find node_modules -maxdepth 4 -name <pkg> -type d` shows the split.
+4. **Keep root `overrides` consistent with the ranges.** An override outranks every declared range, so moving a declaration past its pin changes nothing that is installed: move the pin in the same change. `audit:override-drift` fails on a pin that contradicts a declared range, and on a pin for a directly declared package that nothing in `bun.lock` depends on transitively, since such a pin lifts nothing. After any change to `overrides`, run `bun install --force`. That includes a rebase onto a `main` whose overrides moved. A plain `bun install` against a lockfile that already satisfies every range does not apply a changed override, and still reports "no changes".
+5. **Rust:** run `cargo update` in `packages/ui/src-tauri` to refresh `Cargo.lock` within the ranges `packages/ui/src-tauri/Cargo.toml` allows; edit `Cargo.toml` itself for a deliberate minor or major move. The `cargo audit --ignore` list in `.github/workflows/security.yml` mirrors the ignores in `packages/ui/src-tauri/deny.toml`. Re-check both whenever Tauri moves.
+6. **GitHub Actions:** every third-party `uses:` is pinned to a full 40-character commit SHA, which `audit:action-sha-pins` enforces, with the tag kept as a trailing comment (`uses: <owner>/<action>@<sha> # vX.Y.Z`). To move a pin, resolve the release **tag** to its **commit**: `gh api repos/<owner>/<repo>/commits/<tag> --jq .sha` peels an annotated tag, where reading the tag ref returns the SHA of the tag object instead. Replace the pin in every workflow under `.github/workflows` and every composite action under `.github/actions` that uses that action.
+7. **First-party packages** follow the same steps. `audit:connector-version-skew` already fails `preflight:fast` when the `@nimbus-dev/connectors` pin falls a minor version behind the published release, and moving that pin means regenerating the bundled registry (`bun run gen:connector-registry`, checked by `audit:connector-registry-drift`).
+8. **Verify the whole pass.** Run `bun run preflight`, which is the full CI-parity set. Then run `bun audit` and `bun run audit:advisories`, which only CI runs (they need the npm registry). Add `cd packages/ui && bunx vitest run` when a UI dependency moved, and `bun run docs:build` when anything in `packages/docs` moved (it needs Node >= 22.12). CI runs `cargo audit` and `cargo deny` on every PR that touches `packages/ui/src-tauri`.
+
+Title the PR `chore(deps): …`, or `fix(deps): …` when the pass clears an advisory that users should receive in the next release.
+
+### Packages that move together
+
+- **`react`, `react-dom`, `@types/react` and `@types/react-dom`**, in every workspace that declares them (`packages/ui`; `react` and `@types/react` in `packages/cli` too). React refuses to boot when `react` and `react-dom` differ; a `react-dom`-only bump once failed 47 of 74 UI test files.
+- **`@tauri-apps/*` and the Rust `tauri` crates.** Move `packages/ui/package.json`'s `@tauri-apps/*` in the same pass as `tauri`, `tauri-build` and `tauri-plugin-*` in `packages/ui/src-tauri/Cargo.toml`. The Tauri CLI compares `@tauri-apps/api` with the `tauri` crate, and each `@tauri-apps/plugin-<name>` with its `tauri-plugin-<name>` crate, and stops with "Found version mismatched Tauri packages" when a pair's major.minor differ.
+- **`vitest` and every `@vitest/*` package.** `@vitest/coverage-v8` declares the exact `vitest` version as its peer.
+- **The `github/codeql-action` sub-actions.** `init`, `autobuild` and `analyze` (`.github/workflows/codeql.yml`) and `upload-sarif` (`.github/workflows/security.yml`, `.github/workflows/scorecard.yml`) are one action at one version, so pin all of them to the same SHA.
+- **`@biomejs/biome` and the `$schema` URL in `biome.json`.** Set the URL to the version that actually installed (`node_modules/@biomejs/biome/package.json`), not the range you typed. A mismatch is reported only as an info diagnostic, so `bun run lint` stays green while editors validate the config against a stale schema.
+- **`sharp` and its libvips license pins.** A `sharp` bump usually moves its prebuilt `@img/sharp-libvips-*` binaries, whose LGPL exception in `scripts/structure-audit/check-js-licenses.ts` is pinned to exact versions on purpose. Move those pins and the matching line in `docs/license-policy.md` together. The pinned packages are Linux-only, so `audit:js-licenses` passes no matter what on Windows and macOS: confirm it with `bun run verify:docker`, or on CI.
+
+### Majors that are held back
+
+Each of these was blocked when it was recorded. Re-verify every blocker on each pass, because they clear without notice, and delete an entry once it no longer holds.
+
+- **`vite` 8 with `@vitejs/plugin-react` 6.** `@vitejs/plugin-react` 6 peers `vite` ^8, so the two majors must land in the same pass. They were held back while an automated updater would have split them across PRs. To re-check: `@vitejs/plugin-react`'s `peerDependencies.vite`, then the UI suite on the new pair.
+- **TypeScript 7 in `packages/docs`.** The rest of the repository is on TypeScript 7; `packages/docs` declares TypeScript 6. `astro check` runs `@astrojs/language-server`, which calls `ts.sys`, and TypeScript 7's native port does not expose it: under 7.0.2 the docs typecheck crashed with `undefined is not an object (evaluating 'this.ts.sys.fileExists')`. `@astrojs/check` also declares `typescript: ^5.0.0 || ^6.0.0`. To re-check: that peer range, then `bun run typecheck` with the docs workspace on 7. Separately, the root `typescript-compiler-api` alias stays on TypeScript 6 for a different reason: TypeScript 7 exports its compiler API only under explicitly unstable subpaths, and `scripts/cleanup/strip-comments.ts` and `scripts/cleanup/survey-oc.ts` drive that API directly.
+- **js-yaml 5.** It was attempted in #1049 and reverted. v5's ESM build dropped the default export. TypeScript does not catch that, only running the tests does, and both this repository (two gateway source files, three CI gate scripts and a test) and the Astro/Starlight chain import it that way. The chain also declares js-yaml `^4` (`astro`, `@astrojs/starlight`, `@astrojs/internal-helpers`). Because the root `overrides` pin is global, the gateway cannot get 5 while Astro keeps 4. The pin cannot simply be dropped either: it also lifts `gray-matter` and `@istanbuljs/load-nyc-config` off js-yaml 3. To re-check: the `js-yaml` range in the `dependencies` of `astro` and `@astrojs/starlight`. When it clears, move the override and every declaration in the same PR.
+
+---
+
 ## Package Dependency Rules
 
 ```text

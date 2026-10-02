@@ -320,7 +320,7 @@ Automated vulnerability scans run on every PR and nightly:
 - **`OpenSSF Scorecard`** — supply-chain posture, weekly + on default-branch push
 - **`@nimbus-dev/client`** — published from its own repo, [nimbus-agent/nimbus-client](https://github.com/nimbus-agent/nimbus-client), with **npm provenance** (sigstore signature backed by GitHub OIDC); verify with `npm audit signatures`
 
-HIGH and CRITICAL findings block merges when branch protection checks are required. Dependabot opens update PRs automatically for outdated dependencies.
+HIGH and CRITICAL findings block merges when branch protection checks are required. Dependabot alerts flag vulnerable dependencies, but no bot opens update PRs: dependencies move in periodic manual bulk updates ([`CONTRIBUTING.md` § Updating Dependencies](./CONTRIBUTING.md#updating-dependencies)). A Security run that fails on `main`, typically on a newly published advisory, opens a `Security gate is red on main` issue that closes itself on the next green run.
 
 Release binaries (Gateway + CLI, all four platform builds) carry a **GitHub build provenance attestation** (`actions/attest-build-provenance`) and a **CycloneDX SBOM**, both attached to the GitHub Release. Verify with:
 
