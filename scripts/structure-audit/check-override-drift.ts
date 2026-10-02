@@ -14,10 +14,11 @@
  *
  *   - `packages/gateway` declared `js-yaml: ^5.2.2` while root `overrides`
  *     pinned `4.3.0`. The installed copy was 4.3.0. Nothing reported this.
- *   - Because the override wins, Dependabot PRs against those packages MERGE
- *     GREEN AND CHANGE NOTHING. Dependabot edits `dependencies`; it has no
- *     notion of `overrides`. The manifest moves, the lockfile does not, CI is
- *     green, and the repo now believes it is running a version it is not.
+ *   - Because the override wins, a bump that edits only the declared range —
+ *     by hand, or by an updater with no notion of `overrides` (Dependabot,
+ *     until it was retired on 2026-10-02) — MERGES GREEN AND CHANGES NOTHING.
+ *     The manifest moves, the lockfile does not, CI is green, and the repo now
+ *     believes it is running a version it is not.
  *   - `bun outdated` cannot see it either: it compares the DECLARED range
  *     against the `latest` dist-tag, so a package held on an older major shows
  *     only that major's successor and the held line disappears from the report.
@@ -285,17 +286,18 @@ export function auditOverrideDrift(repoRoot: string): AuditResult {
 
     // An override on a package that ONLY this repo's own manifests consume lifts
     // nothing: the lockfile already pins the exact version a direct declaration
-    // resolves to. What it does do is break every Dependabot bump of that package —
-    // Dependabot moves the declaration but cannot edit `overrides`, so the bump trips
-    // the check below and needs the same hand-pushed "move the pin" commit, which is
-    // what @mastra/core and @mastra/mcp cost on #1144, #1238, #1331, #1515 and #1574
+    // resolves to. What it does do is turn every bump of that package into a
+    // two-place edit — a bump that moves the declaration but not the pin trips the
+    // check below. While Dependabot did the bumping (it was retired on 2026-10-02)
+    // that cost the same hand-pushed "move the pin" commit every time, which is what
+    // @mastra/core and @mastra/mcp cost on #1144, #1238, #1331, #1515 and #1574
     // before #1581 deleted them. Skipped without a lockfile, or with one that has an entry
     // this cannot read, rather than guessed at: only a complete scan that found nobody is
     // evidence that nobody is there.
     const consumers = lockPackages === null ? null : transitiveConsumers(lockPackages, name);
     if (consumers !== null && consumers.length === 0) {
       errors.push(
-        `overrides["${name}"] has no transitive consumer in bun.lock — only this repo's own manifests (${declarations.map((d) => d.file).join(", ")}) depend on "${name}", so the override lifts nothing and only makes every Dependabot bump of it fail this gate. Drop the override; the lockfile already pins the version.`,
+        `overrides["${name}"] has no transitive consumer in bun.lock — only this repo's own manifests (${declarations.map((d) => d.file).join(", ")}) depend on "${name}", so the override lifts nothing and only makes every bump of it fail this gate until the pin is moved too. Drop the override; the lockfile already pins the version.`,
       );
       continue;
     }

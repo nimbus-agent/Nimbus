@@ -625,9 +625,6 @@ jobs:
           PR_TITLE: ${{ github.event.pull_request.title }}
           PR_BODY: ${{ github.event.pull_request.body }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
-          # A Dependabot PR is judged on the summary body the Dependabot shepherd
-          # lands it with, not on the upstream release notes it opens with.
-          PR_AUTHOR: ${{ github.event.pull_request.user.login }}
         run: bun scripts/release/check-pr-message-parses.ts
       - name: If this is the release PR, it must account for every user-facing commit
         # release-please's branch. Any other PR skips: the completeness question is

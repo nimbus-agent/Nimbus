@@ -69,8 +69,8 @@ jobs:
         run: bun run audit:release-please
 
       # A root `overrides` pin outranks every declared range, so a divergence is
-      # invisible in CI without this: the Dependabot PR that bumps the declared
-      # range merges green and changes nothing installed. Local `preflight:fast`
+      # invisible in CI without this: a PR that bumps only the declared range
+      # merges green and changes nothing installed. Local `preflight:fast`
       # alone would leave the gate unenforced on the merge path.
       - name: Audit root overrides drift
         run: bun run audit:override-drift
