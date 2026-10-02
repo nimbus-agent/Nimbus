@@ -195,23 +195,41 @@ describe("push runner", () => {
     const gate = new Promise<void>((r) => {
       release = r;
     });
+    let entered: () => void = () => {};
+    const firstEntered = new Promise<void>((r) => {
+      entered = r;
+    });
     const seen: unknown[] = [];
+    let resolveSelfCalls = 0;
     const dispatch: PushDispatch = async (_m, params, ctx) => {
       seen.push(params);
-      if (seen.length === 1) await gate;
+      const n = seen.length;
+      if (n === 1) {
+        entered();
+        await gate;
+      }
       queueMicrotask(() =>
-        ctx.notify("oncall.briefReady", { sessionId: `s${seen.length}`, brief: "b", findings: {} }),
+        ctx.notify("oncall.briefReady", { sessionId: `s${n}`, brief: "b", findings: {} }),
       );
-      return { sessionId: `s${seen.length}` };
+      return { sessionId: `s${n}` };
     };
-    const { runner } = makeRunner({ dispatch });
+    const { runner } = makeRunner({
+      dispatch,
+      resolveSelf: async () => {
+        resolveSelfCalls += 1;
+        return personId;
+      },
+    });
     const first = runner.run("pagerduty");
+    await firstEntered; // the first run has selected [PA] and is blocked inside its dispatch
     seedIncident("PB"); // arrives while the first run is in flight
     const second = runner.run("pagerduty");
     const third = runner.run("pagerduty");
     release();
     await Promise.all([first, second, third]);
     expect(seen).toEqual([{ incidentId: "pagerduty:PA" }, { incidentId: "pagerduty:PB" }]);
+    // One first run + exactly ONE trailing run for the two overlapping calls.
+    expect(resolveSelfCalls).toBe(2);
   });
 
   test("retry: refused on ok and on missing; a failed row becomes ok in place", async () => {

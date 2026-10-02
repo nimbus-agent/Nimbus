@@ -2398,6 +2398,8 @@ export const RULE_ANCHORS: readonly string[] = [
   // without an anchor of its own, D28 would report clean while scanning nothing the moment
   // `iterateSourceFiles()` stopped reaching `fleet/`.
   "packages/gateway/src/fleet/fleet-invoker.ts",
+  // D28 — second anchor, on `push-runner.ts`: the one file allowed to wear the `push` ClientKind
+  // (`kind: "push"`), scanned by the rule and then permitted, so D28 cannot go blind to it.
   "packages/gateway/src/oncall-push/push-runner.ts",
   // D29 (a)/(b)/(c)/(d) — anchored on `toolgen-broker.ts`, a file all four rules SCAN (it names
   // none of `nimbus/fetch`, `buildGeneratedManifest`'s definition, a `toolgen.` vault-key template,

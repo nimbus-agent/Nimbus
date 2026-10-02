@@ -182,7 +182,8 @@ export function createOncallPushRunner(deps: OncallPushRunnerDeps): OncallPushRu
     const items: PushDelivery[] = [];
     let ok = 0;
     for (const incident of candidates) {
-      if (deps.store.has(incident.id)) continue; // a concurrent retry may have written it
+      // Defensive: a duplicate candidate within one selection would make `insert` throw on the PK.
+      if (deps.store.has(incident.id)) continue;
       const outcome = await briefIncident(deps, incident.id);
       const row = deps.store.insert(incident.id, outcome, now());
       if (row.status === "ok") ok += 1;
@@ -193,12 +194,19 @@ export function createOncallPushRunner(deps: OncallPushRunnerDeps): OncallPushRu
   }
 
   async function loop(): Promise<PushRunSummary> {
-    let last = await once();
-    while (rerunRequested) {
+    try {
+      let last = await once();
+      while (rerunRequested) {
+        rerunRequested = false;
+        last = await once();
+      }
+      return last;
+    } finally {
+      // Same synchronous step as the final `rerunRequested` check (and the throw path): a run()
+      // landing after this sees no in-flight run and starts its own, so no request is lost.
+      inFlight = undefined;
       rerunRequested = false;
-      last = await once();
     }
-    return last;
   }
 
   return {
@@ -209,9 +217,7 @@ export function createOncallPushRunner(deps: OncallPushRunnerDeps): OncallPushRu
         rerunRequested = true;
         return inFlight;
       }
-      inFlight = loop().finally(() => {
-        inFlight = undefined;
-      });
+      inFlight = loop();
       return inFlight;
     },
 
