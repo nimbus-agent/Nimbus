@@ -97,6 +97,14 @@ describe("parseStandupArgs", () => {
     expect(() => parseStandupArgs(["alice"])).toThrow("Unexpected argument: alice");
   });
 
+  test("a flag that would aim the brief at someone else is refused, not silently dropped", () => {
+    // `standup` declares no value flags of its own, so `--person` (or another command's
+    // `--service`) is an unknown flag here. Accepting one and dropping it would still send only
+    // `sinceMs` — handing the user their OWN standup while they believe it is someone else's.
+    expect(() => parseStandupArgs(["--person", "alice"])).toThrow("Unknown flag: --person");
+    expect(() => parseStandupArgs(["--service", "checkout"])).toThrow("Unknown flag: --service");
+  });
+
   test("--help throws the usage text, which documents the identity rules", () => {
     // The usage block is where a user learns WHY their standup is empty, so the resolution order
     // and the config escape hatch must both be in it.

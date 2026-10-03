@@ -84,6 +84,18 @@ describe("parseOncallArgs", () => {
     );
   });
 
+  test("the --incident/--service conflict is reported before any problem with --since", () => {
+    // The contradictory pair is the error the user can see on their own command line; a bad or
+    // over-long duration must not mask it. This is why the shared flag scanner hands `--since` back
+    // as the string typed, leaving the conversion and the 90d bound to run after this check.
+    expect(() =>
+      parseOncallArgs(["--incident", "x", "--service", "y", "--since", "bogus"]),
+    ).toThrow(/mutually exclusive/);
+    expect(() => parseOncallArgs(["--since", "91d", "--incident", "x", "--service", "y"])).toThrow(
+      /mutually exclusive/,
+    );
+  });
+
   test("parses --since into milliseconds", () => {
     expect(parseOncallArgs(["--since", "3d"]).sinceMs).toBe(3 * DAY_MS);
     expect(parseOncallArgs(["--since", "6h"]).sinceMs).toBe(6 * HOUR_MS);

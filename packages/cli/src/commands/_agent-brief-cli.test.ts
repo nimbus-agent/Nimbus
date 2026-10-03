@@ -5,7 +5,7 @@ import { createStreamCapture } from "../../test/helpers/stream-capture.ts";
 import { CliExit } from "../lib/cli-exit.ts";
 
 const mod = await import("./_agent-brief-cli.ts");
-const { runAgentBriefCli } = mod;
+const { runAgentBriefCli, scanBriefCommandFlags, writeBriefOutput } = mod;
 
 // `runAgentBriefCli` ends a failure by throwing `CliExit(2)` rather than calling
 // `process.exit`, so the stream capture no longer needs to trap it.
@@ -163,6 +163,180 @@ describe("runAgentBriefCli — a CliExit raised by a caller-supplied extension p
         },
       }),
     ).rejects.toMatchObject({ name: "CliExit", code: 1 });
+    expect(out.stderrChunks.join("")).toBe("");
+  });
+});
+
+describe("runAgentBriefCli — what it prints", () => {
+  const savedEnv = {
+    NIMBUS_DEMO: process.env["NIMBUS_DEMO"],
+    NIMBUS_CONFIG_DIR: process.env["NIMBUS_CONFIG_DIR"],
+    NIMBUS_GATEWAY_SOCKET: process.env["NIMBUS_GATEWAY_SOCKET"],
+  };
+  const BRIEF = "Next: `nimbus connector sync jira`";
+
+  beforeEach(() => {
+    out.stdoutChunks.length = 0;
+    out.stderrChunks.length = 0;
+    out.install();
+  });
+  afterEach(() => {
+    out.restore();
+    clearFixture();
+    for (const [k, v] of Object.entries(savedEnv)) {
+      if (v === undefined) delete process.env[k];
+      else process.env[k] = v;
+    }
+  });
+
+  it("prints the brief verbatim outside the demo", async () => {
+    const handlers: Handlers = {};
+    setFixture({
+      gatewayState: { socketPath: FAKE_SOCKET_PATH },
+      ipcClient: respondingClient(handlers, { ok: true }, BRIEF),
+    });
+    await runAgentBriefCli(spec);
+    expect(out.stdoutChunks.join("")).toBe(`${BRIEF}\n`);
+  });
+
+  it("--demo: every backticked command it prints targets the demo gateway", async () => {
+    delete process.env["NIMBUS_CONFIG_DIR"];
+    delete process.env["NIMBUS_GATEWAY_SOCKET"];
+    process.env["NIMBUS_DEMO"] = "1";
+    const handlers: Handlers = {};
+    setFixture({
+      gatewayState: { socketPath: FAKE_SOCKET_PATH },
+      ipcClient: respondingClient(handlers, { ok: true }, BRIEF),
+    });
+    await runAgentBriefCli(spec);
+    expect(out.stdoutChunks.join("")).toBe("Next: `nimbus --demo connector sync jira`\n");
+  });
+});
+
+const USAGE = "Usage: nimbus probe [--service <name>]";
+
+/** A command with two value flags of its own, the `oncall` shape. */
+function scanWithValues(args: string[]) {
+  return scanBriefCommandFlags(args, {
+    usage: USAGE,
+    defaultSince: "24h",
+    valueFlags: ["--incident", "--service"],
+  });
+}
+
+/** A command with none, the `standup` shape. */
+function scanBare(args: string[]) {
+  return scanBriefCommandFlags(args, { usage: USAGE, defaultSince: "7d", valueFlags: [] });
+}
+
+describe("scanBriefCommandFlags", () => {
+  it("with no argv: the command's default --since, markdown, not --json, no values", () => {
+    // `toStrictEqual`: an ungiven value flag is ABSENT, not present-and-undefined.
+    expect(scanWithValues([])).toStrictEqual({
+      since: "24h",
+      format: "markdown",
+      json: false,
+      values: {},
+    });
+    expect(scanBare([]).since).toBe("7d");
+  });
+
+  it("reads every shared flag, and --since stays the string as typed", () => {
+    expect(scanBare(["--json", "--since", " 3d ", "--format", "slack"])).toStrictEqual({
+      since: "3d",
+      format: "slack",
+      json: true,
+      values: {},
+    });
+    for (const f of ["markdown", "slack", "plain"] as const) {
+      expect(scanBare(["--format", f]).format).toBe(f);
+    }
+  });
+
+  it("a command's own value flags are captured by flag name, each consuming its value", () => {
+    expect(scanWithValues(["--service", "checkout", "--json"])).toStrictEqual({
+      since: "24h",
+      format: "markdown",
+      json: true,
+      values: { "--service": "checkout" },
+    });
+    expect(scanWithValues(["--incident", "pagerduty:inc-9"]).values).toStrictEqual({
+      "--incident": "pagerduty:inc-9",
+    });
+  });
+
+  it("a repeated flag keeps its LAST value", () => {
+    expect(scanBare(["--since", "1d", "--since", "2d"]).since).toBe("2d");
+    expect(scanWithValues(["--service", "a", "--service", "b"]).values["--service"]).toBe("b");
+  });
+
+  it("an invalid --format is refused by value, with the usage text", () => {
+    expect(() => scanBare(["--format", "html"])).toThrow(
+      `--format must be one of markdown, slack, plain (got: html)\n${USAGE}`,
+    );
+  });
+
+  it("--help and -h throw the usage text and nothing else", () => {
+    for (const flag of ["--help", "-h"]) {
+      let thrown: unknown;
+      try {
+        scanBare([flag]);
+      } catch (e) {
+        thrown = e;
+      }
+      expect((thrown as Error).message).toBe(USAGE);
+    }
+  });
+
+  it("another command's value flag is an UNKNOWN flag here, not a silently ignored one", () => {
+    // The `standup` rule: it declares no value flags, so a `--service` (or any flag that could aim
+    // the brief at someone else) is refused rather than dropped.
+    expect(() => scanBare(["--service", "checkout"])).toThrow(`Unknown flag: --service\n${USAGE}`);
+    expect(() => scanWithValues(["--sicne", "7d"])).toThrow(`Unknown flag: --sicne\n${USAGE}`);
+  });
+
+  it("a positional argument is refused with the usage text", () => {
+    expect(() => scanBare(["alice"])).toThrow(`Unexpected argument: alice\n${USAGE}`);
+  });
+
+  it("a value flag missing its value is an error, never the next flag taken as the value", () => {
+    expect(() => scanWithValues(["--service"])).toThrow("--service requires a value");
+    expect(() => scanWithValues(["--incident", "--json"])).toThrow("--incident requires a value");
+    expect(() => scanBare(["--since"])).toThrow("--since requires a value");
+    expect(() => scanBare(["--format", "--json"])).toThrow("--format requires a value");
+  });
+});
+
+describe("writeBriefOutput", () => {
+  const BRIEF = "## Deployments\n\n- [Fix auth](https://x/1) **shipped**";
+  const FINDINGS = { kind: "probe", gaps: [] };
+
+  beforeEach(() => {
+    out.stdoutChunks.length = 0;
+    out.stderrChunks.length = 0;
+    out.install();
+  });
+  afterEach(() => {
+    out.restore();
+  });
+
+  it("--json prints the findings object, never the brief", () => {
+    writeBriefOutput(BRIEF, FINDINGS, { json: true, format: "slack" });
+    expect(out.stdoutChunks.join("")).toBe(`${JSON.stringify(FINDINGS, null, 2)}\n`);
+  });
+
+  it("markdown prints the brief verbatim", () => {
+    writeBriefOutput(BRIEF, FINDINGS, { json: false, format: "markdown" });
+    expect(out.stdoutChunks.join("")).toBe(`${BRIEF}\n`);
+  });
+
+  it("slack and plain transform the brief's own Markdown", () => {
+    writeBriefOutput(BRIEF, FINDINGS, { json: false, format: "slack" });
+    writeBriefOutput(BRIEF, FINDINGS, { json: false, format: "plain" });
+    expect(out.stdoutChunks).toStrictEqual([
+      "*Deployments*\n\n- <https://x/1|Fix auth> *shipped*\n",
+      "Deployments\n\n- Fix auth shipped\n",
+    ]);
     expect(out.stderrChunks.join("")).toBe("");
   });
 });

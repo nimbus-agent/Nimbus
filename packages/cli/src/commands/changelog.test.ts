@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 
 import { clearFixture, FAKE_SOCKET_PATH, setFixture } from "../../test/helpers/cli-mocks.ts";
 import { createStreamCapture } from "../../test/helpers/stream-capture.ts";
+import { CliExit } from "../lib/cli-exit.ts";
 import {
   type ChangelogBriefLike,
   type ChangelogCommandDeps,
@@ -143,7 +144,11 @@ describe("runChangelogCommand", () => {
 });
 
 describe("fetchChangelogBrief", () => {
-  const out = createStreamCapture({ captureExit: true });
+  // `fetchChangelogBrief` ends a failure by throwing `CliExit` (as `standup`/`oncall` do) rather
+  // than calling `process.exit`, so the capture deliberately does NOT stub `process.exit`: a stub
+  // turns a re-introduced `process.exit` into a throw the shared catch re-labels as `CliExit(2)`,
+  // and the exit-2 test below would still pass.
+  const out = createStreamCapture();
 
   beforeEach(() => {
     out.stdoutChunks.length = 0;
@@ -157,9 +162,9 @@ describe("fetchChangelogBrief", () => {
 
   test("exits 1 when the gateway is not running", async () => {
     setFixture({});
-    await expect(fetchChangelogBrief({ sinceMs: SEVEN_DAYS_MS })).rejects.toThrow(
-      "process.exit(1)",
-    );
+    const err = await fetchChangelogBrief({ sinceMs: SEVEN_DAYS_MS }).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(CliExit);
+    expect((err as CliExit).code).toBe(1);
     expect(out.stderrChunks.join("")).toContain("Gateway is not running");
   });
 
@@ -175,10 +180,43 @@ describe("fetchChangelogBrief", () => {
         onNotification: () => {},
       },
     });
-    await expect(fetchChangelogBrief({ sinceMs: SEVEN_DAYS_MS })).rejects.toThrow(
-      "process.exit(2)",
-    );
+    const err = await fetchChangelogBrief({ sinceMs: SEVEN_DAYS_MS }).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(CliExit);
+    expect((err as CliExit).code).toBe(2);
     expect(out.stderrChunks.join("")).toContain("boom");
+  });
+
+  test("subscribes to the changelog notification and calls agents.changelog", async () => {
+    // `fetchAgentBrief("changelog", ...)` derives the method AND both event names from that one
+    // string. A copy-paste leaving another agent's name there would hang until the TTL rather than
+    // fail loudly.
+    const handlers: Record<string, (params: unknown) => void> = {};
+    let calledMethod: string | undefined;
+    setFixture({
+      gatewayState: { socketPath: FAKE_SOCKET_PATH },
+      ipcClient: {
+        connect: async () => {},
+        disconnect: async () => {},
+        onNotification: (event: string, handler: (params: unknown) => void) => {
+          handlers[event] = handler;
+        },
+        call: async (method: string) => {
+          calledMethod = method;
+          queueMicrotask(() => {
+            handlers["changelog.briefReady"]?.({
+              sessionId: "s1",
+              brief: "x",
+              findings: SAMPLE_FINDINGS,
+            });
+          });
+          return { sessionId: "s1" };
+        },
+      },
+    });
+    await fetchChangelogBrief({ sinceMs: SEVEN_DAYS_MS });
+    expect(calledMethod).toBe("agents.changelog");
+    expect(Object.keys(handlers)).toContain("changelog.briefReady");
+    expect(Object.keys(handlers)).toContain("changelog.briefError");
   });
 
   test("resolves with the brief and findings once briefReady fires", async () => {
