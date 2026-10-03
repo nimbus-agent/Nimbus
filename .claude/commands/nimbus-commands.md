@@ -596,7 +596,8 @@ NIMBUS_DEV_UPDATER_PUBLIC_KEY=<base64> # override embedded Ed25519 public key (t
 
 No environment variable selects a model or supplies an LLM key any more: `v5.0.0` removed the
 `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` fallback, and `v6.0.0` removed the inert `[llm]
-classifier_model` / `remote_model` keys. A cloud model is `[llm.remote.<vendor>] model`, read only
+classifier_model` / `remote_model` keys. (The OpenAI EMBEDDING runtime is the exception: it still
+reads `OPENAI_API_KEY` before the Vault's `openai.api_key` — see `nimbus-embedding-routing`.) A cloud model is `[llm.remote.<vendor>] model`, read only
 under a vendor table with `enabled = true` whose key is in the Vault. A bare id
 (`claude-sonnet-4-6`) is prefixed with THAT vendor and an already-qualified one
 (`anthropic/claude-sonnet-4-6`) is used as is (`toRouterModelId` in `engine/agent.ts`); the vendor
