@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1790969878442,
+  "lastUpdate": 1791053584449,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "306811640+nimbus-release-bot[bot]@users.noreply.github.com",
-            "name": "nimbus-release-bot[bot]",
-            "username": "nimbus-release-bot[bot]"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "201e25a2de073955146abfd19b1f4744308be5a4",
-          "message": "chore: release main (#850)\n\n:robot: I have created a release *beep* *boop*\n---\n\n\n<details><summary>1.1.0</summary>\n\n##\n[1.1.0](https://github.com/nimbus-agent/Nimbus/compare/v1.0.1...v1.1.0)\n(2026-07-26)\n\n\n### Features\n\n* **audit:** action-pin freshness — pinned is not the same as current\n([#847](https://github.com/nimbus-agent/Nimbus/issues/847))\n([fd1e7ae](https://github.com/nimbus-agent/Nimbus/commit/fd1e7ae03019158cbd3796d9e4933263d8687ea1))\n* **audit:** P2 Release Train Phase 2 — dependency-DAG edges\n([#843](https://github.com/nimbus-agent/Nimbus/issues/843))\n([1e8c9ea](https://github.com/nimbus-agent/Nimbus/commit/1e8c9eafdcde6a9f338ce87a613d19e417de8dfa))\n* **review:** give the monorepo a tuned CodeRabbit config\n([#846](https://github.com/nimbus-agent/Nimbus/issues/846))\n([060f50c](https://github.com/nimbus-agent/Nimbus/commit/060f50cda7c240651954cb7294c64d0a249d12a4))\n</details>\n\n---\nThis PR was generated with [Release\nPlease](https://github.com/googleapis/release-please). See\n[documentation](https://github.com/googleapis/release-please#release-please).\n\nCo-authored-by: nimbus-release-bot[bot] <306811640+nimbus-release-bot[bot]@users.noreply.github.com>",
-          "timestamp": "2026-07-26T21:39:54+03:00",
-          "tree_id": "509b5afbaa9889035d11daaf711ffb950d2cefac",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/201e25a2de073955146abfd19b1f4744308be5a4"
-        },
-        "date": 1785094036782,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 329.1859893500019,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 325.8291645500005,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 330.74920705000403,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "306811640+nimbus-release-bot[bot]@users.noreply.github.com",
+            "name": "nimbus-release-bot[bot]",
+            "username": "nimbus-release-bot[bot]"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "642223006b567db7899da72fdbbffd146991103c",
+          "message": "chore: release main (#1595)\n\n:robot: I have created a release *beep* *boop*\n---\n\n\n<details><summary>7.33.0</summary>\n\n##\n[7.33.0](https://github.com/nimbus-agent/Nimbus/compare/v7.32.2...v7.33.0)\n(2026-10-02)\n\n\n### Features\n\n* **oncall:** push the on-call brief when a P1 is assigned to you\n([#1592](https://github.com/nimbus-agent/Nimbus/issues/1592))\n([7a4feb5](https://github.com/nimbus-agent/Nimbus/commit/7a4feb5e79947b4e9a1b381bc84f7aa7409a282d))\n\n\n### Bug Fixes\n\n* **deps:** bump the devalue override to 5.9.4 for three new high\nadvisories ([#1593](https://github.com/nimbus-agent/Nimbus/issues/1593))\n([693f62b](https://github.com/nimbus-agent/Nimbus/commit/693f62ba1885418b3dfd57db9e619810c53f509a))\n</details>\n\n---\nThis PR was generated with [Release\nPlease](https://github.com/googleapis/release-please). See\n[documentation](https://github.com/googleapis/release-please#release-please).\n\nCo-authored-by: nimbus-release-bot[bot] <306811640+nimbus-release-bot[bot]@users.noreply.github.com>",
+          "timestamp": "2026-10-03T21:39:43+03:00",
+          "tree_id": "b23cbad3ab1e675e2f6ba35d7286fb2fe6340657",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/642223006b567db7899da72fdbbffd146991103c"
+        },
+        "date": 1791053580000,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 339.4941982000011,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 339.25733440000005,
             "unit": "ms"
           }
         ]
