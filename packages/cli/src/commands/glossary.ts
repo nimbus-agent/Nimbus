@@ -389,6 +389,34 @@ export type GlossaryCommandDeps = {
 
 const defaultGlossaryDeps: GlossaryCommandDeps = { withGatewayIpc, runAgentBriefCli };
 
+/**
+ * `--rebuild` without `--yes`: print what a rebuild WOULD delete, then stop. Read-only — the
+ * preview goes through `readRebuildPreview`, never a mutating `glossary.*` method.
+ */
+async function printRebuildPreview(deps: GlossaryCommandDeps): Promise<void> {
+  try {
+    const { counts, sample } = await deps.withGatewayIpc((client) =>
+      readRebuildPreview(client, deps.rebuildPreviewTimeoutMs),
+    );
+    process.stdout.write(`${renderRebuildPreview(counts, sample)}\n`);
+  } catch (err) {
+    // Mirrors `agent-cli-dispatcher.ts` / `_agent-brief-cli.ts`'s own catches: a `CliExit`
+    // already carries its own printed message and its own code — re-labelling it here would
+    // print a stray "exit N" and re-code it to 1 or 2 regardless of what it actually was.
+    if (err instanceof CliExit) throw err;
+    process.stderr.write(`${err instanceof Error ? err.message : String(err)}\n`);
+    // A gateway-not-running precondition failure gets the same exit code
+    // every other command uses for it (`_agent-brief-cli.ts`'s own
+    // `readGatewayState` check, documented in `docs/cli-reference.md` as
+    // `1 = gateway not running`) — regardless of which flag reached this
+    // preview path. A timeout or a malformed `agents.glossary` response is
+    // a genuine agent-call failure, not a precondition failure, so it keeps
+    // exit 2 — the same shape `runAgentBriefCli`'s catch uses for the same
+    // distinction.
+    throw new CliExit(err instanceof GatewayNotRunningError ? 1 : 2);
+  }
+}
+
 export async function runGlossaryCommand(
   args: string[],
   deps: GlossaryCommandDeps = defaultGlossaryDeps,
@@ -396,27 +424,7 @@ export async function runGlossaryCommand(
   const parsed = parseGlossaryArgs(args);
 
   if (parsed.rebuild && !parsed.yes) {
-    try {
-      const { counts, sample } = await deps.withGatewayIpc((client) =>
-        readRebuildPreview(client, deps.rebuildPreviewTimeoutMs),
-      );
-      process.stdout.write(`${renderRebuildPreview(counts, sample)}\n`);
-    } catch (err) {
-      // Mirrors `agent-cli-dispatcher.ts` / `_agent-brief-cli.ts`'s own catches: a `CliExit`
-      // already carries its own printed message and its own code — re-labelling it here would
-      // print a stray "exit N" and re-code it to 1 or 2 regardless of what it actually was.
-      if (err instanceof CliExit) throw err;
-      process.stderr.write(`${err instanceof Error ? err.message : String(err)}\n`);
-      // A gateway-not-running precondition failure gets the same exit code
-      // every other command uses for it (`_agent-brief-cli.ts`'s own
-      // `readGatewayState` check, documented in `docs/cli-reference.md` as
-      // `1 = gateway not running`) — regardless of which flag reached this
-      // preview path. A timeout or a malformed `agents.glossary` response is
-      // a genuine agent-call failure, not a precondition failure, so it keeps
-      // exit 2 — the same shape `runAgentBriefCli`'s catch uses for the same
-      // distinction.
-      throw new CliExit(err instanceof GatewayNotRunningError ? 1 : 2);
-    }
+    await printRebuildPreview(deps);
     return;
   }
 

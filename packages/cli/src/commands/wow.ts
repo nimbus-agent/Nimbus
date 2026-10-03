@@ -1,10 +1,5 @@
 import { CliExit } from "../lib/cli-exit.ts";
-import {
-  type LocalityReport,
-  PANEL_COMMANDS,
-  printLocalityPanel,
-  renderLocalityPanel,
-} from "../lib/locality-panel.ts";
+import { type LocalityReport, printLocalityPanel } from "../lib/locality-panel.ts";
 import {
   defaultTourRunners,
   runTour,
@@ -15,7 +10,7 @@ import {
 import { withGatewayIpc } from "../lib/with-gateway-ipc.ts";
 import type { ProveResult } from "./prove.ts";
 
-export { PANEL_COMMANDS, renderLocalityPanel };
+export { PANEL_COMMANDS, renderLocalityPanel } from "../lib/locality-panel.ts";
 
 /**
  * Structural mirror of the gateway's `agents/_lib/tour-types.ts` `TourPlan` / `TourSkip` — the CLI
@@ -73,6 +68,18 @@ export interface WowArgs {
   readonly noProof: boolean;
 }
 
+/** `--steps`'s value: a plain decimal integer inside `1..6`, refused (never clamped) otherwise. */
+function parseStepsValue(raw: string | undefined): number {
+  if (raw === undefined) {
+    throw new Error(`--steps requires a value in ${WOW_STEPS_MIN}..${WOW_STEPS_MAX}`);
+  }
+  const n = Number.parseInt(raw, 10);
+  if (!/^\d+$/.test(raw) || n < WOW_STEPS_MIN || n > WOW_STEPS_MAX) {
+    throw new Error(`--steps must be an integer in ${WOW_STEPS_MIN}..${WOW_STEPS_MAX}, got ${raw}`);
+  }
+  return n;
+}
+
 /**
  * `--steps` is refused (never clamped) outside `1..6` — the same rule the gateway's own
  * `tour.plan` handler enforces, so a client-side bypass here would only be caught a round-trip
@@ -87,21 +94,7 @@ export function parseWowArgs(args: readonly string[]): WowArgs {
     const a = args[i];
     if (a === "--steps") {
       const raw = args[++i];
-      if (raw === undefined) {
-        throw new Error(`--steps requires a value in ${WOW_STEPS_MIN}..${WOW_STEPS_MAX}`);
-      }
-      if (!/^\d+$/.test(raw)) {
-        throw new Error(
-          `--steps must be an integer in ${WOW_STEPS_MIN}..${WOW_STEPS_MAX}, got ${raw}`,
-        );
-      }
-      const n = Number.parseInt(raw, 10);
-      if (n < WOW_STEPS_MIN || n > WOW_STEPS_MAX) {
-        throw new Error(
-          `--steps must be an integer in ${WOW_STEPS_MIN}..${WOW_STEPS_MAX}, got ${raw}`,
-        );
-      }
-      steps = n;
+      steps = parseStepsValue(raw);
       continue;
     }
     if (a === "--json") {

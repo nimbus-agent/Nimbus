@@ -355,7 +355,7 @@ export async function awaitGatewayState(w: GatewayStateWait): Promise<boolean> {
     if (now() - start >= timeoutMs) {
       return false;
     }
-    await sleep(pollMs);
+    await sleep(pollMs); // NOSONAR S9382: bounded poll — each sleep paces the next state read, and the loop ends on the first read that finds the state
   }
 }
 
@@ -540,6 +540,34 @@ export const DEMO_INIT_REFUSAL =
  */
 export const TOUR_HINT = "Run `nimbus wow` any time for a guided tour of what was just indexed.";
 
+/**
+ * Offer to reuse local CLI logins once the repository is indexed. The index already succeeded,
+ * so a failure to LOOK is reported and never turns into a failed init.
+ */
+async function offerLocalAuthAfterIndex(deps: InitDeps): Promise<void> {
+  try {
+    await deps.offerLocalAuth(deps.interactive);
+  } catch (e) {
+    // The index succeeded; failing to LOOK for logins must not turn that into a failed init.
+    deps.error(`Could not check for existing logins: ${errorMessage(e)}`);
+  }
+}
+
+/**
+ * Offer `nimbus wow` on an interactive terminal. One catch covers the prompt AND the tour, so
+ * anything either throws — a `CliExit` included — degrades to `TOUR_HINT` rather than failing
+ * `init`.
+ */
+async function offerTourAfterIndex(deps: InitDeps): Promise<void> {
+  try {
+    if (deps.interactive && (await deps.confirmTour())) {
+      await deps.runTour();
+    }
+  } catch {
+    deps.log(TOUR_HINT);
+  }
+}
+
 export async function runInit(args: string[], deps: InitDeps = defaultInitDeps()): Promise<void> {
   if (hasFlag(args, "--help") || hasFlag(args, "-h")) {
     for (const line of HELP_LINES) {
@@ -561,14 +589,7 @@ export async function runInit(args: string[], deps: InitDeps = defaultInitDeps()
   // to three CLIs, each with a 10 s bound, and a pipeline gains nothing from a login it cannot
   // approve. A non-TTY developer shell still gets the one-line count.
   if (outcome.kind === "indexed" && !hasFlag(args, "--no-detect") && process.env["CI"] !== "true") {
-    try {
-      await deps.offerLocalAuth(deps.interactive);
-    } catch (e) {
-      // The index succeeded; failing to LOOK for logins must not turn that into a failed init.
-      deps.error(
-        `Could not check for existing logins: ${e instanceof Error ? e.message : String(e)}`,
-      );
-    }
+    await offerLocalAuthAfterIndex(deps);
   }
   // The tour is offered only on the arm that actually indexed something with a `file:line`
   // target — `--no-sync`, not-a-repo, an unavailable gateway, a restart-required root and a
@@ -581,16 +602,11 @@ export async function runInit(args: string[], deps: InitDeps = defaultInitDeps()
   // CI runner that allocates a TTY (`docker run -it`, some self-hosted runners) would otherwise
   // hang on `confirm`. A "no" answer, a non-interactive shell, or a skipped offer prints nothing
   // extra here: `nextStepLines` already names `nimbus wow` for this outcome. The whole thing —
-  // including the prompt itself — is wrapped in one catch: `runTour`'s contract is that anything
-  // after the config write degrades to the generic hint rather than failing `init`.
+  // including the prompt itself — is wrapped in one catch (`offerTourAfterIndex`): `runTour`'s
+  // contract is that anything after the config write degrades to the generic hint rather than
+  // failing `init`.
   if (outcome.kind === "indexed" && outcome.demo !== null && process.env["CI"] !== "true") {
-    try {
-      if (deps.interactive && (await deps.confirmTour())) {
-        await deps.runTour();
-      }
-    } catch {
-      deps.log(TOUR_HINT);
-    }
+    await offerTourAfterIndex(deps);
   }
   // Assigned unconditionally: the exit code is derived from the outcome that
   // was just reported, so no earlier writer (runStart's failure signal, say)

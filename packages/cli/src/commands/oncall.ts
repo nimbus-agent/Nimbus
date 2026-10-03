@@ -92,7 +92,25 @@ const USAGE =
   "in nimbus.toml. Refuses rather than printing an empty brief when nothing is assigned —\n" +
   "an empty on-call brief reads as `you are clear`, which is the one wrong answer that looks right.";
 
-export function parseOncallArgs(args: string[]): OncallCliArgs {
+/** `--format`'s value — refused, with the usage text, unless it names a known format. */
+function parseFormatFlag(raw: string): OncallFormat {
+  if (!isOncallFormat(raw)) {
+    throw new Error(`--format must be one of markdown, slack, plain (got: ${raw})\n${USAGE}`);
+  }
+  return raw;
+}
+
+/** Every flag as typed, before the cross-flag checks `parseOncallArgs` applies to the set. */
+type OncallFlags = {
+  since: string;
+  format: OncallFormat;
+  json: boolean;
+  incidentId: string | undefined;
+  service: string | undefined;
+};
+
+/** Walk argv once: each value flag consumes the next argument, and anything unknown is refused. */
+function scanOncallFlags(args: string[]): OncallFlags {
   let since = DEFAULT_SINCE;
   let format: OncallFormat = "markdown";
   let json = false;
@@ -113,11 +131,7 @@ export function parseOncallArgs(args: string[]): OncallCliArgs {
       service = flagValue(args, i, "--service");
       i += 1;
     } else if (a === "--format") {
-      const raw = flagValue(args, i, "--format");
-      if (!isOncallFormat(raw)) {
-        throw new Error(`--format must be one of markdown, slack, plain (got: ${raw})\n${USAGE}`);
-      }
-      format = raw;
+      format = parseFormatFlag(flagValue(args, i, "--format"));
       i += 1;
     } else if (a === "--help" || a === "-h") {
       throw new Error(USAGE);
@@ -127,6 +141,12 @@ export function parseOncallArgs(args: string[]): OncallCliArgs {
       throw new Error(`Unexpected argument: ${String(a)}\n${USAGE}`);
     }
   }
+
+  return { since, format, json, incidentId, service };
+}
+
+export function parseOncallArgs(args: string[]): OncallCliArgs {
+  const { since, format, json, incidentId, service } = scanOncallFlags(args);
 
   // Rejected HERE as well as in the gateway, deliberately. The gateway's check is the real one —
   // it guards every transport — but a CLI that forwarded a contradictory pair would make the user
@@ -202,6 +222,13 @@ export type OncallCommandDeps = {
 
 const defaultOncallDeps: OncallCommandDeps = { fetchBrief: fetchOncallBrief };
 
+/** The `--format` text transform over the brief's own Markdown; `markdown` passes it through. */
+function formatBriefText(brief: string, format: OncallFormat): string {
+  if (format === "slack") return toSlackMrkdwn(brief);
+  if (format === "plain") return toPlainText(brief);
+  return brief;
+}
+
 /**
  * `nimbus oncall` never emits ANSI: `markdown`/`slack`/`plain` are all colorless text transforms
  * over the brief's own Markdown, and `--json` is JSON. There is nothing for NO_COLOR to strip.
@@ -226,11 +253,6 @@ export async function runOncallCommand(
   // These transforms operate on the Markdown the brief already rendered — synthesis may have
   // rewritten it into prose, and re-deriving output from `findings` here would silently discard
   // that prose. See `format/slack-markdown.ts`.
-  const rendered =
-    parsed.format === "slack"
-      ? toSlackMrkdwn(brief)
-      : parsed.format === "plain"
-        ? toPlainText(brief)
-        : brief;
+  const rendered = formatBriefText(brief, parsed.format);
   process.stdout.write(`${rendered}\n`);
 }

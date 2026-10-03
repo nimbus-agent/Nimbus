@@ -118,14 +118,21 @@ function findingWhat(f: FindingWire): string {
   }
 }
 
+/**
+ * The rendered "state" half of a finding's line: `available` (noting an already-configured
+ * service, never a reason), or any other status spelled out, plus its reason when one exists.
+ */
+function findingState(f: FindingWire): string {
+  if (f.status === "available") {
+    return f.alreadyConfigured ? "available (already configured)" : "available";
+  }
+  const status = f.status.replaceAll("_", " ");
+  return f.reason === undefined ? status : `${status} — ${f.reason}`;
+}
+
 function describeFinding(f: FindingWire): string {
   const what = findingWhat(f);
-  const state =
-    f.status === "available"
-      ? f.alreadyConfigured
-        ? "available (already configured)"
-        : "available"
-      : `${f.status.replaceAll("_", " ")}${f.reason === undefined ? "" : ` — ${f.reason}`}`;
+  const state = findingState(f);
   return `  ${f.source.padEnd(8)} ${what}  ·  ${state}`;
 }
 
@@ -272,17 +279,19 @@ function referenceHint(p: AdoptParams): string {
   return `  kubectl must be able to reach context ${p.context ?? ""} when Nimbus syncs (refresh its login if it uses an exec plugin).`;
 }
 
+/** How far the gateway got in proving the adopted credential works, as the report words it. */
+function verificationLabel(verified: "verified" | "unverified" | null): string {
+  if (verified === "verified") return "verified";
+  if (verified === "unverified") return "stored, NOT verified";
+  return "stored";
+}
+
 function reportOutcome(p: AdoptParams, out: AdoptOutcomeWire, deps: ConnectorDetectDeps): void {
   if ("status" in out) {
     deps.log("  Skipped — not approved.");
     return;
   }
-  const verified =
-    out.verified === "verified"
-      ? "verified"
-      : out.verified === "unverified"
-        ? "stored, NOT verified"
-        : "stored";
+  const verified = verificationLabel(out.verified);
   deps.log(`  ✓ ${out.service} connected (${verified}).`);
   if (p.source === "gh") {
     deps.log(
@@ -299,6 +308,41 @@ export function summarizeLocalLogins(findings: readonly FindingWire[]): string |
   return `Found ${String(n)} local login${n === 1 ? "" : "s"} Nimbus can reuse — run: nimbus connector detect`;
 }
 
+/**
+ * An offerable login withheld only because its service is already configured gets a one-line
+ * reason — otherwise it would vanish from the offer list with no explanation.
+ */
+function logAlreadyConfiguredHints(
+  findings: readonly FindingWire[],
+  replace: boolean,
+  deps: ConnectorDetectDeps,
+): void {
+  for (const f of findings) {
+    if (isOfferableStatus(f) && f.alreadyConfigured && !replace) {
+      deps.log(
+        `  ${SERVICE_NAME[f.source]} is already configured — pass --replace to overwrite it.`,
+      );
+    }
+  }
+}
+
+/**
+ * One finding: pick what to adopt, adopt it behind the gateway's consent prompt, report the
+ * outcome. A skipped pick adopts nothing; a failed adopt is printed rather than thrown, so the
+ * walk continues with the next finding.
+ */
+async function connectOne(f: FindingWire, deps: ConnectorDetectDeps, opts: Opts): Promise<void> {
+  const params = await chooseOne(f, deps, opts);
+  if (params === null) return;
+  const withReplace = { ...params, replace: opts.replace };
+  deps.log(`Connecting ${f.source} — approve the prompt to continue.`);
+  try {
+    reportOutcome(withReplace, await deps.adopt(withReplace), deps);
+  } catch (e) {
+    deps.log(`  ✗ ${e instanceof Error ? e.message : String(e)}`);
+  }
+}
+
 export async function runConnectorDetect(
   tail: string[],
   deps: ConnectorDetectDeps = defaultConnectorDetectDeps(),
@@ -312,28 +356,14 @@ export async function runConnectorDetect(
   deps.log("Local logins Nimbus can reuse:");
   for (const f of findings) deps.log(describeFinding(f));
   const offer = findings.filter((f) => adoptable(f, opts.replace));
-  for (const f of findings) {
-    if (isOfferableStatus(f) && f.alreadyConfigured && !opts.replace) {
-      deps.log(
-        `  ${SERVICE_NAME[f.source]} is already configured — pass --replace to overwrite it.`,
-      );
-    }
-  }
+  logAlreadyConfiguredHints(findings, opts.replace, deps);
   if (offer.length === 0) return;
   if (!deps.interactive) {
     deps.log("Run `nimbus connector detect` in a terminal to connect these.");
     return;
   }
   for (const f of offer) {
-    const params = await chooseOne(f, deps, opts);
-    if (params === null) continue;
-    const withReplace = { ...params, replace: opts.replace };
-    deps.log(`Connecting ${f.source} — approve the prompt to continue.`);
-    try {
-      reportOutcome(withReplace, await deps.adopt(withReplace), deps);
-    } catch (e) {
-      deps.log(`  ✗ ${e instanceof Error ? e.message : String(e)}`);
-    }
+    await connectOne(f, deps, opts); // NOSONAR S9382: each finding prompts the owner (the pick, then the gateway's HITL consent) — prompts on one terminal must not interleave
   }
 }
 

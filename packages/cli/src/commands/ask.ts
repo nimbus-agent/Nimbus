@@ -1,15 +1,18 @@
+import type { IPCClient } from "../ipc-client/index.ts";
 import { gatewayNotRunningMessage } from "../lib/gateway-not-running.ts";
 import { readGatewayState } from "../lib/gateway-process.ts";
 import { registerInteractiveCliIpcHandlers } from "../lib/interactive-ipc-handlers.ts";
 import { createIpcClient, INTERACTIVE_RPC_TIMEOUT_MS } from "../lib/rpc-timeouts.ts";
 import { getCliPlatformPaths } from "../paths.ts";
 
-function parseAskArgs(args: string[]): {
+type AskArgs = {
   rest: string[];
   sessionId?: string;
   agent?: string;
   devil?: boolean;
-} {
+};
+
+function parseAskArgs(args: string[]): AskArgs {
   const rest: string[] = [];
   let sessionId: string | undefined;
   let agent: string | undefined;
@@ -36,7 +39,7 @@ function parseAskArgs(args: string[]): {
       rest.push(a);
     }
   }
-  const out: { rest: string[]; sessionId?: string; agent?: string; devil?: boolean } = { rest };
+  const out: AskArgs = { rest };
   if (sessionId !== undefined) {
     out.sessionId = sessionId;
   }
@@ -65,9 +68,95 @@ function isNoLlmError(e: unknown): boolean {
   return e instanceof Error && e.message.includes(NO_LLM_SENTINEL);
 }
 
+/**
+ * The real-install "connect something first" pre-check. Prints the onboarding hint and returns
+ * `true` when no connector is registered — the caller then stops before `agent.invoke`.
+ */
+async function reportIfNoConnectors(client: IPCClient): Promise<boolean> {
+  const connectors = await client.call<Array<{ serviceId?: string }>>("connector.listStatus", {});
+  if (!Array.isArray(connectors) || connectors.length === 0) {
+    process.stdout.write(
+      [
+        "No connectors are registered in the local index yet.",
+        "",
+        "Authenticate at least one connector, then sync:",
+        "  nimbus connector auth github",
+        "  nimbus connector auth google",
+        "  nimbus connector list",
+        "  nimbus connector sync <service>",
+        "",
+        "Until a connector is registered, searches and agent answers have no cloud data to draw on.",
+        "",
+      ].join("\n"),
+    );
+    return true;
+  }
+  return false;
+}
+
+/** The `agent.invoke` params: each optional flag is forwarded only when the user passed it. */
+function buildInvokeParams(query: string, parsed: AskArgs): Record<string, unknown> {
+  const invokeParams: Record<string, unknown> = {
+    input: query,
+    stream: true,
+  };
+  if (parsed.sessionId !== undefined) {
+    invokeParams["sessionId"] = parsed.sessionId;
+  }
+  if (parsed.agent !== undefined) {
+    invokeParams["agent"] = parsed.agent;
+  }
+  if (parsed.devil === true) {
+    invokeParams["devil"] = true;
+  }
+  return invokeParams;
+}
+
+/**
+ * The `agent.invoke` catch arm: the gateway's no-LLM answer is printed and sets a non-zero exit
+ * code (the caller then stops); every other failure is rethrown unchanged.
+ */
+function reportNoLlmGuidanceOrRethrow(e: unknown): void {
+  if (!isNoLlmError(e)) {
+    throw e;
+  }
+  // Guidance, not a failure report: print it as-is rather than letting the
+  // top-level handler render it as `cli.error` with a stack. `ask` is the
+  // one command that genuinely cannot degrade — everything else in Nimbus
+  // works with no LLM — so the exit code stays non-zero. Printed verbatim in a demo
+  // root too: a demo gateway already sends the demo variant (`runAsk` in
+  // gateway/src/engine/run-ask.ts), the one source every ask client shares.
+  process.stderr.write(`${(e as Error).message}\n`);
+  process.exitCode = 1;
+}
+
+/**
+ * Record the turn in the session: the question always, the reply only when it has text. The reply
+ * is read only AFTER the question is recorded.
+ */
+async function appendSessionTurn(
+  client: IPCClient,
+  sessionId: string,
+  query: string,
+  result: { reply: string },
+): Promise<void> {
+  await client.call("session.append", {
+    sessionId,
+    chunkText: query,
+    role: "user",
+  });
+  if (typeof result.reply === "string" && result.reply.trim() !== "") {
+    await client.call("session.append", {
+      sessionId,
+      chunkText: result.reply.slice(0, 8000),
+      role: "assistant",
+    });
+  }
+}
+
 export async function runAsk(args: string[]): Promise<void> {
-  const { rest, sessionId, agent, devil } = parseAskArgs(args);
-  const query = rest.join(" ").trim();
+  const parsed = parseAskArgs(args);
+  const query = parsed.rest.join(" ").trim();
   if (query.length === 0) {
     throw new Error(
       'Usage: nimbus ask [--session <uuid>] [--agent <name>] [--devil] "<natural language query>"',
@@ -94,58 +183,16 @@ export async function runAsk(args: string[]): Promise<void> {
     // already decides emptiness by item count and is demo-aware (`engine/run-ask.ts`'s
     // `DEMO_EMPTY_INDEX_GUIDANCE`, wired from `PlatformPaths.demo`, never the env var), so a demo
     // root skips this pre-check entirely and lets `agent.invoke` answer (or refuse) on its own.
-    if (paths.demo !== true) {
-      const connectors = await client.call<Array<{ serviceId?: string }>>(
-        "connector.listStatus",
-        {},
-      );
-      if (!Array.isArray(connectors) || connectors.length === 0) {
-        process.stdout.write(
-          [
-            "No connectors are registered in the local index yet.",
-            "",
-            "Authenticate at least one connector, then sync:",
-            "  nimbus connector auth github",
-            "  nimbus connector auth google",
-            "  nimbus connector list",
-            "  nimbus connector sync <service>",
-            "",
-            "Until a connector is registered, searches and agent answers have no cloud data to draw on.",
-            "",
-          ].join("\n"),
-        );
-        return;
-      }
+    if (paths.demo !== true && (await reportIfNoConnectors(client))) {
+      return;
     }
 
-    const invokeParams: Record<string, unknown> = {
-      input: query,
-      stream: true,
-    };
-    if (sessionId !== undefined) {
-      invokeParams["sessionId"] = sessionId;
-    }
-    if (agent !== undefined) {
-      invokeParams["agent"] = agent;
-    }
-    if (devil === true) {
-      invokeParams["devil"] = true;
-    }
+    const invokeParams = buildInvokeParams(query, parsed);
     let result: { reply: string };
     try {
       result = await client.call<{ reply: string }>("agent.invoke", invokeParams);
     } catch (e) {
-      if (!isNoLlmError(e)) {
-        throw e;
-      }
-      // Guidance, not a failure report: print it as-is rather than letting the
-      // top-level handler render it as `cli.error` with a stack. `ask` is the
-      // one command that genuinely cannot degrade — everything else in Nimbus
-      // works with no LLM — so the exit code stays non-zero. Printed verbatim in a demo
-      // root too: a demo gateway already sends the demo variant (`runAsk` in
-      // gateway/src/engine/run-ask.ts), the one source every ask client shares.
-      process.stderr.write(`${(e as Error).message}\n`);
-      process.exitCode = 1;
+      reportNoLlmGuidanceOrRethrow(e);
       return;
     }
     if (
@@ -155,19 +202,8 @@ export async function runAsk(args: string[]): Promise<void> {
     ) {
       process.stdout.write(`\n${result.reply}\n`);
     }
-    if (sessionId !== undefined) {
-      await client.call("session.append", {
-        sessionId,
-        chunkText: query,
-        role: "user",
-      });
-      if (typeof result.reply === "string" && result.reply.trim() !== "") {
-        await client.call("session.append", {
-          sessionId,
-          chunkText: result.reply.slice(0, 8000),
-          role: "assistant",
-        });
-      }
+    if (parsed.sessionId !== undefined) {
+      await appendSessionTurn(client, parsed.sessionId, query, result);
     }
   } finally {
     await client.disconnect();
