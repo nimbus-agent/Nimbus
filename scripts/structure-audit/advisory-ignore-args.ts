@@ -19,7 +19,8 @@
  * WITHHOLDS the row, so the blocking step fails on the real advisory, with bun's own output:
  *
  *   - its shape passes `checkRowShape`, the rule `audit:advisories` applies (every justification
- *     present, ISO dates, a window of 1..MAX_ACCEPTANCE_DAYS days);
+ *     present, ISO dates, a window of 1..MAX_ACCEPTANCE_DAYS days, and an `acceptedOn` no later
+ *     than tomorrow, so the cap is measured from a date that has actually arrived);
  *   - it is not past its `recheckBy` (`isExpired`, the same inclusive rule `audit:advisories`
  *     applies): the acceptance stops on the day after `recheckBy`, with no grace period;
  *   - it is the only row for its package+advisory (a duplicate means the registry is malformed);
@@ -95,7 +96,7 @@ function rowProblem(
   if ((rowsPerKey.get(keyOf(row.package, row.ghsa)) ?? 0) > 1) {
     return "two or more rows for the same package+advisory, so the registry is malformed";
   }
-  const shape = checkRowShape(row);
+  const shape = checkRowShape(row, today);
   if (shape.length > 0) {
     return `malformed: ${shape.map((f) => f.detail).join("; ")}`;
   }

@@ -30,10 +30,10 @@ Items marked **Automated** run in CI; **Manual** require human sign-off before a
 
 `Dependency audit` is a required check, and its `bun audit --audit-level high` step fails on any
 HIGH or CRITICAL npm advisory, so one blocks every PR until something changes. Usually that change
-is an upgrade: a root `overrides` pin in
-`package.json` lifts the vulnerable package out of the advisory's range. When no patched release
-exists anywhere in the version graph, there is nothing to upgrade to, so the decision is written
-down in one place instead. The order of preference, also stated at the top of the registry, is:
+is an upgrade: a root `overrides` pin in `package.json` lifts the vulnerable package out of the
+advisory's range. When no patched release exists anywhere in the version graph, there is nothing to
+upgrade to, so the decision is written down in one place instead. The order of preference, also
+stated at the top of the registry, is:
 
 1. **Upgrade.** Check every link in the chain `bun why <package>` prints, not only the vulnerable
    package. A parent's newer release may have dropped it.
@@ -45,7 +45,9 @@ down in one place instead. The order of preference, also stated at the top of th
    exact `GHSA-xxxx-xxxx-xxxx` id), `package`, `severity`, `noFixReason`, `reachability`,
    `unblockedBy` (the upstream event that lets the row be deleted), `acceptedOn`, `recheckBy` and
    `owner`. `recheckBy` may be at most 92 days after `acceptedOn`, and shorter is better while a fix
-   may still be coming.
+   may still be coming. `acceptedOn` is the day of the decision: both steps refuse a row dated
+   later than tomorrow (UTC), because the window counts from that date and a future one would
+   keep the row open past the cap.
 
 Both advisory steps of the `Dependency audit` job read that one list, so there is no second copy to
 keep in step:
@@ -53,9 +55,11 @@ keep in step:
 - **The blocking `bun audit` step** first runs `scripts/structure-audit/advisory-ignore-args.ts`, which
   turns each open, well-formed row into one `--ignore=<GHSA>` argument. A row is withheld if its
   window has closed (it holds through `recheckBy` and lapses the next day), if it breaks any row rule
-  `audit:advisories` applies, if it is duplicated, or if its id is not an exact GHSA id. The last rule
-  matters because bun matches `--ignore` against a SUBSTRING of the advisory URL: a partial id such
-  as `GHSA`, or a URL prefix, would silence every advisory there is. bun honours neither a CVE id
+  `audit:advisories` applies, if it is duplicated, if another row naming the same GHSA is withheld
+  (bun cannot limit an ignore to one package, so a GHSA is passed over only while every row naming
+  it is open), or if its id is not an exact GHSA id. The last rule matters because bun matches
+  `--ignore` against a SUBSTRING of the advisory URL: a partial id such as `GHSA`, or a URL
+  prefix, would silence every advisory there is. bun honours neither a CVE id
   (whatever its `--help` text says, nothing it matches against carries one) nor a comma-joined list,
   so each advisory gets an argument of its own. The step log lists every row passed over and warns
   about every row withheld, and a withheld row whose advisory is still live at HIGH or above fails
@@ -69,9 +73,9 @@ keep in step:
 **When a row lapses**, the `Dependency audit` job goes red the next day. If the advisory is HIGH or
 above, the blocking step fails on it, and because a failed step skips every later step in the job,
 `audit:advisories` does not run until that is resolved. Below HIGH, `audit:advisories` reports the
-row `expired`. Re-judge it. If the unblocking event has happened, take the upgrade and delete the row. If not, re-verify the reachability proof against the
-current lockfile, record what you checked, move `acceptedOn` to the date of that re-judgement and set
-a new `recheckBy`. **When the advisory clears**, for example because a fix was published and
+row `expired`. Re-judge it. If the unblocking event has happened, take the upgrade and delete the
+row. If not, re-verify the reachability proof against the current lockfile, record what you
+checked, move `acceptedOn` to the date of that re-judgement and set a new `recheckBy`. **When the advisory clears**, for example because a fix was published and
 installed, `audit:advisories` reports the row as stale until it is deleted. Retiring a row means
 deleting it, never leaving it in place.
 

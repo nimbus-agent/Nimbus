@@ -6,12 +6,18 @@
  * `bun audit --audit-level high` (security.yml) blocks merges on HIGH/CRITICAL,
  * passing over only the advisories that have an OPEN row in
  * `accepted-advisories.ts`. Its `--ignore` arguments come from
- * `advisory-ignore-args.ts`, which is built on the row rules exported below, so
- * the two steps cannot disagree about what a valid, unexpired row is. Everything below that threshold used to just sit there:
- * two advisories lived in `bun audit` output for weeks because nothing failed
- * and nothing recorded that anyone had looked. This gate closes that gap. It
- * runs `bun audit --json` — never with `--ignore`, so it sees every advisory
- * the blocking step passed over — and fails when:
+ * `advisory-ignore-args.ts`, which is built on the row rules exported below
+ * (`checkRowShape`, `isExpired`), so the two steps share one definition of a
+ * well-formed, unexpired row. The blocking step is stricter in two ways, both
+ * forced by bun's `--ignore`: it needs an exact GHSA id, because bun matches by
+ * substring, and it passes over a GHSA only while EVERY row naming it is open,
+ * because bun cannot scope an ignore to one package.
+ *
+ * Everything below HIGH used to just sit there: two advisories lived in
+ * `bun audit` output for weeks because nothing failed and nothing recorded that
+ * anyone had looked. This gate closes that gap. It runs `bun audit --json`,
+ * never with `--ignore`, so it also sees every advisory the blocking step
+ * passed over, and fails when:
  *
  *   unaccepted         a live advisory nobody has judged (fix it, or add a row)
  *   expired            an accepted row past its `recheckBy` date
@@ -155,11 +161,20 @@ const REQUIRED_PROSE: ReadonlyArray<keyof AcceptedAdvisory> = [
 ];
 
 /**
- * The row rules that do not depend on what `bun audit` reports: a justification in every prose
- * field, ISO dates, and a window of 1..`MAX_ACCEPTANCE_DAYS` days. Shared with
- * `advisory-ignore-args.ts`, which withholds any row this returns a finding for.
+ * How far past `today` an `acceptedOn` may sit: one day, for an author whose local date is
+ * already tomorrow in UTC. The window cap is measured from `acceptedOn`, so a row dated any later
+ * would be open for longer than `MAX_ACCEPTANCE_DAYS` from the day it lands, and a far-future date
+ * would make the cap meaningless.
  */
-export function checkRowShape(row: AcceptedAdvisory): Finding[] {
+const ACCEPTED_ON_SLACK_DAYS = 1;
+
+/**
+ * The row rules that do not depend on what `bun audit` reports: a justification in every prose
+ * field, ISO dates, a window of 1..`MAX_ACCEPTANCE_DAYS` days, and an `acceptedOn` no later than
+ * `ACCEPTED_ON_SLACK_DAYS` after `today`. Shared with `advisory-ignore-args.ts`, which withholds
+ * any row this returns a finding for.
+ */
+export function checkRowShape(row: AcceptedAdvisory, today: string): Finding[] {
   const key = keyOf(row.package, row.ghsa);
   const findings: Finding[] = [];
   for (const field of REQUIRED_PROSE) {
@@ -185,14 +200,21 @@ export function checkRowShape(row: AcceptedAdvisory): Finding[] {
       detail: `acceptance window is ${window} days (max ${MAX_ACCEPTANCE_DAYS})`,
     });
   }
+  if (daysBetween(today, row.acceptedOn) > ACCEPTED_ON_SLACK_DAYS) {
+    findings.push({
+      kind: "malformed",
+      key,
+      detail: `acceptedOn ${row.acceptedOn} is after today (${today}); date a row on the day it is judged, or it stays open past the ${MAX_ACCEPTANCE_DAYS}-day cap`,
+    });
+  }
   return findings;
 }
 
 /**
  * Compare live advisories against the committed registry.
  *
- * `today` is injected rather than read from the clock so the expiry rule can be
- * tested at fixed dates. A test that asserted against `new Date()` would either
+ * `today` is injected rather than read from the clock so the expiry and
+ * future-`acceptedOn` rules can be tested at fixed dates. A test that asserted against `new Date()` would either
  * rot or silently stop exercising the boundary it was written for.
  */
 export function evaluateAdvisories(
@@ -210,7 +232,7 @@ export function evaluateAdvisories(
       continue;
     }
     byKey.set(key, row);
-    findings.push(...checkRowShape(row));
+    findings.push(...checkRowShape(row, today));
   }
 
   const liveKeys = new Set<string>();

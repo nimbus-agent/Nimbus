@@ -25,7 +25,8 @@ Phase-level history before `v0.1.0` (Phases 1â€“4) lives in [`docs/roadmap.md` Â
   release. The other is `http-cache-semantics` (GHSA-ch52-4w7c-c8xp / CVE-2026-93748): `max-stale`
   makes it serve a security-zeroed shared-cache entry to another client, covering `<=4.2.0`, and
   4.2.0 is the latest. `main`'s lockfile carries both, so every PR's required `Dependency audit`
-  check went red, and `main`'s next Security run would too. No upgrade clears either one.
+  check went red, and so did `main`'s own nightly Security run on 2026-10-03, which opened #1598.
+  No upgrade clears either one.
   micromatch, fast-glob, globby and markdownlint-cli2 are all at their latest releases and still
   resolve braces 3.0.3. astro 7.3.5 (latest) and its 7.4 betas require `http-cache-semantics ^4.2.0`.
   Both are reachable only through tooling that never ships. braces sits under the root
@@ -52,11 +53,20 @@ Phase-level history before `v0.1.0` (Phases 1â€“4) lives in [`docs/roadmap.md` Â
   argument. And because `--ignore` is not package-scoped, a GHSA is passed over only when every row
   naming it is open. `audit:advisories` runs next, never passes `--ignore`, and still re-checks
   every advisory by package and severity. The transport-failure retry classification is unchanged.
-  The change adds 23 tests and red-proved 12 mutations, among them the workflow dropping the
-  arguments and the workflow hardcoding an id. The verbatim workflow step was run locally: exit 0
-  with the registry, exit 1 on bun's own report with a scratch registry whose rows had lapsed.
+  Both steps also now refuse a row whose `acceptedOn` is later than tomorrow (UTC). The 92-day cap
+  counts from that date, so a future-dated row could stay open for as long as its author liked: a
+  gap that mattered little while the registry could excuse only sub-HIGH advisories, and that the
+  blocking step would otherwise have inherited.
+  The change adds 26 tests and red-proved 15 mutations, among them the workflow dropping the
+  arguments or joining them into one word, the workflow hardcoding an id, and the future-date rule
+  removed. The verbatim workflow step was run locally: exit 0 with the registry; exit 1 on bun's own
+  report with a scratch registry whose rows had lapsed or were malformed; exit 1 on an unloadable
+  registry; and, against a scratch project that also carries `lodash@4.17.20`, exit 1 on lodash's
+  two HIGH advisories with both accepted ones passed over.
   `security-hardening.md`'s license row, which still named a `JS license compliance` job long since
-  folded into `Dependency audit`, is corrected. Detail:
+  folded into `Dependency audit`, is corrected, and the three one-line summaries that said every
+  HIGH/CRITICAL finding blocks merges (`docs/README.md`, `docs/architecture.md`, the
+  `nimbus-testing` skill) now name the exception. Detail:
   [`security-hardening.md`](./security-hardening.md#accepting-an-advisory-that-has-no-fix).
 
 - **2026-10-02 â€” The on-call pushed brief, PR 1 of 3 (Phase 17 W2).** A P1 page now reaches you with

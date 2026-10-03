@@ -105,6 +105,17 @@ describe("blockingAuditIgnores: the acceptance window", () => {
     }
   });
 
+  test("a row dated after today is withheld, so the window cap cannot be stretched", () => {
+    // ROW is dated 2026-01-01. One day of slack covers an author already on tomorrow's date.
+    expect(argsOn([ROW], "2025-12-31")).toEqual(["--ignore=GHSA-aaaa-bbbb-cccc"]);
+    const early = blockingAuditIgnores([ROW], "2025-12-30");
+    expect(early.args).toEqual([]);
+    expect(early.withheld[0]?.reason).toContain("acceptedOn 2026-01-01 is after today");
+    // In-cap window, ten years out: without the rule this would be passed over for a decade.
+    const decade = { ...ROW, acceptedOn: "2036-01-01", recheckBy: "2036-04-01" };
+    expect(argsOn([decade], "2026-01-15")).toEqual([]);
+  });
+
   test("two rows for one package+advisory withhold BOTH copies", () => {
     const out = blockingAuditIgnores([ROW, ROW], "2026-01-15");
     expect(out.args).toEqual([]);
@@ -135,6 +146,7 @@ describe("blockingAuditIgnores: one rule set with audit:advisories", () => {
     "malformed recheckBy": [{ ...ROW, recheckBy: "2026-13-01" }],
     "window too long": [{ ...ROW, recheckBy: "2026-12-31" }],
     "blank owner": [{ ...ROW, owner: "" }],
+    "dated in the future": [{ ...ROW, acceptedOn: "2026-01-30", recheckBy: "2026-03-01" }],
     duplicate: [ROW, ROW],
     "two packages": [ROW, { ...ROW, package: "right-pad", ghsa: "GHSA-dddd-eeee-ffff" }],
   };

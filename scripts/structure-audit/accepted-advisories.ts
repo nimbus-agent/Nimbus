@@ -49,7 +49,11 @@ export interface AcceptedAdvisory {
   readonly reachability: string;
   /** The concrete event that would let this row be deleted. */
   readonly unblockedBy: string;
-  /** ISO date (YYYY-MM-DD) the decision was made. */
+  /**
+   * ISO date (YYYY-MM-DD) the decision was made. Never after today, beyond one day of slack for an
+   * author whose local date is already tomorrow in UTC: the window cap counts from here, so a
+   * future date would keep the row open past `MAX_ACCEPTANCE_DAYS`, and both gates refuse it.
+   */
   readonly acceptedOn: string;
   /** ISO date (YYYY-MM-DD) after which the gate fails until the row is re-judged. */
   readonly recheckBy: string;
@@ -82,7 +86,7 @@ export const ACCEPTED_ADVISORIES: readonly AcceptedAdvisory[] = [
     noFixReason:
       "No patched braces exists. The advisory (CVE-2026-93687, CVSS 7.5, CWE-674) covers <=3.0.3, 3.0.3 is the latest release, and GitHub lists no first patched version. Moving up the chain reaches no fix either: micromatch 4.0.8 (latest) requires braces ^3.0.3; fast-glob 3.3.3 (latest) requires micromatch ^4.0.8; globby 16.2.4 (latest) requires fast-glob ^3.3.3 and micromatch ^4.0.8; and markdownlint-cli2 0.23.3 (latest, already installed) pins globby 16.2.4 and micromatch 4.0.8 exactly. A root override has nothing to point at. Checked against the npm registry on 2026-10-03.",
     reachability:
-      "Dev tooling only; nothing that ships contains it. `bun why braces`: the sole dependent is the root devDependency markdownlint-cli2 (directly through micromatch, and through globby > fast-glob > micromatch). `bun audit --production` does not report it, and no packages/* workspace depends on any package in that chain. The flaw is unbounded recursion while braces walks a deeply nested brace PATTERN. braces only expands glob patterns, never the paths or the Markdown matched against them, and markdownlint-cli2 takes patterns only from its argv and its config files (`globs`/`ignores`). `bun run lint:markdown`, locally and in docs-quality.yml, passes no globs, and .markdownlint-cli2.jsonc holds seven static globs with no brace expression in them. Worst case, a contributor commits a nested-brace glob there and crashes markdownlint in their own CI run, which costs one lint step's availability and exposes no data.",
+      "Dev tooling only; nothing that ships contains it. `bun why braces`: the sole dependent is the root devDependency markdownlint-cli2, through micromatch by three routes (directly, globby > micromatch, and globby > fast-glob > micromatch). `bun audit --production` does not report it, and no packages/* workspace depends on any package in that chain. The flaw is unbounded recursion while braces walks a deeply nested brace PATTERN. braces only expands glob patterns, never the paths or the Markdown matched against them, and markdownlint-cli2 takes patterns only from its argv and its config files (`globs`/`ignores`). `bun run lint:markdown`, locally and in docs-quality.yml, passes no globs, and .markdownlint-cli2.jsonc holds seven static globs with no brace expression in them. Worst case, a contributor commits a nested-brace glob there and crashes markdownlint in their own CI run, which costs one lint step's availability and exposes no data.",
     unblockedBy:
       "braces publishes a release outside <=3.0.3. A 3.x release satisfies micromatch's ^3.0.3, so a root `overrides` pin can take it the same day; a 4.x release needs micromatch to follow. markdownlint-cli2 dropping micromatch and globby would also clear it. Either way `bun audit` stops reporting it, and audit:advisories then fails on this row as stale until the row is deleted.",
     acceptedOn: "2026-10-03",
