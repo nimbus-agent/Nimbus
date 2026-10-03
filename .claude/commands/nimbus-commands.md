@@ -153,7 +153,13 @@ bun run clean-deep              # workspace-aware deep clean (root + per-package
 ```bash
 bun audit --audit-level high
 bun run audit:high              # same; root script alias
+bun audit --audit-level high $(bun scripts/structure-audit/advisory-ignore-args.ts)  # what CI's blocking step runs: also passes over advisories with an OPEN row in accepted-advisories.ts
+bun run audit:advisories        # needs network; every live advisory must have a current row (CI runs it right after)
 ```
+
+The plain `bun audit --audit-level high` above still reports an advisory the registry has accepted, which is
+the honest local answer. CI's step adds the registry's `--ignore=<GHSA>` arguments, one per open row; see
+`docs/security-hardening.md` § Accepting an advisory that has no fix.
 
 ## Structure audit (Phase 4 B3)
 

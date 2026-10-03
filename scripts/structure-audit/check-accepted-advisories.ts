@@ -3,11 +3,15 @@
 /**
  * audit:advisories — hold every live npm advisory to a written decision.
  *
- * `bun audit --audit-level high` (security.yml) blocks merges on HIGH/CRITICAL.
- * Everything below that threshold used to just sit there: two advisories lived
- * in `bun audit` output for weeks because nothing failed and nothing recorded
- * that anyone had looked. This gate closes that gap. It runs `bun audit --json`
- * and fails when:
+ * `bun audit --audit-level high` (security.yml) blocks merges on HIGH/CRITICAL,
+ * passing over only the advisories that have an OPEN row in
+ * `accepted-advisories.ts`. Its `--ignore` arguments come from
+ * `advisory-ignore-args.ts`, which is built on the row rules exported below, so
+ * the two steps cannot disagree about what a valid, unexpired row is. Everything below that threshold used to just sit there:
+ * two advisories lived in `bun audit` output for weeks because nothing failed
+ * and nothing recorded that anyone had looked. This gate closes that gap. It
+ * runs `bun audit --json` — never with `--ignore`, so it sees every advisory
+ * the blocking step passed over — and fails when:
  *
  *   unaccepted         a live advisory nobody has judged (fix it, or add a row)
  *   expired            an accepted row past its `recheckBy` date
@@ -115,16 +119,31 @@ export function parseBunAudit(stdout: string): LiveAdvisory[] {
 
 const ISO_DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 
-function isIsoDate(s: string): boolean {
+export function isIsoDate(s: string): boolean {
   return ISO_DATE_RE.test(s) && !Number.isNaN(Date.parse(s));
+}
+
+/** Today's date in UTC, as YYYY-MM-DD — the clock every `recheckBy` is judged against. */
+export function utcToday(now: Date = new Date()): string {
+  return now.toISOString().slice(0, 10);
 }
 
 function daysBetween(fromIso: string, toIso: string): number {
   return (Date.parse(toIso) - Date.parse(fromIso)) / 86_400_000;
 }
 
-function keyOf(pkg: string, ghsa: string): string {
+/** The identity of a row: package-scoped, so one advisory id alone never satisfies a row. */
+export function keyOf(pkg: string, ghsa: string): string {
   return `${pkg}@${ghsa}`;
+}
+
+/**
+ * Is this row past its `recheckBy`? Inclusive: the row still holds ON that date and lapses the day
+ * after. A row whose `recheckBy` is not a date is reported as `malformed` by `checkRowShape`
+ * instead, so it is never ALSO reported here.
+ */
+export function isExpired(row: AcceptedAdvisory, today: string): boolean {
+  return isIsoDate(row.recheckBy) && daysBetween(today, row.recheckBy) < 0;
 }
 
 /** Every row must carry a real justification — a blank field is not a decision. */
@@ -135,7 +154,12 @@ const REQUIRED_PROSE: ReadonlyArray<keyof AcceptedAdvisory> = [
   "owner",
 ];
 
-function checkRowShape(row: AcceptedAdvisory): Finding[] {
+/**
+ * The row rules that do not depend on what `bun audit` reports: a justification in every prose
+ * field, ISO dates, and a window of 1..`MAX_ACCEPTANCE_DAYS` days. Shared with
+ * `advisory-ignore-args.ts`, which withholds any row this returns a finding for.
+ */
+export function checkRowShape(row: AcceptedAdvisory): Finding[] {
   const key = keyOf(row.package, row.ghsa);
   const findings: Finding[] = [];
   for (const field of REQUIRED_PROSE) {
@@ -209,7 +233,7 @@ export function evaluateAdvisories(
         detail: `re-scored ${row.severity} -> ${adv.severity}; the acceptance was made against the old score`,
       });
     }
-    if (isIsoDate(row.recheckBy) && daysBetween(today, row.recheckBy) < 0) {
+    if (isExpired(row, today)) {
       findings.push({
         kind: "expired",
         key,
@@ -315,7 +339,7 @@ if (import.meta.main) {
   }
 
   const live = parseBunAudit(stdout);
-  const today = new Date().toISOString().slice(0, 10);
+  const today = utcToday();
   const out = decideExit(evaluateAdvisories(live, ACCEPTED_ADVISORIES, today));
   for (const m of out.messages) console.error(m);
   if (out.code === 0) {
