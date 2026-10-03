@@ -39,7 +39,7 @@
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
-import yaml from "js-yaml";
+import { load as loadYaml } from "js-yaml";
 
 import { parseRootArg } from "./check-action-sha-pins.ts";
 
@@ -126,7 +126,7 @@ function workflowRunOf(on: unknown): WorkflowRunTrigger | null {
 export function parseWorkflow(path: string, text: string): ParsedWorkflow {
   let doc: unknown;
   try {
-    doc = yaml.load(text);
+    doc = loadYaml(text);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     return { path, name: path, triggers: [], workflowRun: null, parseError: message };

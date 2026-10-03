@@ -30,7 +30,7 @@ import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import yaml from "js-yaml";
+import { load as loadYaml } from "js-yaml";
 
 import { parseRootArg } from "../structure-audit/check-action-sha-pins.ts";
 import { readWorkflowFiles } from "../structure-audit/check-workflow-run-triggers.ts";
@@ -113,7 +113,7 @@ function defaultShell(container: unknown): string | undefined {
 export function bashRunBodies(text: string): BashBody[] {
   let doc: unknown;
   try {
-    doc = yaml.load(text);
+    doc = loadYaml(text);
   } catch {
     return [];
   }
@@ -164,7 +164,7 @@ export function bashRunBodies(text: string): BashBody[] {
 export function jobsWithoutTimeout(text: string): string[] {
   let doc: unknown;
   try {
-    doc = yaml.load(text);
+    doc = loadYaml(text);
   } catch {
     // Unparsable YAML is already reported by `lintWorkflow`; do not pile on.
     return [];
@@ -195,7 +195,7 @@ export function lintWorkflow(
   const findings: string[] = [];
 
   try {
-    yaml.load(text);
+    loadYaml(text);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     findings.push(`${file}: could not be parsed as YAML (${message})`);

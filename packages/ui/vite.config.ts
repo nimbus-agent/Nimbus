@@ -13,7 +13,7 @@ export default defineConfig({
   envPrefix: ["VITE_", "TAURI_"],
   build: {
     target: ["es2021", "chrome105", "safari15"],
-    minify: process.env.TAURI_DEBUG ? false : "esbuild",
+    minify: process.env.TAURI_DEBUG ? false : "oxc",
     sourcemap: !!process.env.TAURI_DEBUG,
   },
 });

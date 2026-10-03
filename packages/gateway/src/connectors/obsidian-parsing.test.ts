@@ -104,6 +104,45 @@ describe("extractFrontmatterAndBody — YAML non-object values fall back to empt
     expect(out.frontmatter).toEqual({});
     expect(out.body).toBe("numeric body");
   });
+
+  test("an EMPTY frontmatter block → empty frontmatter, body intact", () => {
+    // js-yaml 5's load() THROWS on empty input where 4.x returned undefined; the parse is
+    // wrapped, so an empty block must still degrade to {} rather than escape as an error.
+    const md = `---\n\n---\nbody after empty block`;
+    const out = parseNote("notes/x.md", md);
+    expect(out.frontmatter).toEqual({});
+    expect(out.body).toBe("body after empty block");
+  });
+});
+
+describe("extractFrontmatterAndBody — USER_YAML_SCHEMA semantics", () => {
+  test("a date-like value is kept as the string the note wrote, not coerced to a Date", () => {
+    // js-yaml 4's default schema resolved `2024-01-02` to a Date (persisted as the ISO
+    // `2024-01-02T00:00:00.000Z`); USER_YAML_SCHEMA has no implicit timestamp type, so the
+    // user's own text survives into the stored frontmatter.
+    const md = `---\ncreated: 2024-01-02\n---\nbody`;
+    const out = parseNote("notes/x.md", md);
+    expect(out.frontmatter["created"]).toBe("2024-01-02");
+  });
+
+  test("a merge key (`<<: *anchor`) contributes its fields, as js-yaml 4 resolved it", () => {
+    // js-yaml 5's bare CORE schema has no merge type: `<<` became a literal key and the
+    // merged `tags` never reached extractTags.
+    const md = `---\nbase: &b\n  tags: [x, y]\n<<: *b\naliases: [Al]\n---\nbody`;
+    const out = parseNote("notes/x.md", md);
+    expect(out.tags).toEqual(["x", "y"]);
+    expect(out.aliases).toEqual(["Al"]);
+    expect(Object.hasOwn(out.frontmatter, "<<")).toBe(false);
+  });
+
+  test("one `!!binary` property does not empty the whole frontmatter", () => {
+    // Under the bare CORE schema an unknown tag throws, the parse falls back to {}, and the
+    // note silently loses every other property — its tags included.
+    const md = `---\ntags: [kept]\nicon: !!binary aGVsbG8=\n---\nbody`;
+    const out = parseNote("notes/x.md", md);
+    expect(out.tags).toEqual(["kept"]);
+    expect(out.frontmatter["icon"]).toBeInstanceOf(Uint8Array);
+  });
 });
 
 describe("extractTitle — edge cases", () => {
