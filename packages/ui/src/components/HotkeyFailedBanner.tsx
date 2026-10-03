@@ -1,21 +1,18 @@
-import { listen } from "@tauri-apps/api/event";
-import { useEffect, useState } from "react";
+import { useCallback, useState } from "react";
+import { useIpcSubscription } from "../hooks/useIpcSubscription";
 
 export function HotkeyFailedBanner() {
   const [error, setError] = useState<string | null>(null);
   const [dismissed, setDismissed] = useState(false);
 
-  useEffect(() => {
-    let stop: (() => void) | null = null;
-    (async () => {
-      stop = await listen<string>("tray://hotkey-failed", (evt) => {
-        setError(typeof evt.payload === "string" ? evt.payload : "Unknown error");
-      });
-    })();
-    return () => {
-      stop?.();
-    };
+  // Subscribed through the shared hook, like every other Tauri event in the app, rather than a
+  // hand-rolled `listen`: the inline version left `listen`'s promise floating, and leaked the
+  // listener when the component unmounted before that promise resolved (its cleanup ran while
+  // `stop` was still null). The hook unlistens a late-resolving subscription on its own.
+  const onHotkeyFailed = useCallback((payload: unknown) => {
+    setError(typeof payload === "string" ? payload : "Unknown error");
   }, []);
+  useIpcSubscription<unknown>("tray://hotkey-failed", onHotkeyFailed);
 
   if (!error || dismissed) return null;
   return (

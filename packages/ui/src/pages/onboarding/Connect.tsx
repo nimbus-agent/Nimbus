@@ -88,7 +88,7 @@ export function Connect() {
     for (const name of services) setAuthStatus(name, "authenticating");
     for (const name of services) {
       try {
-        await client.call("connector.auth", { service: name });
+        await client.call("connector.auth", { service: name }); // NOSONAR S9382: each connector.auth runs an interactive sign-in (OAuth opens a browser consent page + loopback callback) - one provider prompt at a time
       } catch {
         setAuthStatus(name, "failed");
       }
@@ -102,10 +102,11 @@ export function Connect() {
         //
         // Typed against the WIRE shape (`SyncStatus` in gateway `sync/types.ts`), deliberately not
         // against this package's `ConnectorStatus`, which declares `{ name, health }` and does not
-        // match what the gateway sends. That mismatch is real and pre-existing — `ConnectorGrid`
-        // and `ConnectorsPanel` read `.name`/`.health` off this same call and get `undefined` —
-        // but it is a separate defect in a surface that has never shipped, and inheriting the
-        // wrong type here to be consistent with it would just spread the bug.
+        // match what the gateway sends. That mismatch is real and pre-existing — `ConnectorsPanel`
+        // reads `.name`/`.health` off this same call and gets `undefined` (`ConnectorGrid` has
+        // since been fixed to map the wire shape field-by-field) — but it is a separate defect in
+        // a surface that has never shipped, and inheriting the wrong type here to be consistent
+        // with it would just spread the bug.
         const list = asWireStatuses(await client.call<unknown>("connector.listStatus"));
         let anyConnected = false;
         for (const name of services) {
@@ -118,7 +119,10 @@ export function Connect() {
         }
         if (anyConnected) {
           if (pollRef.current) clearInterval(pollRef.current);
-          navigate("/onboarding/syncing");
+          // `void`, not `await`: `navigate` rejects only for an external target (this route is
+          // internal), and awaiting it would route a failure into the "transient" catch below
+          // even though polling has already stopped.
+          void navigate("/onboarding/syncing");
         }
       } catch {
         // transient; keep polling

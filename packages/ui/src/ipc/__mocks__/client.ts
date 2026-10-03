@@ -3,14 +3,16 @@ import { vi } from "vitest";
 export const callMock = vi.fn<(method: string, params?: unknown) => Promise<unknown>>();
 export const subscribeMock = vi.fn<
   (handler: (n: { method: string; params: unknown }) => void) => Promise<() => void>
->(async () => () => {});
-export const onConnectionStateMock = vi.fn<() => Promise<() => void>>(async () => () => {});
+>(() => Promise.resolve(() => {}));
+export const onConnectionStateMock = vi.fn<() => Promise<() => void>>(() =>
+  Promise.resolve(() => {}),
+);
 
 export const connectorListStatusMock = vi.fn<() => Promise<unknown>>();
 export const indexMetricsMock = vi.fn<() => Promise<unknown>>();
 export const auditListMock = vi.fn<(limit?: number) => Promise<unknown>>();
 export const consentRespondMock = vi.fn<(requestId: string, approved: boolean) => Promise<void>>(
-  async () => undefined,
+  () => Promise.resolve(),
 );
 
 export const profileListMock = vi.fn<() => Promise<unknown>>();

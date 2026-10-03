@@ -10,7 +10,7 @@ export function Welcome() {
       key: "onboarding_completed",
       value: new Date().toISOString(),
     });
-    navigate("/", { replace: true });
+    await navigate("/", { replace: true });
   };
 
   return (
