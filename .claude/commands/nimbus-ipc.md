@@ -79,23 +79,19 @@ When a method needs to stream results, it returns a handle immediately and emits
 
 ---
 
-### `agent.*` — Multi-agent orchestration events (notifications only)
+### `agent.*` — `agent.invoke` and its stream
 
-| Notification | Payload | Description |
+| Method / notification | Type | Description |
 |---|---|---|
-| `agent.subTaskProgress` | `{ sessionId, subTaskId, status, description }` | Status update per sub-task |
-| `agent.hitlBatch` | `{ sessionId, actions: HitlAction[] }` | Consolidated consent request for all HITL-required sub-tasks |
-| `agent.gasLimitReached` | `{ sessionId, limit: 'depth' \| 'toolCalls' }` | Loop protection triggered |
+| `agent.invoke` | request | One turn through the shared `runAsk` pipeline (`{ input, stream?, sessionId? }`) — the pipeline `nimbus ask` and the ChatOps read path also use |
+| `agent.chunk` | notification | `{ streamId?, text }`, sent while `agent.invoke` or `workflow.run` runs with `stream: true` |
 
-`HitlAction` shape:
-```ts
-interface HitlAction {
-  actionId: string;
-  subTaskId: string;
-  summary: string;
-  diff?: string;   // before/after diff for file/code changes
-}
-```
+**Not emitted: `agent.subTaskProgress`, `agent.hitlBatch`, `agent.gasLimitReached`.** Older text
+documented these three as the multi-agent orchestration events, with a `HitlAction` payload, but
+nothing in `packages/gateway/src` names them. A depth or tool-call limit makes
+`AgentCoordinator.run` throw (`Agent depth limit reached` / `Tool call limit reached`), and consent
+reaches the acting client as a unicast `consent.request`, answered with `consent.respond`. The TUI
+still subscribes to `agent.hitlBatch` (`packages/cli/src/tui/App.tsx`), so that listener never fires.
 
 ---
 
@@ -127,15 +123,22 @@ interface HitlAction {
 | Method | Type | Description |
 |---|---|---|
 | `connector.listStatus` | request | All connectors with current sync + health state |
-| `connector.history` | request | Last N health transitions for a connector |
+| `connector.healthHistory` | request | Recent health transitions |
+
+Also registered: `connector.status`, `connector.sync`, `connector.pause`, `connector.resume`,
+`connector.remove`, `connector.reindex` (HITL-gated), `connector.setConfig`, `connector.setInterval`,
+`connector.auth`, `connector.addMcp`, `connector.detectLocalAuth` and `connector.adoptLocalAuth`
+(`addMcp`, `detectLocalAuth` and `adoptLocalAuth` are LAN-forbidden). Derive the live set from
+`ipc/connector-rpc.ts` before relying on this list.
 
 **Notifications (connector):**
 
 | Notification | Payload |
 |---|---|
-| `connector.healthChanged` | `{ service, state, reason?, timestamp }` |
+| `connector.healthChanged` | `{ name, health, degradationReason?, fromState, reason, occurredAt }` |
+| `connector.configChanged` | emitted after a connector's config changes |
 
-Health states: `healthy` \| `degraded` \| `error` \| `rate_limited` \| `unauthenticated` \| `paused`
+Health states: `healthy` \| `not_configured` \| `degraded` \| `error` \| `rate_limited` \| `unauthenticated` \| `paused`
 
 ---
 
@@ -145,9 +148,14 @@ Health states: `healthy` \| `degraded` \| `error` \| `rate_limited` \| `unauthen
 |---|---|---|
 | `watcher.list` | request | All watchers with enabled state + last-fired time |
 | `watcher.create` | request | Create a new watcher |
-| `watcher.update` | request | Update watcher definition |
 | `watcher.delete` | request | Delete a watcher |
-| `watcher.history` | request | Past fire events for a watcher |
+| `watcher.pause` / `watcher.resume` | request | Disable / re-enable a watcher by `id` |
+| `watcher.listHistory` | request | Past fire events for a watcher (`{ watcherId, limit }`) |
+| `watcher.listCandidateRelations` | request | Graph relation types a watcher condition can name |
+| `watcher.validateCondition` | request | Check a condition before saving it |
+
+There is no `watcher.update` handler (the LAN `WRITE_METHODS` set still names one). A firing is
+broadcast as `watcher.fired` on the `gateway.event` envelope.
 
 ---
 
@@ -156,12 +164,11 @@ Health states: `healthy` \| `degraded` \| `error` \| `rate_limited` \| `unauthen
 | Method | Type | Description |
 |---|---|---|
 | `workflow.list` | request | All saved workflow pipelines |
-| `workflow.create` | request | Create a pipeline |
-| `workflow.update` | request | Update a pipeline |
+| `workflow.save` | request | Create or replace a pipeline |
 | `workflow.delete` | request | Delete a pipeline |
-| `workflow.run` | request | Execute a pipeline (supports `dryRun: true`) |
-| `workflow.rerun` | request | Re-run from step N (`fromStep` param) |
-| `workflow.history` | request | Run history with per-step status |
+| `workflow.run` | request | Execute a pipeline (supports `dryRun: true`; streams `agent.chunk` with `stream: true`) |
+| `workflow.cancel` | request | Abort a run by its client-chosen `streamId`; honoured at the next step boundary |
+| `workflow.listRuns` | request | Run history with per-step status |
 
 ---
 
@@ -171,9 +178,13 @@ Read methods are available to LAN peers without `grant-write` and never mutate d
 
 | Method | Type | Description |
 |---|---|---|
-| `index.query` | request | Structured filter query over indexed items |
-| `index.search` | request | Hybrid BM25 + vector search |
-| `index.getItem` | request | Fetch a single item by id |
+| `index.queryItems` | request | Structured filter query over indexed items (`nimbus query`) |
+| `index.querySql` | request | Guarded read-only SQL (`nimbus query --sql`); kept OFF the Tauri allowlist |
+| `index.searchRanked` | request | Ranked hybrid BM25 + vector search |
+| `index.metrics` | request | Per-service item counts and one global embedding-coverage figure (the only method in this table on the Tauri allowlist) |
+| `index.health` | request | Index QUALITY — per-connector embedding coverage, staleness, a 0-100 score (`nimbus index health`) |
+| `index.regraph` | request | Re-run the graph populator over existing rows (`nimbus index regraph`). Neither LAN-forbidden nor in the LAN `WRITE_METHODS` set, so any paired peer can trigger it |
+| `index.demoSymbol` | request | `nimbus init`'s `file:line` hint from this machine's index; LAN-forbidden |
 | `index.reembed` | request | Selectively re-embed items to a target model. Returns `{ jobId }`; emits `index.reembedProgress` / `index.reembedDone` / `index.reembedError` notifications. CLI-only — NOT in Tauri allowlist; NOT LAN-callable (T6 PR 3). |
 | `index.reembedCancel` | request | Cancel an in-flight reembed job by `{ jobId }`. Returns `{ cancelled: boolean }`. |
 
@@ -181,7 +192,6 @@ Read methods are available to LAN peers without `grant-write` and never mutate d
 
 | Notification | Payload |
 |---|---|
-| `index.changed` | `{ service, count }` — emitted after a sync cycle writes new rows |
 | `index.reembedProgress` | `{ jobId, done, total, skipped }` per batch (T6 PR 3) |
 | `index.reembedDone` | `{ jobId, succeeded, skipped, durationMs }` on completion (also fires for dry-runs with `dryRun: true` + `planned`) |
 | `index.reembedError` | `{ jobId, code, message }` on fatal abort (vault key missing, unknown model, auth failure) |
@@ -258,7 +268,7 @@ Available to LAN peers. Never mutates data.
 
 ### `agents.*` — Built-in read-only agents (Phase 5 T3 → Spine S1)
 
-**Fifteen methods are registered**, not three — `packages/gateway/src/ipc/agents-rpc.ts` `dispatchAgentsRpc` is the authoritative list; re-read it before assuming an agent is missing. Each returns immediately and emits a `<agent>.briefReady { sessionId, brief }` notification with a Markdown brief (note the prefix is the **agent** name, not `agents.` — `expert.briefReady`, not `agents.expert.briefReady`). All are read-only and never fire HITL. `agents.whyPeek` is the one exception to the notification contract: it answers synchronously in the response.
+**Eighteen methods are registered** — the seventeen built-in agents plus `agents.whyPeek` — not three. `AGENTS_RPC_HANDLERS` in `packages/gateway/src/ipc/agents-rpc.ts` is the authoritative list; re-read it before assuming an agent is missing. Each returns immediately and emits a `<agent>.briefReady { sessionId, brief }` notification with a Markdown brief (note the prefix is the **agent** name, not `agents.` — `expert.briefReady`, not `agents.expert.briefReady`). All are read-only apart from the bounded exceptions their rows name (`janitor`'s `--cleanup` proposal and `preflight`'s per-owner approvals sit behind HITL gates; `premortem` writes disabled watcher proposals). `agents.whyPeek` is the one exception to the notification contract: it answers synchronously in the response. Twelve of the eighteen are served to external callers (HTTP, MCP-declared, ChatOps): `EXTERNAL_EXCLUDED_AGENT_METHODS` withholds `preflight`, `premortem`, `negotiate`, `changelog`, `standup` and `whyPeek`.
 
 | Method | Type | Description |
 |---|---|---|
@@ -274,6 +284,12 @@ Available to LAN peers. Never mutates data.
 | `agents.whyPeek` | request | S1 — **synchronous** sub-300 ms one-liner; emits no notification |
 | `agents.glossary` | request | S1 — read over the materialized `glossary_term` table (V45/V46) |
 | `agents.decisions` | request | S1 — read over the materialized `decision_record` table (V47) |
+| `agents.ownership` | request | S1 — read over the git-blame-derived ownership graph (V51); `nimbus owners` |
+| `agents.premortem` | request | S1 — risk brief for a Jira epic from comparable past epics; writes only disabled `watcher` proposals and their tombstones, never fires HITL |
+| `agents.negotiate` | request | S1 — cited contribution brief for one person over a window; externally excluded, since `--person` makes it a dossier-builder |
+| `agents.changelog` | request | v0.1.1 — Markdown changelog assembled from the local index over a window |
+| `agents.standup` | request | v0.1.1 — the owner's own activity over a window (default `24h`); owner-scoped, so externally excluded |
+| `agents.oncall` | request | v0.1.1 — one incident and the change around it; an external caller must name `--incident` or `--service` |
 
 **The read agent is not the whole surface.** `glossary` and `decisions` each own a *second*, write-class namespace that drives their extraction pass — see below. Do not add a pass-driving method to `agents.*`; that namespace is renderer-exposed and read-only by construction.
 
@@ -481,9 +497,34 @@ A guided tour of the real local index, closing on an honesty panel. Both namespa
 | `tour.plan` | request | Plans up to `params.steps` (1..6, default 3, refused — never clamped — outside that range) of six deterministic per-kind selectors (`oncall`/`why`/`owners`/`standup`/`decisions`/`glossary`) against the real index. Returns `{ steps, more, skipped, t0 }` — `t0` is the gateway's own clock, the LEFT edge of the tour's proof window |
 | `locality.report` | request | The closing panel's data: `{ listeners, inventory, db, t1 }` — which listeners (`locality/listener-registry.ts`) are open RIGHT NOW (probed fresh, never cached), per-service item counts, on-disk index size, and `t1`, the RIGHT edge of the proof window |
 
-The six selectors live under `agents/_lib/tour-*.ts`, not `agents/wow.ts` — static rule D22(d) forbids any file outside `ipc/agents-rpc.ts` from importing an `agents/<name>.ts` emitter or sibling query module, and a selector needs exactly those query modules (`agents/standup-queries.ts`, `agents/oncall-queries.ts`). `locality/` (`listener-registry.ts` + `locality-report.ts`) is a top-level directory, not under `ipc/`, because the registry is a plain module every real listen site imports directly, including `ipc/lan-server.ts` and `ipc/http-server.ts` themselves — sitting inside `ipc/` would be an import cycle. See static rule **D31** (every non-test gateway file opening a listening socket must name a `registerListener(` call) in `docs/SECURITY-INVARIANTS.md` and `CLAUDE.md`'s "Static complement" paragraph.
+The six selectors live under `agents/_lib/tour-*.ts`, not `agents/wow.ts` — static rule D22(d) forbids any file outside `ipc/agents-rpc.ts` from importing an `agents/<name>.ts` emitter or sibling query module, and a selector needs exactly those query modules (`agents/standup-queries.ts`, and `agents/oncall-queries.ts` — since moved to `agents/_lib/oncall-queries.ts`, 2026-10-02). `locality/` (`listener-registry.ts` + `locality-report.ts`) is a top-level directory, not under `ipc/`, because the registry is a plain module every real listen site imports directly, including `ipc/lan-server.ts` and `ipc/http-server.ts` themselves — sitting inside `ipc/` would be an import cycle. See static rule **D31** (every non-test gateway file opening a listening socket must name a `registerListener(` call) in `docs/SECURITY-INVARIANTS.md` and `CLAUDE.md`'s "Static complement" paragraph.
 
 Handlers: `packages/gateway/src/ipc/{tour-rpc,locality-rpc}.ts`. CLI: `nimbus wow [--steps 1..6] [--no-proof] [--json]`.
+
+---
+
+### Namespaces added since Spine S2 — LAN-forbidden, off the Tauri allowlist
+
+Every namespace below is in `FORBIDDEN_OVER_LAN` (`ipc/lan-rpc.ts`) as a whole and has no method on
+`ALLOWED_METHODS`. Design detail lives in `docs/architecture.md` § Spine S2 Subsystems; each handler
+file is the authority for its method set.
+
+| Namespace | Methods | Handler | Notes |
+|---|---|---|---|
+| `exec.*` | `run`, `approvalRespond` | `ipc/exec-rpc.ts` | sandboxed code execution (I33) |
+| `computer.*` | `sessionOpen`, `act`, `sessionStatus`, `sessionClose`, `approvalRespond` | `ipc/computer-rpc.ts` | computer-use lanes (I35) |
+| `media.*` | `understand`, `allowRemote`, `grants.list`, `grants.revoke` | `ipc/media-rpc.ts` | multimodal pass and remote-vision grants (I37) |
+| `fleet.*` | `status`, `list`, `briefs`, `show`, `runNow`, `digest` | `ipc/fleet-rpc.ts` | overnight fleets (I38) |
+| `toolgen.*` | `create`, `approvalRespond`, `save`, `saveApprovalRespond`, `list`, `invoke`, `revoke`, `credentialSet` | `ipc/toolgen-rpc.ts` | runtime tool generation (I39/I40) |
+| `ask.*` | `explainLast` | `ipc/diagnostics-rpc.ts` | `nimbus explain last`; also needs its entry in `tryDispatchDiagnosticsRpc`'s outer match |
+| `oncall.*` | `pushedList`, `pushedGet`, `pushedRetry` | `ipc/oncall-push-rpc.ts` | the on-call pushed brief, default-off `[oncall.push]` |
+| `demo.*` | `seed`, `firePage` | `ipc/demo-rpc.ts` | claimed only by a demo-rooted gateway (I41) |
+
+**`gateway.event`** is the single notification envelope behind `nimbus tail`: `{ kind, ts, payload }`,
+where `kind` is one of `watcher.fired`, `sync.completed`, `extension.stateChanged`, `hitl.requested`,
+`hitl.resolved` and `oncall.briefPushed` (`GatewayEventKind` in `ipc/gateway-events.ts`).
+`connector.healthChanged` keeps its own method name because the Tauri bridge matches on names. The
+two HITL kinds carry `{ requestId, actionType }` only, never the rendered prompt.
 
 ---
 

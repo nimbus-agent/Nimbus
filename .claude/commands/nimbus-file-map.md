@@ -79,7 +79,7 @@ Curated pointer index. Source of truth is the working tree — verify a path wit
 
 ## Connectors + MCP Mesh
 
-A **standard connector** is a triple — `connectors/<x>-sync.ts` (sync handler) + `connectors/<x>-<noun>-mapping.ts` (pure item mapper) + `connectors/<x>/src/server.ts` (read-only `<x>_list/get/search`). ~77 connectors follow this shape: **derive the path from the connector name.** The file is the source of truth for auth, pagination, cursor shape (`{ pass }`), and `MAX_*` caps — that per-connector detail is deliberately **not** mirrored here, because it drifts. Below: shared infra, then the connectors that **deviate** from the standard shape.
+A **standard connector** is a triple — `connectors/<x>-sync.ts` (sync handler) + `connectors/<x>-<noun>-mapping.ts` (pure item mapper), both here under `packages/gateway/src/`, + `connectors/<x>/src/server.ts` (read-only `<x>_list/get/search`), which lives in [nimbus-agent/nimbus-mcp-servers](https://github.com/nimbus-agent/nimbus-mcp-servers) since 2026-08-27. About 65 connectors follow this shape (65 of the 98 sync handlers here have a mapper beside them, 2026-10-03): **derive the path from the connector name.** The file is the source of truth for auth, pagination, cursor shape (`{ pass }`), and `MAX_*` caps — that per-connector detail is deliberately **not** mirrored here, because it drifts. Below: shared infra, then the connectors that **deviate** from the standard shape.
 
 ### Shared connector infra
 
@@ -151,7 +151,7 @@ Everything else follows the standard triple. These break from it in a way worth 
 
 | File | Purpose |
 |---|---|
-| `packages/gateway/src/agents/expert.ts` | `nimbus expert <topic-or-file>` — parallel sub-agents; emits `agents.expert.briefReady` |
+| `packages/gateway/src/agents/expert.ts` | `nimbus expert <topic-or-file>` — parallel sub-agents; emits `expert.briefReady` (the prefix is the agent name, not `agents.`) |
 | `packages/gateway/src/agents/impact.ts` | `nimbus impact <file-or-PR-url>` — 5-way reverse-dep blast radius |
 | `packages/gateway/src/agents/_lib/findings.ts` | `ExpertBrief` / `ExpertFinding` / `Evidence` types + ranking |
 | `packages/gateway/src/agents/_lib/gap-notes.ts` | Gap-note detectors (empty index, missing connector/entity/relation) |
@@ -161,6 +161,8 @@ Everything else follows the standard triple. These break from it in a way worth 
 | `packages/gateway/src/agents/glossary.ts` | `nimbus glossary [<term>]` — implicit-knowledge glossary; `glossary_term` + `glossary_pass_state` (V45/V46) |
 | `packages/gateway/src/agents/decisions.ts` | `nimbus decisions` — implicit ADR extractor; `decision_record`/`_evidence`/`_pass_state` (V47) |
 | `packages/gateway/src/agents/ownership.ts` | `nimbus owners [<path>]` — git-blame-derived ownership read surface; `person --owns--> file\|directory\|service` graph edges + `ownership_pass_state` (V51) |
+| `packages/gateway/src/agents/{premortem,negotiate,changelog,standup,oncall}.ts` | The five agents added after `ownership` — `nimbus pre-mortem`, `negotiate`, `changelog`, `standup`, `oncall`. `changelog` and `standup` keep a sibling `*-queries.ts`; `oncall`'s query module is `agents/_lib/oncall-queries.ts` (moved 2026-10-02 so `oncall-push/` can import it under D22(d)) |
+| `packages/gateway/src/oncall-push/` | The on-call pushed brief (2026-10-02, default-off `[oncall.push]`, `config/oncall-push-toml.ts`): `push-selector.ts` (which incidents qualify), `push-runner.ts` (assembles the deterministic `oncall` brief as the derived `push` ClientKind), `push-store.ts` (`pushed_brief` + `oncall_push_state`, V64), `push-sinks.ts` (the `oncall.briefPushed` gateway event; the OS toast records `skipped`), `push-runtime.ts`. IPC `ipc/oncall-push-rpc.ts`; CLI `packages/cli/src/commands/oncall-pushed.ts` |
 
 ## Metrics + CI/CD
 
@@ -344,7 +346,7 @@ Everything else follows the standard triple. These break from it in a way worth 
 | `packages/gateway/src/index/fleet-v60-sql.ts` | V60 `fleet_job_state` / `fleet_run` / `fleet_brief` migration SQL |
 | `packages/cli/src/commands/fleet.ts` | `nimbus fleet status\|list\|briefs\|show\|run\|digest` + its own exit-code vocabulary (`FLEET_EXIT_CODES`) |
 | `packages/gateway/src/fleet/fleet-digest.ts` | The change digest: pair selection, `compareSummaries`, and the Markdown renderer (`mdSafe` neutralises pipes/newlines from indexed titles) |
-| `packages/gateway/src/fleet/fleet-digest-extractors.ts` | The ELEVEN per-agent extractors + `FLEET_DIGEST_EXTRACTORS`, total over `EligibleAgentMethod` — a twelfth eligible agent is a compile error until its extractor exists |
+| `packages/gateway/src/fleet/fleet-digest-extractors.ts` | The per-agent extractors (fourteen as of 2026-10-03: eleven at ship, then `changelog`, `standup` and `oncall`) + `FLEET_DIGEST_EXTRACTORS`, total over `EligibleAgentMethod` — one more eligible agent is a compile error until its extractor exists |
 | `packages/gateway/src/ipc/agents-rpc.ts` `FLEET_ELIGIBILITY` | TOTAL over the served `agents.*` methods — 11 eligible; `negotiate` is `deferred`, NOT eligible |
 | `packages/gateway/src/agents/_lib/tour-plan.ts` | `buildTourPlan` — orders the six selectors by `TOUR_PRIORITY`, slices to `steps`, renders each `command` from the SAME kind+args it runs (never drifts) |
 | `packages/gateway/src/agents/_lib/tour-selectors.ts` | `TOUR_SELECTORS` — one per `TourStepKind`, each asking "is there something in THIS index worth showing?"; lives under `agents/_lib/` (not `agents/wow.ts`) because `D22(d)` forbids importing an `agents/<name>.ts` emitter or sibling query module from outside `ipc/agents-rpc.ts` |

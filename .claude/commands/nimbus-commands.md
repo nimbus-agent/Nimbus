@@ -47,27 +47,22 @@ cd packages/ui && bunx vitest run                     # UI components (Vitest, s
 cd packages/ui && bunx vitest run --coverage          # UI with coverage
 
 bun run test:ci                           # the TEST SUITE only — same sequence as .github/workflows/_test-suite.yml
-
-bun run test:sandbox                      # per-connector sandbox contract suite — OPT-IN, real network
 ```
 
-**`test:sandbox` is the only way those 79 tests run.** Each connector's
-`test/sandbox.test.ts` is gated on `describe.skipIf(!process.env["NIMBUS_TEST_HARNESS"])`,
-and nothing in the repo set that variable until this script existed — so a plain `bun test`
-reports them as skipped and always did. They are **not** part of any CI gate and should not
-be: `runSandboxContractTests` forks a probe that opens a **real** connection to the
-connector's first declared `permissions.network` host (plus, off Windows, one to an unlisted
-host that must be refused). A host that does not resolve on your network fails as an exit
-code, which is an environment result and not a manifest defect — check the host resolves
-before filing anything.
+**`test:sandbox` is not a script in this repository any more.** The per-connector sandbox
+contract suite — each connector's `test/sandbox.test.ts`, gated on `NIMBUS_TEST_HARNESS`, whose
+`runSandboxContractTests` probe opens a **real** connection to the connector's first declared
+`permissions.network` host — left with the connectors in #1347 (2026-08-27). `bun run test:sandbox`
+now lives in [nimbus-agent/nimbus-mcp-servers](https://github.com/nimbus-agent/nimbus-mcp-servers),
+still opt-in and outside every CI gate.
 
 ## Pre-flight (what to actually run before pushing)
 
-**`test:ci` is not the full gate set — `preflight` is.** `test:ci` is `bun scripts/run-tests.ts`: the test suite and nothing else. `preflight` is `bun scripts/preflight.ts`, which drives the gate manifest in `scripts/lib/preflight-gates.ts` (28 gates today: 24 `tier: "fast"` + 4 `tier: "full"`, plus `CI_ONLY_GATES` that preflight intentionally skips). Running only `test:ci` is the historical #1 cause of PRs that fail on gates the author never ran locally.
+**`test:ci` is not the full gate set — `preflight` is.** `test:ci` is `bun scripts/run-tests.ts`: the test suite and nothing else. `preflight` is `bun scripts/preflight.ts`, which drives the gate manifest in `scripts/lib/preflight-gates.ts` (40 gates when last counted on 2026-10-03: 34 `tier: "fast"` + 6 `tier: "full"`, plus 27 `CI_ONLY_GATES` that preflight intentionally skips — derive the count from the manifest rather than trusting this one). Running only `test:ci` is the historical #1 cause of PRs that fail on gates the author never ran locally.
 
 ```bash
 bun run preflight                         # full CI parity — every gate in PREFLIGHT_GATES
-bun run preflight:fast                    # the 24 fast static gates (~2-3 min); catches most PR failures
+bun run preflight:fast                    # the 34 fast static gates (~2-3 min); catches most PR failures
 ```
 
 Derive gate commands from `PREFLIGHT_GATES` rather than retyping them — several gates are no-ops without their exact flags (`audit:any` without `--check` always exits 0). Depth: the `nimbus-preflight` skill.
@@ -89,7 +84,9 @@ Bun 1.3.14:
    explicit `--coverage --coverage-reporter=lcov --coverage-dir=X` writes no lcov under it.
 
 The percentages in the list below are therefore the floors `audit:coverage-scopes` enforces, not
-something the adjacent command checks. The commands remain useful for running a scope's tests, and
+something the adjacent command checks — with one exception: `test:coverage:health` has no scope in
+`SCOPE_GATES` (there are 23 scopes), so its 85% is enforced by nothing beyond the per-file
+`audit:coverage-floor` ratchet. The commands remain useful for running a scope's tests, and
 their CI jobs still do real work the main suite does not (the Sandbox job builds the sandbox helper
 and runs `cppcheck --error-exitcode=1` on its C source; the Vault job installs libsecret + D-Bus).
 
@@ -117,7 +114,7 @@ bun run test:coverage:watcher         # ≥80% (watcher engine + store + anomaly
 
 # Phase 3.5 — observability + portability
 bun run test:coverage:db              # ≥85% (verify, repair, snapshot, health, metrics, latency buffer)
-bun run test:coverage:health          # ≥85% (connectors/health.ts)
+bun run test:coverage:health          # ≥85% advertised (connectors/health.ts) — no scope enforces it; see above
 bun run test:coverage:config          # ≥80% (config loader, profiles, env overrides)
 bun run test:coverage:telemetry       # ≥85% (telemetry collector — payload safety gate)
 bun run test:coverage:doctor          # ≥80% (nimbus doctor)
@@ -167,7 +164,7 @@ bun run audit:dead-code                 # knip unused exports / orphan files (D7
 bun run audit:duplication               # jscpd token duplication (D6)
 bun run audit:exclusion-parity               # sonar.coverage.exclusions <-> local registry drift check
 bun run audit:any                       # D8 any-count print
-bun run audit:invariants                # static invariant complement D10–D31 (spawn rule, vault-key allow-list, SQL writes, federation/identity/team-vault gates, policy, chatops, preflight, tribal, connector writes, share, egress dispatch chokepoint, exec runConfined, computer-use actuation/driver/lane, remote-VLM constructor + media_grant table, fleet ClientKind, toolgen brokered-fetch literal/generated-manifest/vault-key-prefix confinement, full-SQLite init before any bun:sqlite Database construction, listener-registry registration) — derive the range from `check-nimbus-invariants.ts`; see CLAUDE.md § Security Invariants
+bun run audit:invariants                # static invariant complement D10–D31 (spawn rule, vault-key allow-list, SQL writes, federation/identity/team-vault gates, policy, chatops, preflight, tribal, connector writes, share, egress dispatch chokepoint, exec runConfined, computer-use actuation/driver/lane, remote-VLM constructor + media_grant table, fleet and push ClientKinds, toolgen brokered-fetch literal/generated-manifest/vault-key-prefix confinement, full-SQLite init before any bun:sqlite Database construction, listener-registry registration, and D25's hidden connector spawns) — derive the range from `check-nimbus-invariants.ts`; see CLAUDE.md § Security Invariants
 bun run audit:openapi-drift             # OpenAPI ↔ HTTP_ROUTES drift (Phase 5 T4 PR 1)
 
 bun scripts/structure-audit/count-any-usage.ts --check     # D8 CI gate (fails on regression OR reduction without --update)
@@ -188,7 +185,7 @@ bun run audit:status-drift               # doc status surfaces vs canonical I<N>
                                          # the I17 LAN-admitted set
 ```
 
-Baselines: `docs/structure-audit/{any-baseline.json,baseline.md,churn-90d.json,coverage-baseline.json,db-run-census.json}`.
+Tracked baselines: `docs/structure-audit/{any-baseline.json,baseline.md,coverage-baseline.json,typecheck-tests-baseline.json,index-lane-census.json,ci-latency-baseline.json,bypass-actors-attestation.json}`. `churn-90d.json`, `db-run-census.json` and `jscpd-report.json` are written to the same directory at run time and are git-ignored.
 CI gate (reusable workflow): `.github/workflows/_structure.yml`.
 
 ## Mutation testing (dev-only, advisory — True Coverage Sub-project C)
@@ -286,6 +283,8 @@ nimbus lan remove <peerId>
 ```bash
 nimbus init [--no-sync]                          # index the git repo in the CWD — no credentials, no API key, no LLM
 nimbus wow [--steps 1..6] [--no-proof] [--json]  # guided tour of whatever the gateway has indexed, closing on the locality panel
+nimbus demo [--no-tour] | nimbus demo stop | nimbus demo reset   # seeded synthetic org in an isolated demo root (I41); tours three briefs
+nimbus connector detect [--json] [--source gh|aws|kubectl|gcloud]... [--replace] [--project <id>]   # reuse logins you already have
 ```
 
 Appends a `[[filesystem.roots]]` block to `nimbus.toml` (never rewrites; backs up to `nimbus.toml.bak`), starts the Gateway, syncs the `filesystem` connector, then prints a real `file:line` from your own repo to try with `nimbus why`. On a TTY, after that, offers to run `nimbus wow` right away; every run that indexed and found a target — TTY or not, "yes" or "no" — also sees `nimbus wow` named as the closing `Try it:`/`Next:` block's last line, and a failed tour never changes `init`'s own exit code. Idempotent.
@@ -346,6 +345,21 @@ nimbus ask "<question>" --devil        # argue against the answer before giving 
 
 Each predicate **refuses** — exit `1` with a structured `missing_substrate` document — rather than answering from an unpopulated substrate, because for a negation a *missing* row produces a result instead of costing one. The same three predicates exist on the gateway engine (reached by `nimbus ask`, and by the desktop/VS Code surfaces sharing its engine) and on the MCP server, but **the guarantee is unequal on purpose**: refusals are structural on both, exclusion counts are appended only on the engine surface. Two bounds worth knowing before you rely on them: an external MCP client's model can report rows and silently drop "12 excluded", and with `[llm].prefer_local = true` the local router has **no tool-calling support at all**, so the predicates are unreachable on that path — a local-only user gets them through the CLI or an MCP client, never through `nimbus ask`.
 
+### v0.1.1 CLI batch and the on-call push (2026-09-10 → 2026-10-02)
+
+```bash
+nimbus changelog [--service <name>] [--since <duration>] [--format markdown|slack|plain] [--json]   # IPC: agents.changelog
+nimbus standup [--since <duration>] [--format markdown|slack|plain] [--json]                        # IPC: agents.standup
+nimbus oncall [--incident <item-id>] [--service <name>] [--since <duration>] [--format markdown|slack|plain] [--json]   # IPC: agents.oncall
+nimbus oncall pushed [list] [--json] | nimbus oncall pushed <incident-id> [--retry] [--json]       # IPC: oncall.pushedList/pushedGet/pushedRetry
+nimbus tail [--filter connector,watcher,sync,extension,hitl,oncall] [--json]                       # follow-only gateway event stream
+nimbus explain last [--json]                                                                       # IPC: ask.explainLast — the newest of the last 10 asks
+```
+
+`USAGE` in each `packages/cli/src/commands/<name>.ts` is canonical. `oncall pushed` reads briefs the
+default-off `[oncall.push]` stored; the `oncall.*`, `ask.*` and `demo.*` namespaces are LAN-forbidden
+and off the Tauri allowlist.
+
 ### Index maintenance
 
 ```bash
@@ -354,6 +368,7 @@ nimbus index reembed --model <id> [--service <s>] [--item-type <t>] [--dry-run |
 nimbus index rebody --dry-run                                 # per-service pending body_complete = 0 counts; no network call
 nimbus index rebody --service <name> --yes [--limit N] [--json]
 nimbus index regraph [--json]                                 # re-run the graph populator over existing rows; idempotent
+nimbus index health [--stale-days N] [--json]                 # index QUALITY: per-connector embedding coverage, staleness, 0-100 score
 ```
 
 **`rebody` is not a local recompute.** It clears a connector's sync watermark and lets the sync run from scratch — real outbound API traffic against the owner's credentials and rate-limit quota. Neither `--dry-run` nor `--yes` ⇒ it makes no IPC call at all and just prints the plan. Depth: the `nimbus-index-body-depth` skill.
@@ -501,7 +516,7 @@ nimbus clip delete <id|url> | --all [--yes]           # delete clips
 
 The browser extension lives in the satellite repo `nimbus-agent/nimbus-web-clipper` and reaches the gateway over HTTP only (`POST /v1/clips`, `/v1/clips/pair/confirm`, `/v1/clips/related`).
 
-### Spine S2 — local compute (all DEFAULT OFF; `exec.*` / `computer.*` / `media.*` are LAN-forbidden and off the Tauri allowlist)
+### Spine S2 — local compute (all DEFAULT OFF; `exec.*` / `computer.*` / `media.*` / `fleet.*` / `toolgen.*` are LAN-forbidden and off the Tauri allowlist)
 
 ```bash
 # Sandboxed code execution — invariant I33 / static D23. [code_execution] enabled = true.
@@ -529,6 +544,17 @@ nimbus media allow-remote <itemId>... --vendor <name>
 nimbus media allow-remote --service <name> --limit N --vendor <name> [--since <days>]   # --limit MANDATORY, capped at 500
 nimbus media grants list
 nimbus media grants revoke <itemId> [--vendor <name>]                                   # an item id is always required
+
+# Overnight sub-agent fleets — invariant I38 / static D28. [fleet] enabled + at least one [[fleet.job]].
+nimbus fleet <status|list|briefs|show|run|digest> [options] [--json]   # briefs [--limit N] [--job ID] [--subject KEY]; run <job> [--force]
+
+# Runtime tool generation — invariants I39/I40 / static D29. [tool_generation] enabled = true.
+nimbus tool create --description <text> --host <h> [--host <h>...] [--credential <host>=<token>]...
+nimbus tool list [--json]
+nimbus tool save <tool-id>                                   # standing approval: signed, survives a restart
+nimbus tool run <tool-id> [--input <json>] [--json]          # saved tools only; exit 0/1/127 = executed/failed/refused
+nimbus tool revoke <tool-id>
+nimbus tool credential set <tool-id> <host> (--bearer <token> | --header <name> <value> | --basic <user> <pass>)
 ```
 
 `allow-remote` refuses outright in non-TTY mode rather than defaulting to "no" — a piped `y` is not a confirmation. The escape hatch for a scripted/acceptance run is the `media.allowRemote` IPC method directly, which is owner-equivalent because it is LAN-forbidden and off the Tauri allowlist. Live-vendor status as of 2026-09-06: **Gemini verified end to end; Anthropic and OpenAI fixture-only.**
@@ -561,19 +587,22 @@ Exceeding either fires `agent.gasLimitReached` and halts new decomposition.
 
 ```
 NIMBUS_UPDATER_URL=<url>               # override update manifest URL (default: official endpoint)
-NIMBUS_UPDATER_DISABLE=true            # disable auto-update entirely
+NIMBUS_UPDATER_DISABLE=1               # disable auto-update entirely (only "1" counts; "true" is ignored)
 NIMBUS_LAN_PORT=<port>                 # override LAN TCP listen port (default 7475)
 NIMBUS_DEV_UPDATER_PUBLIC_KEY=<base64> # override embedded Ed25519 public key (tests only)
 ```
 
 ### LLM model selection
 
-Resolution priority: env > `[llm]` TOML > hardcoded default.
-Bare model ids work; the engine auto-prefixes for Mastra (`claude-*` → `anthropic/...`, `gpt-*` / `o1-*` / `o3-*` / `o4-*` → `openai/...`).
+No environment variable selects a model or supplies an LLM key any more: `v5.0.0` removed the
+`ANTHROPIC_API_KEY` / `OPENAI_API_KEY` fallback, and `v6.0.0` removed the inert `[llm]
+classifier_model` / `remote_model` keys. A cloud model is `[llm.remote.<vendor>] model`, read only
+under a vendor table with `enabled = true` whose key is in the Vault. A bare id
+(`claude-sonnet-4-6`) is prefixed with THAT vendor and an already-qualified one
+(`anthropic/claude-sonnet-4-6`) is used as is (`toRouterModelId` in `engine/agent.ts`); the vendor
+is never guessed from the model name's shape any more.
 
 Local model ids are passed to the local router. With Ollama running on `http://127.0.0.1:11434`, set `[llm].local_model` to any pulled model name and `[llm].prefer_local = true`; `nimbus ask` can then answer open-ended questions from indexed context even when no remote classifier key is configured.
-```
-```
 
 ## Docs site
 
