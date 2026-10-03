@@ -312,10 +312,10 @@ For workflow and token hygiene used in CI, see [`security-hardening.md`](./secur
 Automated vulnerability scans run on every PR and nightly:
 
 - **`bun audit`** — npm dependency advisory checks
-- **`cargo audit`** — Rust dependency advisory checks (Tauri shell)
-- **`cargo deny`** — license compatibility (AGPL-3.0 inbound), unmaintained-crate bans, registry pinning
+- **`cargo audit`** — Rust dependency advisory checks (Tauri shell); on a PR only when it touches `packages/ui/src-tauri`, and on every push and nightly run
+- **`cargo deny`** — license compatibility (AGPL-3.0 inbound), unmaintained-crate bans, registry pinning; same trigger as `cargo audit`
 - **`trivy`** — filesystem vulnerability scanning, SARIF uploaded to GitHub Security tab
-- **`CodeQL`** — static analysis for JS/TS *and* Rust (security-extended queries)
+- **`CodeQL`** — static analysis for JS/TS *and* Rust (security-extended queries); on every PR and push, and weekly rather than nightly
 - **`gitleaks`** — committed-secret detection on PRs and nightly
 - **`OpenSSF Scorecard`** — supply-chain posture, weekly + on default-branch push
 - **`@nimbus-dev/client`** — published from its own repo, [nimbus-agent/nimbus-client](https://github.com/nimbus-agent/nimbus-client), with **npm provenance** (sigstore signature backed by GitHub OIDC); verify with `npm audit signatures`
