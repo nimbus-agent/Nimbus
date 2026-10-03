@@ -4435,6 +4435,7 @@ describe("I41 — a demo-rooted process never reaches the real install", () => {
       telemetryFlush: true,
       embeddingRuntime: true,
       extensionsAutoUpdate: true,
+      chatops: true,
     });
     expect(bootPolicyFor(demo)).toEqual({
       reapAppContainers: false,
@@ -4444,6 +4445,7 @@ describe("I41 — a demo-rooted process never reaches the real install", () => {
       telemetryFlush: false,
       embeddingRuntime: false,
       extensionsAutoUpdate: false,
+      chatops: false,
     });
   });
 
@@ -4615,6 +4617,14 @@ describe("I41 — a demo-rooted process never reaches the real install", () => {
     const end = src.indexOf("\n  });", start);
     expect(end).toBeGreaterThan(start);
     expect(src.slice(start, end)).toContain("...(syncEnabled ? {} : { syncDisabled: true }),");
+  });
+
+  test("clause 6 wiring: ChatOps boots only when the boot policy allows it", async () => {
+    const src = await read("packages/gateway/src/platform/assemble.ts");
+    // One call (plus the definition), handed the policy flag; the guard returns before building anything.
+    expect(src.match(/(?<!function )bootChatopsIntoAssembly\(/g)?.length).toBe(1);
+    expect(src).toContain("chatopsAllowedByBootPolicy: bootPolicy.chatops,");
+    expect(src).toMatch(/if \(!chatopsCfg\.enabled \|\| !chatopsAllowedByBootPolicy\) return undefined;/);
   });
 
   test("clause 6 wiring: assemble.ts gates the updater startup check, the telemetry flush and the extensions auto-update daemon on the boot policy", async () => {

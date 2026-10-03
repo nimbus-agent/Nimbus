@@ -409,6 +409,19 @@ describe("assemblePlatformServices — in-process assembly", () => {
     await services.notifications.show("title", "body");
   });
 
+  it("a demo-rooted assembly does not boot ChatOps even with [chatops] enabled (I41)", async () => {
+    const paths: PlatformPaths = { ...makePaths(), demo: true };
+    rmSync(paths.configDir, { recursive: true, force: true });
+    mkdirSync(paths.configDir, { recursive: true });
+    writeFileSync(
+      join(paths.configDir, "nimbus.toml"),
+      ["[chatops]", "enabled = true", "slack_enabled = true", 'bot_vault_entry = "test-bot"'].join("\n"),
+    );
+    services = await assemblePlatformServices(paths, makeInMemoryVault());
+    expect(services.chatops).toBeUndefined();
+    expect(services.oncallPush.chatopsSinkState()).toBe("none");
+  }, 30000);
+
   it("collectSidecarsFromEnv attaches HTTP + metrics sidecars when ports are set", async () => {
     const paths = makePaths();
     const discoverFreePort = (): number => {

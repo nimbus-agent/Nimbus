@@ -2469,6 +2469,7 @@ async function bootChatopsIntoAssembly(deps: {
   httpSidecarOpts: HttpSidecarOpts;
   sidecarStops: Array<() => void>;
   tribalSendHolder: { current: (target: ReplyTarget, text: string) => Promise<void> };
+  chatopsAllowedByBootPolicy: boolean;
 }): Promise<ChatopsBoot | undefined> {
   const {
     chatopsCfg,
@@ -2485,8 +2486,10 @@ async function bootChatopsIntoAssembly(deps: {
     httpSidecarOpts,
     sidecarStops,
     tribalSendHolder,
+    chatopsAllowedByBootPolicy,
   } = deps;
-  if (!chatopsCfg.enabled) return undefined;
+  // I41: a demo gateway never boots ChatOps, whatever its config says (BootPolicy.chatops).
+  if (!chatopsCfg.enabled || !chatopsAllowedByBootPolicy) return undefined;
   const identityBootRef = identityBoot;
   // E2E seam (NIMBUS_CHATOPS_E2E_SINK_DIR, precedent: NIMBUS_SKIP_EMBEDDING_RUNTIME): swap the
   // real bot-credentialed connector spawn + mesh dispatch for a file-backed mock — the "mock
@@ -3618,6 +3621,7 @@ export async function assemblePlatformServices(
   // the IPC server exists. Identity disabled → every chat user resolves unmapped (fail-closed).
   // (`chatopsBoot` is declared above so the tribal in-chat capture interceptor can late-bind to it.)
   chatopsBoot = await bootChatopsIntoAssembly({
+    chatopsAllowedByBootPolicy: bootPolicy.chatops,
     chatopsCfg,
     policyGate,
     tribalBoot,
