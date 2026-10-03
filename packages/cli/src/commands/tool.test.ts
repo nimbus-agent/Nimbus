@@ -8,6 +8,7 @@ import {
   exitCodeForTool,
   formatToolApprovalPrompt,
   handleToolApprovalBroadcast,
+  handleToolSaveApprovalBroadcast,
   parseToolArgs,
   renderToolInvokeOutcome,
   renderToolList,
@@ -548,17 +549,19 @@ describe("handleToolApprovalBroadcast", () => {
   });
 
   // A review comment asked for `@clack/prompts`'s canonical `CANCEL_SYMBOL` here instead of the
-  // registered symbol below, on the grounds that `isCancel(Symbol.for("clack:cancel"))` is false
-  // and so this test never reaches the cancel arm. The first half is correct and is why the test
-  // changed. The suggested fix is not available: `CANCEL_SYMBOL` is NOT exported by
-  // `@clack/prompts` (v1.7) -- `isCancel` closes over a module-private, UNREGISTERED `Symbol()`,
-  // verified by probing the package -- so importing it would not compile, and there is no value a
-  // test can construct for which `isCancel` returns true.
+  // registered symbol below, on the grounds that the real `isCancel(Symbol.for("clack:cancel"))` is
+  // false, so this test never reaches the cancel arm. That holds for the real package: its cancel
+  // value is an UNREGISTERED `Symbol("clack:cancel")`. It was not exported when this test was
+  // written (v1.7); 1.8.x re-exports it from `@clack/core`, but this file still cannot rely on it.
+  // In a whole-repo run `@clack/prompts` may already be `test/helpers/cli-mocks.ts`'s
+  // process-global replacement, which exports no `CANCEL_SYMBOL` and whose `isCancel` matches
+  // `Symbol.for("clack:cancel")` instead -- so which value is "the cancel" depends on which module
+  // the run happened to load.
   //
-  // What actually makes cancellation safe is therefore not `isCancel` at all: it is the
-  // `answer === true` conjunct, which admits ONLY the boolean. A cancel is one member of the set
-  // of non-`true` answers, so pinning the whole set is a stronger statement than pinning the one
-  // member would have been, and it does not depend on a private symbol staying private.
+  // What makes cancellation safe does not depend on that, because it is not `isCancel` at all: it
+  // is the `answer === true` conjunct, which admits ONLY the boolean. A cancel is one member of the
+  // set of non-`true` answers, so pinning the whole set holds under either module, and is a
+  // stronger statement than pinning the one member would have been.
   test.each([
     ["a foreign symbol standing in for a cancel", Symbol.for("clack:cancel")],
     ["a bare symbol", Symbol("anything")],
@@ -1645,5 +1648,145 @@ describe("runTool revoke -- the success path reports the id it dropped", () => {
     await runTool(["revoke", "tg_a"], h.d);
     expect(h.out.join("")).toContain("Revoked tg_a.");
     expect(h.out.join("")).not.toContain("saved copy");
+  });
+});
+
+describe("the create and save approval handlers -- one normaliser, never one prompt", () => {
+  // Both handlers validate through the same `toToolApprovalPrompt` and differ ONLY in the prompt
+  // they render, which makes rendering the OTHER handler's prompt the one regression that sharing
+  // invites -- and a body-only assertion cannot see it, since both prompts show the body verbatim.
+  // A save rendered with the create copy would under-disclose a STANDING grant as the one-off the
+  // owner already approved once.
+  function harness(answer: unknown) {
+    const shown: string[] = [];
+    const answered: Array<{ requestId: string; approved: boolean }> = [];
+    return {
+      shown,
+      answered,
+      ask: async (message: string) => {
+        shown.push(message);
+        return answer;
+      },
+      respond: async (requestId: string, approved: boolean) => {
+        answered.push({ requestId, approved });
+      },
+    };
+  }
+
+  const REQ = {
+    requestId: "s1",
+    toolName: "generated_tg_a",
+    description: "d",
+    body: "return 1;",
+    approvedHosts: ["a.example.com"],
+    credentialHosts: [],
+  };
+
+  test("the create handler renders the one-off prompt, never the standing-approval one", async () => {
+    const h = harness(true);
+    await handleToolApprovalBroadcast(REQ, h.ask, h.respond);
+    expect(h.shown[0]).toContain('Register the generated tool "generated_tg_a"?');
+    expect(h.shown[0]).not.toContain("Persist the generated tool");
+    expect(h.shown[0]).not.toContain("STANDING APPROVAL");
+  });
+
+  test("the save handler renders the standing-approval prompt, never the one-off one", async () => {
+    const h = harness(true);
+    await handleToolSaveApprovalBroadcast({ ...REQ, persistence: true }, h.ask, h.respond);
+    expect(h.shown[0]).toContain('Persist the generated tool "generated_tg_a"');
+    expect(h.shown[0]).toContain("STANDING APPROVAL");
+    expect(h.shown[0]).not.toContain("Register the generated tool");
+    expect(h.answered).toEqual([{ requestId: "s1", approved: true }]);
+  });
+
+  test("the save handler IGNORES a broadcast with no usable requestId, rather than answering", async () => {
+    for (const bad of [{}, { requestId: "" }, { requestId: 7 }, undefined]) {
+      const h = harness(true);
+      await handleToolSaveApprovalBroadcast(bad, h.ask, h.respond);
+      expect(h.answered).toEqual([]);
+      expect(h.shown).toEqual([]);
+    }
+  });
+
+  test.each([
+    ["false", false],
+    ["a bare symbol", Symbol("anything")],
+    ["undefined, as an abandoned prompt yields", undefined],
+    ["the STRING 'true', not the boolean", "true"],
+    ["1, which is truthy but not true", 1],
+  ])("the save handler treats %s as a denial", async (_label, answer) => {
+    const h = harness(answer);
+    await handleToolSaveApprovalBroadcast(REQ, h.ask, h.respond);
+    expect(h.answered).toEqual([{ requestId: "s1", approved: false }]);
+  });
+
+  test("the save handler renders a malformed broadcast safely, and still answers", async () => {
+    const h = harness(false);
+    await handleToolSaveApprovalBroadcast(
+      {
+        requestId: "s5",
+        toolName: 7,
+        body: {},
+        approvedHosts: "nope",
+        credentialHosts: ["a.example.com", 7],
+        inputSchema: "not a schema",
+        grounding: { kind: "not-a-real-kind" },
+      },
+      h.ask,
+      h.respond,
+    );
+    expect(h.answered).toEqual([{ requestId: "s5", approved: false }]);
+    expect(h.shown[0]).toContain('Persist the generated tool "unknown"');
+    expect(h.shown[0]).toContain("  hosts:            none");
+    // All-or-nothing: one non-string host hides the whole list rather than showing the rest.
+    expect(h.shown[0]).toContain("  credential hosts: none");
+    expect(h.shown[0]).toContain("  parameters:       none");
+    expect(h.shown[0]).toContain("no indexed API specification");
+  });
+
+  test("both prompts show each host list under its OWN label", async () => {
+    // Both lists go through one validator, so the mistake left to make is handing it the wrong
+    // field. Every other test here would pass that, while the owner approved a credential going
+    // to a host they had been shown as credential-free.
+    const req = {
+      ...REQ,
+      approvedHosts: ["a.example.com", "b.example.com"],
+      credentialHosts: ["b.example.com"],
+    };
+    for (const handle of [handleToolApprovalBroadcast, handleToolSaveApprovalBroadcast]) {
+      const h = harness(false);
+      await handle(req, h.ask, h.respond);
+      expect(h.shown[0]).toMatch(/^ *hosts: +a\.example\.com, b\.example\.com$/m);
+      expect(h.shown[0]).toMatch(/^ *credential hosts: +b\.example\.com$/m);
+    }
+  });
+});
+
+describe("runTool list -- each host list is read from its OWN wire field", () => {
+  test("approved and credential hosts render under their own labels, never each other's", async () => {
+    // Both fields go through one validator, so the mistake left to make is reading the wrong one:
+    // the listing would then name a credential-free host as one a credential is sent to.
+    const h = fakeDeps({
+      runWithClient: async (fn) =>
+        fn({
+          onNotification: () => {},
+          call: async () => ({
+            tools: [
+              {
+                toolId: "tg_a",
+                toolName: "t",
+                description: "d",
+                approvedHosts: ["a.example.com", "b.example.com"],
+                credentialHosts: ["b.example.com"],
+                approvedAt: 0,
+              },
+            ],
+          }),
+        }),
+    });
+    await runTool(["list"], h.d);
+    expect(h.out.join("")).toContain(
+      "hosts: a.example.com, b.example.com  credential hosts: b.example.com  approved:",
+    );
   });
 });

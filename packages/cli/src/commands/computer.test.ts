@@ -329,6 +329,25 @@ describe("handleEnvelopeBroadcast", () => {
     expect(shown).toMatch(/no network|NONE/i);
     expect(h.answered).toEqual([{ requestId: "e5", approved: true }]);
   });
+
+  test("each origin list reaches the prompt under its OWN label", async () => {
+    // Both lists go through one validator, so the mistake left to make is handing it the wrong
+    // field. Every other test here would pass that, while the owner approved navigation to the
+    // origins they had been shown as script origins.
+    const h = harness(false);
+    await handleEnvelopeBroadcast(
+      {
+        ...REQ,
+        navigateOrigins: ["https://nav.example.com"],
+        scriptOrigins: ["https://cdn.example.com"],
+      },
+      h.ask,
+      h.respond,
+    );
+    const shown = h.shown[0] ?? "";
+    expect(shown).toMatch(/^ *navigate to: +https:\/\/nav\.example\.com$/m);
+    expect(shown).toMatch(/^ *scripts reach: +https:\/\/cdn\.example\.com$/m);
+  });
 });
 
 describe("handleActionBroadcast", () => {

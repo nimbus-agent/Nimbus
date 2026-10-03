@@ -1,6 +1,10 @@
-import { confirm, isCancel } from "@clack/prompts";
-import { INTERACTIVE_RPC_TIMEOUT_MS } from "../lib/rpc-timeouts.ts";
-import { withGatewayIpc } from "../lib/with-gateway-ipc.ts";
+import {
+  type AskOwner,
+  interactiveCommandDeps,
+  isExplicitApproval,
+  type RespondToApproval,
+  stringArrayOrEmpty,
+} from "../lib/approval-broadcast.ts";
 
 /**
  * Control outcomes, in the SAME 124-127 shell-reserved band `exec.ts`'s `EXEC_EXIT_CODES` uses, and
@@ -583,6 +587,26 @@ function toDraftGrounding(v: unknown): DraftGrounding {
 }
 
 /**
+ * Validate a `toolgen.approvalRequest` or `toolgen.saveApprovalRequest` broadcast into the fields
+ * both prompts display. ONE normaliser for both handlers: the save broadcast carries the create
+ * broadcast's fields plus `persistence`, which nothing here reads -- WHICH prompt the owner sees is
+ * decided by which broadcast arrived, never by a field inside it. Two copies of this were two places
+ * for one prompt's validation to fall behind the other's. Never throws -- a malformed field renders
+ * a safe fallback.
+ */
+function toToolApprovalPrompt(p: ToolApprovalBroadcast): ToolApprovalPrompt {
+  return {
+    toolName: typeof p.toolName === "string" ? p.toolName : "unknown",
+    description: typeof p.description === "string" ? p.description : "",
+    body: typeof p.body === "string" ? p.body : "",
+    approvedHosts: stringArrayOrEmpty(p.approvedHosts),
+    credentialHosts: stringArrayOrEmpty(p.credentialHosts),
+    inputSchema: toToolInputSchema(p.inputSchema),
+    grounding: toDraftGrounding(p.grounding),
+  };
+}
+
+/**
  * Answer one `toolgen.approvalRequest` broadcast. Mirrors `exec.ts`'s `handleApprovalBroadcast`:
  * every field validated (including nested arrays) before use, a broadcast with no usable
  * `requestId` is ignored rather than answered, and only an explicit `true` approves. The prompt
@@ -591,27 +615,14 @@ function toDraftGrounding(v: unknown): DraftGrounding {
  */
 export async function handleToolApprovalBroadcast(
   params: unknown,
-  ask: (message: string) => Promise<unknown>,
-  respond: (requestId: string, approved: boolean) => Promise<unknown>,
+  ask: AskOwner,
+  respond: RespondToApproval,
 ): Promise<void> {
   const p = (params ?? {}) as ToolApprovalBroadcast;
   if (typeof p.requestId !== "string" || p.requestId === "") return;
 
-  const strs = (v: unknown): string[] =>
-    Array.isArray(v) && v.every((e) => typeof e === "string") ? [...(v as string[])] : [];
-
-  const answer = await ask(
-    formatToolApprovalPrompt({
-      toolName: typeof p.toolName === "string" ? p.toolName : "unknown",
-      description: typeof p.description === "string" ? p.description : "",
-      body: typeof p.body === "string" ? p.body : "",
-      approvedHosts: strs(p.approvedHosts),
-      credentialHosts: strs(p.credentialHosts),
-      inputSchema: toToolInputSchema(p.inputSchema),
-      grounding: toDraftGrounding(p.grounding),
-    }),
-  );
-  await respond(p.requestId, !isCancel(answer) && answer === true);
+  const answer = await ask(formatToolApprovalPrompt(toToolApprovalPrompt(p)));
+  await respond(p.requestId, isExplicitApproval(answer));
 }
 
 /** The slice of the IPC client `nimbus tool` uses. Narrow so a test can supply one. */
@@ -636,19 +647,9 @@ export interface RunToolDeps {
 }
 
 const defaultDeps: RunToolDeps = {
-  runWithClient: (fn) =>
-    withGatewayIpc(fn as never, undefined, {
-      // The call can block on the owner answering the approval prompt.
-      requestTimeoutMs: INTERACTIVE_RPC_TIMEOUT_MS,
-    }) as never,
-  ask: (message) => confirm({ message }),
-  sink: {
-    out: (s) => void process.stdout.write(s),
-    err: (s) => void process.stderr.write(s),
-  },
-  setExitCode: (c) => {
-    process.exitCode = c;
-  },
+  // `toolgen.create` / `toolgen.save` can block on the owner answering the approval prompt -- the
+  // reason this command needs the shared base's interactive budget rather than the 30s default.
+  ...interactiveCommandDeps(),
   isInteractiveTty: () => process.stdin.isTTY === true,
 };
 
@@ -729,15 +730,13 @@ function toToolListEntry(raw: unknown): ToolListEntry | undefined {
   if (toolId === undefined || toolName === undefined || description === undefined) {
     return undefined;
   }
-  const strs = (v: unknown): string[] =>
-    Array.isArray(v) && v.every((e) => typeof e === "string") ? [...(v as string[])] : [];
   const approvedAt = typeof r["approvedAt"] === "number" ? r["approvedAt"] : 0;
   return {
     toolId,
     toolName,
     description,
-    approvedHosts: strs(r["approvedHosts"]),
-    credentialHosts: strs(r["credentialHosts"]),
+    approvedHosts: stringArrayOrEmpty(r["approvedHosts"]),
+    credentialHosts: stringArrayOrEmpty(r["credentialHosts"]),
     approvedAt,
     // Malformed/absent degrades to the SAFER, less-alarming reading for each field: not saved,
     // not needing a credential, no disabled reason -- an older or malformed gateway response must
@@ -928,33 +927,21 @@ export function formatToolSaveApprovalPrompt(p: ToolApprovalPrompt): string {
 }
 
 /**
- * Answer one `toolgen.saveApprovalRequest` broadcast. Mirrors `handleToolApprovalBroadcast` field
- * for field, over the SAVE prompt's renderer and the SAVE broker's own respond method
+ * Answer one `toolgen.saveApprovalRequest` broadcast. Validates through the same
+ * `toToolApprovalPrompt` as `handleToolApprovalBroadcast`, and differs from it only in rendering
+ * the SAVE prompt. It answers over the SAVE broker's own respond method
  * (`toolgen.saveApprovalRespond`, wired by the caller) -- never `toolgen.approvalRespond`.
  */
 export async function handleToolSaveApprovalBroadcast(
   params: unknown,
-  ask: (message: string) => Promise<unknown>,
-  respond: (requestId: string, approved: boolean) => Promise<unknown>,
+  ask: AskOwner,
+  respond: RespondToApproval,
 ): Promise<void> {
   const p = (params ?? {}) as ToolApprovalBroadcast;
   if (typeof p.requestId !== "string" || p.requestId === "") return;
 
-  const strs = (v: unknown): string[] =>
-    Array.isArray(v) && v.every((e) => typeof e === "string") ? [...(v as string[])] : [];
-
-  const answer = await ask(
-    formatToolSaveApprovalPrompt({
-      toolName: typeof p.toolName === "string" ? p.toolName : "unknown",
-      description: typeof p.description === "string" ? p.description : "",
-      body: typeof p.body === "string" ? p.body : "",
-      approvedHosts: strs(p.approvedHosts),
-      credentialHosts: strs(p.credentialHosts),
-      inputSchema: toToolInputSchema(p.inputSchema),
-      grounding: toDraftGrounding(p.grounding),
-    }),
-  );
-  await respond(p.requestId, !isCancel(answer) && answer === true);
+  const answer = await ask(formatToolSaveApprovalPrompt(toToolApprovalPrompt(p)));
+  await respond(p.requestId, isExplicitApproval(answer));
 }
 
 async function runSaveCmd(
