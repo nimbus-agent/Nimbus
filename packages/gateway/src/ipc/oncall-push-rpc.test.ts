@@ -98,6 +98,56 @@ test("retry maps refusals to named codes", async () => {
   ).rejects.toMatchObject({ rpcCode: -32001 });
 });
 
+test("no params at all: pushedList uses its defaults, pushedGet reads the newest", async () => {
+  const rt = runtime({ identityResolved: async () => false });
+  expect(await hit("oncall.pushedList", undefined, rt)).toEqual({
+    enabled: true,
+    identity: "unresolved",
+    briefs: [],
+  });
+  expect((await hit("oncall.pushedGet", undefined, rt))["brief"]).toBeNull();
+});
+
+test("pushedRetry retries the trimmed id and returns the row in full", async () => {
+  const row = store.insert(
+    "pagerduty:A",
+    { status: "ok", sessionId: "s", briefMarkdown: "# A", briefJson: "{}" },
+    1,
+  );
+  const asked: string[] = [];
+  const rt = runtime({
+    retry: async (id) => {
+      asked.push(id);
+      return row;
+    },
+  });
+  expect(await hit("oncall.pushedRetry", { incidentId: " pagerduty:A " }, rt)).toEqual({
+    brief: {
+      incidentId: "pagerduty:A",
+      status: "ok",
+      createdAt: 1,
+      retriedAt: null,
+      title: null,
+      briefMarkdown: "# A",
+      failureCode: null,
+      delivery: {},
+    },
+  });
+  expect(asked).toEqual(["pagerduty:A"]);
+});
+
+test("an unexpected retry failure is rethrown as-is, not mapped to a refusal code", async () => {
+  const boom = new Error("disk full");
+  const rt = runtime({
+    retry: async () => {
+      throw boom;
+    },
+  });
+  await expect(
+    dispatchOncallPushRpc("oncall.pushedRetry", { incidentId: "pagerduty:A" }, { runtime: rt }),
+  ).rejects.toBe(boom);
+});
+
 test("an unknown oncall.* method misses (falls through to Method not found)", async () => {
   expect((await dispatchOncallPushRpc("oncall.nope", {}, { runtime: runtime() })).kind).toBe(
     "miss",

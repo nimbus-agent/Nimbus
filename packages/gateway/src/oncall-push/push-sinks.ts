@@ -41,6 +41,16 @@ async function attempt(run: () => void | Promise<void>): Promise<Attempt> {
   }
 }
 
+/** `attempt` for a synchronous sink (`emit`): there is nothing to await, so nothing is awaited. */
+function attemptSync(run: () => void): Attempt {
+  try {
+    run();
+    return { outcome: "delivered" };
+  } catch (e) {
+    return { outcome: "failed", reason: errText(e) };
+  }
+}
+
 export function createPushDeliverer(
   deps: PushSinkDeps,
 ): (items: readonly PushDelivery[]) => Promise<void> {
@@ -56,7 +66,7 @@ export function createPushDeliverer(
   return async (items) => {
     // The event is a machine signal (the desktop panel needs every id) — never capped.
     for (const d of items) {
-      const o = await attempt(() =>
+      const o = attemptSync(() =>
         deps.emit({ incidentId: d.row.incidentId, status: d.row.status }),
       );
       record(d.row.incidentId, "event", o);
@@ -72,7 +82,7 @@ export function createPushDeliverer(
       (a, b) => (b.incident.openedAtMs ?? 0) - (a.incident.openedAtMs ?? 0),
     );
     for (const d of newestFirst.slice(0, PUSH_NOTIFY_CAP)) {
-      const o = await attempt(() => deps.notify(TITLE, bodyFor(d)));
+      const o = await attempt(() => deps.notify(TITLE, bodyFor(d))); // NOSONAR S9382: human-facing toasts are shown one at a time, newest first (the sort above) - concurrent notify calls would let a slow notifier reorder or stack the capped toasts
       record(d.row.incidentId, "toast", o);
     }
     const rest = newestFirst.slice(PUSH_NOTIFY_CAP);

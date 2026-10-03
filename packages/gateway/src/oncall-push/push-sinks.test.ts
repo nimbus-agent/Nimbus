@@ -209,6 +209,50 @@ test("emit succeeds but its record throws → the event is not re-recorded as fa
   expect(attempted).toHaveLength(1);
 });
 
+test("one sink at a time: events in stored order, toasts newest first, each recorded before the next goes out", async () => {
+  const seen: string[] = [];
+  const spy = new Proxy(store, {
+    get(target, prop, receiver) {
+      if (prop === "recordDelivery") {
+        return (id: string, sink: string, o: Parameters<PushStore["recordDelivery"]>[2]) => {
+          seen.push(`record ${sink} ${id}`);
+          return target.recordDelivery(id, sink, o);
+        };
+      }
+      const v = Reflect.get(target, prop, receiver);
+      return typeof v === "function" ? v.bind(target) : v;
+    },
+  });
+  await createPushDeliverer({
+    store: spy,
+    notify: (_t, b) => {
+      seen.push(`toast ${b.split("nimbus oncall pushed ")[1]}`);
+    },
+    emit: (p) => {
+      seen.push(`emit ${p.incidentId}`);
+    },
+    now: () => 1,
+  })([
+    item("pagerduty:e1", "ok", 1),
+    item("pagerduty:e2", "failed", 3),
+    item("pagerduty:e3", "ok", 2),
+  ]);
+  expect(seen).toEqual([
+    "emit pagerduty:e1",
+    "record event pagerduty:e1",
+    "emit pagerduty:e2",
+    "record event pagerduty:e2",
+    "emit pagerduty:e3",
+    "record event pagerduty:e3",
+    "toast pagerduty:e2",
+    "record toast pagerduty:e2",
+    "toast pagerduty:e3",
+    "record toast pagerduty:e3",
+    "toast pagerduty:e1",
+    "record toast pagerduty:e1",
+  ]);
+});
+
 test("a throwing summary toast records overflow rows coalesced WITH the reason", async () => {
   let calls = 0;
   const items = [1, 2, 3, 4].map((n) => item(`pagerduty:${n}`, "ok", n));

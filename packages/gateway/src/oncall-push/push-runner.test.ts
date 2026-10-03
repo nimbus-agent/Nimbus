@@ -331,6 +331,17 @@ describe("push runner", () => {
     expect(store.get("pagerduty:PA")?.failureCode).toBe("brief_error: unknown");
   });
 
+  test("a briefError whose error is not a string says unknown, never [object Object]", async () => {
+    const dispatch: PushDispatch = async (_m, _p, ctx) => {
+      queueMicrotask(() =>
+        ctx.notify("oncall.briefError", { sessionId: "s1", error: { code: "E_BRIEF" } }),
+      );
+      return { sessionId: "s1" };
+    };
+    await makeRunner({ dispatch }).runner.run("pagerduty");
+    expect(store.get("pagerduty:PA")?.failureCode).toBe("brief_error: unknown");
+  });
+
   test("a briefReady with no brief/findings keys stores an empty brief and '{}' findings", async () => {
     const dispatch: PushDispatch = async (_m, _p, ctx) => {
       queueMicrotask(() => ctx.notify("oncall.briefReady", { sessionId: "s1" }));
