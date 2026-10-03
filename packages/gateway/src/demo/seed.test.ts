@@ -151,6 +151,11 @@ describe("seedDemoCorpus", () => {
       reason: "no OS notification implementation on this platform",
     });
     expect(infoCalls).toHaveLength(0); // show() was never even called
+    // The demo config names no ChatOps namespace, so the chat sink posts nothing (I41).
+    expect(rt.store.get("pagerduty:PDEMO412")?.delivery["chatops"]).toMatchObject({
+      outcome: "skipped",
+      reason: "no [oncall.push] chatops_namespace",
+    });
   });
 
   test("the story deploy finishes ~8 minutes before the page", async () => {
