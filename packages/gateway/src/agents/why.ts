@@ -16,6 +16,7 @@ import {
 } from "./_lib/gap-notes.ts";
 import { reverseDependsOn } from "./_lib/graph-traversals.ts";
 import { resolvePrSubject } from "./_lib/pr-subject.ts";
+import { subAgent } from "./_lib/sub-agent.ts";
 import type { SynthesisRunner } from "./_lib/synthesis-llm.ts";
 import { parseRef, resolveWhySubject } from "./_lib/why-subject.ts";
 import type { WhyBrief, WhyFinding, WhyInput, WhyRefInput, WhySubject } from "./_lib/why-types.ts";
@@ -66,21 +67,6 @@ type SubAgentResult = {
   findings?: WhyFinding[];
   gap?: GapNote;
 };
-
-function makeSubAgent(
-  fn: (db: Database, lane: LaneInput) => Promise<SubAgentResult>,
-  db: Database,
-  lane: LaneInput,
-): SubTask {
-  return {
-    taskType: "agent_step",
-    prompt: "",
-    execute: async () => {
-      const out = await fn(db, lane);
-      return { text: JSON.stringify(out), tokensIn: 0, tokensOut: 0 };
-    },
-  };
-}
 
 interface WhyLaneResolution {
   readonly subject: WhySubject | null;
@@ -284,10 +270,11 @@ function collectLaneOutput(results: readonly SubTaskResult[]): {
     }
     // Unguarded `JSON.parse` on purpose, and it stays safe only while this holds: `r.text` on a
     // `done` result is ALWAYS `JSON.stringify` of a locally-typed `SubAgentResult`, produced by
-    // `makeSubAgent` above from one of the six lane functions in this file. No LLM output, no
-    // network payload and no user input reaches it, so the text cannot be malformed and
-    // `findings` cannot be a non-array. A throw inside `execute()` never arrives here either —
-    // the coordinator converts it to `status: "error"`, which the branch above turns into a gap.
+    // `subAgent` (`_lib/sub-agent.ts`) from one of the six lane functions in this file. No LLM
+    // output, no network payload and no user input reaches it, so the text cannot be malformed
+    // and `findings` cannot be a non-array. A throw inside a lane never arrives here either —
+    // `execute()` rejects, and the coordinator converts that to `status: "error"`, which the
+    // branch above turns into a gap.
     //
     // A try/catch here today would be a branch no test could reach, which the branch-coverage
     // floor would then charge us for. If a lane is ever backed by a model or a remote call,
@@ -372,12 +359,12 @@ export async function runWhy(input: WhyInput, ctx: WhyContext): Promise<WhyBrief
   });
 
   const tasks: SubTask[] = [
-    makeSubAgent(subAuthorship, ctx.db, lane),
-    makeSubAgent(subPullRequest, ctx.db, lane),
-    makeSubAgent(subTicket, ctx.db, lane),
-    makeSubAgent(subDiscussion, ctx.db, lane),
-    makeSubAgent(subDriver, ctx.db, lane),
-    makeSubAgent(subDownstream, ctx.db, lane),
+    subAgent(() => subAuthorship(ctx.db, lane)),
+    subAgent(() => subPullRequest(ctx.db, lane)),
+    subAgent(() => subTicket(ctx.db, lane)),
+    subAgent(() => subDiscussion(ctx.db, lane)),
+    subAgent(() => subDriver(ctx.db, lane)),
+    subAgent(() => subDownstream(ctx.db, lane)),
   ];
 
   const results = await coordinator.run(tasks);
@@ -517,7 +504,7 @@ function ticketRowsForPr(db: Database, prEntityId: string): TicketRow[] {
 // Lane 1: authorship
 // ---------------------------------------------------------------------------
 
-async function subAuthorship(db: Database, lane: LaneInput): Promise<SubAgentResult> {
+function subAuthorship(db: Database, lane: LaneInput): SubAgentResult {
   // Line-level by nature: a `prUrl` question never had a file/line subject to
   // begin with, so that absence is the shape of the question, not a gap in
   // anyone's index — nothing here is actionable on the change arm.
@@ -625,7 +612,7 @@ function detectUnresolvedReviewedRelation(db: Database, prEntityId: string): Gap
   };
 }
 
-async function subPullRequest(db: Database, lane: LaneInput): Promise<SubAgentResult> {
+function subPullRequest(db: Database, lane: LaneInput): SubAgentResult {
   const pr = lane.pr;
   if (pr === null) {
     const gap = detectMissingRelationEmit(
@@ -701,7 +688,7 @@ async function subPullRequest(db: Database, lane: LaneInput): Promise<SubAgentRe
 // Lane 3: ticket
 // ---------------------------------------------------------------------------
 
-async function subTicket(db: Database, lane: LaneInput): Promise<SubAgentResult> {
+function subTicket(db: Database, lane: LaneInput): SubAgentResult {
   const pr = lane.pr;
   if (pr === null) return {};
 
@@ -736,7 +723,7 @@ async function subTicket(db: Database, lane: LaneInput): Promise<SubAgentResult>
 // Lane 4: discussion
 // ---------------------------------------------------------------------------
 
-async function subDiscussion(db: Database, lane: LaneInput): Promise<SubAgentResult> {
+function subDiscussion(db: Database, lane: LaneInput): SubAgentResult {
   const targetIds: string[] = [];
   // A commit-message thread genuinely needs the SHA — there is none on the
   // prUrl arm, so this half stays guarded on `lane.blame`.
@@ -811,7 +798,7 @@ async function subDiscussion(db: Database, lane: LaneInput): Promise<SubAgentRes
 // Lane 5: driver
 // ---------------------------------------------------------------------------
 
-async function subDriver(db: Database, lane: LaneInput): Promise<SubAgentResult> {
+function subDriver(db: Database, lane: LaneInput): SubAgentResult {
   const missingEntityGap = detectMissingEntityType(db, "incident");
   if (missingEntityGap !== null) return { gap: missingEntityGap };
 
@@ -880,7 +867,7 @@ async function subDriver(db: Database, lane: LaneInput): Promise<SubAgentResult>
 const NO_SYMBOLS_DETAIL =
   "No indexed code symbols for this file — enable code_index on the root and sync.";
 
-async function subDownstream(db: Database, lane: LaneInput): Promise<SubAgentResult> {
+function subDownstream(db: Database, lane: LaneInput): SubAgentResult {
   // File-shaped by nature — `agents.impact` already answers this question for
   // a `prUrl`, so a missing file subject here is the shape of the question,
   // not a gap in anyone's index.

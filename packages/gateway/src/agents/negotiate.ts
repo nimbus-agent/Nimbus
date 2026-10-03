@@ -29,6 +29,7 @@ import {
   type GitRunner,
   resolveSelfPerson,
 } from "./_lib/self-person.ts";
+import { subAgent } from "./_lib/sub-agent.ts";
 import type { SynthesisRunner } from "./_lib/synthesis-llm.ts";
 
 const DEFAULT_SINCE_MS = 90 * 24 * 60 * 60 * 1000;
@@ -1018,14 +1019,6 @@ function personalDocsSources(personalSources: readonly string[]): NegotiateBrief
   };
 }
 
-function laneTask(execute: () => unknown): SubTask {
-  return {
-    taskType: "agent_step",
-    prompt: "",
-    execute: async () => ({ text: JSON.stringify(execute()), tokensIn: 0, tokensOut: 0 }),
-  };
-}
-
 /**
  * Extracted from `runNegotiate` so it can be unit-tested directly against synthetic
  * `SubTaskResult[]` input: Task 1 wires this mechanism with zero real lanes (`tasks` is
@@ -1255,13 +1248,13 @@ export async function runNegotiate(
     // Same order as `tasks.push` below — the pairing is positional (`SubTaskResult.taskIndex`).
     laneNames.push(...NEGOTIATE_LANE_FIELDS);
     tasks.push(
-      laneTask(() => laneAuthoredPrs(ctx.db, personId, sinceMs)),
-      laneTask(() => laneReviewedPrs(ctx.db, personId, sinceMs)),
-      laneTask(() => laneTickets(ctx.db, personId, sinceMs)),
-      laneTask(() => laneOwnership(ctx.db, personId)),
-      laneTask(() => laneDecisions(ctx.db, personId, sinceMs)),
-      laneTask(() => laneWriting(ctx.db, personId, sinceMs, ctx.personalSources)),
-      laneTask(() => laneIncidents(ctx.db, personId, sinceMs)),
+      subAgent(() => laneAuthoredPrs(ctx.db, personId, sinceMs)),
+      subAgent(() => laneReviewedPrs(ctx.db, personId, sinceMs)),
+      subAgent(() => laneTickets(ctx.db, personId, sinceMs)),
+      subAgent(() => laneOwnership(ctx.db, personId)),
+      subAgent(() => laneDecisions(ctx.db, personId, sinceMs)),
+      subAgent(() => laneWriting(ctx.db, personId, sinceMs, ctx.personalSources)),
+      subAgent(() => laneIncidents(ctx.db, personId, sinceMs)),
     );
   }
   const coordinator = new AgentCoordinator({

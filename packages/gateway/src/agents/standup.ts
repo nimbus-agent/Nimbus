@@ -393,7 +393,7 @@ export async function emitStandupBrief(opts: EmitStandupOpts): Promise<{ session
     briefErrorMethod: "standup.briefError",
     notify: opts.notify,
     ...(opts.runner === undefined ? {} : { runner: opts.runner }),
-    buildBrief: async () =>
+    buildBrief: () =>
       buildStandupBrief({
         db: opts.db,
         nowMs: Date.now(),

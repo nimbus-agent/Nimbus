@@ -227,7 +227,7 @@ export async function emitChangelogBrief(opts: {
     briefErrorMethod: "changelog.briefError",
     notify: opts.notify,
     ...(opts.runner === undefined ? {} : { runner: opts.runner }),
-    buildBrief: async () =>
+    buildBrief: () =>
       buildChangelogBrief({
         db: opts.db,
         nowMs: Date.now(),

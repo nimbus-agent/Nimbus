@@ -37,6 +37,18 @@ describe("subAgent", () => {
     await task.execute();
     expect(calls).toBe(1);
   });
+
+  test("a throwing lane REJECTS execute() rather than throwing synchronously", async () => {
+    // The coordinator turns a rejection into a failed-lane gap. A synchronous throw out of a
+    // function typed `() => Promise<…>` would instead escape every caller that only handles
+    // rejections (`.catch`, `expect(...).rejects`).
+    const task = subAgent(() => {
+      throw new Error("sql read failed");
+    });
+    // Called outside any `expect`: a synchronous throw here would fail this test outright.
+    const pending = task.execute();
+    await expect(pending).rejects.toThrow("sql read failed");
+  });
 });
 
 describe("decode", () => {

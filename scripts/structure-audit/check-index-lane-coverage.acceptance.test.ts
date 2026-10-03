@@ -10,7 +10,7 @@
  *
  * Four bugs are the reason this gate exists, confirmed by hand against the shipped artifact
  * (`docs/structure-audit/index-lane-census.json`):
- *   - `expert.ts:386` reads `item.type = 'commit'` — no writer in the corpus ever writes that
+ *   - `expert.ts:371` reads `item.type = 'commit'` — no writer in the corpus ever writes that
  *     type (a dead lane: `graph_entity` writes `commit`, `item` never does).
  *   - `preflight.ts:166` reads `item.metadata.workflow_name` scoped to `ci_run` — no `ci_run`
  *     writer emits it at all.
@@ -49,7 +49,7 @@ describe("lane census over the real tree", () => {
   test("expert.ts's dead 'commit' item-type read is unmatched", () => {
     const hits = unmatchedAt("commit", "agents/expert.ts");
     expect(hits.length).toBeGreaterThan(0);
-    expect(hits.some((h) => h.line === 386 && h.matchState === "unmatched")).toBe(true);
+    expect(hits.some((h) => h.line === 371 && h.matchState === "unmatched")).toBe(true);
   });
 
   test("preflight's workflow_name read is unmatched (total absence)", () => {

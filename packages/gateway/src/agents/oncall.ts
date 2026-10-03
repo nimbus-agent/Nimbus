@@ -489,7 +489,7 @@ export async function emitOncallBrief(opts: EmitOncallOpts): Promise<{ sessionId
     briefErrorMethod: "oncall.briefError",
     notify: opts.notify,
     ...(opts.runner === undefined ? {} : { runner: opts.runner }),
-    buildBrief: async () =>
+    buildBrief: () =>
       buildOncallBrief({
         db: opts.db,
         nowMs: Date.now(),

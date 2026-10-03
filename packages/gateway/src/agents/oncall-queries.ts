@@ -48,7 +48,8 @@ const PAGERDUTY_SERVICE = "pagerduty";
  * with noise until nobody runs it.
  */
 function isActiveStatus(status: string | null): boolean {
-  return status === null || status.toLowerCase() !== "resolved";
+  // `null?.toLowerCase()` is `undefined`, which is not "resolved": a missing status reads ACTIVE.
+  return status?.toLowerCase() !== "resolved";
 }
 
 type RawItemRow = {
@@ -498,6 +499,6 @@ export function selectPriorIncidents(
     });
   }
   return out
-    .sort((a, b) => (b.openedAtMs ?? 0) - (a.openedAtMs ?? 0) || codeUnitCompare(a.id, b.id))
+    .toSorted((a, b) => (b.openedAtMs ?? 0) - (a.openedAtMs ?? 0) || codeUnitCompare(a.id, b.id))
     .slice(0, limit);
 }

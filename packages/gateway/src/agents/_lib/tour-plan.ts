@@ -1,7 +1,11 @@
 import { TOUR_SELECTORS, type TourCandidate, type TourSelectorCtx } from "./tour-selectors.ts";
 import type { TourPlan, TourSkip, TourStep, TourStepKind } from "./tour-types.ts";
 
-export const TOUR_PRIORITY = [
+/** `T` itself when it names every {@link TourStepKind}, otherwise `never`. */
+type TotalOverKinds<T extends readonly TourStepKind[]> =
+  Exclude<TourStepKind, T[number]> extends never ? T : never;
+
+const PRIORITY_ORDER = [
   "oncall",
   "why",
   "owners",
@@ -9,11 +13,9 @@ export const TOUR_PRIORITY = [
   "decisions",
   "glossary",
 ] as const satisfies readonly TourStepKind[];
-// Compile-time totality: a kind missing from TOUR_PRIORITY makes this `never`, which `true` is not assignable to.
-type PriorityIsTotal =
-  Exclude<TourStepKind, (typeof TOUR_PRIORITY)[number]> extends never ? true : never;
-const PRIORITY_IS_TOTAL: PriorityIsTotal = true;
-void PRIORITY_IS_TOTAL;
+// Compile-time totality: a kind missing from PRIORITY_ORDER makes the annotation `never`, which
+// the tuple is not assignable to — so the omission fails the build here, with no runtime check.
+export const TOUR_PRIORITY: TotalOverKinds<typeof PRIORITY_ORDER> = PRIORITY_ORDER;
 
 /** The CLI subcommand each kind runs. Total by type. */
 const SUBCOMMAND: Readonly<Record<TourStepKind, string>> = {
@@ -52,7 +54,8 @@ const BARE_SAFE_RE = /^[A-Za-z0-9._\-/\\:=+@]+$/;
  */
 function quoteForDisplay(arg: string): string {
   if (BARE_SAFE_RE.test(arg)) return arg;
-  return `"${arg.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
+  const escaped = arg.replaceAll("\\", "\\\\").replaceAll('"', String.raw`\"`);
+  return `"${escaped}"`;
 }
 
 /** `command` and `args` come from ONE value here, so the printed line and the executed step cannot drift. */
@@ -91,7 +94,7 @@ export async function buildTourPlan(
   const skipped: TourSkip[] = [];
   for (const kind of TOUR_PRIORITY) {
     try {
-      const r = await selectors[kind](ctx);
+      const r = await selectors[kind](ctx); // NOSONAR S9382: only standup awaits (resolveSelf); the other 5 selectors are synchronous bun:sqlite reads on one connection, so Promise.all would gain nothing measurable
       if ("skip" in r) {
         skipped.push({ kind, reason: r.skip });
       } else {

@@ -90,50 +90,91 @@ export type SynthesisProvenance =
 
 export type SynthesisOutcome = { markdown: string; provenance: SynthesisProvenance };
 
+/**
+ * One arm per brief kind, each narrowing `brief` to its own renderer's input. A `switch` rather
+ * than an `if` chain because this is ONE flat dispatch, which cognitive complexity scores once
+ * rather than per `if` (the arms are still tested in order at run time, exactly as the chain
+ * was); `default` keeps the exhaustiveness check, so a new kind with no renderer is still a
+ * compile error here.
+ *
+ * `switch (true)` with a `brief.kind === "…"` test per arm, not `switch (brief.kind)`: the I31
+ * enforcement test ("the reserved registry is total over the brief union", in
+ * `security-invariants.test.ts`) reads the set of dispatched kinds from exactly that comparison.
+ * Changing the arms' shape means changing that scraper in the same commit.
+ */
 function deterministicRender(brief: SynthInput, opts?: RenderOpts): string {
-  if (brief.kind === "expert") return renderExpert(brief, opts);
-  if (brief.kind === "impact") return renderImpact(brief, opts);
-  if (brief.kind === "catchup") return renderCatchup(brief, opts);
-  if (brief.kind === "ghost") return renderGhost(brief, opts);
-  if (brief.kind === "conflict") return renderConflict(brief, opts);
-  if (brief.kind === "janitor") return renderJanitor(brief, opts);
-  if (brief.kind === "preflight") return renderPreflight(brief, opts);
-  if (brief.kind === "why") return renderWhy(brief, opts);
-  if (brief.kind === "glossary") return renderGlossary(brief, opts);
-  if (brief.kind === "decisions") return renderDecisions(brief, opts);
-  if (brief.kind === "ownership") return renderOwnership(brief, opts);
-  if (brief.kind === "huddle") return renderHuddle(brief, opts);
-  if (brief.kind === "premortem") return renderPremortem(brief, opts);
-  if (brief.kind === "negotiate") return renderNegotiate(brief, opts);
-  if (brief.kind === "changelog") return renderChangelog(brief, opts);
-  if (brief.kind === "standup") return renderStandup(brief, opts);
-  if (brief.kind === "oncall") return renderOncall(brief, opts);
-  return assertNeverBrief(brief);
+  switch (true) {
+    case brief.kind === "expert":
+      return renderExpert(brief, opts);
+    case brief.kind === "impact":
+      return renderImpact(brief, opts);
+    case brief.kind === "catchup":
+      return renderCatchup(brief, opts);
+    case brief.kind === "ghost":
+      return renderGhost(brief, opts);
+    case brief.kind === "conflict":
+      return renderConflict(brief, opts);
+    case brief.kind === "janitor":
+      return renderJanitor(brief, opts);
+    case brief.kind === "preflight":
+      return renderPreflight(brief, opts);
+    case brief.kind === "why":
+      return renderWhy(brief, opts);
+    case brief.kind === "glossary":
+      return renderGlossary(brief, opts);
+    case brief.kind === "decisions":
+      return renderDecisions(brief, opts);
+    case brief.kind === "ownership":
+      return renderOwnership(brief, opts);
+    case brief.kind === "huddle":
+      return renderHuddle(brief, opts);
+    case brief.kind === "premortem":
+      return renderPremortem(brief, opts);
+    case brief.kind === "negotiate":
+      return renderNegotiate(brief, opts);
+    case brief.kind === "changelog":
+      return renderChangelog(brief, opts);
+    case brief.kind === "standup":
+      return renderStandup(brief, opts);
+    case brief.kind === "oncall":
+      return renderOncall(brief, opts);
+    default:
+      return assertNeverBrief(brief);
+  }
 }
 
 /** Test-only re-export: the all-kinds `omitReserved` table test in
  *  `reserved-sections.coverage.test.ts` must exercise the real dispatch, not a copy of it. */
 export const deterministicRenderForTest = deterministicRender;
 
+/**
+ * The `tool` name each brief is enveloped under (`wrapToolOutput`, I11) when it is handed to the
+ * model. Total over the brief kinds, so a new kind is a compile error until it is named here —
+ * the same guarantee the exhaustive dispatch above gives. Note `conflict` maps to the PLURAL
+ * `agents.conflicts`: that is the method name, not a typo.
+ */
+const TOOL_NAME_BY_KIND: Readonly<Record<SynthInput["kind"], string>> = {
+  expert: "agents.expert",
+  impact: "agents.impact",
+  catchup: "agents.catchup",
+  ghost: "agents.ghost",
+  conflict: "agents.conflicts",
+  janitor: "agents.janitor",
+  preflight: "agents.preflight",
+  why: "agents.why",
+  glossary: "agents.glossary",
+  decisions: "agents.decisions",
+  ownership: "agents.ownership",
+  huddle: "agents.huddle",
+  premortem: "agents.premortem",
+  negotiate: "agents.negotiate",
+  changelog: "agents.changelog",
+  standup: "agents.standup",
+  oncall: "agents.oncall",
+};
+
 function toolNameFor(brief: SynthInput): string {
-  if (brief.kind === "expert") return "agents.expert";
-  if (brief.kind === "impact") return "agents.impact";
-  if (brief.kind === "catchup") return "agents.catchup";
-  if (brief.kind === "ghost") return "agents.ghost";
-  if (brief.kind === "conflict") return "agents.conflicts";
-  if (brief.kind === "janitor") return "agents.janitor";
-  if (brief.kind === "preflight") return "agents.preflight";
-  if (brief.kind === "why") return "agents.why";
-  if (brief.kind === "glossary") return "agents.glossary";
-  if (brief.kind === "decisions") return "agents.decisions";
-  if (brief.kind === "ownership") return "agents.ownership";
-  if (brief.kind === "huddle") return "agents.huddle";
-  if (brief.kind === "premortem") return "agents.premortem";
-  if (brief.kind === "negotiate") return "agents.negotiate";
-  if (brief.kind === "changelog") return "agents.changelog";
-  if (brief.kind === "standup") return "agents.standup";
-  if (brief.kind === "oncall") return "agents.oncall";
-  return assertNeverBrief(brief);
+  return TOOL_NAME_BY_KIND[brief.kind];
 }
 
 const DETERMINISTIC_FOOTER =
