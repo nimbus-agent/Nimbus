@@ -2876,55 +2876,45 @@ describe("I31 — disclosure integrity: a synthesized brief never says less than
     }
   });
 
-  test("I31: the renderer and the guard both CALL the one changelog disclosure builder", async () => {
-    // The invariant's single-definition property is a claim about PRODUCTION WIRING, and an
-    // import assertion cannot see it: `brief-contract.ts` could import `changelogDisclosures`
-    // and return `[]` for the kind, or `render.ts` could import it and inline its own prose,
-    // and every unit test over the builder would stay green while the brief shipped an
-    // unguarded — or a second, drifting — disclosure. So this asserts the CALL on both sides.
-    const render = await read("packages/gateway/src/agents/_lib/render.ts");
-    const contract = await read("packages/gateway/src/agents/_lib/brief-contract.ts");
-    expect(render).toContain("changelogDisclosures(");
-    expect(contract).toContain("changelogDisclosures(");
-    // And that the guard reaches it on the changelog kind specifically, rather than through a
-    // branch changelog never takes.
-    expect(contract).toContain('brief.kind === "changelog"');
-  });
-
-  test("I31: the renderer and the guard both CALL the one standup disclosure builder", async () => {
-    // Same wiring claim as the changelog case above, for the same reason: an import assertion
-    // cannot tell a guard that CALLS the builder from one that imports it and returns `[]` for
-    // the kind, and every unit test over the builder stays green either way.
-    const render = await read("packages/gateway/src/agents/_lib/render.ts");
-    const contract = await read("packages/gateway/src/agents/_lib/brief-contract.ts");
-    expect(render).toContain("standupDisclosures(");
-    expect(contract).toContain("standupDisclosures(");
-    expect(contract).toContain('brief.kind === "standup"');
-  });
-
-  test("I31: the renderer and the guard both CALL the one oncall disclosure builder", async () => {
-    // Same wiring claim as the changelog and standup cases above. It matters more here than on
-    // either of them: `oncall`'s preamble carries the sync-freshness disclosure, which qualifies
-    // WHICH INCIDENT the brief selected rather than a count — a guard that imported the builder
-    // and returned `[]` for this kind would let a rewrite drop the one sentence standing between
-    // a reader and a brief about an incident that closed an hour ago.
-    const render = await read("packages/gateway/src/agents/_lib/render.ts");
-    const contract = await read("packages/gateway/src/agents/_lib/brief-contract.ts");
-    expect(render).toContain("oncallDisclosures(");
-    expect(contract).toContain("oncallDisclosures(");
-    expect(contract).toContain('brief.kind === "oncall"');
-  });
+  // The invariant's single-definition property is a claim about PRODUCTION WIRING, and an import
+  // assertion cannot see it: `brief-contract.ts` could import a kind's builder and return `[]` for
+  // the kind, or `render.ts` could import it and inline its own prose, and every unit test over
+  // the builder would stay green while the brief shipped an unguarded — or a second, drifting —
+  // disclosure. So each row asserts the CALL on both sides, AND that the guard reaches it on that
+  // kind's own branch rather than through a branch the kind never takes.
+  //
+  // It matters most for `oncall`: its preamble carries the sync-freshness disclosure, which
+  // qualifies WHICH INCIDENT the brief selected rather than a count — a guard that imported the
+  // builder and returned `[]` for that kind would let a rewrite drop the one sentence standing
+  // between a reader and a brief about an incident that closed an hour ago.
+  //
+  // One row per kind (S5976): the next kind with interleaved disclosures is a row here, not a
+  // fourth copy of the same body.
+  test.each([
+    ["changelog", "changelogDisclosures"],
+    ["standup", "standupDisclosures"],
+    ["oncall", "oncallDisclosures"],
+  ])(
+    "I31: the renderer and the guard both CALL the one %s disclosure builder",
+    async (kind, builder) => {
+      const render = await read("packages/gateway/src/agents/_lib/render.ts");
+      const contract = await read("packages/gateway/src/agents/_lib/brief-contract.ts");
+      expect(render).toContain(`${builder}(`);
+      expect(contract).toContain(`${builder}(`);
+      expect(contract).toContain(`brief.kind === "${kind}"`);
+    },
+  );
 
   test("I31: EVERY interleaved disclosure builder is called by both the renderer and the guard", async () => {
-    // The three tests above are hand-written, one per kind, and that shape has now failed twice in
-    // this repo for the same reason: a hand-maintained list cannot fail for a kind nobody added to
-    // it. `reserved-sections.coverage.test.ts`'s `ALL_KINDS` silently skipped `standup` (guarded by
-    // its own `toHaveLength`, so the list and the assertion stayed self-consistent), and
-    // `disclosure-anchor-coverage.test.ts` silently skipped `oncall`.
+    // The per-kind rows above are a hand-written list, one per kind, and that shape has now failed
+    // twice in this repo for the same reason: a hand-maintained list cannot fail for a kind nobody
+    // added to it. `reserved-sections.coverage.test.ts`'s `ALL_KINDS` silently skipped `standup`
+    // (guarded by its own `toHaveLength`, so the list and the assertion stayed self-consistent),
+    // and `disclosure-anchor-coverage.test.ts` silently skipped `oncall`.
     //
     // This closes the class by DERIVING the set from `brief-disclosures.ts`'s own exports rather
     // than restating it: a builder added there and wired into neither file — or into only one —
-    // fails here without anyone remembering to extend a list. The per-kind tests above are kept
+    // fails here without anyone remembering to extend a list. The per-kind rows above are kept
     // because they additionally assert the guard reaches the builder on that kind's own branch
     // (`brief.kind === "…"`), which the export name alone cannot tell us: the kind for
     // `negotiateOwnershipDisclosures` is `negotiate`, not `negotiateOwnership`.

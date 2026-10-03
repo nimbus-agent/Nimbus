@@ -36,7 +36,7 @@ export interface GdprPurgeRetryHandle {
 export function buildGdprPurgeRetryDeps(db: Database, opts: StartGdprPurgeRetryOptions): RetryDeps {
   const clock = opts.nowMs ?? Date.now;
   const store = new GdprPurgeStore(db);
-  const requestPurge = opts.requestPurge ?? (async () => null);
+  const requestPurge = opts.requestPurge ?? (() => Promise.resolve(null));
   return {
     store,
     requestPurge,

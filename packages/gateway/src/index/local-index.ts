@@ -202,7 +202,7 @@ function rowToRankedItem(
     indexedType: String(row.type),
     ...(trimmed === "" ? {} : { canonicalUrl: trimmed }),
     ...(duplicates !== undefined && duplicates.length > 0 ? { duplicates } : {}),
-    ...(components ?? {}),
+    ...components,
   };
   return item;
 }
@@ -724,7 +724,7 @@ export class LocalIndex {
         // Snapshot the backfill pass when RANKING starts, not before the query embedding: that
         // await can span the whole embedding budget, during which a pass may start or finish.
         const retrieval = retrievalFromOutcome(outcome, ss.activeBackfillPass());
-        const hybridResults = await hybridSearch(this.db, hybridOpts);
+        const hybridResults = hybridSearch(this.db, hybridOpts);
 
         const normRrf = normalizeHigherIsBetter(hybridResults.map((h) => h.rrfScore));
         const now = options?.nowMs ?? Date.now();

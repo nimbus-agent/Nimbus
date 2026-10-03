@@ -53,24 +53,24 @@ function insertVec384AndEmbeddingChunk(
   );
 }
 
-async function bm25ThenHybridWithEmbedding(
+function bm25ThenHybridWithEmbedding(
   db: Database,
   query: string,
   queryEmbedding: Float32Array,
-): Promise<{ bm25: HybridSearchResult[]; hybrid: HybridSearchResult[] }> {
+): { bm25: HybridSearchResult[]; hybrid: HybridSearchResult[] } {
   const common = { query, limit: 50, embeddingModel: MODEL, semantic: true as const };
-  const bm25 = await hybridSearch(db, common);
-  const hybrid = await hybridSearch(db, { ...common, queryEmbedding });
+  const bm25 = hybridSearch(db, common);
+  const hybrid = hybridSearch(db, { ...common, queryEmbedding });
   return { bm25, hybrid };
 }
 
-async function computeCaseMRR(
+function computeCaseMRR(
   db: Database,
   targetId: string,
   query: string,
   queryEmbedding: Float32Array,
-): Promise<{ mrrBm25: number; mrrHybrid: number }> {
-  const { bm25, hybrid } = await bm25ThenHybridWithEmbedding(db, query, queryEmbedding);
+): { mrrBm25: number; mrrHybrid: number } {
+  const { bm25, hybrid } = bm25ThenHybridWithEmbedding(db, query, queryEmbedding);
   const ids = (results: HybridSearchResult[]): string[] => results.map((r) => r.item.id);
   return {
     mrrBm25: reciprocalRankAtK(targetId, ids(bm25), K),
@@ -79,7 +79,7 @@ async function computeCaseMRR(
 }
 
 describe.skipIf(!VEC_AVAILABLE)("search quality (hybrid vs BM25 MRR@10)", () => {
-  test("mean hybrid MRR@10 improves BM25 by ≥10% or rescues zero-recall queries", async () => {
+  test("mean hybrid MRR@10 improves BM25 by ≥10% or rescues zero-recall queries", () => {
     const db = new Database(":memory:");
     LocalIndex.ensureSchema(db);
     const now = Date.now();
@@ -114,7 +114,7 @@ describe.skipIf(!VEC_AVAILABLE)("search quality (hybrid vs BM25 MRR@10)", () => 
     insertVec384AndEmbeddingChunk(db, 2, vRenewal, "bench:renewal", "renewal chunk", now);
 
     const queryA = "refresh OAuth tokens";
-    const { mrrBm25: mrrBm25A, mrrHybrid: mrrHybridA } = await computeCaseMRR(
+    const { mrrBm25: mrrBm25A, mrrHybrid: mrrHybridA } = computeCaseMRR(
       db,
       "bench:renewal",
       queryA,
@@ -151,7 +151,7 @@ describe.skipIf(!VEC_AVAILABLE)("search quality (hybrid vs BM25 MRR@10)", () => 
     const qKw = new Float32Array(384);
     qKw[0] = 1;
     qKw[1] = 0.03;
-    const { mrrBm25: mrrBm25B, mrrHybrid: mrrHybridB } = await computeCaseMRR(
+    const { mrrBm25: mrrBm25B, mrrHybrid: mrrHybridB } = computeCaseMRR(
       db,
       "bench:vec",
       queryB,
@@ -188,7 +188,7 @@ describe.skipIf(!VEC_AVAILABLE)("search quality (hybrid vs BM25 MRR@10)", () => 
     const qZ = new Float32Array(384);
     qZ[5] = 1;
     qZ[6] = 0.35;
-    const { mrrBm25: mrrBm25C, mrrHybrid: mrrHybridC } = await computeCaseMRR(
+    const { mrrBm25: mrrBm25C, mrrHybrid: mrrHybridC } = computeCaseMRR(
       db,
       "bench:target",
       queryC,
@@ -205,7 +205,7 @@ describe.skipIf(!VEC_AVAILABLE)("search quality (hybrid vs BM25 MRR@10)", () => 
 });
 
 describe.skipIf(!VEC_AVAILABLE)("search quality (code_symbol body vs title)", () => {
-  test("hybrid surfaces semantic body match when title omits query wording", async () => {
+  test("hybrid surfaces semantic body match when title omits query wording", () => {
     const db = new Database(":memory:");
     LocalIndex.ensureSchema(db);
     const now = Date.now();
@@ -239,7 +239,7 @@ describe.skipIf(!VEC_AVAILABLE)("search quality (code_symbol body vs title)", ()
     const qEmbed = new Float32Array(384);
     qEmbed[7] = 1;
     qEmbed[8] = 0.1;
-    const { mrrBm25, mrrHybrid } = await computeCaseMRR(db, "bench:target-fn", query, qEmbed);
+    const { mrrBm25, mrrHybrid } = computeCaseMRR(db, "bench:target-fn", query, qEmbed);
     expect(mrrBm25).toBe(0);
     expect(mrrHybrid).toBeGreaterThan(0);
   });

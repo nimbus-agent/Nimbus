@@ -116,13 +116,18 @@ export function buildTribalBoot(deps: TribalBootDeps): TribalBoot {
 
   let running = true;
 
+  // `TribalRpcCtx` types `start`/`stop`/`dismiss` as Promise-returning; none of them awaits. A flag
+  // flip cannot throw, so a resolved Promise is the whole contract. `dismiss` writes SQLite, which
+  // can throw, so `Promise.try` keeps that a REJECTION, exactly as the former `async` did.
   const rpcCtx: TribalRpcCtx = {
     status: () => ({ enabled: running, clusters: store.count() }),
-    start: async () => {
+    start: () => {
       running = true;
+      return Promise.resolve();
     },
-    stop: async () => {
+    stop: () => {
       running = false;
+      return Promise.resolve();
     },
     list: (status) => {
       if (status === undefined || status === "") return store.listAll();
@@ -131,9 +136,10 @@ export function buildTribalBoot(deps: TribalBootDeps): TribalBoot {
       }
       return store.listByStatus(status as TribalStatus);
     },
-    dismiss: async (clusterId) => {
-      store.markDismissed(clusterId, { now: now(), cooldownUntil: now() + cooldownMs });
-    },
+    dismiss: (clusterId) =>
+      Promise.try(() => {
+        store.markDismissed(clusterId, { now: now(), cooldownUntil: now() + cooldownMs });
+      }),
     scan: async () => {
       // Re-evaluate pending clusters that crossed the threshold but were never suggested (e.g. the
       // suggestion post failed). Fires a suggestion for each qualifying cluster.
@@ -144,7 +150,7 @@ export function buildTribalBoot(deps: TribalBootDeps): TribalBoot {
         const inWindow = c.lastSeen - c.firstSeen <= windowMs;
         if (c.occurrenceCount >= deps.cfg.minOccurrences && inWindow) {
           try {
-            await postSuggestion({ send: deps.send, store, now }, c);
+            await postSuggestion({ send: deps.send, store, now }, c); // NOSONAR S9382: each suggestion is an outbound ChatOps post (a ledgered I29 chatops row when ChatOps is live) under the chat platform's rate limit, sent one at a time in cluster order
             fired++;
           } catch (err) {
             deps.log?.(

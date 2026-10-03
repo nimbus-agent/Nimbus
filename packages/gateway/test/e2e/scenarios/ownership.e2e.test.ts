@@ -144,7 +144,7 @@ describe("I29 — agents.ownership egress-ledger coverage", () => {
 // dispatch chokepoint.
 describe("I29 — agents.ownership over HTTP", () => {
   test("POST /v1/agents/ownership appends EXACTLY ONE source_type='http' row", async () => {
-    const s = await startAgentTestServer();
+    const s = startAgentTestServer();
     try {
       const res = await fetch(`http://127.0.0.1:${String(s.port)}/v1/agents/ownership`, {
         method: "POST",

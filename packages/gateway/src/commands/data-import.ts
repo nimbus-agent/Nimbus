@@ -80,7 +80,7 @@ export async function runDataImport(input: RunDataImportInput): Promise<RunDataI
   const encrypted = JSON.parse(
     readFileSync(join(stage, "vault-manifest.json.enc"), "utf8"),
   ) as VaultManifestBlob;
-  const plaintext = await decryptVaultManifest(encrypted, {
+  const plaintext = decryptVaultManifest(encrypted, {
     ...(input.passphrase === undefined ? {} : { passphrase: input.passphrase }),
     ...(input.recoverySeed === undefined ? {} : { seed: input.recoverySeed }),
   });
@@ -90,7 +90,7 @@ export async function runDataImport(input: RunDataImportInput): Promise<RunDataI
   let oauthFlagged = 0;
   try {
     for (const e of entries) {
-      await input.vault.set(e.key, e.value);
+      await input.vault.set(e.key, e.value); // NOSONAR S9382: fail-fast restore - writtenKeys must hold exactly the keys written before a failure, for the rollback below
       writtenKeys.push(e.key);
       // audit-ignore-next-line D11-vault-key (shape-check on already-restored entry, not vault-key construction)
       if (e.key.endsWith(".oauth") || e.key.includes(".oauth.")) oauthFlagged += 1;
@@ -101,7 +101,7 @@ export async function runDataImport(input: RunDataImportInput): Promise<RunDataI
     // Index/watcher/workflow/extension/profile payloads are restored in future integration work.
   } catch (err) {
     for (const key of writtenKeys) {
-      await input.vault.delete(key).catch(() => {});
+      await input.vault.delete(key).catch(() => {}); // NOSONAR S9382: the macOS vault's delete rewrites one shared key-index file (read-modify-write); concurrent deletes would lose index updates
     }
     throw err;
   }

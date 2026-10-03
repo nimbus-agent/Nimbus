@@ -356,7 +356,7 @@ describe("nimbus wow: tour.plan and locality.report over a real gateway socket",
 
       // The seeded Acme demo corpus yields exactly 3 offerable steps (oncall/owners/standup);
       // why/decisions skip (no indexed symbols in configured roots / no extracted decisions).
-      expect(plan.steps.length).toBe(3);
+      expect(plan.steps).toHaveLength(3);
       for (const step of plan.steps) {
         expect(step.args).not.toContain("--demo");
         expect(step.command.startsWith("nimbus --demo ")).toBe(true);
@@ -374,7 +374,7 @@ describe("nimbus wow: tour.plan and locality.report over a real gateway socket",
       }>("locality.report", {});
 
       const byName = report.listeners.filter((l) => l.name === "ipc");
-      expect(byName.length).toBe(1);
+      expect(byName).toHaveLength(1);
       expect(report.listeners.some((l) => l.name === "http")).toBe(false);
       expect(report.listeners.some((l) => l.name === "metrics")).toBe(false);
       // A demo gateway never enables `[federation]` (default off; the demo seed writes no
@@ -383,7 +383,7 @@ describe("nimbus wow: tour.plan and locality.report over a real gateway socket",
       // block) never runs either. Confirmed against `platform/assemble.ts` and the demo seed
       // config writer (`demo/seed.ts`'s `writeDemoConfig`) before asserting the full array here —
       // `address` is a per-run pipe/socket name, so this checks shape/count, not the literal path.
-      expect(report.listeners.length).toBe(1);
+      expect(report.listeners).toHaveLength(1);
       expect(report.listeners[0]?.name).toBe("ipc");
       expect(report.listeners[0]?.loopback).toBe(true);
 

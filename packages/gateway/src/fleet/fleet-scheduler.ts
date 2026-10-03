@@ -153,6 +153,15 @@ interface RunTally {
 
 type SweepJobResult = "succeeded" | "failed" | "yielded";
 
+/** What every job's turn within ONE run shares: its open row, the expiry, the tally, the flags. */
+interface JobWalk {
+  readonly runId: string;
+  readonly expiresAt: number;
+  readonly tally: RunTally;
+  readonly force: boolean;
+  readonly namedJob: boolean;
+}
+
 export class FleetScheduler {
   private timer: ReturnType<typeof setInterval> | undefined;
 
@@ -384,7 +393,7 @@ export class FleetScheduler {
     for (const [i, subject] of window.entries()) {
       if (i > 0 && !(await this.stillAdmitted(tally.subjectsAttempted, force))) return "yielded";
       tally.subjectsAttempted += 1;
-      const error = await this.runSweepSubject(job, subject, runId, expiresAt);
+      const error = await this.runSweepSubject(job, subject, runId, expiresAt); // NOSONAR S9382: one agent run at a time on idle local hardware (the sequential-invoker contract), with admission re-probed between subjects and the rotation cursor advanced after each
       if (error === null) {
         succeeded += 1;
         tally.subjectsCompleted += 1;
@@ -403,6 +412,69 @@ export class FleetScheduler {
       `all ${String(window.length)} sweep subjects failed; first: ${firstError ?? "unknown"}`,
     );
     return "failed";
+  }
+
+  /**
+   * The job walk: every job in scope, in order. Each job passes the same two gates in the same
+   * order — host admission, then the schedule — before it gets its turn. Returns `"yielded"` the
+   * moment a unit boundary loses admission or a sweep yields part-way, `"completed"` once every job
+   * has been seen. It never closes the run row: `execute` does, for every outcome.
+   */
+  private async runJobsInScope(
+    jobs: readonly NimbusFleetJobToml[],
+    walk: JobWalk,
+  ): Promise<"yielded" | "completed"> {
+    const { tally } = walk;
+    for (const job of jobs) {
+      // Keyed on SUBJECTS attempted: one counter across both job kinds, so admission is re-checked
+      // at every unit boundary (a config-named job is one unit).
+      if (!(await this.stillAdmitted(tally.subjectsAttempted, walk.force))) return "yielded";
+
+      // Due check AND backoff, both inside `isJobDue`. NAMING a job (not `--force`) is what
+      // overrides the schedule: an owner asking for one job by name has made the decision this
+      // check exists to make on their behalf. It overrides neither the capability, nor
+      // eligibility, nor I38's budget. `--force` deliberately does NOT reach here — its scope is
+      // host admission, and a scheduled tick passes neither flag.
+      if (
+        !walk.namedJob &&
+        !isJobDue(job, this.deps.store.loadJobState(job.name), this.deps.now())
+      ) {
+        tally.skippedNotDue += 1;
+        continue;
+      }
+
+      tally.attempted += 1;
+      if ((await this.runDueJob(job, walk)) === "yielded") return "yielded";
+    }
+    return "completed";
+  }
+
+  /**
+   * One due job's turn, after both gates passed. A config-named job is exactly ONE unit of brief
+   * production; a sweep job walks its window and is the only kind that can YIELD part-way.
+   */
+  private async runDueJob(job: NimbusFleetJobToml, walk: JobWalk): Promise<"yielded" | "ran"> {
+    const { tally } = walk;
+    if (job.sweep === null) {
+      tally.subjectsInScope += 1;
+      tally.subjectsAttempted += 1;
+      if (await this.runOneJob(job, walk.runId, walk.expiresAt)) {
+        tally.completed += 1;
+        tally.subjectsCompleted += 1;
+      }
+      return "ran";
+    }
+    const result = await this.runSweepJob(
+      job,
+      job.sweep,
+      walk.runId,
+      walk.expiresAt,
+      tally,
+      walk.force,
+    );
+    if (result === "yielded") return "yielded";
+    if (result === "succeeded") tally.completed += 1;
+    return "ran";
   }
 
   private async execute(
@@ -497,35 +569,11 @@ export class FleetScheduler {
     const expiresAt = startedAt + this.deps.config.retentionDays * 86_400_000;
 
     try {
-      for (const job of jobs) {
-        // Keyed on SUBJECTS attempted: one counter across both job kinds, so admission is re-checked
-        // at every unit boundary (a config-named job is one unit).
-        if (!(await this.stillAdmitted(tally.subjectsAttempted, force))) return close("yielded");
-
-        // Due check AND backoff, both inside `isJobDue`. NAMING a job (not `--force`) is what
-        // overrides the schedule: an owner asking for one job by name has made the decision this
-        // check exists to make on their behalf. It overrides neither the capability, nor
-        // eligibility, nor I38's budget. `--force` deliberately does NOT reach here — its scope is
-        // host admission, and a scheduled tick passes neither flag.
-        if (!namedJob && !isJobDue(job, this.deps.store.loadJobState(job.name), this.deps.now())) {
-          tally.skippedNotDue += 1;
-          continue;
-        }
-
-        tally.attempted += 1;
-        if (job.sweep === null) {
-          tally.subjectsInScope += 1;
-          tally.subjectsAttempted += 1;
-          if (await this.runOneJob(job, runId, expiresAt)) {
-            tally.completed += 1;
-            tally.subjectsCompleted += 1;
-          }
-          continue;
-        }
-        const result = await this.runSweepJob(job, job.sweep, runId, expiresAt, tally, force);
-        if (result === "yielded") return close("yielded");
-        if (result === "succeeded") tally.completed += 1;
-      }
+      // The job walk reports how it ended; the row is closed HERE, inside this `try`, exactly as
+      // when the walk was inlined — so a `close("yielded")` that throws still reaches the `failed`
+      // path below, and `close("completed")` stays outside it.
+      const walked = await this.runJobsInScope(jobs, { runId, expiresAt, tally, force, namedJob });
+      if (walked === "yielded") return close("yielded");
     } catch (err) {
       // The invoker CONTRACT returns `{ status: "failed" }` rather than throwing, so reaching here
       // means something below it broke its contract (or the store did). Close the row as `failed`

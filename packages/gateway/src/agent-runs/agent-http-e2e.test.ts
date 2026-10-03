@@ -38,7 +38,7 @@ function ledgerRows(
 
 describe("agents over HTTP — end to end", () => {
   test("an agents-scoped token invokes an agent and polls its run to completion", async () => {
-    const s = await startAgentTestServer();
+    const s = startAgentTestServer();
     try {
       const res = await invoke(s.port, "expert", s.token);
       expect(res.status).toBe(202);
@@ -70,7 +70,7 @@ describe("agents over HTTP — end to end", () => {
     // Task 6 fix: GET /v1/agents/runs/{id} previously never surfaced `synthesis` at all, so a
     // caller could never learn why a rewrite was, or was not, used. This harness wires no LLM
     // router, so provenance is the "no runner" shape — still a REAL object, not absent.
-    const s = await startAgentTestServer();
+    const s = startAgentTestServer();
     try {
       const res = await invoke(s.port, "expert", s.token);
       const { runId } = (await res.json()) as { runId: string };
@@ -90,7 +90,7 @@ describe("agents over HTTP — end to end", () => {
   });
 
   test("the invocation appended exactly one source_type='http' egress row", async () => {
-    const s = await startAgentTestServer();
+    const s = startAgentTestServer();
     try {
       await invoke(s.port, "expert", s.token);
       expect(
@@ -110,7 +110,7 @@ describe("agents over HTTP — end to end", () => {
     // The scope story end to end: a token minted before scopes existed parses as exactly
     // clip+briefs and must not reach any agent. This is the assertion the previous PR was built to
     // make possible — and the zero-row check is what proves the refusal happens BEFORE the append.
-    const s = await startAgentTestServer({ tokensJson: LEGACY_TOKENS });
+    const s = startAgentTestServer({ tokensJson: LEGACY_TOKENS });
     try {
       const res = await invoke(s.port, "expert", LEGACY_TOKEN);
       expect(res.status).toBe(403);
@@ -126,7 +126,7 @@ describe("agents over HTTP — end to end", () => {
   });
 
   test("a legacy token is refused on BOTH reads too", async () => {
-    const s = await startAgentTestServer({ tokensJson: LEGACY_TOKENS });
+    const s = startAgentTestServer({ tokensJson: LEGACY_TOKENS });
     try {
       const list = await fetch(`http://127.0.0.1:${String(s.port)}/v1/agents`, {
         headers: { authorization: `Bearer ${LEGACY_TOKEN}` },
@@ -141,7 +141,7 @@ describe("agents over HTTP — end to end", () => {
   });
 
   test("an unknown token is 401, not 403", async () => {
-    const s = await startAgentTestServer();
+    const s = startAgentTestServer();
     try {
       expect((await invoke(s.port, "expert", "not-a-real-token")).status).toBe(401);
       expect((await pollRun(s.port, "not-a-real-token", "expert_1_x")).status).toBe(401);
@@ -153,7 +153,7 @@ describe("agents over HTTP — end to end", () => {
   test("agents.preflight is not reachable over HTTP (I24)", async () => {
     // A 404 here is the whole point: an external caller must not be able to queue a consent prompt
     // on the owner's machine, and no egress row is written for a route that does not exist.
-    const s = await startAgentTestServer();
+    const s = startAgentTestServer();
     try {
       const res = await invoke(s.port, "preflight", s.token, { ref: "HEAD", namespace: "n" });
       expect(res.status).toBe(404);
@@ -169,7 +169,7 @@ describe("agents over HTTP — end to end", () => {
     // skill for the exact bounds of that exception). A 404 here is the whole point, same as
     // preflight above: an external caller must not be able to trigger those writes unprompted,
     // and no egress row is written for a route that does not exist.
-    const s = await startAgentTestServer();
+    const s = startAgentTestServer();
     try {
       const res = await invoke(s.port, "premortem", s.token, { epicRef: "PROJ-1" });
       expect(res.status).toBe(404);
@@ -186,7 +186,7 @@ describe("agents over HTTP — end to end", () => {
     // holder of the `agents` token assemble a contribution dossier on any indexed person without
     // the owner initiating it. A 404 here is the whole point, same as preflight/premortem above,
     // and no egress row is written for a route that does not exist.
-    const s = await startAgentTestServer();
+    const s = startAgentTestServer();
     try {
       const res = await invoke(s.port, "negotiate", s.token, { personId: "person-1" });
       expect(res.status).toBe(404);
@@ -198,7 +198,7 @@ describe("agents over HTTP — end to end", () => {
   });
 
   test("GET /v1/agents publishes exactly the invokable set", async () => {
-    const s = await startAgentTestServer();
+    const s = startAgentTestServer();
     try {
       const res = await fetch(`http://127.0.0.1:${String(s.port)}/v1/agents`, {
         headers: { authorization: `Bearer ${s.token}` },
@@ -221,7 +221,7 @@ describe("agents over HTTP — end to end", () => {
   });
 
   test("GET /v1/agents publishes the gateway version alongside the names", async () => {
-    const s = await startAgentTestServer();
+    const s = startAgentTestServer();
     try {
       const res = await fetch(`http://127.0.0.1:${String(s.port)}/v1/agents`, {
         headers: { authorization: `Bearer ${s.token}` },
@@ -245,7 +245,7 @@ describe("agents over HTTP — end to end", () => {
   });
 
   test("an unknown run id is 404 and an expired one is 410", async () => {
-    const s = await startAgentTestServer({ ttlMs: 5_000 });
+    const s = startAgentTestServer({ ttlMs: 5_000 });
     try {
       expect((await pollRun(s.port, s.token, "expert_1_deadbeef")).status).toBe(404);
       const res = await invoke(s.port, "expert", s.token);
@@ -258,7 +258,7 @@ describe("agents over HTTP — end to end", () => {
   });
 
   test("malformed params are 400 invalid_params", async () => {
-    const s = await startAgentTestServer();
+    const s = startAgentTestServer();
     try {
       const res = await invoke(s.port, "expert", s.token, { topicOrFile: "" });
       expect(res.status).toBe(400);
@@ -272,7 +272,7 @@ describe("agents over HTTP — end to end", () => {
     // Two different 429s reach a client from this route: the per-token rate limiter's and the run
     // store's capacity refusal. A client backing off by Retry-After must not have to know which one
     // it got. This is the assertion that keeps them consistent as either side changes.
-    const s = await startAgentTestServer();
+    const s = startAgentTestServer();
     try {
       s.fillRunCapacity();
       const res = await invoke(s.port, "expert", s.token);
@@ -285,7 +285,7 @@ describe("agents over HTTP — end to end", () => {
   });
 
   test("every /v1/agents route 404s with a named cause when the seam is absent", async () => {
-    const s = await startAgentTestServer({ enabled: false });
+    const s = startAgentTestServer({ enabled: false });
     try {
       for (const res of [
         await invoke(s.port, "expert", s.token),
@@ -306,7 +306,7 @@ describe("agents over HTTP — end to end", () => {
     // The reads are mounted in the fetch handler ahead of that table precisely because it is
     // documented "no bearer gate". A missing Authorization header must 401, never fall through to
     // an ungated read of a brief synthesised from the private index.
-    const s = await startAgentTestServer();
+    const s = startAgentTestServer();
     try {
       const res = await fetch(`http://127.0.0.1:${String(s.port)}/v1/agents/runs/expert_1_x`);
       expect(res.status).toBe(401);

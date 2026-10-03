@@ -74,7 +74,7 @@ export async function runDataDelete(input: RunDataDeleteInput): Promise<RunDataD
   })();
 
   for (const key of preflight.vaultKeys) {
-    await input.vault.delete(key);
+    await input.vault.delete(key); // NOSONAR S9382: the macOS vault's delete rewrites one shared key-index file (read-modify-write); concurrent deletes would lose index updates
   }
 
   return { preflight, deleted: true };

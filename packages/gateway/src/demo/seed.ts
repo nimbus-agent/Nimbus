@@ -116,7 +116,7 @@ function writeDemoConfig(
   // even on Windows. `loadNimbusFilesystemRootsFromConfigDir` is the source of
   // truth for the resolved path the caller must use (see `writeItems` order
   // below); this is only what gets written to disk.
-  const workspacePosix = workspace.split("\\").join("/");
+  const workspacePosix = workspace.replaceAll("\\", "/");
   const serviceBlocks = corpus.services
     .map(
       (s) =>
