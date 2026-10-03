@@ -1,6 +1,6 @@
 # Cross-platform support
 
-Windows 10+, macOS 13+, and Ubuntu 22.04+ are equally supported. Every PR runs a full gate on Ubuntu; pushes to `main` run the full three-platform matrix in parallel. Platform-specific code (IPC, secrets, autostart, notifications) lives behind a typed `PlatformServices` abstraction — business logic never knows which OS it's on.
+Windows 10+, macOS 13+, and Ubuntu 22.04+ are equally supported. Every PR runs a full gate on Ubuntu plus one macOS and one Windows leg (`pr-quality-cross-platform`) that run the same whole-repo `bun test` paths as the push matrix; pushes to `main` run the full three-platform matrix in parallel. Platform-specific code (IPC, secrets, autostart, notifications) lives behind a typed `PlatformServices` abstraction — business logic never knows which OS it's on.
 
 | | Windows 10+ | macOS 13+ | Ubuntu 22.04+ † |
 |---|---|---|---|
