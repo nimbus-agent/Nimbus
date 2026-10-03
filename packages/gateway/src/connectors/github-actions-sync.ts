@@ -243,7 +243,7 @@ export function createGithubActionsSyncable(options: GithubActionsSyncableOption
           continue;
         }
         const lastSeen = nextRepos[full] ?? 0;
-        const r = await syncGithubActionsForRepo({
+        const repoArgs: GithubActionsRepoSyncArgs = {
           ctx,
           full,
           owner: parts.owner,
@@ -252,7 +252,8 @@ export function createGithubActionsSyncable(options: GithubActionsSyncableOption
           lastSeen,
           floorMs,
           now,
-        });
+        };
+        const r = await syncGithubActionsForRepo(repoArgs); // NOSONAR S9382: one repo at a time through the shared GitHub rate limiter - the list is every indexed repo (uncapped), and a rate-limit 403's penalty from one response must throttle the next request
         bytes += r.bytes;
         upserted += r.upserted;
         nextRepos[full] = r.maxId;

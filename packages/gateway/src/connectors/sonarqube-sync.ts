@@ -199,7 +199,7 @@ export function createSonarqubeSyncable(options: SonarqubeSyncableOptions): Sync
       const batches = chunkArray(allProjectKeys, 50);
 
       for (const batch of batches) {
-        const projectOutcome = await syncProjects(ctx, creds, batch, now);
+        const projectOutcome = await syncProjects(ctx, creds, batch, now); // NOSONAR S9382: each batch pages through its issues and upserts as it goes - concurrent batches would interleave those index writes nondeterministically through the shared SonarQube rate limiter
         totalUpserted += projectOutcome.upserted;
         totalBytes += projectOutcome.bytes;
       }

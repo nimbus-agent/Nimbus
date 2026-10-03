@@ -118,7 +118,7 @@ async function collectJsonFiles(root: string): Promise<string[]> {
       }
       const full = join(dir, entry.name);
       if (entry.isDirectory()) {
-        await walk(full, depth + 1);
+        await walk(full, depth + 1); // NOSONAR S9382: depth-first walk sharing the MAX_FILES cap - each entry's early exit reads `found` as the previous subtree left it
       } else if (entry.isFile() && entry.name.toLowerCase().endsWith(".json")) {
         found.push(full);
       }
@@ -200,7 +200,7 @@ export function createGreatExpectationsSyncable(
       const files = await collectJsonFiles(dir);
       let totalUpserted = 0;
       for (const file of files) {
-        const artefact = await readArtefact(file);
+        const artefact = await readArtefact(file); // NOSONAR S9382: one artefact in memory at a time - readFile loads each file whole before the MAX_FILE_BYTES check, and Promise.all would hold up to MAX_FILES of them
         if (artefact === null) {
           continue;
         }

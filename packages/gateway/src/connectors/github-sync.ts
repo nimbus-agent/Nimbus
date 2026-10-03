@@ -683,12 +683,11 @@ export async function enrichPrDetail(
   fetchImpl: typeof fetch = fetch,
 ): Promise<number> {
   const candidates = ctx.prEnrichCandidates(MAX_ENRICH_PER_TICK);
+  const headers = buildGithubEventHeaders(pat, null);
   let enriched = 0;
   for (const c of candidates) {
-    await ctx.rateLimiter.acquire("github");
-    const res = await fetchImpl(pullDetailUrl(c.repoFull, c.num), {
-      headers: buildGithubEventHeaders(pat, null),
-    });
+    await ctx.rateLimiter.acquire("github"); // NOSONAR S9382: fail-fast by design - a 401 or a rate limit (both throw below) must stop the pass before the next request is sent
+    const res = await fetchImpl(pullDetailUrl(c.repoFull, c.num), { headers }); // NOSONAR S9382: fail-fast by design - this response's 401/rate-limit check decides whether the next request is sent at all
     if (res.status === 401) {
       throw new UnauthenticatedError("GitHub pull detail: unauthorized (401)");
     }
@@ -698,7 +697,7 @@ export async function enrichPrDetail(
     }
     let parsed: unknown;
     try {
-      parsed = JSON.parse(await res.text()) as unknown;
+      parsed = JSON.parse(await res.text()) as unknown; // NOSONAR S9382: reads this iteration's own response body, inside the deliberately sequential pass above
     } catch {
       continue;
     }

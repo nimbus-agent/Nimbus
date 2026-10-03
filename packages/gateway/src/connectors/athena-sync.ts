@@ -141,6 +141,22 @@ async function collectPaged(
   return { items, bytes, firstPageFailed: false };
 }
 
+/** One catalog's databases (`aws athena list-databases`), paginated and capped. */
+function listCatalogDatabases(
+  run: RunAwsCli,
+  ctx: SyncContext,
+  catalog: string,
+): Promise<ListResult> {
+  return collectPaged(
+    run,
+    ctx,
+    ["athena", "list-databases", "--catalog-name", catalog],
+    "DatabaseList",
+    databaseNameOf,
+    MAX_DATABASES_PER_CATALOG,
+  );
+}
+
 interface WalkResult {
   readonly upserted: number;
   readonly bytes: number;
@@ -252,17 +268,10 @@ export function createAthenaSyncable(options: AthenaSyncableOptions): Syncable {
 
       let totalUpserted = 0;
       for (const catalog of catalogs.items) {
-        const databases = await collectPaged(
-          run,
-          ctx,
-          ["athena", "list-databases", "--catalog-name", catalog],
-          "DatabaseList",
-          databaseNameOf,
-          MAX_DATABASES_PER_CATALOG,
-        );
+        const databases = await listCatalogDatabases(run, ctx, catalog); // NOSONAR S9382: one `aws` CLI child process at a time (the only throttle on these AWS calls) - Promise.all would spawn one per catalog, up to MAX_CATALOGS at once
         totalBytes += databases.bytes;
         for (const database of databases.items) {
-          const res = await walkDatabaseTables(run, ctx, catalog, database, now);
+          const res = await walkDatabaseTables(run, ctx, catalog, database, now); // NOSONAR S9382: one `aws` CLI child process at a time - each walk paginates on the previous page's NextToken, and Promise.all would spawn up to MAX_DATABASES_PER_CATALOG walks at once
           totalUpserted += res.upserted;
           totalBytes += res.bytes;
         }

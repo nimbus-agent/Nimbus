@@ -174,7 +174,7 @@ export function createDbtSyncable(options: DbtSyncableOptions): Syncable {
       const now = Date.now();
       let totalUpserted = 0;
       for (const accountId of resolved.accountIds) {
-        const result = await syncAccountJobs(ctx, creds, accountId, now);
+        const result = await syncAccountJobs(ctx, creds, accountId, now); // NOSONAR S9382: one account at a time through the shared dbt Cloud rate limiter - each account paginates its own job list (up to MAX_PAGES_PER_ACCOUNT) and the account list is uncapped
         totalUpserted += result.upserted;
         totalBytes += result.bytes;
       }

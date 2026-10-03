@@ -18,10 +18,10 @@ function makeIdx(): LocalIndex {
 }
 
 describe("connector reindex", () => {
-  test("shallow prunes body and writes data.minimization.prune audit entry", async () => {
+  test("shallow prunes body and writes data.minimization.prune audit entry", () => {
     const idx = makeIdx();
     seed(idx, "github", "full body content here");
-    const result = await reindexConnector({
+    const result = reindexConnector({
       index: idx,
       service: "github",
       depth: "metadata_only",
@@ -35,19 +35,19 @@ describe("connector reindex", () => {
     expect(audit.some((r) => r.actionType === "data.minimization.prune")).toBe(true);
   });
 
-  test("deepen leaves existing rows in place and does not write a prune audit entry", async () => {
+  test("deepen leaves existing rows in place and does not write a prune audit entry", () => {
     const idx = makeIdx();
     seed(idx, "github", null);
-    const result = await reindexConnector({ index: idx, service: "github", depth: "full" });
+    const result = reindexConnector({ index: idx, service: "github", depth: "full" });
     expect(result.itemsAffected).toBe(0);
     const audit = idx.listAuditWithChain(10);
     expect(audit.some((r) => r.actionType === "data.minimization.prune")).toBe(false);
   });
 
-  test("metadata_only with zero matching items writes no prune audit entry", async () => {
+  test("metadata_only with zero matching items writes no prune audit entry", () => {
     const idx = makeIdx();
     // No items at all for this service — the WHERE clause matches nothing.
-    const result = await reindexConnector({
+    const result = reindexConnector({
       index: idx,
       service: "nonexistent-service",
       depth: "metadata_only",

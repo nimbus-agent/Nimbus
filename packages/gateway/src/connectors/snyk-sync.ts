@@ -146,7 +146,7 @@ async function ingestOrgProjects(
   let upserted = 0;
   let bytes = projectsOutcome.bytes;
   for (const projectId of extractProjectIds(projectsOutcome.parsed)) {
-    const tally = await ingestProjectIssues(ctx, token, orgId, projectId, now);
+    const tally = await ingestProjectIssues(ctx, token, orgId, projectId, now); // NOSONAR S9382: one project at a time through the shared Snyk rate limiter - an org's project list is uncapped, so Promise.all would be an unbounded burst
     upserted += tally.upserted;
     bytes += tally.bytes;
   }
@@ -179,7 +179,7 @@ export function createSnykSyncable(options: SnykSyncableOptions): Syncable {
       let totalBytes = orgsOutcome.bytes;
 
       for (const orgId of extractOrgIds(orgsOutcome.parsed)) {
-        const tally = await ingestOrgProjects(ctx, token, orgId, now);
+        const tally = await ingestOrgProjects(ctx, token, orgId, now); // NOSONAR S9382: one org at a time through the shared Snyk rate limiter - each org fans out to one request per project, so concurrent orgs would multiply an already uncapped burst
         upserted += tally.upserted;
         totalBytes += tally.bytes;
       }

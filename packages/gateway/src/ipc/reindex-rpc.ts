@@ -48,6 +48,6 @@ export async function dispatchReindexRpc(
       throw new ReindexRpcError(-32000, gateResult.reason);
     }
   }
-  const result = await reindexConnector({ index: ctx.index, service, depth });
+  const result = reindexConnector({ index: ctx.index, service, depth });
   return { kind: "hit", value: result };
 }

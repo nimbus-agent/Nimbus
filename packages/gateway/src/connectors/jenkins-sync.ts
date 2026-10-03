@@ -275,13 +275,12 @@ async function runJenkinsSyncAfterAuth(
   const CHUNK_SIZE = 10;
   for (let i = 0; i < flat.length; i += CHUNK_SIZE) {
     const chunk = flat.slice(i, i + CHUNK_SIZE);
-    const results = await Promise.all(
-      chunk.map(async (job) => {
-        const lastSeen = nextJobs[job.fullName] ?? 0;
-        const r = await syncJenkinsJobBuilds(ctx, job, base, auth, lastSeen, floorMs, now);
-        return { job, r };
-      }),
-    );
+    const chunkSyncs = chunk.map(async (job) => {
+      const lastSeen = nextJobs[job.fullName] ?? 0;
+      const r = await syncJenkinsJobBuilds(ctx, job, base, auth, lastSeen, floorMs, now);
+      return { job, r };
+    });
+    const results = await Promise.all(chunkSyncs); // NOSONAR S9382: bounded concurrency by design - each chunk's jobs run concurrently and chunks run one after another, so the Jenkins server never sees more than CHUNK_SIZE requests at once
 
     for (const { job, r } of results) {
       bytes += r.bytes;

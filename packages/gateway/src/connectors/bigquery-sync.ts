@@ -247,7 +247,7 @@ async function upsertTablesPage(
       break;
     }
     state.seen += 1;
-    const source = await resolveTableSource(ctx, token, project, datasetId, entry, state);
+    const source = await resolveTableSource(ctx, token, project, datasetId, entry, state); // NOSONAR S9382: entries share `state` - the MAX_TABLES_PER_DATASET count (with its break) and the MAX_TABLE_DETAIL describe budget are spent in table order
     const mapped = mapBigqueryTableToItem(source, { project, syncedAt: now });
     if (mapped !== null) {
       ctx.upsertItem(mapped);
@@ -315,7 +315,7 @@ export function createBigquerySyncable(options: BigquerySyncableOptions): Syncab
 
       let totalUpserted = 0;
       for (const datasetId of datasets.ids) {
-        const res = await walkDataset(ctx, token, creds.project, datasetId, now);
+        const res = await walkDataset(ctx, token, creds.project, datasetId, now); // NOSONAR S9382: one dataset at a time - each walk paginates on the previous page token and spends up to MAX_TABLE_DETAIL describes; Promise.all would start up to MAX_DATASETS walks against the shared BigQuery rate limiter
         totalUpserted += res.upserted;
         totalBytes += res.bytes;
       }

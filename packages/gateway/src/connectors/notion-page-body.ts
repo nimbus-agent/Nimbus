@@ -216,7 +216,7 @@ async function collectChildren(
     deps.budget.left -= 1;
     const page = await fetchChildrenPage(deps, blockId, cursor, state);
     for (const raw of page.results) {
-      await collectBlock(deps, state, raw, depth, out);
+      await collectBlock(deps, state, raw, depth, out); // NOSONAR S9382: depth-first walk in document order - each block's text (and its children's) must land in `out` before the next block's, and all blocks share one request budget
     }
     if (page.nextCursor === undefined) {
       return;

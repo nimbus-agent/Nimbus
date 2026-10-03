@@ -168,7 +168,7 @@ export function createGoogleMeetSyncable(options: GoogleMeetSyncableOptions): Sy
         // record the mapper would reject never costs a participants request.
         const recordName = typeof record.name === "string" ? record.name : "";
         const fetched =
-          recordName === "" ? NO_PARTICIPANTS : await fetchParticipants(ctx, token, recordName);
+          recordName === "" ? NO_PARTICIPANTS : await fetchParticipants(ctx, token, recordName); // NOSONAR S9382: fail-fast by design - a dead token (UnauthenticatedError, rethrown) must stop the page before the next of up to PAGE_SIZE roster requests is sent
         totalBytes += fetched.bytes;
         const mapped = mapGoogleMeetRecordToItem(record, {
           syncedAt: now,

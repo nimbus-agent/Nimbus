@@ -48,7 +48,7 @@ async function collectSqlFiles(root: string): Promise<string[]> {
       }
       const full = join(dir, entry.name);
       if (entry.isDirectory()) {
-        await walk(full, depth + 1);
+        await walk(full, depth + 1); // NOSONAR S9382: depth-first walk sharing the MAX_FILES cap - each entry's early exit reads `found` as the previous subtree left it
       } else if (entry.isFile() && entry.name.toLowerCase().endsWith(".sql")) {
         found.push(full);
       }
@@ -105,7 +105,7 @@ export function createLocaldbSyncable(options: LocalDbSyncableOptions): Syncable
       const files = await collectSqlFiles(dir);
       let upserted = 0;
       for (const file of files) {
-        const input = await readSqlFile(file, dir);
+        const input = await readSqlFile(file, dir); // NOSONAR S9382: one file in memory at a time - readFile loads each file whole before the MAX_FILE_BYTES check, and Promise.all would hold up to MAX_FILES of them
         if (input === null) {
           continue;
         }

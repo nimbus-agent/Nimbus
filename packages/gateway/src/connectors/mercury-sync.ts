@@ -179,7 +179,7 @@ async function syncTransactions(
     if (state.pagesUsed >= MAX_TRANSACTION_PAGES) {
       break;
     }
-    await walkAccountTransactions(ctx, creds, accountId, now, state);
+    await walkAccountTransactions(ctx, creds, accountId, now, state); // NOSONAR S9382: accounts share one MAX_TRANSACTION_PAGES budget in `state` - each account may only use the pages the earlier ones left (the break above)
   }
   return state;
 }

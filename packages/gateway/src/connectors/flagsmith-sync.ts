@@ -208,7 +208,7 @@ export function createFlagsmithSyncable(options: FlagsmithSyncableOptions): Sync
       const now = Date.now();
       let totalUpserted = 0;
       for (const project of resolved.projects) {
-        const result = await syncProjectFeatures(ctx, creds, project, now);
+        const result = await syncProjectFeatures(ctx, creds, project, now); // NOSONAR S9382: one project at a time through the shared Flagsmith rate limiter - each project paginates its features (page by page, until a short page) and the project list is uncapped
         totalUpserted += result.upserted;
         totalBytes += result.bytes;
       }

@@ -117,23 +117,35 @@ function selectIndexableRows(rows: readonly unknown[]): IndexRow[] {
  * sync because one mapping request failed would be the worse trade. `bytes` is
  * accumulated whether or not the batch parsed, since the transfer happened
  * either way and the caller meters real traffic.
+ *
+ * The batches are independent read-only GETs over disjoint index names, and
+ * there are at most `MAX_INDEX_DETAIL / BATCH_SIZE` of them, so they are
+ * fetched concurrently. Their outcomes are folded in batch order, so `mappings`
+ * and `bytes` come out exactly as a one-at-a-time walk would leave them.
  */
 async function fetchIndexMappings(
   ctx: SyncContext,
   creds: ElasticsearchCreds,
   validRows: readonly IndexRow[],
 ): Promise<{ mappings: MappingsByIndex; bytes: number }> {
-  const mappings: MappingsByIndex = {};
-  let bytes = 0;
   const withDetails = validRows.slice(0, MAX_INDEX_DETAIL);
   const BATCH_SIZE = 50;
-
+  const batches: (readonly IndexRow[])[] = [];
   for (let i = 0; i < withDetails.length; i += BATCH_SIZE) {
-    const batch = withDetails.slice(i, i + BATCH_SIZE);
-    const names = batch.map((b) => encodeURIComponent(b.name)).join(",");
-    const detail = await esGet(ctx, creds, `/${names}/_mapping`);
-    bytes += detail.bytes;
+    batches.push(withDetails.slice(i, i + BATCH_SIZE));
+  }
 
+  const fetched = await Promise.all(
+    batches.map(async (batch) => {
+      const names = batch.map((b) => encodeURIComponent(b.name)).join(",");
+      return { batch, detail: await esGet(ctx, creds, `/${names}/_mapping`) };
+    }),
+  );
+
+  const mappings: MappingsByIndex = {};
+  let bytes = 0;
+  for (const { batch, detail } of fetched) {
+    bytes += detail.bytes;
     if (detail.kind === "ok") {
       for (const { name } of batch) {
         mappings[name] = { fields: flattenMappingFields(detail.parsed, name) };

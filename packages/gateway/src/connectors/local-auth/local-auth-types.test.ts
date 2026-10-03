@@ -1,8 +1,8 @@
 import { describe, expect, test } from "bun:test";
 
-import { GCP_PROJECT_ID } from "./local-auth-types.ts";
+import { isGcpProjectId } from "./local-auth-types.ts";
 
-describe("GCP_PROJECT_ID", () => {
+describe("isGcpProjectId", () => {
   test.each([
     // Bare id, the common case.
     "acme-prod",
@@ -13,8 +13,13 @@ describe("GCP_PROJECT_ID", () => {
     // for an owner on this form.
     "example.com:my-proj",
     "sub.example.co.uk:another-id",
+    // Bare-id length bounds: 6 and 30 characters.
+    "abcdef",
+    "a".repeat(30),
+    // A domain label may carry inner hyphens, consecutive ones included.
+    "a--b.com:my-proj",
   ])("accepts %s", (value) => {
-    expect(GCP_PROJECT_ID.test(value)).toBe(true);
+    expect(isGcpProjectId(value)).toBe(true);
   });
 
   test.each([
@@ -24,8 +29,10 @@ describe("GCP_PROJECT_ID", () => {
     "Acme-Prod",
     // Spaces and punctuation.
     "Not A Project!",
-    // Too short (bare-id rule needs 6-30 chars).
+    // Too short / too long (bare-id rule needs 6-30 chars).
     "ab",
+    "abcde",
+    "a".repeat(31),
     // Leading/trailing hyphen.
     "-acme-prod",
     "acme-prod-",
@@ -35,7 +42,18 @@ describe("GCP_PROJECT_ID", () => {
     "example.com:Not-Valid!",
     // A colon with no domain before it.
     ":my-proj",
+    // Malformed domain prefixes: an empty label (leading, trailing or doubled dot), or a label
+    // that starts or ends with a hyphen.
+    ".example.com:my-proj",
+    "example.com.:my-proj",
+    "a..b:my-proj",
+    "-a.com:my-proj",
+    "a-.com:my-proj",
+    // More than one colon — the part after the first colon is held to the bare-id rule.
+    "a:b:my-project",
+    // A trailing newline is not ignored.
+    "my-project\n",
   ])("rejects %s", (value) => {
-    expect(GCP_PROJECT_ID.test(value)).toBe(false);
+    expect(isGcpProjectId(value)).toBe(false);
   });
 });

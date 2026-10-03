@@ -169,7 +169,7 @@ export function createLaunchdarklySyncable(options: LaunchdarklySyncableOptions)
       const now = Date.now();
       let totalUpserted = 0;
       for (const projectKey of resolved.keys) {
-        const result = await syncProjectFlags(ctx, creds, projectKey, now);
+        const result = await syncProjectFlags(ctx, creds, projectKey, now); // NOSONAR S9382: one project at a time through the shared LaunchDarkly rate limiter - each project paginates its flags (until a short page) and the project list is uncapped
         totalUpserted += result.upserted;
         totalBytes += result.bytes;
       }

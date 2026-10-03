@@ -61,9 +61,19 @@ export function createFluxSyncable(options: FluxSyncableOptions): Syncable {
       let totalBytes = 0;
       let totalUpserted = 0;
 
-      for (const entry of FLUX_KINDS) {
-        const path = `/apis/${entry.group}/${entry.version}/${entry.plural}`;
-        const outcome = await agGet(ctx, creds, path);
+      // One read-only GET per Flux kind. FLUX_KINDS is a small, fixed SDK list of independent
+      // endpoints, so they are fetched concurrently. The outcomes are then handled in FLUX_KINDS
+      // order, so the index writes and this loop's per-kind warnings land exactly as a
+      // one-at-a-time walk leaves them; only `connectorFetch`'s own per-request failure log
+      // follows completion order.
+      const fetched = await Promise.all(
+        FLUX_KINDS.map(async (entry) => {
+          const path = `/apis/${entry.group}/${entry.version}/${entry.plural}`;
+          return { entry, path, outcome: await agGet(ctx, creds, path) };
+        }),
+      );
+
+      for (const { entry, path, outcome } of fetched) {
         totalBytes += outcome.bytes;
         if (outcome.kind !== "ok") {
           ctx.logger.warn(

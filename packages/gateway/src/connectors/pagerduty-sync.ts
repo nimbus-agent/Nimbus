@@ -163,7 +163,7 @@ export const MAX_USER_LOOKUPS_PER_SYNC = 25;
  * Sequential on purpose. The cap bounds TOTAL requests, not their burst rate;
  * fanning 25 concurrent requests at a shared limiter is precisely the spike the
  * limiter exists to smooth. Each lookup acquires the limiter exactly as the
- * list requests do (`:186`).
+ * list requests do (the page loop in `createPagerdutySyncable`'s `sync`).
  *
  * Every failure mode — non-OK status, thrown request, unparseable body — is
  * caught PER LOOKUP and memoised as a miss, then attribution simply degrades to
@@ -181,19 +181,19 @@ async function resolveMissingActorEmails(
   attempted: Set<string>,
 ): Promise<number> {
   let bytes = 0;
+  const headers = {
+    Accept: "application/vnd.pagerduty+json;version=2",
+    Authorization: `Token token=${token.trim()}`,
+  };
   for (const id of ids) {
     if (attempted.size >= MAX_USER_LOOKUPS_PER_SYNC) return bytes;
     if (attempted.has(id) || emailById.has(id)) continue;
     attempted.add(id);
-    await ctx.rateLimiter.acquire("pagerduty");
+    await ctx.rateLimiter.acquire("pagerduty"); // NOSONAR S9382: sequential on purpose (see the docstring) - fanning up to MAX_USER_LOOKUPS_PER_SYNC lookups at the shared limiter at once is the spike it exists to smooth
     try {
-      const res = await fetch(`https://api.pagerduty.com/users/${encodeURIComponent(id)}`, {
-        headers: {
-          Accept: "application/vnd.pagerduty+json;version=2",
-          Authorization: `Token token=${token.trim()}`,
-        },
-      });
-      const text = await res.text();
+      const url = `https://api.pagerduty.com/users/${encodeURIComponent(id)}`;
+      const res = await fetch(url, { headers }); // NOSONAR S9382: sequential on purpose (see the docstring) - one user lookup in flight at a time
+      const text = await res.text(); // NOSONAR S9382: reads this lookup's own response body, inside the deliberately sequential loop
       bytes += text.length;
       if (!res.ok) {
         ctx.logger.warn(

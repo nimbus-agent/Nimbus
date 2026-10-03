@@ -91,7 +91,7 @@ async function collectDataFiles(root: string): Promise<string[]> {
       }
       const full = join(dir, entry.name);
       if (entry.isDirectory()) {
-        await walk(full, depth + 1);
+        await walk(full, depth + 1); // NOSONAR S9382: depth-first walk sharing the MAX_FILES cap - each entry's early exit reads `found` as the previous subtree left it
       } else if (entry.isFile() && EXT_FORMAT[extOf(entry.name)] !== undefined) {
         found.push(full);
       }
@@ -280,7 +280,7 @@ export function createDataProfileSyncable(options: DataProfileSyncableOptions): 
         if (format === undefined) {
           continue;
         }
-        const profile = await profileFile(file, dir, format, readParquet);
+        const profile = await profileFile(file, dir, format, readParquet); // NOSONAR S9382: one file in memory at a time - a text file is read whole up to MAX_TEXT_BYTES, and Promise.all would hold up to MAX_FILES of them
         if (profile === null) {
           continue;
         }

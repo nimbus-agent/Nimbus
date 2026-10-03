@@ -154,15 +154,21 @@ function tryUpsertCircleciPipeline(
   return { upserted: 1, pipelineNum: num };
 }
 
+/** What every project in one sync pass shares: the context, the API token and the time window. */
+interface CircleciPass {
+  readonly ctx: SyncContext;
+  readonly token: string;
+  readonly floorMs: number;
+  readonly now: number;
+}
+
 async function syncCircleciProjectPipelines(
-  ctx: SyncContext,
-  token: string,
+  pass: CircleciPass,
   full: string,
   slug: string,
   lastSeen: number,
-  floorMs: number,
-  now: number,
 ): Promise<{ upserted: number; bytes: number; maxNum: number }> {
+  const { ctx, token, floorMs, now } = pass;
   await ctx.rateLimiter.acquire("circleci");
   const path = `https://circleci.com/api/v2/project/${circleciProjectPath(slug)}/pipeline`;
   const res = await fetch(path, {
@@ -226,7 +232,7 @@ export function createCircleciSyncable(options: CircleciSyncableOptions): Syncab
       let bytes = 0;
       const now = Date.now();
       const floorMs = now - initialSyncDepthDays * 86_400_000;
-      const token = apiTok.trim();
+      const pass: CircleciPass = { ctx, token: apiTok.trim(), floorMs, now };
 
       for (const full of repos) {
         const slug = githubRepoToCircleProjectSlug(full);
@@ -234,15 +240,7 @@ export function createCircleciSyncable(options: CircleciSyncableOptions): Syncab
           continue;
         }
         const lastSeen = nextProjects[slug] ?? 0;
-        const r = await syncCircleciProjectPipelines(
-          ctx,
-          token,
-          full,
-          slug,
-          lastSeen,
-          floorMs,
-          now,
-        );
+        const r = await syncCircleciProjectPipelines(pass, full, slug, lastSeen); // NOSONAR S9382: one project at a time through the shared CircleCI rate limiter - the list is every indexed GitHub repo (uncapped), so Promise.all would be an unbounded burst
         bytes += r.bytes;
         upserted += r.upserted;
         nextProjects[slug] = r.maxNum;

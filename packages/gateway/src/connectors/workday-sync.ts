@@ -222,11 +222,9 @@ async function syncRaasReports(
       continue;
     }
     try {
-      await ctx.rateLimiter.acquire(SERVICE_ID);
-      const res = await fetchFn(report.url, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      const text = await res.text();
+      await ctx.rateLimiter.acquire(SERVICE_ID); // NOSONAR S9382: one report at a time through the shared Workday rate limiter - the configured report list is uncapped, and each report's warnings and index writes land in config order
+      const res = await fetchFn(report.url, { headers: { Authorization: `Bearer ${token}` } }); // NOSONAR S9382: one report request in flight at a time (see the acquire above)
+      const text = await res.text(); // NOSONAR S9382: reads this report's own response body, inside the deliberately sequential loop
       bytes += text.length;
       if (!res.ok) {
         ctx.logger.warn(
