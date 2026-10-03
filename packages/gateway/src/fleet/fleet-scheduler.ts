@@ -371,7 +371,8 @@ export class FleetScheduler {
   /**
    * A sweep job's turn (spec § 7). The cursor advances after EVERY subject, success or failure, so
    * one broken subject cannot pin the rotation. A yield records no success, so the job stays due and
-   * resumes from the cursor. The first subject is not re-probed: `execute` probed at the job boundary.
+   * resumes from the cursor. The first subject is not re-probed: `runJobsInScope` probed at the job
+   * boundary.
    */
   private async runSweepJob(
     job: NimbusFleetJobToml,

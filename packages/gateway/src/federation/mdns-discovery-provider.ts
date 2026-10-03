@@ -44,12 +44,13 @@ export class MdnsDiscoveryProvider implements DiscoveryProvider {
     this.makeBonjour = makeBonjour;
   }
 
-  // `start`, `stop` and `advertise` do no asynchronous work — every bonjour call is synchronous —
-  // but the `DiscoveryProvider` contract returns a Promise, and `platform/assemble.ts` fires them
-  // as `void discovery.start()` / `void discovery.stop()`. `Promise.try` runs each body
-  // immediately, exactly as the former `async` did, and turns a throw from the bonjour library into
-  // a REJECTION of the returned promise; a plain synchronous throw would instead escape into gateway
-  // boot or the shutdown drain at the call site.
+  // `start`, `stop` and `advertise` await nothing — every bonjour call RETURNS synchronously, while
+  // the library's own socket bind and announcements run in the background, never through these
+  // promises — but the `DiscoveryProvider` contract returns a Promise, and `platform/assemble.ts`
+  // fires all three with `void` (`void discovery.start()`, and likewise `stop` and `advertise`).
+  // `Promise.try` runs each body immediately, exactly as the former `async` did, and turns a throw
+  // from the bonjour library into a REJECTION of the returned promise; a plain synchronous throw
+  // would instead escape into gateway boot or the shutdown drain at the call site.
   start(): Promise<void> {
     return Promise.try(() => {
       this.bonjour = this.makeBonjour();

@@ -4105,7 +4105,7 @@ export async function assemblePlatformServices(
     bindCredentials: async (toolId, credentials) => {
       const bound: string[] = [];
       for (const c of credentials) {
-        await writeToolCredential(vault, toolId, c.host, c.binding); // NOSONAR S9382: sequential by contract (see above and toolgen-gate.ts) - and macOS Vault writes update `.keyindex.json` by unlocked read-modify-write, so concurrent sets lose index entries
+        await writeToolCredential(vault, toolId, c.host, c.binding); // NOSONAR S9382: Vault WRITES - macOS set() updates `.keyindex.json` by an unlocked read-modify-write, so concurrent sets lose index entries; one at a time also stops at the first failure rather than writing more secrets for a tool that may never register
         bound.push(c.host);
       }
       return bound;

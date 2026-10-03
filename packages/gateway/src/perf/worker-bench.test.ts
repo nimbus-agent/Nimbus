@@ -12,6 +12,8 @@ interface FakeWorkerOpts {
   writes?: number;
   busyRetries?: number;
   errorBeforeReady?: { message: string; stack?: string };
+  /** Report this `error` frame, `postWritesAfterMs` after `start`, in place of `done`. */
+  errorAfterStart?: { message: string; stack?: string };
   hangPastStop?: boolean;
   /** Emit a message whose `kind` the coordinator does not know, just before `done`. */
   noiseKind?: string;
@@ -42,6 +44,12 @@ function makeFakeWorker(opts: FakeWorkerOpts): typeof Worker {
       if (m.kind === "start") {
         const after = opts.postWritesAfterMs ?? 5;
         setTimeout(() => {
+          if (opts.errorAfterStart !== undefined) {
+            this.onmessage?.({
+              data: { kind: "error", ...opts.errorAfterStart },
+            } as MessageEvent<unknown>);
+            return;
+          }
           if (opts.noiseKind !== undefined) {
             this.onmessage?.({ data: { kind: opts.noiseKind } } as MessageEvent<unknown>);
           }
@@ -199,6 +207,27 @@ describe("runWorkerBench", () => {
     expect(result.perWorker[0]?.busyRetries).toBe(0);
     expect(result.perWorker[0]?.throughputPerSec).toBe(200); // 10 writes / (50 ms / 1000)
     expect(result.errors).toEqual([]);
+  });
+
+  test("on timeout, a Worker whose error frame lands after terminate is reported as an error", async () => {
+    // The `error` twin of the late-`done` case above. `collectResults` classifies a Worker only
+    // once its `donePromise` has settled, so a late `error` frame still reaches `errors`. Reading
+    // `error` BEFORE awaiting `donePromise` saw nothing yet, and the frame then resolved that
+    // promise with `{0, 0}` — filing a failed Worker in `perWorker` as a successful run that
+    // simply wrote nothing.
+    const result = await runWorkerBench({
+      workers: [{ name: "sync", url: new URL("file:///fake.ts"), config: {} }],
+      durationMs: 50,
+      sharedDbPath: "/fake/db",
+      timeoutMs: 5,
+      WorkerCtor: makeFakeWorker({
+        errorAfterStart: { message: "database is locked" },
+        postWritesAfterMs: 150,
+      }),
+    });
+    expect(result.errors).toEqual([{ name: "sync", message: "database is locked" }]);
+    expect(result.perWorker).toEqual([]);
+    expect(result.totalThroughputPerSec).toBe(0);
   });
 
   test("with no WorkerCtor override it drives real Workers over the message protocol", async () => {
