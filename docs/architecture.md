@@ -1557,8 +1557,8 @@ background run would re-route a concurrent interactive `nimbus ask`) and `enforc
 `nimbus fleet digest` reports what moved between each job's newest brief and its predecessor. It
 compares the deterministic `findings_json`, **never** the synthesised markdown — a rewrite differs
 run to run on an unchanged index — through per-agent extractors whose map is compiler-enforced total
-over the eligible set, so flipping a twelfth agent to eligible fails the build until its extractor
-exists. It makes **no model call at any point**, which is what keeps it outside `I38` by
+over the eligible set, so flipping one more agent to eligible fails the build until its extractor
+exists (eleven agents were eligible at ship; `changelog`, `standup` and `oncall` have joined since). It makes **no model call at any point**, which is what keeps it outside `I38` by
 construction rather than by check.
 
 #### Subject enumeration (PR 2b, shipped 2026-09-17)

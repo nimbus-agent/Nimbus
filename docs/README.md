@@ -844,7 +844,7 @@ Five-layer pyramid:
 2. **Integration (`bun test` + real SQLite)** — connector sync, index queries, extension loading and isolation. Each test gets a fresh temp dir + fresh DB.
 3. **E2E CLI (`bun test` + Gateway subprocess)** — full CLI command flows against a real Gateway backed by mock MCP servers.
 4. **UI Components (Vitest + Testing Library)** — React components in the Tauri WebView. Vitest is used here because `bun test` does not support jsdom.
-5. **E2E Desktop (Playwright + Tauri WebDriver)** — full desktop flows on all three platforms. Runs on push to `main` and release tags.
+5. **E2E Desktop (Playwright + Tauri WebDriver)** — full desktop flows on all three platforms. Runs on push to `main` only (a release tag does not run it), and on a PR only when it carries the `ci:e2e-desktop` label and touches `packages/ui/`.
 
 Run `bun run preflight` for full CI parity before opening a PR (`bun run preflight:fast` for the cheap static gates). Security scans: `bun audit`, `trivy`, and CodeQL on every PR; Dependabot alerts for vulnerable dependencies, with updates made in periodic manual passes ([`CONTRIBUTING.md` § Updating Dependencies](./CONTRIBUTING.md#updating-dependencies)); SonarCloud as a blocking quality gate. HIGH/CRITICAL findings block merges. See [`testing.md`](./testing.md).
 
@@ -859,7 +859,7 @@ nimbus/
 │   │   └── src/
 │   │       ├── platform/     # PAL: win32, darwin, linux implementations
 │   │       ├── engine/       # Mastra agent, router, planner, HITL executor, persona
-│   │       ├── agents/       # The sixteen built-in brief agents (all read-only but pre-mortem)
+│   │       ├── agents/       # The seventeen built-in brief agents (all read-only but pre-mortem)
 │   │       ├── vault/        # DPAPI, Keychain, libsecret
 │   │       ├── db/           # verify, repair, snapshot, health, metrics, latency ring buffer
 │   │       ├── index/        # SQLite schema + migrations, item store, body/depth

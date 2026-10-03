@@ -581,7 +581,7 @@ NIMBUS_MAX_AGENT_DEPTH=3              # sub-agent recursion limit (1–10; defau
 NIMBUS_MAX_TOOL_CALLS_PER_SESSION=20  # hard cap on tool calls per session (1–200; default 20)
 ```
 
-Exceeding either fires `agent.gasLimitReached` and halts new decomposition.
+Exceeding either makes `AgentCoordinator.run` throw (`Agent depth limit reached: …` / `Tool call limit reached: …`) before any sub-task of that batch is dispatched. No notification is sent: `agent.gasLimitReached` is named in older text, but nothing in the gateway emits it.
 
 ### Release infrastructure (Phase 4 WS4)
 

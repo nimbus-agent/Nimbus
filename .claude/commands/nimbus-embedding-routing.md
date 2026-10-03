@@ -152,7 +152,7 @@ The dispatcher computes the query embedding(s) using the same routing decision (
 
 `tryCreateRoutingEmbeddingRuntime` is the gateway-startup factory. The important property:
 
-> If no OpenAI key resolves but `embedding.provider = "hybrid"` is set in `nimbus.toml`, the factory **falls back to MiniLM-only** and logs one info-level line. The gateway never refuses to start because of the missing optional secret. The key resolves from the `OPENAI_API_KEY` environment variable FIRST, then the Vault's `openai.api_key` (`resolveOpenAIApiKey` in `create-routing-runtime.ts`; `create-embedding-runtime.ts` and `ipc/index-reembed-rpc.ts` do the same) — unlike the LLM vendors, whose environment fallback was removed in `v5.0.0`.
+> If no OpenAI key resolves but `embedding.provider = "hybrid"` is set in `nimbus.toml`, the factory **falls back to MiniLM-only** and logs one warn-level line (`Hybrid embedding: openai.api_key missing; routing falls back to MiniLM-only`). The gateway never refuses to start because of the missing optional secret. The key resolves from the `OPENAI_API_KEY` environment variable FIRST, then the Vault's `openai.api_key` (`resolveOpenAIApiKey` in `create-routing-runtime.ts`; `create-embedding-runtime.ts` and `ipc/index-reembed-rpc.ts` do the same) — unlike the LLM vendors, whose environment fallback was removed in `v5.0.0`.
 
 This is the right default for OSS: hybrid is opt-in via vault key, not config. A user who configures `provider = "hybrid"` but never adds the key gets degraded recall, not a startup failure.
 
