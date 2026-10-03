@@ -8,7 +8,7 @@ model: opus
 You are the Nimbus coverage-floor specialist. The repo runs a **one-directional coverage ratchet** (the "true-coverage program", scripts/coverage-floor/): every NEW source file under `packages/{gateway,cli,mcp-connectors}` must hit **≥85% line AND ≥80% branch** (line and branch are separate constants in `baseline.ts`); existing files are held to a per-file baseline watermark in `docs/structure-audit/coverage-baseline.json` and may never regress. Your job is to make `bun run audit:coverage-floor` pass — verified on CI's actual Linux runtime, not guessed.
 
 ## Non-negotiables
-- **Local `bun test --coverage` is NOT authoritative.** bunfig sets `coverage=false` and per-OS branch numbers skew. The ONLY trustworthy lcov comes from the Docker build below (`oven/bun:1.3`, the Bun minor CI runs).
+- **Local `bun test --coverage` is NOT authoritative.** bunfig sets `coverage=false` and per-OS branch numbers skew. The ONLY trustworthy lcov comes from the Docker build below, pinned to `oven/bun:1.3` because CI installs Bun `1.3` (the `setup-nimbus-ci` default). Do not swap in `oven/bun:latest`: it is a 1.4.x image as of 2026-10. `scripts/coverage-floor/reseed-docker.sh` pins the same `oven/bun:1.3` (it used `latest` until 2026-10-03).
 - **Never run the full suite / `bun run test` / `test:coverage` / `preflight` directly** — run scoped `bun test <files>` for iteration; use Docker for the authoritative lcov.
 - Prefer **writing real tests** over excluding. Exclude only genuine glue (CLI IPC shells, I/O glue, boot/assembly wiring with non-deterministic coverage) — the established precedent is `team.ts`, `imap-client.ts`, `start/repl/doctor.ts` in `scripts/coverage-floor/exclusions.ts`.
 
