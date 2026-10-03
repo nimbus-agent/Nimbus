@@ -121,7 +121,7 @@ not here. Where the Gateway also carries per-connector sync/indexing logic, a fe
 
 **PAL:** OS-specific logic lives under `packages/gateway/src/platform/`, accessed via `PlatformServices` — never import `win32`/`darwin`/`linux` from business logic.
 
-**Dependency rules:** `gateway` imports nothing from cli/ui. `cli` and `ui` reach the gateway IPC-only (no source imports). `sdk` imports nothing from gateway/cli/ui. The gateway's ONLY import from the connectors package is `setConnectorMode` from `@nimbus-dev/connectors/shared/connector-mode.ts`, in `run-bundled-connector.ts`. Circular dependencies are forbidden.
+**Dependency rules:** `gateway` imports nothing from cli/ui. `cli` and `ui` reach the gateway IPC-only (no source imports). `sdk` imports nothing from gateway/cli/ui. The gateway's ONLY static import from the connectors package is `setConnectorMode` from `@nimbus-dev/connectors/shared/connector-mode.ts`, in `run-bundled-connector.ts`; beyond it, the generated `connectors/bundled-connector-registry.ts` `import()`s each of the 94 connector entrypoints (`@nimbus-dev/connectors/<id>`), which is how `BUNDLED_CONNECTORS` gets them into the compiled binary. Circular dependencies are forbidden.
 
 **Prerequisites:** Bun v1.2+; Rust for the Tauri UI. Local `nimbus ask` can run through Ollama on `http://127.0.0.1:11434` with `[llm].prefer_local = true` + `[llm].local_model`.
 
