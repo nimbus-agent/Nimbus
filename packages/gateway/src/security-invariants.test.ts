@@ -4624,7 +4624,9 @@ describe("I41 — a demo-rooted process never reaches the real install", () => {
     // One call (plus the definition), handed the policy flag; the guard returns before building anything.
     expect(src.match(/(?<!function )bootChatopsIntoAssembly\(/g)?.length).toBe(1);
     expect(src).toContain("chatopsAllowedByBootPolicy: bootPolicy.chatops,");
-    expect(src).toMatch(/if \(!chatopsCfg\.enabled \|\| !chatopsAllowedByBootPolicy\) return undefined;/);
+    expect(src).toMatch(
+      /if \(!chatopsCfg\.enabled \|\| !chatopsAllowedByBootPolicy\) return undefined;/,
+    );
   });
 
   test("clause 6 wiring: assemble.ts gates the updater startup check, the telemetry flush and the extensions auto-update daemon on the boot policy", async () => {

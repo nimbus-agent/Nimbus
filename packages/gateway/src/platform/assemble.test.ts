@@ -415,7 +415,9 @@ describe("assemblePlatformServices — in-process assembly", () => {
     mkdirSync(paths.configDir, { recursive: true });
     writeFileSync(
       join(paths.configDir, "nimbus.toml"),
-      ["[chatops]", "enabled = true", "slack_enabled = true", 'bot_vault_entry = "test-bot"'].join("\n"),
+      ["[chatops]", "enabled = true", "slack_enabled = true", 'bot_vault_entry = "test-bot"'].join(
+        "\n",
+      ),
     );
     services = await assemblePlatformServices(paths, makeInMemoryVault());
     expect(services.chatops).toBeUndefined();
