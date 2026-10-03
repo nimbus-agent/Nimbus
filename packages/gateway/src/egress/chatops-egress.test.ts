@@ -33,15 +33,26 @@ describe("chatops egress appender", () => {
     await posts.reply("slack", "C123", "hello");
     await posts.approvalCard("slack", "C123", "approve?");
     await posts.agentBrief("teams", "19:abc", "## Gaps");
+    await posts.pushedBrief("slack", "C123", "P1 · svc — t");
 
     const rows = listEgress(db, { limit: 10 });
     expect(rows.map((r) => r.method)).toEqual([
       "chatops.reply",
       "chatops.approvalCard",
       "chatops.agentBrief",
+      "chatops.pushedBrief",
     ]);
     expect(rows.every((r) => r.sourceType === "chatops")).toBe(true);
-    expect(rows.map((r) => r.destination)).toEqual(["slack", "slack", "teams"]);
+    expect(rows.map((r) => r.destination)).toEqual(["slack", "slack", "teams", "slack"]);
+  });
+
+  test("pushedBrief stores the byte count, never the headline text", async () => {
+    const s = spy();
+    await buildLedgeredChatPosts(db, s.fn, SALT).pushedBrief("slack", "C1", "SECRET-HEADLINE-TEXT");
+    const rows = listEgress(db, { limit: 10 });
+    expect(rows.map((r) => r.method)).toEqual(["chatops.pushedBrief"]);
+    expect(JSON.stringify(rows)).not.toContain("SECRET-HEADLINE-TEXT");
+    expect(s.calls).toHaveLength(1);
   });
 
   test("the channel id is never stored in cleartext", async () => {
