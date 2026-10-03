@@ -7,7 +7,7 @@
  * Lives under `agents/_lib/` — not `agents/<name>.ts` — because static rule D22(d) forbids any
  * file outside `ipc/agents-rpc.ts` from importing an `agents/<name>.ts` emitter (both static and
  * dynamic import forms), and its regex also matches sibling query modules such as
- * `agents/standup-queries.ts` / `agents/oncall-queries.ts`. The tour's per-step selectors need to
+ * `agents/standup-queries.ts` / `agents/_lib/oncall-queries.ts`. The tour's per-step selectors need to
  * import those query modules, so the tour code has to live inside the agents package itself;
  * `_lib/` is the precedent-established exception importable from `ipc/` (see `demo-symbol.ts`).
  * This file exports no emitter — only the plan shape every later task consumes.

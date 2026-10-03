@@ -119,6 +119,33 @@ describe("checkLanMethodAllowed", () => {
     },
   );
 
+  test.each(["oncall.pushedList", "oncall.pushedGet", "oncall.pushedRetry"])(
+    "%s is not callable over LAN regardless of grant-write",
+    (method) => {
+      for (const writeAllowed of [true, false]) {
+        expect(() => checkLanMethodAllowed(method, { peerId: "p", writeAllowed })).toThrow(
+          /not callable over LAN/,
+        );
+      }
+    },
+  );
+
+  test("negative control: the match is the exact namespace, not a prefix", () => {
+    expect(() =>
+      checkLanMethodAllowed("oncallish.read", { peerId: "p", writeAllowed: false }),
+    ).not.toThrow();
+  });
+
+  test("negative control: agents.oncall is NOT refused by the `oncall` namespace entry", () => {
+    // The check splits on the FIRST segment, so `agents.oncall` keys on `agents` (not forbidden,
+    // not a write method) — forbidding the `oncall` namespace must not take the agent with it.
+    for (const writeAllowed of [true, false]) {
+      expect(() =>
+        checkLanMethodAllowed("agents.oncall", { peerId: "p", writeAllowed }),
+      ).not.toThrow();
+    }
+  });
+
   /**
    * The whole `toolgen` namespace (S2 runtime tool generation), matching exec/computer/media/
    * fleet above. `toolgen.create` is RCE-class by definition -- it registers model-authored code
@@ -371,22 +398,25 @@ describe("clip over LAN (I5 / I30 — pairing must stay owner-opened)", () => {
 });
 
 describe("demo over LAN (I41 clause 5 — the demo seeder is local CLI only)", () => {
-  test("forbids demo.seed over LAN regardless of grant-write", () => {
-    for (const peer of [
-      { peerId: "p1", writeAllowed: true },
-      { peerId: "p1", writeAllowed: false },
-    ]) {
-      let thrown: LanError | undefined;
-      try {
-        checkLanMethodAllowed("demo.seed", peer);
-      } catch (e) {
-        thrown = e as LanError;
+  test.each(["demo.seed", "demo.firePage"])(
+    "forbids %s over LAN regardless of grant-write",
+    (method) => {
+      for (const peer of [
+        { peerId: "p1", writeAllowed: true },
+        { peerId: "p1", writeAllowed: false },
+      ]) {
+        let thrown: LanError | undefined;
+        try {
+          checkLanMethodAllowed(method, peer);
+        } catch (e) {
+          thrown = e as LanError;
+        }
+        expect(thrown).toBeInstanceOf(LanError);
+        expect(thrown?.rpcCode).toBe(-32601);
+        expect(thrown?.message).toMatch(/ERR_METHOD_NOT_ALLOWED/);
       }
-      expect(thrown).toBeInstanceOf(LanError);
-      expect(thrown?.rpcCode).toBe(-32601);
-      expect(thrown?.message).toMatch(/ERR_METHOD_NOT_ALLOWED/);
-    }
-  });
+    },
+  );
 
   // Negative control: the namespace entry is doing the work, not a coincidental broader match.
   test("agents.ownership is still allowed", () => {

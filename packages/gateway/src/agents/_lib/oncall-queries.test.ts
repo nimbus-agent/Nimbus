@@ -1,6 +1,6 @@
 import type { Database } from "bun:sqlite";
 import { beforeEach, describe, expect, test } from "bun:test";
-import { createMemoryIndexDb } from "../connectors/connector-sync-test-helpers.ts";
+import { createMemoryIndexDb } from "../../connectors/connector-sync-test-helpers.ts";
 import {
   readPagerdutySyncFreshness,
   selectActiveAssignedIncidents,

@@ -51,6 +51,7 @@ import {
   OBSIDIAN_NOTES_V26_SCHEMA_SQL,
   OBSIDIAN_NOTES_V26_SEED_SQL,
 } from "../obsidian-notes-v26-sql.ts";
+import { ONCALL_PUSH_V64_SQL } from "../oncall-push-v64-sql.ts";
 import {
   OWNERSHIP_PASS_STATE_V51_SQL,
   OWNERSHIP_RELATION_TYPES_V51_SQL,
@@ -575,6 +576,12 @@ const INDEXED_SCHEMA_STEPS: readonly IndexedSchemaStep[] = [
     63,
     "fleet subject enumeration (brief subject_key + sweep cursor)",
     FLEET_SUBJECTS_V63_SQL,
+  ),
+  simpleStep(
+    63,
+    64,
+    "on-call pushed briefs (pushed_brief + oncall_push_state)",
+    ONCALL_PUSH_V64_SQL,
   ),
 ];
 

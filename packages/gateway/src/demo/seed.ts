@@ -13,13 +13,21 @@ import { dbRun } from "../db/write.ts";
 import { runDecisionPass } from "../decisions/decision-extract.ts";
 import { annotateDeployment, validateDeploymentSha } from "../deployment/annotate.ts";
 import { runGlossaryPass } from "../glossary/glossary-extract.ts";
+import { itemPrimaryKey } from "../index/item-key.ts";
 import { upsertIndexedItem } from "../index/item-store.ts";
+import type { PushRunSummary } from "../oncall-push/push-runner.ts";
+import type { OncallPushRuntime } from "../oncall-push/push-runtime.ts";
 import { runOwnershipPass } from "../ownership/ownership-pass.ts";
 import { NIMBUS_PERSON_NAMESPACE_UUID, uuidV5 } from "../people/person-id.ts";
 import { insertPerson } from "../people/person-store.ts";
 import { type BlameRow, upsertBlameLines } from "../security/blame-store.ts";
 
-import { ACME_TOUR_STEPS, buildAcmeCorpus } from "./corpus/acme.ts";
+import {
+  ACME_TOUR_STEPS,
+  buildAcmeCorpus,
+  PAGE_FOLLOW_UPS,
+  PAGING_INCIDENT,
+} from "./corpus/acme.ts";
 import type {
   At,
   DemoCommit,
@@ -142,7 +150,12 @@ function writeDemoConfig(
     "[[filesystem.roots]]\n" +
     `path = "${workspacePosix}"\n` +
     "git_aware = true\n" +
-    serviceBlocks;
+    serviceBlocks +
+    // The page `demo.firePage` fires is briefed by the on-call push path. `[user] me_person_id`
+    // above is Sam, the paging incident's assignee; `enabled_at` is stamped by the boot reconcile
+    // when `nimbus demo` restarts the gateway after seeding, so it precedes the page.
+    "\n[oncall.push]\n" +
+    "enabled = true\n";
   writeFileSync(join(configDir, "nimbus.toml"), toml);
 }
 
@@ -434,4 +447,35 @@ export async function seedDemoCorpus(
     tour: ACME_TOUR_STEPS.map((s) => tourStepFor(s.kind, s, true)),
     workspaceRoot: repoRoot,
   };
+}
+
+export type FireDemoPageResult = { readonly incidentId: string; readonly push: PushRunSummary };
+
+/**
+ * The page (spec § 3): write the paging incident "now", mark PagerDuty as just synced, run the SAME
+ * `runtime.run("pagerduty")` a real sync triggers, and only THEN write the team's chatter — so the
+ * pushed brief is honestly assembled before anyone typed.
+ *
+ * Reached only through `demo.firePage`, which only a demo-rooted gateway claims (I41). Repeatable:
+ * a second fire re-upserts the same incident and messages, and the push store's already-pushed
+ * check selects nothing new.
+ */
+export async function fireDemoPage(
+  db: Database,
+  runtime: OncallPushRuntime,
+  nowMs: number,
+): Promise<FireDemoPageResult> {
+  const corpus = buildAcmeCorpus();
+  const at: At = (offsetMs) => nowMs + offsetMs;
+  writeItems(db, corpus.people, [PAGING_INCIDENT], at, nowMs);
+  dbRun(
+    db,
+    "INSERT INTO sync_state (connector_id, last_sync_at) VALUES (?, ?) ON CONFLICT(connector_id) DO UPDATE SET last_sync_at = excluded.last_sync_at",
+    ["pagerduty", nowMs],
+  );
+  const push = await runtime.run("pagerduty");
+  // Never before the page, even under an injected clock that runs ahead of the wall clock.
+  const after = Math.max(Date.now(), nowMs);
+  writeItems(db, corpus.people, PAGE_FOLLOW_UPS, (o) => after + o, after);
+  return { incidentId: itemPrimaryKey(PAGING_INCIDENT.service, PAGING_INCIDENT.externalId), push };
 }

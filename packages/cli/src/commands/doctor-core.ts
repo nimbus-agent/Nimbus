@@ -516,6 +516,20 @@ export function doctorPrintIndexConfidence(health: {
   return 0;
 }
 
+/** Spec § 4: push enabled but no identity selects nothing — say so rather than stay silent. */
+export function doctorPrintOncallPush(r: { enabled?: unknown; identity?: unknown }): number {
+  if (r.enabled !== true) return 0;
+  if (r.identity === "unresolved") {
+    console.log(
+      "[warn] On-call push is enabled but your identity is unresolved, so no incident can be selected. " +
+        "Set [user] me_person_id in nimbus.toml or `git config user.email`.",
+    );
+    return 1;
+  }
+  console.log("[ok] On-call push: enabled.");
+  return 0;
+}
+
 /**
  * Report the embedding runtime, so a dead semantic search cannot stay silent.
  *
@@ -701,6 +715,10 @@ async function doctorRunGatewayRpcs(client: IPCClient): Promise<number> {
     .call<{ confidence?: unknown; confidenceUnavailableReason?: unknown }>("index.health", {})
     .catch(() => ({}) as { confidence?: unknown; confidenceUnavailableReason?: unknown });
   exit = Math.max(exit, doctorPrintIndexConfidence(health));
+  const push = await client
+    .call<{ enabled?: unknown; identity?: unknown }>("oncall.pushedList", { limit: 1 })
+    .catch(() => ({}) as { enabled?: unknown; identity?: unknown });
+  exit = Math.max(exit, doctorPrintOncallPush(push));
   // Reported BEFORE connector health: a dead embedding runtime disables semantic search for the
   // whole gateway run, which outranks any one connector being unreachable.
   exit = Math.max(exit, doctorPrintEmbeddingFromSnapshot(snap));
