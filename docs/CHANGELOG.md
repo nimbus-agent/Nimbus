@@ -18,6 +18,33 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
 
 ## Post-Phase-6 deliveries
 
+- **2026-10-03 — Every third-party dependency moved to its latest release; five holds are written
+  down with their evidence.** npm: each direct dependency moved in every workspace that declares it,
+  the root `overrides` went from 27 pins to 5, and `bun.lock` was regenerated from the manifests.
+  Four of the five (`sharp`, `protobufjs`, `qs`, `nodemailer`) lift a consumer whose own range tops
+  out at a vulnerable version; `zod` keeps a single copy at the MCP type seam. Two majors landed. **vite 8 with `@vitejs/plugin-react` 6**: the UI
+  now minifies with vite's built-in `oxc` rather than an `esbuild` it never declared. **js-yaml 5**:
+  default imports became named imports, the global override is gone, and the Astro/Starlight chain
+  keeps its own js-yaml 4 (the prerender build bundles it via `resolve.noExternal`). Under js-yaml 5's
+  YAML 1.2 core schema, Obsidian frontmatter `created: 2024-01-02` stays the string the note wrote.
+  `protobufjs` moved to 8.8.0. Nothing at runtime loads it: `onnxruntime-web`'s Node entry point
+  requires only `onnxruntime-common` and Node built-ins. Rust: `tauri` 2.12.1, `tauri-build` 2.7.1, and a `cargo update` (147 crates
+  moved). That bump retired 20 of `deny.toml`'s 21 advisory ignores, each one cargo-deny reported as
+  matching nothing. quick-xml 0.39.4 left the graph with this update. The gtk3-rs "unmaintained"
+  advisories were withdrawn upstream. fxhash, unic-* and rand 0.7.3 were already gone. glib's
+  `unsound` advisory can never fail cargo-deny's default `workspace` scope. `cargo audit` dropped its
+  two `--ignore` flags and moved to 0.22.2. Actions: every pin is on its latest release. The org's
+  own `verify-npm-provenance` publishes no releases, so it is pinned to its newest commit.
+  Held back: **msw 3**, which intercepts `fetch` through `node:net`/`tls` socket patching that
+  Bun's native `fetch` never passes through, so under msw 3.0.2 the gateway's handler tests fail 0/4
+  and their requests reach the real Google and GitHub APIs (`msw` stays `^2.15.0`, the last 2.x).
+  **TypeScript 7 in `packages/docs`**: `astro check`, its typecheck and build step, refuses TypeScript
+  7.0, and its TypeScript 7 path needs 7.1+. The root `typescript-compiler-api` alias also stays on 6,
+  for the compiler API `scripts/cleanup/` drives. **WiX 5.0.2** for the release MSI: the 6.x and 7.x
+  binaries require accepting the Open Source Maintenance Fee EULA, a licensing decision. **Rust
+  1.95.0** (1.99.0 is out) and **Bun 1.3 in CI** (1.4.2 is out): both are toolchains rather than
+  packages, and each needs its own pass.
+
 - **2026-10-02 — The on-call pushed brief, PR 1 of 3 (Phase 17 W2).** A P1 page now reaches you with
   its brief already assembled. With `[oncall.push] enabled = true` (DEFAULT OFF), a PagerDuty sync
   selects ACTIVE (`triggered`/`acknowledged`) incidents assigned to you whose severity is in

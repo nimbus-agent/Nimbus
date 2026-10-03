@@ -119,7 +119,7 @@ There is no local equivalent packaged (it needs `SONAR_TOKEN` + server-side anal
 
 These only run in CI (other OS, external tooling, or network) — when one reds, don't guess, drive it down with the named agent:
 
-- **Coverage floor** is **Linux-authoritative**: local lcov on Windows/macOS diverges from CI by tens of percent on OS-specific files. Reproduce with `scripts/coverage-floor/reseed-docker.sh` (builds the lcov in `oven/bun:latest` == CI bun). Red gate → **`nimbus-coverage-floor`** agent.
+- **Coverage floor** is **Linux-authoritative**: local lcov on Windows/macOS diverges from CI by tens of percent on OS-specific files. Reproduce with `scripts/coverage-floor/reseed-docker.sh` (builds the lcov in `oven/bun:1.3`, the Bun minor CI runs). Red gate → **`nimbus-coverage-floor`** agent.
 - **SonarCloud quality gate** (above) → **`nimbus-sonar-gate`** agent.
 - **Cross-platform Windows/macOS** unit legs, **client node-compat** (real Node 20 ESM), **CodeQL / Trivy / cargo-audit / cargo-deny**, **install-smoke (3-OS)** — accept as push-time; a red here → **`nimbus-ci-doctor`** agent.
 

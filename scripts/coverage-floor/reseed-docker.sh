@@ -16,7 +16,7 @@ export MSYS_NO_PATHCONV=1
 export MSYS2_ARG_CONV_EXCL='*'
 
 REPO_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
-IMAGE="oven/bun:latest"        # bun 1.3.14 == CI
+IMAGE="oven/bun:1.3"           # the Bun minor CI runs (setup-nimbus-ci's bun-version default)
 CACHE_VOL="nimbus-bun-cache"   # named volume: bun install cache, paid once
 
 if [[ "${1:-}" == "--clean" || "${1:-}" == "-c" ]]; then
@@ -28,7 +28,7 @@ cd "${REPO_ROOT}"
 docker volume create "${CACHE_VOL}" >/dev/null
 mkdir -p coverage
 
-echo "--- docker: build instrumented lcov (oven/bun:latest) ---"
+echo "--- docker: build instrumented lcov (${IMAGE}) ---"
 # Stream tracked + untracked working-tree files (node_modules/.git/coverage/dist excluded)
 # into the container, extract, install, build the client, run build-lcov.sh, copy lcov out.
 # NB: `./coverage` is anchored to the repo root so it excludes the top-level output dir
@@ -47,7 +47,7 @@ tar --exclude=node_modules --exclude=.git --exclude=./coverage --exclude=dist \
         export DEBIAN_FRONTEND=noninteractive
         # Match the CI coverage job (_test-suite.yml unit-coverage): the ubuntu runner ships git
         # and installs libsecret-tools + gnome-keyring + dbus, then runs the suite inside a D-Bus
-        # session via run-with-optional-dbus.sh. oven/bun:latest has none of these, so the PAL /
+        # session via run-with-optional-dbus.sh. The oven/bun image has none of these, so the PAL /
         # vault tests and the assemblePlatformServices boot fail — which falsely un-covers every
         # subsystem they exercise (scheduler, graph-populator, latency-ring-buffer,
         # delegated-request-remote, and the filesystem-v2-sync git path). Install + wrap to match.
