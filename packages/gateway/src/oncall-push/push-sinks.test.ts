@@ -537,11 +537,12 @@ test("chatops: a headline render that throws is a failed row, deliver resolves, 
     ...item("pagerduty:A", "ok", 1),
     incident: null as unknown as PushDelivery["incident"],
   };
-  const toasts: number[] = [];
   let posted = 0;
-  await chatDeliverer(async () => (posted += 1), { notify: () => void toasts.push(1) })([bad]);
+  await chatDeliverer(async () => (posted += 1), {})([bad]);
   expect(posted).toBe(0);
   expect(store.get("pagerduty:A")?.delivery["chatops"]?.outcome).toBe("failed");
+  // The toast sink still ran; it is `failed` because its own bodyFor(d) throws on the nulled incident.
+  expect(store.get("pagerduty:A")?.delivery["toast"]?.outcome).toBe("failed");
   expect(store.get("pagerduty:A")?.delivery["chatops"]?.reason).toEndWith(
     "(delivery may be partial)",
   );
