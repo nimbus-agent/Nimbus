@@ -67,9 +67,13 @@ import {
   type TeamsEventsSurface,
   WRITE_ROUTE_ALLOWLIST,
 } from "./http-write-routes.ts";
-import { dispatchMetricsRpc, MetricsRpcError } from "./metrics-rpc.ts";
+import { dispatchMetricsRpc, type MetricsRpcContext, MetricsRpcError } from "./metrics-rpc.ts";
 import { loadOpenApiJsonBytes } from "./openapi-loader.ts";
-import { dispatchPreflightRpc, PreflightRpcError } from "./preflight-rpc.ts";
+import {
+  dispatchPreflightRpc,
+  type PreflightRpcContext,
+  PreflightRpcError,
+} from "./preflight-rpc.ts";
 
 export type ReadOnlyHttpServerOptions = {
   readonly configDir?: string;
@@ -138,16 +142,30 @@ function json(data: unknown, status = 200): Response {
   });
 }
 
+/** The plain-text twin of `json`, for the admin routes that answer in text (`/metrics`, `/admin`). */
+function text(body: string, status: number): Response {
+  return new Response(body, {
+    status,
+    headers: { "content-type": "text/plain; charset=utf-8" },
+  });
+}
+
+/** The bare 404: no JSON body and no named cause, exactly what an unmatched path answers. */
+function notFound(): Response {
+  return new Response("Not Found", { status: 404 });
+}
+
 /**
- * Shared gate for the two inline bearer reads: 401 when the token is unknown, 403 when it is
+ * The token phase of `requireScopedSurface`: 401 when the token is unknown, 403 when it is
  * known but out of scope, 500 when the route's `HTTP_ROUTE_AUTH` entry is itself misconfigured
  * (see `enforceClipScope`'s fail-closed contract). Returns the verified principal on success.
  *
- * `routeKey` must be the STATIC route constant (`ROUTE_KEY_BRIEF_GET` / `ROUTE_KEY_CLIPS_RELATED`),
+ * `routeKey` must be the STATIC route constant (`ROUTE_KEY_BRIEF_GET`, `ROUTE_KEY_EGRESS_LIST`, …),
  * never the raw request path — `clipScopeFor` looks the requirement up by that literal key. The
- * parameter type is narrowed to exactly those two constants: this function is never called any
- * other way, and the narrowing is what makes `enforceClipScope` returning "misconfigured" for this
- * routeKey a genuine table bug rather than a legitimately-unscoped route.
+ * parameter type is narrowed to exactly the `ClipReadRouteKey` constants, one per inline read:
+ * this function is never called any other way, and the narrowing is what makes
+ * `enforceClipScope` returning "misconfigured" for this routeKey a genuine table bug rather than a
+ * legitimately-unscoped route.
  */
 async function requireScopedClipToken(
   req: Request,
@@ -164,6 +182,48 @@ async function requireScopedClipToken(
     return { ok: false, response: json(verdict.body, verdict.status) };
   }
   return { ok: true, scopes: verified.scopes };
+}
+
+/** A scoped read's gate outcome: the vault the token was verified against, or the final answer. */
+type ScopedSurfaceGate =
+  | { readonly ok: true; readonly clipsVault: NimbusVault }
+  | { readonly ok: false; readonly response: Response };
+
+/**
+ * The gate in front of every bearer-scoped inline read: the surface must be mounted, then the
+ * token must carry `routeKey`'s scope (`requireScopedClipToken`). Every one of these reads
+ * authenticates against `opts.clipsVault`, the one labeled client-token map.
+ *
+ * ORDER IS THE CONTRACT: `disabled` is answered BEFORE the token is read, so an unmounted surface
+ * gives every caller the same 404, with a token or without one. Clients depend on that 404 — the
+ * browser client reads a resolve 404 as "gateway older than the route" and withholds those lanes
+ * silently, where a 401 or a 500 would be a visible error on every gateway that does not mount the
+ * surface. A route whose surface needs more than the vault (briefs, agents) refuses on that half
+ * FIRST, with the same `disabled` answer, so the whole "not mounted" check still precedes auth.
+ *
+ * NAMING THE GATE: what it tests is that the SURFACE is mounted, not that the route exists — so a
+ * gateway new enough to carry a route but with no clips surface answers the same 404 as one too
+ * old to have it, and a client cannot tell those apart.
+ *
+ * Each route passes its OWN `disabled` answer, because the bodies differ on purpose: each names the
+ * absent surface (`resolve_disabled`, `services_disabled`, `egress_disabled`, `briefs_disabled` /
+ * `agents_disabled` with hints), and `POST /v1/clips/related` answers the bare `notFound()`.
+ */
+async function requireScopedSurface(
+  req: Request,
+  opts: ReadOnlyHttpServerOptions,
+  routeKey: ClipReadRouteKey,
+  disabled: () => Response,
+): Promise<ScopedSurfaceGate> {
+  const clipsVault = opts.clipsVault;
+  if (clipsVault === undefined) {
+    return { ok: false, response: disabled() };
+  }
+  const auth = await requireScopedClipToken(req, clipsVault, routeKey);
+  if (!auth.ok) {
+    return { ok: false, response: auth.response };
+  }
+  return { ok: true, clipsVault };
 }
 
 function parsePositiveInt(raw: string | null, fallback: number, max: number): number {
@@ -284,6 +344,72 @@ function handleOpenApiJson(): Response {
 }
 
 /**
+ * A required `?name=`, or `null` when it is absent OR EMPTY. Whitespace is a VALUE here, unlike
+ * `coordinateParam`'s blankness rule: `?service=%20` reaches the dispatcher's own validation. And
+ * `metrics.stats`' `window_ms` / `bucket_ms` refuse only absence — see `handleMetricsStats`.
+ */
+function requiredQueryParam(url: URL, name: string): string | null {
+  const raw = url.searchParams.get(name);
+  return raw === null || raw === "" ? null : raw;
+}
+
+/** The 400 for a missing required query param — naming that one param, never a group of them. */
+function missingQueryParam(name: string): Response {
+  return json({ error: `missing required query param: ${name}` }, 400);
+}
+
+/**
+ * The owner's service configs, or an empty map when no config dir is wired. THROWS on a malformed
+ * `nimbus.toml`: what that means is each caller's decision, and they decide differently on purpose
+ * — `handleMetricsStats` answers `config_unreadable`, while `metrics.dora` and `deploy.preflight`
+ * load lazily inside their dispatcher, so theirs is the generic 500.
+ */
+function loadServiceConfigs(opts: ReadOnlyHttpServerOptions): Map<string, ServiceConfig> {
+  return opts.configDir === undefined
+    ? new Map<string, ServiceConfig>()
+    : loadNimbusServiceConfigsFromConfigDir(opts.configDir);
+}
+
+/** What `metrics.*` and `deploy.preflight` both take: the read handle, configs, and the clock. */
+function serviceRpcContext(
+  db: Database,
+  opts: ReadOnlyHttpServerOptions,
+  loadConfig: () => Map<string, ServiceConfig>,
+): MetricsRpcContext & PreflightRpcContext {
+  return { db, loadConfig, ...(opts.nowMs === undefined ? {} : { nowMs: opts.nowMs }) };
+}
+
+/** A dispatcher's own refusal class (`MetricsRpcError`, `PreflightRpcError`). */
+type RpcRefusalClass = abstract new (...args: never[]) => Error;
+
+/**
+ * Serves a read-only RPC dispatcher's answer on its public route. Its own `refusal` class becomes a
+ * 400 carrying the message verbatim (those messages are the actionable part); ANY other throw
+ * propagates to `handleGet`'s generic 500, which keeps a config parser's message (service id,
+ * offending value) off the wire; a `miss` is a wiring bug, thrown rather than served. `dispatch` is
+ * handed `method`, so the method dispatched and the one that error names cannot drift apart.
+ */
+async function serveRpcRead(
+  method: string,
+  refusal: RpcRefusalClass,
+  dispatch: (method: string) => Promise<{ kind: "miss" } | { kind: "hit"; value: unknown }>,
+): Promise<Response> {
+  let out: Awaited<ReturnType<typeof dispatch>>;
+  try {
+    out = await dispatch(method);
+  } catch (e) {
+    if (e instanceof refusal) {
+      return json({ error: e.message }, 400);
+    }
+    throw e;
+  }
+  if (out.kind === "miss") {
+    throw new Error(`${method} dispatcher returned miss`);
+  }
+  return json(out.value);
+}
+
+/**
  * GET /v1/metrics/stats — one DORA-family metric as a bucketed TIME SERIES.
  *
  * PUBLIC, beside `/v1/metrics/dora` and `/v1/preflight/deploy`. That is a decision and not an
@@ -318,47 +444,43 @@ async function handleMetricsStats(
   // own edge and the IPC layer takes milliseconds, so integer ms keeps this route on the same
   // side of that line as the method it wraps. `requireStatsParams` does the real validation and
   // its messages are actionable, so bare presence is all that is checked here.
-  const service = url.searchParams.get("service");
-  if (service === null || service === "") {
-    return json({ error: "missing required query param: service" }, 400);
-  }
-  const metric = url.searchParams.get("metric");
-  if (metric === null || metric === "") {
-    return json({ error: "missing required query param: metric" }, 400);
-  }
+  const service = requiredQueryParam(url, "service");
+  if (service === null) return missingQueryParam("service");
+  const metric = requiredQueryParam(url, "metric");
+  if (metric === null) return missingQueryParam("metric");
+  // The two integers refuse only ABSENCE, not emptiness, so they are not `requiredQueryParam`: a
+  // present-but-empty `?window_ms=` passes and reaches the dispatcher as `Number("")`, i.e. 0,
+  // which its bucket-shape check refuses as non-positive (see the conversion below).
   const windowMs = url.searchParams.get("window_ms");
-  if (windowMs === null) {
-    return json({ error: "missing required query param: window_ms" }, 400);
-  }
+  if (windowMs === null) return missingQueryParam("window_ms");
   // Checked SEPARATELY from `window_ms`, not as one combined `||`. A combined check names both
   // params whatever the caller omitted, so someone who sent `window_ms` and forgot `bucket_ms`
   // is told `window_ms` is missing too — and then goes looking at the one param they got right.
   const bucketMs = url.searchParams.get("bucket_ms");
-  if (bucketMs === null) {
-    return json({ error: "missing required query param: bucket_ms" }, 400);
-  }
+  if (bucketMs === null) return missingQueryParam("bucket_ms");
   let loaded: Map<string, ServiceConfig>;
   try {
-    loaded =
-      opts.configDir === undefined
-        ? new Map()
-        : loadNimbusServiceConfigsFromConfigDir(opts.configDir);
+    loaded = loadServiceConfigs(opts);
   } catch {
     // Loaded HERE rather than inside the dispatcher's `loadConfig` thunk, so a malformed
-    // `nimbus.toml` is caught rather than escaping as a 500 with the parser's message intact —
-    // which is what `/v1/metrics/dora` beside it still does today. Those messages embed the
-    // service id AND the offending config value, and on a PUBLIC route that is readable by any
-    // local process on the machine. Same answer as `GET /v1/services/resolve` gives, deliberately:
-    // the design asked that both routes answer this seam the same way.
+    // `nimbus.toml` is caught and NAMED rather than escaping to `handleGet`'s generic
+    // `internal_error` 500 — which is what `/v1/metrics/dora` beside it still answers today. The
+    // body names only THAT parsing failed: the parser's messages embed the service id AND the
+    // offending config value, and on a PUBLIC route that is readable by any local process on the
+    // machine. Same answer as `GET /v1/services/resolve` gives, deliberately: the design asked
+    // that both routes answer this seam the same way.
     //
     // Not a fix for the sibling route. That is pre-existing and out of scope here; it is named so
     // the next reader knows the two differ on purpose rather than by oversight.
     return json({ error: "config_unreadable" }, 500);
   }
-  let out: Awaited<ReturnType<typeof dispatchMetricsRpc>>;
-  try {
-    out = await dispatchMetricsRpc(
-      "metrics.stats",
+  // `MetricsRpcError` covers the unknown-service refusal AND every `StatsBucketError` the
+  // dispatcher already maps to it — non-positive or inverted bounds, and the MAX_BUCKETS ceiling.
+  // Those messages are actionable ("widen the bucket or narrow the window") and reach the client
+  // verbatim, as `serveRpcRead`'s 400.
+  return await serveRpcRead("metrics.stats", MetricsRpcError, (method) =>
+    dispatchMetricsRpc(
+      method,
       {
         service,
         metric,
@@ -370,25 +492,9 @@ async function handleMetricsStats(
         window_ms: Number(windowMs),
         bucket_ms: Number(bucketMs),
       },
-      {
-        db,
-        loadConfig: () => loaded,
-        ...(opts.nowMs === undefined ? {} : { nowMs: opts.nowMs }),
-      },
-    );
-  } catch (e) {
-    if (e instanceof MetricsRpcError) {
-      // Covers the unknown-service refusal AND every `StatsBucketError` the dispatcher already
-      // maps here — non-positive or inverted bounds, and the MAX_BUCKETS ceiling. Those messages
-      // are actionable ("widen the bucket or narrow the window") and reach the client verbatim.
-      return json({ error: e.message }, 400);
-    }
-    throw e;
-  }
-  if (out.kind === "miss") {
-    throw new Error("metrics.stats dispatcher returned miss");
-  }
-  return json(out.value);
+      serviceRpcContext(db, opts, () => loaded),
+    ),
+  );
 }
 
 async function handleMetricsDora(
@@ -396,36 +502,17 @@ async function handleMetricsDora(
   db: Database,
   opts: ReadOnlyHttpServerOptions,
 ): Promise<Response> {
-  const service = url.searchParams.get("service");
-  if (service === null || service === "") {
-    return json({ error: "missing required query param: service" }, 400);
-  }
+  const service = requiredQueryParam(url, "service");
+  if (service === null) return missingQueryParam("service");
   const sinceRaw = url.searchParams.get("since");
   const since = sinceRaw === null || sinceRaw === "" ? "30d" : sinceRaw;
-  let out: Awaited<ReturnType<typeof dispatchMetricsRpc>>;
-  try {
-    out = await dispatchMetricsRpc(
-      "metrics.dora",
+  return await serveRpcRead("metrics.dora", MetricsRpcError, (method) =>
+    dispatchMetricsRpc(
+      method,
       { service, since },
-      {
-        db,
-        loadConfig: () =>
-          opts.configDir === undefined
-            ? new Map()
-            : loadNimbusServiceConfigsFromConfigDir(opts.configDir),
-        ...(opts.nowMs === undefined ? {} : { nowMs: opts.nowMs }),
-      },
-    );
-  } catch (e) {
-    if (e instanceof MetricsRpcError) {
-      return json({ error: e.message }, 400);
-    }
-    throw e;
-  }
-  if (out.kind === "miss") {
-    throw new Error("metrics.dora dispatcher returned miss");
-  }
-  return json(out.value);
+      serviceRpcContext(db, opts, () => loadServiceConfigs(opts)),
+    ),
+  );
 }
 
 async function handleDeployPreflight(
@@ -433,14 +520,10 @@ async function handleDeployPreflight(
   db: Database,
   opts: ReadOnlyHttpServerOptions,
 ): Promise<Response> {
-  const service = url.searchParams.get("service");
-  if (service === null || service === "") {
-    return json({ error: "missing required query param: service" }, 400);
-  }
-  const targetRef = url.searchParams.get("target_ref");
-  if (targetRef === null || targetRef === "") {
-    return json({ error: "missing required query param: target_ref" }, 400);
-  }
+  const service = requiredQueryParam(url, "service");
+  if (service === null) return missingQueryParam("service");
+  const targetRef = requiredQueryParam(url, "target_ref");
+  if (targetRef === null) return missingQueryParam("target_ref");
   const maxFindingsRaw = url.searchParams.get("max_findings");
   const maxFindings =
     maxFindingsRaw === null || maxFindingsRaw === ""
@@ -449,64 +532,74 @@ async function handleDeployPreflight(
   if (maxFindings !== undefined && !Number.isInteger(maxFindings)) {
     return json({ error: "max_findings must be an integer" }, 400);
   }
-  let out: Awaited<ReturnType<typeof dispatchPreflightRpc>>;
-  try {
-    out = await dispatchPreflightRpc(
-      "deploy.preflight",
+  return await serveRpcRead("deploy.preflight", PreflightRpcError, (method) =>
+    dispatchPreflightRpc(
+      method,
       maxFindings === undefined
         ? { service, target_ref: targetRef }
         : { service, target_ref: targetRef, max_findings: maxFindings },
-      {
-        db,
-        loadConfig: () =>
-          opts.configDir === undefined
-            ? new Map()
-            : loadNimbusServiceConfigsFromConfigDir(opts.configDir),
-        ...(opts.nowMs === undefined ? {} : { nowMs: opts.nowMs }),
-      },
-    );
-  } catch (e) {
-    if (e instanceof PreflightRpcError) {
-      return json({ error: e.message }, 400);
-    }
-    throw e;
-  }
-  if (out.kind === "miss") {
-    throw new Error("deploy.preflight dispatcher returned miss");
-  }
-  return json(out.value);
+      serviceRpcContext(db, opts, () => loadServiceConfigs(opts)),
+    ),
+  );
 }
 
+/**
+ * The admin bearer check shared by `/v1/admin/status`, `/metrics` and `/admin/*`: the EXACT I13
+ * mechanism (requireBearer → constantTimeStringEqual), so a missing/empty resolved token fails
+ * closed (surfaceDisabled). The token is resolved on every request, never cached.
+ */
+async function adminBearerOk(
+  req: Request,
+  resolveAdminToken: () => Promise<string>,
+): Promise<boolean> {
+  const expectedToken = await resolveAdminToken();
+  return requireBearer(req, { expectedToken }).ok;
+}
+
+/** The plain-text 401 of `/metrics` and `/admin/*` — `/v1/admin/status` answers JSON instead. */
+function textUnauthorized(): Response {
+  return text("unauthorized\n", 401);
+}
+
+/** The observability gate's outcome: the readers to snapshot, or the final answer (`null` = 404). */
+type StatusSurfaceGate =
+  | { readonly ok: true; readonly readers: StatusReaders }
+  | { readonly ok: false; readonly response: Response | null };
+
 // Observability (Task 15). The admin snapshot + Prometheus metrics share one bearer-gated surface:
-// both require statusReaders + a resolveAdminToken. The bearer check is the EXACT I13 mechanism
-// (requireBearer → constantTimeStringEqual) — a missing/empty token fails closed (surfaceDisabled).
+// both require statusReaders + a resolveAdminToken, and absent either the answer is `null` (the
+// surface is not mounted, so the route 404s). Each route passes its own 401.
+async function requireStatusSurface(
+  req: Request,
+  opts: ReadOnlyHttpServerOptions,
+  unauthorized: () => Response,
+): Promise<StatusSurfaceGate> {
+  const readers = opts.statusReaders;
+  if (readers === undefined || opts.resolveAdminToken === undefined) {
+    return { ok: false, response: null };
+  }
+  if (!(await adminBearerOk(req, opts.resolveAdminToken))) {
+    return { ok: false, response: unauthorized() };
+  }
+  return { ok: true, readers };
+}
+
 async function handleAdminStatus(
   req: Request,
   opts: ReadOnlyHttpServerOptions,
 ): Promise<Response | null> {
-  const readers = opts.statusReaders;
-  if (readers === undefined || opts.resolveAdminToken === undefined) return null;
-  const expectedToken = await opts.resolveAdminToken();
-  if (!requireBearer(req, { expectedToken }).ok) {
-    return json({ error: "unauthorized" }, 401);
-  }
-  return json({ data: buildStatus(readers) });
+  const gate = await requireStatusSurface(req, opts, () => json({ error: "unauthorized" }, 401));
+  if (!gate.ok) return gate.response;
+  return json({ data: buildStatus(gate.readers) });
 }
 
 async function handleMetrics(
   req: Request,
   opts: ReadOnlyHttpServerOptions,
 ): Promise<Response | null> {
-  const readers = opts.statusReaders;
-  if (readers === undefined || opts.resolveAdminToken === undefined) return null;
-  const expectedToken = await opts.resolveAdminToken();
-  if (!requireBearer(req, { expectedToken }).ok) {
-    return new Response("unauthorized\n", {
-      status: 401,
-      headers: { "content-type": "text/plain; charset=utf-8" },
-    });
-  }
-  return new Response(formatPrometheus(buildStatus(readers)), {
+  const gate = await requireStatusSurface(req, opts, textUnauthorized);
+  if (!gate.ok) return gate.response;
+  return new Response(formatPrometheus(buildStatus(gate.readers)), {
     status: 200,
     headers: { "content-type": "text/plain; version=0.0.4; charset=utf-8" },
   });
@@ -521,33 +614,17 @@ async function handleAdminConsole(
   opts: ReadOnlyHttpServerOptions,
 ): Promise<Response | null> {
   if (opts.resolveAdminToken === undefined) return null;
-  const expectedToken = await opts.resolveAdminToken();
-  if (!requireBearer(req, { expectedToken }).ok) {
-    return new Response("unauthorized\n", {
-      status: 401,
-      headers: { "content-type": "text/plain; charset=utf-8" },
-    });
-  }
+  if (!(await adminBearerOk(req, opts.resolveAdminToken))) return textUnauthorized();
   const rel = safeAssetPath(url.pathname);
-  if (rel === undefined) {
-    return new Response("bad request\n", {
-      status: 400,
-      headers: { "content-type": "text/plain; charset=utf-8" },
-    });
-  }
+  if (rel === undefined) return text("bad request\n", 400);
   const asset = resolveConsoleAsset(rel);
   if (asset.kind === "not-built") {
-    return new Response(
+    return text(
       "admin console not built — run: bun --filter @nimbus-dev/admin-console build\n",
-      {
-        status: 503,
-        headers: { "content-type": "text/plain; charset=utf-8" },
-      },
+      503,
     );
   }
-  if (asset.kind === "not-found") {
-    return new Response("Not Found", { status: 404 });
-  }
+  if (asset.kind === "not-found") return notFound();
   return new Response(Bun.file(asset.path), { headers: { "content-type": contentTypeFor(rel) } });
 }
 
@@ -630,7 +707,7 @@ async function dispatchReadOnlyGet(
   if (adminRes !== null) {
     return adminRes;
   }
-  return new Response("Not Found", { status: 404 });
+  return notFound();
 }
 
 type WriteRouteDeps = Parameters<typeof dispatchWriteRoute>[1];
@@ -714,12 +791,8 @@ async function handleClipRelated(
   db: Database,
   opts: ReadOnlyHttpServerOptions,
 ): Promise<Response> {
-  const { clipsVault } = opts;
-  if (clipsVault === undefined) {
-    return new Response("Not Found", { status: 404 });
-  }
-  const auth = await requireScopedClipToken(req, clipsVault, ROUTE_KEY_CLIPS_RELATED);
-  if (!auth.ok) return auth.response;
+  const gate = await requireScopedSurface(req, opts, ROUTE_KEY_CLIPS_RELATED, notFound);
+  if (!gate.ok) return gate.response;
   let parsed: unknown;
   try {
     parsed = await req.json();
@@ -750,6 +823,11 @@ async function handleClipRelated(
   return json(out);
 }
 
+/** The named 404 of the three `/v1/items/resolve*` reads, which share one surface. */
+function resolveDisabled(): Response {
+  return json({ error: "resolve_disabled" }, 404);
+}
+
 // GET /v1/items/resolve?url= — bearer-authed read under the `resolve` scope. Mounted in the fetch
 // handler, NOT reachable via dispatchReadOnlyDataGet: that table's "/v1/items/*" entry is PUBLIC
 // (handleItemByPath, no bearer gate at all), so routing resolve through it would serve scoped
@@ -762,14 +840,10 @@ async function handleItemsResolve(
   db: Database,
   opts: ReadOnlyHttpServerOptions,
 ): Promise<Response> {
-  const clipsVault = opts.clipsVault;
-  if (clipsVault === undefined) {
-    // Same "surface not mounted" shape as handleAgentsList/agentsDisabled(): a named 404, never a
-    // fall-through to the public /v1/items/* table.
-    return json({ error: "resolve_disabled" }, 404);
-  }
-  const auth = await requireScopedClipToken(req, clipsVault, ROUTE_KEY_ITEMS_RESOLVE);
-  if (!auth.ok) return auth.response;
+  // Same "surface not mounted" shape as handleAgentsList/agentsDisabled(): a named 404, never a
+  // fall-through to the public /v1/items/* table.
+  const gate = await requireScopedSurface(req, opts, ROUTE_KEY_ITEMS_RESOLVE, resolveDisabled);
+  if (!gate.ok) return gate.response;
   const raw = url.searchParams.get("url");
   if (raw === null || raw.trim() === "") {
     return json({ error: "missing_url" }, 400);
@@ -803,16 +877,10 @@ async function handleItemsResolveFile(
   db: Database,
   opts: ReadOnlyHttpServerOptions,
 ): Promise<Response> {
-  const clipsVault = opts.clipsVault;
-  if (clipsVault === undefined) {
-    // The same "surface not mounted" shape as handleItemsResolve. Load-bearing beyond tidiness:
-    // the shipped browser client reads a 404 from this route as "gateway older than the route"
-    // and withholds its file lanes silently. A 500 here would turn a correct, quiet degradation
-    // into a visible error on every gateway that does not mount the clips surface.
-    return json({ error: "resolve_disabled" }, 404);
-  }
-  const auth = await requireScopedClipToken(req, clipsVault, ROUTE_KEY_ITEMS_RESOLVE_FILE);
-  if (!auth.ok) return auth.response;
+  // Load-bearing beyond tidiness: the shipped browser client reads this route's 404 as "gateway
+  // older than the route" and withholds its file lanes silently (see requireScopedSurface).
+  const gate = await requireScopedSurface(req, opts, ROUTE_KEY_ITEMS_RESOLVE_FILE, resolveDisabled);
+  if (!gate.ok) return gate.response;
 
   const service = coordinateParam(url, "service");
   const repo = coordinateParam(url, "repo");
@@ -845,15 +913,10 @@ async function handleItemsResolveIds(
   db: Database,
   opts: ReadOnlyHttpServerOptions,
 ): Promise<Response> {
-  const clipsVault = opts.clipsVault;
-  if (clipsVault === undefined) {
-    // Before the auth check, and load-bearing: a client reads this 404 as "gateway older than
-    // the route" and withholds its links silently. A 500 would turn a correct, quiet
-    // degradation into a visible error on every gateway that does not mount the clips surface.
-    return json({ error: "resolve_disabled" }, 404);
-  }
-  const auth = await requireScopedClipToken(req, clipsVault, ROUTE_KEY_ITEMS_RESOLVE_IDS);
-  if (!auth.ok) return auth.response;
+  // Before the auth check, and load-bearing: a client reads this 404 as "gateway older than
+  // the route" and withholds its links silently (see requireScopedSurface).
+  const gate = await requireScopedSurface(req, opts, ROUTE_KEY_ITEMS_RESOLVE_IDS, resolveDisabled);
+  if (!gate.ok) return gate.response;
 
   // RAW count first, before trimming and before de-duplicating: checking after the set is built
   // would let a caller send fifty thousand copies of one id and pay only the parse cost.
@@ -880,6 +943,11 @@ async function handleItemsResolveIds(
   return json({ items });
 }
 
+/** `GET /v1/services/resolve`'s named 404. */
+function servicesDisabled(): Response {
+  return json({ error: "services_disabled" }, 404);
+}
+
 // GET /v1/services/resolve?repo=github:acme/web — bearer-authed read under the `resolve` scope,
 // mounted inline for exactly the reason the three reads above are: the "/v1/items/*" entry in
 // dispatchReadOnlyDataGet's table is PUBLIC, so routing this through it would serve scoped output
@@ -892,18 +960,10 @@ async function handleServicesResolve(
   url: URL,
   opts: ReadOnlyHttpServerOptions,
 ): Promise<Response> {
-  const clipsVault = opts.clipsVault;
-  if (clipsVault === undefined) {
-    // Before the auth check, like every other inline read. NAMING THE GATE, because none of the
-    // others do: what this actually tests is that the clips surface is mounted, NOT that this
-    // route exists. So a gateway new enough to carry the route but with no paired-client surface
-    // answers the same 404 as one too old to have it, and a client cannot tell those apart. Benign
-    // here — both readings lead the client to the same per-repo fallback — but it is a property of
-    // the gate rather than of this route, and it should be read rather than rediscovered.
-    return json({ error: "services_disabled" }, 404);
-  }
-  const auth = await requireScopedClipToken(req, clipsVault, ROUTE_KEY_SERVICES_RESOLVE);
-  if (!auth.ok) return auth.response;
+  // An unmounted gateway answers like one too old to carry this route (see requireScopedSurface).
+  // Benign here: both readings lead the client to the same per-repo fallback.
+  const gate = await requireScopedSurface(req, opts, ROUTE_KEY_SERVICES_RESOLVE, servicesDisabled);
+  if (!gate.ok) return gate.response;
 
   const raw = coordinateParam(url, "repo");
   if (raw === null) return json({ error: "missing_repo" }, 400);
@@ -1009,19 +1069,13 @@ function coordinateParam(url: URL, name: string): string | null {
  * None of the four appends an egress row. They read the ledger; a read that ledgered itself would
  * inflate the very number it exists to report.
  */
-async function requireEgressRead(
+function requireEgressRead(
   req: Request,
   opts: ReadOnlyHttpServerOptions,
   routeKey: ClipReadRouteKey,
-): Promise<{ ok: true; clipsVault: NimbusVault } | { ok: false; response: Response }> {
-  const clipsVault = opts.clipsVault;
-  if (clipsVault === undefined) {
-    // A named 404, never a fall-through to the public /v1/items/* table.
-    return { ok: false, response: json({ error: "egress_disabled" }, 404) };
-  }
-  const auth = await requireScopedClipToken(req, clipsVault, routeKey);
-  if (!auth.ok) return { ok: false, response: auth.response };
-  return { ok: true, clipsVault };
+): Promise<ScopedSurfaceGate> {
+  // A named 404, never a fall-through to the public /v1/items/* table.
+  return requireScopedSurface(req, opts, routeKey, () => json({ error: "egress_disabled" }, 404));
 }
 
 // GET /v1/egress — a page of the ledger, newest first, with the window's counted totals.
@@ -1125,35 +1179,55 @@ const BRIEF_GET_RE = /^\/v1\/briefs\/(\w{1,64})$/;
 /** Kept identical to http-write-routes.ts BRIEF_DISABLED_HINT — one string, two surfaces. */
 const BRIEFS_DISABLED_HINT = "research briefs disabled — enable [briefs] in nimbus.toml";
 
+/** Same body as the POST routes' 404, so the client renders one string, not two. */
+function briefsDisabled(): Response {
+  return json({ error: "briefs_disabled", hint: BRIEFS_DISABLED_HINT }, 404);
+}
+
+/** The read side of an in-memory run store (`BriefRunController`, `AgentRunController`). */
+type PolledRuns<R> = {
+  get(id: string): R | null;
+  wasKnown(id: string): boolean;
+};
+
+/**
+ * One poll of an in-memory run: 200 with the route's own field-by-field `render` of the run, or —
+ * for an id the store no longer holds — 410 when this process held the run and has since dropped
+ * it (expired or evicted), else 404 for unknown OR lost to a gateway restart: the tombstone set is
+ * in-memory, so a client polling across a restart cannot see 410. Both misses are terminal:
+ * re-issue the call, never keep waiting. Shared by brief and agent runs, whose stores both keep
+ * their tombstones in memory and so answer a poll the same way.
+ */
+function serveRunPoll<R>(
+  runs: PolledRuns<R>,
+  id: string,
+  render: (run: R) => Record<string, unknown>,
+): Response {
+  const run = runs.get(id);
+  if (run === null) {
+    return runs.wasKnown(id) ? json({ error: "expired" }, 410) : json({ error: "not_found" }, 404);
+  }
+  return json(render(run), 200);
+}
+
 async function handleBriefGet(
   req: Request,
   id: string,
   opts: ReadOnlyHttpServerOptions,
 ): Promise<Response> {
-  const clipsVault = opts.clipsVault;
   const runs = opts.briefRuns;
-  if (clipsVault === undefined || runs === undefined) {
-    // Same body as the POST routes' 404 so the client renders one string, not two.
-    return json({ error: "briefs_disabled", hint: BRIEFS_DISABLED_HINT }, 404);
-  }
+  if (runs === undefined) return briefsDisabled();
   // Shared parser from http-auth.ts (Task 1) — same header handling as the write dispatcher.
-  const auth = await requireScopedClipToken(req, clipsVault, ROUTE_KEY_BRIEF_GET);
-  if (!auth.ok) return auth.response;
-  const run = runs.get(id);
-  if (run === null) {
-    return runs.wasKnown(id) ? json({ error: "expired" }, 410) : json({ error: "not_found" }, 404);
-  }
+  const gate = await requireScopedSurface(req, opts, ROUTE_KEY_BRIEF_GET, briefsDisabled);
+  if (!gate.ok) return gate.response;
   // `failureReason`, NOT `error`: on every other route here `error` means an HTTP-level
   // failure, so reusing it for a legitimately-failed run would make `if (body.error)` —
   // the obvious client check — misread a normal outcome as a transport error.
-  return json(
-    {
-      status: run.status,
-      ...(run.report === null ? {} : { report: run.report }),
-      ...(run.error === null ? {} : { failureReason: run.error }),
-    },
-    200,
-  );
+  return serveRunPoll(runs, id, (run) => ({
+    status: run.status,
+    ...(run.report === null ? {} : { report: run.report }),
+    ...(run.error === null ? {} : { failureReason: run.error }),
+  }));
 }
 
 // GET /v1/agents/runs/{id} — bearer-authed read of an in-memory run. Mounted in the fetch handler,
@@ -1170,10 +1244,9 @@ function agentsDisabled(): Response {
 }
 
 async function handleAgentsList(req: Request, opts: ReadOnlyHttpServerOptions): Promise<Response> {
-  const clipsVault = opts.clipsVault;
-  if (clipsVault === undefined || opts.agentRuns === undefined) return agentsDisabled();
-  const auth = await requireScopedClipToken(req, clipsVault, ROUTE_KEY_AGENTS_LIST);
-  if (!auth.ok) return auth.response;
+  if (opts.agentRuns === undefined) return agentsDisabled();
+  const gate = await requireScopedSurface(req, opts, ROUTE_KEY_AGENTS_LIST, agentsDisabled);
+  if (!gate.ok) return gate.response;
   // Derived from AGENTS_RPC_HANDLERS, so it cannot advertise a name that POST would then 404.
   //
   // `version` rides along because a NAME does not imply an ARM. `why`, `expert` and `ownership`
@@ -1194,33 +1267,22 @@ async function handleAgentRunGet(
   id: string,
   opts: ReadOnlyHttpServerOptions,
 ): Promise<Response> {
-  const clipsVault = opts.clipsVault;
   const runs = opts.agentRuns;
-  if (clipsVault === undefined || runs === undefined) return agentsDisabled();
-  const auth = await requireScopedClipToken(req, clipsVault, ROUTE_KEY_AGENT_RUN_GET);
-  if (!auth.ok) return auth.response;
-  const run = runs.get(id);
-  if (run === null) {
-    // 404 means "unknown OR lost to a gateway restart" — the tombstone set is in-memory, so a
-    // client polling across a restart cannot see 410. Both are terminal: re-issue the call, never
-    // keep waiting. 410 means known-and-expired within this process lifetime.
-    return runs.wasKnown(id) ? json({ error: "expired" }, 410) : json({ error: "not_found" }, 404);
-  }
+  if (runs === undefined) return agentsDisabled();
+  const gate = await requireScopedSurface(req, opts, ROUTE_KEY_AGENT_RUN_GET, agentsDisabled);
+  if (!gate.ok) return gate.response;
   // `failureReason`, NOT `error`: on every other route here `error` means an HTTP-level failure, so
   // reusing it for a legitimately-failed run would make `if (body.error)` — the obvious client
   // check — misread a normal outcome as a transport error. Same choice as handleBriefGet.
-  return json(
-    {
-      status: run.status,
-      ...(run.brief === null ? {} : { brief: run.brief }),
-      ...(run.findings === null ? {} : { findings: run.findings }),
-      ...(run.error === null ? {} : { failureReason: run.error }),
-      // Why a synthesized rewrite was, or was not, used — the answer `SynthesisProvenance` exists
-      // to carry. Absent for a `briefError` run (no `briefReady` ever landed) and while `running`.
-      ...(run.synthesis === null ? {} : { synthesis: run.synthesis }),
-    },
-    200,
-  );
+  return serveRunPoll(runs, id, (run) => ({
+    status: run.status,
+    ...(run.brief === null ? {} : { brief: run.brief }),
+    ...(run.findings === null ? {} : { findings: run.findings }),
+    ...(run.error === null ? {} : { failureReason: run.error }),
+    // Why a synthesized rewrite was, or was not, used — the answer `SynthesisProvenance` exists
+    // to carry. Absent for a `briefError` run (no `briefReady` ever landed) and while `running`.
+    ...(run.synthesis === null ? {} : { synthesis: run.synthesis }),
+  }));
 }
 
 // Agent-invocation write seam — present only when clipsVault, agentRuns AND agentInvoke are all
@@ -1294,10 +1356,7 @@ async function resolveExpectedToken(opts: ReadOnlyHttpServerOptions): Promise<st
 
 // Lazily lists the configured service ids (empty when no config dir is wired).
 function resolveKnownServices(opts: ReadOnlyHttpServerOptions): () => readonly string[] {
-  const cfgDir = opts.configDir;
-  return cfgDir === undefined
-    ? (): readonly string[] => []
-    : (): readonly string[] => Array.from(loadNimbusServiceConfigsFromConfigDir(cfgDir).keys());
+  return (): readonly string[] => Array.from(loadServiceConfigs(opts).keys());
 }
 
 // The Teams events messaging surface, or undefined when that seam is unwired.
