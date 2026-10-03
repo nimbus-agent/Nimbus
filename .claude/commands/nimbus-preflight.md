@@ -124,7 +124,7 @@ These only run in CI (other OS, external tooling, or network) — when one reds,
 
 - **Coverage floor** is **Linux-authoritative**: local lcov on Windows/macOS diverges from CI by tens of percent on OS-specific files. Reproduce with `bun run verify:docker --full` or `scripts/coverage-floor/reseed-docker.sh`, both pinned to `oven/bun:1.3` like CI. (The script used `oven/bun:latest` until 2026-10-03, which stopped matching CI once `latest` became a 1.4.x release.) Red gate → **`nimbus-coverage-floor`** agent.
 - **SonarCloud quality gate** (above) → **`nimbus-sonar-gate`** agent.
-- **Cross-platform Windows/macOS** unit legs, **CodeQL / Trivy / cargo-audit / cargo-deny**, **install-smoke (3-OS)** — accept as push-time; a red here → **`nimbus-ci-doctor`** agent. (The client's real-Node ESM node-compat job left this repository with `@nimbus-dev/client` in #758; its test lives in [nimbus-agent/nimbus-client](https://github.com/nimbus-agent/nimbus-client) now.)
+- **Cross-platform Windows/macOS** unit legs, **CodeQL / Trivy / cargo-audit / cargo-deny** and **install-smoke (3-OS)** cannot be reproduced on one dev box, but every one of them runs on the PR, not only after merge. The cross-platform legs block through `PR quality — required gates`; CodeQL, Trivy, cargo-audit and cargo-deny are required contexts of their own; install-smoke runs on PRs that touch the installers or gateway/CLI source and is not required. A red one → **`nimbus-ci-doctor`** agent. (The client's real-Node ESM node-compat job left this repository with `@nimbus-dev/client` in #758; its test lives in [nimbus-agent/nimbus-client](https://github.com/nimbus-agent/nimbus-client) now.)
 
 ## Static gates worth knowing
 
