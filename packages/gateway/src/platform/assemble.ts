@@ -2743,6 +2743,23 @@ function bootAgentsIntoHttpSidecar(deps: {
 }
 
 /**
+ * Spec § 4 (boot race): the ONE place the on-call push learns whether ChatOps exists. Called right
+ * after `bootChatopsIntoAssembly` on BOTH branches. Until it runs, the push runtime holds every
+ * run, so a PagerDuty sync that completes during boot is delivered after this, never dropped.
+ */
+export function settleOncallPushChatops(
+  oncallPush: Pick<OncallPushRuntime, "settleChatopsPoster" | "config">,
+  chatopsBoot: Pick<ChatopsBoot, "postPushedBrief"> | undefined,
+): void {
+  if (chatopsBoot === undefined) {
+    oncallPush.settleChatopsPoster(undefined);
+    return;
+  }
+  const namespace = oncallPush.config.chatopsNamespace;
+  oncallPush.settleChatopsPoster((text) => chatopsBoot.postPushedBrief(namespace, text));
+}
+
+/**
  * Bind the ChatOps agent-intent invoker (`@nimbus agent <name> k=v ...`) onto a booted ChatOps
  * graph. Mirrors `bootAgentsIntoHttpSidecar` immediately above it — same db/index/configDir/
  * llmRouter/selfIdentity shape — because both build a `buildChatopsAgentInvoker`/
@@ -3616,8 +3633,7 @@ export async function assemblePlatformServices(
     sidecarStops,
     tribalSendHolder,
   });
-  // TEMPORARY (oncall-push PR 2, Task 2): release held runs; Task 6 binds the real poster here.
-  oncallPush.settleChatopsPoster(undefined);
+  settleOncallPushChatops(oncallPush, chatopsBoot);
 
   // ChatOps agent-intent path (Task 9 / FIX 1): `@nimbus agent <name> k=v ...` runs a real
   // built-in agent through `dispatchAgentsRpc`. Bound HERE rather than post-boot in
@@ -4351,6 +4367,7 @@ export async function assemblePlatformServices(
     connectorWriteDeps,
     embeddingReadiness,
     askExplainRecorder,
+    oncallPush,
     ...(sessionMemoryStore === undefined ? {} : { sessionMemoryStore }),
     policyHitl,
     ...(federationBooted === undefined ? {} : { executorDelegation: federationBooted }),
