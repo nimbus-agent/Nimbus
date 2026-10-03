@@ -354,6 +354,14 @@ In `platform/assemble.ts`, directly after the `chatopsBoot = await bootChatopsIn
 Run: `bun test packages/gateway/src/oncall-push packages/gateway/src/demo/seed.test.ts packages/gateway/src/ipc/demo-rpc.test.ts packages/gateway/src/ipc/oncall-push-rpc.test.ts packages/gateway/src/ipc/server/dispatchers-oncall-push.test.ts`
 Expected: all pass. Then run `bun run typecheck`, expecting exit 0. If another file constructs an `OncallPushRuntime` literal and fails typecheck, add the two members there the same way.
 
+Typecheck cannot catch the other failure mode. A test that builds a real runtime without `settleImmediately: true` and never settles it compiles fine, then HANGS on `run`/`retry`. So enumerate every real construction:
+
+```bash
+grep -rn "assembleOncallPushRuntime(" packages/gateway/src packages/gateway/test --include=*.ts
+```
+
+At planning time, the non-definition hits were `demo/seed.test.ts` (3), `ipc/demo-rpc.test.ts` (1), `oncall-push/push-runtime.test.ts` (5, of which the two new gate tests settle explicitly) and `platform/assemble.ts` (1, settled by the Task 2 temporary call). Every other test hit must carry `settleImmediately: true` or call `settleChatopsPoster`. A new hit not on this list gets the same treatment.
+
 - [ ] **Step 5: Red-prove.** Delete `await gate;` from `run`. The boot-race test must fail on `expect(first).toBe("held")`. Restore. Then delete it from `retry`. The retry test must fail. Restore.
 
 - [ ] **Step 6: Commit** (`feat(oncall): hold push runs until the ChatOps poster is settled`)
@@ -469,6 +477,14 @@ describe("parseHeadlineBrief over the REAL stored brief", () => {
     expect(parseHeadlineBrief("[]")).toBeNull();
     expect(parseHeadlineBrief('{"binding":{"nimbusServiceId":3},"deployment":null}')).toBeNull();
     expect(parseHeadlineBrief('{"binding":{"nimbusServiceId":null}}')).toBeNull(); // deployment key absent
+    expect(
+      parseHeadlineBrief('{"binding":{},"deployment":{"title":"D","startedAtMs":1,"finishedAtMs":"x"}}'),
+    ).toBeNull(); // a nullable field with the WRONG TYPE still rejects
+  });
+  test("a MISSING nullable key reads as null rather than rejecting a real brief", () => {
+    expect(
+      parseHeadlineBrief('{"binding":{},"deployment":{"title":"D","startedAtMs":5}}'),
+    ).toEqual({ nimbusServiceId: null, deployment: { title: "D", startedAtMs: 5, finishedAtMs: null } });
   });
 });
 
@@ -737,14 +753,19 @@ export function parseHeadlineBrief(json: string | null): HeadlineBrief | null {
   if (!isRecord(v) || !("deployment" in v)) return null;
   const binding = v["binding"];
   if (!isRecord(binding)) return null;
-  const sid = binding["nimbusServiceId"];
+  // The two NULLABLE fields also accept a missing key, read as null. Today's writer always emits
+  // both (`finished_at_ms` comes back from SQLite as null, never absent), but rejecting the whole
+  // brief over a missing nullable field would print "could not be assembled" for a brief that
+  // exists. Treating it as null lands on the spec's own fallbacks instead. A WRONG TYPE still
+  // rejects.
+  const sid = binding["nimbusServiceId"] ?? null;
   if (sid !== null && typeof sid !== "string") return null;
   const dep = v["deployment"];
   if (dep === null) return { nimbusServiceId: sid, deployment: null };
   if (!isRecord(dep)) return null;
   const title = dep["title"];
   const startedAtMs = dep["startedAtMs"];
-  const finishedAtMs = dep["finishedAtMs"];
+  const finishedAtMs = dep["finishedAtMs"] ?? null;
   if (typeof title !== "string" || typeof startedAtMs !== "number") return null;
   if (finishedAtMs !== null && typeof finishedAtMs !== "number") return null;
   return { nimbusServiceId: sid, deployment: { title, startedAtMs, finishedAtMs } };
@@ -809,7 +830,7 @@ If the first fixture test fails because the real `briefJson` has no `binding`/`d
 Run: `bun test packages/gateway/src/oncall-push/push-headline.test.ts`
 Expected: all pass. Then run `bun run typecheck && bun run lint`.
 
-- [ ] **Step 5: Red-prove.** (a) Change `incidentId=` to `incident=` in `pushAgentCommand`: the parse round-trip test fails. (b) Remove `.replace(BREAK_RE, " ")`: the three-lines test fails. (c) Remove `field()` around the title in line 1: the hostile-title test fails. Restore each.
+- [ ] **Step 5: Red-prove.** (a) Change `incidentId=` to `incident=` in `pushAgentCommand`: the parse round-trip test fails. (b) Remove `.replace(BREAK_RE, " ")`: the three-lines test fails. (c) Remove `field()` around the title in line 1: the hostile-title test fails. (d) Remove `?? null` from `finishedAtMs`: the missing-key test fails. Restore each.
 
 - [ ] **Step 6: Commit** (`feat(oncall): render the pushed-brief ChatOps headline and summary`)
 
@@ -1679,7 +1700,8 @@ Expected: all green. `verify:docker` always shows one red exec-e2e from its own 
 - [ ] **Step 4: Strip the spec, review and plan.** They never land on `main`.
 
 ```bash
-git rm docs/superpowers/specs/2026-10-02-oncall-push-chatops-design.md docs/superpowers/specs/2026-10-02-oncall-push-chatops-review.md docs/superpowers/plans/2026-10-03-oncall-push-chatops.md
+git rm docs/superpowers/specs/2026-10-02-oncall-push-chatops-design.md docs/superpowers/specs/2026-10-02-oncall-push-chatops-review.md docs/superpowers/plans/2026-10-03-oncall-push-chatops.md docs/superpowers/plans/2026-10-03-oncall-push-chatops-plan-review.md
+ls docs/superpowers/specs docs/superpowers/plans 2>/dev/null   # must list nothing from this branch
 git commit -F msg.txt   # "chore: strip the PR 2 spec, review and plan before merge"
 ```
 

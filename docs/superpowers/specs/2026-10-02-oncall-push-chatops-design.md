@@ -96,7 +96,9 @@ No new invariant, static rule or egress class.
 
 `renderPushHeadline(d)` reads `d.incident` (`OncallIncident`) and parses `d.row.briefJson` with a narrowing step
 of its own. There is no decoder for the stored `OncallBrief`; `null`, malformed JSON or the wrong shape all mean
-"no brief". Output is at most three lines:
+"no brief". A MISSING key for one of the two nullable fields (`binding.nimbusServiceId`,
+`deployment.finishedAtMs`) reads as `null` and falls back as above, rather than rejecting a brief that
+exists. A wrong type still rejects. (Plan review, 2026-10-03.) Output is at most three lines:
 
 ```text
 P1 · <service> — <incident title>
