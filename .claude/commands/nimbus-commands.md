@@ -153,7 +153,11 @@ bun run clean-deep              # workspace-aware deep clean (root + per-package
 ```bash
 bun audit --audit-level high
 bun run audit:high              # same; root script alias
-bun audit --audit-level high $(bun scripts/structure-audit/advisory-ignore-args.ts)  # what CI's blocking step runs: also passes over advisories with an OPEN row in accepted-advisories.ts
+# what CI's blocking step runs: also passes over advisories with an OPEN row in accepted-advisories.ts.
+# Read the arguments first and audit only if that succeeded, so a registry that cannot be read never
+# degrades into a plain audit run.
+ignore_args=$(bun scripts/structure-audit/advisory-ignore-args.ts) &&
+  bun audit --audit-level high $ignore_args
 bun run audit:advisories        # needs network; every live advisory must have a current row (CI runs it right after)
 ```
 
