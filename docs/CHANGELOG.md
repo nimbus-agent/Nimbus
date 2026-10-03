@@ -18,6 +18,21 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
 
 ## Post-Phase-6 deliveries
 
+- **2026-10-03 — Contributor docs re-derived from code and the live ruleset.** No behaviour
+  changed. Two corrections matter to users: `NIMBUS_UPDATER_DISABLE` only honours `1` (as
+  `config/nimbus-toml.ts` always did; `docs/cli-reference.md` said `true`, which does nothing), and
+  `nimbus decisions` confidence has reached `1.0` since #1307 (five documents still described the
+  old `0.86` cap as current). `.github/BRANCH_PROTECTION.md` and `docs/security-hardening.md` stop
+  recommending required checks that never report on a PR that skips them, and name the ten the
+  General ruleset requires. `CLAUDE.md` gains static rule D25, which was enforced but documented
+  nowhere. The `.claude/` skills and agents were brought up to date: eighteen `agents.*` methods,
+  the namespaces added since S2, schema V64, invariant ceiling I41, eight egress coverage classes,
+  40 preflight gates, and the real `index.*`, `watcher.*`, `workflow.*` and `connector.*` method
+  sets. They also record that nothing in the gateway emits `agent.subTaskProgress`,
+  `agent.hitlBatch` or `agent.gasLimitReached`, so the TUI's `agent.hitlBatch` listener never fires.
+  `docs/CONTRIBUTING.md`'s held-back majors now read as a dated record to re-test, not a standing
+  fact.
+
 - **2026-10-02 — The merge queue and Dependabot are retired; dependencies move in manual bulk
   updates.** The merge queue that went live on 2026-09-30 took seven entries before it was switched
   off, and every one re-ran the whole PR gate on the merged result: 21 to 52 minutes of CI after
