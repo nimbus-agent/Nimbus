@@ -58,7 +58,10 @@ export function getTestScript(pkgPath: string): string | undefined {
 export async function runTest(args: string[]): Promise<void> {
   const { root } = parseTestArgs(args);
   const manifest = loadAndValidateManifest(root);
-  runContractTests(manifest);
+  // Awaited: `runContractTests` is async and REJECTS on a violation. Left floating, a broken
+  // manifest went on to run the extension's own tests and print "Extension contract OK.", with
+  // the violation surfacing only as an unhandled rejection.
+  await runContractTests(manifest);
 
   const pkgPath = join(root, "package.json");
   const testScript = getTestScript(pkgPath);

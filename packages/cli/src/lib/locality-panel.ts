@@ -122,17 +122,19 @@ const NEXT_COMMAND_COLUMN_WIDTH = 25;
  * that line.
  */
 export function renderLocalityPanel(loc: LocalityReport, proofText: string): string {
-  const lines: string[] = ["Listeners the gateway has open right now:"];
-  for (const l of loc.listeners) lines.push(renderListenerLine(l));
-  lines.push("Local index:");
-  lines.push(`  ${loc.db.path}  (${formatBytes(loc.db.bytes)})`);
-  lines.push(renderInventoryLine(loc.inventory));
-  lines.push("Outbound activity during this tour (gateway-wide):");
-  lines.push(proofText);
-  lines.push("Next:");
-  for (const c of PANEL_COMMANDS) {
-    lines.push(`  ${c.padEnd(NEXT_COMMAND_COLUMN_WIDTH)}${PANEL_COMMAND_DESCRIPTIONS[c]}`);
-  }
+  const lines: readonly string[] = [
+    "Listeners the gateway has open right now:",
+    ...loc.listeners.map((l) => renderListenerLine(l)),
+    "Local index:",
+    `  ${loc.db.path}  (${formatBytes(loc.db.bytes)})`,
+    renderInventoryLine(loc.inventory),
+    "Outbound activity during this tour (gateway-wide):",
+    proofText,
+    "Next:",
+    ...PANEL_COMMANDS.map(
+      (c) => `  ${c.padEnd(NEXT_COMMAND_COLUMN_WIDTH)}${PANEL_COMMAND_DESCRIPTIONS[c]}`,
+    ),
+  ];
   return `${lines.join("\n")}\n`;
 }
 

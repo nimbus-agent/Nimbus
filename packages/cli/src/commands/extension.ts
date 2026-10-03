@@ -128,21 +128,20 @@ export async function runExtensionList(client: IPCClient, args: string[]): Promi
   }
 
   if (tree) {
-    const installed: InstalledExtensionForTree[] = [];
-    for (const r of rows) {
-      try {
-        const info = await client.call<{
-          extension: { forwardDeps?: Array<{ id: string; range: string }> };
-        }>("extension.info", { id: r.id });
-        installed.push({
-          id: r.id,
-          version: r.version,
-          forwardDeps: info.extension.forwardDeps ?? [],
-        });
-      } catch {
-        installed.push({ id: r.id, version: r.version, forwardDeps: [] });
-      }
-    }
+    // Independent read-only lookups over the one connection, so they are issued together and
+    // collected in row order; one that fails still degrades only its own row to a leaf.
+    const installed: InstalledExtensionForTree[] = await Promise.all(
+      rows.map(async (r) => {
+        try {
+          const info = await client.call<{
+            extension: { forwardDeps?: Array<{ id: string; range: string }> };
+          }>("extension.info", { id: r.id });
+          return { id: r.id, version: r.version, forwardDeps: info.extension.forwardDeps ?? [] };
+        } catch {
+          return { id: r.id, version: r.version, forwardDeps: [] };
+        }
+      }),
+    );
     console.log(renderTree(installed));
     return;
   }
@@ -396,7 +395,16 @@ export async function runExtensionRemove(
   console.log(JSON.stringify(out, undefined, 2));
 }
 
-export async function runExtensionKeygen(args: string[]): Promise<number> {
+/**
+ * `nimbus extension keygen`. All of the work is synchronous; `Promise.try` keeps the contract an
+ * `async` function had — the body still runs at call time, and a filesystem error REJECTS rather
+ * than throwing at the caller.
+ */
+export function runExtensionKeygen(args: string[]): Promise<number> {
+  return Promise.try(() => writePublisherKeypair(args));
+}
+
+function writePublisherKeypair(args: string[]): number {
   const outIdx = args.indexOf("--out");
   const force = args.includes("--force");
   let outPath = join(homedir(), ".nimbus", "publisher-key");

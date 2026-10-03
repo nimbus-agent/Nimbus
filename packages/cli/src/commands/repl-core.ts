@@ -96,7 +96,7 @@ export async function runRepl(
       if (q === "" || q === "exit" || q === "quit") {
         break;
       }
-      await runReplTurn(client, q, sessionId, (s) => output.write(s));
+      await runReplTurn(client, q, sessionId, (s) => output.write(s)); // NOSONAR S9382: interactive REPL — the next line is read only after this turn's reply has printed
     }
   } finally {
     rl.close();

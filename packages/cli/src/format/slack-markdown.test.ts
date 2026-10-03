@@ -1,5 +1,10 @@
 import { describe, expect, test } from "bun:test";
-import { toPlainText, toSlackMrkdwn } from "./slack-markdown.ts";
+import {
+  formatBriefText,
+  isBriefTextFormat,
+  toPlainText,
+  toSlackMrkdwn,
+} from "./slack-markdown.ts";
 
 describe("toSlackMrkdwn", () => {
   test("links become <url|title>", () => {
@@ -116,13 +121,97 @@ describe("toPlainText", () => {
   test("a literal private-use sentinel character survives the plain-text pass", () => {
     expect(toPlainText("a  b")).toBe("a  b");
   });
-  // The alternation inside `LINK_RE`'s title class is unambiguous (one branch starts at a
-  // backslash, the other cannot), so a long unterminated title is linear, not exponential.
-  // Written time-bounded because a future edit to that class would regress it silently.
+  // The title scan consumes a `\x` pair as one unit, so a long unterminated title is one linear
+  // pass. Written time-bounded because a future edit to that scan would regress it silently.
   test("an unterminated escaped title does not backtrack catastrophically", () => {
     const pathological = `[${"a\\]".repeat(20_000)}`;
     const started = performance.now();
     expect(toPlainText(pathological)).toContain("a]");
     expect(performance.now() - started).toBeLessThan(1_000);
+  });
+});
+
+// The link matcher used to be one regex, `/\[((?:\\[\s\S]|[^\\\]])*)\]\(([^)]+)\)/g`. It is now a
+// scan that skips every start position a failed attempt proves cannot match, which is what keeps
+// a line linear. These pin what that regex did on the shapes where the skip could plausibly go
+// wrong, so the two stay byte-identical, and then the time bound on the inputs the regex took
+// seconds on (each `[` after a failed attempt re-scanned the rest of the line).
+describe("link matching keeps the leftmost-match semantics of the old regex", () => {
+  test("an unescaped `[` inside a title stays part of that title", () => {
+    expect(toSlackMrkdwn("[x [y](https://x/1)")).toBe("<https://x/1|x [y>");
+  });
+  test("the title ends at the FIRST unescaped `]`, so an outer bracket is left as text", () => {
+    expect(toSlackMrkdwn("[[a](https://x/1)](https://x/2)")).toBe("<https://x/1|[a>](https://x/2)");
+  });
+  test("a failed candidate does not hide a later link on the same line", () => {
+    expect(toPlainText("[a] then [b](https://x/1)")).toBe("[a] then b");
+    expect(toPlainText("[a]() then [b](https://x/1)")).toBe("[a]() then b");
+  });
+  test("an empty URL is not a link, and neither is one that never closes", () => {
+    expect(toPlainText("[a]()")).toBe("[a]()");
+    expect(toPlainText("[a](https://x/1")).toBe("[a](https://x/1");
+  });
+  test("the URL runs to the FIRST `)`", () => {
+    expect(toSlackMrkdwn("[t](a(b)c)")).toBe("<a(b|t>c)");
+  });
+  test("an empty title is still a link", () => {
+    expect(toSlackMrkdwn("[](https://x/1)")).toBe("<https://x/1|>");
+  });
+  test("an escaped backslash before `]` does not escape the bracket", () => {
+    expect(toSlackMrkdwn("[a\\\\](https://x/1)")).toBe("<https://x/1|a\\>");
+  });
+
+  // 40,000 repetitions, not fewer: the quadratic regex finished `[](` x 20,000 in ~0.7 s on a fast
+  // machine, inside the bound, so a smaller input does not reliably fail against a regression.
+  for (const [shape, line] of [
+    ["`[](` repeated with no `)` anywhere", "[](".repeat(40_000)],
+    ["`[` repeated with no `]`", "[".repeat(40_000)],
+    ["`[` repeated, closed once but never followed by `(`", `${"[".repeat(40_000)}]`],
+  ] as const) {
+    test(`stays linear on ${shape}`, () => {
+      const started = performance.now();
+      expect(toPlainText(line)).toBe(line);
+      expect(toSlackMrkdwn(line)).toBe(line);
+      expect(performance.now() - started).toBeLessThan(1_000);
+    });
+  }
+});
+
+describe("headings", () => {
+  test("a heading with no text after its separator renders as an empty one", () => {
+    expect(toSlackMrkdwn("## ")).toBe("**");
+    expect(toPlainText("##\t ")).toBe("");
+  });
+  test("only the space/tab run is stripped; any other leading character is kept", () => {
+    expect(toPlainText("# \u00a0Deployments")).toBe("\u00a0Deployments");
+  });
+  test("seven hashes, no separator, or a `\\r` before the end is not a heading", () => {
+    expect(toSlackMrkdwn("####### Deployments")).toBe("####### Deployments");
+    expect(toSlackMrkdwn("#Deployments")).toBe("#Deployments");
+    expect(toSlackMrkdwn("## Deployments\r")).toBe("## Deployments\r");
+  });
+  // `[ \t]+(.*)$` let the separator run and the text trade characters, so a line `$` rejects
+  // re-scanned the rest of the line once per separator character: seconds at this length.
+  test("a long separator run on a line that cannot match stays linear", () => {
+    const line = `#${" \t".repeat(40_000)}\r`;
+    const started = performance.now();
+    expect(toPlainText(line)).toBe(line);
+    expect(performance.now() - started).toBeLessThan(1_000);
+  });
+});
+
+describe("formatBriefText", () => {
+  const brief = "## Deployments\n[Fix auth](https://x/1) **shipped**";
+
+  test("markdown passes the brief through verbatim", () => {
+    expect(formatBriefText(brief, "markdown")).toBe(brief);
+  });
+  test("slack and plain each apply their own transform", () => {
+    expect(formatBriefText(brief, "slack")).toBe("*Deployments*\n<https://x/1|Fix auth> *shipped*");
+    expect(formatBriefText(brief, "plain")).toBe("Deployments\nFix auth shipped");
+  });
+  test("isBriefTextFormat accepts exactly the three formats, case-sensitively", () => {
+    for (const f of ["markdown", "slack", "plain"]) expect(isBriefTextFormat(f)).toBe(true);
+    for (const f of ["html", "", "Slack", "plain "]) expect(isBriefTextFormat(f)).toBe(false);
   });
 });

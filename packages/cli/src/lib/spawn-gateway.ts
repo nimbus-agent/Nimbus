@@ -51,10 +51,21 @@ export type SpawnGatewayOptions = {
   readonly extraEnv?: Readonly<Record<string, string>>;
 };
 
-export async function spawnGateway(
+type SpawnedGateway = { pid: number; logPath: string; logStartOffset: number };
+
+/**
+ * Launches the gateway detached, its stdout/stderr appended to today's log. All of the work is
+ * synchronous; `Promise.try` keeps the contract an `async` function had — the spawn still happens
+ * at call time, and a launch failure REJECTS rather than throwing at the caller.
+ */
+export function spawnGateway(
   paths: CliPlatformPaths,
   opts: SpawnGatewayOptions = {},
-): Promise<{ pid: number; logPath: string; logStartOffset: number }> {
+): Promise<SpawnedGateway> {
+  return Promise.try(() => launchGateway(paths, opts));
+}
+
+function launchGateway(paths: CliPlatformPaths, opts: SpawnGatewayOptions): SpawnedGateway {
   const launch = resolveGatewayLaunch(process.execPath, import.meta.url);
   if (!launch.ok) {
     throw new Error(launch.message);

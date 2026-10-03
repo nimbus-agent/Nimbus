@@ -1,4 +1,8 @@
-import { toPlainText, toSlackMrkdwn } from "../format/slack-markdown.ts";
+import {
+  type BriefTextFormat,
+  formatBriefText,
+  isBriefTextFormat,
+} from "../format/slack-markdown.ts";
 import { IPCClient } from "../ipc-client/index.ts";
 import { awaitAgentBrief, briefTextFor, type PendingBrief } from "../lib/agent-brief-render.ts";
 import { gatewayNotRunningMessage } from "../lib/gateway-not-running.ts";
@@ -37,17 +41,7 @@ export function isChangelogBriefLike(v: unknown): v is ChangelogBriefLike {
   );
 }
 
-export type ChangelogFormat = "markdown" | "slack" | "plain";
-
-const CHANGELOG_FORMATS: ReadonlySet<string> = new Set<ChangelogFormat>([
-  "markdown",
-  "slack",
-  "plain",
-]);
-
-function isChangelogFormat(v: string): v is ChangelogFormat {
-  return CHANGELOG_FORMATS.has(v);
-}
+export type ChangelogFormat = BriefTextFormat;
 
 export type ChangelogCliArgs = {
   sinceMs: number;
@@ -86,7 +80,7 @@ export function parseChangelogArgs(args: string[]): ChangelogCliArgs {
       i += 1;
     } else if (a === "--format") {
       const raw = flagValue(args, i, "--format");
-      if (!isChangelogFormat(raw)) {
+      if (!isBriefTextFormat(raw)) {
         throw new Error(`--format must be one of markdown, slack, plain (got: ${raw})\n${USAGE}`);
       }
       format = raw;
@@ -176,11 +170,5 @@ export async function runChangelogCommand(
   // These transforms operate on the Markdown the brief already rendered — synthesis may have
   // rewritten it into prose, and re-deriving output from `findings` here would silently discard
   // that prose. See `format/slack-markdown.ts`.
-  const rendered =
-    parsed.format === "slack"
-      ? toSlackMrkdwn(brief)
-      : parsed.format === "plain"
-        ? toPlainText(brief)
-        : brief;
-  process.stdout.write(`${rendered}\n`);
+  process.stdout.write(`${formatBriefText(brief, parsed.format)}\n`);
 }

@@ -37,9 +37,12 @@ export function rawSocketClient(socketPath: string): ProbeClient {
         s.once("connect", () => resolve());
         s.once("error", reject);
       }),
-    disconnect: async () => {
-      sock?.destroy();
-    },
+    // `Promise.try`, not `async`: nothing here awaits, but a throwing `destroy()` must still reach
+    // `probeSocketReachable`'s `.catch` as a rejection rather than escape its `finally`.
+    disconnect: () =>
+      Promise.try(() => {
+        sock?.destroy();
+      }),
   };
 }
 

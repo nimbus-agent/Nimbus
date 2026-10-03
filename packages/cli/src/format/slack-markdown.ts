@@ -9,24 +9,64 @@
  */
 
 /**
- * A Markdown inline link whose TITLE may contain BACKSLASH-ESCAPED brackets.
+ * Where a Markdown inline link's TITLE closes: the index of the first UNESCAPED `]` at or after
+ * `start` (just past the opening `[`), or `undefined` when the title never closes.
  *
- * The naive title class `[^\]]*` is wrong against the briefs this tool actually consumes: the
- * gateway renderer hardens every entry title through `escapeMarkdownLinkText`
- * (`agents/_lib/render.ts`), which turns `[` into `\[`, `]` into `\]` and `\` into `\\`. A class
- * that stops at the `]` CHARACTER stops at the `\]` too, so the whole link fails to match and
- * ships unconverted — a raw `[title](url)` posted into Slack, and a bare URL in the plain-text
- * output this module's own contract says must not carry one. `[WIP]`, `[RFC]`, `[hotfix]`,
- * `[P1]` and `[PROJ-123]` are routine PR/incident title prefixes, so it fails silently on real
- * changelogs rather than on a contrived one.
- *
- * The two branches are UNAMBIGUOUS — `\\[\s\S]` can only start at a backslash and
- * `[^\\\]]` can only start at a non-backslash — so no input can be split between them two ways
- * and there is no backtracking blow-up. `slack-markdown.test.ts` pins that with a time-bounded
- * case, because "this alternation is disjoint" is exactly the claim a future edit breaks
- * silently.
+ * The title may contain BACKSLASH-ESCAPED brackets, and stopping at the first `]` CHARACTER is
+ * wrong against the briefs this tool actually consumes: the gateway renderer hardens every entry
+ * title through `escapeMarkdownLinkText` (`agents/_lib/render.ts`), which turns `[` into `\[`,
+ * `]` into `\]` and `\` into `\\`. A scan that stops at the `]` of a `\]` makes the whole link fail
+ * to match and ship unconverted — a raw `[title](url)` posted into Slack, and a bare URL in the
+ * plain-text output this module's own contract says must not carry one. `[WIP]`, `[RFC]`,
+ * `[hotfix]`, `[P1]` and `[PROJ-123]` are routine PR/incident title prefixes, so that fails
+ * silently on real changelogs rather than on a contrived one. A `\x` pair is therefore consumed as
+ * one unit whatever `x` is — an escaped `]` included — and a lone trailing backslash escapes
+ * nothing, so it cannot close the title either.
  */
-const LINK_RE = /\[((?:\\[\s\S]|[^\\\]])*)\]\(([^)]+)\)/g;
+function closingTitleBracket(text: string, start: number): number | undefined {
+  let i = start;
+  while (i < text.length) {
+    const c = text[i];
+    if (c === "]") return i;
+    i += c === "\\" ? 2 : 1;
+  }
+  return undefined;
+}
+
+type LinkScan = {
+  readonly resumeAt: number;
+  readonly link?: { readonly title: string; readonly url: string };
+};
+
+/**
+ * One attempt to read `[title](url)` with its `[` at `open`. `resumeAt` is where the search for
+ * the next link continues: just past the link when one matched, otherwise the first index that
+ * could still START one.
+ *
+ * Skipping ahead on a failed attempt is what keeps a whole line linear, and it is exact rather
+ * than a heuristic. Every `[` between `open` and the title's closing `]` sits inside that title, at
+ * a point where its scan is in step with this one (an escape pair is consumed whole), so an attempt
+ * starting there would reach the SAME `]` and fail the same way — the single regex this scan
+ * replaced retried each of them anyway, which made `[](` repeated without a `)` quadratic.
+ * Likewise when no `)` follows `](` at all, nothing later in the line can close a link, and when
+ * the title never closes, no later `[` can close one either. The URL is everything up to the FIRST
+ * `)` and must be non-empty, so `[t]()` is not a link. Match for match, the output is what that
+ * regex produced; `slack-markdown.test.ts` quotes it and pins the equivalence cases and the time
+ * bound.
+ */
+function scanLink(text: string, open: number): LinkScan {
+  const close = closingTitleBracket(text, open + 1);
+  if (close === undefined) return { resumeAt: text.length };
+  if (text[close + 1] !== "(") return { resumeAt: close + 1 };
+  const urlEnd = text.indexOf(")", close + 2);
+  if (urlEnd === -1) return { resumeAt: text.length };
+  if (urlEnd === close + 2) return { resumeAt: close + 1 };
+  return {
+    resumeAt: urlEnd + 1,
+    link: { title: text.slice(open + 1, close), url: text.slice(close + 2, urlEnd) },
+  };
+}
+
 const BOLD_RE = /\*\*(.+?)\*\*/g;
 
 /**
@@ -35,16 +75,16 @@ const BOLD_RE = /\*\*(.+?)\*\*/g;
  * inside a cell that way, and {@link splitUnescapedPipes} preserves the sequence through the
  * cell split precisely so this pass can resolve it to the character the reader should see.
  *
- * This is needed INDEPENDENTLY of {@link LINK_RE}, and that is why it is a whole-line pass
- * rather than something {@link convertLink} does to the title it captured. The renderer escapes
- * an entry title whether or not a link ends up wrapping it — an item with no renderable
- * permalink renders as bare escaped text — so a title-only unescape would still ship
+ * This is needed INDEPENDENTLY of the link scan ({@link scanLink}), and that is why it is a
+ * whole-line pass rather than something {@link convertLink} does to the title it captured. The
+ * renderer escapes an entry title whether or not a link ends up wrapping it — an item with no
+ * renderable permalink renders as bare escaped text — so a title-only unescape would still ship
  * `\[WIP\] Fix auth` to a reader. Running it once, LAST, also keeps it from double-unescaping:
  * a title carrying a literal backslash arrives as `\\\[` and must become `\[`, not `[`.
  *
- * It must stay last for a second reason: it is the inverse of the escaping {@link LINK_RE}
- * reads, so unescaping first would hand the link matcher live brackets and reintroduce the
- * truncation the escaping exists to prevent.
+ * It must stay last for a second reason: it is the inverse of the escaping
+ * {@link closingTitleBracket} reads, so unescaping first would hand the link matcher live
+ * brackets and reintroduce the truncation the escaping exists to prevent.
  */
 function unescapeMarkdown(text: string): string {
   return text.replace(/\\([\\[\]|])/g, "$1");
@@ -63,7 +103,18 @@ function unescapeMarkdown(text: string): string {
  */
 const UNDERSCORE_ITALIC_RE = /(?<!\w)_(?!\s)(.+?)(?<!\s)_(?!\w)/g;
 const ASTERISK_ITALIC_RE = /\*(.+?)\*/g;
-const HEADING_RE = /^#{1,6}[ \t]+(.*)$/;
+/**
+ * `#`–`######`, a run of spaces/tabs, then the heading text — captured WITHOUT its leading
+ * whitespace, and absent (not `""`) for a heading with no text, which the caller reads as `""`.
+ *
+ * The text's first character is any character `.` matches EXCEPT a space or a tab, so it can
+ * never be handed back to the separator run. Written as `[ \t]+(.*)`, the two could trade
+ * characters: a line that cannot match — a `\r` before its end, which `.` refuses and `$` (no `m`
+ * flag) does not accept — re-scanned the rest of the line once per separator character, quadratic
+ * in the length of the run. The set of lines that match is unchanged, and so is the text every
+ * heading renders.
+ */
+const HEADING_RE = /^#{1,6}[ \t]+([^ \t\n\r\u2028\u2029].*)?$/;
 const STRIKE_RE = /~~(.+?)~~/g;
 
 /**
@@ -132,10 +183,24 @@ function isDelimiterRow(cells: string[]): boolean {
 
 type InlineMode = "slack" | "plain";
 
+/**
+ * Every `[title](url)` in `text`, leftmost first, as `<url|title>` (Slack) or the bare `title`
+ * (plain). Text outside a link is copied through untouched.
+ */
 function convertLink(text: string, mode: InlineMode): string {
-  return text.replace(LINK_RE, (_m, title: string, url: string) =>
-    mode === "slack" ? `<${url}|${title}>` : title,
-  );
+  let out = "";
+  let copied = 0;
+  let open = text.indexOf("[");
+  while (open !== -1) {
+    const { resumeAt, link } = scanLink(text, open);
+    if (link !== undefined) {
+      out +=
+        text.slice(copied, open) + (mode === "slack" ? `<${link.url}|${link.title}>` : link.title);
+      copied = resumeAt;
+    }
+    open = text.indexOf("[", resumeAt);
+  }
+  return out + text.slice(copied);
 }
 
 /**
@@ -151,9 +216,9 @@ function convertLink(text: string, mode: InlineMode): string {
  * byte-identical to the sentinel version.
  *
  * Link conversion is NOT order-dependent against this pair: `[t](u)` and `**b**`/`*i*`/`_i_`
- * match independently of each other (`LINK_RE` cares about `[`/`]`/`(`/`)`, the emphasis regexes
- * care about `*`/`_`), so converting links before or after this step produces byte-identical
- * output either way.
+ * match independently of each other (the link scan cares about `[`/`]`/`(`/`)`, the emphasis
+ * regexes care about `*`/`_`), so converting links before or after this step produces
+ * byte-identical output either way.
  */
 function convertBoldItalic(text: string, mode: InlineMode): string {
   if (mode === "plain") {
@@ -238,4 +303,36 @@ export function toSlackMrkdwn(markdown: string): string {
  */
 export function toPlainText(markdown: string): string {
   return transformMarkdown(markdown, "plain");
+}
+
+/**
+ * The `--format` values a brief command (`changelog`, `standup`) accepts: text transforms over
+ * the brief's own Markdown, never a re-render from its findings.
+ */
+export type BriefTextFormat = "markdown" | "slack" | "plain";
+
+const BRIEF_TEXT_FORMATS: ReadonlySet<string> = new Set<BriefTextFormat>([
+  "markdown",
+  "slack",
+  "plain",
+]);
+
+export function isBriefTextFormat(v: string): v is BriefTextFormat {
+  return BRIEF_TEXT_FORMATS.has(v);
+}
+
+/**
+ * Applies one `--format` transform to a brief's Markdown; `markdown` passes it through verbatim.
+ * The switch is total over {@link BriefTextFormat}, so a fourth format fails to compile here
+ * rather than silently printing Markdown.
+ */
+export function formatBriefText(markdown: string, format: BriefTextFormat): string {
+  switch (format) {
+    case "slack":
+      return toSlackMrkdwn(markdown);
+    case "plain":
+      return toPlainText(markdown);
+    case "markdown":
+      return markdown;
+  }
 }

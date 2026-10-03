@@ -117,7 +117,7 @@ export async function stopAndWaitForExit(
   const start = Date.now();
   while (isProcessAlive(state.pid)) {
     if (Date.now() - start > deadlineMs) throw new StopTimeoutError(state.pid, deadlineMs);
-    await new Promise((r) => setTimeout(r, pollMs));
+    await new Promise((r) => setTimeout(r, pollMs)); // NOSONAR S9382: exit poll — each liveness check must wait pollMs after the previous one, and the deadline throw ends it
   }
   await unlink(statePath).catch(() => undefined);
   return "stopped";
