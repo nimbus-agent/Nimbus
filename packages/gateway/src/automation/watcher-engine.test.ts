@@ -236,9 +236,9 @@ describe("watcher-engine", () => {
   });
 
   test("opts.onFired receives the real fire's payload from evaluateWatchersStartupCatchUp", () => {
-    // The SECOND, independent fire site inside `watcher-engine.ts` — `evaluateWatchersAfterSync`
-    // and `evaluateWatchersStartupCatchUp` each call `opts.onFired?.(...)` on their own, so a test
-    // that only drives one of them cannot prove the other still calls it.
+    // The SECOND entry point into `watcher-engine.ts`'s fire site. Both exports share one loop, but
+    // each forwards `opts` to it on its own, so a test that only drives `evaluateWatchersAfterSync`
+    // cannot prove the catch-up path still hands `onFired` through.
     const db = makeDb();
     const t0 = 3_801_000_000_000;
     const wid = insertAlertFiredWatcher(

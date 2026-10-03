@@ -73,6 +73,24 @@ describe("create", () => {
     expect(out.oldestExpiresInSeconds).toBeLessThanOrEqual(DEFAULT_RUN_TTL_MS / 1000);
   });
 
+  test("an infinite TTL reports Infinity when busy, never an invented 0", () => {
+    // Every run then expires at Infinity, so the registry has no finite expiry to report (null).
+    // The store answers what the expiry arithmetic gives for such a run, keeping the field a number.
+    let n = 0;
+    const c = new BriefRunController({
+      nowMs: () => 1_000_000,
+      ttlMs: Number.POSITIVE_INFINITY,
+      genId: () => `run_${++n}`,
+    });
+    created(c);
+    created(c);
+    created(c);
+    const out = c.create({ brief: "q", sources: SRC, useIndex: false });
+    if (!("error" in out)) throw new Error("expected busy");
+    expect(out.activeRuns).toBe(3);
+    expect(out.oldestExpiresInSeconds).toBe(Number.POSITIVE_INFINITY);
+  });
+
   test("sweeps expired runs before enforcing the cap (abandoned-run lockout)", () => {
     const { c, advance } = fixture();
     created(c);
@@ -132,6 +150,39 @@ describe("get and expiry", () => {
     expect(c.get(run.id)).not.toBeNull();
     advance(20);
     expect(c.get(run.id)).toBeNull();
+  });
+});
+
+describe("source bodies on expiry", () => {
+  // "Source text is ephemeral" is structural only if EVERY TTL path drops the bodies, not just
+  // the terminal transitions: a collecting run abandoned mid-feed never reaches finish()/fail().
+  const SOURCE = {
+    url: "https://a.test/1",
+    title: "A",
+    body: "private page text",
+    capturedAt: 1,
+    truncated: false,
+  };
+
+  test("the lazy get() path drops an expired run's source bodies", () => {
+    const { c, advance } = fixture();
+    const run = created(c);
+    c.addSource(run, SOURCE);
+    expect(run.sources.size).toBe(1);
+    advance(DEFAULT_RUN_TTL_MS + 1);
+    expect(c.get(run.id)).toBeNull();
+    expect(run.sources.size).toBe(0);
+  });
+
+  test("the sweep drops an expired run's source bodies with nobody polling it", () => {
+    const { c, advance } = fixture();
+    const run = created(c);
+    c.addSource(run, SOURCE);
+    advance(DEFAULT_RUN_TTL_MS + 1);
+    // activeCount() sweeps; the run itself is never read again.
+    expect(c.activeCount()).toBe(0);
+    expect(run.sources.size).toBe(0);
+    expect(c.wasKnown(run.id)).toBe(true);
   });
 });
 

@@ -67,12 +67,42 @@ function asRecord(json: string): Record<string, unknown> | undefined {
   }
 }
 
+/** The human-prose `notify(title, body)` lane — distinct from the structured `opts.onFired`. */
+type WatcherNotify = (title: string, body: string) => void | Promise<void>;
+
 export function evaluateWatchersAfterSync(
   db: Database,
   syncedServiceId: string,
   nowMs: number,
-  notify: (title: string, body: string) => void | Promise<void>,
+  notify: WatcherNotify,
   opts: WatcherEvalOptions = {},
+): void {
+  evaluateEnabledWatchers(db, syncedServiceId, nowMs, notify, opts);
+}
+
+export function evaluateWatchersStartupCatchUp(
+  db: Database,
+  nowMs: number,
+  notify: WatcherNotify,
+  opts: WatcherEvalOptions = {},
+): void {
+  evaluateEnabledWatchers(db, undefined, nowMs, notify, opts);
+}
+
+/**
+ * The loop both entry points run: evaluate every enabled watcher, stamp it checked, and record,
+ * announce and stamp each one that fired.
+ *
+ * `syncedServiceId` is the connector whose sync triggered the pass, or `undefined` for the startup
+ * catch-up, which has none. With `undefined`, no watcher is skipped for naming a service other than
+ * the one that synced (`resolveWatcherScope`); its `filter.service` still narrows the item query.
+ */
+function evaluateEnabledWatchers(
+  db: Database,
+  syncedServiceId: string | undefined,
+  nowMs: number,
+  notify: WatcherNotify,
+  opts: WatcherEvalOptions,
 ): void {
   if (readIndexedUserVersion(db) < 8) {
     return;
@@ -82,35 +112,6 @@ export function evaluateWatchersAfterSync(
 
   for (const w of listEnabledWatchers(db)) {
     const fired = evaluateOneWatcher(db, w, syncedServiceId, graphEnabled);
-    updateWatcherLastChecked(db, w.id, nowMs);
-    if (fired !== null) {
-      insertWatcherEvent(db, w.id, nowMs, fired.snapshot, JSON.stringify({ ok: true }));
-      void notify("Nimbus watcher", `${w.name}: ${fired.summary}`);
-      opts.onFired?.({
-        watcherId: w.id,
-        name: w.name,
-        summary: fired.summary,
-        firedAt: nowMs,
-      });
-      updateWatcherLastFired(db, w.id, nowMs);
-    }
-  }
-}
-
-export function evaluateWatchersStartupCatchUp(
-  db: Database,
-  nowMs: number,
-  notify: (title: string, body: string) => void | Promise<void>,
-  opts: WatcherEvalOptions = {},
-): void {
-  if (readIndexedUserVersion(db) < 8) {
-    return;
-  }
-
-  const graphEnabled = opts.graphConditionsEnabled ?? true;
-
-  for (const w of listEnabledWatchers(db)) {
-    const fired = evaluateOneWatcher(db, w, undefined, graphEnabled);
     updateWatcherLastChecked(db, w.id, nowMs);
     if (fired !== null) {
       insertWatcherEvent(db, w.id, nowMs, fired.snapshot, JSON.stringify({ ok: true }));
