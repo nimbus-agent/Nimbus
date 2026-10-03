@@ -253,7 +253,7 @@ test("without a [user] override and the default clock, identity agrees with reso
   expect(await rt.run("github")).toMatchObject({ skipped: "not_pagerduty" });
 });
 
-test("a run before settleChatopsPoster waits for it, then runs once (spec § 4 boot race)", async () => {
+test("a run before settleChatopsPoster waits for it, then runs once (design: 2026-10-02-oncall-push-chatops-design.md § 4 boot race)", async () => {
   const meId = seedP1("PGATE");
   writeFileSync(
     join(configDir, "nimbus.toml"),

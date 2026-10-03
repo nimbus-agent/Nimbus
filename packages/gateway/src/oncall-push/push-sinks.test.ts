@@ -543,9 +543,9 @@ test("chatops: a headline render that throws is a failed row, deliver resolves, 
   expect(store.get("pagerduty:A")?.delivery["chatops"]?.outcome).toBe("failed");
   // The toast sink still ran; it is `failed` because its own bodyFor(d) throws on the nulled incident.
   expect(store.get("pagerduty:A")?.delivery["toast"]?.outcome).toBe("failed");
-  expect(store.get("pagerduty:A")?.delivery["chatops"]?.reason).toEndWith(
-    "(delivery may be partial)",
-  );
+  const reason = store.get("pagerduty:A")?.delivery["chatops"]?.reason ?? "";
+  expect(reason.startsWith("could not render: ")).toBe(true);
+  expect(reason).not.toContain("(delivery may be partial)");
 });
 
 test("chatops: a throwing poster getter skips every row as not running, and the toast still runs", async () => {

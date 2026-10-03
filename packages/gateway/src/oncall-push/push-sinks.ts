@@ -19,7 +19,7 @@ export interface ChatopsSinkDeps {
   readonly namespace: string;
   /**
    * Read at DELIVERY time, never at construction: the runtime builds the deliverer before ChatOps
-   * boots and binds the poster later (spec § 2.1). `undefined` means ChatOps is not running.
+   * boots and binds the poster later (design: 2026-10-02-oncall-push-chatops-design.md § 2.1). `undefined` means ChatOps is not running.
    */
   readonly post: () => ChatopsPoster | undefined;
 }
@@ -36,7 +36,7 @@ export interface PushSinkDeps {
   readonly now: () => number;
   /** Absent: no chatops sink and no `chatops` delivery record (PR 1 callers). */
   readonly chatops?: ChatopsSinkDeps;
-  /** Spec § 4: a `failed` chat outcome is also logged. Fields never carry the headline text. */
+  /** Design § 4 (2026-10-02-oncall-push-chatops-design.md): a `failed` chat outcome is also logged. Fields never carry the headline text. */
   readonly warn?: (msg: string, fields: Record<string, string>) => void;
 }
 
@@ -68,8 +68,15 @@ async function chatAttempt(
   render: () => string,
   ns: string,
 ): Promise<Attempt> {
+  let text: string;
   try {
-    const sent = await post(render());
+    text = render();
+  } catch (e) {
+    // Nothing was posted, so this is not a partial delivery.
+    return { outcome: "failed", reason: `could not render: ${errText(e)}` };
+  }
+  try {
+    const sent = await post(text);
     return sent === 0
       ? { outcome: "skipped", reason: noChannelsReason(ns) }
       : { outcome: "delivered" };
@@ -145,7 +152,7 @@ export function createPushDeliverer(
     const newestFirst = [...items].sort(
       (a, b) => (b.incident.openedAtMs ?? 0) - (a.incident.openedAtMs ?? 0),
     );
-    // Spec § 2.2: BEFORE the toast's "no notifier" early return, so chat does not depend on it.
+    // Design § 2.2 (2026-10-02-oncall-push-chatops-design.md): BEFORE the toast's "no notifier" early return, so chat does not depend on it.
     if (deps.chatops !== undefined) await chatSink(deps.chatops, items, newestFirst);
     if (deps.notifyDelivers === false) {
       // Honest record: nothing would be shown, so nothing is attempted and no summary is sent.

@@ -6,7 +6,7 @@
  * the literal characters, so readers see the original text.
  *
  * Slack-only by design: `ReplyDispatcher` posts every `namespaceNotify` message as `"slack"`
- * (spec § 7), and Teams has a different markup.
+ * (design: 2026-10-02-oncall-push-chatops-design.md § 7), and Teams has a different markup.
  */
 export function escapeSlackText(s: string): string {
   return s.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");

@@ -1,9 +1,9 @@
 import { escapeSlackText } from "../chatops/escape-outbound.ts";
 import type { PushDelivery } from "./push-runner.ts";
 
-/** Coalesced ids the summary post lists; the rest stay reachable locally (spec § 3). */
+/** Coalesced ids the summary post lists; the rest stay reachable locally (design: 2026-10-02-oncall-push-chatops-design.md § 3). */
 export const SUMMARY_ID_CAP = 10;
-/** Per inserted field, in code points (spec § 3). */
+/** Per inserted field, in code points (design: 2026-10-02-oncall-push-chatops-design.md § 3). */
 export const FIELD_MAX_CODEPOINTS = 200;
 const MINUTE_MS = 60_000;
 
@@ -97,7 +97,7 @@ function deploymentLine(brief: HeadlineBrief | null, openedAtMs: number | null):
   return `Last deployment before the alert: ${field(nonEmpty(dep.title) ?? "(untitled)")}${when} — timing only, not a proven cause`;
 }
 
-/** Spec § 3: at most three lines. Every inserted value is single-lined, capped and escaped. */
+/** Design § 3 (2026-10-02-oncall-push-chatops-design.md): at most three lines. Every inserted value is single-lined, capped and escaped. */
 export function renderPushHeadline(d: PushDelivery): string {
   const brief = d.row.status === "ok" ? parseHeadlineBrief(d.row.briefJson) : null;
   const severity = nonEmpty(d.incident.severity) ?? "P1";

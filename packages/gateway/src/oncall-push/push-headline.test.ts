@@ -229,7 +229,7 @@ describe("renderPushHeadline", () => {
   });
 
   // Review Focus 4
-  test("an id with a control character renders escaped", async () => {
+  test("an id with Slack control characters (<, &, >) renders escaped", async () => {
     const d = await realDelivery();
     const x: PushDelivery = { ...d, row: { ...d.row, incidentId: "pagerduty:P<&>" } };
     const third = lines(renderPushHeadline(x))[2] ?? "";

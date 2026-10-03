@@ -218,7 +218,7 @@ describe("bootChatopsAgentInvoker (FIX 1: selfIdentity reaches the ChatOps agent
 // Task 11: the one `http:` exception source for `POST /v1/items/fetch`. Unit-tested directly
 // against a fake Vault — the property under test (return the parsed `.origin`, never the raw
 // secret; fail closed on anything but `http:`) is orthogonal to the full gateway boot above.
-describe("settleOncallPushChatops (spec § 4 boot race)", () => {
+describe("settleOncallPushChatops (design: 2026-10-02-oncall-push-chatops-design.md § 4 boot race)", () => {
   it("binds a poster that posts to the CONFIGURED namespace when ChatOps booted", async () => {
     const settled: Array<ChatopsPoster | undefined> = [];
     const calls: Array<[string, string]> = [];

@@ -103,4 +103,5 @@ test("an append failure posts NOTHING and records failed", async () => {
   const o = rt.store.get(fired.incidentId)?.delivery["chatops"];
   expect(o?.outcome).toBe("failed");
   expect(o?.reason).toEndWith("(delivery may be partial)");
+  expect(o?.reason).toContain("egress ledger append failed");
 });

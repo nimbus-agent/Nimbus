@@ -52,6 +52,9 @@ describe("chatops egress appender", () => {
     const rows = listEgress(db, { limit: 10 });
     expect(rows.map((r) => r.method)).toEqual(["chatops.pushedBrief"]);
     expect(JSON.stringify(rows)).not.toContain("SECRET-HEADLINE-TEXT");
+    expect(rows[0]?.payloadSummary).toContain(
+      `"bytes":${Buffer.byteLength("SECRET-HEADLINE-TEXT", "utf8")}`,
+    );
     expect(s.calls).toHaveLength(1);
   });
 

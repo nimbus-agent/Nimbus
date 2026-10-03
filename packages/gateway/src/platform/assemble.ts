@@ -2746,7 +2746,7 @@ function bootAgentsIntoHttpSidecar(deps: {
 }
 
 /**
- * Spec § 4 (boot race): the ONE place the on-call push learns whether ChatOps exists. Called right
+ * Design § 4 (2026-10-02-oncall-push-chatops-design.md) (boot race): the ONE place the on-call push learns whether ChatOps exists. Called right
  * after `bootChatopsIntoAssembly` on BOTH branches. Until it runs, the push runtime holds every
  * run, so a PagerDuty sync that completes during boot is delivered after this, never dropped.
  */

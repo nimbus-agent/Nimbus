@@ -26,7 +26,7 @@ export interface OncallPushRuntime {
   retry(incidentId: string): Promise<PushedBriefRow>;
   identityResolved(): Promise<boolean>;
   /**
-   * Spec § 4 (boot race): bind the ChatOps poster, or record that there is none, and release every
+   * Design § 4 (2026-10-02-oncall-push-chatops-design.md) (boot race): bind the ChatOps poster, or record that there is none, and release every
    * run held since boot. `platform/assemble.ts` calls it exactly once, right after ChatOps boots, on
    * the enabled AND the disabled branch. A second call throws.
    */
@@ -80,7 +80,7 @@ export function assembleOncallPushRuntime(deps: OncallPushBootDeps): OncallPushR
     return r.personId;
   };
 
-  // Spec § 4: the sync scheduler can complete a PagerDuty sync before ChatOps has booted. A run
+  // Design § 4 (2026-10-02-oncall-push-chatops-design.md): the sync scheduler can complete a PagerDuty sync before ChatOps has booted. A run
   // that delivered then would record "ChatOps not running", and dedup would never reselect it.
   // So nothing starts until the poster is settled; early runs wait rather than drop.
   let settled = deps.settleImmediately === true;
