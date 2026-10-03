@@ -4831,7 +4831,7 @@ nimbus update --yes                 # Skip confirmation prompt (for scripted/una
 
 **Headless note:** When the Gateway starts in headless mode (no Tauri connection detected) and an update is available, it prints a one-line hint to stdout: `"A new version of Nimbus is available (X.Y.Z). Run 'nimbus update' to install."`
 
-**Environment overrides:** `NIMBUS_UPDATER_URL` overrides the manifest URL. `NIMBUS_UPDATER_DISABLE=true` disables all update checks.
+**Environment overrides:** `NIMBUS_UPDATER_URL` overrides the manifest URL. `NIMBUS_UPDATER_DISABLE=1` disables all update checks (only the value `1` counts; `true` is ignored).
 
 ---
 
@@ -5058,7 +5058,7 @@ nimbus lan remove abc123
 | `NIMBUS_LOG_LEVEL` | `debug` / `info` / `warn` / `error` (default: `info`) |
 | `NIMBUS_SQLITE_PATH` | **macOS only.** Path to a full `libsqlite3.dylib`. Checked first, ahead of the `libsqlite3.dylib` released builds ship beside the binaries and then the Homebrew prefixes (`/opt/homebrew/opt/sqlite/lib/`, then `/usr/local/opt/sqlite/lib/`). Bun links Apple's system SQLite on macOS, which has extension loading compiled out, so sqlite-vec — and therefore vector search, hybrid ranking and session-memory recall — needs one of these present; on a released install the bundled one always is, and this variable is an override rather than a requirement. Mainly useful on a dev checkout, where `process.execPath` is `bun` and no library sits beside it. Ignored on Linux and Windows, which use Bun's own full build. `nimbus doctor` reports the resolved state. |
 | `NIMBUS_UPDATER_URL` | Override the update manifest URL (default: official endpoint) |
-| `NIMBUS_UPDATER_DISABLE` | Set to `true` to disable all auto-update checks |
+| `NIMBUS_UPDATER_DISABLE` | Set to `1` to disable all auto-update checks (any other value, `true` included, is ignored) |
 | `NIMBUS_EXTENSIONS_REGISTRY_URL` | Extension registry base URL; the auto-update polling daemon is only constructed when this is set |
 | `NIMBUS_EXTENSIONS_DISABLE_AUTO_UPDATE` | Set to `1` to hard-disable the extension auto-update polling daemon at Gateway init |
 | `NIMBUS_LAN_PORT` | Override the LAN TCP listen port (default: `7475`) |

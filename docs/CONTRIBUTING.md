@@ -145,7 +145,7 @@ Direct browsing: see `.claude/commands/` and the index in `CLAUDE.md`. The skill
 
 ### Shell scripts and audit gates
 
-The `scripts/` directory holds repository tooling — release packaging (`scripts/release/`, `scripts/install/`, `scripts/linux/`, `scripts/windows/`), structural audits (`scripts/structure-audit/` — invariant checks, OpenAPI drift, doc-ref drift, license check), CI helpers (`scripts/ci/`), per-package coverage-floor (`scripts/coverage-floor/`), README generators (`scripts/audit/`), and the asciinema hero-cast harness (`scripts/cast-driver/`). Every `.ts` script has a sibling `.test.ts`; the suite is wired as `bun run test:scripts` and runs in CI. The full list of contributor-facing `bun run` scripts (and the env-var overrides that gate them) lives in the [`nimbus-commands`](../.claude/commands/nimbus-commands.md) skill / reference file.
+The `scripts/` directory holds repository tooling — release packaging (`scripts/release/`, `scripts/install/`, `scripts/linux/`, `scripts/windows/`), structural audits (`scripts/structure-audit/` — invariant checks, OpenAPI drift, doc-ref drift, license check), CI helpers (`scripts/ci/`), per-package coverage-floor (`scripts/coverage-floor/`), README generators (`scripts/audit/`), and the asciinema hero-cast harness (`scripts/cast-driver/`). Most `.ts` scripts have a sibling `.test.ts` (not every one does); the suite is wired as `bun run test:scripts` and runs in CI. The full list of contributor-facing `bun run` scripts (and the env-var overrides that gate them) lives in the [`nimbus-commands`](../.claude/commands/nimbus-commands.md) skill / reference file.
 
 ### Before Opening a PR
 
@@ -199,9 +199,9 @@ resolves its helpers from the published `@nimbus-dev/sdk` instead of relative `.
 paths.
 
 **`nimbus scaffold extension` is not the tool for this.** It emits a four-file generic extension
-shell with no `src/server.ts`, and every connector gate — `audit:connector-registry-drift`,
-`audit:connector-entrypoints`, `audit:connector-deps` — keys off that file, so its output is
-invisible to all three. They report clean, which is not the same as done.
+shell with no `src/server.ts`, and every connector gate — `audit:connector-registry-drift` here,
+`audit:connector-entrypoints` and `audit:connector-deps` in the connectors repository — keys off
+that file, so its output is invisible to all three. They report clean, which is not the same as done.
 
 ### After generating
 
@@ -303,13 +303,16 @@ Title the PR `chore(deps): …`, or `fix(deps): …` when the pass clears an adv
 - **`@biomejs/biome` and the `$schema` URL in `biome.json`.** Set the URL to the version that actually installed (`node_modules/@biomejs/biome/package.json`), not the range you typed. A mismatch is reported only as an info diagnostic, so `bun run lint` stays green while editors validate the config against a stale schema.
 - **`sharp` and its libvips license pins.** A `sharp` bump usually moves its prebuilt `@img/sharp-libvips-*` binaries, whose LGPL exception in `scripts/structure-audit/check-js-licenses.ts` is pinned to exact versions on purpose. Move those pins and the matching line in `docs/license-policy.md` together. The pinned packages are Linux-only, so `audit:js-licenses` passes no matter what on Windows and macOS: confirm it with `bun run verify:docker`, or on CI.
 
-### Majors that are held back
+### Majors that were held back
 
-Each of these was blocked when it was recorded. Re-verify every blocker on each pass, because they clear without notice, and delete an entry once it no longer holds.
+These three majors were **previously blocked**: each entry records why it was held back when the
+section was written (2026-10-02), not a standing fact. Blockers clear without notice, so **re-test
+each one before assuming it still holds**, take the major in the pass where it clears, and delete
+its entry in that same pass.
 
-- **`vite` 8 with `@vitejs/plugin-react` 6.** `@vitejs/plugin-react` 6 peers `vite` ^8, so the two majors must land in the same pass. They were held back while an automated updater would have split them across PRs. To re-check: `@vitejs/plugin-react`'s `peerDependencies.vite`, then the UI suite on the new pair.
-- **TypeScript 7 in `packages/docs`.** The rest of the repository is on TypeScript 7; `packages/docs` declares TypeScript 6. `astro check` runs `@astrojs/language-server`, which calls `ts.sys`, and TypeScript 7's native port does not expose it: under 7.0.2 the docs typecheck crashed with `undefined is not an object (evaluating 'this.ts.sys.fileExists')`. `@astrojs/check` also declares `typescript: ^5.0.0 || ^6.0.0`. To re-check: that peer range, then `bun run typecheck` with the docs workspace on 7. Separately, the root `typescript-compiler-api` alias stays on TypeScript 6 for a different reason: TypeScript 7 exports its compiler API only under explicitly unstable subpaths, and `scripts/cleanup/strip-comments.ts` and `scripts/cleanup/survey-oc.ts` drive that API directly.
-- **js-yaml 5.** It was attempted in #1049 and reverted. v5's ESM build dropped the default export. TypeScript does not catch that, only running the tests does, and both this repository (two gateway source files, three CI gate scripts and a test) and the Astro/Starlight chain import it that way. The chain also declares js-yaml `^4` (`astro`, `@astrojs/starlight`, `@astrojs/internal-helpers`). Because the root `overrides` pin is global, the gateway cannot get 5 while Astro keeps 4. The pin cannot simply be dropped either: it also lifts `gray-matter` and `@istanbuljs/load-nyc-config` off js-yaml 3. To re-check: the `js-yaml` range in the `dependencies` of `astro` and `@astrojs/starlight`. When it clears, move the override and every declaration in the same PR.
+- **`vite` 8 with `@vitejs/plugin-react` 6.** `@vitejs/plugin-react` 6 peered `vite` ^8, so the two majors have to land in the same pass. They were held back while an automated updater would have split them across PRs; with Dependabot retired, that reason is gone and only the coupling remains. To re-check: `@vitejs/plugin-react`'s `peerDependencies.vite`, then the UI suite on the new pair.
+- **TypeScript 7 in `packages/docs`.** When recorded, the rest of the repository was on TypeScript 7 and `packages/docs` declared TypeScript 6. `astro check` runs `@astrojs/language-server`, which called `ts.sys`, and TypeScript 7's native port did not expose it: under 7.0.2 the docs typecheck crashed with `undefined is not an object (evaluating 'this.ts.sys.fileExists')`. `@astrojs/check` 0.9.10 also declared `typescript: ^5.0.0 || ^6.0.0`. To re-check: that peer range, then `bun run typecheck` with the docs workspace on 7. Separately, the root `typescript-compiler-api` alias was kept on TypeScript 6 for a different reason: TypeScript 7 exported its compiler API only under explicitly unstable subpaths, and `scripts/cleanup/strip-comments.ts` and `scripts/cleanup/survey-oc.ts` drive that API directly. Re-check that too: the subpaths may have stabilised.
+- **js-yaml 5.** It was attempted in #1049 and reverted. v5's ESM build dropped the default export. TypeScript did not catch that, only running the tests did, and both this repository (two gateway source files, three CI gate scripts and a test, when recorded) and the Astro/Starlight chain imported it that way. The chain also declared js-yaml `^4` (`astro`, `@astrojs/starlight`, `@astrojs/internal-helpers`), and because the root `overrides` pin is global, the gateway could not get 5 while Astro kept 4. The pin could not simply be dropped either: it also lifted `gray-matter` and `@istanbuljs/load-nyc-config` off js-yaml 3. To re-check: the `js-yaml` range in the `dependencies` of `astro` and `@astrojs/starlight`, and every default-import site in this repository. When it clears, move the override and every declaration in the same PR.
 
 ---
 
