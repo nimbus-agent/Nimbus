@@ -18,8 +18,8 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
 
 ## Post-Phase-6 deliveries
 
-- **2026-10-03 — Every third-party dependency moved to its latest release; five holds are written
-  down with their evidence.** npm: each direct dependency moved in every workspace that declares it,
+- **2026-10-03 — Third-party dependencies moved to their latest releases, except five holds
+  written down with their evidence.** npm: each direct dependency moved in every workspace that declares it,
   the root `overrides` went from 27 pins to 5, and `bun.lock` was regenerated from the manifests.
   Four of the five (`sharp`, `protobufjs`, `qs`, `nodemailer`) lift a consumer whose own range tops
   out at a vulnerable version; `zod` keeps a single copy at the MCP type seam. Two majors landed.
