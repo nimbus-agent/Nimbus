@@ -63,9 +63,13 @@ async function attempt(run: () => void | Promise<void>): Promise<Attempt> {
 }
 
 /** Like `attempt`, but a post that reached 0 channels is `skipped`, and any throw may be partial. */
-async function chatAttempt(post: ChatopsPoster, text: string, ns: string): Promise<Attempt> {
+async function chatAttempt(
+  post: ChatopsPoster,
+  render: () => string,
+  ns: string,
+): Promise<Attempt> {
   try {
-    const sent = await post(text);
+    const sent = await post(render());
     return sent === 0
       ? { outcome: "skipped", reason: noChannelsReason(ns) }
       : { outcome: "delivered" };
@@ -103,16 +107,21 @@ export function createPushDeliverer(
       for (const d of items) record(d.row.incidentId, "chatops", { outcome: "skipped", reason });
     };
     if (c.namespace === "") return skipAll(NO_NAMESPACE_REASON);
-    const post = c.post();
+    let post: ChatopsPoster | undefined;
+    try {
+      post = c.post();
+    } catch {
+      post = undefined; // A throwing getter reads as "not running"; nothing escapes deliver.
+    }
     if (post === undefined) return skipAll(CHATOPS_NOT_RUNNING_REASON);
     for (const d of newestFirst.slice(0, PUSH_NOTIFY_CAP)) {
-      const o = await chatAttempt(post, renderPushHeadline(d), c.namespace);
+      const o = await chatAttempt(post, () => renderPushHeadline(d), c.namespace);
       record(d.row.incidentId, "chatops", o);
       if (o.outcome === "failed") warnFailed(d.row.incidentId, o.reason);
     }
     const rest = newestFirst.slice(PUSH_NOTIFY_CAP);
     if (rest.length === 0) return;
-    const s = await chatAttempt(post, renderPushSummary(items, rest), c.namespace);
+    const s = await chatAttempt(post, () => renderPushSummary(items, rest), c.namespace);
     const o: Attempt =
       s.outcome === "delivered"
         ? { outcome: "coalesced" }

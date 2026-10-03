@@ -531,3 +531,42 @@ test("chatops: the poster is read at delivery time, so a later binding is seen",
   await deliver([item("pagerduty:A", "ok", 1)]);
   expect(posted).toBe(1);
 });
+
+test("chatops: a headline render that throws is a failed row, deliver resolves, and the toast still runs", async () => {
+  const bad: PushDelivery = {
+    ...item("pagerduty:A", "ok", 1),
+    incident: null as unknown as PushDelivery["incident"],
+  };
+  const toasts: number[] = [];
+  let posted = 0;
+  await chatDeliverer(async () => (posted += 1), { notify: () => void toasts.push(1) })([bad]);
+  expect(posted).toBe(0);
+  expect(store.get("pagerduty:A")?.delivery["chatops"]?.outcome).toBe("failed");
+  expect(store.get("pagerduty:A")?.delivery["chatops"]?.reason).toEndWith(
+    "(delivery may be partial)",
+  );
+});
+
+test("chatops: a throwing poster getter skips every row as not running, and the toast still runs", async () => {
+  const toasts: number[] = [];
+  const deliver = createPushDeliverer({
+    store,
+    notify: () => void toasts.push(1),
+    emit: () => {},
+    now: () => 7,
+    chatops: {
+      namespace: NS,
+      post: () => {
+        throw new Error("getter down");
+      },
+    },
+  });
+  await deliver([item("pagerduty:A", "ok", 1), item("pagerduty:B", "ok", 2)]);
+  for (const id of ["pagerduty:A", "pagerduty:B"]) {
+    expect(store.get(id)?.delivery["chatops"]).toMatchObject({
+      outcome: "skipped",
+      reason: CHATOPS_NOT_RUNNING_REASON,
+    });
+  }
+  expect(toasts).toHaveLength(2);
+});
