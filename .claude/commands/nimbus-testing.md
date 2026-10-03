@@ -338,7 +338,7 @@ NIMBUS_RUN_QUERY_BENCH=1 bun test
 |---|---|
 | PR opened/updated | `pr-quality` on Ubuntu: lint (Biome), typecheck, unit + integration tests, `bun audit` — **plus** `pr-quality-cross-platform`: one `macos-15` leg and one `windows-2025` leg, each running the same whole-repo `bun test packages/gateway packages/cli scripts` as the push matrix, in one process |
 | Push to `main` / `develop` | Full 3-platform matrix: `windows-2025`, `macos-15`, `ubuntu-24.04` |
-| Push to `main` | E2E Desktop (Playwright + Tauri WebDriver) on all three platforms — not on release tags; on a PR only with the `ci:e2e-desktop` label |
+| Push to `main` | E2E Desktop (Playwright + Tauri WebDriver) on all three platforms — not on release tags; on a PR only with the `ci:e2e-desktop` label and changes under `packages/ui/` |
 
 The PR cross-platform legs carry **no coverage and no packaging** — both are Ubuntu-only by design
 (the coverage floor is CI-Linux-authoritative; packaging is a separate job). They **do** carry
