@@ -3,19 +3,9 @@
 import { randomUUID } from "node:crypto";
 import { join } from "node:path";
 
-import { runBenchCli } from "./bench-cli.ts";
+import { hasFlag, takeFlag } from "./bench-args.ts";
+import { detectRunner, runBenchCli } from "./bench-cli.ts";
 import { type IncompleteContext, installIncompleteSignalHandler } from "./signal-handler.ts";
-import type { RunnerKind } from "./types.ts";
-
-function takeFlag(args: string[], flag: string): string | undefined {
-  const i = args.indexOf(flag);
-  if (i < 0 || i + 1 >= args.length) return undefined;
-  return args[i + 1];
-}
-
-function hasFlag(args: string[], flag: string): boolean {
-  return args.includes(flag);
-}
 
 const HELP = `nimbus bench — perf bench harness (Phase 1A)
 
@@ -40,16 +30,6 @@ Flags:
 
 See the B2 perf audit design for the surface table.
 `;
-
-function detectRunner(args: string[]): RunnerKind {
-  if (hasFlag(args, "--reference")) return "reference-m1air";
-  if (hasFlag(args, "--gha")) {
-    if (process.platform === "darwin") return "gha-macos";
-    if (process.platform === "win32") return "gha-windows";
-    return "gha-ubuntu";
-  }
-  return "local-dev";
-}
 
 export interface BenchRunnerDeps {
   stdout?: (s: string) => void;

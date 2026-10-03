@@ -4,6 +4,7 @@ import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { medianBaseline } from "./baseline-median.ts";
+import { takeFlag } from "./bench-args.ts";
 import { GhCli } from "./bench-ci-gh.ts";
 import type { HistoryLine } from "./history-line.ts";
 import { COMMENT_MARKER_PREFIX, composePrCommentBody } from "./pr-comment-formatter.ts";
@@ -27,12 +28,6 @@ interface ParsedArgs {
   current: string;
   runner: RunnerKind;
   prevDir?: string;
-}
-
-function takeFlag(args: string[], flag: string): string | undefined {
-  const i = args.indexOf(flag);
-  if (i < 0 || i + 1 >= args.length) return undefined;
-  return args[i + 1];
 }
 
 function parseArgs(args: string[]): ParsedArgs {
