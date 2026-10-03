@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1791053584449,
+  "lastUpdate": 1791055357668,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "d32a5c03706646799bc5ef03e20f996354c90343",
-          "message": "chore(ci): refresh three stale action pins + fix a pin-freshness blind spot (#851)\n\n## Summary\n\nClears the three findings `audit:pin-freshness` shipped red on in #847 —\nand one of them turned out to be a flaw in **my gate**, not a stale pin.\n\n| Action | Change | Risk |\n| --- | --- | --- |\n| `actions/cache` | v5.0.5 → **v6.1.0** (6 call sites) | Major — see\nbelow |\n| `actions/attest-build-provenance` | v4.1.0 → **v4.1.1** (2 sites) |\nPatch, none |\n| `dtolnay/rust-toolchain` | → current `stable` head (3 sites) | See\nbelow |\n\nGate after: **`audit:pin-freshness: OK (30/30 pins current)`**.\n\n## The `actions/cache` major bump deserves a sentence\n\nv6.0.0 is *\"Update packages, migrate to ESM\"* — a packaging/runtime\nchange, not caching semantics. That matters here because\n`.github/actions/setup-nimbus-ci/action.yml` carries an explicit note\nabout `actions/cache@v5`'s tar pack/restore not preserving **Windows NT\njunctions**. Upstream doesn't list that behaviour as changed, so I\nbumped rather than pinned back — but CI is the proof, and the Windows\ncache steps on this PR are the thing to watch.\n\n## `dtolnay/rust-toolchain` — the gate was wrong, not the pin\n\nThe pin is commented `# stable` and deliberately tracks that **branch**.\nMy gate measured it against the newest **release**, `v1` — and `v1`\ncurrently sits **12 commits behind `stable`**:\n\n```\ncompare(stable...v1) → { ahead: 0, behind: 12 }\n```\n\nSo taking the gate at its word would have moved the pin **backwards in\ncode age** purely to turn a check green. That's the failure mode this\nwhole batch has been avoiding: a gate that can only be satisfied by\nmaking the repo worse is a broken gate.\n\nFix: actions that deliberately track a named ref are compared against\n**that ref**, via a deliberately tiny `TRACKED_REF_OVERRIDES` map. Three\ntests keep it honest:\n\n- every value must be a real ref namespace (`heads/…`/`tags/…`) — a bare\n`stable` would 404 and silently degrade the pin to `indeterminate`, i.e.\na mute button dressed as a check;\n- the map is **size-capped**, so it cannot quietly grow into a general\nsuppression list;\n- the rust-toolchain entry asserts it matches the ref its own pin\ncomment names.\n\nThis is the third instance in this batch of the same underlying lesson —\n*don't let a gate report a permanent mismatch as a fixable failure* (cf.\n`unverifiable` in #845 and the no-releases skip in #847).\n\n## Testing\n\n- `bun test scripts/` — **753 pass, 20 skip, 0 fail** (3 new)\n- `bunx tsc -p scripts/tsconfig.json --noEmit` — exit 0\n- biome — clean\n- `audit:action-sha-pins` — OK (every bumped ref is still a full 40-hex\nSHA with a version comment)\n- `audit:secret-inventory` — OK\n- Live `audit:pin-freshness` — 30/30 current\n\n## Type of Change\n\n- [x] CI / tooling\n- [x] Bug fix (the gate blind spot)\n\n## Non-Negotiables Checklist\n\n- [x] `bun run typecheck` — exit 0\n- [x] `bun run lint` (Biome) — clean\n- [x] All existing tests pass — 753\n- [x] New behaviour is covered by tests — 3\n- [x] No `any` introduced\n- [x] No credentials in logs/IPC/config\n- [x] Platform-specific code behind `PlatformServices` — n/a\n- [x] HITL gate untouched — n/a\n\n## Notes for Reviewers\n\nThis unblocks the **P2 sweep proof**: with the pins current, a\ndispatched `org-drift-sweep` should be green across every job, which is\nthe program's definition of *done* for Phase 2.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n\n## Summary by CodeRabbit\n\n- **Chores**\n- Updated CI, security, release, and build automation dependencies to\nnewer verified revisions.\n- Improved caching support for JavaScript, Rust, and browser tooling to\nkeep automated checks current.\n- Updated Rust toolchain references used by development and security\nvalidation workflows.\n\n- **Tests**\n- Added validation to ensure tracked automation references use correctly\nformatted refs and maintain expected stable-toolchain tracking.\n\n- **Security**\n- Refreshed build provenance attestation tooling to support current\nrelease verification practices.\n\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->",
-          "timestamp": "2026-07-27T02:16:42Z",
-          "tree_id": "1ba9b054b28308cd1bf322ec83ddb098356874ae",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/d32a5c03706646799bc5ef03e20f996354c90343"
-        },
-        "date": 1785119129688,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 251.28987035000029,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 248.29466370000154,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 339.25733440000005,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "71a065156e342acf5b041f221b7eb5fa744d647e",
+          "message": "ci: accept two unpatched dev-tooling advisories through the advisory registry (#1599)\n\n## Summary\n\nSince 22:36 UTC on 2026-10-02, every Security run has failed the\nrequired `Dependency audit` check, so no PR can merge. At that time\nGitHub reviewed two HIGH npm advisories into the feed `bun audit` reads:\nGHSA-vfj7-8cjw-p6xm in `braces` and GHSA-ch52-4w7c-c8xp in\n`http-cache-semantics`. `main`'s lockfile carries both, and neither has\na patched release anywhere in its version graph. Both PR runs since then\n(#1596, #1597) failed on the blocking `bun audit` step. So did `main`'s\nnightly on 2026-10-03, which opened #1598.\n\nThis PR accepts both advisories in the existing registry,\n`scripts/structure-audit/accepted-advisories.ts`. Each row records a\nreachability proof, the upstream event that unblocks it, and a 30-day\nre-check date of 2026-11-02. The PR also lets the blocking step read\nthat registry. Until now only `audit:advisories` read it, so there was\nno way to accept a HIGH advisory that has no fix. The only choices were\na red required check on every PR or an id hardcoded in the workflow.\n\nIssue #1598 needs no manual action: the workflow's red-main reporter\nshuts it on the first green Security run on `main` after this merges.\n\n## The two advisories\n\n| Package | Advisory | Severity | Path | Why it is unreachable |\nUnblocked by |\n|---|---|---|---|---|---|\n| `braces` 3.0.3 | GHSA-vfj7-8cjw-p6xm / CVE-2026-93687. Stack\nexhaustion on deeply nested brace patterns, `<=3.0.3` | HIGH, CVSS 7.5 |\n`markdownlint-cli2`, a root devDependency, → `micromatch` → `braces`,\nalso via `globby` and via `globby` → `fast-glob` | Dev tooling only, and\n`bun audit --production` does not report it. braces expands glob\nPATTERNS, never file paths or Markdown. markdownlint-cli2 takes patterns\nonly from its argv, which `lint:markdown` leaves empty, and from\n`.markdownlint-cli2.jsonc`, which has seven static globs and no braces.\nThe worst case is a crashed lint step on a pattern someone committed. |\nA `braces` release outside `<=3.0.3`; a root `overrides` pin can take a\n3.x release the same day. Or markdownlint-cli2 dropping micromatch and\nglobby. |\n| `http-cache-semantics` 4.2.0 | GHSA-ch52-4w7c-c8xp / CVE-2026-93748.\n`max-stale` serves a security-zeroed shared-cache entry to another\nclient, `<=4.2.0` | HIGH, CVSS 7.5 | `astro` in the private\n`@nimbus/docs` workspace | Build-time only. No shipped package depends\non astro. astro imports it only in `dist/assets/build/remote.js`, which\ncalls `storable()` and `timeToLive()` and never `evaluateRequest()` or\n`satisfiesWithoutRevalidation()`, where the flaw is. The docs use only\nlocal images, configure no remote-image domains, and deploy as static\nfiles. | An `http-cache-semantics` release outside `<=4.2.0`; an\noverride can take a 4.x release the same day. Or astro dropping the\ndependency. |\n\nNo upgrade exists today. I checked the npm registry on 2026-10-03:\n\n- braces 3.0.3, micromatch 4.0.8, fast-glob 3.3.3, globby 16.2.4 and\nmarkdownlint-cli2 0.23.3 are all at their latest release, and\nmarkdownlint-cli2 pins globby and micromatch exactly.\n- http-cache-semantics 4.2.0 is the latest release. astro 7.3.5 and its\n7.4.0 betas all require `^4.2.0`.\n- GitHub lists no patched version for either advisory.\n\n## How acceptance works\n\n1. Each row in `accepted-advisories.ts` records:\n   - the exact GHSA id, package and severity;\n- why no fix exists, the reachability proof, and the event that unblocks\nit;\n   - `acceptedOn`, a `recheckBy` at most 92 days later, and an owner.\n2. Before it runs bun, the blocking step runs `bun\nscripts/structure-audit/advisory-ignore-args.ts`. That prints one\n`--ignore=<GHSA>` per open, well-formed row and nothing else. No\nadvisory id is typed into `security.yml`, and a test fails if one ever\nis.\n3. A row produces no argument if any of these is true:\n- it is past `recheckBy`. The row still counts on that date and lapses\nthe next day;\n- it breaks a row rule `audit:advisories` applies, or it is a duplicate;\n   - its id is not an exact GHSA id;\n   - its `acceptedOn` is later than tomorrow, UTC;\n   - another withheld row names the same GHSA.\n\nWhen a row is withheld, bun reports the advisory and the step fails. An\nacceptance therefore lapses on its own, and nobody has to remember to\nremove an ignore.\n4. If the registry cannot be loaded, the step fails without running bun.\n5. `audit:advisories` runs next, with no `--ignore`. It re-checks every\nlive advisory by package and by severity. If an accepted advisory is\nre-scored higher, or is reported against a package with no row, the job\nstill fails.\n\nTwo bun 1.3.14 behaviours shaped the design. I measured both and\nconfirmed them in bun's source:\n\n- `--ignore` matches a SUBSTRING of the advisory URL, so `--ignore=GHSA`\non its own silences every advisory.\n- bun ignores CVE ids, lowercase ids and comma-joined lists.\n\nSo the script emits only anchored, full GHSA ids, one argument each. The\ntransport-failure retry logic is unchanged.\n\nThe review also closed a gap that was already there. The 92-day cap is\ncounted from `acceptedOn`, so a row dated in the future could stay open\nfor years. That mattered little while the registry could only excuse\nadvisories below HIGH, but it would now apply to the blocking step. Both\nsteps now refuse an `acceptedOn` later than tomorrow, UTC; the one-day\nslack covers authors in time zones ahead of UTC.\n\n## Verification\n\n- **Real lockfile.** With the emitted arguments, `bun audit\n--audit-level high` exits 0. The arguments are exactly\n`--ignore=GHSA-vfj7-8cjw-p6xm` and `--ignore=GHSA-ch52-4w7c-c8xp`.\n- **Unrelated HIGH advisories still block.** I ran the workflow step as\nwritten against a scratch project with `braces@3.0.3`,\n`http-cache-semantics@4.2.0` and `lodash@4.17.20`. It failed on lodash's\ntwo HIGH advisories and passed over only the two accepted ones.\n- **The blocking step fails closed.** I ran the same step against\nscratch copies of the registry:\n  - an expired braces row: fails on bun's report for braces;\n- a malformed http-cache-semantics row: fails on bun's report for\nhttp-cache-semantics;\n  - a braces row dated 2027-01-01: fails on bun's report for braces;\n- a registry that cannot be loaded: fails with `Could not read the\naccepted-advisory registry`.\n- **Reachability.**\n  - Re-ran `bun why` for both packages.\n  - `bun audit --production --json` reports only http-cache-semantics.\n- astro's `remote.js` is the only installed file that references\nhttp-cache-semantics.\n- GitHub's advisory API gives `first_patched_version: null` for both,\nand `github_reviewed_at` 2026-10-02T22:36Z.\n- **Tests.** `bun test scripts/structure-audit`: 989 pass, 0 fail,\nincluding 26 new tests. 15 mutations were red-proved, among them:\n  - the workflow dropping the arguments, or joining them into one word;\n  - the workflow hardcoding an id;\n  - the future-date rule removed.\n- **Gates.** `bun run preflight:fast` passed all 34 gates. All of these\nexit 0:\n  - `bun run typecheck`, which covers all five advisory files;\n- `audit:doc-refs`, `audit:status-drift`, `audit:workflow-lint` and\n`lint:markdown`;\n- the networked `audit:advisories`: 2 live advisories, 2 accepted rows.\n\n  `security.yml` parses identically with js-yaml and Bun.YAML.\n- **Same bun build as CI.** CI's audit job resolves bun 1.3.14 at\n0d9b296a, the build these measurements used.\n\n## Caveats\n\n- **Both rows lapse after 2026-11-02.** From 2026-11-03 the required\ncheck goes red on the real advisories until someone re-judges or deletes\nthe rows. The nightly will open a new \"Security gate is red on main\"\nissue, which serves as the reminder.\n- **Step order matters.** Only `audit:advisories` catches a severity\nescalation of an accepted advisory, and it runs only because the\nblocking step passed. Keep the two steps in this order, with no `if:` on\nthe second.\n- **Conflicts with #1596 and #1597.**\n  - Both add entries at the top of `docs/CHANGELOG.md`.\n- #1596 also edits the same lines in `docs/testing.md`, `docs/README.md`\nand `docs/architecture.md`, plus the lines next to the one changed here\nin the nimbus-testing skill.\n\nBoth PRs are red until this one lands, so merge this first and rebase\nthem.\n- **Plain `bun audit` stays red locally, on purpose.** `bun run\naudit:high` and plain `bun audit --audit-level high` still report the\naccepted advisories and exit 1. No gate runs them.\n`.claude/commands/nimbus-commands.md` shows the command CI actually\nruns.\n- **No acceptance for non-GHSA advisories in the blocking step.**\n`audit:advisories` can accept one recorded by URL, but the blocking step\nnever passes it over. None exists today.\n- **Not changed here:**\n- The nimbus-testing skill still says \"Exactly one check gates the\nmerge\".\n- The \"Maintainer workflow\" section of `security-hardening.md` lists an\noutdated set of required checks. #1596 rewrites both.\n- `docs/structure-audit/ci-latency-baseline.json` still lists a job that\nno longer exists.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n## Summary by CodeRabbit\n\n* **Security**\n* High- and critical-severity advisories without an available fix may be\ntemporarily accepted through a dated review process. Expired or invalid\nacceptances continue to block the audit.\n* Added temporary acceptances for advisories affecting `braces` and\n`http-cache-semantics`, with review deadlines.\n* A separate check continues to flag live advisories without a current\ndecision, regardless of severity.\n* **Documentation**\n* Updated security and testing guidance to explain advisory acceptance,\nreview deadlines, and how accepted advisories affect merge checks.\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-10-03T19:10:09Z",
+          "tree_id": "f99bb61ff0f993641057df4f2f8f6cfd855c8a7e",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/71a065156e342acf5b041f221b7eb5fa744d647e"
+        },
+        "date": 1791055353218,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 330.84165430000576,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 329.9363511499945,
             "unit": "ms"
           }
         ]
