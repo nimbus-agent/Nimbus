@@ -60,11 +60,36 @@ jobs:
       # If all 3 attempts hit transport failures the step still FAILS. That is
       # deliberate: `continue-on-error` here would also swallow genuine
       # HIGH/CRITICAL findings, which is the one thing this gate exists to catch.
+      #
+      # The advisories this step passes over come from ONE place: the accepted-
+      # advisory registry (scripts/structure-audit/accepted-advisories.ts), where
+      # a HIGH advisory with no fix is accepted with a reachability proof, an
+      # unblocking condition and a recheckBy date. Never type an id into this
+      # file. advisory-ignore-args.ts turns each OPEN, well-formed row into one
+      # `--ignore=<GHSA>` and every other row into nothing, so the day after a
+      # row's recheckBy this step fails on the real advisory. It emits exact GHSA
+      # ids only, because bun matches `--ignore` by SUBSTRING of the advisory URL
+      # and a partial id would silence unrelated advisories. The arguments are
+      # read ONCE, before the retry loop, and failing to read them fails the step.
+      # Everything passed over here is re-checked, package-scoped and
+      # severity-aware, by the `Accepted-advisory registry` step below, which
+      # never passes `--ignore`.
       - name: bun audit (retry transport failures only)
         run: |
           set +e
+          ignores="$(bun scripts/structure-audit/advisory-ignore-args.ts)"
+          ignores_code=$?
+          if [ "$ignores_code" -ne 0 ]; then
+            echo "Could not read the accepted-advisory registry (exit $ignores_code) — failing closed."
+            exit "$ignores_code"
+          fi
+          # One argument per line. An empty list gives an empty array, never an empty argument.
+          ignore_args=()
+          while IFS= read -r arg; do
+            if [ -n "$arg" ]; then ignore_args+=("$arg"); fi
+          done <<< "$ignores"
           for attempt in 1 2 3; do
-            out="$(bun audit --audit-level high 2>&1)"
+            out="$(bun audit --audit-level high "${ignore_args[@]}" 2>&1)"
             code=$?
             printf '%s\n' "$out"
             if [ "$code" -eq 0 ]; then
@@ -100,7 +125,10 @@ jobs:
       # with nothing failing and no record that anyone had judged them. This
       # step holds every live advisory to a written, dated decision in
       # scripts/structure-audit/accepted-advisories.ts, and fails when a
-      # decision expires, goes stale, or was never made.
+      # decision expires, goes stale, or was never made. It is also the
+      # package-scoped, severity-aware re-check of everything the step above
+      # passed over: an accepted advisory re-scored higher, or an accepted
+      # GHSA reported against a package with no row, fails HERE.
       - name: Accepted-advisory registry
         run: bun run audit:advisories
 

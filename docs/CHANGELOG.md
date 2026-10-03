@@ -38,6 +38,57 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
   `watcher.*`, `workflow.*` and `connector.*` method sets. `docs/CONTRIBUTING.md`'s held-back
   majors now read as a dated record to re-test, not a standing fact.
 
+- **2026-10-03 — Two unpatched dev-tooling advisories accepted, and the blocking `bun audit` now
+  reads the advisory registry.** Two HIGH advisories reached the npm advisory feed on 2026-10-02
+  with no patched release anywhere. One is `braces` (GHSA-vfj7-8cjw-p6xm / CVE-2026-93687): a
+  stack-exhaustion DoS on deeply nested brace patterns, covering `<=3.0.3`, and 3.0.3 is the latest
+  release. The other is `http-cache-semantics` (GHSA-ch52-4w7c-c8xp / CVE-2026-93748): `max-stale`
+  makes it serve a security-zeroed shared-cache entry to another client, covering `<=4.2.0`, and
+  4.2.0 is the latest. `main`'s lockfile carries both, so every PR's required `Dependency audit`
+  check went red, and so did `main`'s own nightly Security run on 2026-10-03, which opened #1598.
+  No upgrade clears either one.
+  micromatch, fast-glob, globby and markdownlint-cli2 are all at their latest releases and still
+  resolve braces 3.0.3. astro 7.3.5 (latest) and its 7.4 betas require `http-cache-semantics ^4.2.0`.
+  Both are reachable only through tooling that never ships. braces sits under the root
+  devDependency markdownlint-cli2, and `bun audit --production` does not report it. It only ever
+  expands glob patterns, and those come from an empty argv and `.markdownlint-cli2.jsonc` (seven
+  static globs, none with a brace). http-cache-semantics sits under astro in the private docs
+  workspace. astro imports it in one place (`dist/assets/build/remote.js`, the static build's
+  remote-image cache), which calls only `storable()`/`timeToLive()` and never the vulnerable
+  `evaluateRequest()`/`satisfiesWithoutRevalidation()`. Our pages use only local images in any
+  case, and the site ships as static files. Both rows are in
+  `scripts/structure-audit/accepted-advisories.ts`, each with the proof, the upstream event that
+  unblocks it, and a deliberately short 30-day window (re-check by 2026-11-02).
+  **The mechanism is the real change.** The registry used to feed only `audit:advisories`, so the
+  blocking `bun audit --audit-level high` step before it had no way to honour an acceptance. That
+  step now reads its `--ignore=<GHSA>` arguments from the new
+  `scripts/structure-audit/advisory-ignore-args.ts`, one per OPEN, well-formed row. The rules are
+  the same row-shape and inclusive-expiry rules `audit:advisories` applies, now exported from
+  `check-accepted-advisories.ts` rather than restated, and no id is typed into `security.yml`. An
+  expired or malformed row produces no argument, so the day after its `recheckBy` the step fails on
+  the real advisory, with a warning naming the lapsed row. Two bun 1.3.14 behaviours, both measured,
+  shaped the design. First, `--ignore` matches a SUBSTRING of the advisory URL, and
+  `--ignore=GHSA` on its own silences every advisory, so only anchored, full GHSA ids are ever
+  emitted. Second, bun honours neither CVE ids nor comma-joined lists, so each advisory gets its own
+  argument. And because `--ignore` is not package-scoped, a GHSA is passed over only when every row
+  naming it is open. `audit:advisories` runs next, never passes `--ignore`, and still re-checks
+  every advisory by package and severity. The transport-failure retry classification is unchanged.
+  Both steps also now refuse a row whose `acceptedOn` is later than tomorrow (UTC). The 92-day cap
+  counts from that date, so a future-dated row could stay open for as long as its author liked: a
+  gap that mattered little while the registry could excuse only sub-HIGH advisories, and that the
+  blocking step would otherwise have inherited.
+  The change adds 26 tests and red-proved 15 mutations, among them the workflow dropping the
+  arguments or joining them into one word, the workflow hardcoding an id, and the future-date rule
+  removed. The verbatim workflow step was run locally: exit 0 with the registry; exit 1 on bun's own
+  report with a scratch registry whose rows had lapsed or were malformed; exit 1 on an unloadable
+  registry; and, against a scratch project that also carries `lodash@4.17.20`, exit 1 on lodash's
+  two HIGH advisories with both accepted ones passed over.
+  `security-hardening.md`'s license row, which still named a `JS license compliance` job long since
+  folded into `Dependency audit`, is corrected, and the three one-line summaries that said every
+  HIGH/CRITICAL finding blocks merges (`docs/README.md`, `docs/architecture.md`, the
+  `nimbus-testing` skill) now name the exception. Detail:
+  [`security-hardening.md`](./security-hardening.md#accepting-an-advisory-that-has-no-fix).
+
 - **2026-10-02 — The merge queue and Dependabot are retired; dependencies move in manual bulk
   updates.** The merge queue that went live on 2026-09-30 took seven entries before it was switched
   off, and every one re-ran the whole PR gate on the merged result: 21 to 52 minutes of CI after

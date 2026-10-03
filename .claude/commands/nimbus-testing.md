@@ -351,4 +351,7 @@ an `if: always()` job over every other PR-quality job; the other nine come from 
 and CLA workflows. See the `nimbus-preflight` skill § _Merging_ — the ruleset's org-admin bypass is
 silent, so merging before the checks report is the single largest source of red `main`.
 
-Security scans run on every PR: `bun audit`, `trivy`, CodeQL. HIGH/CRITICAL findings block the merge.
+Security scans run on every PR: `bun audit`, `trivy`, CodeQL. HIGH/CRITICAL findings block the merge,
+except an npm advisory with no fix that holds an open, dated row in
+`scripts/structure-audit/accepted-advisories.ts` (`docs/security-hardening.md` § Accepting an
+advisory that has no fix).
