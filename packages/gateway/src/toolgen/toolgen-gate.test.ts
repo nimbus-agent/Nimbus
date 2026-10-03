@@ -666,3 +666,89 @@ describe("createGeneratedTool's refused outcome carries the draft's locality (Ta
     expect(Object.hasOwn(out, "locality")).toBe(false);
   });
 });
+
+// `credentialRevokeFailed` is the one field telling an operator that a bearer token may still sit
+// in the Vault under a toolId that will never register. It is written by all THREE
+// non-registering audit rows (the denial arm, and both rows the outer `catch` can write), and must
+// be PRESENT exactly when a bound credential failed to revoke and ABSENT otherwise — `false` or a
+// bare key would still read as a claim about cleanup on a run that bound nothing. Asserted on the
+// PARSED row, never by substring, so an absent field cannot pass on an accident of formatting.
+describe("credentialRevokeFailed on the three non-registering audit rows", () => {
+  const failingRevoke = async (): Promise<void> => {
+    throw new Error("vault unavailable");
+  };
+
+  function onlyRow(db: Database): Record<string, unknown> {
+    const rows = auditRows(db);
+    expect(rows).toHaveLength(1);
+    return JSON.parse(rows[0]?.action_json ?? "{}") as Record<string, unknown>;
+  }
+
+  test("denied_by_owner: present when the revoke FAILED, absent when it succeeded", async () => {
+    const failed = deps({
+      bindCredentials: async () => ["api.example.com"],
+      requestApproval: async () => false,
+      revokeCredentials: failingRevoke,
+    });
+    expect(await createGeneratedTool(req, failed as never)).toEqual({ status: "denied" });
+    const failedRow = onlyRow(failed.db);
+    expect(failedRow["outcome"]).toBe("denied_by_owner");
+    expect(failedRow["credentialRevokeFailed"]).toBe(true);
+
+    const clean = deps({
+      bindCredentials: async () => ["api.example.com"],
+      requestApproval: async () => false,
+    });
+    expect(await createGeneratedTool(req, clean as never)).toEqual({ status: "denied" });
+    expect(clean.calls.revokeCredentials).toBe(1);
+    const cleanRow = onlyRow(clean.db);
+    expect(cleanRow["outcome"]).toBe("denied_by_owner");
+    expect(Object.hasOwn(cleanRow, "credentialRevokeFailed")).toBe(false);
+  });
+
+  test("failed_after_approval: present when the revoke FAILED, absent when it succeeded", async () => {
+    const diskFull = async (): Promise<string> => {
+      throw new Error("disk full");
+    };
+    const failed = deps({
+      bindCredentials: async () => ["api.example.com"],
+      writeScript: diskFull,
+      revokeCredentials: failingRevoke,
+    });
+    expect((await createGeneratedTool(req, failed as never)).status).toBe("refused");
+    const failedRow = onlyRow(failed.db);
+    expect(failedRow["outcome"]).toBe("failed_after_approval");
+    expect(failedRow["credentialRevokeFailed"]).toBe(true);
+
+    const clean = deps({ bindCredentials: async () => ["api.example.com"], writeScript: diskFull });
+    expect((await createGeneratedTool(req, clean as never)).status).toBe("refused");
+    expect(clean.calls.revokeCredentials).toBe(1);
+    const cleanRow = onlyRow(clean.db);
+    expect(cleanRow["outcome"]).toBe("failed_after_approval");
+    expect(Object.hasOwn(cleanRow, "credentialRevokeFailed")).toBe(false);
+  });
+
+  test("refused_before_consent: present when a partial bind's revoke FAILED, absent when nothing was ever bound", async () => {
+    const failed = deps({
+      bindCredentials: async () => {
+        throw new Error("vault unavailable after writing the first host");
+      },
+      revokeCredentials: failingRevoke,
+    });
+    expect((await createGeneratedTool(req, failed as never)).status).toBe("refused");
+    const failedRow = onlyRow(failed.db);
+    expect(failedRow["outcome"]).toBe("refused_before_consent");
+    expect(failedRow["credentialRevokeFailed"]).toBe(true);
+
+    // Refused before the bind step (config off): no revoke is ever attempted. The FAILING revoke is
+    // deliberate — had the gate called it anyway, the field would appear and this would fail.
+    const nothingBound = deps({
+      config: DEFAULT_NIMBUS_TOOL_GENERATION_TOML,
+      revokeCredentials: failingRevoke,
+    });
+    expect((await createGeneratedTool(req, nothingBound as never)).status).toBe("refused");
+    const nothingBoundRow = onlyRow(nothingBound.db);
+    expect(nothingBoundRow["outcome"]).toBe("refused_before_consent");
+    expect(Object.hasOwn(nothingBoundRow, "credentialRevokeFailed")).toBe(false);
+  });
+});

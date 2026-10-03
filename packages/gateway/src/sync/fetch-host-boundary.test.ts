@@ -239,4 +239,22 @@ describe("fetch-host-boundary", () => {
     );
     expect(serviceForHost(map, "gitlab.com")).toBe("gitlab");
   });
+
+  test("a Vault read that REJECTS fails the whole derivation closed, even after every other read resolved", async () => {
+    // The services' reads run concurrently, so one can reject AFTER every other read has already
+    // resolved. That must still reject the whole map: a partial map built from the reads that
+    // happened to succeed can AUTHORISE a host the complete one would refuse — had this jira read
+    // returned a `base_url` of github.com, the collision rule would have refused github.com for
+    // BOTH services, yet a map without jira would hand it to github.
+    const vault = {
+      async get(fullKey: string): Promise<string | null> {
+        if (fullKey === "jira.api_token") {
+          await new Promise<void>((resolve) => setTimeout(resolve, 5));
+          throw new Error("keychain locked");
+        }
+        return fullKey === "github.pat" ? "t" : null;
+      },
+    } as unknown as Parameters<typeof deriveFetchHostMap>[0];
+    await expect(deriveFetchHostMap(vault)).rejects.toThrow("keychain locked");
+  });
 });

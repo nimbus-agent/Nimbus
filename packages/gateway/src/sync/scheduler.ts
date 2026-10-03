@@ -303,7 +303,7 @@ export class SyncScheduler {
       this._connectivityRecheckHandle = null;
     }
     while (this.runningGlobal > 0) {
-      await new Promise((r) => setTimeout(r, 10));
+      await new Promise((r) => setTimeout(r, 10)); // NOSONAR S9382: drain poll - re-checks runningGlobal every 10 ms until in-flight jobs finish; there is no independent work to overlap
     }
   }
 
@@ -331,7 +331,7 @@ export class SyncScheduler {
 
   async forceSync(serviceId: string): Promise<void> {
     if (this.syncDisabled) {
-      return Promise.reject(new SyncDisabledError(serviceId));
+      throw new SyncDisabledError(serviceId);
     }
     return new Promise((resolve, reject) => {
       const list = this.forceWaiters.get(serviceId) ?? [];

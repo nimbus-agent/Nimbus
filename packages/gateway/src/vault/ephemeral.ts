@@ -11,26 +11,36 @@ import type { NimbusVault } from "./nimbus-vault.ts";
 export class EphemeralVault implements NimbusVault {
   private readonly store = new Map<string, string>();
 
-  async set(key: string, value: string): Promise<void> {
-    validateVaultKeyOrThrow(key);
-    this.store.set(key, value);
+  // Every operation is a synchronous Map access, but `NimbusVault` returns Promises and every real
+  // backend REJECTS on a malformed key. `Promise.try` runs each body immediately and turns
+  // `validateVaultKeyOrThrow`'s throw into that same rejection, so code exercised against this
+  // vault in demo mode sees exactly the failure shape it would see against the OS store.
+  set(key: string, value: string): Promise<void> {
+    return Promise.try(() => {
+      validateVaultKeyOrThrow(key);
+      this.store.set(key, value);
+    });
   }
 
-  async get(key: string): Promise<string | null> {
-    validateVaultKeyOrThrow(key);
-    return this.store.get(key) ?? null;
+  get(key: string): Promise<string | null> {
+    return Promise.try(() => {
+      validateVaultKeyOrThrow(key);
+      return this.store.get(key) ?? null;
+    });
   }
 
-  async delete(key: string): Promise<void> {
-    validateVaultKeyOrThrow(key);
-    this.store.delete(key);
+  delete(key: string): Promise<void> {
+    return Promise.try(() => {
+      validateVaultKeyOrThrow(key);
+      this.store.delete(key);
+    });
   }
 
-  async listKeys(prefix?: string): Promise<string[]> {
+  listKeys(prefix?: string): Promise<string[]> {
     const keys = [...this.store.keys()].sort(compareVaultKeysAlphabetically);
     if (prefix === undefined || prefix.length === 0) {
-      return keys;
+      return Promise.resolve(keys);
     }
-    return keys.filter((k) => k.startsWith(prefix));
+    return Promise.resolve(keys.filter((k) => k.startsWith(prefix)));
   }
 }

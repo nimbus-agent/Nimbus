@@ -28,8 +28,8 @@ export class InMemoryDiscoveryProvider implements DiscoveryProvider {
   async stop(): Promise<void> {
     // no-op: nothing to tear down
   }
-  async list(): Promise<readonly DiscoveredPeer[]> {
-    return [...this.peers];
+  list(): Promise<readonly DiscoveredPeer[]> {
+    return Promise.resolve([...this.peers]);
   }
   async advertise(): Promise<void> {
     // no-op: the in-memory provider does not broadcast

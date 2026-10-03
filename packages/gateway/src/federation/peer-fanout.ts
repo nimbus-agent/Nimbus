@@ -69,7 +69,7 @@ async function runPool<T>(
     while (cursor < rows.length) {
       const row = rows[cursor++];
       if (row === undefined) return;
-      const r = await worker(row);
+      const r = await worker(row); // NOSONAR S9382: pool lane - one peer at a time per lane is what caps in-flight peers at FANOUT_CONCURRENCY
       if ("ok" in r) perPeer.push(r.ok);
       else gaps.push(r.gap);
     }

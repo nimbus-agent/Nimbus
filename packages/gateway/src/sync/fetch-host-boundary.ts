@@ -262,6 +262,13 @@ function claimHostsForService(
  * self-hosted origin host); `claimHostsForService` then claims every host that service is
  * entitled to, with `claimHost` refusing any host two different services both claim. See those
  * functions' docs for the collision and self-hosted-skip rules.
+ *
+ * The Vault READS run concurrently across services — each service reads only its own keys, and
+ * this runs fresh on every targeted fetch and resolve request, never cached — but the CLAIMS still
+ * run one service at a time, in `FETCHABLE_SERVICES` order, so the map is identical to one built
+ * from sequential reads. A read that rejects still rejects the whole derivation, never a partial
+ * map: a map missing one service could authorise a host the complete one would refuse as
+ * ambiguous (I29's fail-closed posture).
  */
 export async function deriveFetchHostMap(
   vault: NimbusVault,
@@ -269,8 +276,13 @@ export async function deriveFetchHostMap(
   const map = new Map<string, FetchableService>();
   const ambiguousHosts = new Set<string>();
 
-  for (const service of FETCHABLE_SERVICES) {
-    const config = await resolveServiceConfig(vault, service);
+  const resolved = await Promise.all(
+    FETCHABLE_SERVICES.map(async (service) => ({
+      service,
+      config: await resolveServiceConfig(vault, service),
+    })),
+  );
+  for (const { service, config } of resolved) {
     if (!config.configured) {
       continue;
     }

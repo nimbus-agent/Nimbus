@@ -182,7 +182,7 @@ async function fetchWithRetry(
     const waitMs = Number.isFinite(retryAfter)
       ? Math.min(retryAfter * 1000, MAX_RETRY_AFTER_MS)
       : 2 ** attempt * 1000;
-    await deps.sleep(waitMs + randomInt(250));
+    await deps.sleep(waitMs + randomInt(250)); // NOSONAR S9382: retry backoff - the next attempt may only start once this 429/503 wait has elapsed
   }
 }
 
@@ -371,7 +371,7 @@ async function streamBodyToFile(
         controller.abort();
         return { ok: false, stop: "budget_exhausted", fetched };
       }
-      await writeChunk(ws, value);
+      await writeChunk(ws, value); // NOSONAR S9382: ordered file writes - each chunk must land after the previous one, and this await is the backpressure
     }
   } finally {
     reader.releaseLock();

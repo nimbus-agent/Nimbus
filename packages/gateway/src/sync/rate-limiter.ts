@@ -196,7 +196,12 @@ function sleepMs(ms: number): Promise<void> {
 class ProviderMutex {
   private tail: Promise<void> = Promise.resolve();
 
-  runExclusive<T>(fn: () => Promise<T>): Promise<T> {
+  /**
+   * Runs `fn` once every earlier holder has settled. `fn` may be synchronous: it runs as a `.then`
+   * callback either way, so a thrown error still rejects the returned promise and still releases
+   * the lock for the next holder, exactly as an `async` `fn` would.
+   */
+  runExclusive<T>(fn: () => T | Promise<T>): Promise<T> {
     let release!: () => void;
     const ready = new Promise<void>((r) => {
       release = r;
@@ -312,7 +317,7 @@ export class ProviderRateLimiter {
     if (tokens > state.quota.burstSize) {
       throw new Error("acquire exceeds provider burstSize");
     }
-    return this.mutexFor(provider).runExclusive(async () => {
+    return this.mutexFor(provider).runExclusive(() => {
       const now = this.nowFn();
       if (now < state.penaltyUntilMs) {
         return false;
@@ -342,7 +347,7 @@ export class ProviderRateLimiter {
       const deficit = tokens - state.tokens;
       const ratePerMs = state.quota.requestsPerMinute / 60_000;
       const waitMs = Math.ceil(deficit / ratePerMs);
-      await sleepMs(Math.max(1, waitMs));
+      await sleepMs(Math.max(1, waitMs)); // NOSONAR S9382: token-bucket wait - each pass re-reads the clock after the previous sleep to see whether enough tokens have refilled
     }
   }
 
@@ -350,7 +355,7 @@ export class ProviderRateLimiter {
     if (!Number.isFinite(retryAfterMs) || retryAfterMs < 0) {
       return;
     }
-    void this.mutexFor(provider).runExclusive(async () => {
+    void this.mutexFor(provider).runExclusive(() => {
       const state = this.stateFor(provider);
       const now = this.nowFn();
       state.tokens = 0;

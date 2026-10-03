@@ -380,30 +380,36 @@ export function wireExitCallback(io: ToolChildIo, onExit: () => void): void {
   void io.waitExit().then(onExit);
 }
 
-export async function spawnGeneratedTool(
+export function spawnGeneratedTool(
   envelope: ToolgenEnvelope,
   broker: ToolgenBroker,
   cwd: string,
   onExit?: () => void,
 ): Promise<GeneratedToolHandle> {
-  const spec = buildToolSpawnSpec(envelope, cwd);
-  // stderr is INHERITED, not piped. A pipe nothing reads is a deadlock: `ioFromSpawnedChild`
-  // consumes only stdout, so once a generated tool wrote about one pipe buffer of stderr its
-  // writes would block forever, and the tool would stop answering `describe`/`call` while
-  // `wireToolProtocol` reported it as merely wedged. A generated body is owner-approved code that
-  // may legitimately log, and the runtime itself prints warning traces there, so this is a
-  // reachable state rather than a theoretical one. Inheriting also puts that output where an owner
-  // debugging their own tool can actually see it.
-  const child = Bun.spawn<"pipe", "pipe", "inherit">([spec.command, ...spec.args], {
-    env: spec.env,
-    cwd,
-    stdin: "pipe",
-    stdout: "pipe",
-    stderr: "inherit",
+  // Nothing below awaits — the spawn and the protocol wiring are synchronous — but callers hold a
+  // Promise-returning `spawn` dep. `Promise.try` runs the body immediately and turns a throw (a
+  // `Bun.spawn` that cannot start the executable, say) into a REJECTION of the returned promise,
+  // exactly as the former `async` did, rather than a synchronous throw at the call site.
+  return Promise.try(() => {
+    const spec = buildToolSpawnSpec(envelope, cwd);
+    // stderr is INHERITED, not piped. A pipe nothing reads is a deadlock: `ioFromSpawnedChild`
+    // consumes only stdout, so once a generated tool wrote about one pipe buffer of stderr its
+    // writes would block forever, and the tool would stop answering `describe`/`call` while
+    // `wireToolProtocol` reported it as merely wedged. A generated body is owner-approved code that
+    // may legitimately log, and the runtime itself prints warning traces there, so this is a
+    // reachable state rather than a theoretical one. Inheriting also puts that output where an
+    // owner debugging their own tool can actually see it.
+    const child = Bun.spawn<"pipe", "pipe", "inherit">([spec.command, ...spec.args], {
+      env: spec.env,
+      cwd,
+      stdin: "pipe",
+      stdout: "pipe",
+      stderr: "inherit",
+    });
+    const io = ioFromSpawnedChild(child);
+    if (onExit !== undefined) {
+      wireExitCallback(io, onExit);
+    }
+    return wireToolProtocol(io, envelope, broker);
   });
-  const io = ioFromSpawnedChild(child);
-  if (onExit !== undefined) {
-    wireExitCallback(io, onExit);
-  }
-  return wireToolProtocol(io, envelope, broker);
 }

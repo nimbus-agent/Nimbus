@@ -248,7 +248,7 @@ export async function assertToolConfinement(deps: ToolConfinementDeps): Promise<
     ...deps.manifest.permissions.filesystem.read,
     ...deps.manifest.permissions.filesystem.write,
   ]) {
-    await mkdir(dir, { recursive: true, mode: 0o700 });
+    await mkdir(dir, { recursive: true, mode: 0o700 }); // NOSONAR S9382: pre-consent and fail-fast - the gate refuses at the first grant directory it cannot create, before creating any later one
   }
   let sentinel: { path: string; dir: string };
   try {

@@ -45,4 +45,24 @@ describeWin("DpapiVault atomic write (S2-F3)", () => {
     expect(await vault.get("github.pat")).toBe("value-two");
     expect(existsSync(target)).toBe(true);
   });
+
+  test("set() has swept EVERY stale temp file of its own key by the time it resolves, and no other key's", async () => {
+    // The removals run concurrently, so this pins both halves of that: `set` waits for each of
+    // them rather than for the first, and the prefix filter still spares another key's leftover.
+    const { DpapiVault } = await import("./win32.ts");
+    const cfg = mkdtempSync(join(tmpdir(), "nimbus-vault-atomic-"));
+    const vault = new DpapiVault({ configDir: cfg } as never);
+    await vault.set("github.pat", "value-one");
+    const vaultDir = join(cfg, "vault");
+    const stale = ["1.aa", "2.bb", "3.cc"].map((tag) =>
+      join(vaultDir, `github.pat.enc.tmp.${tag}`),
+    );
+    for (const path of stale) writeFileSync(path, "junk");
+    const otherKeysLeftover = join(vaultDir, "gitlab.pat.enc.tmp.4.dd");
+    writeFileSync(otherKeysLeftover, "junk");
+    await vault.set("github.pat", "value-two");
+    expect(stale.filter((path) => existsSync(path))).toEqual([]);
+    expect(existsSync(otherKeysLeftover)).toBe(true);
+    expect(await vault.get("github.pat")).toBe("value-two");
+  });
 });

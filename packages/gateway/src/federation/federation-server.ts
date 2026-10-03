@@ -81,7 +81,7 @@ export function pairingServiceFor(pairingWindow: PairingWindow): PairingService 
  * for testing.
  */
 export const EMPTY_DISCOVERY = {
-  list: async () => [],
+  list: () => Promise.resolve([]),
 } as unknown as DiscoveryProvider;
 export const EMPTY_PEER_PAIRING = {
   listPeers: () => [],

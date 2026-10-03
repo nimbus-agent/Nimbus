@@ -262,15 +262,14 @@ export class DpapiVault implements NimbusVault {
       return;
     }
     const prefix = `${key}.enc.tmp.`;
-    for (const entry of entries) {
-      if (!entry.startsWith(prefix)) continue;
-      const full = join(this.vaultDir, entry);
-      try {
-        await unlink(full);
-      } catch {
-        /* ignore */
-      }
-    }
+    // Independent, best-effort removals: order is unobservable and a failed unlink is ignored (the
+    // next `set` of this key sweeps again), so they run concurrently. `allSettled` never rejects
+    // and still waits for every attempt, so `set` resolves only once each one has been made.
+    await Promise.allSettled(
+      entries
+        .filter((entry) => entry.startsWith(prefix))
+        .map((entry) => unlink(join(this.vaultDir, entry))),
+    );
   }
 
   async get(key: string): Promise<string | null> {
