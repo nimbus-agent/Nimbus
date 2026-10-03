@@ -18,7 +18,7 @@ anyone asking.
 |---|---|
 | Who it is for | The on-call owner's team, in the namespace's notify channel |
 | Success | A pushed brief posts one escaped headline per channel, ledgered as `chatops.pushedBrief`. Nothing posts unless a namespace is configured AND policy names notify channels for it. Every outcome is recorded in `delivery_json.chatops`. |
-| Content | **Headline only.** No full-brief option, and no policy flag (decided 2026-10-02; see § 7). The full brief is already one intent away: `@nimbus agent oncall incident=<id>`. |
+| Content | **Headline only.** No full-brief option, and no policy flag (decided 2026-10-02; see § 7). The full brief is already one intent away: `@nimbus agent oncall incidentId=<id>`. |
 | Volume | Mirrors the toast sink. Up to 3 headline posts per run, newest first, then one summary post. Failed rows post too. A retry that becomes `ok` posts once more. |
 | Out of scope | Full-brief posting; a Teams-specific notify path; escaping in the existing `@nimbus agent …` replies (§ 7); desktop panel (PR 3) |
 
@@ -49,8 +49,9 @@ These come from reading the code (2026-10-02) and replace what that section assu
 | `chatops/escape-outbound.ts` (new) | `escapeSlackText(s: string): string`. It applies Slack's control-character escape: `&` → `&amp;`, `<` → `&lt;`, `>` → `&gt;`, in that order. |
 | `oncall-push/push-headline.ts` (new) | Pure functions: `renderPushHeadline(d: PushDelivery): string` and `renderPushSummary(all: readonly PushDelivery[], rest: readonly PushDelivery[]): string`, plus `oneLine(s)` (§ 3). |
 | `oncall-push/push-sinks.ts` | `PushSinkDeps` gains `chatops?: ChatopsSinkDeps`, where `ChatopsSinkDeps = { readonly namespace: string; readonly post: () => ((text: string) => Promise<number>) \| undefined }`, and `warn?: (msg: string, fields: Record<string, string>) => void` for the § 4 failure log. A new `chatops` sink is added. |
-| `oncall-push/push-runtime.ts` | Holds `let chatopsPoster: ((text: string) => Promise<number>) \| undefined` and a one-shot **sinks-settled gate** (§ 4, boot race). Exposes `settleChatopsPoster(fn \| undefined)` on `OncallPushRuntime`: it binds the poster (or records that there is none) and opens the gate; a second call throws. `trigger` and `run` await the gate before the runner starts, so a PagerDuty sync that finishes during boot queues its run instead of delivering early. `retry` awaits it too. Passes `{ namespace: config.chatopsNamespace, post: () => chatopsPoster }` to the deliverer. `OncallPushBootDeps` gains `settleImmediately?: boolean` (default `false`) for tests and any caller with no ChatOps phase. `config.chatopsNamespace` gets its first consumer, and the "no consumer" header comment in `config/oncall-push-toml.ts` is updated. |
-| `platform/assemble.ts` | Immediately after `bootChatopsIntoAssembly` returns, calls `oncallPush.settleChatopsPoster(...)` **on both branches**: with `(text) => chatopsBoot.postPushedBrief(ns, text)` when a boot was returned, and with `undefined` when ChatOps is disabled. `ns` is the namespace the runtime already holds. |
+| `oncall-push/push-runtime.ts` | Holds `let chatopsPoster: ((text: string) => Promise<number>) \| undefined` and a one-shot **sinks-settled gate** (§ 4, boot race). Exposes `settleChatopsPoster(fn \| undefined)` on `OncallPushRuntime`: it binds the poster (or records that there is none) and opens the gate; a second call throws. `chatopsSinkState(): "pending" | "bound" | "none"` reports which. `trigger` and `run` await the gate before the runner starts, so a PagerDuty sync that finishes during boot queues its run instead of delivering early. `retry` awaits it too. Passes `{ namespace: config.chatopsNamespace, post: () => chatopsPoster }` to the deliverer. `OncallPushBootDeps` gains `settleImmediately?: boolean` (default `false`) for tests and any caller with no ChatOps phase. `config.chatopsNamespace` gets its first consumer, and the "no consumer" header comment in `config/oncall-push-toml.ts` is updated. |
+| `platform/assemble.ts` | Immediately after `bootChatopsIntoAssembly` returns, calls `oncallPush.settleChatopsPoster(...)` **on both branches**: with `(text) => chatopsBoot.postPushedBrief(ns, text)` when a boot was returned, and with `undefined` when ChatOps is disabled. `ns` is the namespace the runtime already holds. The call is an exported helper, `settleOncallPushChatops`, so it can be unit-tested. `PlatformServices` gains `oncallPush: OncallPushRuntime`, which lets the assembly test read `chatopsSinkState()`. |
+| `platform/demo-boot.ts` | `BootPolicy` gains `chatops: boolean`, false in demo. `bootChatopsIntoAssembly` returns `undefined` when it is false (§ 2.3, I41). |
 
 ### 2.2 Data flow
 
@@ -82,8 +83,14 @@ No new invariant, static rule or egress class.
   "three functions (`reply`/`approvalCard`/`agentBrief`)" to four, in `CLAUDE.md`, `GEMINI.md`,
   `docs/SECURITY-INVARIANTS.md`, the `nimbus-egress` skill if it restates the list, and any `docs/` page that
   repeats it. The plan greps for every restatement.
-- **I41 (demo).** ChatOps never boots in a demo gateway, so the sink records `skipped` and the demo's
-  "0 outbound network calls" stays true by construction.
+- **I41 (demo).** Corrected 2026-10-03 during planning: ChatOps did NOT stay off in a demo gateway by
+  construction. It stayed off only because the demo's generated `nimbus.toml` has no `[chatops]` section.
+  `bootChatopsIntoAssembly` checked `chatopsCfg.enabled` and nothing else. This PR makes a demo page reach a
+  chat sink, so the guard becomes structural. `BootPolicy` gains `chatops` (false in demo), and
+  `bootChatopsIntoAssembly` returns `undefined` when it is false, the same way the env sidecars and the
+  updater are gated. That is an I41 wiring change, so the docs and `security-invariants.test.ts` change in
+  the same commit (triple rule). In a demo gateway the sink then records `skipped`, either for no
+  `chatops_namespace` (the demo config sets none) or for `ChatOps not running`.
 
 ## 3. Headline content
 
@@ -94,7 +101,7 @@ of its own. There is no decoder for the stored `OncallBrief`; `null`, malformed 
 ```text
 P1 · <service> — <incident title>
 <deployment line>
-@nimbus agent oncall incident=<incidentId>  ·  locally: nimbus oncall pushed <incidentId>
+@nimbus agent oncall incidentId=<incidentId>  ·  locally: nimbus oncall pushed <incidentId>
 ```
 
 - **Severity label:** `incident.severity`, falling back to `P1`.
@@ -106,10 +113,14 @@ P1 · <service> — <incident title>
   `\p{Cc}`) collapsed to one space, then is trimmed. Without this a PagerDuty title or a commit-message
   deployment title containing a newline could forge the headline's second or third line, for example a fake
   deployment line that drops the "timing only" disclosure. This is `oneLine(s)` in `push-headline.ts`, applied
-  before `escapeSlackText`.
+  before `escapeSlackText`. Added during planning: `oneLine` also removes format characters (`\p{Cf}`: bidi
+  overrides and isolates, zero-width characters, the BOM), so a right-to-left override cannot make the
+  rendered line read differently from its bytes (the Trojan Source class I35's terminal buffer refuses). It
+  caps each field at 200 code points, with `…` marking the cut. A title that is empty after this renders as
+  `(untitled)`.
 - **Deployment line**, in this order:
   - No brief (failed row, or unusable JSON): `Brief could not be assembled; rerun the agent below to retry`.
-    Line 3 already carries the `@nimbus agent oncall incident=<id>` call, so line 2 does not repeat it.
+    Line 3 already carries the `@nimbus agent oncall incidentId=<id>` call, so line 2 does not repeat it.
   - `brief.deployment === null`: `No deployment found before the alert`.
   - Otherwise: `Last deployment before the alert: <deployment.title> (<n> min before) — timing only, not a proven cause`,
     where `n = round((incident.openedAtMs − (deployment.finishedAtMs ?? deployment.startedAtMs)) / 60_000)`, with
@@ -118,7 +129,7 @@ P1 · <service> — <incident title>
     except timing.
 - **No PR number.** `OncallChange` has no number field, and parsing one out of a URL would invent data.
 - **Summary** (`renderPushSummary(all, rest)`, for rows past the cap):
-  `<N> P1 incidents paged (<M> brief[s] ready). Not posted individually: <id>, <id>, … — @nimbus agent oncall incident=<id> for any of them`.
+  `<N> P1 incidents paged (<M> brief[s] ready). Not posted individually: <id>, <id>, … — @nimbus agent oncall incidentId=<id> for any of them`.
   `N` and `M` match the toast sink's summary exactly: `N = all.length`, `M` counts `status === "ok"` over `all`,
   and `brief`/`briefs` follows `M`. The id list is `rest` (the coalesced rows), newest first, capped at 10;
   past that it ends `… and <K> more (locally: nimbus oncall pushed list)`. The cap keeps an incident storm to a
@@ -166,8 +177,9 @@ carries the headline text.
   changes when every connector first syncs to protect one consumer, and it holds only while no future code adds an
   await-bearing step after the move. The gate puts the order in the runtime that depends on it, and any caller
   that forgets to settle fails a test instead of losing pages.
-- **Retry.** `nimbus oncall pushed <id> --retry` re-delivers an `ok` row to every sink, so the channel gets a
-  second, complete headline. This is intended.
+- **Retry.** `nimbus oncall pushed <id> --retry` accepts only a `failed` row (`ERR_ONCALL_PUSH_NOT_FAILED`
+  otherwise). When the retry turns it `ok`, the row is re-delivered to every sink, so the channel gets a second,
+  complete headline after the first "could not be assembled" one. This is intended.
 - **No notifier.** The sink sits before the toast sink's `notifyDelivers === false` early return, so chat posting
   does not depend on the notification backend (which today delivers nothing).
 
@@ -258,3 +270,14 @@ From `2026-10-02-oncall-push-chatops-review.md`. Each claim was checked against 
 | § 5.4 append-failure visibility | **Fixed.** `failed` outcomes are also logged at `warn` (§ 4). |
 | § 6 docs checklist | **No change.** § 2.3 and § 6 already list these, plus the CHANGELOG, roadmap and `nimbus-egress` skill, which the review omits. |
 | § 7 test matrix | **Merged** into § 5, with the gate tests replacing "scheduler does not sync before bind". |
+
+### Found while planning (2026-10-03), not in the review
+
+- **The call to action named a parameter that does not exist.** The `oncall` agent's ChatOps parameter is
+  `incidentId` (`ipc/agent-param-kinds.ts`), so `@nimbus agent oncall incident=<id>` would have been refused with
+  `'oncall' has no parameter 'incident'` in every headline. Every occurrence now reads `incidentId=`. The
+  headline test round-trips the rendered command through the real `parseAgentCommand`, so a later rename
+  breaks a test, not a channel.
+- **I41's demo claim was true by config, not by construction.** The fix is in § 2.3.
+- **§ 4's retry bullet** said retry re-delivers an `ok` row. Retry refuses an `ok` row. It re-delivers a
+  `failed` row that becomes `ok`. Reworded.
