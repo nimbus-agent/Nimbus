@@ -26,16 +26,26 @@ Phase-level history before `v0.1.0` (Phases 1â€“4) lives in [`docs/roadmap.md` Â
   **vite 8 with `@vitejs/plugin-react` 6**: the UI now minifies with vite's built-in `oxc` rather
   than an `esbuild` it never declared. **js-yaml 5**: default imports became named imports, the
   global override is gone, and the Astro/Starlight chain keeps its own js-yaml 4 (the prerender build
-  bundles it via `resolve.noExternal`). Under js-yaml 5's YAML 1.2 core schema, Obsidian frontmatter
-  `created: 2024-01-02` stays the string the note wrote. `protobufjs` moved to 8.8.0. Nothing at
+  bundles it via `resolve.noExternal`). js-yaml 5's default schema is the bare YAML 1.2 core, which
+  drops merge keys and the `!!binary`/`!!omap`/`!!pairs`/`!!set` tags that 4 resolved: a `<<: *anchor`
+  path item indexed none of its operations, and one tagged value made a whole spec or note
+  frontmatter unparseable. The two parsers of YAML a user wrote (OpenAPI specs under indexed roots,
+  Obsidian frontmatter) now share `USER_YAML_SCHEMA`, which adds all five back. The one deliberate
+  change is implicit timestamps: `created: 2024-01-02` stays the string the note wrote rather than a
+  `Date`. A complex mapping key (`? [a, b]`) still fails to parse, where 4 flattened it to a string.
+  Every YAML file in the repository parses identically under 4 and 5. One narrow case does
+  not round-trip: a `.nimbus-recipe.yaml` from an earlier release fails verification if a string
+  in it is a plus-signed number with no digit before the point, such as `+.5`, because js-yaml 4 wrote
+  that unquoted and 5 reads it as a number. `protobufjs` moved to 8.8.0. Nothing at
   runtime loads it: `onnxruntime-web`'s Node entry point requires only `onnxruntime-common` and Node
   built-ins. Rust: `tauri` 2.12.1, `tauri-build` 2.7.1, and a `cargo update` (147 crates moved).
-  That bump retired 20 of `deny.toml`'s 21 advisory ignores, each one cargo-deny reported as matching
-  nothing. quick-xml 0.39.4 left the graph with this update. The gtk3-rs "unmaintained" advisories
-  were withdrawn upstream. fxhash, unic-* and rand 0.7.3 were already gone. glib's `unsound` advisory
-  can never fail cargo-deny's default `workspace` scope. `cargo audit` dropped its two `--ignore`
-  flags and moved to 0.22.2. Actions: every pin is on its latest release. The org's own
-  `verify-npm-provenance` publishes no releases, so it is pinned to its newest commit.
+  20 of `deny.toml`'s 21 advisory ignores were deleted, each one cargo-deny reported as matching
+  nothing. Only two went with the bump itself: quick-xml 0.39.4 left the graph. The other eighteen
+  already matched nothing on `main`. The gtk3-rs "unmaintained" advisories were withdrawn upstream,
+  fxhash, unic-* and rand 0.7.3 were already gone, and glib's `unsound` advisory cannot fail
+  cargo-deny's default `workspace` scope while glib stays a transitive dependency. `cargo audit`
+  dropped its two `--ignore` flags and moved to 0.22.2. Actions: every pin is on its latest release.
+  The org's own `verify-npm-provenance` publishes no releases, so it is pinned to its newest commit.
   Held back: **msw 3**, which intercepts `fetch` through `node:net`/`tls` socket patching that Bun's
   native `fetch` never passes through, so under msw 3.0.2 none of the gateway's four handler tests
   pass and their requests reach the real Google and GitHub APIs (`msw` stays `^2.15.0`, the last

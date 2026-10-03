@@ -29,7 +29,9 @@ yanked = "deny"
 # Every row must still match a crate in Cargo.lock. cargo-deny warns
 # `advisory-not-detected` for a row that matches nothing, and such a row is
 # deleted, not kept "just in case": retire = delete the row, never leave drift.
-# The tauri 2.12.1 bump (2026-10-03) retired twenty rows that way:
+# The 2026-10-03 dependency pass retired twenty rows that way. Only the first
+# two went with its tauri 2.12.1 bump; the other eighteen already matched
+# nothing before it:
 #   - quick-xml 0.39.4 (RUSTSEC-2026-0194, RUSTSEC-2026-0195) left the graph.
 #     plist 1.10.1 and wayland-scanner 0.31.11 now resolve quick-xml 0.41 and
 #     0.42, both past the fix. `cargo audit` in security.yml dropped the same
