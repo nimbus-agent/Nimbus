@@ -33,6 +33,7 @@ function nextLog(): { signal: Promise<void>; resolve: () => void } {
 let onLog: () => void = () => {};
 const boot = (now = 1000) =>
   assembleOncallPushRuntime({
+    settleImmediately: true,
     db,
     configDir,
     notifications: { show: () => {} },
@@ -141,6 +142,7 @@ test("run() drives the real pipeline end to end: default dispatch, brief stored,
   );
   const toasts: [string, string][] = [];
   const rt = assembleOncallPushRuntime({
+    settleImmediately: true,
     db,
     configDir,
     localIndex: new LocalIndex(db),
@@ -184,6 +186,7 @@ test("a notification service that does not deliver records the toast skipped; no
   );
   let shown = 0;
   const rt = assembleOncallPushRuntime({
+    settleImmediately: true,
     db,
     configDir,
     notifications: {
@@ -205,6 +208,7 @@ test("trigger logs a non-Error rejection as its string form", async () => {
   const errs: Record<string, unknown>[] = [];
   const logged = nextLog();
   const rt = assembleOncallPushRuntime({
+    settleImmediately: true,
     db,
     configDir,
     notifications: { show: () => {} },
@@ -238,6 +242,7 @@ me_person_id = "person-1"
 
 test("without a [user] override and the default clock, identity agrees with resolveSelfPerson", async () => {
   const rt = assembleOncallPushRuntime({
+    settleImmediately: true,
     db,
     configDir,
     notifications: { show: () => {} },
@@ -246,4 +251,71 @@ test("without a [user] override and the default clock, identity agrees with reso
   const expected = (await resolveSelfPerson(db, {})).personId !== null;
   expect(await rt.identityResolved()).toBe(expected);
   expect(await rt.run("github")).toMatchObject({ skipped: "not_pagerduty" });
+});
+
+test("a run before settleChatopsPoster waits for it, then runs once (spec § 4 boot race)", async () => {
+  const meId = seedP1("PGATE");
+  writeFileSync(
+    join(configDir, "nimbus.toml"),
+    `[user]\nme_person_id = "${meId}"\n\n[oncall.push]\nenabled = true\n`,
+  );
+  const rt = assembleOncallPushRuntime({
+    db,
+    configDir,
+    localIndex: new LocalIndex(db),
+    notifications: { show: () => {} },
+    logger: { error: () => {} },
+    now: () => T0 - 1000,
+  });
+  expect(rt.chatopsSinkState()).toBe("pending");
+  const p = rt.run("pagerduty");
+  // An ungated run finishes well inside this window, so with the gate's `await` deleted this race
+  // resolves "ran". That is the red-proof. With the gate it can only be "held".
+  const first = await Promise.race([
+    p.then(() => "ran" as const),
+    Bun.sleep(1500).then(() => "held" as const),
+  ]);
+  expect(first).toBe("held");
+  expect(rt.store.get("pagerduty:PGATE")).toBeNull();
+  rt.settleChatopsPoster(undefined);
+  expect(rt.chatopsSinkState()).toBe("none");
+  expect(await p).toEqual({ selected: 1, ok: 1, failed: 0 });
+  expect(rt.store.get("pagerduty:PGATE")?.status).toBe("ok");
+});
+
+test("retry waits for the gate too", async () => {
+  const rt = assembleOncallPushRuntime({
+    db,
+    configDir,
+    notifications: { show: () => {} },
+    logger: { error: () => {} },
+  });
+  const r = rt.retry("pagerduty:NONE");
+  const first = await Promise.race([
+    r.then(
+      () => "ran" as const,
+      () => "ran" as const,
+    ),
+    Bun.sleep(200).then(() => "held" as const),
+  ]);
+  expect(first).toBe("held");
+  rt.settleChatopsPoster(undefined);
+  await expect(r).rejects.toMatchObject({ code: "ERR_ONCALL_PUSH_NOT_FOUND" });
+});
+
+test("settling records bound vs none, and a second settle throws", () => {
+  const a = assembleOncallPushRuntime({
+    db,
+    configDir,
+    notifications: { show: () => {} },
+    logger: { error: () => {} },
+  });
+  a.settleChatopsPoster(async () => 1);
+  expect(a.chatopsSinkState()).toBe("bound");
+  expect(() => a.settleChatopsPoster(undefined)).toThrow(/already settled/);
+});
+
+test("settleImmediately starts settled with no poster", () => {
+  expect(boot().chatopsSinkState()).toBe("none");
+  expect(() => boot().settleChatopsPoster(undefined)).toThrow(/already settled/);
 });

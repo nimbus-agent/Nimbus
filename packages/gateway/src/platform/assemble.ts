@@ -3616,6 +3616,8 @@ export async function assemblePlatformServices(
     sidecarStops,
     tribalSendHolder,
   });
+  // TEMPORARY (oncall-push PR 2, Task 2): release held runs; Task 6 binds the real poster here.
+  oncallPush.settleChatopsPoster(undefined);
 
   // ChatOps agent-intent path (Task 9 / FIX 1): `@nimbus agent <name> k=v ...` runs a real
   // built-in agent through `dispatchAgentsRpc`. Bound HERE rather than post-boot in

@@ -100,6 +100,7 @@ describe("seedDemoCorpus", () => {
 
     // The runtime boots AFTER the seed, as the real gateway does after `nimbus demo`'s restart.
     const rt = assembleOncallPushRuntime({
+      settleImmediately: true,
       db,
       configDir,
       notifications: { show: () => {} },
@@ -137,6 +138,7 @@ describe("seedDemoCorpus", () => {
     const notifications = createUnimplementedNotifications(logger);
     expect(notifications.delivers).toBe(false);
     const rt = assembleOncallPushRuntime({
+      settleImmediately: true,
       db,
       configDir,
       notifications,
@@ -171,6 +173,7 @@ describe("seedDemoCorpus", () => {
     const nowMs = Date.now();
     await seedDemoCorpus(db, { configDir, dataDir, nowMs });
     const rt = assembleOncallPushRuntime({
+      settleImmediately: true,
       db,
       configDir,
       notifications: { show: () => {} },

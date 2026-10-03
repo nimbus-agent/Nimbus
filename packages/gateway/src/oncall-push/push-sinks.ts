@@ -2,6 +2,9 @@ import type { OncallBriefPushedPayload } from "../ipc/gateway-events.ts";
 import type { PushDelivery } from "./push-runner.ts";
 import type { PushStore, SinkOutcome } from "./push-store.ts";
 
+/** Posts one headline to the configured namespace; resolves to the number of channels posted to. */
+export type ChatopsPoster = (text: string) => Promise<number>;
+
 /** Spec § 2.5: briefs are ALL stored; only human interruptions are capped. */
 export const PUSH_NOTIFY_CAP = 3;
 const TITLE = "Nimbus on-call";

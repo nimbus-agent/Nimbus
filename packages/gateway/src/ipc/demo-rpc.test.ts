@@ -127,6 +127,7 @@ describe("dispatchDemoRpc", () => {
     const nowMs = Date.now();
     await dispatchDemoRpc("demo.seed", { nowMs }, { db, configDir, dataDir });
     const oncallPush = assembleOncallPushRuntime({
+      settleImmediately: true,
       db,
       configDir,
       notifications: { show: () => {} },
