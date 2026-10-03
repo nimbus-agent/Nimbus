@@ -98,7 +98,7 @@ async function resolveBaseline(
     let downloaded = false;
     try {
       mkdirSync(dir, { recursive: true });
-      downloaded = await gh.runDownloadArtifact({ runId: databaseId, name: artifactName, dir });
+      downloaded = await gh.runDownloadArtifact({ runId: databaseId, name: artifactName, dir }); // NOSONAR S9382: _perf.yml's scheduled runs can share a headSha, and every download writes prevDir/<headSha> - concurrent downloads would race on one directory
     } catch (err) {
       stderr(`bench-ci: gh run download (${headSha}) failed: ${errMsg(err)}; skipping`);
       continue;

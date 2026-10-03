@@ -23,7 +23,7 @@ export async function reapOrphanedAppContainers(opts: ReapOpts): Promise<string[
     if (!profile.startsWith(PREFIX)) continue;
     const extId = profile.slice(PREFIX.length);
     if (opts.liveExtensionIds.has(extId)) continue;
-    if (await opts.deleteProfile(profile)) reaped.push(profile);
+    if (await opts.deleteProfile(profile)) reaped.push(profile); // NOSONAR S9382: one sandbox-helper spawn per profile against the machine-wide AppContainer registry, over an unbounded orphan count
   }
   return reaped;
 }

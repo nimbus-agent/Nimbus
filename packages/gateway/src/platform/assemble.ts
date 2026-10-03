@@ -370,8 +370,8 @@ import type { AutostartManager, NotificationService, PlatformServices } from "./
 
 function createStubAutostart(): AutostartManager {
   return {
-    async isEnabled(): Promise<boolean> {
-      return false;
+    isEnabled(): Promise<boolean> {
+      return Promise.resolve(false);
     },
     async enable(): Promise<void> {},
     async disable(): Promise<void> {},
@@ -403,11 +403,16 @@ function createStubAutostart(): AutostartManager {
  */
 export function createUnimplementedNotifications(logger: Logger): NotificationService {
   return {
-    async show(title: string, _body: string): Promise<void> {
-      logger.info(
-        { event: "notification.dropped", title },
-        "OS notification not delivered (no platform implementation); the underlying event is still persisted and readable",
-      );
+    show(title: string, _body: string): Promise<void> {
+      // `Promise.try` runs the body synchronously, as the `async` method did, and turns a throwing
+      // logger into a REJECTION rather than a synchronous throw — producers fire this as
+      // `void notify(...)` mid-loop, so a throw would escape into their loop instead.
+      return Promise.try(() => {
+        logger.info(
+          { event: "notification.dropped", title },
+          "OS notification not delivered (no platform implementation); the underlying event is still persisted and readable",
+        );
+      });
     },
   };
 }
@@ -552,7 +557,7 @@ function maybeAttachSessionMemoryStore(
       ? new SessionMemoryStore({
           db,
           dims: DEFAULT_EMBEDDING_DIMS,
-          embedText: async () => null,
+          embedText: () => Promise.resolve(null),
         })
       : new SessionMemoryStore({
           db,
@@ -1191,7 +1196,7 @@ async function bootFederationIntoIpcOpts(
     if (peer === undefined) return;
     for (const row of drainPending(db, pub)) {
       try {
-        await deliverShareToPeer(row.share, peer);
+        await deliverShareToPeer(row.share, peer); // NOSONAR S9382: FIFO drain - the peer receives its queued forwards one at a time in received_at order, over an unbounded queue
         markDelivered(db, row.id);
       } catch {
         /* best-effort; retried on next pair/online event */
@@ -1934,8 +1939,15 @@ async function registerRemoteVendorRoutes(
   enabledVendors: readonly ResolvedRemoteVendor[],
   logger: RouteValidationLogger,
 ): Promise<void> {
-  for (const vendor of enabledVendors) {
-    const key = await vendor.apiKey();
+  // Every vendor's key is read at once (Vault READS may overlap; only writes touch the macOS key
+  // index), and the results are then handled strictly in config order: registration order is route
+  // order for `byPreference`, and a failed read still rejects at the vendor where a one-at-a-time
+  // loop would have stopped, after the same warnings and registrations for every vendor before it.
+  const keyReads = await Promise.allSettled(enabledVendors.map((vendor) => vendor.apiKey()));
+  for (const [i, vendor] of enabledVendors.entries()) {
+    const read = keyReads[i];
+    if (read?.status === "rejected") throw read.reason;
+    const key = read?.value;
     if (key === undefined || key.trim() === "") {
       logger.warn(
         `[llm] dropping [llm.remote.${vendor.vendorId}]: enabled but no ` +
@@ -2073,7 +2085,9 @@ function buildPolicyRpcCtx(deps: {
         // Best-effort: no inbound anchor bundle source is wired at the IPC layer, so refetch is a
         // local no-op (returns the locally-served bundle, or null when ungoverned). The over-the-wire
         // peer fetch is the federation runtime's job; here we surface "no_bundle" rather than fabricate.
-        fetch: async () => servePolicy(policyStore),
+        // `Promise.try`, not `Promise.resolve(servePolicy(...))`: a failing store read must still
+        // REJECT, as it did from an `async` arrow, rather than throw synchronously.
+        fetch: () => Promise.try(() => servePolicy(policyStore)),
       }),
     signPolicy: async ({ toml }) => {
       const { privkeyB64, pubkeyB64 } = await ensureAnchorKeypair(vault);
@@ -2148,7 +2162,9 @@ function wireUpdaterIntoIpc(
 //     mutable holder keeps the original late-bound `let tribalSend` semantics across the boundary.
 //   - `getChatopsBoot()` — `chatopsBoot` is assigned after this function returns; the in-chat
 //     capture interceptor reads it at message time (skips cleanly if chatops isn't up).
-async function bootTribalKnowledge(deps: {
+// Synchronous: building the tribal boot awaits nothing (the asynchronous work lives in the
+// closures it returns), so the caller has nothing to await either.
+function bootTribalKnowledge(deps: {
   tribalCfg: NimbusTribalToml;
   chatopsCfg: NimbusChatopsToml;
   rt: EmbeddingRuntime;
@@ -2159,10 +2175,10 @@ async function bootTribalKnowledge(deps: {
   ipcOpts: Parameters<typeof createIpcServer>[0];
   sendHolder: { current: (target: ReplyTarget, text: string) => Promise<void> };
   getChatopsBoot: () => ChatopsBoot | undefined;
-}): Promise<{
+}): {
   tribalBoot: TribalBoot;
   tribalInterceptCommand: (m: ChatMessage) => Promise<boolean>;
-}> {
+} {
   const {
     tribalCfg,
     chatopsCfg,
@@ -2241,15 +2257,16 @@ async function bootTribalKnowledge(deps: {
       {
         gatherSources,
         watchChannels: tribalWatchSet,
-        llm: async (question, srcs) => ({
-          title: question.slice(0, 120),
-          bodyMarkdown:
-            srcs.length === 0
-              ? "No source context was found — please write the answer manually before saving."
-              : `Drafted from ${srcs.length} source message(s) — review and edit before saving.\n\n${srcs
-                  .map((s) => `- ${s.text}`)
-                  .join("\n")}`,
-        }),
+        llm: (question, srcs) =>
+          Promise.resolve({
+            title: question.slice(0, 120),
+            bodyMarkdown:
+              srcs.length === 0
+                ? "No source context was found — please write the answer manually before saving."
+                : `Drafted from ${srcs.length} source message(s) — review and edit before saving.\n\n${srcs
+                    .map((s) => `- ${s.text}`)
+                    .join("\n")}`,
+          }),
       },
       cluster,
     );
@@ -2831,9 +2848,16 @@ const HTTP_ORIGIN_CANDIDATE_SERVICES: readonly FetchableService[] = ["gitlab", "
 async function buildHttpOriginMap(
   vault: NimbusVault,
 ): Promise<ReadonlyMap<FetchableService, string>> {
+  // The candidates' secrets are READ concurrently — the caller already runs this beside two other
+  // Vault-reading helpers under one `Promise.all` — and entered in candidate order. A failed read
+  // still rejects the whole map, so the fetch fails closed exactly as before.
+  const origins = await Promise.all(
+    HTTP_ORIGIN_CANDIDATE_SERVICES.map(
+      async (service) => [service, await httpOriginFor(vault, service)] as const,
+    ),
+  );
   const map = new Map<FetchableService, string>();
-  for (const service of HTTP_ORIGIN_CANDIDATE_SERVICES) {
-    const origin = await httpOriginFor(vault, service);
+  for (const [service, origin] of origins) {
     if (origin !== null) {
       map.set(service, origin);
     }
@@ -3279,7 +3303,7 @@ export async function assemblePlatformServices(
   // chosen and be scoped to the wrong connector for all but one of them. They bind per service in
   // `sync/scheduler.ts` `contextForService`, which both `runJob` and `syncContextFor` route
   // through — the first points that know which connector is running.
-  const syncBase: SyncRuntimeContext = {
+  const syncContext: SyncRuntimeContext = {
     ...unboundSyncCapabilities(),
     vault,
     db,
@@ -3292,9 +3316,7 @@ export async function assemblePlatformServices(
     depth: "full",
     ...teamCredentialExtras,
   };
-  const syncContext: SyncRuntimeContext = scheduleItemEmbedding
-    ? { ...syncBase, scheduleItemEmbedding }
-    : syncBase;
+  assignIfPresent(syncContext, "scheduleItemEmbedding", scheduleItemEmbedding);
 
   const sessionMemoryStore = maybeAttachSessionMemoryStore(db, rt, sessionToml, sidecarStops);
 
@@ -3425,9 +3447,7 @@ export async function assemblePlatformServices(
     llmRegistry,
     ...autoUpdateIpcOpts(autoUpdateRuntime, paths.configDir, autoUpdateDisabled),
   };
-  if (sessionMemoryStore !== undefined) {
-    ipcOpts.sessionMemoryStore = sessionMemoryStore;
-  }
+  assignIfPresent(ipcOpts, "sessionMemoryStore", sessionMemoryStore);
   // Readiness is ALWAYS wired, even when there is no runtime at all: a client must be able to
   // tell "warming up, N% downloaded" from "switched off" from "fetch failed" — the difference
   // between a real progress report and a generic spinner (#928).
@@ -3558,7 +3578,7 @@ export async function assemblePlatformServices(
   // shared `tribalSendHolder` (reply seam) and the `() => chatopsBoot` getter (the in-chat capture
   // interceptor reads it at message time — chatopsBoot is assigned just below).
   const tribal = tribalCfg.enabled
-    ? await bootTribalKnowledge({
+    ? bootTribalKnowledge({
         tribalCfg,
         chatopsCfg,
         rt,
@@ -4067,7 +4087,7 @@ export async function assemblePlatformServices(
     bindCredentials: async (toolId, credentials) => {
       const bound: string[] = [];
       for (const c of credentials) {
-        await writeToolCredential(vault, toolId, c.host, c.binding);
+        await writeToolCredential(vault, toolId, c.host, c.binding); // NOSONAR S9382: sequential by contract (see above and toolgen-gate.ts) - and macOS Vault writes update `.keyindex.json` by unlocked read-modify-write, so concurrent sets lose index entries
         bound.push(c.host);
       }
       return bound;
@@ -4086,7 +4106,7 @@ export async function assemblePlatformServices(
       let lastError: unknown;
       for (const host of hosts) {
         try {
-          await deleteToolCredential(vault, toolId, host);
+          await deleteToolCredential(vault, toolId, host); // NOSONAR S9382: macOS Vault deletes update `.keyindex.json` by unlocked read-modify-write, so concurrent deletes lose index entries; the per-host catch already attempts every host
         } catch (err) {
           lastError = err;
         }
@@ -4312,7 +4332,7 @@ export async function assemblePlatformServices(
     sidecarStops.push(telemetryStop.stop);
   }
 
-  return {
+  const services: PlatformServices = {
     vault,
     ipc,
     paths,
@@ -4325,16 +4345,11 @@ export async function assemblePlatformServices(
     sandboxRunner,
     hostActivity,
     toolgenRegistry,
-    ...(fleetScheduler === undefined ? {} : { fleetScheduler }),
     llmRegistry,
-    ...(agentVendor === undefined ? {} : { agentVendor }),
     connectorWriteDeps,
     embeddingReadiness,
     askExplainRecorder,
-    ...(sessionMemoryStore === undefined ? {} : { sessionMemoryStore }),
     policyHitl,
-    ...(federationBooted === undefined ? {} : { executorDelegation: federationBooted }),
-    ...(chatopsBoot === undefined ? {} : { chatops: chatopsBoot }),
     disposeSidecars(): void {
       for (const s of sidecarStops) {
         try {
@@ -4345,4 +4360,12 @@ export async function assemblePlatformServices(
       }
     },
   };
+  // The members only some installs have — OMITTED when absent, never set to `undefined`
+  // (`exactOptionalPropertyTypes`).
+  assignIfPresent(services, "fleetScheduler", fleetScheduler);
+  assignIfPresent(services, "agentVendor", agentVendor);
+  assignIfPresent(services, "sessionMemoryStore", sessionMemoryStore);
+  assignIfPresent(services, "executorDelegation", federationBooted);
+  assignIfPresent(services, "chatops", chatopsBoot);
+  return services;
 }

@@ -32,7 +32,7 @@ function chunkedReadableStream(chunks: string[], chunkDelayMs: number): Readable
     async start(controller) {
       for (const c of chunks) {
         controller.enqueue(enc.encode(c));
-        await new Promise((r) => setTimeout(r, chunkDelayMs));
+        await new Promise((r) => setTimeout(r, chunkDelayMs)); // NOSONAR S9382: simulated stream pacing - each chunk is enqueued only after the previous chunk's delay
       }
       controller.close();
     },

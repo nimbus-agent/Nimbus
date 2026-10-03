@@ -75,7 +75,7 @@ export function createBatteryBackfillGate(deps: BatteryBackfillGateDeps): Batter
         if (!deps.pauseOnBattery) return true;
         const probe = await deps.hostActivity.probe();
         if (probe.power !== "battery") return true;
-        await sleep(pollMs);
+        await sleep(pollMs); // NOSONAR S9382: power poll - each pass re-probes only after the previous wait, and the waiting IS the pause
       }
     },
     stop(): void {

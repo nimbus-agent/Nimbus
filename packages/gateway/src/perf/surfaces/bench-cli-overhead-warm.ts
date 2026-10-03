@@ -1,6 +1,6 @@
 import { resolve } from "node:path";
 
-import { spawnAndTimeToMarker } from "../process-spawn-bench.ts";
+import { type SpawnAndTimeOptions, spawnAndTimeToMarker } from "../process-spawn-bench.ts";
 import type { BenchRunOptions } from "../types.ts";
 
 export const CLI_WARM_SAMPLES_PER_RUN = 20;
@@ -21,24 +21,19 @@ export async function runCliOverheadWarmOnce(
 ): Promise<number[]> {
   const samples: number[] = [];
   const entry = runOpts.cliEntry ?? defaultCliEntry();
-  const args = [entry, "help"];
-
-  await spawnAndTimeToMarker({
+  // One options object for the unsampled warm-up and every sample: the spawn only reads it.
+  const spawnOpts: SpawnAndTimeOptions = {
     cmd: process.execPath,
-    args,
+    args: [entry, "help"],
     mode: "exit",
     timeoutMs: CLI_TIMEOUT_MS,
     ...(runOpts.spawn !== undefined && { spawn: runOpts.spawn }),
-  });
+  };
+
+  await spawnAndTimeToMarker(spawnOpts);
 
   for (let i = 0; i < CLI_WARM_SAMPLES_PER_RUN; i += 1) {
-    const ms = await spawnAndTimeToMarker({
-      cmd: process.execPath,
-      args,
-      mode: "exit",
-      timeoutMs: CLI_TIMEOUT_MS,
-      ...(runOpts.spawn !== undefined && { spawn: runOpts.spawn }),
-    });
+    const ms = await spawnAndTimeToMarker(spawnOpts); // NOSONAR S9382: timing samples must not overlap - concurrent spawns contend for CPU and skew each measured latency
     samples.push(ms);
   }
   return samples;

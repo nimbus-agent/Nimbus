@@ -127,7 +127,7 @@ describe("RoutingEmbeddingPipeline", () => {
         seen.push({ done, total });
       });
 
-      expect(seen.length).toBe(4);
+      expect(seen).toHaveLength(4);
       for (let i = 1; i < seen.length; i += 1) {
         expect(seen[i]?.done ?? 0).toBeGreaterThan(seen[i - 1]?.done ?? 0);
         expect(seen[i]?.total ?? 0).toBeGreaterThanOrEqual(seen[i - 1]?.total ?? 0);
@@ -191,7 +191,7 @@ describe("RoutingEmbeddingPipeline", () => {
         .c;
       expect(before).toBeGreaterThan(0);
 
-      await router.deleteItemEmbeddings("slack:e1");
+      router.deleteItemEmbeddings("slack:e1");
 
       expect(
         (

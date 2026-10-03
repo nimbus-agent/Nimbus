@@ -43,5 +43,5 @@ export const UNKNOWN_PROBE: HostActivityProbe = Object.freeze({
  * these to keep compiling.
  */
 export const UNKNOWN_HOST_ACTIVITY: HostActivity = {
-  probe: async (): Promise<HostActivityProbe> => UNKNOWN_PROBE,
+  probe: (): Promise<HostActivityProbe> => Promise.resolve(UNKNOWN_PROBE),
 };

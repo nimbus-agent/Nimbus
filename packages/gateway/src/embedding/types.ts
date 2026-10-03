@@ -52,6 +52,7 @@ export type EmbeddingDualVectors = {
 
 export interface EmbeddingPipeline {
   embedItem(item: IndexedItem): Promise<void>;
-  deleteItemEmbeddings(itemId: string): Promise<void>;
+  /** Synchronous: one SQLite DELETE (the V30 triggers cascade it into the vec tables). */
+  deleteItemEmbeddings(itemId: string): void;
   backfillAll(onProgress?: (done: number, total: number) => void): Promise<void>;
 }

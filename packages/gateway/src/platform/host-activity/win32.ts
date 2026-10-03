@@ -52,25 +52,28 @@ export function createWin32HostActivity(): HostActivity {
     const lii = new Uint32Array(2);
     lii[0] = 8;
 
-    return {
-      probe: async (): Promise<HostActivityProbe> => {
-        try {
-          const power =
-            kernel.symbols.GetSystemPowerStatus(ptr(sps)) === 0
-              ? "unknown"
-              : powerFromAcLineStatus(sps[0] ?? 255);
+    // Synchronous FFI, all of it inside the `try`: any failure degrades to UNKNOWN_PROBE, never a
+    // throw, so `probe` can hand back an already-settled promise.
+    const probeNow = (): HostActivityProbe => {
+      try {
+        const power =
+          kernel.symbols.GetSystemPowerStatus(ptr(sps)) === 0
+            ? "unknown"
+            : powerFromAcLineStatus(sps[0] ?? 255);
 
-          let idleMs: number | null = null;
-          if (user.symbols.GetLastInputInfo(ptr(lii)) !== 0) {
-            idleMs = idleMsFromTicks(kernel.symbols.GetTickCount(), lii[1] ?? 0);
-          }
-          return { power, idleMs, source: idleMs === null ? "power_only" : "measured" };
-        } catch {
-          return UNKNOWN_PROBE;
+        let idleMs: number | null = null;
+        if (user.symbols.GetLastInputInfo(ptr(lii)) !== 0) {
+          idleMs = idleMsFromTicks(kernel.symbols.GetTickCount(), lii[1] ?? 0);
         }
-      },
+        return { power, idleMs, source: idleMs === null ? "power_only" : "measured" };
+      } catch {
+        return UNKNOWN_PROBE;
+      }
+    };
+    return {
+      probe: (): Promise<HostActivityProbe> => Promise.resolve(probeNow()),
     };
   } catch {
-    return { probe: async (): Promise<HostActivityProbe> => UNKNOWN_PROBE };
+    return { probe: (): Promise<HostActivityProbe> => Promise.resolve(UNKNOWN_PROBE) };
   }
 }

@@ -1,6 +1,6 @@
 import { resolve } from "node:path";
 
-import { spawnAndTimeToMarker } from "../process-spawn-bench.ts";
+import { type SpawnAndTimeOptions, spawnAndTimeToMarker } from "../process-spawn-bench.ts";
 import type { BenchRunOptions } from "../types.ts";
 
 export const TUI_FIRST_PAINT_SAMPLES_PER_RUN = 5;
@@ -22,16 +22,17 @@ export async function runTuiFirstPaintOnce(
 ): Promise<number[]> {
   const samples: number[] = [];
   const entry = runOpts.cliEntry ?? defaultCliEntry();
+  const spawnOpts: SpawnAndTimeOptions = {
+    cmd: process.execPath,
+    args: [entry, "tui"],
+    mode: "marker",
+    marker: FIRST_FRAME_MARKER,
+    timeoutMs: TUI_TIMEOUT_MS,
+    env: { NIMBUS_BENCH: "1" },
+    ...(runOpts.spawn !== undefined && { spawn: runOpts.spawn }),
+  };
   for (let i = 0; i < TUI_FIRST_PAINT_SAMPLES_PER_RUN; i += 1) {
-    const ms = await spawnAndTimeToMarker({
-      cmd: process.execPath,
-      args: [entry, "tui"],
-      mode: "marker",
-      marker: FIRST_FRAME_MARKER,
-      timeoutMs: TUI_TIMEOUT_MS,
-      env: { NIMBUS_BENCH: "1" },
-      ...(runOpts.spawn !== undefined && { spawn: runOpts.spawn }),
-    });
+    const ms = await spawnAndTimeToMarker(spawnOpts); // NOSONAR S9382: timing samples must not overlap - concurrent TUI spawns contend for CPU and skew each first-frame time
     samples.push(ms);
   }
   return samples;

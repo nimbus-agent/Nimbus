@@ -128,7 +128,7 @@ export async function runBench(
   let totalSamples = 0;
 
   for (let i = 0; i < opts.runs; i += 1) {
-    const samples = await runSurfaceOnce(surfaceId, fn, opts, i, stderr);
+    const samples = await runSurfaceOnce(surfaceId, fn, opts, i, stderr); // NOSONAR S9382: benchmark runs must not overlap - concurrent runs contend for CPU and IO and skew every sample
     perRunSamples.push(samples);
     totalSamples += samples.length;
   }

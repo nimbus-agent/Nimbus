@@ -49,7 +49,7 @@ export async function runWorkerLoop(
         throw err;
       }
       busyRetries += 1;
-      await opts.deps.sleep(BUSY_RETRY_MS);
+      await opts.deps.sleep(BUSY_RETRY_MS); // NOSONAR S9382: SQLITE_BUSY backoff - the next write is attempted only after this wait
     }
   }
   return { writes, busyRetries };

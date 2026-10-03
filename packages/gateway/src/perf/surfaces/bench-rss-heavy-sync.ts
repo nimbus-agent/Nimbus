@@ -23,8 +23,8 @@ function defaultGatewayEntry(): string {
   return resolve(import.meta.dir, "..", "..", "index.ts");
 }
 
-async function defaultIpcCall(_method: string, _params: unknown): Promise<unknown> {
-  throw new Error("default IPC client not wired — pass runOpts.ipcCall in tests");
+function defaultIpcCall(_method: string, _params: unknown): Promise<unknown> {
+  return Promise.reject(new Error("default IPC client not wired — pass runOpts.ipcCall in tests"));
 }
 
 export async function runRssHeavySyncOnce(
