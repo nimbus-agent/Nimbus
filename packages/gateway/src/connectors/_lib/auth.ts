@@ -26,8 +26,8 @@ export class QueryStringToken implements AuthHeaderProvider {
     private readonly param: string,
     private readonly getToken: () => Promise<string>,
   ) {}
-  async apply(headers: Headers): Promise<Headers> {
-    return headers;
+  apply(headers: Headers): Promise<Headers> {
+    return Promise.resolve(headers);
   }
   async applyToUrl(url: URL): Promise<URL> {
     const out = new URL(url.toString());
@@ -37,7 +37,7 @@ export class QueryStringToken implements AuthHeaderProvider {
 }
 
 export class Anonymous implements AuthHeaderProvider {
-  async apply(headers: Headers): Promise<Headers> {
-    return headers;
+  apply(headers: Headers): Promise<Headers> {
+    return Promise.resolve(headers);
   }
 }

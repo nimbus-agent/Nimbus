@@ -246,7 +246,7 @@ export async function runAwsCliPaginatedWalk<S extends BaseWalkState>(
         break;
       }
       state.seen += 1;
-      await spec.processEntry(run, ctx, entry, now, state);
+      await spec.processEntry(run, ctx, entry, now, state); // NOSONAR S9382: processEntry may spawn an `aws` CLI child per entry and reads/mutates the shared walk state; sequential keeps at most one child in flight, not a page-sized burst
     }
     token = awsNextToken(parsed, spec.tokenKey);
     page += 1;

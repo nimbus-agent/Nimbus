@@ -170,16 +170,8 @@ export async function syncGitlabPipelinesForIndexedProjects(
     }
     scanned += 1;
     const lastSeen = next[path] ?? 0;
-    const r = await syncGitlabPipelinesForOneProject({
-      ctx,
-      pat,
-      apiBase,
-      webOrigin,
-      path,
-      lastSeen,
-      floorMs,
-      now,
-    });
+    const projectArgs = { ctx, pat, apiBase, webOrigin, path, lastSeen, floorMs, now };
+    const r = await syncGitlabPipelinesForOneProject(projectArgs); // NOSONAR S9382: every project request acquires the shared gitlab rate limiter, and a 429 penalises it before the next project's request
     bytes += r.bytes;
     upserted += r.upserted;
     next[path] = r.maxId;

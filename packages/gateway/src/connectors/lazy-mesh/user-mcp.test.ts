@@ -171,14 +171,14 @@ describe("recordArgsJsonFailure — branch coverage", () => {
 });
 
 describe("ensureUserMcpClient — args_json failures", () => {
-  test("args_json is not JSON → records 'JSON parse failed', no client created", async () => {
+  test("args_json is not JSON → records 'JSON parse failed', no client created", () => {
     const { ctx, warns, calls, healthDb } = makeSpyContext({
       withLogger: true,
       withHealthDb: true,
     });
     const row = makeRow({ service_id: "mcp_parse_fail", args_json: "not-json" });
 
-    await ensureUserMcpClient(ctx, row);
+    ensureUserMcpClient(ctx, row);
 
     expect(warns).toHaveLength(1);
     expect(warns[0]?.bindings["serviceId"]).toBe("mcp_parse_fail");
@@ -199,7 +199,7 @@ describe("ensureUserMcpClient — args_json failures", () => {
     healthDb.close();
   });
 
-  test("args_json parses but is a bare string → records 'expected string array'", async () => {
+  test("args_json parses but is a bare string → records 'expected string array'", () => {
     const { ctx, warns, calls, healthDb } = makeSpyContext({
       withLogger: true,
       withHealthDb: true,
@@ -209,7 +209,7 @@ describe("ensureUserMcpClient — args_json failures", () => {
       args_json: '"a string"',
     });
 
-    await ensureUserMcpClient(ctx, row);
+    ensureUserMcpClient(ctx, row);
 
     expect(warns).toHaveLength(1);
     expect(warns[0]?.bindings["reason"]).toBe("expected string array");
@@ -222,7 +222,7 @@ describe("ensureUserMcpClient — args_json failures", () => {
     healthDb.close();
   });
 
-  test("args_json parses to an array of non-strings → records 'expected string array'", async () => {
+  test("args_json parses to an array of non-strings → records 'expected string array'", () => {
     const { ctx, warns, calls } = makeSpyContext({
       withLogger: true,
       withHealthDb: false,
@@ -232,7 +232,7 @@ describe("ensureUserMcpClient — args_json failures", () => {
       args_json: "[1, 2, 3]",
     });
 
-    await ensureUserMcpClient(ctx, row);
+    ensureUserMcpClient(ctx, row);
 
     expect(warns).toHaveLength(1);
     expect(warns[0]?.bindings["reason"]).toBe("expected string array");
@@ -240,7 +240,7 @@ describe("ensureUserMcpClient — args_json failures", () => {
     expect(calls.bumpToolsEpoch).toBe(0);
   });
 
-  test("args_json parses to mixed strings + numbers → records 'expected string array'", async () => {
+  test("args_json parses to mixed strings + numbers → records 'expected string array'", () => {
     const { ctx, warns, calls } = makeSpyContext({
       withLogger: true,
       withHealthDb: false,
@@ -250,14 +250,14 @@ describe("ensureUserMcpClient — args_json failures", () => {
       args_json: '["ok", 42]',
     });
 
-    await ensureUserMcpClient(ctx, row);
+    ensureUserMcpClient(ctx, row);
 
     expect(warns).toHaveLength(1);
     expect(warns[0]?.bindings["reason"]).toBe("expected string array");
     expect(calls.setLazyClient).toHaveLength(0);
   });
 
-  test("args_json parses to {} object → records 'expected string array'", async () => {
+  test("args_json parses to {} object → records 'expected string array'", () => {
     const { ctx, warns, calls } = makeSpyContext({
       withLogger: true,
       withHealthDb: false,
@@ -267,7 +267,7 @@ describe("ensureUserMcpClient — args_json failures", () => {
       args_json: '{"not":"an array"}',
     });
 
-    await ensureUserMcpClient(ctx, row);
+    ensureUserMcpClient(ctx, row);
 
     expect(warns).toHaveLength(1);
     expect(warns[0]?.bindings["reason"]).toBe("expected string array");
@@ -276,7 +276,7 @@ describe("ensureUserMcpClient — args_json failures", () => {
 });
 
 describe("ensureUserMcpClient — early-return when client already exists", () => {
-  test("existing client → scheduleLazyDisconnect called, no new client created", async () => {
+  test("existing client → scheduleLazyDisconnect called, no new client created", () => {
     const sentinel = { __isExistingClient: true };
     const { ctx, calls, warns } = makeSpyContext({
       withLogger: true,
@@ -288,7 +288,7 @@ describe("ensureUserMcpClient — early-return when client already exists", () =
       args_json: '["valid", "args"]',
     });
 
-    await ensureUserMcpClient(ctx, row);
+    ensureUserMcpClient(ctx, row);
 
     expect(calls.clearLazyIdle).toEqual(["mesh:user:mcp_exists"]);
     expect(calls.getLazyClient).toEqual(["mesh:user:mcp_exists"]);
@@ -299,7 +299,7 @@ describe("ensureUserMcpClient — early-return when client already exists", () =
     expect(warns).toHaveLength(0);
   });
 
-  test("existing client + malformed args_json → STILL returns early (early-return precedes parse)", async () => {
+  test("existing client + malformed args_json → STILL returns early (early-return precedes parse)", () => {
     const sentinel = { __isExistingClient: true };
     const { ctx, calls, warns, healthDb } = makeSpyContext({
       withLogger: true,
@@ -311,7 +311,7 @@ describe("ensureUserMcpClient — early-return when client already exists", () =
       args_json: "this is not json at all",
     });
 
-    await ensureUserMcpClient(ctx, row);
+    ensureUserMcpClient(ctx, row);
 
     expect(calls.scheduleLazyDisconnect).toEqual(["mesh:user:mcp_exists_broken"]);
     expect(calls.setLazyClient).toHaveLength(0);
@@ -329,7 +329,7 @@ describe("ensureUserMcpClient — early-return when client already exists", () =
 });
 
 describe("ensureUserMcpClient — successful path (constructs MCPClient lazily)", () => {
-  test("valid args_json + no existing client → setLazyClient + bumpToolsEpoch", async () => {
+  test("valid args_json + no existing client → setLazyClient + bumpToolsEpoch", () => {
     const { ctx, calls, warns } = makeSpyContext({
       withLogger: true,
       withHealthDb: false,
@@ -340,7 +340,7 @@ describe("ensureUserMcpClient — successful path (constructs MCPClient lazily)"
       args_json: '["one", "two"]',
     });
 
-    await ensureUserMcpClient(ctx, row);
+    ensureUserMcpClient(ctx, row);
 
     expect(calls.setLazyClient).toHaveLength(1);
     expect(calls.setLazyClient[0]?.key).toBe("mesh:user:mcp_ok");
@@ -351,7 +351,7 @@ describe("ensureUserMcpClient — successful path (constructs MCPClient lazily)"
     expect(warns).toHaveLength(0);
   });
 
-  test("service_id with non-alphanumeric chars gets sanitized to MCP server key", async () => {
+  test("service_id with non-alphanumeric chars gets sanitized to MCP server key", () => {
     const { ctx, calls, warns } = makeSpyContext({
       withLogger: false,
       withHealthDb: false,
@@ -362,7 +362,7 @@ describe("ensureUserMcpClient — successful path (constructs MCPClient lazily)"
       args_json: "[]",
     });
 
-    await ensureUserMcpClient(ctx, row);
+    ensureUserMcpClient(ctx, row);
 
     expect(calls.setLazyClient).toHaveLength(1);
     expect(calls.setLazyClient[0]?.key).toBe("mesh:user:mcp_with.dots+plus");

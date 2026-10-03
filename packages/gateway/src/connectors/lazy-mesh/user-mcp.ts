@@ -45,10 +45,12 @@ function mcpServerKeyForUserConnector(serviceId: string): string {
   return serviceId.replaceAll(/[^a-zA-Z0-9_-]/g, "_");
 }
 
-export async function ensureUserMcpClient(
-  ctx: MeshSpawnContext,
-  row: UserMcpConnectorRow,
-): Promise<void> {
+/**
+ * Registers the user MCP described by `row` in its mesh slot. Synchronous: the args parse, the
+ * sandbox wrap and the `MCPClient` construction all complete here, and the client connects (spawns
+ * its server) lazily, on first use.
+ */
+export function ensureUserMcpClient(ctx: MeshSpawnContext, row: UserMcpConnectorRow): void {
   const meshKey = userMcpMeshKey(row.service_id);
   ctx.clearLazyIdle(meshKey);
   if (ctx.getLazyClient(meshKey) !== undefined) {

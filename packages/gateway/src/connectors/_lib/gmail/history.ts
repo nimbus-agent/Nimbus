@@ -86,7 +86,8 @@ export async function applyGmailHistoryRecords(
   let itemsUpserted = 0;
   let itemsDeleted = 0;
   for (const rec of records) {
-    itemsUpserted += await gmailHistoryApplyAdded(ctx, accessToken, rec.messagesAdded ?? [], now);
+    const added = rec.messagesAdded ?? [];
+    itemsUpserted += await gmailHistoryApplyAdded(ctx, accessToken, added, now); // NOSONAR S9382: history records apply in order — a message added in one record and deleted in a later one must be upserted before it is deleted
     itemsDeleted += gmailHistoryApplyDeleted(ctx, rec.messagesDeleted ?? []);
   }
   return { itemsUpserted, itemsDeleted, hist };

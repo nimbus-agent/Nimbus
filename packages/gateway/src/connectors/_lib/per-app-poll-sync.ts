@@ -108,9 +108,8 @@ export async function runPerAppPollSync<C>(
     if (appId === undefined) {
       continue;
     }
-    const buildsOutcome = await connectorFetch(ctx, spec.serviceId, spec.buildsUrl(appId), {
-      headers,
-    });
+    const buildsUrl = spec.buildsUrl(appId);
+    const buildsOutcome = await connectorFetch(ctx, spec.serviceId, buildsUrl, { headers }); // NOSONAR S9382: one rate-limited request per app, and the app count is unbounded; sequential keeps one request in flight and each app's builds upserted right after the app
     totalBytes += buildsOutcome.bytes;
     if (buildsOutcome.kind !== "ok") {
       continue;

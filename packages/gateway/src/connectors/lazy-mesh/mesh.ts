@@ -210,29 +210,35 @@ export class LazyConnectorMesh {
     await this.stopLazyClient(extensionId);
   }
 
-  async ensureUserMcpRunning(serviceId: string): Promise<void> {
-    const rows = this.listUserMcpConnectors();
-    const row = rows.find((r) => r.service_id === serviceId);
-    if (row === undefined) {
-      return;
-    }
-    await ensureUserMcpClient(this.spawnContext, row);
+  /**
+   * Nothing here awaits — `ensureUserMcpClient` is synchronous — but callers hold this as an
+   * ensure-running hook and await it. `Promise.try` runs the body immediately and turns a throw
+   * (from the row lookup or the client registration) into a rejection, as `async` did.
+   */
+  ensureUserMcpRunning(serviceId: string): Promise<void> {
+    return Promise.try(() => {
+      const rows = this.listUserMcpConnectors();
+      const row = rows.find((r) => r.service_id === serviceId);
+      if (row === undefined) {
+        return;
+      }
+      ensureUserMcpClient(this.spawnContext, row);
+    });
   }
 
   private async ensureUserMcpConnectorsRunning(): Promise<void> {
     const rows = this.listUserMcpConnectors();
     const active = new Set(rows.map((r) => r.service_id));
-    for (const key of this.lazySlots.keys()) {
-      if (!key.startsWith(USER_MESH_PREFIX)) {
-        continue;
-      }
-      const id = key.slice(USER_MESH_PREFIX.length);
-      if (!active.has(id)) {
-        await this.stopUserMcpClient(id);
-      }
-    }
+    // Stale slots are torn down concurrently: the stops are independent of one another, never
+    // reject, and may each wait up to ten minutes for in-flight calls to drain — sequentially, one
+    // draining slot held back every stop after it. The keys are snapshotted before any stop runs.
+    const staleIds = Array.from(this.lazySlots.keys())
+      .filter((key) => key.startsWith(USER_MESH_PREFIX))
+      .map((key) => key.slice(USER_MESH_PREFIX.length))
+      .filter((id) => !active.has(id));
+    await Promise.all(staleIds.map((id) => this.stopUserMcpClient(id)));
     for (const row of rows) {
-      await ensureUserMcpClient(this.spawnContext, row);
+      ensureUserMcpClient(this.spawnContext, row);
     }
   }
 
@@ -380,28 +386,50 @@ export class LazyConnectorMesh {
     ];
   }
 
+  /**
+   * Lists the user slots one at a time, in slot order, so a later slot still wins a shared tool
+   * name. Unlike the refcount listing below, this walk stays sequential: a user slot's first
+   * listing connects its `MCPClient`, which spawns the user-configured server through the sandbox
+   * wrapper, and nothing caps how many user MCPs are registered. Listing them together would start
+   * every one of those servers at once, and on Windows each confined spawn's helper rewrites the
+   * DACL of the one shared sandbox cwd with an unlocked read-modify-write.
+   */
   private async collectUserMcpToolMap(): Promise<LazyMeshToolMap> {
     let merged: LazyMeshToolMap = {};
     for (const [meshKey, slot] of this.lazySlots) {
       if (!meshKey.startsWith(USER_MESH_PREFIX) || slot.client === undefined) {
         continue;
       }
-      merged = { ...merged, ...(await listLazyMeshClientTools(slot.client)) };
+      const tools = await listLazyMeshClientTools(slot.client); // NOSONAR S9382: a user slot's first listing spawns its user-configured server; the user-MCP count is uncapped, so they start one at a time, not as a burst of sandboxed spawns
+      merged = { ...merged, ...tools };
     }
     return merged;
   }
 
+  /**
+   * Lists every live slot concurrently, then maps each tool to the FIRST slot (in slot order)
+   * that lists it — the same first-wins answer the one-slot-at-a-time walk gave. A slot whose
+   * listing fails is skipped, as before.
+   */
   private async buildSlotForToolMap(): Promise<Map<string, LazyDrainTracker>> {
-    const slotForTool = new Map<string, LazyDrainTracker>();
-    for (const slot of this.lazySlots.values()) {
-      if (slot.client === undefined) continue;
-      try {
-        const tools = (await slot.client.listTools()) as LazyMeshToolMap;
-        for (const k of Object.keys(tools)) {
-          if (!slotForTool.has(k)) slotForTool.set(k, slot.drain);
+    const liveSlots = Array.from(this.lazySlots.values()).flatMap((slot) =>
+      slot.client === undefined ? [] : [{ client: slot.client, drain: slot.drain }],
+    );
+    const listings = await Promise.all(
+      liveSlots.map(async ({ client, drain }) => {
+        try {
+          const tools = (await client.listTools()) as LazyMeshToolMap;
+          return { drain, toolKeys: Object.keys(tools) };
+        } catch {
+          return undefined; // slot disappearing — skip
         }
-      } catch {
-        /* slot disappearing — skip */
+      }),
+    );
+    const slotForTool = new Map<string, LazyDrainTracker>();
+    for (const listing of listings) {
+      if (listing === undefined) continue;
+      for (const k of listing.toolKeys) {
+        if (!slotForTool.has(k)) slotForTool.set(k, listing.drain);
       }
     }
     return slotForTool;
@@ -516,9 +544,11 @@ export class LazyConnectorMesh {
   }
 
   async disconnect(): Promise<void> {
-    for (const key of this.lazySlots.keys()) {
-      await this.stopLazyClient(key);
-    }
+    // Slots are stopped concurrently, then the filesystem client. Each stop is independent and
+    // never rejects; run one at a time, a single slot draining in-flight calls (up to ten minutes)
+    // delayed the teardown of every slot after it. The key set is snapshotted up front — gateway
+    // shutdown, the one production caller, stops the sync scheduler and IPC server before this.
+    await Promise.all(Array.from(this.lazySlots.keys(), (key) => this.stopLazyClient(key)));
     try {
       await this.filesystem.disconnect();
     } catch {
@@ -527,7 +557,12 @@ export class LazyConnectorMesh {
   }
 }
 
-export async function createLazyConnectorMesh(
+/**
+ * Construction is synchronous; the Promise is this factory's contract with its callers, which
+ * await it. `Promise.try` keeps a throwing constructor a rejection rather than a synchronous
+ * throw, exactly as the former `async` declaration did.
+ */
+export function createLazyConnectorMesh(
   paths: PlatformPaths,
   vault: NimbusVault,
   options?: {
@@ -540,5 +575,5 @@ export async function createLazyConnectorMesh(
     isConnectorAllowed?: (serviceId: string) => boolean;
   },
 ): Promise<LazyConnectorMesh> {
-  return new LazyConnectorMesh(paths, vault, options);
+  return Promise.try(() => new LazyConnectorMesh(paths, vault, options));
 }
