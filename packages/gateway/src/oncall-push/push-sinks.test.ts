@@ -1,8 +1,15 @@
 import type { Database } from "bun:sqlite";
 import { afterEach, beforeEach, expect, test } from "bun:test";
 import { createMemoryIndexDb } from "../connectors/connector-sync-test-helpers.ts";
+import { renderPushHeadline, renderPushSummary } from "./push-headline.ts";
 import type { PushDelivery } from "./push-runner.ts";
-import { createPushDeliverer, NO_NOTIFIER_REASON, PUSH_NOTIFY_CAP } from "./push-sinks.ts";
+import {
+  CHATOPS_NOT_RUNNING_REASON,
+  createPushDeliverer,
+  NO_NAMESPACE_REASON,
+  NO_NOTIFIER_REASON,
+  PUSH_NOTIFY_CAP,
+} from "./push-sinks.ts";
 import { PushStore } from "./push-store.ts";
 
 let db: Database;
@@ -357,4 +364,170 @@ test("a sink that throws a non-Error value is recorded failed with the stringifi
     event: { outcome: "failed", reason: "42", at: 3 },
     toast: { outcome: "failed", reason: "toast exploded", at: 3 },
   });
+});
+
+const NS = "project:pay";
+function chatDeliverer(
+  post: ((text: string) => Promise<number>) | undefined,
+  over: {
+    namespace?: string;
+    notifyDelivers?: boolean;
+    notify?: () => void;
+    warn?: (m: string, f: Record<string, string>) => void;
+  } = {},
+) {
+  return createPushDeliverer({
+    store,
+    notify: over.notify ?? (() => {}),
+    ...(over.notifyDelivers === undefined ? {} : { notifyDelivers: over.notifyDelivers }),
+    emit: () => {},
+    now: () => 7,
+    chatops: { namespace: over.namespace ?? NS, post: () => post },
+    ...(over.warn === undefined ? {} : { warn: over.warn }),
+  });
+}
+
+test("chatops: an empty namespace skips every row and never posts", async () => {
+  let calls = 0;
+  await chatDeliverer(async () => (calls += 1), { namespace: "" })([item("pagerduty:A", "ok", 1)]);
+  expect(calls).toBe(0);
+  expect(store.get("pagerduty:A")?.delivery["chatops"]).toEqual({
+    outcome: "skipped",
+    reason: NO_NAMESPACE_REASON,
+    at: 7,
+  });
+});
+
+test("chatops: an unbound poster skips every row", async () => {
+  await chatDeliverer(undefined)([item("pagerduty:A", "ok", 1), item("pagerduty:B", "ok", 2)]);
+  for (const id of ["pagerduty:A", "pagerduty:B"]) {
+    expect(store.get(id)?.delivery["chatops"]).toMatchObject({
+      outcome: "skipped",
+      reason: CHATOPS_NOT_RUNNING_REASON,
+    });
+  }
+});
+
+test("chatops: 0 channels → skipped with the namespace named; N → delivered with the real headline", async () => {
+  const a = item("pagerduty:A", "ok", 1);
+  await chatDeliverer(async () => 0)([a]);
+  expect(store.get("pagerduty:A")?.delivery["chatops"]).toMatchObject({
+    outcome: "skipped",
+    reason: `namespace ${NS} has no notify channels`,
+  });
+  const texts: string[] = [];
+  const b = item("pagerduty:B", "ok", 1);
+  await chatDeliverer(async (t) => {
+    texts.push(t);
+    return 2;
+  })([b]);
+  expect(texts).toEqual([renderPushHeadline(b)]);
+  expect(store.get("pagerduty:B")?.delivery["chatops"]).toEqual({ outcome: "delivered", at: 7 });
+});
+
+test("chatops: a throwing post is failed, says partial, is warned once, and the toast still runs", async () => {
+  const warns: [string, Record<string, string>][] = [];
+  const toasts: number[] = [];
+  await chatDeliverer(
+    async () => {
+      throw new Error("boom");
+    },
+    { notify: () => void toasts.push(1), warn: (m, f) => void warns.push([m, f]) },
+  )([item("pagerduty:A", "ok", 1)]);
+  expect(store.get("pagerduty:A")?.delivery["chatops"]).toMatchObject({
+    outcome: "failed",
+    reason: "boom (delivery may be partial)",
+  });
+  expect(warns).toEqual([
+    [
+      "[oncall.push] chatops post failed",
+      { incidentId: "pagerduty:A", reason: "boom (delivery may be partial)" },
+    ],
+  ]);
+  expect(toasts).toHaveLength(1);
+});
+
+test("chatops: a throwing toast does not stop the chat post", async () => {
+  let posted = 0;
+  await chatDeliverer(async () => (posted += 1), {
+    notify: () => {
+      throw new Error("toast down");
+    },
+  })([item("pagerduty:A", "ok", 1)]);
+  expect(posted).toBe(1);
+  expect(store.get("pagerduty:A")?.delivery["toast"]?.outcome).toBe("failed");
+});
+
+test("chatops: posts even when notifyDelivers is false", async () => {
+  let posted = 0;
+  await chatDeliverer(async () => (posted += 1), { notifyDelivers: false })([
+    item("pagerduty:A", "ok", 1),
+  ]);
+  expect(posted).toBe(1);
+  expect(store.get("pagerduty:A")?.delivery["toast"]?.outcome).toBe("skipped");
+  expect(store.get("pagerduty:A")?.delivery["chatops"]?.outcome).toBe("delivered");
+});
+
+test(`chatops: past ${PUSH_NOTIFY_CAP}, newest-first headlines then ONE summary; rest coalesced`, async () => {
+  const items = [1, 5, 3, 4, 2].map((n) => item(`pagerduty:${n}`, "ok", n));
+  const texts: string[] = [];
+  await chatDeliverer(async (t) => {
+    texts.push(t);
+    return 1;
+  })(items);
+  const byId = (id: string) => items.find((d) => d.row.incidentId === id) as (typeof items)[number];
+  expect(texts).toEqual([
+    renderPushHeadline(byId("pagerduty:5")),
+    renderPushHeadline(byId("pagerduty:4")),
+    renderPushHeadline(byId("pagerduty:3")),
+    renderPushSummary(items, [byId("pagerduty:2"), byId("pagerduty:1")]),
+  ]);
+  for (const id of ["pagerduty:2", "pagerduty:1"]) {
+    expect(store.get(id)?.delivery["chatops"]).toEqual({ outcome: "coalesced", at: 7 });
+  }
+});
+
+test("chatops: a summary that reaches 0 channels marks the rest skipped, not coalesced", async () => {
+  const items = [1, 2, 3, 4].map((n) => item(`pagerduty:${n}`, "ok", n));
+  await chatDeliverer(async () => 0)(items);
+  expect(store.get("pagerduty:1")?.delivery["chatops"]).toMatchObject({
+    outcome: "skipped",
+    reason: `namespace ${NS} has no notify channels`,
+  });
+});
+
+test("chatops: a failed summary post marks the rest coalesced with the reason, and warns per row", async () => {
+  const items = [1, 2, 3, 4, 5].map((n) => item(`pagerduty:${n}`, "ok", n));
+  let n = 0;
+  const warns: string[] = [];
+  await chatDeliverer(
+    async () => {
+      n += 1;
+      if (n === 4) throw new Error("rate limited");
+      return 1;
+    },
+    { warn: (_m, f) => void warns.push(f["incidentId"] ?? "") },
+  )(items);
+  for (const id of ["pagerduty:2", "pagerduty:1"]) {
+    expect(store.get(id)?.delivery["chatops"]).toMatchObject({
+      outcome: "coalesced",
+      reason: "summary post failed: rate limited (delivery may be partial)",
+    });
+  }
+  expect(warns).toEqual(["pagerduty:2", "pagerduty:1"]);
+});
+
+test("chatops: the poster is read at delivery time, so a later binding is seen", async () => {
+  let bound: ((t: string) => Promise<number>) | undefined;
+  const deliver = createPushDeliverer({
+    store,
+    notify: () => {},
+    emit: () => {},
+    now: () => 7,
+    chatops: { namespace: NS, post: () => bound },
+  });
+  let posted = 0;
+  bound = async () => (posted += 1);
+  await deliver([item("pagerduty:A", "ok", 1)]);
+  expect(posted).toBe(1);
 });

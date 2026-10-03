@@ -111,6 +111,8 @@ export function assembleOncallPushRuntime(deps: OncallPushBootDeps): OncallPushR
       emit: (p) =>
         emitGatewayEvent("oncall.briefPushed", { incidentId: p.incidentId, status: p.status }),
       now,
+      chatops: { namespace: config.chatopsNamespace, post: () => chatopsPoster },
+      warn: (msg, fields) => deps.logger.warn?.(fields, msg),
     }),
     now,
   });

@@ -319,3 +319,29 @@ test("settleImmediately starts settled with no poster", () => {
   expect(boot().chatopsSinkState()).toBe("none");
   expect(() => boot().settleChatopsPoster(undefined)).toThrow(/already settled/);
 });
+
+test("a run settled with a poster posts the headline through it and records delivered", async () => {
+  const meId = seedP1("PCHAT");
+  writeFileSync(
+    join(configDir, "nimbus.toml"),
+    `[user]\nme_person_id = "${meId}"\n\n[oncall.push]\nenabled = true\nchatops_namespace = "project:pay"\n`,
+  );
+  const rt = assembleOncallPushRuntime({
+    db,
+    configDir,
+    localIndex: new LocalIndex(db),
+    notifications: { show: () => {} },
+    logger: { error: () => {} },
+    now: () => T0 - 1000,
+  });
+  const texts: string[] = [];
+  rt.settleChatopsPoster(async (t) => {
+    texts.push(t);
+    return 1;
+  });
+  await rt.run("pagerduty");
+  expect(texts).toHaveLength(1);
+  // Real writer: PSVC is unmapped to a Nimbus service, so the PagerDuty id is the service label.
+  expect(texts[0]?.split("\n")[0]).toBe("P1 · PSVC — inc PCHAT");
+  expect(rt.store.get("pagerduty:PCHAT")?.delivery["chatops"]?.outcome).toBe("delivered");
+});
