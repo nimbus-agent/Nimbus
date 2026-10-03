@@ -26,11 +26,13 @@ function requireParams(params: unknown): DeploymentAnnotateInput {
   return params as DeploymentAnnotateInput;
 }
 
-export async function dispatchDeploymentRpc(
+type DeploymentRpcOutcome = { kind: "miss" } | { kind: "hit"; value: DeploymentAnnotateResult };
+
+function annotateDeploymentRpc(
   method: string,
   params: unknown,
   ctx: DeploymentRpcContext,
-): Promise<{ kind: "miss" } | { kind: "hit"; value: DeploymentAnnotateResult }> {
+): DeploymentRpcOutcome {
   if (method !== "deployment.annotate") return { kind: "miss" };
   const input = requireParams(params);
   const nowMs = (ctx.nowMs ?? (() => Date.now()))();
@@ -45,4 +47,14 @@ export async function dispatchDeploymentRpc(
     }
     throw e;
   }
+}
+
+export function dispatchDeploymentRpc(
+  method: string,
+  params: unknown,
+  ctx: DeploymentRpcContext,
+): Promise<DeploymentRpcOutcome> {
+  // The work is synchronous (bun:sqlite), but callers await this as an RPC dispatcher:
+  // `Promise.try` keeps that contract, so a `DeploymentRpcError` still arrives as a rejection.
+  return Promise.try(() => annotateDeploymentRpc(method, params, ctx));
 }

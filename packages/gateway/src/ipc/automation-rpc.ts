@@ -247,7 +247,7 @@ const AUTOMATION_HANDLERS: Readonly<Record<string, AutomationHandler>> = {
     try {
       const out = await handleAutoUpdateRpc("extension.update", rec, ctx);
       const value = asRecord(out.value);
-      const applied = value !== undefined && value["applied"] === true;
+      const applied = value?.["applied"] === true;
       // A non-applied outcome (`cache_miss`, `signature_failed`, `user_rejected`, …) never
       // throws — it's a normal `{applied:false, reason}` result from `resolveUpdateTarget` /
       // `applyUpdateUnderMutex` — so the reason has to be read off the success value here, not

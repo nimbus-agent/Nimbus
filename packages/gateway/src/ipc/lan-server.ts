@@ -52,37 +52,47 @@ export class LanServer {
 
   constructor(private readonly opts: LanServerOptions) {}
 
-  async start(): Promise<void> {
-    this.instance = Bun.listen<SessionState>({
-      hostname: this.opts.bind,
-      port: this.opts.port,
-      socket: {
-        open: (socket) => {
-          socket.data = {
-            peerIp: socket.remoteAddress,
-            buffer: new Uint8Array(0),
-          };
+  // start()/stop() do synchronous work behind a Promise contract their callers await; `Promise.try`
+  // keeps a failure (e.g. a bind error from `Bun.listen`) a rejection rather than a synchronous throw.
+  start(): Promise<void> {
+    return Promise.try(() => {
+      this.instance = Bun.listen<SessionState>({
+        hostname: this.opts.bind,
+        port: this.opts.port,
+        socket: {
+          open: (socket) => {
+            socket.data = {
+              peerIp: socket.remoteAddress,
+              buffer: new Uint8Array(0),
+            };
+          },
+          data: (socket, chunk) => {
+            void this.handleChunk(socket, chunk);
+          },
+          close: () => {},
+          error: () => {},
         },
-        data: (socket, chunk) => {
-          void this.handleChunk(socket, chunk);
-        },
-        close: () => {},
-        error: () => {},
-      },
-    });
-    this.unregisterListener = registerListener(() => {
-      const a = this.listenAddr();
-      return a === undefined
-        ? null
-        : { name: "lan", address: `${a.host}:${String(a.port)}`, loopback: isLoopbackHost(a.host) };
+      });
+      this.unregisterListener = registerListener(() => {
+        const a = this.listenAddr();
+        return a === undefined
+          ? null
+          : {
+              name: "lan",
+              address: `${a.host}:${String(a.port)}`,
+              loopback: isLoopbackHost(a.host),
+            };
+      });
     });
   }
 
-  async stop(): Promise<void> {
-    this.instance?.stop(true);
-    this.instance = undefined;
-    this.unregisterListener?.();
-    this.unregisterListener = undefined;
+  stop(): Promise<void> {
+    return Promise.try(() => {
+      this.instance?.stop(true);
+      this.instance = undefined;
+      this.unregisterListener?.();
+      this.unregisterListener = undefined;
+    });
   }
 
   listenAddr(): { host: string; port: number } | undefined {
@@ -121,14 +131,14 @@ export class LanServer {
       socket.data.buffer = socket.data.buffer.slice(4 + length);
 
       if (socket.data.peerPubkey) {
-        await this.handleEncryptedMessage(socket, payload);
+        await this.handleEncryptedMessage(socket, payload); // NOSONAR S9382: sequential by design - frames are a stream: the handshake sets the session state the next frame is read with, and a peer's RPCs (which can raise consent prompts) are answered one at a time, in order
       } else {
-        await this.handleHandshake(socket, payload);
+        this.handleHandshake(socket, payload);
       }
     }
   }
 
-  private async handleHandshake(socket: Socket<SessionState>, payload: Uint8Array): Promise<void> {
+  private handleHandshake(socket: Socket<SessionState>, payload: Uint8Array): void {
     let msg: { kind?: string; client_pubkey?: string; pairing_code?: string };
     try {
       msg = JSON.parse(new TextDecoder().decode(payload)) as {

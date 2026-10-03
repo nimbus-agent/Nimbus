@@ -24,16 +24,20 @@ export function createSeededTokenVault(tokensJson: string): NimbusVault {
   const store = new Map<string, string>();
   store.set(CLIP_TOKENS_KEY, tokensJson);
   return {
-    get: async (k: string) => store.get(k) ?? null,
-    set: async (k: string, v: string) => {
+    get: (k: string) => Promise.resolve(store.get(k) ?? null),
+    set: (k: string, v: string) => {
       store.set(k, v);
+      return Promise.resolve();
     },
-    delete: async (k: string) => {
+    delete: (k: string) => {
       store.delete(k);
+      return Promise.resolve();
     },
-    listKeys: async (prefix?: string) => {
+    listKeys: (prefix?: string) => {
       const keys = [...store.keys()];
-      return prefix === undefined ? keys : keys.filter((k) => k.startsWith(prefix));
+      return Promise.resolve(
+        prefix === undefined ? keys : keys.filter((k) => k.startsWith(prefix)),
+      );
     },
   } as NimbusVault;
 }

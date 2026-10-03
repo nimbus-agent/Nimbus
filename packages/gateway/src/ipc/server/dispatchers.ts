@@ -1174,13 +1174,15 @@ function handleLanLocalRpc(ctx: ServerCtx, method: string, params: unknown): unk
   }
 }
 
-export async function tryDispatchLanRpc(
+export function tryDispatchLanRpc(
   ctx: ServerCtx,
   method: string,
   params: unknown,
 ): Promise<unknown> {
-  if (!method.startsWith("lan.")) return phase4RpcSkipped;
-  return handleLanLocalRpc(ctx, method, params);
+  if (!method.startsWith("lan.")) return Promise.resolve(phase4RpcSkipped);
+  // `handleLanLocalRpc` is synchronous; `Promise.try` keeps the dispatcher-table contract, so its
+  // `RpcMethodError` still arrives as a rejection.
+  return Promise.try(() => handleLanLocalRpc(ctx, method, params));
 }
 
 export async function tryDispatchPolicyRpc(
@@ -1278,7 +1280,7 @@ export async function tryDispatchTribalRpc(
     const dispatcher = ctx.options.tribalConnectorDispatcher;
     const index = ctx.options.localIndex;
     if (dispatcher === undefined || index === undefined) {
-      return rpc.capture(clusterId, target, async () => ({ status: "rejected" }));
+      return rpc.capture(clusterId, target, () => Promise.resolve({ status: "rejected" }));
     }
     // I29: tribal capture dispatches a real connector write (notion/confluence KB append) — an
     // outbound event — so this executor carries the egress sink (append-before-dispatch).

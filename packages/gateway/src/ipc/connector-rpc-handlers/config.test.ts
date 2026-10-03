@@ -62,10 +62,10 @@ function buildCtx(args: {
 }
 
 describe("handleConnectorAddMcp", () => {
-  test("missing syncScheduler -> -32603", async () => {
+  test("missing syncScheduler -> -32603", () => {
     const { stub: mesh } = makeStubMesh();
     try {
-      await handleConnectorAddMcp(
+      handleConnectorAddMcp(
         buildCtx({ rec: { serviceId: "mcp_test", commandLine: "echo hi" }, mesh }),
       );
       throw new Error("expected throw");
@@ -75,10 +75,10 @@ describe("handleConnectorAddMcp", () => {
     }
   });
 
-  test("missing connectorMesh -> -32603", async () => {
+  test("missing connectorMesh -> -32603", () => {
     const { stub: scheduler } = makeStubScheduler();
     try {
-      await handleConnectorAddMcp(
+      handleConnectorAddMcp(
         buildCtx({ rec: { serviceId: "mcp_test", commandLine: "echo hi" }, scheduler }),
       );
       throw new Error("expected throw");
@@ -87,11 +87,11 @@ describe("handleConnectorAddMcp", () => {
     }
   });
 
-  test("non-string serviceId -> -32602", async () => {
+  test("non-string serviceId -> -32602", () => {
     const { stub: scheduler } = makeStubScheduler();
     const { stub: mesh } = makeStubMesh();
     try {
-      await handleConnectorAddMcp(
+      handleConnectorAddMcp(
         buildCtx({ rec: { serviceId: 42, commandLine: "echo hi" }, scheduler, mesh }),
       );
       throw new Error("expected throw");
@@ -101,11 +101,11 @@ describe("handleConnectorAddMcp", () => {
     }
   });
 
-  test("non-string commandLine -> -32602", async () => {
+  test("non-string commandLine -> -32602", () => {
     const { stub: scheduler } = makeStubScheduler();
     const { stub: mesh } = makeStubMesh();
     try {
-      await handleConnectorAddMcp(
+      handleConnectorAddMcp(
         buildCtx({ rec: { serviceId: "mcp_test", commandLine: 42 }, scheduler, mesh }),
       );
       throw new Error("expected throw");
@@ -114,11 +114,11 @@ describe("handleConnectorAddMcp", () => {
     }
   });
 
-  test("invalid serviceId format -> -32602", async () => {
+  test("invalid serviceId format -> -32602", () => {
     const { stub: scheduler } = makeStubScheduler();
     const { stub: mesh } = makeStubMesh();
     try {
-      await handleConnectorAddMcp(
+      handleConnectorAddMcp(
         buildCtx({
           rec: { serviceId: "not-mcp-prefixed", commandLine: "echo hi" },
           scheduler,
@@ -132,10 +132,10 @@ describe("handleConnectorAddMcp", () => {
     }
   });
 
-  test("happy path inserts row, registers syncable, returns ok", async () => {
+  test("happy path inserts row, registers syncable, returns ok", () => {
     const { stub: scheduler, calls: schedCalls } = makeStubScheduler();
     const { stub: mesh } = makeStubMesh();
-    const result = await handleConnectorAddMcp(
+    const result = handleConnectorAddMcp(
       buildCtx({
         rec: { serviceId: "mcp_test", commandLine: "echo hi" },
         scheduler,
@@ -151,7 +151,7 @@ describe("handleConnectorAddMcp", () => {
     expect(row).not.toBeNull();
   });
 
-  test("UNIQUE conflict on re-insert -> -32602", async () => {
+  test("UNIQUE conflict on re-insert -> -32602", () => {
     const { stub: scheduler } = makeStubScheduler();
     const { stub: mesh } = makeStubMesh();
     const ctx = buildCtx({
@@ -159,9 +159,9 @@ describe("handleConnectorAddMcp", () => {
       scheduler,
       mesh,
     });
-    await handleConnectorAddMcp(ctx);
+    handleConnectorAddMcp(ctx);
     try {
-      await handleConnectorAddMcp(ctx);
+      handleConnectorAddMcp(ctx);
       throw new Error("expected throw");
     } catch (e) {
       expect((e as ConnectorRpcError).rpcCode).toBe(-32602);

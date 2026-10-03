@@ -168,12 +168,23 @@ const PROGRESS_EVERY = 200;
  * full result. Used directly by tests and wrapped as a long-running job by
  * `dispatchSecurityRpc`.
  */
-export async function runSecurityScan(
+export function runSecurityScan(
   db: Database,
   opts: RunSecurityScanOptions,
   progress?: (payload: Record<string, unknown>) => void,
   signal?: AbortSignal,
 ): Promise<SecurityScanResult> {
+  // Synchronous end to end (bun:sqlite + regex), but the job registry's `run` takes a Promise:
+  // `Promise.try` supplies one and keeps a failure a rejection rather than a synchronous throw.
+  return Promise.try(() => scanAndAudit(db, opts, progress, signal));
+}
+
+function scanAndAudit(
+  db: Database,
+  opts: RunSecurityScanOptions,
+  progress?: (payload: Record<string, unknown>) => void,
+  signal?: AbortSignal,
+): SecurityScanResult {
   const sec =
     opts.configDir === undefined
       ? DEFAULT_NIMBUS_SECURITY_TOML
@@ -244,11 +255,23 @@ function parseScanParams(params: unknown): SecurityScanParams {
   return out;
 }
 
-export async function dispatchSecurityRpc(
+type SecurityRpcOutcome = { kind: "miss" } | { kind: "hit"; value: unknown };
+
+export function dispatchSecurityRpc(
   method: string,
   params: unknown,
   ctx: SecurityRpcContext,
-): Promise<{ kind: "miss" } | { kind: "hit"; value: unknown }> {
+): Promise<SecurityRpcOutcome> {
+  // Starting or cancelling a job is synchronous; `Promise.try` keeps the dispatcher's Promise
+  // contract, so a `SecurityRpcError` still arrives as a rejection.
+  return Promise.try(() => routeSecurityRpc(method, params, ctx));
+}
+
+function routeSecurityRpc(
+  method: string,
+  params: unknown,
+  ctx: SecurityRpcContext,
+): SecurityRpcOutcome {
   if (method === "security.scanCancel") {
     const rec =
       params !== null && typeof params === "object" ? (params as Record<string, unknown>) : {};

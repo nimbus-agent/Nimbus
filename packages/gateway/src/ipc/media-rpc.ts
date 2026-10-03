@@ -190,10 +190,10 @@ function requireConfiguredVendorMatch(
   }
 }
 
-async function handleAllowRemote(
+function handleAllowRemote(
   rawParams: unknown,
   deps: MediaRpcDeps,
-): Promise<{ granted: number; alreadyGranted: number }> {
+): { granted: number; alreadyGranted: number } {
   if (deps.grantRemote === undefined) {
     throw new Error("media.allowRemote requires deps.grantRemote to be wired");
   }

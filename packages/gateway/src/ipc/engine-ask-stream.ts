@@ -63,75 +63,87 @@ function streamMetaFromModelMeta(meta: LlmGenerateResult): Record<string, unknow
   };
 }
 
-export function createAskStreamHandler(
+/**
+ * Registers the stream, launches the agent run in the background, and returns the stream id at
+ * once — the run's outcome reaches the client only through `engine.stream*` notifications.
+ */
+function startAskStream(
   deps: AskStreamHandlerDeps,
-): (clientId: string, params: AskStreamParams) => Promise<AskStreamResult> {
-  return async (clientId, params): Promise<AskStreamResult> => {
-    const streamId = deps.randomId();
-    const ac = new AbortController();
-    deps.registry.register(streamId, ac);
+  clientId: string,
+  params: AskStreamParams,
+): AskStreamResult {
+  const streamId = deps.randomId();
+  const ac = new AbortController();
+  deps.registry.register(streamId, ac);
 
-    const sendChunk = (text: string): void => {
-      if (ac.signal.aborted) return;
-      deps.sessionWriteNotification({
-        jsonrpc: "2.0",
-        method: "engine.streamToken",
-        params: { streamId, text },
+  const sendChunk = (text: string): void => {
+    if (ac.signal.aborted) return;
+    deps.sessionWriteNotification({
+      jsonrpc: "2.0",
+      method: "engine.streamToken",
+      params: { streamId, text },
+    });
+  };
+
+  void (async (): Promise<void> => {
+    try {
+      let modelMeta: LlmGenerateResult | undefined;
+      const ctx: RequestContextLike = {};
+      if (params.sessionId !== undefined) ctx.sessionId = params.sessionId;
+      await deps.runWithRequestContext(ctx, async () => {
+        const payload: AgentInvokeContextLike = {
+          clientId,
+          input: params.input,
+          stream: true,
+          sendChunk,
+          signal: ac.signal,
+        };
+        if (params.sessionId !== undefined) payload.sessionId = params.sessionId;
+        if (params.devil === true) payload.devil = true;
+        const invokeResult = await deps.agentInvokeHandler(payload);
+        modelMeta = invokeResult.modelMeta;
       });
-    };
-
-    void (async (): Promise<void> => {
-      try {
-        let modelMeta: LlmGenerateResult | undefined;
-        const ctx: RequestContextLike = {};
-        if (params.sessionId !== undefined) ctx.sessionId = params.sessionId;
-        await deps.runWithRequestContext(ctx, async () => {
-          const payload: AgentInvokeContextLike = {
-            clientId,
-            input: params.input,
-            stream: true,
-            sendChunk,
-            signal: ac.signal,
-          };
-          if (params.sessionId !== undefined) payload.sessionId = params.sessionId;
-          if (params.devil === true) payload.devil = true;
-          const invokeResult = await deps.agentInvokeHandler(payload);
-          modelMeta = invokeResult.modelMeta;
-        });
-        if (ac.signal.aborted) {
-          deps.sessionWriteNotification({
-            jsonrpc: "2.0",
-            method: "engine.streamError",
-            params: { streamId, code: "cancelled", error: "Stream cancelled" },
-          });
-        } else {
-          deps.sessionWriteNotification({
-            jsonrpc: "2.0",
-            method: "engine.streamDone",
-            params: {
-              streamId,
-              meta:
-                modelMeta === undefined
-                  ? { modelUsed: "default", isLocal: false, provider: "remote" }
-                  : streamMetaFromModelMeta(modelMeta),
-            },
-          });
-        }
-      } catch (e) {
-        const message = e instanceof Error ? e.message : "Stream error";
-        const code = ac.signal.aborted ? "cancelled" : "stream_error";
+      if (ac.signal.aborted) {
         deps.sessionWriteNotification({
           jsonrpc: "2.0",
           method: "engine.streamError",
-          params: { streamId, code, error: message },
+          params: { streamId, code: "cancelled", error: "Stream cancelled" },
         });
-      } finally {
-        deps.registry.unregister(streamId);
+      } else {
+        deps.sessionWriteNotification({
+          jsonrpc: "2.0",
+          method: "engine.streamDone",
+          params: {
+            streamId,
+            meta:
+              modelMeta === undefined
+                ? { modelUsed: "default", isLocal: false, provider: "remote" }
+                : streamMetaFromModelMeta(modelMeta),
+          },
+        });
       }
-    })();
+    } catch (e) {
+      const message = e instanceof Error ? e.message : "Stream error";
+      const code = ac.signal.aborted ? "cancelled" : "stream_error";
+      deps.sessionWriteNotification({
+        jsonrpc: "2.0",
+        method: "engine.streamError",
+        params: { streamId, code, error: message },
+      });
+    } finally {
+      deps.registry.unregister(streamId);
+    }
+  })();
 
-    return { streamId };
-  };
+  return { streamId };
+}
+
+export function createAskStreamHandler(
+  deps: AskStreamHandlerDeps,
+): (clientId: string, params: AskStreamParams) => Promise<AskStreamResult> {
+  // `Promise.try` keeps the handler's Promise contract (a throwing dep still rejects rather than
+  // throwing synchronously) without an `async` that awaits nothing.
+  return (clientId, params) => Promise.try(() => startAskStream(deps, clientId, params));
 }
 
 export function createStreamRegistry(): StreamRegistry {

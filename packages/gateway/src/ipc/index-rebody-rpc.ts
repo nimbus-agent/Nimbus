@@ -564,7 +564,8 @@ async function runRebody(
     if (signal.aborted) {
       break;
     }
-    if (await resyncOneService(service, p, ctx)) {
+    const resynced = await resyncOneService(service, p, ctx); // NOSONAR S9382: sequential by design - each forceSync is a full connector sync (API quota, an I29 sync egress row); the loop honours cancellation between services and reports in-order progress
+    if (resynced) {
       succeeded += 1;
     } else {
       failed += 1;

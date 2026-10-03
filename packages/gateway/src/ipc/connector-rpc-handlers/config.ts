@@ -11,9 +11,7 @@ import { ConnectorRpcError, requireRegisteredSchedulerServiceId } from "../conne
 import type { ConnectorRpcHandlerContext, ConnectorRpcHit } from "./context.ts";
 import { emitConfigChanged, pauseConnector, resumeConnector } from "./lifecycle.ts";
 
-export async function handleConnectorAddMcp(
-  ctx: ConnectorRpcHandlerContext,
-): Promise<ConnectorRpcHit> {
+export function handleConnectorAddMcp(ctx: ConnectorRpcHandlerContext): ConnectorRpcHit {
   const { rec, localIndex, syncScheduler, connectorMesh } = ctx;
   if (syncScheduler === undefined || connectorMesh === undefined) {
     throw new ConnectorRpcError(-32603, "User MCP registration requires sync and connector mesh");

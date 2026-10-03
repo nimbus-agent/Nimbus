@@ -117,11 +117,13 @@ function unconfiguredEnvelope(
   };
 }
 
-export async function dispatchPreflightRpc(
+type PreflightRpcOutcome = { kind: "miss" } | { kind: "hit"; value: DeployPreflightResult };
+
+function evaluatePreflightRpc(
   method: string,
   params: unknown,
   ctx: PreflightRpcContext,
-): Promise<{ kind: "miss" } | { kind: "hit"; value: DeployPreflightResult }> {
+): PreflightRpcOutcome {
   if (method !== "deploy.preflight") return { kind: "miss" };
   const { service, targetRef, maxFindings } = requireParams(params);
   const nowMs = (ctx.nowMs ?? (() => Date.now()))();
@@ -134,4 +136,14 @@ export async function dispatchPreflightRpc(
     kind: "hit",
     value: computeDeployPreflight(ctx.db, cfg, targetRef, nowMs, maxFindings),
   };
+}
+
+export function dispatchPreflightRpc(
+  method: string,
+  params: unknown,
+  ctx: PreflightRpcContext,
+): Promise<PreflightRpcOutcome> {
+  // The evaluation is synchronous (bun:sqlite), but callers await this as an RPC dispatcher:
+  // `Promise.try` keeps that contract, so a `PreflightRpcError` still arrives as a rejection.
+  return Promise.try(() => evaluatePreflightRpc(method, params, ctx));
 }

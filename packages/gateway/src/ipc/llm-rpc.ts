@@ -115,7 +115,7 @@ async function getRouteStatuses(ctx: LlmRpcContext): Promise<{ routes: LlmRouteS
   return { routes: statuses };
 }
 
-async function handlePullModel(params: unknown, ctx: LlmRpcContext): Promise<{ pullId: string }> {
+function handlePullModel(params: unknown, ctx: LlmRpcContext): { pullId: string } {
   const { provider, modelName, routeId } = requireModelParams(params, "pullModel");
   const pullId = `pull_${Date.now()}_${crypto.randomUUID().slice(0, 8)}`;
   const controller = new AbortController();
@@ -173,10 +173,10 @@ async function handleLoadOrUnload(
  * answered the same way that handler already answers it: refuse. A silent success that persists
  * nothing is exactly the bug this change removes.
  */
-async function handleSetDefault(
+function handleSetDefault(
   params: unknown,
   ctx: LlmRpcContext,
-): Promise<{ taskType: string; provider: string; modelName: string }> {
+): { taskType: string; provider: string; modelName: string } {
   const message = "setDefault requires valid taskType, provider, modelName";
   const p = requireParamsObject(params, message);
   const taskType = p["taskType"];
@@ -226,7 +226,7 @@ async function handleSetDefault(
  * persist a pin that silently never applies — the orphaned-config shape this whole plan
  * exists to stop repeating. Nothing is written to `nimbus.toml` unless both checks pass.
  */
-async function handleLlmUse(params: unknown, ctx: LlmRpcContext): Promise<{ ok: true }> {
+function handleLlmUse(params: unknown, ctx: LlmRpcContext): { ok: true } {
   const p = requireParamsObject(params, "llm.use requires task and routeId");
   const task = p["task"];
   const routeId = p["routeId"];
