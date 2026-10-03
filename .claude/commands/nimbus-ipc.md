@@ -183,7 +183,7 @@ Read methods are available to LAN peers without `grant-write` and never mutate d
 | `index.searchRanked` | request | Ranked hybrid BM25 + vector search |
 | `index.metrics` | request | Per-service item counts and one global embedding-coverage figure (the only method in this table on the Tauri allowlist) |
 | `index.health` | request | Index QUALITY — per-connector embedding coverage, staleness, a 0-100 score (`nimbus index health`) |
-| `index.regraph` | request | Re-run the graph populator over existing rows (`nimbus index regraph`). Neither LAN-forbidden nor in the LAN `WRITE_METHODS` set, so any paired peer can trigger it |
+| `index.regraph` | request | Re-run the graph populator over existing rows (`nimbus index regraph`). CLI-only; `FORBIDDEN_OVER_LAN` (I5), like the other write-class index methods |
 | `index.demoSymbol` | request | `nimbus init`'s `file:line` hint from this machine's index; LAN-forbidden |
 | `index.reembed` | request | Selectively re-embed items to a target model. Returns `{ jobId }`; emits `index.reembedProgress` / `index.reembedDone` / `index.reembedError` notifications. CLI-only — NOT in Tauri allowlist; NOT LAN-callable (T6 PR 3). |
 | `index.reembedCancel` | request | Cancel an in-flight reembed job by `{ jobId }`. Returns `{ cancelled: boolean }`. |

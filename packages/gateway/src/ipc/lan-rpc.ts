@@ -97,6 +97,12 @@ const FORBIDDEN_OVER_LAN = new Set([
   // trigger that on the owner's behalf, so both are fully forbidden (I5 defense-in-depth).
   "index.rebody",
   "index.rebodyCancel",
+  // index.regraph is a write-class index method too: it re-runs the graph populator over every
+  // indexed row, upserting entities and clearing and re-emitting relations (graph/regraph.ts).
+  // The `index.*` namespace is default-allow for READS, so without this entry any paired peer
+  // could churn the owner's relationship graph on demand. Fully forbidden, like reembed/rebody
+  // and the glossary/decisions/ownership passes, not merely write-gated (I5 defense-in-depth).
+  "index.regraph",
   // Glossary on-demand passes are write-class and local-only: refresh spends the
   // owner's local model, rebuild TRUNCATES both glossary tables and deletes every
   // projected item. The denylist is default-allow, so omitting this would leave a
