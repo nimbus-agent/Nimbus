@@ -273,19 +273,22 @@ jobs:
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/.cargo/bin/cargo-audit
-          key: cargo-audit-0.22.1
+          key: cargo-audit-0.22.2
 
       - name: Install cargo-audit
         if: steps.cargo-audit-cache.outputs.cache-hit != 'true'
-        run: cargo install cargo-audit --version 0.22.1 --locked
+        run: cargo install cargo-audit --version 0.22.2 --locked
 
       - name: Run cargo audit (packages/ui/src-tauri)
         working-directory: packages/ui/src-tauri
-        # quick-xml 0.39.4 DoS advisories (transitive via plist/wayland-scanner,
-        # not reachable without an upstream Tauri bump; Tauri desktop deferred to
-        # Phase 13, no runtime exposure). Mirrors the deny.toml ignore list —
-        # revisit at the next Tauri bump. See deny.toml for full rationale.
-        run: cargo audit --ignore RUSTSEC-2026-0194 --ignore RUSTSEC-2026-0195
+        # No `--ignore` flags. The two this step carried (RUSTSEC-2026-0194 and
+        # RUSTSEC-2026-0195, quick-xml 0.39.4) were retired at the tauri 2.12.1
+        # bump: plist and wayland-scanner now resolve quick-xml 0.41/0.42, past
+        # the fix. Two informational advisories still print as allowed warnings
+        # and do not fail the step: proc-macro-error (unmaintained) and glib 0.18
+        # (unsound), both transitive via the Linux gtk3 stack. Keep any future
+        # ignore here in step with deny.toml's list, which has the rationale.
+        run: cargo audit
 
   cargo-deny:
     # Skipped on PRs that touch no Rust. This name is a literal with no `${{ }}`
