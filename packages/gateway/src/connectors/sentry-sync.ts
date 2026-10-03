@@ -1,7 +1,7 @@
 import { stripTrailingSlashes } from "../string/strip-trailing-slashes.ts";
-import { clampSyncTitle } from "../sync/pass-cursor-sync-result.ts";
+import { clampSyncTitle, syncPassCursorHttpEmpty } from "../sync/pass-cursor-sync-result.ts";
 import { type Syncable, type SyncContext, type SyncResult, syncNoopResult } from "../sync/types.ts";
-import { decodeNimbusJsonCursorPayload, encodeNimbusJsonCursor } from "./nimbus-json-cursor.ts";
+import { decodeNimbusJsonCursorObject, encodeNimbusJsonCursor } from "./nimbus-json-cursor.ts";
 import type { SentryIssuePassResult } from "./sentry-issue-sync.ts";
 import { syncSentryIssuePass } from "./sentry-issue-sync.ts";
 import { asRecord, stringField } from "./unknown-record.ts";
@@ -25,17 +25,10 @@ function encodeCursor(c: SentryCursorV2): string {
  * special-cased legacy branch: it simply fails to decode.
  */
 function decodeCursor(raw: string | null): SentryCursorV2 | null {
-  if (raw === null || raw === "") {
+  const rec = decodeNimbusJsonCursorObject(raw, CURSOR_PREFIX);
+  if (rec === null) {
     return null;
   }
-  const parsed = decodeNimbusJsonCursorPayload(raw, CURSOR_PREFIX);
-  if (parsed === undefined) {
-    return null;
-  }
-  if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
-    return null;
-  }
-  const rec = parsed as Record<string, unknown>;
   const lastSeenMs = rec["lastSeenMs"];
   if (typeof lastSeenMs !== "number" || !Number.isFinite(lastSeenMs)) {
     return null;
@@ -150,14 +143,7 @@ export function createSentrySyncable(options: SentrySyncableOptions): Syncable {
         // window an issue pass against, so the issue pass does not run this
         // tick. Keep the incoming cursor untouched, or a cold-start marker if
         // there was none.
-        return {
-          cursor: cursor ?? encodeCursor({ lastSeenMs: 0 }),
-          itemsUpserted: 0,
-          itemsDeleted: 0,
-          hasMore: false,
-          durationMs: Math.round(performance.now() - t0),
-          bytesTransferred: text.length,
-        };
+        return syncPassCursorHttpEmpty(t0, text.length, cursor, encodeCursor({ lastSeenMs: 0 }));
       }
       let root: unknown;
       try {
@@ -168,15 +154,9 @@ export function createSentrySyncable(options: SentrySyncableOptions): Syncable {
         // a cursor the caller already trusted must not be destroyed by a
         // failure in the OTHER pass. Echo it (or a cold-start marker if
         // there was none), never synthesize a fresh {lastSeenMs: 0} over an
-        // established one.
-        return {
-          cursor: cursor ?? encodeCursor({ lastSeenMs: 0 }),
-          itemsUpserted: 0,
-          itemsDeleted: 0,
-          hasMore: false,
-          durationMs: Math.round(performance.now() - t0),
-          bytesTransferred: text.length,
-        };
+        // established one. Hence the same helper as that arm:
+        // `syncPassCursorParseEmpty` would drop an established cursor.
+        return syncPassCursorHttpEmpty(t0, text.length, cursor, encodeCursor({ lastSeenMs: 0 }));
       }
       const list = Array.isArray(root) ? root : [];
       const now = Date.now();

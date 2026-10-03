@@ -1,5 +1,6 @@
+import { syncPassCursorSuccess } from "../sync/pass-cursor-sync-result.ts";
 import { type Syncable, type SyncContext, type SyncResult, syncNoopResult } from "../sync/types.ts";
-import { decodeNimbusJsonCursorPayload, encodeNimbusJsonCursor } from "./nimbus-json-cursor.ts";
+import { decodeNimbusJsonCursorObject, encodeNimbusJsonCursor } from "./nimbus-json-cursor.ts";
 import { asRecord, numberField, stringField } from "./unknown-record.ts";
 
 const SERVICE_ID = "github_actions";
@@ -12,17 +13,10 @@ function encodeCursor(c: GhaSyncCursorV1): string {
 }
 
 function decodeCursor(raw: string | null): GhaSyncCursorV1 | null {
-  if (raw === null || raw === "") {
+  const rec = decodeNimbusJsonCursorObject(raw, CURSOR_PREFIX);
+  if (rec === null) {
     return null;
   }
-  const parsed = decodeNimbusJsonCursorPayload(raw, CURSOR_PREFIX);
-  if (parsed === undefined) {
-    return null;
-  }
-  if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
-    return null;
-  }
-  const rec = parsed as Record<string, unknown>;
   const reposRaw = rec["repos"];
   if (reposRaw === null || typeof reposRaw !== "object" || Array.isArray(reposRaw)) {
     return { repos: {} };
@@ -259,14 +253,7 @@ export function createGithubActionsSyncable(options: GithubActionsSyncableOption
         nextRepos[full] = r.maxId;
       }
 
-      return {
-        cursor: encodeCursor({ repos: nextRepos }),
-        itemsUpserted: upserted,
-        itemsDeleted: 0,
-        hasMore: false,
-        durationMs: Math.round(performance.now() - t0),
-        bytesTransferred: bytes,
-      };
+      return syncPassCursorSuccess(t0, bytes, encodeCursor({ repos: nextRepos }), upserted);
     },
   };
 }

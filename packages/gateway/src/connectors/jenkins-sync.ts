@@ -1,6 +1,6 @@
 import { itemPrimaryKey } from "../index/item-store.ts";
 import { stripTrailingSlashes } from "../string/strip-trailing-slashes.ts";
-import { clampSyncTitle } from "../sync/pass-cursor-sync-result.ts";
+import { clampSyncTitle, syncPassCursorSuccess } from "../sync/pass-cursor-sync-result.ts";
 import {
   FETCH_ONE_TIMEOUT_MS,
   type FetchOneResult,
@@ -15,7 +15,7 @@ import {
   JENKINS_JOBS_API_TREE,
   type JenkinsApiJobNode,
 } from "./jenkins-api-jobs.ts";
-import { decodeNimbusJsonCursorPayload, encodeNimbusJsonCursor } from "./nimbus-json-cursor.ts";
+import { decodeNimbusJsonCursorObject, encodeNimbusJsonCursor } from "./nimbus-json-cursor.ts";
 import { asRecord, numberField, stringField } from "./unknown-record.ts";
 
 const SERVICE_ID = "jenkins";
@@ -28,17 +28,10 @@ function encodeCursor(c: JenkinsSyncCursorV1): string {
 }
 
 function decodeCursor(raw: string | null): JenkinsSyncCursorV1 | null {
-  if (raw === null || raw === "") {
+  const rec = decodeNimbusJsonCursorObject(raw, CURSOR_PREFIX);
+  if (rec === null) {
     return null;
   }
-  const parsed = decodeNimbusJsonCursorPayload(raw, CURSOR_PREFIX);
-  if (parsed === undefined) {
-    return null;
-  }
-  if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
-    return null;
-  }
-  const rec = parsed as Record<string, unknown>;
   const jobsRaw = rec["jobs"];
   if (jobsRaw === null || typeof jobsRaw !== "object" || Array.isArray(jobsRaw)) {
     return { jobs: {} };
@@ -251,14 +244,7 @@ async function runJenkinsSyncAfterAuth(
       { serviceId: SERVICE_ID, status: jobsRes.status },
       "jenkins sync: failed to list jobs",
     );
-    return {
-      cursor: encodeCursor(prev),
-      itemsUpserted: 0,
-      itemsDeleted: 0,
-      hasMore: false,
-      durationMs: Math.round(performance.now() - t0),
-      bytesTransferred: bytes,
-    };
+    return syncPassCursorSuccess(t0, bytes, encodeCursor(prev), 0);
   }
 
   const jobsRoot = jobsRes.json as Record<string, unknown>;
@@ -289,14 +275,7 @@ async function runJenkinsSyncAfterAuth(
     }
   }
 
-  return {
-    cursor: encodeCursor({ jobs: nextJobs }),
-    itemsUpserted: upserted,
-    itemsDeleted: 0,
-    hasMore: false,
-    durationMs: Math.round(performance.now() - t0),
-    bytesTransferred: bytes,
-  };
+  return syncPassCursorSuccess(t0, bytes, encodeCursor({ jobs: nextJobs }), upserted);
 }
 
 /**

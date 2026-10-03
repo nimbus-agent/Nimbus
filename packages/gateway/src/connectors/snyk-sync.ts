@@ -5,6 +5,7 @@ import {
 } from "../sync/pass-cursor-sync-result.ts";
 import { type Syncable, type SyncContext, type SyncResult, syncNoopResult } from "../sync/types.ts";
 import { connectorFetch } from "./_lib/fetch-outcome.ts";
+import { upsertMapped } from "./_lib/paginated-sync.ts";
 import { encodeNimbusJsonCursor } from "./nimbus-json-cursor.ts";
 import { mapSnykAggregatedIssueToItem } from "./snyk-issue-mapping.ts";
 import { asRecord, stringField } from "./unknown-record.ts";
@@ -117,15 +118,9 @@ async function ingestProjectIssues(
   if (issuesOutcome.kind !== "ok") {
     return { upserted: 0, bytes: issuesOutcome.bytes };
   }
-  let upserted = 0;
-  for (const issue of extractIssues(issuesOutcome.parsed)) {
-    const mapped = mapSnykAggregatedIssueToItem(issue, { orgId, projectId, syncedAt: now });
-    if (mapped === null) {
-      continue;
-    }
-    ctx.upsertItem(mapped);
-    upserted += 1;
-  }
+  const upserted = upsertMapped(ctx, extractIssues(issuesOutcome.parsed), (issue) =>
+    mapSnykAggregatedIssueToItem(issue, { orgId, projectId, syncedAt: now }),
+  );
   return { upserted, bytes: issuesOutcome.bytes };
 }
 

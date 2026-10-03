@@ -8,8 +8,9 @@ import { extensionProcessEnv } from "../extensions/spawn-env.ts";
 import { MEDIA_EXTENSIONS, mediaExtensionModality } from "../multimodal/media-source-registry.ts";
 import type { MediaModality } from "../multimodal/media-types.ts";
 import { type BlameRow, parseBlamePorcelain } from "../security/blame-store.ts";
+import { syncPassCursorSuccess } from "../sync/pass-cursor-sync-result.ts";
 import { type Syncable, type SyncContext, type SyncResult, syncNoopResult } from "../sync/types.ts";
-import { decodeNimbusJsonCursorPayload, encodeNimbusJsonCursor } from "./nimbus-json-cursor.ts";
+import { decodeNimbusJsonCursorObject, encodeNimbusJsonCursor } from "./nimbus-json-cursor.ts";
 
 const SERVICE_ID = "filesystem";
 const CURSOR_PREFIX = "nimbus-fsv2:";
@@ -51,19 +52,10 @@ function decodeCodeMtimes(raw: unknown): Record<string, CodeMtimeMap> {
 }
 
 function decodeCursor(raw: string | null): FsCursorV1 {
-  if (raw === null || raw === "") {
+  const rec = decodeNimbusJsonCursorObject(raw, CURSOR_PREFIX);
+  if (rec === null) {
     return emptyCursor();
   }
-  const parsed = decodeNimbusJsonCursorPayload(raw, CURSOR_PREFIX);
-  if (
-    parsed === undefined ||
-    parsed === null ||
-    typeof parsed !== "object" ||
-    Array.isArray(parsed)
-  ) {
-    return emptyCursor();
-  }
-  const rec = parsed as Record<string, unknown>;
   const tipsRaw = rec["tips"];
   const tips: Record<string, string> = {};
   if (tipsRaw !== null && typeof tipsRaw === "object" && !Array.isArray(tipsRaw)) {
@@ -966,14 +958,12 @@ export function createFilesystemV2Syncable(options: FilesystemV2SyncableOptions)
         bytes += r.bytes;
       }
 
-      return {
-        cursor: encodeCursor({ tips: nextTips, codeMtimes: nextCodeMtimes }),
-        itemsUpserted: upserted,
-        itemsDeleted: 0,
-        hasMore: false,
-        durationMs: Math.round(performance.now() - t0),
-        bytesTransferred: bytes,
-      };
+      return syncPassCursorSuccess(
+        t0,
+        bytes,
+        encodeCursor({ tips: nextTips, codeMtimes: nextCodeMtimes }),
+        upserted,
+      );
     },
   };
 }

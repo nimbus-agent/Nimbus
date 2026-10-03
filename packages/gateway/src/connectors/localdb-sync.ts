@@ -1,7 +1,8 @@
-import { readdir, readFile, stat } from "node:fs/promises";
-import { join, relative, resolve } from "node:path";
+import { readFile, stat } from "node:fs/promises";
+import { relative, resolve } from "node:path";
 import { syncPassCursorSuccess } from "../sync/pass-cursor-sync-result.ts";
 import { type Syncable, type SyncContext, type SyncResult, syncNoopResult } from "../sync/types.ts";
+import { collectFiles } from "./_lib/collect-files.ts";
 import { type LocalDbQueryInput, mapLocalDbQueryToItem } from "./localdb-query-mapping.ts";
 import { encodeNimbusJsonCursor } from "./nimbus-json-cursor.ts";
 
@@ -30,32 +31,12 @@ async function loadScriptsDir(ctx: SyncContext): Promise<string | null> {
   return raw === "" ? null : resolve(raw);
 }
 
-async function collectSqlFiles(root: string): Promise<string[]> {
-  const found: string[] = [];
-  async function walk(dir: string, depth: number): Promise<void> {
-    if (depth > MAX_WALK_DEPTH || found.length >= MAX_FILES) {
-      return;
-    }
-    let entries: import("node:fs").Dirent[];
-    try {
-      entries = await readdir(dir, { withFileTypes: true });
-    } catch {
-      return; // unreadable dir — skip
-    }
-    for (const entry of entries) {
-      if (found.length >= MAX_FILES) {
-        return;
-      }
-      const full = join(dir, entry.name);
-      if (entry.isDirectory()) {
-        await walk(full, depth + 1); // NOSONAR S9382: depth-first walk sharing the MAX_FILES cap - each entry's early exit reads `found` as the previous subtree left it
-      } else if (entry.isFile() && entry.name.toLowerCase().endsWith(".sql")) {
-        found.push(full);
-      }
-    }
-  }
-  await walk(root, 0);
-  return found;
+function collectSqlFiles(root: string): Promise<string[]> {
+  return collectFiles(root, {
+    maxDepth: MAX_WALK_DEPTH,
+    maxFiles: MAX_FILES,
+    accept: (name) => name.toLowerCase().endsWith(".sql"),
+  });
 }
 
 async function readSqlFile(path: string, root: string): Promise<LocalDbQueryInput | null> {

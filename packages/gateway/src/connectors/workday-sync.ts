@@ -5,7 +5,8 @@ import {
 import { Config } from "../config.ts";
 import { syncPassCursorSuccess } from "../sync/pass-cursor-sync-result.ts";
 import { type Syncable, type SyncContext, type SyncResult, syncNoopResult } from "../sync/types.ts";
-import { decodeNimbusJsonCursorPayload, encodeNimbusJsonCursor } from "./nimbus-json-cursor.ts";
+import { upsertMapped } from "./_lib/paginated-sync.ts";
+import { decodeNimbusJsonCursorObject, encodeNimbusJsonCursor } from "./nimbus-json-cursor.ts";
 import {
   mapJobPostingToItem,
   mapReportRowToItem,
@@ -32,31 +33,21 @@ interface DomainState {
 }
 
 function decodeCursor(cursor: string | null): WorkdayCursorV1 | null {
-  if (cursor === null) return null;
-  const parsed = decodeNimbusJsonCursorPayload(cursor, CURSOR_PREFIX);
+  const rec = decodeNimbusJsonCursorObject(cursor, CURSOR_PREFIX);
   if (
-    parsed !== null &&
-    typeof parsed === "object" &&
-    "workerOffset" in parsed &&
-    "timeOffOffset" in parsed &&
-    "jobPostingOffset" in parsed
+    rec === null ||
+    !("workerOffset" in rec && "timeOffOffset" in rec && "jobPostingOffset" in rec)
   ) {
-    return {
-      workerOffset:
-        typeof (parsed as WorkdayCursorV1).workerOffset === "number"
-          ? (parsed as WorkdayCursorV1).workerOffset
-          : 0,
-      timeOffOffset:
-        typeof (parsed as WorkdayCursorV1).timeOffOffset === "number"
-          ? (parsed as WorkdayCursorV1).timeOffOffset
-          : 0,
-      jobPostingOffset:
-        typeof (parsed as WorkdayCursorV1).jobPostingOffset === "number"
-          ? (parsed as WorkdayCursorV1).jobPostingOffset
-          : 0,
-    };
+    return null;
   }
-  return null;
+  const workerOffset = rec["workerOffset"];
+  const timeOffOffset = rec["timeOffOffset"];
+  const jobPostingOffset = rec["jobPostingOffset"];
+  return {
+    workerOffset: typeof workerOffset === "number" ? workerOffset : 0,
+    timeOffOffset: typeof timeOffOffset === "number" ? timeOffOffset : 0,
+    jobPostingOffset: typeof jobPostingOffset === "number" ? jobPostingOffset : 0,
+  };
 }
 
 function buildNextCursor(
@@ -162,13 +153,7 @@ async function walkDomain(args: WalkDomainArgs): Promise<DomainResult> {
     const { rows, bytes, ok } = await fetchDomainPage(ctx, url, token, fetchFn);
     totalBytes += bytes;
     if (!ok) break;
-    for (const raw of rows) {
-      const mapped = mapper(raw, mapCtx);
-      if (mapped !== null) {
-        ctx.upsertItem(mapped);
-        upserted += 1;
-      }
-    }
+    upserted += upsertMapped(ctx, rows, (raw) => mapper(raw, mapCtx));
     if (rows.length < pageSize) {
       hasMore = false;
       offset += rows.length;

@@ -1,8 +1,9 @@
 import type { FileHandle } from "node:fs/promises";
-import { open, readdir } from "node:fs/promises";
-import { join, relative, resolve } from "node:path";
+import { open } from "node:fs/promises";
+import { relative, resolve } from "node:path";
 import { syncPassCursorSuccess } from "../sync/pass-cursor-sync-result.ts";
 import { type Syncable, type SyncContext, type SyncResult, syncNoopResult } from "../sync/types.ts";
+import { collectFiles } from "./_lib/collect-files.ts";
 import {
   type DataColumn,
   type DataFileFormat,
@@ -73,32 +74,12 @@ function extOf(name: string): string {
   return i < 0 ? "" : name.slice(i).toLowerCase();
 }
 
-async function collectDataFiles(root: string): Promise<string[]> {
-  const found: string[] = [];
-  async function walk(dir: string, depth: number): Promise<void> {
-    if (depth > MAX_WALK_DEPTH || found.length >= MAX_FILES) {
-      return;
-    }
-    let entries: import("node:fs").Dirent[];
-    try {
-      entries = await readdir(dir, { withFileTypes: true });
-    } catch {
-      return;
-    }
-    for (const entry of entries) {
-      if (found.length >= MAX_FILES) {
-        return;
-      }
-      const full = join(dir, entry.name);
-      if (entry.isDirectory()) {
-        await walk(full, depth + 1); // NOSONAR S9382: depth-first walk sharing the MAX_FILES cap - each entry's early exit reads `found` as the previous subtree left it
-      } else if (entry.isFile() && EXT_FORMAT[extOf(entry.name)] !== undefined) {
-        found.push(full);
-      }
-    }
-  }
-  await walk(root, 0);
-  return found;
+function collectDataFiles(root: string): Promise<string[]> {
+  return collectFiles(root, {
+    maxDepth: MAX_WALK_DEPTH,
+    maxFiles: MAX_FILES,
+    accept: (name) => EXT_FORMAT[extOf(name)] !== undefined,
+  });
 }
 
 interface FileSlurp {

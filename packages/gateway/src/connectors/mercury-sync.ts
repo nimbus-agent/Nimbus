@@ -5,6 +5,7 @@ import {
 } from "../sync/pass-cursor-sync-result.ts";
 import { type Syncable, type SyncContext, type SyncResult, syncNoopResult } from "../sync/types.ts";
 import { connectorFetch } from "./_lib/fetch-outcome.ts";
+import { upsertMapped } from "./_lib/paginated-sync.ts";
 import { mapMercuryAccountToItem } from "./mercury-account-mapping.ts";
 import { mapMercuryTransactionToItem } from "./mercury-transaction-mapping.ts";
 import { encodeNimbusJsonCursor } from "./nimbus-json-cursor.ts";
@@ -108,16 +109,9 @@ function upsertTransactions(
   transactions: readonly unknown[],
   now: number,
 ): number {
-  let upserted = 0;
-  for (const txn of transactions) {
-    const mapped = mapMercuryTransactionToItem(txn, { syncedAt: now, accountId });
-    if (mapped === null) {
-      continue;
-    }
-    ctx.upsertItem(mapped);
-    upserted += 1;
-  }
-  return upserted;
+  return upsertMapped(ctx, transactions, (txn) =>
+    mapMercuryTransactionToItem(txn, { syncedAt: now, accountId }),
+  );
 }
 
 interface TransactionWalkState {

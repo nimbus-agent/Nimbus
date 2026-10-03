@@ -6,7 +6,8 @@ import {
 } from "../sync/pass-cursor-sync-result.ts";
 import { type Syncable, type SyncContext, type SyncResult, syncNoopResult } from "../sync/types.ts";
 import { connectorFetch } from "./_lib/fetch-outcome.ts";
-import { decodeNimbusJsonCursorPayload, encodeNimbusJsonCursor } from "./nimbus-json-cursor.ts";
+import { upsertMapped } from "./_lib/paginated-sync.ts";
+import { decodeNimbusJsonCursorObject, encodeNimbusJsonCursor } from "./nimbus-json-cursor.ts";
 import { asRecord, stringField } from "./unknown-record.ts";
 import { mapZoomMeetingToItem } from "./zoom-meeting-mapping.ts";
 import { mapZoomTranscriptToItem, vttToPlainText } from "./zoom-transcript-mapping.ts";
@@ -39,12 +40,8 @@ function encodeCursor(c: ZoomCursorV1): string {
 }
 
 function decodeCursor(raw: string | null): ZoomCursorV1 {
-  if (raw === null || raw === "") {
-    return emptyCursor();
-  }
-  const parsed = decodeNimbusJsonCursorPayload(raw, CURSOR_PREFIX);
-  const rec = asRecord(parsed);
-  if (rec === undefined) {
+  const rec = decodeNimbusJsonCursorObject(raw, CURSOR_PREFIX);
+  if (rec === null) {
     return emptyCursor();
   }
   const lastTo = rec["lastRecordingsTo"];
@@ -101,16 +98,7 @@ function extractPage(parsed: unknown): { meetings: unknown[]; nextPageToken: str
 }
 
 function upsertMeetings(ctx: SyncContext, meetings: readonly unknown[], now: number): number {
-  let upserted = 0;
-  for (const m of meetings) {
-    const mapped = mapZoomMeetingToItem(m, { syncedAt: now });
-    if (mapped === null) {
-      continue;
-    }
-    ctx.upsertItem(mapped);
-    upserted += 1;
-  }
-  return upserted;
+  return upsertMapped(ctx, meetings, (m) => mapZoomMeetingToItem(m, { syncedAt: now }));
 }
 
 /**

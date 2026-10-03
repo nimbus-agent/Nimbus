@@ -1,7 +1,9 @@
-import { readdir, readFile, stat } from "node:fs/promises";
-import { join, resolve } from "node:path";
+import { readFile, stat } from "node:fs/promises";
+import { resolve } from "node:path";
 import { syncPassCursorSuccess } from "../sync/pass-cursor-sync-result.ts";
 import { type Syncable, type SyncContext, type SyncResult, syncNoopResult } from "../sync/types.ts";
+import { collectFiles } from "./_lib/collect-files.ts";
+import { upsertMapped } from "./_lib/paginated-sync.ts";
 import {
   type GreatExpectationsMappingContext,
   mapGreatExpectationsResultToItem,
@@ -100,32 +102,12 @@ function buildMappingContext(
   };
 }
 
-async function collectJsonFiles(root: string): Promise<string[]> {
-  const found: string[] = [];
-  async function walk(dir: string, depth: number): Promise<void> {
-    if (depth > MAX_WALK_DEPTH || found.length >= MAX_FILES) {
-      return;
-    }
-    let entries: import("node:fs").Dirent[];
-    try {
-      entries = await readdir(dir, { withFileTypes: true });
-    } catch {
-      return; // unreadable dir — skip
-    }
-    for (const entry of entries) {
-      if (found.length >= MAX_FILES) {
-        return;
-      }
-      const full = join(dir, entry.name);
-      if (entry.isDirectory()) {
-        await walk(full, depth + 1); // NOSONAR S9382: depth-first walk sharing the MAX_FILES cap - each entry's early exit reads `found` as the previous subtree left it
-      } else if (entry.isFile() && entry.name.toLowerCase().endsWith(".json")) {
-        found.push(full);
-      }
-    }
-  }
-  await walk(root, 0);
-  return found;
+function collectJsonFiles(root: string): Promise<string[]> {
+  return collectFiles(root, {
+    maxDepth: MAX_WALK_DEPTH,
+    maxFiles: MAX_FILES,
+    accept: (name) => name.toLowerCase().endsWith(".json"),
+  });
 }
 
 interface ParsedArtefact {
@@ -168,15 +150,7 @@ function ingestArtefact(ctx: SyncContext, artefact: ParsedArtefact, syncedAt: nu
     return 0;
   }
   const mappingCtx = buildMappingContext(artefact.parsed, syncedAt, artefact.mtimeMs);
-  let upserted = 0;
-  for (const entry of results) {
-    const mapped = mapGreatExpectationsResultToItem(entry, mappingCtx);
-    if (mapped !== null) {
-      ctx.upsertItem(mapped);
-      upserted += 1;
-    }
-  }
-  return upserted;
+  return upsertMapped(ctx, results, (entry) => mapGreatExpectationsResultToItem(entry, mappingCtx));
 }
 
 export function createGreatExpectationsSyncable(

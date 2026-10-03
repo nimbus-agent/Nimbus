@@ -1,7 +1,7 @@
-import type { Syncable, SyncContext, SyncResult } from "../sync/types.ts";
+import type { Syncable } from "../sync/types.ts";
 import { mapTableauViewToItem } from "./tableau-dashboard-mapping.ts";
 import { asRecord, stringField } from "./unknown-record.ts";
-import { listConnectorItems } from "./warehouse-sync-transport.ts";
+import { createWarehouseListSyncable } from "./warehouse-sync-transport.ts";
 
 const SERVICE_ID = "tableau";
 const LIST_TOOL_ID = "tableau_list";
@@ -31,35 +31,14 @@ function shapeTableauView(raw: unknown): Record<string, unknown> {
 }
 
 /**
- * Tableau sync on the unified Wave-7b spawn transport. {@link listConnectorItems} spawns the
- * connector once (personal: service-scoped vault view; team: the I19 localOperator gate) and drains
- * the paginated `tableau_list`; the gateway reshapes + maps each view. Pagination is fully drained in
- * the transport, so the input `cursor` passes through unchanged.
+ * Tableau sync on the unified Wave-7b spawn transport ({@link createWarehouseListSyncable}): it
+ * drains the paginated `tableau_list`, and the gateway reshapes + maps each view.
  */
 export function createTableauSyncable(): Syncable {
-  return {
-    serviceId: SERVICE_ID,
-    defaultIntervalMs: 10 * 60 * 1000,
-    initialSyncDepthDays: 30,
-    async sync(ctx: SyncContext, cursor: string | null): Promise<SyncResult> {
-      const t0 = performance.now();
-      const raw = await listConnectorItems(ctx, SERVICE_ID, LIST_TOOL_ID);
-      const now = Date.now();
-      let upserted = 0;
-      for (const rawView of raw) {
-        const mapped = mapTableauViewToItem(shapeTableauView(rawView), { syncedAt: now });
-        if (mapped !== null) {
-          ctx.upsertItem(mapped);
-          upserted += 1;
-        }
-      }
-      return {
-        cursor,
-        itemsUpserted: upserted,
-        itemsDeleted: 0,
-        hasMore: false,
-        durationMs: Math.round(performance.now() - t0),
-      };
+  return createWarehouseListSyncable(SERVICE_ID, [
+    {
+      listToolId: LIST_TOOL_ID,
+      map: (rawView, mapping) => mapTableauViewToItem(shapeTableauView(rawView), mapping),
     },
-  };
+  ]);
 }

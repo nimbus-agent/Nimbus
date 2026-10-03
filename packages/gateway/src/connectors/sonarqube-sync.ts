@@ -5,6 +5,7 @@ import {
 } from "../sync/pass-cursor-sync-result.ts";
 import { type Syncable, type SyncContext, type SyncResult, syncNoopResult } from "../sync/types.ts";
 import { connectorFetch } from "./_lib/fetch-outcome.ts";
+import { upsertMapped } from "./_lib/paginated-sync.ts";
 import { encodeNimbusJsonCursor } from "./nimbus-json-cursor.ts";
 import { mapSonarIssueToItem, stripTrailingSlashes } from "./sonarqube-issue-mapping.ts";
 import { asRecord, stringField } from "./unknown-record.ts";
@@ -142,20 +143,13 @@ function upsertSonarIssues(
   issues: readonly unknown[],
   now: number,
 ): number {
-  let upserted = 0;
-  for (const issue of issues) {
-    const mapped = mapSonarIssueToItem(issue, {
+  return upsertMapped(ctx, issues, (issue) =>
+    mapSonarIssueToItem(issue, {
       baseUrl: creds.base,
       organization: creds.organization,
       syncedAt: now,
-    });
-    if (mapped === null) {
-      continue;
-    }
-    ctx.upsertItem(mapped);
-    upserted += 1;
-  }
-  return upserted;
+    }),
+  );
 }
 
 function buildComponentsPath(organization: string): string {

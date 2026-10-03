@@ -7,7 +7,7 @@ import {
 } from "./google-meet-meeting-mapping.ts";
 import { fetchGoogleJson } from "./google-sync-shared.ts";
 import { asUnknownObjectRecord } from "./json-unknown.ts";
-import { decodeNimbusJsonCursorPayload, encodeNimbusJsonCursor } from "./nimbus-json-cursor.ts";
+import { decodeNimbusJsonCursorObject, encodeNimbusJsonCursor } from "./nimbus-json-cursor.ts";
 
 const SERVICE_ID = "google_meet";
 const CURSOR_PREFIX = "nimbus-gmeet1:";
@@ -48,12 +48,8 @@ export function encodeGoogleMeetSyncCursor(c: GoogleMeetSyncCursorV1): string {
 }
 
 export function decodeGoogleMeetSyncCursor(raw: string): GoogleMeetSyncCursorV1 | undefined {
-  const o = decodeNimbusJsonCursorPayload(raw, CURSOR_PREFIX);
-  if (o == null || typeof o !== "object" || Array.isArray(o)) {
-    return undefined;
-  }
-  const r = o as Record<string, unknown>;
-  if (r["v"] !== 1) {
+  const r = decodeNimbusJsonCursorObject(raw, CURSOR_PREFIX);
+  if (r === null || r["v"] !== 1) {
     return undefined;
   }
   const pageToken = r["pageToken"];

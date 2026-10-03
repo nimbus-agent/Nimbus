@@ -6,9 +6,7 @@ import {
 import type { Provider } from "../../sync/rate-limiter.ts";
 import { type SyncContext, type SyncResult, syncNoopResult } from "../../sync/types.ts";
 import { connectorFetch } from "./fetch-outcome.ts";
-
-/** The row shape accepted by {@link upsertIndexedItemForSync}. */
-type SyncUpsertRow = Parameters<SyncContext["upsertItem"]>[0];
+import type { SyncUpsertRow } from "./paginated-sync.ts";
 
 /**
  * Spec for a "list apps → for each app fetch builds" HTTP sync pattern.

@@ -1,5 +1,6 @@
+import { syncPassCursorSuccess } from "../sync/pass-cursor-sync-result.ts";
 import { type Syncable, type SyncContext, type SyncResult, syncNoopResult } from "../sync/types.ts";
-import { decodeNimbusJsonCursorPayload, encodeNimbusJsonCursor } from "./nimbus-json-cursor.ts";
+import { decodeNimbusJsonCursorObject, encodeNimbusJsonCursor } from "./nimbus-json-cursor.ts";
 import { shortIndexedMessageTitleFromPreview } from "./sync-message-preview-title.ts";
 import { asRecord } from "./unknown-record.ts";
 
@@ -37,17 +38,10 @@ function slackStringIdArrayOk(ids: unknown): ids is string[] {
 }
 
 function decodeCursor(raw: string | null): SlackSyncCursorV1 | null {
-  if (raw === null || raw === "") {
+  const rec = decodeNimbusJsonCursorObject(raw, CURSOR_PREFIX);
+  if (rec === null) {
     return null;
   }
-  const parsed = decodeNimbusJsonCursorPayload(raw, CURSOR_PREFIX);
-  if (parsed === undefined) {
-    return null;
-  }
-  if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
-    return null;
-  }
-  const rec = parsed as Record<string, unknown>;
   const phase = rec["phase"];
   const floorTs = rec["floorTs"];
   const ids = rec["ids"];
@@ -328,14 +322,7 @@ async function slackRunHistoryPhase(
 ): Promise<SyncResult> {
   const ch = state.ids[state.nextIdx % state.ids.length] ?? "";
   if (ch === "") {
-    return {
-      cursor: encodeCursor(state),
-      itemsUpserted,
-      itemsDeleted: 0,
-      hasMore: false,
-      durationMs: Math.round(performance.now() - t0),
-      bytesTransferred,
-    };
+    return syncPassCursorSuccess(t0, bytesTransferred, encodeCursor(state), itemsUpserted);
   }
   const histBody = slackHistoryRequestBody(state, ch);
   const hres = await slackWebApi(token, "conversations.history", histBody);
@@ -442,14 +429,7 @@ export function createSlackSyncable(options: SlackSyncableOptions): Syncable {
       }
 
       if (state.phase === "history" && state.ids.length === 0) {
-        return {
-          cursor: encodeCursor(state),
-          itemsUpserted: 0,
-          itemsDeleted: 0,
-          hasMore: false,
-          durationMs: Math.round(performance.now() - t0),
-          bytesTransferred,
-        };
+        return syncPassCursorSuccess(t0, bytesTransferred, encodeCursor(state), 0);
       }
 
       if (state.phase === "history") {

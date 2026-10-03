@@ -1,6 +1,7 @@
+import { syncPassCursorSuccess } from "../sync/pass-cursor-sync-result.ts";
 import { type Syncable, type SyncContext, type SyncResult, syncNoopResult } from "../sync/types.ts";
 import { usableActorEmail } from "./actor-email.ts";
-import { decodeNimbusJsonCursorPayload, encodeNimbusJsonCursor } from "./nimbus-json-cursor.ts";
+import { decodeNimbusJsonCursorObject, encodeNimbusJsonCursor } from "./nimbus-json-cursor.ts";
 import {
   extractPagerdutyActors,
   PAGERDUTY_INCIDENT_META_VERSION,
@@ -19,17 +20,10 @@ function encodeCursor(c: PdCursorV1): string {
 }
 
 function decodeCursor(raw: string | null): PdCursorV1 | null {
-  if (raw === null || raw === "") {
+  const rec = decodeNimbusJsonCursorObject(raw, CURSOR_PREFIX);
+  if (rec === null) {
     return null;
   }
-  const parsed = decodeNimbusJsonCursorPayload(raw, CURSOR_PREFIX);
-  if (parsed === undefined) {
-    return null;
-  }
-  if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
-    return null;
-  }
-  const rec = parsed as Record<string, unknown>;
   const lu = rec["lastUpdated"];
   if (typeof lu !== "string" || lu === "") {
     return null;
@@ -257,14 +251,12 @@ function partialSyncResult(
   bytesTransferred: number,
   t0: number,
 ): SyncResult {
-  return {
-    cursor: encodeCursor({ lastUpdated: maxUpdated }),
-    itemsUpserted,
-    itemsDeleted: 0,
-    hasMore: false,
-    durationMs: Math.round(performance.now() - t0),
+  return syncPassCursorSuccess(
+    t0,
     bytesTransferred,
-  };
+    encodeCursor({ lastUpdated: maxUpdated }),
+    itemsUpserted,
+  );
 }
 
 export function createPagerdutySyncable(options: PagerdutySyncableOptions): Syncable {

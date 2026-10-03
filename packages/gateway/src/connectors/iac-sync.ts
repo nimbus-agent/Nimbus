@@ -1,3 +1,4 @@
+import { syncPassCursorSuccess } from "../sync/pass-cursor-sync-result.ts";
 import { type Syncable, type SyncContext, type SyncResult, syncNoopResult } from "../sync/types.ts";
 import { encodeNimbusJsonCursor } from "./nimbus-json-cursor.ts";
 
@@ -44,14 +45,7 @@ export function createIacSyncable(options: IacSyncableOptions): Syncable {
         pinned: false,
         syncedAt: now,
       });
-      return {
-        cursor: encodeCursor({ tick: now }),
-        itemsUpserted: 1,
-        itemsDeleted: 0,
-        hasMore: false,
-        durationMs: Math.round(performance.now() - t0),
-        bytesTransferred: 0,
-      };
+      return syncPassCursorSuccess(t0, 0, encodeCursor({ tick: now }), 1);
     },
   };
 }

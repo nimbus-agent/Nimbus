@@ -1,4 +1,4 @@
-import { decodeNimbusJsonCursorPayload, encodeNimbusJsonCursor } from "./nimbus-json-cursor.ts";
+import { decodeNimbusJsonCursorObject, encodeNimbusJsonCursor } from "./nimbus-json-cursor.ts";
 
 export type WatermarkCursorV1 = { v: 1; watermark: string | null };
 
@@ -10,17 +10,10 @@ export function decodeWatermarkCursorV1(
   raw: string | null,
   prefix: string,
 ): WatermarkCursorV1 | null {
-  if (raw === null || raw === "") {
+  const rec = decodeNimbusJsonCursorObject(raw, prefix);
+  if (rec === null) {
     return null;
   }
-  const parsed = decodeNimbusJsonCursorPayload(raw, prefix);
-  if (parsed === undefined) {
-    return null;
-  }
-  if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
-    return null;
-  }
-  const rec = parsed as Record<string, unknown>;
   if (rec["v"] !== 1) {
     return null;
   }

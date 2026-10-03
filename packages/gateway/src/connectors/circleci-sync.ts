@@ -1,6 +1,6 @@
-import { clampSyncTitle } from "../sync/pass-cursor-sync-result.ts";
+import { clampSyncTitle, syncPassCursorSuccess } from "../sync/pass-cursor-sync-result.ts";
 import { type Syncable, type SyncContext, type SyncResult, syncNoopResult } from "../sync/types.ts";
-import { decodeNimbusJsonCursorPayload, encodeNimbusJsonCursor } from "./nimbus-json-cursor.ts";
+import { decodeNimbusJsonCursorObject, encodeNimbusJsonCursor } from "./nimbus-json-cursor.ts";
 import { asRecord, numberField, stringField } from "./unknown-record.ts";
 
 const SERVICE_ID = "circleci";
@@ -13,17 +13,10 @@ function encodeCursor(c: CircleciSyncCursorV1): string {
 }
 
 function decodeCursor(raw: string | null): CircleciSyncCursorV1 | null {
-  if (raw === null || raw === "") {
+  const rec = decodeNimbusJsonCursorObject(raw, CURSOR_PREFIX);
+  if (rec === null) {
     return null;
   }
-  const parsed = decodeNimbusJsonCursorPayload(raw, CURSOR_PREFIX);
-  if (parsed === undefined) {
-    return null;
-  }
-  if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
-    return null;
-  }
-  const rec = parsed as Record<string, unknown>;
   const projectsRaw = rec["projects"];
   if (projectsRaw === null || typeof projectsRaw !== "object" || Array.isArray(projectsRaw)) {
     return { projects: {} };
@@ -246,14 +239,7 @@ export function createCircleciSyncable(options: CircleciSyncableOptions): Syncab
         nextProjects[slug] = r.maxNum;
       }
 
-      return {
-        cursor: encodeCursor({ projects: nextProjects }),
-        itemsUpserted: upserted,
-        itemsDeleted: 0,
-        hasMore: false,
-        durationMs: Math.round(performance.now() - t0),
-        bytesTransferred: bytes,
-      };
+      return syncPassCursorSuccess(t0, bytes, encodeCursor({ projects: nextProjects }), upserted);
     },
   };
 }

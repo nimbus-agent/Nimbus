@@ -2,6 +2,7 @@ import { FLUX_KINDS, trimTrailingSlash } from "@nimbus-dev/sdk";
 import { syncPassCursorSuccess } from "../sync/pass-cursor-sync-result.ts";
 import { type Syncable, type SyncContext, type SyncResult, syncNoopResult } from "../sync/types.ts";
 import { connectorFetch } from "./_lib/fetch-outcome.ts";
+import { upsertMapped } from "./_lib/paginated-sync.ts";
 import { mapFluxResourceToItem } from "./flux-resource-mapping.ts";
 import { encodeNimbusJsonCursor } from "./nimbus-json-cursor.ts";
 import { asRecord } from "./unknown-record.ts";
@@ -82,14 +83,9 @@ export function createFluxSyncable(options: FluxSyncableOptions): Syncable {
           );
           continue;
         }
-        for (const raw of extractItems(outcome.parsed)) {
-          const mapped = mapFluxResourceToItem(raw, { kind: entry.kind, syncedAt: now });
-          if (mapped === null) {
-            continue;
-          }
-          ctx.upsertItem(mapped);
-          totalUpserted += 1;
-        }
+        totalUpserted += upsertMapped(ctx, extractItems(outcome.parsed), (raw) =>
+          mapFluxResourceToItem(raw, { kind: entry.kind, syncedAt: now }),
+        );
       }
 
       return syncPassCursorSuccess(t0, totalBytes, pass1Cursor(), totalUpserted);
