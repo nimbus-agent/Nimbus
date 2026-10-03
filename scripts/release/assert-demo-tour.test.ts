@@ -43,10 +43,28 @@ describe("checkDemoTour", () => {
     ["── [3/4] Who owns this code", "header 3/4"],
     ["── [4/4] Where your data is", "header 4/4"],
     ["$ nimbus --demo why src/retry/backoff.ts:42", "command line"],
-    ["$ nimbus --demo oncall --incident pagerduty:PDEMO412", "command line"],
   ])("fails when %p is absent", (needle, expected) => {
     const f = checkDemoTour(GOOD.replace(needle, "x"));
     expect(f.some((m) => m.includes(expected))).toBe(true);
+  });
+
+  // The transition: the weekly run judges the LATEST RELEASE (the old `--incident` form) with
+  // `main`'s script, while this release prints `oncall pushed`. Both must pass; neither must fail.
+  const OLD_ONCALL = "$ nimbus --demo oncall --incident pagerduty:PDEMO412";
+  const NEW_ONCALL = "$ nimbus --demo oncall pushed";
+
+  test("premise: the real capture is the PREVIOUS release's tour (the old --incident form)", () => {
+    expect(GOOD).toContain(OLD_ONCALL);
+    expect(GOOD).not.toContain(NEW_ONCALL);
+  });
+
+  test("accepts this release's tour, whose first step prints `oncall pushed`", () => {
+    expect(checkDemoTour(GOOD.replace(OLD_ONCALL, NEW_ONCALL))).toEqual([]);
+  });
+
+  test("a first step with NEITHER oncall form fails, naming both", () => {
+    const f = checkDemoTour(GOOD.replace(OLD_ONCALL, "$ nimbus --demo oncall"));
+    expect(f).toContain(`the tour did not print its command line: ${NEW_ONCALL} OR ${OLD_ONCALL}`);
   });
 
   test.each([

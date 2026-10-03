@@ -2,7 +2,6 @@ import { createHash } from "node:crypto";
 
 import type { TourStepKind } from "../../agents/_lib/tour-types.ts";
 import { PAGERDUTY_INCIDENT_META_VERSION } from "../../connectors/pagerduty-attribution.ts";
-import { itemPrimaryKey } from "../../index/item-key.ts";
 import {
   DAY,
   type DemoCommit,
@@ -20,8 +19,10 @@ import {
  * "Acme" — a fictional org seeded by `nimbus demo` (spec § 4.3). One connected storyline every
  * tour brief reaches from a different angle:
  *   ticket PAY-231 → PR #412 (Dana) changes src/retry/backoff.ts → merged → deployed to
- *   payment-service at T−47m → P1 at T−38m assigned to the demo persona (Sam) → chat names the
- *   service → a same-service incident 3 weeks earlier → all blame on src/retry is Dana's (bus factor 1).
+ *   payment-service at T−11m (finished ~T−8m) → a P1 assigned to the demo persona (Sam) that
+ *   `demo.firePage` fires at T (NOT seeded — see {@link PAGING_INCIDENT}) → chat naming the service
+ *   follows the page → a same-service incident 3 weeks earlier → all blame on src/retry is Dana's
+ *   (bus factor 1).
  * Everything else is background so standup / expert / stats / changelog / glossary / decisions
  * have real content. Nothing here is real: every domain is `.example`.
  */
@@ -60,9 +61,8 @@ const SERVICES: readonly DemoService[] = [
 ];
 
 /**
- * The PagerDuty id of the storyline's paging incident. ONE source: the incident definition below
- * and the tour's `oncall` step both read it, so the step can never name an incident the corpus
- * does not seed.
+ * The PagerDuty id of the storyline's paging incident — {@link PAGING_INCIDENT}, written by
+ * `fireDemoPage` at fire time rather than by the seed.
  */
 const PAGING_INCIDENT_ID = "PDEMO412";
 
@@ -84,10 +84,11 @@ export const ACME_TOUR_STEPS = [
   {
     kind: "oncall",
     title: "On-call triage",
-    // The INDEX item id, not the raw PagerDuty id — `nimbus oncall --incident` looks the item up
-    // by primary key.
-    args: ["--incident", itemPrimaryKey("pagerduty", PAGING_INCIDENT_ID)],
-    reason: "the open P1 on payment-service",
+    // The brief the page that `demo.firePage` just fired PUSHED — the newest pushed brief, so no
+    // incident id is needed here (`nimbus oncall --incident pagerduty:PDEMO412` still works after
+    // the page, so it stays a valid command to suggest).
+    args: ["pushed"],
+    reason: "the page that just fired",
   },
   {
     kind: "why",
@@ -301,7 +302,9 @@ const STORY_REVIEWS: readonly DemoItem[] = [
 const STORY_DEPLOY: DemoDeployment = {
   serviceId: "payment-service",
   sha: SHA_412,
-  offsetMs: -47 * MINUTE,
+  // Finishes ~8 min before the page that `demo.firePage` fires (the seed adds 3 min to finish a
+  // deploy, and the seed → restart → fire gap is seconds).
+  offsetMs: -11 * MINUTE,
   status: "success",
   runId: "7412",
 };
@@ -341,15 +344,21 @@ function emailOf(key: string): string {
   return p.email;
 }
 
+/**
+ * The storyline's paging incident. NOT part of the seeded corpus: `fireDemoPage` writes it with
+ * `opened_at_ms = now` (offset 0 from the fire time), so it is newer than the push runtime's boot
+ * `enabled_at` and the SAME selection a real PagerDuty sync drives picks it up.
+ */
+export const PAGING_INCIDENT: DemoItem = incident(
+  PAGING_INCIDENT_ID,
+  "payment-service: 5xx rate above 5% on /v1/charges",
+  0,
+  "triggered",
+  "sam",
+  "PPAYDEMO",
+);
+
 const STORY_INCIDENTS: readonly DemoItem[] = [
-  incident(
-    PAGING_INCIDENT_ID,
-    "payment-service: 5xx rate above 5% on /v1/charges",
-    -38 * MINUTE,
-    "triggered",
-    "sam",
-    "PPAYDEMO",
-  ),
   incident(
     "PDEMO301",
     "payment-service: charge latency p99 above 4s",
@@ -378,26 +387,32 @@ const message = (
   metadata: () => ({ channel }),
 });
 
-const STORY_MESSAGES: readonly DemoItem[] = [
+/**
+ * The team's chatter after the page. NOT seeded: `fireDemoPage` writes these AFTER the push run
+ * completed, anchored at the moment they are written (offsets are ms after that moment), so the
+ * pushed brief is honestly assembled before anyone typed. They stay in the index for any later
+ * `nimbus oncall --incident`.
+ */
+export const PAGE_FOLLOW_UPS: readonly DemoItem[] = [
   message(
     "m1",
     "payments-incidents",
     "sam",
-    -35 * MINUTE,
+    0,
     "Paged: payment-service 5xx above 5% on /v1/charges. Looking now.",
   ),
   message(
     "m2",
     "payments-incidents",
     "dana",
-    -31 * MINUTE,
-    "PR #412 (PAY-231) went out to payment-service about ten minutes before the alert. Checking whether the 8s cap is involved.",
+    1,
+    "PR #412 (PAY-231) went out to payment-service about eight minutes before the alert. Checking whether the 8s cap is involved.",
   ),
   message(
     "m3",
     "payments-incidents",
     "lee",
-    -22 * MINUTE,
+    2,
     "payment-service errors are all PSP timeouts. Same shape as the incident three weeks ago.",
   ),
 ];
@@ -638,7 +653,7 @@ export function buildAcmeCorpus(): DemoCorpus {
     ciRuns: bg.ciRuns,
     deployments: [...bg.deployments, STORY_DEPLOY],
     incidents: [...bg.incidents, ...STORY_INCIDENTS],
-    messages: [...KNOWLEDGE_MESSAGES, ...STORY_MESSAGES],
+    messages: KNOWLEDGE_MESSAGES,
     pagerdutyLastSyncOffsetMs: -2 * MINUTE,
   };
 }

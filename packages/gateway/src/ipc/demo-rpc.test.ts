@@ -6,6 +6,7 @@ import { join } from "node:path";
 
 import { CURRENT_SCHEMA_VERSION } from "../index/local-index.ts";
 import { runIndexedSchemaMigrations } from "../index/migrations/runner.ts";
+import { assembleOncallPushRuntime } from "../oncall-push/push-runtime.ts";
 import { DemoRpcError, dispatchDemoRpc } from "./demo-rpc.ts";
 
 let dbs: Database[] = [];
@@ -99,6 +100,52 @@ describe("dispatchDemoRpc", () => {
     expect(value.seededAtMs).toBe(ticks[0] as number);
     expect(value.t0).toBe(ticks[1] as number);
     expect(value.t0).toBeGreaterThanOrEqual(value.seededAtMs);
+  });
+
+  test("demo.firePage with no on-call push runtime wired → -32010 ERR_DEMO_PUSH_UNAVAILABLE", async () => {
+    const { db, configDir, dataDir } = fresh();
+    const err = await dispatchDemoRpc("demo.firePage", {}, { db, configDir, dataDir }).then(
+      () => undefined,
+      (e: unknown) => e,
+    );
+    expect(err).toBeInstanceOf(DemoRpcError);
+    expect(err).toMatchObject({ rpcCode: -32010 });
+    expect((err as Error).message).toContain("ERR_DEMO_PUSH_UNAVAILABLE");
+  });
+
+  test("demo.firePage takes {} only — any param is -32602", async () => {
+    const { db, configDir, dataDir } = fresh();
+    for (const bad of [{ x: 1 }, null, [], "x", 1]) {
+      await expect(
+        dispatchDemoRpc("demo.firePage", bad, { db, configDir, dataDir }),
+      ).rejects.toMatchObject({ rpcCode: -32602 });
+    }
+  });
+
+  test("demo.firePage with a runtime fires the page and returns { incidentId, push }", async () => {
+    const { db, configDir, dataDir } = fresh();
+    const nowMs = Date.now();
+    await dispatchDemoRpc("demo.seed", { nowMs }, { db, configDir, dataDir });
+    const oncallPush = assembleOncallPushRuntime({
+      db,
+      configDir,
+      notifications: { show: () => {} },
+      logger: { error: () => {} },
+      now: () => nowMs + 1_000,
+    });
+    const out = await dispatchDemoRpc("demo.firePage", undefined, {
+      db,
+      configDir,
+      dataDir,
+      oncallPush,
+      now: () => nowMs + 2_000,
+    });
+    expect(out.kind).toBe("hit");
+    if (out.kind !== "hit") throw new Error("unreachable");
+    expect(out.value).toMatchObject({
+      incidentId: "pagerduty:PDEMO412",
+      push: { selected: 1, ok: 1, failed: 0 },
+    });
   });
 
   test("rejects a non-numeric, non-finite, or negative nowMs", async () => {

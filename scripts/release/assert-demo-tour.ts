@@ -21,11 +21,17 @@ const HEADERS = [
   "── [4/4] Where your data is",
 ] as const;
 
-const COMMANDS = [
-  "$ nimbus --demo oncall --incident pagerduty:PDEMO412",
+/**
+ * A step's command line, or a set of accepted alternatives. The first step has TWO during the
+ * transition: the weekly run judges the LATEST RELEASE with `main`'s script, so until a release
+ * carrying the pushed brief ships, `main` must still accept the old `--incident` form. Drop the
+ * old alternative once the release after 2026-10 carries `oncall pushed`.
+ */
+const COMMANDS: readonly (string | readonly string[])[] = [
+  ["$ nimbus --demo oncall pushed", "$ nimbus --demo oncall --incident pagerduty:PDEMO412"],
   "$ nimbus --demo why src/retry/backoff.ts:42",
   "$ nimbus --demo owners src/retry",
-] as const;
+];
 
 /**
  * The locality panel's own anchors. The proof fragment is the `formatProveResult`
@@ -96,7 +102,10 @@ export function checkDemoTour(rawStdout: string): string[] {
     }
   });
   for (const c of COMMANDS) {
-    if (!out.includes(c)) failures.push(`the tour did not print its command line: ${c}`);
+    const options = typeof c === "string" ? [c] : c;
+    if (!options.some((o) => out.includes(o))) {
+      failures.push(`the tour did not print its command line: ${options.join(" OR ")}`);
+    }
   }
   for (const f of FORBIDDEN) {
     if (out.includes(f)) failures.push(`the output contains a failure marker: ${f}`);

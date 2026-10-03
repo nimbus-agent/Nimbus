@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
-import { ACME_TOUR_STEPS, buildAcmeCorpus } from "./acme.ts";
+import { ACME_TOUR_STEPS, buildAcmeCorpus, PAGE_FOLLOW_UPS, PAGING_INCIDENT } from "./acme.ts";
 
 /** The single arg of the step whose kind is `kind` — the tour's own target for that step. */
 function soleArg(kind: (typeof ACME_TOUR_STEPS)[number]["kind"]): string {
@@ -21,6 +21,9 @@ const allItems = [
   ...corpus.ciRuns,
   ...corpus.incidents,
   ...corpus.messages,
+  // Written by `fireDemoPage`, not the seed — but held to the same hygiene rules.
+  PAGING_INCIDENT,
+  ...PAGE_FOLLOW_UPS,
 ];
 
 describe("acme corpus hygiene", () => {
@@ -64,14 +67,19 @@ describe("acme corpus hygiene", () => {
     expect(corpus.files.some((x) => x.path.startsWith(`${soleArg("owners")}/`))).toBe(true);
   });
 
-  test("the oncall step targets the indexed id of the paging incident", () => {
+  test("the oncall step shows the pushed brief of the page that just fired", () => {
     const step = ACME_TOUR_STEPS.find((s) => s.kind === "oncall");
-    expect(step?.args[0]).toBe("--incident");
-    // The step must name the INDEX item id, not the raw PagerDuty id — `nimbus oncall --incident`
-    // looks the item up by primary key, so a bare `PDEMO412` would select nothing.
-    const incidentId = step?.args[1];
-    const page = corpus.incidents.find((i) => `pagerduty:${i.externalId}` === incidentId);
-    expect(page?.title).toContain("payment-service");
+    expect(step?.args).toEqual(["pushed"]);
+    expect(step?.title).toBe("On-call triage");
+    expect(PAGING_INCIDENT.title).toContain("payment-service");
+  });
+
+  test("the paging incident and its chatter are NOT seeded — `fireDemoPage` writes them", () => {
+    expect(corpus.incidents.some((i) => i.externalId === PAGING_INCIDENT.externalId)).toBe(false);
+    const followUpIds = new Set(PAGE_FOLLOW_UPS.map((m) => m.externalId));
+    expect(corpus.messages.some((m) => followUpIds.has(m.externalId))).toBe(false);
+    expect(PAGE_FOLLOW_UPS.map((m) => m.offsetMs)).toEqual([0, 1, 2]);
+    expect(PAGE_FOLLOW_UPS[1]?.body).toContain("about eight minutes before the alert");
   });
 
   test("all blame under the owners dir is ONE author (bus factor 1)", () => {
@@ -86,12 +94,12 @@ describe("acme corpus hygiene", () => {
 
   test("the paging incident is assigned to me and opened after the story deploy", () => {
     const at = (o: number): number => 1_000 + o; // any base — only ordering matters
-    const page = corpus.incidents.find((i) => i.externalId === "PDEMO412");
-    const meta = page?.metadata?.(at);
+    const page = PAGING_INCIDENT;
+    const meta = page.metadata?.(at);
     const me = corpus.people.find((p) => p.key === corpus.meKey);
     expect(meta?.["assignee_emails"]).toEqual([me?.email]);
     const deploy = corpus.deployments.find((d) => d.runId === "7412");
-    expect((deploy?.offsetMs ?? 0) < (page?.offsetMs ?? 0)).toBe(true);
+    expect((deploy?.offsetMs ?? 0) < page.offsetMs).toBe(true);
   });
 
   test("external ids are unique per service/type", () => {

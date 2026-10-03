@@ -24,6 +24,12 @@ export interface AutostartManager {
 }
 
 export interface NotificationService {
+  /**
+   * Whether `show()` actually raises an OS notification. Absent means true; `false` means
+   * `show()` is a no-op that drops the notification, so a caller recording a delivery outcome
+   * must not record "delivered" for it.
+   */
+  readonly delivers?: boolean;
   show(title: string, body: string): Promise<void>;
 }
 

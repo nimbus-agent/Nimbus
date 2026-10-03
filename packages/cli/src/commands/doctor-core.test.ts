@@ -18,6 +18,7 @@ import {
   doctorPrintHealthFromSnapshot,
   doctorPrintIndexConfidence,
   doctorPrintIndexFromSnapshot,
+  doctorPrintOncallPush,
   doctorPrintVectorSearchFromSnapshot,
   doctorVoiceLines,
   healthStateMark,
@@ -1093,6 +1094,37 @@ describe("doctorPrintIndexConfidence (v0.1.1 index health)", () => {
     // Same rule the embedding check follows: a false green, or a false red, is worse than no line.
     const exit = doctorPrintIndexConfidence({});
     expect(exit).toBe(0);
+    expect(log).toHaveLength(0);
+  });
+});
+
+describe("doctorPrintOncallPush", () => {
+  const log: string[] = [];
+  const orig = console.log;
+  beforeEach(() => {
+    log.length = 0;
+    console.log = (...a: unknown[]) => {
+      log.push(a.map(String).join(" "));
+    };
+  });
+  afterEach(() => {
+    console.log = orig;
+  });
+
+  it("disabled -> 0 and prints nothing", () => {
+    expect(doctorPrintOncallPush({ enabled: false, identity: "unresolved" })).toBe(0);
+    expect(log).toHaveLength(0);
+  });
+  it("enabled + unresolved -> 1 with [warn]", () => {
+    expect(doctorPrintOncallPush({ enabled: true, identity: "unresolved" })).toBe(1);
+    expect(log.some((l) => l.includes("[warn]"))).toBe(true);
+  });
+  it("enabled + resolved -> 0 with [ok]", () => {
+    expect(doctorPrintOncallPush({ enabled: true, identity: "resolved" })).toBe(0);
+    expect(log.some((l) => l.includes("[ok]"))).toBe(true);
+  });
+  it("empty object (older gateway) -> 0, silent", () => {
+    expect(doctorPrintOncallPush({})).toBe(0);
     expect(log).toHaveLength(0);
   });
 });

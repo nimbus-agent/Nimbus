@@ -20,6 +20,7 @@ import {
   checkGeneratedManifestConfinement,
   checkListenerRegistryConfinement,
   checkMediaGrantStoreConfinement,
+  checkPushClientKindConfinement,
   checkRemoteVlmConfinement,
   checkRunConfinedConfinement,
   checkSavedToolAccessorConfinement,
@@ -2203,6 +2204,40 @@ describe("D29(d) — saved-tool accessor confinement (I40)", () => {
   });
 });
 
+describe("D28 — push ClientKind confinement (oncall push)", () => {
+  const file = (relPath: string, contents: string): FileEntry => ({ relPath, contents });
+  const ROGUE = "packages/gateway/src/agents/rogue.ts";
+  const RUNNER = "packages/gateway/src/oncall-push/push-runner.ts";
+  const EGRESS = "packages/gateway/src/egress/egress-bearing-kinds.ts";
+  const flagged = (files: FileEntry[]): boolean =>
+    checkPushClientKindConfinement(files).some((v) => v.rule === "D28-push-client-kind");
+
+  test("flags an object-literal kind outside the runner", () => {
+    expect(flagged([file(ROGUE, `const caller = { clientId: id, kind: "push" };`)])).toBe(true);
+  });
+  test("flags a SINGLE-quoted kind outside the runner", () => {
+    expect(flagged([file(ROGUE, "const caller = { clientId: id, kind: 'push' };")])).toBe(true);
+    expect(flagged([file(ROGUE, "const k = 'push' as ClientKind;")])).toBe(true);
+  });
+  test("allows it in the runner", () => {
+    expect(flagged([file(RUNNER, `caller: { clientId: "oncall-push", kind: "push" },`)])).toBe(
+      false,
+    );
+  });
+  test("the unquoted `push: null` egress entry is allow-listed in EGRESS, flagged elsewhere", () => {
+    const entry = `  fleet: null,\n  push: null,\n});`;
+    expect(flagged([file(EGRESS, entry)])).toBe(false);
+    expect(flagged([file(ROGUE, entry)])).toBe(true);
+  });
+  test("does not flag the owner-scoped map entry `push: false` or array push()", () => {
+    expect(flagged([file("packages/gateway/src/ipc/agents-rpc.ts", "  push: false,")])).toBe(false);
+    expect(flagged([file(ROGUE, "out.push(row);")])).toBe(false);
+  });
+  test("ignores test files", () => {
+    expect(flagged([file("packages/gateway/src/x.test.ts", `kind: "push"`)])).toBe(false);
+  });
+});
+
 describe("D28 — fleet ClientKind confinement (I38)", () => {
   const file = (relPath: string, contents: string): FileEntry => ({ relPath, contents });
   const ROGUE = "packages/gateway/src/agents/rogue.ts";
@@ -2213,6 +2248,10 @@ describe("D28 — fleet ClientKind confinement (I38)", () => {
     checkFleetClientKindConfinement(files).some((v) => v.rule === "D28-fleet-client-kind");
 
   // ---- positive: one per assignment shape the rule claims to cover -------------------------
+
+  test("flags a SINGLE-quoted kind outside the allow-list", () => {
+    expect(flagged([file(ROGUE, "const caller = { clientId: id, kind: 'fleet' };")])).toBe(true);
+  });
 
   test("flags the REAL egress classification shape copy-pasted elsewhere", () => {
     // The rule could not see this until the unquoted-key alternative was added: the map-key

@@ -19,6 +19,12 @@ export interface DemoSeedSummary {
   readonly t0: number;
 }
 
+/** What `demo.firePage` returns: the page's index id and the on-call push run it triggered. */
+export type FireDemoPageSummary = {
+  incidentId: string;
+  push: { selected: number; ok: number; failed: number };
+};
+
 export interface DemoDeps {
   readonly paths: () => CliPlatformPaths;
   readonly stop: (paths: CliPlatformPaths) => Promise<StopResult>;
@@ -26,6 +32,8 @@ export interface DemoDeps {
   /** Starts the demo gateway; resolves true when it is up. */
   readonly start: () => Promise<boolean>;
   readonly seed: (paths: CliPlatformPaths) => Promise<DemoSeedSummary>;
+  /** Fires the storyline's page on the (restarted) demo gateway — the on-call push path briefs it. */
+  readonly firePage: (paths: CliPlatformPaths) => Promise<FireDemoPageSummary>;
   readonly runners: TourRunners;
   readonly locality: (paths: CliPlatformPaths) => Promise<LocalityReport>;
   readonly prove: (paths: CliPlatformPaths, since: number, until: number) => Promise<ProveResult>;
@@ -48,6 +56,10 @@ export const defaultDemoDeps: DemoDeps = {
   },
   seed: (p) =>
     withGatewayIpc((c) => c.call<DemoSeedSummary>("demo.seed", {}), p, {
+      requestTimeoutMs: BATCH_RPC_TIMEOUT_MS,
+    }),
+  firePage: (p) =>
+    withGatewayIpc((c) => c.call<FireDemoPageSummary>("demo.firePage", {}), p, {
       requestTimeoutMs: BATCH_RPC_TIMEOUT_MS,
     }),
   // The SAME runner table `nimbus wow` uses, so a brief cannot behave differently on the two
@@ -147,7 +159,30 @@ export async function runDemo(args: string[], deps: DemoDeps = defaultDemoDeps):
   await stopOrAbort(deps, paths);
   if (!(await deps.start())) return;
 
-  let failed = false;
+  // The page fires on the RESTARTED gateway, whose boot reconcile already stamped the push
+  // runtime's `enabled_at` — so the page is newer than it and the real selection picks it up.
+  let page: FireDemoPageSummary;
+  try {
+    page = await deps.firePage(paths);
+  } catch (err) {
+    // Without the page the tour's first step has nothing to show; stop here rather than tour.
+    deps.err(
+      `The demo page could not be fired: ${err instanceof Error ? err.message : String(err)}\n`,
+    );
+    // Same cleanup as the seed-failure path: do not leave the demo gateway running, and never let
+    // a failed stop replace the page error being reported.
+    await deps.stop(paths).catch(() => undefined);
+    throw new CliExit(1);
+  }
+  const pushed = page.push.ok > 0;
+  deps.out(
+    pushed
+      ? "A page just fired: P1 on payment-service. Its brief was assembled before anyone asked.\n"
+      : `A page just fired, but no brief was pushed (${JSON.stringify(page.push)}).\n`,
+  );
+
+  // A page that pushed no brief is a failed demo — the tour's first step will fail too.
+  let failed = !pushed;
   if (action === "run") {
     // The locality panel is one more step than the seeder planned, so the brief headers read
     // "[n/N+1]" rather than under-counting what actually prints. `runTour` renders every header
@@ -165,7 +200,7 @@ export async function runDemo(args: string[], deps: DemoDeps = defaultDemoDeps):
       seeded.t0,
       total,
     );
-    failed = results.some((r) => !r.ok) || proveFailed;
+    failed = failed || results.some((r) => !r.ok) || proveFailed;
   }
   deps.out(
     [
