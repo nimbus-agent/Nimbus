@@ -18,6 +18,36 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
 
 ## Post-Phase-6 deliveries
 
+- **2026-10-02 — The on-call pushed brief, PR 1 of 3 (Phase 17 W2).** A P1 page now reaches you with
+  its brief already assembled. With `[oncall.push] enabled = true` (DEFAULT OFF), a PagerDuty sync
+  selects ACTIVE (`triggered`/`acknowledged`) incidents assigned to you whose severity is in
+  `{"p1"} ∪ [pagerduty] severity_p1_aliases` (or `[oncall.push] severities`, which replaces that set)
+  and that opened at or after the boot-reconciled `enabled_at` minus five minutes, assembles the
+  `nimbus oncall` brief once per incident, stores it, and emits an `oncall.briefPushed` gateway event
+  carrying `{incidentId, status}` only. The OS notification is attempted but currently dropped —
+  Nimbus has no platform notification implementation yet, so each row's toast is recorded `skipped`
+  rather than `delivered` — and `nimbus tail --filter oncall` (the event) and `nimbus oncall pushed`
+  are the delivery surfaces today. Schema **V64**: `pushed_brief` (`incident_id` is the primary key, so the table is the
+  dedup) and the singleton `oncall_push_state`. **Synthesis never runs** — the stored brief is the
+  deterministic render. Read it with `nimbus oncall pushed [list|<incident-id>] [--retry] [--json]`,
+  follow it with `nimbus tail --filter oncall`; `nimbus doctor` warns when push is enabled but your
+  identity is unresolved. Three CLI-only IPC methods (`oncall.pushedList`/`pushedGet`/`pushedRetry`);
+  the whole `oncall` namespace stays LAN-forbidden and none is on the Tauri allowlist (still 105). A new
+  derived `push` ClientKind (not declarable over the socket, non-egress-bearing, refused `oncall`'s
+  owner-scoped shape) and a `D28-push-client-kind` twin of static rule D28 confining its assignment to
+  `oncall-push/push-runner.ts`; no new invariant, no new egress class. `nimbus demo` now fires a page
+  after its post-seed restart (`demo.firePage`, demo-rooted gateways only) that runs this same path, and
+  its first tour step is `nimbus --demo oncall pushed` (the title is still "On-call triage"; the story
+  deploy finishes about eight minutes before the page, and the incident-channel chatter is written after
+  the brief); the release judge accepts both the old and new first step during the transition.
+  `agents/oncall-queries.ts` moved to `agents/_lib/oncall-queries.ts` because D22(d) treats
+  `agents/<name>.ts` as emitters. **Bounds:** an incident with no `opened_at_ms` is never pushed;
+  enabling never backfills history; a GDPR purge does not sweep `pushed_brief` (retention, 90 days by
+  default and pruned at every boot even with push disabled, is the bound, as for `fleet_brief`). **Not shipped:** ChatOps delivery (PR 2 —
+  `chatops_namespace` is parsed and inert), the desktop panel (PR 3), approve-from-push, cascade
+  ranking. Detail: [`architecture.md`](./architecture.md#on-call-pushed-brief-oncall-push-nimbus-oncall-pushed),
+  [`cli-reference.md`](./cli-reference.md#nimbus-oncall-pushed).
+
 - **2026-09-30 — Dependabot PRs merge themselves; `main` merges through a merge queue.** Clearing
   one week's Dependabot batch (#1573–#1576) took two days, seven superseded PR numbers and a dozen
   hand-pushed fixes, and none of the failures was a real incompatibility. Five causes, each now

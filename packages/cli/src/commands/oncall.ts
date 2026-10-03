@@ -9,6 +9,7 @@ import { registerInteractiveCliIpcHandlers } from "../lib/interactive-ipc-handle
 import { parseDurationToMs } from "../lib/parse-duration.ts";
 import { getCliPlatformPaths } from "../paths.ts";
 import { flagValue } from "./_agent-brief-cli.ts";
+import { ONCALL_PUSHED_USAGE, runOncallPushed } from "./oncall-pushed.ts";
 
 /**
  * Local structural stand-in for the gateway's `OncallBrief` (`agents/_lib/oncall-types.ts`).
@@ -88,9 +89,11 @@ const USAGE =
   "  --json       print structured findings instead of the brief\n" +
   "\n" +
   "With neither --incident nor --service, briefs the newest active incident assigned to YOU,\n" +
-  "resolved from `git config user.email`, then your OS username. Pin it with `[user] mePersonId`\n" +
+  "resolved from `git config user.email`, then your OS username. Pin it with `[user] me_person_id`\n" +
   "in nimbus.toml. Refuses rather than printing an empty brief when nothing is assigned —\n" +
-  "an empty on-call brief reads as `you are clear`, which is the one wrong answer that looks right.";
+  "an empty on-call brief reads as `you are clear`, which is the one wrong answer that looks right.\n" +
+  "\n" +
+  ONCALL_PUSHED_USAGE;
 
 /** `--format`'s value — refused, with the usage text, unless it names a known format. */
 function parseFormatFlag(raw: string): OncallFormat {
@@ -237,6 +240,10 @@ export async function runOncallCommand(
   args: string[],
   deps: OncallCommandDeps = defaultOncallDeps,
 ): Promise<void> {
+  if (args[0] === "pushed") {
+    await runOncallPushed(args.slice(1));
+    return;
+  }
   const parsed = parseOncallArgs(args);
 
   const { brief, findings } = await deps.fetchBrief({

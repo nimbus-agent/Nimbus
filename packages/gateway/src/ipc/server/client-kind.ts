@@ -10,7 +10,7 @@
  * handler for a caller whose bearer token it just verified. It is on this union because the egress
  * ledger records the transport, and one union keeps that record total.
  */
-export type ClientKind = "cli" | "mcp" | "ui" | "http" | "chatops" | "fleet" | "unknown";
+export type ClientKind = "cli" | "mcp" | "ui" | "http" | "chatops" | "fleet" | "push" | "unknown";
 
 /**
  * The kinds a client may DECLARE at connect time.
@@ -25,6 +25,8 @@ export type ClientKind = "cli" | "mcp" | "ui" | "http" | "chatops" | "fleet" | "
  * `fleet` is likewise DERIVED and deliberately absent from RECOGNISED: it is set by the gateway's
  * own scheduler, so its attribution is a fact rather than a client's word. Admitting it here would
  * let any local process on the socket file its briefs as unattended fleet work.
+ *
+ * `push` is likewise DERIVED (set only by `oncall-push/push-runner.ts`) and absent from RECOGNISED.
  */
 const RECOGNISED: ReadonlySet<string> = new Set(["cli", "mcp", "ui"]);
 

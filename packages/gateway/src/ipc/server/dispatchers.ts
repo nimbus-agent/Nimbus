@@ -64,6 +64,7 @@ import { dispatchLlmRpc, LlmRpcError } from "../llm-rpc.ts";
 import { dispatchLocalityRpc, LocalityRpcError } from "../locality-rpc.ts";
 import { dispatchMediaRpc } from "../media-rpc.ts";
 import { dispatchMetricsRpc, MetricsRpcError } from "../metrics-rpc.ts";
+import { dispatchOncallPushRpc, OncallPushRpcError } from "../oncall-push-rpc.ts";
 import { dispatchOwnershipRpc } from "../ownership-rpc.ts";
 import { dispatchPeopleRpc, PeopleRpcError } from "../people-rpc.ts";
 import { dispatchPolicyRpc, PolicyRpcError } from "../policy-rpc.ts";
@@ -984,10 +985,12 @@ export async function tryDispatchDemoRpc(
     return phase4RpcSkipped;
   }
   try {
+    const oncallPush = ctx.options.oncallPushRpcCtx?.runtime;
     const out = await dispatchDemoRpc(method, params, {
       db: localIndex.getDatabase(),
       configDir,
       dataDir,
+      ...(oncallPush === undefined ? {} : { oncallPush }),
     });
     if (out.kind === "hit") return out.value;
   } catch (e) {
@@ -1415,6 +1418,24 @@ export async function tryDispatchFleetRpc(
   return phase4RpcSkipped;
 }
 
+export async function tryDispatchOncallPushRpc(
+  ctx: ServerCtx,
+  method: string,
+  params: unknown,
+): Promise<unknown> {
+  if (!method.startsWith("oncall.")) return phase4RpcSkipped;
+  const rpc = ctx.options.oncallPushRpcCtx;
+  if (rpc === undefined) return phase4RpcSkipped;
+  try {
+    const out = await dispatchOncallPushRpc(method, params, rpc);
+    if (out.kind === "hit") return out.value;
+  } catch (e) {
+    if (e instanceof OncallPushRpcError) throw new RpcMethodError(e.rpcCode, e.message);
+    throw e;
+  }
+  return phase4RpcSkipped;
+}
+
 export async function tryDispatchShareRpc(
   ctx: ServerCtx,
   method: string,
@@ -1692,6 +1713,7 @@ const PHASE4_PLATFORM_DISPATCHERS: ReadonlyArray<
   tryDispatchToolgenRpc,
   tryDispatchComputerRpc,
   tryDispatchFleetRpc,
+  tryDispatchOncallPushRpc,
   tryDispatchMediaRpc,
   tryDispatchEgressRpc,
   tryDispatchGlossaryRpc,

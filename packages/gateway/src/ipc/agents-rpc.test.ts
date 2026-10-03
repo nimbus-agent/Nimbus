@@ -1480,13 +1480,32 @@ describe("the forge-file arm", () => {
 describe("agents.oncall — the external shape bound", () => {
   const EXTERNAL: readonly ClientKind[] = ["http", "mcp", "chatops"];
   const LOCAL: readonly ClientKind[] = ["cli", "ui", "unknown", "fleet"];
+  // Kinds refused the owner-scoped shape. `push` is LOCAL (the gateway's own post-sync hook) but
+  // always names its incident, so it is refused the shape that would let it lose one.
+  const OWNER_SCOPED_REFUSED: readonly ClientKind[] = [...EXTERNAL, "push"];
+
+  test("the kind lists together cover every ClientKind exactly", () => {
+    const ALL: Record<ClientKind, true> = {
+      cli: true,
+      ui: true,
+      unknown: true,
+      fleet: true,
+      push: true,
+      mcp: true,
+      http: true,
+      chatops: true,
+    };
+    expect([...OWNER_SCOPED_REFUSED, ...LOCAL].sort()).toEqual(
+      (Object.keys(ALL) as ClientKind[]).sort(),
+    );
+  });
 
   function ctxAs(kind: ClientKind | undefined) {
     const base = makeCtx(freshDb());
     return kind === undefined ? base : { ...base, caller: { clientId: "c1", kind } };
   }
 
-  test.each(EXTERNAL.map((k) => [k] as const))(
+  test.each(OWNER_SCOPED_REFUSED.map((k) => [k] as const))(
     "%s: the zero-parameter owner-scoped shape is REFUSED",
     async (kind) => {
       const out = await dispatchAgentsRpc("agents.oncall", {}, ctxAs(kind)).catch(
@@ -1497,7 +1516,7 @@ describe("agents.oncall — the external shape bound", () => {
     },
   );
 
-  test.each(EXTERNAL.map((k) => [k] as const))(
+  test.each(OWNER_SCOPED_REFUSED.map((k) => [k] as const))(
     "%s: an explicit --service IS served (the bound is the shape, not the method)",
     async (kind) => {
       // Reaches the agent and refuses for the RIGHT reason — no incident in an empty index —

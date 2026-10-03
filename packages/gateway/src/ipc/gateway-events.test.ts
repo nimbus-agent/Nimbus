@@ -85,3 +85,16 @@ describe("gateway event sink", () => {
     expect(seen).toEqual([]);
   });
 });
+
+describe("oncall.briefPushed", () => {
+  test("goes out on the envelope carrying ONLY incidentId and status", () => {
+    const seen: Array<{ method: string; params: unknown }> = [];
+    setGatewayEventBroadcast((method, params) => seen.push({ method, params }));
+    emitGatewayEvent("oncall.briefPushed", { incidentId: "pagerduty:A", status: "ok" });
+    expect(seen).toHaveLength(1);
+    expect(seen[0]?.method).toBe("gateway.event");
+    const p = seen[0]?.params as { kind: string; payload: Record<string, unknown> };
+    expect(p.kind).toBe("oncall.briefPushed");
+    expect(Object.keys(p.payload).sort()).toEqual(["incidentId", "status"]);
+  });
+});

@@ -18,6 +18,7 @@ describe("egress-bearing client kinds", () => {
       "fleet",
       "http",
       "mcp",
+      "push",
       "ui",
       "unknown",
     ]);

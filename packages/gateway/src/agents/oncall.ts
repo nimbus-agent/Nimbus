@@ -3,15 +3,6 @@ import type { GapNote } from "@nimbus-dev/sdk";
 
 import { distinctPrServiceColumns, type ServiceConfig } from "../metrics/dora-config.ts";
 import { emitBriefWithSynthesis } from "./_lib/emit-brief.ts";
-import type {
-  OncallBrief,
-  OncallIncident,
-  OncallOtherIncident,
-  OncallSelection,
-  OncallServiceBinding,
-} from "./_lib/oncall-types.ts";
-import { type GitRunner, resolveSelfPerson } from "./_lib/self-person.ts";
-import type { SynthesisRunner } from "./_lib/synthesis-llm.ts";
 import {
   readPagerdutySyncFreshness,
   selectActiveAssignedIncidents,
@@ -23,7 +14,16 @@ import {
   selectPriorIncidents,
   selectServiceMessages,
   type Window,
-} from "./oncall-queries.ts";
+} from "./_lib/oncall-queries.ts";
+import type {
+  OncallBrief,
+  OncallIncident,
+  OncallOtherIncident,
+  OncallSelection,
+  OncallServiceBinding,
+} from "./_lib/oncall-types.ts";
+import { type GitRunner, resolveSelfPerson } from "./_lib/self-person.ts";
+import type { SynthesisRunner } from "./_lib/synthesis-llm.ts";
 
 /**
  * Display cap for the chat lane, matching `standup`'s.

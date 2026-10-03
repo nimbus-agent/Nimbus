@@ -14,6 +14,7 @@ import {
   DemoGatewayUnresponsiveError,
   type DemoSeedSummary,
   defaultDemoDeps,
+  type FireDemoPageSummary,
   parseDemoArgs,
   runDemo,
 } from "./demo.ts";
@@ -44,9 +45,9 @@ const SEED: DemoSeedSummary = {
     {
       kind: "oncall",
       title: "On-call triage",
-      command: "nimbus --demo oncall --incident pagerduty:PDEMO412",
-      args: ["--incident", "pagerduty:PDEMO412"],
-      reason: "the open P1 on payment-service",
+      command: "nimbus --demo oncall pushed",
+      args: ["pushed"],
+      reason: "the page that just fired",
     },
     {
       kind: "why",
@@ -64,6 +65,12 @@ const SEED: DemoSeedSummary = {
     },
   ],
   t0: 1000,
+};
+
+/** A page that pushed exactly one brief — what `demo.firePage` returns on a healthy demo gateway. */
+const PAGE: FireDemoPageSummary = {
+  incidentId: "pagerduty:PDEMO412",
+  push: { selected: 1, ok: 1, failed: 0 },
 };
 
 const LOCALITY: LocalityReport = {
@@ -136,6 +143,11 @@ function fakeDeps(overrides: Partial<DemoDeps> = {}): {
       void p;
       return SEED;
     },
+    firePage: async (p) => {
+      calls.push("firePage");
+      void p;
+      return PAGE;
+    },
     runners,
     locality: async (p) => {
       calls.push("locality");
@@ -182,7 +194,8 @@ describe("runDemo", () => {
       "seed",
       "stop",
       "start",
-      "oncall(--incident pagerduty:PDEMO412)",
+      "firePage",
+      "oncall(pushed)",
       "why(src/retry/backoff.ts:42)",
       "owners(src/retry)",
       "locality",
@@ -197,7 +210,7 @@ describe("runDemo", () => {
     expect(joined).toContain("── [3/4] Who owns this code");
     expect(joined).toContain("── [4/4] Where your data is");
 
-    const oncallIdx = joined.indexOf("$ nimbus --demo oncall --incident pagerduty:PDEMO412");
+    const oncallIdx = joined.indexOf("$ nimbus --demo oncall pushed");
     const whyIdx = joined.indexOf("$ nimbus --demo why src/retry/backoff.ts:42");
     const ownersIdx = joined.indexOf("$ nimbus --demo owners src/retry");
     expect(oncallIdx).toBeGreaterThan(-1);
@@ -223,11 +236,96 @@ describe("runDemo", () => {
     const { deps, calls, out } = fakeDeps();
     await runDemo(["--no-tour"], deps);
 
-    expect(calls).toEqual(["stop", "removeDir(demo-root)", "start", "seed", "stop", "start"]);
+    expect(calls).toEqual([
+      "stop",
+      "removeDir(demo-root)",
+      "start",
+      "seed",
+      "stop",
+      "start",
+      "firePage",
+    ]);
     const joined = out.join("");
     expect(joined).not.toContain("[1/4]");
     expect(joined).not.toContain("Where your data is");
     expect(joined).not.toContain("Listeners the gateway has open right now:");
+  });
+
+  test.each([[[] as string[]], [["--no-tour"]]])(
+    "%p fires the page exactly once, after the second start and before any tour step",
+    async (args) => {
+      const { deps, calls, out } = fakeDeps();
+      await runDemo(args, deps);
+      expect(calls.filter((c) => c === "firePage")).toHaveLength(1);
+      const fire = calls.indexOf("firePage");
+      expect(calls.lastIndexOf("start")).toBe(fire - 1);
+      const firstStep = calls.findIndex((c) => c.startsWith("oncall("));
+      if (firstStep >= 0) expect(fire).toBeLessThan(firstStep);
+      expect(out.join("")).toContain(
+        "A page just fired: P1 on payment-service. Its brief was assembled before anyone asked.",
+      );
+    },
+  );
+
+  test.each([[[] as string[]], [["--no-tour"]]])(
+    "%p: a firePage rejection is reported, stops the demo gateway, and exits 1 without touring",
+    async (args) => {
+      const { deps, calls, err } = fakeDeps({
+        firePage: async () => {
+          calls.push("firePage");
+          throw new Error("boom");
+        },
+      });
+      await expect(runDemo(args, deps)).rejects.toMatchObject({ name: "CliExit", code: 1 });
+      expect(calls).toEqual([
+        "stop",
+        "removeDir(demo-root)",
+        "start",
+        "seed",
+        "stop",
+        "start",
+        "firePage",
+        "stop",
+      ]);
+      expect(err.join("")).toContain("boom");
+    },
+  );
+
+  test("a firePage rejection whose cleanup stop ALSO fails still exits 1 with the page error", async () => {
+    let n = 0;
+    const { deps, calls, err } = fakeDeps({
+      stop: async () => {
+        calls.push("stop");
+        n += 1;
+        if (n > 2) throw new Error("stop failed");
+        return "stopped";
+      },
+      firePage: async () => {
+        calls.push("firePage");
+        throw new Error("boom");
+      },
+    });
+    await expect(runDemo(["--no-tour"], deps)).rejects.toMatchObject({ name: "CliExit", code: 1 });
+    expect(calls.slice(-2)).toEqual(["firePage", "stop"]);
+    expect(err.join("")).toContain("boom");
+    expect(err.join("")).not.toContain("stop failed");
+  });
+
+  test("a page that pushed no brief says so without a failure marker, still tours, then CliExit(1)", async () => {
+    const { deps, calls, out } = fakeDeps({
+      firePage: async () => {
+        calls.push("firePage");
+        return { incidentId: "pagerduty:PDEMO412", push: { selected: 0, ok: 0, failed: 0 } };
+      },
+    });
+    await expect(runDemo([], deps)).rejects.toMatchObject({ name: "CliExit", code: 1 });
+    const joined = out.join("");
+    expect(joined).toContain("A page just fired, but no brief was pushed");
+    for (const marker of ["ERR_", "Gateway is not running", "No LLM provider available"]) {
+      expect(joined).not.toContain(marker);
+    }
+    expect(calls).toContain("oncall(pushed)");
+    expect(joined).toContain("The demo gateway is still running");
   });
 
   test("a failing step still runs the others, prints the panel and the closing block, then CliExit(1)", async () => {
@@ -249,7 +347,8 @@ describe("runDemo", () => {
       "seed",
       "stop",
       "start",
-      "oncall(--incident pagerduty:PDEMO412)",
+      "firePage",
+      "oncall(pushed)",
       "why(boom)",
       "owners(src/retry)",
       "locality",
@@ -507,6 +606,15 @@ describe("defaultDemoDeps", () => {
 
   test("seed with no running demo gateway rejects with the demo-root not-running message", async () => {
     const err = await defaultDemoDeps.seed(tempDemoPaths()).then(
+      () => undefined,
+      (e: unknown) => e,
+    );
+    expect(err).toBeInstanceOf(GatewayNotRunningError);
+    expect((err as Error).message).toContain("(demo root)");
+  });
+
+  test("firePage with no running demo gateway rejects with the demo-root not-running message", async () => {
+    const err = await defaultDemoDeps.firePage(tempDemoPaths()).then(
       () => undefined,
       (e: unknown) => e,
     );

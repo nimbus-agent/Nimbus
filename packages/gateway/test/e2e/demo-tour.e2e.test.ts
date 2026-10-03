@@ -278,7 +278,7 @@ describe("nimbus demo: the whole flow, end to end, on temp roots", () => {
       expect(i3).toBeGreaterThan(i2);
       expect(i4).toBeGreaterThan(i3);
 
-      expect(r.stdout).toContain("$ nimbus --demo oncall --incident pagerduty:PDEMO412");
+      expect(r.stdout).toContain("$ nimbus --demo oncall pushed");
       expect(r.stdout).toContain("$ nimbus --demo why src/retry/backoff.ts:42");
       expect(r.stdout).toContain("$ nimbus --demo owners src/retry");
 

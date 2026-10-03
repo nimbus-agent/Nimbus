@@ -1,6 +1,7 @@
 import type { Database } from "bun:sqlite";
 
-import { DemoSeedRefusedError, seedDemoCorpus } from "../demo/seed.ts";
+import { DemoSeedRefusedError, fireDemoPage, seedDemoCorpus } from "../demo/seed.ts";
+import type { OncallPushRuntime } from "../oncall-push/push-runtime.ts";
 import { dispatchByMethod, type RpcMissOrHit } from "./_lib/dispatch-by-method.ts";
 
 export class DemoRpcError extends Error {
@@ -17,6 +18,8 @@ export type DemoRpcContext = {
   readonly configDir: string;
   readonly dataDir: string;
   readonly now?: () => number;
+  /** The gateway's on-call push runtime — `demo.firePage` runs the page through it. */
+  readonly oncallPush?: OncallPushRuntime;
 };
 
 function requireSeedParams(params: unknown): { nowMs?: number } {
@@ -61,6 +64,29 @@ async function handleDemoSeed(params: unknown, ctx: DemoRpcContext): Promise<unk
 }
 
 /**
+ * `demo.firePage` — fires the storyline's page through the SAME on-call push path a real
+ * PagerDuty sync triggers (`fireDemoPage`). Takes `{}` only.
+ */
+async function handleFirePage(params: unknown, ctx: DemoRpcContext): Promise<unknown> {
+  if (
+    params !== undefined &&
+    (params === null ||
+      typeof params !== "object" ||
+      Array.isArray(params) ||
+      Object.keys(params).length > 0)
+  ) {
+    throw new DemoRpcError(-32602, "ERR_INVALID_PARAMS: demo.firePage takes {}");
+  }
+  if (ctx.oncallPush === undefined) {
+    throw new DemoRpcError(
+      -32010,
+      "ERR_DEMO_PUSH_UNAVAILABLE: the on-call push runtime is not wired",
+    );
+  }
+  return fireDemoPage(ctx.db, ctx.oncallPush, (ctx.now ?? Date.now)());
+}
+
+/**
  * `demo.*` — I41 clause (5). The inner, pure dispatcher: reachable from a real gateway only
  * through `tryDispatchDemoRpc` (`ipc/server/dispatchers.ts`), which claims the namespace ONLY
  * when `ctx.options.demo === true` — see that function's own doc comment for why an ordinary
@@ -73,5 +99,6 @@ export async function dispatchDemoRpc(
 ): Promise<RpcMissOrHit> {
   return dispatchByMethod<DemoRpcContext>(method, params, ctx, {
     "demo.seed": handleDemoSeed,
+    "demo.firePage": handleFirePage,
   });
 }

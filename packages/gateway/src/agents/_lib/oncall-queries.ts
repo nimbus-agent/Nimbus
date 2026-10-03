@@ -1,12 +1,12 @@
 import type { Database } from "bun:sqlite";
 
-import { codeUnitCompare } from "../util/code-unit-compare.ts";
+import { codeUnitCompare } from "../../util/code-unit-compare.ts";
 import {
   finiteNumberField,
   metadataRecord,
   nonEmptyStringField,
   stringArrayField,
-} from "./_lib/item-metadata.ts";
+} from "./item-metadata.ts";
 import type {
   OncallChange,
   OncallCiRun,
@@ -15,7 +15,7 @@ import type {
   OncallMessage,
   OncallPriorIncident,
   OncallSyncFreshness,
-} from "./_lib/oncall-types.ts";
+} from "./oncall-types.ts";
 
 /**
  * ABSOLUTE epoch bounds, half-open `[fromMs, toMs)`.

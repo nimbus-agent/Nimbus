@@ -4,7 +4,7 @@ import { readGatewayState } from "../lib/gateway-process.ts";
 import { getCliPlatformPaths } from "../paths.ts";
 import { flagValue } from "./_agent-brief-cli.ts";
 
-export type TailCategory = "connector" | "watcher" | "sync" | "extension" | "hitl";
+export type TailCategory = "connector" | "watcher" | "sync" | "extension" | "hitl" | "oncall";
 
 const ALL_CATEGORIES: readonly TailCategory[] = [
   "connector",
@@ -12,6 +12,7 @@ const ALL_CATEGORIES: readonly TailCategory[] = [
   "sync",
   "extension",
   "hitl",
+  "oncall",
 ];
 
 export type TailCliArgs = {
@@ -134,6 +135,7 @@ function categoryOf(method: string, params: unknown): TailCategory | null {
   if (kind.startsWith("sync.")) return "sync";
   if (kind.startsWith("extension.")) return "extension";
   if (kind.startsWith("hitl.")) return "hitl";
+  if (kind.startsWith("oncall.")) return "oncall";
   return null;
 }
 
@@ -196,6 +198,14 @@ function renderGatewayEvent(o: Record<string, unknown>): string | null {
   }
   if (kind === "hitl.resolved") {
     return renderHitlResolved(at, payload);
+  }
+
+  if (kind === "oncall.briefPushed") {
+    const id = str(payload, "incidentId");
+    if (id !== null) {
+      const word = str(payload, "status") === "ok" ? "ready" : "FAILED";
+      return `${at} [oncall] brief ${word} for ${id} — nimbus oncall pushed ${id}`;
+    }
   }
 
   // Never dropped: a stream that discards what it does not recognise is the same failure as a

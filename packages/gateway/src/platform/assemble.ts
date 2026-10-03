@@ -241,6 +241,7 @@ import { vendorApiKeyName } from "../llm/vendor-vault-keys.ts";
 import { XaiProvider } from "../llm/xai-provider.ts";
 import { SessionMemoryStore } from "../memory/session-memory-store.ts";
 import { buildServiceIdentityResolver } from "../metrics/service-identity.ts";
+import { assembleOncallPushRuntime, type OncallPushRuntime } from "../oncall-push/push-runtime.ts";
 import { runOwnershipPass } from "../ownership/ownership-pass.ts";
 import {
   createOwnershipRefresher,
@@ -403,6 +404,7 @@ function createStubAutostart(): AutostartManager {
  */
 export function createUnimplementedNotifications(logger: Logger): NotificationService {
   return {
+    delivers: false,
     show(title: string, _body: string): Promise<void> {
       // `Promise.try` runs the body synchronously, as the `async` method did, and turns a throwing
       // logger into a REJECTION rather than a synchronous throw — producers fire this as
@@ -641,6 +643,7 @@ async function createSchedulerWithMesh(opts: SchedulerWithMeshOpts): Promise<{
   decisionsRefresher: DecisionRefresher | undefined;
   ownershipRefresher: OwnershipRefresher | undefined;
   premortemRefresher: PremortemRefresher | undefined;
+  oncallPush: OncallPushRuntime;
 }> {
   const {
     paths,
@@ -815,11 +818,23 @@ async function createSchedulerWithMesh(opts: SchedulerWithMeshOpts): Promise<{
       })
     : undefined;
 
+  const oncallPush = assembleOncallPushRuntime({
+    db,
+    configDir: paths.configDir,
+    localIndex,
+    // Passed WHOLE so the push sinks see `delivers: false` and record "skipped", not "delivered".
+    notifications,
+    logger: syncLogger,
+  });
+
   const syncScheduler = new SyncScheduler(syncContext, undefined, {
     notify: async (title, body) => {
       await notifications.show(title, body);
     },
     onConnectorSyncSuccess: (serviceId, result, durationMs) => {
+      // FIRST: the scheduler calls this hook unguarded, so a throw below would skip the push;
+      // trigger() never throws (and returns at once for anything but pagerduty).
+      oncallPush.trigger(serviceId);
       const at = Date.now();
       syncAnomaly.recordSample(`sync:duration_ms:${serviceId}`, durationMs, at);
       syncAnomaly.recordSample(`sync:items_upserted:${serviceId}`, result.itemsUpserted, at);
@@ -903,6 +918,7 @@ async function createSchedulerWithMesh(opts: SchedulerWithMeshOpts): Promise<{
     decisionsRefresher,
     ownershipRefresher,
     premortemRefresher,
+    oncallPush,
   };
 }
 
@@ -3389,6 +3405,7 @@ export async function assemblePlatformServices(
     decisionsRefresher,
     ownershipRefresher,
     premortemRefresher,
+    oncallPush,
   } = await createSchedulerWithMesh({
     paths,
     vault,
@@ -3913,6 +3930,7 @@ export async function assemblePlatformServices(
     jobs: fleetRuntime.jobs,
     now: () => Date.now(),
   };
+  ipcOpts.oncallPushRpcCtx = { runtime: oncallPush };
 
   // I39 (S2 runtime tool generation): the sandboxed, owner-approved, session-ephemeral tool
   // registration surface. DEFAULT OFF -- `enabled` is read from `[tool_generation]`, and

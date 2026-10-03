@@ -4062,6 +4062,32 @@ describe("I38 — an unattended fleet run reaches a non-local model only under g
     // Not vacuous: `declare` really does honour the kinds it recognises.
     expect(new ClientKindStore().declare("c2", "mcp")).toBe("mcp");
   });
+
+  test("a pushed brief appends no egress row — the push kind is non-bearing", () => {
+    expect(egressSourceTypeForClientKind("push")).toBeNull();
+    expect(egressSourceTypeForClientKind("mcp")).toBe("mcp"); // not vacuous
+  });
+
+  test("push is NOT declarable by a socket client — attribution stays a fact", () => {
+    expect(new ClientKindStore().declare("c1", "push")).toBe("unknown");
+    expect(new ClientKindStore().declare("c2", "mcp")).toBe("mcp"); // not vacuous
+  });
+
+  test("a push caller can never take oncall's owner-scoped (parameterless) shape", async () => {
+    const db = new Database(":memory:");
+    LocalIndex.ensureSchema(db);
+    try {
+      await expect(
+        dispatchAgentsRpc("agents.oncall", {}, {
+          db,
+          notify: () => {},
+          caller: { clientId: "x", kind: "push" },
+        } as unknown as Parameters<typeof dispatchAgentsRpc>[2]),
+      ).rejects.toThrow(/requires incidentId or service/);
+    } finally {
+      db.close();
+    }
+  });
 });
 
 describe("I39 — generated tools reach the network only through the broker", () => {
