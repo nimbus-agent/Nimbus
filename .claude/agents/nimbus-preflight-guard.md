@@ -16,7 +16,7 @@ You are the Nimbus pre-push guard. Goal: reproduce locally every gate CI would f
 ```bash
 git rev-parse --abbrev-ref HEAD            # confirm a dev/* branch
 git status --short                          # know what changed
-bun run preflight:fast 2>&1 | tail -40      # the fast tier: build:console, typecheck, typecheck:tests, biome, lint:markdown, duplication, and 27 audit:* gates
+bun run preflight:fast 2>&1 | tail -40      # the fast tier: build:console, typecheck, typecheck:tests, biome, lint:markdown, duplication, and 28 audit:* gates (2026-10-03)
 ```
 Every gate must be ✓. Do not hard-code the gate count here —
 `scripts/lib/preflight-gates.ts` is the manifest, and a drift test fails when a
@@ -28,10 +28,10 @@ showed the whole run; widen the window rather than trusting a number in prose. I
 From `git status`, run `bun test` on the test files for the changed source (and their direct consumers). e.g. policy change → `bun test packages/gateway/src/policy …`. Confirm 0 fails + **clean exit** (a hanging run = a leaked `setInterval` from a sidecar test — `.unref()` on an awaited timer spins 100% CPU forever on Windows; flag it). For gateway changes also run `cd packages/gateway && bun run typecheck` (bun test ≠ tsc — a passing test can still have a type error CI rejects). For CLI changes, `cd packages/cli && bun run typecheck`.
 
 ## Step 3 — conditional deeper checks
-- **New source files OR coverage-sensitive change** under packages/{gateway,cli,mcp-connectors} → the coverage ratchet will gate it. Recommend (or invoke) the `nimbus-coverage-floor` agent for the Docker-Linux verify; do NOT rely on local scoped coverage.
+- **New source files OR coverage-sensitive change** under packages/{gateway,cli} → the coverage ratchet will gate it. Recommend (or invoke) the `nimbus-coverage-floor` agent for the Docker-Linux verify; do NOT rely on local scoped coverage.
 - **Security invariant / HITL / Vault / allowlist touched** → `bun run scripts/structure-audit/check-nimbus-invariants.ts` (the static D-checks) + `bun test packages/gateway/src/security-invariants.test.ts`. Confirm the triple rule (wiring + docs + test in the same commit).
-- **Connector added/changed** → `bun run audit:package-readmes` (public-tier README sections; not in test:ci) + the connector contract tests.
-- **Migration added** → confirm `CURRENT_SCHEMA_VERSION` bumped, `INDEXED_SCHEMA_STEPS` + `BACKFILL_LABELS` gapless + index-aligned, and a migration-existence test exists.
+- **Connector sync handler added/changed** (the connector itself lives in nimbus-agent/nimbus-mcp-servers) → `audit:connector-registry-drift` and `audit:connector-version-skew` already run inside `preflight:fast`; add the handler's own scoped tests. `audit:package-readmes` no longer covers connectors — its scope is `packages/docs`, `installers` and the perf fixtures.
+- **Migration added** → confirm `CURRENT_SCHEMA_VERSION` (`index/local-index.ts`) equals the new step's `toVersion` (`runner.test.ts`'s drift guard compares it with `maxRegisteredIndexedSchemaVersion()`), `INDEXED_SCHEMA_STEPS` is gapless, and a migration-existence test exists. Do **not** add a `BACKFILL_LABELS` entry: that list intentionally stops at v37, and appending to it makes its missing-label error branch unreachable.
 - **Tauri allowlist (gateway_bridge.rs) touched** → Rust isn't built locally; note the allowlist count assertion must match (CI Rust job validates).
 
 ## Step 4 — go/no-go report

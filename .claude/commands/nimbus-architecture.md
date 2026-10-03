@@ -19,7 +19,7 @@ These are **load-bearing constraints**, not style preferences. Check every new f
 2. **HITL is structural** — the consent gate lives in the executor (`packages/gateway/src/engine/executor.ts`) as a compile-time constant set (`HITL_REQUIRED`). It is NOT a prompt instruction, NOT runtime-configurable, and has NO timeout. The audit log is written **before** the connector is called.
 3. **No plaintext credentials** — Vault only. Never in logs, IPC responses, config files, or env vars persisted outside spawn context. The structured logger auto-redacts `*.token`, `*.secret`, `oauth.*`.
 4. **MCP as connector standard** — the Engine never calls cloud APIs directly. Every integration is an MCP server. Engine ↔ connector boundary is always MCP.
-5. **Platform equality** — Windows 10+, macOS 13+, Ubuntu 22.04+ are equally supported in every change.
+5. **Platform equality** — Windows 10+, macOS 13+, Ubuntu 22.04+ are equally supported in every change. (Ubuntu 22.04 is a source-build target only: the pre-built Linux binaries need glibc ≥ 2.39, i.e. Ubuntu 24.04+ — see `docs/cross-platform.md`.)
 6. **No feature creep across phases** — do not implement Phase N+1 features while Phase N is active. **Phase 6 (Team)** is ✅ complete (2026-06-18 — all 9 slices: federation, team-vault/quorum, identity/SSO/SCIM, org policy, ChatOps, cross-colleague agents, data-warehouse/BI + lineage, Share & Virality, and the deferred-Phase-5 items); from Phase 7 onward the build order is the **Sequencing Spine overlay (S1 -> S5)**, not the phase numbers; **Spine S1 (Local Brain) is ✅ complete (2026-06-20 → 2026-08-20)** and the current build slot is **Spine S2 (Local Compute Fleet)**, opened 2026-08-21. Phase 5 (The Extended Surface) is ✅ complete. See [docs/CHANGELOG.md](../../docs/CHANGELOG.md) for the dated delivery log.
 
 ---
@@ -31,7 +31,7 @@ nimbus/
 ├── packages/
 │   ├── gateway/          ← Core headless process (Bun runtime)
 │   ├── cli/              ← nimbus CLI + TUI (Bun)
-│   ├── ui/               ← Tauri 2.0 desktop app (React 18 + Rust bridge)
+│   ├── ui/               ← Tauri 2.0 desktop app (React 19 + Rust bridge)
 │   ├── admin-console/    ← dependency-free static admin console (Phase 6 Slice 4)
 │   ├── github-actions/   ← Composite GitHub Actions (DORA data layer)
 │   └── docs/             ← Astro Starlight documentation site
@@ -52,24 +52,24 @@ nimbus/
 | `platform/` | Platform Abstraction Layer — `PlatformServices` interface + `win32`, `darwin`, `linux` impls |
 | `engine/` | Mastra agent, router, planner, HITL executor, coordinator, sub-agents |
 | `vault/` | `NimbusVault` interface + DPAPI / Keychain / libsecret impls |
-| `db/` | SQLite schema, migrations, verify/repair/snapshot, health, latency ring buffer |
+| `db/` | SQLite write chokepoint (`write.ts`, I14), audit chain, verify/repair/snapshot, health, latency ring buffer — the schema and its migrations live in `index/` |
 | `connectors/` | Connector registry, lazy mesh, health model, health history |
 | `sync/` | Delta sync scheduler, connectivity probe, rate limiter |
 | `extensions/` | Extension Registry, manifest validator, sandbox |
 | `telemetry/` | Opt-in aggregate telemetry collector |
 | `config/` | TOML config loader, profiles, env-var overrides |
 | `ipc/` | JSON-RPC 2.0 server, HTTP API, Prometheus endpoint, LAN server |
-| `llm/` | Ollama provider, llama.cpp provider, LLM router, GPU arbiter *(Phase 4)* |
+| `llm/` | Ollama provider, llama.cpp provider, LLM router, GPU arbiter *(Phase 4)*; the four cloud adapters — Anthropic, OpenAI, Gemini, xAI — behind per-vendor `[llm.remote.<vendor>]` opt-ins *(S2, 2026-08-28)* |
 | `voice/` | STT (Whisper.cpp), TTS, wake-word *(Phase 4)* |
 
 **Key files to know:**
 - `engine/executor.ts` — HITL gate lives here. Touch carefully.
 - `ipc/<namespace>-rpc.ts` — one file per IPC namespace (e.g. `federation-rpc.ts`, `connector-rpc.ts`, `llm-rpc.ts`); each exports a `dispatch<Namespace>Rpc` wired into `ipc/server/dispatchers.ts`
-- `db/schema.ts` (or migrations/) — all SQLite schema changes go through migrations, never manual ALTER
+- `index/migrations/runner.ts` (`INDEXED_SCHEMA_STEPS`) — all SQLite schema changes go through migrations, never manual ALTER
 
 ### `packages/cli/src/`
 
-- `commands/` — one file per CLI subcommand (62 top-level commands registered in `COMMAND_HANDLERS`, `packages/cli/src/index.ts` — verify the live map rather than this count): `start`, `stop`, `status`, `db`, `diag`, `query`, `telemetry`, `tui`, `update`, `doctor`, `config`, `profile`, `serve`, `test`, `ask`, `catchup`, `expert`, `impact`, `index`, `vault`, `audit`, `connector`, `data`, `deploy`, `extension`, `people`, `search`, `security`, `session`, `workflow`, `watch`, `repl`, `run`, `scaffold`, `lan`, `llm`, `metrics`, `team`, `identity`, `scim`, `policy`, `chatops`, `admin`, `mcp-server`, `ghost`, `conflicts`, `huddle`, `janitor`, `preflight`, `tribal`, `share`, `verify-share`, `prove`, `egress`. (`bench` is dispatched in a separate branch; there is no `docs` command.)
+- `commands/` — one file per CLI subcommand (74 top-level commands registered in `COMMAND_HANDLERS`, `packages/cli/src/index.ts`, when last counted on 2026-10-03 — verify the live map rather than this count): `start`, `stop`, `status`, `db`, `diag`, `tail`, `query`, `telemetry`, `tui`, `update`, `doctor`, `config`, `profile`, `serve`, `test`, `ask`, `explain`, `catchup`, `changelog`, `conflicts`, `decisions`, `demo`, `expert`, `ghost`, `glossary`, `huddle`, `impact`, `janitor`, `index`, `init`, `vault`, `audit`, `connector`, `data`, `deploy`, `extension`, `people`, `preflight`, `search`, `security`, `session`, `workflow`, `watch`, `why`, `repl`, `run`, `scaffold`, `lan`, `llm`, `media`, `metrics`, `standup`, `oncall`, `stats`, `negotiate`, `owners`, `pre-mortem`, `team`, `identity`, `scim`, `policy`, `chatops`, `tribal`, `admin`, `share`, `verify-share`, `mcp-server`, `prove`, `egress`, `exec`, `clip`, `computer`, `tool`, `wow`. (`bench` and `fleet` are dispatched in separate branches, because both return an exit code the generic handler path would discard; there is no `docs` command.)
 - `tui/` — Ink-based TUI components (Phase 4): `App.tsx`, `QueryInput.tsx`, `ConnectorHealth.tsx`, `WatcherPane.tsx`, `SubTaskPane.tsx`
 
 ### `packages/ui/src/` (Tauri desktop — Phase 4)
@@ -87,12 +87,12 @@ nimbus/
 
 | Namespace | Owns |
 |---|---|
-| `engine.*` | `ask`, `askStream`, `getSubTaskPlan` |
-| `agent.*` | `subTaskProgress` (notification), `hitlBatch` (notification), `gasLimitReached` (notification) |
-| `connector.*` | `list`, `history`, `healthChanged` (notification) |
-| `llm.*` | `listModels`, `pullModel`, `loadModel`, `unloadModel`, `setDefault`, `getRouterStatus`, `listLocalModels` |
-| `watcher.*` | `list`, `create`, `update`, `delete`, `history` |
-| `workflow.*` | `list`, `create`, `update`, `delete`, `run`, `history`, `rerun` |
+| `engine.*` | `askStream`, `cancelStream`, `getSessionTranscript`; `streamToken` / `streamDone` / `streamError` (notifications) |
+| `agent.*` | `invoke` (the shared `runAsk` pipeline); `chunk` (notification, `{ streamId?, text }`, sent when `agent.invoke` or `workflow.run` is called with `stream: true`). `subTaskProgress`, `hitlBatch` and `gasLimitReached` are named in older text but nothing in the gateway emits them, and a coordinator limit throws instead |
+| `connector.*` | `listStatus`, `status`, `healthHistory`, `sync`, `pause`, `resume`, `remove`, `reindex`, `setConfig`, `setInterval`, `auth`, `addMcp`, `detectLocalAuth`, `adoptLocalAuth`; `healthChanged`, `configChanged` (notifications) |
+| `llm.*` | `listModels`, `pullModel`, `cancelPull`, `loadModel`, `unloadModel`, `setDefault`, `use`, `status`, `getStatus`, `getRouterStatus` |
+| `watcher.*` | `list`, `create`, `delete`, `pause`, `resume`, `listHistory`, `listCandidateRelations`, `validateCondition` (a firing rides `gateway.event` as `watcher.fired`) |
+| `workflow.*` | `list`, `save`, `delete`, `run`, `cancel`, `listRuns` |
 | `index.*` | queries — read-only, available to LAN peers |
 | `status.*` | health, diagnostics — read-only |
 | `vault.*` | sensitive — NOT in the Tauri UI allowlist |
@@ -129,7 +129,7 @@ When writing any feature that performs a write, outgoing, or irreversible action
 - The tool **must** be in the `HITL_REQUIRED` frozen set in `executor.ts`
 - This is not optional and cannot be bypassed via config
 - The audit log entry is written **before** the action executes
-- For multi-agent flows: HITL actions are consolidated into `agent.hitlBatch` — sub-agents do not get individual consent; the coordinator surfaces one consolidated request
+- For multi-agent flows the design is one consolidated request rather than per-sub-agent consent. The `agent.hitlBatch` notification that older text names for it is **not emitted** by the gateway today (only the TUI still subscribes to it); consent reaches the acting client as a unicast `consent.request`, answered with `consent.respond`
 - Partial approval is supported: rejected actions mark dependent sub-tasks as `skipped`, not `failed`
 
 ---
@@ -160,12 +160,12 @@ Every connector lives in [nimbus-agent/nimbus-mcp-servers](https://github.com/ni
 
 The Engine calls connectors through the MCP tool interface only. No connector imports are allowed inside `packages/gateway/src/engine/`.
 
-**Connector quickstart:**
+**Connector quickstart** (from the connectors repo's root):
 ```bash
-nimbus scaffold <service-name>
-# → generates connectors/<service-name>/ with typed scaffolding (in the connectors repo)
+bunx create-nimbus-connector --spec ./<service-name>.spec.json
+# → generates connectors/<service-name>/: src/server.ts, the manifest, tsconfig, package.json, README, sandbox test
 ```
-Full walkthrough: `docs/contributors/extension-author-walkthrough.md`
+`nimbus scaffold extension <id>` is **not** the tool for a connector: it emits a generic extension shell with no `src/server.ts`, which every connector gate keys off. See `docs/CONTRIBUTING.md` § Adding a New MCP Connector. Extension (not connector) walkthrough: `docs/contributors/extension-author-walkthrough.md`
 
 ---
 
@@ -194,7 +194,7 @@ Full walkthrough: `docs/contributors/extension-author-walkthrough.md`
 | Integration | `bun test` | `packages/*/test/integration/**/*.test.ts` |
 | E2E CLI | `bun test` + Gateway subprocess | `packages/*/test/e2e/**/*.e2e.test.ts` |
 | UI components | Vitest + Testing Library | `packages/ui/test/**/*.test.tsx` |
-| E2E Desktop | Playwright + Tauri WebDriver | runs on push to `main` and release tags |
+| E2E Desktop | Playwright + Tauri WebDriver | runs on push to `main` only (not on release tags); on a PR only with the `ci:e2e-desktop` label and a `packages/ui/` change |
 
 Coverage gates: Engine ≥ 85%, Vault ≥ 90%. New subsystems should target ≥ 85%.
 
@@ -207,7 +207,7 @@ Each test gets a fresh temp dir + fresh DB — never share state between tests.
 | Platform | IPC Socket | Config Dir | Data Dir |
 |---|---|---|---|
 | Windows 10+ | `\\.\pipe\nimbus-gateway` | `%APPDATA%\Nimbus` | `%LOCALAPPDATA%\Nimbus\data` |
-| macOS 13+ | `~/Library/Application Support/Nimbus/gateway.sock` | `~/Library/Application Support/Nimbus` | `~/Library/Application Support/Nimbus/data` |
-| Ubuntu 22.04+ | `~/.local/share/nimbus/gateway.sock` | `~/.config/nimbus` | `~/.local/share/nimbus` |
+| macOS 13+ | `$TMPDIR/nimbus-gateway.sock` (`/tmp` when `TMPDIR` is unset) | `~/Library/Application Support/Nimbus` | the same directory as the config dir |
+| Ubuntu 22.04+ | `$XDG_RUNTIME_DIR/nimbus-gateway.sock` (the OS temp dir when unset) | `$XDG_CONFIG_HOME/nimbus` (default `~/.config/nimbus`) | `$XDG_DATA_HOME/nimbus` (default `~/.local/share/nimbus`) |
 
-Use `PlatformServices` from `packages/gateway/src/platform/` to resolve these — never hardcode paths.
+Use `PlatformServices` from `packages/gateway/src/platform/` to resolve these — never hardcode paths. The resolution lives in `platform/paths.ts`: `NIMBUS_GATEWAY_SOCKET` moves only the socket and `NIMBUS_CONFIG_DIR` only the config dir, and a demo-rooted process (`NIMBUS_DEMO=1`, invariant I41) derives every path, and the endpoint name, from its own demo root.
