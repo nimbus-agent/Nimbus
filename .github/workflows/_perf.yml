@@ -221,7 +221,7 @@ jobs:
           matrix.os == 'ubuntu-24.04' ||
           github.event_name != 'schedule' ||
           github.event.schedule == '0 4 * * 0'
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           # MUST match the format `perf-${runner_id}-${sha}` that
           # bench-ci.ts constructs for `gh run download --name ...`.
@@ -244,7 +244,7 @@ jobs:
             github.event.schedule == '0 4 * * 0'
           )
         continue-on-error: true # advisory: an install hiccup on any leg must never red the perf job
-        uses: bencherdev/bencher@8d75325c3bc59403a2186a056b472c4f49d42838 # v0.6.12
+        uses: bencherdev/bencher@f80847436d7157936b40525db4c2a1064124f04a # v0.6.13
 
       - name: Emit Bencher BMF
         id: bencher-emit
