@@ -61,20 +61,9 @@ Scorecard uploads SARIF to **Security → Code scanning**. Findings such as **Br
 
 ## Recommended required status checks
 
-After workflows have run at least once, add as **required checks**:
+The recommended set is the one the `General` ruleset already requires — the ten contexts in [Currently active required checks](#currently-active-required-checks-general-ruleset-on-main) below. An earlier version of this section recommended individual jobs instead (`PR quality — TS/Bun (ubuntu-24.04)`, `PR quality — Rust/Tauri (ubuntu-24.04)`, `PR quality — Duplication scan`, the label-gated `E2E Desktop (PR) — ubuntu-24.04`, and the push-only `CI — TS/Bun` / `CI — Rust/Tauri` matrices). **Do not add any of those as required contexts:** a job skipped by its own `if:`, a label-gated job and a push-only job never report on a PR that skips them, and that PR then waits forever. `PR quality — required gates` already covers every PR-quality job.
 
-| Check | Workflow | When it runs |
-|--------|-----------|----------------|
-| **PR quality — TS/Bun (ubuntu-24.04)** | CI | Every pull request |
-| **PR quality — Rust/Tauri (ubuntu-24.04)** | CI | Every pull request (when `packages/ui/src-tauri/` changes) |
-| **PR quality — Duplication scan** | CI | Every pull request |
-| **E2E Desktop (PR) — ubuntu-24.04** | CI | Every pull request carrying the `ci:e2e-desktop` label |
-| **Security** jobs | Security | Every pull request (`Dependency audit`, `Trivy vulnerability scan`, `Gateway audit JSON + connector.remove vault restore`, `Cargo audit (Tauri)`) |
-| **Analyze (JavaScript / TypeScript)** | CodeQL | Pull requests and pushes |
-| **CI — TS/Bun (ubuntu-24.04)** / **CI — TS/Bun (macos-15)** / **CI — TS/Bun (windows-2025)** | CI | Pushes to `main` / `develop` (TS/Bun matrix) |
-| **CI — Rust/Tauri (ubuntu-24.04)** / **CI — Rust/Tauri (macos-15)** / **CI — Rust/Tauri (windows-2025)** | CI | Pushes to `main` / `develop` (Rust/Tauri matrix) |
-
-**Note:** Required checks must match the **exact** job names shown in the Actions UI. After changing workflow job names, update the rule accordingly. Marking every Security job as required ensures `bun audit`, Trivy, gateway contract tests, and `cargo audit` all block merges when they fail.
+**Note:** Required checks must match the **exact** job names shown in the Actions UI. After changing workflow job names, update the rule accordingly. Marking every Security job as required ensures `bun audit`, Trivy, gitleaks, the gateway contract tests, `cargo audit` and `cargo deny` all block merges when they fail.
 
 ## Currently active required checks (`General` ruleset on `main`)
 
