@@ -45,6 +45,7 @@ import type { SignatureDisableReason } from "../extensions/verify-signature.ts";
 import type { NimbusVault } from "../vault/index.ts";
 import { asRecord } from "./connector-rpc-shared.ts";
 import { emitGatewayEvent } from "./gateway-events.ts";
+import { requireTrimmedStringField } from "./rpc-params.ts";
 
 export class AutomationRpcError extends Error {
   readonly rpcCode: number;
@@ -57,15 +58,9 @@ export class AutomationRpcError extends Error {
 
 type Hit = { kind: "hit"; value: unknown };
 
+/** `rec[key]`, trimmed, or `Missing or invalid <key>` as an `AutomationRpcError`. */
 function requireString(rec: Record<string, unknown> | undefined, key: string): string {
-  if (rec === undefined) {
-    throw new AutomationRpcError(-32602, `Missing or invalid ${key}`);
-  }
-  const v = rec[key];
-  if (typeof v !== "string" || v.trim() === "") {
-    throw new AutomationRpcError(-32602, `Missing or invalid ${key}`);
-  }
-  return v.trim();
+  return requireTrimmedStringField(rec, key, AutomationRpcError);
 }
 
 function requireNumber(rec: Record<string, unknown> | undefined, key: string): number {

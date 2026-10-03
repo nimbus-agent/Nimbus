@@ -25,6 +25,7 @@ import {
   type RpcMethodHandlerMap,
   type RpcMissOrHit,
 } from "./_lib/dispatch-by-method.ts";
+import { requireNonEmptyStringParam } from "./rpc-params.ts";
 
 /** A `ShareRpcError` carries the JSON-RPC error code surfaced by the dispatcher chain. */
 export class ShareRpcError extends Error {
@@ -105,13 +106,9 @@ export interface ShareRpcCtx {
   readonly deliverToPeer?: (share: ShareFile, peerId: string) => Promise<boolean>;
 }
 
+/** `ERR_INVALID_PARAMS: <key> (non-empty string) required`, as a `ShareRpcError`. */
 function requireString(params: unknown, key: string): string {
-  const rec = asRecord(params);
-  const v = rec === undefined ? undefined : rec[key];
-  if (typeof v !== "string" || v.length === 0) {
-    throw new ShareRpcError(-32602, `ERR_INVALID_PARAMS: ${key} (non-empty string) required`);
-  }
-  return v;
+  return requireNonEmptyStringParam(params, key, ShareRpcError);
 }
 
 /** Parse the caller's `sink` selector into a {@link ShareSink} + (for the file sink) a target path. */

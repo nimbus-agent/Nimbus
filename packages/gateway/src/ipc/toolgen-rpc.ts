@@ -34,6 +34,7 @@ import {
   type RpcMethodHandlerMap,
   type RpcMissOrHit,
 } from "./_lib/dispatch-by-method.ts";
+import { requireNonEmptyStringParam, stringArrayAllOrNothing } from "./rpc-params.ts";
 
 /** A `ToolgenRpcError` carries the JSON-RPC error code surfaced by the dispatcher chain. */
 export class ToolgenRpcError extends Error {
@@ -145,32 +146,9 @@ function assertCallerToolId(toolId: string): void {
   }
 }
 
-/**
- * Module-private, matching `exec-rpc.ts:35` / `share-rpc.ts:108`.
- *
- * There is no shared IPC validation module: `requireString` is redefined in every `ipc/*-rpc.ts`
- * file across three signatures. Consolidating them is a worthwhile cleanup but would put most of
- * this feature's diff in unrelated RPC modules, so it is deliberately left alone here.
- */
+/** `ERR_INVALID_PARAMS: <key> (non-empty string) required`, as a `ToolgenRpcError`. */
 function requireString(params: unknown, key: string): string {
-  const rec = asRecord(params);
-  const v = rec === undefined ? undefined : rec[key];
-  if (typeof v !== "string" || v.length === 0) {
-    throw new ToolgenRpcError(-32602, `ERR_INVALID_PARAMS: ${key} (non-empty string) required`);
-  }
-  return v;
-}
-
-/**
- * Every element must be a string; a non-array or a mixed array yields an EMPTY host list, never a
- * partial one -- a half-parsed host list is a set the caller did not ask for, and silently
- * dropping the bad element would approve a tool for a host list nobody typed. `createGeneratedTool`
- * refuses an empty host list outright (`ERR_TOOLGEN_HOST_NOT_ALLOWED`), so a malformed `hosts`
- * array is turned into a clean refusal rather than a partially-granted tool.
- */
-function stringArray(v: unknown): string[] {
-  if (!Array.isArray(v)) return [];
-  return v.every((e) => typeof e === "string") ? [...(v as string[])] : [];
+  return requireNonEmptyStringParam(params, key, ToolgenRpcError);
 }
 
 /**
@@ -372,7 +350,11 @@ const HANDLERS: RpcMethodHandlerMap<ToolgenRpcCtx> = {
     const rec = asRecord(params) ?? {};
     const sessionId = requireString(params, "sessionId");
     const description = requireString(params, "description");
-    const hosts = stringArray(rec["hosts"]);
+    // All or nothing: a mixed array is an EMPTY host list, never the partial one its string
+    // elements would make — a host list nobody typed. `createGeneratedTool` refuses an empty list
+    // outright (`ERR_TOOLGEN_HOST_NOT_ALLOWED`), so a malformed `hosts` array becomes a clean
+    // refusal rather than a partially-granted tool.
+    const hosts = stringArrayAllOrNothing(rec["hosts"]);
     return createGeneratedTool(
       { sessionId, description, hosts },
       ctx.gateDeps,

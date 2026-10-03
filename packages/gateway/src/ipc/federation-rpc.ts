@@ -39,6 +39,7 @@ import { TeamVaultStore } from "../teamvault/team-vault-store.ts";
 import { dispatchByMethod, type RpcMissOrHit } from "./_lib/dispatch-by-method.ts";
 import { sendFederatedOverWire } from "./lan-client.ts";
 import type { BoxKeypair } from "./lan-crypto.ts";
+import { requireNonEmptyStringField } from "./rpc-params.ts";
 
 export class FederationRpcError extends Error {
   readonly rpcCode: number;
@@ -115,12 +116,9 @@ function asRecord(params: unknown): Record<string, unknown> {
   return params as Record<string, unknown>;
 }
 
+/** `ERR_INVALID_PARAMS: <key> must be a non-empty string`, as a `FederationRpcError`. */
 function requireString(rec: Record<string, unknown>, key: string): string {
-  const v = rec[key];
-  if (typeof v !== "string" || v.length === 0) {
-    throw new FederationRpcError(-32602, `ERR_INVALID_PARAMS: ${key} must be a non-empty string`);
-  }
-  return v;
+  return requireNonEmptyStringField(rec, key, FederationRpcError);
 }
 
 /** Narrow an over-the-wire federation.auditExport result to its entries, or undefined on

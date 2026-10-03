@@ -6,6 +6,7 @@ import {
   type RpcMethodHandlerMap,
   type RpcMissOrHit,
 } from "./_lib/dispatch-by-method.ts";
+import { requireNonEmptyStringParam, stringArrayAllOrNothing } from "./rpc-params.ts";
 
 /** An `ExecRpcError` carries the JSON-RPC error code surfaced by the dispatcher chain. */
 export class ExecRpcError extends Error {
@@ -25,30 +26,9 @@ export interface ExecRpcCtx {
   readonly consent: ExecConsentBroker;
 }
 
-/**
- * Module-private, matching `share-rpc.ts:108`.
- *
- * There is no shared IPC validation module: `requireString` is redefined in nine files under
- * `ipc/` across three signatures. Consolidating them is a worthwhile cleanup but would put most of
- * this feature's diff in unrelated RPC modules, so it is deliberately left alone here.
- */
+/** `ERR_INVALID_PARAMS: <key> (non-empty string) required`, as an `ExecRpcError`. */
 function requireString(params: unknown, key: string): string {
-  const rec = asRecord(params);
-  const v = rec === undefined ? undefined : rec[key];
-  if (typeof v !== "string" || v.length === 0) {
-    throw new ExecRpcError(-32602, `ERR_INVALID_PARAMS: ${key} (non-empty string) required`);
-  }
-  return v;
-}
-
-/**
- * Every element must be a string; a non-array or a mixed array yields an EMPTY grant list, never a
- * partial one -- a half-parsed grant set is a grant the caller did not ask for, and silently
- * dropping the bad element would hand the child a capability set nobody chose.
- */
-function stringArray(v: unknown): string[] {
-  if (!Array.isArray(v)) return [];
-  return v.every((e) => typeof e === "string") ? [...(v as string[])] : [];
+  return requireNonEmptyStringParam(params, key, ExecRpcError);
 }
 
 const HANDLERS: RpcMethodHandlerMap<ExecRpcCtx> = {
@@ -63,11 +43,13 @@ const HANDLERS: RpcMethodHandlerMap<ExecRpcCtx> = {
       ...(typeof rec["code"] === "string" ? { code: rec["code"] } : {}),
       ...(typeof rec["filePath"] === "string" ? { filePath: rec["filePath"] } : {}),
       ...(typeof rec["runtimeId"] === "string" ? { runtimeId: rec["runtimeId"] } : {}),
-      fsRead: stringArray(rec["fsRead"]),
-      fsWrite: stringArray(rec["fsWrite"]),
+      // All or nothing: a mixed array is an EMPTY grant list, never the partial one its string
+      // elements would make — a capability set nobody chose.
+      fsRead: stringArrayAllOrNothing(rec["fsRead"]),
+      fsWrite: stringArrayAllOrNothing(rec["fsWrite"]),
       // Forwarded ONLY so the gate can refuse it. Omitting the key when absent keeps "asked for
       // nothing" distinct from "asked for an empty list".
-      ...(rec["network"] === undefined ? {} : { network: stringArray(rec["network"]) }),
+      ...(rec["network"] === undefined ? {} : { network: stringArrayAllOrNothing(rec["network"]) }),
       ...(typeof rec["timeoutMs"] === "number" ? { timeoutMs: rec["timeoutMs"] } : {}),
       cwd,
     };

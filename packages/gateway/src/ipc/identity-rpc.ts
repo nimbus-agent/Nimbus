@@ -4,6 +4,7 @@ import { deprovisionUser } from "../identity/deprovision.ts";
 import type { IdentityStore } from "../identity/identity-store.ts";
 import { isOperatorValid } from "../identity/verifier.ts";
 import { dispatchByMethod, type RpcMissOrHit } from "./_lib/dispatch-by-method.ts";
+import { requireNonEmptyStringField } from "./rpc-params.ts";
 
 export class IdentityRpcError extends Error {
   constructor(
@@ -22,12 +23,9 @@ function asRecord(v: unknown): Record<string, unknown> {
   return v as Record<string, unknown>;
 }
 
+/** `ERR_INVALID_PARAMS: <key> must be a non-empty string`, as an `IdentityRpcError`. */
 function requireString(rec: Record<string, unknown>, key: string): string {
-  const v = rec[key];
-  if (typeof v !== "string" || v.length === 0) {
-    throw new IdentityRpcError(-32602, `ERR_INVALID_PARAMS: ${key} must be a non-empty string`);
-  }
-  return v;
+  return requireNonEmptyStringField(rec, key, IdentityRpcError);
 }
 
 export interface IdentityRpcContext {
