@@ -66,12 +66,24 @@ async function exists(path: string): Promise<boolean> {
   }
 }
 
+/**
+ * Moves each of `names` from `fromDir` to the same name under `toDir`, best-effort. The renames
+ * are independent (distinct names, distinct targets) and each failure is swallowed on its own,
+ * so they run together: every one is attempted, and this never rejects.
+ */
+async function moveEntriesBestEffort(
+  names: readonly string[],
+  fromDir: string,
+  toDir: string,
+): Promise<void> {
+  await Promise.all(
+    names.map((name) => rename(join(fromDir, name), join(toDir, name)).catch(() => {})),
+  );
+}
+
 async function restoreHolding(holdingPath: string, prevDir: string): Promise<void> {
   if (!(await exists(holdingPath))) return;
-  const entries = await readdir(holdingPath);
-  for (const e of entries) {
-    await rename(join(holdingPath, e), join(prevDir, e)).catch(() => {});
-  }
+  await moveEntriesBestEffort(await readdir(holdingPath), holdingPath, prevDir);
   await rm(holdingPath, { recursive: true, force: true });
 }
 
@@ -87,9 +99,7 @@ export async function applyUpgradeSwap(opts: ApplyUpgradeOpts): Promise<void> {
   const stale = (await readdir(prevDir)).filter((e) => e !== opts.fromVersion);
   if (stale.length > 0) {
     await mkdir(holdingPath, { recursive: true });
-    for (const v of stale) {
-      await rename(join(prevDir, v), join(holdingPath, v)).catch(() => {});
-    }
+    await moveEntriesBestEffort(stale, prevDir, holdingPath);
     movedAside = true;
   }
 
