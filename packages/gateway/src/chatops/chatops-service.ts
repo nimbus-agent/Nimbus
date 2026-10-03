@@ -48,15 +48,14 @@ export class ChatopsService {
         this.lastEventAt = this.now();
         await this.deps.handleMessage(m);
       });
-      await t.start();
+      await t.start(); // NOSONAR S9382: fail-fast — a transport that fails to start aborts start() before any later transport goes live
     }
   }
 
   async stop(): Promise<void> {
     this.started = false;
-    for (const t of this.deps.transports) {
-      await t.stop();
-    }
+    // Concurrent on purpose: a transport that fails to stop must not leave the others running.
+    await Promise.all(this.deps.transports.map((t) => t.stop()));
   }
 
   testParse(text: string): ParsedCommand {

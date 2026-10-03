@@ -152,29 +152,37 @@ export class WakeWordDetectorImpl implements WakeWordDetector {
       }
       this.pollCount++;
 
-      try {
-        this.emitMicState(true);
-        let audioPath: string;
-        try {
-          audioPath = await this.recordAudioFn(this.chunkDurationMs);
-        } finally {
-          this.emitMicState(false);
-        }
-        const silent = await this.isChunkSilentFn(audioPath);
-        if (!silent) {
-          const result = await this.stt.transcribe(audioPath);
-          if (result.text.toLowerCase().includes(this.wakeWordLower)) {
-            this.onDetected?.({ transcript: result.text, detectedAt: Date.now() });
-            await new Promise((r) => setTimeout(r, this.cooldownMs));
-          }
-        }
-      } catch {
-        /* audio or transcription error — skip this chunk */
-      }
-
+      await this.listenOnce(); // NOSONAR S9382: one capture cycle at a time — the microphone is a single device, and a detection's cooldown must elapse before the next recording starts
       if (this.running) {
-        await new Promise((r) => setTimeout(r, this.pollIntervalMs));
+        await new Promise((r) => setTimeout(r, this.pollIntervalMs)); // NOSONAR S9382: the poll interval is a deliberate pause between capture cycles
       }
+    }
+  }
+
+  /**
+   * One capture cycle: record a chunk, skip it if silent, otherwise transcribe it and — on a
+   * wake-word match — fire `onDetected` and cool down. Each step consumes the previous step's
+   * result. Never rejects: an audio or transcription error skips this chunk.
+   */
+  private async listenOnce(): Promise<void> {
+    try {
+      this.emitMicState(true);
+      let audioPath: string;
+      try {
+        audioPath = await this.recordAudioFn(this.chunkDurationMs);
+      } finally {
+        this.emitMicState(false);
+      }
+      const silent = await this.isChunkSilentFn(audioPath);
+      if (!silent) {
+        const result = await this.stt.transcribe(audioPath);
+        if (result.text.toLowerCase().includes(this.wakeWordLower)) {
+          this.onDetected?.({ transcript: result.text, detectedAt: Date.now() });
+          await new Promise((r) => setTimeout(r, this.cooldownMs));
+        }
+      }
+    } catch {
+      /* audio or transcription error — skip this chunk */
     }
   }
 }

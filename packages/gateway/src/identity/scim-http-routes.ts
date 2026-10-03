@@ -3,9 +3,9 @@
 // The SCIM provisioning surface is split in two so the write path is intrinsic to the I13
 // pipeline (invariant): every POST/PATCH/DELETE flows through `dispatchWriteRoute` (bearer auth,
 // rate-limit, body cap, audit-on-rejection) and lands here as `runScimWrite`, which owns only the
-// SCIM *semantics* (provision / deprovision / leak-proof shape) and throws `ScimError` for the
-// dispatcher to map + audit. The read path (`dispatchScimRead`, spec §6 roster list/read) is a
-// bearer-checked GET — reads never write, so they stay off the I13 write surface.
+// SCIM *semantics* (provision / deprovision / leak-proof shape) and rejects with `ScimError` for
+// the dispatcher to map + audit. The read path (`dispatchScimRead`, spec §6 roster list/read) is
+// a bearer-checked GET — reads never write, so they stay off the I13 write surface.
 import type { Database } from "bun:sqlite";
 import type { NamespaceStore } from "../federation/namespace-store.ts";
 import { requireBearer } from "../ipc/http-auth.ts";
@@ -74,15 +74,27 @@ function applyScimPatch(id: string, parsed: unknown, ctx: ScimWriteContext): Res
 }
 
 /**
- * Executes a SCIM write (create / patch / delete). Throws `ScimError` on a bad body or missing id;
- * the caller (`dispatchWriteRoute`) owns auth, rate-limiting, and rejection auditing.
+ * Executes a SCIM write (create / patch / delete). Rejects with `ScimError` on a bad body or a
+ * missing id; the caller (`dispatchWriteRoute`) owns auth, rate-limiting, and rejection auditing.
  */
-export async function runScimWrite(
+export function runScimWrite(
   key: string,
   id: string | undefined,
   parsed: unknown,
   ctx: ScimWriteContext,
 ): Promise<Response> {
+  // The write itself is synchronous (bun:sqlite); `Promise.try` keeps every throw from it a
+  // REJECTION of the returned promise, exactly as it was when this function was `async`.
+  return Promise.try(() => applyScimWrite(key, id, parsed, ctx));
+}
+
+/** The synchronous body of `runScimWrite`; throws `ScimError` on a bad body or missing id. */
+function applyScimWrite(
+  key: string,
+  id: string | undefined,
+  parsed: unknown,
+  ctx: ScimWriteContext,
+): Response {
   if (key === "POST /scim/v2/Users") {
     const u = applyScimCreate(ctx.identity, asScimResource(parsed), ctx.nowMs());
     return scimJson(scimUserResource(u), 201);

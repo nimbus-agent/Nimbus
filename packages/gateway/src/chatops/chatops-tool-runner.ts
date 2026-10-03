@@ -57,7 +57,7 @@ export function buildChatopsToolRunner(deps: ChatopsToolRunnerDeps): RunChatopsT
   return async (platform, toolId, args, opts) => {
     const view = createTeamVaultView(deps.vault, deps.botVaultEntry);
     for (const secret of REQUIRED_BOT_SECRETS[platform]) {
-      const v = await secret.read(view);
+      const v = await secret.read(view); // NOSONAR S9382: fail-closed (I19 pattern) — the first missing bot secret aborts before any later secret is read
       if (v === null || v === "") {
         throw new Error(
           `chatops: missing required bot secret "${secret.label}" in team-vault entry "${deps.botVaultEntry}" (fail-closed)`,

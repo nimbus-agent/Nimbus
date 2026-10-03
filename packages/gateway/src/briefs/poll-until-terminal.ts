@@ -59,7 +59,7 @@ export async function pollBriefUntilTerminal(
     const body = (await res.json()) as TerminalBody;
     lastStatus = body.status;
     if (body.status === "done" || body.status === "failed") return body;
-    await new Promise((r) => setTimeout(r, sleepMs));
+    await new Promise((r) => setTimeout(r, sleepMs)); // NOSONAR S9382: polling — the next GET may only follow a non-terminal answer to this one
   }
 
   throw new Error(

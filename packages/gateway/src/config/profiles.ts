@@ -43,16 +43,16 @@ export class ProfileManager {
     return out.sort((a, b) => a.localeCompare(b));
   }
 
-  async list(): Promise<ProfileSummary[]> {
+  list(): ProfileSummary[] {
     const active = this.readActiveMarker();
     return this.listProfileNames().map((name) => ({ name, active: name === active }));
   }
 
-  async getActive(): Promise<string | undefined> {
+  getActive(): string | undefined {
     return this.readActiveMarker();
   }
 
-  async create(name: string): Promise<void> {
+  create(name: string): void {
     if (!/^[a-z0-9_-]{1,32}$/i.test(name) || name === "default") {
       throw new Error(`Invalid profile name: ${name}`);
     }
@@ -70,13 +70,13 @@ export class ProfileManager {
     }
   }
 
-  async switchTo(name: string): Promise<void> {
+  switchTo(name: string): void {
     const dest = this.profileTomlPath(name);
     if (!existsSync(dest)) throw new Error(`Profile not found: ${name}`);
     writeFileSync(join(this.configDir, PROFILE_MARKER), `${name}\n`, "utf8");
   }
 
-  async delete(name: string): Promise<void> {
+  delete(name: string): void {
     if (this.readActiveMarker() === name) {
       throw new Error(`Cannot delete active profile: ${name}`);
     }
