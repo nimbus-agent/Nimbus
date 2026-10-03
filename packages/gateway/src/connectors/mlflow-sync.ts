@@ -1,5 +1,6 @@
 import type { Syncable, SyncContext } from "../sync/types.ts";
 import { connectorFetch } from "./_lib/fetch-outcome.ts";
+import { trimTrailingSlash } from "./_lib/field-helpers.ts";
 import { runSinglePassPaginatedSync } from "./_lib/paginated-sync.ts";
 import { mapMlflowModelToItem } from "./mlflow-model-mapping.ts";
 import { encodeNimbusJsonCursor } from "./nimbus-json-cursor.ts";
@@ -23,10 +24,6 @@ export type MlflowSyncableOptions = {
 interface MlflowCreds {
   readonly host: string;
   readonly token: string;
-}
-
-function trimTrailingSlash(s: string): string {
-  return s.endsWith("/") ? s.slice(0, -1) : s;
 }
 
 async function loadCreds(ctx: SyncContext): Promise<MlflowCreds | null> {

@@ -1,3 +1,5 @@
+import { pickEnum, pickIntField, pickStringArray } from "./_lib/field-helpers.ts";
+import type { MappedRow } from "./mapped-row.ts";
 import { asRecord, stringField } from "./unknown-record.ts";
 
 type Severity = "BLOCKER" | "CRITICAL" | "MAJOR" | "MINOR" | "INFO";
@@ -21,18 +23,7 @@ export interface SonarMappingContext {
   readonly syncedAt: number;
 }
 
-export interface SonarMappedRow {
-  readonly service: "sonarqube";
-  readonly type: "code_issue";
-  readonly externalId: string;
-  readonly title: string;
-  readonly bodyPreview: string;
-  readonly url: string | null;
-  readonly canonicalUrl: string;
-  readonly modifiedAt: number;
-  readonly metadata: Record<string, unknown>;
-  readonly syncedAt: number;
-}
+export type SonarMappedRow = MappedRow<"sonarqube", "code_issue", string>;
 
 export function stripTrailingSlashes(s: string): string {
   let end = s.length;
@@ -48,45 +39,12 @@ export function issueUrl(baseUrl: string, organization: string, issueKey: string
   return `${base}/project/issues?issues=${encodeURIComponent(issueKey)}&open=${encodeURIComponent(issueKey)}`;
 }
 
-function pickSeverity(value: unknown): Severity | null {
-  if (typeof value !== "string") {
-    return null;
-  }
-  return SEVERITIES.has(value) ? (value as Severity) : null;
-}
-
-function pickIssueType(value: unknown): IssueType | null {
-  if (typeof value !== "string") {
-    return null;
-  }
-  return ISSUE_TYPES.has(value) ? (value as IssueType) : null;
-}
-
-function pickIssueStatus(value: unknown): IssueStatus | null {
-  if (typeof value !== "string") {
-    return null;
-  }
-  return ISSUE_STATUSES.has(value) ? (value as IssueStatus) : null;
-}
-
-function pickStringArray(value: unknown): string[] {
-  if (!Array.isArray(value)) {
-    return [];
-  }
-  return value.filter((v): v is string => typeof v === "string");
-}
-
 function parseIsoMs(value: unknown): number | null {
   if (typeof value !== "string" || value === "") {
     return null;
   }
   const ms = Date.parse(value);
   return Number.isFinite(ms) ? ms : null;
-}
-
-function pickIntField(row: Record<string, unknown>, key: string): number | null {
-  const v = row[key];
-  return typeof v === "number" && Number.isFinite(v) ? Math.trunc(v) : null;
 }
 
 function extractFilePath(component: string): string | null {
@@ -111,9 +69,9 @@ export function mapSonarIssueToItem(raw: unknown, ctx: SonarMappingContext): Son
   const rule = stringField(row, "rule") ?? null;
   const component = stringField(row, "component") ?? "";
   const projectKey = stringField(row, "project") ?? "";
-  const severity = pickSeverity(row["severity"]);
-  const issueType = pickIssueType(row["type"]);
-  const status = pickIssueStatus(row["status"]);
+  const severity = pickEnum<Severity>(row["severity"], SEVERITIES);
+  const issueType = pickEnum<IssueType>(row["type"], ISSUE_TYPES);
+  const status = pickEnum<IssueStatus>(row["status"], ISSUE_STATUSES);
   const tags = pickStringArray(row["tags"]);
   const effort = stringField(row, "effort") ?? null;
   const debt = stringField(row, "debt") ?? null;

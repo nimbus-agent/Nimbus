@@ -1,3 +1,4 @@
+import type { MappedRow } from "./mapped-row.ts";
 import { asRecord, stringField } from "./unknown-record.ts";
 
 export interface FlagsmithMappingContext {
@@ -8,18 +9,7 @@ export interface FlagsmithMappingContext {
   readonly syncedAt: number;
 }
 
-export interface FlagsmithMappedRow {
-  readonly service: "flagsmith";
-  readonly type: "feature_flag";
-  readonly externalId: string;
-  readonly title: string;
-  readonly bodyPreview: string;
-  readonly url: string | null;
-  readonly canonicalUrl: string;
-  readonly modifiedAt: number;
-  readonly metadata: Record<string, unknown>;
-  readonly syncedAt: number;
-}
+export type FlagsmithMappedRow = MappedRow<"flagsmith", "feature_flag", string>;
 
 export function appBaseFromApiBase(apiBase: string): string {
   try {

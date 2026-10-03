@@ -1,3 +1,5 @@
+import { pickIntField, pickStringArray } from "./_lib/field-helpers.ts";
+import type { MappedRow } from "./mapped-row.ts";
 import { asRecord, stringField } from "./unknown-record.ts";
 
 type Severity = "critical" | "high" | "medium" | "low" | "info";
@@ -17,18 +19,7 @@ export interface SemgrepMappingContext {
   readonly syncedAt: number;
 }
 
-export interface SemgrepMappedRow {
-  readonly service: "semgrep";
-  readonly type: "finding";
-  readonly externalId: string;
-  readonly title: string;
-  readonly bodyPreview: string;
-  readonly url: string | null;
-  readonly canonicalUrl: string;
-  readonly modifiedAt: number;
-  readonly metadata: Record<string, unknown>;
-  readonly syncedAt: number;
-}
+export type SemgrepMappedRow = MappedRow<"semgrep", "finding", string>;
 
 export function findingUrl(deploymentSlug: string, findingId: string): string {
   return `https://semgrep.dev/orgs/${encodeURIComponent(deploymentSlug)}/findings/${encodeURIComponent(findingId)}`;
@@ -42,24 +33,12 @@ function lowerEnum<T extends string>(value: unknown, set: ReadonlySet<string>): 
   return set.has(lc) ? (lc as T) : null;
 }
 
-function pickStringArray(value: unknown): string[] {
-  if (!Array.isArray(value)) {
-    return [];
-  }
-  return value.filter((v): v is string => typeof v === "string");
-}
-
 function parseIsoMs(value: unknown): number | null {
   if (typeof value !== "string" || value === "") {
     return null;
   }
   const ms = Date.parse(value);
   return Number.isFinite(ms) ? ms : null;
-}
-
-function pickIntField(row: Record<string, unknown>, key: string): number | null {
-  const v = row[key];
-  return typeof v === "number" && Number.isFinite(v) ? Math.trunc(v) : null;
 }
 
 function findingIdFrom(row: Record<string, unknown>): string | undefined {

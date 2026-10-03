@@ -5,6 +5,8 @@ import {
 } from "../sync/pass-cursor-sync-result.ts";
 import { type Syncable, type SyncContext, type SyncResult, syncNoopResult } from "../sync/types.ts";
 import { connectorFetch } from "./_lib/fetch-outcome.ts";
+import { trimTrailingSlash } from "./_lib/field-helpers.ts";
+import { upsertMapped } from "./_lib/paginated-sync.ts";
 import { mapMetabaseDashboardToItem } from "./metabase-dashboard-mapping.ts";
 import { encodeNimbusJsonCursor } from "./nimbus-json-cursor.ts";
 import { asRecord, numberField, stringField } from "./unknown-record.ts";
@@ -25,10 +27,6 @@ export type MetabaseSyncableOptions = {
 interface MetabaseCreds {
   readonly url: string;
   readonly apiKey: string;
-}
-
-function trimTrailingSlash(s: string): string {
-  return s.endsWith("/") ? s.slice(0, -1) : s;
 }
 
 async function loadCreds(ctx: SyncContext): Promise<MetabaseCreds | null> {
@@ -72,29 +70,6 @@ function extractCollectionNames(parsed: unknown): Record<string, string> {
   return map;
 }
 
-function upsertDashboards(
-  ctx: SyncContext,
-  creds: MetabaseCreds,
-  collectionNames: Record<string, string>,
-  dashboards: readonly unknown[],
-  now: number,
-): number {
-  let upserted = 0;
-  for (const d of dashboards) {
-    const mapped = mapMetabaseDashboardToItem(d, {
-      baseUrl: creds.url,
-      collectionNames,
-      syncedAt: now,
-    });
-    if (mapped === null) {
-      continue;
-    }
-    ctx.upsertItem(mapped);
-    upserted += 1;
-  }
-  return upserted;
-}
-
 export function createMetabaseSyncable(options: MetabaseSyncableOptions): Syncable {
   return {
     serviceId: SERVICE_ID,
@@ -122,12 +97,8 @@ export function createMetabaseSyncable(options: MetabaseSyncableOptions): Syncab
       }
 
       const now = Date.now();
-      const upserted = upsertDashboards(
-        ctx,
-        creds,
-        collectionNames,
-        extractArray(outcome.parsed),
-        now,
+      const upserted = upsertMapped(ctx, extractArray(outcome.parsed), (raw) =>
+        mapMetabaseDashboardToItem(raw, { baseUrl: creds.url, collectionNames, syncedAt: now }),
       );
 
       return syncPassCursorSuccess(t0, totalBytes, pass1Cursor(), upserted);

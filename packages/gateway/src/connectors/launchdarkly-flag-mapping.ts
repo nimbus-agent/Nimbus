@@ -1,3 +1,5 @@
+import { pickEnum, pickStringArray, trimTrailingSlash } from "./_lib/field-helpers.ts";
+import type { MappedRow } from "./mapped-row.ts";
 import { asRecord, stringField } from "./unknown-record.ts";
 
 type Kind = "boolean" | "multivariate";
@@ -9,41 +11,16 @@ export interface LaunchDarklyMappingContext {
   readonly syncedAt: number;
 }
 
-export interface LaunchDarklyMappedRow {
-  readonly service: "launchdarkly";
-  readonly type: "feature_flag";
-  readonly externalId: string;
-  readonly title: string;
-  readonly bodyPreview: string;
-  readonly url: string | null;
-  readonly canonicalUrl: string;
-  readonly modifiedAt: number;
-  readonly metadata: Record<string, unknown>;
-  readonly syncedAt: number;
-}
+export type LaunchDarklyMappedRow = MappedRow<"launchdarkly", "feature_flag", string>;
 
 export function flagUrl(baseUrl: string, projectKey: string, flagKey: string): string {
-  const base = baseUrl.endsWith("/") ? baseUrl.slice(0, -1) : baseUrl;
+  const base = trimTrailingSlash(baseUrl);
   return `${base}/projects/${encodeURIComponent(projectKey)}/flags/${encodeURIComponent(flagKey)}`;
-}
-
-function pickEnum<T extends string>(value: unknown, set: ReadonlySet<string>): T | null {
-  if (typeof value !== "string") {
-    return null;
-  }
-  return set.has(value) ? (value as T) : null;
 }
 
 function numberField(row: Record<string, unknown>, key: string): number | null {
   const v = row[key];
   return typeof v === "number" && Number.isFinite(v) ? v : null;
-}
-
-function extractTags(value: unknown): string[] {
-  if (!Array.isArray(value)) {
-    return [];
-  }
-  return value.filter((t): t is string => typeof t === "string");
 }
 
 function extractEnvironments(value: unknown): {
@@ -85,7 +62,7 @@ export function mapLaunchDarklyFlagToItem(
   const name = stringField(row, "name") ?? null;
   const description = stringField(row, "description") ?? null;
   const kind = pickEnum<Kind>(row["kind"], KINDS);
-  const tags = extractTags(row["tags"]);
+  const tags = pickStringArray(row["tags"]);
   const maintainer = stringField(asRecord(row["_maintainer"]) ?? {}, "email") ?? null;
   const maintainerId = stringField(row, "maintainerId") ?? null;
   const variations = Array.isArray(row["variations"]) ? row["variations"].length : 0;

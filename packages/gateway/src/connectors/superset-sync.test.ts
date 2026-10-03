@@ -243,7 +243,7 @@ describeWithFetchRestore("superset-sync", () => {
     expect(r.itemsUpserted).toBe(1);
   });
 
-  test("unmappable entries are skipped (covers upsertDashboards mapped===null)", async () => {
+  test("unmappable entries are skipped (covers upsertMapped mapped===null)", async () => {
     const db = createMemoryIndexDb();
     installFetch((url) =>
       url.includes("/security/login")

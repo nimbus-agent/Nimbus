@@ -1,5 +1,9 @@
+import { pickStringArray } from "./_lib/field-helpers.ts";
 import type { MappedRow } from "./mapped-row.ts";
 import { asRecord, numberField, stringField } from "./unknown-record.ts";
+
+// Lever tags are plain strings: every string element is kept, empty ones included.
+export { pickStringArray as tagStrings } from "./_lib/field-helpers.ts";
 
 export interface LeverMappingContext {
   readonly syncedAt: number;
@@ -10,19 +14,6 @@ export type LeverMappedRow = MappedRow<"lever", "posting">;
 function epochMs(row: Record<string, unknown>, key: string): number | null {
   const v = numberField(row, key);
   return v === undefined || v === 0 ? null : v;
-}
-
-export function tagStrings(raw: unknown): string[] {
-  if (!Array.isArray(raw)) {
-    return [];
-  }
-  const names: string[] = [];
-  for (const t of raw) {
-    if (typeof t === "string") {
-      names.push(t);
-    }
-  }
-  return names;
 }
 
 function reqCode(row: Record<string, unknown>): string | null {
@@ -97,7 +88,7 @@ export function mapLeverPostingToItem(
   const commitment = stringField(categories, "commitment") ?? null;
   const level = stringField(categories, "level") ?? null;
 
-  const tags = tagStrings(row["tags"]);
+  const tags = pickStringArray(row["tags"]);
 
   const hostedUrl = stringField(row, "hostedUrl") ?? null;
   const applyUrl = stringField(row, "applyUrl") ?? null;

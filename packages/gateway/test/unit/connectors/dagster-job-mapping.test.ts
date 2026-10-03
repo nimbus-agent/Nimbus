@@ -98,6 +98,14 @@ describe("mapDagsterJobToItem", () => {
     expect(row.canonicalUrl).toBeNull();
   });
 
+  test("canonical url drops a trailing slash from the base url", () => {
+    const row = mapDagsterJobToItem(makeJob(), ctx({ baseUrl: `${BASE_URL}/` }));
+    if (row === null) throw new Error("expected mapping to succeed");
+    expect(row.canonicalUrl).toBe(
+      "https://my-org.dagster.cloud/prod/locations/analytics_code/jobs/nightly_etl",
+    );
+  });
+
   test("extracts flat fields into metadata", () => {
     const row = mapDagsterJobToItem(makeJob(), ctx());
     if (row === null) throw new Error("expected mapping to succeed");

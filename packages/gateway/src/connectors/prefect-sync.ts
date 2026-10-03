@@ -1,5 +1,6 @@
 import type { Syncable, SyncContext } from "../sync/types.ts";
 import { connectorFetch } from "./_lib/fetch-outcome.ts";
+import { trimTrailingSlash } from "./_lib/field-helpers.ts";
 import { bareArrayPage, runSinglePassPaginatedSync } from "./_lib/paginated-sync.ts";
 import { encodeNimbusJsonCursor } from "./nimbus-json-cursor.ts";
 import { mapPrefectDeploymentToItem } from "./prefect-deployment-mapping.ts";
@@ -22,10 +23,6 @@ export type PrefectSyncableOptions = {
 interface PrefectCreds {
   readonly apiUrl: string;
   readonly apiKey: string;
-}
-
-function trimTrailingSlash(s: string): string {
-  return s.endsWith("/") ? s.slice(0, -1) : s;
 }
 
 async function loadCreds(ctx: SyncContext): Promise<PrefectCreds | null> {

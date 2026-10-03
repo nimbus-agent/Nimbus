@@ -1,3 +1,5 @@
+import { trimTrailingSlash } from "./_lib/field-helpers.ts";
+import type { MappedRow } from "./mapped-row.ts";
 import { asRecord, numberField, stringField } from "./unknown-record.ts";
 
 export interface DbtMappingContext {
@@ -6,22 +8,7 @@ export interface DbtMappingContext {
   readonly syncedAt: number;
 }
 
-export interface DbtMappedRow {
-  readonly service: "dbt";
-  readonly type: "job";
-  readonly externalId: string;
-  readonly title: string;
-  readonly bodyPreview: string;
-  readonly url: string | null;
-  readonly canonicalUrl: string;
-  readonly modifiedAt: number;
-  readonly metadata: Record<string, unknown>;
-  readonly syncedAt: number;
-}
-
-function trimTrailingSlash(s: string): string {
-  return s.endsWith("/") ? s.slice(0, -1) : s;
-}
+export type DbtMappedRow = MappedRow<"dbt", "job", string>;
 
 function parseIsoMs(v: unknown): number | null {
   return typeof v === "string" && Number.isFinite(Date.parse(v)) ? Date.parse(v) : null;

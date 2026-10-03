@@ -1,3 +1,4 @@
+import { namedTags } from "./_lib/field-helpers.ts";
 import type { MappedRow } from "./mapped-row.ts";
 import { asRecord, numberField, stringField } from "./unknown-record.ts";
 
@@ -13,22 +14,9 @@ function parseIsoMs(v: unknown): number | null {
 
 const TITLE_MAX = 80;
 
+/** Readwise tag objects (`{ id, name }`) carry their label in `name`. */
 export function tagNames(raw: unknown): string[] {
-  if (!Array.isArray(raw)) {
-    return [];
-  }
-  const names: string[] = [];
-  for (const t of raw) {
-    const row = asRecord(t);
-    if (row === undefined) {
-      continue;
-    }
-    const name = stringField(row, "name");
-    if (name !== undefined && name !== "") {
-      names.push(name);
-    }
-  }
-  return names;
+  return namedTags(raw);
 }
 
 export function mapReadwiseHighlightToItem(

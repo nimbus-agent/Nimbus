@@ -1,3 +1,5 @@
+import { pickEnum } from "./_lib/field-helpers.ts";
+import type { MappedRow } from "./mapped-row.ts";
 import { asRecord, stringField } from "./unknown-record.ts";
 
 type Severity = "CRITICAL" | "HIGH" | "MEDIUM" | "LOW" | "INFORMATIONAL";
@@ -17,18 +19,7 @@ export interface WizMappingContext {
   readonly syncedAt: number;
 }
 
-export interface WizMappedRow {
-  readonly service: "wiz";
-  readonly type: "issue";
-  readonly externalId: string;
-  readonly title: string;
-  readonly bodyPreview: string;
-  readonly url: string | null;
-  readonly canonicalUrl: string;
-  readonly modifiedAt: number;
-  readonly metadata: Record<string, unknown>;
-  readonly syncedAt: number;
-}
+export type WizMappedRow = MappedRow<"wiz", "issue", string>;
 
 export function issueUrl(apiBaseUrl: string, issueId: string): string {
   try {
@@ -38,13 +29,6 @@ export function issueUrl(apiBaseUrl: string, issueId: string): string {
   } catch {
     return `${apiBaseUrl}#issue=${encodeURIComponent(issueId)}`;
   }
-}
-
-function pickEnum<T extends string>(value: unknown, set: ReadonlySet<string>): T | null {
-  if (typeof value !== "string") {
-    return null;
-  }
-  return set.has(value) ? (value as T) : null;
 }
 
 function parseIsoMs(value: unknown): number | null {

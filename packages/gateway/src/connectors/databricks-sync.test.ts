@@ -717,8 +717,8 @@ describeWithFetchRestore("databricks-sync", () => {
     expect(meta["latest_run_duration_ms"]).toBeNull();
   });
 
-  // ── upsertJobs: mapped === null (line 98 continue) — job without job_id ───
-  test("skips jobs that fail mapping (e.g. missing job_id) (line 98 continue)", async () => {
+  // ── upsertMapped: mapped === null → skipped — job without job_id ──────────
+  test("skips jobs that fail mapping (e.g. missing job_id)", async () => {
     const db = createMemoryIndexDb();
 
     const invalidJob = { settings: { name: "No ID Job" } }; // no job_id → mapDatabricksJobToItem returns null
@@ -749,8 +749,8 @@ describeWithFetchRestore("databricks-sync", () => {
     expectServiceItemCount(db, "databricks", 1);
   });
 
-  // ── upsertJobs: non-record job → mapDatabricksJobToItem returns null ───────
-  test("skips primitive (non-object) entries in the jobs array (line 98 continue)", async () => {
+  // ── upsertMapped: non-record job → mapDatabricksJobToItem returns null ─────
+  test("skips primitive (non-object) entries in the jobs array", async () => {
     const db = createMemoryIndexDb();
 
     globalThis.fetch = (async (input: SyncTestFetchParams[0]): Promise<Response> => {

@@ -100,7 +100,7 @@ describeWithFetchRestore("metabase-sync", () => {
     expectServiceItemCount(db, "metabase", 1);
   });
 
-  // ── trimTrailingSlash: URL with trailing slash (line 33 true branch) ────────
+  // ── trimTrailingSlash: URL with trailing slash (true branch) ────────────────
   test("trims trailing slash from base URL before fetching", async () => {
     const db = createMemoryIndexDb();
     const vault = createStubVault({
@@ -128,7 +128,7 @@ describeWithFetchRestore("metabase-sync", () => {
     expect(seenUrls.some((u) => u.endsWith("/api/collection"))).toBe(true);
   });
 
-  // ── trimTrailingSlash: URL without trailing slash (line 33 false branch) ────
+  // ── trimTrailingSlash: URL without trailing slash (false branch) ────────────
   test("preserves URL without trailing slash", async () => {
     const db = createMemoryIndexDb();
     const vault = createStubVault({
@@ -319,7 +319,7 @@ describeWithFetchRestore("metabase-sync", () => {
     expect(r.itemsUpserted).toBe(1);
   });
 
-  // ── upsertDashboards: mapped === null → skipped (line 91, DA=0 exec line 92) ──
+  // ── upsertMapped: mapped === null → skipped ─────────────────────────────────
   test("skips dashboard items that fail mapping (no id field → mapped null)", async () => {
     const db = createMemoryIndexDb();
     const vault = createStubVault({
@@ -344,7 +344,7 @@ describeWithFetchRestore("metabase-sync", () => {
     expectServiceItemCount(db, "metabase", 1);
   });
 
-  // ── upsertDashboards: dashboard with no name → mapped null → skipped ────────
+  // ── upsertMapped: dashboard with no name → mapped null → skipped ────────────
   test("skips dashboard with empty name (mapped null)", async () => {
     const db = createMemoryIndexDb();
     const vault = createStubVault({

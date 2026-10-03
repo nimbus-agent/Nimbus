@@ -5,6 +5,7 @@ import {
 } from "../sync/pass-cursor-sync-result.ts";
 import { type Syncable, type SyncContext, type SyncResult, syncNoopResult } from "../sync/types.ts";
 import { connectorFetch } from "./_lib/fetch-outcome.ts";
+import { trimTrailingSlash } from "./_lib/field-helpers.ts";
 import {
   flattenMappingFields,
   mapElasticsearchIndexToItem,
@@ -34,10 +35,6 @@ export type ElasticsearchSyncableOptions = {
 interface ElasticsearchCreds {
   readonly baseUrl: string;
   readonly apiKey: string;
-}
-
-function trimTrailingSlash(s: string): string {
-  return s.endsWith("/") ? s.slice(0, -1) : s;
 }
 
 async function loadCreds(ctx: SyncContext): Promise<ElasticsearchCreds | null> {
