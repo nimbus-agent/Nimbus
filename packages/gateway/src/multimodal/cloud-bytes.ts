@@ -191,10 +191,10 @@ async function fetchWithRetry(
  * Both bounds are checked here, not just the per-artifact one: streaming 10 MB of a 500 MB file
  * before tripping the run budget spends exactly the resource the budget exists to conserve.
  * `content-length` is a HINT, not a guarantee — it can be absent, or wrong — so the per-chunk
- * checks in {@link collectToMemory}/{@link collectToScratch} still run as a backstop for the
- * PERMIT direction (a header that understates the real size). That backstop does NOT exist for
- * the REFUSE direction taken here: a header that OVERSTATES the size refuses the artifact before
- * a single byte streams, with no per-chunk check to overrule a lying provider's inflated number.
+ * checks in {@link readBodyBounded} still run as a backstop for the PERMIT direction (a header that
+ * understates the real size). That backstop does NOT exist for the REFUSE direction taken here: a
+ * header that OVERSTATES the size refuses the artifact before a single byte streams, with no
+ * per-chunk check to overrule a lying provider's inflated number.
  */
 function checkDeclaredLength(
   res: Response,
@@ -251,6 +251,52 @@ export async function fetchCloudBytes(
 }
 
 /**
+ * Reads `res.body` to its end, handing each chunk to `onChunk` IN ORDER — awaited, so a sink that
+ * writes to disk lands each chunk after the previous one, and that await is its backpressure.
+ *
+ * Both budgets are checked PER CHUNK (spec § 16.9), the per-artifact cap BEFORE the run budget, and
+ * both before the chunk reaches the sink: an overrun aborts the transfer — rather than paying for
+ * the whole artifact and then declining it — and is reported as a refusal, never a success.
+ * `fetched` is then the bytes that actually crossed the wire, the overrunning chunk included. A
+ * `null` body is a completed read of zero bytes. The reader's lock is released on EVERY exit,
+ * including a throwing sink.
+ *
+ * The one loop both collectors run — {@link collectToMemory} and {@link collectToScratch} differ
+ * only in where a chunk goes.
+ */
+async function readBodyBounded(
+  res: Response,
+  controller: AbortController,
+  deps: CloudBytesDeps,
+  onChunk: (chunk: Uint8Array) => void | Promise<void>,
+): Promise<{ fetched: number } | CloudBytesRefusal> {
+  const body = res.body;
+  if (body === null) return { fetched: 0 };
+  let fetched = 0;
+  const reader = body.getReader();
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (value === undefined) continue;
+      fetched += value.byteLength;
+      if (fetched > deps.maxBytes) {
+        controller.abort();
+        return { ok: false, reason: "over_byte_cap", fetched };
+      }
+      if (fetched > deps.remainingBudget) {
+        controller.abort();
+        return { ok: false, stop: "budget_exhausted", fetched };
+      }
+      await onChunk(value); // NOSONAR S9382: ordered sink - each chunk must land after the previous one, and for the scratch-file sink this await is the backpressure
+    }
+  } finally {
+    reader.releaseLock();
+  }
+  return { fetched };
+}
+
+/**
  * Buffers a still image in memory. Only reachable for `modality === "image"` — the AV arm always
  * goes to disk (`collectToScratch`) since a video/audio artifact can be large enough that holding
  * it in memory is the wrong default.
@@ -260,41 +306,19 @@ async function collectToMemory(
   controller: AbortController,
   deps: CloudBytesDeps,
 ): Promise<CloudBytes> {
-  const body = res.body;
-  if (body === null) return { ok: true, kind: "bytes", bytes: new Uint8Array(0), fetched: 0 };
-
-  const reader = body.getReader();
   const chunks: Uint8Array[] = [];
-  let fetched = 0;
-  try {
-    for (;;) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      if (value === undefined) continue;
-      fetched += value.byteLength;
-      // Per-chunk, not just at the end: an overrun aborts the transfer rather than paying for
-      // the whole artifact and then declining it.
-      if (fetched > deps.maxBytes) {
-        controller.abort();
-        return { ok: false, reason: "over_byte_cap", fetched };
-      }
-      if (fetched > deps.remainingBudget) {
-        controller.abort();
-        return { ok: false, stop: "budget_exhausted", fetched };
-      }
-      chunks.push(value);
-    }
-  } finally {
-    reader.releaseLock();
-  }
+  const read = await readBodyBounded(res, controller, deps, (chunk) => {
+    chunks.push(chunk);
+  });
+  if ("ok" in read) return read;
 
-  const bytes = new Uint8Array(fetched);
+  const bytes = new Uint8Array(read.fetched);
   let at = 0;
   for (const chunk of chunks) {
     bytes.set(chunk, at);
     at += chunk.byteLength;
   }
-  return { ok: true, kind: "bytes", bytes, fetched };
+  return { ok: true, kind: "bytes", bytes, fetched: read.fetched };
 }
 
 /** Resolves once `chunk` has actually been written (or errored), so backpressure is honoured. */
@@ -324,62 +348,6 @@ function closeStream(ws: WriteStream): Promise<void> {
 }
 
 /**
- * Streams an AV artifact to a gateway-owned scratch file rather than holding it in memory.
- *
- * `nimbus-media-<uuid>`, no extension (spec § 5.4): a downloaded artifact's extension is whatever
- * the provider served, and an extension list is guaranteed to drift. The mode goes on CREATION
- * (`createWriteStream(path, { mode: 0o600 })`), not a `chmodSync` afterwards, so there is no
- * window in which the file exists world-readable under a permissive umask. The file is removed on
- * every non-`ok` exit — including a thrown read/write error, not only the two budget refusals —
- * because `succeeded` is set only immediately before the happy-path return, and the `finally`
- * checks it unconditionally.
- *
- * `createWriteStream` opens its file descriptor ASYNCHRONOUSLY. On the reachable path where the
- * very first chunk already exceeds the cap or the budget, this function can reach the cleanup
- * branch before that `open` has completed — an `rmSync` at that moment removes nothing, and the
- * still-pending open then creates the file anyway, moments after this function has already
- * returned. `ws.destroy()` alone does not close synchronously either. The fix is to await the
- * stream's own `close` event before removing: `close` fires only once the fd has genuinely been
- * opened-then-closed, so by the time this function returns, the file is guaranteed to be either
- * never created or created-and-removed — never present.
- */
-/**
- * Streams `res.body` into `ws`, chunk by chunk, checking both budgets per chunk (spec § 16.9) —
- * an overrun aborts the transfer and reports it as a refusal rather than a success.
- */
-async function streamBodyToFile(
-  res: Response,
-  controller: AbortController,
-  ws: WriteStream,
-  deps: CloudBytesDeps,
-): Promise<{ fetched: number } | CloudBytesRefusal> {
-  const body = res.body;
-  if (body === null) return { fetched: 0 };
-  let fetched = 0;
-  const reader = body.getReader();
-  try {
-    for (;;) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      if (value === undefined) continue;
-      fetched += value.byteLength;
-      if (fetched > deps.maxBytes) {
-        controller.abort();
-        return { ok: false, reason: "over_byte_cap", fetched };
-      }
-      if (fetched > deps.remainingBudget) {
-        controller.abort();
-        return { ok: false, stop: "budget_exhausted", fetched };
-      }
-      await writeChunk(ws, value); // NOSONAR S9382: ordered file writes - each chunk must land after the previous one, and this await is the backpressure
-    }
-  } finally {
-    reader.releaseLock();
-  }
-  return { fetched };
-}
-
-/**
  * Removes a scratch file a failed collection created. Waits for the stream's own `close` event
  * first — see {@link collectToScratch}'s docstring for why `rmSync` alone races the async open.
  * Both the wait and the removal are best-effort: neither failing changes the outcome already
@@ -389,7 +357,7 @@ async function streamBodyToFile(
  * opened) — `ws.closed` is then already `true` before `once(ws, "close")` ever attaches a
  * listener, and an event that already fired never fires again. That is reachable in production,
  * not merely hypothetical: a `writeChunk` rejection auto-destroys the stream, which emits `error`
- * then `close` — and the rejection resumes the `await streamBodyToFile(...)` caller in a LATER
+ * then `close` — and the rejection resumes the `await readBodyBounded(...)` caller in a LATER
  * microtask, so by the time this function runs, `close` can already be behind it. Without the
  * `!ws.closed` guard, `once` would never settle: the whole pass stalls with no timeout, AND the
  * scratch file this function exists to remove is never removed either, since the `try` below
@@ -412,6 +380,26 @@ export async function cleanupFailedScratch(ws: WriteStream, path: string): Promi
   }
 }
 
+/**
+ * Streams an AV artifact to a gateway-owned scratch file rather than holding it in memory.
+ *
+ * `nimbus-media-<uuid>`, no extension (spec § 5.4): a downloaded artifact's extension is whatever
+ * the provider served, and an extension list is guaranteed to drift. The mode goes on CREATION
+ * (`createWriteStream(path, { mode: 0o600 })`), not a `chmodSync` afterwards, so there is no
+ * window in which the file exists world-readable under a permissive umask. The file is removed on
+ * every non-`ok` exit — including a thrown read/write error, not only the two budget refusals —
+ * because `succeeded` is set only immediately before the happy-path return, and the `finally`
+ * checks it unconditionally.
+ *
+ * `createWriteStream` opens its file descriptor ASYNCHRONOUSLY. On the reachable path where the
+ * very first chunk already exceeds the cap or the budget, this function can reach the cleanup
+ * branch before that `open` has completed — an `rmSync` at that moment removes nothing, and the
+ * still-pending open then creates the file anyway, moments after this function has already
+ * returned. `ws.destroy()` alone does not close synchronously either. The fix is to await the
+ * stream's own `close` event before removing: `close` fires only once the fd has genuinely been
+ * opened-then-closed, so by the time this function returns, the file is guaranteed to be either
+ * never created or created-and-removed — never present.
+ */
 async function collectToScratch(
   res: Response,
   controller: AbortController,
@@ -421,7 +409,7 @@ async function collectToScratch(
   const ws = createWriteStream(path, { mode: 0o600 });
   let succeeded = false;
   try {
-    const streamed = await streamBodyToFile(res, controller, ws, deps);
+    const streamed = await readBodyBounded(res, controller, deps, (chunk) => writeChunk(ws, chunk));
     if ("ok" in streamed) return streamed;
     await closeStream(ws);
     succeeded = true;

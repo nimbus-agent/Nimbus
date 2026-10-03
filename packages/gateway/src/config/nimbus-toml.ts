@@ -442,40 +442,74 @@ function beginLlmTable(
 }
 
 /**
- * Accumulates raw kv strings per `[llm.<kind>.<id>]` sub-table.
- *
- * `prefix`/`label` are the ONLY difference between the local-route and remote-vendor collectors,
- * so they share this one function rather than each carrying a copy of the header-reset behaviour
- * below — that reset fixed a real bug, and a second copy could regress it independently.
+ * Opens a sub-table for {@link collectSubTableKv}: given a VALID `[...]` header line, returns the id
+ * whose bucket the `key = value` lines below it belong to, creating that bucket in `accum`; or
+ * `undefined` when the header names a different table, or this one with an unusable id — the lines
+ * below it are then dropped.
  */
-function collectLlmKvSections(
+type BeginSubTable = (
+  accum: Map<string, Record<string, string>>,
+  trimmed: string,
+) => string | undefined;
+
+/**
+ * Accumulates raw kv strings per `[<section>.<id>]` sub-table: `[llm.local.*]`, `[llm.remote.*]`,
+ * `[hitl.quorum."*"]` and `[federation.preflight."*"]`.
+ *
+ * `beginTable` — which header opens which id — is the ONLY difference between those sections, so
+ * they share this one scanner and its header reset below. That reset was once fixed in the
+ * `[llm.*]` copy alone, and the `[hitl.quorum]` and `[federation.preflight]` copies kept the bug it
+ * fixes: under a quorum header missing its `]`, `approvers = 1` replaced the PREVIOUS action type's
+ * approver count (I21), and under a preflight one, `command` replaced the previous namespace's
+ * command (I24).
+ */
+function collectSubTableKv(
   source: string,
-  prefix: string,
-  label: string,
+  beginTable: BeginSubTable,
 ): Map<string, Record<string, string>> {
   const accum = new Map<string, Record<string, string>>();
   let currentId: string | undefined;
 
   for (const line of source.split(/\r?\n/)) {
     const trimmed = stripComment(line).trim();
-    if (hasUnterminatedString(line)) continue;
     if (trimmed === "") continue;
+    const unterminated = hasUnterminatedString(line);
     // Header-LIKE, not header-VALID: a line that opens with `[` is a table header the writer
     // meant, whether or not it closes. Ending the current block on the OPENING bracket — before
     // `isTableHeader` gets to reject `[llm.local.bad` for its missing `]` — is what makes a
-    // malformed header end the previous route instead of leaking into it. Without the reset,
-    // `currentId` stayed on the last VALID id, so every `runtime`/`model` line under the
-    // malformed header was written into the PREVIOUS route's bucket: `[llm.local.good]` followed
-    // by `[llm.local.bad` silently became `good` carrying `bad`'s runtime and model.
+    // malformed header end the previous table instead of leaking into it. Without the reset,
+    // `currentId` stayed on the last VALID id, so every line under the malformed header was
+    // written into the PREVIOUS table's bucket: `[llm.local.good]` followed by `[llm.local.bad`
+    // silently became `good` carrying `bad`'s runtime and model.
+    //
+    // A header whose quote never closes (`[hitl.quorum."x]`) is malformed the same way, which is
+    // why this test runs BEFORE the unterminated-string skip below: skipped there, that header
+    // reset nothing and its keys leaked into the previous table exactly as above. It ends the
+    // previous table and opens none.
     if (trimmed.startsWith("[")) {
-      currentId = isTableHeader(trimmed) ? beginLlmTable(accum, trimmed, prefix, label) : undefined;
+      currentId = isTableHeader(trimmed) && !unterminated ? beginTable(accum, trimmed) : undefined;
       continue;
     }
+    // A key line whose quoted value never closes is malformed. Skipping beats acting on the
+    // mangled value the old parser produced (a leading `"` plus a truncated fragment) — no value
+    // is better than a wrong one.
+    if (unterminated) continue;
     if (currentId === undefined) continue;
     applyKvLine(accum.get(currentId), trimmed);
   }
 
   return accum;
+}
+
+/** Accumulates raw kv strings per `[llm.<kind>.<id>]` sub-table; see {@link collectSubTableKv}. */
+function collectLlmKvSections(
+  source: string,
+  prefix: string,
+  label: string,
+): Map<string, Record<string, string>> {
+  return collectSubTableKv(source, (accum, trimmed) =>
+    beginLlmTable(accum, trimmed, prefix, label),
+  );
 }
 
 /** Accumulates raw kv strings per `[llm.local.<name>]` sub-table. */
@@ -1658,37 +1692,23 @@ export function parseQuorumConfig(source: string): QuorumConfig {
 
 /** Accumulates raw kv strings per `[hitl.quorum."<action-type>"]` sub-table. */
 function collectQuorumKvSections(source: string): Map<string, Record<string, string>> {
-  const accum = new Map<string, Record<string, string>>();
-  let currentId: string | undefined;
-
-  for (const line of source.split(/\r?\n/)) {
-    const trimmed = stripComment(line).trim();
-    // A line whose quoted value never closes is malformed. Skipping beats
-    // acting on the mangled value the old parser produced (a leading `"` plus
-    // a truncated fragment) — no value is better than a wrong one.
-    if (hasUnterminatedString(line)) continue;
-    if (trimmed === "") continue;
-    if (isTableHeader(trimmed)) {
-      currentId = beginQuorumTable(accum, trimmed);
-      continue;
-    }
-    if (currentId === undefined) continue;
-    applyKvLine(accum.get(currentId), trimmed);
-  }
-
-  return accum;
+  return collectSubTableKv(source, (accum, trimmed) =>
+    beginQuotedIdTable(accum, trimmed, HITL_QUORUM_TABLE_PREFIX),
+  );
 }
 
 /**
- * If `trimmed` is a `[hitl.quorum."<action-type>"]` header with a non-empty id,
- * ensures a bucket exists in `accum` and returns the id; otherwise returns undefined.
+ * If `trimmed` is a `<prefix><id>"]` header with a non-empty id — `prefix` being
+ * `[hitl.quorum."` or `[federation.preflight."` — ensures a bucket exists in `accum` and returns
+ * the id; otherwise returns undefined.
  */
-function beginQuorumTable(
+function beginQuotedIdTable(
   accum: Map<string, Record<string, string>>,
   trimmed: string,
+  prefix: string,
 ): string | undefined {
-  if (!trimmed.startsWith(HITL_QUORUM_TABLE_PREFIX) || !trimmed.endsWith('"]')) return undefined;
-  const id = trimmed.slice(HITL_QUORUM_TABLE_PREFIX.length, -2);
+  if (!trimmed.startsWith(prefix) || !trimmed.endsWith('"]')) return undefined;
+  const id = trimmed.slice(prefix.length, -2);
   if (id.length === 0) return undefined;
   if (!accum.has(id)) accum.set(id, {});
   return id;
@@ -1852,40 +1872,9 @@ const PREFLIGHT_TIMEOUT_CAP = 1800;
 
 /** Accumulates raw kv strings per `[federation.preflight."<namespace>"]` sub-table. */
 function collectPreflightKvSections(source: string): Map<string, Record<string, string>> {
-  const accum = new Map<string, Record<string, string>>();
-  let currentId: string | undefined;
-
-  for (const line of source.split(/\r?\n/)) {
-    const trimmed = stripComment(line).trim();
-    // A line whose quoted value never closes is malformed. Skipping beats
-    // acting on the mangled value the old parser produced (a leading `"` plus
-    // a truncated fragment) — no value is better than a wrong one.
-    if (hasUnterminatedString(line)) continue;
-    if (trimmed === "") continue;
-    if (isTableHeader(trimmed)) {
-      currentId = beginPreflightTable(accum, trimmed);
-      continue;
-    }
-    if (currentId === undefined) continue;
-    applyKvLine(accum.get(currentId), trimmed);
-  }
-
-  return accum;
-}
-
-/**
- * If `trimmed` is a `[federation.preflight."<namespace>"]` header with a non-empty id,
- * ensures a bucket exists in `accum` and returns the id; otherwise returns undefined.
- */
-function beginPreflightTable(
-  accum: Map<string, Record<string, string>>,
-  trimmed: string,
-): string | undefined {
-  if (!trimmed.startsWith(PREFLIGHT_TABLE_PREFIX) || !trimmed.endsWith('"]')) return undefined;
-  const id = trimmed.slice(PREFLIGHT_TABLE_PREFIX.length, -2);
-  if (id.length === 0) return undefined;
-  if (!accum.has(id)) accum.set(id, {});
-  return id;
+  return collectSubTableKv(source, (accum, trimmed) =>
+    beginQuotedIdTable(accum, trimmed, PREFLIGHT_TABLE_PREFIX),
+  );
 }
 
 /**

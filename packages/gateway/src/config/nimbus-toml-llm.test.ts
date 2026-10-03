@@ -126,6 +126,31 @@ describe("parseNimbusTomlLlmSection", () => {
     expect(cfg.taskPins?.get("reasoning")).toBe("ollama/qwen3:14b"); // valid sibling kept
     expect(cfg.taskPins?.has("teleportation" as never)).toBe(false); // bad key dropped
   });
+
+  test("a sub-table header whose quote never closes ends the previous route rather than rewriting it", () => {
+    // The unterminated-string skip used to run BEFORE the header reset, so this header was
+    // skipped as a whole — resetting nothing — and `good` silently picked up `bad`'s runtime and
+    // model, the same leak a header missing its `]` caused before the reset existed.
+    const cfg = parseNimbusTomlLlmSection(
+      `[llm.local.good]\nruntime = "ollama"\nmodel = "qwen3:8b"\n[llm.local."bad]\nruntime = "llamacpp"\nmodel = "evil.gguf"\n`,
+    );
+    expect(cfg.localRoutes?.get("good")).toEqual({ runtime: "ollama", model: "qwen3:8b" });
+    expect([...(cfg.localRoutes ?? new Map()).keys()]).toEqual(["good"]);
+  });
+
+  test("a remote-vendor header whose quote never closes ends the previous vendor", () => {
+    // The sharper case: before the fix, `xai`'s `enabled = true` landed on `anthropic`, turning on
+    // a vendor's per-vendor opt-in — the gate on prompts leaving the machine — that the owner had
+    // left off, and pointing it at a model the owner never chose for it.
+    const cfg = parseNimbusTomlLlmSection(
+      `[llm.remote.anthropic]\nmodel = "claude-sonnet-4-6"\n[llm.remote."xai]\nenabled = true\nmodel = "grok-4"\n`,
+    );
+    expect(cfg.remoteVendors?.get("anthropic")).toEqual({
+      enabled: false,
+      model: "claude-sonnet-4-6",
+    });
+    expect([...(cfg.remoteVendors ?? new Map()).keys()]).toEqual(["anthropic"]);
+  });
 });
 
 describe("DEFAULT_NIMBUS_LLM_TOML", () => {

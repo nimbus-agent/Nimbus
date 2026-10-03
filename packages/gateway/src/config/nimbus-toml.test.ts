@@ -1080,7 +1080,7 @@ describe("parseQuorumConfig — additional edge cases", () => {
   });
 
   test("empty table id is not added to map", () => {
-    // beginQuorumTable: id.length === 0 → return undefined
+    // beginQuotedIdTable: id.length === 0 → return undefined
     const raw = ['[hitl.quorum.""]', "approvers = 2", "window_seconds = 300"].join("\n");
     expect(parseQuorumConfig(raw).size).toBe(0);
   });
@@ -1237,7 +1237,7 @@ describe("parsePreflightConfig — edge cases", () => {
   });
 
   test("empty namespace id is not added", () => {
-    // beginPreflightTable: id.length === 0 → return undefined
+    // beginQuotedIdTable: id.length === 0 → return undefined
     const cfg = parsePreflightConfig('[federation.preflight.""]\ncommand = "make"\n');
     expect(cfg.size).toBe(0);
   });
