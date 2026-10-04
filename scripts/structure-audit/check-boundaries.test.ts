@@ -23,6 +23,17 @@ import { REPO_ROOT } from "./lib.ts";
 const TS6 = "typescript@6.0.3";
 const NO_PATH = { path: null, pathNot: null } as const;
 
+/** The version the root `typescript-compiler-api` alias installed: what the preload must serve. */
+function aliasVersion(): string {
+  const manifest: unknown = createRequire(join(REPO_ROOT, "package.json"))(
+    "typescript-compiler-api/package.json",
+  );
+  if (typeof manifest !== "object" || manifest === null || !("version" in manifest)) {
+    throw new Error("typescript-compiler-api/package.json has no version");
+  }
+  return String(manifest.version);
+}
+
 /** Rules shaped like `.dependency-cruiser.cjs`'s own: one unscoped, two path-scoped. */
 const RULES: readonly ForbiddenRule[] = [
   { name: "no-circular", comment: "No cycles.", from: NO_PATH, to: NO_PATH },
@@ -452,6 +463,59 @@ test("`audit:boundaries` runs this wrapper, never a bare dependency-cruiser", ()
   expect(script).toBe("bun scripts/structure-audit/check-boundaries.ts");
 });
 
+describe("dependency-cruiser-ts6-preload", () => {
+  let dir: string;
+
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), "boundaries-preload-"));
+    // A typescript@7 exactly where node resolution from `dir` finds it. That is the situation
+    // bun's isolated linker sometimes creates for dependency-cruiser, made deterministic here.
+    const fakeTs7 = join(dir, "node_modules", "typescript");
+    mkdirSync(fakeTs7, { recursive: true });
+    writeFileSync(
+      join(fakeTs7, "package.json"),
+      JSON.stringify({ name: "typescript", version: "7.0.2", main: "index.js" }),
+    );
+    writeFileSync(join(fakeTs7, "index.js"), 'module.exports = { version: "7.0.2" };\n');
+    // The two lookups dependency-cruiser makes: the manifest for its version gate, and the module.
+    writeFileSync(
+      join(dir, "probe.mjs"),
+      `import { createRequire } from "node:module";
+const manifest = createRequire(import.meta.url)("typescript/package.json");
+const loaded = await import("typescript");
+const ts = loaded.default ?? loaded;
+console.log(JSON.stringify({ manifest: manifest.version, module: ts.version, transpileModule: typeof ts.transpileModule }));
+`,
+    );
+  });
+
+  afterEach(() => {
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  function probe(preload: readonly string[]): unknown {
+    const proc = Bun.spawnSync([process.execPath, ...preload, join(dir, "probe.mjs")], {
+      cwd: dir,
+      stdout: "pipe",
+      stderr: "pipe",
+      windowsHide: true,
+    });
+    if (proc.exitCode !== 0) throw new Error(`probe exited ${proc.exitCode}: ${proc.stderr}`);
+    return JSON.parse(proc.stdout.toString());
+  }
+
+  test("answers both typescript lookups with the alias, even where typescript@7 is installed", () => {
+    // Negative control: without the preload the installed 7 wins both lookups. That is the
+    // inert case, and it shows the probe can tell the two apart.
+    expect(probe([])).toEqual({ manifest: "7.0.2", module: "7.0.2", transpileModule: "undefined" });
+    expect(probe(["--preload", PRELOAD_PATH])).toEqual({
+      manifest: aliasVersion(),
+      module: aliasVersion(),
+      transpileModule: "function",
+    });
+  }, 60_000);
+});
+
 describe("runCruise: the real dependency-cruiser, under the preload", () => {
   let fixture: string;
 
@@ -498,14 +562,10 @@ describe("runCruise: the real dependency-cruiser, under the preload", () => {
     });
     if (!run.ok) throw new Error(run.error);
 
-    // The compiler dependency-cruiser reports using must be the alias's, whatever `typescript`
-    // bun linked where dependency-cruiser would otherwise look.
-    const alias: unknown = createRequire(join(REPO_ROOT, "package.json"))(
-      "typescript-compiler-api/package.json",
-    );
-    const aliasVersion =
-      typeof alias === "object" && alias !== null && "version" in alias ? alias.version : null;
-    expect(run.result.typescript).toBe(`typescript@${String(aliasVersion)}`);
+    // dependency-cruiser must report the alias's compiler. On a checkout where bun happened to
+    // link typescript@6 for it, this would also hold WITHOUT the preload. The preload test above
+    // is the one that cannot pass by luck.
+    expect(run.result.typescript).toBe(`typescript@${aliasVersion()}`);
     expect(run.result.environmentIssues).toEqual([]);
 
     const required = ["src/a.ts", "src/b.ts", "src/cli/x.ts", "src/gateway/y.ts"];
