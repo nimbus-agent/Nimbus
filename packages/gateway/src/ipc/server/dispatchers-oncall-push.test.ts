@@ -33,6 +33,8 @@ function fakeRuntime(over: Partial<FakeRuntime> = {}): OncallPushRuntime {
     config: { enabled: true } as OncallPushRuntime["config"],
     store: {
       list: () => [],
+      listWithIncident: () => [],
+      incidentPagerdutyServiceId: () => null,
       newest: () => null,
       get: () => null,
       incidentTitle: () => null,

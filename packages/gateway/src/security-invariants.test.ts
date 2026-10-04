@@ -1120,9 +1120,21 @@ describe("I7 — Tauri ALLOWED_METHODS surface for T2 PR 3", () => {
     expect(rust).not.toContain("toolgen.");
   });
 
-  test("allowlist_exact_size assertion is 105", async () => {
+  test("allowlist_exact_size assertion is 107", async () => {
     const rust = await read("packages/ui/src-tauri/src/gateway_bridge.rs");
-    expect(rust).toMatch(/assert_eq!\s*\(\s*ALLOWED_METHODS\.len\(\),\s*105\s*\)/);
+    expect(rust).toMatch(/assert_eq!\s*\(\s*ALLOWED_METHODS\.len\(\),\s*107\s*\)/);
+  });
+
+  // By NAME, as for every brief/verb pair: a one-for-one swap of pushedGet for pushedRetry keeps
+  // the count at 107. pushedRetry starts an agent run on the owner's behalf; it stays CLI-only.
+  test("oncall: the two reads are renderer-callable, pushedRetry never is", async () => {
+    const rust = await read("packages/ui/src-tauri/src/gateway_bridge.rs");
+    expect(rust).toMatch(/^\s*"oncall\.pushedGet",\s*$/m);
+    expect(rust).toMatch(/^\s*"oncall\.pushedList",\s*$/m);
+    expect(rust).not.toMatch(/^\s*"oncall\.pushedRetry",\s*$/m);
+    expect(rust).toContain('assert!(is_method_allowed("oncall.pushedList"));');
+    expect(rust).toContain('assert!(is_method_allowed("oncall.pushedGet"));');
+    expect(rust).toContain('assert!(!is_method_allowed("oncall.pushedRetry"));');
   });
 
   test("connector.list stays absent; connector.listStatus is the served one", async () => {

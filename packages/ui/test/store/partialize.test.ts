@@ -22,14 +22,20 @@ describe("persistPartialize", () => {
       activePullId: null,
       active: "work",
       profiles: [{ name: "work" }],
+      lastSeenPushedAt: 7,
       setConnectionState: () => {},
       setProfileList: () => {},
     } as unknown as Record<string, unknown>;
     const out = persistPartialize(full);
     expect(Object.keys(out).sort((a, b) => a.localeCompare(b))).toEqual(
-      ["active", "activePullId", "connectorsList", "installedModels", "profiles"].sort((a, b) =>
-        a.localeCompare(b),
-      ),
+      [
+        "active",
+        "activePullId",
+        "connectorsList",
+        "installedModels",
+        "lastSeenPushedAt",
+        "profiles",
+      ].sort((a, b) => a.localeCompare(b)),
     );
   });
 
@@ -119,8 +125,8 @@ describe("persistPartialize — Data slice (Plan 5)", () => {
     expect(out).toHaveProperty("profiles", ["default"]);
   });
 
-  it("still has WHITELISTED_PERSIST_KEYS at exactly 5 entries", () => {
-    expect(WHITELISTED_PERSIST_KEYS).toHaveLength(5);
+  it("still has WHITELISTED_PERSIST_KEYS at exactly 6 entries", () => {
+    expect(WHITELISTED_PERSIST_KEYS).toHaveLength(6);
   });
 });
 
