@@ -251,8 +251,10 @@ three perf surfaces (`bench-cli-overhead-cold`, `bench-cli-overhead-warm`, `benc
 into `bench-cli-spawn-shared.ts`. It also folded the six warehouse/BI syncables' straight-line
 `_list` drains into the one loop in `createWarehouseListSyncable`, which needed one new marker,
 because each drain spawns the connector or opens a team session through the I19 gate. That gives
-142 − 6 + 2 + 1 = **139**, all `typescript:S9382`, which is what
-`git diff origin/main...HEAD | grep NOSONAR` counts.
+142 − 6 + 2 + 1 = **139**, all `typescript:S9382`. That is what
+`git diff origin/main...HEAD -- '*.ts' '*.tsx' | grep -c '^+.*NOSONAR'` counts. The pathspec
+matters: this page and the changelog entry mention the token in prose, so an unfiltered diff counts
+3 more.
 
 Sites are named by file and enclosing function rather than by line, so a row survives unrelated
 edits. **Retire a row when its reason stops being true.** One example: the rows that cite the macOS
