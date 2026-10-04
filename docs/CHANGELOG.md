@@ -18,6 +18,24 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
 
 ## Post-Phase-6 deliveries
 
+- **2026-10-04 — The on-call pushed brief, PR 3 of 3 (desktop panel).** The desktop app now has an
+  `/oncall` page ("On-call" in the sidebar, after Dashboard, with an unread dot driven by a persisted
+  `lastSeenPushedAt` that only moves forward). It lists the pushed briefs (title or id, service,
+  status, age) and shows the selected brief's markdown VERBATIM as preformatted text: a React text
+  child, with no renderer and no CSP change. A delivery strip shows the event, toast and chatops
+  outcomes with their reasons. A failed row shows its failure code and
+  `nimbus oncall pushed <id> --retry`, with NO retry button. One `OncallBriefsProvider` holds one
+  subscription to the `oncall.briefPushed` gateway event, with a 60 s poll as the backstop, and the
+  auto-select never re-selects a pruned brief. On the gateway, `oncall.pushedList`/`pushedGet` rows
+  gain `service`, resolved by the same helper the ChatOps headline uses (the mapped Nimbus service,
+  then the PagerDuty service id, then null); the list reads it through one LEFT JOIN with a
+  `json_valid` guard, so there is no per-row query, and `nimbus oncall pushed list` prints
+  `[service]` when it is known. `ALLOWED_METHODS` goes 105 → 107: `oncall.pushedList` and
+  `oncall.pushedGet` are added, and `oncall.pushedRetry` stays CLI-only (I7 ledger updated in the
+  same change). A gateway-validated contract fixture, `packages/ui/test/fixtures/oncall-pushed.json`,
+  binds the two packages without a source import. No new invariant, egress class, IPC method or
+  migration. **Not shipped:** approve-from-push and cascade ranking.
+
 - **2026-10-03 — `index.regraph` is refused over LAN.** It re-runs the graph populator over every
   indexed row, upserting entities and clearing and re-emitting relations, yet it was in neither
   `FORBIDDEN_OVER_LAN` nor `WRITE_METHODS`. The LAN check is a denylist that lets `index.*` reads

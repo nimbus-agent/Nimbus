@@ -1733,9 +1733,9 @@ dropped — Nimbus has no platform notification implementation yet (`Notificatio
 every row's toast is recorded `skipped` with that reason and no summary is sent. Were one implemented, it would be
 capped at 3 per run plus one summary and would carry the incident title and id, never the brief. Today the delivery
 surfaces are `nimbus tail --filter oncall` (the event) and `nimbus oncall pushed`. Read it with
-`nimbus oncall pushed [list|<incident-id>] [--retry] [--json]` through three CLI-only methods,
-`oncall.pushedList` / `oncall.pushedGet` / `oncall.pushedRetry`; the whole `oncall` namespace is LAN-forbidden and none
-is on the Tauri allowlist (still 105). `nimbus tail --filter oncall` follows the event and `nimbus doctor` warns when
+`nimbus oncall pushed [list|<incident-id>] [--retry] [--json]` through three methods,
+`oncall.pushedList` / `oncall.pushedGet` / `oncall.pushedRetry`; the whole `oncall` namespace is LAN-forbidden, and of the
+three only the two reads are on the Tauri allowlist (105 → 107); `oncall.pushedRetry` stays CLI-only. `nimbus tail --filter oncall` follows the event and `nimbus doctor` warns when
 push is enabled but the identity is unresolved (nothing could ever be selected).
 
 **`push` ClientKind.** Derived by the gateway, absent from `RECOGNISED` so no socket client can declare it;
@@ -1768,8 +1768,20 @@ boots after the push runtime is built, so the runtime holds every run until `pla
 (bound or none) right after ChatOps boots, on both branches; early runs wait rather than drop. **Demo:** `BootPolicy.chatops`
 means a demo-rooted gateway never boots ChatOps (I41), so a demo page attempts no ChatOps post. **Bounds:** headline
 only, with no full-brief option; notify posting is Slack-only, as it already was for every other `notify` consumer.
-**Not shipped:** the desktop panel (PR 3), approve-from-push, and cascade ranking. No new invariant, egress class, IPC
-method or migration.
+**Desktop panel (PR 3).** The desktop app's `/oncall` page ("On-call" in the sidebar, after Dashboard) lists the
+pushed briefs (title or id, service, status, age) and shows the selected brief's stored markdown VERBATIM, as
+preformatted text: it is a React text child inside a `<pre>`, with no markdown renderer, no link detection and no CSP
+change, which is what makes rendering stored text safe. A delivery strip above it shows the event, toast and chatops
+outcomes from `delivery_json`, with reasons. A failed row shows its failure code and `nimbus oncall pushed <id> --retry`
+and has NO retry button, since `oncall.pushedRetry` is not renderer-callable. One `OncallBriefsProvider` holds the one
+`oncall.pushedList` query and the one subscription to the `oncall.briefPushed` gateway event, so the sidebar's unread dot
+(driven by a persisted `lastSeenPushedAt`, which only moves forward) and the page never double-fetch; a 60 s poll is the
+backstop for events missed while the bridge reconnects. The auto-select never re-selects a pruned brief. Both read rows
+gain `service`, resolved by the same helper the ChatOps headline uses (the mapped Nimbus service, then the PagerDuty
+service id, then null); the list reads it with one LEFT JOIN guarded by `json_valid`, so there is no per-row query. A
+gateway-validated contract fixture, `packages/ui/test/fixtures/oncall-pushed.json`, binds the two packages without a
+source import. **Not shipped:** approve-from-push and cascade ranking. No new invariant, egress class, IPC method or
+migration.
 
 ### Bring-your-own-frontier-model routing (`llm/`)
 
