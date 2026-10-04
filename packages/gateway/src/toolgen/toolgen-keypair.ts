@@ -55,8 +55,10 @@ export const TOOLGEN_SIGNING_KEY_PREFIX = "toolgen.signing.";
  * privkey that does not derive the stored pubkey, which would sign artifacts a boot-time verify
  * would then reject) is treated as unusable and silently replaced — this function never throws on
  * a corrupted Vault, it regenerates. That rule lives in the shared `ensureVaultEd25519Keypair`
- * (`util/ed25519.ts`), which `share/share-keypair.ts` uses too; the key names stay here, this
- * file being the D11 vault-key allow-list entry for them.
+ * (`util/ed25519.ts`), which `share/share-keypair.ts` uses too; the key names stay here. That is
+ * a convention, not a static rule: this file is on the D11 vault-key allow-list, but D11's scan
+ * does not flag a `toolgen.signing.*` literal elsewhere — unlike `share.signing.privkey`, which
+ * D21 does confine to `share/share-keypair.ts`.
  */
 export function ensureToolgenKeypair(
   vault: NimbusVault,

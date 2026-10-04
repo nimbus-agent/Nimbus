@@ -70,10 +70,13 @@ function isMatchingKeypair(privkeyB64: string, pubkeyB64: string): boolean {
  * signing/verify call. A Vault read or write that itself fails still rejects.
  *
  * The key NAMES are parameters, never literals here, so each name keeps its one home: static rule
- * D21 confines `share.signing.privkey` to `share/share-keypair.ts` (I27), and
- * `toolgen/toolgen-keypair.ts` (I40) is the D11 vault-key allow-list entry for the toolgen
- * signing keys. Not used by `policy/anchor-keypair.ts` (I22), whose resolver reuses a stored pair
- * WITHOUT the consistency check — a different rule, not a copy of this one.
+ * D21 confines `share.signing.privkey` to `share/share-keypair.ts` (I27), and the toolgen signing
+ * keys live in `toolgen/toolgen-keypair.ts` (I40). Only the first of those homes is enforced: the
+ * toolgen file is on the D11 vault-key allow-list, but D11's literal scan is built from the
+ * connector keyspace and does not flag a `toolgen.signing.*` literal anywhere else, and D29(c)
+ * matches only the composed `toolgen.<toolId>.<hostSlug>` form. Not used by
+ * `policy/anchor-keypair.ts` (I22), whose resolver reuses a stored pair WITHOUT the consistency
+ * check — a different rule, not a copy of this one.
  */
 export async function ensureVaultEd25519Keypair(
   vault: VaultReader & VaultWriter,

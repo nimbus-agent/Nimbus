@@ -120,8 +120,8 @@ export type OncallFetchResult = { brief: string; findings: OncallBriefLike };
 
 /**
  * The real `agents.oncall` round trip — `lib/agent-cli-dispatcher.ts`'s `fetchAgentBrief` (exit 1
- * if no gateway, exit 2 on any failure once connected), returning the raw `{ brief, findings }`
- * for `runOncallCommand` below to print.
+ * if no gateway is running, exit 2 on any later failure, a failed connect included), returning the
+ * raw `{ brief, findings }` for `runOncallCommand` below to print.
  *
  * All three gateway refusals (`ERR_ONCALL_NO_ACTIVE_INCIDENT`,
  * `ERR_ONCALL_INCIDENT_NOT_FOUND`, `ERR_ONCALL_IDENTITY_UNRESOLVED`) arrive as JSON-RPC errors

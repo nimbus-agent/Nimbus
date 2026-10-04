@@ -63,7 +63,7 @@ function requireSteps(params: unknown): number {
  * uses, so `nimbus wow` and `nimbus standup` cannot disagree about who "me" is.
  *
  * Deliberately narrower than `resolveSelfPerson` itself supports: `handleStandup`
- * (`ipc/agents-rpc.ts` ~:589-610) never obtains or passes an OS username to `emitStandupBrief`, so
+ * (`ipc/agents-rpc.ts`) never obtains or passes an OS username to `emitStandupBrief`, so
  * `nimbus standup`'s OS-username resolution tier never fires in production even though the
  * primitive has one. `tour.plan` must never offer a `standup` step that then refuses when the
  * owner actually runs it, so its notion of "me" has to be the SAME (narrower) one — passing

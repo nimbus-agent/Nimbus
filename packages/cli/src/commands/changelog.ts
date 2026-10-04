@@ -67,9 +67,10 @@ export type ChangelogFetchResult = { brief: string; findings: ChangelogBriefLike
 
 /**
  * The real `agents.changelog` round trip — `lib/agent-cli-dispatcher.ts`'s `fetchAgentBrief`, the
- * lifecycle `runAgentCli` also runs (exit 1 if no gateway, exit 2 on any failure once connected).
- * It returns the raw `{ brief, findings }` instead of auto-rendering, since `runChangelogCommand`
- * below still has to pick a `--format` transform (or `--json`) over the result.
+ * lifecycle `runAgentCli` also runs (exit 1 if no gateway is running, exit 2 on any later failure,
+ * a failed connect included). It returns the raw `{ brief, findings }` instead of auto-rendering,
+ * since `runChangelogCommand` below still has to pick a `--format` transform (or `--json`) over
+ * the result.
  */
 export function fetchChangelogBrief(params: ChangelogFetchParams): Promise<ChangelogFetchResult> {
   return fetchAgentBrief("changelog", params, isChangelogBriefLike);

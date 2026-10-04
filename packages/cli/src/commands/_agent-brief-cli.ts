@@ -29,7 +29,8 @@ export function flagValue(args: string[], i: number, flag: string): string {
 
 /**
  * The flags every pasteable-brief command (`changelog`, `standup`, `oncall`) shares, exactly as
- * typed. `since` stays a string: each command converts and bounds it itself, and `oncall` must
+ * typed. `since` stays a string: each command converts it itself — only `oncall` also bounds it
+ * locally (`changelog` and `standup` leave the 90d bound to the gateway) — and `oncall` must
  * refuse an `--incident`/`--service` pair BEFORE it reports a bad duration.
  */
 export type BriefCommandFlags<V extends string> = {

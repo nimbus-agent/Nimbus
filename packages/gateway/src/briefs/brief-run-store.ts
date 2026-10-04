@@ -93,9 +93,11 @@ export class BriefRunController {
         error: "busy",
         activeRuns: active,
         // `active >= MAX_CONCURRENT_RUNS` means a non-terminal run is held, so this is null only
-        // when every such run expires at Infinity (an infinite TTL, or one so large `now + ttlMs`
-        // overflowed). Infinity is what the expiry arithmetic yields for those runs too — never
-        // an invented 0.
+        // when every such run expires at Infinity: a `ttlMs` of Infinity, which is what an absurdly
+        // large `[briefs] ttl_minutes` becomes once `ttlMinutes * 60_000` overflows at the wiring
+        // site. `now + ttlMs` cannot overflow by itself: a finite TTL keeps the sum finite at any
+        // real clock value. Infinity is what the expiry arithmetic yields for those runs too —
+        // never an invented 0.
         oldestExpiresInSeconds: this.runs.secondsUntilSoonestExpiry() ?? Number.POSITIVE_INFINITY,
       };
     }

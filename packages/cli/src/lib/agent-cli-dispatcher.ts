@@ -115,7 +115,8 @@ export function runAgentCli<B extends { gaps: readonly { category: string }[] }>
  * cannot. Calls `agents.<agentName>` with `callParams` verbatim and resolves to the raw
  * `{ brief, findings }` — demo-safe commands in the Markdown only (`briefTextFor`); `findings`, the
  * `--json` output, is untouched. Same exit codes as {@link runAgentCli}: `CliExit(1)` when no
- * gateway is running, `CliExit(2)` after printing the error for any failure once connected.
+ * gateway is running, `CliExit(2)` after printing the error for any later failure, a failed
+ * connect included.
  */
 export function fetchAgentBrief<B>(
   agentName: string,

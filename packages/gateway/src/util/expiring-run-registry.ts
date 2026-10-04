@@ -128,8 +128,10 @@ export class ExpiringRunRegistry<R extends ExpiringRun> {
 
   /**
    * Seconds until the soonest NON-terminal run expires — rounded up, never negative — or null when
-   * no non-terminal run is held. Never Infinity: JSON.stringify would turn it into `null` anyway,
-   * but silently, and meaning "unknown" rather than "not clock-bounded".
+   * there is no finite expiry to report: no non-terminal run is held, OR every one held expires at
+   * Infinity (an infinite TTL). Never Infinity: JSON.stringify would turn it into `null` anyway,
+   * but silently, and meaning "unknown" rather than "not clock-bounded". A store that must report
+   * a number maps the null itself, as `BriefRunController.create` does.
    *
    * Does not sweep. A store calls it right after `activeCount()`, which already has.
    */

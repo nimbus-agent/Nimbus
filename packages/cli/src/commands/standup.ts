@@ -74,8 +74,9 @@ export type StandupFetchResult = { brief: string; findings: StandupBriefLike };
 
 /**
  * The real `agents.standup` round trip — `lib/agent-cli-dispatcher.ts`'s `fetchAgentBrief` (exit 1
- * if no gateway, exit 2 on any failure once connected), returning the raw `{ brief, findings }`
- * because `runStandupCommand` below still has to pick a `--format` transform (or `--json`).
+ * if no gateway is running, exit 2 on any later failure, a failed connect included), returning the
+ * raw `{ brief, findings }` because `runStandupCommand` below still has to pick a `--format`
+ * transform (or `--json`).
  *
  * **No `personId` is sent, and that is the contract rather than an omission.** The gateway
  * resolves the owner from local state; `agents.standup` accepts no person parameter, so there is
