@@ -346,10 +346,13 @@ integration and e2e: `bun test packages/gateway` recurses into every subdirector
 and `test/e2e/` included, and `bunfig.toml` configures no path exclusions. So a regression confined
 to `test/e2e/` is a PR-time discovery now, not a post-merge one — that changed on 2026-08-23.
 
-**Ten required checks gate the merge**, and only one is an aggregator: `PR quality — required gates`,
+**Ten required status checks gate the merge**, and only one is an aggregator: `PR quality — required gates`,
 an `if: always()` job over every other PR-quality job; the other nine come from the Security, CodeQL
-and CLA workflows. See the `nimbus-preflight` skill § _Merging_ — the ruleset's org-admin bypass is
-silent, so merging before the checks report is the single largest source of red `main`.
+and CLA workflows. The ruleset also requires every review thread to be resolved, and it carries a
+`code_quality` rule at severity `all` (GitHub Code Quality). No Code Quality run has appeared on a recent
+PR's checks, so what that rule gates in practice is unverified. See the `nimbus-preflight` skill §
+_Merging_ — the ruleset's org-admin bypass is silent, so merging before the checks report is the single
+largest source of red `main`.
 
 Security scans run on every PR: `bun audit`, `trivy`, CodeQL. HIGH/CRITICAL findings block the merge,
 except an npm advisory with no fix that holds an open, dated row in
