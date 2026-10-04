@@ -83,7 +83,7 @@ Phase-level history before `v0.1.0` (Phases 1â€“4) lives in [`docs/roadmap.md` Â
     these read `lan-client: connection closed mid-exchange`. What is refused is unchanged.
   - On Windows, running a generated tool no longer opens a console window: its spawn now passes
     `windowsHide`.
-  - The updater accepts an `http://[::1]` manifest URL outside production, as it already did
+  - The updater accepts an `http://[::1]` manifest URL outside production, as it already did for
     `127.0.0.1` and `localhost`. Its IPv6 check compared the hostname with `::1`, but `URL` keeps
     the brackets, so the check could never match.
   - `--format slack` and `--format plain` (`changelog`, `standup`, `oncall`) take linear time on any
