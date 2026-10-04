@@ -1,11 +1,13 @@
 import { readFile, stat } from "node:fs/promises";
 import { resolve } from "node:path";
+import { itemPrimaryKey } from "../index/item-store.ts";
 import { syncPassCursorSuccess } from "../sync/pass-cursor-sync-result.ts";
 import { type Syncable, type SyncContext, type SyncResult, syncNoopResult } from "../sync/types.ts";
 import { collectFiles } from "./_lib/collect-files.ts";
 import { upsertMapped } from "./_lib/paginated-sync.ts";
 import {
   type GreatExpectationsMappingContext,
+  legacyClampedExternalId,
   mapGreatExpectationsResultToItem,
 } from "./great-expectations-result-mapping.ts";
 import { encodeNimbusJsonCursor } from "./nimbus-json-cursor.ts";
@@ -144,13 +146,48 @@ async function readArtefact(path: string): Promise<ParsedArtefact | null> {
   }
 }
 
-function ingestArtefact(ctx: SyncContext, artefact: ParsedArtefact, syncedAt: number): number {
+/** The external ids one sync pass wrote, and the pre-fix ids of the same results. */
+interface PassIds {
+  readonly written: Set<string>;
+  readonly legacy: Set<string>;
+}
+
+function ingestArtefact(
+  ctx: SyncContext,
+  artefact: ParsedArtefact,
+  syncedAt: number,
+  ids: PassIds,
+): number {
   const results = artefact.parsed["results"];
   if (!Array.isArray(results)) {
     return 0;
   }
   const mappingCtx = buildMappingContext(artefact.parsed, syncedAt, artefact.mtimeMs);
-  return upsertMapped(ctx, results, (entry) => mapGreatExpectationsResultToItem(entry, mappingCtx));
+  for (const entry of results) {
+    const legacy = legacyClampedExternalId(entry, mappingCtx);
+    if (legacy !== null) ids.legacy.add(legacy);
+  }
+  return upsertMapped(ctx, results, (entry) => {
+    const row = mapGreatExpectationsResultToItem(entry, mappingCtx);
+    if (row !== null) ids.written.add(row.externalId);
+    return row;
+  });
+}
+
+/**
+ * Removes the rows an older gateway wrote under a broken clamped id (see
+ * `legacyClampedExternalId`) for results this pass has just written under their real ids. Runs
+ * after every artefact is ingested and skips any id this pass wrote, so it can never remove a row
+ * that is current. Returns how many rows it removed.
+ */
+function removeLegacyClampedRows(ctx: SyncContext, ids: PassIds): number {
+  let removed = 0;
+  for (const id of ids.legacy) {
+    if (ids.written.has(id) || !ctx.itemExists(itemPrimaryKey(SERVICE_ID, id))) continue;
+    ctx.deleteItem(SERVICE_ID, id);
+    removed += 1;
+  }
+  return removed;
 }
 
 export function createGreatExpectationsSyncable(
@@ -172,16 +209,18 @@ export function createGreatExpectationsSyncable(
       await ctx.rateLimiter.acquire("filesystem");
       const now = Date.now();
       const files = await collectJsonFiles(dir);
+      const ids: PassIds = { written: new Set(), legacy: new Set() };
       let totalUpserted = 0;
       for (const file of files) {
         const artefact = await readArtefact(file); // NOSONAR S9382: one artefact in memory at a time - readFile loads each file whole before the MAX_FILE_BYTES check, and Promise.all would hold up to MAX_FILES of them
         if (artefact === null) {
           continue;
         }
-        totalUpserted += ingestArtefact(ctx, artefact, now);
+        totalUpserted += ingestArtefact(ctx, artefact, now, ids);
       }
 
-      return syncPassCursorSuccess(t0, 0, pass1Cursor(), totalUpserted);
+      const itemsDeleted = removeLegacyClampedRows(ctx, ids);
+      return { ...syncPassCursorSuccess(t0, 0, pass1Cursor(), totalUpserted), itemsDeleted };
     },
   };
 }

@@ -14,6 +14,7 @@ import { describe, expect, test } from "bun:test";
 
 import {
   type GreatExpectationsMappingContext,
+  legacyClampedExternalId,
   mapGreatExpectationsResultToItem,
 } from "./great-expectations-result-mapping.ts";
 
@@ -136,5 +137,39 @@ describe("mapGreatExpectationsResultToItem — absent kwargs and result", () => 
     expect(row?.externalId).toBe("s::b::expect_x::_");
     expect(row?.bodyPreview).toBe("expect_x on (table) — passed");
     expect(row?.metadata["observedValue"]).toBeNull();
+  });
+});
+
+/** The clamp as it shipped before the fix, verbatim — the hash left unreduced. */
+function clampedIdBeforeTheFix(id: string): string {
+  if (id.length <= ID_MAX) return id;
+  let h = 0;
+  for (let i = 0; i < id.length; i += 1) {
+    h = Math.trunc(h * 31 + (id.codePointAt(i) ?? 0));
+  }
+  return `${id.slice(0, ID_MAX - 16)}#${(h >>> 0).toString(16)}`;
+}
+
+describe("legacyClampedExternalId — the id an over-long result had before the fix", () => {
+  test("is exactly what the pre-fix clamp produced, and differs from today's id", () => {
+    for (const suite of ["s".repeat(241), "q".repeat(400), "\u{1F600}".repeat(130)]) {
+      const full = rawId(suite, "c");
+      const legacy = legacyClampedExternalId(entry("c"), ctx(suite));
+      expect(legacy).toBe(clampedIdBeforeTheFix(full));
+      expect(legacy).toBe(`${full.slice(0, ID_MAX - 16)}#0`);
+      expect(legacy).not.toBe(mapGreatExpectationsResultToItem(entry("c"), ctx(suite))?.externalId);
+    }
+  });
+
+  test("an id within the cap was never clamped, so it has no older id", () => {
+    const suite = "s".repeat(ID_MAX - "::b::expect_x::c".length);
+    expect(rawId(suite, "c")).toHaveLength(ID_MAX);
+    expect(legacyClampedExternalId(entry("c"), ctx(suite))).toBeNull();
+  });
+
+  test("an entry the mapper does not index has no older id either", () => {
+    const suite = "s".repeat(300);
+    expect(legacyClampedExternalId(null, ctx(suite))).toBeNull();
+    expect(legacyClampedExternalId({ expectation_config: {} }, ctx(suite))).toBeNull();
   });
 });
