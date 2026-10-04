@@ -36,7 +36,12 @@ afterEach(() => {
   roots = [];
 });
 
-/** A value's type tree: what the desktop depends on, without the volatile values. */
+/**
+ * A value's type tree: what the desktop depends on, without the volatile values. It does NOT guard a
+ * field that is null in every fixture row: that is checked only as null. Every `delivery` entry is one
+ * `SinkOutcome` shape (`outcome`, optional `reason`, `at`), which the ok row already exercises with a
+ * `reason` present.
+ */
 function shape(v: unknown): unknown {
   if (v === null) return "null";
   if (Array.isArray(v)) return v.map(shape);
@@ -104,6 +109,12 @@ test("the UI fixture has the shape the real oncall.pushedList / pushedGet return
     { status: "failed", sessionId: null, failureCode: "timeout: no brief in 30000ms" },
     nowMs + 60_000,
   );
+  // A retried failure, via the store's own writer, so `retriedAt` is a real number on this row.
+  rt.store.applyRetry(
+    "pagerduty:PCONTRACTFAIL",
+    { status: "failed", sessionId: null, failureCode: "timeout: no brief in 30000ms" },
+    nowMs + 120_000,
+  );
   const ctx = { runtime: rt };
   const live = normalize(
     {
@@ -120,10 +131,14 @@ test("the UI fixture has the shape the real oncall.pushedList / pushedGet return
   const committed: unknown = JSON.parse(readFileSync(FIXTURE, "utf8"));
   expect(shape(live)).toEqual(shape(committed));
   // The values the desktop tests rely on, pinned so a regenerated fixture cannot quietly lose them.
-  const list = (live as { list: { briefs: { incidentId: string; service: unknown }[] } }).list;
+  const list = (
+    live as { list: { briefs: { incidentId: string; service: unknown; retriedAt: unknown }[] } }
+  ).list;
   expect(list.briefs.map((b) => b.incidentId)).toEqual([
     "pagerduty:PCONTRACTFAIL",
     fired.incidentId,
   ]);
+  expect(typeof list.briefs[0]?.retriedAt).toBe("number"); // retried failure
+  expect(list.briefs[1]?.retriedAt).toBeNull(); // never retried
   expect(list.briefs[1]?.service).toBe("payment-service"); // the MAPPED case, from the real brief
 }, 60_000);
