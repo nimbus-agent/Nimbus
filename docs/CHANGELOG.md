@@ -108,12 +108,13 @@ Phase-level history before `v0.1.0` (Phases 1â€“4) lives in [`docs/roadmap.md` Â
   Ed25519 keypair code, bench sampling, the token-only connector auth handler, the HTTP scoped-read
   gate, and the HITL approval-broadcast plumbing. The `.jscpd.json` ratchet drops from 4% to 1.7%,
   so the gain cannot quietly erode.
-  **Coverage.** 213 new test files and additions to 141 existing ones bring 2,934 more tests. The
-  whole-repo `bun test` run goes from 24,673 tests in 1,639 files to 27,169 in 1,836, and the
-  desktop UI's vitest suite goes from 528 tests in 76 files to 966 in 92, all passing. Both trees
-  were measured on the same machine, with `main` at `38d07ce7` (before #1600 landed), and with the
-  same instrumentation: `build-lcov`'s istanbul shards for the gateway and CLI, and vitest's v8
-  provider for the UI.
+  **Coverage.** 213 new test files and additions to 141 existing ones bring 2,934 more tests, and
+  the two reviews of the sweep's last commits added 29 more, along with one new test file. Before
+  those reviews, the whole-repo `bun test` run went from 24,673 tests in 1,639 files to 27,169 in
+  1,836, and the desktop UI's vitest suite from 528 tests in 76 files to 966 in 92, all passing.
+  Both trees were measured on the same machine, with `main` at `38d07ce7` (before #1600 landed),
+  and with the same instrumentation: `build-lcov`'s istanbul shards for the gateway and CLI, and
+  vitest's v8 provider for the UI.
   - Over the 1,281 gateway and CLI source files both trees share, line coverage goes from 95.24% to
     97.35% and branch coverage from 90.70% to 95.21%. That leaves 1,441 uncovered lines (from
     2,625) and 1,907 uncovered branches (from 3,793).
