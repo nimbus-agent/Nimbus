@@ -350,16 +350,29 @@ describe("the SCOPED_ROUTES table itself", () => {
     // which sees what the server actually gates. A new regex-routed read gated with an EXISTING
     // key needs no new constant, no new HTTP_ROUTE_AUTH entry and no new row, so it would pass
     // both. Reading the server's gate call sites catches it: its key then appears twice.
+    //
+    // Scanned as Bun transpiles it, so comments are gone (a `see requireScopedSurface()` note is
+    // not a call) and every call keeps one printed shape whatever the formatter did. A definition
+    // still reads `function name(`, which the lookbehinds below exclude.
     const source = await Bun.file(join(import.meta.dir, "http-server.ts")).text();
-    const gateCall = /\b(?:requireScopedSurface|requireEgressRead)\(\s*req,\s*opts,\s*(\w+)/g;
-    const argNames = [...source.matchAll(gateCall)].map((m) => m[1] ?? "");
+    const code = new Bun.Transpiler({ loader: "ts" }).transformSync(source);
+    const callsOf = (names: string): string[] =>
+      code.match(new RegExp(String.raw`(?<!function )\b(?:${names})\(`, "g")) ?? [];
+
+    // The scope check itself sits two levels down: requireScopedSurface calls
+    // requireScopedClipToken, which calls enforceClipScope. A handler calling either of those
+    // directly would gate a read with any key, outside everything below, so each must have its
+    // one caller and no other.
+    expect(code.match(/\bfunction (?:requireScopedSurface|requireEgressRead)\(/g)).toHaveLength(2);
+    expect(callsOf("requireScopedClipToken")).toHaveLength(1);
+    expect(callsOf("enforceClipScope")).toHaveLength(1);
+
+    const gateCall =
+      /(?<!function )\b(?:requireScopedSurface|requireEgressRead)\(\s*req,\s*opts,\s*(\w+)/g;
+    const argNames = [...code.matchAll(gateCall)].map((m) => m[1] ?? "");
     // Every call is visible to the pattern above: anything else (other argument names, a call
     // spread over an alias) would sit outside this check, so the raw call count must agree.
-    const allCalls = source.match(/\b(?:requireScopedSurface|requireEgressRead)\(/g) ?? [];
-    const definitions =
-      source.match(/\bfunction (?:requireScopedSurface|requireEgressRead)\(/g) ?? [];
-    expect(definitions).toHaveLength(2);
-    expect(argNames).toHaveLength(allCalls.length - definitions.length);
+    expect(argNames).toHaveLength(callsOf("requireScopedSurface|requireEgressRead").length);
     // requireEgressRead forwards its own `routeKey` parameter; every other site names a constant.
     expect(argNames.filter((name) => name === "routeKey")).toHaveLength(1);
     const keyNames = argNames.filter((name) => name !== "routeKey");

@@ -596,8 +596,7 @@ describe("exchangeHelloThenRpc (via sendFederatedOverWire)", () => {
     ).rejects.toThrow("lan-client: rpc timeout");
   });
 
-  // BRDA line=168 block=19 branch=0 AND line=172 block=20 branch=0:
-  // reply.kind !== "hello_ok" (true) AND kind is a non-null string.
+  // reply.kind !== "hello_ok", and the kind is a protocol token, so replyKindForMessage echoes it.
   // The rejection is settled BEFORE socket.end(), so it names the peer's refusal rather than the
   // generic "connection closed mid-exchange" Bun's synchronous close() would otherwise win with.
   test("rejects naming the peer's refusal when the hello is rejected (kind=hello_err)", async () => {
@@ -853,7 +852,7 @@ describe("sendFederatedOverWire — buildRpc guard branches", () => {
 // ---------------------------------------------------------------------------
 
 describe("outboundPairHandshake — guard branches", () => {
-  // BRDA line=278 block=34 branch=1: msg.kind ?? "unknown" — kind field absent.
+  // replyKindForMessage: the kind field is absent.
   test("rejects with 'pairing rejected (unknown)' when response has no kind field", async () => {
     // Server sends a frame with no kind field after the client's pair request.
     const port = await startDataServer((socket, _chunk) => {
@@ -866,8 +865,8 @@ describe("outboundPairHandshake — guard branches", () => {
     );
   });
 
-  // BRDA line=278 block=34 branch=0 (kind present but wrong) is already covered by the
-  // "throws on pair_err (window closed)" test above.
+  // A token kind that is not pair_ok is covered by the "throws on pair_err (window closed)" test
+  // above, and a kind that is not a token by the injected-heading test beside it.
 
   // BRDA line=281 block=35 branch=0: hostPub.length !== 32 → true (bad host pubkey length).
   test("rejects with 'bad host pubkey length' when server returns a short pubkey in pair_ok", async () => {
