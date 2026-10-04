@@ -38,11 +38,18 @@ function renderApp(stub: StubIpcClient): {
   };
 }
 
-const SETTLE_MS = 20;
-const SUBMIT_SETTLE_MS = 60;
-
-async function settle(ms = SETTLE_MS): Promise<void> {
-  await new Promise((r) => setTimeout(r, ms));
+/**
+ * Let pending promise continuations and React's passive effects run. React schedules effects with
+ * `setImmediate`, so draining a fixed number of those rounds is enough, and never waits on the
+ * clock: the fixed 20/60 ms sleeps this replaced were slower AND, on a loaded machine, too short —
+ * the 'a'/'r' consent tests failed when a render outlasted them.
+ */
+async function settle(): Promise<void> {
+  for (let i = 0; i < 10; i++) {
+    await new Promise<void>((resolve) => {
+      setImmediate(resolve);
+    });
+  }
 }
 
 let origIsTty: PropertyDescriptor | undefined;
@@ -59,13 +66,19 @@ beforeEach(() => {
 });
 
 afterEach(() => {
-  if (origIsTty === undefined) {
-    delete (process.stdout as unknown as { isTTY?: boolean }).isTTY;
-  } else {
-    Object.defineProperty(process.stdout, "isTTY", origIsTty);
+  // A piped stdout (every CI run) has no OWN `isTTY`/`columns`/`rows`: restoring "as it was" means
+  // deleting the pin, or it stays behind as a non-writable 120x40 for every later file in the run.
+  for (const [key, original] of [
+    ["isTTY", origIsTty],
+    ["columns", origColumns],
+    ["rows", origRows],
+  ] as const) {
+    if (original === undefined) {
+      Reflect.deleteProperty(process.stdout, key);
+    } else {
+      Object.defineProperty(process.stdout, key, original);
+    }
   }
-  if (origColumns !== undefined) Object.defineProperty(process.stdout, "columns", origColumns);
-  if (origRows !== undefined) Object.defineProperty(process.stdout, "rows", origRows);
 });
 
 describe("App state machine", () => {
@@ -75,7 +88,7 @@ describe("App state machine", () => {
     await settle();
     stdin.write("hello");
     stdin.write("\r");
-    await settle(SUBMIT_SETTLE_MS);
+    await settle();
     expect(stub.calls.some((c) => c.method === "engine.askStream")).toBe(true);
     expect(lastFrame() ?? "").toContain("hello");
     teardown();
@@ -87,10 +100,10 @@ describe("App state machine", () => {
     await settle();
     stdin.write("hi");
     stdin.write("\r");
-    await settle(SUBMIT_SETTLE_MS);
+    await settle();
     stub.emit("engine.streamToken", { streamId: "s-test", text: "response" });
     stub.emit("engine.streamDone", { streamId: "s-test" });
-    await settle(SUBMIT_SETTLE_MS);
+    await settle();
     const frame = lastFrame() ?? "";
     expect(frame).toContain("response");
     expect(frame).toContain("nimbus>");
@@ -103,9 +116,9 @@ describe("App state machine", () => {
     await settle();
     stdin.write("oops");
     stdin.write("\r");
-    await settle(SUBMIT_SETTLE_MS);
+    await settle();
     stub.emit("engine.streamError", { streamId: "s-test", error: "downstream failed" });
-    await settle(SUBMIT_SETTLE_MS);
+    await settle();
     const frame = lastFrame() ?? "";
     expect(frame).toContain("downstream failed");
     expect(frame).toContain("❌");
@@ -136,13 +149,13 @@ describe("App state machine", () => {
 
     stdin.write("first prompt");
     stdin.write("\r");
-    await settle(SUBMIT_SETTLE_MS);
+    await settle();
     stub.emit("engine.streamDone", { streamId: "s-test" });
-    await settle(SUBMIT_SETTLE_MS);
+    await settle();
 
     stdin.write("second prompt");
     stdin.write("\r");
-    await settle(SUBMIT_SETTLE_MS);
+    await settle();
 
     const askCalls = stub.calls.filter((c) => c.method === "engine.askStream");
     expect(askCalls).toHaveLength(2);
@@ -163,7 +176,7 @@ describe("App state machine", () => {
     await settle();
     stdin.write("hi");
     stdin.write("\r");
-    await settle(SUBMIT_SETTLE_MS);
+    await settle();
     expect(lastFrame() ?? "").toContain("Gateway disconnected");
     teardown();
   });
@@ -200,7 +213,7 @@ describe("App state machine", () => {
     stdin.write("a");
     await settle();
     stdin.write("a");
-    await settle(SUBMIT_SETTLE_MS);
+    await settle();
     const consentCalls = stub.calls.filter((c) => c.method === "consent.respond");
     expect(consentCalls).toHaveLength(1);
     const params = consentCalls[0]?.params as {
@@ -224,7 +237,7 @@ describe("App state machine", () => {
     });
     await settle();
     stdin.write("r");
-    await settle(SUBMIT_SETTLE_MS);
+    await settle();
     const consentCalls = stub.calls.filter((c) => c.method === "consent.respond");
     expect(consentCalls).toHaveLength(1);
     const params = consentCalls[0]?.params as {
@@ -250,7 +263,7 @@ describe("App state machine", () => {
     stdin.write("a");
     await settle();
     stdin.write("r");
-    await settle(SUBMIT_SETTLE_MS);
+    await settle();
     const frame = lastFrame() ?? "";
     expect(frame).toContain("approved 1");
     expect(frame).toContain("rejected 1");
@@ -281,7 +294,7 @@ describe("App state machine", () => {
     await settle();
     expect(stub.calls.some((c) => c.method === "consent.respond")).toBe(false);
     ink.stdin.write("q");
-    await settle(SUBMIT_SETTLE_MS);
+    await settle();
     expect(exitCalls).toBe(1);
     const consentCalls = stub.calls.filter((c) => c.method === "consent.respond");
     expect(consentCalls).toHaveLength(1);
@@ -309,9 +322,9 @@ describe("App state machine", () => {
     await settle();
     stdin.write("running");
     stdin.write("\r");
-    await settle(SUBMIT_SETTLE_MS);
+    await settle();
     stdin.write("\x03");
-    await settle(SUBMIT_SETTLE_MS);
+    await settle();
     const frame = lastFrame() ?? "";
     expect(frame).toContain("canceled by user");
     expect(frame).toContain("nimbus>");
@@ -359,7 +372,7 @@ describe("App state machine", () => {
     await settle();
     stdin.write("hello");
     stdin.write("\r");
-    await settle(SUBMIT_SETTLE_MS);
+    await settle();
     stub.emit("engine.streamToken", null);
     stub.emit("engine.streamToken", { streamId: 42 });
     stub.emit("engine.streamDone", null);
