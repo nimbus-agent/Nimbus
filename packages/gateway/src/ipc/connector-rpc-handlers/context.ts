@@ -1,6 +1,7 @@
 // Type-only module: NO executable runtime logic. It is exact-path-excluded from the coverage floor
 // in scripts/coverage-floor/exclusions.ts (a type-only file emits no SF: lcov record). Adding runtime
 // logic here would silently bypass the floor — put runtime logic in a separate, covered module.
+import type { PKCEOptions, PKCEResult } from "../../auth/pkce.ts";
 import type {
   ConnectorOAuthProfile,
   ConnectorServiceId,
@@ -63,4 +64,12 @@ export type ConnectorRpcHandlerContext = {
    * before any probe request (I29). Injected only to prove the fail-closed arm.
    */
   appendProbeEgress?: (serviceId: ConnectorServiceId) => void;
+  /**
+   * Test seam. Omitted in production, where `auth.ts` runs the real `runPKCEFlow` — a loopback
+   * callback server, the owner's browser, and the provider's token endpoint. Injected so the half
+   * of `connectorAuthOAuthPkce` AFTER the exchange (the shared Google/Microsoft key mirror, the
+   * scheduler registration, the reported scopes) and the exact options handed to the flow can be
+   * proven with no browser round-trip and no network, for the reason `runCredentialProbe` is.
+   */
+  runPkceFlow?: (options: PKCEOptions) => Promise<PKCEResult>;
 };

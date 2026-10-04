@@ -22,7 +22,7 @@ import {
   ZOOM_OAUTH_CLIENT_SECRET_HELP,
 } from "../../auth/oauth-env-help-messages.ts";
 import { OAUTH_PROVIDERS } from "../../auth/oauth-registry.ts";
-import { type PKCEOptions, runPKCEFlow } from "../../auth/pkce.ts";
+import { type PKCEOptions, type PKCEResult, runPKCEFlow } from "../../auth/pkce.ts";
 import { Config } from "../../config.ts";
 import {
   type ConnectorOAuthProfile,
@@ -713,6 +713,8 @@ async function connectorAuthOAuthPkce(
   // fallback; a default here would duplicate that and be permanently unreachable — dead code
   // that reads like a safety net.
   resolveClientConfig: OAuthClientConfigResolver,
+  // Required for the same reason: `handleConnectorAuth` resolves `ctx.runPkceFlow ?? runPKCEFlow`.
+  runPkceFlow: (options: PKCEOptions) => Promise<PKCEResult>,
 ): Promise<ConnectorRpcHit> {
   const profile = oauthProfileForService(id);
   const config = resolveClientConfig(profile);
@@ -744,7 +746,7 @@ async function connectorAuthOAuthPkce(
       : pkceBase;
   const pkceFlowInput: PKCEOptions =
     redirectPort === undefined ? merged : { ...merged, redirectPort };
-  const tokens = await runPKCEFlow(pkceFlowInput);
+  const tokens = await runPkceFlow(pkceFlowInput);
 
   let sharedKey: string | undefined;
   if (profile.provider === "google") {
@@ -935,5 +937,6 @@ export async function handleConnectorAuth(
     localIndex,
     openUrl,
     ctx.resolveOAuthClientConfig ?? oauthClientConfigForProvider,
+    ctx.runPkceFlow ?? runPKCEFlow,
   );
 }

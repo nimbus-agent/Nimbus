@@ -1072,6 +1072,18 @@ export async function tryDispatchProfileRpc(
   return phase4RpcSkipped;
 }
 
+/**
+ * The platform `data.*` records (`data.export` stamps it into the bundle manifest): the host's own
+ * when it is one of the three Nimbus supports, else `"linux"`. A pure function of its argument so
+ * every arm is provable on any OS — read from `process.platform` inline, only the arm of whichever
+ * OS ran the suite was ever reachable, and the coverage run is Linux-only.
+ */
+export function dataRpcPlatform(hostPlatform: NodeJS.Platform): "win32" | "darwin" | "linux" {
+  if (hostPlatform === "win32") return "win32";
+  if (hostPlatform === "darwin") return "darwin";
+  return "linux";
+}
+
 export async function tryDispatchDataRpc(
   ctx: ServerCtx,
   method: string,
@@ -1080,10 +1092,7 @@ export async function tryDispatchDataRpc(
 ): Promise<unknown> {
   if (!method.startsWith("data.")) return phase4RpcSkipped;
   try {
-    let rpcPlatform: "win32" | "darwin" | "linux";
-    if (process.platform === "win32") rpcPlatform = "win32";
-    else if (process.platform === "darwin") rpcPlatform = "darwin";
-    else rpcPlatform = "linux";
+    const rpcPlatform = dataRpcPlatform(process.platform);
     const stubDispatcher: ConnectorDispatcher = {
       dispatch(): Promise<unknown> {
         return Promise.reject(new Error("IPC-native gate does not dispatch to MCP"));
