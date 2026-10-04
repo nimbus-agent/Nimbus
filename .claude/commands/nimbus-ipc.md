@@ -490,7 +490,7 @@ Handlers: `packages/gateway/src/ipc/clip-rpc.ts`. CLI: `nimbus clip pair|status|
 
 ### `tour.*` / `locality.*` — `nimbus wow` guided tour (2026-09-21)
 
-A guided tour of the real local index, closing on an honesty panel. Both namespaces are **CLI-only** — `FORBIDDEN_OVER_LAN` (I5) and absent from the Tauri `ALLOWED_METHODS` (I7, still 105). Read-only, no HITL, no new egress class (the panel's proof line reuses `egress.proveWindow` above).
+A guided tour of the real local index, closing on an honesty panel. Both namespaces are **CLI-only** — `FORBIDDEN_OVER_LAN` (I5) and absent from the Tauri `ALLOWED_METHODS` (I7). Read-only, no HITL, no new egress class (the panel's proof line reuses `egress.proveWindow` above).
 
 | Method | Type | Description |
 |---|---|---|

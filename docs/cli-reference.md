@@ -140,7 +140,7 @@ must gate on ledger health should use `nimbus egress verify`, not `nimbus wow`'s
 
 **The proof line is a time window, not attribution.** The window is exactly `{since: plan.t0, until: locality.t1}` — `t0` is the gateway's own clock when `tour.plan` ran, `t1` is its clock when `locality.report` ran, and both are gateway-side values, never `Date.now()` computed in the CLI. It answers "how much left this machine, gateway-wide, while the tour was running" — **not** "how much this tour's own three commands sent." A concurrent sync, a background fleet run, or another client's `nimbus ask` during the same window would show up on the same line, and the panel does not (and cannot) separate them out. `nimbus prove --sign`, `nimbus egress` and `nimbus egress verify` — named at the foot of the panel — are how to inspect the same window (or a different one) in full.
 
-**IPC:** `tour.plan(params: { steps?: 1..6 })` and `locality.report(params: {})`. Both are **CLI-only**: the `tour` and `locality` namespaces are `FORBIDDEN_OVER_LAN` (I5) and neither method is in the Tauri `ALLOWED_METHODS` (I7 — still 105). Read-only, no HITL, no new egress class — the panel's own proof line is produced by the existing `egress.proveWindow` method, not a new one.
+**IPC:** `tour.plan(params: { steps?: 1..6 })` and `locality.report(params: {})`. Both are **CLI-only**: the `tour` and `locality` namespaces are `FORBIDDEN_OVER_LAN` (I5) and neither method is in the Tauri `ALLOWED_METHODS` (I7). Read-only, no HITL, no new egress class — the panel's own proof line is produced by the existing `egress.proveWindow` method, not a new one.
 
 **Three residuals of the locality panel, stated rather than hidden:**
 
