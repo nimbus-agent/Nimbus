@@ -591,7 +591,7 @@ interface State {
   readonly keys: Set<string>;
   /** Per-file registrar names. */
   readonly locals: Map<string, Map<string, RegistrarKind>>;
-  /** Forwarders declared `export`ed, so callable from any file. */
+  /** Registrars and forwarders declared `export`ed, so callable from any file. */
   readonly exported: Map<string, RegistrarKind>;
 }
 
@@ -672,7 +672,7 @@ class Analysis {
     return m;
   }
 
-  /** Every registrar callable in `f`: its own names plus exported forwarders. */
+  /** Every registrar callable in `f`: its own names plus every exported one. */
   registrarsIn(f: File): Map<string, RegistrarKind> {
     return new Map([...this.state.exported, ...this.localsOf(f)]);
   }

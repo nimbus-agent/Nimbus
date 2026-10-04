@@ -558,18 +558,38 @@ other path that executes a tool id a caller names. Four ids remain outside the p
 (static D17) — those rules confine where the GATEWAY names the tools, not which tool id a federated
 peer may send, so today only the owner's per-tool grant stands between a peer and them.
 
+**Matched in the form a federated session executes (2026-10-04).** A team-credentialed session
+lists its tools through `@mastra/mcp`'s `MCPClient.listTools()`, which keys every tool
+`<server>_<tool>` (`aws_aws_ec2_instance_stop`), and `withConnectorSession` looks the requested id
+up in that map verbatim — so the namespaced key is the form a federated invoke executes, and the
+bare id is not found. The predicate used to match bare ids only: it refused exactly the ids that
+cannot run and passed the ones that can, for EVERY write, long-classified ones included. A probe
+through the real invoke gate, the real predicate, the real `withConnectorSession` lookup and a real
+`MCPClient` refused `tableau_datasource_refresh` and executed `tableau_tableau_datasource_refresh`
+behind a grant. `isConnectorWriteToolId` now also matches any `_`-delimited suffix of the id, so every
+server key is covered (`github_actions_gha_run_trigger` included); it tests only suffixes no longer
+than the longest write id, so a hostile id costs time linear in its length rather than quadratic.
+`test/integration/connectors/write-tool-namespacing.integration.test.ts` pins the key scheme on REAL
+connector processes listed through a real `MCPClient`: every key is `<server>_<tool>`, and the
+namespaced form always gets the bare id's verdict, in both directions. **Stated bound:** the same
+namespacing means a bare id cannot execute through `withConnectorSession` at all — a separate,
+fail-closed defect in the gateway's own bare-id callers of that seam (the local connector-write
+transport and the team list drain), whose unit tests fake bare-keyed tool maps. Matching both forms
+keeps I26 correct whichever way that is fixed.
+
 **Statement:** Connector write actions — warehouse/BI (Snowflake tag/comment set, Tableau / Power BI refresh, Looker datagroup/schedule trigger, Monte Carlo / Bigeye incident-issue acknowledge/resolve) **and** GitOps/ML (ArgoCD app sync/rollback, Flux kustomization/helmrelease reconcile, MLflow model promote/transition-stage) — execute ONLY behind the LOCAL owner's executor HITL gate (I2): their action types are all members of `HITL_REQUIRED_BACKING`. The federated peer invoke gate (`answerFederatedInvoke`) is fail-closed against any write-classified tool id via the injected `isWriteForbiddenToolId` predicate (the union `isConnectorWriteToolId`): a peer's `federation.invoke` for a connector write is rejected with a `write_forbidden` audit decision before any connector dispatch, so a teammate can never trigger a connector write over the wire. The write tool ids themselves are confined to the two single-source-of-truth modules (`connectors/warehouse-write-tools.ts`, `connectors/gitops-ml-write-tools.ts`), the connector definition `server.ts` files, and the gateway transport/dispatch sites. Static **D20**.
 
 **Wired at:**
 
 - `packages/gateway/src/connectors/warehouse-write-tools.ts` + `packages/gateway/src/connectors/gitops-ml-write-tools.ts` — the per-group SSoTs (`WAREHOUSE_BI_WRITES` / `GITOPS_ML_WRITES`, each a `ConnectorWrite` `{ actionType, toolId, service }`), their tool-id sets, and the `isWarehouseWriteToolId` / `isGitopsMlWriteToolId` predicates. Kept in drift-sync with `HITL_REQUIRED_BACKING` in `executor.ts` (asserted in `connector-write-registry.test.ts`).
-- `packages/gateway/src/connectors/connector-write-registry.ts` — the union: `CONNECTOR_WRITES`, the `isConnectorWriteToolId(toolId)` predicate, and `connectorWriteByActionType(type)`.
+- `packages/gateway/src/connectors/connector-write-registry.ts` — the union: `CONNECTOR_WRITES`, the `isConnectorWriteToolId(toolId)` predicate (a bare write id, or any `_`-delimited suffix of the id, i.e. the `<server>_<tool>` key a federated session executes), and `connectorWriteByActionType(type)`.
 - `packages/gateway/src/engine/executor.ts` — every connector write `actionType` is a member of `HITL_REQUIRED_BACKING` (I2), so the local executor gate always fires before connector dispatch.
 - `packages/gateway/src/ipc/federation-rpc.ts` `"federation.invoke"` — injects `isWriteForbiddenToolId: isConnectorWriteToolId` into the `answerFederatedInvoke` ctx, so the gate rejects connector writes asked for by a peer.
 - `packages/gateway/src/federation/invoke-gate.ts` `answerFederatedInvoke()` — consults `ctx.isWriteForbiddenToolId?.(q.toolId)`; on a match it records a `write_forbidden` audit decision and returns fail-closed without invoking the tool.
 - Enforced statically by **D20** in `scripts/structure-audit/check-nimbus-invariants.ts` — any file outside the SSoT / connector / transport-dispatch allow-list (excluding `.test.ts`) that references a connector write tool id causes `audit:invariants` to exit 1 (`D20-connector-write`); additionally `invoke-gate.ts` must reference `isWriteForbiddenToolId` or the check fails (`D20-invoke-gate-predicate`).
 - Runtime test in `packages/gateway/src/security-invariants.test.ts` — the `I26` describe block: federation-rpc wires `isWriteForbiddenToolId`/`isConnectorWriteToolId`, the invoke gate consults the predicate and emits `write_forbidden`, every `CONNECTOR_WRITES` action type is HITL-gated, plus a `D20` presence assertion. A functional rejection of a GitOps write id via the real `isConnectorWriteToolId` lives in `federation/invoke-gate.test.ts`, as does one per reclassified tool, each first proving the grant would answer it so the refusal is the predicate's alone.
-- Sync guard in `packages/gateway/src/connectors/connector-write-sync.test.ts` — every write the installed connectors package registers is classified (see above); the derivation lives in `connectors/testing/connector-write-registrations.ts`, with its own tests beside it.
+- Sync guard in `packages/gateway/src/connectors/connector-write-sync.test.ts` — every write the installed connectors package registers is classified, bare and namespaced (see above); the derivation lives in `connectors/testing/connector-write-registrations.ts`, with its own tests beside it.
+- Wire contract in `packages/gateway/test/integration/connectors/write-tool-namespacing.integration.test.ts` — real connector processes listed through a real `MCPClient`: every key is `<server>_<tool>` and gets its bare id's verdict. The namespaced and bounded-cost matching is unit-tested in `connectors/connector-write-registry.test.ts`, and each reclassified id plus `tableau_datasource_refresh` is refused in both forms at the gate in `federation/invoke-gate.test.ts`.
 
 **Anti-pattern:** exposing a connector write over `federation.invoke` without the predicate; calling a connector write tool id from anywhere but the SSoT / connector / transport-dispatch sites; adding a connector write action type to a connector without adding it to `HITL_REQUIRED_BACKING` + the matching group SSoT.
 

@@ -21,9 +21,7 @@ export const CONNECTOR_WRITES: readonly ConnectorWrite[] = [
   ...GITOPS_ML_WRITES,
 ];
 
-/** I26: true for any connector write tool id — the federated peer invoke gate rejects these
- *  fail-closed; they execute only behind the local owner's executor I2 HITL gate. */
-export function isConnectorWriteToolId(toolId: string): boolean {
+function isWriteToolIdExactly(toolId: string): boolean {
   return (
     isWarehouseWriteToolId(toolId) ||
     isGitopsMlWriteToolId(toolId) ||
@@ -31,6 +29,36 @@ export function isConnectorWriteToolId(toolId: string): boolean {
     // rejected for naming one just the same — the predicate is about write-ness, not routability.
     MIGRATED_WRITE_TOOL_IDS.has(toolId)
   );
+}
+
+/** The longest write tool id: no suffix longer than this can name a write. */
+const LONGEST_WRITE_TOOL_ID = Math.max(
+  ...CONNECTOR_WRITES.map((w) => w.toolId.length),
+  ...[...MIGRATED_WRITE_TOOL_IDS].map((id) => id.length),
+);
+
+/**
+ * I26: true for any connector write tool id — the federated peer invoke gate rejects these
+ * fail-closed; they execute only behind the local owner's executor I2 HITL gate.
+ *
+ * Matches a write however the federated runner ADDRESSES it, not only by its bare id. A
+ * team-credentialed session lists its tools through `@mastra/mcp`'s `MCPClient.listTools()`, which
+ * keys every tool `<server>_<tool>` (`aws_aws_ec2_instance_stop`), and `withConnectorSession` looks
+ * the requested id up in that map verbatim — so the namespaced key is the form that EXECUTES there,
+ * and the bare id is not found. Matching bare ids alone refused exactly the ids that cannot run and
+ * passed the ones that can. Any `_`-delimited suffix that is a write id therefore names that write,
+ * whatever server key precedes it (`github_actions_gha_run_trigger` included).
+ *
+ * Only a suffix no longer than the longest write id can match, so the scan starts there: its cost
+ * is bounded by that length, never by the caller-supplied id's.
+ */
+export function isConnectorWriteToolId(toolId: string): boolean {
+  if (isWriteToolIdExactly(toolId)) return true;
+  const from = Math.max(0, toolId.length - LONGEST_WRITE_TOOL_ID - 1);
+  for (let i = toolId.indexOf("_", from); i !== -1; i = toolId.indexOf("_", i + 1)) {
+    if (isWriteToolIdExactly(toolId.slice(i + 1))) return true;
+  }
+  return false;
 }
 
 export function connectorWriteByActionType(actionType: string): ConnectorWrite | undefined {

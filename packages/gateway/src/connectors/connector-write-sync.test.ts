@@ -70,6 +70,17 @@ describe("I26 sync guard — the installed connectors package", () => {
     ).toEqual([]);
   });
 
+  test("and each gets the same verdict in the `<server>_<tool>` form a federated session executes", () => {
+    // `@mastra/mcp` keys a session's tools by server, and the federated runner looks the requested
+    // id up verbatim, so the namespaced key is what a peer would have to send.
+    // test/integration/connectors/write-tool-namespacing.integration.test.ts pins that on real
+    // connector processes.
+    for (const r of SCAN.registrations) {
+      const server = (r.origin.split("/")[1] ?? "").replaceAll("-", "_");
+      expect(isConnectorWriteToolId(`${server}_${r.id}`), r.id).toBe(isConnectorWriteToolId(r.id));
+    }
+  });
+
   test("the scan followed every registration — no shape it could not resolve", () => {
     expect(SCAN.violations.map((v) => `${v.file}:${String(v.line)} ${v.reason}`)).toEqual([]);
   });
