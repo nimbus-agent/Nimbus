@@ -17,11 +17,18 @@ import {
 import { tmpdir } from "node:os";
 import { join, relative, resolve, sep } from "node:path";
 
-export function resolveSystemTarCommand(): string {
-  if (process.platform !== "win32") {
+/**
+ * `platform`/`env` default to the live process and exist so the Windows branch can be exercised on
+ * any host — every production caller passes neither.
+ */
+export function resolveSystemTarCommand(
+  platform: NodeJS.Platform = process.platform,
+  env: Readonly<Record<string, string | undefined>> = process.env,
+): string {
+  if (platform !== "win32") {
     return "tar";
   }
-  const root = process.env["SystemRoot"] ?? process.env["windir"];
+  const root = env["SystemRoot"] ?? env["windir"];
   if (root !== undefined && root !== "") {
     return join(root, "System32", "tar.exe");
   }

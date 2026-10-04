@@ -380,11 +380,17 @@ export function wireExitCallback(io: ToolChildIo, onExit: () => void): void {
   void io.waitExit().then(onExit);
 }
 
+/**
+ * `spawn` defaults to `Bun.spawn` and exists only so a test can see the exact spawn this makes —
+ * the wrapped spec, stderr INHERITED rather than piped, and the console hidden — without starting
+ * the sandbox wrapper role; every production caller passes nothing.
+ */
 export function spawnGeneratedTool(
   envelope: ToolgenEnvelope,
   broker: ToolgenBroker,
   cwd: string,
   onExit?: () => void,
+  spawn: typeof Bun.spawn = Bun.spawn,
 ): Promise<GeneratedToolHandle> {
   // Nothing below awaits — the spawn and the protocol wiring are synchronous — but callers hold a
   // Promise-returning `spawn` dep. `Promise.try` runs the body immediately and turns a throw (a
@@ -399,12 +405,16 @@ export function spawnGeneratedTool(
     // may legitimately log, and the runtime itself prints warning traces there, so this is a
     // reachable state rather than a theoretical one. Inheriting also puts that output where an
     // owner debugging their own tool can actually see it.
-    const child = Bun.spawn<"pipe", "pipe", "inherit">([spec.command, ...spec.args], {
+    const child = spawn<"pipe", "pipe", "inherit">([spec.command, ...spec.args], {
       env: spec.env,
       cwd,
       stdin: "pipe",
       stdout: "pipe",
       stderr: "inherit",
+      // The gateway runs with no console of its own, and on Windows a console-less parent gets a
+      // new, VISIBLE console window for every console child it spawns — one per generated-tool
+      // run. The rule and its measurement: `scripts/audit/check-windows-console-hide.ts`.
+      windowsHide: true,
     });
     const io = ioFromSpawnedChild(child);
     if (onExit !== undefined) {
