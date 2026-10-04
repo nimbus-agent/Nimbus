@@ -131,6 +131,7 @@ test("pushedRetry retries the trimmed id and returns the row in full", async () 
       createdAt: 1,
       retriedAt: null,
       title: null,
+      service: null,
       briefMarkdown: "# A",
       failureCode: null,
       delivery: {},
