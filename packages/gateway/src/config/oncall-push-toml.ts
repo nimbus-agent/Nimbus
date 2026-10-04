@@ -1,7 +1,7 @@
 /**
  * `[oncall.push]` — the on-call pushed brief (spec 2026-10-02-oncall-pushed-brief-design.md § 2.8).
- * DEFAULT OFF. `chatops_namespace` is parsed here so PR 1's config surface is complete, but it has
- * no consumer until the ChatOps sink lands (PR 2).
+ * DEFAULT OFF. `chatops_namespace` names the namespace whose policy `notify` channels receive the
+ * pushed headline (the ChatOps sink, `oncall-push/push-sinks.ts`); `""` posts nothing.
  */
 import { existsSync, readFileSync } from "node:fs";
 import {

@@ -12,7 +12,7 @@ import {
 import type { LocalIndex } from "../index/local-index.ts";
 import { emitGatewayEvent } from "../ipc/gateway-events.ts";
 import { createOncallPushRunner, type PushRunSummary } from "./push-runner.ts";
-import { createPushDeliverer } from "./push-sinks.ts";
+import { type ChatopsPoster, createPushDeliverer } from "./push-sinks.ts";
 import { type PushedBriefRow, PushStore } from "./push-store.ts";
 
 const DAY_MS = 86_400_000;
@@ -25,6 +25,14 @@ export interface OncallPushRuntime {
   trigger(serviceId: string): void;
   retry(incidentId: string): Promise<PushedBriefRow>;
   identityResolved(): Promise<boolean>;
+  /**
+   * Design § 4 (2026-10-02-oncall-push-chatops-design.md) (boot race): bind the ChatOps poster, or record that there is none, and release every
+   * run held since boot. `platform/assemble.ts` calls it exactly once, right after ChatOps boots, on
+   * the enabled AND the disabled branch. A second call throws.
+   */
+  settleChatopsPoster(post: ChatopsPoster | undefined): void;
+  /** `pending` until settled, then `bound` (a poster) or `none`. */
+  chatopsSinkState(): "pending" | "bound" | "none";
 }
 
 export interface OncallPushBootDeps {
@@ -36,7 +44,16 @@ export interface OncallPushBootDeps {
     show(title: string, body: string): void | Promise<void>;
     readonly delivers?: boolean;
   };
-  readonly logger: { error(obj: Record<string, unknown>, msg: string): void };
+  /** `warn` is optional so test loggers need not supply it; production passes the pino logger. */
+  readonly logger: {
+    error(obj: Record<string, unknown>, msg: string): void;
+    warn?(obj: Record<string, unknown>, msg: string): void;
+  };
+  /**
+   * Start settled with no poster. For tests and any caller with no ChatOps phase. Production
+   * leaves it unset so no run starts before `assemble.ts` has decided whether ChatOps exists.
+   */
+  readonly settleImmediately?: boolean;
   readonly now?: () => number;
 }
 
@@ -63,6 +80,22 @@ export function assembleOncallPushRuntime(deps: OncallPushBootDeps): OncallPushR
     return r.personId;
   };
 
+  // Design § 4 (2026-10-02-oncall-push-chatops-design.md): the sync scheduler can complete a PagerDuty sync before ChatOps has booted. A run
+  // that delivered then would record "ChatOps not running", and dedup would never reselect it.
+  // So nothing starts until the poster is settled; early runs wait rather than drop.
+  let settled = deps.settleImmediately === true;
+  let chatopsPoster: ChatopsPoster | undefined;
+  let release: () => void = () => {};
+  const gate: Promise<void> = settled
+    ? Promise.resolve()
+    : new Promise<void>((resolve) => {
+        release = resolve;
+      });
+  const run = async (serviceId: string): Promise<PushRunSummary> => {
+    await gate;
+    return runner.run(serviceId);
+  };
+
   const runner = createOncallPushRunner({
     db: deps.db,
     store,
@@ -78,6 +111,8 @@ export function assembleOncallPushRuntime(deps: OncallPushBootDeps): OncallPushR
       emit: (p) =>
         emitGatewayEvent("oncall.briefPushed", { incidentId: p.incidentId, status: p.status }),
       now,
+      chatops: { namespace: config.chatopsNamespace, post: () => chatopsPoster },
+      warn: (msg, fields) => deps.logger.warn?.(fields, msg),
     }),
     now,
   });
@@ -85,16 +120,29 @@ export function assembleOncallPushRuntime(deps: OncallPushBootDeps): OncallPushR
   return {
     config,
     store,
-    run: (serviceId) => runner.run(serviceId),
+    run,
     trigger(serviceId) {
-      runner.run(serviceId).catch((err: unknown) => {
+      run(serviceId).catch((err: unknown) => {
         deps.logger.error(
           { err: err instanceof Error ? err.message : String(err) },
           "[oncall.push] run failed",
         );
       });
     },
-    retry: (incidentId) => runner.retry(incidentId),
+    retry: async (incidentId) => {
+      await gate;
+      return runner.retry(incidentId);
+    },
     identityResolved: async () => (await resolveSelf()) !== null,
+    settleChatopsPoster(post) {
+      if (settled) throw new Error("[oncall.push] settleChatopsPoster: already settled");
+      settled = true;
+      chatopsPoster = post;
+      release();
+    },
+    chatopsSinkState() {
+      if (!settled) return "pending";
+      return chatopsPoster === undefined ? "none" : "bound";
+    },
   };
 }

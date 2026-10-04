@@ -85,6 +85,23 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
   PR analysis reports the CI figure. On the same machine the extra tests add about 5–11% to the
   whole-repo run: 374 s on `main`, 394–416 s here.
 
+- **2026-10-03 — The on-call pushed brief, PR 2 of 3 (ChatOps sink).** Every pushed on-call brief now also
+  posts a three-line, escaped headline to the `notify` channels of `[oncall.push] chatops_namespace`
+  (default `""`, which posts nothing): at most three headlines per delivery, newest first, then ONE summary
+  post for the rest. Each post is ledgered as `chatops.pushedBrief` — a fourth `ChatPostKind` of
+  `buildLedgeredChatPosts`, under I29's existing `chatops` class — and routed through a `ReplyDispatcher`
+  (I23) via `ChatopsBoot.postPushedBrief`. The outcome is stored in `delivery_json.chatops` with the reasons
+  `no [oncall.push] chatops_namespace`, `ChatOps not running`, `namespace <ns> has no notify channels`,
+  `<error> (delivery may be partial)` and `summary post failed: …`. **Headline only, no full-brief option:** the
+  full brief is already one intent away in the same channel (behind its binding and identity mapping), and an
+  unattended post of private-index content would need a widening policy field with no tighten-only
+  precedent; notify posting is Slack-only, which is pre-existing. The
+  call to action is `@nimbus agent oncall incidentId=<id>` — an earlier draft wrote `incident=`, which the
+  agent grammar refuses. **Boot race:** ChatOps boots after the push runtime is built, so the runtime holds
+  every run until `platform/assemble.ts` settles the poster, on both branches, right after ChatOps boots.
+  **I41:** `BootPolicy.chatops` means a demo gateway never boots ChatOps, so a demo page attempts no ChatOps post. No new invariant, no new egress class, no new IPC method, no migration. **Not
+  shipped:** the desktop panel (PR 3), approve-from-push, cascade ranking.
+
 - **2026-10-03 — Third-party dependencies moved to their latest releases, except five holds
   written down with their evidence.** npm: each direct dependency moved in every workspace that declares it,
   the root `overrides` went from 27 pins to 5, and `bun.lock` was regenerated from the manifests.

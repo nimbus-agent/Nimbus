@@ -68,4 +68,18 @@ describe("ReplyDispatcher (I23)", () => {
     ).rejects.toThrow("egress append failed");
     expect(attempted).toEqual(["C_ONE"]);
   });
+
+  test("send resolves to the number of channels posted to: 1, N and 0", async () => {
+    const posted: string[] = [];
+    const d = new ReplyDispatcher({
+      post: async (_p, channelId) => {
+        posted.push(channelId);
+      },
+      notifyChannelsFor: (ns) => (ns === "two" ? ["C_A", "C_B"] : []),
+    });
+    expect(await d.send({ kind: "originating", platform: "slack", channelId: "C_O" }, "x")).toBe(1);
+    expect(await d.send({ kind: "namespaceNotify", namespace: "two" }, "x")).toBe(2);
+    expect(await d.send({ kind: "namespaceNotify", namespace: "none" }, "x")).toBe(0);
+    expect(posted).toEqual(["C_O", "C_A", "C_B"]);
+  });
 });

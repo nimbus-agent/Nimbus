@@ -14,6 +14,7 @@ import { platform, tmpdir } from "node:os";
 import { join } from "node:path";
 import { makeInMemoryVault } from "../../test/helpers/in-memory-vault.ts";
 import type { ChatopsAgentInvokerDeps } from "../agent-runs/agent-chatops-invoke.ts";
+import { DEFAULT_ONCALL_PUSH_CONFIG } from "../config/oncall-push-toml.ts";
 import { resetPersonaWarningsForTest } from "../config/persona.ts";
 import { writeConnectorSecret } from "../connectors/connector-vault.ts";
 import { THIS_BINARY_COVERAGE } from "../egress/egress-coverage.ts";
@@ -22,6 +23,7 @@ import { coverageForWindow } from "../egress/egress-verify.ts";
 import { loadOrCreateFederationIdentity } from "../federation/federation-identity.ts";
 import { LocalIndex } from "../index/local-index.ts";
 import { openMigratedMemoryDb } from "../index/migrated-db-template.ts";
+import type { ChatopsPoster } from "../oncall-push/push-sinks.ts";
 import type { Syncable } from "../sync/types.ts";
 import {
   appendBootMarkerOrWarn,
@@ -29,6 +31,7 @@ import {
   bootChatopsAgentInvoker,
   createUnimplementedNotifications,
   httpOriginFor,
+  settleOncallPushChatops,
 } from "./assemble.ts";
 import { processEnvSet } from "./env-access.ts";
 import { gatewayDailyLogPath } from "./gateway-log-file.ts";
@@ -215,6 +218,37 @@ describe("bootChatopsAgentInvoker (FIX 1: selfIdentity reaches the ChatOps agent
 // Task 11: the one `http:` exception source for `POST /v1/items/fetch`. Unit-tested directly
 // against a fake Vault — the property under test (return the parsed `.origin`, never the raw
 // secret; fail closed on anything but `http:`) is orthogonal to the full gateway boot above.
+describe("settleOncallPushChatops (design: 2026-10-02-oncall-push-chatops-design.md § 4 boot race)", () => {
+  it("binds a poster that posts to the CONFIGURED namespace when ChatOps booted", async () => {
+    const settled: Array<ChatopsPoster | undefined> = [];
+    const calls: Array<[string, string]> = [];
+    settleOncallPushChatops(
+      {
+        config: { ...DEFAULT_ONCALL_PUSH_CONFIG, chatopsNamespace: "project:pay" },
+        settleChatopsPoster: (p) => void settled.push(p),
+      },
+      {
+        postPushedBrief: async (ns, text) => {
+          calls.push([ns, text]);
+          return 1;
+        },
+      },
+    );
+    expect(settled).toHaveLength(1);
+    expect(await settled[0]?.("hi")).toBe(1);
+    expect(calls).toEqual([["project:pay", "hi"]]);
+  });
+
+  it("settles with undefined when ChatOps did not boot, so held runs are released", () => {
+    const settled: Array<ChatopsPoster | undefined> = [];
+    settleOncallPushChatops(
+      { config: DEFAULT_ONCALL_PUSH_CONFIG, settleChatopsPoster: (p) => void settled.push(p) },
+      undefined,
+    );
+    expect(settled).toEqual([undefined]);
+  });
+});
+
 describe("createUnimplementedNotifications", () => {
   function capture(): {
     infoCalls: unknown[][];
@@ -375,6 +409,21 @@ describe("assemblePlatformServices — in-process assembly", () => {
     await services.notifications.show("title", "body");
   });
 
+  it("a demo-rooted assembly does not boot ChatOps even with [chatops] enabled (I41)", async () => {
+    const paths: PlatformPaths = { ...makePaths(), demo: true };
+    rmSync(paths.configDir, { recursive: true, force: true });
+    mkdirSync(paths.configDir, { recursive: true });
+    writeFileSync(
+      join(paths.configDir, "nimbus.toml"),
+      ["[chatops]", "enabled = true", "slack_enabled = true", 'bot_vault_entry = "test-bot"'].join(
+        "\n",
+      ),
+    );
+    services = await assemblePlatformServices(paths, makeInMemoryVault());
+    expect(services.chatops).toBeUndefined();
+    expect(services.oncallPush.chatopsSinkState()).toBe("none");
+  }, 30000);
+
   it("collectSidecarsFromEnv attaches HTTP + metrics sidecars when ports are set", async () => {
     const paths = makePaths();
     const discoverFreePort = (): number => {
@@ -468,6 +517,7 @@ describe("assemblePlatformServices — in-process assembly", () => {
       kind: string;
     };
     expect(parsed.kind).toBe("write");
+    expect(services.oncallPush.chatopsSinkState()).toBe("bound");
   }, 30000);
 
   it("does not boot ChatOps when [chatops] is absent", async () => {
@@ -476,6 +526,7 @@ describe("assemblePlatformServices — in-process assembly", () => {
     mkdirSync(paths.configDir, { recursive: true });
     services = await assemblePlatformServices(paths, makeInMemoryVault());
     expect(services.chatops).toBeUndefined();
+    expect(services.oncallPush.chatopsSinkState()).toBe("none");
   }, 30000);
 
   // M-1: `loadNimbusServiceConfigsFromConfigDir` throws on a malformed

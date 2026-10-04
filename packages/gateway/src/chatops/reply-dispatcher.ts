@@ -21,13 +21,21 @@ export interface ReplyDispatcherDeps {
 export class ReplyDispatcher {
   constructor(private readonly deps: ReplyDispatcherDeps) {}
 
-  async send(target: ReplyTarget, text: string): Promise<void> {
+  /**
+   * Resolves to the number of channels posted to: 1 for `originating`, N for `namespaceNotify` (0
+   * when the namespace has no notify channels). Channels are posted in turn and a throw stops the
+   * rest, so a caller seeing a rejection must treat delivery as possibly partial.
+   */
+  async send(target: ReplyTarget, text: string): Promise<number> {
     if (target.kind === "originating") {
       await this.deps.post(target.platform, target.channelId, text);
-      return;
+      return 1;
     }
+    let posted = 0;
     for (const channelId of this.deps.notifyChannelsFor(target.namespace)) {
       await this.deps.post("slack", channelId, text); // NOSONAR S9382: I23/I29 — each post appends its own egress row first; posts go out in order and a failure stops later channels
+      posted += 1;
     }
+    return posted;
   }
 }

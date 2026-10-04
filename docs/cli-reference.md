@@ -1064,7 +1064,7 @@ nimbus oncall --since 3d --format slack
 
 ### `nimbus oncall pushed`
 
-Read the brief the gateway assembled **on its own** when a P1 page reached you — the on-call push. This is the read side of an unattended pass: with `[oncall.push] enabled = true` (default **off**), every PagerDuty sync checks for an ACTIVE (`triggered`/`acknowledged`) incident assigned to you, with a severity in `{"p1"} ∪ [pagerduty] severity_p1_aliases` (or the `[oncall.push] severities` list, which replaces that set), that opened at or after the moment push was enabled (minus five minutes). Each such incident gets **one** brief, assembled exactly as [`nimbus oncall --incident`](#nimbus-oncall) would assemble it, stored, announced by an `oncall.briefPushed` gateway event, and readable here. The OS notification is attempted but currently dropped — Nimbus has no platform notification implementation yet, so the stored record shows the toast as `skipped` — which makes `nimbus tail --filter oncall` (the event) and this command the delivery surfaces today.
+Read the brief the gateway assembled **on its own** when a P1 page reached you — the on-call push. This is the read side of an unattended pass: with `[oncall.push] enabled = true` (default **off**), every PagerDuty sync checks for an ACTIVE (`triggered`/`acknowledged`) incident assigned to you, with a severity in `{"p1"} ∪ [pagerduty] severity_p1_aliases` (or the `[oncall.push] severities` list, which replaces that set), that opened at or after the moment push was enabled (minus five minutes). Each such incident gets **one** brief, assembled exactly as [`nimbus oncall --incident`](#nimbus-oncall) would assemble it, stored, announced by an `oncall.briefPushed` gateway event, and readable here. The OS notification is attempted but currently dropped — Nimbus has no platform notification implementation yet, so the stored record shows the toast as `skipped` — which makes `nimbus tail --filter oncall` (the event) and this command the delivery surfaces today. When `chatops_namespace` names a namespace with policy `notify` channels and `[chatops]` is enabled, a three-line headline is also posted there (at most three per delivery, then one summary); `delivery.chatops` in `--json` shows the outcome.
 
 ```bash
 nimbus oncall pushed
@@ -1090,7 +1090,7 @@ A brief that could not be assembled is stored as `FAILED` with its failure code 
 [oncall.push]
 enabled = false          # default off
 severities = []          # [] = {"p1"} plus [pagerduty] severity_p1_aliases; a non-empty list REPLACES that set
-chatops_namespace = ""   # parsed, but has NO effect until ChatOps delivery ships (PR 2)
+chatops_namespace = ""   # "" = post nothing; else the namespace whose policy notify channels get each pushed headline
 retention_days = 90      # stored briefs older than this are pruned at boot (even when disabled) and on each run
 ```
 
