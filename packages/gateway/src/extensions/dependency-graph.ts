@@ -54,9 +54,8 @@ export async function resolveClosure(
 async function resolveDepCandidate(
   depId: string,
   parentId: string,
-  pinned: Pinned,
   constraintList: DependencyConstraint[],
-  fetcher: RegistryFetcher,
+  { pinned, fetcher }: Pick<SolveContext, "pinned" | "fetcher">,
 ): Promise<string> {
   const installed = pinned.get(depId);
   if (installed && constraintList.every((c) => semver.satisfies(installed, c.range))) {
@@ -88,8 +87,7 @@ async function loadDepManifest(
   depId: string,
   parentId: string,
   candidate: string,
-  fetcher: RegistryFetcher,
-  manifestCache: ManifestCache,
+  { fetcher, manifestCache }: Pick<SolveContext, "fetcher" | "manifestCache">,
 ): Promise<ExtensionManifestForSolver> {
   const cacheKey = `${depId}@${candidate}`;
   const cached = manifestCache.get(cacheKey);
@@ -143,26 +141,15 @@ async function visit(current: ExtensionManifestForSolver, ctx: SolveContext): Pr
       constraintList.push({ from: current.id, range });
       ctx.ranges.set(depId, constraintList);
 
-      const candidate = await resolveDepCandidate(
-        depId,
-        current.id,
-        ctx.pinned,
-        constraintList,
-        ctx.fetcher,
-      );
-
-      const depManifest = await loadDepManifest(
-        depId,
-        current.id,
-        candidate,
-        ctx.fetcher,
-        ctx.manifestCache,
-      );
+      // The three awaits below are SERIAL by design: this is a depth-first solve over shared,
+      // mutable `ctx` state, so no dependency can be resolved concurrently with another.
+      const candidate = await resolveDepCandidate(depId, current.id, constraintList, ctx); // NOSONAR S9382: the candidate is chosen against the ranges and pins earlier siblings' subtrees left in ctx
+      const depManifest = await loadDepManifest(depId, current.id, candidate, ctx); // NOSONAR S9382: needs this iteration's candidate, and shares ctx.manifestCache with the rest of the solve
 
       deps.push({ id: depId, range, resolvedVersion: candidate });
 
       if (!ctx.resolved.has(depId)) {
-        await visit(depManifest, ctx);
+        await visit(depManifest, ctx); // NOSONAR S9382: depth-first recursion - cycle detection relies on ctx.ancestors holding exactly the current path, one subtree at a time
       }
     }
 

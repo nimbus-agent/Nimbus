@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -159,4 +159,69 @@ test("a readable config file yields loaded:true", () => {
   writeFileSync(join(dir, "nimbus.toml"), '[glossary.terms]\nCDR = "x"\n', "utf8");
   const cfg = loadedOrThrow(loadGlossaryManualFromConfigDir(dir));
   expect(cfg.terms).toHaveLength(1);
+});
+
+test("a config path that exists but cannot be read yields loaded:false, NOT an empty config", () => {
+  // `nimbus.toml` as a DIRECTORY passes `existsSync` and then makes `readFileSync` throw
+  // (EISDIR on every OS). Reading that failure as "no authored terms" would let the
+  // desired-state pre-pass delete every authored term on the machine.
+  const dir = mkdtempSync(join(tmpdir(), "nimbus-glossary-cfg-"));
+  try {
+    mkdirSync(join(dir, "nimbus.toml"));
+    expect(loadGlossaryManualFromConfigDir(dir)).toEqual({ loaded: false });
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("a term key that normalizes to nothing is skipped with its own reason", () => {
+  const raw = ["[glossary.terms]", '"..." = "An ellipsis."', 'CDR = "Kept."'].join("\n");
+  const cfg = loadedOrThrow(parseGlossaryManualToml(raw));
+  expect(cfg.terms.map((t) => t.termKey)).toEqual(["cdr"]);
+  expect(cfg.skipped).toEqual([{ entry: "...", reason: "key normalizes to nothing" }]);
+});
+
+test("an alias that normalizes to nothing is skipped, not aliased", () => {
+  const raw = ["[glossary.terms]", 'CDR = "Kept."', "[glossary.synonyms]", '"!!" = "CDR"'].join(
+    "\n",
+  );
+  const cfg = loadedOrThrow(parseGlossaryManualToml(raw));
+  expect(cfg.synonyms.size).toBe(0);
+  expect(cfg.skipped).toEqual([{ entry: "!!", reason: "alias or target normalizes to nothing" }]);
+});
+
+test("an alias whose TARGET normalizes to nothing is skipped, not reported as a missing term", () => {
+  const raw = [
+    "[glossary.terms]",
+    'CDR = "Kept."',
+    "[glossary.synonyms]",
+    '"change data record" = "..."',
+  ].join("\n");
+  const cfg = loadedOrThrow(parseGlossaryManualToml(raw));
+  expect(cfg.synonyms.size).toBe(0);
+  expect(cfg.skipped).toEqual([
+    { entry: "change data record", reason: "alias or target normalizes to nothing" },
+  ]);
+});
+
+test("an unterminated string OUTSIDE both glossary blocks is not this parser's business", () => {
+  const raw = ["[llm]", 'local_model = "llama', "[glossary.terms]", 'CDR = "Kept."'].join("\n");
+  const cfg = loadedOrThrow(parseGlossaryManualToml(raw));
+  expect(cfg.terms.map((t) => t.termKey)).toEqual(["cdr"]);
+  expect(cfg.skipped).toEqual([]);
+});
+
+test("a well-formed key under an unrelated table is never read as a term", () => {
+  const raw = ['CDR = "before any table"', "[llm]", 'CDX = "under [llm]"'].join("\n");
+  const cfg = loadedOrThrow(parseGlossaryManualToml(raw));
+  expect(cfg.terms).toEqual([]);
+  expect(cfg.synonyms.size).toBe(0);
+  expect(cfg.skipped).toEqual([]);
+});
+
+test("a bare line with no '=' under [glossary] is neither a term nor a reported dotted key", () => {
+  const raw = ["[glossary]", "terms", "[glossary.terms]", 'CDR = "Kept."'].join("\n");
+  const cfg = loadedOrThrow(parseGlossaryManualToml(raw));
+  expect(cfg.terms.map((t) => t.termKey)).toEqual(["cdr"]);
+  expect(cfg.skipped).toEqual([]);
 });

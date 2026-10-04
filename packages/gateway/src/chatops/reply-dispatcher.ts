@@ -33,7 +33,7 @@ export class ReplyDispatcher {
     }
     let posted = 0;
     for (const channelId of this.deps.notifyChannelsFor(target.namespace)) {
-      await this.deps.post("slack", channelId, text);
+      await this.deps.post("slack", channelId, text); // NOSONAR S9382: I23/I29 — each post appends its own egress row first; posts go out in order and a failure stops later channels
       posted += 1;
     }
     return posted;

@@ -430,12 +430,13 @@ describe("nimbus demo: the whole flow, end to end, on temp roots", () => {
       ];
       for (const c of commands) {
         const r = await cli(["--demo", ...c], TRY_TIMEOUT_MS);
-        if (r.code !== 0) {
-          throw new Error(
-            `nimbus --demo ${c.join(" ")} exited ${String(r.code)}\n` +
-              `--- stdout ---\n${r.stdout}\n--- stderr ---\n${r.stderr}`,
-          );
-        }
+        // The command's full output rides in the failure message: an exit code alone says nothing
+        // about WHY a command the tour told the user to try did not work.
+        expect(
+          r.code,
+          `nimbus --demo ${c.join(" ")} exited ${String(r.code)}\n` +
+            `--- stdout ---\n${r.stdout}\n--- stderr ---\n${r.stderr}`,
+        ).toBe(0);
       }
     },
     TRY_TIMEOUT_MS * 4 + 20_000,

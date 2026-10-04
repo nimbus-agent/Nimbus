@@ -98,11 +98,17 @@ export function demoizeBriefCommands(markdown: string): string {
 }
 
 /**
- * The brief text a CLI command prints: demo-safe commands when `demo`, verbatim otherwise.
- * `demo` must come from the caller's `CliPlatformPaths.demo === true`, never the env var directly.
+ * The install a brief is printed for. Structurally a subset of `CliPlatformPaths`, so a caller
+ * holding its paths passes them as-is; one holding only the derived flag passes `{ demo }`. The
+ * flag must come from `CliPlatformPaths.demo`, never the env var directly.
  */
-export function briefTextFor(brief: string, demo: boolean): string {
-  return demo ? demoizeBriefCommands(brief) : brief;
+export interface BriefInstall {
+  readonly demo?: boolean;
+}
+
+/** The brief text a CLI command prints: demo-safe commands for the demo, verbatim otherwise. */
+export function briefTextFor(brief: string, install: BriefInstall): string {
+  return install.demo === true ? demoizeBriefCommands(brief) : brief;
 }
 
 /**
@@ -127,5 +133,5 @@ export function renderAgentBrief<T extends { gaps: readonly { category: string }
     process.stderr.write(demo ? DEMO_EMPTY_INDEX_HINT : EMPTY_INDEX_HINT);
     throw new CliExit(1);
   }
-  process.stdout.write(`${briefTextFor(brief, demo)}\n`);
+  process.stdout.write(`${briefTextFor(brief, { demo })}\n`);
 }

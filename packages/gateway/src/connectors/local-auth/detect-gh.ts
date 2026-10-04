@@ -55,7 +55,9 @@ export function parseGhHosts(text: string): GhHostEntry[] {
     const active = typeof user === "string" && user.trim() !== "" ? user.trim() : null;
     const users = raw["users"];
     const multi = isRecord(users);
-    const accounts = multi ? Object.keys(users) : active === null ? [] : [active];
+    // Multi-account hosts list every account under `users:`; single-account ones name one `user:`.
+    const singleAccount = active === null ? [] : [active];
+    const accounts = multi ? Object.keys(users) : singleAccount;
     out.push({ host: hostName, accounts, activeAccount: active, multiAccount: multi });
   }
   return out;

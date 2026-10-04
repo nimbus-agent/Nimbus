@@ -127,6 +127,28 @@ describe("RootLayout", () => {
     expect(useNimbusStore.getState().highlightConnector).toBe("github");
   });
 
+  it("returns to the dashboard from another route when tray://open-connector fires", async () => {
+    render(
+      <MemoryRouter initialEntries={["/settings"]}>
+        <Routes>
+          <Route element={<RootLayout />}>
+            <Route index element={<div>child</div>} />
+            <Route path="settings" element={<div>settings page</div>} />
+          </Route>
+        </Routes>
+      </MemoryRouter>,
+    );
+    expect(screen.getByText("settings page")).toBeTruthy();
+    await waitFor(() =>
+      expect(listenHandlers.get("tray://open-connector")?.length).toBeGreaterThan(0),
+    );
+    act(() => {
+      fire("tray://open-connector", { name: "github" });
+    });
+    expect(await screen.findByText("child")).toBeTruthy();
+    expect(screen.queryByText("settings page")).toBeNull();
+  });
+
   it("recovers pending requests from get_pending_hitl on mount", async () => {
     invokeMock.mockImplementation(async (cmd: string) => {
       if (cmd === "get_pending_hitl") {

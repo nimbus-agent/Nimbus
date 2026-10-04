@@ -44,6 +44,21 @@ describe("parseAllowRemoteArgs", () => {
     expect(() => parseAllowRemoteArgs(["--service"])).toThrow(/--service requires a value/);
   });
 
+  /**
+   * § 18.5/§ 19.6: an unrecognised --service would otherwise reach the preview's source label,
+   * which reads anything outside the cloud set as "local" — a reassuring falsehood for bytes a
+   * third party may hold. Refused before any limit rule, and naming the accepted set.
+   */
+  test("REFUSES an unknown --service rather than previewing it as a local source", () => {
+    expect(() => parseAllowRemoteArgs(["--service", "slack", "--limit", "5"])).toThrow(
+      'nimbus media allow-remote: unknown --service "slack" (expected one of: filesystem, google_photos, google_drive, onedrive)',
+    );
+    // A recognised service with the same limit is accepted, so the refusal is about the name.
+    expect(parseAllowRemoteArgs(["--service", "onedrive", "--limit", "5"]).service).toBe(
+      "onedrive",
+    );
+  });
+
   test("REFUSES --since with no value", () => {
     expect(() => parseAllowRemoteArgs(["--since"])).toThrow(/--since requires a value/);
   });
@@ -185,6 +200,21 @@ describe("renderGrantList", () => {
       { itemId: "i1", title: null, modelVendor: "openai", grantedAt: 1_700_000_000_000 },
     ]);
     expect(out).toContain("(item no longer indexed)");
+  });
+
+  test("one malformed grantedAt renders as unknown instead of making the whole list throw", () => {
+    // `grants list` is the only surface a user has to find (and then revoke) a grant, so one bad
+    // persisted row must not take the rest of the list down with a RangeError.
+    const out = renderGrantList([
+      { itemId: "bad", title: "broken.png", modelVendor: "gemini", grantedAt: Number.NaN },
+      { itemId: "ok", title: "chart.png", modelVendor: "openai", grantedAt: 1_700_000_000_000 },
+    ]);
+    expect(out).toBe(
+      [
+        "  broken.png — gemini (granted unknown (NaN), item bad)",
+        `  chart.png — openai (granted ${new Date(1_700_000_000_000).toISOString()}, item ok)`,
+      ].join("\n"),
+    );
   });
 });
 

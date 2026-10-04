@@ -8,10 +8,11 @@ import {
 } from "./hybrid-internal.ts";
 import type { HybridSearchOptions, HybridSearchResult } from "./hybrid-types.ts";
 
-export async function hybridSearch(
-  db: Database,
-  opts: HybridSearchOptions,
-): Promise<HybridSearchResult[]> {
+/**
+ * Synchronous: both retrieval passes and the fusion are `bun:sqlite` reads, which block, so there
+ * is nothing to await. The caller embeds the query vector first and passes it in.
+ */
+export function hybridSearch(db: Database, opts: HybridSearchOptions): HybridSearchResult[] {
   const nameQ = opts.query.trim();
   const k = opts.rrfK ?? 60;
   const wB = opts.bm25Weight ?? 0.6;

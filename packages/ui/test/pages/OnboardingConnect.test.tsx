@@ -55,6 +55,45 @@ describe("Onboarding → Connect", () => {
     );
   });
 
+  it("runs one connector.auth sign-in at a time, never two concurrently", async () => {
+    // Pins the sequential loop in `onAuth` (kept on purpose; see the S9382 suppression on its
+    // `await`): an OAuth `connector.auth` opens a browser consent page and waits on a loopback
+    // callback, so a `Promise.all` rewrite would put every selected provider's sign-in in front of
+    // the user at once.
+    const pendingAuth: Array<() => void> = [];
+    callMock.mockImplementation(async (method) => {
+      if (method === "connector.auth")
+        return new Promise<null>((resolve) => {
+          pendingAuth.push(() => resolve(null));
+        });
+      if (method === "connector.listStatus") return [];
+      throw new Error(`unexpected ${method}`);
+    });
+    const authCalls = () => callMock.mock.calls.filter(([method]) => method === "connector.auth");
+    renderAt();
+    fireEvent.click(screen.getByText("GitHub"));
+    fireEvent.click(screen.getByText("Slack"));
+    fireEvent.click(screen.getByRole("button", { name: /authenticate/i }));
+
+    await waitFor(() => expect(pendingAuth).toHaveLength(1));
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    });
+    expect(authCalls()).toEqual([["connector.auth", { service: "GitHub" }]]);
+
+    await act(async () => {
+      pendingAuth[0]!();
+    });
+    await waitFor(() => expect(pendingAuth).toHaveLength(2));
+    expect(authCalls()).toEqual([
+      ["connector.auth", { service: "GitHub" }],
+      ["connector.auth", { service: "Slack" }],
+    ]);
+    await act(async () => {
+      pendingAuth[1]!();
+    });
+  });
+
   it("shows Authenticating… immediately after clicking Authenticate", async () => {
     let resolveAuth!: () => void;
     callMock.mockImplementation(async (method) => {

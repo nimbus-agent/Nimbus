@@ -257,3 +257,47 @@ describe("mapPipedriveDealToItem", () => {
     expect(row.syncedAt).toBe(NOW);
   });
 });
+
+describe("mapPipedriveDealToItem — id, name and preview shapes", () => {
+  function mapped(over: Record<string, unknown>, drop: readonly string[] = []) {
+    const deal = makeDeal(over);
+    for (const k of drop) delete deal[k];
+    const row = mapPipedriveDealToItem(deal, { syncedAt: NOW });
+    if (row === null) throw new Error("expected mapping to succeed");
+    return row;
+  }
+
+  test("a non-empty string id passes through; a blank one is dropped", () => {
+    const row = mapped({ person_id: "p-777", org_id: "   " });
+    expect(meta(row)["person_id"]).toBe("p-777");
+    expect(meta(row)["org_id"]).toBeNull();
+  });
+
+  test("a nested { value } id may be a string; a blank or non-finite nested value is dropped", () => {
+    const row = mapped({ person_id: { value: "p-777" }, org_id: { value: "  " } });
+    expect(meta(row)["person_id"]).toBe("p-777");
+    expect(meta(row)["org_id"]).toBeNull();
+    const inf = mapped({ person_id: { value: Number.POSITIVE_INFINITY } });
+    expect(meta(inf)["person_id"]).toBeNull();
+  });
+
+  test("a nested object whose name is empty or not a string supplies no denormalized name", () => {
+    const row = mapped({ org_id: { value: 999, name: "" }, user_id: { id: 5, name: 42 } }, [
+      "org_name",
+      "owner_name",
+    ]);
+    expect(meta(row)["org_name"]).toBeNull();
+    expect(meta(row)["owner_name"]).toBeNull();
+    // The id itself is still taken from the nested object.
+    expect(meta(row)["org_id"]).toBe(999);
+  });
+
+  test.each([
+    ["no currency", { currency: null }, "48000 — open"],
+    ["an empty currency", { currency: "" }, "48000 — open"],
+    ["an empty status", { status: "" }, "48000 USD"],
+    ["neither", { currency: "", status: null }, "48000"],
+  ])("a valued deal with %s previews only what is present", (_label, over, preview) => {
+    expect(mapped(over).bodyPreview).toBe(preview);
+  });
+});

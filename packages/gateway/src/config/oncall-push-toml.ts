@@ -40,11 +40,43 @@ function lowerDeduped(values: readonly string[]): string[] {
   return out;
 }
 
+/** The parsed config while its section is still being read. */
+type OncallPushDraft = { -readonly [K in keyof NimbusOncallPushToml]: NimbusOncallPushToml[K] };
+
+/** One `[oncall.push]` entry. A malformed value is ignored, so the value already in effect stands. */
+function applyOncallPushKey(out: OncallPushDraft, key: string, valRaw: string): void {
+  switch (key) {
+    case "enabled": {
+      const b = parseBool(valRaw);
+      if (b !== undefined) out.enabled = b;
+      break;
+    }
+    case "severities":
+      // parseStringArray THROWS on a non-array value (`severities = "P1"`) and on a multi-line
+      // array, which this line-based parser sees as a bare `[`. This loader runs during gateway
+      // assembly, so an unparseable value is ignored — like `enabled` and `retention_days` —
+      // rather than aborting boot over an optional, default-off section.
+      try {
+        out.severities = lowerDeduped(parseStringArray(valRaw));
+      } catch {
+        // keep the value in effect (the default, unless an earlier line set one)
+      }
+      break;
+    case "chatops_namespace":
+      out.chatopsNamespace = parseString(valRaw).trim();
+      break;
+    case "retention_days": {
+      const n = parseIntDec(valRaw);
+      if (n !== undefined && n >= 1) out.retentionDays = n;
+      break;
+    }
+    default:
+      break;
+  }
+}
+
 export function parseNimbusTomlOncallPush(source: string): NimbusOncallPushToml {
-  let enabled = DEFAULT_ONCALL_PUSH_CONFIG.enabled;
-  let severities: readonly string[] = DEFAULT_ONCALL_PUSH_CONFIG.severities;
-  let chatopsNamespace = DEFAULT_ONCALL_PUSH_CONFIG.chatopsNamespace;
-  let retentionDays = DEFAULT_ONCALL_PUSH_CONFIG.retentionDays;
+  const out: OncallPushDraft = { ...DEFAULT_ONCALL_PUSH_CONFIG };
   let inSection = false;
   for (const line of source.split(/\r?\n/)) {
     const trimmed = stripComment(line).trim();
@@ -55,37 +87,9 @@ export function parseNimbusTomlOncallPush(source: string): NimbusOncallPushToml 
     }
     if (!inSection) continue;
     const kv = splitKeyValue(trimmed);
-    if (kv === undefined) continue;
-    switch (kv.key) {
-      case "enabled": {
-        const b = parseBool(kv.valRaw);
-        if (b !== undefined) enabled = b;
-        break;
-      }
-      case "severities":
-        // parseStringArray THROWS on a non-array value (`severities = "P1"`) and on a multi-line
-        // array, which this line-based parser sees as a bare `[`. This loader runs during gateway
-        // assembly, so an unparseable value keeps the default — like `enabled` and `retention_days`
-        // — rather than aborting boot over an optional, default-off section.
-        try {
-          severities = lowerDeduped(parseStringArray(kv.valRaw));
-        } catch {
-          // keep the default
-        }
-        break;
-      case "chatops_namespace":
-        chatopsNamespace = parseString(kv.valRaw).trim();
-        break;
-      case "retention_days": {
-        const n = parseIntDec(kv.valRaw);
-        if (n !== undefined && n >= 1) retentionDays = n;
-        break;
-      }
-      default:
-        break;
-    }
+    if (kv !== undefined) applyOncallPushKey(out, kv.key, kv.valRaw);
   }
-  return { enabled, severities, chatopsNamespace, retentionDays };
+  return out;
 }
 
 export function loadNimbusOncallPushFromPath(tomlPath: string): NimbusOncallPushToml {

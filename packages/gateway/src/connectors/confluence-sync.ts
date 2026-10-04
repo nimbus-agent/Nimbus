@@ -1,5 +1,6 @@
 import type { IndexedItemBodyInput } from "../index/item-store.ts";
 import { plainTextFromHtml } from "../string/html-plain-text.ts";
+import { syncPassCursorSuccess } from "../sync/pass-cursor-sync-result.ts";
 import { type Syncable, type SyncContext, type SyncResult, syncNoopResult } from "../sync/types.ts";
 import {
   asRecord,
@@ -262,14 +263,12 @@ async function confluenceRunPagedSearch(p: ConfluencePagedSearchParams): Promise
   }
 
   const nextW = acc.maxEdited === "" ? watermark : acc.maxEdited;
-  return {
-    cursor: encodeCursor({ v: 1, watermark: nextW }),
-    itemsUpserted: acc.upserted,
-    itemsDeleted: 0,
-    hasMore: false,
-    durationMs: Math.round(performance.now() - t0),
+  return syncPassCursorSuccess(
+    t0,
     bytesTransferred,
-  };
+    encodeCursor({ v: 1, watermark: nextW }),
+    acc.upserted,
+  );
 }
 
 export type ConfluenceSyncableOptions = {

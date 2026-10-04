@@ -16,21 +16,23 @@ import type { NimbusVault } from "../vault/nimbus-vault.ts";
 export function createMemoryVault(): NimbusVault {
   const m = new Map<string, string>();
   return {
-    async set(key: string, value: string): Promise<void> {
+    set(key: string, value: string): Promise<void> {
       m.set(key, value);
+      return Promise.resolve();
     },
-    async get(key: string): Promise<string | null> {
-      return m.get(key) ?? null;
+    get(key: string): Promise<string | null> {
+      return Promise.resolve(m.get(key) ?? null);
     },
-    async delete(key: string): Promise<void> {
+    delete(key: string): Promise<void> {
       m.delete(key);
+      return Promise.resolve();
     },
-    async listKeys(prefix?: string): Promise<string[]> {
+    listKeys(prefix?: string): Promise<string[]> {
       const keys = [...m.keys()].sort((a, b) => a.localeCompare(b));
       if (prefix === undefined || prefix === "") {
-        return keys;
+        return Promise.resolve(keys);
       }
-      return keys.filter((k) => k.startsWith(prefix));
+      return Promise.resolve(keys.filter((k) => k.startsWith(prefix)));
     },
   };
 }
@@ -59,7 +61,7 @@ export function createSyncTestContext(
     // Wave 7b SyncContext members — personal-credential defaults for sync tests.
     sandboxCwd: os.tmpdir(),
     credentialFor: () => ({ credential: "personal" }),
-    runTeamList: async () => [],
+    runTeamList: () => Promise.resolve([]),
     // Connector sync tests exercise the full-body path unless a test overrides it.
     depth: "full",
   };

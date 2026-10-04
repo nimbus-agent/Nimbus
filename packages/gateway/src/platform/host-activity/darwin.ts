@@ -43,13 +43,14 @@ export function parseDarwinIdleMs(ioregOut: string): number | null {
   return Number.isFinite(ns) ? Math.floor(ns / 1_000_000) : null;
 }
 
-export function createDarwinHostActivity(): HostActivity {
+/** `spawn` defaults to `Bun.spawn`; a test passes its own so the probe runs on any host. */
+export function createDarwinHostActivity(spawn: DarwinSpawn = Bun.spawn): HostActivity {
   return {
     probe: async (): Promise<HostActivityProbe> => {
-      const pmset = await run(["pmset", "-g", "batt"]);
+      const pmset = await run(["pmset", "-g", "batt"], spawn);
       if (pmset === undefined) return UNKNOWN_PROBE;
       const power = parseDarwinPower(pmset);
-      const ioreg = await run(["ioreg", "-c", "IOHIDSystem", "-d", "1"]);
+      const ioreg = await run(["ioreg", "-c", "IOHIDSystem", "-d", "1"], spawn);
       const idleMs = ioreg === undefined ? null : parseDarwinIdleMs(ioreg);
       return { power, idleMs, source: idleMs === null ? "power_only" : "measured" };
     },

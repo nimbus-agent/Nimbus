@@ -169,14 +169,19 @@ export async function ensureGoogleDriveMcp(ctx: MeshSpawnContext): Promise<reado
     return [];
   }
   const googleServers: Record<string, ServerSpec> = {};
+  // One service at a time, deliberately. A Vault read that throws (it sits outside the try below)
+  // aborts the bundle before any later service's token refresh — a token-endpoint POST — starts,
+  // and a credential that cannot produce a token records its warning and health transition in
+  // bundle order. `Promise.all` would start every refresh and record those failures in completion
+  // order.
   for (const id of GOOGLE_BUNDLE_IDS) {
-    const resolved = await resolveGoogleOAuthVaultKey(ctx.vault, id);
+    const resolved = await resolveGoogleOAuthVaultKey(ctx.vault, id); // NOSONAR S9382: a throwing Vault read aborts the bundle before any later service's token refresh starts
     if (resolved === null) {
       continue;
     }
     let token: string;
     try {
-      token = await getValidGoogleAccessToken(ctx.vault, id);
+      token = await getValidGoogleAccessToken(ctx.vault, id); // NOSONAR S9382: a failed refresh records this service's warning and health transition (history row + connector.healthChanged) in bundle order, not completion order
     } catch (err) {
       // A present-but-unusable credential is treated exactly like an absent one: skip this
       // service, keep the others. Unguarded, this `await` aborted the whole bundle — and
@@ -821,7 +826,7 @@ export async function ensureKubernetesMcp(ctx: MeshSpawnContext): Promise<void> 
   ctx.scheduleLazyDisconnect(slotKey);
 }
 
-export async function ensureObsidianMcp(ctx: MeshSpawnContext): Promise<void> {
+function startObsidianMcp(ctx: MeshSpawnContext): void {
   const slotKey = LAZY_MESH.obsidian;
   ctx.clearLazyIdle(slotKey);
   if (ctx.getLazyClient(slotKey) !== undefined) {
@@ -861,6 +866,17 @@ export async function ensureObsidianMcp(ctx: MeshSpawnContext): Promise<void> {
   );
   ctx.bumpToolsEpoch();
   ctx.scheduleLazyDisconnect(slotKey);
+}
+
+/**
+ * Starts the Obsidian MCP when vault paths are configured. Nothing here awaits — the paths
+ * arrive on the context rather than from the Vault — but it keeps the Promise-returning
+ * `CredentialSpawners` contract its siblings share. `Promise.try` runs the body immediately and
+ * turns any throw from it into a rejection, exactly as the former `async` declaration did, so
+ * callers still see one failure channel.
+ */
+export function ensureObsidianMcp(ctx: MeshSpawnContext): Promise<void> {
+  return Promise.try(() => startObsidianMcp(ctx));
 }
 
 /**

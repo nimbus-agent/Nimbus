@@ -5,6 +5,8 @@ import {
 } from "../sync/pass-cursor-sync-result.ts";
 import { type Syncable, type SyncContext, type SyncResult, syncNoopResult } from "../sync/types.ts";
 import { connectorFetch } from "./_lib/fetch-outcome.ts";
+import { trimTrailingSlash } from "./_lib/field-helpers.ts";
+import { upsertMapped } from "./_lib/paginated-sync.ts";
 import { encodeNimbusJsonCursor } from "./nimbus-json-cursor.ts";
 import { mapSupersetDashboardToItem } from "./superset-dashboard-mapping.ts";
 import { asRecord } from "./unknown-record.ts";
@@ -28,10 +30,6 @@ interface SupersetCreds {
   readonly url: string;
   readonly username: string;
   readonly password: string;
-}
-
-function trimTrailingSlash(s: string): string {
-  return s.endsWith("/") ? s.slice(0, -1) : s;
 }
 
 async function loadCreds(ctx: SyncContext): Promise<SupersetCreds | null> {
@@ -92,24 +90,6 @@ function dashboardListPath(page: number): string {
   return `/api/v1/dashboard/?q=${q}`;
 }
 
-function upsertDashboards(
-  ctx: SyncContext,
-  creds: SupersetCreds,
-  dashboards: readonly unknown[],
-  now: number,
-): number {
-  let upserted = 0;
-  for (const d of dashboards) {
-    const mapped = mapSupersetDashboardToItem(d, { baseUrl: creds.url, syncedAt: now });
-    if (mapped === null) {
-      continue;
-    }
-    ctx.upsertItem(mapped);
-    upserted += 1;
-  }
-  return upserted;
-}
-
 export function createSupersetSyncable(options: SupersetSyncableOptions): Syncable {
   return {
     serviceId: SERVICE_ID,
@@ -143,7 +123,9 @@ export function createSupersetSyncable(options: SupersetSyncableOptions): Syncab
           break;
         }
         const dashboards = extractResult(outcome.parsed);
-        totalUpserted += upsertDashboards(ctx, creds, dashboards, now);
+        totalUpserted += upsertMapped(ctx, dashboards, (raw) =>
+          mapSupersetDashboardToItem(raw, { baseUrl: creds.url, syncedAt: now }),
+        );
         if (dashboards.length < PAGE_SIZE) {
           break;
         }

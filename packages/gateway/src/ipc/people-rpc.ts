@@ -12,6 +12,7 @@ import {
 } from "../people/person-store.ts";
 import type { PersonRecord } from "../people/person-types.ts";
 import { asRecord } from "./connector-rpc-shared.ts";
+import { requireTrimmedStringField } from "./rpc-params.ts";
 
 export class PeopleRpcError extends Error {
   readonly rpcCode: number;
@@ -22,15 +23,9 @@ export class PeopleRpcError extends Error {
   }
 }
 
+/** `rec[key]`, trimmed, or `Missing or invalid <key>` as a `PeopleRpcError`. */
 function requireString(rec: Record<string, unknown> | undefined, key: string): string {
-  if (rec === undefined) {
-    throw new PeopleRpcError(-32602, `Missing or invalid ${key}`);
-  }
-  const v = rec[key];
-  if (typeof v !== "string" || v.trim() === "") {
-    throw new PeopleRpcError(-32602, `Missing or invalid ${key}`);
-  }
-  return v.trim();
+  return requireTrimmedStringField(rec, key, PeopleRpcError);
 }
 
 function optionalLimit(

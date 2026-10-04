@@ -101,7 +101,7 @@ export function createReadwiseSyncable(options: ReadwiseSyncableOptions): Syncab
         return syncNoopResult(cursor, t0);
       }
       const alreadyRunning = async (): Promise<void> => {};
-      const alreadyLoaded = async (): Promise<ReadwiseCreds> => creds;
+      const alreadyLoaded = (): Promise<ReadwiseCreds> => Promise.resolve(creds);
 
       const highlights = await runSinglePassPaginatedSync(ctx, cursor, {
         ensureRunning: alreadyRunning,

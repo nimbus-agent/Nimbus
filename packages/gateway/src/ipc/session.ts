@@ -98,7 +98,7 @@ export class ClientSession {
         continue;
       }
       try {
-        await this.onRpc(this.clientId, msg);
+        await this.onRpc(this.clientId, msg); // NOSONAR S9382: sequential by design - a client's pipelined messages are handled in arrival order, so each sees the effects (vault/DB writes) of the ones before it
       } catch (e) {
         try {
           const m = e instanceof Error ? e.message : "Internal error";

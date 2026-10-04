@@ -173,14 +173,22 @@ export type SpawnFn = (
   opts: { stdio: "inherit"; shell: boolean },
 ) => EventEmitter;
 
-export async function runConfigEdit(tomlPath: string, spawnFn?: SpawnFn): Promise<void> {
-  const editor = process.env["EDITOR"]?.trim() || (process.platform === "win32" ? "notepad" : "vi");
+/**
+ * `platform` picks the per-OS behaviour — the fallback editor and whether it runs through a shell —
+ * and is a parameter so a test can check both sides on any host. Production callers pass nothing.
+ */
+export async function runConfigEdit(
+  tomlPath: string,
+  spawnFn?: SpawnFn,
+  platform: NodeJS.Platform = process.platform,
+): Promise<void> {
+  const editor = process.env["EDITOR"]?.trim() || (platform === "win32" ? "notepad" : "vi");
   const factory: SpawnFn =
     spawnFn ?? ((cmd, a, opts): EventEmitter => spawn(cmd, a, opts) as unknown as EventEmitter);
   await new Promise<void>((resolve, reject) => {
     const child = factory(editor, [tomlPath], {
       stdio: "inherit",
-      shell: process.platform === "win32",
+      shell: platform === "win32",
     });
     child.on("error", (err: Error) => {
       reject(err);
@@ -195,7 +203,11 @@ export async function runConfigEdit(tomlPath: string, spawnFn?: SpawnFn): Promis
   });
 }
 
-export async function runConfig(args: string[]): Promise<void> {
+/**
+ * `spawnFn` is handed to `runConfigEdit` and nothing else — the test seam that lets the `edit` route
+ * be dispatched without launching a real editor. Production callers pass nothing.
+ */
+export async function runConfig(args: string[], spawnFn?: SpawnFn): Promise<void> {
   const sub = args[0];
   if (sub === undefined || sub === "help" || sub === "--help" || sub === "-h") {
     printConfigHelp();
@@ -216,7 +228,7 @@ export async function runConfig(args: string[]): Promise<void> {
   }
 
   if (sub === "edit") {
-    await runConfigEdit(tomlPath);
+    await runConfigEdit(tomlPath, spawnFn);
     return;
   }
 

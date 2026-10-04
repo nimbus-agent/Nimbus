@@ -1,11 +1,14 @@
-import { IPCClient } from "../ipc-client/index.ts";
+import {
+  type BriefTextFormat,
+  formatBriefText,
+  isBriefTextFormat,
+} from "../format/slack-markdown.ts";
+import type { IPCClient } from "../ipc-client/index.ts";
 import { briefTextFor, resolveBriefTimeoutMs } from "../lib/agent-brief-render.ts";
+import { agentBriefClientOrExit } from "../lib/agent-cli-dispatcher.ts";
 import { CliExit } from "../lib/cli-exit.ts";
 import { disconnectQuietly } from "../lib/disconnect-quietly.ts";
-import { gatewayNotRunningMessage } from "../lib/gateway-not-running.ts";
-import { readGatewayState } from "../lib/gateway-process.ts";
 import { registerInteractiveCliIpcHandlers } from "../lib/interactive-ipc-handlers.ts";
-import { getCliPlatformPaths } from "../paths.ts";
 
 /** Shared notification-wait bound, resolved from the single definition in
  * `lib/agent-brief-render.ts` (honours NIMBUS_BRIEF_TIMEOUT_MS). Exported so
@@ -22,6 +25,103 @@ export function flagValue(args: string[], i: number, flag: string): string {
     throw new Error(`${flag} requires a value`);
   }
   return v.trim();
+}
+
+/**
+ * The flags every pasteable-brief command (`changelog`, `standup`, `oncall`) shares, exactly as
+ * typed. `since` stays a string: each command converts it itself — only `oncall` also bounds it
+ * locally (`changelog` and `standup` leave the 90d bound to the gateway) — and `oncall` must
+ * refuse an `--incident`/`--service` pair BEFORE it reports a bad duration.
+ */
+export type BriefCommandFlags<V extends string> = {
+  since: string;
+  format: BriefTextFormat;
+  json: boolean;
+  /** The command's own value flags, keyed by flag name (`"--service"`); absent when not given. */
+  values: Partial<Record<V, string>>;
+};
+
+export type BriefCommandFlagSpec<V extends string> = {
+  /** Appended to every refusal, and thrown on its own for `--help` / `-h`. */
+  usage: string;
+  /** `--since` when the flag is not given. */
+  defaultSince: string;
+  /** The command's own value flags, each consuming the next argument (`flagValue`). */
+  valueFlags: readonly V[];
+};
+
+/** `--format`'s value — refused, with the usage text, unless it names a known format. */
+function parseBriefFormat(raw: string, usage: string): BriefTextFormat {
+  if (!isBriefTextFormat(raw)) {
+    throw new Error(`--format must be one of markdown, slack, plain (got: ${raw})\n${usage}`);
+  }
+  return raw;
+}
+
+/** Whether `a` is one of the command's own value flags — the narrowing `values[a]` needs. */
+function isValueFlag<V extends string>(valueFlags: readonly V[], a: string | undefined): a is V {
+  const declared: readonly (string | undefined)[] = valueFlags;
+  return declared.includes(a);
+}
+
+/**
+ * Walk a pasteable-brief command's argv once: `--json`, `--since <duration>`,
+ * `--format markdown|slack|plain`, `--help`/`-h`, and the command's own value flags. An unknown
+ * `--flag` or a positional argument is REFUSED with the usage text rather than ignored: silently
+ * dropping `--sicne 7d` would print a one-day brief to a user who believes they asked for a week.
+ */
+export function scanBriefCommandFlags<V extends string = never>(
+  args: string[],
+  spec: BriefCommandFlagSpec<V>,
+): BriefCommandFlags<V> {
+  let since = spec.defaultSince;
+  let format: BriefTextFormat = "markdown";
+  let json = false;
+  const values: Partial<Record<V, string>> = {};
+
+  for (let i = 0; i < args.length; i++) {
+    const a = args[i];
+    if (a === "--json") {
+      json = true;
+    } else if (a === "--since") {
+      since = flagValue(args, i, "--since");
+      i += 1;
+    } else if (a === "--format") {
+      format = parseBriefFormat(flagValue(args, i, "--format"), spec.usage);
+      i += 1;
+    } else if (a === "--help" || a === "-h") {
+      throw new Error(spec.usage);
+    } else if (isValueFlag(spec.valueFlags, a)) {
+      values[a] = flagValue(args, i, a);
+      i += 1;
+    } else if (a?.startsWith("--")) {
+      throw new Error(`Unknown flag: ${a}\n${spec.usage}`);
+    } else {
+      throw new Error(`Unexpected argument: ${String(a)}\n${spec.usage}`);
+    }
+  }
+
+  return { since, format, json, values };
+}
+
+/**
+ * A pasteable-brief command's output: `--json` prints the structured findings verbatim; otherwise
+ * the brief's own Markdown goes through the `--format` transform. Never ANSI — `markdown`/`slack`/
+ * `plain` are all colorless text, so there is nothing for NO_COLOR to strip.
+ */
+export function writeBriefOutput(
+  brief: string,
+  findings: unknown,
+  opts: { json: boolean; format: BriefTextFormat },
+): void {
+  if (opts.json) {
+    process.stdout.write(`${JSON.stringify(findings, null, 2)}\n`);
+    return;
+  }
+  // These transforms operate on the Markdown the brief already rendered — synthesis may have
+  // rewritten it into prose, and re-deriving output from `findings` here would silently discard
+  // that prose. See `format/slack-markdown.ts`.
+  process.stdout.write(`${formatBriefText(brief, opts.format)}\n`);
 }
 
 /**
@@ -91,14 +191,7 @@ function awaitBrief<TFindings>(
 export async function runAgentBriefCli<TFindings>(
   spec: AgentBriefCliSpec<TFindings>,
 ): Promise<void> {
-  const paths = getCliPlatformPaths();
-  const state = await readGatewayState(paths);
-  if (state === undefined) {
-    process.stderr.write(`${gatewayNotRunningMessage(paths.demo === true)}\n`);
-    throw new CliExit(1);
-  }
-
-  const client = new IPCClient(state.socketPath);
+  const { client, demo } = await agentBriefClientOrExit();
   let timeout: ReturnType<typeof setTimeout> | undefined;
   try {
     await client.connect();
@@ -124,7 +217,7 @@ export async function runAgentBriefCli<TFindings>(
     if (spec.json) {
       process.stdout.write(`${JSON.stringify(findings, null, 2)}\n`);
     } else {
-      process.stdout.write(`${briefTextFor(brief, paths.demo === true)}\n`);
+      process.stdout.write(`${briefTextFor(brief, { demo })}\n`);
     }
   } catch (err) {
     // `spec.beforeCall`/`spec.onResult` are caller-supplied extension points (see decisions.ts,

@@ -193,6 +193,23 @@ function canUseConversation(p: RunAskParams): boolean {
   return p.conversationalAgent !== undefined || p.llmRouter?.prefersLocal() === true;
 }
 
+/** One group of the discarded tail: how many cut candidates share a service + item type. */
+type DiscardedTailEntry = { service: string; type: string; count: number };
+
+/**
+ * The retrieval trace of a local pool built for this turn (spec §4.2) — the payload of the
+ * `local_context` route, and of `agent_tools`'s `localContextAlsoGiven` on a local-router
+ * fallback. One shape for both, built by {@link localContextExplainFields}.
+ */
+type LocalContextExplain = {
+  readonly searchTerms: string;
+  readonly primaryRetrieval: PrimaryRetrieval;
+  readonly fallbackTermFired?: string;
+  readonly truncation: ContextTruncation;
+  readonly pool: readonly LocalCandidate[];
+  readonly discardedTail: readonly DiscardedTailEntry[];
+};
+
 /**
  * What a route contributes to the explain record beyond the shared `BaseExplainRecord` fields
  * (spec §4.2). One MUTABLE field on {@link ExplainPartial}, filled in as the turn progresses —
@@ -201,15 +218,7 @@ function canUseConversation(p: RunAskParams): boolean {
  */
 type ExplainRoute =
   | { readonly kind: "empty_index" }
-  | {
-      readonly kind: "local_context";
-      readonly searchTerms: string;
-      readonly primaryRetrieval: PrimaryRetrieval;
-      readonly fallbackTermFired?: string;
-      readonly truncation: ContextTruncation;
-      readonly pool: readonly LocalCandidate[];
-      readonly discardedTail: ReadonlyArray<{ service: string; type: string; count: number }>;
-    }
+  | ({ readonly kind: "local_context" } & LocalContextExplain)
   | {
       readonly kind: "agent_tools";
       /**
@@ -218,14 +227,7 @@ type ExplainRoute =
        * genuinely handed to the agent on fallback, not silently dropped. Absent means none was
        * built, never that it was lost.
        */
-      readonly localContextAlsoGiven?: {
-        readonly searchTerms: string;
-        readonly primaryRetrieval: PrimaryRetrieval;
-        readonly fallbackTermFired?: string;
-        readonly truncation: ContextTruncation;
-        readonly pool: readonly LocalCandidate[];
-        readonly discardedTail: ReadonlyArray<{ service: string; type: string; count: number }>;
-      };
+      readonly localContextAlsoGiven?: LocalContextExplain;
     }
   | { readonly kind: "plan_dispatch"; readonly plan: string };
 
@@ -299,55 +301,60 @@ async function answerConversationally(
       isLocal: result.modelMeta.isLocal,
     };
   }
-  // `toolless` means the LOCAL ROUTER answered this turn with no fallback — the same signal
-  // `appendDeterministicDisclosures` uses to decide the negation-tools-unavailable line. Only
-  // then does the route report the indexed-context retrieval trace Task 4 built AS THE PRIMARY
-  // route payload; a fallback to the Mastra agent (or an agent turn that never had local context
-  // to begin with) is reported as `agent_tools`, with `fallbackFromLocalRouter` carrying the
-  // local-router failure alongside it (spec §4.2) — the two are not mutually exclusive.
-  //
-  // A fallback turn does NOT lose the local pool, though: `promptWithContext` is built ONCE,
-  // above the router-vs-agent fork in `run-conversational-agent.ts`, and `runTurn` hands that
-  // SAME `promptArg` to the agent on fallback — so a pool built for this turn genuinely reached
-  // the model's prompt even when the route is `agent_tools`. `localContextAlsoGiven` carries it
-  // there, additively, only when one was actually built (`shouldBuildLocalContext` is false on
-  // the pure agent route, so a non-fallback `agent_tools` turn never sets this).
-  partial.route =
-    result.toolless && localContext !== undefined
-      ? {
-          kind: "local_context",
-          searchTerms: localContext.explain.searchTerms,
-          primaryRetrieval: localContext.explain.primaryRetrieval,
-          ...(localContext.explain.fallbackTermFired === undefined
-            ? {}
-            : { fallbackTermFired: localContext.explain.fallbackTermFired }),
-          truncation: localContext.truncation,
-          pool: localContext.explain.pool,
-          discardedTail: localContext.explain.discardedTail,
-        }
-      : {
-          kind: "agent_tools",
-          ...(localContext === undefined
-            ? {}
-            : {
-                localContextAlsoGiven: {
-                  searchTerms: localContext.explain.searchTerms,
-                  primaryRetrieval: localContext.explain.primaryRetrieval,
-                  ...(localContext.explain.fallbackTermFired === undefined
-                    ? {}
-                    : { fallbackTermFired: localContext.explain.fallbackTermFired }),
-                  truncation: localContext.truncation,
-                  pool: localContext.explain.pool,
-                  discardedTail: localContext.explain.discardedTail,
-                },
-              }),
-        };
+  partial.route = conversationalExplainRoute(result.toolless, localContext);
 
   await persistConversationTurn(p.sessionMemoryStore, sessionId, p.input, result.reply);
 
   return {
     reply: result.reply,
     ...(result.modelMeta === undefined ? {} : { modelMeta: result.modelMeta }),
+  };
+}
+
+/**
+ * The explain route a conversational turn reports (spec §4.2).
+ *
+ * `toolless` means the LOCAL ROUTER answered this turn with no fallback — the same signal
+ * `appendDeterministicDisclosures` uses to decide the negation-tools-unavailable line. Only
+ * then does the route report the indexed-context retrieval trace Task 4 built AS THE PRIMARY
+ * route payload; a fallback to the Mastra agent (or an agent turn that never had local context
+ * to begin with) is reported as `agent_tools`, with `fallbackFromLocalRouter` carrying the
+ * local-router failure alongside it (spec §4.2) — the two are not mutually exclusive.
+ *
+ * A fallback turn does NOT lose the local pool, though: `promptWithContext` is built ONCE,
+ * above the router-vs-agent fork in `run-conversational-agent.ts`, and `runTurn` hands that
+ * SAME `promptArg` to the agent on fallback — so a pool built for this turn genuinely reached
+ * the model's prompt even when the route is `agent_tools`. `localContextAlsoGiven` carries it
+ * there, additively, only when one was actually built (`shouldBuildLocalContext` is false on
+ * the pure agent route, so a non-fallback `agent_tools` turn never sets this).
+ */
+function conversationalExplainRoute(
+  toolless: boolean,
+  localContext: LocalIndexedContext | undefined,
+): ExplainRoute {
+  if (localContext === undefined) {
+    return { kind: "agent_tools" };
+  }
+  const fields = localContextExplainFields(localContext);
+  return toolless
+    ? { kind: "local_context", ...fields }
+    : { kind: "agent_tools", localContextAlsoGiven: fields };
+}
+
+/**
+ * {@link LocalContextExplain} for a built pool. ONE builder for both places the trace lands —
+ * the `local_context` route and `agent_tools`'s `localContextAlsoGiven` — so the two cannot drift.
+ */
+function localContextExplainFields(localContext: LocalIndexedContext): LocalContextExplain {
+  return {
+    searchTerms: localContext.explain.searchTerms,
+    primaryRetrieval: localContext.explain.primaryRetrieval,
+    ...(localContext.explain.fallbackTermFired === undefined
+      ? {}
+      : { fallbackTermFired: localContext.explain.fallbackTermFired }),
+    truncation: localContext.truncation,
+    pool: localContext.explain.pool,
+    discardedTail: localContext.explain.discardedTail,
   };
 }
 
@@ -670,7 +677,7 @@ interface LocalIndexedContext {
     readonly primaryRetrieval: PrimaryRetrieval;
     readonly fallbackTermFired?: string;
     readonly pool: LocalCandidate[];
-    readonly discardedTail: Array<{ service: string; type: string; count: number }>;
+    readonly discardedTail: DiscardedTailEntry[];
   };
 }
 
@@ -784,93 +791,15 @@ async function buildLocalIndexedContext(
       (item, idx) => ({ ...item, rank: idx + 1 }),
     );
 
-    const shownIds = new Set(contextItems.map((i) => i.sourceId));
-    const byIdOrder = [...byId.keys()];
-    const limit = resolveLocalContextItemLimit();
-
-    const outcomeFor = (id: string, inById: boolean): CandidateOutcome =>
-      classifyCandidateOutcome({
-        sourceId: id,
-        inById,
-        byIdPosition: inById ? byIdOrder.indexOf(id) : -1,
-        shownIds,
-        limit,
-      });
-
-    /** A candidate that WAS scored: read the components off the preserved RankedIndexItem. */
-    const fromRanked = (
-      item: RankedIndexItem,
-      pass: ContributingPass,
-      inById: boolean,
-    ): LocalCandidate => ({
-      sourceId: item.indexPrimaryKey,
-      service: item.service,
-      indexedType: item.indexedType,
-      title: cleanContextText(item.name),
-      ...(item.modifiedAt === undefined ? {} : { modifiedAt: item.modifiedAt }),
-      ...(item.scoringFormula === undefined
-        ? {}
-        : {
-            score: item.score,
-            matchScore: item.matchScore,
-            recencyComponent: item.recencyComponent,
-            servicePriorityComponent: item.servicePriorityComponent,
-            scoringFormula: item.scoringFormula,
-          }),
-      pass,
-      outcome: outcomeFor(item.indexPrimaryKey, inById),
+    const pool = buildCandidatePool({
+      byId,
+      passById,
+      rankedById,
+      primary,
+      shownIds: new Set(contextItems.map((i) => i.sourceId)),
+      limit: resolveLocalContextItemLimit(),
     });
-
-    /**
-     * A candidate that was NEVER scored — the raw-SQL repo-slug rows. Score fields are left
-     * ABSENT, never 0: rendering an absent score as zero would claim it ranked last when in fact
-     * it was never ranked (spec §2.4).
-     */
-    const fromContext = (
-      item: Omit<LocalContextItem, "rank">,
-      pass: ContributingPass,
-    ): LocalCandidate => ({
-      sourceId: item.sourceId,
-      service: item.service,
-      indexedType: item.indexedType,
-      title: item.title,
-      pass,
-      outcome: outcomeFor(item.sourceId, true),
-    });
-
-    const pool: LocalCandidate[] = [];
-    const seen = new Set<string>();
-    for (const [id, ctxItem] of byId) {
-      seen.add(id);
-      const pass = passById.get(id) ?? { kind: "primary-hybrid" as const };
-      const ranked = rankedById.get(id);
-      pool.push(ranked === undefined ? fromContext(ctxItem, pass) : fromRanked(ranked, pass, true));
-    }
-    for (const item of primary) {
-      if (seen.has(item.indexPrimaryKey)) continue;
-      seen.add(item.indexPrimaryKey);
-      pool.push(fromRanked(item, { kind: "primary-hybrid" }, false));
-    }
-
-    // Group the discarded tail by service + type.
-    //
-    // Spec §2.5 suggested reusing `buildContextWindow`. DO NOT: its cap is
-    // `Math.min(200, Math.max(1, Math.floor(maxItems)))`, so passing 0 to summarise EVERYTHING
-    // clamps to 1 — it would keep the first discarded row as an "item" and silently omit it from
-    // the summary. It would also need an unsound cast, since LocalCandidate is not a
-    // RankedIndexItem. Ten honest lines beat a reused function used off-contract.
-    const tail = new Map<string, { service: string; type: string; count: number }>();
-    for (const c of pool) {
-      if (c.outcome === "shown") continue;
-      const key = JSON.stringify([c.service, c.indexedType]);
-      const hit = tail.get(key);
-      if (hit === undefined) {
-        tail.set(key, { service: c.service, type: c.indexedType, count: 1 });
-      } else {
-        hit.count += 1;
-      }
-    }
-    const discardedTail = [...tail.values()].sort((a, b) => b.count - a.count);
+    const discardedTail = summarizeDiscardedTail(pool);
 
     return {
       // `rank` is stripped before serialising (F12c). It is internal relevance ordering, the
@@ -904,6 +833,117 @@ async function buildLocalIndexedContext(
     runAskLog.warn({ err: e }, "failed to build local indexed context for local LLM");
     return undefined;
   }
+}
+
+/** What {@link buildCandidatePool} reads: the merged candidates plus what the context showed. */
+type CandidatePoolInputs = {
+  readonly byId: ReadonlyMap<string, Omit<LocalContextItem, "rank">>;
+  readonly passById: ReadonlyMap<string, ContributingPass>;
+  /** The scores survive ONLY here — `formatContextItem` drops them (spec §2.4). */
+  readonly rankedById: ReadonlyMap<string, RankedIndexItem>;
+  /** The full primary probe, including the overflow that never reached `byId`. */
+  readonly primary: readonly RankedIndexItem[];
+  readonly shownIds: ReadonlySet<string>;
+  readonly limit: number;
+};
+
+/**
+ * Every candidate the ranking pass considered, with its contributing pass and outcome (spec
+ * §2.4): first each `byId` entry in merge order, then the primary probe's overflow that never
+ * made it into `byId` (`cut: probe slice`).
+ */
+function buildCandidatePool(inputs: CandidatePoolInputs): LocalCandidate[] {
+  const { byId, passById, rankedById, primary, shownIds, limit } = inputs;
+  const byIdOrder = [...byId.keys()];
+
+  const outcomeFor = (id: string, inById: boolean): CandidateOutcome =>
+    classifyCandidateOutcome({
+      sourceId: id,
+      inById,
+      byIdPosition: inById ? byIdOrder.indexOf(id) : -1,
+      shownIds,
+      limit,
+    });
+
+  /** A candidate that WAS scored: read the components off the preserved RankedIndexItem. */
+  const fromRanked = (
+    item: RankedIndexItem,
+    pass: ContributingPass,
+    inById: boolean,
+  ): LocalCandidate => ({
+    sourceId: item.indexPrimaryKey,
+    service: item.service,
+    indexedType: item.indexedType,
+    title: cleanContextText(item.name),
+    ...(item.modifiedAt === undefined ? {} : { modifiedAt: item.modifiedAt }),
+    ...(item.scoringFormula === undefined
+      ? {}
+      : {
+          score: item.score,
+          matchScore: item.matchScore,
+          recencyComponent: item.recencyComponent,
+          servicePriorityComponent: item.servicePriorityComponent,
+          scoringFormula: item.scoringFormula,
+        }),
+    pass,
+    outcome: outcomeFor(item.indexPrimaryKey, inById),
+  });
+
+  /**
+   * A candidate that was NEVER scored — the raw-SQL repo-slug rows. Score fields are left
+   * ABSENT, never 0: rendering an absent score as zero would claim it ranked last when in fact
+   * it was never ranked (spec §2.4).
+   */
+  const fromContext = (
+    item: Omit<LocalContextItem, "rank">,
+    pass: ContributingPass,
+  ): LocalCandidate => ({
+    sourceId: item.sourceId,
+    service: item.service,
+    indexedType: item.indexedType,
+    title: item.title,
+    pass,
+    outcome: outcomeFor(item.sourceId, true),
+  });
+
+  const pool: LocalCandidate[] = [];
+  const seen = new Set<string>();
+  for (const [id, ctxItem] of byId) {
+    seen.add(id);
+    const pass = passById.get(id) ?? { kind: "primary-hybrid" as const };
+    const ranked = rankedById.get(id);
+    pool.push(ranked === undefined ? fromContext(ctxItem, pass) : fromRanked(ranked, pass, true));
+  }
+  for (const item of primary) {
+    if (seen.has(item.indexPrimaryKey)) continue;
+    seen.add(item.indexPrimaryKey);
+    pool.push(fromRanked(item, { kind: "primary-hybrid" }, false));
+  }
+  return pool;
+}
+
+/**
+ * Groups the discarded tail (every candidate not `shown`) by service + type, largest first.
+ *
+ * Spec §2.5 suggested reusing `buildContextWindow`. DO NOT: its cap is
+ * `Math.min(200, Math.max(1, Math.floor(maxItems)))`, so passing 0 to summarise EVERYTHING
+ * clamps to 1 — it would keep the first discarded row as an "item" and silently omit it from
+ * the summary. It would also need an unsound cast, since LocalCandidate is not a
+ * RankedIndexItem. Ten honest lines beat a reused function used off-contract.
+ */
+function summarizeDiscardedTail(pool: readonly LocalCandidate[]): DiscardedTailEntry[] {
+  const tail = new Map<string, DiscardedTailEntry>();
+  for (const c of pool) {
+    if (c.outcome === "shown") continue;
+    const key = JSON.stringify([c.service, c.indexedType]);
+    const hit = tail.get(key);
+    if (hit === undefined) {
+      tail.set(key, { service: c.service, type: c.indexedType, count: 1 });
+    } else {
+      hit.count += 1;
+    }
+  }
+  return [...tail.values()].sort((a, b) => b.count - a.count);
 }
 
 async function loadRecentConversationHistory(
@@ -1174,8 +1214,8 @@ export async function runAsk(
     const out = await runAskInner(p, partial);
     recordExplainSafely(p, partial, startedAt, undefined);
     return out;
-  } catch (caught) {
-    const e = demoAwareAskError(p, caught);
+  } catch (error) {
+    const e = demoAwareAskError(p, error);
     recordExplainSafely(p, partial, startedAt, e);
     throw e;
   }

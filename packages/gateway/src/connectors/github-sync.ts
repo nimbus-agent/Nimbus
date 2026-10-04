@@ -4,6 +4,7 @@ import { itemPrimaryKey } from "../index/item-store.ts";
 import type { PersonSyncHints } from "../people/person-types.ts";
 import { PR_FILES_PAGE_SIZE, runPrFilePass } from "../prfiles/pr-file-fetch.ts";
 import { mapGithubPrFiles } from "../prfiles/pr-file-mapping.ts";
+import { syncPassCursorSuccess } from "../sync/pass-cursor-sync-result.ts";
 import {
   FETCH_ONE_TIMEOUT_MS,
   type FetchOneResult,
@@ -16,7 +17,7 @@ import {
   UnauthenticatedError,
 } from "../sync/types.ts";
 import { fetchOneMissForResponse } from "./fetch-miss-reason.ts";
-import { decodeNimbusJsonCursorPayload, encodeNimbusJsonCursor } from "./nimbus-json-cursor.ts";
+import { decodeNimbusJsonCursorObject, encodeNimbusJsonCursor } from "./nimbus-json-cursor.ts";
 import { asRecord, numberField, stringField } from "./unknown-record.ts";
 
 const SERVICE_ID = "github";
@@ -145,17 +146,10 @@ function encodeCursor(c: GithubSyncCursorV1): string {
 }
 
 function decodeCursor(raw: string | null): GithubSyncCursorV1 | null {
-  if (raw === null || raw === "") {
+  const rec = decodeNimbusJsonCursorObject(raw, CURSOR_PREFIX);
+  if (rec === null) {
     return null;
   }
-  const parsed = decodeNimbusJsonCursorPayload(raw, CURSOR_PREFIX);
-  if (parsed === undefined) {
-    return null;
-  }
-  if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
-    return null;
-  }
-  const rec = parsed as Record<string, unknown>;
   const etag = rec["etag"];
   const login = rec["login"];
   return {
@@ -683,12 +677,11 @@ export async function enrichPrDetail(
   fetchImpl: typeof fetch = fetch,
 ): Promise<number> {
   const candidates = ctx.prEnrichCandidates(MAX_ENRICH_PER_TICK);
+  const headers = buildGithubEventHeaders(pat, null);
   let enriched = 0;
   for (const c of candidates) {
-    await ctx.rateLimiter.acquire("github");
-    const res = await fetchImpl(pullDetailUrl(c.repoFull, c.num), {
-      headers: buildGithubEventHeaders(pat, null),
-    });
+    await ctx.rateLimiter.acquire("github"); // NOSONAR S9382: fail-fast by design - a 401 or a rate limit (both throw below) must stop the pass before the next request is sent
+    const res = await fetchImpl(pullDetailUrl(c.repoFull, c.num), { headers }); // NOSONAR S9382: fail-fast by design - this response's 401/rate-limit check decides whether the next request is sent at all
     if (res.status === 401) {
       throw new UnauthenticatedError("GitHub pull detail: unauthorized (401)");
     }
@@ -698,7 +691,7 @@ export async function enrichPrDetail(
     }
     let parsed: unknown;
     try {
-      parsed = JSON.parse(await res.text()) as unknown;
+      parsed = JSON.parse(await res.text()) as unknown; // NOSONAR S9382: reads this iteration's own response body, inside the deliberately sequential pass above
     } catch {
       continue;
     }
@@ -850,11 +843,7 @@ async function syncGithubUserEvents(
     // otherwise byte-identical to before this fix.
     await runPrDetailEnrichmentBestEffort(ctx, pat, Date.now());
     await runPrFilePassBestEffort(ctx, pat, Date.now());
-    return {
-      ...syncNoopResult(cursor, t0),
-      cursor: encodeCursor({ etag, login }),
-      bytesTransferred,
-    };
+    return syncPassCursorSuccess(t0, bytesTransferred, encodeCursor({ etag, login }), 0);
   }
 
   if (res.status === 401) {
@@ -897,14 +886,7 @@ async function syncGithubUserEvents(
   const newEtag = res.headers.get("etag");
   const nextCursor = encodeCursor({ etag: newEtag, login });
 
-  return {
-    cursor: nextCursor,
-    itemsUpserted: upserted,
-    itemsDeleted: 0,
-    hasMore: false,
-    durationMs: Math.round(performance.now() - t0),
-    bytesTransferred,
-  };
+  return syncPassCursorSuccess(t0, bytesTransferred, nextCursor, upserted);
 }
 
 /**

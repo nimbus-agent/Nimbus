@@ -5,7 +5,7 @@ import { type PurgeDeps, startPurge } from "./gdpr-purge.ts";
 import { GdprPurgeStore } from "./gdpr-purge-store.ts";
 
 describe("startPurge", () => {
-  test("revokes grants, deletes local contributions, opens a durable job with one request per peer", async () => {
+  test("revokes grants, deletes local contributions, opens a durable job with one request per peer", () => {
     const db = new Database(":memory:");
     runIndexedSchemaMigrations(db, 37);
     const revoked: string[] = [];
@@ -20,7 +20,7 @@ describe("startPurge", () => {
       newJobId: () => "job-1",
       nowMs: () => 1000,
     };
-    const r = await startPurge(deps, "alice");
+    const r = startPurge(deps, "alice");
     expect(r.jobId).toBe("job-1");
     expect(revoked).toEqual(["peer:alice"]);
     expect(r.localDeleted).toBe(3);
@@ -32,7 +32,7 @@ describe("startPurge", () => {
     ).toEqual(["peer:aa", "peer:bb"]);
   });
 
-  test("throws for an unknown user (resolvePeer undefined)", async () => {
+  test("throws for an unknown user (resolvePeer undefined)", () => {
     const db = new Database(":memory:");
     runIndexedSchemaMigrations(db, 37);
     const deps: PurgeDeps = {
@@ -44,6 +44,6 @@ describe("startPurge", () => {
       newJobId: () => "j",
       nowMs: () => 1,
     };
-    await expect(startPurge(deps, "ghost")).rejects.toThrow();
+    expect(() => startPurge(deps, "ghost")).toThrow("gdpr purge: unknown user ghost");
   });
 });

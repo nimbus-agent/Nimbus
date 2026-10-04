@@ -1,9 +1,9 @@
-import { type SpawnOptions, spawn } from "node:child_process";
+import { type ChildProcess, type SpawnOptions, spawn } from "node:child_process";
 import { closeSync, existsSync, fstatSync, openSync, readFileSync, writeSync } from "node:fs";
 import { join } from "node:path";
 
 import type { CliPlatformPaths } from "../paths.ts";
-import { resolveGatewayLaunch } from "./resolve-gateway-launch.ts";
+import { type GatewayLaunchPlan, resolveGatewayLaunch } from "./resolve-gateway-launch.ts";
 
 const PROFILE_FILENAME = ".nimbus-profile";
 
@@ -51,11 +51,49 @@ export type SpawnGatewayOptions = {
   readonly extraEnv?: Readonly<Record<string, string>>;
 };
 
-export async function spawnGateway(
+type SpawnedGateway = { pid: number; logPath: string; logStartOffset: number };
+
+/**
+ * The outside world `spawnGateway` reaches, injectable for its tests alone — production callers
+ * pass nothing and get the real launch resolver, `node:child_process`'s `spawn` and the host
+ * platform. A real spawn cannot show a test the env, stdio and flags the child was given, cannot
+ * be made to report no pid on demand, and takes only the host's side of the `win32` branch.
+ */
+export type SpawnGatewayDeps = {
+  readonly resolveLaunch: () => GatewayLaunchPlan;
+  readonly spawn: (
+    command: string,
+    args: readonly string[],
+    options: SpawnOptions,
+  ) => Pick<ChildProcess, "pid" | "unref">;
+  readonly platform: NodeJS.Platform;
+};
+
+const DEFAULT_SPAWN_GATEWAY_DEPS: SpawnGatewayDeps = {
+  resolveLaunch: () => resolveGatewayLaunch(process.execPath, import.meta.url),
+  spawn,
+  platform: process.platform,
+};
+
+/**
+ * Launches the gateway detached, its stdout/stderr appended to today's log. All of the work is
+ * synchronous; `Promise.try` keeps the contract an `async` function had — the spawn still happens
+ * at call time, and a launch failure REJECTS rather than throwing at the caller.
+ */
+export function spawnGateway(
   paths: CliPlatformPaths,
   opts: SpawnGatewayOptions = {},
-): Promise<{ pid: number; logPath: string; logStartOffset: number }> {
-  const launch = resolveGatewayLaunch(process.execPath, import.meta.url);
+  deps: SpawnGatewayDeps = DEFAULT_SPAWN_GATEWAY_DEPS,
+): Promise<SpawnedGateway> {
+  return Promise.try(() => launchGateway(paths, opts, deps));
+}
+
+function launchGateway(
+  paths: CliPlatformPaths,
+  opts: SpawnGatewayOptions,
+  deps: SpawnGatewayDeps,
+): SpawnedGateway {
+  const launch = deps.resolveLaunch();
   if (!launch.ok) {
     throw new Error(launch.message);
   }
@@ -91,10 +129,10 @@ export async function spawnGateway(
       windowsHide: true,
       env: childEnv,
     };
-    if (process.platform === "win32") {
+    if (deps.platform === "win32") {
       spawnOpts.detached = true;
     }
-    const child = spawn(executable, spawnArgs, spawnOpts);
+    const child = deps.spawn(executable, spawnArgs, spawnOpts);
     const p = child.pid;
     if (p === undefined) {
       throw new Error("Gateway spawn did not return a process id");

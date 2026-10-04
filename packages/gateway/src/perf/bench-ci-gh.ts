@@ -92,7 +92,7 @@ export class GhCli {
         );
       }
       if (attempt < this.#maxAttempts) {
-        await this.#sleep(this.#backoffMs);
+        await this.#sleep(this.#backoffMs); // NOSONAR S9382: retry loop - the next attempt runs only after this one failed and its backoff elapsed
       }
     }
     throw new Error(

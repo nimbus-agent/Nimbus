@@ -47,7 +47,7 @@ describe("detectGcloud", () => {
     expect(f.project).toBeNull();
   });
 
-  test("a project NUMBER (not an id) → needs_project, agreeing with resolveTarget's GCP_PROJECT_ID check", async () => {
+  test("a project NUMBER (not an id) → needs_project, agreeing with resolveTarget's isGcpProjectId check", async () => {
     // `gcloud config set project` accepts a project number as readily as a project id, and
     // `core.project` echoes back whatever was set. Detect and adopt must agree on what counts as
     // "a project" — an owner whose default is a number is asked to name an id, the same shape
@@ -72,9 +72,9 @@ describe("detectGcloud", () => {
   test("a domain-scoped project id (the legacy example.com:my-proj form) → available", async () => {
     // `example.com:my-proj` is a real, still-valid GCP project id, not a deprecated one — the
     // review round that added the project-id validation above initially rejected it and then told
-    // an owner on this form something false ("it may be a project number"). `GCP_PROJECT_ID`
+    // an owner on this form something false ("it may be a project number"). `isGcpProjectId`
     // itself is pinned in `local-auth-types.test.ts`; this proves the detector actually accepts
-    // what that regex accepts, not a narrower shape re-implemented here.
+    // what that validator accepts, not a narrower shape re-implemented here.
     const run: RunCli = async () => ({
       ok: true,
       stdout: JSON.stringify({

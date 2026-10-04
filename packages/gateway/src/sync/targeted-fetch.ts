@@ -182,7 +182,7 @@ async function acquireWithinTimeout(
     if (await rateLimiter.tryAcquire(service)) {
       return true;
     }
-    await sleep(RATE_LIMIT_POLL_INTERVAL_MS);
+    await sleep(RATE_LIMIT_POLL_INTERVAL_MS); // NOSONAR S9382: bounded poll - each attempt retries one token acquire only after the previous one failed and the interval elapsed
   }
   return false;
 }

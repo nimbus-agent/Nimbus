@@ -4,9 +4,10 @@ import {
   syncPassCursorSuccess,
 } from "../sync/pass-cursor-sync-result.ts";
 import { type Syncable, type SyncContext, type SyncResult, syncNoopResult } from "../sync/types.ts";
+import { upsertMapped } from "./_lib/paginated-sync.ts";
 import { nextPageUrl } from "./link-header.ts";
 import { mapMendeleyDocumentToItem } from "./mendeley-reference-mapping.ts";
-import { decodeNimbusJsonCursorPayload, encodeNimbusJsonCursor } from "./nimbus-json-cursor.ts";
+import { decodeNimbusJsonCursorObject, encodeNimbusJsonCursor } from "./nimbus-json-cursor.ts";
 
 const SERVICE_ID = "mendeley";
 const CURSOR_PREFIX = "nimbus-mendeley1:";
@@ -36,15 +37,12 @@ export function formatCursorDate(date: Date): string {
 }
 
 function decodeCursor(cursor: string | null): MendeleyCursorV1 | null {
-  if (cursor === null) {
+  const rec = decodeNimbusJsonCursorObject(cursor, CURSOR_PREFIX);
+  if (rec === null || !("since" in rec)) {
     return null;
   }
-  const parsed = decodeNimbusJsonCursorPayload(cursor, CURSOR_PREFIX);
-  if (parsed !== null && typeof parsed === "object" && "since" in parsed) {
-    const since = parsed.since;
-    return { since: typeof since === "string" ? since : null };
-  }
-  return null;
+  const since = rec["since"];
+  return { since: typeof since === "string" ? since : null };
 }
 
 function firstPageUrl(since: string | null): string {
@@ -126,15 +124,7 @@ async function loadAccessToken(
 
 /** Map + upsert one page of documents; returns the number upserted (skips unmappable rows). */
 function upsertDocs(ctx: SyncContext, docs: readonly unknown[]): number {
-  let upserted = 0;
-  for (const d of docs) {
-    const mapped = mapMendeleyDocumentToItem(d, { syncedAt: Date.now() });
-    if (mapped !== null) {
-      ctx.upsertItem(mapped);
-      upserted += 1;
-    }
-  }
-  return upserted;
+  return upsertMapped(ctx, docs, (d) => mapMendeleyDocumentToItem(d, { syncedAt: Date.now() }));
 }
 
 /** Empty pass-cursor result for a first-page failure (http vs parse error). */

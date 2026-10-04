@@ -1,6 +1,7 @@
 import { extensionProcessEnv } from "../extensions/spawn-env.ts";
 import type { SandboxPolicy } from "../platform/sandbox/sandbox-policy.ts";
 import type { SandboxRunner } from "../platform/sandbox/sandbox-runner.ts";
+import { trimPartialUtf8 } from "../util/utf8-trim.ts";
 import type { ExecResult, TerminationReason } from "./exec-result.ts";
 
 export interface RunConfinedOptions {
@@ -13,32 +14,6 @@ export interface RunConfinedOptions {
 
 /** Escalation delay before SIGKILL when SIGTERM is ignored (POSIX; on Windows SIGTERM is forceful). */
 const KILL_ESCALATION_MS = 2_000;
-
-/**
- * Drop a trailing INCOMPLETE UTF-8 sequence.
- *
- * Needed only where WE made the cut. Mid-stream splits are healed by concatenating every chunk
- * before decoding; but the output cap can slice mid-character, and decoding that fragment yields a
- * U+FFFD we manufactured ourselves. That is worse than it looks: U+FFFD re-encodes to 3 bytes, so
- * cutting four emoji at a 10-byte cap produced 11 bytes of output -- back OVER the very cap the
- * trim was enforcing.
- */
-/** How many bytes the UTF-8 sequence starting with this lead byte occupies. */
-function sequenceLength(lead: number): number {
-  if (lead < 0x80) return 1;
-  if ((lead & 0xe0) === 0xc0) return 2;
-  if ((lead & 0xf0) === 0xe0) return 3;
-  return 4;
-}
-
-function trimPartialUtf8(buf: Uint8Array): Uint8Array {
-  for (let back = 1; back <= 4 && back <= buf.length; back++) {
-    const b = buf[buf.length - back] as number;
-    if ((b & 0xc0) === 0x80) continue; // continuation byte -- keep walking back to the lead byte
-    return sequenceLength(b) === back ? buf : buf.subarray(0, buf.length - back);
-  }
-  return buf;
-}
 
 /**
  * Spawn `cmd` through the platform sandbox runner and capture bounded output.

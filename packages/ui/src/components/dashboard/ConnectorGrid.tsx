@@ -42,33 +42,43 @@ function toConnectorHealth(healthState: unknown): ConnectorHealth {
 const KNOWN_DEPTHS: ReadonlySet<string> = new Set(["metadata_only", "summary", "full"]);
 
 /**
+ * Map ONE wire row to a `ConnectorStatus`, or `null` for a row that is not an object or has no
+ * string `serviceId` — a tile cannot be named without one. Each optional field is copied only when
+ * its wire type matches, so a malformed value is dropped rather than asserted.
+ */
+function toConnectorStatus(entry: unknown): ConnectorStatus | null {
+  if (entry === null || typeof entry !== "object") return null;
+  const rec = entry as Record<string, unknown>;
+  if (typeof rec["serviceId"] !== "string") return null;
+  const status: ConnectorStatus = {
+    name: rec["serviceId"],
+    health: toConnectorHealth(rec["healthState"]),
+  };
+  if (typeof rec["lastError"] === "string") status.lastError = rec["lastError"];
+  if (typeof rec["itemCount"] === "number") status.itemCount = rec["itemCount"];
+  if (typeof rec["intervalMs"] === "number") status.intervalMs = rec["intervalMs"];
+  if (typeof rec["depth"] === "string" && KNOWN_DEPTHS.has(rec["depth"])) {
+    status.depth = rec["depth"] as "metadata_only" | "summary" | "full";
+  }
+  if (typeof rec["enabled"] === "boolean") status.enabled = rec["enabled"];
+  return status;
+}
+
+/**
  * `connector.listStatus` returns the gateway's `SyncStatus` (`packages/gateway/src/sync/types.ts`)
  * — `{ serviceId, healthState, lastError, itemCount, intervalMs, depth, enabled, ... }` — not this
  * package's `ConnectorStatus` (`{ name, health, ... }`). The old code asserted the RPC result WAS a
  * `ConnectorStatus[]` via the `useIpcQuery` generic and handed it straight to `setConnectors`,
  * which left every row's `name`/`health` `undefined` and made `patchConnector`'s `x.name === name`
- * match nothing. Map field-by-field instead, and drop a row with no string `serviceId` rather than
- * producing a tile with no name.
+ * match nothing. Map field-by-field instead (`toConnectorStatus`), and drop a row with no string
+ * `serviceId` rather than producing a tile with no name.
  */
 function toConnectorStatuses(raw: unknown): ConnectorStatus[] {
   if (!Array.isArray(raw)) return [];
   const out: ConnectorStatus[] = [];
   for (const entry of raw) {
-    if (entry === null || typeof entry !== "object") continue;
-    const rec = entry as Record<string, unknown>;
-    if (typeof rec["serviceId"] !== "string") continue;
-    const status: ConnectorStatus = {
-      name: rec["serviceId"],
-      health: toConnectorHealth(rec["healthState"]),
-    };
-    if (typeof rec["lastError"] === "string") status.lastError = rec["lastError"];
-    if (typeof rec["itemCount"] === "number") status.itemCount = rec["itemCount"];
-    if (typeof rec["intervalMs"] === "number") status.intervalMs = rec["intervalMs"];
-    if (typeof rec["depth"] === "string" && KNOWN_DEPTHS.has(rec["depth"])) {
-      status.depth = rec["depth"] as "metadata_only" | "summary" | "full";
-    }
-    if (typeof rec["enabled"] === "boolean") status.enabled = rec["enabled"];
-    out.push(status);
+    const status = toConnectorStatus(entry);
+    if (status !== null) out.push(status);
   }
   return out;
 }

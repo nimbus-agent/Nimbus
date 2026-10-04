@@ -10,6 +10,7 @@ import {
 } from "./_lib/gap-notes.ts";
 import { reverseDependsOn } from "./_lib/graph-traversals.ts";
 import { resolvePrSubject } from "./_lib/pr-subject.ts";
+import { subAgent } from "./_lib/sub-agent.ts";
 import type { SynthesisRunner } from "./_lib/synthesis-llm.ts";
 
 export type ImpactInput = {
@@ -36,22 +37,6 @@ type SubAgentResult = {
   gap?: GapNote;
 };
 
-function makeSubAgent(
-  fn: (db: Database, input: ImpactInput, start: ResolvedStart | null) => Promise<SubAgentResult>,
-  db: Database,
-  input: ImpactInput,
-  start: ResolvedStart | null,
-): SubTask {
-  return {
-    taskType: "agent_step",
-    prompt: "",
-    execute: async () => {
-      const out = await fn(db, input, start);
-      return { text: JSON.stringify(out), tokensIn: 0, tokensOut: 0 };
-    },
-  };
-}
-
 export async function runImpact(input: ImpactInput, ctx: ImpactContext): Promise<ImpactBrief> {
   const start = performance.now();
 
@@ -69,11 +54,11 @@ export async function runImpact(input: ImpactInput, ctx: ImpactContext): Promise
   });
 
   const tasks: SubTask[] = [
-    makeSubAgent(subDownstreamCode, ctx.db, input, resolved),
-    makeSubAgent(subPipelines, ctx.db, input, resolved),
-    makeSubAgent(subOncall, ctx.db, input, resolved),
-    makeSubAgent(subDashboards, ctx.db, input, resolved),
-    makeSubAgent(subDownstreamRepos, ctx.db, input, resolved),
+    subAgent(() => subDownstreamCode(ctx.db, resolved)),
+    subAgent(() => subPipelines(ctx.db, resolved)),
+    subAgent(() => subOncall(ctx.db, resolved)),
+    subAgent(() => subDashboards(ctx.db, resolved)),
+    subAgent(() => subDownstreamRepos(ctx.db, resolved)),
   ];
 
   const results = await coordinator.run(tasks);
@@ -188,11 +173,7 @@ function repoIdsForRepoLabel(db: Database, repoLabel: string): string[] {
   return rows.map((r) => r.id);
 }
 
-async function subDownstreamCode(
-  db: Database,
-  _input: ImpactInput,
-  start: ResolvedStart | null,
-): Promise<SubAgentResult> {
+function subDownstreamCode(db: Database, start: ResolvedStart | null): SubAgentResult {
   if (start === null) {
     return {
       gap: {
@@ -224,11 +205,7 @@ async function subDownstreamCode(
   };
 }
 
-async function subPipelines(
-  db: Database,
-  _input: ImpactInput,
-  start: ResolvedStart | null,
-): Promise<SubAgentResult> {
+function subPipelines(db: Database, start: ResolvedStart | null): SubAgentResult {
   if (start === null) {
     return {
       gap: {
@@ -274,11 +251,7 @@ async function subPipelines(
   return {};
 }
 
-async function subOncall(
-  db: Database,
-  _input: ImpactInput,
-  start: ResolvedStart | null,
-): Promise<SubAgentResult> {
+function subOncall(db: Database, start: ResolvedStart | null): SubAgentResult {
   const gap = detectMissingConnector(db, "pagerduty");
   if (gap !== null) return { gap };
   if (start === null) {
@@ -314,11 +287,7 @@ async function subOncall(
   };
 }
 
-async function subDashboards(
-  db: Database,
-  _input: ImpactInput,
-  start: ResolvedStart | null,
-): Promise<SubAgentResult> {
+function subDashboards(db: Database, start: ResolvedStart | null): SubAgentResult {
   const gap = detectMissingEntityType(db, "dashboard");
   if (gap !== null) return { gap };
   if (start === null) return {};
@@ -349,11 +318,7 @@ async function subDashboards(
   };
 }
 
-async function subDownstreamRepos(
-  db: Database,
-  _input: ImpactInput,
-  start: ResolvedStart | null,
-): Promise<SubAgentResult> {
+function subDownstreamRepos(db: Database, start: ResolvedStart | null): SubAgentResult {
   if (start === null) {
     return {
       gap: {

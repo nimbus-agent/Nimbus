@@ -7,6 +7,18 @@ export { MAX_HANDSHAKE_FRAME } from "./lan-server.ts";
 
 const DEFAULT_TIMEOUT_MS = 5000;
 
+/** Every `kind` a Nimbus responder sends is a short lowercase protocol token. */
+const PROTOCOL_KIND = /^[a-z_]{1,32}$/;
+
+/**
+ * A handshake reply's `kind`, for an error message. The reply arrives BEFORE the responder's key is
+ * checked, so anyone answering at the peer's address controls this text, and the message reaches
+ * brief `## Gaps` and CLI output. Only a protocol token is echoed; anything else reads `unknown`.
+ */
+export function replyKindForMessage(kind: unknown): string {
+  return typeof kind === "string" && PROTOCOL_KIND.test(kind) ? kind : "unknown";
+}
+
 interface FrameReader {
   push(chunk: Uint8Array): void;
   next(): Uint8Array | undefined;
@@ -49,6 +61,10 @@ export function buildFrame(payload: Uint8Array): Uint8Array {
  * One-shot settle guard shared by the single-frame and two-frame exchanges: starts the timeout
  * timer and returns a `finish(body?, err?)` that resolves/rejects exactly once (clearing the timer),
  * mapping a missing body to `closedMsg` and a timeout to `timeoutMsg`.
+ *
+ * Every caller settles BEFORE `socket.end()`, on the error paths as on the success path: Bun fires
+ * `close()` synchronously inside `end()`, and `close()` calls `finish(undefined)` — so ending first
+ * would replace the specific error (a bad hello, a pinned-key mismatch) with `closedMsg`.
  */
 function makeSettler(
   resolve: (body: Uint8Array) => void,
@@ -115,8 +131,8 @@ export function exchangeOneFrame(
               socket.end();
             }
           } catch (e) {
-            socket.end();
             finish(undefined, e instanceof Error ? e : new Error(String(e)));
+            socket.end();
           }
         },
         close() {
@@ -165,8 +181,8 @@ function exchangeHelloThenRpc(
           try {
             body = reader.next();
           } catch (e) {
-            socket.end();
             finish(undefined, e instanceof Error ? e : new Error(String(e)));
+            socket.end();
             return;
           }
           if (body === undefined) return;
@@ -175,24 +191,24 @@ function exchangeHelloThenRpc(
             try {
               reply = JSON.parse(new TextDecoder().decode(body)) as typeof reply;
             } catch {
-              socket.end();
               finish(undefined, new Error("lan-client: bad hello reply"));
+              socket.end();
               return;
             }
             if (reply.kind !== "hello_ok") {
-              socket.end();
               finish(
                 undefined,
-                new Error(`lan-client: hello rejected (${reply.kind ?? "unknown"})`),
+                new Error(`lan-client: hello rejected (${replyKindForMessage(reply.kind)})`),
               );
+              socket.end();
               return;
             }
             phase = "rpc";
             try {
               writeFrame(socket, buildRpc(reply));
             } catch (e) {
-              socket.end();
               finish(undefined, e instanceof Error ? e : new Error(String(e)));
+              socket.end();
             }
             return;
           }
@@ -289,7 +305,7 @@ export async function outboundPairHandshake(
     host_pubkey?: string;
   };
   if (msg.kind !== "pair_ok" || typeof msg.host_pubkey !== "string") {
-    throw new Error(`lan-client: pairing rejected (${msg.kind ?? "unknown"})`);
+    throw new Error(`lan-client: pairing rejected (${replyKindForMessage(msg.kind)})`);
   }
   const hostPub = new Uint8Array(Buffer.from(msg.host_pubkey, "base64"));
   if (hostPub.length !== 32) throw new Error("lan-client: bad host pubkey length");

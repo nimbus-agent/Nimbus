@@ -32,9 +32,9 @@ export class NativeTtsProvider implements TtsProvider {
     this.platform = opts.platform;
   }
 
-  async isAvailable(): Promise<boolean> {
-    if (this.platform === "darwin" || this.platform === "win32") return true;
-    return Bun.which("espeak-ng") !== null || Bun.which("spd-say") !== null;
+  isAvailable(): Promise<boolean> {
+    if (this.platform === "darwin" || this.platform === "win32") return Promise.resolve(true);
+    return Promise.resolve(Bun.which("espeak-ng") !== null || Bun.which("spd-say") !== null);
   }
 
   async speak(text: string): Promise<void> {

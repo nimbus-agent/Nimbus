@@ -56,7 +56,7 @@ resolves a tool off a lazy-mesh tool map and calls `tool.execute()` directly:
 
 | Path | Site | What leaves the machine |
 |---|---|---|
-| `share.replay` | `ipc/share-rpc.ts:172` | Recipe steps against the **live** mesh, gated only by `isReadOnlyToolId` — from a file a third party sent you |
+| `share.replay` | `ipc/share-rpc.ts:169` | Recipe steps against the **live** mesh, gated only by `isReadOnlyToolId` — from a file a third party sent you |
 | ChatOps replies | `chatops/chatops-bot-spawn-call.ts:40` | Every operational reply, including posting answer text into a channel — the most content-bearing egress in the product |
 | Team-vault session | `teamvault/connector-session.ts:127` | A federated **peer's** invoke, under shared org credentials |
 

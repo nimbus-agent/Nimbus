@@ -1,5 +1,13 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -274,6 +282,34 @@ describe("setTomlValueInFile", () => {
     writeFileSync(sibling, "keep me");
     setTomlValueInFile(tomlPath, "llm.remote_model", "sonnet");
     expect(readFileSync(sibling, "utf8")).toBe("keep me");
+  });
+
+  test("rethrows a read error other than ENOENT instead of writing a fresh file over it", () => {
+    // Only "the file does not exist yet" may be treated as an empty config. A path that exists but
+    // cannot be read (here a DIRECTORY, so EISDIR) must fail loudly: swallowing it like ENOENT would
+    // go on to replace whatever is there with a one-key file.
+    mkdirSync(tomlPath);
+    writeFileSync(join(tomlPath, "inside.txt"), "untouched");
+    let caught: unknown;
+    try {
+      setTomlValueInFile(tomlPath, "llm.local_model", "llama3.2");
+    } catch (e) {
+      caught = e;
+    }
+    expect((caught as NodeJS.ErrnoException | undefined)?.code).toBe("EISDIR");
+    expect(readFileSync(join(tomlPath, "inside.txt"), "utf8")).toBe("untouched");
+    // The write never started: no swap directory was created beside the target.
+    expect(readdirSync(dir).filter((n) => n.includes(".swap-"))).toEqual([]);
+  });
+
+  test("a successful write removes its swap directory: only nimbus.toml is left behind", () => {
+    // Each atomic replace stages the new body in a sibling `.nimbus.toml.swap-*` directory. Every
+    // `nimbus config set` that left one behind would litter the user's config directory, so after
+    // a create AND a replace the directory must hold exactly the config file.
+    setTomlValueInFile(tomlPath, "llm.local_model", "llama3.2");
+    setTomlValueInFile(tomlPath, "llm.local_model", "llama3.3");
+    expect(readFileSync(tomlPath, "utf8")).toBe('[llm]\nlocal_model = "llama3.3"\n');
+    expect(readdirSync(dir)).toEqual(["nimbus.toml"]);
   });
 });
 

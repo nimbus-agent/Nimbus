@@ -303,6 +303,20 @@ async function runStatus(c: FleetIpc, json: boolean, sink: OutcomeSink): Promise
   return FLEET_EXIT_CODES.ok;
 }
 
+/**
+ * A `fleet list` row's sweep suffix, or `""` for a config-named job. Read with `== null` on purpose:
+ * a pre-sweep gateway omits the field entirely (see `FleetJobListEntryShape.sweep`).
+ */
+function sweepColumn(sweep: FleetJobListEntryShape["sweep"]): string {
+  if (sweep == null) return "";
+  const empty = sweep.emptyReason === null ? "" : `  empty: ${sweep.emptyReason}`;
+  const warning =
+    sweep.rotationExceedsRetention === true
+      ? "  WARNING: a full rotation outlasts retention; this sweep cannot report movement"
+      : "";
+  return `  sweep=${sweep.kind} max=${sweep.maxSubjects} total=${sweep.subjectsTotal ?? "?"}${empty}${warning}`;
+}
+
 async function runList(c: FleetIpc, json: boolean, sink: OutcomeSink): Promise<number> {
   const r = (await c.call("fleet.list", {})) as { jobs: readonly FleetJobListEntryShape[] };
   if (json) {
@@ -317,16 +331,8 @@ async function runList(c: FleetIpc, json: boolean, sink: OutcomeSink): Promise<n
     const last =
       j.state?.lastSuccessAt != null ? new Date(j.state.lastSuccessAt).toISOString() : "never";
     const failures = j.state?.consecutiveFailures ?? 0;
-    const sweep =
-      j.sweep == null
-        ? ""
-        : `  sweep=${j.sweep.kind} max=${j.sweep.maxSubjects} total=${j.sweep.subjectsTotal ?? "?"}` +
-          (j.sweep.emptyReason === null ? "" : `  empty: ${j.sweep.emptyReason}`) +
-          (j.sweep.rotationExceedsRetention === true
-            ? "  WARNING: a full rotation outlasts retention; this sweep cannot report movement"
-            : "");
     sink.out(
-      `${j.name}  agent=${j.agent}  interval=${j.intervalSeconds}s  last success=${last}  consecutive failures=${failures}${sweep}\n`,
+      `${j.name}  agent=${j.agent}  interval=${j.intervalSeconds}s  last success=${last}  consecutive failures=${failures}${sweepColumn(j.sweep)}\n`,
     );
   }
   return FLEET_EXIT_CODES.ok;

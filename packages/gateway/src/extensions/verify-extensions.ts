@@ -95,12 +95,12 @@ function tryPromotePrevVersion(
   }
 }
 
-async function maybeRecoverMissingActive(
+function maybeRecoverMissingActive(
   db: Database,
   logger: Logger,
   row: ExtensionRow,
   now: number,
-): Promise<boolean> {
+): boolean {
   const activePath = row.install_path;
   if (existsSync(activePath)) return true;
 
@@ -201,7 +201,7 @@ async function verifyOneExtension(
   now: number,
   mesh?: ExtensionMeshHandle,
 ): Promise<void> {
-  const recovered = await maybeRecoverMissingActive(db, logger, row, now);
+  const recovered = maybeRecoverMissingActive(db, logger, row, now);
   if (!recovered) return;
 
   const manifestPath = resolveExtensionManifestPath(row.install_path);
@@ -437,8 +437,11 @@ async function runSignatureVerificationPass(
   let signaturesChecked = 0;
   let signatureHardDisabled = 0;
   const failures: { id: string; reason: SignatureDisableReason }[] = [];
+  // SERIAL by design (I16): each row reads its publisher key from the OS Vault, and a failed row
+  // is disabled, logged and its client stopped before the next row is checked; `failures` feeds
+  // the audit row below, so its order must be the registry's, never a race's.
   for (const row of listExtensions(db).filter((r) => r.enabled === 1)) {
-    const result = await computeRowSignatureReason(row, signatureOpts.vault);
+    const result = await computeRowSignatureReason(row, signatureOpts.vault); // NOSONAR S9382: I16 startup pass, one row at a time in registry order (see above)
     if (result === "skip") continue;
     signaturesChecked++;
     if (result === undefined) continue;
@@ -450,7 +453,7 @@ async function runSignatureVerificationPass(
       { extensionId: row.id, reason: result },
       "extensions: signature verification failed — extension disabled",
     );
-    if (mesh !== undefined) await mesh.stopExtensionClient(row.id);
+    if (mesh !== undefined) await mesh.stopExtensionClient(row.id); // NOSONAR S9382: I16 fail-closed - the disabled extension's client is stopped before the next row is verified
   }
   appendAuditEntry(db, {
     actionType: "extension.startup_verification",
@@ -477,7 +480,7 @@ export async function verifyExtensionsBestEffort(
   const preT2Disabled = hardDisablePreT2Extensions({ db, logger });
   if (mesh !== undefined) {
     for (const row of preT2Disabled) {
-      await mesh.stopExtensionClient(row.id);
+      await mesh.stopExtensionClient(row.id); // NOSONAR S9382: fail-closed - stopped one at a time in registry order; a failed stop rejects the pass before any later stop or verification starts
     }
   }
   const rows = listExtensions(db).filter((r) => r.enabled === 1);
@@ -486,7 +489,7 @@ export async function verifyExtensionsBestEffort(
   }
   const now = Date.now();
   for (const row of rows) {
-    await verifyOneExtension(db, logger, row, now, mesh);
+    await verifyOneExtension(db, logger, row, now, mesh); // NOSONAR S9382: I16 startup verify - each row may rename dirs, write the DB and audit chain, and stop its client; rows go one at a time in registry order
   }
 
   if (signatureOpts !== undefined) {

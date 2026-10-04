@@ -15,9 +15,11 @@ export function isPermittedSchemeForUpdater(url: string): boolean {
   try {
     const u = new URL(url);
     if (u.protocol === "https:") return true;
+    // `URL` keeps an IPv6 literal's brackets in `hostname`: the IPv6 loopback reads `[::1]`, never
+    // `::1` (which no parsed URL can produce).
     if (
       u.protocol === "http:" &&
-      (u.hostname === "127.0.0.1" || u.hostname === "::1" || u.hostname === "localhost") &&
+      (u.hostname === "127.0.0.1" || u.hostname === "[::1]" || u.hostname === "localhost") &&
       process.env["NODE_ENV"] !== "production"
     ) {
       return true;

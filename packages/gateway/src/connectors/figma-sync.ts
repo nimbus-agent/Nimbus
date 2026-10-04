@@ -146,7 +146,7 @@ export function createFigmaSyncable(options: FigmaSyncableOptions): Syncable {
           break;
         }
         const filesPath = `/v1/projects/${encodeURIComponent(project.id)}/files`;
-        const filesOutcome = await figmaGet(ctx, token, filesPath);
+        const filesOutcome = await figmaGet(ctx, token, filesPath); // NOSONAR S9382: projects share one MAX_FILES budget - a project is fetched only while the earlier ones left budget (the break above), and up to MAX_PROJECTS would otherwise burst at once
         totalBytes += filesOutcome.bytes;
         if (filesOutcome.kind !== "ok") {
           // Skip this project, continue with the rest — partial coverage beats none.

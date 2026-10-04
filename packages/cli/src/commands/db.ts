@@ -4,7 +4,19 @@ import { join } from "node:path";
 import { isProcessAlive, readGatewayState } from "../lib/gateway-process.ts";
 import { restoreDbFromSnapshot } from "../lib/restore-db-from-snapshot.ts";
 import { withGatewayIpc } from "../lib/with-gateway-ipc.ts";
-import { getCliPlatformPaths } from "../paths.ts";
+import { type CliPlatformPaths, getCliPlatformPaths } from "../paths.ts";
+
+/**
+ * The outside world `runDb` reaches that a test must be able to redirect. Only `restore` reads it:
+ * that is the one subcommand that resolves the platform paths ITSELF — to overwrite `nimbus.db` —
+ * rather than inside `withGatewayIpc`, so it is the one a test must never let resolve the real data
+ * directory. The default is the real thing; production callers pass nothing.
+ */
+export interface RunDbDeps {
+  readonly getPaths: () => CliPlatformPaths;
+}
+
+const defaultRunDbDeps: RunDbDeps = { getPaths: getCliPlatformPaths };
 
 function takeFlag(args: string[], flag: string): string | undefined {
   const i = args.indexOf(flag);
@@ -109,13 +121,13 @@ async function dbCmdBackupsList(): Promise<void> {
   console.log(JSON.stringify(rows, null, 2));
 }
 
-async function dbCmdRestore(tail: string[]): Promise<void> {
+async function dbCmdRestore(tail: string[], getPaths: () => CliPlatformPaths): Promise<void> {
   const snap = tail[0]?.trim() ?? "";
   if (snap === "") {
     throw new Error("Usage: nimbus db restore <snapshot.db.gz> [--yes]");
   }
   const yes = tail.includes("--yes");
-  const paths = getCliPlatformPaths();
+  const paths = getPaths();
   const state = await readGatewayState(paths);
   if (state !== undefined && isProcessAlive(state.pid)) {
     throw new Error("Stop the Gateway before restoring the database file (nimbus stop).");
@@ -133,7 +145,7 @@ async function dbCmdRestore(tail: string[]): Promise<void> {
   console.log(`Restored database from ${snap}`);
 }
 
-export async function runDb(args: string[]): Promise<void> {
+export async function runDb(args: string[], deps: RunDbDeps = defaultRunDbDeps): Promise<void> {
   const sub = args[0];
   const tail = args.slice(1);
   if (sub === undefined || sub === "help" || sub === "--help" || sub === "-h") {
@@ -181,7 +193,7 @@ export async function runDb(args: string[]): Promise<void> {
   }
 
   if (sub === "restore") {
-    await dbCmdRestore(tail);
+    await dbCmdRestore(tail, deps.getPaths);
     return;
   }
 

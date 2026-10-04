@@ -19,6 +19,6 @@ export async function ensurePlatformDirectories(paths: PlatformPaths): Promise<v
     dirs.push(dirname(paths.socketPath));
   }
   for (const d of dirs) {
-    await mkdir(d, { recursive: true });
+    await mkdir(d, { recursive: true }); // NOSONAR S9382: fail-fast boot - the first directory that cannot be made stops the run before any later one is created, and its error is the one reported
   }
 }

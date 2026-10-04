@@ -1,4 +1,4 @@
-import { decodeNimbusJsonCursorPayload, encodeNimbusJsonCursor } from "../../nimbus-json-cursor.ts";
+import { decodeNimbusJsonCursorObject, encodeNimbusJsonCursor } from "../../nimbus-json-cursor.ts";
 
 const CURSOR_PREFIX = "nimbus-glab1:";
 
@@ -27,17 +27,10 @@ export function encodeGitlabCursor(c: GitlabSyncCursorV2): string {
 }
 
 export function decodeGitlabCursor(raw: string | null): GitlabSyncCursorV2 | null {
-  if (raw === null || raw === "") {
+  const rec = decodeNimbusJsonCursorObject(raw, CURSOR_PREFIX);
+  if (rec === null) {
     return null;
   }
-  const parsed = decodeNimbusJsonCursorPayload(raw, CURSOR_PREFIX);
-  if (parsed === undefined) {
-    return null;
-  }
-  if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
-    return null;
-  }
-  const rec = parsed as Record<string, unknown>;
   const after = rec["after"];
   const page = rec["page"];
   if (typeof after !== "string" || after === "") {

@@ -1,3 +1,5 @@
+import { trimTrailingSlash } from "./_lib/field-helpers.ts";
+import type { MappedRow } from "./mapped-row.ts";
 import { asRecord, numberField, stringField } from "./unknown-record.ts";
 
 export interface MlflowMappingContext {
@@ -5,28 +7,13 @@ export interface MlflowMappingContext {
   readonly syncedAt: number;
 }
 
-export interface MlflowMappedRow {
-  readonly service: "mlflow";
-  readonly type: "ml_model";
-  readonly externalId: string;
-  readonly title: string;
-  readonly bodyPreview: string;
-  readonly url: string | null;
-  readonly canonicalUrl: string;
-  readonly modifiedAt: number;
-  readonly metadata: Record<string, unknown>;
-  readonly syncedAt: number;
-}
+export type MlflowMappedRow = MappedRow<"mlflow", "ml_model", string>;
 
 interface LatestVersion {
   readonly version: string | null;
   readonly stage: string | null;
   readonly status: string | null;
   readonly runId: string | null;
-}
-
-function trimTrailingSlash(s: string): string {
-  return s.endsWith("/") ? s.slice(0, -1) : s;
 }
 
 export function modelUrl(host: string, name: string): string {

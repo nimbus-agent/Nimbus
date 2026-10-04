@@ -257,3 +257,59 @@ describe("modelUrl", () => {
     );
   });
 });
+
+describe("mapMlflowModelToItem — irregular version lists and names", () => {
+  test("non-record entries are skipped, and an entry without a parseable version loses to a numbered one", () => {
+    const row = mapMlflowModelToItem(
+      makeModel({
+        latest_versions: [
+          "junk",
+          null,
+          { version: "beta", current_stage: "Staging", status: "READY", run_id: "run-beta" },
+          { current_stage: "Archived" },
+          { version: "2", current_stage: "None", status: "READY", run_id: "run-2" },
+        ],
+      }),
+      ctx(),
+    );
+    if (row === null) throw new Error("expected mapping to succeed");
+    expect(meta(row)["version_count"]).toBe(5);
+    expect(meta(row)["latest_version"]).toBe("2");
+    expect(meta(row)["latest_stage"]).toBe("None");
+    expect(meta(row)["latest_run_id"]).toBe("run-2");
+  });
+
+  test("when no entry carries a usable version number, the first record entry is kept", () => {
+    // A versionless entry ranks with the unparseable ones (lowest), so it never displaces them.
+    const row = mapMlflowModelToItem(
+      makeModel({
+        latest_versions: [
+          { version: "beta", run_id: "first" },
+          { version: "rc", run_id: "second" },
+          { run_id: "versionless" },
+        ],
+      }),
+      ctx(),
+    );
+    if (row === null) throw new Error("expected mapping to succeed");
+    expect(meta(row)["latest_version"]).toBe("beta");
+    expect(meta(row)["latest_run_id"]).toBe("first");
+  });
+
+  test("a chosen entry missing every field reports each as null", () => {
+    const row = mapMlflowModelToItem(makeModel({ latest_versions: [{}] }), ctx());
+    if (row === null) throw new Error("expected mapping to succeed");
+    expect(meta(row)["version_count"]).toBe(1);
+    expect(meta(row)["latest_version"]).toBeNull();
+    expect(meta(row)["latest_stage"]).toBeNull();
+    expect(meta(row)["latest_status"]).toBeNull();
+    expect(meta(row)["latest_run_id"]).toBeNull();
+  });
+
+  test("an empty model name falls back to a 'Model ' title", () => {
+    const row = mapMlflowModelToItem(makeModel({ name: "" }), ctx());
+    if (row === null) throw new Error("expected mapping to succeed");
+    expect(row.title).toBe("Model ");
+    expect(row.externalId).toBe("model_");
+  });
+});

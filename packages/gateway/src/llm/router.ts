@@ -263,7 +263,7 @@ export class LlmRouter {
     for (const route of this.orderedRoutes(task, preferLocal)) {
       if (this.config.enforceAirGap && !route.provider.isLocal) continue;
       if (!this.meetsCapabilityFloor(route, task)) continue;
-      if (await isAvailable(route)) yield route;
+      if (await isAvailable(route)) yield route; // NOSONAR S9382: lazy priority walk - a route is probed only when the consumer pulls past the previous one
     }
   }
 
@@ -527,44 +527,50 @@ export class LlmRouter {
 
   async getStatus(): Promise<Record<LlmTaskType, LlmTaskStatus | undefined>> {
     const tasks: LlmTaskType[] = ["classification", "reasoning", "summarisation", "agent_step"];
-    const out: Partial<Record<LlmTaskType, LlmTaskStatus | undefined>> = {};
+    // The four tasks are independent, so their statuses are computed concurrently. That costs no
+    // extra probes: the shared `this.availability` probe hands every concurrent `check()` of one
+    // provider instance the same in-flight fetch.
+    const entries = await Promise.all(
+      tasks.map(async (t) => [t, await this.taskStatus(t)] as const),
+    );
+    return Object.fromEntries(entries) as Record<LlmTaskType, LlmTaskStatus | undefined>;
+  }
+
+  /** One task's `getStatus` entry: its preferred route, and the fallback when that route is down. */
+  private async taskStatus(t: LlmTaskType): Promise<LlmTaskStatus | undefined> {
     // `probeAvailable` already goes through the shared `this.availability` probe, whose
     // own per-provider-instance TTL cache amortizes repeated checks — a second, per-call
     // cache here (as this used to have) is redundant, and two caching layers with different
     // lifetimes over the same question is how they drift apart.
     const isAvailable = (route: ModelRoute): Promise<boolean> => this.probeAvailable(route);
-    for (const t of tasks) {
-      const preferred = this.findPreferredRoute(t);
-      if (preferred === undefined) {
-        out[t] = undefined;
-        continue;
-      }
-      const preferredAvailable = await isAvailable(preferred);
-      const entry: LlmTaskStatus = {
-        providerId: preferred.provider.providerId,
-        modelName: preferred.modelName,
-        isAvailable: preferredAvailable,
-        reason: this.reasonFor(t, preferred),
-      };
-      if (!preferredAvailable) {
-        // The preferred provider is down; report the route generate() would actually fall
-        // back to (next available in priority order) so status matches real routing.
-        const actual = await this.firstAvailableRoute(t, isAvailable);
-        // Compared by ROUTE id, not provider id. Two routes on one provider is the normal case
-        // now that `(provider, model)` is the key — `ollama/qwen3:8b` down and
-        // `ollama/gemma3:12b` answering in its place is precisely the fallback a user needs to
-        // see, and a providerId comparison suppressed it as "same provider, nothing to report".
-        // A route can only equal itself here, so the self-suppression this guard exists for
-        // still holds.
-        if (actual !== undefined && actual.routeId !== preferred.routeId) {
-          entry.fallback = {
-            providerId: actual.provider.providerId,
-            modelName: actual.modelName,
-          };
-        }
-      }
-      out[t] = entry;
+    const preferred = this.findPreferredRoute(t);
+    if (preferred === undefined) {
+      return undefined;
     }
-    return out as Record<LlmTaskType, LlmTaskStatus | undefined>;
+    const preferredAvailable = await isAvailable(preferred);
+    const entry: LlmTaskStatus = {
+      providerId: preferred.provider.providerId,
+      modelName: preferred.modelName,
+      isAvailable: preferredAvailable,
+      reason: this.reasonFor(t, preferred),
+    };
+    if (!preferredAvailable) {
+      // The preferred provider is down; report the route generate() would actually fall
+      // back to (next available in priority order) so status matches real routing.
+      const actual = await this.firstAvailableRoute(t, isAvailable);
+      // Compared by ROUTE id, not provider id. Two routes on one provider is the normal case
+      // now that `(provider, model)` is the key — `ollama/qwen3:8b` down and
+      // `ollama/gemma3:12b` answering in its place is precisely the fallback a user needs to
+      // see, and a providerId comparison suppressed it as "same provider, nothing to report".
+      // A route can only equal itself here, so the self-suppression this guard exists for
+      // still holds.
+      if (actual !== undefined && actual.routeId !== preferred.routeId) {
+        entry.fallback = {
+          providerId: actual.provider.providerId,
+          modelName: actual.modelName,
+        };
+      }
+    }
+    return entry;
   }
 }

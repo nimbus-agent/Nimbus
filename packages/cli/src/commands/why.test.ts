@@ -32,6 +32,17 @@ describe("parseWhyArgs", () => {
     expect(() => parseWhyArgs(["a.ts", "--line", "0"])).toThrow();
     expect(() => parseWhyArgs(["a.ts", "--line", "-1"])).toThrow();
   });
+
+  test("a --flag the parser does not know is never taken as the ref", () => {
+    expect(parseWhyArgs(["--frobnicate", "src/a.ts"])).toEqual({
+      ref: "src/a.ts",
+      peek: false,
+      json: false,
+    });
+    expect(() => parseWhyArgs(["--frobnicate"])).toThrow(
+      "Usage: nimbus why <path[:line] | symbol | pr-url> [--line <n>] [--peek] [--json]",
+    );
+  });
 });
 
 describe("renderPeekLine", () => {
@@ -50,6 +61,36 @@ describe("renderPeekLine", () => {
     expect(renderPeekLine("src/a.ts:42", fullPeek)).toBe(
       "alice · a1b2c3d4e5f6 · 2023-11-14 · Fix retry backoff · PR #412 · NIM-88",
     );
+  });
+
+  test("a blamed line with nothing else known renders the short sha alone, no empty separators", () => {
+    const bare: WhyPeekLike = {
+      subject: { repoRoot: "/repo", filePath: "src/a.ts", lineNo: 42 },
+      author: null,
+      authorEmail: null,
+      commitSha: "a1b2c3d4e5f6789",
+      committedAt: null,
+      commitSubject: null,
+      pr: null,
+      ticket: null,
+      hasMore: false,
+    };
+    expect(renderPeekLine("src/a.ts:42", bare)).toBe("a1b2c3d4e5f6");
+  });
+
+  test("a PR the index knows only by title (no number) is left out rather than printed as 'PR #null'", () => {
+    const peek: WhyPeekLike = {
+      subject: { repoRoot: "/repo", filePath: "src/a.ts", lineNo: 42 },
+      author: "alice",
+      authorEmail: null,
+      commitSha: "a1b2c3d4e5f6789",
+      committedAt: null,
+      commitSubject: null,
+      pr: { number: null, title: "Retry backoff", url: null },
+      ticket: { key: "NIM-88", title: "Retry storms", url: null },
+      hasMore: false,
+    };
+    expect(renderPeekLine("src/a.ts:42", peek)).toBe("alice · a1b2c3d4e5f6 · NIM-88");
   });
 
   test("empty peek: no subject / no commitSha renders the not-indexed message", () => {
@@ -264,6 +305,43 @@ describe("runWhyCli — dispatcher (full brief)", () => {
     });
     await expect(runWhyCli(["src/a.ts:42"])).rejects.toMatchObject({ name: "CliExit", code: 2 });
     expect(stderrChunks.join("")).toContain("blame lookup failed");
+  });
+
+  /** Wires a gateway whose `why.briefReady` carries `findings` verbatim. */
+  function gatewayDelivering(findings: unknown): void {
+    const handlers = new Map<string, (params: unknown) => void>();
+    setFixture({
+      gatewayState: { socketPath: FAKE_SOCKET_PATH },
+      ipcClient: {
+        call: async (method: string) => {
+          if (method === "agents.why") {
+            setTimeout(() => {
+              handlers.get("why.briefReady")?.({ sessionId: "s", brief: "# Why", findings });
+            }, 0);
+            return { sessionId: "s" };
+          }
+          return undefined;
+        },
+        connect: async () => {},
+        disconnect: async () => {},
+        onNotification: (event: string, handler: (params: unknown) => void) => {
+          handlers.set(event, handler);
+        },
+      },
+    });
+  }
+
+  it("a null findings payload is refused as malformed (exit 2), never rendered", async () => {
+    gatewayDelivering(null);
+    await expect(runWhyCli(["src/a.ts:42"])).rejects.toMatchObject({ name: "CliExit", code: 2 });
+    expect(stderrChunks.join("")).toBe("Malformed why.briefReady payload\n");
+    expect(stdoutChunks.join("")).not.toContain("# Why");
+  });
+
+  it("a non-object findings payload is refused the same way", async () => {
+    gatewayDelivering("why");
+    await expect(runWhyCli(["src/a.ts:42"])).rejects.toMatchObject({ name: "CliExit", code: 2 });
+    expect(stderrChunks.join("")).toBe("Malformed why.briefReady payload\n");
   });
 });
 

@@ -1,4 +1,6 @@
-import { describe, expect, it } from "bun:test";
+import { afterEach, beforeEach, describe, expect, it } from "bun:test";
+
+import { createStreamCapture } from "../../test/helpers/stream-capture.ts";
 import { parseTeamArgs, runTeamCommand, type TeamRpcClient } from "./team.ts";
 
 function fakeClient(): {
@@ -139,5 +141,69 @@ describe("nimbus team purge (Task 21)", () => {
       method: "team.purge",
       params: { externalId: "u123" },
     });
+  });
+});
+
+describe("runTeamCommand -- what the operator is told", () => {
+  const streams = createStreamCapture();
+  beforeEach(() => {
+    streams.stdoutChunks.length = 0;
+    streams.stderrChunks.length = 0;
+    streams.install();
+  });
+  afterEach(() => {
+    streams.restore();
+  });
+
+  function clientReturning(result: unknown): {
+    client: TeamRpcClient;
+    calls: Array<{ method: string; params: unknown }>;
+  } {
+    const calls: Array<{ method: string; params: unknown }> = [];
+    return {
+      calls,
+      client: {
+        call: async (method: string, params?: unknown) => {
+          calls.push({ method, params });
+          return result as never;
+        },
+      },
+    };
+  }
+
+  it("deny answers BOTH brokers as a denial, as the --as peer, and says denied", async () => {
+    const { client, calls } = clientReturning({ ok: true });
+    await runTeamCommand(["deny", "req-9", "--as", "peer:bob"], { client });
+    const params = { requestId: "req-9", peerId: "peer:bob", approved: false };
+    expect(calls).toEqual([
+      { method: "federation.approvalRespond", params },
+      { method: "federation.quorumRespond", params },
+    ]);
+    expect(streams.stdoutChunks.join("")).toBe("denied req-9\n");
+  });
+
+  it("purge reports the job id and the revoked-grant count the gateway returned", async () => {
+    const { client } = clientReturning({ jobId: "job-7", localDeleted: 3 });
+    await runTeamCommand(["purge", "--user", "u1", "--yes"], { client });
+    expect(streams.stdoutChunks.join("")).toBe(
+      "GDPR purge started for u1: job job-7 (3 local grant(s) revoked)\n",
+    );
+  });
+
+  it("purge states placeholders, never 'undefined', when the gateway omits both", async () => {
+    const { client } = clientReturning({});
+    await runTeamCommand(["purge", "--user", "u1", "--force"], { client });
+    expect(streams.stdoutChunks.join("")).toBe(
+      "GDPR purge started for u1: job ? (0 local grant(s) revoked)\n",
+    );
+  });
+
+  it("a federation subcommand is refused by name before any call, never silently dropped", async () => {
+    const { client, calls } = clientReturning({ ok: true });
+    await expect(runTeamCommand(["discover"], { client })).rejects.toThrow(
+      "runTeamCommand does not handle subcommand: discover",
+    );
+    expect(calls).toEqual([]);
+    expect(streams.stdoutChunks).toEqual([]);
   });
 });

@@ -197,4 +197,86 @@ describe("ConnectorGrid", () => {
       expect.objectContaining({ name: "jira", health: "not_configured" }),
     ]);
   });
+
+  it("drops rows it cannot name and copies only optional fields whose wire type matches", () => {
+    // Exact `toEqual` objects, not `objectContaining`: a wrongly typed field that leaked through
+    // (e.g. `lastError: 500`) would show up as an extra key and fail the comparison.
+    store.setConnectors = (c) => {
+      store.connectors = c;
+    };
+    wireListStatus = [
+      null,
+      "drive",
+      42,
+      { healthState: "healthy" },
+      { serviceId: 7, healthState: "healthy" },
+      {
+        serviceId: "github",
+        healthState: "rate_limited",
+        lastError: "HTTP 429",
+        itemCount: 3,
+        intervalMs: 1_000,
+        depth: "full",
+        enabled: false,
+      },
+      {
+        serviceId: "slack",
+        healthState: "persistent_error",
+        lastError: 500,
+        itemCount: "3",
+        intervalMs: null,
+        depth: "deep",
+        enabled: "yes",
+      },
+    ];
+    store.connectors = [];
+
+    render(
+      <MemoryRouter>
+        <ConnectorGrid />
+      </MemoryRouter>,
+    );
+
+    expect(store.connectors).toEqual([
+      {
+        name: "github",
+        health: "rate_limited",
+        lastError: "HTTP 429",
+        itemCount: 3,
+        intervalMs: 1_000,
+        depth: "full",
+        enabled: false,
+      },
+      // An unrecognised health state falls back to "healthy"; every mistyped field is dropped.
+      { name: "slack", health: "healthy" },
+    ]);
+  });
+
+  it("maps a non-array connector.listStatus payload to an empty list", () => {
+    const setConnectorsSpy = vi.fn<(c: ConnectorStatus[]) => void>();
+    store.setConnectors = setConnectorsSpy;
+    wireListStatus = { error: "not an array" };
+
+    render(
+      <MemoryRouter>
+        <ConnectorGrid />
+      </MemoryRouter>,
+    );
+
+    expect(setConnectorsSpy).toHaveBeenCalledWith([]);
+  });
+
+  it("leaves the connector list alone until the first poll has returned data", () => {
+    const setConnectorsSpy = vi.fn<(c: ConnectorStatus[]) => void>();
+    store.setConnectors = setConnectorsSpy;
+    wireListStatus = null;
+
+    render(
+      <MemoryRouter>
+        <ConnectorGrid />
+      </MemoryRouter>,
+    );
+
+    expect(setConnectorsSpy).not.toHaveBeenCalled();
+  });
 });

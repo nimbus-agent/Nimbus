@@ -187,6 +187,13 @@ const SHA_HANDLER_PRIYA = sha("handler-priya");
 const SHA_HANDLER_MARCO = sha("handler-marco");
 const SHA_HANDLER_LEE = sha("handler-lee");
 
+/** The commit that last touched handler line `i` (0-based): three authors in contiguous bands. */
+function handlerBlameFor(i: number): string {
+  if (i < 4) return SHA_HANDLER_PRIYA;
+  if (i < 7) return SHA_HANDLER_MARCO;
+  return SHA_HANDLER_LEE;
+}
+
 const FILES: readonly DemoFile[] = [
   {
     path: "src/retry/backoff.ts",
@@ -201,9 +208,7 @@ const FILES: readonly DemoFile[] = [
   {
     path: "src/charges/handler.ts",
     lines: HANDLER_LINES,
-    blame: HANDLER_LINES.map((_, i) =>
-      i < 4 ? SHA_HANDLER_PRIYA : i < 7 ? SHA_HANDLER_MARCO : SHA_HANDLER_LEE,
-    ),
+    blame: HANDLER_LINES.map((_, i) => handlerBlameFor(i)),
   },
 ];
 

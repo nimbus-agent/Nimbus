@@ -1,5 +1,12 @@
 import { describe, expect, test } from "bun:test";
-import { createWriteStream, existsSync, mkdtempSync, readdirSync, statSync } from "node:fs";
+import {
+  createWriteStream,
+  existsSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  statSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, extname, join } from "node:path";
 import { type CloudBytesDeps, cleanupFailedScratch, fetchCloudBytes } from "./cloud-bytes.ts";
@@ -373,6 +380,108 @@ describe("fetchCloudBytes", () => {
     // pass — same contract as a hostile provider-returned URL (see the test above).
     expect(r).toEqual({ ok: false, reason: "fetch_miss", fetched: 0 });
   });
+});
+
+describe("fetchCloudBytes — reading the body (both collectors share one bounded read loop)", () => {
+  test("an image arriving in several chunks is reassembled in order", async () => {
+    const { stream } = chunkedStream(["AB", "CDE", "F"]);
+    const deps = fakeDeps({ fetchFn: async () => new Response(stream) });
+    expect(await fetchCloudBytes(imageCandidate, providerUrl, deps)).toEqual({
+      ok: true,
+      kind: "bytes",
+      bytes: new TextEncoder().encode("ABCDEF"),
+      fetched: 6,
+    });
+  });
+
+  test("an AV artifact arriving in several chunks is written to scratch in order", async () => {
+    const { stream } = chunkedStream(["AB", "CDE", "F"]);
+    const deps = fakeDeps({ fetchFn: async () => new Response(stream) });
+    const r = await fetchCloudBytes(avCandidate, providerUrl, deps);
+    expect(r).toMatchObject({ ok: true, kind: "path", fetched: 6 });
+    expect(r.ok && r.kind === "path" ? readFileSync(r.path, "utf8") : null).toBe("ABCDEF");
+  });
+
+  test("a 200 with no body is an empty image, not a failure", async () => {
+    const deps = fakeDeps({ fetchFn: async () => new Response(null) });
+    expect(await fetchCloudBytes(imageCandidate, providerUrl, deps)).toEqual({
+      ok: true,
+      kind: "bytes",
+      bytes: new Uint8Array(0),
+      fetched: 0,
+    });
+  });
+
+  test("a 200 with no body lands an EMPTY scratch file for an AV artifact", async () => {
+    const deps = fakeDeps({ fetchFn: async () => new Response(null) });
+    const r = await fetchCloudBytes(avCandidate, providerUrl, deps);
+    expect(r).toMatchObject({ ok: true, kind: "path", fetched: 0 });
+    expect(r.ok && r.kind === "path" ? statSync(r.path).size : null).toBe(0);
+  });
+
+  test("a stream chunk carrying no value is skipped, never counted", async () => {
+    const stream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(undefined as unknown as Uint8Array);
+        controller.enqueue(new TextEncoder().encode("AB"));
+        controller.close();
+      },
+    });
+    const deps = fakeDeps({ maxBytes: 2, fetchFn: async () => new Response(stream) });
+    expect(await fetchCloudBytes(imageCandidate, providerUrl, deps)).toEqual({
+      ok: true,
+      kind: "bytes",
+      bytes: new TextEncoder().encode("AB"),
+      fetched: 2,
+    });
+  });
+
+  // The per-artifact cap is checked BEFORE the run budget, and that order decides the OUTCOME:
+  // `over_byte_cap` skips this one artifact and the run goes on, while `budget_exhausted` stops the
+  // run and leaves its cursor here (`media-pass.ts`). The two single-bound tests above cannot tell
+  // the orders apart, since each leaves the other bound out of reach.
+  test.each([
+    ["an image", imageCandidate],
+    ["an AV artifact", avCandidate],
+  ] as const)(
+    "%s crossing BOTH bounds on one chunk is refused for the cap, not stopped for the budget",
+    async (_label, candidate) => {
+      const { stream, pulledIndexes } = chunkedStream(["AB", "CDEFGH", "IJ"]);
+      const deps = fakeDeps({
+        maxBytes: 5,
+        remainingBudget: 5,
+        fetchFn: async () => new Response(stream),
+      });
+      expect(await fetchCloudBytes(candidate, providerUrl, deps)).toEqual({
+        ok: false,
+        reason: "over_byte_cap",
+        fetched: 8,
+      });
+      expect(pulledIndexes).toEqual([0, 1]);
+      expect(readdirSync(deps.scratchDir).filter((n) => n.startsWith("nimbus-media-"))).toEqual([]);
+    },
+  );
+
+  // The shared read loop promises to release the body's reader lock on EVERY exit. Nothing in this
+  // module reads the body again, so a leaked lock is invisible to every other assertion here — it
+  // is pinned directly on the Response the loop read from, on both a completed read and a refusal,
+  // for both collectors.
+  test.each([
+    ["a completed image read", imageCandidate, 1_000_000_000, true],
+    ["a completed AV read", avCandidate, 1_000_000_000, true],
+    ["an image refused mid-stream for the cap", imageCandidate, 5, false],
+    ["an AV artifact refused mid-stream for the cap", avCandidate, 5, false],
+  ] as const)(
+    "releases the body's reader lock after %s",
+    async (_label, candidate, maxBytes, ok) => {
+      const { stream } = chunkedStream(["AB", "CDEFGH", "IJ"]);
+      const res = new Response(stream);
+      const deps = fakeDeps({ maxBytes, fetchFn: async () => res });
+      const r = await fetchCloudBytes(candidate, providerUrl, deps);
+      expect(r.ok).toBe(ok); // proves which exit was taken
+      expect(res.body?.locked).toBe(false);
+    },
+  );
 });
 
 describe("cleanupFailedScratch", () => {

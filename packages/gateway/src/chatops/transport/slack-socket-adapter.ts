@@ -141,10 +141,14 @@ export class SlackSocketAdapter implements ChatTransport {
     });
   }
 
-  async stop(): Promise<void> {
-    this.stopped = true;
-    this.socket?.close();
-    this.socket = undefined;
+  stop(): Promise<void> {
+    // Nothing here awaits, but `close()` is the injected socket's and may throw: `Promise.try`
+    // keeps that a rejection for the caller, exactly as it was when this method was `async`.
+    return Promise.try(() => {
+      this.stopped = true;
+      this.socket?.close();
+      this.socket = undefined;
+    });
   }
 
   private async onFrame(raw: string, socket: SocketLike): Promise<void> {

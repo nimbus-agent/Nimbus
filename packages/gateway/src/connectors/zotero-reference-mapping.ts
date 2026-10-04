@@ -1,3 +1,4 @@
+import { namedTags } from "./_lib/field-helpers.ts";
 import type { MappedRow } from "./mapped-row.ts";
 import { asRecord, numberField, stringField } from "./unknown-record.ts";
 
@@ -41,22 +42,9 @@ export function creatorNames(raw: unknown): string[] {
   return names;
 }
 
+/** Zotero tag objects carry their label in `tag`, not `name`. */
 export function tagNames(raw: unknown): string[] {
-  if (!Array.isArray(raw)) {
-    return [];
-  }
-  const names: string[] = [];
-  for (const t of raw) {
-    const row = asRecord(t);
-    if (row === undefined) {
-      continue;
-    }
-    const tag = stringField(row, "tag");
-    if (tag !== undefined && tag !== "") {
-      names.push(tag);
-    }
-  }
-  return names;
+  return namedTags(raw, "tag");
 }
 
 function collectionKeys(raw: unknown): string[] {

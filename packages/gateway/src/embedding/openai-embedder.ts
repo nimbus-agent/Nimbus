@@ -6,14 +6,16 @@ export type CreateOpenAIEmbedderOptions = {
   dimensions?: number;
 };
 
-export async function createOpenAIEmbedder(
-  options: CreateOpenAIEmbedderOptions,
-): Promise<Embedder> {
+/**
+ * Promise-returning because `create-embedding-runtime.ts` takes it as an injectable async factory
+ * (`openaiEmbedderFactory`); constructing the embedder itself does no I/O and cannot throw.
+ */
+export function createOpenAIEmbedder(options: CreateOpenAIEmbedderOptions): Promise<Embedder> {
   const model = options.model ?? "text-embedding-3-small";
   const dimensions = options.dimensions ?? 384;
   const modelTag = `openai:${model}`;
 
-  return {
+  const embedder: Embedder = {
     model: modelTag,
     dims: dimensions,
     isLocal: false,
@@ -63,4 +65,5 @@ export async function createOpenAIEmbedder(
       return out;
     },
   };
+  return Promise.resolve(embedder);
 }

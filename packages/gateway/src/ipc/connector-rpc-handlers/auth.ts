@@ -22,7 +22,7 @@ import {
   ZOOM_OAUTH_CLIENT_SECRET_HELP,
 } from "../../auth/oauth-env-help-messages.ts";
 import { OAUTH_PROVIDERS } from "../../auth/oauth-registry.ts";
-import { type PKCEOptions, runPKCEFlow } from "../../auth/pkce.ts";
+import { type PKCEOptions, type PKCEResult, runPKCEFlow } from "../../auth/pkce.ts";
 import { Config } from "../../config.ts";
 import {
   type ConnectorOAuthProfile,
@@ -34,6 +34,7 @@ import {
 } from "../../connectors/connector-catalog.ts";
 import { CONNECTOR_VAULT_SECRET_KEYS } from "../../connectors/connector-secrets-manifest.ts";
 import {
+  type ConnectorSecretKeyOf,
   deleteConnectorSecret,
   sharedOAuthKey,
   writeConnectorSecret,
@@ -60,6 +61,26 @@ import type {
 /** Returns the trimmed string value of `raw`, or `""` if it is not a non-empty string. */
 function extractStringField(raw: unknown): string {
   return typeof raw === "string" && raw.trim() !== "" ? raw.trim() : "";
+}
+
+/** The request fields a PAT handler reads its token from, in precedence order. */
+const PAT_TOKEN_FIELDS = ["personalAccessToken", "token"] as const;
+
+/**
+ * `rec[aliases[0]] ?? rec[aliases[1]] ?? …`, then `extractStringField`. Only a `null`/`undefined`
+ * alias is skipped: the first one set to anything else wins even when it is blank or not a string,
+ * so such a preferred field yields `""` (and the caller's refusal) rather than falling through to a
+ * later alias.
+ */
+function aliasedStringField(
+  rec: Record<string, unknown> | undefined,
+  aliases: readonly string[],
+): string {
+  let raw: unknown;
+  for (const alias of aliases) {
+    raw ??= rec?.[alias];
+  }
+  return extractStringField(raw);
 }
 
 function oauthScopesFromConnectorRequest(
@@ -108,6 +129,42 @@ function authSuccess(
       verified,
     },
   };
+}
+
+/**
+ * The tail a PAT/secret handler ends on once its Vault writes are done: register the service's
+ * sync schedule at its default interval, then report success. Callers reach it only AFTER their
+ * writes, and so after any `verifyBeforeStore` probe — a rejected credential registers nothing.
+ * github registers two services on one timestamp and keeps its own tail.
+ */
+function registerAndSucceed(
+  localIndex: LocalIndex,
+  id: ConnectorServiceId,
+  verified: VerifiedState = null,
+): ConnectorRpcHit {
+  localIndex.ensureConnectorSchedulerRegistration(
+    id,
+    defaultSyncIntervalMsForService(id),
+    Date.now(),
+  );
+  return authSuccess(id, verified);
+}
+
+/**
+ * Store an OPTIONAL setting, or delete it when the caller's normalized `value` is `""` (left out,
+ * blank, or normalized away), so a setting dropped on re-auth does not linger from an earlier one.
+ */
+async function writeOrDeleteConnectorSecret<S extends ConnectorServiceId>(
+  vault: NimbusVault,
+  serviceId: S,
+  keyName: ConnectorSecretKeyOf<S>,
+  value: string,
+): Promise<void> {
+  if (value === "") {
+    await deleteConnectorSecret(vault, serviceId, keyName);
+  } else {
+    await writeConnectorSecret(vault, serviceId, keyName, value);
+  }
 }
 
 /**
@@ -170,8 +227,7 @@ async function verifyBeforeStore(
 }
 
 async function connectorAuthGithub(ctx: ConnectorRpcHandlerContext): Promise<ConnectorRpcHit> {
-  const tokenRaw = ctx.rec?.["personalAccessToken"] ?? ctx.rec?.["token"];
-  const token = extractStringField(tokenRaw);
+  const token = aliasedStringField(ctx.rec, PAT_TOKEN_FIELDS);
   if (token === "") {
     throw new ConnectorRpcError(-32602, "Missing personalAccessToken for github");
   }
@@ -192,8 +248,7 @@ async function connectorAuthGithub(ctx: ConnectorRpcHandlerContext): Promise<Con
 }
 
 async function connectorAuthGitlab(ctx: ConnectorRpcHandlerContext): Promise<ConnectorRpcHit> {
-  const tokenRaw = ctx.rec?.["personalAccessToken"] ?? ctx.rec?.["token"];
-  const token = extractStringField(tokenRaw);
+  const token = aliasedStringField(ctx.rec, PAT_TOKEN_FIELDS);
   if (token === "") {
     throw new ConnectorRpcError(-32602, "Missing personalAccessToken for gitlab");
   }
@@ -207,30 +262,15 @@ async function connectorAuthGitlab(ctx: ConnectorRpcHandlerContext): Promise<Con
     api_base: normalizedBase,
   });
   await writeConnectorSecret(ctx.vault, "gitlab", "pat", token);
+  // Keyed on whether a base was SUPPLIED, not on the normalized value as
+  // `writeOrDeleteConnectorSecret` is: an `apiBaseUrl` of "/" normalizes to "" and is
+  // stored as "", where that helper would delete the key.
   if (hasCustomBase) {
     await writeConnectorSecret(ctx.vault, "gitlab", "api_base", normalizedBase);
   } else {
     await deleteConnectorSecret(ctx.vault, "gitlab", "api_base");
   }
-  const interval = defaultSyncIntervalMsForService("gitlab");
-  ctx.localIndex.ensureConnectorSchedulerRegistration("gitlab", interval, Date.now());
-  return authSuccess("gitlab", verified);
-}
-
-async function connectorAuthLinear(
-  rec: Record<string, unknown> | undefined,
-  vault: NimbusVault,
-  localIndex: LocalIndex,
-): Promise<ConnectorRpcHit> {
-  const tokenRaw = rec?.["personalAccessToken"] ?? rec?.["token"] ?? rec?.["apiKey"];
-  const token = extractStringField(tokenRaw);
-  if (token === "") {
-    throw new ConnectorRpcError(-32602, "Missing API key for linear");
-  }
-  await writeConnectorSecret(vault, "linear", "api_key", token);
-  const interval = defaultSyncIntervalMsForService("linear");
-  localIndex.ensureConnectorSchedulerRegistration("linear", interval, Date.now());
-  return authSuccess("linear");
+  return registerAndSucceed(ctx.localIndex, "gitlab", verified);
 }
 
 async function connectorAuthDiscord(
@@ -248,32 +288,13 @@ async function connectorAuthDiscord(
       "Discord is opt-in: use CLI `nimbus connector auth discord --token <bot_token> --enable`",
     );
   }
-  const tokenRaw = rec?.["personalAccessToken"] ?? rec?.["token"];
-  const token = extractStringField(tokenRaw);
+  const token = aliasedStringField(rec, PAT_TOKEN_FIELDS);
   if (token === "") {
     throw new ConnectorRpcError(-32602, "Missing bot token for discord");
   }
   await writeConnectorSecret(vault, "discord", "bot_token", token);
   await writeConnectorSecret(vault, "discord", "enabled", "1");
-  const interval = defaultSyncIntervalMsForService("discord");
-  localIndex.ensureConnectorSchedulerRegistration("discord", interval, Date.now());
-  return authSuccess("discord");
-}
-
-async function connectorAuthCircleci(
-  rec: Record<string, unknown> | undefined,
-  vault: NimbusVault,
-  localIndex: LocalIndex,
-): Promise<ConnectorRpcHit> {
-  const tokenRaw = rec?.["personalAccessToken"] ?? rec?.["token"];
-  const token = extractStringField(tokenRaw);
-  if (token === "") {
-    throw new ConnectorRpcError(-32602, "Missing API token for circleci");
-  }
-  await writeConnectorSecret(vault, "circleci", "api_token", token);
-  const interval = defaultSyncIntervalMsForService("circleci");
-  localIndex.ensureConnectorSchedulerRegistration("circleci", interval, Date.now());
-  return authSuccess("circleci");
+  return registerAndSucceed(localIndex, "discord");
 }
 
 async function persistAwsAccessKeyPair(
@@ -291,16 +312,8 @@ async function persistAwsAccessKeyPair(
   }
   await writeConnectorSecret(vault, "aws", "access_key_id", ak);
   await writeConnectorSecret(vault, "aws", "secret_access_key", sk);
-  if (reg === "") {
-    await deleteConnectorSecret(vault, "aws", "default_region");
-  } else {
-    await writeConnectorSecret(vault, "aws", "default_region", reg);
-  }
-  if (prof === "") {
-    await deleteConnectorSecret(vault, "aws", "profile");
-  } else {
-    await writeConnectorSecret(vault, "aws", "profile", prof);
-  }
+  await writeOrDeleteConnectorSecret(vault, "aws", "default_region", reg);
+  await writeOrDeleteConnectorSecret(vault, "aws", "profile", prof);
 }
 
 async function persistAwsProfileOnly(vault: NimbusVault, prof: string, reg: string): Promise<void> {
@@ -309,11 +322,7 @@ async function persistAwsProfileOnly(vault: NimbusVault, prof: string, reg: stri
   // A supplied region is KEPT: the lazy-mesh AWS spawn needs it for regional sandbox hosts
   // (`phase3-shared.ts` `loadAwsCreds`). It used to be deleted unconditionally, which silently
   // dropped `--aws-region` on `nimbus connector auth aws --aws-profile X --aws-region Y`.
-  if (reg === "") {
-    await deleteConnectorSecret(vault, "aws", "default_region");
-  } else {
-    await writeConnectorSecret(vault, "aws", "default_region", reg);
-  }
+  await writeOrDeleteConnectorSecret(vault, "aws", "default_region", reg);
   await writeConnectorSecret(vault, "aws", "profile", prof);
 }
 
@@ -343,9 +352,7 @@ async function connectorAuthAws(
     }
     await persistAwsProfileOnly(vault, prof, reg);
   }
-  const interval = defaultSyncIntervalMsForService("aws");
-  localIndex.ensureConnectorSchedulerRegistration("aws", interval, Date.now());
-  return authSuccess("aws");
+  return registerAndSucceed(localIndex, "aws");
 }
 
 async function connectorAuthAzure(
@@ -368,9 +375,7 @@ async function connectorAuthAzure(
   await writeConnectorSecret(vault, "azure", "tenant_id", tenant);
   await writeConnectorSecret(vault, "azure", "client_id", clientId);
   await writeConnectorSecret(vault, "azure", "client_secret", secret);
-  const interval = defaultSyncIntervalMsForService("azure");
-  localIndex.ensureConnectorSchedulerRegistration("azure", interval, Date.now());
-  return authSuccess("azure");
+  return registerAndSucceed(localIndex, "azure");
 }
 
 /**
@@ -401,12 +406,7 @@ async function connectorAuthGcp(
     await writeConnectorSecret(vault, "gcp", "project_id", project);
     // A key path would WIN over auth_source (resolveGcpAuth), so it must go for this to take effect.
     await deleteConnectorSecret(vault, "gcp", "credentials_json_path");
-    localIndex.ensureConnectorSchedulerRegistration(
-      "gcp",
-      defaultSyncIntervalMsForService("gcp"),
-      Date.now(),
-    );
-    return authSuccess("gcp");
+    return registerAndSucceed(localIndex, "gcp");
   }
 
   const pathRaw = rec?.["gcpCredentialsJsonPath"] ?? rec?.["credentialsJsonPath"] ?? rec?.["path"];
@@ -421,14 +421,8 @@ async function connectorAuthGcp(
   await deleteConnectorSecret(vault, "gcp", "auth_source");
   const projRaw = rec?.["gcpProjectId"] ?? rec?.["projectId"];
   const proj = extractStringField(projRaw);
-  if (proj === "") {
-    await deleteConnectorSecret(vault, "gcp", "project_id");
-  } else {
-    await writeConnectorSecret(vault, "gcp", "project_id", proj);
-  }
-  const interval = defaultSyncIntervalMsForService("gcp");
-  localIndex.ensureConnectorSchedulerRegistration("gcp", interval, Date.now());
-  return authSuccess("gcp");
+  await writeOrDeleteConnectorSecret(vault, "gcp", "project_id", proj);
+  return registerAndSucceed(localIndex, "gcp");
 }
 
 async function connectorAuthIac(
@@ -445,9 +439,7 @@ async function connectorAuthIac(
     );
   }
   await writeConnectorSecret(vault, "iac", "enabled", "1");
-  const interval = defaultSyncIntervalMsForService("iac");
-  localIndex.ensureConnectorSchedulerRegistration("iac", interval, Date.now());
-  return authSuccess("iac");
+  return registerAndSucceed(localIndex, "iac");
 }
 
 async function connectorAuthGrafana(
@@ -460,8 +452,7 @@ async function connectorAuthGrafana(
     typeof baseRaw === "string" && baseRaw.trim() !== ""
       ? stripTrailingSlashes(baseRaw.trim())
       : "";
-  const tokenRaw = rec?.["personalAccessToken"] ?? rec?.["token"];
-  const token = extractStringField(tokenRaw);
+  const token = aliasedStringField(rec, PAT_TOKEN_FIELDS);
   if (base === "") {
     throw new ConnectorRpcError(
       -32602,
@@ -476,9 +467,7 @@ async function connectorAuthGrafana(
   }
   await writeConnectorSecret(vault, "grafana", "url", base);
   await writeConnectorSecret(vault, "grafana", "api_token", token);
-  const interval = defaultSyncIntervalMsForService("grafana");
-  localIndex.ensureConnectorSchedulerRegistration("grafana", interval, Date.now());
-  return authSuccess("grafana");
+  return registerAndSucceed(localIndex, "grafana");
 }
 
 async function connectorAuthSentry(
@@ -486,8 +475,7 @@ async function connectorAuthSentry(
   vault: NimbusVault,
   localIndex: LocalIndex,
 ): Promise<ConnectorRpcHit> {
-  const tokenRaw = rec?.["personalAccessToken"] ?? rec?.["token"];
-  const token = extractStringField(tokenRaw);
+  const token = aliasedStringField(rec, PAT_TOKEN_FIELDS);
   const orgRaw = rec?.["sentryOrgSlug"] ?? rec?.["orgSlug"];
   const org = extractStringField(orgRaw);
   if (token === "" || org === "") {
@@ -501,14 +489,8 @@ async function connectorAuthSentry(
   const urlRaw = rec?.["sentryUrl"] ?? rec?.["apiBaseUrl"];
   const surl =
     typeof urlRaw === "string" && urlRaw.trim() !== "" ? stripTrailingSlashes(urlRaw.trim()) : "";
-  if (surl === "") {
-    await deleteConnectorSecret(vault, "sentry", "url");
-  } else {
-    await writeConnectorSecret(vault, "sentry", "url", surl);
-  }
-  const interval = defaultSyncIntervalMsForService("sentry");
-  localIndex.ensureConnectorSchedulerRegistration("sentry", interval, Date.now());
-  return authSuccess("sentry");
+  await writeOrDeleteConnectorSecret(vault, "sentry", "url", surl);
+  return registerAndSucceed(localIndex, "sentry");
 }
 
 async function connectorAuthNewrelic(
@@ -516,8 +498,7 @@ async function connectorAuthNewrelic(
   vault: NimbusVault,
   localIndex: LocalIndex,
 ): Promise<ConnectorRpcHit> {
-  const tokenRaw = rec?.["personalAccessToken"] ?? rec?.["token"];
-  const token = extractStringField(tokenRaw);
+  const token = aliasedStringField(rec, PAT_TOKEN_FIELDS);
   if (token === "") {
     throw new ConnectorRpcError(
       -32602,
@@ -527,14 +508,8 @@ async function connectorAuthNewrelic(
   await writeConnectorSecret(vault, "newrelic", "api_key", token);
   const acctRaw = rec?.["newrelicAccountId"] ?? rec?.["accountId"];
   const acct = extractStringField(acctRaw);
-  if (acct === "") {
-    await deleteConnectorSecret(vault, "newrelic", "account_id");
-  } else {
-    await writeConnectorSecret(vault, "newrelic", "account_id", acct);
-  }
-  const interval = defaultSyncIntervalMsForService("newrelic");
-  localIndex.ensureConnectorSchedulerRegistration("newrelic", interval, Date.now());
-  return authSuccess("newrelic");
+  await writeOrDeleteConnectorSecret(vault, "newrelic", "account_id", acct);
+  return registerAndSucceed(localIndex, "newrelic");
 }
 
 async function connectorAuthDatadog(
@@ -556,14 +531,8 @@ async function connectorAuthDatadog(
   await writeConnectorSecret(vault, "datadog", "app_key", app);
   const siteRaw = rec?.["datadogSite"] ?? rec?.["site"];
   const site = extractStringField(siteRaw);
-  if (site === "") {
-    await deleteConnectorSecret(vault, "datadog", "site");
-  } else {
-    await writeConnectorSecret(vault, "datadog", "site", site);
-  }
-  const interval = defaultSyncIntervalMsForService("datadog");
-  localIndex.ensureConnectorSchedulerRegistration("datadog", interval, Date.now());
-  return authSuccess("datadog");
+  await writeOrDeleteConnectorSecret(vault, "datadog", "site", site);
+  return registerAndSucceed(localIndex, "datadog");
 }
 
 async function connectorAuthKubernetes(
@@ -581,30 +550,8 @@ async function connectorAuthKubernetes(
   }
   await writeConnectorSecret(vault, "kubernetes", "kubeconfig", kubePath);
   const ctxRaw = rec?.["context"];
-  if (typeof ctxRaw === "string" && ctxRaw.trim() !== "") {
-    await writeConnectorSecret(vault, "kubernetes", "context", ctxRaw.trim());
-  } else {
-    await deleteConnectorSecret(vault, "kubernetes", "context");
-  }
-  const interval = defaultSyncIntervalMsForService("kubernetes");
-  localIndex.ensureConnectorSchedulerRegistration("kubernetes", interval, Date.now());
-  return authSuccess("kubernetes");
-}
-
-async function connectorAuthPagerduty(
-  rec: Record<string, unknown> | undefined,
-  vault: NimbusVault,
-  localIndex: LocalIndex,
-): Promise<ConnectorRpcHit> {
-  const tokenRaw = rec?.["personalAccessToken"] ?? rec?.["token"];
-  const token = extractStringField(tokenRaw);
-  if (token === "") {
-    throw new ConnectorRpcError(-32602, "Missing API token for pagerduty");
-  }
-  await writeConnectorSecret(vault, "pagerduty", "api_token", token);
-  const interval = defaultSyncIntervalMsForService("pagerduty");
-  localIndex.ensureConnectorSchedulerRegistration("pagerduty", interval, Date.now());
-  return authSuccess("pagerduty");
+  await writeOrDeleteConnectorSecret(vault, "kubernetes", "context", extractStringField(ctxRaw));
+  return registerAndSucceed(localIndex, "kubernetes");
 }
 
 async function connectorAuthJenkins(ctx: ConnectorRpcHandlerContext): Promise<ConnectorRpcHit> {
@@ -621,8 +568,7 @@ async function connectorAuthJenkins(ctx: ConnectorRpcHandlerContext): Promise<Co
   }
   const userRaw = ctx.rec?.["username"];
   const user = extractStringField(userRaw);
-  const tokenRaw = ctx.rec?.["personalAccessToken"] ?? ctx.rec?.["token"];
-  const token = extractStringField(tokenRaw);
+  const token = aliasedStringField(ctx.rec, PAT_TOKEN_FIELDS);
   if (user === "") {
     throw new ConnectorRpcError(-32602, "Jenkins requires --username <jenkins_user>");
   }
@@ -637,16 +583,13 @@ async function connectorAuthJenkins(ctx: ConnectorRpcHandlerContext): Promise<Co
   await writeConnectorSecret(ctx.vault, "jenkins", "base_url", base);
   await writeConnectorSecret(ctx.vault, "jenkins", "username", user);
   await writeConnectorSecret(ctx.vault, "jenkins", "api_token", token);
-  const interval = defaultSyncIntervalMsForService("jenkins");
-  ctx.localIndex.ensureConnectorSchedulerRegistration("jenkins", interval, Date.now());
-  return authSuccess("jenkins", verified);
+  return registerAndSucceed(ctx.localIndex, "jenkins", verified);
 }
 
 async function connectorAuthBitbucket(ctx: ConnectorRpcHandlerContext): Promise<ConnectorRpcHit> {
   const userRaw = ctx.rec?.["bitbucketUsername"] ?? ctx.rec?.["username"];
   const user = extractStringField(userRaw);
-  const tokenRaw = ctx.rec?.["personalAccessToken"] ?? ctx.rec?.["token"];
-  const token = extractStringField(tokenRaw);
+  const token = aliasedStringField(ctx.rec, PAT_TOKEN_FIELDS);
   if (user === "") {
     throw new ConnectorRpcError(-32602, "Missing username for bitbucket (Atlassian account)");
   }
@@ -659,9 +602,7 @@ async function connectorAuthBitbucket(ctx: ConnectorRpcHandlerContext): Promise<
   });
   await writeConnectorSecret(ctx.vault, "bitbucket", "username", user);
   await writeConnectorSecret(ctx.vault, "bitbucket", "app_password", token);
-  const interval = defaultSyncIntervalMsForService("bitbucket");
-  ctx.localIndex.ensureConnectorSchedulerRegistration("bitbucket", interval, Date.now());
-  return authSuccess("bitbucket", verified);
+  return registerAndSucceed(ctx.localIndex, "bitbucket", verified);
 }
 
 /**
@@ -772,6 +713,8 @@ async function connectorAuthOAuthPkce(
   // fallback; a default here would duplicate that and be permanently unreachable — dead code
   // that reads like a safety net.
   resolveClientConfig: OAuthClientConfigResolver,
+  // Required for the same reason: `handleConnectorAuth` resolves `ctx.runPkceFlow ?? runPKCEFlow`.
+  runPkceFlow: (options: PKCEOptions) => Promise<PKCEResult>,
 ): Promise<ConnectorRpcHit> {
   const profile = oauthProfileForService(id);
   const config = resolveClientConfig(profile);
@@ -803,7 +746,7 @@ async function connectorAuthOAuthPkce(
       : pkceBase;
   const pkceFlowInput: PKCEOptions =
     redirectPort === undefined ? merged : { ...merged, redirectPort };
-  const tokens = await runPKCEFlow(pkceFlowInput);
+  const tokens = await runPkceFlow(pkceFlowInput);
 
   let sharedKey: string | undefined;
   if (profile.provider === "google") {
@@ -836,15 +779,61 @@ async function connectorAuthOAuthPkce(
 
 type PatConnectorAuthHandler = (ctx: ConnectorRpcHandlerContext) => Promise<ConnectorRpcHit>;
 
+/** A connector whose `connector.auth` stores ONE token under ONE Vault key. */
+interface TokenOnlyAuthSpec<S extends ConnectorServiceId> {
+  readonly serviceId: S;
+  /** Request fields that may carry the token, in precedence order. */
+  readonly tokenFields: readonly [string, ...string[]];
+  /** Stored as `<serviceId>.<secretKey>`. */
+  readonly secretKey: ConnectorSecretKeyOf<S>;
+  /** The `-32602` refusal when the token read via `aliasedStringField` comes back blank. */
+  readonly missingTokenMessage: string;
+}
+
+/**
+ * The handler for a {@link TokenOnlyAuthSpec} connector. None of these services has a pre-store
+ * credential probe, so nothing is probed here; one that gains a probe needs its own handler, with
+ * `verifyBeforeStore` ahead of the write. auth.test.ts walks `CREDENTIAL_PROBES` and fails when a
+ * probed service reaches its first write without probing, so registering a probe for a service
+ * still built here is caught rather than silently never run.
+ */
+function tokenOnlyConnectorAuth<S extends ConnectorServiceId>(
+  spec: TokenOnlyAuthSpec<S>,
+): PatConnectorAuthHandler {
+  return async (ctx) => {
+    const token = aliasedStringField(ctx.rec, spec.tokenFields);
+    if (token === "") {
+      throw new ConnectorRpcError(-32602, spec.missingTokenMessage);
+    }
+    await writeConnectorSecret(ctx.vault, spec.serviceId, spec.secretKey, token);
+    return registerAndSucceed(ctx.localIndex, spec.serviceId);
+  };
+}
+
 const PAT_CONNECTOR_AUTH_HANDLERS: Partial<Record<ConnectorServiceId, PatConnectorAuthHandler>> = {
   github: (c) => connectorAuthGithub(c),
   gitlab: (c) => connectorAuthGitlab(c),
-  linear: (c) => connectorAuthLinear(c.rec, c.vault, c.localIndex),
+  linear: tokenOnlyConnectorAuth({
+    serviceId: "linear",
+    tokenFields: [...PAT_TOKEN_FIELDS, "apiKey"],
+    secretKey: "api_key",
+    missingTokenMessage: "Missing API key for linear",
+  }),
   bitbucket: (c) => connectorAuthBitbucket(c),
   discord: (c) => connectorAuthDiscord(c.rec, c.vault, c.localIndex),
   jenkins: (c) => connectorAuthJenkins(c),
-  circleci: (c) => connectorAuthCircleci(c.rec, c.vault, c.localIndex),
-  pagerduty: (c) => connectorAuthPagerduty(c.rec, c.vault, c.localIndex),
+  circleci: tokenOnlyConnectorAuth({
+    serviceId: "circleci",
+    tokenFields: PAT_TOKEN_FIELDS,
+    secretKey: "api_token",
+    missingTokenMessage: "Missing API token for circleci",
+  }),
+  pagerduty: tokenOnlyConnectorAuth({
+    serviceId: "pagerduty",
+    tokenFields: PAT_TOKEN_FIELDS,
+    secretKey: "api_token",
+    missingTokenMessage: "Missing API token for pagerduty",
+  }),
   kubernetes: (c) => connectorAuthKubernetes(c.rec, c.vault, c.localIndex),
   aws: (c) => connectorAuthAws(c.rec, c.vault, c.localIndex),
   azure: (c) => connectorAuthAzure(c.rec, c.vault, c.localIndex),
@@ -948,5 +937,6 @@ export async function handleConnectorAuth(
     localIndex,
     openUrl,
     ctx.resolveOAuthClientConfig ?? oauthClientConfigForProvider,
+    ctx.runPkceFlow ?? runPKCEFlow,
   );
 }

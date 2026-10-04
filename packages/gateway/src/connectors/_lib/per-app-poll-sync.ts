@@ -6,9 +6,7 @@ import {
 import type { Provider } from "../../sync/rate-limiter.ts";
 import { type SyncContext, type SyncResult, syncNoopResult } from "../../sync/types.ts";
 import { connectorFetch } from "./fetch-outcome.ts";
-
-/** The row shape accepted by {@link upsertIndexedItemForSync}. */
-type SyncUpsertRow = Parameters<SyncContext["upsertItem"]>[0];
+import type { SyncUpsertRow } from "./paginated-sync.ts";
 
 /**
  * Spec for a "list apps → for each app fetch builds" HTTP sync pattern.
@@ -108,9 +106,8 @@ export async function runPerAppPollSync<C>(
     if (appId === undefined) {
       continue;
     }
-    const buildsOutcome = await connectorFetch(ctx, spec.serviceId, spec.buildsUrl(appId), {
-      headers,
-    });
+    const buildsUrl = spec.buildsUrl(appId);
+    const buildsOutcome = await connectorFetch(ctx, spec.serviceId, buildsUrl, { headers }); // NOSONAR S9382: one rate-limited request per app, and the app count is unbounded; sequential keeps one request in flight and each app's builds upserted right after the app
     totalBytes += buildsOutcome.bytes;
     if (buildsOutcome.kind !== "ok") {
       continue;

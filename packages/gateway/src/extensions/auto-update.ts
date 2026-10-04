@@ -111,28 +111,35 @@ export class ExtensionAutoUpdater {
     return this.running;
   }
 
-  async start(): Promise<void> {
-    if (this.opts.enforceAirGap) return;
-    if (this.running) return;
-    this.running = true;
+  // `start`/`stop` only arm and clear timers — nothing suspends — but stay Promise-returning,
+  // the shape the gateway (`void daemon.start()`) and the tests (`await`) consume.
+  start(): Promise<void> {
+    // `Promise.try` keeps a throw from the injected `random` a rejection, as `async` did.
+    return Promise.try(() => {
+      if (this.opts.enforceAirGap) return;
+      if (this.running) return;
+      this.running = true;
 
-    const jitterMs = 30_000 + Math.floor(this.opts.random() * 270_000);
-    this.startupTimer = setTimeout(() => {
-      this.pollOnce().catch(() => {});
-    }, jitterMs);
+      const jitterMs = 30_000 + Math.floor(this.opts.random() * 270_000);
+      this.startupTimer = setTimeout(() => {
+        this.pollOnce().catch(() => {});
+      }, jitterMs);
 
-    const periodMs = this.opts.intervalHours * 3_600_000;
-    this.periodicTimer = setInterval(() => {
-      this.pollOnce().catch(() => {});
-    }, periodMs);
+      const periodMs = this.opts.intervalHours * 3_600_000;
+      this.periodicTimer = setInterval(() => {
+        this.pollOnce().catch(() => {});
+      }, periodMs);
+    });
   }
 
-  async stop(): Promise<void> {
-    if (!this.running) return;
-    this.running = false;
-    if (this.startupTimer) clearTimeout(this.startupTimer);
-    if (this.periodicTimer) clearInterval(this.periodicTimer);
-    this.abort.abort();
+  stop(): Promise<void> {
+    if (this.running) {
+      this.running = false;
+      if (this.startupTimer) clearTimeout(this.startupTimer);
+      if (this.periodicTimer) clearInterval(this.periodicTimer);
+      this.abort.abort();
+    }
+    return Promise.resolve();
   }
 
   async pollOnce(): Promise<void> {
@@ -141,7 +148,7 @@ export class ExtensionAutoUpdater {
       if (row.enabled !== 1) continue;
       if (row.manifest.publisher === undefined) continue;
       try {
-        await this.pollOne(row, installed);
+        await this.pollOne(row, installed); // NOSONAR S9382: one registry round-trip per extension, kept serial (no burst at the remote registry) and each new detection appends to the audit chain in a deterministic order
       } catch {
         // Per-extension failure does not stop the loop.
       }

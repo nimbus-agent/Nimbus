@@ -5,6 +5,8 @@ import {
 } from "../sync/pass-cursor-sync-result.ts";
 import { type Syncable, type SyncContext, type SyncResult, syncNoopResult } from "../sync/types.ts";
 import { connectorFetch } from "./_lib/fetch-outcome.ts";
+import { trimTrailingSlash } from "./_lib/field-helpers.ts";
+import { upsertMapped } from "./_lib/paginated-sync.ts";
 import { mapArgocdApplicationToItem } from "./argocd-application-mapping.ts";
 import { encodeNimbusJsonCursor } from "./nimbus-json-cursor.ts";
 import { asRecord } from "./unknown-record.ts";
@@ -27,10 +29,6 @@ interface ArgocdCreds {
   readonly token: string;
 }
 
-function trimTrailingSlash(s: string): string {
-  return s.endsWith("/") ? s.slice(0, -1) : s;
-}
-
 async function loadCreds(ctx: SyncContext): Promise<ArgocdCreds | null> {
   const url = (await ctx.getSecret("url"))?.trim() ?? "";
   const token = (await ctx.getSecret("token"))?.trim() ?? "";
@@ -43,24 +41,6 @@ async function loadCreds(ctx: SyncContext): Promise<ArgocdCreds | null> {
 function extractApplications(parsed: unknown): unknown[] {
   const items = asRecord(parsed)?.["items"];
   return Array.isArray(items) ? items : [];
-}
-
-function upsertApplications(
-  ctx: SyncContext,
-  creds: ArgocdCreds,
-  apps: readonly unknown[],
-  now: number,
-): number {
-  let upserted = 0;
-  for (const a of apps) {
-    const mapped = mapArgocdApplicationToItem(a, { baseUrl: creds.url, syncedAt: now });
-    if (mapped === null) {
-      continue;
-    }
-    ctx.upsertItem(mapped);
-    upserted += 1;
-  }
-  return upserted;
 }
 
 export function createArgocdSyncable(options: ArgocdSyncableOptions): Syncable {
@@ -86,7 +66,9 @@ export function createArgocdSyncable(options: ArgocdSyncableOptions): Syncable {
       }
 
       const now = Date.now();
-      const upserted = upsertApplications(ctx, creds, extractApplications(outcome.parsed), now);
+      const upserted = upsertMapped(ctx, extractApplications(outcome.parsed), (raw) =>
+        mapArgocdApplicationToItem(raw, { baseUrl: creds.url, syncedAt: now }),
+      );
 
       return syncPassCursorSuccess(t0, outcome.bytes, pass1Cursor(), upserted);
     },

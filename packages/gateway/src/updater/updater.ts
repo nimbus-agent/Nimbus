@@ -226,20 +226,39 @@ export class Updater {
     }
     const reader = resp.body?.getReader();
     if (reader === undefined) throw new Error("No response body from download");
+    return this.readBodyUnderCap(reader, cap, declaredTotal);
+  }
+
+  /**
+   * `downloadAsset`'s body phase: stream the response under the size cap, reporting progress per
+   * chunk. The cap LEAVES the read loop rather than cancelling inside it, so the loop awaits nothing
+   * but the next chunk; the over-cap chunk is neither kept nor reported as progress, and the stream
+   * is cancelled before the refusal is thrown.
+   */
+  private async readBodyUnderCap(
+    reader: Pick<ReadableStreamDefaultReader<Uint8Array>, "read" | "cancel">,
+    cap: number,
+    declaredTotal: number,
+  ): Promise<Uint8Array> {
     const chunks: Uint8Array[] = [];
     let downloaded = 0;
+    let overCap = false;
     while (true) {
       const { done, value } = await reader.read();
       if (done) break;
       if (value !== undefined) {
         downloaded += value.byteLength;
         if (downloaded > cap) {
-          await reader.cancel();
-          throw new Error(`Download body exceeds size cap of ${cap} bytes (read ${downloaded})`);
+          overCap = true;
+          break;
         }
         chunks.push(value);
         this.opts.emit("updater.downloadProgress", { bytes: downloaded, total: declaredTotal });
       }
+    }
+    if (overCap) {
+      await reader.cancel();
+      throw new Error(`Download body exceeds size cap of ${cap} bytes (read ${downloaded})`);
     }
     const bytes = new Uint8Array(downloaded);
     let off = 0;

@@ -1,3 +1,4 @@
+import { namedTags, trimTrailingSlash } from "./_lib/field-helpers.ts";
 import type { MappedRow } from "./mapped-row.ts";
 import { asRecord, numberField, stringField } from "./unknown-record.ts";
 
@@ -10,30 +11,8 @@ export type DependencyTrackMappedRow = MappedRow<"dependencytrack", "project">;
 
 const TITLE_MAX = 200;
 
-function trimTrailingSlash(s: string): string {
-  return s.endsWith("/") ? s.slice(0, -1) : s;
-}
-
 export function projectUrl(baseUrl: string, uuid: string): string {
   return `${trimTrailingSlash(baseUrl)}/projects/${encodeURIComponent(uuid)}`;
-}
-
-function tagNames(raw: unknown): string[] {
-  if (!Array.isArray(raw)) {
-    return [];
-  }
-  const names: string[] = [];
-  for (const t of raw) {
-    const row = asRecord(t);
-    if (row === undefined) {
-      continue;
-    }
-    const name = stringField(row, "name");
-    if (name !== undefined && name !== "") {
-      names.push(name);
-    }
-  }
-  return names;
 }
 
 function clampTitle(s: string): string {
@@ -63,7 +42,7 @@ export function mapDependencyTrackProjectToItem(
   const classifier = stringField(row, "classifier") ?? null;
   const active = row["active"] === true;
   const lastBomImport = numberField(row, "lastBomImport") ?? null;
-  const tags = tagNames(row["tags"]);
+  const tags = namedTags(row["tags"]);
 
   const metrics = asRecord(row["metrics"]);
   const critical = metrics === undefined ? null : (numberField(metrics, "critical") ?? null);

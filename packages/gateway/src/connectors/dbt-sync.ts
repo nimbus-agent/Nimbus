@@ -5,6 +5,8 @@ import {
 } from "../sync/pass-cursor-sync-result.ts";
 import { type Syncable, type SyncContext, type SyncResult, syncNoopResult } from "../sync/types.ts";
 import { connectorFetch } from "./_lib/fetch-outcome.ts";
+import { trimTrailingSlash } from "./_lib/field-helpers.ts";
+import { upsertMapped } from "./_lib/paginated-sync.ts";
 import { mapDbtJobToItem } from "./dbt-job-mapping.ts";
 import { encodeNimbusJsonCursor } from "./nimbus-json-cursor.ts";
 import { asRecord, numberField } from "./unknown-record.ts";
@@ -29,10 +31,6 @@ interface DbtCreds {
   readonly token: string;
   readonly apiBase: string;
   readonly accountId: number | null;
-}
-
-function trimTrailingSlash(s: string): string {
-  return s.endsWith("/") ? s.slice(0, -1) : s;
 }
 
 async function loadCreds(ctx: SyncContext): Promise<DbtCreds | null> {
@@ -87,25 +85,6 @@ function jobsPath(accountId: number, offset: number): string {
   return `/accounts/${encodeURIComponent(String(accountId))}/jobs/?${params.toString()}`;
 }
 
-function upsertJobs(
-  ctx: SyncContext,
-  creds: DbtCreds,
-  accountId: number,
-  jobs: readonly unknown[],
-  now: number,
-): number {
-  let upserted = 0;
-  for (const j of jobs) {
-    const mapped = mapDbtJobToItem(j, { apiBase: creds.apiBase, accountId, syncedAt: now });
-    if (mapped === null) {
-      continue;
-    }
-    ctx.upsertItem(mapped);
-    upserted += 1;
-  }
-  return upserted;
-}
-
 type AccountsOutcome =
   | { readonly accountIds: number[]; readonly bytes: number }
   | { readonly error: "http_error" | "parse_error"; readonly bytes: number };
@@ -142,7 +121,9 @@ async function syncAccountJobs(
       break;
     }
     const jobs = extractData(outcome.parsed);
-    upserted += upsertJobs(ctx, creds, accountId, jobs, now);
+    upserted += upsertMapped(ctx, jobs, (raw) =>
+      mapDbtJobToItem(raw, { apiBase: creds.apiBase, accountId, syncedAt: now }),
+    );
     if (jobs.length < PAGE_SIZE) {
       break;
     }
@@ -174,7 +155,7 @@ export function createDbtSyncable(options: DbtSyncableOptions): Syncable {
       const now = Date.now();
       let totalUpserted = 0;
       for (const accountId of resolved.accountIds) {
-        const result = await syncAccountJobs(ctx, creds, accountId, now);
+        const result = await syncAccountJobs(ctx, creds, accountId, now); // NOSONAR S9382: one account at a time through the shared dbt Cloud rate limiter - each account paginates its own job list (up to MAX_PAGES_PER_ACCOUNT) and the account list is uncapped
         totalUpserted += result.upserted;
         totalBytes += result.bytes;
       }

@@ -29,6 +29,6 @@ export async function createHostActivity(): Promise<HostActivity> {
     case "win32":
       return (await import("./host-activity/win32.ts")).createWin32HostActivity();
     default:
-      return { probe: async (): Promise<HostActivityProbe> => UNKNOWN_PROBE };
+      return { probe: (): Promise<HostActivityProbe> => Promise.resolve(UNKNOWN_PROBE) };
   }
 }

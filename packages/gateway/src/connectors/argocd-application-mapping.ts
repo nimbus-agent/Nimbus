@@ -1,3 +1,5 @@
+import { trimTrailingSlash } from "./_lib/field-helpers.ts";
+import type { MappedRow } from "./mapped-row.ts";
 import { asRecord, stringField } from "./unknown-record.ts";
 
 export interface ArgocdMappingContext {
@@ -5,22 +7,7 @@ export interface ArgocdMappingContext {
   readonly syncedAt: number;
 }
 
-export interface ArgocdMappedRow {
-  readonly service: "argocd";
-  readonly type: "application";
-  readonly externalId: string;
-  readonly title: string;
-  readonly bodyPreview: string;
-  readonly url: string | null;
-  readonly canonicalUrl: string;
-  readonly modifiedAt: number;
-  readonly metadata: Record<string, unknown>;
-  readonly syncedAt: number;
-}
-
-function trimTrailingSlash(s: string): string {
-  return s.endsWith("/") ? s.slice(0, -1) : s;
-}
+export type ArgocdMappedRow = MappedRow<"argocd", "application", string>;
 
 export function applicationUrl(baseUrl: string, name: string): string {
   return `${trimTrailingSlash(baseUrl)}/applications/${encodeURIComponent(name)}`;

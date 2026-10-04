@@ -14,7 +14,7 @@ export async function retryPendingPurges(deps: RetryDeps): Promise<void> {
     for (const req of deps.store.pendingRequests(jobId)) {
       deps.store.incrementAttempt(jobId, req.peerId, deps.nowMs());
       try {
-        const record = await deps.requestPurge(req.peerId);
+        const record = await deps.requestPurge(req.peerId); // NOSONAR S9382: each request is bracketed by its own incrementAttempt/markDone writes, stamped in order; concurrent requests would reorder those rows and fan out to every peer at once
         if (record !== null) {
           deps.store.markDone(jobId, req.peerId, record, deps.nowMs());
         }

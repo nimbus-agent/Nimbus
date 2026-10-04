@@ -38,6 +38,29 @@ describe("buildChatopsToolRunner (I19-pattern fail-closed bot-tool invocation)",
     expect(calls).toHaveLength(0);
   });
 
+  // The secret check is sequential by design (the S9382 suppression on its loop): the first missing
+  // secret aborts before any later one is read, and the error names that first secret in order.
+  test("fail-closed: stops at the first missing secret before reading the rest", async () => {
+    const reads: string[] = [];
+    const vault: NimbusVault = {
+      get: (key: string) => {
+        reads.push(key);
+        return Promise.resolve(null);
+      },
+      set: () => Promise.resolve(),
+      delete: () => Promise.resolve(),
+      listKeys: () => Promise.resolve([]),
+    };
+    const run = buildChatopsToolRunner({
+      vault,
+      botVaultEntry: "chatops-bot",
+      sandboxCwd: "/cwd",
+      spawnAndCall: () => Promise.resolve({}),
+    });
+    await expect(run("slack", "slack_user_info", {})).rejects.toThrow(/"slack bot_token"/);
+    expect(reads).toEqual(["teamvault.chatops-bot.slack.bot_token"]);
+  });
+
   test("the missing-key error never contains a secret value", async () => {
     const run = buildChatopsToolRunner({
       vault: vaultWith({ "teamvault.chatops-bot.slack.bot_token": "xoxb-secret" }),

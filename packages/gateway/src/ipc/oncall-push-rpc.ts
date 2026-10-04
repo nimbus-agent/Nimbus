@@ -103,7 +103,7 @@ async function handleList(params: unknown, ctx: OncallPushRpcCtx) {
   };
 }
 
-async function handleGet(params: unknown, ctx: OncallPushRpcCtx) {
+function handleGet(params: unknown, ctx: OncallPushRpcCtx) {
   const id = incidentIdParam(obj(params, "oncall.pushedGet"), "oncall.pushedGet", false);
   const row = id === undefined ? ctx.runtime.store.newest() : ctx.runtime.store.get(id);
   return { brief: row === null ? null : detail(ctx, row) };

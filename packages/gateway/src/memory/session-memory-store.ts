@@ -150,38 +150,46 @@ export class SessionMemoryStore {
     return out;
   }
 
-  async getRecentTurns(
+  /**
+   * Every read here is a synchronous `bun:sqlite` call, so nothing awaits — but callers
+   * (`engine/run-ask.ts`, `platform/assemble.ts`) and their test doubles treat this as
+   * Promise-returning, and a SQLite throw must REJECT that promise, exactly as it did when this
+   * method was `async`. `Promise.try` runs the body immediately with exactly those semantics.
+   */
+  getRecentTurns(
     sessionId: string,
     limit: number,
   ): Promise<Array<{ text: string; role: SessionMemoryRole; createdAt: number }>> {
-    // This read touches only the `session_memory` table — never a vec virtual table — so it must
-    // NOT gate on ensureReady() (which also requires the sqlite-vec extension to load). On a runner
-    // where sqlite-vec is unavailable (no npm prebuilt + no sidecar), the table still holds the
-    // no-vec rows append() wrote; gating on vec readiness here silently dropped them (empty turns),
-    // which is why the I27 share e2e redaction round-trip failed on all 3 OS legs. Gate on table
-    // existence (V10) only, mirroring listSessions()/deleteSession().
-    if (readIndexedUserVersion(this.db) < 10) {
-      return [];
-    }
-    const k = Math.min(200, Math.max(1, Math.floor(limit)));
-    const rows = this.db
-      .query(
-        `SELECT chunk_text AS text, role, created_at AS createdAt
+    return Promise.try(() => {
+      // This read touches only the `session_memory` table — never a vec virtual table — so it must
+      // NOT gate on ensureReady() (which also requires the sqlite-vec extension to load). On a
+      // runner where sqlite-vec is unavailable (no npm prebuilt + no sidecar), the table still
+      // holds the no-vec rows append() wrote; gating on vec readiness here silently dropped them
+      // (empty turns), which is why the I27 share e2e redaction round-trip failed on all 3 OS
+      // legs. Gate on table existence (V10) only, mirroring listSessions()/deleteSession().
+      if (readIndexedUserVersion(this.db) < 10) {
+        return [];
+      }
+      const k = Math.min(200, Math.max(1, Math.floor(limit)));
+      const rows = this.db
+        .query(
+          `SELECT chunk_text AS text, role, created_at AS createdAt
          FROM session_memory
          WHERE session_id = ?
          ORDER BY created_at DESC
          LIMIT ?`,
-      )
-      .all(sessionId, k) as Array<{ text: string; role: string; createdAt: number }>;
-    const out: Array<{ text: string; role: SessionMemoryRole; createdAt: number }> = [];
-    for (let i = rows.length - 1; i >= 0; i--) {
-      const r = rows[i];
-      if (r === undefined) continue;
-      const role = r.role;
-      if (role !== "user" && role !== "assistant" && role !== "tool") continue;
-      out.push({ text: r.text, role, createdAt: r.createdAt });
-    }
-    return out;
+        )
+        .all(sessionId, k) as Array<{ text: string; role: string; createdAt: number }>;
+      const out: Array<{ text: string; role: SessionMemoryRole; createdAt: number }> = [];
+      for (let i = rows.length - 1; i >= 0; i--) {
+        const r = rows[i];
+        if (r === undefined) continue;
+        const role = r.role;
+        if (role !== "user" && role !== "assistant" && role !== "tool") continue;
+        out.push({ text: r.text, role, createdAt: r.createdAt });
+      }
+      return out;
+    });
   }
 
   pruneExpired(ttlMs: number, nowMs: number): number {

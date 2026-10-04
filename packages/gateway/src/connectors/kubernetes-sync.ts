@@ -1,6 +1,10 @@
 import { extensionProcessEnv } from "../extensions/spawn-env.ts";
 import { spawnCapture } from "../platform/spawn-capture.ts";
-import { syncPassCursorParseEmpty } from "../sync/pass-cursor-sync-result.ts";
+import {
+  syncPassCursorHttpEmpty,
+  syncPassCursorParseEmpty,
+  syncPassCursorSuccess,
+} from "../sync/pass-cursor-sync-result.ts";
 import { type Syncable, type SyncContext, type SyncResult, syncNoopResult } from "../sync/types.ts";
 import { encodeNimbusJsonCursor } from "./nimbus-json-cursor.ts";
 import { asRecord, stringField } from "./unknown-record.ts";
@@ -28,14 +32,7 @@ async function syncKubernetesDeploymentsList(
   const res = await kubectlDeploymentsJson(kc, kctx);
   if (!res.ok) {
     ctx.logger.warn({ serviceId: SERVICE_ID }, "kubernetes sync: kubectl get deployments failed");
-    return {
-      cursor: cursor ?? zeroRvCursor(),
-      itemsUpserted: 0,
-      itemsDeleted: 0,
-      hasMore: false,
-      durationMs: Math.round(performance.now() - t0),
-      bytesTransferred: res.text.length,
-    };
+    return syncPassCursorHttpEmpty(t0, res.text.length, cursor, zeroRvCursor());
   }
   let root: unknown;
   try {
@@ -90,14 +87,12 @@ async function syncKubernetesDeploymentsList(
     upserted += 1;
   }
 
-  return {
-    cursor: encodeCursor({ resourceVersion: rv ?? "0" }),
-    itemsUpserted: upserted,
-    itemsDeleted: 0,
-    hasMore: false,
-    durationMs: Math.round(performance.now() - t0),
-    bytesTransferred: res.text.length,
-  };
+  return syncPassCursorSuccess(
+    t0,
+    res.text.length,
+    encodeCursor({ resourceVersion: rv ?? "0" }),
+    upserted,
+  );
 }
 
 async function kubectlDeploymentsJson(

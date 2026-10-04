@@ -49,7 +49,9 @@ export function RootLayout() {
 
   const onTrayConnector = useCallback(
     (p: { readonly name: string }) => {
-      navigate("/");
+      // `void`: `navigate` rejects only for an external target, and "/" is internal; route errors
+      // go to the router's error boundary instead.
+      void navigate("/");
       requestHighlight(p.name);
       setTimeout(() => clearHighlight(), 1500);
     },

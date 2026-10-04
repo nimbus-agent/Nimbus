@@ -329,12 +329,14 @@ describe("the final failure is recorded and surfaced, not swallowed", () => {
     expect(vecLoadWarnCountForTest()).toBe(2);
   });
 
-  test("a successful load records nothing and warns nothing", () => {
-    if (!upstreamSqliteVecLoadable) return;
-    const db = new Database(":memory:");
-    expect(tryLoadSqliteVec(db)).toBe(true);
-    db.close();
-    expect(lastVecLoadFailure()).toBeUndefined();
-    expect(vecLoadWarnCountForTest()).toBe(0);
-  });
+  test.skipIf(!upstreamSqliteVecLoadable)(
+    "a successful load records nothing and warns nothing",
+    () => {
+      const db = new Database(":memory:");
+      expect(tryLoadSqliteVec(db)).toBe(true);
+      db.close();
+      expect(lastVecLoadFailure()).toBeUndefined();
+      expect(vecLoadWarnCountForTest()).toBe(0);
+    },
+  );
 });

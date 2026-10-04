@@ -32,7 +32,11 @@ function isMissingVecTableError(err: unknown, table: string): boolean {
   );
 }
 
-export async function reindexConnector(input: ReindexInput): Promise<ReindexResult> {
+/**
+ * Synchronous on purpose: every step is a synchronous `bun:sqlite` call, so a failure surfaces as
+ * a throw at the call site (one inside the `db.transaction()` below rolls the whole erasure back).
+ */
+export function reindexConnector(input: ReindexInput): ReindexResult {
   if (input.depth === "metadata_only") {
     // Selection happens INSIDE the same transaction as the UPDATE/DELETEs
     // below (CodeRabbit #1026): reading it outside would let a concurrent

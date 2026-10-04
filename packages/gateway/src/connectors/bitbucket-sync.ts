@@ -13,7 +13,7 @@ import {
   syncNoopResult,
 } from "../sync/types.ts";
 import { fetchOneMissForResponse } from "./fetch-miss-reason.ts";
-import { decodeNimbusJsonCursorPayload, encodeNimbusJsonCursor } from "./nimbus-json-cursor.ts";
+import { decodeNimbusJsonCursorObject, encodeNimbusJsonCursor } from "./nimbus-json-cursor.ts";
 import { asRecord, numberField, stringField } from "./unknown-record.ts";
 
 const SERVICE_ID = "bitbucket";
@@ -38,17 +38,10 @@ function encodeCursor(c: BitbucketCursorV1): string {
 }
 
 function decodeCursor(raw: string | null): BitbucketCursorV1 | null {
-  if (raw === null || raw === "") {
+  const rec = decodeNimbusJsonCursorObject(raw, CURSOR_PREFIX);
+  if (rec === null) {
     return null;
   }
-  const parsed = decodeNimbusJsonCursorPayload(raw, CURSOR_PREFIX);
-  if (parsed === undefined) {
-    return null;
-  }
-  if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
-    return null;
-  }
-  const rec = parsed as Record<string, unknown>;
   const since = rec["since"];
   if (typeof since !== "string" || since === "") {
     return null;
@@ -543,7 +536,7 @@ export function createBitbucketSyncable(options: BitbucketSyncableOptions): Sync
         let prPages = 0;
         const active = state.activeRepo;
         while (prUrl !== null && prPages < MAX_PR_PAGES_PER_REPO) {
-          const { json } = await fetchJson(prUrl);
+          const { json } = await fetchJson(prUrl); // NOSONAR S9382: paginated - each request needs the previous page's `next` URL
           prPages += 1;
           const now = Date.now();
           const page = ingestBitbucketPullRequestPage(ctx, active, json, now, maxUpdated);

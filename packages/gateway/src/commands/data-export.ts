@@ -32,7 +32,7 @@ async function collectVaultManifestPlaintext(vault: NimbusVault): Promise<string
   const entries: Array<{ key: string; value: string }> = [];
   for (const key of keys) {
     if (key === "backup.recovery_seed") continue;
-    const value = await vault.get(key);
+    const value = await vault.get(key); // NOSONAR S9382: one read per stored key - on Linux each spawns a secret-tool process, so Promise.all would be an unbounded process burst
     if (value !== null) entries.push({ key, value });
   }
   return JSON.stringify(entries);
@@ -53,7 +53,7 @@ export async function runDataExport(input: RunDataExportInput): Promise<RunDataE
   // on disk.
   try {
     const vaultPlaintext = await collectVaultManifestPlaintext(input.vault);
-    const encrypted = await encryptVaultManifest({
+    const encrypted = encryptVaultManifest({
       plaintext: vaultPlaintext,
       passphrase: input.passphrase,
       seed: seed.mnemonic,

@@ -1,4 +1,4 @@
-import { act, render } from "@testing-library/react";
+import { act, render, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const listeners = new Map<string, Array<(payload: unknown) => void>>();
@@ -22,6 +22,7 @@ vi.mock("@tauri-apps/api/event", () => ({
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn(async () => undefined) }));
 vi.mock("../../../src/ipc/client");
 
+import { invoke } from "@tauri-apps/api/core";
 import { UpdaterRestartChrome } from "../../../src/components/updater/UpdaterRestartChrome";
 import {
   diagGetVersionMock,
@@ -42,6 +43,7 @@ function fireRestartEvent(event: "updater://restart-started" | "updater://restar
 
 beforeEach(() => {
   listeners.clear();
+  vi.mocked(invoke).mockClear();
   diagGetVersionMock.mockReset();
   updaterCheckNowMock.mockReset();
   updaterGetStatusMock.mockReset();
@@ -152,5 +154,46 @@ describe("UpdaterRestartChrome — notification handlers", () => {
       await Promise.resolve();
     });
     expect(useNimbusStore.getState().updaterUiState).toBe("failed");
+  });
+
+  // The restart-complete handler fires its async check with `void`, which is only honest while the
+  // check owns every failure itself. These pin that: each path ends in a surfaced UI state AND the
+  // `updater_apply_finished` signal to the shell, with nothing left to reject.
+  it("restart-complete: a failing status refresh after a version match is non-fatal", async () => {
+    diagGetVersionMock.mockResolvedValueOnce({ version: "0.2.0", commit: "abc", buildId: "1" });
+    updaterGetStatusMock.mockRejectedValueOnce(new Error("status unavailable"));
+    render(<UpdaterRestartChrome />);
+    act(() => {
+      useNimbusStore.getState().setUpdaterRestarting({ fromVersion: "0.1.0", toVersion: "0.2.0" });
+    });
+    await act(async () => {
+      fireRestartEvent("updater://restart-complete");
+    });
+    await waitFor(() => expect(invoke).toHaveBeenCalledWith("updater_apply_finished"));
+    expect(useNimbusStore.getState().updaterUiState).toBe("success");
+    expect(useNimbusStore.getState().updaterStatus).toBeNull();
+    expect(useNimbusStore.getState().updaterFailure).toBeNull();
+  });
+
+  it("restart-complete: a failed version probe still signals the shell", async () => {
+    diagGetVersionMock.mockRejectedValueOnce(new Error("network"));
+    render(<UpdaterRestartChrome />);
+    await act(async () => {
+      fireRestartEvent("updater://restart-complete");
+    });
+    await waitFor(() => expect(invoke).toHaveBeenCalledWith("updater_apply_finished"));
+    expect(useNimbusStore.getState().updaterFailure).toEqual({ reason: "installer_failed" });
+  });
+
+  it("restart-complete: no recorded target version reads as rolled_back, not success", async () => {
+    // `updaterRestarting` is null (no `updater.restarting` seen), so there is no version to match.
+    diagGetVersionMock.mockResolvedValueOnce({ version: "0.2.0", commit: "abc", buildId: "1" });
+    render(<UpdaterRestartChrome />);
+    await act(async () => {
+      fireRestartEvent("updater://restart-complete");
+    });
+    await waitFor(() => expect(invoke).toHaveBeenCalledWith("updater_apply_finished"));
+    expect(useNimbusStore.getState().updaterUiState).toBe("rolled_back");
+    expect(useNimbusStore.getState().updaterFailure).toEqual({ reason: "installer_failed" });
   });
 });

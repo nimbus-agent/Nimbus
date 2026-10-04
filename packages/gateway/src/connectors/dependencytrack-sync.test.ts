@@ -64,8 +64,8 @@ describeWithFetchRestore("dependencytrack-sync", () => {
     makeStubVault(null, null),
   );
 
-  // ─── line 34: trimTrailingSlash true branch — base_url with trailing slash ──
-  test("trims trailing slash from base_url (line-34 true branch)", async () => {
+  // ─── trimTrailingSlash true branch — base_url with trailing slash ──────────
+  test("trims trailing slash from base_url (trimTrailingSlash true branch)", async () => {
     const db = createMemoryIndexDb();
     let capturedUrl = "";
 
@@ -88,8 +88,8 @@ describeWithFetchRestore("dependencytrack-sync", () => {
     expect(r.itemsUpserted).toBe(1);
   });
 
-  // ─── line 34: trimTrailingSlash false branch — base_url without trailing slash ──
-  test("keeps base_url unchanged when no trailing slash (line-34 false branch)", async () => {
+  // ─── trimTrailingSlash false branch — base_url without trailing slash ──────
+  test("keeps base_url unchanged when no trailing slash (trimTrailingSlash false branch)", async () => {
     const db = createMemoryIndexDb();
     let capturedUrl = "";
 

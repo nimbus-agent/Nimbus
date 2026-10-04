@@ -1,7 +1,8 @@
 import { afterAll, beforeEach, describe, expect, it } from "bun:test";
 
 import { captureOutput } from "../../test/helpers/cli-output.ts";
-import { createMockIpcClient } from "../../test/helpers/mock-ipc-client.ts";
+import { type CallRecord, createMockIpcClient } from "../../test/helpers/mock-ipc-client.ts";
+import { createStreamCapture } from "../../test/helpers/stream-capture.ts";
 import type { IPCClient } from "../ipc-client/index.ts";
 import type { CliPlatformPaths } from "../paths.ts";
 import {
@@ -102,6 +103,17 @@ describe("runReplTurn", () => {
     expect((mock.calls[1]?.params as Record<string, unknown> | undefined)?.["role"]).toBe("user");
   });
 
+  it("a reply that is not a string counts as empty: nothing written, '' returned, no assistant append", async () => {
+    const mock = createMockIpcClient([{ reply: 42 }, null]);
+    const result = await runReplTurn(mock.client, "hi", "sess-1", write);
+    expect(result).toBe("");
+    expect(writes).toHaveLength(0);
+    expect(mock.calls).toEqual([
+      { method: "agent.invoke", params: { input: "hi", stream: true, sessionId: "sess-1" } },
+      { method: "session.append", params: { sessionId: "sess-1", chunkText: "hi", role: "user" } },
+    ]);
+  });
+
   it("truncates assistant chunkText to 8000 chars", async () => {
     const big = "a".repeat(9000);
     const mock = createMockIpcClient([{ reply: big }, null, null]);
@@ -164,5 +176,103 @@ describe("runRepl (readline loop, injected interface)", () => {
     await runRepl([], deps, fakeInterface(["exit"]));
     expect(handlersRegistered).toBe(1);
     expect(mockIpc.calls).toHaveLength(0);
+  });
+
+  /** A readline stand-in that answers `answers` in order and records whether it was closed. */
+  function recordingInterface(answers: string[]): {
+    make: Parameters<typeof runRepl>[2];
+    prompts: () => number;
+    closed: () => boolean;
+  } {
+    let asked = 0;
+    let closed = false;
+    const make = (() => ({
+      question: async (): Promise<string> => {
+        const answer = answers[asked] ?? "exit";
+        asked += 1;
+        return answer;
+      },
+      close: (): void => {
+        closed = true;
+      },
+    })) as unknown as Parameters<typeof runRepl>[2];
+    return { make, prompts: () => asked, closed: () => closed };
+  }
+
+  /** The mock IPC client with its `disconnect` counted. */
+  function countingClient(responses: readonly unknown[]): {
+    client: IPCClient;
+    calls: CallRecord[];
+    disconnects: () => number;
+  } {
+    const mock = createMockIpcClient(responses);
+    let disconnects = 0;
+    const client = {
+      ...(mock.client as unknown as Record<string, unknown>),
+      disconnect: async (): Promise<void> => {
+        disconnects += 1;
+      },
+    } as unknown as IPCClient;
+    return { client, calls: mock.calls, disconnects: () => disconnects };
+  }
+
+  it("runs one turn per trimmed question, prints the reply, and leaves on `quit`", async () => {
+    const ipc = countingClient([{ reply: "pong" }]);
+    const rl = recordingInterface(["  ping  ", "quit"]);
+    const deps = makeDeps({
+      readGatewayState: async () => ({ socketPath: "fake-repl.sock" }),
+      makeClient: () => ipc.client,
+    });
+    const cap = createStreamCapture();
+    cap.install();
+    try {
+      await runRepl([], deps, rl.make);
+    } finally {
+      cap.restore();
+    }
+    expect(ipc.calls).toEqual([
+      { method: "agent.invoke", params: { input: "ping", stream: true } },
+    ]);
+    expect(cap.stdoutChunks.join("")).toContain("\npong\n");
+    expect(rl.prompts()).toBe(2);
+    expect(rl.closed()).toBe(true);
+    expect(ipc.disconnects()).toBe(1);
+  });
+
+  it("a blank line ends the REPL without a turn, still closing readline and the connection", async () => {
+    const ipc = countingClient([]);
+    const rl = recordingInterface(["   ", "never asked"]);
+    const deps = makeDeps({
+      readGatewayState: async () => ({ socketPath: "fake-repl.sock" }),
+      makeClient: () => ipc.client,
+    });
+    const cap = createStreamCapture();
+    cap.install();
+    try {
+      await runRepl([], deps, rl.make);
+    } finally {
+      cap.restore();
+    }
+    expect(ipc.calls).toHaveLength(0);
+    expect(rl.prompts()).toBe(1);
+    expect(rl.closed()).toBe(true);
+    expect(ipc.disconnects()).toBe(1);
+  });
+
+  it("with no interface injected, a gateway that is not running fails before readline exists", async () => {
+    // The default `makeInterface` is the real readline over process.stdin; reaching it would block
+    // on a terminal. The precondition must refuse first.
+    let clientMade = false;
+    const deps = makeDeps({
+      readGatewayState: async () => undefined,
+      makeClient: () => {
+        clientMade = true;
+        return createMockIpcClient([]).client;
+      },
+    });
+    await expect(runRepl([], deps)).rejects.toThrow(
+      "Gateway is not running. Start with: nimbus start",
+    );
+    expect(clientMade).toBe(false);
   });
 });

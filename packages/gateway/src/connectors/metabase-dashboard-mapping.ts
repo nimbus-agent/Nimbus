@@ -1,3 +1,5 @@
+import { trimTrailingSlash } from "./_lib/field-helpers.ts";
+import type { MappedRow } from "./mapped-row.ts";
 import { asRecord, numberField, stringField } from "./unknown-record.ts";
 
 export interface MetabaseMappingContext {
@@ -6,22 +8,7 @@ export interface MetabaseMappingContext {
   readonly syncedAt: number;
 }
 
-export interface MetabaseMappedRow {
-  readonly service: "metabase";
-  readonly type: "dashboard";
-  readonly externalId: string;
-  readonly title: string;
-  readonly bodyPreview: string;
-  readonly url: string | null;
-  readonly canonicalUrl: string;
-  readonly modifiedAt: number;
-  readonly metadata: Record<string, unknown>;
-  readonly syncedAt: number;
-}
-
-function trimTrailingSlash(s: string): string {
-  return s.endsWith("/") ? s.slice(0, -1) : s;
-}
+export type MetabaseMappedRow = MappedRow<"metabase", "dashboard", string>;
 
 export function dashboardUrl(baseUrl: string, id: number): string {
   return `${trimTrailingSlash(baseUrl)}/dashboard/${encodeURIComponent(String(id))}`;

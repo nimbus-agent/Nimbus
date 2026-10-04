@@ -716,7 +716,7 @@ describe("data-profile-sync — JSON truncated (too large)", () => {
   });
 });
 
-// ─── collectDataFiles: MAX_WALK_DEPTH guard (line 81) ────────────────────────
+// ─── collectDataFiles: MAX_WALK_DEPTH guard (collectFiles' maxDepth, _lib/collect-files.ts) ─
 
 describe("data-profile-sync — MAX_WALK_DEPTH guard", () => {
   let cleanup: (() => Promise<void>) | null = null;

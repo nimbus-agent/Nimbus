@@ -358,15 +358,21 @@ export async function openBrowserLane(
               url: () => (typeof url === "string" ? url : ""),
               resourceType: () => (typeof resourceType === "string" ? resourceType : "Other"),
             }),
-            continue: async () => {
+            // `LedgerableRoute` requires a Promise, but nothing here is awaited: `sendAndForget`
+            // is fire-and-forget by design (see its doc) and cannot throw — it returns early on a
+            // closed transport and swallows a failed send — so a settled Promise is the whole
+            // contract, with no rejection for an `async` wrapper to have preserved.
+            continue: () => {
               activeConn.sendAndForget("Fetch.continueRequest", { requestId }, sessionId);
+              return Promise.resolve();
             },
-            abort: async () => {
+            abort: () => {
               activeConn.sendAndForget(
                 "Fetch.failRequest",
                 { requestId, errorReason: "BlockedByClient" },
                 sessionId,
               );
+              return Promise.resolve();
             },
           };
           void handler(route).catch(() => {

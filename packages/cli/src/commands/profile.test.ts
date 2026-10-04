@@ -5,6 +5,7 @@ import { join } from "node:path";
 
 import { clearFixture } from "../../test/helpers/cli-mocks.ts";
 import { captureOutput } from "../../test/helpers/cli-output.ts";
+import { getCliPlatformPaths } from "../paths.ts";
 
 const profileMod = await import("./profile.ts");
 const { runProfile, runProfileCreate, runProfileDelete, runProfileList, runProfileSwitch } =
@@ -66,6 +67,24 @@ describe("runProfileCreate", () => {
     const base = join(tmp, "nimbus.toml");
     expect(() => runProfileCreate(tmp, base, [])).toThrow("Usage: nimbus profile create");
     expect(() => runProfileCreate(tmp, base, ["default"])).toThrow("Usage: nimbus profile create");
+  });
+
+  // The minimal-file fallback is for a MISSING base (ENOENT) only: any other copy failure has to
+  // surface as itself, not be swallowed into a seeded profile the owner never asked for. A NUL byte
+  // in the base path fails argument validation with the same code on every OS, where a real
+  // filesystem error's code differs by platform.
+  it("rethrows a copy failure that is neither EEXIST nor ENOENT, and seeds nothing", () => {
+    let thrown: unknown;
+    try {
+      runProfileCreate(tmp, join(tmp, "nim\0bus.toml"), ["work"]);
+    } catch (e) {
+      thrown = e;
+    }
+    expect(thrown).toBeInstanceOf(TypeError);
+    expect((thrown as { code?: unknown }).code).toBe("ERR_INVALID_ARG_VALUE");
+    expect((thrown as Error).message).not.toContain("already exists");
+    expect(existsSync(join(tmp, "nimbus.work.toml"))).toBe(false);
+    expect(out.stdout).toBe("");
   });
 });
 
@@ -227,5 +246,84 @@ describe("runProfile (dispatcher)", () => {
 
   it("rejects unknown subcommands", () => {
     expect(() => runProfile(["bogus"])).toThrow("Unknown profile subcommand: bogus");
+  });
+});
+
+describe("runProfileList / runProfileDelete -- the edges", () => {
+  beforeEach(() => {
+    out.reset();
+  });
+
+  it("a config dir that does not exist yet lists as the default with no profiles, not a crash", () => {
+    const root = makeTmpConfigDir();
+    try {
+      runProfileList(join(root, "never-created"));
+      expect(out.stdout).toBe(
+        "active: (default — nimbus.toml)\n(no nimbus.<name>.toml profiles yet)\n",
+      );
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("delete with no arguments at all is a usage error that touches nothing", () => {
+    const root = makeTmpConfigDir();
+    try {
+      writeFileSync(join(root, ".nimbus-profile"), "work\n", "utf8");
+      expect(() => runProfileDelete(root, [])).toThrow("Usage: nimbus profile delete <name> --yes");
+      expect(readFileSync(join(root, ".nimbus-profile"), "utf8")).toBe("work\n");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("runProfile (dispatcher) -- each subcommand acts on the CONFIGURED config dir", () => {
+  let tmp: string;
+  let savedConfigDir: string | undefined;
+  let savedDemo: string | undefined;
+
+  function restoreEnv(name: string, value: string | undefined): void {
+    if (value === undefined) delete process.env[name];
+    else process.env[name] = value;
+  }
+
+  beforeEach(() => {
+    out.reset();
+    tmp = makeTmpConfigDir();
+    savedConfigDir = process.env["NIMBUS_CONFIG_DIR"];
+    savedDemo = process.env["NIMBUS_DEMO"];
+    process.env["NIMBUS_CONFIG_DIR"] = tmp;
+    delete process.env["NIMBUS_DEMO"];
+    // Precondition: every write below resolves into tmp. Were the override not honoured, this
+    // fails before the test writes a single file into the developer's real config dir.
+    expect(getCliPlatformPaths().configDir).toBe(tmp);
+  });
+
+  afterEach(() => {
+    restoreEnv("NIMBUS_CONFIG_DIR", savedConfigDir);
+    restoreEnv("NIMBUS_DEMO", savedDemo);
+    rmSync(tmp, { recursive: true, force: true });
+  });
+
+  it("create -> switch -> list -> delete, end to end", () => {
+    writeFileSync(join(tmp, "nimbus.toml"), 'foo = "bar"\n', "utf8");
+
+    runProfile(["create", "work"]);
+    expect(readFileSync(join(tmp, "nimbus.work.toml"), "utf8")).toBe('foo = "bar"\n');
+
+    runProfile(["switch", "work"]);
+    expect(readFileSync(join(tmp, ".nimbus-profile"), "utf8")).toBe("work\n");
+
+    out.reset();
+    runProfile(["list"]);
+    expect(out.stdout).toBe("active: work\n* work\n");
+
+    runProfile(["delete", "work", "--yes"]);
+    expect(existsSync(join(tmp, "nimbus.work.toml"))).toBe(false);
+    // Deleting the ACTIVE profile also drops the marker, or `nimbus start` would load a ghost.
+    expect(existsSync(join(tmp, ".nimbus-profile"))).toBe(false);
+    // The base file is never touched by any of it.
+    expect(readFileSync(join(tmp, "nimbus.toml"), "utf8")).toBe('foo = "bar"\n');
   });
 });

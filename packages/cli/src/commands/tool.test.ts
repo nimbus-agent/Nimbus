@@ -8,10 +8,12 @@ import {
   exitCodeForTool,
   formatToolApprovalPrompt,
   handleToolApprovalBroadcast,
+  handleToolSaveApprovalBroadcast,
   parseToolArgs,
   renderToolInvokeOutcome,
   renderToolList,
   renderToolOutcome,
+  renderToolSaveOutcome,
   runTool,
   TOOL_EXIT_CODES,
 } from "./tool.ts";
@@ -508,23 +510,27 @@ describe("formatToolApprovalPrompt", () => {
   });
 });
 
-describe("handleToolApprovalBroadcast", () => {
-  function harness(answer: unknown) {
-    const shown: string[] = [];
-    const answered: Array<{ requestId: string; approved: boolean }> = [];
-    return {
-      shown,
-      answered,
-      ask: async (message: string) => {
-        shown.push(message);
-        return answer;
-      },
-      respond: async (requestId: string, approved: boolean) => {
-        answered.push({ requestId, approved });
-      },
-    };
-  }
+/**
+ * The owner (`ask`, answering `answer` to every prompt) and the gateway's respond method, both
+ * recording what they saw. Shared by every approval-broadcast describe below.
+ */
+function harness(answer: unknown = false) {
+  const shown: string[] = [];
+  const answered: Array<{ requestId: string; approved: boolean }> = [];
+  return {
+    shown,
+    answered,
+    ask: async (message: string) => {
+      shown.push(message);
+      return answer;
+    },
+    respond: async (requestId: string, approved: boolean) => {
+      answered.push({ requestId, approved });
+    },
+  };
+}
 
+describe("handleToolApprovalBroadcast", () => {
   const REQ = {
     requestId: "r1",
     toolName: "generated_tg_a",
@@ -548,17 +554,19 @@ describe("handleToolApprovalBroadcast", () => {
   });
 
   // A review comment asked for `@clack/prompts`'s canonical `CANCEL_SYMBOL` here instead of the
-  // registered symbol below, on the grounds that `isCancel(Symbol.for("clack:cancel"))` is false
-  // and so this test never reaches the cancel arm. The first half is correct and is why the test
-  // changed. The suggested fix is not available: `CANCEL_SYMBOL` is NOT exported by
-  // `@clack/prompts` (v1.7) -- `isCancel` closes over a module-private, UNREGISTERED `Symbol()`,
-  // verified by probing the package -- so importing it would not compile, and there is no value a
-  // test can construct for which `isCancel` returns true.
+  // registered symbol below, on the grounds that the real `isCancel(Symbol.for("clack:cancel"))` is
+  // false, so this test never reaches the cancel arm. That holds for the real package: its cancel
+  // value is an UNREGISTERED `Symbol("clack:cancel")`. It was not exported when this test was
+  // written (v1.7); 1.8.x re-exports it from `@clack/core`, but this file still cannot rely on it.
+  // In a whole-repo run `@clack/prompts` may already be `test/helpers/cli-mocks.ts`'s
+  // process-global replacement, which exports no `CANCEL_SYMBOL` and whose `isCancel` matches
+  // `Symbol.for("clack:cancel")` instead -- so which value is "the cancel" depends on which module
+  // the run happened to load.
   //
-  // What actually makes cancellation safe is therefore not `isCancel` at all: it is the
-  // `answer === true` conjunct, which admits ONLY the boolean. A cancel is one member of the set
-  // of non-`true` answers, so pinning the whole set is a stronger statement than pinning the one
-  // member would have been, and it does not depend on a private symbol staying private.
+  // What makes cancellation safe does not depend on that, because it is not `isCancel` at all: it
+  // is the `answer === true` conjunct, which admits ONLY the boolean. A cancel is one member of the
+  // set of non-`true` answers, so pinning the whole set holds under either module, and is a
+  // stronger statement than pinning the one member would have been.
   test.each([
     ["a foreign symbol standing in for a cancel", Symbol.for("clack:cancel")],
     ["a bare symbol", Symbol("anything")],
@@ -1645,5 +1653,411 @@ describe("runTool revoke -- the success path reports the id it dropped", () => {
     await runTool(["revoke", "tg_a"], h.d);
     expect(h.out.join("")).toContain("Revoked tg_a.");
     expect(h.out.join("")).not.toContain("saved copy");
+  });
+});
+
+describe("the create and save approval handlers -- one normaliser, never one prompt", () => {
+  // Both handlers validate through the same `toToolApprovalPrompt` and differ ONLY in the prompt
+  // they render, which makes rendering the OTHER handler's prompt the one regression that sharing
+  // invites -- and a body-only assertion cannot see it, since both prompts show the body verbatim.
+  // A save rendered with the create copy would under-disclose a STANDING grant as the one-off the
+  // owner already approved once.
+  const REQ = {
+    requestId: "s1",
+    toolName: "generated_tg_a",
+    description: "d",
+    body: "return 1;",
+    approvedHosts: ["a.example.com"],
+    credentialHosts: [],
+  };
+
+  test("the create handler renders the one-off prompt, never the standing-approval one", async () => {
+    const h = harness(true);
+    await handleToolApprovalBroadcast(REQ, h.ask, h.respond);
+    expect(h.shown[0]).toContain('Register the generated tool "generated_tg_a"?');
+    expect(h.shown[0]).not.toContain("Persist the generated tool");
+    expect(h.shown[0]).not.toContain("STANDING APPROVAL");
+  });
+
+  test("the save handler renders the standing-approval prompt, never the one-off one", async () => {
+    const h = harness(true);
+    await handleToolSaveApprovalBroadcast({ ...REQ, persistence: true }, h.ask, h.respond);
+    expect(h.shown[0]).toContain('Persist the generated tool "generated_tg_a"');
+    expect(h.shown[0]).toContain("STANDING APPROVAL");
+    expect(h.shown[0]).not.toContain("Register the generated tool");
+    expect(h.answered).toEqual([{ requestId: "s1", approved: true }]);
+  });
+
+  test("the save handler IGNORES a broadcast with no usable requestId, rather than answering", async () => {
+    for (const bad of [{}, { requestId: "" }, { requestId: 7 }, undefined]) {
+      const h = harness(true);
+      await handleToolSaveApprovalBroadcast(bad, h.ask, h.respond);
+      expect(h.answered).toEqual([]);
+      expect(h.shown).toEqual([]);
+    }
+  });
+
+  test.each([
+    ["false", false],
+    ["a bare symbol", Symbol("anything")],
+    ["undefined, as an abandoned prompt yields", undefined],
+    ["the STRING 'true', not the boolean", "true"],
+    ["1, which is truthy but not true", 1],
+  ])("the save handler treats %s as a denial", async (_label, answer) => {
+    const h = harness(answer);
+    await handleToolSaveApprovalBroadcast(REQ, h.ask, h.respond);
+    expect(h.answered).toEqual([{ requestId: "s1", approved: false }]);
+  });
+
+  test("the save handler renders a malformed broadcast safely, and still answers", async () => {
+    const h = harness(false);
+    await handleToolSaveApprovalBroadcast(
+      {
+        requestId: "s5",
+        toolName: 7,
+        body: {},
+        approvedHosts: "nope",
+        credentialHosts: ["a.example.com", 7],
+        inputSchema: "not a schema",
+        grounding: { kind: "not-a-real-kind" },
+      },
+      h.ask,
+      h.respond,
+    );
+    expect(h.answered).toEqual([{ requestId: "s5", approved: false }]);
+    expect(h.shown[0]).toContain('Persist the generated tool "unknown"');
+    expect(h.shown[0]).toContain("  hosts:            none");
+    // All-or-nothing: one non-string host hides the whole list rather than showing the rest.
+    expect(h.shown[0]).toContain("  credential hosts: none");
+    expect(h.shown[0]).toContain("  parameters:       none");
+    expect(h.shown[0]).toContain("no indexed API specification");
+  });
+
+  test("both prompts show each host list under its OWN label", async () => {
+    // Both lists go through one validator, so the mistake left to make is handing it the wrong
+    // field. Every other test here would pass that, while the owner approved a credential going
+    // to a host they had been shown as credential-free.
+    const req = {
+      ...REQ,
+      approvedHosts: ["a.example.com", "b.example.com"],
+      credentialHosts: ["b.example.com"],
+    };
+    for (const handle of [handleToolApprovalBroadcast, handleToolSaveApprovalBroadcast]) {
+      const h = harness(false);
+      await handle(req, h.ask, h.respond);
+      expect(h.shown[0]).toMatch(/^ *hosts: +a\.example\.com, b\.example\.com$/m);
+      expect(h.shown[0]).toMatch(/^ *credential hosts: +b\.example\.com$/m);
+    }
+  });
+});
+
+describe("runTool list -- each host list is read from its OWN wire field", () => {
+  test("approved and credential hosts render under their own labels, never each other's", async () => {
+    // Both fields go through one validator, so the mistake left to make is reading the wrong one:
+    // the listing would then name a credential-free host as one a credential is sent to.
+    const h = fakeDeps({
+      runWithClient: async (fn) =>
+        fn({
+          onNotification: () => {},
+          call: async () => ({
+            tools: [
+              {
+                toolId: "tg_a",
+                toolName: "t",
+                description: "d",
+                approvedHosts: ["a.example.com", "b.example.com"],
+                credentialHosts: ["b.example.com"],
+                approvedAt: 0,
+              },
+            ],
+          }),
+        }),
+    });
+    await runTool(["list"], h.d);
+    expect(h.out.join("")).toContain(
+      "hosts: a.example.com, b.example.com  credential hosts: b.example.com  approved:",
+    );
+  });
+});
+
+describe("the approval prompt renders a WELL-FORMED inputSchema and grounding from the wire", () => {
+  // Every broadcast test above sends either no schema or a malformed one, so the arm that turns a
+  // valid wire schema into the parameter list the owner approves was only ever reached through
+  // `formatToolApprovalPrompt` directly -- never through the handler, the only path production
+  // takes. These pin that arm field by field, through both handlers.
+  const BASE = {
+    toolName: "generated_tg_s",
+    description: "d",
+    body: "return 1;",
+    approvedHosts: ["a.example.com"],
+    credentialHosts: [],
+  };
+
+  const NOT_GROUNDED = "no indexed API specification matched";
+
+  test("scalar, array, required and optional parameters each render with their own marker", async () => {
+    const h = harness();
+    await handleToolApprovalBroadcast(
+      {
+        ...BASE,
+        requestId: "p1",
+        inputSchema: {
+          type: "object",
+          properties: {
+            query: { type: "string", description: "what to search for" },
+            tags: { type: "array", items: { type: "string" } },
+            limit: { type: "number" },
+            verbose: { type: "boolean" },
+          },
+          required: ["query"],
+        },
+        grounding: { kind: "endpoints", count: 3, services: ["github-api", "jira-api"] },
+      },
+      h.ask,
+      h.respond,
+    );
+    expect(h.shown[0]).toContain(
+      "  parameters:       query: string (required), tags: string[]?, limit: number?, verbose: boolean?\n",
+    );
+    expect(h.shown[0]).toContain(
+      "  grounding:        3 indexed endpoint(s) from github-api, jira-api\n",
+    );
+    expect(h.shown[0]).not.toContain(NOT_GROUNDED);
+    expect(h.answered).toEqual([{ requestId: "p1", approved: false }]);
+  });
+
+  test("a malformed property is DROPPED on its own, never taking the well-formed ones with it", async () => {
+    const h = harness();
+    await handleToolApprovalBroadcast(
+      {
+        ...BASE,
+        requestId: "p2",
+        inputSchema: {
+          type: "object",
+          properties: {
+            kept: { type: "string" },
+            objectTyped: { type: "object" },
+            notARecord: "string",
+            arrayOfObjects: { type: "array", items: { type: "object" } },
+            arrayWithoutItems: { type: "array" },
+            alsoKept: { type: "array", items: { type: "boolean" } },
+          },
+        },
+      },
+      h.ask,
+      h.respond,
+    );
+    expect(h.shown[0]).toContain("  parameters:       kept: string?, alsoKept: boolean[]?\n");
+    for (const dropped of ["objectTyped", "notARecord", "arrayOfObjects", "arrayWithoutItems"]) {
+      expect(h.shown[0]).not.toContain(dropped);
+    }
+    expect(h.answered).toEqual([{ requestId: "p2", approved: false }]);
+  });
+
+  test("a parameter literally named __proto__ is SHOWN to the owner, not swallowed by the prototype setter", async () => {
+    // JSON.parse, not an object literal: only JSON.parse creates an OWN `__proto__` key, which is
+    // exactly what a wire payload decoded from JSON-RPC carries.
+    const inputSchema: unknown = JSON.parse(
+      '{"type":"object","properties":{"__proto__":{"type":"string"},"x":{"type":"number"}},"required":["__proto__"]}',
+    );
+    const h = harness();
+    await handleToolApprovalBroadcast({ ...BASE, requestId: "p3", inputSchema }, h.ask, h.respond);
+    expect(h.shown[0]).toContain("  parameters:       __proto__: string (required), x: number?\n");
+  });
+
+  // What this can see is the RENDERED marker: a mixed list must not be discarded whole. Whether the
+  // non-string entries are filtered out first is invisible here -- property names are strings, so
+  // a stray 7 or null can never match one either way.
+  test("a required list mixing in non-strings still marks its string entries; a non-array required marks nothing", async () => {
+    const properties = { query: { type: "string" }, n: { type: "number" } };
+    const filtered = harness();
+    await handleToolApprovalBroadcast(
+      {
+        ...BASE,
+        requestId: "p4",
+        inputSchema: { type: "object", properties, required: [7, "query", null] },
+      },
+      filtered.ask,
+      filtered.respond,
+    );
+    expect(filtered.shown[0]).toContain(
+      "  parameters:       query: string (required), n: number?\n",
+    );
+
+    const notAnArray = harness();
+    await handleToolApprovalBroadcast(
+      { ...BASE, requestId: "p5", inputSchema: { type: "object", properties, required: "query" } },
+      notAnArray.ask,
+      notAnArray.respond,
+    );
+    expect(notAnArray.shown[0]).toContain("  parameters:       query: string?, n: number?\n");
+    expect(notAnArray.shown[0]).not.toContain("(required)");
+  });
+
+  test("an object schema with no properties at all renders 'none'", async () => {
+    const h = harness();
+    await handleToolApprovalBroadcast(
+      { ...BASE, requestId: "p6", inputSchema: { type: "object" } },
+      h.ask,
+      h.respond,
+    );
+    expect(h.shown[0]).toContain("  parameters:       none\n");
+  });
+
+  test.each([
+    ["a non-numeric count", { kind: "endpoints", count: "2", services: ["a"] }],
+    ["a services field that is not an array", { kind: "endpoints", count: 2, services: "a" }],
+    ["no services field at all", { kind: "endpoints", count: 2 }],
+  ])("endpoints grounding with %s discloses the draft as a guess", async (_label, grounding) => {
+    const h = harness();
+    await handleToolApprovalBroadcast({ ...BASE, requestId: "g1", grounding }, h.ask, h.respond);
+    expect(h.shown[0]).toContain(NOT_GROUNDED);
+    expect(h.shown[0]).not.toContain("indexed endpoint(s)");
+  });
+
+  test("endpoints grounding keeps only the string service names", async () => {
+    const h = harness();
+    await handleToolApprovalBroadcast(
+      {
+        ...BASE,
+        requestId: "g2",
+        grounding: { kind: "endpoints", count: 2, services: ["a", 5, "b"] },
+      },
+      h.ask,
+      h.respond,
+    );
+    expect(h.shown[0]).toContain("  grounding:        2 indexed endpoint(s) from a, b\n");
+  });
+
+  test("the SAVE prompt renders the same well-formed schema and grounding", async () => {
+    const h = harness();
+    await handleToolSaveApprovalBroadcast(
+      {
+        ...BASE,
+        requestId: "s9",
+        persistence: true,
+        inputSchema: {
+          type: "object",
+          properties: { ids: { type: "array", items: { type: "number" } } },
+          required: ["ids"],
+        },
+        grounding: { kind: "endpoints", count: 1, services: ["svc"] },
+      },
+      h.ask,
+      h.respond,
+    );
+    expect(h.shown[0]).toContain("STANDING APPROVAL");
+    expect(h.shown[0]).toContain("  parameters:       ids: number[] (required)\n");
+    expect(h.shown[0]).toContain("  grounding:        1 indexed endpoint(s) from svc\n");
+    expect(h.answered).toEqual([{ requestId: "s9", approved: false }]);
+  });
+});
+
+describe("renderToolSaveOutcome -- an outcome missing its id or code still says what happened", () => {
+  test.each([
+    ["saved", "Tool saved: (unknown id). It will now survive a gateway restart.\n"],
+    [
+      "already_saved",
+      "Tool (unknown id) is already saved with these exact contents; nothing to do.\n",
+    ],
+    [
+      "repaired",
+      "Tool (unknown id)'s saved copy was repaired -- its content was already approved.\n",
+    ],
+  ])("%s with no toolId prints a placeholder, never 'undefined'", (status, expected) => {
+    const sink = fakeSink();
+    renderToolSaveOutcome({ status }, sink);
+    expect(sink.outText).toBe(expected);
+    expect(sink.errText).toBe("");
+  });
+
+  test("a refusal with no code still names itself a refusal", () => {
+    const sink = fakeSink();
+    renderToolSaveOutcome({ status: "refused" }, sink);
+    expect(sink.errText).toBe("nimbus: save refused (unknown)\n");
+    expect(sink.outText).toBe("");
+  });
+});
+
+describe("renderToolInvokeOutcome -- an absent field renders a stated placeholder", () => {
+  test("--json on an executed run with NO result prints the JSON literal null", () => {
+    const sink = fakeSink();
+    renderToolInvokeOutcome({ status: "executed", durationMs: 4 }, sink, true);
+    expect(sink.outText).toBe("null\n");
+    expect(JSON.parse(sink.outText)).toBeNull();
+    // --json prints nothing but the result -- not even the duration.
+    expect(sink.errText).toBe("");
+  });
+
+  test("a failed run with no error text says 'unknown error'", () => {
+    const sink = fakeSink();
+    renderToolInvokeOutcome({ status: "failed" }, sink, false);
+    expect(sink.errText).toBe("nimbus: unknown error\n");
+    expect(sink.outText).toBe("");
+  });
+
+  test("a refusal with no code and an EMPTY reason prints no blank reason line", () => {
+    const sink = fakeSink();
+    renderToolInvokeOutcome({ status: "refused", reason: "" }, sink, false);
+    expect(sink.errText).toBe("nimbus: refused (unknown)\n");
+  });
+});
+
+describe("runTool list -- a saved tool's health fields are read from the wire", () => {
+  const WIRE = {
+    tools: [
+      {
+        toolId: "tg_dis",
+        toolName: "t1",
+        description: "d1",
+        approvedHosts: [],
+        credentialHosts: [],
+        approvedAt: 0,
+        saved: true,
+        needsCredentials: true,
+        disabledReason: "pubkey_rotated",
+      },
+      {
+        // Truthy-but-not-true and non-string values must read as the SAFER, healthy state.
+        toolId: "tg_odd",
+        toolName: "t2",
+        description: "d2",
+        approvedHosts: [],
+        credentialHosts: [],
+        approvedAt: 0,
+        saved: "yes",
+        needsCredentials: 1,
+        disabledReason: 42,
+      },
+    ],
+  };
+
+  function listDeps() {
+    return fakeDeps({
+      runWithClient: async (fn) => fn({ onNotification: () => {}, call: async () => WIRE }),
+    });
+  }
+
+  test("a disabledReason on the wire is shown, and outranks needs-credentials", async () => {
+    const h = listDeps();
+    await runTool(["list"], h.d);
+    const text = h.out.join("");
+    expect(text).toContain("  tg_dis  t1 — d1  (saved)  [DISABLED: pubkey_rotated]\n");
+    expect(text).not.toContain("needs credentials");
+    expect(text).toContain("  tg_odd  t2 — d2  (ephemeral)\n");
+    expect(text).not.toContain("DISABLED: 42");
+    expect(h.codes).toEqual([]);
+  });
+
+  test("--json carries the validated fields, never the malformed raw ones", async () => {
+    const h = listDeps();
+    await runTool(["list", "--json"], h.d);
+    const entries = JSON.parse(h.out.join("")) as Array<Record<string, unknown>>;
+    expect(
+      entries.map((e) => [e["toolId"], e["saved"], e["needsCredentials"], e["disabledReason"]]),
+    ).toEqual([
+      ["tg_dis", true, true, "pubkey_rotated"],
+      ["tg_odd", false, false, null],
+    ]);
   });
 });

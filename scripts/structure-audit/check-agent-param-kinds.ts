@@ -24,6 +24,24 @@ const VALIDATOR_HEADER_RE = /^function (require\w+)\(/;
 const DOT_TYPEOF_RE = /typeof\s+p\.(\w+)\s*(?:!==|===)\s*"(\w+)"/g;
 /** `typeof p["field"] !== "kind"` or `typeof p["field"] === "kind"` — `janitor`'s bracket form. */
 const BRACKET_TYPEOF_RE = /typeof\s+p\["(\w+)"\]\s*(?:!==|===)\s*"(\w+)"/g;
+/**
+ * `agents-rpc.ts`'s shared field validators, by the one kind each checks. Their `typeof` runs
+ * inside the helper, on its own parameter, where the two regexes above cannot see it — so a
+ * `helper(p.field, …)` CALL is the evidence. A new `optional*` helper there must be added here, or
+ * every field it validates drops out of this audit while the audit still reports clean; the test
+ * file pins that. Unlike those two, this pattern is matched against a validator's WHOLE span (see
+ * `parseValidatorFields`), because `\s*` must reach across the line break the formatter puts after
+ * the `(` of a call too long for one line.
+ */
+export const HELPER_TO_KIND: Readonly<Record<string, ParamKind>> = Object.freeze({
+  optionalSinceMs: "number",
+  optionalBoundedString: "string",
+  optionalPositiveInteger: "number",
+});
+const HELPER_CALL_RE = new RegExp(
+  `\\b(${Object.keys(HELPER_TO_KIND).join("|")})\\(\\s*p\\.(\\w+)`,
+  "g",
+);
 
 const TYPEOF_TO_KIND: Readonly<Record<string, ParamKind>> = Object.freeze({
   string: "string",
@@ -76,7 +94,12 @@ export interface ParsedValidator {
  * and a deliberately naive running brace balance — every `{`/`}` CHARACTER counts, comments and
  * template-literal `${…}` interpolations included — to find where that function's body ends. Every
  * `typeof p.field`/`typeof p["field"]` comparison inside that span, in either polarity, is recorded
- * against it. This is a line-walker, not a parser: it does not tokenize strings or comments, and it
+ * against it, and so is every `HELPER_TO_KIND` helper called on `p.field` (`optionalSinceMs(p.field`
+ * and its siblings) — those calls matched over the span's joined text rather than line by line,
+ * so a call the formatter wrapped after its `(` still counts. The span ends as soon as the running
+ * brace count is back to zero — which a signature that wraps before its body's `{` reaches on its
+ * very first line, so such a validator (today `requireOncallParams`) is recorded with no fields at
+ * all. This is a line-walker, not a parser: it does not tokenize strings or comments, and it
  * relies on every `{`/`}` in the file occurring in a properly nested pair (true of this file's
  * style today — template interpolations are the only source of "incidental" braces, and each `${`
  * is always closed on the same line). CODE REVIEW NOTE: a future edit that puts an unbalanced brace
@@ -87,7 +110,8 @@ export interface ParsedValidator {
  * This walker CANNOT see a field validated via a local alias (`janitor.idleDays`, checked as
  * `typeof idleDaysRaw`, never `typeof p.idleDays`), a field with no `typeof` check at all
  * (`janitor.allowGaps`, `decisions.explain`), or a field validated inside a DIFFERENT function that
- * the owning validator merely delegates to — `ghost`/`conflicts`/`huddle`'s `namespace`/
+ * the owning validator merely delegates to, other than through a `HELPER_TO_KIND` helper —
+ * `ghost`/`conflicts`/`huddle`'s `namespace`/
  * `namespaces` (checked by the shared `parseNamespaces` helper, on a loop variable, never on
  * `p.namespace`) and `why`'s `ref`/`line` (checked by `requireWhyRefParams`, a function
  * `requireWhyParams` calls rather than inlines). None of that is a bug to work around: see
@@ -101,9 +125,17 @@ export function parseValidatorFields(source: string): Record<string, ParsedValid
   let currentName: string | null = null;
   let depth = 0;
   let fields: Record<string, ParamKind> = {};
+  /** The current validator's lines, for the helper-call match, which must cross line breaks. */
+  let span: string[] = [];
 
   const finish = (): void => {
     if (currentName === null) return;
+    const text = span.join("\n");
+    HELPER_CALL_RE.lastIndex = 0;
+    for (let m = HELPER_CALL_RE.exec(text); m !== null; m = HELPER_CALL_RE.exec(text)) {
+      const kind = HELPER_TO_KIND[m[1] as string];
+      if (kind !== undefined) fields[m[2] as string] = kind;
+    }
     const agents = deriveAgentNames(currentName);
     result[currentName] = {
       agent: agents.length === 1 ? (agents[0] as string) : agents,
@@ -111,6 +143,7 @@ export function parseValidatorFields(source: string): Record<string, ParsedValid
     };
     currentName = null;
     fields = {};
+    span = [];
   };
 
   for (const line of lines) {
@@ -120,7 +153,9 @@ export function parseValidatorFields(source: string): Record<string, ParsedValid
       currentName = header[1] as string;
       depth = 0;
       fields = {};
+      span = [];
     }
+    span.push(line);
 
     DOT_TYPEOF_RE.lastIndex = 0;
     for (let m = DOT_TYPEOF_RE.exec(line); m !== null; m = DOT_TYPEOF_RE.exec(line)) {

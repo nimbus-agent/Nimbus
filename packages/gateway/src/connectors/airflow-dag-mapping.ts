@@ -1,3 +1,4 @@
+import { namedTags, trimTrailingSlash } from "./_lib/field-helpers.ts";
 import type { MappedRow } from "./mapped-row.ts";
 import { asRecord, stringField } from "./unknown-record.ts";
 
@@ -9,10 +10,6 @@ export interface AirflowMappingContext {
 export type AirflowMappedRow = MappedRow<"airflow", "dag">;
 
 const TITLE_MAX = 200;
-
-function trimTrailingSlash(s: string): string {
-  return s.endsWith("/") ? s.slice(0, -1) : s;
-}
 
 export function dagUrl(baseUrl: string, dagId: string): string {
   return `${trimTrailingSlash(baseUrl)}/dags/${encodeURIComponent(dagId)}/grid`;
@@ -38,24 +35,6 @@ function owners(raw: unknown): string[] {
     }
   }
   return out;
-}
-
-function tagNames(raw: unknown): string[] {
-  if (!Array.isArray(raw)) {
-    return [];
-  }
-  const names: string[] = [];
-  for (const t of raw) {
-    const row = asRecord(t);
-    if (row === undefined) {
-      continue;
-    }
-    const name = stringField(row, "name");
-    if (name !== undefined && name !== "") {
-      names.push(name);
-    }
-  }
-  return names;
 }
 
 /** Airflow schedule_interval is `{ __type, value }`; surface the human-readable value. */
@@ -94,7 +73,7 @@ export function mapAirflowDagToItem(
   const description = stringField(row, "description") ?? null;
   const fileloc = stringField(row, "fileloc") ?? null;
   const ownerList = owners(row["owners"]);
-  const tags = tagNames(row["tags"]);
+  const tags = namedTags(row["tags"]);
   const schedule = scheduleInterval(row["schedule_interval"]);
   const nextDagrun = parseIsoMs(row["next_dagrun"]);
   const lastParsedTime = parseIsoMs(row["last_parsed_time"]);

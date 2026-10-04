@@ -157,6 +157,27 @@ describe("runTest dispatcher", () => {
     await runTest([tmpDir]);
     expect(out.stdout).toContain("Extension contract OK");
   });
+
+  // Regression: `runContractTests` is async and rejects on a violation, but it was called without
+  // `await` — so a manifest that breaks the contract still printed "Extension contract OK." and
+  // the violation surfaced only as an unhandled rejection after the command had "passed".
+  it("rejects with the violation, and never prints OK, when the manifest breaks the contract", async () => {
+    const manifest = {
+      id: "com.test.extension",
+      displayName: "test ext",
+      version: "0.1.0",
+      description: "Manifest requesting a permission the contract does not allow",
+      author: "tester",
+      entrypoint: "dist/index.js",
+      runtime: "bun" as const,
+      permissions: ["root"],
+      hitlRequired: [],
+      minNimbusVersion: "0.1.0",
+    };
+    writeFileSync(join(tmpDir, MANIFEST), JSON.stringify(manifest), "utf8");
+    await expect(runTest([tmpDir])).rejects.toThrow(/invalid manifest\.permissions entry: root/);
+    expect(out.stdout).not.toContain("Extension contract OK");
+  });
 });
 
 function mockSpawnEmitting(event: "close" | "error", arg: number | Error): void {

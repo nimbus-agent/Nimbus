@@ -5,6 +5,7 @@ import {
 } from "../sync/pass-cursor-sync-result.ts";
 import { type Syncable, type SyncContext, type SyncResult, syncNoopResult } from "../sync/types.ts";
 import { connectorFetch } from "./_lib/fetch-outcome.ts";
+import { upsertMapped } from "./_lib/paginated-sync.ts";
 import { encodeNimbusJsonCursor } from "./nimbus-json-cursor.ts";
 import { mapSnykAggregatedIssueToItem } from "./snyk-issue-mapping.ts";
 import { asRecord, stringField } from "./unknown-record.ts";
@@ -117,15 +118,9 @@ async function ingestProjectIssues(
   if (issuesOutcome.kind !== "ok") {
     return { upserted: 0, bytes: issuesOutcome.bytes };
   }
-  let upserted = 0;
-  for (const issue of extractIssues(issuesOutcome.parsed)) {
-    const mapped = mapSnykAggregatedIssueToItem(issue, { orgId, projectId, syncedAt: now });
-    if (mapped === null) {
-      continue;
-    }
-    ctx.upsertItem(mapped);
-    upserted += 1;
-  }
+  const upserted = upsertMapped(ctx, extractIssues(issuesOutcome.parsed), (issue) =>
+    mapSnykAggregatedIssueToItem(issue, { orgId, projectId, syncedAt: now }),
+  );
   return { upserted, bytes: issuesOutcome.bytes };
 }
 
@@ -146,7 +141,7 @@ async function ingestOrgProjects(
   let upserted = 0;
   let bytes = projectsOutcome.bytes;
   for (const projectId of extractProjectIds(projectsOutcome.parsed)) {
-    const tally = await ingestProjectIssues(ctx, token, orgId, projectId, now);
+    const tally = await ingestProjectIssues(ctx, token, orgId, projectId, now); // NOSONAR S9382: one project at a time through the shared Snyk rate limiter - an org's project list is uncapped, so Promise.all would be an unbounded burst
     upserted += tally.upserted;
     bytes += tally.bytes;
   }
@@ -179,7 +174,7 @@ export function createSnykSyncable(options: SnykSyncableOptions): Syncable {
       let totalBytes = orgsOutcome.bytes;
 
       for (const orgId of extractOrgIds(orgsOutcome.parsed)) {
-        const tally = await ingestOrgProjects(ctx, token, orgId, now);
+        const tally = await ingestOrgProjects(ctx, token, orgId, now); // NOSONAR S9382: one org at a time through the shared Snyk rate limiter - each org fans out to one request per project, so concurrent orgs would multiply an already uncapped burst
         upserted += tally.upserted;
         totalBytes += tally.bytes;
       }

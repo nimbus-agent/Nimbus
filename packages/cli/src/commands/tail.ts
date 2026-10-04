@@ -33,6 +33,23 @@ function isCategory(v: string): v is TailCategory {
   return (ALL_CATEGORIES as readonly string[]).includes(v);
 }
 
+/**
+ * Add one `--filter` value's comma-separated categories to `picked`, first-seen order, deduped
+ * across every `--filter` given. Blank parts are skipped; an unknown name fails fast with the
+ * valid set.
+ */
+function addFilterCategories(raw: string, picked: TailCategory[]): void {
+  for (const part of raw.split(",").map((s) => s.trim())) {
+    if (part === "") continue;
+    if (!isCategory(part)) {
+      throw new Error(
+        `Unknown --filter category: ${part}\nValid: ${ALL_CATEGORIES.join(", ")}\n${USAGE}`,
+      );
+    }
+    if (!picked.includes(part)) picked.push(part);
+  }
+}
+
 export function parseTailArgs(args: string[]): TailCliArgs {
   const picked: TailCategory[] = [];
   let json = false;
@@ -50,15 +67,7 @@ export function parseTailArgs(args: string[]): TailCliArgs {
     } else if (a === "--filter") {
       sawFilterFlag = true;
       const raw = flagValue(args, i, "--filter");
-      for (const part of raw.split(",").map((s) => s.trim())) {
-        if (part === "") continue;
-        if (!isCategory(part)) {
-          throw new Error(
-            `Unknown --filter category: ${part}\nValid: ${ALL_CATEGORIES.join(", ")}\n${USAGE}`,
-          );
-        }
-        if (!picked.includes(part)) picked.push(part);
-      }
+      addFilterCategories(raw, picked);
       i += 1;
     } else if (a === "--help" || a === "-h") {
       throw new Error(USAGE);
@@ -130,21 +139,42 @@ function categoryOf(method: string, params: unknown): TailCategory | null {
   return null;
 }
 
-export function renderEvent(method: string, params: unknown): string | null {
-  const o = rec(params);
-  if (o === null) return null;
+/**
+ * `connector.healthChanged`, in the desktop's field names; `null` unless both `name` and `health`
+ * are strings.
+ */
+function renderHealthChanged(o: Record<string, unknown>): string | null {
+  const name = str(o, "name");
+  const health = str(o, "health");
+  if (name === null || health === null) return null;
+  const from = str(o, "fromState") ?? "unknown";
+  const reason = str(o, "reason");
+  const tail = reason === null ? "" : ` (${oneLine(reason)})`;
+  return `${ts(o["occurredAt"])} [connector] ${name}: ${from} -> ${health}${tail}`;
+}
 
-  if (method === "connector.healthChanged") {
-    const name = str(o, "name");
-    const health = str(o, "health");
-    if (name === null || health === null) return null;
-    const from = str(o, "fromState") ?? "unknown";
-    const reason = str(o, "reason");
-    const tail = reason === null ? "" : ` (${oneLine(reason)})`;
-    return `${ts(o["occurredAt"])} [connector] ${name}: ${from} -> ${health}${tail}`;
-  }
+/**
+ * `ExtensionStateChangedPayload.error` must not be dropped: it's what lets
+ * `extension.update`'s ten non-applied outcomes (signature check failed, downgrade refused,
+ * an update already in flight, ...) read as anything other than one indistinguishable
+ * "(failed)". Omitted cleanly when the field is absent, and entirely on success.
+ */
+function extensionFailureSuffix(payload: Record<string, unknown>): string {
+  if (payload["ok"] === true) return "";
+  const error = str(payload, "error");
+  return error === null ? " (failed)" : ` (failed: ${oneLine(error)})`;
+}
 
-  if (method !== "gateway.event") return null;
+/** `hitl.resolved`: the verdict, plus the reason (collapsed to one line) when one was given. */
+function renderHitlResolved(at: string, payload: Record<string, unknown>): string {
+  const verdict = payload["approved"] === true ? "approved" : "rejected";
+  const reason = str(payload, "reason");
+  const suffix = reason === null ? "" : ` — ${oneLine(reason)}`;
+  return `${at} [hitl]      ${str(payload, "requestId") ?? "?"}: ${verdict}${suffix}`;
+}
+
+/** One `gateway.event` envelope, by its `kind`; `null` only when the envelope has no `kind`. */
+function renderGatewayEvent(o: Record<string, unknown>): string | null {
   const kind = str(o, "kind");
   if (kind === null) return null;
   const payload = rec(o["payload"]) ?? {};
@@ -161,23 +191,13 @@ export function renderEvent(method: string, params: unknown): string | null {
     return `${at} [watcher]   ${str(payload, "name") ?? "?"}: ${oneLine(str(payload, "summary") ?? "")}`;
   }
   if (kind === "extension.stateChanged") {
-    const ok = payload["ok"] === true;
-    const error = str(payload, "error");
-    // `ExtensionStateChangedPayload.error` must not be dropped: it's what lets
-    // `extension.update`'s ten non-applied outcomes (signature check failed, downgrade refused,
-    // an update already in flight, ...) read as anything other than one indistinguishable
-    // "(failed)". Omitted cleanly when the field is absent.
-    const suffix = ok ? "" : error === null ? " (failed)" : ` (failed: ${oneLine(error)})`;
-    return `${at} [extension] ${str(payload, "extensionId") ?? "?"}: ${str(payload, "action") ?? "?"}${suffix}`;
+    return `${at} [extension] ${str(payload, "extensionId") ?? "?"}: ${str(payload, "action") ?? "?"}${extensionFailureSuffix(payload)}`;
   }
   if (kind === "hitl.requested") {
     return `${at} [hitl]      ${str(payload, "requestId") ?? "?"}: requested — ${str(payload, "actionType") ?? "?"}`;
   }
   if (kind === "hitl.resolved") {
-    const verdict = payload["approved"] === true ? "approved" : "rejected";
-    const reason = str(payload, "reason");
-    const suffix = reason === null ? "" : ` — ${oneLine(reason)}`;
-    return `${at} [hitl]      ${str(payload, "requestId") ?? "?"}: ${verdict}${suffix}`;
+    return renderHitlResolved(at, payload);
   }
 
   if (kind === "oncall.briefPushed") {
@@ -191,6 +211,14 @@ export function renderEvent(method: string, params: unknown): string | null {
   // Never dropped: a stream that discards what it does not recognise is the same failure as a
   // brief that renders a missing section as empty.
   return `${at} [unknown: ${kind}] ${JSON.stringify(payload)}`;
+}
+
+export function renderEvent(method: string, params: unknown): string | null {
+  const o = rec(params);
+  if (o === null) return null;
+  if (method === "connector.healthChanged") return renderHealthChanged(o);
+  if (method !== "gateway.event") return null;
+  return renderGatewayEvent(o);
 }
 
 /**

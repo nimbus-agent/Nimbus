@@ -641,4 +641,69 @@ describe("runPeople — list --not-reviewed", () => {
     const parsed: unknown = JSON.parse(out.stdout);
     expect(Array.isArray(parsed)).toBe(true);
   });
+
+  it("--json with no --since records the window as ALL TIME from 0, not a missing field", async () => {
+    const mock = createMockIpcClient([
+      { people: [], meta: { limit: 100, total: 0 }, gaps: { excludedNoGraphEntity: 0 } },
+    ]);
+    setFixture({ gatewayState: { socketPath: FAKE_SOCKET_PATH }, ipcClient: mock.client });
+    await runPeople(["list", "--not-reviewed", "--json"]);
+    const parsed = JSON.parse(out.stdout) as Record<string, unknown>;
+    expect(parsed["window"]).toEqual({ sinceMs: 0, allTime: true });
+  });
+
+  it("gaps with no meta print the gap line but no batch caveat", async () => {
+    const mock = createMockIpcClient([{ people: [], gaps: { excludedNoGraphEntity: 4 } }]);
+    setFixture({ gatewayState: { socketPath: FAKE_SOCKET_PATH }, ipcClient: mock.client });
+    await runPeople(["list", "--not-reviewed"]);
+    expect(out.stdout).toContain("Gaps: 4 excluded (no graph entity of the required type)\n");
+    expect(out.stdout).not.toContain("row(s) in this batch");
+  });
+});
+
+describe("runPeople — list --explain", () => {
+  const EXPLAIN = {
+    sql: "SELECT id FROM person WHERE linked = ?",
+    params: [1],
+    substrate: { probeSql: "SELECT COUNT(*) FROM graph_edge", passed: true, rowCount: 12 },
+  };
+
+  beforeEach(() => {
+    out.reset();
+    process.exitCode = 0;
+  });
+  afterEach(() => {
+    clearFixture();
+    process.exitCode = 0;
+  });
+
+  it("asks the gateway for the explain block and prints it after the people", async () => {
+    const mock = createMockIpcClient([{ people: [fakePerson()], explain: EXPLAIN }]);
+    setFixture({ gatewayState: { socketPath: FAKE_SOCKET_PATH }, ipcClient: mock.client });
+    await runPeople(["list", "--explain"]);
+    expect(mock.calls).toEqual([
+      { method: "people.list", params: { unlinkedOnly: false, limit: 100, explain: true } },
+    ]);
+    expect(out.stdout).toContain(
+      "\n── explain ──\nsql:    SELECT id FROM person WHERE linked = ?\nparams: [1]\n" +
+        "substrate probe: SELECT COUNT(*) FROM graph_edge\n  passed=true rowCount=12\n",
+    );
+    // The person row comes first; the block is printed beneath it. The row's own position is
+    // asserted first: indexOf's -1 for a row that was never printed would satisfy the ordering.
+    const rowAt = out.stdout.indexOf("p1  linked  Alice  alice@example.com\n");
+    expect(rowAt).toBeGreaterThanOrEqual(0);
+    expect(rowAt).toBeLessThan(out.stdout.indexOf("── explain ──"));
+    // --explain alone is not --not-reviewed: no window line.
+    expect(out.stdout).not.toContain("Window:");
+  });
+
+  it("--explain --json folds the block into ONE document, with no window for a non-negation call", async () => {
+    const mock = createMockIpcClient([{ people: [fakePerson()], explain: EXPLAIN }]);
+    setFixture({ gatewayState: { socketPath: FAKE_SOCKET_PATH }, ipcClient: mock.client });
+    await runPeople(["list", "--explain", "--json"]);
+    const parsed = JSON.parse(out.stdout) as Record<string, unknown>;
+    expect(parsed["explain"]).toEqual(EXPLAIN);
+    expect("window" in parsed).toBe(false);
+    expect(out.stdout).not.toContain("── explain ──");
+  });
 });

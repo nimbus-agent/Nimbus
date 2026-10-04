@@ -8,8 +8,9 @@ import { extensionProcessEnv } from "../extensions/spawn-env.ts";
 import { MEDIA_EXTENSIONS, mediaExtensionModality } from "../multimodal/media-source-registry.ts";
 import type { MediaModality } from "../multimodal/media-types.ts";
 import { type BlameRow, parseBlamePorcelain } from "../security/blame-store.ts";
+import { syncPassCursorSuccess } from "../sync/pass-cursor-sync-result.ts";
 import { type Syncable, type SyncContext, type SyncResult, syncNoopResult } from "../sync/types.ts";
-import { decodeNimbusJsonCursorPayload, encodeNimbusJsonCursor } from "./nimbus-json-cursor.ts";
+import { decodeNimbusJsonCursorObject, encodeNimbusJsonCursor } from "./nimbus-json-cursor.ts";
 
 const SERVICE_ID = "filesystem";
 const CURSOR_PREFIX = "nimbus-fsv2:";
@@ -51,19 +52,10 @@ function decodeCodeMtimes(raw: unknown): Record<string, CodeMtimeMap> {
 }
 
 function decodeCursor(raw: string | null): FsCursorV1 {
-  if (raw === null || raw === "") {
+  const rec = decodeNimbusJsonCursorObject(raw, CURSOR_PREFIX);
+  if (rec === null) {
     return emptyCursor();
   }
-  const parsed = decodeNimbusJsonCursorPayload(raw, CURSOR_PREFIX);
-  if (
-    parsed === undefined ||
-    parsed === null ||
-    typeof parsed !== "object" ||
-    Array.isArray(parsed)
-  ) {
-    return emptyCursor();
-  }
-  const rec = parsed as Record<string, unknown>;
   const tipsRaw = rec["tips"];
   const tips: Record<string, string> = {};
   if (tipsRaw !== null && typeof tipsRaw === "object" && !Array.isArray(tipsRaw)) {
@@ -455,7 +447,7 @@ async function syncFilesystemCodeSymbolsForRoot(
     });
     upserted += fileResult.upserted;
     if (gitAware && fileResult.blameRanges.length > 0) {
-      await blameIndexedExcerptRanges(ctx, root, relNorm, fileResult.blameRanges);
+      await blameIndexedExcerptRanges(ctx, root, relNorm, fileResult.blameRanges); // NOSONAR S9382: one `git blame` subprocess at a time (one per indexed file of the root), and this file's mtime is recorded below only once its blame has landed
     }
     // Recorded only here, once the file has actually been read and indexed — the single point
     // that makes "this mtime is in the map" mean "this content is in the index".
@@ -867,6 +859,73 @@ function extractExportedSymbols(
   return out;
 }
 
+/** Run-wide state: the decoded cursor every root reads, and the next-cursor maps each root fills. */
+interface FilesystemRunState {
+  readonly prev: FsCursorV1;
+  readonly nextTips: Record<string, string>;
+  readonly nextCodeMtimes: Record<string, CodeMtimeMap>;
+  readonly now: number;
+}
+
+/**
+ * One configured root's share of a run, in a fixed order: git commits, package deps, code
+ * symbols, then media. A root that is missing or not a directory contributes nothing.
+ */
+async function syncFilesystemRoot(
+  ctx: SyncContext,
+  rootCfg: NimbusFilesystemRootToml,
+  run: FilesystemRunState,
+): Promise<{ upserted: number; bytes: number }> {
+  const root = rootCfg.path;
+  if (!existsSync(root) || !statSync(root).isDirectory()) {
+    return { upserted: 0, bytes: 0 };
+  }
+  const { prev, now } = run;
+  const rk = rootKey(root);
+  let upserted = 0;
+  let bytes = 0;
+
+  if (rootCfg.gitAware) {
+    const g = await syncFilesystemGitCommits(
+      ctx,
+      root,
+      rk,
+      now,
+      run.nextTips,
+      prev.tips[`git:${root}`],
+    );
+    upserted += g.upserted;
+    bytes += g.bytes;
+  }
+
+  if (rootCfg.dependencyGraph) {
+    const d = syncFilesystemPackageDeps(ctx, root, rootCfg.exclude, rk, now);
+    upserted += d.upserted;
+    bytes += d.bytes;
+  }
+
+  if (rootCfg.codeIndex) {
+    const c = await syncFilesystemCodeSymbolsForRoot(
+      ctx,
+      root,
+      rootCfg.exclude,
+      rk,
+      now,
+      prev.codeMtimes[rk] ?? {},
+    );
+    upserted += c.upserted;
+    bytes += c.bytes;
+    run.nextCodeMtimes[rk] = c.mtimes;
+  }
+
+  if (rootCfg.mediaIndex) {
+    const m = syncFilesystemMediaForRoot(ctx, root, rootCfg.exclude, MEDIA_MAX_FILES_PER_ROOT, now);
+    upserted += m.upserted;
+    bytes += m.bytes;
+  }
+  return { upserted, bytes };
+}
+
 export type FilesystemV2SyncableOptions = {
   roots: readonly NimbusFilesystemRootToml[];
 };
@@ -891,68 +950,20 @@ export function createFilesystemV2Syncable(options: FilesystemV2SyncableOptions)
       let upserted = 0;
       const now = Date.now();
       let bytes = 0;
+      const run: FilesystemRunState = { prev, nextTips, nextCodeMtimes, now };
 
       for (const rootCfg of options.roots) {
-        const root = rootCfg.path;
-        if (!existsSync(root) || !statSync(root).isDirectory()) {
-          continue;
-        }
-        const rk = rootKey(root);
-
-        if (rootCfg.gitAware) {
-          const g = await syncFilesystemGitCommits(
-            ctx,
-            root,
-            rk,
-            now,
-            nextTips,
-            prev.tips[`git:${root}`],
-          );
-          upserted += g.upserted;
-          bytes += g.bytes;
-        }
-
-        if (rootCfg.dependencyGraph) {
-          const d = syncFilesystemPackageDeps(ctx, root, rootCfg.exclude, rk, now);
-          upserted += d.upserted;
-          bytes += d.bytes;
-        }
-
-        if (rootCfg.codeIndex) {
-          const c = await syncFilesystemCodeSymbolsForRoot(
-            ctx,
-            root,
-            rootCfg.exclude,
-            rk,
-            now,
-            prev.codeMtimes[rk] ?? {},
-          );
-          upserted += c.upserted;
-          bytes += c.bytes;
-          nextCodeMtimes[rk] = c.mtimes;
-        }
-
-        if (rootCfg.mediaIndex) {
-          const m = syncFilesystemMediaForRoot(
-            ctx,
-            root,
-            rootCfg.exclude,
-            MEDIA_MAX_FILES_PER_ROOT,
-            now,
-          );
-          upserted += m.upserted;
-          bytes += m.bytes;
-        }
+        const r = await syncFilesystemRoot(ctx, rootCfg, run); // NOSONAR S9382: one root at a time - each root's pass spawns git subprocesses (`git log`, a `git blame` per changed file), so concurrent roots would multiply the spawns and interleave the index writes
+        upserted += r.upserted;
+        bytes += r.bytes;
       }
 
-      return {
-        cursor: encodeCursor({ tips: nextTips, codeMtimes: nextCodeMtimes }),
-        itemsUpserted: upserted,
-        itemsDeleted: 0,
-        hasMore: false,
-        durationMs: Math.round(performance.now() - t0),
-        bytesTransferred: bytes,
-      };
+      return syncPassCursorSuccess(
+        t0,
+        bytes,
+        encodeCursor({ tips: nextTips, codeMtimes: nextCodeMtimes }),
+        upserted,
+      );
     },
   };
 }

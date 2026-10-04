@@ -60,6 +60,30 @@ describe("[oncall.push] config", () => {
     expect(multi.retentionDays).toBe(30);
   });
 
+  test("the section ends at the next header; unknown keys and malformed values keep the value in effect", () => {
+    const c = parseNimbusTomlOncallPush(
+      [
+        "[oncall.push]",
+        "enabled = true",
+        'severities = ["P1"]',
+        "retention_days = 30",
+        "colour = blue", // an unknown key
+        "enabled = yes", // not a TOML boolean
+        "retention_days = 1day", // not a whole integer
+        'severities = "P2"', // not an array: the earlier ["p1"] stands, not the default
+        "[fleet]",
+        "enabled = false",
+        "retention_days = 7",
+      ].join("\n"),
+    );
+    expect(c).toEqual({
+      enabled: true,
+      severities: ["p1"],
+      chatopsNamespace: "",
+      retentionDays: 30,
+    });
+  });
+
   test("load from a missing path → defaults", () => {
     const dir = mkdtempSync(join(tmpdir(), "oncall-push-toml-"));
     try {

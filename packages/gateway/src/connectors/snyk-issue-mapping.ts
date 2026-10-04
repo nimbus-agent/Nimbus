@@ -1,3 +1,4 @@
+import { pickEnum, pickStringArray } from "./_lib/field-helpers.ts";
 import { asRecord, stringField } from "./unknown-record.ts";
 
 type Severity = "critical" | "high" | "medium" | "low";
@@ -26,13 +27,6 @@ export function projectUrl(orgId: string, projectId: string): string {
   return `https://app.snyk.io/org/${orgId}/project/${projectId}`;
 }
 
-function pickSeverity(value: unknown): Severity | null {
-  if (typeof value !== "string") {
-    return null;
-  }
-  return SEVERITIES.has(value) ? (value as Severity) : null;
-}
-
 function firstString(arr: unknown): string | null {
   if (!Array.isArray(arr)) {
     return null;
@@ -43,13 +37,6 @@ function firstString(arr: unknown): string | null {
     }
   }
   return null;
-}
-
-function pickStringArray(value: unknown): string[] {
-  if (!Array.isArray(value)) {
-    return [];
-  }
-  return value.filter((v): v is string => typeof v === "string");
 }
 
 function parseIsoMs(value: unknown): number | null {
@@ -86,7 +73,7 @@ export function mapSnykAggregatedIssueToItem(
   const publishedAt = stringField(issueData, "publicationTime") ?? null;
   const modifiedAt = parseIsoMs(disclosedAt) ?? parseIsoMs(publishedAt) ?? ctx.syncedAt;
 
-  const severity = pickSeverity(issueData["severity"]);
+  const severity = pickEnum<Severity>(issueData["severity"], SEVERITIES);
   const cveId = firstString(identifiers["CVE"]);
   const pkgName = stringField(row, "pkgName") ?? null;
   const pkgVersions = pickStringArray(row["pkgVersions"]);

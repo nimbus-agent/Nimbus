@@ -5,7 +5,7 @@ import { CURRENT_SCHEMA_VERSION } from "../index/local-index.ts";
 import { runIndexedSchemaMigrations } from "../index/migrations/runner.ts";
 import { reindexConnector } from "./reindex.ts";
 
-test("metadata_only depth strips body, body_preview and body_complete together", async () => {
+test("metadata_only depth strips body, body_preview and body_complete together", () => {
   const raw = new Database(":memory:");
   runIndexedSchemaMigrations(raw, CURRENT_SCHEMA_VERSION);
   upsertIndexedItem(raw, {
@@ -25,7 +25,7 @@ test("metadata_only depth strips body, body_preview and body_complete together",
   expect(before.body).not.toBeNull();
   expect(before.body_complete).toBe(1);
 
-  await reindexConnector({
+  reindexConnector({
     index: { rawDb: raw, recordAudit: () => undefined } as never,
     service: "slack",
     depth: "metadata_only",

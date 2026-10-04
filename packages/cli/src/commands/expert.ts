@@ -97,7 +97,7 @@ export async function runExpertCli(args: string[]): Promise<void> {
       process.stderr.write(paths.demo === true ? DEMO_EMPTY_INDEX_HINT : EMPTY_INDEX_HINT);
       process.exit(1);
     }
-    process.stdout.write(`${briefTextFor(brief, paths.demo === true)}\n`);
+    process.stdout.write(`${briefTextFor(brief, paths)}\n`);
   } catch (err) {
     process.stderr.write(`${err instanceof Error ? err.message : String(err)}\n`);
     process.exit(2);

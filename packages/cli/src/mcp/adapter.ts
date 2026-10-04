@@ -4,7 +4,7 @@ import { z } from "zod";
 import { IPCClient } from "../ipc-client/index.ts";
 import { readGatewayState } from "../lib/gateway-process.ts";
 import { parseSearchRankedResponse } from "../lib/search-ranked-response.ts";
-import { getCliPlatformPaths } from "../paths.ts";
+import { type CliPlatformPaths, getCliPlatformPaths } from "../paths.ts";
 import { AGENT_TOOL_SPECS, failBriefsForClient } from "./agent-tools.ts";
 import {
   type ClosableClient,
@@ -149,7 +149,7 @@ export interface ConnectionEnv {
   /**
    * Whether this connection targets a demo-rooted gateway (`CliPlatformPaths.demo === true`).
    * Optional, defaulting to `false`, so every hand-built test `ConnectionEnv` stays valid — only
-   * `createProductionDeps()` sets it, from the real paths resolver.
+   * `createProductionDeps()` sets it, from its paths resolver (the real one unless injected).
    */
   demo?: boolean;
 }
@@ -299,19 +299,49 @@ export function createDeps(env: ConnectionEnv): AdapterDeps {
   };
 }
 
-/** Production deps: real gateway-state read + real IPCClient connect. */
-export function createProductionDeps(): AdapterDeps {
+/**
+ * The real I/O `createProductionDeps` composes: the CLI paths resolver, the gateway-state read and
+ * the IPC client class.
+ *
+ * A parameter so the COMPOSITION — which paths the state is read from, which socket the client is
+ * opened on, that it is connected before anything is sent, where the demo flag comes from — is
+ * testable in-process. `test/helpers/cli-mocks.ts` replaces both backing modules with a
+ * process-global `mock.module` for the rest of any combined `bun test` run, so a test cannot rely on
+ * reaching the real ones; `test/fixtures/mcp-production-deps-probe.ts` drives the DEFAULT end to
+ * end in a fresh process instead.
+ */
+export interface ProductionIo {
+  readonly paths: () => CliPlatformPaths;
+  readonly readGatewayState: (
+    paths: CliPlatformPaths,
+  ) => Promise<{ readonly socketPath: string } | undefined>;
+  readonly IpcClient: new (socketPath: string) => IpcCallable & { connect(): Promise<void> };
+}
+
+/**
+ * The real {@link ProductionIo}. A function rather than a module-level object, so each call reads
+ * the imported bindings at that moment — exactly as the closures did before `io` existed.
+ */
+function productionIo(): ProductionIo {
+  return { paths: getCliPlatformPaths, readGatewayState, IpcClient: IPCClient };
+}
+
+/**
+ * Production deps: real gateway-state read + real IPCClient connect. The default `io` is built
+ * per call, by {@link productionIo}.
+ */
+export function createProductionDeps(io: ProductionIo = productionIo()): AdapterDeps {
   return createDeps({
     readState: async () => {
-      const s = await readGatewayState(getCliPlatformPaths());
+      const s = await io.readGatewayState(io.paths());
       return s === undefined ? undefined : { socketPath: s.socketPath };
     },
     connect: async (socketPath: string) => {
-      const client = new IPCClient(socketPath);
+      const client = new io.IpcClient(socketPath);
       await client.connect();
       return client;
     },
-    demo: getCliPlatformPaths().demo === true,
+    demo: io.paths().demo === true,
   });
 }
 

@@ -108,8 +108,8 @@ describe("runScaffold dispatcher", () => {
     rmSync(tmpDir, { recursive: true, force: true });
   });
 
-  it("creates the directory layout and prints success", async () => {
-    await runScaffold(["extension", "my.ext"]);
+  it("creates the directory layout and prints success", () => {
+    runScaffold(["extension", "my.ext"]);
     const dir = join(tmpDir, "my.ext");
     expect(existsSync(dir)).toBe(true);
     expect(existsSync(join(dir, EXTENSION_MANIFEST_FILENAME))).toBe(true);
@@ -123,7 +123,7 @@ describe("runScaffold dispatcher", () => {
     expect(out.stdout).toContain("Scaffolded extension at ./my.ext/");
   });
 
-  it("propagates parseScaffoldArgs errors", async () => {
-    await expect(runScaffold([])).rejects.toThrow(/Usage: nimbus scaffold extension/);
+  it("propagates parseScaffoldArgs errors", () => {
+    expect(() => runScaffold([])).toThrow(/Usage: nimbus scaffold extension/);
   });
 });

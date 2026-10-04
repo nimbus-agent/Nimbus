@@ -480,12 +480,16 @@ static int mode_revoke_grants(int argc, wchar_t **argv) {
     const wchar_t *profile = NULL;
     const wchar_t *paths[MAX_RELEASE_PATHS];
     int npaths = 0;
-    for (int i = 2; i < argc; i++) {
+    /* Every accepted option is a flag AND its value, so the loop steps by two in its header and
+     * the body only READS `argv[i + 1]` — the counter is never moved behind an `argv[++i]` (S886).
+     * Same grammar as before: a known flag that is the LAST token fails its `i + 1 < argc` guard
+     * and falls through to the "unexpected arg" refusal, and every refusal still returns at once. */
+    for (int i = 2; i < argc; i += 2) {
         if (wcscmp(argv[i], L"--profile") == 0 && i + 1 < argc) {
-            profile = argv[++i];
+            profile = argv[i + 1];
         } else if (wcscmp(argv[i], L"--path") == 0 && i + 1 < argc) {
             if (npaths >= MAX_RELEASE_PATHS) { err(L"too many --path"); return 64; }
-            paths[npaths++] = argv[++i];
+            paths[npaths++] = argv[i + 1];
         } else {
             err(L"unexpected arg: %s", argv[i]);
             return 64;

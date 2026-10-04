@@ -1,8 +1,10 @@
 import { Database } from "bun:sqlite";
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, jest, test } from "bun:test";
 import { appendAuditEntry } from "../db/audit-chain.ts";
 import { runIndexedSchemaMigrations } from "../index/migrations/runner.ts";
 import {
+  AUDIT_SHIP_BATCH_LIMIT,
+  AUDIT_SHIP_INTERVAL_MS,
   type AuditMetaRow,
   type AuditShipperHandle,
   currentAuditCursor,
@@ -188,5 +190,215 @@ describe("startAuditShipper", () => {
     await new Promise((r) => setTimeout(r, 90));
     // The same row is retried on each tick because the cursor never advanced.
     expect(attempts).toBeGreaterThanOrEqual(2);
+  });
+});
+
+describe("currentAuditCursor without an audit_log table", () => {
+  test("baselines at 0 instead of throwing", () => {
+    const bare = new Database(":memory:");
+    try {
+      expect(currentAuditCursor(bare)).toBe(0);
+    } finally {
+      bare.close();
+    }
+  });
+});
+
+/**
+ * The defaults — cadence, batch limit and the real `fetch`-based POST — driven deterministically:
+ * a fake clock fires each tick exactly when the test says so, and a fake `fetch` stands in for the
+ * SIEM endpoint. A tick runs synchronously up to its first await, so the POST it makes is visible
+ * the moment `advanceTimersByTime` returns; `settle()` then lets the rest of that tick (its awaits
+ * are all on already-settled promises) finish, including the cursor update.
+ */
+describe("startAuditShipper — defaults (fake clock, fake fetch)", () => {
+  const realFetch = globalThis.fetch;
+  const SHIP_TO = "https://siem.example/ingest";
+  let shipper: AuditShipperHandle | undefined;
+  let db: Database | undefined;
+
+  afterEach(() => {
+    shipper?.stop();
+    shipper = undefined;
+    jest.useRealTimers();
+    globalThis.fetch = realFetch;
+    db?.close();
+    db = undefined;
+  });
+
+  async function settle(): Promise<void> {
+    for (let i = 0; i < 20; i++) await Promise.resolve();
+  }
+
+  /**
+   * Stops the shipper, restores the real clock and yields ONE real macrotask. The interval runs each
+   * tick as `void tick()`, so a rejection the tick failed to catch stays invisible while the test
+   * only settles microtasks; bun:test reports it (failing the running test) once the event loop
+   * turns. Without this step, a "the tick swallows its failure" assertion passes even when the tick's
+   * own catch is deleted.
+   */
+  async function stopAndSurfaceEscapedRejections(): Promise<void> {
+    shipper?.stop();
+    shipper = undefined;
+    jest.useRealTimers();
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+  }
+
+  function append(target: Database, actionType: string): void {
+    appendAuditEntry(target, {
+      actionType,
+      hitlStatus: "not_required",
+      actionJson: '{"secret":"never-shipped"}',
+      timestamp: 1_000,
+    });
+  }
+
+  function lines(ndjson: string | undefined): string[] {
+    return (ndjson ?? "").split("\n").filter((l) => l !== "");
+  }
+
+  type FetchCall = { url: string; init: RequestInit | undefined };
+
+  /** Replaces `fetch` with a recorder answering every call via `respond`. */
+  function fakeFetch(respond: () => Response): FetchCall[] {
+    const calls: FetchCall[] = [];
+    globalThis.fetch = (async (input: unknown, init?: RequestInit) => {
+      calls.push({ url: String(input), init });
+      return respond();
+    }) as unknown as typeof fetch;
+    return calls;
+  }
+
+  test("ships on the default AUDIT_SHIP_INTERVAL_MS cadence, and not a millisecond before", () => {
+    db = auditDb(0);
+    jest.useFakeTimers();
+    const posted: string[] = [];
+    shipper = startAuditShipper(db, {
+      shipTo: SHIP_TO,
+      post: async (_u, ndjson) => {
+        posted.push(ndjson);
+        return true;
+      },
+    });
+    append(db, "policy.applied.cadence");
+
+    jest.advanceTimersByTime(AUDIT_SHIP_INTERVAL_MS - 1);
+    expect(posted).toEqual([]);
+    jest.advanceTimersByTime(1);
+    expect(posted).toHaveLength(1);
+    expect(posted[0]).toContain("policy.applied.cadence");
+  });
+
+  test("caps a tick at the default AUDIT_SHIP_BATCH_LIMIT rows; the remainder ships next tick", async () => {
+    db = auditDb(0);
+    jest.useFakeTimers();
+    const bodies: string[] = [];
+    shipper = startAuditShipper(db, {
+      shipTo: SHIP_TO,
+      intervalMs: 1_000,
+      post: async (_u, ndjson) => {
+        bodies.push(ndjson);
+        return true;
+      },
+    });
+    for (let i = 0; i <= AUDIT_SHIP_BATCH_LIMIT; i++) append(db, `policy.applied.${i}`);
+
+    jest.advanceTimersByTime(1_000);
+    expect(lines(bodies[0])).toHaveLength(AUDIT_SHIP_BATCH_LIMIT);
+    await settle();
+    jest.advanceTimersByTime(1_000);
+    expect(bodies).toHaveLength(2);
+    const rest = lines(bodies[1]);
+    expect(rest).toHaveLength(1);
+    expect((JSON.parse(rest[0] ?? "{}") as { id: number }).id).toBe(AUDIT_SHIP_BATCH_LIMIT + 1);
+  });
+
+  test("the default POST sends metadata-only NDJSON as application/x-ndjson; a 2xx advances the cursor", async () => {
+    db = auditDb(0);
+    jest.useFakeTimers();
+    const calls = fakeFetch(() => new Response(null, { status: 202 }));
+    shipper = startAuditShipper(db, { shipTo: SHIP_TO, intervalMs: 1_000 });
+    append(db, "policy.applied.first");
+
+    jest.advanceTimersByTime(1_000);
+    expect(calls).toHaveLength(1);
+    const first = calls[0];
+    expect(first?.url).toBe(SHIP_TO);
+    expect(first?.init?.method).toBe("POST");
+    expect(first?.init?.headers).toEqual({ "content-type": "application/x-ndjson" });
+    const body = String(first?.init?.body);
+    expect(body.endsWith("\n")).toBe(true);
+    expect((JSON.parse(lines(body)[0] ?? "{}") as { actionType: string }).actionType).toBe(
+      "policy.applied.first",
+    );
+    expect(body).not.toContain("secret");
+
+    await settle();
+    // The 202 counted as shipped: an idle tick re-sends nothing...
+    jest.advanceTimersByTime(1_000);
+    expect(calls).toHaveLength(1);
+    // ...and the next new row ships on its own.
+    append(db, "policy.applied.second");
+    jest.advanceTimersByTime(1_000);
+    expect(calls).toHaveLength(2);
+    const second = String(calls[1]?.init?.body);
+    expect(second).toContain("policy.applied.second");
+    expect(second).not.toContain("policy.applied.first");
+  });
+
+  test("a non-2xx response is a failed ship: the cursor holds and the same rows are re-sent", async () => {
+    db = auditDb(0);
+    jest.useFakeTimers();
+    const calls = fakeFetch(() => new Response("busy", { status: 503 }));
+    shipper = startAuditShipper(db, { shipTo: SHIP_TO, intervalMs: 1_000 });
+    append(db, "policy.applied.retry");
+
+    jest.advanceTimersByTime(1_000);
+    await settle();
+    jest.advanceTimersByTime(1_000);
+    expect(calls).toHaveLength(2);
+    expect(String(calls[1]?.init?.body)).toBe(String(calls[0]?.init?.body));
+    expect(String(calls[1]?.init?.body)).toContain("policy.applied.retry");
+  });
+
+  test("a fetch that throws is a failed ship, never an escaped rejection", async () => {
+    db = auditDb(0);
+    jest.useFakeTimers();
+    const attempts: string[] = [];
+    globalThis.fetch = (async (_input: unknown, init?: RequestInit) => {
+      attempts.push(String(init?.body));
+      throw new TypeError("fetch failed: ECONNREFUSED");
+    }) as unknown as typeof fetch;
+    shipper = startAuditShipper(db, { shipTo: SHIP_TO, intervalMs: 1_000 });
+    append(db, "policy.applied.offline");
+    jest.advanceTimersByTime(1_000);
+    await settle();
+    jest.advanceTimersByTime(1_000);
+    // A rejection escaping either tick fails THIS test here, rather than passing unseen.
+    await stopAndSurfaceEscapedRejections();
+
+    expect(attempts).toHaveLength(2);
+    expect(attempts[1]).toBe(attempts[0]);
+    expect(attempts[0]).toContain("policy.applied.offline");
+  });
+
+  test("a tick that throws (no audit_log table) is swallowed and posts nothing", async () => {
+    db = new Database(":memory:");
+    jest.useFakeTimers();
+    let posts = 0;
+    shipper = startAuditShipper(db, {
+      shipTo: SHIP_TO,
+      intervalMs: 1_000,
+      post: async () => {
+        posts += 1;
+        return true;
+      },
+    });
+    // The tick's first query throws ("no such table: audit_log"). The tick runs as `void tick()`, so
+    // `advanceTimersByTime` cannot throw either way: only turning the event loop shows whether the
+    // failure was swallowed or escaped.
+    jest.advanceTimersByTime(1_000);
+    await stopAndSurfaceEscapedRejections();
+    expect(posts).toBe(0);
   });
 });

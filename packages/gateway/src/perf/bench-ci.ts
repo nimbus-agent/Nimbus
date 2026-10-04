@@ -4,6 +4,7 @@ import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { medianBaseline } from "./baseline-median.ts";
+import { takeFlag } from "./bench-args.ts";
 import { GhCli } from "./bench-ci-gh.ts";
 import type { HistoryLine } from "./history-line.ts";
 import { COMMENT_MARKER_PREFIX, composePrCommentBody } from "./pr-comment-formatter.ts";
@@ -27,12 +28,6 @@ interface ParsedArgs {
   current: string;
   runner: RunnerKind;
   prevDir?: string;
-}
-
-function takeFlag(args: string[], flag: string): string | undefined {
-  const i = args.indexOf(flag);
-  if (i < 0 || i + 1 >= args.length) return undefined;
-  return args[i + 1];
 }
 
 function parseArgs(args: string[]): ParsedArgs {
@@ -98,7 +93,7 @@ async function resolveBaseline(
     let downloaded = false;
     try {
       mkdirSync(dir, { recursive: true });
-      downloaded = await gh.runDownloadArtifact({ runId: databaseId, name: artifactName, dir });
+      downloaded = await gh.runDownloadArtifact({ runId: databaseId, name: artifactName, dir }); // NOSONAR S9382: _perf.yml's scheduled runs can share a headSha, and every download writes prevDir/<headSha> - concurrent downloads would race on one directory
     } catch (err) {
       stderr(`bench-ci: gh run download (${headSha}) failed: ${errMsg(err)}; skipping`);
       continue;

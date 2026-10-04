@@ -1,5 +1,6 @@
 import type { Syncable, SyncContext } from "../sync/types.ts";
 import { connectorFetch } from "./_lib/fetch-outcome.ts";
+import { trimTrailingSlash } from "./_lib/field-helpers.ts";
 import { runSinglePassPaginatedSync } from "./_lib/paginated-sync.ts";
 import { encodeNimbusJsonCursor } from "./nimbus-json-cursor.ts";
 import { asRecord, stringField } from "./unknown-record.ts";
@@ -24,10 +25,6 @@ interface ZendeskCreds {
   readonly url: string;
   readonly email: string;
   readonly apiToken: string;
-}
-
-function trimTrailingSlash(s: string): string {
-  return s.endsWith("/") ? s.slice(0, -1) : s;
 }
 
 function zendeskBasicAuthHeader(email: string, apiToken: string): string {

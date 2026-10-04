@@ -277,6 +277,17 @@ describe("oncall pushed: remaining branches", () => {
     expect(c.calls[1]).toEqual(["oncall.pushedList", { limit: 1 }]);
   });
 
+  test("newest empty, then the off-hint lookup fails: reported on stderr, exit 1 (never a rejection)", async () => {
+    const { s, sink: k } = sink();
+    const c = fake({
+      "oncall.pushedGet": { brief: null },
+      "oncall.pushedList": new Error("gateway went away"),
+    });
+    expect(await runOncallPushedWith(c, { mode: "newest", json: false }, k, false)).toBe(1);
+    expect(s.out).toBe("No pushed briefs yet.\n");
+    expect(s.err).toBe("gateway went away\n");
+  });
+
   test("retry success calls pushedRetry with the id and renders the brief", async () => {
     const { s, sink: k } = sink();
     const c = fake({ "oncall.pushedRetry": { brief: OK } });

@@ -245,19 +245,11 @@ function parseCandidate(v: unknown, where: string): LocalCandidate {
   };
 }
 
-function parseDiscardedEntry(
-  v: unknown,
-  where: string,
-): { service: string; type: string; count: number } {
-  if (!isRecordObj(v)) bad(where);
-  return {
-    service: str(v["service"], `${where}.service`),
-    type: str(v["type"], `${where}.type`),
-    count: num(v["count"], `${where}.count`),
-  };
-}
-
-function parseSourceSummaryEntry(v: unknown, where: string): SourceSummaryEntry {
+/**
+ * A `{service, type, count}` row — the shape of both a payload's `discardedTail` entries and a
+ * ranking's `sourceSummary` entries.
+ */
+function parseServiceTypeCount(v: unknown, where: string): SourceSummaryEntry {
   if (!isRecordObj(v)) bad(where);
   return {
     service: str(v["service"], `${where}.service`),
@@ -300,7 +292,7 @@ function parseLocalContextPayload(v: unknown, where: string): LocalContextPayloa
     truncation: parseTruncation(v["truncation"], `${where}.truncation`),
     pool: arr(v["pool"], `${where}.pool`).map((c, i) => parseCandidate(c, `${where}.pool[${i}]`)),
     discardedTail: arr(v["discardedTail"], `${where}.discardedTail`).map((d, i) =>
-      parseDiscardedEntry(d, `${where}.discardedTail[${i}]`),
+      parseServiceTypeCount(d, `${where}.discardedTail[${i}]`),
     ),
   };
 }
@@ -328,7 +320,7 @@ function parseRanking(v: unknown, where: string): NonNullable<CollectedToolCall[
     totalMatches: num(v["totalMatches"], `${where}.totalMatches`),
     itemsInWindow: num(v["itemsInWindow"], `${where}.itemsInWindow`),
     sourceSummary: arr(v["sourceSummary"], `${where}.sourceSummary`).map((s, i) =>
-      parseSourceSummaryEntry(s, `${where}.sourceSummary[${i}]`),
+      parseServiceTypeCount(s, `${where}.sourceSummary[${i}]`),
     ),
   };
 }
@@ -478,10 +470,8 @@ function renderModelRoute(m: ModelRoute | undefined): string {
 function renderClassifier(c: ClassifierVerdict): string {
   if (!c.called) return `not called — ${c.reason}`;
   const entities = Object.entries(c.entities);
-  const entitiesPart =
-    entities.length === 0
-      ? ""
-      : ` entities={${entities.map(([k, val]) => `${k}=${val}`).join(", ")}}`;
+  const entityPairs = entities.map(([k, val]) => `${k}=${val}`).join(", ");
+  const entitiesPart = entities.length === 0 ? "" : ` entities={${entityPairs}}`;
   return `intent=${c.intent} confidence=${c.confidence.toFixed(2)} destination=${c.destination}${entitiesPart}`;
 }
 

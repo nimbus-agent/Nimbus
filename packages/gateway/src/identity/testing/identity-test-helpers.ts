@@ -45,15 +45,19 @@ export async function makeSignedJwt(claims: Record<string, unknown>, kid: string
 export function fakeVault(): { vault: NimbusVault; store: Map<string, string> } {
   const store = new Map<string, string>();
   const vault: NimbusVault = {
-    get: async (k: string) => store.get(k) ?? null,
-    set: async (k: string, v: string) => {
+    get: (k: string) => Promise.resolve(store.get(k) ?? null),
+    set: (k: string, v: string) => {
       store.set(k, v);
+      return Promise.resolve();
     },
-    delete: async (k: string) => {
+    delete: (k: string) => {
       store.delete(k);
+      return Promise.resolve();
     },
-    listKeys: async (prefix?: string) =>
-      [...store.keys()].filter((k) => prefix === undefined || k.startsWith(prefix)),
+    listKeys: (prefix?: string) =>
+      Promise.resolve(
+        [...store.keys()].filter((k) => prefix === undefined || k.startsWith(prefix)),
+      ),
   };
   return { vault, store };
 }

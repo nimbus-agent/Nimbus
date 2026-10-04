@@ -62,6 +62,16 @@ async function attempt(run: () => void | Promise<void>): Promise<Attempt> {
   }
 }
 
+/** `attempt` for a synchronous sink (`emit`): there is nothing to await, so nothing is awaited. */
+function attemptSync(run: () => void): Attempt {
+  try {
+    run();
+    return { outcome: "delivered" };
+  } catch (e) {
+    return { outcome: "failed", reason: errText(e) };
+  }
+}
+
 /** Like `attempt`, but a post that reached 0 channels is `skipped`, and any throw may be partial. */
 async function chatAttempt(
   post: ChatopsPoster,
@@ -83,6 +93,16 @@ async function chatAttempt(
   } catch (e) {
     return { outcome: "failed", reason: `${errText(e)} (delivery may be partial)` };
   }
+}
+
+/**
+ * What the rows behind the chat summary record: `coalesced` when the summary went out, the
+ * summary's own `skipped` when it reached no channel, and `coalesced` with the reason otherwise.
+ */
+function chatSummaryOutcome(s: Attempt): Attempt {
+  if (s.outcome === "delivered") return { outcome: "coalesced" };
+  if (s.outcome === "skipped") return s;
+  return { outcome: "coalesced", reason: `summary post failed: ${s.reason ?? ""}` };
 }
 
 export function createPushDeliverer(
@@ -122,19 +142,14 @@ export function createPushDeliverer(
     }
     if (post === undefined) return skipAll(CHATOPS_NOT_RUNNING_REASON);
     for (const d of newestFirst.slice(0, PUSH_NOTIFY_CAP)) {
-      const o = await chatAttempt(post, () => renderPushHeadline(d), c.namespace);
+      const o = await chatAttempt(post, () => renderPushHeadline(d), c.namespace); // NOSONAR S9382: headlines post one at a time, newest first (the sort above), each ledgered (I29) before it is sent - concurrent posts would let a slow one reorder the headlines in the channel
       record(d.row.incidentId, "chatops", o);
       if (o.outcome === "failed") warnFailed(d.row.incidentId, o.reason);
     }
     const rest = newestFirst.slice(PUSH_NOTIFY_CAP);
     if (rest.length === 0) return;
     const s = await chatAttempt(post, () => renderPushSummary(items, rest), c.namespace);
-    const o: Attempt =
-      s.outcome === "delivered"
-        ? { outcome: "coalesced" }
-        : s.outcome === "skipped"
-          ? s
-          : { outcome: "coalesced", reason: `summary post failed: ${s.reason ?? ""}` };
+    const o = chatSummaryOutcome(s);
     for (const d of rest) {
       record(d.row.incidentId, "chatops", o);
       if (s.outcome === "failed") warnFailed(d.row.incidentId, o.reason);
@@ -144,7 +159,7 @@ export function createPushDeliverer(
   return async (items) => {
     // The event is a machine signal (the desktop panel needs every id) — never capped.
     for (const d of items) {
-      const o = await attempt(() =>
+      const o = attemptSync(() =>
         deps.emit({ incidentId: d.row.incidentId, status: d.row.status }),
       );
       record(d.row.incidentId, "event", o);
@@ -162,7 +177,7 @@ export function createPushDeliverer(
       return;
     }
     for (const d of newestFirst.slice(0, PUSH_NOTIFY_CAP)) {
-      const o = await attempt(() => deps.notify(TITLE, bodyFor(d)));
+      const o = await attempt(() => deps.notify(TITLE, bodyFor(d))); // NOSONAR S9382: human-facing toasts are shown one at a time, newest first (the sort above) - concurrent notify calls would let a slow notifier reorder or stack the capped toasts
       record(d.row.incidentId, "toast", o);
     }
     const rest = newestFirst.slice(PUSH_NOTIFY_CAP);

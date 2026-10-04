@@ -35,4 +35,13 @@ describe("EphemeralVault", () => {
       "Invalid vault key format",
     );
   });
+
+  // `get` and `delete` as well as `set`, and as a REJECTION rather than a synchronous throw: the
+  // argument to `expect` is evaluated first, so a synchronous throw would fail the test right there
+  // instead of reaching `.rejects`.
+  test("get and delete reject a malformed key rather than throwing synchronously", async () => {
+    const v = new EphemeralVault();
+    await expect(v.get("NOT A KEY")).rejects.toThrow("Invalid vault key format");
+    await expect(v.delete("NOT A KEY")).rejects.toThrow("Invalid vault key format");
+  });
 });

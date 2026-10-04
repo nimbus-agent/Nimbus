@@ -1,17 +1,7 @@
+import type { MappedRow } from "./mapped-row.ts";
 import { asRecord, stringField } from "./unknown-record.ts";
 
-export interface FirebaseMappedRow {
-  readonly service: "firebase";
-  readonly type: "release";
-  readonly externalId: string;
-  readonly title: string;
-  readonly bodyPreview: string;
-  readonly url: string | null;
-  readonly canonicalUrl: string | null;
-  readonly modifiedAt: number;
-  readonly metadata: Record<string, unknown>;
-  readonly syncedAt: number;
-}
+export type FirebaseMappedRow = MappedRow<"firebase", "release">;
 
 /** Parse an ISO-8601 timestamp to epoch-ms; null on absent/garbled input. */
 function parseIsoMs(value: unknown): number | null {

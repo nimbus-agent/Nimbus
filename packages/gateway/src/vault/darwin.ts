@@ -293,8 +293,12 @@ export class DarwinKeychainVault implements NimbusVault {
    * existing item first, so a keychain that refuses this lookup must report the
    * failure as a failed *store*. Reporting "delete failed" during `nimbus init`
    * would send a stuck user looking in the wrong place.
+   *
+   * Synchronous, like every keychain call it makes: a throw surfaces inside the calling `async`
+   * method (`set` / `delete`) and rejects that method's promise, exactly as awaiting a rejection
+   * did.
    */
-  private async deleteKeychainOnly(key: string, op: KeychainOp): Promise<void> {
+  private deleteKeychainOnly(key: string, op: KeychainOp): void {
     const { status, passwordLengthBuf, passwordDataOutBuf, itemRefBuf } =
       this.keychainFindGenericPassword(key);
 
@@ -311,7 +315,7 @@ export class DarwinKeychainVault implements NimbusVault {
 
   async set(key: string, value: string): Promise<void> {
     validateVaultKeyOrThrow(key);
-    await this.deleteKeychainOnly(key, "store");
+    this.deleteKeychainOnly(key, "store");
 
     const { svcBuf, keyBuf } = this.serviceAndKeyBuffers(key);
     const pass = Buffer.from(value, "utf8");
@@ -331,37 +335,43 @@ export class DarwinKeychainVault implements NimbusVault {
     await this.addToIndex(key);
   }
 
-  async get(key: string): Promise<string | null> {
-    validateVaultKeyOrThrow(key);
-    const { status, passwordLengthBuf, passwordDataOutBuf, itemRefBuf } =
-      this.keychainFindGenericPassword(key);
+  get(key: string): Promise<string | null> {
+    // Every keychain call here is a synchronous FFI call, so nothing awaits — but `NimbusVault.get`
+    // returns a Promise, and a throw (an invalid key, a refused lookup) must REJECT it, exactly as
+    // it did when this method was `async`, rather than escape synchronously into a caller that only
+    // attached `.catch`. `Promise.try` runs the body immediately with exactly those semantics.
+    return Promise.try(() => {
+      validateVaultKeyOrThrow(key);
+      const { status, passwordLengthBuf, passwordDataOutBuf, itemRefBuf } =
+        this.keychainFindGenericPassword(key);
 
-    if (status === ERR_SEC_ITEM_NOT_FOUND) {
-      return null;
-    }
-    if (status !== ERR_SEC_SUCCESS) {
-      throw new Error(describeKeychainFailure("read", status));
-    }
+      if (status === ERR_SEC_ITEM_NOT_FOUND) {
+        return null;
+      }
+      if (status !== ERR_SEC_SUCCESS) {
+        throw new Error(describeKeychainFailure("read", status));
+      }
 
-    const pwdLen = passwordLengthBuf.readUInt32LE(0);
-    const pwdPtr = passwordDataOutBuf.readBigUInt64LE(0);
-    const itemRef = itemRefBuf.readBigUInt64LE(0);
+      const pwdLen = passwordLengthBuf.readUInt32LE(0);
+      const pwdPtr = passwordDataOutBuf.readBigUInt64LE(0);
+      const itemRef = itemRefBuf.readBigUInt64LE(0);
 
-    let plain: string;
-    try {
-      plain = this.readPlainPasswordFromKeychainPointer(pwdLen, pwdPtr);
-      this.releaseFindGenericPasswordOutputs(pwdPtr, itemRef);
-    } catch (err) {
-      this.bestEffortReleaseFindGenericPasswordOutputs(pwdPtr, itemRef);
-      throw err;
-    }
+      let plain: string;
+      try {
+        plain = this.readPlainPasswordFromKeychainPointer(pwdLen, pwdPtr);
+        this.releaseFindGenericPasswordOutputs(pwdPtr, itemRef);
+      } catch (err) {
+        this.bestEffortReleaseFindGenericPasswordOutputs(pwdPtr, itemRef);
+        throw err;
+      }
 
-    return plain;
+      return plain;
+    });
   }
 
   async delete(key: string): Promise<void> {
     validateVaultKeyOrThrow(key);
-    await this.deleteKeychainOnly(key, "delete");
+    this.deleteKeychainOnly(key, "delete");
     await this.removeFromIndex(key);
   }
 

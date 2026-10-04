@@ -109,19 +109,26 @@ export type ReceiveOutcome = { readonly ok: boolean; readonly reason?: string };
  * viewable/replayable artifact. This function has NO access to the executor, index writer, or
  * embedding pipeline — receiving never executes, never merges into the index, and needs no HITL.
  * The advisory hop chain is not a storage gate.
+ *
+ * Nothing in the body awaits — verification and the inert store are both blocking calls — but it
+ * stays Promise-returning: the `federation.shareReceive` handler returns this promise as its own
+ * result, and a throw (a failed `storeReceived` write, a serialisation error) must REJECT it rather
+ * than escape synchronously. `Promise.try` runs the body at once with exactly those semantics.
  */
-export async function receiveForwardedShare(
+export function receiveForwardedShare(
   rawShare: unknown,
   deps: ReceiveShareDeps,
 ): Promise<ReceiveOutcome> {
-  if (rawShare === null || typeof rawShare !== "object") {
-    return { ok: false, reason: "malformed" };
-  }
-  const bytes = new TextEncoder().encode(JSON.stringify(rawShare));
-  const verdict = verifyShareBytes(bytes, { now: deps.now() });
-  if (!verdict.signatureValid || !verdict.contentHashValid) {
-    return { ok: false, reason: "content signature invalid" };
-  }
-  deps.storeReceived(rawShare as ShareFile);
-  return { ok: true };
+  return Promise.try((): ReceiveOutcome => {
+    if (rawShare === null || typeof rawShare !== "object") {
+      return { ok: false, reason: "malformed" };
+    }
+    const bytes = new TextEncoder().encode(JSON.stringify(rawShare));
+    const verdict = verifyShareBytes(bytes, { now: deps.now() });
+    if (!verdict.signatureValid || !verdict.contentHashValid) {
+      return { ok: false, reason: "content signature invalid" };
+    }
+    deps.storeReceived(rawShare as ShareFile);
+    return { ok: true };
+  });
 }

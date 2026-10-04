@@ -1,7 +1,11 @@
 import { TOUR_SELECTORS, type TourCandidate, type TourSelectorCtx } from "./tour-selectors.ts";
 import type { TourPlan, TourSkip, TourStep, TourStepKind } from "./tour-types.ts";
 
-export const TOUR_PRIORITY = [
+/** `T` itself when it names every {@link TourStepKind}, otherwise `never`. */
+type TotalOverKinds<T extends readonly TourStepKind[]> =
+  Exclude<TourStepKind, T[number]> extends never ? T : never;
+
+const PRIORITY_ORDER = [
   "oncall",
   "why",
   "owners",
@@ -9,11 +13,9 @@ export const TOUR_PRIORITY = [
   "decisions",
   "glossary",
 ] as const satisfies readonly TourStepKind[];
-// Compile-time totality: a kind missing from TOUR_PRIORITY makes this `never`, which `true` is not assignable to.
-type PriorityIsTotal =
-  Exclude<TourStepKind, (typeof TOUR_PRIORITY)[number]> extends never ? true : never;
-const PRIORITY_IS_TOTAL: PriorityIsTotal = true;
-void PRIORITY_IS_TOTAL;
+// Compile-time totality: a kind missing from PRIORITY_ORDER makes the annotation `never`, which
+// the tuple is not assignable to — so the omission fails the build here, with no runtime check.
+export const TOUR_PRIORITY: TotalOverKinds<typeof PRIORITY_ORDER> = PRIORITY_ORDER;
 
 /** The CLI subcommand each kind runs. Total by type. */
 const SUBCOMMAND: Readonly<Record<TourStepKind, string>> = {
@@ -52,7 +54,8 @@ const BARE_SAFE_RE = /^[A-Za-z0-9._\-/\\:=+@]+$/;
  */
 function quoteForDisplay(arg: string): string {
   if (BARE_SAFE_RE.test(arg)) return arg;
-  return `"${arg.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
+  const escaped = arg.replaceAll("\\", "\\\\").replaceAll('"', String.raw`\"`);
+  return `"${escaped}"`;
 }
 
 /** `command` and `args` come from ONE value here, so the printed line and the executed step cannot drift. */
@@ -82,24 +85,45 @@ export function tourStepFor(kind: TourStepKind, candidate: TourCandidate, demo: 
   };
 }
 
+/** One kind's selector verdict: a step to offer, or the reason it is skipped. */
+type SelectorOutcome = { readonly step: TourStep } | { readonly skip: TourSkip };
+
+/**
+ * Runs ONE kind's selector and builds its step. A selector that throws or rejects, or a candidate
+ * `tourStepFor` cannot render, is that kind's skip and never fails the plan.
+ */
+async function evaluateSelector(
+  kind: TourStepKind,
+  ctx: TourSelectorCtx,
+  selectors: typeof TOUR_SELECTORS,
+  demo: boolean,
+): Promise<SelectorOutcome> {
+  try {
+    const r = await selectors[kind](ctx);
+    return "skip" in r
+      ? { skip: { kind, reason: r.skip } }
+      : { step: tourStepFor(kind, r.ok, demo) };
+  } catch {
+    return { skip: { kind, reason: "selector error" } };
+  }
+}
+
 export async function buildTourPlan(
   ctx: TourSelectorCtx,
   opts: { steps: number; demo: boolean; selectors?: typeof TOUR_SELECTORS },
 ): Promise<TourPlan> {
   const selectors = opts.selectors ?? TOUR_SELECTORS;
+  // The selectors are independent read-only lookups, so they run concurrently. `Promise.all` keeps
+  // TOUR_PRIORITY order in its result, and each outcome already carries its own failure, so the
+  // plan comes out exactly as a one-at-a-time loop would build it.
+  const outcomes = await Promise.all(
+    TOUR_PRIORITY.map((kind) => evaluateSelector(kind, ctx, selectors, opts.demo)),
+  );
   const candidates: TourStep[] = [];
   const skipped: TourSkip[] = [];
-  for (const kind of TOUR_PRIORITY) {
-    try {
-      const r = await selectors[kind](ctx);
-      if ("skip" in r) {
-        skipped.push({ kind, reason: r.skip });
-      } else {
-        candidates.push(tourStepFor(kind, r.ok, opts.demo));
-      }
-    } catch {
-      skipped.push({ kind, reason: "selector error" });
-    }
+  for (const outcome of outcomes) {
+    if ("step" in outcome) candidates.push(outcome.step);
+    else skipped.push(outcome.skip);
   }
   return {
     steps: candidates.slice(0, opts.steps),

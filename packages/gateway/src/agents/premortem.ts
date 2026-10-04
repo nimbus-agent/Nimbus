@@ -43,7 +43,7 @@ const HISTORY_SPAN_SHORT_MS = 180 * DAY_MS;
 /**
  * "PROJ-120" or "jira:PROJ-120" both name the bare key `PROJ-120`. Any OTHER
  * prefix (`linear:ABC-1`, ...) names a tracker pre-mortem does not cover —
- * see the foreign-tracker branch in `runPremortem`, which recognizes this
+ * see the foreign-tracker branch in `buildPremortemBrief`, which recognizes this
  * from the prefix alone and never touches the database for it.
  */
 function parseEpicRef(ref: string): { trackerPrefix: string | null; key: string } {
@@ -287,7 +287,7 @@ function repoToConfigServiceId(
 /**
  * ONE memoized repo → config-id translation, shared by every consumer in this
  * module: the incident-coupling query below and the watcher proposals in
- * `runPremortem`.
+ * `buildPremortemBrief`.
  *
  * Sharing it is the fix for a real bug, not tidiness. The two paths used to
  * disagree — incident coupling translated the repo, the watcher proposal wrote
@@ -533,7 +533,7 @@ function emptyCohort(): CohortResult {
  * Propose (paused) watchers for the epic's affected services, plus the gap note
  * for any service that maps to no configured deployment id.
  *
- * Split out of `runPremortem` for cognitive complexity (Sonar S3776, scored 30).
+ * Split out of `buildPremortemBrief` for cognitive complexity (Sonar S3776, scored 30).
  *
  * Deliberately a function of the TARGET's affected services, NOT of the cohort:
  * an epic with no comparable history still has services worth watching. These
@@ -580,8 +580,8 @@ function buildWatcherProposals(
  *
  * Every measured field is empty and the single gap says why — pre-mortem is JIRA-ONLY, and
  * an empty brief with no explanation would read as "nothing to worry about" rather than
- * "nothing was looked at". Split out of {@link runPremortem} so that function's happy path
- * is not preceded by a 20-line literal (Sonar `S3776`).
+ * "nothing was looked at". Split out of {@link buildPremortemBrief} so that function's happy
+ * path is not preceded by a 20-line literal (Sonar `S3776`).
  */
 function nonJiraTrackerBrief(
   epicRef: string,
@@ -624,7 +624,7 @@ function nonJiraTrackerBrief(
  * (admins rename types, non-English instances localize them), so the message states what
  * was checked rather than guessing why.
  *
- * Split out of {@link runPremortem} to bring it under the cognitive-complexity gate
+ * Split out of {@link buildPremortemBrief} to bring it under the cognitive-complexity gate
  * (Sonar `S3776`); it is also a coherent step on its own — resolve, or refuse with a
  * reason.
  */
@@ -654,8 +654,8 @@ function requireIndexedJiraEpic(
  * Two distinct causes, never conflated: an epic with NO children at all is almost always a
  * company-managed Jira project (`parent_key` is populated only for team-managed ones), while
  * an epic WITH children but no merged PRs among them is simply early. Split out of
- * {@link runPremortem} with {@link analyseCohort} to bring it under the cognitive-complexity
- * gate (Sonar `S3776`).
+ * {@link buildPremortemBrief} with {@link analyseCohort} to bring it under the
+ * cognitive-complexity gate (Sonar `S3776`).
  */
 function noAffectedServicesGap(epicKey: string, childCount: number): GapNote {
   return {
@@ -667,10 +667,11 @@ function noAffectedServicesGap(epicKey: string, childCount: number): GapNote {
 }
 
 /**
- * The cohort-populated arm of {@link runPremortem}: risks, themes, and the three conditional
- * honesty gaps that only mean anything once there IS a cohort to compare the target against.
+ * The cohort-populated arm of {@link buildPremortemBrief}: risks, themes, and the three
+ * conditional honesty gaps that only mean anything once there IS a cohort to compare the target
+ * against.
  *
- * Split out to bring `runPremortem` back under the cognitive-complexity gate (Sonar `S3776`,
+ * Split out to bring that function back under the cognitive-complexity gate (Sonar `S3776`,
  * which measured it at 24 against a limit of 15). Purely a move — same order, same
  * conditions, same gap texts — so the caller keeps deciding WHETHER there is a cohort and
  * this decides only what to say about one.
@@ -758,10 +759,7 @@ function analyseCohort(
   return { risks, themes, gaps };
 }
 
-export async function runPremortem(
-  input: PremortemInput,
-  ctx: PremortemContext,
-): Promise<PremortemBrief> {
+function buildPremortemBrief(input: PremortemInput, ctx: PremortemContext): PremortemBrief {
   const start = performance.now();
   const now = Date.now();
   const overrides = input.serviceOverrides ?? [];
@@ -875,6 +873,21 @@ export async function runPremortem(
     themes,
     watchers,
   };
+}
+
+/**
+ * The pre-mortem brief for one epic, as a Promise.
+ *
+ * Every step of {@link buildPremortemBrief} is synchronous, but this entry point keeps the
+ * Promise contract its callers consume — including a REJECTION for an epic that is not indexed.
+ * `Promise.try` runs the builder synchronously, exactly as the former `async` declaration did,
+ * and still turns a throw into that rejection instead of letting it escape synchronously.
+ */
+export function runPremortem(
+  input: PremortemInput,
+  ctx: PremortemContext,
+): Promise<PremortemBrief> {
+  return Promise.try(() => buildPremortemBrief(input, ctx));
 }
 
 export function emitPremortemBrief(

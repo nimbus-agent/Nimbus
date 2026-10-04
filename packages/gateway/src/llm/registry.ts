@@ -33,6 +33,42 @@ export type LlmRegistryOptions = {
 export type LlmLifecycleTarget = { routeId?: string };
 
 /**
+ * The parameter count a local route's provider reports for that route's OWN model — matched
+ * exactly, or tag-tolerantly (`qwen3` matches `qwen3:8b`) — or `undefined` when it reports none.
+ */
+async function reportedParameterCount(route: ModelRoute): Promise<number | undefined> {
+  try {
+    const models = await route.provider.listModels();
+    const match = models.find(
+      (m) => m.modelName === route.modelName || m.modelName.startsWith(`${route.modelName}:`),
+    );
+    return match?.parameterCount;
+  } catch {
+    // Provider unreachable. Leaving meta empty keeps the documented fail-open.
+    return undefined;
+  }
+}
+
+/** The models an AVAILABLE provider lists. An unavailable or failing provider contributes none. */
+async function listIfAvailable(provider: LlmProvider): Promise<LlmModelInfo[]> {
+  try {
+    if (!(await provider.isAvailable())) return [];
+    return await provider.listModels();
+  } catch {
+    return []; // provider error — skip
+  }
+}
+
+/** The provider's own availability answer, with a throw read as unavailable. */
+async function availableOrFalse(provider: LlmProvider): Promise<boolean> {
+  try {
+    return await provider.isAvailable();
+  } catch {
+    return false;
+  }
+}
+
+/**
  * `llm_task_defaults` (V20) is intentionally left in the schema and now has NEITHER a reader nor
  * a writer. `getDefault` went on 2026-08-29 as dead code; `setDefault` went with #1383, once
  * `llm.setDefault` was repointed at `[llm.tasks]` — the store the router actually reads. The
@@ -123,21 +159,24 @@ export class LlmRegistry {
     // only against ITS OWN `modelName` (never a caller-supplied one) makes that impossible
     // by construction, and lets every local route refresh in one pass with no argument at
     // all — one `listModels()` call per LOCAL ROUTE, not per route × distinct model name.
-    for (const route of this.router.routes()) {
-      if (!route.provider.isLocal) continue;
-      if (modelName !== undefined && route.modelName !== modelName) continue;
-      try {
-        const models = await route.provider.listModels();
-        const match = models.find(
-          (m) => m.modelName === route.modelName || m.modelName.startsWith(`${route.modelName}:`),
-        );
-        if (match?.parameterCount !== undefined) {
-          this.router.registerRoute(route.provider, route.modelName, {
-            parameterCount: match.parameterCount,
-          });
-        }
-      } catch {
-        // Provider unreachable. Leaving meta empty keeps the documented fail-open.
+    //
+    // The routes' providers are asked concurrently — each call is independent and the set is
+    // bounded by config — and the reported counts are then applied in route order.
+    const targets = this.router
+      .routes()
+      .filter(
+        (route) =>
+          route.provider.isLocal && (modelName === undefined || route.modelName === modelName),
+      );
+    const refreshed = await Promise.all(
+      targets.map(async (route) => ({
+        route,
+        parameterCount: await reportedParameterCount(route),
+      })),
+    );
+    for (const { route, parameterCount } of refreshed) {
+      if (parameterCount !== undefined) {
+        this.router.registerRoute(route.provider, route.modelName, { parameterCount });
       }
     }
   }
@@ -147,24 +186,17 @@ export class LlmRegistry {
   }
 
   async listAllModels(): Promise<LlmModelInfo[]> {
-    const results: LlmModelInfo[] = [];
     // Dedup by provider INSTANCE (not providerId): a future multi-route provider id
     // (several distinct Ollama daemons, say) must still be listed once per instance, but
     // two routes sharing the same instance must not trigger the same listModels() call
-    // twice.
-    const seen = new Set<LlmProvider>();
-    for (const route of this.router.routes()) {
-      const provider = route.provider;
-      if (seen.has(provider)) continue;
-      seen.add(provider);
-      try {
-        if (!(await provider.isAvailable())) continue;
-        const models = await provider.listModels();
-        results.push(...models);
-        this.syncModelsToDb(models);
-      } catch {
-        /* provider error — skip */
-      }
+    // twice. A `Set` keeps first-registration order.
+    const providers = [...new Set(this.router.routes().map((route) => route.provider))];
+    // Asked concurrently, then merged and synced to `llm_models` in that same order.
+    const listed = await Promise.all(providers.map((provider) => listIfAvailable(provider)));
+    const results: LlmModelInfo[] = [];
+    for (const models of listed) {
+      results.push(...models);
+      this.syncModelsToDb(models);
     }
     return results;
   }
@@ -184,16 +216,20 @@ export class LlmRegistry {
    */
   async checkAvailability(): Promise<Record<string, boolean>> {
     const result = Object.create(null) as Record<string, boolean>;
-    const seen = new Set<string>();
+    // The FIRST route per vendor id answers for it. Every vendor is asked concurrently and the
+    // answers are written back in first-registration order.
+    const firstByVendor = new Map<string, LlmProvider>();
     for (const route of this.router.routes()) {
       const id = route.provider.providerId;
-      if (seen.has(id)) continue;
-      seen.add(id);
-      try {
-        result[id] = await route.provider.isAvailable();
-      } catch {
-        result[id] = false;
-      }
+      if (!firstByVendor.has(id)) firstByVendor.set(id, route.provider);
+    }
+    const answers = await Promise.all(
+      [...firstByVendor].map(
+        async ([id, provider]) => [id, await availableOrFalse(provider)] as const,
+      ),
+    );
+    for (const [id, available] of answers) {
+      result[id] = available;
     }
     return result;
   }

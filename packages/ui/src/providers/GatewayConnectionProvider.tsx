@@ -41,7 +41,10 @@ async function tryFirstConnectOnce(
     if (args.isCancelled()) {
       return "cancelled";
     }
-    args.navigate(isFreshInstall(snap, meta) ? "/onboarding/welcome" : "/", {
+    // `void`, not `await`: `navigate` rejects only for an external target (both routes here are
+    // internal), and awaiting it would let a navigation failure masquerade as a failed IPC attempt
+    // and re-run `diag.snapshot`/`db.getMeta` through the retry loop.
+    void args.navigate(isFreshInstall(snap, meta) ? "/onboarding/welcome" : "/", {
       replace: true,
     });
     return "done";
@@ -64,7 +67,7 @@ async function runFirstConnect(args: RunFirstConnectArgs): Promise<void> {
       args.firstConnectHandled.current = false;
       return;
     }
-    await new Promise((r) => setTimeout(r, FIRST_CONNECT_BACKOFF_MS[attempt]));
+    await new Promise((r) => setTimeout(r, FIRST_CONNECT_BACKOFF_MS[attempt])); // NOSONAR S9382: retry loop - the backoff must elapse before the next first-connect attempt
   }
 }
 

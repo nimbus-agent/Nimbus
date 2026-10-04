@@ -56,10 +56,17 @@ CREATE INDEX IF NOT EXISTS idx_item_type        ON item(type);
 CREATE INDEX IF NOT EXISTS idx_item_modified_at ON item(modified_at);
 `;
 
-export async function buildSyntheticIndex(
-  tier: CorpusTier,
-  opts: BuildOptions = {},
-): Promise<string> {
+/**
+ * Promise-returning although the build itself is synchronous SQLite work: it is the ONLY await in
+ * `runQueryLatencyOnce`, a `SurfaceFn` that must return a Promise, so a synchronous signature would
+ * only move this wrapper up into that surface. `Promise.try` still runs the build immediately and
+ * keeps a failure a REJECTION, as the `async` version made it, rather than a synchronous throw.
+ */
+export function buildSyntheticIndex(tier: CorpusTier, opts: BuildOptions = {}): Promise<string> {
+  return Promise.try(() => writeSyntheticIndex(tier, opts));
+}
+
+function writeSyntheticIndex(tier: CorpusTier, opts: BuildOptions): string {
   const cacheDir = opts.cacheDir ?? defaultCacheDir();
   if (!existsSync(cacheDir)) {
     mkdirSync(cacheDir, { recursive: true });

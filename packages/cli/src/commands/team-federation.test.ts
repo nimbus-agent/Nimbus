@@ -1,5 +1,6 @@
-import { afterEach, describe, expect, it } from "bun:test";
+import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 
+import { createStreamCapture } from "../../test/helpers/stream-capture.ts";
 import {
   type ConfirmPrompt,
   dispatchTeamCommand,
@@ -478,6 +479,76 @@ describe("registerConsentListener", () => {
     }
     // Invoke with a payload lacking requestId so the real clack `confirm` is never reached.
     expect(() => fake.notifications[0]?.handler({})).not.toThrow();
+  });
+});
+
+describe("consent replies -- what the operator is told", () => {
+  const streams = createStreamCapture();
+  beforeEach(() => {
+    streams.stdoutChunks.length = 0;
+    streams.stderrChunks.length = 0;
+    streams.install();
+  });
+  afterEach(() => {
+    streams.restore();
+  });
+
+  it("a matched DENIAL says denied, not approved, and leaves the exit code clean", async () => {
+    const { client } = fakeClient({ matched: true });
+    await runTeamFederationRpc(client, { kind: "consent", requestId: "r9", approved: false });
+    expect(streams.stdoutChunks.join("")).toBe("consent denied for r9\n");
+    expect(streams.stderrChunks).toEqual([]);
+    expect(process.exitCode ?? 0).toBe(0);
+  });
+
+  it("a non-Error rejection from the transport is still reported verbatim, and exits 1", async () => {
+    const client: TeamRpcClient = {
+      call: async () => {
+        throw "socket hung up";
+      },
+    };
+    await runTeamFederationRpc(client, { kind: "consent", requestId: "r9", approved: true });
+    expect(streams.stderrChunks.join("")).toBe(
+      "Error responding to consent request: socket hung up\n",
+    );
+    expect(process.exitCode).toBe(1);
+  });
+
+  it("the listener reports a non-Error rejection verbatim too, and never throws", async () => {
+    const client: TeamRpcClient = {
+      call: async () => {
+        throw "socket hung up";
+      },
+    };
+    await expect(
+      handleConsentNotification(
+        client,
+        { requestId: "r9" },
+        async () => true,
+        () => false,
+      ),
+    ).resolves.toBeUndefined();
+    expect(streams.stderrChunks.join("")).toBe("Error sending consent decision: socket hung up\n");
+  });
+
+  it("the listener's prompt names the peer, namespace and purpose, falling back to ? for each", async () => {
+    const asked: string[] = [];
+    const prompt: ConfirmPrompt = async ({ message }) => {
+      asked.push(message);
+      return false;
+    };
+    const { client } = fakeClient();
+    await handleConsentNotification(
+      client,
+      { requestId: "r1", peerId: "peer:ada", namespace: "eng", purpose: "triage" },
+      prompt,
+      () => false,
+    );
+    await handleConsentNotification(client, { requestId: "r2", peerId: 7 }, prompt, () => false);
+    expect(asked).toEqual([
+      'Peer peer:ada requests namespace "eng" (purpose: triage). Approve?',
+      'Peer ? requests namespace "?" (purpose: ?). Approve?',
+    ]);
   });
 });
 

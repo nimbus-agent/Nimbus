@@ -49,7 +49,7 @@ export async function sweepToolgenCredentials(vault: NimbusVault): Promise<numbe
   let n = 0;
   for (const key of keys) {
     if (key.startsWith(SIGNING_PREFIX)) continue;
-    await vault.delete(key);
+    await vault.delete(key); // NOSONAR S9382: Vault deletes stay serial - the macOS backend's key index is a read-modify-write JSON file, so concurrent deletes would lose index updates
     n++;
   }
   return n;

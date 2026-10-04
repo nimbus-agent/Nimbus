@@ -5,6 +5,7 @@ import {
 } from "../sync/pass-cursor-sync-result.ts";
 import { type Syncable, type SyncContext, type SyncResult, syncNoopResult } from "../sync/types.ts";
 import { connectorFetch, type FetchOutcome } from "./_lib/fetch-outcome.ts";
+import { trimTrailingSlash } from "./_lib/field-helpers.ts";
 import { type DagsterFlatJob, mapDagsterJobToItem } from "./dagster-job-mapping.ts";
 import { encodeNimbusJsonCursor } from "./nimbus-json-cursor.ts";
 import { asRecord, stringField } from "./unknown-record.ts";
@@ -45,10 +46,6 @@ export type DagsterSyncableOptions = {
 interface DagsterCreds {
   readonly baseUrl: string;
   readonly apiToken: string;
-}
-
-function trimTrailingSlash(s: string): string {
-  return s.endsWith("/") ? s.slice(0, -1) : s;
 }
 
 async function loadCreds(ctx: SyncContext): Promise<DagsterCreds | null> {

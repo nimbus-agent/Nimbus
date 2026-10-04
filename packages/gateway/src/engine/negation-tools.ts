@@ -1,5 +1,6 @@
 import { createTool } from "@mastra/core/tools";
 
+import { asRecord } from "../connectors/unknown-record.ts";
 import type { LocalIndex } from "../index/local-index.ts";
 import {
   runNoDownstreamIncidentQuery,
@@ -9,12 +10,6 @@ import {
 import type { PersonRecord } from "../people/person-types.ts";
 import { negationDisclosureLine, recordNegationDisclosure } from "./negation-disclosure.ts";
 
-function asRecord(input: unknown): Record<string, unknown> {
-  return input !== null && typeof input === "object" && !Array.isArray(input)
-    ? (input as Record<string, unknown>)
-    : {};
-}
-
 function optTrimmed(q: Record<string, unknown>, k: string): string | undefined {
   const v = q[k];
   if (typeof v !== "string") return undefined;
@@ -22,8 +17,8 @@ function optTrimmed(q: Record<string, unknown>, k: string): string | undefined {
   return t === "" ? undefined : t;
 }
 
-// Capped at 100, matching the sibling tool on the same agent (`fetchMoreIndexResults`,
-// `engine/agent.ts:190`): these tools return raw, unprojected rows (including `metadata` and
+// Capped at 100, matching the sibling tool on the same agent (`fetchMoreIndexResults` in
+// `engine/agent.ts`): these tools return raw, unprojected rows (including `metadata` and
 // `body_preview`), so a higher cap would hand the model far more context than the projected
 // search tools ever do for the same row count.
 function optLimit(q: Record<string, unknown>): number {
@@ -105,84 +100,100 @@ function personToToolRow(p: PersonRecord): {
   return { id: p.id, displayName: p.displayName, canonicalEmail: p.canonicalEmail };
 }
 
+// Each tool's body below is SYNCHRONOUS (the negation queries are plain SQLite reads) behind
+// `createTool`'s Promise-returning `execute` contract. `Promise.try` runs it at call time and turns
+// a throw into a rejection — exactly what an `async` body with nothing to await did.
 export function createNegationTools(deps: { localIndex: LocalIndex }) {
   const findPrsNotTouching = createTool({
     id: "findPrsNotTouching",
     description:
       "findPrsNotTouching(pathGlob, service?, limit?) — pull requests with NO indexed changed-file path matching pathGlob (a GLOB such as 'tests/**'; required). Use this, never searchLocalIndex, when the question is which PRs do NOT touch something: it proves its substrate first and refuses when PR file coverage is not indexed, because an unfetched PR is indistinguishable from one that genuinely never touched the path. Scoped to pull requests intrinsically — there is no itemType argument. service is optional; omitting it searches every indexed forge. limit is optional (default 20, max 100).",
-    execute: async (inputData: unknown) => {
-      const q = asRecord(inputData);
-      const pathGlob = optTrimmed(q, "pathGlob");
-      if (pathGlob === undefined) {
-        return { error: "pathGlob is required (a GLOB pattern such as 'tests/**')" };
-      }
-      const service = optTrimmed(q, "service");
-      const db = deps.localIndex.getDatabase();
-      const outcome = runNotTouchingQuery(db, deps.localIndex, {
-        pathGlob,
-        types: ["pr"],
-        ...(service === undefined ? {} : { services: [service] }),
-        limit: optLimit(q),
-      });
-      if (outcome.kind === "refused") {
-        return refusalResult("findPrsNotTouching", outcome.refusal);
-      }
-      return withExclusions(
-        "findPrsNotTouching",
-        [
-          { label: "no file coverage indexed", n: outcome.gaps.excludedNoCoverage },
-          { label: "file coverage truncated", n: outcome.gaps.excludedTruncated },
-        ],
-        { items: outcome.rows, gaps: outcome.gaps },
-      );
-    },
+    execute: (inputData: unknown) =>
+      Promise.try(() => {
+        const q = asRecord(inputData) ?? {};
+        const pathGlob = optTrimmed(q, "pathGlob");
+        if (pathGlob === undefined) {
+          return { error: "pathGlob is required (a GLOB pattern such as 'tests/**')" };
+        }
+        const service = optTrimmed(q, "service");
+        const db = deps.localIndex.getDatabase();
+        const outcome = runNotTouchingQuery(db, deps.localIndex, {
+          pathGlob,
+          types: ["pr"],
+          ...(service === undefined ? {} : { services: [service] }),
+          limit: optLimit(q),
+        });
+        if (outcome.kind === "refused") {
+          return refusalResult("findPrsNotTouching", outcome.refusal);
+        }
+        return withExclusions(
+          "findPrsNotTouching",
+          [
+            { label: "no file coverage indexed", n: outcome.gaps.excludedNoCoverage },
+            { label: "file coverage truncated", n: outcome.gaps.excludedTruncated },
+          ],
+          { items: outcome.rows, gaps: outcome.gaps },
+        );
+      }),
   });
 
   const findDeploymentsWithoutIncident = createTool({
     id: "findDeploymentsWithoutIncident",
     description:
       "findDeploymentsWithoutIncident(service?, limit?) — deployments with NO outgoing correlates_with edge to a downstream incident. Use this, never searchLocalIndex, when the question is which deployments had NO incident: it proves its substrate first and refuses when deployment-to-incident correlation is not indexed. The correlation window is fixed at the time the edge was written and cannot be widened per query — there is deliberately no `within` argument, because the edge timestamp is a write time, not an event time, so a query-time window cannot be reconstructed even in principle. Scoped to deployments intrinsically — there is no itemType argument. service is optional; omitting it searches every indexed service. limit is optional (default 20, max 100).",
-    execute: async (inputData: unknown) => {
-      const q = asRecord(inputData);
-      const service = optTrimmed(q, "service");
-      const db = deps.localIndex.getDatabase();
-      const outcome = runNoDownstreamIncidentQuery(db, deps.localIndex, {
-        types: ["deployment"],
-        ...(service === undefined ? {} : { services: [service] }),
-        limit: optLimit(q),
-      });
-      if (outcome.kind === "refused") {
-        return refusalResult("findDeploymentsWithoutIncident", outcome.refusal);
-      }
-      return withExclusions(
-        "findDeploymentsWithoutIncident",
-        [{ label: "no graph entity of the required type", n: outcome.gaps.excludedNoGraphEntity }],
-        { items: outcome.rows, gaps: outcome.gaps },
-      );
-    },
+    execute: (inputData: unknown) =>
+      Promise.try(() => {
+        const q = asRecord(inputData) ?? {};
+        const service = optTrimmed(q, "service");
+        const db = deps.localIndex.getDatabase();
+        const outcome = runNoDownstreamIncidentQuery(db, deps.localIndex, {
+          types: ["deployment"],
+          ...(service === undefined ? {} : { services: [service] }),
+          limit: optLimit(q),
+        });
+        if (outcome.kind === "refused") {
+          return refusalResult("findDeploymentsWithoutIncident", outcome.refusal);
+        }
+        return withExclusions(
+          "findDeploymentsWithoutIncident",
+          [
+            {
+              label: "no graph entity of the required type",
+              n: outcome.gaps.excludedNoGraphEntity,
+            },
+          ],
+          { items: outcome.rows, gaps: outcome.gaps },
+        );
+      }),
   });
 
   const findPeopleWithoutReviews = createTool({
     id: "findPeopleWithoutReviews",
     description:
       "findPeopleWithoutReviews(sinceDays?, limit?) — people with NO outgoing reviewed edge newer than sinceDays days ago. Use this, never searchLocalIndex, when the question is who has NOT reviewed anything: it proves its substrate first and refuses when review activity is not indexed for the window, because an un-synced person is indistinguishable from one who genuinely reviewed nothing. sinceDays is a number of days back from now (e.g. 7 for the last week); omitting it means ever. limit is optional (default 20, max 100).",
-    execute: async (inputData: unknown) => {
-      const q = asRecord(inputData);
-      const sinceMs = optSinceMsFromDays(q);
-      const db = deps.localIndex.getDatabase();
-      const outcome = runNotReviewedQuery(db, {
-        ...(sinceMs === undefined ? {} : { sinceMs }),
-        limit: optLimit(q),
-      });
-      if (outcome.kind === "refused") {
-        return refusalResult("findPeopleWithoutReviews", outcome.refusal);
-      }
-      return withExclusions(
-        "findPeopleWithoutReviews",
-        [{ label: "no graph entity of the required type", n: outcome.gaps.excludedNoGraphEntity }],
-        { people: outcome.rows.map(personToToolRow), gaps: outcome.gaps },
-      );
-    },
+    execute: (inputData: unknown) =>
+      Promise.try(() => {
+        const q = asRecord(inputData) ?? {};
+        const sinceMs = optSinceMsFromDays(q);
+        const db = deps.localIndex.getDatabase();
+        const outcome = runNotReviewedQuery(db, {
+          ...(sinceMs === undefined ? {} : { sinceMs }),
+          limit: optLimit(q),
+        });
+        if (outcome.kind === "refused") {
+          return refusalResult("findPeopleWithoutReviews", outcome.refusal);
+        }
+        return withExclusions(
+          "findPeopleWithoutReviews",
+          [
+            {
+              label: "no graph entity of the required type",
+              n: outcome.gaps.excludedNoGraphEntity,
+            },
+          ],
+          { people: outcome.rows.map(personToToolRow), gaps: outcome.gaps },
+        );
+      }),
   });
 
   return { findPrsNotTouching, findDeploymentsWithoutIncident, findPeopleWithoutReviews };

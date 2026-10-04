@@ -5,6 +5,7 @@ import {
 } from "../sync/pass-cursor-sync-result.ts";
 import { type Syncable, type SyncContext, type SyncResult, syncNoopResult } from "../sync/types.ts";
 import { connectorFetch, type FetchOutcome } from "./_lib/fetch-outcome.ts";
+import { upsertMapped } from "./_lib/paginated-sync.ts";
 import { encodeNimbusJsonCursor } from "./nimbus-json-cursor.ts";
 import { asRecord, stringField } from "./unknown-record.ts";
 import { mapWizIssueToItem } from "./wiz-issue-mapping.ts";
@@ -153,16 +154,9 @@ function upsertWizIssues(
   nodes: readonly unknown[],
   now: number,
 ): number {
-  let upserted = 0;
-  for (const node of nodes) {
-    const mapped = mapWizIssueToItem(node, { apiBaseUrl: creds.apiUrl, syncedAt: now });
-    if (mapped === null) {
-      continue;
-    }
-    ctx.upsertItem(mapped);
-    upserted += 1;
-  }
-  return upserted;
+  return upsertMapped(ctx, nodes, (node) =>
+    mapWizIssueToItem(node, { apiBaseUrl: creds.apiUrl, syncedAt: now }),
+  );
 }
 
 export function createWizSyncable(options: WizSyncableOptions): Syncable {

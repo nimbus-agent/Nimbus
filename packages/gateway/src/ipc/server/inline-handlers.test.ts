@@ -5,6 +5,7 @@ import {
   EMBEDDING_WARMING_RPC_CODE,
   type EmbeddingReadiness,
 } from "../../embedding/embedding-readiness.ts";
+import { GatewayAgentUnavailableError } from "../../engine/gateway-agent-error.ts";
 import { LocalIndex } from "../../index/local-index.ts";
 import { createMockVault } from "../../vault/mock.ts";
 import { ConsentCoordinatorImpl } from "../consent.ts";
@@ -824,5 +825,185 @@ describe("rpcGatewayPing — embedding readiness", () => {
     expect(emb.state).toBe("warming");
     expect(emb.download?.percent).toBe(25);
     expect(emb.elapsedMs).toBe(4_000);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Error mapping and malformed-params arms. `GatewayAgentUnavailableError` is the one engine error
+// that carries user-facing guidance (no LLM configured, a revoked key, a quota) — both entry
+// points must surface it as the -32000 the clients key on, and must NOT launder any other error
+// into that code.
+// ---------------------------------------------------------------------------
+
+describe("inline handlers — agent-unavailable mapping and malformed params", () => {
+  test("agent.invoke maps GatewayAgentUnavailableError to -32000 carrying its guidance", async () => {
+    const unavailable = new GatewayAgentUnavailableError({ reason: "rate_limited" });
+    const ctx = makeCtx({
+      agentInvokeHandler: async () => {
+        throw unavailable;
+      },
+    });
+    const { session } = makeSession();
+    let thrown: unknown;
+    try {
+      await dispatchAgentInvoke(ctx, session, "c", { input: "hi" });
+    } catch (e) {
+      thrown = e;
+    }
+    expect(thrown).toBeInstanceOf(RpcMethodError);
+    expect((thrown as RpcMethodError).rpcCode).toBe(-32000);
+    expect((thrown as RpcMethodError).message).toBe(unavailable.message);
+  });
+
+  test("agent.invoke rethrows any OTHER error unchanged rather than mapping it", async () => {
+    const boom = new Error("engine exploded");
+    const ctx = makeCtx({
+      agentInvokeHandler: async () => {
+        throw boom;
+      },
+    });
+    const { session } = makeSession();
+    let thrown: unknown;
+    try {
+      await dispatchAgentInvoke(ctx, session, "c", { input: "hi" });
+    } catch (e) {
+      thrown = e;
+    }
+    expect(thrown).toBe(boom);
+    expect(thrown).not.toBeInstanceOf(RpcMethodError);
+  });
+
+  test("agent.invoke with non-record params runs with an empty input, not a crash", async () => {
+    // Without a handler the echo reply quotes the input verbatim, so an empty tail proves the
+    // non-record params fell back to "" rather than to a stringified `null`.
+    const noHandler = makeCtx();
+    const { session } = makeSession();
+    const echo = (await dispatchAgentInvoke(noHandler, session, "c", null)) as {
+      reply: string;
+      stream: boolean;
+    };
+    expect(echo.reply).toBe("Agent invoke is not configured (no handler). Echo: ");
+    expect(echo.stream).toBe(false);
+
+    let captured: Record<string, unknown> | undefined;
+    const withHandler = makeCtx({
+      agentInvokeHandler: async (p: unknown) => {
+        captured = p as Record<string, unknown>;
+        return { reply: "ok" };
+      },
+    });
+    await dispatchAgentInvoke(withHandler, session, "c", "not-an-object");
+    expect(captured?.["input"]).toBe("");
+    expect(captured?.["stream"]).toBe(false);
+  });
+
+  test("workflow.run maps GatewayAgentUnavailableError to -32000 and still unregisters", async () => {
+    const unavailable = new GatewayAgentUnavailableError({ reason: "no_api_key" });
+    const ctx = makeCtx({
+      localIndex: makeIndex(),
+      workflowRunHandler: async () => {
+        throw unavailable;
+      },
+    });
+    const { session } = makeSession();
+    let thrown: unknown;
+    try {
+      await dispatchWorkflowRunRpc(ctx, "client-1", session, { name: "n", streamId: "wf-u" });
+    } catch (e) {
+      thrown = e;
+    }
+    expect(thrown).toBeInstanceOf(RpcMethodError);
+    expect((thrown as RpcMethodError).rpcCode).toBe(-32000);
+    expect((thrown as RpcMethodError).message).toBe(unavailable.message);
+    expect(ctx.streamRegistry.has(workflowRegistryKey("client-1", "wf-u"))).toBe(false);
+  });
+
+  test("workflow.run with non-record params is refused as a missing name (-32602)", async () => {
+    let called = false;
+    const ctx = makeCtx({
+      localIndex: makeIndex(),
+      workflowRunHandler: async () => {
+        called = true;
+        return {};
+      },
+    });
+    const { session } = makeSession();
+    let thrown: unknown;
+    try {
+      await dispatchWorkflowRunRpc(ctx, "c", session, null);
+    } catch (e) {
+      thrown = e;
+    }
+    expect(thrown).toBeInstanceOf(RpcMethodError);
+    expect((thrown as RpcMethodError).rpcCode).toBe(-32602);
+    expect((thrown as RpcMethodError).message).toBe("Missing or invalid name");
+    expect(called).toBe(false);
+  });
+
+  test("engine.askStream with non-record params hands the handler an empty input", async () => {
+    let resolveCall: ((p: Record<string, unknown>) => void) | undefined;
+    const called = new Promise<Record<string, unknown>>((res) => {
+      resolveCall = res;
+    });
+    const ctx = makeCtx({
+      agentInvokeHandler: async (p: unknown) => {
+        resolveCall?.(p as Record<string, unknown>);
+        return { reply: "done" };
+      },
+    });
+    const { session } = makeSession();
+    const r = await dispatchEngineAskStream(ctx, session, "c", 42);
+    expect(r.streamId.length).toBeGreaterThan(0);
+    const captured = await called;
+    expect(captured["input"]).toBe("");
+    expect(captured["sessionId"]).toBeUndefined();
+  });
+});
+
+describe("rpcConsentRespond — the accepted answer", () => {
+  function ctxWithLiveConsent(): { ctx: ServerCtx; sent: unknown[] } {
+    const sent: unknown[] = [];
+    const ctx: ServerCtx = {
+      ...makeCtx(),
+      consentImpl: new ConsentCoordinatorImpl(() => (n: unknown) => {
+        sent.push(n);
+      }),
+    };
+    return { ctx, sent };
+  }
+
+  test("the requesting client's answer resolves the pending consent and returns ok", async () => {
+    const { ctx, sent } = ctxWithLiveConsent();
+    const pending = ctx.consentImpl.requestConsent("client-1", {
+      requestId: "req-1",
+      prompt: "Send it?",
+    });
+    expect(sent).toHaveLength(1);
+    expect(rpcConsentRespond(ctx, "client-1", { requestId: "req-1", approved: true })).toEqual({
+      ok: true,
+    });
+    expect(await pending).toBe(true);
+  });
+
+  test("another client cannot answer it — the request stays pending for its owner", async () => {
+    const { ctx } = ctxWithLiveConsent();
+    const pending = ctx.consentImpl.requestConsent("client-1", {
+      requestId: "req-2",
+      prompt: "Delete it?",
+    });
+    let thrown: unknown;
+    try {
+      rpcConsentRespond(ctx, "client-2", { requestId: "req-2", approved: true });
+    } catch (e) {
+      thrown = e;
+    }
+    expect(thrown).toBeInstanceOf(RpcMethodError);
+    expect((thrown as RpcMethodError).rpcCode).toBe(-32602);
+    expect((thrown as RpcMethodError).message).toBe("Unknown or foreign consent request");
+    // The rightful owner can still answer — the foreign attempt consumed nothing.
+    expect(rpcConsentRespond(ctx, "client-1", { requestId: "req-2", approved: false })).toEqual({
+      ok: true,
+    });
+    expect(await pending).toBe(false);
   });
 });

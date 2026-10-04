@@ -1,6 +1,6 @@
-import { clampSyncTitle } from "../sync/pass-cursor-sync-result.ts";
+import { clampSyncTitle, syncPassCursorSuccess } from "../sync/pass-cursor-sync-result.ts";
 import { type Syncable, type SyncContext, type SyncResult, syncNoopResult } from "../sync/types.ts";
-import { decodeNimbusJsonCursorPayload, encodeNimbusJsonCursor } from "./nimbus-json-cursor.ts";
+import { decodeNimbusJsonCursorObject, encodeNimbusJsonCursor } from "./nimbus-json-cursor.ts";
 import { asRecord, numberField, stringField } from "./unknown-record.ts";
 
 const SERVICE_ID = "circleci";
@@ -13,17 +13,10 @@ function encodeCursor(c: CircleciSyncCursorV1): string {
 }
 
 function decodeCursor(raw: string | null): CircleciSyncCursorV1 | null {
-  if (raw === null || raw === "") {
+  const rec = decodeNimbusJsonCursorObject(raw, CURSOR_PREFIX);
+  if (rec === null) {
     return null;
   }
-  const parsed = decodeNimbusJsonCursorPayload(raw, CURSOR_PREFIX);
-  if (parsed === undefined) {
-    return null;
-  }
-  if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
-    return null;
-  }
-  const rec = parsed as Record<string, unknown>;
   const projectsRaw = rec["projects"];
   if (projectsRaw === null || typeof projectsRaw !== "object" || Array.isArray(projectsRaw)) {
     return { projects: {} };
@@ -154,15 +147,21 @@ function tryUpsertCircleciPipeline(
   return { upserted: 1, pipelineNum: num };
 }
 
+/** What every project in one sync pass shares: the context, the API token and the time window. */
+interface CircleciPass {
+  readonly ctx: SyncContext;
+  readonly token: string;
+  readonly floorMs: number;
+  readonly now: number;
+}
+
 async function syncCircleciProjectPipelines(
-  ctx: SyncContext,
-  token: string,
+  pass: CircleciPass,
   full: string,
   slug: string,
   lastSeen: number,
-  floorMs: number,
-  now: number,
 ): Promise<{ upserted: number; bytes: number; maxNum: number }> {
+  const { ctx, token, floorMs, now } = pass;
   await ctx.rateLimiter.acquire("circleci");
   const path = `https://circleci.com/api/v2/project/${circleciProjectPath(slug)}/pipeline`;
   const res = await fetch(path, {
@@ -226,7 +225,7 @@ export function createCircleciSyncable(options: CircleciSyncableOptions): Syncab
       let bytes = 0;
       const now = Date.now();
       const floorMs = now - initialSyncDepthDays * 86_400_000;
-      const token = apiTok.trim();
+      const pass: CircleciPass = { ctx, token: apiTok.trim(), floorMs, now };
 
       for (const full of repos) {
         const slug = githubRepoToCircleProjectSlug(full);
@@ -234,28 +233,13 @@ export function createCircleciSyncable(options: CircleciSyncableOptions): Syncab
           continue;
         }
         const lastSeen = nextProjects[slug] ?? 0;
-        const r = await syncCircleciProjectPipelines(
-          ctx,
-          token,
-          full,
-          slug,
-          lastSeen,
-          floorMs,
-          now,
-        );
+        const r = await syncCircleciProjectPipelines(pass, full, slug, lastSeen); // NOSONAR S9382: one project at a time through the shared CircleCI rate limiter - the list is every indexed GitHub repo (uncapped), so Promise.all would be an unbounded burst
         bytes += r.bytes;
         upserted += r.upserted;
         nextProjects[slug] = r.maxNum;
       }
 
-      return {
-        cursor: encodeCursor({ projects: nextProjects }),
-        itemsUpserted: upserted,
-        itemsDeleted: 0,
-        hasMore: false,
-        durationMs: Math.round(performance.now() - t0),
-        bytesTransferred: bytes,
-      };
+      return syncPassCursorSuccess(t0, bytes, encodeCursor({ projects: nextProjects }), upserted);
     },
   };
 }

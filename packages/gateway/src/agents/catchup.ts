@@ -5,6 +5,7 @@ import { emitBriefWithSynthesis } from "./_lib/emit-brief.ts";
 import type { CatchupBrief, CatchupItem, CatchupSection, GapNote } from "./_lib/findings.ts";
 import { detectEmptyIndex } from "./_lib/gap-notes.ts";
 import { type GitRunner, resolveSelfPerson } from "./_lib/self-person.ts";
+import { subAgent } from "./_lib/sub-agent.ts";
 import type { SynthesisRunner } from "./_lib/synthesis-llm.ts";
 
 const DEFAULT_SINCE_MS = 3 * 24 * 60 * 60 * 1000;
@@ -50,22 +51,6 @@ type SubAgentResult = {
   windowItems?: WindowItem[];
   gap?: GapNote;
 };
-
-function makeSubAgent(
-  fn: (db: Database, selfPersonId: string | null, sinceMs: number) => Promise<SubAgentResult>,
-  db: Database,
-  selfPersonId: string | null,
-  sinceMs: number,
-): SubTask {
-  return {
-    taskType: "agent_step",
-    prompt: "",
-    execute: async () => {
-      const out = await fn(db, selfPersonId, sinceMs);
-      return { text: JSON.stringify(out), tokensIn: 0, tokensOut: 0 };
-    },
-  };
-}
 
 function unresolvedIdentityGap(): GapNote {
   return {
@@ -126,12 +111,13 @@ export async function runCatchup(input: CatchupInput, ctx: CatchupContext): Prom
     depth: 1,
     toolCallCount: { value: 0 },
   });
+  const selfPersonId = resolution.personId;
   const tasks: SubTask[] = [
-    makeSubAgent(subOwnedServices, ctx.db, resolution.personId, sinceMs),
-    makeSubAgent(subActiveRepos, ctx.db, resolution.personId, sinceMs),
-    makeSubAgent(subRespondedIncidents, ctx.db, resolution.personId, sinceMs),
-    makeSubAgent(subCollaborators, ctx.db, resolution.personId, sinceMs),
-    makeSubAgent(subWindowItems, ctx.db, resolution.personId, sinceMs),
+    subAgent(() => subOwnedServices(ctx.db, selfPersonId)),
+    subAgent(() => subActiveRepos(ctx.db, selfPersonId)),
+    subAgent(() => subRespondedIncidents(ctx.db, selfPersonId)),
+    subAgent(() => subCollaborators(ctx.db, selfPersonId)),
+    subAgent(() => subWindowItems(ctx.db, sinceMs)),
   ];
   const results = await coordinator.run(tasks);
 
@@ -299,11 +285,7 @@ export function scoreAndGroup(items: WindowItem[], involvement: Involvement): Ca
 
 const NINETY_DAYS_MS = 90 * 24 * 60 * 60 * 1000;
 
-async function subOwnedServices(
-  db: Database,
-  selfPersonId: string | null,
-  _sinceMs: number,
-): Promise<SubAgentResult> {
+function subOwnedServices(db: Database, selfPersonId: string | null): SubAgentResult {
   if (selfPersonId === null) return { ownedServices: [] };
   const ninetyDaysAgo = Date.now() - NINETY_DAYS_MS;
   const rows = db
@@ -319,11 +301,7 @@ async function subOwnedServices(
   return { ownedServices: rows.map((r) => r.service) };
 }
 
-async function subActiveRepos(
-  db: Database,
-  selfPersonId: string | null,
-  _sinceMs: number,
-): Promise<SubAgentResult> {
+function subActiveRepos(db: Database, selfPersonId: string | null): SubAgentResult {
   if (selfPersonId === null) return { activeRepos: [] };
   const ninetyDaysAgo = Date.now() - NINETY_DAYS_MS;
   const rows = db
@@ -340,11 +318,7 @@ async function subActiveRepos(
   return { activeRepos: rows.map((r) => r.repo_label).filter((s) => s.length > 0) };
 }
 
-async function subRespondedIncidents(
-  db: Database,
-  selfPersonId: string | null,
-  _sinceMs: number,
-): Promise<SubAgentResult> {
+function subRespondedIncidents(db: Database, selfPersonId: string | null): SubAgentResult {
   if (selfPersonId === null) return { incidentServices: [] };
   const ninetyDaysAgo = Date.now() - NINETY_DAYS_MS;
   const rows = db
@@ -360,11 +334,7 @@ async function subRespondedIncidents(
   return { incidentServices: rows.map((r) => r.service) };
 }
 
-async function subCollaborators(
-  db: Database,
-  selfPersonId: string | null,
-  _sinceMs: number,
-): Promise<SubAgentResult> {
+function subCollaborators(db: Database, selfPersonId: string | null): SubAgentResult {
   if (selfPersonId === null) return { collaboratorPersonIds: [] };
   const ninetyDaysAgo = Date.now() - NINETY_DAYS_MS;
   const rows = db
@@ -390,11 +360,7 @@ async function subCollaborators(
   return { collaboratorPersonIds: rows.map((r) => r.person_id) };
 }
 
-async function subWindowItems(
-  db: Database,
-  _selfPersonId: string | null,
-  sinceMs: number,
-): Promise<SubAgentResult> {
+function subWindowItems(db: Database, sinceMs: number): SubAgentResult {
   const sinceCutoff = Date.now() - sinceMs;
   const rows = db
     .query(

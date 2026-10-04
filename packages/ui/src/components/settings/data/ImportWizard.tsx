@@ -392,7 +392,9 @@ export function ImportWizard({ onClose }: ImportWizardProps) {
                   type="button"
                   onClick={() => {
                     onClose();
-                    navigate(errorDeepLink);
+                    // `void`: `navigate` rejects only for an external target (this deep link is an
+                    // internal route); route errors go to the router's error boundary instead.
+                    void navigate(errorDeepLink);
                   }}
                   className="px-3 py-1.5 rounded-md bg-[var(--color-accent)] text-white"
                 >

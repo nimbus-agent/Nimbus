@@ -1,5 +1,9 @@
+import { pickStringArray } from "./_lib/field-helpers.ts";
 import type { MappedRow } from "./mapped-row.ts";
 import { asRecord, numberField, stringField } from "./unknown-record.ts";
+
+// Raindrop tags are plain strings: every string element is kept, empty ones included.
+export { pickStringArray as tagStrings } from "./_lib/field-helpers.ts";
 
 export interface RaindropMappingContext {
   readonly syncedAt: number;
@@ -9,19 +13,6 @@ export type RaindropMappedRow = MappedRow<"raindrop", "bookmark">;
 
 function parseIsoMs(v: unknown): number | null {
   return typeof v === "string" && Number.isFinite(Date.parse(v)) ? Date.parse(v) : null;
-}
-
-export function tagStrings(raw: unknown): string[] {
-  if (!Array.isArray(raw)) {
-    return [];
-  }
-  const names: string[] = [];
-  for (const t of raw) {
-    if (typeof t === "string") {
-      names.push(t);
-    }
-  }
-  return names;
 }
 
 function deriveRaindropTitle(
@@ -79,7 +70,7 @@ export function mapRaindropBookmarkToItem(
   const domain = stringField(row, "domain") ?? null;
   const type = stringField(row, "type") ?? null;
   const collectionId = numberField(row, "collectionId") ?? null;
-  const tags = tagStrings(row["tags"]);
+  const tags = pickStringArray(row["tags"]);
 
   const createdAt = parseIsoMs(row["created"]);
   const updatedAt = parseIsoMs(row["lastUpdate"]);

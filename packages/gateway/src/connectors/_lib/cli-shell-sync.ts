@@ -3,7 +3,7 @@ import {
   syncPassCursorSuccess,
 } from "../../sync/pass-cursor-sync-result.ts";
 import { type SyncContext, type SyncResult, syncNoopResult } from "../../sync/types.ts";
-import type { SyncUpsertRow } from "./paginated-sync.ts";
+import { type SyncUpsertRow, upsertMapped } from "./paginated-sync.ts";
 
 export type { SyncUpsertRow };
 
@@ -104,14 +104,7 @@ export async function runSinglePassCliShellSync<C>(
     }
 
     const parsed = spec.parsePage(outcome.text, i);
-    for (const raw of parsed.items) {
-      const mapped = spec.map(raw, creds, now);
-      if (mapped === null) {
-        continue;
-      }
-      ctx.upsertItem(mapped);
-      totalUpserted += 1;
-    }
+    totalUpserted += upsertMapped(ctx, parsed.items, (raw) => spec.map(raw, creds, now));
     if (!parsed.hasMore) {
       break;
     }

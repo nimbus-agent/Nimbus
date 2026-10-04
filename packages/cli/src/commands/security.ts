@@ -196,29 +196,45 @@ function streamScan(
 ): Promise<SecurityScanResult> {
   return new Promise<SecurityScanResult>((resolve, reject) => {
     let jobId: string | undefined;
-    client.onNotification("security.scanProgress", (n: unknown) => {
-      const p = n as { jobId: string; scanned: number; total: number };
-      if (jobId === undefined || p.jobId !== jobId) return;
-      if (!isJson) process.stderr.write(`scanning ${String(p.scanned)}/${String(p.total)}\r`);
-    });
-    client.onNotification("security.scanDone", (n: unknown) => {
-      const p = n as Record<string, unknown>;
-      if (jobId === undefined || p["jobId"] !== jobId) return;
-      if (!isSecurityScanResult(p)) {
-        reject(new Error("Malformed security.scanDone payload"));
-        return;
-      }
-      resolve(p);
-    });
-    client.onNotification("security.scanError", (n: unknown) => {
-      const p = n as { jobId: string; message: string };
-      if (jobId === undefined || p.jobId !== jobId) return;
-      reject(new Error(p.message));
-    });
+    // The gateway runs the scan synchronously inside `security.scan`, so its progress and its
+    // `scanDone` reach the wire BEFORE the response that names the job. An event seen before
+    // `jobId` is known is held and replayed once it is: dropping it would leave this promise
+    // unresolved forever (the race `index-cmd.ts`'s `streamJob` documents for its own jobs).
+    const early: Array<() => void> = [];
+    const whenJobKnown = (handle: () => void): void => {
+      if (jobId === undefined) early.push(handle);
+      else handle();
+    };
+    client.onNotification("security.scanProgress", (n: unknown) =>
+      whenJobKnown(() => {
+        const p = n as { jobId: string; scanned: number; total: number };
+        if (p.jobId !== jobId) return;
+        if (!isJson) process.stderr.write(`scanning ${String(p.scanned)}/${String(p.total)}\r`);
+      }),
+    );
+    client.onNotification("security.scanDone", (n: unknown) =>
+      whenJobKnown(() => {
+        const p = n as Record<string, unknown>;
+        if (p["jobId"] !== jobId) return;
+        if (!isSecurityScanResult(p)) {
+          reject(new Error("Malformed security.scanDone payload"));
+          return;
+        }
+        resolve(p);
+      }),
+    );
+    client.onNotification("security.scanError", (n: unknown) =>
+      whenJobKnown(() => {
+        const p = n as { jobId: string; message: string };
+        if (p.jobId !== jobId) return;
+        reject(new Error(p.message));
+      }),
+    );
     client
       .call<{ jobId: string }>("security.scan", params)
       .then((r) => {
         jobId = r.jobId;
+        for (const handle of early.splice(0)) handle();
       })
       .catch(reject);
   });

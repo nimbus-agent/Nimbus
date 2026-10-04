@@ -1,7 +1,10 @@
 // This is the CANONICAL test for connector-spawns.ts. It mocks the per-provider
 // OAuth access-token resolvers via process-global `mock.module` and is therefore
 // safe under the combined `bun test packages/gateway` run (the push-matrix "Unit +
-// Coverage" job) — it never depends on the real resolver's return value.
+// Coverage" job) — it never depends on the real resolver's return value, with ONE
+// deliberate exception: no test file mocks Zoom's resolver, so the `ensureZoomMcp`
+// block at the end drives the real one, offline, from an unexpired stored token. A
+// `mock.module` of zoom-access-token.ts anywhere would make that block order-dependent.
 //
 // Do NOT add a sibling real-resolver test (e.g. a src-tree connector-spawns.test.ts
 // that drives ensure*Mcp through the REAL getValid*AccessToken). `mock.module` is
@@ -227,14 +230,36 @@ mock.module("../../../../src/auth/figma-access-token.ts", () => ({
   getValidFigmaAccessToken: async (): Promise<string> =>
     resolveOauthToken("figma", "fake-figma-access-token"),
 }));
+/**
+ * What the Salesforce spawn handed the auth resolver. `ensureSalesforceMcp` passes
+ * `getValidSalesforceAuth` two capability callbacks — a token getter bound to its vault, and a
+ * reader for the stored `salesforce.oauth` payload — so this mock DRIVES both, the way the real
+ * resolver does, instead of ignoring them.
+ *
+ * `getValidSalesforceAccessToken` must be exported here as well: connector-spawns.ts imports it
+ * for that token getter, and a factory that omits an imported name makes this file fail to LINK
+ * when it runs on its own ("Export named ... not found"). The combined run only hid that because
+ * another file had already loaded the real module.
+ */
+const salesforceSeen: { tokenVaults: unknown[]; rawPayloads: (string | null)[] } = {
+  tokenVaults: [],
+  rawPayloads: [],
+};
+let salesforceInstanceUrl = "https://acme.my.salesforce.com";
+
 mock.module("../../../../src/auth/salesforce-access-token.ts", () => ({
-  getValidSalesforceAuth: async (): Promise<{ accessToken: string; instanceUrl: string }> => {
-    if (oauthBehaviour.salesforce === "throw") throw new Error("test-injected-failure");
+  getValidSalesforceAccessToken: async (vault: unknown): Promise<string> => {
+    salesforceSeen.tokenVaults.push(vault);
+    return resolveOauthToken("salesforce", "fake-salesforce-access-token");
+  },
+  getValidSalesforceAuth: async (
+    accessTokenFor: () => Promise<string>,
+    rawOAuthPayload: () => Promise<string | null>,
+  ): Promise<{ accessToken: string; instanceUrl: string }> => {
+    const accessToken = await accessTokenFor();
+    salesforceSeen.rawPayloads.push(await rawOAuthPayload());
     if (oauthBehaviour.salesforce === "empty") return { accessToken: "", instanceUrl: "" };
-    return {
-      accessToken: "fake-salesforce-access-token",
-      instanceUrl: "https://acme.my.salesforce.com",
-    };
+    return { accessToken, instanceUrl: salesforceInstanceUrl };
   },
 }));
 
@@ -264,6 +289,7 @@ const {
   ensureSalesforceMcp,
   ensureSlackMcp,
   ensureWorkdayMcp,
+  ensureZoomMcp,
 } = await import("../../../../src/connectors/lazy-mesh/connector-spawns.ts");
 
 const { LAZY_MESH } = await import("../../../../src/connectors/lazy-mesh/keys.ts");
@@ -345,6 +371,9 @@ beforeEach(() => {
   oauthBehaviour.canva = "ok";
   oauthBehaviour.figma = "ok";
   oauthBehaviour.salesforce = "ok";
+  salesforceSeen.tokenVaults.length = 0;
+  salesforceSeen.rawPayloads.length = 0;
+  salesforceInstanceUrl = "https://acme.my.salesforce.com";
   process.env.NIMBUS_TEST_LEAK_CANARY = "should-not-appear";
 });
 
@@ -883,6 +912,25 @@ describe("ensureJenkinsMcp", () => {
     await ensureJenkinsMcp(ctx);
     expect(capturedClients).toHaveLength(0);
   });
+
+  test("the configured server's host is the one host on jenkins' otherwise-empty allowlist", async () => {
+    const { ctx, vault } = makeCtx();
+    await vault.set("jenkins.base_url", "https://jenkins.example.com/");
+    await vault.set("jenkins.username", "ops");
+    await vault.set("jenkins.api_token", "jenkins_tok");
+    await ensureJenkinsMcp(ctx);
+    expect(spawnedNetworkHosts("jenkins")).toEqual(["jenkins.example.com"]);
+  });
+
+  test("an unparseable base_url still spawns but adds no host to the allowlist", async () => {
+    const { ctx, vault } = makeCtx();
+    await vault.set("jenkins.base_url", "not a url");
+    await vault.set("jenkins.username", "ops");
+    await vault.set("jenkins.api_token", "jenkins_tok");
+    await ensureJenkinsMcp(ctx);
+    expect(capturedClients[0]?.servers["jenkins"]?.env["JENKINS_BASE_URL"]).toBe("not a url");
+    expect(spawnedNetworkHosts("jenkins")).toEqual([]);
+  });
 });
 
 describe("ensureKubernetesMcp", () => {
@@ -1191,6 +1239,22 @@ describe("ensureGoogleDriveMcp — a dead credential is isolated to its own serv
     const lastError = getConnectorHealth(db, "google_drive").lastError ?? "";
     expect(lastError).toContain("would not exchange");
     expect(lastError).not.toContain("invalid_grant");
+  });
+
+  test("a thrown non-Error is never classified by its text", async () => {
+    // Only an `Error`'s message is compared against the parse-failure messages. A bare string —
+    // even one spelling a parse-failure message exactly — falls to the generic reason.
+    const db = healthDb();
+    const { ctx, vault } = makeCtx({ healthDb: db });
+    await vault.set("google_drive.oauth", '{"access_token":"d"}');
+    googleTokenFailure.set("google_drive", GOOGLE_OAUTH_PARSE_ERRORS.invalidJson);
+
+    const registered = await ensureGoogleDriveMcp(ctx);
+
+    expect(registered).toEqual([]);
+    const lastError = getConnectorHealth(db, "google_drive").lastError ?? "";
+    expect(lastError).toContain("would not exchange");
+    expect(lastError).not.toContain("could not be read");
   });
 
   test("it warns with the failing service id, since nothing else surfaces this", async () => {
@@ -1570,6 +1634,35 @@ describe("ensureSalesforceMcp (Tier-2 OAuth + per-tenant instance host)", () => 
     await ensureSalesforceMcp(ctx);
     expect(capturedClients).toHaveLength(0);
   });
+
+  test("the resolver gets a token getter bound to this vault and the stored salesforce.oauth payload", async () => {
+    const { ctx, vault } = makeCtx();
+    const stored = '{"access_token":"raw","instance_url":"https://acme.my.salesforce.com"}';
+    await vault.set("salesforce.oauth", stored);
+
+    await ensureSalesforceMcp(ctx);
+
+    expect(salesforceSeen.tokenVaults).toHaveLength(1);
+    expect(salesforceSeen.tokenVaults[0]).toBe(vault);
+    expect(salesforceSeen.rawPayloads).toEqual([stored]);
+    // The env token is the one the getter produced, not anything read from the payload.
+    expect(capturedClients[0]?.servers["salesforce"]?.env["SALESFORCE_ACCESS_TOKEN"]).toBe(
+      "fake-salesforce-access-token",
+    );
+  });
+
+  test("an instance URL whose host cannot be parsed spawns without widening the allowlist", async () => {
+    salesforceInstanceUrl = "not a url";
+    const { ctx, vault } = makeCtx();
+    await vault.set("salesforce.oauth", '{"access_token":"raw"}');
+
+    await ensureSalesforceMcp(ctx);
+
+    expect(capturedClients[0]?.servers["salesforce"]?.env["SALESFORCE_INSTANCE_URL"]).toBe(
+      "not a url",
+    );
+    expect(spawnedNetworkHosts("salesforce")).toEqual(["login.salesforce.com"]);
+  });
 });
 
 describe("ensureWorkdayMcp (Tier-2 OAuth + per-tenant host sandbox allowlisting)", () => {
@@ -1639,5 +1732,101 @@ describe("ensureWorkdayMcp (Tier-2 OAuth + per-tenant host sandbox allowlisting)
     await vault.set("workday.oauth", '{"access_token":"raw"}');
     await ensureWorkdayMcp(ctx);
     expect(capturedClients).toHaveLength(0);
+  });
+
+  // One blank setting per case, the other valid: a case blanking BOTH would still pass with
+  // either one of the two trims removed.
+  test.each([
+    ["an empty tenant host", "", "acme"],
+    ["an empty tenant name", "https://acme.workday.com", ""],
+    ["a whitespace-only tenant host", "   ", "acme"],
+    ["a whitespace-only tenant name", "https://acme.workday.com", "  "],
+  ])("%s → no spawn", async (_label, tenantHost, tenant) => {
+    mutableWorkdayConfig.workdayTenantHost = tenantHost;
+    mutableWorkdayConfig.workdayTenant = tenant;
+    const { ctx, calls, vault } = makeCtx();
+    await vault.set("workday.oauth", '{"access_token":"raw"}');
+
+    await ensureWorkdayMcp(ctx);
+
+    expect(calls.setLazyClient).toHaveLength(0);
+    expect(capturedClients).toHaveLength(0);
+  });
+
+  test("a tenant host that cannot be parsed spawns with workday's default-deny allowlist", async () => {
+    mutableWorkdayConfig.workdayTenantHost = "not a url";
+    const { ctx, vault } = makeCtx();
+    await vault.set("workday.oauth", '{"access_token":"raw"}');
+
+    await ensureWorkdayMcp(ctx);
+
+    expect(capturedClients[0]?.servers["workday"]?.env["WORKDAY_TENANT_HOST"]).toBe("not a url");
+    expect(spawnedNetworkHosts("workday")).toEqual([]);
+  });
+});
+
+/**
+ * Zoom's resolver is deliberately NOT mocked in this file, so these run the REAL
+ * `getValidZoomAccessToken`. That is deterministic and offline: a stored token that does not
+ * expire for an hour is returned as-is, before any refresh — no token endpoint, no client id. A
+ * payload the resolver cannot parse makes it throw, which is the swallowed-failure path. (The
+ * resolver rejects an empty access token while parsing, so the spawn's own empty-token guard is
+ * unreachable through it.)
+ */
+describe("ensureZoomMcp", () => {
+  const unexpiredPayload = (): string =>
+    JSON.stringify({
+      accessToken: "zoom-access-token",
+      refreshToken: "zoom-refresh-token",
+      expiresAt: Date.now() + 3_600_000,
+    });
+
+  test.each([
+    ["absent", null],
+    ["empty", ""],
+  ])("zoom.oauth %s → no spawn", async (_label, stored) => {
+    const { ctx, calls, vault } = makeCtx();
+    if (stored !== null) await vault.set("zoom.oauth", stored);
+    await ensureZoomMcp(ctx);
+    expect(calls.setLazyClient).toHaveLength(0);
+    expect(capturedClients).toHaveLength(0);
+  });
+
+  test("an unexpired stored token → spawn zoom with that token in its scoped env", async () => {
+    const { ctx, calls, vault } = makeCtx();
+    await vault.set("zoom.oauth", unexpiredPayload());
+
+    await ensureZoomMcp(ctx);
+
+    expect(calls.clearLazyIdle).toEqual([LAZY_MESH.zoom]);
+    expect(calls.setLazyClient.map((c) => c.key)).toEqual([LAZY_MESH.zoom]);
+    expect(calls.bumpToolsEpoch).toBe(1);
+    expect(calls.scheduleLazyDisconnect).toEqual([LAZY_MESH.zoom]);
+    const env = capturedClients[0]?.servers["zoom"]?.env;
+    expect(env?.["ZOOM_TOKEN"]).toBe("zoom-access-token");
+    expectNoProcessEnvLeak(env ?? {});
+    expect(spawnedNetworkHosts("zoom")).toEqual(["api.zoom.us", "zoom.us"]);
+  });
+
+  test("a stored payload the resolver cannot read → no spawn (swallowed, not thrown)", async () => {
+    const { ctx, calls, vault } = makeCtx();
+    await vault.set("zoom.oauth", "{not json");
+
+    await ensureZoomMcp(ctx);
+
+    expect(calls.setLazyClient).toHaveLength(0);
+    expect(calls.bumpToolsEpoch).toBe(0);
+    expect(capturedClients).toHaveLength(0);
+  });
+
+  test("already running → no double-spawn, and the idle disconnect is re-armed", async () => {
+    const { ctx, calls, vault } = makeCtx({ existingClient: true });
+    await vault.set("zoom.oauth", unexpiredPayload());
+
+    await ensureZoomMcp(ctx);
+
+    expect(capturedClients).toHaveLength(0);
+    expect(calls.setLazyClient).toHaveLength(0);
+    expect(calls.scheduleLazyDisconnect).toEqual([LAZY_MESH.zoom]);
   });
 });

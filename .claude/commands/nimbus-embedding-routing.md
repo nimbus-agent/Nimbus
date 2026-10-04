@@ -113,7 +113,7 @@ class RoutingEmbeddingPipeline implements EmbeddingPipeline {
     await target.embedItem(item);
   }
 
-  async deleteItemEmbeddings(itemId: string): Promise<void> {
+  deleteItemEmbeddings(itemId: string): void {
     // V30 dim-aware delete triggers on `embedding_chunk` fan out to
     // both vec_items_* tables automatically — one DELETE is enough.
     dbRun(this.db, `DELETE FROM embedding_chunk WHERE item_id = ?`, [itemId]);

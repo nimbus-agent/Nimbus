@@ -21,40 +21,40 @@ describe("envelope encryption", () => {
     restoreKdf();
   });
 
-  test("round-trips plaintext via passphrase", async () => {
-    const blob = await encryptVaultManifest({
+  test("round-trips plaintext via passphrase", () => {
+    const blob = encryptVaultManifest({
       plaintext: PLAINTEXT,
       passphrase: PASSPHRASE,
       seed: SEED,
       kdfParams: FAST_KDF,
     });
-    const out = await decryptVaultManifest(blob, { passphrase: PASSPHRASE });
+    const out = decryptVaultManifest(blob, { passphrase: PASSPHRASE });
     expect(out).toBe(PLAINTEXT);
   });
 
-  test("round-trips plaintext via seed", async () => {
-    const blob = await encryptVaultManifest({
+  test("round-trips plaintext via seed", () => {
+    const blob = encryptVaultManifest({
       plaintext: PLAINTEXT,
       passphrase: PASSPHRASE,
       seed: SEED,
       kdfParams: FAST_KDF,
     });
-    const out = await decryptVaultManifest(blob, { seed: SEED });
+    const out = decryptVaultManifest(blob, { seed: SEED });
     expect(out).toBe(PLAINTEXT);
   });
 
-  test("wrong passphrase fails to decrypt", async () => {
-    const blob = await encryptVaultManifest({
+  test("wrong passphrase fails to decrypt", () => {
+    const blob = encryptVaultManifest({
       plaintext: PLAINTEXT,
       passphrase: PASSPHRASE,
       seed: SEED,
       kdfParams: FAST_KDF,
     });
-    await expect(decryptVaultManifest(blob, { passphrase: "wrong" })).rejects.toThrow();
+    expect(() => decryptVaultManifest(blob, { passphrase: "wrong" })).toThrow();
   });
 
-  test("tampered ciphertext is rejected by AES-GCM auth tag", async () => {
-    const blob = await encryptVaultManifest({
+  test("tampered ciphertext is rejected by AES-GCM auth tag", () => {
+    const blob = encryptVaultManifest({
       plaintext: PLAINTEXT,
       passphrase: PASSPHRASE,
       seed: SEED,
@@ -64,17 +64,17 @@ describe("envelope encryption", () => {
       ...blob,
       ciphertext: blob.ciphertext.replace(/^./, (c) => (c === "a" ? "b" : "a")),
     };
-    await expect(decryptVaultManifest(tampered, { passphrase: PASSPHRASE })).rejects.toThrow();
+    expect(() => decryptVaultManifest(tampered, { passphrase: PASSPHRASE })).toThrow();
   });
 
-  test("rejects when neither passphrase nor seed is provided", async () => {
-    const blob = await encryptVaultManifest({
+  test("rejects when neither passphrase nor seed is provided", () => {
+    const blob = encryptVaultManifest({
       plaintext: PLAINTEXT,
       passphrase: PASSPHRASE,
       seed: SEED,
       kdfParams: FAST_KDF,
     });
-    await expect(decryptVaultManifest(blob, {})).rejects.toThrow(
+    expect(() => decryptVaultManifest(blob, {})).toThrow(
       /either passphrase or seed must be provided/i,
     );
   });
@@ -89,39 +89,39 @@ describe("decryptVaultManifest — KDF allowlist (S2-F10)", () => {
     restoreKdf();
   });
 
-  test("rejects bundles with attacker-substituted weak KDF parameters", async () => {
-    const blob = await encryptVaultManifest({
+  test("rejects bundles with attacker-substituted weak KDF parameters", () => {
+    const blob = encryptVaultManifest({
       plaintext: PLAINTEXT,
       passphrase: PASSPHRASE,
       seed: SEED,
       kdfParams: FAST_KDF,
     });
     const tampered = { ...blob, kdf: { t: 1, m: 8, p: 1 } };
-    await expect(decryptVaultManifest(tampered, { passphrase: PASSPHRASE })).rejects.toThrow(
+    expect(() => decryptVaultManifest(tampered, { passphrase: PASSPHRASE })).toThrow(
       /kdf params not in allowlist/i,
     );
   });
 
-  test("rejects bundles with deeply weak KDF parameters", async () => {
-    const blob = await encryptVaultManifest({
+  test("rejects bundles with deeply weak KDF parameters", () => {
+    const blob = encryptVaultManifest({
       plaintext: PLAINTEXT,
       passphrase: PASSPHRASE,
       seed: SEED,
       kdfParams: FAST_KDF,
     });
     const tampered = { ...blob, kdf: { t: 1, m: 1, p: 1 } };
-    await expect(decryptVaultManifest(tampered, { passphrase: PASSPHRASE })).rejects.toThrow(
+    expect(() => decryptVaultManifest(tampered, { passphrase: PASSPHRASE })).toThrow(
       /kdf params not in allowlist/i,
     );
   });
 
-  test("accepts the DEFAULT_KDF profile (production)", async () => {
-    const blob = await encryptVaultManifest({
+  test("accepts the DEFAULT_KDF profile (production)", () => {
+    const blob = encryptVaultManifest({
       plaintext: "x",
       passphrase: PASSPHRASE,
       seed: SEED,
     });
-    const out = await decryptVaultManifest(blob, { passphrase: PASSPHRASE });
+    const out = decryptVaultManifest(blob, { passphrase: PASSPHRASE });
     expect(out).toBe("x");
   }, 30_000);
 });

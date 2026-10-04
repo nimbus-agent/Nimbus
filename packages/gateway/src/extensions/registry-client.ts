@@ -81,7 +81,7 @@ export function createPublisherKeyFetcher(opts: {
       let remaining = retries;
       while (result.kind === "transient" && remaining > 0) {
         remaining--;
-        result = await attempt(publisherId);
+        result = await attempt(publisherId); // NOSONAR S9382: retry loop - each attempt runs only after the previous one failed transiently
       }
       return result;
     },

@@ -4,6 +4,7 @@ import { AGENT_PARAM_KINDS } from "../../packages/gateway/src/ipc/agent-param-ki
 import {
   AGENTS_RPC_PATH,
   checkAgentParamKinds,
+  HELPER_TO_KIND,
   type ParsedValidator,
   parseValidatorFields,
   VALIDATOR_FLOOR,
@@ -113,6 +114,87 @@ test("parseValidatorFields maps requireFileParam to BOTH ghost and conflicts", (
   const fileParam = parsed["requireFileParam"];
   expect(fileParam?.agent).toEqual(["ghost", "conflicts"]);
   expect(fileParam?.fields).toMatchObject({ file: "string" });
+});
+
+test("parseValidatorFields reads the kind off agents-rpc.ts's shared field helpers", () => {
+  // `optionalSinceMs`/`optionalBoundedString` apply their `typeof` inside the helper, where the
+  // `typeof p.<field>` regexes cannot see it — the call is what names the field and its kind.
+  const source = [
+    "function requireCatchupParams(params: unknown, method: string): SinceAndServiceParams {",
+    '  const sinceMs = optionalSinceMs(p.sinceMs, MAX_SINCE_MS, "90 days");',
+    '  const service = optionalBoundedString(p.service, "service", MAX_SERVICE_LEN);',
+    '  const limit = optionalPositiveInteger(p.limit, "limit");',
+    "  return out;",
+    "}",
+  ].join("\n");
+  expect(parseValidatorFields(source)["requireCatchupParams"]?.fields).toEqual({
+    sinceMs: "number",
+    service: "string",
+    limit: "number",
+  });
+});
+
+test("a helper call the formatter wrapped after its `(` is still read", () => {
+  // Biome breaks a call longer than the line width after its `(`, which puts `p.<field>` on the
+  // NEXT line — `requireOncallParams`' incidentId call already has this shape. A per-line match
+  // never sees that field, so the audit would stay clean over a parameter it cannot check; a
+  // new field's name growing past the width is all it takes.
+  const source = [
+    "function requireCatchupParams(params: unknown, method: string): SinceAndServiceParams {",
+    "  const incidentId = optionalBoundedString(",
+    "    p.incidentId,",
+    '    "incidentId",',
+    "    MAX_INCIDENT_ID_LEN,",
+    '    "characters",',
+    "  );",
+    "  const sinceMs = optionalSinceMs(",
+    "    p.sinceMs,",
+    "    MAX_SINCE_MS,",
+    '    "90 days",',
+    "  );",
+    "  return out;",
+    "}",
+  ].join("\n");
+  expect(parseValidatorFields(source)["requireCatchupParams"]?.fields).toEqual({
+    incidentId: "string",
+    sinceMs: "number",
+  });
+});
+
+test("every optional* field helper agents-rpc.ts defines is one the walker reads", () => {
+  // The blind spot the helper recognition closes reopens the moment a NEW helper is added without
+  // being registered: the fields it validates would silently leave the comparison. Enumerated from
+  // the real file, so this fails at the helper's introduction rather than never.
+  const source = readFileSync(AGENTS_RPC_PATH, "utf8");
+  const helpers = [...source.matchAll(/^function (optional\w+)\(/gm)].map((m) => m[1]);
+  expect(helpers.length).toBeGreaterThan(0);
+  expect(helpers.sort()).toEqual(Object.keys(HELPER_TO_KIND).sort());
+});
+
+test("a helper-validated field with no map entry IS drift (the widening feeds the guard)", () => {
+  // End to end, parse then compare: the failure the helper recognition exists to catch is a NEW
+  // param added through a helper and never declared in AGENT_PARAM_KINDS.
+  const source = [
+    "function requireCatchupParams(params: unknown, method: string): SinceAndServiceParams {",
+    '  const newField = optionalBoundedString(p.newField, "newField", 64);',
+    "}",
+  ].join("\n");
+  const parsed = { ...fullCoverageBaseline(), ...parseValidatorFields(source) };
+  expect(missingInMapSnippets(checkAgentParamKinds(parsed))).toContain("catchup.newField");
+});
+
+test("fields validated through the shared helpers stay visible in the real file", () => {
+  // Pins the visibility the helper recognition restores: these checks were inline `typeof p.<field>`
+  // comparisons until agents-rpc.ts moved them into `optionalSinceMs`/`optionalBoundedString`, and
+  // without the recognition every one of them would drop out of the comparison while the audit
+  // still reported clean.
+  const parsed = parseValidatorFields(readFileSync(AGENTS_RPC_PATH, "utf8"));
+  expect(parsed["requireCatchupParams"]?.fields).toEqual({ sinceMs: "number", service: "string" });
+  expect(parsed["requireImpactParams"]?.fields).toMatchObject({ service: "string" });
+  expect(parsed["requireHuddleParams"]?.fields).toMatchObject({ sinceMs: "number" });
+  expect(parsed["requireOwnershipParams"]?.fields).toMatchObject({ service: "string" });
+  expect(parsed["requireGlossaryParams"]?.fields).toMatchObject({ limit: "number" });
+  expect(parsed["requireDecisionsParams"]?.fields).toMatchObject({ limit: "number" });
 });
 
 test("checkAgentParamKinds against the real file reports no drift", () => {

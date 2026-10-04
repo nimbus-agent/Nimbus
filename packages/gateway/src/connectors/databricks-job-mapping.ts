@@ -1,3 +1,5 @@
+import { trimTrailingSlash } from "./_lib/field-helpers.ts";
+import type { MappedRow } from "./mapped-row.ts";
 import { asRecord, numberField, stringField } from "./unknown-record.ts";
 
 export interface RunSummary {
@@ -16,22 +18,7 @@ export interface DatabricksMappingContext {
   readonly syncedAt: number;
 }
 
-export interface DatabricksMappedRow {
-  readonly service: "databricks";
-  readonly type: "data_pipeline";
-  readonly externalId: string;
-  readonly title: string;
-  readonly bodyPreview: string;
-  readonly url: string | null;
-  readonly canonicalUrl: string;
-  readonly modifiedAt: number;
-  readonly metadata: Record<string, unknown>;
-  readonly syncedAt: number;
-}
-
-function trimTrailingSlash(s: string): string {
-  return s.endsWith("/") ? s.slice(0, -1) : s;
-}
+export type DatabricksMappedRow = MappedRow<"databricks", "data_pipeline", string>;
 
 export function jobUrl(host: string, jobId: number): string {
   return `${trimTrailingSlash(host)}/jobs/${String(jobId)}`;

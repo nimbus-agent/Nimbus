@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, test } from "bun:test";
 import {
   AgentRunController,
   MAX_CONCURRENT_AGENT_RUNS,
+  MAX_EXPIRED_AGENT_TOMBSTONES,
   MAX_RETAINED_TERMINAL_AGENT_RUNS,
 } from "./agent-run-store.ts";
 
@@ -251,5 +252,48 @@ describe("AgentRunController", () => {
     expect(c.get("expert_0_g")).toBeNull();
     expect(c.wasKnown("expert_0_g")).toBe(true);
     expect(c.get(`expert_${String(MAX_RETAINED_TERMINAL_AGENT_RUNS + 1)}_g`)).not.toBeNull();
+  });
+
+  test("a briefError whose error is not a string records the generic internal_error", () => {
+    // The error text is echoed to an HTTP poller; a non-string value must not leak through as
+    // `[object Object]` or be dropped to null (which would read as "failed for no reason").
+    const c = makeController();
+    c.observe("why.briefError", { sessionId: "why_1_eeee", error: { code: 500 } });
+    const run = c.get("why_1_eeee");
+    expect(run?.status).toBe("failed");
+    expect(run?.error).toBe("internal_error");
+  });
+
+  test("a briefReady whose brief is not a string finishes the run with a null brief", () => {
+    const c = makeController();
+    c.observe("expert.briefReady", {
+      sessionId: "expert_1_iiii",
+      brief: 42,
+      findings: { gaps: ["x"] },
+    });
+    const run = c.get("expert_1_iiii");
+    expect(run?.status).toBe("done");
+    expect(run?.brief).toBeNull();
+    expect(run?.findings).toEqual({ gaps: ["x"] });
+  });
+
+  test("the 410 tombstone set is capped at MAX_EXPIRED_AGENT_TOMBSTONES, oldest degrading to 404", () => {
+    // 16 terminal runs stay pollable; every run trimmed past that is tombstoned (410). Evicting
+    // MAX_EXPIRED_AGENT_TOMBSTONES + 1 runs overflows the set by exactly one, so the OLDEST id
+    // degrades to an unknown 404 while the next-oldest is still a 410.
+    const c = makeController();
+    const total = MAX_EXPIRED_AGENT_TOMBSTONES + 1 + MAX_RETAINED_TERMINAL_AGENT_RUNS;
+    for (let i = 0; i < total; i++) {
+      now += 1;
+      c.observe("expert.briefReady", { sessionId: `t${String(i)}`, brief: "md" });
+    }
+    expect(c.get("t0")).toBeNull();
+    expect(c.wasKnown("t0")).toBe(false);
+    expect(c.wasKnown("t1")).toBe(true);
+    expect(c.wasKnown(`t${String(MAX_EXPIRED_AGENT_TOMBSTONES)}`)).toBe(true);
+    // The newest retained run is neither expired nor tombstoned.
+    const newest = `t${String(total - 1)}`;
+    expect(c.get(newest)?.status).toBe("done");
+    expect(c.wasKnown(newest)).toBe(false);
   });
 });

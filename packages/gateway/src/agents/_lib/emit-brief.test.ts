@@ -77,6 +77,43 @@ describe("emitBriefWithSynthesis", () => {
     expect(notified.some((n) => n.method === "expert.briefReady")).toBe(false);
   });
 
+  // `buildBrief` may be SYNCHRONOUS (the changelog/standup/oncall builders are plain index
+  // reads). These two pin the contract that makes that safe: a sync brief still reaches
+  // `briefReady`, and a sync THROW still becomes `briefError` rather than escaping the call.
+  test("accepts a synchronous buildBrief and notifies briefReady with its brief", async () => {
+    const notified: Array<{ method: string; params: unknown }> = [];
+    const brief = fakeBrief();
+    await emitBriefWithSynthesis({
+      sessionId: "sess-sync-builder",
+      briefReadyMethod: "expert.briefReady",
+      briefErrorMethod: "expert.briefError",
+      notify: (method, params) => notified.push({ method, params }),
+      buildBrief: () => brief,
+    });
+    await waitMacrotask();
+    const ready = notified.find((n) => n.method === "expert.briefReady");
+    expect((ready?.params as { findings: ExpertBrief } | undefined)?.findings).toBe(brief);
+  });
+
+  test("a synchronous buildBrief that throws emits briefErrorMethod, never a throw", async () => {
+    const notified: Array<{ method: string; params: unknown }> = [];
+    // Called outside any `expect`: a synchronous throw escaping here would fail this test outright.
+    const handle = emitBriefWithSynthesis({
+      sessionId: "sess-sync-throw",
+      briefReadyMethod: "expert.briefReady",
+      briefErrorMethod: "expert.briefError",
+      notify: (method, params) => notified.push({ method, params }),
+      buildBrief: () => {
+        throw new Error("sync build exploded");
+      },
+    });
+    expect(await handle).toEqual({ sessionId: "sess-sync-throw" });
+    await waitMacrotask();
+    const err = notified.find((n) => n.method === "expert.briefError");
+    expect((err?.params as { error: string } | undefined)?.error).toBe("sync build exploded");
+    expect(notified.some((n) => n.method === "expert.briefReady")).toBe(false);
+  });
+
   test("passes runner option through to synthesize", async () => {
     const attempt: SynthesisAttempt = {
       ok: true,

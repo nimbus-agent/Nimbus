@@ -82,7 +82,7 @@ export async function runTour(
     const before = process.exitCode;
     let ok: boolean;
     try {
-      await runner([...step.args]);
+      await runner([...step.args]); // NOSONAR S9382: steps print to stdout in order, and each one's process.exitCode save/restore needs it finished before the next starts
       ok = (process.exitCode ?? 0) === 0 || (process.exitCode ?? 0) === (before ?? 0);
     } catch (error) {
       ok = false;

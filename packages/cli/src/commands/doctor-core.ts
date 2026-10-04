@@ -360,8 +360,13 @@ export function createDoctorVaultExec(timeoutMs: number = VAULT_PROBE_TIMEOUT_MS
 const MIN_BUN_MAJOR = 1;
 const MIN_BUN_MINOR = 2;
 
-function bunVersionOk(): boolean {
-  const m = /^(\d+)\.(\d+)\./.exec(Bun.version);
+/**
+ * Whether `version` meets the minimum. A version string this cannot parse passes rather than
+ * fails. Takes the version as a parameter, rather than reading `Bun.version` itself, so the check
+ * is testable on a current runtime — `Bun.version` is a non-configurable property.
+ */
+export function bunVersionOk(version: string): boolean {
+  const m = /^(\d+)\.(\d+)\./.exec(version);
   if (m === null) {
     return true;
   }
@@ -415,9 +420,10 @@ export function healthStateMark(st: string): string {
   return "[warn]";
 }
 
-function doctorPrintBunCheck(): number {
-  console.log(`Runtime: Bun ${Bun.version}`);
-  if (bunVersionOk()) {
+/** `version` defaults to the running Bun; injectable for the same reason as {@link bunVersionOk}. */
+export function doctorPrintBunCheck(version: string = Bun.version): number {
+  console.log(`Runtime: Bun ${version}`);
+  if (bunVersionOk(version)) {
     console.log("[ok] Bun version meets minimum.");
     return 0;
   }

@@ -104,7 +104,9 @@ describe("UpdatesPanel (slimmed; subscriptions live in UpdaterRestartChrome)", (
     });
     updaterRollbackMock.mockResolvedValueOnce({ ok: true });
     render(<UpdatesPanel />);
-    expect(await screen.findByText(/previous install failed/)).toBeTruthy();
+    // Exact row text: the panel description itself says "...if a previous install failed", so a
+    // bare /previous install failed/ matched the static copy even with the Last-error row gone.
+    expect(await screen.findByText("Last error: previous install failed")).toBeInTheDocument();
     const rollback = screen.getByRole("button", { name: "Rollback" });
     fireEvent.click(rollback);
     await waitFor(() => expect(updaterRollbackMock).toHaveBeenCalledTimes(1));

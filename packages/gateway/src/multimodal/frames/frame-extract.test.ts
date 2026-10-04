@@ -302,4 +302,40 @@ describe("extractFrameJpeg", () => {
     ).rejects.toThrow(/exceeds/i);
     expect(killed).toBe(true);
   });
+
+  test("a cap breach CANCELS the underlying stdout source, not merely releases its lock", async () => {
+    // `releaseLock()` alone leaves a real ffmpeg blocked on its next write to a pipe nobody drains.
+    // On a cap breach `extractFrameJpeg` kills the process but never calls `collect.cancel()`, and
+    // a cancel issued through a reader whose lock is already released never reaches the source —
+    // so `readBounded`'s own `reader.cancel()`, issued BEFORE its `finally` releases the lock, is
+    // the ONLY call that can make the source's `cancel()` run. This pins both the call and that
+    // ordering; the "exceeds" rejection alone would pass without either.
+    let underlyingCancelRan = false;
+    const stream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new Uint8Array(3));
+        controller.enqueue(new Uint8Array(3));
+        // Never closes: only a cancel can end this source.
+      },
+      cancel() {
+        underlyingCancelRan = true;
+      },
+    });
+    const spawn = (() => ({
+      exited: new Promise<number>(() => {}),
+      stdout: stream,
+      stderr: new Response("").body,
+      kill: () => {},
+    })) as unknown as typeof Bun.spawn;
+
+    await expect(
+      extractFrameJpeg("/v/clip.mp4", 1, {
+        ffmpegBin: "ffmpeg",
+        maxBytes: 4,
+        timeoutMs: 30_000,
+        spawn,
+      }),
+    ).rejects.toThrow(/exceeds/i);
+    expect(underlyingCancelRan).toBe(true);
+  });
 });

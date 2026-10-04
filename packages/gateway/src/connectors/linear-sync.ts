@@ -1,6 +1,7 @@
 import type { PersonSyncHints } from "../people/person-types.ts";
+import { syncPassCursorSuccess } from "../sync/pass-cursor-sync-result.ts";
 import { type Syncable, type SyncContext, type SyncResult, syncNoopResult } from "../sync/types.ts";
-import { decodeNimbusJsonCursorPayload, encodeNimbusJsonCursor } from "./nimbus-json-cursor.ts";
+import { decodeNimbusJsonCursorObject, encodeNimbusJsonCursor } from "./nimbus-json-cursor.ts";
 import { msFromIso, normalizeLinearStateType, TICKET_META_VERSION } from "./ticket-depth.ts";
 import { asRecord, stringField } from "./unknown-record.ts";
 
@@ -54,17 +55,10 @@ function encodeCursor(c: LinearSyncCursorV1): string {
 }
 
 function decodeCursor(raw: string | null): LinearSyncCursorV1 | null {
-  if (raw === null || raw === "") {
+  const rec = decodeNimbusJsonCursorObject(raw, CURSOR_PREFIX);
+  if (rec === null) {
     return null;
   }
-  const parsed = decodeNimbusJsonCursorPayload(raw, CURSOR_PREFIX);
-  if (parsed === undefined) {
-    return null;
-  }
-  if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
-    return null;
-  }
-  const rec = parsed as Record<string, unknown>;
   const since = rec["since"];
   return typeof since === "string" && since !== "" ? { since } : null;
 }
@@ -334,14 +328,7 @@ export function createLinearSyncable(options: LinearSyncableOptions): Syncable {
 
       const nextCursor = encodeCursor({ since: maxUpdated });
 
-      return {
-        cursor: nextCursor,
-        itemsUpserted: upserted,
-        itemsDeleted: 0,
-        hasMore: false,
-        durationMs: Math.round(performance.now() - t0),
-        bytesTransferred,
-      };
+      return syncPassCursorSuccess(t0, bytesTransferred, nextCursor, upserted);
     },
   };
 }

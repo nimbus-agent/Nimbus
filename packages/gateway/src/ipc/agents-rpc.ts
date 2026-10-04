@@ -90,6 +90,68 @@ const MAX_IMPACT_DEPTH = 5;
 const MAX_SERVICE_LEN = 64;
 
 const MAX_SINCE_MS = 90 * 24 * 60 * 60 * 1000;
+
+/**
+ * A non-null, non-array object, or `-32602` saying `<method> requires an object payload`.
+ * Validators whose refusal says something else — the shape they expect, or a different rule —
+ * keep their own check inline.
+ */
+function requireObjectPayload(params: unknown, method: string): asserts params is object {
+  if (params === null || typeof params !== "object" || Array.isArray(params)) {
+    throw new AgentsRpcError(-32602, `${method} requires an object payload`);
+  }
+}
+
+// The `optional*` field validators below are seen by `audit:agent-param-kinds` only through their
+// CALLS (`HELPER_TO_KIND` in `scripts/structure-audit/check-agent-param-kinds.ts`): register a new
+// one there, or every field it validates silently leaves that audit. That audit's own test fails
+// until you do.
+
+/**
+ * An optional `sinceMs` look-back window: `undefined` when absent, otherwise a non-negative integer
+ * of at most `max` ms. `label` is that bound in words (`"90 days"`), echoed in the refusal.
+ *
+ * `agents.decisions` does NOT use this: its `sinceMs` has no upper bound, a different rule.
+ */
+function optionalSinceMs(raw: unknown, max: number, label: string): number | undefined {
+  if (raw === undefined) return undefined;
+  if (typeof raw !== "number" || !Number.isInteger(raw) || raw < 0 || raw > max) {
+    throw new AgentsRpcError(
+      -32602,
+      `sinceMs must be a non-negative integer up to ${max} ms (${label})`,
+    );
+  }
+  return raw;
+}
+
+/**
+ * An optional identifier field — `service`, `personId`, `incidentId`: `undefined` when absent,
+ * otherwise a string that is non-blank after trim and at most `maxLen` long BEFORE it, returned
+ * trimmed. `unit` exists only because `agents.oncall`'s two messages say `characters` where every
+ * other validator says `chars`; the wording is kept exactly as the caller has always seen it.
+ */
+function optionalBoundedString(
+  raw: unknown,
+  name: string,
+  maxLen: number,
+  unit: "chars" | "characters" = "chars",
+): string | undefined {
+  if (raw === undefined) return undefined;
+  if (typeof raw !== "string" || raw.trim().length === 0 || raw.length > maxLen) {
+    throw new AgentsRpcError(-32602, `${name} must be a non-empty string up to ${maxLen} ${unit}`);
+  }
+  return raw.trim();
+}
+
+/** An optional positive integer with no upper bound (`limit`, `line`): `undefined` when absent. */
+function optionalPositiveInteger(raw: unknown, name: string): number | undefined {
+  if (raw === undefined) return undefined;
+  if (typeof raw !== "number" || !Number.isInteger(raw) || raw < 1) {
+    throw new AgentsRpcError(-32602, `${name} must be a positive integer`);
+  }
+  return raw;
+}
+
 function requireExpertParams(params: unknown): {
   topicOrFile?: string;
   itemUrl?: string;
@@ -177,58 +239,30 @@ function requireImpactParams(params: unknown): {
     }
     out.depth = p.depth;
   }
-  if (p.service !== undefined) {
-    if (
-      typeof p.service !== "string" ||
-      p.service.trim().length === 0 ||
-      p.service.length > MAX_SERVICE_LEN
-    ) {
-      throw new AgentsRpcError(
-        -32602,
-        `service must be a non-empty string up to ${MAX_SERVICE_LEN} chars`,
-      );
-    }
-    out.service = p.service.trim();
-  }
+  const service = optionalBoundedString(p.service, "service", MAX_SERVICE_LEN);
+  if (service !== undefined) out.service = service;
   return out;
 }
 
-function requireCatchupParams(params: unknown): {
-  sinceMs?: number;
-  service?: string;
-} {
-  if (params === null || typeof params !== "object" || Array.isArray(params)) {
-    throw new AgentsRpcError(-32602, "agents.catchup requires an object payload");
-  }
+type SinceAndServiceParams = { sinceMs?: number; service?: string };
+
+/**
+ * `agents.catchup`'s parameters — and `agents.changelog`'s, which are the same surface under the
+ * same bounds: an optional window and an optional service. The two differ only in the method the
+ * payload refusal names, so they share this validator rather than carrying two copies of it.
+ *
+ * The signature stays on ONE line: `scripts/structure-audit/check-agent-param-kinds.ts` reads this
+ * file line by line and ends a validator's span once its brace count is back to zero, so a
+ * parameter list wrapped before the body's `{` would hide every field below it from that audit.
+ */
+function requireCatchupParams(params: unknown, method: string): SinceAndServiceParams {
+  requireObjectPayload(params, method);
   const p = params as { sinceMs?: unknown; service?: unknown };
-  const out: { sinceMs?: number; service?: string } = {};
-  if (p.sinceMs !== undefined) {
-    if (
-      typeof p.sinceMs !== "number" ||
-      !Number.isInteger(p.sinceMs) ||
-      p.sinceMs < 0 ||
-      p.sinceMs > MAX_SINCE_MS
-    ) {
-      throw new AgentsRpcError(
-        -32602,
-        `sinceMs must be a non-negative integer up to ${MAX_SINCE_MS} ms (90 days)`,
-      );
-    }
-    out.sinceMs = p.sinceMs;
-  }
-  if (p.service !== undefined) {
-    if (
-      typeof p.service !== "string" ||
-      p.service.trim().length === 0 ||
-      p.service.length > MAX_SERVICE_LEN
-    ) {
-      throw new AgentsRpcError(
-        -32602,
-        `service must be a non-empty string up to ${MAX_SERVICE_LEN} chars`,
-      );
-    }
-    out.service = p.service.trim();
-  }
+  const out: SinceAndServiceParams = {};
+  const sinceMs = optionalSinceMs(p.sinceMs, MAX_SINCE_MS, "90 days");
+  if (sinceMs !== undefined) out.sinceMs = sinceMs;
+  const service = optionalBoundedString(p.service, "service", MAX_SERVICE_LEN);
+  if (service !== undefined) out.service = service;
   return out;
 }
 
@@ -366,25 +400,11 @@ function requireForgeField(value: unknown, name: string): string {
 }
 
 function requireHuddleParams(params: unknown): { sinceMs?: number; namespaces: string[] } {
-  if (params === null || typeof params !== "object" || Array.isArray(params)) {
-    throw new AgentsRpcError(-32602, "agents.huddle requires an object payload");
-  }
+  requireObjectPayload(params, "agents.huddle");
   const p = params as { sinceMs?: unknown; namespace?: unknown; namespaces?: unknown };
   const out: { sinceMs?: number; namespaces: string[] } = { namespaces: parseNamespaces(p) };
-  if (p.sinceMs !== undefined) {
-    if (
-      typeof p.sinceMs !== "number" ||
-      !Number.isInteger(p.sinceMs) ||
-      p.sinceMs < 0 ||
-      p.sinceMs > MAX_SINCE_MS
-    ) {
-      throw new AgentsRpcError(
-        -32602,
-        `sinceMs must be a non-negative integer up to ${MAX_SINCE_MS} ms (90 days)`,
-      );
-    }
-    out.sinceMs = p.sinceMs;
-  }
+  const sinceMs = optionalSinceMs(p.sinceMs, MAX_SINCE_MS, "90 days");
+  if (sinceMs !== undefined) out.sinceMs = sinceMs;
   return out;
 }
 
@@ -429,7 +449,7 @@ async function handleImpact(params: unknown, ctx: AgentsRpcContext): Promise<unk
 }
 
 async function handleCatchup(params: unknown, ctx: AgentsRpcContext): Promise<unknown> {
-  const input = requireCatchupParams(params);
+  const input = requireCatchupParams(params, "agents.catchup");
   const sessionId = newSessionId("catchup");
   const userToml = ctx.configDir === undefined ? {} : loadNimbusUserFromConfigDir(ctx.configDir);
   const catchupInput =
@@ -441,42 +461,6 @@ async function handleCatchup(params: unknown, ctx: AgentsRpcContext): Promise<un
       ? { db: ctx.db, notify: ctx.notify, sessionId }
       : { db: ctx.db, runner: ctx.runner, notify: ctx.notify, sessionId };
   return await emitCatchupBrief(catchupInput, catchupCtx);
-}
-
-function requireChangelogParams(params: unknown): { sinceMs?: number; service?: string } {
-  if (params === null || typeof params !== "object" || Array.isArray(params)) {
-    throw new AgentsRpcError(-32602, "agents.changelog requires an object payload");
-  }
-  const p = params as { sinceMs?: unknown; service?: unknown };
-  const out: { sinceMs?: number; service?: string } = {};
-  if (p.sinceMs !== undefined) {
-    if (
-      typeof p.sinceMs !== "number" ||
-      !Number.isInteger(p.sinceMs) ||
-      p.sinceMs < 0 ||
-      p.sinceMs > MAX_SINCE_MS
-    ) {
-      throw new AgentsRpcError(
-        -32602,
-        `sinceMs must be a non-negative integer up to ${MAX_SINCE_MS} ms (90 days)`,
-      );
-    }
-    out.sinceMs = p.sinceMs;
-  }
-  if (p.service !== undefined) {
-    if (
-      typeof p.service !== "string" ||
-      p.service.trim().length === 0 ||
-      p.service.length > MAX_SERVICE_LEN
-    ) {
-      throw new AgentsRpcError(
-        -32602,
-        `service must be a non-empty string up to ${MAX_SERVICE_LEN} chars`,
-      );
-    }
-    out.service = p.service.trim();
-  }
-  return out;
 }
 
 /**
@@ -521,7 +505,8 @@ async function handleChangelog(
   params: unknown,
   ctx: AgentsRpcContext,
 ): Promise<{ sessionId: string }> {
-  const input = requireChangelogParams(params);
+  // Changelog's surface IS catchup's — same fields, same bounds — so it shares that validator.
+  const input = requireCatchupParams(params, "agents.changelog");
   return await emitChangelogBrief({
     db: ctx.db,
     sessionId: newSessionId("changelog"),
@@ -541,25 +526,11 @@ async function handleChangelog(
  * one way to change who this is about, and it is owner-written config rather than a request field.
  */
 function requireStandupParams(params: unknown): { sinceMs?: number } {
-  if (params === null || typeof params !== "object" || Array.isArray(params)) {
-    throw new AgentsRpcError(-32602, "agents.standup requires an object payload");
-  }
+  requireObjectPayload(params, "agents.standup");
   const p = params as { sinceMs?: unknown };
   const out: { sinceMs?: number } = {};
-  if (p.sinceMs !== undefined) {
-    if (
-      typeof p.sinceMs !== "number" ||
-      !Number.isInteger(p.sinceMs) ||
-      p.sinceMs < 0 ||
-      p.sinceMs > MAX_SINCE_MS
-    ) {
-      throw new AgentsRpcError(
-        -32602,
-        `sinceMs must be a non-negative integer up to ${MAX_SINCE_MS} ms (90 days)`,
-      );
-    }
-    out.sinceMs = p.sinceMs;
-  }
+  const sinceMs = optionalSinceMs(p.sinceMs, MAX_SINCE_MS, "90 days");
+  if (sinceMs !== undefined) out.sinceMs = sinceMs;
   return out;
 }
 
@@ -704,39 +675,20 @@ function requireOncallParams(
   params: unknown,
   caller: { kind: ClientKind } | undefined,
 ): { incidentId?: string; service?: string; sinceMs?: number } {
-  if (params === null || typeof params !== "object" || Array.isArray(params)) {
-    throw new AgentsRpcError(-32602, "agents.oncall requires an object payload");
-  }
+  requireObjectPayload(params, "agents.oncall");
   const p = params as { incidentId?: unknown; service?: unknown; sinceMs?: unknown };
   const out: { incidentId?: string; service?: string; sinceMs?: number } = {};
 
-  if (p.incidentId !== undefined) {
-    if (
-      typeof p.incidentId !== "string" ||
-      p.incidentId.trim() === "" ||
-      p.incidentId.length > MAX_INCIDENT_ID_LEN
-    ) {
-      throw new AgentsRpcError(
-        -32602,
-        `incidentId must be a non-empty string up to ${MAX_INCIDENT_ID_LEN} characters`,
-      );
-    }
-    out.incidentId = p.incidentId.trim();
-  }
+  const incidentId = optionalBoundedString(
+    p.incidentId,
+    "incidentId",
+    MAX_INCIDENT_ID_LEN,
+    "characters",
+  );
+  if (incidentId !== undefined) out.incidentId = incidentId;
 
-  if (p.service !== undefined) {
-    if (
-      typeof p.service !== "string" ||
-      p.service.trim() === "" ||
-      p.service.length > MAX_SERVICE_LEN
-    ) {
-      throw new AgentsRpcError(
-        -32602,
-        `service must be a non-empty string up to ${MAX_SERVICE_LEN} characters`,
-      );
-    }
-    out.service = p.service.trim();
-  }
+  const service = optionalBoundedString(p.service, "service", MAX_SERVICE_LEN, "characters");
+  if (service !== undefined) out.service = service;
 
   if (out.incidentId !== undefined && out.service !== undefined) {
     throw new AgentsRpcError(
@@ -746,20 +698,8 @@ function requireOncallParams(
     );
   }
 
-  if (p.sinceMs !== undefined) {
-    if (
-      typeof p.sinceMs !== "number" ||
-      !Number.isInteger(p.sinceMs) ||
-      p.sinceMs < 0 ||
-      p.sinceMs > MAX_SINCE_MS
-    ) {
-      throw new AgentsRpcError(
-        -32602,
-        `sinceMs must be a non-negative integer up to ${MAX_SINCE_MS} ms (90 days)`,
-      );
-    }
-    out.sinceMs = p.sinceMs;
-  }
+  const sinceMs = optionalSinceMs(p.sinceMs, MAX_SINCE_MS, "90 days");
+  if (sinceMs !== undefined) out.sinceMs = sinceMs;
 
   if (
     out.incidentId === undefined &&
@@ -921,13 +861,8 @@ function requireWhyRefParams(params: unknown): WhyRefInput {
   if (trimmed.length < MIN_REF_LEN || trimmed.length > MAX_REF_LEN) {
     throw new AgentsRpcError(-32602, `ref must be a non-empty string up to ${MAX_REF_LEN} chars`);
   }
-  if (
-    p.line !== undefined &&
-    (typeof p.line !== "number" || !Number.isInteger(p.line) || p.line < 1)
-  ) {
-    throw new AgentsRpcError(-32602, "line must be a positive integer");
-  }
-  return { ref: trimmed, ...(p.line === undefined ? {} : { line: p.line }) };
+  const line = optionalPositiveInteger(p.line, "line");
+  return { ref: trimmed, ...(line === undefined ? {} : { line }) };
 }
 
 /**
@@ -1030,15 +965,10 @@ function requireGlossaryParams(params: unknown): GlossaryInput {
   if (p.term !== undefined && typeof p.term !== "string") {
     throw new AgentsRpcError(-32602, "term must be a string");
   }
-  if (
-    p.limit !== undefined &&
-    (typeof p.limit !== "number" || !Number.isInteger(p.limit) || p.limit < 1)
-  ) {
-    throw new AgentsRpcError(-32602, "limit must be a positive integer");
-  }
+  const limit = optionalPositiveInteger(p.limit, "limit");
   return {
     ...(p.term === undefined ? {} : { term: p.term }),
-    ...(p.limit === undefined ? {} : { limit: p.limit as number }),
+    ...(limit === undefined ? {} : { limit }),
   };
 }
 
@@ -1082,18 +1012,13 @@ function requireDecisionsParams(params: unknown): DecisionsInput {
   if (p.service !== undefined && typeof p.service !== "string") {
     throw new AgentsRpcError(-32602, "service must be a string");
   }
-  if (
-    p.limit !== undefined &&
-    (typeof p.limit !== "number" || !Number.isInteger(p.limit) || p.limit < 1)
-  ) {
-    throw new AgentsRpcError(-32602, "limit must be a positive integer");
-  }
+  const limit = optionalPositiveInteger(p.limit, "limit");
   return {
     ...(p.sinceMs === undefined ? {} : { sinceMs: p.sinceMs as number }),
     ...(p.minConfidence === undefined ? {} : { minConfidence: p.minConfidence as number }),
     ...(p.service === undefined ? {} : { service: p.service as string }),
     ...(p.explain === true ? { explain: true } : {}),
-    ...(p.limit === undefined ? {} : { limit: p.limit as number }),
+    ...(limit === undefined ? {} : { limit }),
   };
 }
 
@@ -1141,38 +1066,13 @@ const MAX_PERSON_ID_LEN = 256;
  * validator in this file stays on the shared 90-day constant.
  */
 function requireNegotiateParams(params: unknown): { sinceMs?: number; personId?: string } {
-  if (params === null || typeof params !== "object" || Array.isArray(params)) {
-    throw new AgentsRpcError(-32602, "agents.negotiate requires an object payload");
-  }
+  requireObjectPayload(params, "agents.negotiate");
   const p = params as { sinceMs?: unknown; personId?: unknown };
   const out: { sinceMs?: number; personId?: string } = {};
-  if (p.sinceMs !== undefined) {
-    if (
-      typeof p.sinceMs !== "number" ||
-      !Number.isInteger(p.sinceMs) ||
-      p.sinceMs < 0 ||
-      p.sinceMs > MAX_NEGOTIATE_SINCE_MS
-    ) {
-      throw new AgentsRpcError(
-        -32602,
-        `sinceMs must be a non-negative integer up to ${MAX_NEGOTIATE_SINCE_MS} ms (365 days)`,
-      );
-    }
-    out.sinceMs = p.sinceMs;
-  }
-  if (p.personId !== undefined) {
-    if (
-      typeof p.personId !== "string" ||
-      p.personId.trim().length === 0 ||
-      p.personId.length > MAX_PERSON_ID_LEN
-    ) {
-      throw new AgentsRpcError(
-        -32602,
-        `personId must be a non-empty string up to ${MAX_PERSON_ID_LEN} chars`,
-      );
-    }
-    out.personId = p.personId.trim();
-  }
+  const sinceMs = optionalSinceMs(p.sinceMs, MAX_NEGOTIATE_SINCE_MS, "365 days");
+  if (sinceMs !== undefined) out.sinceMs = sinceMs;
+  const personId = optionalBoundedString(p.personId, "personId", MAX_PERSON_ID_LEN);
+  if (personId !== undefined) out.personId = personId;
   return out;
 }
 
@@ -1206,9 +1106,7 @@ async function handleNegotiate(
 
 function requireOwnershipParams(params: unknown): OwnershipInput {
   if (params === null || params === undefined) return {};
-  if (typeof params !== "object" || Array.isArray(params)) {
-    throw new AgentsRpcError(-32602, "agents.ownership requires an object payload");
-  }
+  requireObjectPayload(params, "agents.ownership");
   const p = params as { path?: unknown; service?: unknown; itemUrl?: unknown };
   // A count, not a pairwise check: with three scopes the old `path && service` form would
   // have let `{ path, itemUrl }` through, and lane 1 would silently answer only one of them.
@@ -1234,19 +1132,8 @@ function requireOwnershipParams(params: unknown): OwnershipInput {
     }
     out.path = trimmed;
   }
-  if (p.service !== undefined) {
-    if (
-      typeof p.service !== "string" ||
-      p.service.trim().length === 0 ||
-      p.service.length > MAX_SERVICE_LEN
-    ) {
-      throw new AgentsRpcError(
-        -32602,
-        `service must be a non-empty string up to ${MAX_SERVICE_LEN} chars`,
-      );
-    }
-    out.service = p.service.trim();
-  }
+  const service = optionalBoundedString(p.service, "service", MAX_SERVICE_LEN);
+  if (service !== undefined) out.service = service;
   return out;
 }
 

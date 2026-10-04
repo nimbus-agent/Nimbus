@@ -83,7 +83,7 @@ async function assertTeamSecretsPresentAndView(
   // Keys outside any alternative-auth group are each individually required (AND).
   for (const key of requiredKeys) {
     if (anyOfKeys.has(key)) continue;
-    if (!(await isPresent(key))) missing();
+    if (!(await isPresent(key))) missing(); // NOSONAR S9382: I19 fail-closed guard - stops at the first missing team secret, so later secrets are never read; Promise.all would read every one first
   }
   // Each alternative-auth group needs at least ONE key present (e.g. Snowflake oauth_token | key_pair_jwt).
   for (const group of anyOfGroups) {

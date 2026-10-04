@@ -138,7 +138,7 @@ export async function deleteCredentialsForTool(
   for (const key of keys) {
     if (key.startsWith(TOOLGEN_SIGNING_KEY_PREFIX)) continue;
     try {
-      await vault.delete(key);
+      await vault.delete(key); // NOSONAR S9382: Vault deletes stay serial - the macOS backend's key index is a read-modify-write JSON file, so concurrent deletes would lose index updates
     } catch (err) {
       if (!failed) {
         failed = true;

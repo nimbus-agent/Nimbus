@@ -2,8 +2,9 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { LINUX_ONLY_THRESHOLDS, runBenchCli } from "./bench-cli.ts";
+import { detectRunner, LINUX_ONLY_THRESHOLDS, runBenchCli } from "./bench-cli.ts";
 import { runQueryLatency100kOnce } from "./surfaces/bench-query-latency-100k.ts";
+import type { RunnerKind } from "./types.ts";
 
 let dir = "";
 let historyPath = "";
@@ -253,5 +254,25 @@ describe("runBenchCli — PR-B-2b-2 registrations", () => {
       });
       expect(exitCode).toBe(0);
     }
+  });
+});
+
+describe("detectRunner", () => {
+  test("--reference wins over --gha", () => {
+    expect(detectRunner(["--gha", "--reference"])).toBe("reference-m1air");
+  });
+
+  test("--gha picks the GitHub-hosted runner for this host's OS", () => {
+    const ghaByPlatform: Partial<Record<NodeJS.Platform, RunnerKind>> = {
+      darwin: "gha-macos",
+      win32: "gha-windows",
+    };
+    expect(detectRunner(["--surface", "S1", "--gha"])).toBe(
+      ghaByPlatform[process.platform] ?? "gha-ubuntu",
+    );
+  });
+
+  test("neither flag is a local dev run", () => {
+    expect(detectRunner(["--surface", "S1"])).toBe("local-dev");
   });
 });

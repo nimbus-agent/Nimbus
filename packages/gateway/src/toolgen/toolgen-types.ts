@@ -179,7 +179,7 @@ export const ERR_TOOLGEN_SANDBOX_DEGRADED = "ERR_TOOLGEN_SANDBOX_DEGRADED";
 
 /**
  * The session id every CLI-originated `toolgen.invoke` call is attributed to, matching
- * `toolgen.create`'s existing `CLI_TOOLGEN_SESSION_ID` (`packages/cli/src/commands/tool.ts:368`,
+ * `toolgen.create`'s existing `CLI_TOOLGEN_SESSION_ID` (`packages/cli/src/commands/tool.ts`,
  * also `"cli"`). This is a SECOND, independent definition of the same wire value, not a mistake:
  * the gateway cannot import the CLI's constant (the dependency rule is one-way — gateway imports
  * nothing from cli), so each side of the wire needs its own copy. The two MUST agree on the

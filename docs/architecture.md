@@ -2203,12 +2203,12 @@ const streamReq: JSONRPCRequest = {
 //   `deploy_failed` watcher matches, `INSERT`s its `item` row directly and never calls the graph
 //   populator; the other two `type: "deployment"` writers record no `conclusion` at all
 //   (`vercel-deployment-mapping.ts:88` writes `metadata.state` instead; `prefect-deployment-mapping.ts:116`
-//   indexes deployment definitions with no outcome), and `github-actions-sync.ts:136` writes
+//   indexes deployment definitions with no outcome), and `github-actions-sync.ts:127` writes
 //   `conclusion` on a `ci_run` item, which `deploy_failed` does not match. `nimbus index regraph`
 //   would populate the entity, but nothing runs it automatically.
 //   **Review drag cannot currently be measured for any repo**: no connector writes
 //   `opened_at_ms` on a `pr` item — the only writer of that field anywhere in the tree is
-//   `pagerduty-sync.ts:68`, and it writes it on an `incident`, not a `pr` — so the brief reports
+//   `pagerduty-sync.ts:82`, and it writes it on an `incident`, not a `pr` — so the brief reports
 //   a named gap rather than a fabricated figure for every repo, not most.
 //   **Incident coupling** translates a cohort repo to a DORA `[ci.service.<id>]` config id via
 //   the injected `ServiceIdentityResolver`, denominates its rate on `measured` (cohort members

@@ -1,6 +1,6 @@
 import { Database } from "bun:sqlite";
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DEFAULT_NIMBUS_TOOL_GENERATION_TOML } from "../config/nimbus-toml.ts";
@@ -66,12 +66,32 @@ describe("toolgen is LAN-forbidden as a WHOLE namespace", () => {
 
 const brokers: ToolgenConsentBroker[] = [];
 const saveBrokers: ToolgenSaveConsentBroker[] = [];
+/** Every `makeCtx` database and temp `configDir`, released after the test that made them. */
+const ctxDbs: Database[] = [];
+const ctxConfigDirs: string[] = [];
 // Pending approvals hold live TTL timers; without this, a test that leaves one pending hangs
 // `bun test` teardown on Windows (the same trap `exec-rpc.test.ts` guards against).
 afterEach(() => {
   for (const b of brokers.splice(0)) b.clear();
   for (const b of saveBrokers.splice(0)) b.clear();
+  for (const db of ctxDbs.splice(0)) db.close();
+  for (const dir of ctxConfigDirs.splice(0)) {
+    try {
+      // maxRetries: 0 -- fail fast on a pinned handle; a leaked temp dir is the accepted cost.
+      rmSync(dir, { recursive: true, force: true, maxRetries: 0, retryDelay: 0 });
+    } catch {
+      /* best-effort */
+    }
+  }
 });
+
+/**
+ * The `-32602` a missing or non-string `key` is refused with — by NAME, so a test that leaves out
+ * one field cannot pass on a refusal of a different field, or on some later failure entirely.
+ */
+function invalidParams(key: string): { rpcCode: number; message: string } {
+  return { rpcCode: -32602, message: `ERR_INVALID_PARAMS: ${key} (non-empty string) required` };
+}
 
 function makeEnvelope(toolId: string, sessionId: string): ToolgenEnvelope {
   return {
@@ -188,6 +208,7 @@ function makeCtx(
   saveOver: Partial<ToolgenSaveDeps> = {},
 ): TestCtx {
   const db = new Database(":memory:");
+  ctxDbs.push(db);
   runIndexedSchemaMigrations(db, CURRENT_SCHEMA_VERSION);
   const consent = new ToolgenConsentBroker();
   brokers.push(consent);
@@ -207,6 +228,7 @@ function makeCtx(
   const revokeCredentialsForToolCalls: string[] = [];
   const removeSavedDirCalls: string[] = [];
   const configDir = mkdtempSync(join(tmpdir(), "nimbus-toolgen-rpc-"));
+  ctxConfigDirs.push(configDir);
   return {
     consent,
     saveConsent,
@@ -365,7 +387,7 @@ describe("toolgen RPC", () => {
         { description: "d", hosts: ["api.example.com"] },
         makeCtx(),
       ),
-    ).rejects.toThrow();
+    ).rejects.toMatchObject(invalidParams("sessionId"));
   });
 
   test("toolgen.create without description is an invalid-params error", async () => {
@@ -375,7 +397,7 @@ describe("toolgen RPC", () => {
         { sessionId: "s1", hosts: ["a.example.com"] },
         makeCtx(),
       ),
-    ).rejects.toThrow();
+    ).rejects.toMatchObject(invalidParams("description"));
   });
 
   test("a non-array hosts value is treated as an empty list, refused by the gate itself", async () => {
@@ -461,7 +483,9 @@ describe("toolgen RPC", () => {
   });
 
   test("toolgen.list without sessionId is an invalid-params error", async () => {
-    await expect(dispatchToolgenRpc("toolgen.list", {}, makeCtx())).rejects.toThrow();
+    await expect(dispatchToolgenRpc("toolgen.list", {}, makeCtx())).rejects.toMatchObject(
+      invalidParams("sessionId"),
+    );
   });
 
   test("an ephemeral entry reports saved:false, needsCredentials:false, disabledReason:null", async () => {
@@ -799,7 +823,9 @@ describe("toolgen RPC", () => {
   });
 
   test("toolgen.revoke without toolId is an invalid-params error", async () => {
-    await expect(dispatchToolgenRpc("toolgen.revoke", {}, makeCtx())).rejects.toThrow();
+    await expect(dispatchToolgenRpc("toolgen.revoke", {}, makeCtx())).rejects.toMatchObject(
+      invalidParams("toolId"),
+    );
   });
 
   // `createGeneratedTool` is a hard import in `toolgen-rpc.ts`, not an injectable dep on
@@ -946,7 +972,9 @@ describe("toolgen.save", () => {
   });
 
   test("without toolId is an invalid-params error", async () => {
-    await expect(dispatchToolgenRpc("toolgen.save", {}, makeCtx())).rejects.toThrow();
+    await expect(dispatchToolgenRpc("toolgen.save", {}, makeCtx())).rejects.toMatchObject(
+      invalidParams("toolId"),
+    );
   });
 
   test("refuses a tool that is not live in this registry", async () => {
@@ -1121,7 +1149,13 @@ describe("toolgen.credentialSet", () => {
   });
 
   test("without toolId, host or binding is an invalid-params error", async () => {
-    await expect(dispatchToolgenRpc("toolgen.credentialSet", {}, makeCtx())).rejects.toThrow();
+    // Refused in field order, each by name: an id first, then the host.
+    await expect(dispatchToolgenRpc("toolgen.credentialSet", {}, makeCtx())).rejects.toMatchObject(
+      invalidParams("toolId"),
+    );
+    await expect(
+      dispatchToolgenRpc("toolgen.credentialSet", { toolId: "t1" }, makeCtx()),
+    ).rejects.toMatchObject(invalidParams("host"));
   });
 
   test("a malformed binding.type is refused without leaking any supplied value", async () => {
@@ -1213,6 +1247,190 @@ describe("toolgen.invoke", () => {
   test("toolgen.invoke requires a string toolId", async () => {
     await expect(
       dispatchToolgenRpc("toolgen.invoke", { toolId: 42 }, ctxWithFakeInvoke()),
-    ).rejects.toThrow();
+    ).rejects.toMatchObject(invalidParams("toolId"));
+  });
+
+  /**
+   * `ctxWithFakeInvoke`, with the fake tool recording every spawn and every input it is called
+   * with — so "refused before the tool is spawned" is asserted on the spawn itself, not inferred
+   * from `call` never running.
+   */
+  function ctxRecordingInput(): { ctx: TestCtx; inputs: unknown[]; spawned: string[] } {
+    const base = ctxWithFakeInvoke();
+    const inputs: unknown[] = [];
+    const spawned: string[] = [];
+    return {
+      inputs,
+      spawned,
+      ctx: {
+        ...base,
+        invokeDeps: {
+          ...base.invokeDeps,
+          spawn: async (toolId: string) => {
+            spawned.push(toolId);
+            return {
+              describe: async () => ({
+                name: "t1",
+                description: "d",
+                inputSchema: { type: "object", properties: {} },
+              }),
+              call: async (input: unknown) => {
+                inputs.push(input);
+                return { ok: true };
+              },
+              close: async () => {},
+            };
+          },
+        },
+      },
+    };
+  }
+
+  test("an omitted input is invoked as the empty object", async () => {
+    const { ctx, inputs, spawned } = ctxRecordingInput();
+    const out = await dispatchToolgenRpc("toolgen.invoke", { toolId: "t1" }, ctx);
+    if (out.kind !== "hit") throw new Error("unreachable");
+    expect(out.value).toMatchObject({ status: "executed" });
+    expect(spawned).toEqual(["t1"]);
+    expect(inputs).toEqual([{}]);
+  });
+
+  test("an input that is not a JSON object is refused before the tool is spawned", async () => {
+    for (const input of ["q=x", 7, [1, 2], null]) {
+      const { ctx, inputs, spawned } = ctxRecordingInput();
+      await expect(
+        dispatchToolgenRpc("toolgen.invoke", { toolId: "t1", input }, ctx),
+      ).rejects.toMatchObject({ rpcCode: -32602, message: "input must be a JSON object" });
+      expect(spawned).toEqual([]);
+      expect(inputs).toEqual([]);
+    }
+  });
+
+  test("a non-record params is an invalid-params error naming toolId", async () => {
+    const { ctx, inputs, spawned } = ctxRecordingInput();
+    const err: unknown = await dispatchToolgenRpc("toolgen.invoke", null, ctx).then(
+      () => new Error("resolved"),
+      (e: unknown) => e,
+    );
+    expect(err).toMatchObject({
+      rpcCode: -32602,
+      message: "ERR_INVALID_PARAMS: toolId (non-empty string) required",
+    });
+    expect(spawned).toEqual([]);
+    expect(inputs).toEqual([]);
+  });
+});
+
+describe("toolgen.credentialSet — a malformed binding is refused by FIELD NAME only", () => {
+  /** A live tool approved for one credential host, as `registerCredentialedLiveTool` above. */
+  function ctxWithCredentialedTool(): TestCtx {
+    const ctx = makeCtx();
+    const envelope = makeEnvelope("t1", "s1");
+    ctx.gateDeps.registry.register(
+      { ...envelope, artifact: { ...envelope.artifact, credentialHosts: ["api.example.com"] } },
+      async () => {},
+    );
+    return ctx;
+  }
+
+  const OBJECT = "ERR_INVALID_PARAMS: binding (object) required";
+  const BEARER = "ERR_INVALID_PARAMS: binding.token (non-empty string) required";
+  const HEADER =
+    "ERR_INVALID_PARAMS: binding.headerName and binding.value (non-empty strings) required";
+  const BASIC =
+    "ERR_INVALID_PARAMS: binding.username and binding.password (non-empty strings) required";
+  // A value no refusal may echo: the refusals name fields, never what was in them.
+  const SECRET = "nimbus-test-binding-value-DO-NOT-USE";
+
+  test.each([
+    ["no binding at all", undefined, OBJECT],
+    ["a string binding", SECRET, OBJECT],
+    ["an array binding", [SECRET], OBJECT],
+    ["a bearer with no token", { type: "bearer" }, BEARER],
+    ["a bearer with an empty token", { type: "bearer", token: "" }, BEARER],
+    ["a bearer with a numeric token", { type: "bearer", token: 7 }, BEARER],
+    ["a header with no name", { type: "header", value: SECRET }, HEADER],
+    ["a header with an empty value", { type: "header", headerName: SECRET, value: "" }, HEADER],
+    ["a basic with no password", { type: "basic", username: SECRET }, BASIC],
+    ["a basic with an empty username", { type: "basic", username: "", password: SECRET }, BASIC],
+  ])("%s", async (_label, binding, message) => {
+    const ctx = ctxWithCredentialedTool();
+    const err: unknown = await dispatchToolgenRpc(
+      "toolgen.credentialSet",
+      { toolId: "t1", host: "api.example.com", binding },
+      ctx,
+    ).then(
+      (v) => new Error(`resolved: ${JSON.stringify(v)}`),
+      (e: unknown) => e,
+    );
+    expect(err).toMatchObject({ rpcCode: -32602, message });
+    expect((err as Error).message).not.toContain(SECRET);
+    // Refused before anything was written.
+    expect(await ctx.vault.listKeys("toolgen.t1.")).toEqual([]);
+  });
+});
+
+describe("toolgen.list — an UNHEALTHY saved row is displayed from its cached artifact column", () => {
+  /** The row helper's default canonical artifact, with the credential hosts a test needs. */
+  function artifactJsonWith(toolId: string, credentialHosts: string[]): string {
+    return JSON.stringify({
+      toolId,
+      toolName: `generated_${toolId}`,
+      description: "a saved tool",
+      body: "return 1;",
+      approvedHosts: ["api.example.com"],
+      credentialHosts,
+      inputSchema: { type: "object", properties: {} },
+      manifest: {
+        id: `toolgen.${toolId}`,
+        version: "0.0.0",
+        updateChannel: "stable",
+        network: [],
+        filesystemWrite: [],
+      },
+    });
+  }
+
+  async function listedSaved(ctx: TestCtx, toolId: string): Promise<Record<string, unknown>> {
+    const out = await dispatchToolgenRpc("toolgen.list", { sessionId: "s1" }, ctx);
+    if (out.kind !== "hit") throw new Error("unreachable");
+    const entry = (out.value as { tools: Array<Record<string, unknown>> }).tools.find(
+      (t) => t["toolId"] === toolId,
+    );
+    if (entry === undefined) throw new Error(`${toolId} not listed`);
+    return entry;
+  }
+
+  test("a cached artifact with credential hosts reports needsCredentials, with its reason", async () => {
+    const ctx = makeCtx();
+    insertGeneratedToolRow(ctx.gateDeps.db, "tg_cred", {
+      artifactJson: artifactJsonWith("tg_cred", ["api.example.com"]),
+      disabledReason: "pubkey_rotated",
+    });
+    expect(await listedSaved(ctx, "tg_cred")).toMatchObject({
+      saved: true,
+      approvedHosts: ["api.example.com"],
+      credentialHosts: ["api.example.com"],
+      needsCredentials: true,
+      disabledReason: "pubkey_rotated",
+    });
+  });
+
+  test("a cached artifact that does not even parse shows EMPTY host lists rather than throwing", async () => {
+    const ctx = makeCtx();
+    insertGeneratedToolRow(ctx.gateDeps.db, "tg_garbled", {
+      artifactJson: "{ this is not an artifact",
+      disabledReason: "schema_invalid",
+    });
+    // A healthy neighbour is still listed: one broken row must not take the listing down.
+    insertGeneratedToolRow(ctx.gateDeps.db, "tg_fine");
+    expect(await listedSaved(ctx, "tg_garbled")).toMatchObject({
+      toolName: "generated_tg_garbled",
+      approvedHosts: [],
+      credentialHosts: [],
+      needsCredentials: false,
+      disabledReason: "schema_invalid",
+    });
+    expect(await listedSaved(ctx, "tg_fine")).toMatchObject({ toolId: "tg_fine", saved: true });
   });
 });

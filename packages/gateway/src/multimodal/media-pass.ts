@@ -416,6 +416,38 @@ async function resolveCandidateSource(
   return resolution;
 }
 
+/**
+ * The page of candidates this run will walk. An explicit afterItemId always wins (a caller
+ * override); otherwise resume from the stored cursor for this passId, which is what makes an
+ * interrupted run resumable at all (spec § 6.2).
+ */
+function discoverPage(deps: MediaPassDeps): MediaCandidate[] {
+  const afterItemId = deps.afterItemId ?? readCursor(deps.db, deps.passId) ?? undefined;
+  return findCandidates(deps.db, {
+    limit: deps.limit,
+    ...(deps.service === undefined ? {} : { service: deps.service }),
+    ...(deps.modality === undefined ? {} : { modality: deps.modality }),
+    ...(deps.sinceMs === undefined ? {} : { sinceMs: deps.sinceMs }),
+    ...(afterItemId === undefined ? {} : { afterItemId }),
+    ...(deps.remoteVendor === undefined ? {} : { remoteVendor: deps.remoteVendor }),
+  });
+}
+
+/**
+ * Unlinks a cloud scratch file this pass took ownership of (see the loop in {@link runMediaPass}).
+ * A no-op when there is none: a local candidate, a cloud artifact fetched into memory rather than
+ * to a scratch file, or an iteration that ended before its source was resolved.
+ */
+function releaseCloudScratch(cloudScratch: string | undefined): void {
+  if (cloudScratch === undefined) return;
+  try {
+    rmSync(cloudScratch, { force: true });
+  } catch {
+    // A failed unlink must not end the pass — best-effort, matching fetchCloudBytes's own
+    // cleanup paths.
+  }
+}
+
 export async function runMediaPass(deps: MediaPassDeps): Promise<MediaPassSummary> {
   // Reclaim scratch WAVs a previous gateway process died mid-write and never unwound (spec § 5.4).
   // Age-bounded, so a concurrently running pass's file is never removed under it.
@@ -427,18 +459,7 @@ export async function runMediaPass(deps: MediaPassDeps): Promise<MediaPassSummar
   // self-heals rows orphaned before this shipped.
   pruneOrphanedMedia(deps.db, deps.nowMs());
 
-  // An explicit afterItemId always wins (a caller override); otherwise resume from the stored
-  // cursor for this passId, which is what makes an interrupted run resumable at all (spec § 6.2).
-  const afterItemId = deps.afterItemId ?? readCursor(deps.db, deps.passId) ?? undefined;
-
-  const candidates = findCandidates(deps.db, {
-    limit: deps.limit,
-    ...(deps.service === undefined ? {} : { service: deps.service }),
-    ...(deps.modality === undefined ? {} : { modality: deps.modality }),
-    ...(deps.sinceMs === undefined ? {} : { sinceMs: deps.sinceMs }),
-    ...(afterItemId === undefined ? {} : { afterItemId }),
-    ...(deps.remoteVendor === undefined ? {} : { remoteVendor: deps.remoteVendor }),
-  });
+  const candidates = discoverPage(deps);
 
   const refused = refuseOnPreflight(candidates, deps.fetchBudgetBytes);
   if (refused !== null) return refused;
@@ -477,7 +498,7 @@ export async function runMediaPass(deps: MediaPassDeps): Promise<MediaPassSummar
       }
       cloudScratch = resolution.cloudScratch;
 
-      const result = await understandArtifact(candidate, resolution.source, deps.gate);
+      const result = await understandArtifact(candidate, resolution.source, deps.gate); // NOSONAR S9382: cursor-ordered pass - each item spends the budget the previous ones left and advances the resume cursor, and a stop must not start later items
       if (!result.ok) {
         recordSkip(acc, deps, candidate, result.reason);
         continue;
@@ -495,14 +516,7 @@ export async function runMediaPass(deps: MediaPassDeps): Promise<MediaPassSummar
       acc.lastItemId = candidate.itemId;
       advance(deps, acc.lastItemId, acc.understood + acc.skipped);
     } finally {
-      if (cloudScratch !== undefined) {
-        try {
-          rmSync(cloudScratch, { force: true });
-        } catch {
-          // A failed unlink must not end the pass — best-effort, matching fetchCloudBytes's own
-          // cleanup paths.
-        }
-      }
+      releaseCloudScratch(cloudScratch);
     }
   }
 

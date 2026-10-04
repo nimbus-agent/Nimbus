@@ -3,6 +3,7 @@ import {
   type RpcMethodHandlerMap,
   type RpcMissOrHit,
 } from "./_lib/dispatch-by-method.ts";
+import { requireStringParam } from "./rpc-params.ts";
 
 export interface TribalStatus {
   readonly enabled: boolean;
@@ -46,13 +47,6 @@ export interface TribalRpcCtx {
   ) => Promise<TribalCaptureResult>;
 }
 
-function requireString(params: unknown, key: string): string {
-  const rec = params as Record<string, unknown> | null;
-  const v = rec === null || typeof rec !== "object" ? undefined : rec[key];
-  if (typeof v !== "string") throw new Error(`ERR_INVALID_PARAMS: ${key} (string) required`);
-  return v;
-}
-
 function optionalString(params: unknown, key: string): string | undefined {
   const rec = params as Record<string, unknown> | null;
   const v = rec === null || typeof rec !== "object" ? undefined : rec[key];
@@ -71,7 +65,7 @@ const HANDLERS: RpcMethodHandlerMap<TribalRpcCtx> = {
   },
   "tribal.list": (p, ctx) => ctx.list(optionalString(p, "status")),
   "tribal.dismiss": async (p, ctx) => {
-    await ctx.dismiss(requireString(p, "clusterId"));
+    await ctx.dismiss(requireStringParam(p, "clusterId"));
     return { ok: true } as const;
   },
   "tribal.scan": (_p, ctx) => ctx.scan(),

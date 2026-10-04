@@ -79,24 +79,30 @@ function gatherPublisherManifests(db: Database): {
   return { publisherIdToExtensions, manifestByExtId };
 }
 
+/**
+ * Re-checks every extension of one publisher against its new key. Each check is an independent,
+ * read-only signature verification — nothing is disabled, logged or audited here — so they run
+ * together; `Promise.all` keeps input order, so `failed` lists extensions in `extIds` order.
+ */
 async function reverifyPublisherExtensions(
   extIds: readonly string[],
   manifestByExtId: ReadonlyMap<string, Record<string, unknown>>,
   pubkey: Uint8Array,
 ): Promise<{ allOk: boolean; failed: string[] }> {
-  const failed: string[] = [];
-  let allOk = true;
-  for (const extId of extIds) {
-    const m = manifestByExtId.get(extId);
-    if (m === undefined) continue;
-    try {
-      await verifyManifestSignature(m, pubkey);
-    } catch {
-      failed.push(extId);
-      allOk = false;
-    }
-  }
-  return { allOk, failed };
+  const verdicts = await Promise.all(
+    extIds.map(async (extId) => {
+      const m = manifestByExtId.get(extId);
+      if (m === undefined) return { extId, ok: true };
+      try {
+        await verifyManifestSignature(m, pubkey);
+        return { extId, ok: true };
+      } catch {
+        return { extId, ok: false };
+      }
+    }),
+  );
+  const failed = verdicts.filter((v) => !v.ok).map((v) => v.extId);
+  return { allOk: failed.length === 0, failed };
 }
 
 async function processPublisherKey(
@@ -167,7 +173,7 @@ export async function syncPublisherKeys(opts: {
       dryRun,
     };
     for (const [publisherId, extIds] of publisherIdToExtensions) {
-      await processPublisherKey(processOpts, result, publisherId, extIds, manifestByExtId);
+      await processPublisherKey(processOpts, result, publisherId, extIds, manifestByExtId); // NOSONAR S9382: one registry fetch, Vault write and audit append per publisher, serial so the shared result lists and the audit chain keep a deterministic order
     }
 
     return result;

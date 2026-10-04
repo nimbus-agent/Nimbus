@@ -96,6 +96,6 @@ export async function pollDeviceToken(
     const step = await pollTokenOnce(d, clientId, deviceCode, opts, intervalMs);
     if ("token" in step) return step.token;
     intervalMs = step.waitMs;
-    await opts.sleep(intervalMs);
+    await opts.sleep(intervalMs); // NOSONAR S9382: RFC 8628 device-code polling — the next token request must wait the IdP-mandated interval after this response
   }
 }

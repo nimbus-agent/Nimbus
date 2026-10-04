@@ -34,6 +34,41 @@ describe("ReplyDispatcher (I23)", () => {
     expect(posted).toEqual([]);
   });
 
+  // The notify loop is sequential by design (the S9382 suppression on it): every post appends its
+  // own egress-ledger row before it is sent (I29), so posts must not overlap and a failed one — an
+  // `EgressAppendFailedError` included — must stop the channels after it.
+  test("notify posts are sequential: each starts only after the previous one settled", async () => {
+    const events: string[] = [];
+    const d = new ReplyDispatcher({
+      post: async (_platform, channelId) => {
+        events.push(`start:${channelId}`);
+        // The FIRST post is the slow one, so overlapping posts would interleave below.
+        if (channelId === "C_ONE") await new Promise((r) => setTimeout(r, 5));
+        events.push(`end:${channelId}`);
+      },
+      notifyChannelsFor: () => ["C_ONE", "C_TWO"],
+    });
+    await d.send({ kind: "namespaceNotify", namespace: "project:pay" }, "alert");
+    expect(events).toEqual(["start:C_ONE", "end:C_ONE", "start:C_TWO", "end:C_TWO"]);
+  });
+
+  test("a failed notify post rejects send() and stops the channels after it", async () => {
+    const attempted: string[] = [];
+    const d = new ReplyDispatcher({
+      post: (_platform, channelId) => {
+        attempted.push(channelId);
+        return channelId === "C_ONE"
+          ? Promise.reject(new Error("egress append failed"))
+          : Promise.resolve();
+      },
+      notifyChannelsFor: () => ["C_ONE", "C_TWO"],
+    });
+    await expect(
+      d.send({ kind: "namespaceNotify", namespace: "project:pay" }, "alert"),
+    ).rejects.toThrow("egress append failed");
+    expect(attempted).toEqual(["C_ONE"]);
+  });
+
   test("send resolves to the number of channels posted to: 1, N and 0", async () => {
     const posted: string[] = [];
     const d = new ReplyDispatcher({

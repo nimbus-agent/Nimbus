@@ -5,6 +5,7 @@ import {
 } from "../sync/pass-cursor-sync-result.ts";
 import { type Syncable, type SyncContext, type SyncResult, syncNoopResult } from "../sync/types.ts";
 import { connectorFetch } from "./_lib/fetch-outcome.ts";
+import { upsertMapped } from "./_lib/paginated-sync.ts";
 import { mapFlagsmithFeatureToItem } from "./flagsmith-feature-mapping.ts";
 import { encodeNimbusJsonCursor } from "./nimbus-json-cursor.ts";
 import { asRecord, numberField, stringField } from "./unknown-record.ts";
@@ -126,22 +127,15 @@ function upsertFeatures(
   features: readonly unknown[],
   now: number,
 ): number {
-  let upserted = 0;
-  for (const f of features) {
-    const mapped = mapFlagsmithFeatureToItem(f, {
+  return upsertMapped(ctx, features, (f) =>
+    mapFlagsmithFeatureToItem(f, {
       apiBase: creds.apiBase,
       projectId: project.id,
       projectName: project.name,
       tagMap,
       syncedAt: now,
-    });
-    if (mapped === null) {
-      continue;
-    }
-    ctx.upsertItem(mapped);
-    upserted += 1;
-  }
-  return upserted;
+    }),
+  );
 }
 
 type ProjectsOutcome =
@@ -208,7 +202,7 @@ export function createFlagsmithSyncable(options: FlagsmithSyncableOptions): Sync
       const now = Date.now();
       let totalUpserted = 0;
       for (const project of resolved.projects) {
-        const result = await syncProjectFeatures(ctx, creds, project, now);
+        const result = await syncProjectFeatures(ctx, creds, project, now); // NOSONAR S9382: one project at a time through the shared Flagsmith rate limiter - each project paginates its features (page by page, until a short page) and the project list is uncapped
         totalUpserted += result.upserted;
         totalBytes += result.bytes;
       }

@@ -5,6 +5,7 @@ import {
 } from "../sync/pass-cursor-sync-result.ts";
 import { type Syncable, type SyncContext, type SyncResult, syncNoopResult } from "../sync/types.ts";
 import { connectorFetch } from "./_lib/fetch-outcome.ts";
+import { upsertMapped } from "./_lib/paginated-sync.ts";
 import { encodeNimbusJsonCursor } from "./nimbus-json-cursor.ts";
 import { mapSemgrepFindingToItem } from "./semgrep-finding-mapping.ts";
 import { asRecord, stringField } from "./unknown-record.ts";
@@ -108,19 +109,12 @@ function upsertSemgrepFindings(
   findings: readonly unknown[],
   now: number,
 ): number {
-  let upserted = 0;
-  for (const f of findings) {
-    const mapped = mapSemgrepFindingToItem(f, {
+  return upsertMapped(ctx, findings, (f) =>
+    mapSemgrepFindingToItem(f, {
       deploymentSlug: slug,
       syncedAt: now,
-    });
-    if (mapped === null) {
-      continue;
-    }
-    ctx.upsertItem(mapped);
-    upserted += 1;
-  }
-  return upserted;
+    }),
+  );
 }
 
 export function createSemgrepSyncable(options: SemgrepSyncableOptions): Syncable {

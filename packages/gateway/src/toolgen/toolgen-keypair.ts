@@ -1,6 +1,6 @@
 import nacl from "tweetnacl";
 import { decodeBase64, encodeBase64 } from "../util/base64.ts";
-import { generateEd25519Keypair } from "../util/ed25519.ts";
+import { ensureVaultEd25519Keypair } from "../util/ed25519.ts";
 import type { NimbusVault } from "../vault/nimbus-vault.ts";
 
 /**
@@ -45,63 +45,25 @@ export const TOOLGEN_SIGNING_PUBKEY = "toolgen.signing.pubkey";
  */
 export const TOOLGEN_SIGNING_KEY_PREFIX = "toolgen.signing.";
 
-/** True only if `b64` decodes from base64 to exactly `len` bytes (Ed25519 seed/pubkey = 32). */
-function isValidB64Len(b64: string, len: number): boolean {
-  try {
-    return decodeBase64(b64).length === len;
-  } catch {
-    return false;
-  }
-}
-
-/**
- * True only if the stored public key is the one derived from the stored private seed — i.e. they
- * form a consistent Ed25519 keypair. Guards against a partially-rotated / mismatched Vault (a
- * privkey from one keypair next to a pubkey from another), which would sign artifacts a boot-time
- * verify would then reject.
- */
-function isMatchingKeypair(privkeyB64: string, pubkeyB64: string): boolean {
-  try {
-    const derivedPub = nacl.sign.keyPair.fromSeed(decodeBase64(privkeyB64)).publicKey;
-    return encodeBase64(derivedPub) === pubkeyB64;
-  } catch {
-    return false;
-  }
-}
-
 /**
  * Resolve the toolgen artifact-signing keypair from the Vault, generating + storing it on first
  * use. The private seed is Vault-only — it is read here solely to thread into the in-process
  * signing call in `signArtifact`; it is never returned over IPC/HTTP, persisted to a DB column, or
- * logged. Mirrors `share/share-keypair.ts` and `policy/anchor-keypair.ts`.
+ * logged.
  *
  * A stored pair that is absent, malformed (wrong decoded length), or internally inconsistent (a
- * privkey that does not derive the stored pubkey) is treated as unusable and silently replaced —
- * this function never throws on a corrupted Vault, it regenerates.
+ * privkey that does not derive the stored pubkey, which would sign artifacts a boot-time verify
+ * would then reject) is treated as unusable and silently replaced — this function never throws on
+ * a corrupted Vault, it regenerates. That rule lives in the shared `ensureVaultEd25519Keypair`
+ * (`util/ed25519.ts`), which `share/share-keypair.ts` uses too; the key names stay here. That is
+ * a convention, not a static rule: this file is on the D11 vault-key allow-list, but D11's scan
+ * does not flag a `toolgen.signing.*` literal elsewhere — unlike `share.signing.privkey`, which
+ * D21 does confine to `share/share-keypair.ts`.
  */
-export async function ensureToolgenKeypair(
+export function ensureToolgenKeypair(
   vault: NimbusVault,
 ): Promise<{ privkeyB64: string; pubkeyB64: string }> {
-  const existingPriv = await vault.get(TOOLGEN_SIGNING_PRIVKEY);
-  const existingPub = await vault.get(TOOLGEN_SIGNING_PUBKEY);
-  // Reuse persisted material only when BOTH values decode to valid 32-byte keys AND form a
-  // consistent keypair. Corrupt/truncated/mismatched Vault contents are regenerated here rather
-  // than deferring failure to a later signing/verify call.
-  if (
-    existingPriv !== null &&
-    existingPub !== null &&
-    isValidB64Len(existingPriv, 32) &&
-    isValidB64Len(existingPub, 32) &&
-    isMatchingKeypair(existingPriv, existingPub)
-  ) {
-    return { privkeyB64: existingPriv, pubkeyB64: existingPub };
-  }
-  const kp = generateEd25519Keypair();
-  const privkeyB64 = encodeBase64(kp.privkey);
-  const pubkeyB64 = encodeBase64(kp.pubkey);
-  await vault.set(TOOLGEN_SIGNING_PRIVKEY, privkeyB64);
-  await vault.set(TOOLGEN_SIGNING_PUBKEY, pubkeyB64);
-  return { privkeyB64, pubkeyB64 };
+  return ensureVaultEd25519Keypair(vault, TOOLGEN_SIGNING_PRIVKEY, TOOLGEN_SIGNING_PUBKEY);
 }
 
 /**

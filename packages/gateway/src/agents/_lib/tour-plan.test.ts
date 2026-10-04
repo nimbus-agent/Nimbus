@@ -47,6 +47,51 @@ test("a throwing selector is a skip, not a failed plan", async () => {
   expect(p.steps).toHaveLength(5);
 });
 
+// The selectors run concurrently, so the plan must follow TOUR_PRIORITY, never the order in which
+// they happen to settle. Here each one settles LATER the earlier its kind is ranked, so the first
+// in priority is the last to finish.
+test("selectors that settle in reverse order still give the plan in priority order", async () => {
+  const sel = Object.fromEntries(
+    TOUR_PRIORITY.map((kind, rank) => [
+      kind,
+      () =>
+        new Promise<TourSelectorResult>((resolve) => {
+          setTimeout(
+            () => resolve(kind === "owners" ? { skip: "no owners" } : ok([kind])),
+            (TOUR_PRIORITY.length - rank) * 5,
+          );
+        }),
+    ]),
+  ) as never;
+  const p = await buildTourPlan(ctx, { steps: 3, demo: false, selectors: sel });
+  expect(p.steps.map((s) => s.kind)).toEqual(["oncall", "why", "standup"]);
+  expect(p.more.map((s) => s.kind)).toEqual(["decisions", "glossary"]);
+  expect(p.steps.map((s) => s.args)).toEqual([["oncall"], ["why"], ["standup"]]);
+  expect(p.skipped).toEqual([{ kind: "owners", reason: "no owners" }]);
+});
+
+test("a rejecting async selector is a skip, and every other kind is still offered", async () => {
+  const sel = {
+    ...all(() => ok()),
+    standup: () => Promise.reject(new Error("git config failed")),
+  } as never;
+  const p = await buildTourPlan(ctx, { steps: 6, demo: false, selectors: sel });
+  expect(p.skipped).toEqual([{ kind: "standup", reason: "selector error" }]);
+  expect(p.steps.map((s) => s.kind)).toEqual(["oncall", "why", "owners", "decisions", "glossary"]);
+});
+
+test("a candidate the step cannot be rendered from is that kind's skip, not a failed plan", async () => {
+  // `tourStepFor` maps over `args`, so a selector handing back anything else throws THERE — inside
+  // the same per-kind guard as the selector call itself.
+  const sel = {
+    ...all(() => ok()),
+    oncall: () => ({ ok: { title: "T", args: null, reason: "r" } }),
+  } as never;
+  const p = await buildTourPlan(ctx, { steps: 6, demo: false, selectors: sel });
+  expect(p.skipped).toEqual([{ kind: "oncall", reason: "selector error" }]);
+  expect(p.steps.map((s) => s.kind)).toEqual(["why", "owners", "standup", "decisions", "glossary"]);
+});
+
 // `tourStepFor` is the ONE construction path for a `TourStep` — `buildTourPlan` (`nimbus wow`)
 // and the demo seeder both go through it, so the printed `command` and the executed `args` cannot
 // drift between the two surfaces.

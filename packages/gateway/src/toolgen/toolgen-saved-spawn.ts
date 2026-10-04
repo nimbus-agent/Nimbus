@@ -142,7 +142,7 @@ export async function loadSavedToolsIntoRegistry(
 
   const runtimeReadPaths = deps.runtime.requiredReadPaths();
   for (const row of listSavedTools(deps.db)) {
-    const verified = await readVerifiedSavedTool(deps.configDir, row.toolId, pubkeyB64);
+    const verified = await readVerifiedSavedTool(deps.configDir, row.toolId, pubkeyB64); // NOSONAR S9382: verify-then-register one row at a time - the saved-tool count is unbounded, and a throwing verify must stop the load at that row with earlier rows already registered
     if (!verified.ok) continue;
 
     const fields = verified.artifact;

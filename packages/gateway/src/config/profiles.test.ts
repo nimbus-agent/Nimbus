@@ -15,18 +15,18 @@ describe("ProfileManager", () => {
     rmSync(dir, { recursive: true, force: true });
   });
 
-  test("list returns empty array before any profile is created", async () => {
+  test("list returns empty array before any profile is created", () => {
     const mgr = new ProfileManager(dir);
-    expect(await mgr.list()).toEqual([]);
-    expect(await mgr.getActive()).toBeUndefined();
+    expect(mgr.list()).toEqual([]);
+    expect(mgr.getActive()).toBeUndefined();
   });
 
-  test("create + switch + list round trip", async () => {
+  test("create + switch + list round trip", () => {
     const mgr = new ProfileManager(dir);
-    await mgr.create("work");
-    await mgr.create("personal");
-    await mgr.switchTo("personal");
-    const profiles = await mgr.list();
+    mgr.create("work");
+    mgr.create("personal");
+    mgr.switchTo("personal");
+    const profiles = mgr.list();
     expect(profiles.map((p) => p.name).sort((a, b) => a.localeCompare(b))).toEqual([
       "personal",
       "work",
@@ -34,38 +34,38 @@ describe("ProfileManager", () => {
     expect(profiles.find((p) => p.active)?.name).toBe("personal");
   });
 
-  test("delete removes the profile file and clears active if needed", async () => {
+  test("delete removes the profile file and clears active if needed", () => {
     const mgr = new ProfileManager(dir);
-    await mgr.create("work");
-    await mgr.create("personal");
-    await mgr.switchTo("work");
-    await mgr.delete("personal");
-    const profiles = await mgr.list();
+    mgr.create("work");
+    mgr.create("personal");
+    mgr.switchTo("work");
+    mgr.delete("personal");
+    const profiles = mgr.list();
     expect(profiles.map((p) => p.name)).toEqual(["work"]);
   });
 
-  test("delete refuses the active profile", async () => {
+  test("delete refuses the active profile", () => {
     const mgr = new ProfileManager(dir);
-    await mgr.create("work");
-    await mgr.switchTo("work");
-    await expect(mgr.delete("work")).rejects.toThrow(/active/i);
+    mgr.create("work");
+    mgr.switchTo("work");
+    expect(() => mgr.delete("work")).toThrow(/active/i);
   });
 
-  test("create rejects invalid names", async () => {
+  test("create rejects invalid names", () => {
     const mgr = new ProfileManager(dir);
-    await expect(mgr.create("bad name!")).rejects.toThrow();
-    await expect(mgr.create("default")).rejects.toThrow();
+    expect(() => mgr.create("bad name!")).toThrow();
+    expect(() => mgr.create("default")).toThrow();
   });
 
-  test("vaultKeyPrefix returns empty string for default profile", async () => {
+  test("vaultKeyPrefix returns empty string for default profile", () => {
     const mgr = new ProfileManager(dir);
     expect(mgr.vaultKeyPrefix()).toBe("");
   });
 
-  test("vaultKeyPrefix returns profile/ prefix after switch", async () => {
+  test("vaultKeyPrefix returns profile/ prefix after switch", () => {
     const mgr = new ProfileManager(dir);
-    await mgr.create("work");
-    await mgr.switchTo("work");
+    mgr.create("work");
+    mgr.switchTo("work");
     expect(mgr.vaultKeyPrefix()).toBe("profile/work/");
   });
 });

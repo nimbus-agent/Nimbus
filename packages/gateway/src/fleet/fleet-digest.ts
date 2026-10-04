@@ -11,7 +11,7 @@ import type {
   FleetSweepDigest,
   FleetSweepSubjectDigest,
 } from "./fleet-digest-types.ts";
-import type { FleetStore } from "./fleet-store.ts";
+import type { FleetBriefRow, FleetStore } from "./fleet-store.ts";
 
 type Compared = Pick<
   FleetJobDigest,
@@ -109,6 +109,197 @@ function kindFromKey(key: string): SweepKind | null {
   return (SWEEP_KINDS as readonly string[]).includes(prefix) ? (prefix as SweepKind) : null;
 }
 
+/** What one brief pair supports — see {@link classifyBriefPair}. */
+type BriefPairOutcome =
+  | { readonly kind: "no_brief" }
+  | { readonly kind: "first_observation"; readonly current: FleetBriefRow }
+  | {
+      readonly kind: "agent_changed";
+      readonly current: FleetBriefRow;
+      readonly predecessor: FleetBriefRow;
+    }
+  | {
+      readonly kind: "not_summarizable";
+      readonly current: FleetBriefRow;
+      readonly predecessor: FleetBriefRow;
+      readonly currentUnreadable: boolean;
+      readonly predecessorUnreadable: boolean;
+    }
+  | {
+      readonly kind: "compared";
+      readonly current: FleetBriefRow;
+      readonly predecessor: FleetBriefRow;
+      readonly compared: Compared;
+    };
+
+/**
+ * The classification BOTH digest walks share — `buildFleetDigest`'s per-job loop and
+ * `buildSweepDigest`'s per-subject loop (spec § 5, § 8.1) — decided in one place so the two
+ * cannot drift on the ORDER of the checks, which is itself part of the contract (see below).
+ */
+function classifyBriefPair(
+  pair: {
+    readonly current: FleetBriefRow | undefined;
+    readonly predecessor: FleetBriefRow | undefined;
+  },
+  minDelta: number,
+): BriefPairOutcome {
+  const { current, predecessor } = pair;
+  if (current === undefined) return { kind: "no_brief" };
+  // One brief only: reporting it as "all new" would fabricate a change against a baseline that
+  // never existed (spec § 5).
+  if (predecessor === undefined) return { kind: "first_observation", current };
+  if (current.agentMethod !== predecessor.agentMethod) {
+    // Same name, different agent — the owner repointed it. Both briefs are readable, but their
+    // metric namespaces are disjoint, so comparing them would report EVERY metric as one-sided and
+    // every key as churn: a wall of movement describing a config edit, not the index. Refused with
+    // its own disclosure rather than diffed (spec § 5).
+    //
+    // Deliberately takes precedence over summarizability: this fires BEFORE either brief is even
+    // passed to `summarizeBrief`, so a `current` brief that is both under the new agent AND
+    // independently corrupt is absorbed into this disclosure with no separate "also unreadable"
+    // signal. That is still correct — the comparison is impossible either way, and "the agent
+    // changed" is the more actionable fact for a reader than "also, the new brief doesn't parse".
+    return { kind: "agent_changed", current, predecessor };
+  }
+  const after = summarizeBrief(current.agentMethod, current.findingsJson);
+  const before = summarizeBrief(predecessor.agentMethod, predecessor.findingsJson);
+  if (after === undefined || before === undefined) {
+    // Both sides are checked, and both reported when both fail: a reader responds differently to
+    // a broken NEW brief than to a broken OLD one, so the role is part of the disclosure.
+    return {
+      kind: "not_summarizable",
+      current,
+      predecessor,
+      currentUnreadable: after === undefined,
+      predecessorUnreadable: before === undefined,
+    };
+  }
+  return {
+    kind: "compared",
+    current,
+    predecessor,
+    compared: compareSummaries(before, after, minDelta),
+  };
+}
+
+/** A sweep job's per-subject populations, in ONE record the subject walk fills. */
+interface SweepTally {
+  agentMethod: string;
+  readonly moved: FleetSweepSubjectDigest[];
+  readonly firstObservationKeys: string[];
+  readonly notSummarizable: FleetDigestSubjectRef[];
+  readonly agentChanged: FleetDigestSubjectRef[];
+  unchangedCount: number;
+  unchangedWithinThresholdCount: number;
+}
+
+interface SweepSubjectCtx {
+  readonly jobId: string;
+  readonly subjectKey: string;
+  readonly configured: boolean;
+  readonly minDelta: number;
+}
+
+/** Files one subject's classified brief pair into the sweep's tally. */
+function recordSweepSubject(
+  tally: SweepTally,
+  outcome: BriefPairOutcome,
+  ctx: SweepSubjectCtx,
+): void {
+  if (outcome.kind === "no_brief") return;
+  tally.agentMethod = outcome.current.agentMethod;
+  const { subjectKey } = ctx;
+  switch (outcome.kind) {
+    case "first_observation":
+      tally.firstObservationKeys.push(subjectKey);
+      return;
+    case "agent_changed":
+      tally.agentChanged.push({
+        subjectKey,
+        briefId: outcome.current.id,
+        reason: `${outcome.predecessor.agentMethod} → ${outcome.current.agentMethod}, not comparable`,
+      });
+      return;
+    case "not_summarizable":
+      if (outcome.currentUnreadable) {
+        tally.notSummarizable.push({
+          subjectKey,
+          briefId: outcome.current.id,
+          reason: `unreadable ${outcome.current.agentMethod} brief (current)`,
+        });
+      }
+      if (outcome.predecessorUnreadable) {
+        tally.notSummarizable.push({
+          subjectKey,
+          briefId: outcome.predecessor.id,
+          reason: `unreadable ${outcome.predecessor.agentMethod} brief (predecessor)`,
+        });
+      }
+      return;
+    case "compared":
+      recordSweepComparison(tally, outcome, ctx);
+  }
+}
+
+/** A compared subject is counted when it did not move, and reported in full when it did. */
+function recordSweepComparison(
+  tally: SweepTally,
+  outcome: Extract<BriefPairOutcome, { kind: "compared" }>,
+  ctx: SweepSubjectCtx,
+): void {
+  const { current, predecessor, compared } = outcome;
+  if (compared.status === "unchanged") {
+    tally.unchangedCount += 1;
+    return;
+  }
+  if (compared.status === "unchanged_within_threshold") {
+    tally.unchangedWithinThresholdCount += 1;
+    return;
+  }
+  tally.moved.push({
+    jobId: ctx.jobId,
+    subjectKey: ctx.subjectKey,
+    agentMethod: current.agentMethod,
+    configured: ctx.configured,
+    minDelta: ctx.minDelta,
+    currentBriefId: current.id,
+    currentCreatedAt: current.createdAt,
+    predecessorBriefId: predecessor.id,
+    predecessorCreatedAt: predecessor.createdAt,
+    comparisonSpanMs: current.createdAt - predecessor.createdAt,
+    ...compared,
+  });
+}
+
+/**
+ * Spec § 8.1's rotation-vs-retention estimate: how many runs (and how long) one full pass over the
+ * job's subjects takes, against how long a brief is kept. Null wherever an input is unknown.
+ */
+function rotationVsRetention(
+  subjectsTotal: number | null,
+  cfg: NimbusFleetJobToml | undefined,
+  retentionDays: number,
+): Pick<
+  FleetSweepDigest,
+  "rotationRunsEstimate" | "rotationMsEstimate" | "retentionMs" | "rotationExceedsRetention"
+> {
+  const sweep = cfg?.sweep ?? null;
+  const rotationRunsEstimate =
+    subjectsTotal === null || sweep === null ? null : Math.ceil(subjectsTotal / sweep.maxSubjects);
+  const rotationMsEstimate =
+    rotationRunsEstimate === null || cfg === undefined
+      ? null
+      : rotationRunsEstimate * cfg.intervalSeconds * 1000;
+  const retentionMs = retentionDays * DAY_MS;
+  return {
+    rotationRunsEstimate,
+    rotationMsEstimate,
+    retentionMs,
+    rotationExceedsRetention: rotationMsEstimate !== null && rotationMsEstimate > retentionMs,
+  };
+}
+
 /**
  * One sweep job's grouped outcomes across every subject with a live brief in the window (spec
  * § 8.1). Mirrors `buildFleetDigest`'s per-job loop, scoped to subjects rather than job ids, and
@@ -124,107 +315,137 @@ function buildSweepDigest(
   const keys = deps.store.subjectKeysWithBriefsInWindow({ jobId, windowStartMs, now: deps.now });
   const configured = cfg !== undefined;
   const minDelta = cfg?.digestMinDelta ?? 1;
-  let agentMethod = cfg === undefined ? "unknown" : `agents.${cfg.agent}`;
-  const moved: FleetSweepSubjectDigest[] = [];
-  const firstObservationKeys: string[] = [];
-  const notSummarizable: FleetDigestSubjectRef[] = [];
-  const agentChanged: FleetDigestSubjectRef[] = [];
-  let unchangedCount = 0;
-  let unchangedWithinThresholdCount = 0;
+  const tally: SweepTally = {
+    agentMethod: cfg === undefined ? "unknown" : `agents.${cfg.agent}`,
+    moved: [],
+    firstObservationKeys: [],
+    notSummarizable: [],
+    agentChanged: [],
+    unchangedCount: 0,
+    unchangedWithinThresholdCount: 0,
+  };
 
   for (const subjectKey of keys) {
-    const { current, predecessor } = deps.store.briefPairForSubject({
+    const pair = deps.store.briefPairForSubject({
       jobId,
       subjectKey,
       windowStartMs,
       now: deps.now,
     });
-    if (current === undefined) continue;
-    agentMethod = current.agentMethod;
-    if (predecessor === undefined) {
-      firstObservationKeys.push(subjectKey);
-      continue;
-    }
-    if (current.agentMethod !== predecessor.agentMethod) {
-      agentChanged.push({
-        subjectKey,
-        briefId: current.id,
-        reason: `${predecessor.agentMethod} → ${current.agentMethod}, not comparable`,
-      });
-      continue;
-    }
-    const after = summarizeBrief(current.agentMethod, current.findingsJson);
-    const before = summarizeBrief(predecessor.agentMethod, predecessor.findingsJson);
-    if (after === undefined || before === undefined) {
-      if (after === undefined) {
-        notSummarizable.push({
-          subjectKey,
-          briefId: current.id,
-          reason: `unreadable ${current.agentMethod} brief (current)`,
-        });
-      }
-      if (before === undefined) {
-        notSummarizable.push({
-          subjectKey,
-          briefId: predecessor.id,
-          reason: `unreadable ${predecessor.agentMethod} brief (predecessor)`,
-        });
-      }
-      continue;
-    }
-    const compared = compareSummaries(before, after, minDelta);
-    if (compared.status === "unchanged") {
-      unchangedCount += 1;
-      continue;
-    }
-    if (compared.status === "unchanged_within_threshold") {
-      unchangedWithinThresholdCount += 1;
-      continue;
-    }
-    moved.push({
+    recordSweepSubject(tally, classifyBriefPair(pair, minDelta), {
       jobId,
       subjectKey,
-      agentMethod: current.agentMethod,
       configured,
       minDelta,
-      currentBriefId: current.id,
-      currentCreatedAt: current.createdAt,
-      predecessorBriefId: predecessor.id,
-      predecessorCreatedAt: predecessor.createdAt,
-      comparisonSpanMs: current.createdAt - predecessor.createdAt,
-      ...compared,
     });
   }
 
   const subjectsTotal = deps.store.loadSweepState(jobId)?.subjectsTotal ?? null;
-  const sweep = cfg?.sweep ?? null;
-  const rotationRunsEstimate =
-    subjectsTotal === null || sweep === null ? null : Math.ceil(subjectsTotal / sweep.maxSubjects);
-  const rotationMsEstimate =
-    rotationRunsEstimate === null || cfg === undefined
-      ? null
-      : rotationRunsEstimate * cfg.intervalSeconds * 1000;
-  const retentionMs = deps.retentionDays * DAY_MS;
+  const rotation = rotationVsRetention(subjectsTotal, cfg, deps.retentionDays);
   const firstKey = keys.find((k) => k !== jobId);
   return {
     jobId,
-    agentMethod,
-    sweepKind: sweep?.kind ?? (firstKey === undefined ? null : kindFromKey(firstKey)),
+    agentMethod: tally.agentMethod,
+    sweepKind: cfg?.sweep?.kind ?? (firstKey === undefined ? null : kindFromKey(firstKey)),
     configured,
     subjectsTotal,
     subjectsSweptInWindow: keys.length,
-    rotationRunsEstimate,
-    rotationMsEstimate,
-    retentionMs,
-    rotationExceedsRetention: rotationMsEstimate !== null && rotationMsEstimate > retentionMs,
-    moved,
-    unchangedCount,
-    unchangedWithinThresholdCount,
-    firstObservationKeys,
-    notSummarizable,
-    agentChanged,
+    rotationRunsEstimate: rotation.rotationRunsEstimate,
+    rotationMsEstimate: rotation.rotationMsEstimate,
+    retentionMs: rotation.retentionMs,
+    rotationExceedsRetention: rotation.rotationExceedsRetention,
+    moved: tally.moved,
+    unchangedCount: tally.unchangedCount,
+    unchangedWithinThresholdCount: tally.unchangedWithinThresholdCount,
+    firstObservationKeys: tally.firstObservationKeys,
+    notSummarizable: tally.notSummarizable,
+    agentChanged: tally.agentChanged,
     noBriefInWindow: keys.length === 0,
   };
+}
+
+/**
+ * The four `notCompared` populations while the job walk fills them. Derived from
+ * `FleetDigestNotCompared` rather than restated — that type is the single definition of these
+ * shapes; structural checking where the result is returned catches drift either way, but there is
+ * no reason to keep a second copy of it here.
+ */
+type NotComparedTally = {
+  readonly [K in keyof FleetDigestNotCompared]: FleetDigestNotCompared[K][number][];
+};
+
+/** Files one config-named job's classified brief pair into the job list or a `notCompared` population. */
+function recordJobOutcome(
+  acc: { readonly jobs: FleetJobDigest[]; readonly notCompared: NotComparedTally },
+  outcome: BriefPairOutcome,
+  ctx: {
+    readonly jobId: string;
+    readonly cfg: NimbusFleetJobToml | undefined;
+    readonly minDelta: number;
+  },
+): void {
+  const { jobId, cfg, minDelta } = ctx;
+  const configured = cfg !== undefined;
+  const nc = acc.notCompared;
+  switch (outcome.kind) {
+    case "no_brief":
+      // Configured but no brief landed in the window at all — reported with the CONFIGURED agent
+      // name, since there is no brief to read one from.
+      nc.noBriefInWindow.push({ jobId, agent: cfg?.agent ?? "unknown", configured });
+      return;
+    case "first_observation":
+      nc.firstObservation.push({
+        jobId,
+        briefId: outcome.current.id,
+        createdAt: outcome.current.createdAt,
+        configured,
+      });
+      return;
+    case "agent_changed":
+      nc.agentChanged.push({
+        jobId,
+        from: outcome.predecessor.agentMethod,
+        to: outcome.current.agentMethod,
+        configured,
+      });
+      return;
+    case "not_summarizable":
+      if (outcome.currentUnreadable) {
+        nc.notSummarizable.push({
+          jobId,
+          briefId: outcome.current.id,
+          role: "current",
+          reason: `unreadable ${outcome.current.agentMethod} brief`,
+          configured,
+        });
+      }
+      if (outcome.predecessorUnreadable) {
+        nc.notSummarizable.push({
+          jobId,
+          briefId: outcome.predecessor.id,
+          role: "predecessor",
+          reason: `unreadable ${outcome.predecessor.agentMethod} brief`,
+          configured,
+        });
+      }
+      return;
+    case "compared": {
+      const { current, predecessor } = outcome;
+      acc.jobs.push({
+        jobId,
+        agentMethod: current.agentMethod,
+        configured,
+        minDelta,
+        currentBriefId: current.id,
+        currentCreatedAt: current.createdAt,
+        predecessorBriefId: predecessor.id,
+        predecessorCreatedAt: predecessor.createdAt,
+        // The PAIR's span, not the window — those differ per job (spec § 2.1).
+        comparisonSpanMs: current.createdAt - predecessor.createdAt,
+        ...outcome.compared,
+      });
+    }
+  }
 }
 
 /**
@@ -272,99 +493,27 @@ export function buildFleetDigest(deps: {
   );
 
   const jobs: FleetJobDigest[] = [];
-  // Derived from `FleetDigestNotCompared` rather than restated inline — that type is the single
-  // definition of these shapes; structural checking at the return statement below catches drift
-  // either way, but there is no reason to keep a second copy of it here.
-  const firstObservation: FleetDigestNotCompared["firstObservation"][number][] = [];
-  const notSummarizable: FleetDigestNotCompared["notSummarizable"][number][] = [];
-  const noBriefInWindow: FleetDigestNotCompared["noBriefInWindow"][number][] = [];
-  const agentChanged: FleetDigestNotCompared["agentChanged"][number][] = [];
+  const notCompared: NotComparedTally = {
+    firstObservation: [],
+    notSummarizable: [],
+    noBriefInWindow: [],
+    agentChanged: [],
+  };
 
   for (const jobId of ids) {
     if (sweepIds.has(jobId)) continue;
     const cfg = configured.get(jobId);
-    const { current, predecessor } = deps.store.briefPairForSubject({
+    const minDelta = cfg?.digestMinDelta ?? 1;
+    const pair = deps.store.briefPairForSubject({
       jobId,
       subjectKey: jobId,
       windowStartMs,
       now: deps.now,
     });
-    const configuredHere = cfg !== undefined;
-    if (current === undefined) {
-      // Configured but no brief landed in the window at all — reported with the CONFIGURED agent
-      // name, since there is no brief to read one from.
-      noBriefInWindow.push({ jobId, agent: cfg?.agent ?? "unknown", configured: configuredHere });
-      continue;
-    }
-    if (predecessor === undefined) {
-      // One brief only: reporting it as "all new" would fabricate a change against a baseline
-      // that never existed (spec § 5).
-      firstObservation.push({
-        jobId,
-        briefId: current.id,
-        createdAt: current.createdAt,
-        configured: configuredHere,
-      });
-      continue;
-    }
-    if (current.agentMethod !== predecessor.agentMethod) {
-      // Same job name, different agent — the owner repointed it. Both briefs are readable, but
-      // their metric namespaces are disjoint, so comparing them would report EVERY metric as
-      // one-sided and every key as churn: a wall of movement describing a config edit, not the
-      // index. Refused with its own disclosure rather than diffed (spec § 5).
-      //
-      // Deliberately takes precedence over summarizability: this fires BEFORE either brief is
-      // even passed to `summarizeBrief`, so a `current` brief that is both under the new agent
-      // AND independently corrupt is absorbed into this disclosure with no separate
-      // "also unreadable" signal. That is still correct — the comparison is impossible either
-      // way, and "the agent changed" is the more actionable fact for a reader than "also, the
-      // new brief doesn't parse".
-      agentChanged.push({
-        jobId,
-        from: predecessor.agentMethod,
-        to: current.agentMethod,
-        configured: configuredHere,
-      });
-      continue;
-    }
-    const after = summarizeBrief(current.agentMethod, current.findingsJson);
-    const before = summarizeBrief(predecessor.agentMethod, predecessor.findingsJson);
-    if (after === undefined || before === undefined) {
-      // Both sides are checked, and both reported when both fail: a reader responds differently
-      // to a broken NEW brief than to a broken OLD one, so the role is part of the disclosure.
-      if (after === undefined) {
-        notSummarizable.push({
-          jobId,
-          briefId: current.id,
-          role: "current",
-          reason: `unreadable ${current.agentMethod} brief`,
-          configured: configuredHere,
-        });
-      }
-      if (before === undefined) {
-        notSummarizable.push({
-          jobId,
-          briefId: predecessor.id,
-          role: "predecessor",
-          reason: `unreadable ${predecessor.agentMethod} brief`,
-          configured: configuredHere,
-        });
-      }
-      continue;
-    }
-    const minDelta = cfg?.digestMinDelta ?? 1;
-    jobs.push({
+    recordJobOutcome({ jobs, notCompared }, classifyBriefPair(pair, minDelta), {
       jobId,
-      agentMethod: current.agentMethod,
-      configured: cfg !== undefined,
+      cfg,
       minDelta,
-      currentBriefId: current.id,
-      currentCreatedAt: current.createdAt,
-      predecessorBriefId: predecessor.id,
-      predecessorCreatedAt: predecessor.createdAt,
-      // The PAIR's span, not the window — those differ per job (spec § 2.1).
-      comparisonSpanMs: current.createdAt - predecessor.createdAt,
-      ...compareSummaries(before, after, minDelta),
     });
   }
 
@@ -377,7 +526,7 @@ export function buildFleetDigest(deps: {
     windowMs: deps.windowMs,
     generatedAt: deps.now,
     jobs,
-    notCompared: { firstObservation, notSummarizable, noBriefInWindow, agentChanged },
+    notCompared,
     sweeps,
   };
   // One computation, two shapes. Rendering from `result` rather than from the locals is what makes
