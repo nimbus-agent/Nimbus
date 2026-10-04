@@ -9,6 +9,7 @@ import { createDataSlice, type DataSlice } from "./slices/data";
 import { createHitlSlice, type HitlSlice } from "./slices/hitl";
 import { createModelSlice, type ModelSlice } from "./slices/model";
 import { createOnboardingSlice, type OnboardingSlice } from "./slices/onboarding";
+import { createOncallSlice, type OncallSlice } from "./slices/oncall";
 import { createProfileSlice, type ProfileSlice } from "./slices/profile";
 import { createQuickQuerySlice, type QuickQuerySlice } from "./slices/quickQuery";
 import { createSettingsSlice, type SettingsSlice } from "./slices/settings";
@@ -29,7 +30,8 @@ export type NimbusStore = ConnectionSlice &
   ConnectorsSlice &
   ModelSlice &
   AuditSlice &
-  UpdaterSlice;
+  UpdaterSlice &
+  OncallSlice;
 
 export const useNimbusStore = create<NimbusStore>()(
   persist(
@@ -48,6 +50,7 @@ export const useNimbusStore = create<NimbusStore>()(
       ...createModelSlice(...a),
       ...createAuditSlice(...a),
       ...createUpdaterSlice(...a),
+      ...createOncallSlice(...a),
     }),
     {
       name: "nimbus-ui-store",

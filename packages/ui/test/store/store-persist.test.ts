@@ -16,9 +16,14 @@ describe("useNimbusStore — persist middleware integration", () => {
     expect(raw).not.toBeNull();
     const parsed = JSON.parse(raw!);
     expect(Object.keys(parsed.state).sort((a, b) => a.localeCompare(b))).toEqual(
-      ["active", "activePullId", "connectorsList", "installedModels", "profiles"].sort((a, b) =>
-        a.localeCompare(b),
-      ),
+      [
+        "active",
+        "activePullId",
+        "connectorsList",
+        "installedModels",
+        "lastSeenPushedAt",
+        "profiles",
+      ].sort((a, b) => a.localeCompare(b)),
     );
   });
 

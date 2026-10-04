@@ -140,7 +140,7 @@ must gate on ledger health should use `nimbus egress verify`, not `nimbus wow`'s
 
 **The proof line is a time window, not attribution.** The window is exactly `{since: plan.t0, until: locality.t1}` — `t0` is the gateway's own clock when `tour.plan` ran, `t1` is its clock when `locality.report` ran, and both are gateway-side values, never `Date.now()` computed in the CLI. It answers "how much left this machine, gateway-wide, while the tour was running" — **not** "how much this tour's own three commands sent." A concurrent sync, a background fleet run, or another client's `nimbus ask` during the same window would show up on the same line, and the panel does not (and cannot) separate them out. `nimbus prove --sign`, `nimbus egress` and `nimbus egress verify` — named at the foot of the panel — are how to inspect the same window (or a different one) in full.
 
-**IPC:** `tour.plan(params: { steps?: 1..6 })` and `locality.report(params: {})`. Both are **CLI-only**: the `tour` and `locality` namespaces are `FORBIDDEN_OVER_LAN` (I5) and neither method is in the Tauri `ALLOWED_METHODS` (I7 — still 105). Read-only, no HITL, no new egress class — the panel's own proof line is produced by the existing `egress.proveWindow` method, not a new one.
+**IPC:** `tour.plan(params: { steps?: 1..6 })` and `locality.report(params: {})`. Both are **CLI-only**: the `tour` and `locality` namespaces are `FORBIDDEN_OVER_LAN` (I5) and neither method is in the Tauri `ALLOWED_METHODS` (I7). Read-only, no HITL, no new egress class — the panel's own proof line is produced by the existing `egress.proveWindow` method, not a new one.
 
 **Three residuals of the locality panel, stated rather than hidden:**
 
@@ -1077,7 +1077,7 @@ nimbus oncall pushed --json
 | Form | What it does |
 |---|---|
 | `nimbus oncall pushed` | Print the newest pushed brief. With none, prints `No pushed briefs yet.` and exits `0` (an empty list is an answer); if push is off it says how to turn it on. |
-| `nimbus oncall pushed list` | One line per stored brief, newest first: time, `ok`/`FAILED`, incident id, title. |
+| `nimbus oncall pushed list` | One line per stored brief, newest first: time, `ok`/`FAILED`, incident id, `[service]` when known, title. |
 | `nimbus oncall pushed <incident-id>` | Print that incident's brief. Exits `1` when none is stored for the id. |
 | `--retry` | Only with an incident id: re-assemble a brief for that incident (the recovery path when a stored brief is `FAILED`). |
 | `--json` | Print the stored record as JSON. Exit codes are unchanged: a failed brief or a named id with no brief exits `1`. |
@@ -1096,9 +1096,9 @@ retention_days = 90      # stored briefs older than this are pruned at boot (eve
 
 **What a push never does.** It never runs synthesis — the stored brief is the deterministic render, so nothing is sent to a model. The `oncall.briefPushed` event carries only `{incidentId, status}` (an `ok`/`failed` status), never the brief. The (currently dropped) notification would carry the incident title and id, never the brief, and would be capped at three per run plus one summary. An incident with no recorded opening time is never pushed, enabling push never backfills history, and the gateway reconciles the enable moment at boot rather than trusting a timestamp from an earlier run.
 
-**Bounds.** A GDPR purge does not sweep stored pushed briefs — retention is the bound, as for `fleet_brief`. **Not shipped:** delivery to ChatOps (planned PR 2), the desktop panel (PR 3), approving a mitigation from the push, and ranking a cascade of alerts. `nimbus tail --filter oncall` follows the event live; `nimbus doctor` warns when push is enabled but your identity is unresolved, since nothing could then ever be selected.
+**Bounds.** A GDPR purge does not sweep stored pushed briefs — retention is the bound, as for `fleet_brief`. The desktop app's On-call page shows the same briefs (it cannot retry; a failed row shows the `--retry` command above). **Not shipped:** approving a mitigation from the push, and ranking a cascade of alerts. `nimbus tail --filter oncall` follows the event live; `nimbus doctor` warns when push is enabled but your identity is unresolved, since nothing could then ever be selected.
 
-**CLI-only.** The three methods behind it (`oncall.pushedList`, `oncall.pushedGet`, `oncall.pushedRetry`) are not reachable over LAN, HTTP, MCP, ChatOps or the Tauri allowlist.
+**Reach.** The three methods behind it (`oncall.pushedList`, `oncall.pushedGet`, `oncall.pushedRetry`) are not reachable over LAN, HTTP, MCP or ChatOps. Only the two reads are on the Tauri allowlist; `oncall.pushedRetry` is CLI-only.
 
 ---
 
