@@ -947,6 +947,11 @@ export function asPushedBriefList(v: unknown): PushedBriefList | null {
   return v as unknown as PushedBriefList;
 }
 
+/**
+ * THREE states, deliberately: `undefined` = nothing usable yet (loading, or not this shape);
+ * `{ brief: null }` = the gateway answered and the brief is gone (pruned): BriefDetail reports it;
+ * `{ brief: … }` = a brief. Collapsing the first two would announce "pruned" while still loading.
+ */
 export function asPushedBriefGet(v: unknown): PushedBriefGet | undefined {
   if (!isRecord(v) || !("brief" in v)) return undefined;
   const b = v["brief"];
@@ -1111,6 +1116,12 @@ It renders `<MemoryRouter initialEntries={[path]}><Routes><Route path="/oncall" 
 9. Review Focus 1: render with `?id=<older ok id>`, then replace `briefs.list` with a list that has a NEW newest row and re-render. The URL still names the older id, and its brief is still shown.
 10. Review Focus 2: a list containing `pagerduty:A/B#c?d`. Clicking its row puts `?id=pagerduty%3AA%2FB%23c%3Fd` in the URL, and the detail query is called with `{ incidentId: "pagerduty:A/B#c?d" }`.
 11. Live arrival: with `/oncall` mounted, a list update whose newest `createdAt` is larger calls `markPushedSeen` with the new value (dot stays off).
+13. No prune loop (plan review § 2.1). The cached list's NEWEST row is the pruned id `pagerduty:PGONE`, with one older ok row behind it. Start at `/oncall` and let the detail query for `pagerduty:PGONE` return `{ brief: null }`.
+    - The pruned notice shows.
+    - The URL ends on the OLDER row's id.
+    - The detail query for `pagerduty:PGONE` was requested exactly once.
+    - The list's `refetch` was called once.
+    - Red-proved by reverting `autoId` to `newest?.incidentId`: the `pagerduty:PGONE` query count climbs, so assert it stays at 1 after `waitFor` settles.
 12. `BriefDetail` refetch: setting `briefs.lastPushed = { incidentId: <selected>, seq: 1 }` and re-rendering calls that detail query's `refetch`. A `lastPushed` for another id does not.
 
 - [ ] **Step 2: Run them and confirm they fail.** `cd packages/ui && bunx vitest run test/pages/Oncall.test.tsx test/components/oncall`.
@@ -1276,7 +1287,7 @@ const IDENTITY_UNRESOLVED =
   "On-call push is enabled but your identity is unresolved, so no incident can be selected. Set [user] me_person_id in nimbus.toml or `git config user.email`.";
 
 export function Oncall(): ReactNode {
-  const { list, error } = useOncallBriefs();
+  const { list, error, refetch } = useOncallBriefs();
   const [params, setParams] = useSearchParams();
   const markPushedSeen = useNimbusStore((s) => s.markPushedSeen);
   const [pruned, setPruned] = useState<string | null>(null);
@@ -1290,11 +1301,14 @@ export function Oncall(): ReactNode {
     if (newestCreatedAt !== undefined) markPushedSeen(newestCreatedAt);
   }, [newestCreatedAt, markPushedSeen]);
 
-  // Auto-select ONLY when nothing is selected, so an arrival never yanks the reader away.
-  const newestId = newest?.incidentId;
+  // Auto-select ONLY when nothing is selected, so an arrival never yanks the reader away. The target
+  // skips a just-pruned id: the cached list can still name it until the list refetch below lands,
+  // and re-selecting it would remount BriefDetail, fetch `{ brief: null }` again, clear `id` again,
+  // and loop (plan review § 2.1).
+  const autoId = briefs.find((b) => b.incidentId !== pruned)?.incidentId;
   useEffect(() => {
-    if (selectedId === null && newestId !== undefined) setParams({ id: newestId }, { replace: true });
-  }, [selectedId, newestId, setParams]);
+    if (selectedId === null && autoId !== undefined) setParams({ id: autoId }, { replace: true });
+  }, [selectedId, autoId, setParams]);
 
   const onSelect = useCallback(
     (id: string) => {
@@ -1307,8 +1321,9 @@ export function Oncall(): ReactNode {
     (id: string) => {
       setPruned(id);
       setParams({}, { replace: true });
+      refetch(); // the list may still carry the pruned row; refresh it rather than wait 60 s
     },
-    [setParams],
+    [setParams, refetch],
   );
 
   return (
