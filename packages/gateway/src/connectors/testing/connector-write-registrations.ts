@@ -232,44 +232,61 @@ function expressionEnd(s: string, start: number): number {
   return s.length;
 }
 
+/** +1 for a bracket that opens inside a type (generics included), -1 for one that closes. */
+function typeDepthDelta(c: string): number {
+  if (OPEN.includes(c) || c === "<") return 1;
+  if (CLOSE.includes(c) || c === ">") return -1;
+  return 0;
+}
+
 /** Past a type annotation (after its `:`), to the `=` it ends at; -1 when it is not followed by one. */
 function skipTypeToAssign(s: string, i: number): number {
   let depth = 0;
   for (let j = i; j < s.length; j++) {
+    if (s.startsWith("=>", j)) {
+      j++;
+      continue;
+    }
     const c = s.charAt(j);
-    if (c === "=" && s.charAt(j + 1) === ">") j++;
-    else if (OPEN.includes(c) || c === "<") depth++;
-    else if (CLOSE.includes(c) || c === ">") depth--;
-    else if (depth === 0 && c === "=") return j;
-    else if (depth === 0 && c === ";") return -1;
+    depth += typeDepthDelta(c);
     if (depth < 0) return -1;
+    if (depth === 0 && c === "=") return j;
+    if (depth === 0 && c === ";") return -1;
   }
   return -1;
+}
+
+/** +1 for `(` `[` `<`, -1 for `)` `]` `>` — the brackets a return type nests through. */
+function parenAngleDelta(c: string): number {
+  if ("([<".includes(c)) return 1;
+  return ")]>".includes(c) ? -1 : 0;
+}
+
+/** An object TYPE literal can follow these; a `{` after anything else opens a function body. */
+const OBJECT_TYPE_LEADS = ":|&,";
+
+/** The bracket closing the one at `open`, or the end of `s` when it never closes. */
+function closeOrEnd(s: string, open: number): number {
+  const close = matchForward(s, open);
+  return close < 0 ? s.length : close;
 }
 
 /** Past a return-type annotation (after its `:`), to the `{` that opens the body; -1 if none. */
 function skipReturnTypeToBody(s: string, i: number): number {
   let depth = 0;
   let prev = ":";
-  for (let j = i; j < s.length; j++) {
+  for (let j = skipWs(s, i); j < s.length; j = skipWs(s, j + 1)) {
     const c = s.charAt(j);
-    if (/\s/.test(c)) continue;
-    if (c === "=" && s.charAt(j + 1) === ">") {
-      j++;
-      prev = ">";
-      continue;
-    }
-    if (c === "{" && depth === 0 && !":|&,".includes(prev)) return j;
     if (c === "{" && depth === 0) {
-      j = matchForward(s, j);
-      if (j < 0) return -1;
-      prev = "}";
-      continue;
+      if (!OBJECT_TYPE_LEADS.includes(prev)) return j;
+      j = closeOrEnd(s, j); // an object type: skip it whole
+    } else if (s.startsWith("=>", j)) {
+      j++;
+    } else {
+      depth += parenAngleDelta(c);
+      if (depth === 0 && c === ";") return -1;
     }
-    if ("([<".includes(c)) depth++;
-    else if (")]>".includes(c)) depth--;
-    else if (depth === 0 && c === ";") return -1;
-    prev = c;
+    prev = s.charAt(j);
   }
   return -1;
 }
@@ -437,33 +454,55 @@ function headContext(
   return { name: null, exported: false, returned: /\breturn\s+(?:async\s+)?$/.test(before) };
 }
 
+/**
+ * After `function name` (at `i`): the parameter list's `(` and the body's `{`, past any type
+ * parameters and return type — or null when what follows is not a function with a body.
+ */
+function functionHeadAt(s: string, i: number): { paramsOpen: number; bodyStart: number } | null {
+  const paramsOpen = s.charAt(i) === "<" ? skipWs(s, skipAngles(s, i)) : i;
+  if (paramsOpen < 0 || s.charAt(paramsOpen) !== "(") return null;
+  const paramsClose = matchForward(s, paramsOpen);
+  if (paramsClose < 0) return null;
+  const j = skipWs(s, paramsClose + 1);
+  const bodyStart = s.charAt(j) === ":" ? skipReturnTypeToBody(s, j + 1) : j;
+  return bodyStart >= 0 && s.charAt(bodyStart) === "{" ? { paramsOpen, bodyStart } : null;
+}
+
+/** A declaration `function name` is bound to `name`, exported when `export` precedes it. */
+function namedFunctionContext(
+  s: string,
+  at: number,
+  name: string,
+): Omit<FnInfo, "params" | "bodyStart" | "bodyEnd"> {
+  const before = s.slice(Math.max(0, at - 40), at);
+  return {
+    name,
+    exported: /\bexport\s+(?:default\s+)?(?:async\s+)?$/.test(before),
+    returned: false,
+  };
+}
+
 function functionDeclarationsOf(s: string): FnInfo[] {
   const out: FnInfo[] = [];
   const re = new RegExp(String.raw`\bfunction\b\s*\*?\s*(${IDENT})?\s*`, "g");
   for (const m of s.matchAll(re)) {
     const at = m.index ?? 0;
-    let i = at + m[0].length;
-    if (s.charAt(i) === "<") i = skipWs(s, skipAngles(s, i));
-    if (i < 0 || s.charAt(i) !== "(") continue;
-    const paramsClose = matchForward(s, i);
-    if (paramsClose < 0) continue;
-    let j = skipWs(s, paramsClose + 1);
-    if (s.charAt(j) === ":") j = skipReturnTypeToBody(s, j + 1);
-    if (j < 0 || s.charAt(j) !== "{") continue;
-    const name = m[1] ?? null;
-    const ctx =
-      name === null
-        ? headContext(s, at)
-        : {
-            name,
-            exported: /\bexport\s+(?:default\s+)?(?:async\s+)?$/.test(
-              s.slice(Math.max(0, at - 40), at),
-            ),
-            returned: false,
-          };
-    out.push({ ...ctx, params: parseParams(s, i), bodyStart: j, bodyEnd: matchForward(s, j) });
+    const head = functionHeadAt(s, at + m[0].length);
+    if (head === null) continue;
+    const ctx = m[1] === undefined ? headContext(s, at) : namedFunctionContext(s, at, m[1]);
+    out.push({
+      ...ctx,
+      params: parseParams(s, head.paramsOpen),
+      bodyStart: head.bodyStart,
+      bodyEnd: matchForward(s, head.bodyStart),
+    });
   }
   return out;
+}
+
+/** End of a body starting at `b`: its matching `}` for a block, else the expression's end. */
+function blockOrExpressionEnd(s: string, b: number): number {
+  return s.charAt(b) === "{" ? matchForward(s, b) : expressionEnd(s, b);
 }
 
 /** The `(` of an arrow's parameter list ending just before `arrow`, or -1. */
@@ -478,38 +517,54 @@ function arrowParamsOpen(s: string, arrow: number): number {
   return s.charAt(close) === ")" ? matchBackward(s, close) : -1;
 }
 
+/** Where an arrow's head starts: the `<` of `<T>(...)` when it is generic, else its `(`. */
+function genericStart(s: string, open: number): number {
+  const g = skipWsBack(s, open - 1);
+  if (s.charAt(g) !== ">") return open;
+  let depth = 0;
+  for (let i = g; i >= 0; i--) {
+    const c = s.charAt(i);
+    if (c === ">") depth++;
+    else if (c === "<" && --depth === 0) return i;
+  }
+  return open;
+}
+
+/** The parameters and head start of the arrow function whose `=>` is at `arrow`, or null. */
+function arrowHead(s: string, arrow: number): { params: Param[]; headStart: number } | null {
+  const open = arrowParamsOpen(s, arrow);
+  if (open >= 0) return { params: parseParams(s, open), headStart: genericStart(s, open) };
+  const single = new RegExp(`(${IDENT})\\s*$`).exec(s.slice(Math.max(0, arrow - 80), arrow));
+  if (single?.[1] === undefined) return null;
+  return { params: [{ name: single[1], pattern: [] }], headStart: arrow - single[0].length };
+}
+
 function arrowFunctionsOf(s: string): FnInfo[] {
   const out: FnInfo[] = [];
   for (let arrow = s.indexOf("=>"); arrow >= 0; arrow = s.indexOf("=>", arrow + 2)) {
-    let params: Param[];
-    let headStart: number;
-    const open = arrowParamsOpen(s, arrow);
-    if (open >= 0) {
-      params = parseParams(s, open);
-      headStart = open;
-      const g = skipWsBack(s, open - 1);
-      if (s.charAt(g) === ">") {
-        // `<T>(...) =>`: the generic's `<`.
-        let depth = 0;
-        for (let i = g; i >= 0; i--) {
-          if (s.charAt(i) === ">") depth++;
-          else if (s.charAt(i) === "<" && --depth === 0) {
-            headStart = i;
-            break;
-          }
-        }
-      }
-    } else {
-      const single = new RegExp(`(${IDENT})\\s*$`).exec(s.slice(Math.max(0, arrow - 80), arrow));
-      if (single?.[1] === undefined) continue;
-      params = [{ name: single[1], pattern: [] }];
-      headStart = arrow - single[0].length;
-    }
+    const head = arrowHead(s, arrow);
+    if (head === null) continue;
     const b = skipWs(s, arrow + 2);
-    const bodyEnd = s.charAt(b) === "{" ? matchForward(s, b) : expressionEnd(s, b);
-    out.push({ ...headContext(s, headStart), params, bodyStart: b, bodyEnd });
+    out.push({
+      ...headContext(s, head.headStart),
+      params: head.params,
+      bodyStart: b,
+      bodyEnd: blockOrExpressionEnd(s, b),
+    });
   }
   return out;
+}
+
+/** A for-of binding starting at `i`: a destructuring pattern or one identifier, and its end. */
+function loopBinding(
+  s: string,
+  i: number,
+  limit: number,
+): { ident: string | null; pattern: Binding[]; end: number } | null {
+  if (s.charAt(i) === "{")
+    return { ident: null, pattern: parsePattern(s, i), end: matchForward(s, i) + 1 };
+  const id = new RegExp(`^${IDENT}`).exec(s.slice(i, limit));
+  return id === null ? null : { ident: id[0], pattern: [], end: i + id[0].length };
 }
 
 function forOfLoopsOf(s: string): ForOf[] {
@@ -517,28 +572,24 @@ function forOfLoopsOf(s: string): ForOf[] {
   for (const m of s.matchAll(/\bfor\s*\(/g)) {
     const headOpen = (m.index ?? 0) + m[0].length - 1;
     const headClose = matchForward(s, headOpen);
-    if (headClose < 0) continue;
-    const head = s.slice(headOpen + 1, headClose);
-    const decl = /^\s*(?:const|let|var)\s+/.exec(head);
+    const decl =
+      headClose < 0 ? null : /^\s*(?:const|let|var)\s+/.exec(s.slice(headOpen + 1, headClose));
     if (decl === null) continue;
-    let i = headOpen + 1 + decl[0].length;
-    let ident: string | null = null;
-    let pattern: Binding[] = [];
-    if (s.charAt(i) === "{") {
-      pattern = parsePattern(s, i);
-      i = matchForward(s, i) + 1;
-    } else {
-      const id = new RegExp(`^${IDENT}`).exec(s.slice(i, headClose));
-      if (id === null) continue;
-      ident = id[0];
-      i += id[0].length;
-    }
-    const of = new RegExp(String.raw`^\s+of\s+(?:(${IDENT})\s*$|(\[))`).exec(s.slice(i, headClose));
+    const binding = loopBinding(s, headOpen + 1 + decl[0].length, headClose);
+    if (binding === null) continue;
+    const of = new RegExp(String.raw`^\s+of\s+(?:(${IDENT})\s*$|(\[))`).exec(
+      s.slice(binding.end, headClose),
+    );
     if (of === null) continue;
-    const inlineArray = of[2] === undefined ? -1 : i + of[0].length - 1;
     const b = skipWs(s, headClose + 1);
-    const bodyEnd = s.charAt(b) === "{" ? matchForward(s, b) : expressionEnd(s, b);
-    out.push({ ident, pattern, iterable: of[1] ?? null, inlineArray, bodyStart: b, bodyEnd });
+    out.push({
+      ident: binding.ident,
+      pattern: binding.pattern,
+      iterable: of[1] ?? null,
+      inlineArray: of[2] === undefined ? -1 : binding.end + of[0].length - 1,
+      bodyStart: b,
+      bodyEnd: blockOrExpressionEnd(s, b),
+    });
   }
   return out;
 }
@@ -569,6 +620,23 @@ function indexFile(p: Prepared): FileIndex {
     strings,
     imports,
   };
+}
+
+/** Identifiers that START at bracket depth 0 of `s[start, end)`, with their offsets. */
+function topLevelWords(s: string, start: number, end: number): Array<{ at: number; word: string }> {
+  const out: Array<{ at: number; word: string }> = [];
+  let depth = 0;
+  for (let i = start; i < end; i++) {
+    const c = s.charAt(i);
+    if (OPEN.includes(c)) depth++;
+    else if (CLOSE.includes(c)) depth--;
+    else if (depth === 0 && /[A-Za-z_$]/.test(c) && !/[\w$]/.test(s.charAt(i - 1))) {
+      const word = new RegExp(`^${IDENT}`).exec(s.slice(i, end))?.[0] ?? "";
+      out.push({ at: i, word });
+      i += Math.max(0, word.length - 1);
+    }
+  }
+  return out;
 }
 
 /** Functions whose body contains `offset`, innermost first. */
@@ -681,45 +749,57 @@ class Analysis {
 
   /** Bind names to registrars: factory results, aliases, destructured or typed registrar keys. */
   discoverBindings(f: File): void {
-    const s = f.p.blank;
+    this.discoverTypedKeys(f);
+    this.discoverDeclaredRegistrars(f);
+    this.discoverDestructuredRegistrars(f);
+    this.discoverHandOffKeys(f);
+  }
+
+  /** A property or parameter typed `*WriteToolRegistrar` names a registrar key, and a local. */
+  discoverTypedKeys(f: File): void {
     const locals = this.localsOf(f);
     const typed = new RegExp(
       String.raw`(?<![\w$.])(${IDENT})\s*\??\s*:\s*(?:Readonly<\s*)?[A-Za-z_$]*WriteToolRegistrar\b`,
       "g",
     );
-    for (const m of s.matchAll(typed)) {
-      const name = m[1];
-      if (name === undefined) continue;
+    for (const m of f.p.blank.matchAll(typed)) {
+      const name = m[1] ?? "";
       this.state.keys.add(name);
       if (!locals.has(name)) locals.set(name, "kit-alias");
     }
+  }
+
+  /** `const name = <registrar-valued expression>`; an exported one is callable from any file. */
+  discoverDeclaredRegistrars(f: File): void {
     for (const d of f.ix.declarations) {
       const kind = this.registrarValueKind(f, d.initStart, d.initEnd);
       if (kind === undefined) continue;
-      // An exported registrar is callable from any file that imports it.
-      const exported = /\bexport\s+$/.test(s.slice(Math.max(0, d.at - 20), d.at));
-      const target = exported ? this.state.exported : locals;
+      const exported = /\bexport\s+$/.test(f.p.blank.slice(Math.max(0, d.at - 20), d.at));
+      const target = exported ? this.state.exported : this.localsOf(f);
       if (!target.has(d.name)) target.set(d.name, kind);
     }
-    for (const d of f.ix.destructurings) {
-      for (const b of d.bindings) {
-        if (this.state.keys.has(b.key) && !locals.has(b.local)) locals.set(b.local, "kit-alias");
-      }
+  }
+
+  /** `const { registerWriteTool } = opts` and `({ registerWriteTool }) =>` take a registrar key. */
+  discoverDestructuredRegistrars(f: File): void {
+    const locals = this.localsOf(f);
+    const patterns = [
+      ...f.ix.destructurings.map((d) => d.bindings),
+      ...f.ix.fns.flatMap((fn) => fn.params.map((p) => p.pattern)),
+    ];
+    for (const b of patterns.flat()) {
+      if (this.state.keys.has(b.key) && !locals.has(b.local)) locals.set(b.local, "kit-alias");
     }
-    for (const fn of f.ix.fns) {
-      for (const param of fn.params) {
-        for (const b of param.pattern) {
-          if (this.state.keys.has(b.key) && !locals.has(b.local)) locals.set(b.local, "kit-alias");
-        }
-      }
-    }
-    // Hand-offs: `{ registerWriteTool }` / `{ key: registerWriteTool }` make the key a registrar key.
+  }
+
+  /** Hand-offs: `{ registerWriteTool }` / `{ key: registerWriteTool }` make the key a registrar key. */
+  discoverHandOffKeys(f: File): void {
     for (const name of this.registrarsIn(f).keys()) {
       const re = new RegExp(
         String.raw`(?:[{,]\s*${escapeRe(name)}\s*(?=[,}])|(?<![\w$.])(${IDENT})\s*:\s*${escapeRe(name)}\s*(?=[,}]))`,
         "g",
       );
-      for (const m of s.matchAll(re)) this.state.keys.add(m[1] ?? name);
+      for (const m of f.p.blank.matchAll(re)) this.state.keys.add(m[1] ?? name);
     }
   }
 
@@ -728,27 +808,33 @@ class Analysis {
    * name, or a registrar key read off an object (`options.registerWriteTool ?? create...(...)`).
    */
   registrarValueKind(f: File, start: number, end: number): RegistrarKind | undefined {
-    const s = f.p.blank;
     const registrars = this.registrarsIn(f);
-    let depth = 0;
     let found: RegistrarKind | undefined;
-    for (let i = start; i < end; i++) {
-      const c = s.charAt(i);
-      if (OPEN.includes(c)) depth++;
-      else if (CLOSE.includes(c)) depth--;
-      if (depth !== 0 || !/[A-Za-z_$]/.test(c) || /[\w$]/.test(s.charAt(i - 1))) continue;
-      const word = new RegExp(`^${IDENT}`).exec(s.slice(i, end))?.[0] ?? "";
-      const next = s.charAt(skipWs(s, i + word.length));
-      const member = s.charAt(skipWsBack(s, i - 1)) === ".";
-      const factory = this.state.factories.get(word);
-      if (!member && factory !== undefined && (next === "(" || next === "<")) return factory;
-      if (next !== "(") {
-        if (!member && registrars.has(word)) found ??= registrars.get(word);
-        if (member && this.state.keys.has(word)) found ??= "kit-alias";
-      }
-      i += Math.max(0, word.length - 1);
+    for (const { at, word } of topLevelWords(f.p.blank, start, end)) {
+      const hit = this.wordRegistrarKind(f.p.blank, at, word, registrars);
+      if (hit?.call === true) return hit.kind; // a factory CALL decides it outright
+      found ??= hit?.kind;
     }
     return found;
+  }
+
+  /** What one top-level word contributes: a factory call, a registrar value, or nothing. */
+  wordRegistrarKind(
+    s: string,
+    at: number,
+    word: string,
+    registrars: ReadonlyMap<string, RegistrarKind>,
+  ): { readonly call: boolean; readonly kind: RegistrarKind } | undefined {
+    const next = s.charAt(skipWs(s, at + word.length));
+    const member = s.charAt(skipWsBack(s, at - 1)) === ".";
+    const factory = this.state.factories.get(word);
+    if (!member && factory !== undefined && (next === "(" || next === "<")) {
+      return { call: true, kind: factory };
+    }
+    if (next === "(") return undefined; // calling a registrar yields no registrar
+    if (member) return this.state.keys.has(word) ? { call: false, kind: "kit-alias" } : undefined;
+    const kind = registrars.get(word);
+    return kind === undefined ? undefined : { call: false, kind };
   }
 
   // -- registrations --------------------------------------------------------------------------
@@ -1010,8 +1096,14 @@ class Analysis {
 
   /** A registrar or factory used as a value somewhere the flow does not follow. */
   checkEscapes(f: File): void {
+    this.checkRegistrarEscapes(f);
+    this.checkKeyEscapes(f);
+    this.checkFactoryEscapes(f);
+  }
+
+  /** Every bare use of a registrar name is a tracked use or a top-level alias. */
+  checkRegistrarEscapes(f: File): void {
     const s = f.p.blank;
-    const inImport = (o: number): boolean => f.ix.imports.some(([x, y]) => x <= o && o < y);
     for (const name of this.registrarsIn(f).keys()) {
       for (const m of s.matchAll(new RegExp(`(?<![\\w$.])${escapeRe(name)}(?![\\w$])`, "g"))) {
         const o = m.index ?? 0;
@@ -1020,6 +1112,11 @@ class Analysis {
         }
       }
     }
+  }
+
+  /** Every `.key` read of a registrar key is a call or a top-level alias. */
+  checkKeyEscapes(f: File): void {
+    const s = f.p.blank;
     for (const key of this.state.keys) {
       for (const m of s.matchAll(new RegExp(`\\.\\s*${escapeRe(key)}(?![\\w$])`, "g"))) {
         const o = (m.index ?? 0) + m[0].length - key.length;
@@ -1033,24 +1130,32 @@ class Analysis {
         }
       }
     }
+  }
+
+  /** Every use of a registrar factory is a bound call, its definition, or a plain import. */
+  checkFactoryEscapes(f: File): void {
     for (const factory of this.state.factories.keys()) {
-      for (const m of s.matchAll(new RegExp(`(?<![\\w$.])${escapeRe(factory)}(?![\\w$])`, "g"))) {
+      const re = new RegExp(`(?<![\\w$.])${escapeRe(factory)}(?![\\w$])`, "g");
+      for (const m of f.p.blank.matchAll(re)) {
         const o = m.index ?? 0;
-        const before = s.slice(Math.max(0, o - 40), o);
-        const after = s.slice(o + factory.length, o + factory.length + 40);
-        if (inImport(o)) {
-          if (/^\s+as\b/.test(after))
-            this.violation(f, o, `\`${factory}\` is imported under an alias`);
-          continue;
-        }
-        if (/\bfunction\s*\*?\s*$/.test(before) || /\btypeof\s+$/.test(before)) continue;
-        if (!/^\s*[<(]/.test(after)) {
-          this.violation(f, o, `registrar factory \`${factory}\` is used as a value`);
-        } else if (!this.isTopLevelOfInit(f, o) && !isKeyedValue(s, o)) {
-          this.violation(f, o, `registrar factory \`${factory}\`'s result is not bound to a name`);
-        }
+        const reason = this.factoryUseViolation(f, o, factory);
+        if (reason !== undefined) this.violation(f, o, reason);
       }
     }
+  }
+
+  /** Why the factory name at `o` escapes the scan, or undefined when the use is followed. */
+  factoryUseViolation(f: File, o: number, factory: string): string | undefined {
+    const s = f.p.blank;
+    const before = s.slice(Math.max(0, o - 40), o);
+    const after = s.slice(o + factory.length, o + factory.length + 40);
+    if (f.ix.imports.some(([x, y]) => x <= o && o < y)) {
+      return /^\s+as\b/.test(after) ? `\`${factory}\` is imported under an alias` : undefined;
+    }
+    if (/\bfunction\s*\*?\s*$/.test(before) || /\btypeof\s+$/.test(before)) return undefined;
+    if (!/^\s*[<(]/.test(after)) return `registrar factory \`${factory}\` is used as a value`;
+    if (this.isTopLevelOfInit(f, o) || isKeyedValue(s, o)) return undefined;
+    return `registrar factory \`${factory}\`'s result is not bound to a name`;
   }
 
   /** Every `mutates:` literal must sit in a recognised registration, a table one used, or a const one passed. */
