@@ -569,20 +569,22 @@ jobs:
         # Reads .jscpd.json (min-lines 5 / min-tokens 50 / shared ignore set) so
         # the local `audit:duplication` script and CI measure identically. The
         # threshold there is a RATCHET: it fails on regression and is lowered as
-        # further dedup lands. Set it to the measurement rounded UP to one
-        # decimal, never below it.
+        # further dedup lands. When a dedup lands, set it to the measurement
+        # rounded UP to one decimal, never below it. Code added elsewhere
+        # dilutes the percentage without removing a clone, so that alone is no
+        # reason to tighten it.
         #
-        # Current numbers, measured 2026-10-03 after the quality-sweep dedup
-        # (2.37% before it):
-        #   threshold  1.7%  (.jscpd.json)
-        #   actual     1.60% duplicated LINES (3,559 of 222k) across 341 clones
+        # Current numbers, measured 2026-10-04 after the quality-sweep dedup
+        # (2.42% and 488 clones on main before it):
+        #   threshold  1.7%  (.jscpd.json; set when the dedup measured 1.6004%)
+        #   actual     1.60% duplicated LINES (3,559 of 222.5k) across 341 clones
         # so there is about 0.1pp of slack. A PR that adds a sizeable clone
         # will trip it; dedup the clone rather than raising the number.
         #
         # The threshold gates the LINE percentage, NOT the token percentage.
-        # The token figure (1.94%) is ABOVE the threshold, so reading that
+        # The token figure (1.93%) is ABOVE the threshold, so reading that
         # column makes this job look like it should be failing.
-        # Verified by bisecting the config: threshold 1.7 passes, 1.6 fails.
+        # Verified with --threshold: 1.59 fails; 1.6 and 1.7 pass.
         run: bunx jscpd packages
 
   # Structure audit — D1/D2/D3 boundaries, D8 any-count ratchet, D10/D11
