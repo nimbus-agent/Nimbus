@@ -180,7 +180,7 @@ test("hasFilesystemRoot un-escapes an escaped quote inside a hand-written path",
   // `\"` is how TOML spells a literal quote in a basic string; the comparison must see the quote,
   // not the backslash, or a root whose name contains one is reported unconfigured and re-added.
   const target = join(dir, 'a"b');
-  const tomlValue = target.split(sep).join("/").replace('"', String.raw`\"`);
+  const tomlValue = target.split(sep).join("/").replaceAll('"', String.raw`\"`);
   const src = [FS_ROOTS_HEADER, `path = "${tomlValue}"`, ""].join("\n");
   expect(hasFilesystemRoot(src, target)).toBe(true);
   // Dropping the escaped character instead of un-escaping it would match this one.

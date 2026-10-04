@@ -124,7 +124,7 @@ describe("redactSensitiveSubstrings", () => {
   it.each([
     [
       "a generic key=value pair",
-      "auth failed: api_key=sk_live_123 retry",
+      "auth failed: api_key=x retry",
       "auth failed: api_key=[REDACTED] retry",
     ],
     [
