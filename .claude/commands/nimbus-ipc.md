@@ -490,7 +490,7 @@ Handlers: `packages/gateway/src/ipc/clip-rpc.ts`. CLI: `nimbus clip pair|status|
 
 ### `tour.*` / `locality.*` — `nimbus wow` guided tour (2026-09-21)
 
-A guided tour of the real local index, closing on an honesty panel. Both namespaces are **CLI-only** — `FORBIDDEN_OVER_LAN` (I5) and absent from the Tauri `ALLOWED_METHODS` (I7, still 105). Read-only, no HITL, no new egress class (the panel's proof line reuses `egress.proveWindow` above).
+A guided tour of the real local index, closing on an honesty panel. Both namespaces are **CLI-only** — `FORBIDDEN_OVER_LAN` (I5) and absent from the Tauri `ALLOWED_METHODS` (I7). Read-only, no HITL, no new egress class (the panel's proof line reuses `egress.proveWindow` above).
 
 | Method | Type | Description |
 |---|---|---|
@@ -503,10 +503,10 @@ Handlers: `packages/gateway/src/ipc/{tour-rpc,locality-rpc}.ts`. CLI: `nimbus wo
 
 ---
 
-### Namespaces added since Spine S2 — LAN-forbidden, off the Tauri allowlist
+### Namespaces added since Spine S2 — LAN-forbidden (oncall's two reads are on the Tauri allowlist)
 
-Every namespace below is in `FORBIDDEN_OVER_LAN` (`ipc/lan-rpc.ts`) as a whole and has no method on
-`ALLOWED_METHODS`. Design detail lives in `docs/architecture.md` § Spine S2 Subsystems; each handler
+Every namespace below is in `FORBIDDEN_OVER_LAN` (`ipc/lan-rpc.ts`) as a whole, and none is on
+`ALLOWED_METHODS` except where its row says so. Design detail lives in `docs/architecture.md` § Spine S2 Subsystems; each handler
 file is the authority for its method set.
 
 | Namespace | Methods | Handler | Notes |
@@ -517,7 +517,7 @@ file is the authority for its method set.
 | `fleet.*` | `status`, `list`, `briefs`, `show`, `runNow`, `digest` | `ipc/fleet-rpc.ts` | overnight fleets (I38) |
 | `toolgen.*` | `create`, `approvalRespond`, `save`, `saveApprovalRespond`, `list`, `invoke`, `revoke`, `credentialSet` | `ipc/toolgen-rpc.ts` | runtime tool generation (I39/I40) |
 | `ask.*` | `explainLast` | `ipc/diagnostics-rpc.ts` | `nimbus explain last`; also needs its entry in `tryDispatchDiagnosticsRpc`'s outer match |
-| `oncall.*` | `pushedList`, `pushedGet`, `pushedRetry` | `ipc/oncall-push-rpc.ts` | the on-call pushed brief, default-off `[oncall.push]` |
+| `oncall.*` | `pushedList`, `pushedGet`, `pushedRetry` | `ipc/oncall-push-rpc.ts` | the on-call pushed brief, default-off `[oncall.push]`; `pushedList`/`pushedGet` ARE on the Tauri `ALLOWED_METHODS` (desktop On-call page), `pushedRetry` is CLI-only |
 | `demo.*` | `seed`, `firePage` | `ipc/demo-rpc.ts` | claimed only by a demo-rooted gateway (I41) |
 
 **`gateway.event`** is the single notification envelope behind `nimbus tail`: `{ kind, ts, payload }`,
