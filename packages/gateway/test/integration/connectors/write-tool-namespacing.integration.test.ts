@@ -8,7 +8,9 @@
  * a real session cannot execute. This spawns REAL connectors through the gateway's own
  * `connectorSpawn`, lists them through a REAL `MCPClient` keyed the way the production spawners key
  * them, and checks the predicate against the keys a session actually holds. If the namespacing
- * scheme ever changes (a `.` separator, say), the prefix assertion fails here first.
+ * scheme ever changes (a `.` separator, say), the prefix assertion fails here first. The I26
+ * code-execution predicate gets the same check on the same keys, and the source-text census its
+ * sync guard relies on is compared with what the real process-capable connectors list.
  *
  * The listing runs in a CHILD process (`test/fixtures/session-tool-keys-probe.ts`): other test
  * files `mock.module("@mastra/mcp")` with bare-keyed fakes, and in the one-process whole-repo run a
@@ -18,7 +20,13 @@ import { afterAll, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { isConnectorCodeExecutionToolId } from "../../../src/connectors/connector-code-execution-tool-ids.ts";
 import { isConnectorWriteToolId } from "../../../src/connectors/connector-write-registry.ts";
+import { scanProcessSpawningConnectors } from "../../../src/connectors/testing/connector-process-spawns.ts";
+import {
+  installedConnectorsPackageRoot,
+  readConnectorPackageSources,
+} from "../../../src/connectors/testing/connector-write-registrations.ts";
 import { extensionProcessEnv } from "../../../src/extensions/spawn-env.ts";
 
 /** Package id → the server key the production spawner registers it under. */
@@ -27,6 +35,7 @@ const CONNECTORS = [
   { pkg: "kubernetes", server: "kubernetes" },
   { pkg: "slack", server: "slack" },
   { pkg: "github-actions", server: "github_actions" }, // a key that itself contains `_`
+  { pkg: "iac", server: "iac" }, // the code-execution half: its reads run caller-directed code
 ] as const;
 
 const PROBE = join(import.meta.dir, "..", "..", "fixtures", "session-tool-keys-probe.ts");
@@ -70,9 +79,16 @@ async function sessionKeysByPackage(): Promise<Record<string, string[]>> {
   }
 }
 
+/** One probe for the whole file: it spawns a process per connector, so it runs once and is shared. */
+let probed: Promise<Record<string, string[]>> | undefined;
+function probedKeys(): Promise<Record<string, string[]>> {
+  probed ??= sessionKeysByPackage();
+  return probed;
+}
+
 describe("I26 — the predicate refuses a write in the form a federated session executes it", () => {
   test("namespacing never changes the verdict, on the keys real connectors list", async () => {
-    const keysByPackage = await sessionKeysByPackage();
+    const keysByPackage = await probedKeys();
     const refused: string[] = [];
     for (const { pkg, server } of CONNECTORS) {
       const keys = keysByPackage[pkg] ?? [];
@@ -100,5 +116,45 @@ describe("I26 — the predicate refuses a write in the form a federated session 
         "github_actions_gha_run_trigger",
       ]),
     );
+  }, 120_000);
+});
+
+describe("I26 — the code-execution refusal holds in the form a federated session executes it", () => {
+  test("namespacing never changes the verdict, and only the iac tools that evaluate code are refused", async () => {
+    const keysByPackage = await probedKeys();
+    const refused: string[] = [];
+    for (const { pkg, server } of CONNECTORS) {
+      for (const key of keysByPackage[pkg] ?? []) {
+        const bare = key.slice(server.length + 1);
+        expect(isConnectorCodeExecutionToolId(key), key).toBe(isConnectorCodeExecutionToolId(bare));
+        if (isConnectorCodeExecutionToolId(key)) refused.push(key);
+      }
+    }
+    // Exactly these, out of every key five real connectors list: no bypass, and no over-blocking.
+    expect(refused.sort()).toEqual([
+      "iac_iac_pulumi_preview",
+      "iac_iac_pulumi_up",
+      "iac_iac_terraform_apply",
+      "iac_iac_terraform_destroy",
+      "iac_iac_terraform_plan",
+    ]);
+  }, 120_000);
+
+  test("the census of process-capable connectors derives exactly what their real processes list", async () => {
+    // The sync guard (`connector-code-execution-sync.test.ts`) reads tool ids from source text;
+    // this ties that derivation to what real connector processes actually register.
+    const keysByPackage = await probedKeys();
+    const census = scanProcessSpawningConnectors(
+      readConnectorPackageSources(installedConnectorsPackageRoot()),
+    );
+    const checked: string[] = [];
+    for (const { pkg, server } of CONNECTORS) {
+      const derived = census.connectors.find((c) => c.id === pkg);
+      if (derived === undefined) continue; // slack, github-actions: they cannot start a process
+      const listed = (keysByPackage[pkg] ?? []).map((k) => k.slice(server.length + 1));
+      expect([...derived.toolIds].sort(), pkg).toEqual(listed.sort());
+      checked.push(pkg);
+    }
+    expect(checked).toEqual(expect.arrayContaining(["aws", "kubernetes", "iac"]));
   }, 120_000);
 });

@@ -8,6 +8,7 @@ import {
   gitopsMlWriteByActionType,
   isGitopsMlWriteToolId,
 } from "./gitops-ml-write-tools.ts";
+import { matchesBareOrNamespacedToolId } from "./namespaced-tool-id.ts";
 import {
   isWarehouseWriteToolId,
   WAREHOUSE_BI_WRITES,
@@ -67,15 +68,12 @@ const LONGEST_WRITE_TOOL_ID = Math.max(
  * whatever server key precedes it (`github_actions_gha_run_trigger` included).
  *
  * Only a suffix no longer than the longest write id can match, so the scan starts there: its cost
- * is bounded by that length, never by the caller-supplied id's.
+ * is bounded by that length, never by the caller-supplied id's. The scan is
+ * `matchesBareOrNamespacedToolId`, shared with the code-execution refusal
+ * (`connector-code-execution-tool-ids.ts`) so the two cannot match by different rules.
  */
 export function isConnectorWriteToolId(toolId: string): boolean {
-  if (isWriteToolIdExactly(toolId)) return true;
-  const from = Math.max(0, toolId.length - LONGEST_WRITE_TOOL_ID - 1);
-  for (let i = toolId.indexOf("_", from); i !== -1; i = toolId.indexOf("_", i + 1)) {
-    if (isWriteToolIdExactly(toolId.slice(i + 1))) return true;
-  }
-  return false;
+  return matchesBareOrNamespacedToolId(toolId, isWriteToolIdExactly, LONGEST_WRITE_TOOL_ID);
 }
 
 export function connectorWriteByActionType(actionType: string): ConnectorWrite | undefined {

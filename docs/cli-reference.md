@@ -3188,7 +3188,7 @@ nimbus team vault put prod-stripe stripe --secret api_key=sk_live_xxxx
 
 Grant a paired peer permission to invoke one tool against a team-vault entry.
 
-Name the tool by the key its team-credentialed connector session lists it under, `<server>_<tool>`: for the Stripe connector's `stripe_search`, that is `stripe_stripe_search`. The grant check and the session lookup both match the id exactly as written, and the session holds only the `<server>_<tool>` key, so a grant for the bare `stripe_search` can never run. A connector WRITE is refused at the federated door in either form, whatever is granted (invariant `I26`).
+Name the tool by the key its team-credentialed connector session lists it under, `<server>_<tool>`: for the Stripe connector's `stripe_search`, that is `stripe_stripe_search`. The grant check and the session lookup both match the id exactly as written, and the session holds only the `<server>_<tool>` key, so a grant for the bare `stripe_search` can never run. A connector WRITE is refused at the federated door in either form, whatever is granted (invariant `I26`), and so is a connector tool that runs caller-directed code on your machine, read or not: `iac_terraform_plan` and `iac_pulumi_preview` evaluate the directory the caller names.
 
 ```bash
 nimbus team vault grant prod-stripe peer:aabbcc stripe_stripe_search
@@ -3212,7 +3212,7 @@ nimbus team vault list
 
 ### `nimbus team invoke <peerId> <entry> <toolId> --purpose "<why>" [--args <json>]`
 
-Ask a peer to invoke a granted tool against one of their team-vault entries on your behalf. The peer's gateway runs the tool with team-scoped credentials and returns a leak-proof result (invariant `I19`). `--args` accepts a JSON object of tool arguments. `<toolId>` is the `<server>_<tool>` key the peer granted (see `nimbus team vault grant` above). A connector write is always refused (invariant `I26`), and the refusal looks the same as a missing grant.
+Ask a peer to invoke a granted tool against one of their team-vault entries on your behalf. The peer's gateway runs the tool with team-scoped credentials and returns a leak-proof result (invariant `I19`). `--args` accepts a JSON object of tool arguments. `<toolId>` is the `<server>_<tool>` key the peer granted (see `nimbus team vault grant` above). A connector write is always refused (invariant `I26`), as is a connector tool that runs caller-directed code on the peer's machine (`iac_iac_terraform_plan`, `iac_iac_pulumi_preview`), and either refusal looks the same as a missing grant.
 
 ```bash
 nimbus team invoke peer:aabbcc prod-stripe stripe_stripe_search --purpose "find order 1234's invoice" --args '{"query":"1234"}'

@@ -653,7 +653,8 @@ export function checkTribalKbWriteInvariant(files: readonly FileEntry[]): Violat
 // modules, the connector servers, and the gateway transport/dispatch sites. Any other reference could
 // route a write outside the local executor I2 gate. Also requires answerFederatedInvoke
 // (federation/invoke-gate.ts) to consult the write-id predicate (isWriteForbiddenToolId) so a
-// federated peer can never trigger a connector write.
+// federated peer can never trigger a connector write, and the code-execution predicate
+// (isCodeExecutionForbiddenToolId) so it can never run caller-directed code on the anchor either.
 // The nine connector definition sites that used to need an exemption here
 // (`packages/mcp-connectors/{snowflake,tableau,looker,powerbi,monte-carlo,bigeye,argocd,flux,mlflow}/src/server.ts`)
 // left this repo in the v3.0.0 extraction to nimbus-mcp-servers, so only the gateway-side
@@ -667,19 +668,36 @@ const CONNECTOR_WRITE_ALLOWED = [
 const CONNECTOR_WRITE_RE =
   /\b(?:snowflake_tag_set|snowflake_comment_set|tableau_datasource_refresh|tableau_workbook_refresh|looker_datagroup_trigger|looker_schedule_run_once|powerbi_dataset_refresh|powerbi_dataflow_refresh|montecarlo_incident_acknowledge|montecarlo_incident_resolve|bigeye_issue_acknowledge|bigeye_issue_resolve|argocd_app_sync|argocd_app_rollback|flux_kustomization_reconcile|flux_helmrelease_reconcile|mlflow_model_promote|mlflow_model_transition_stage)\b/;
 
+const INVOKE_GATE_FILE = "packages/gateway/src/federation/invoke-gate.ts";
+/** The predicates `answerFederatedInvoke` must consult, and the rule each one's absence breaks. */
+const INVOKE_GATE_PREDICATES: readonly { readonly name: string; readonly rule: string }[] = [
+  { name: "isWriteForbiddenToolId", rule: "D20-invoke-gate-predicate" },
+  { name: "isCodeExecutionForbiddenToolId", rule: "D20-invoke-gate-code-execution" },
+];
+
+/**
+ * Each predicate must be CALLED in code (`ctx.isWriteForbiddenToolId?.(...)`), not merely named:
+ * the `InvokeGateCtx` interface declares both fields, so a name-only check passed with the call
+ * deleted — it could not fail for the one regression it exists to catch.
+ */
+function invokeGatePredicateViolations(f: FileEntry): Violation[] {
+  const code = stripStringLiterals(stripComments(f.contents));
+  return INVOKE_GATE_PREDICATES.filter(
+    (p) => !new RegExp(String.raw`\b${p.name}\s*(?:\?\.)?\s*\(`).test(code),
+  ).map((p) => ({
+    rule: p.rule,
+    file: f.relPath,
+    line: 1,
+    snippet: `answerFederatedInvoke must call ${p.name} (I26)`,
+  }));
+}
+
 export function checkConnectorWriteConfinement(files: readonly FileEntry[]): Violation[] {
   const out: Violation[] = [];
   for (const f of files) {
     if (f.relPath.endsWith(".test.ts")) continue;
-    if (f.relPath === "packages/gateway/src/federation/invoke-gate.ts") {
-      if (!/isWriteForbiddenToolId/.test(stripComments(f.contents))) {
-        out.push({
-          rule: "D20-invoke-gate-predicate",
-          file: f.relPath,
-          line: 1,
-          snippet: "answerFederatedInvoke must consult isWriteForbiddenToolId (I26)",
-        });
-      }
+    if (f.relPath === INVOKE_GATE_FILE) {
+      out.push(...invokeGatePredicateViolations(f));
       continue;
     }
     if (CONNECTOR_WRITE_ALLOWED.some((p) => f.relPath === p)) continue;

@@ -1929,6 +1929,54 @@ describe("I26 — connector writes (warehouse/BI ∪ GitOps/ML) are confined to 
     const audit = await read("scripts/structure-audit/check-nimbus-invariants.ts");
     expect(audit).toContain("D20-connector-write");
     expect(audit).toContain("D20-invoke-gate-predicate");
+    expect(audit).toContain("D20-invoke-gate-code-execution");
+  });
+
+  // The code-execution half (2026-10-05): a federated peer never chooses what code runs on the
+  // anchor. `iac_terraform_plan` / `iac_pulumi_preview` are READ registrations that hand terraform /
+  // pulumi a caller-named directory, which evaluates its code, so the write predicate never saw them.
+  test("federation-rpc wires the code-execution predicate into answerFederatedInvoke", async () => {
+    const src = stripComments(await read("packages/gateway/src/ipc/federation-rpc.ts"));
+    expect(src).toMatch(/\bisCodeExecutionForbiddenToolId:\s*isConnectorCodeExecutionToolId\b/);
+  });
+
+  test("the gate refuses a code-executing tool id before identity, the grant, quorum and the run", async () => {
+    const gate = stripComments(await read("packages/gateway/src/federation/invoke-gate.ts"));
+    const body =
+      /export async function answerFederatedInvoke\([\s\S]*?\n\}\n/.exec(gate)?.[0] ?? "";
+    expect(body).not.toBe("");
+    const check = body.indexOf("ctx.isCodeExecutionForbiddenToolId(q.toolId)");
+    expect(check).toBeGreaterThan(-1);
+    expect(body).toContain('"code_execution_forbidden"');
+    for (const later of ["ctx.identity", "ctx.store.getEntry", "ctx.quorumFor", "ctx.runTool"]) {
+      expect(body.indexOf(later), later).toBeGreaterThan(check);
+    }
+  });
+
+  // Asserted on the SOURCE, like LlmRegistryOptions.db below: a type error is invisible to a runtime
+  // suite. Required means no federated invoke ctx can be built without deciding.
+  test("the code-execution predicate is a REQUIRED InvokeGateCtx field", async () => {
+    const gate = stripComments(await read("packages/gateway/src/federation/invoke-gate.ts"));
+    const fields = /export interface InvokeGateCtx \{([\s\S]*?)\n\}/.exec(gate)?.[1] ?? "";
+    expect(fields).not.toBe("");
+    expect(/\bisCodeExecutionForbiddenToolId\s*\?\s*:/.test(fields)).toBe(false);
+    expect(
+      /\bisCodeExecutionForbiddenToolId\s*:\s*\(toolId: string\) => boolean/.test(fields),
+    ).toBe(true);
+  });
+
+  test("both iac reads that evaluate a caller-named directory are refused, bare and namespaced", async () => {
+    const { isConnectorCodeExecutionToolId } = await import(
+      "./connectors/connector-code-execution-tool-ids.ts"
+    );
+    for (const id of [
+      "iac_terraform_plan",
+      "iac_pulumi_preview",
+      "iac_iac_terraform_plan",
+      "iac_iac_pulumi_preview",
+    ]) {
+      expect(isConnectorCodeExecutionToolId(id), id).toBe(true);
+    }
   });
 });
 

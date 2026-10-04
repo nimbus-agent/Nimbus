@@ -18,11 +18,12 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
 
 ## Post-Phase-6 deliveries
 
-- **2026-10-05 — I26 holds again: the federated invoke gate refuses every connector write, in the
-  form a session actually executes it, and a sync guard keeps the write list in step with the
-  connectors package.** I26 says a federated peer can never trigger a connector write:
-  `answerFederatedInvoke` refuses any tool id `isConnectorWriteToolId` classifies. Three gaps made
-  that false, each leaving only the owner's per-tool grant in the way:
+- **2026-10-05 — I26 holds again: the federated invoke gate refuses every connector write and every
+  connector tool that runs caller-directed code, in the form a session actually executes it, and
+  sync guards keep both lists in step with the connectors package.** I26 says a federated peer can
+  never trigger a connector write: `answerFederatedInvoke` refuses any tool id
+  `isConnectorWriteToolId` classifies. Three gaps made that false, each leaving only the owner's
+  per-tool grant in the way:
   - **No write was refused in the form that runs.** A team-credentialed session lists its tools
     through `@mastra/mcp`, which keys each one `<server>_<tool>`, and the runner looks the requested
     id up verbatim, so `tableau_tableau_datasource_refresh` executes and a bare
@@ -58,6 +59,34 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
   rather than hidden: a mutation registered as a read, which is why `gdrive_file_trash` is listed
   by hand, and an object a registrar was handed off into, then read by a non-literal computed key
   or by reflection.
+
+  **The gate now also refuses connector tools that run caller-directed code.** `iac_terraform_plan`
+  and `iac_pulumi_preview` are READ registrations, so no write list could name them, yet each hands
+  terraform or pulumi a caller-supplied `workingDirectory`. Planning a Terraform configuration runs
+  its provider plugins and any `external` data source program, and a Pulumi preview runs the stack
+  program. `iac` is team-invokable through its `iac.enabled` team-vault key, so a peer granted
+  `iac_iac_terraform_plan` could have had the anchor evaluate code at a path of its choosing, with
+  no owner approval of that code. `answerFederatedInvoke` now calls a second, REQUIRED predicate,
+  `isCodeExecutionForbiddenToolId`, wired to `isConnectorCodeExecutionToolId` over
+  `CONNECTOR_CODE_EXECUTION_TOOL_IDS`. It runs after the write check and before identity, the grant,
+  quorum and the run, audits `code_execution_forbidden`, and returns the same opaque `no_grant`. It
+  matches bare and namespaced ids through `matchesBareOrNamespacedToolId`, which the write predicate
+  now shares. The list also names the three iac writes that evaluate the same directory; those are
+  still refused as writes first. A sweep of every connector in 0.2.1 and 0.2.2 found exactly eleven
+  that can start a process (athena, aws, azure, bigquery, cloud-logging, cloudwatch, gcp, iac,
+  kubernetes, sagemaker and vertex-ai), and only iac lets the caller choose the code: the other ten
+  run a fixed `aws` / `az` / `gcloud` / `kubectl` call, their reads hand it caller values only as
+  flag values or `isSafeCliArg`-guarded arguments, and their mutating tools are writes, already
+  refused. The new
+  `connectors/connector-code-execution-sync.test.ts` makes that sweep a gate. Every listed id must
+  still be registered, and every connector whose source can start a process or evaluate code must be
+  in its review, with each of its tools refused or reviewed. So a new process-capable connector, or a
+  new tool in one, fails until someone classifies it. The wire test checks the census against what
+  real `aws`, `kubernetes` and `iac` processes list. Static D20 now requires the gate to CALL both
+  predicates; the old check accepted the name alone, which the ctx interface already declares. This
+  is I26 rather than I19 or I24: the enforcement point is I26's tool-id refusal, I19's credential
+  custody is unchanged, and I24's preflight gate is the precedent for the principle but a different
+  gate. The local owner's own paths are unchanged.
 
   Found on the way and not fixed here: because of the same namespacing, a bare id is not found
   wherever the gateway looks a tool up verbatim in an `MCPClient`-keyed map, so the gateway's own
