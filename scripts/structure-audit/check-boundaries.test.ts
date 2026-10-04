@@ -69,6 +69,8 @@ function healthy(overrides: Partial<CruiseResult> = {}): CruiseResult {
 
 describe("assessCruise", () => {
   test("passes a cruise that read every required file and resolved its imports", () => {
+    // RULES includes `no-circular`, whose sides carry no path: it is not a liveness subject, and
+    // judging it one would fail this.
     const verdict = assessCruise(healthy(), REQUIRED);
     expect(verdict).toEqual({
       violations: [],
@@ -98,17 +100,17 @@ describe("assessCruise", () => {
       REQUIRED,
     );
     expect(verdict.violations).toEqual([]);
-    const reasons = verdict.inert.join("\n");
-    expect(reasons).toContain(
+    expect(verdict.inert).toHaveLength(4);
+    const [issue, compiler, coverage, edges] = verdict.inert;
+    expect(issue).toBe(
       "dependency-cruiser reported 'missing-typescript-transpiler': dependency-cruiser detected a TypeScript environment, but not a compatible TypeScript compiler",
     );
-    expect(reasons).toContain("found no usable TypeScript compiler");
-    expect(reasons).toContain("4 of 4 required source files");
-    expect(reasons).toContain("only 0 resolved dependencies across 1 modules");
-    expect(reasons).toContain("rule 'cli-no-import-gateway' can never fire");
-    expect(reasons).toContain("rule 'pal-isolation' can never fire");
-    // A rule with no path constraint (no-circular) is not a liveness subject.
-    expect(reasons).not.toContain("rule 'no-circular'");
+    expect(compiler).toContain("found no usable TypeScript compiler");
+    expect(coverage).toContain("4 of 4 required source files");
+    expect(edges).toContain("only 0 resolved dependencies across 1 modules");
+    // Every path-scoped rule LOOKS dead on an empty cruise. Reporting that would advise deleting
+    // healthy rules, so liveness waits for a cruise that is otherwise complete.
+    expect(verdict.inert.join("\n")).not.toContain("can never fire");
     expect(verdict.summary).toContain("with NO TypeScript compiler; 0/4 required sources covered");
   });
 

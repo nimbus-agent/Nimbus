@@ -42,7 +42,8 @@
  *        - LIVENESS: every forbidden rule's `from.path` / `to.path` (minus its `pathNot`) must
  *          match at least one cruised module. A rule whose subjects no longer exist can never
  *          fire. That is how `mcp-connectors-only-import-sdk` sat dead after the connectors left
- *          the repository on 2026-08-27.
+ *          the repository on 2026-08-27. Liveness is judged only once every other check passes,
+ *          because on an empty cruise every scoped rule merely LOOKS dead.
  *
  * STATED BOUND. The edge floor catches edges disappearing WHOLESALE, not partially. A resolver
  * regression that loses one import kind in ten would pass it. Coverage and liveness are exact.
@@ -326,6 +327,10 @@ function inertReasons(result: CruiseResult, required: readonly string[], edges: 
         "`.dependency-cruiser.cjs` still exports a `forbidden` array.",
     );
   }
+  // Liveness is judged only on an otherwise complete cruise. On an empty one, every path-scoped
+  // rule looks dead, and "delete the rule" would be exactly the wrong advice. The reasons above
+  // are the cause, and that is what gets reported.
+  if (inert.length > 0) return inert;
   for (const rule of result.rules) {
     for (const [label, side] of [
       ["from", rule.from],
