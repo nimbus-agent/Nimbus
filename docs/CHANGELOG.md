@@ -18,6 +18,47 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
 
 ## Post-Phase-6 deliveries
 
+- **2026-10-05 — `audit:boundaries` enforces its rules again, and fails when it cannot.** The gate
+  runs dependency-cruiser over `.dependency-cruiser.cjs`: no cycles, no cross-package source imports,
+  and PAL isolation. It had been inert on a coin flip since TypeScript 7 landed (#1049, 2026-08-05).
+  dependency-cruiser 18.5.0, its latest release, parses TypeScript only through a `typescript` below 7.
+  It resolves one from its own real path, which has no `typescript` link under bun's isolated linker,
+  so the lookup falls through to `node_modules/.bun/node_modules/typescript`. Bun points that link at
+  the 6.0.3 alias or at the 7.0.2 compiler, and the choice varies between installs of the same
+  lockfile. On one machine, a single lockfile hash linked 6 in three checkouts and 7 in eight. On 7,
+  dependency-cruiser skipped every `.ts`/`.tsx` file and cruised one `.mjs`. It then printed "no
+  dependency violations found (1 modules, 0 dependencies cruised)" and exited 0. In CI, 19 of 33
+  sampled `main` pushes (one per lockfile change) ran it that way, because the `node_modules` cache,
+  keyed on `bun.lock`, carried each lockfile's first draw forward.
+
+  **The fix pins the compiler.** `audit:boundaries` now runs
+  `scripts/structure-audit/check-boundaries.ts`, which spawns the CLI under a Bun preload. The preload
+  serves the `typescript-compiler-api` alias (6.0.3) through virtual modules (`build.module`). An
+  `onResolve` path redirect was tried first and rejected: on Windows, Bun turns the absolute path it
+  returns into `file:C:\...` and fails, and dependency-cruiser swallows that as "no compatible
+  compiler".
+
+  **The fix also guards the guard.** The wrapper reads the verdict from the JSON, because in JSON mode
+  dependency-cruiser exits 0 even when there are violations. It also fails any cruise that could not
+  have checked the code:
+  - any dependency-cruiser environment issue;
+  - no usable TypeScript compiler;
+  - any non-test `.ts`/`.tsx` file under gateway/cli/ui `src` left uncruised;
+  - fewer resolved imports than modules (under `includeOnly`, an unresolvable import is dropped, not
+    reported);
+  - a rule whose path matches no cruised module.
+
+  The last check caught a dead rule at once. `mcp-connectors-only-import-sdk` had matched nothing since
+  the connectors left the repository (#1347, 2026-08-27), so it is deleted. A new
+  `gateway-no-import-cli-ui` rule enforces the half of the documented dependency rule ("`gateway`
+  imports nothing from cli/ui") that had never been enforced. A temporary gateway import of a cli file
+  passed the old rule set unreported.
+
+  **Nothing was violating on `main`.** The full cruise reads 1,471 modules and 3,494 imports, covers
+  all 1,424 required sources, and finds no violations under five rules. It costs about 6 s locally and
+  11 s on the CI runner, against 0.4 s for the run that checked nothing. No migration, no invariant,
+  no runtime change.
+
 - **2026-10-04 — The on-call pushed brief, PR 3 of 3 (desktop panel).** The desktop app now has an
   `/oncall` page ("On-call" in the sidebar, after Dashboard, with an unread dot driven by a persisted
   `lastSeenPushedAt` that only moves forward). It lists the pushed briefs (title or id, service,
