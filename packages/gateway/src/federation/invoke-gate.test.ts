@@ -298,6 +298,58 @@ describe("I26 — federated peer gate fail-closed rejects write tool ids", () =>
     expect(audited.action_type).toBe("teamvault.invoke.write_forbidden");
   });
 
+  // Classified 2026-10-04: four moved to the write registrar in connectors 0.2.2, and
+  // gdrive_file_trash, which still mutates from a read registration. Each case first proves the
+  // grant WOULD let the call through, so the refusal is the write predicate and nothing else.
+  for (const [service, toolId] of [
+    ["aws", "aws_ec2_instance_stop"],
+    ["aws", "aws_ec2_instance_start"],
+    ["slack", "slack_message_post_dm"],
+    ["teams", "teams_message_post_chat"],
+    ["google_drive", "gdrive_file_trash"],
+  ] as const) {
+    it(`${toolId}: granted, yet refused (opaque no_grant, audited write_forbidden) before runTool`, async () => {
+      let runToolCalls = 0;
+      const { db, ctx } = freshI26Ctx({
+        runTool: async () => {
+          runToolCalls++;
+          return { ok: true };
+        },
+      });
+      ctx.store.createEntry(`team-${service}`, service, "owner", 1000);
+      ctx.store.grant(`team-${service}`, "peer-1", toolId, 1000);
+      const request = {
+        peerId: "peer-1",
+        entry: `team-${service}`,
+        toolId,
+        purpose: "p",
+        args: {},
+      };
+      const lastDecision = (): string =>
+        (
+          db.query(`SELECT action_type FROM audit_log ORDER BY id DESC LIMIT 1`).get() as {
+            action_type: string;
+          }
+        ).action_type;
+
+      // Control: without the predicate the grant answers it.
+      expect(await answerFederatedInvoke(ctx, request)).toEqual({
+        kind: "ok",
+        result: { ok: true },
+      });
+      expect(runToolCalls).toBe(1);
+      expect(lastDecision()).toBe("teamvault.invoke.answered");
+
+      const guarded: InvokeGateCtx = { ...ctx, isWriteForbiddenToolId: isConnectorWriteToolId };
+      expect(await answerFederatedInvoke(guarded, request)).toEqual({
+        kind: "error",
+        error: "no_grant",
+      });
+      expect(runToolCalls).toBe(1); // never reached the connector
+      expect(lastDecision()).toBe("teamvault.invoke.write_forbidden");
+    });
+  }
+
   it("a read tool id is unaffected by the predicate", async () => {
     let ran = false;
     const { ctx } = freshI26Ctx({

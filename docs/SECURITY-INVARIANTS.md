@@ -530,6 +530,34 @@ into a real routing table. The predicate is about write-ness, not routability: a
 be rejected for naming one of these tool ids whether or not the gateway could have dispatched it.
 The registry test asserts the set and the dispatchable rows never overlap.
 
+**Kept in step with the connectors package (2026-10-04).** The predicate is a hand-maintained list,
+and five mutating tools were on none of it: `aws_ec2_instance_stop`, `aws_ec2_instance_start`,
+`slack_message_post_dm` and `teams_message_post_chat` were registered as plain READ tools in
+`@nimbus-dev/connectors` 0.2.1 and moved to the consent kit's write registrar in 0.2.2, and
+`gdrive_file_trash` still registers as a read in 0.2.2 although it PATCHes `trashed: true`. All
+five are now in `MIGRATED_WRITE_TOOL_IDS`. `connectors/connector-write-sync.test.ts` keeps the list
+honest from now on: it reads the INSTALLED connectors package as text (never importing it — the
+gateway's only import from that package is `setConnectorMode`) and derives every tool id registered
+through the write registrar, then fails on any `isConnectorWriteToolId` does not classify. The
+derivation follows the registrar by DATA FLOW from `createWriteToolRegistrar` — aliases, kit
+hand-offs, kit factories, and forwarders of any name — rather than by a `register*WriteTool` naming
+convention, which 0.2.2 already breaks (`registerStatusTool`, `registerPipelineActionTool`,
+`registerFeedbackTool`). It is fail-closed: a registration whose id it cannot resolve to a constant,
+a registrar used as a value it does not follow, an unbound factory result, a `mutates:` literal no
+recognised registration consumes, and a file the comment stripper lost its place in are each a
+violation that fails the test. It guards itself with a floor on the count, the registration shapes
+the pinned package uses, and upstream's own signal: every connector whose manifest declares
+`write`/`delete` in `hitlRequired` must yield a derived registration. Per-shape fixtures
+(`connectors/testing/connector-write-fixtures.ts`) prove an unclassified write is reported in every
+shape it follows, not only the shapes the installed version uses. **Stated bound:** it sees write
+REGISTRATIONS only, so a tool that mutates while registered as a read — `gdrive_file_trash` today —
+is invisible to it and has to be classified by hand. It also asserts that no write tool ends in a
+verb `share.replay`'s read allowlist (`share/read-tool-registry.ts`) would run, since replay is the
+other path that executes a tool id a caller names. Four ids remain outside the predicate:
+`notion_kb_append` / `confluence_kb_append` (static D19) and `slack_chat_post` / `teams_chat_post`
+(static D17) — those rules confine where the GATEWAY names the tools, not which tool id a federated
+peer may send, so today only the owner's per-tool grant stands between a peer and them.
+
 **Statement:** Connector write actions — warehouse/BI (Snowflake tag/comment set, Tableau / Power BI refresh, Looker datagroup/schedule trigger, Monte Carlo / Bigeye incident-issue acknowledge/resolve) **and** GitOps/ML (ArgoCD app sync/rollback, Flux kustomization/helmrelease reconcile, MLflow model promote/transition-stage) — execute ONLY behind the LOCAL owner's executor HITL gate (I2): their action types are all members of `HITL_REQUIRED_BACKING`. The federated peer invoke gate (`answerFederatedInvoke`) is fail-closed against any write-classified tool id via the injected `isWriteForbiddenToolId` predicate (the union `isConnectorWriteToolId`): a peer's `federation.invoke` for a connector write is rejected with a `write_forbidden` audit decision before any connector dispatch, so a teammate can never trigger a connector write over the wire. The write tool ids themselves are confined to the two single-source-of-truth modules (`connectors/warehouse-write-tools.ts`, `connectors/gitops-ml-write-tools.ts`), the connector definition `server.ts` files, and the gateway transport/dispatch sites. Static **D20**.
 
 **Wired at:**
@@ -540,7 +568,8 @@ The registry test asserts the set and the dispatchable rows never overlap.
 - `packages/gateway/src/ipc/federation-rpc.ts` `"federation.invoke"` — injects `isWriteForbiddenToolId: isConnectorWriteToolId` into the `answerFederatedInvoke` ctx, so the gate rejects connector writes asked for by a peer.
 - `packages/gateway/src/federation/invoke-gate.ts` `answerFederatedInvoke()` — consults `ctx.isWriteForbiddenToolId?.(q.toolId)`; on a match it records a `write_forbidden` audit decision and returns fail-closed without invoking the tool.
 - Enforced statically by **D20** in `scripts/structure-audit/check-nimbus-invariants.ts` — any file outside the SSoT / connector / transport-dispatch allow-list (excluding `.test.ts`) that references a connector write tool id causes `audit:invariants` to exit 1 (`D20-connector-write`); additionally `invoke-gate.ts` must reference `isWriteForbiddenToolId` or the check fails (`D20-invoke-gate-predicate`).
-- Runtime test in `packages/gateway/src/security-invariants.test.ts` — the `I26` describe block: federation-rpc wires `isWriteForbiddenToolId`/`isConnectorWriteToolId`, the invoke gate consults the predicate and emits `write_forbidden`, every `CONNECTOR_WRITES` action type is HITL-gated, plus a `D20` presence assertion. A functional rejection of a GitOps write id via the real `isConnectorWriteToolId` lives in `federation/invoke-gate.test.ts`.
+- Runtime test in `packages/gateway/src/security-invariants.test.ts` — the `I26` describe block: federation-rpc wires `isWriteForbiddenToolId`/`isConnectorWriteToolId`, the invoke gate consults the predicate and emits `write_forbidden`, every `CONNECTOR_WRITES` action type is HITL-gated, plus a `D20` presence assertion. A functional rejection of a GitOps write id via the real `isConnectorWriteToolId` lives in `federation/invoke-gate.test.ts`, as does one per reclassified tool, each first proving the grant would answer it so the refusal is the predicate's alone.
+- Sync guard in `packages/gateway/src/connectors/connector-write-sync.test.ts` — every write the installed connectors package registers is classified (see above); the derivation lives in `connectors/testing/connector-write-registrations.ts`, with its own tests beside it.
 
 **Anti-pattern:** exposing a connector write over `federation.invoke` without the predicate; calling a connector write tool id from anywhere but the SSoT / connector / transport-dispatch sites; adding a connector write action type to a connector without adding it to `HITL_REQUIRED_BACKING` + the matching group SSoT.
 

@@ -8,7 +8,9 @@
  *
  * Grows one wave at a time as connectors migrate to `registerWriteTool`. When a tool gains a
  * dispatch path it graduates to a `ConnectorWrite` row and leaves this set — the registry test
- * asserts the two never overlap.
+ * asserts the two never overlap. `connector-write-sync.test.ts` derives every write the INSTALLED
+ * connectors package registers and fails on one neither this set nor `CONNECTOR_WRITES` names, so a
+ * connectors bump that adds a write cannot land unclassified.
  */
 export const MIGRATED_WRITE_TOOL_IDS: ReadonlySet<string> = new Set([
   // github — Part 1 (#1318)
@@ -94,4 +96,18 @@ export const MIGRATED_WRITE_TOOL_IDS: ReadonlySet<string> = new Set([
   "k8s_rollout_restart",
   "k8s_deployment_scale",
   "k8s_pod_delete",
+
+  // Classified 2026-10-04: real mutations the I26 predicate let a federated peer name.
+  //   - Registered as plain READ tools in @nimbus-dev/connectors 0.2.1 and moved to the consent
+  //     kit's write registrar in 0.2.2, where the sync guard (`connector-write-sync.test.ts`)
+  //     derives them:
+  "aws_ec2_instance_stop",
+  "aws_ec2_instance_start",
+  "slack_message_post_dm",
+  "teams_message_post_chat",
+  //   - STILL registered as a read in 0.2.2 (`registerDriveTool`), though it PATCHes
+  //     `trashed: true`. The guard derives write REGISTRATIONS only, so it cannot see this one,
+  //     which is listed by hand. google_drive has no team-injectable secret today, so no federated
+  //     invoke can reach it yet; classified now so it is refused the day one can.
+  "gdrive_file_trash",
 ]);
