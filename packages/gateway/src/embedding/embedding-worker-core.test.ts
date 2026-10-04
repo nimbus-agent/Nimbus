@@ -483,6 +483,138 @@ describe("EmbeddingWorkerCore", () => {
     await core.idle();
     expect(posts).toHaveLength(before);
   });
+
+  it("remembered cancellations are bounded at 256 and evict OLDEST-first", async () => {
+    // A cancel whose request never arrives lingers; the set must not grow without bound. 257
+    // cancels push the first one out, so a request reusing that id is answered again, while an id
+    // still remembered is suppressed — proving the eviction order, not only that one happened.
+    const db = makeDb();
+    const embedded: string[][] = [];
+    const setup: EmbeddingWorkerSetup = async () => ({
+      db,
+      pipeline: makePipeline({
+        embedTexts: async (texts) => {
+          embedded.push(texts);
+          return [new Float32Array([7])];
+        },
+      }),
+    });
+    const { core, posts } = await initReadyCore(setup);
+
+    for (let i = 0; i <= 256; i += 1) core.handleMessage({ type: "cancel_embed", id: `c${i}` });
+    core.handleMessage({ type: "embed_texts", id: "c0", texts: ["evicted"] });
+    core.handleMessage({ type: "embed_texts", id: "c1", texts: ["still-cancelled"] });
+    core.handleMessage({ type: "embed_texts", id: "c256", texts: ["newest"] });
+    await core.idle();
+
+    expect(embedded).toEqual([["evicted"]]);
+    expect(postsOfType(posts, "embed_texts_result")).toEqual([
+      { type: "embed_texts_result", id: "c0", ok: true, vectors: [[7]] },
+    ]);
+  });
+
+  it("cancel_embed DURING an embed that then FAILS suppresses the error reply too", async () => {
+    const db = makeDb();
+    let release: (() => void) | undefined;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let embedCalls = 0;
+    const setup: EmbeddingWorkerSetup = async () => ({
+      db,
+      pipeline: makePipeline({
+        embedTexts: async () => {
+          embedCalls += 1;
+          await gate;
+          throw new Error("late failure");
+        },
+      }),
+    });
+    const { core, posts } = await initReadyCore(setup);
+
+    core.handleMessage({ type: "embed_texts", id: "req-fail", texts: ["a"] });
+    core.handleMessage({ type: "cancel_embed", id: "req-fail" });
+    release?.();
+    await core.idle();
+
+    expect(embedCalls).toBe(1);
+    expect(postsOfType(posts, "embed_texts_result")).toEqual([]);
+    // The cancel was CONSUMED by the failed request, so the same id is answered next time.
+    core.handleMessage({ type: "embed_texts", id: "req-fail", texts: ["b"] });
+    await core.idle();
+    expect(postsOfType(posts, "embed_texts_result")).toEqual([
+      { type: "embed_texts_result", id: "req-fail", ok: false, error: "late failure" },
+    ]);
+  });
+
+  it("a non-Error thrown by setup is stringified into init_error", async () => {
+    const posts: unknown[] = [];
+    const core = new EmbeddingWorkerCore({
+      sendToMain: (data) => posts.push(data),
+      setup: async () => {
+        throw "model cache missing";
+      },
+    });
+    core.handleMessage(INIT_MSG);
+    await core.idle();
+    expect(posts).toEqual([{ type: "init_error", message: "model cache missing" }]);
+  });
+
+  it("a non-Error thrown by embedTexts is stringified into the error reply", async () => {
+    const db = makeDb();
+    const setup: EmbeddingWorkerSetup = async () => ({
+      db,
+      pipeline: makePipeline({
+        embedTexts: async () => {
+          throw 503;
+        },
+      }),
+    });
+    const { core, posts } = await initReadyCore(setup);
+    core.handleMessage({ type: "embed_texts", id: "req-num", texts: ["a"] });
+    await core.idle();
+    expect(postsOfType(posts, "embed_texts_result")).toEqual([
+      { type: "embed_texts_result", id: "req-num", ok: false, error: "503" },
+    ]);
+  });
+});
+
+describe("isInMsg init guard — each field is checked", () => {
+  const valid = {
+    type: "init",
+    dbPath: ":memory:",
+    cacheDir: join(tmpdir(), "cache"),
+    toml: { chunkTokens: 256, chunkOverlapTokens: 32, backfillBatchSize: 50 },
+  };
+
+  it("accepts pauseOnBattery when it is a boolean", () => {
+    expect(isInMsg({ ...valid, toml: { ...valid.toml, pauseOnBattery: false } })).toBe(true);
+    expect(isInMsg({ ...valid, toml: { ...valid.toml, pauseOnBattery: true } })).toBe(true);
+  });
+
+  it("rejects a present-but-non-boolean pauseOnBattery instead of defaulting it", () => {
+    expect(isInMsg({ ...valid, toml: { ...valid.toml, pauseOnBattery: "false" } })).toBe(false);
+    expect(isInMsg({ ...valid, toml: { ...valid.toml, pauseOnBattery: 0 } })).toBe(false);
+  });
+
+  it("rejects a non-string cacheDir", () => {
+    expect(isInMsg({ ...valid, cacheDir: 7 })).toBe(false);
+  });
+
+  it("rejects a missing toml object", () => {
+    const { toml: _omit, ...noToml } = valid;
+    expect(isInMsg(noToml)).toBe(false);
+  });
+
+  it("rejects non-numeric chunkTokens and chunkOverlapTokens", () => {
+    expect(isInMsg({ ...valid, toml: { ...valid.toml, chunkTokens: "256" } })).toBe(false);
+    expect(isInMsg({ ...valid, toml: { ...valid.toml, chunkOverlapTokens: null } })).toBe(false);
+  });
+
+  it("accepts a well-formed cancel_embed and rejects a non-string id", () => {
+    expect(isInMsg({ type: "cancel_embed", id: "r1" })).toBe(true);
+    expect(isInMsg({ type: "cancel_embed", id: 1 })).toBe(false);
+  });
 });
 
 describe("isInMsg", () => {
