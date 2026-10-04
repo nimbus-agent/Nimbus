@@ -77,7 +77,8 @@ export function deriveLatestJson({ historyPath, outputPath }: DeriveOptions): vo
   writeLatestJson(outputPath, line);
 }
 
-function parseArgs(argv: string[]): DeriveOptions {
+/** The CLI's flag rules. Exported so they are testable in-process rather than only by a spawn. */
+export function parseArgs(argv: string[]): DeriveOptions {
   let historyPath: string | undefined;
   let outputPath: string | undefined;
   for (let i = 0; i < argv.length; i++) {
@@ -97,14 +98,33 @@ function parseArgs(argv: string[]): DeriveOptions {
   return { historyPath, outputPath };
 }
 
-if (import.meta.main) {
+export interface DeriveLatestJsonIo {
+  stdout: (s: string) => void;
+  stderr: (s: string) => void;
+}
+
+/**
+ * The CLI entry's whole behaviour, as an exit code. The `import.meta.main` block below only wires
+ * real stdio and the exit — the same split `bench-ci.ts` (`runBenchCiMain`) and `bench-runner.ts`
+ * (`runBenchRunnerMain`) use, so the reporting is testable without spawning a process.
+ */
+export function runDeriveLatestJsonMain(argv: string[], io: DeriveLatestJsonIo): number {
   try {
-    deriveLatestJson(parseArgs(process.argv.slice(2)));
-    // biome-ignore lint/suspicious/noConsole: CLI entry point logs to stdout/stderr
-    console.log("derive-latest-json: OK");
+    deriveLatestJson(parseArgs(argv));
+    io.stdout("derive-latest-json: OK");
+    return 0;
   } catch (err) {
-    // biome-ignore lint/suspicious/noConsole: CLI entry point logs to stdout/stderr
-    console.error(`derive-latest-json: ${err instanceof Error ? err.message : String(err)}`);
-    process.exit(1);
+    io.stderr(`derive-latest-json: ${err instanceof Error ? err.message : String(err)}`);
+    return 1;
   }
+}
+
+if (import.meta.main) {
+  const code = runDeriveLatestJsonMain(process.argv.slice(2), {
+    // biome-ignore lint/suspicious/noConsole: CLI entry point logs to stdout/stderr
+    stdout: (s) => console.log(s),
+    // biome-ignore lint/suspicious/noConsole: CLI entry point logs to stdout/stderr
+    stderr: (s) => console.error(s),
+  });
+  if (code !== 0) process.exit(code);
 }

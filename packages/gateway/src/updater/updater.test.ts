@@ -1265,30 +1265,28 @@ describe("B11 — applyUpdate download-failure audit events", () => {
     expect(status.lastError).toContain("string-error-not-an-Error-object");
   });
 
-  test("checkNow catch: lastError uses String() for non-Error thrown value", async () => {
-    // Force a non-Error to be thrown from fetchUpdateManifest by returning invalid JSON
-    // that causes the ManifestFetchError to be a non-Error? Actually ManifestFetchError extends Error.
-    // The `err instanceof Error ? err.message : String(err)` branch in checkNow catch
-    // fires when a non-Error is thrown. We simulate by using globalThis.fetch fake.
+  test("checkNow catch: a fetch that rejects is recorded as lastError, with state failed", async () => {
+    // The fetch is STUBBED to fail the way an unresolvable host does. Pointing at a real
+    // unresolvable name instead would send a DNS query from a unit test. (The catch's non-Error
+    // `String(err)` arm is reached in `updater.coverage.test.ts`, through a throwing emit listener —
+    // nothing on the fetch path can throw a non-Error, since `fetchUpdateManifest` wraps it.)
     const origFetch = globalThis.fetch;
-    // Point to a URL that will fail with a non-Error via a bad fetch rejection
-    // Actually, in checkNow, the error comes from fetchUpdateManifest which always throws
-    // ManifestFetchError (extends Error) or a native Error. To hit the non-Error branch
-    // we need fetchUpdateManifest to throw a non-Error. This isn't possible via normal flow.
-    // The non-Error String() branch in checkNow catch is effectively unreachable in practice.
-    // We verify the Error branch is hit instead.
+    globalThis.fetch = (async () => {
+      throw new TypeError("getaddrinfo ENOTFOUND updates.example");
+    }) as unknown as typeof fetch;
     try {
       const u = new Updater({
         currentVersion: "0.1.0",
-        manifestUrl: "https://definitely-does-not-exist.invalid/latest.json",
+        manifestUrl: "https://updates.example/latest.json",
         publicKey: kp.publicKey,
         target: "linux-x86_64",
         emit: () => {},
         timeoutMs: 500,
       });
-      await expect(u.checkNow()).rejects.toBeDefined();
-      const status = u.getStatus();
-      expect(status.lastError).toBeDefined();
+      const reason = "fetch failed: TypeError: getaddrinfo ENOTFOUND updates.example";
+      await expect(u.checkNow()).rejects.toThrow(reason);
+      expect(u.getStatus()).toMatchObject({ state: "failed", lastError: reason });
+      expect(u.getStatus().lastCheckAt).toBeUndefined();
     } finally {
       globalThis.fetch = origFetch;
     }
