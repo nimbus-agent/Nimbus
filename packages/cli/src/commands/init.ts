@@ -19,6 +19,7 @@ import { appendFilesystemRoot, hasFilesystemRoot } from "../lib/toml-append.ts";
 import { withGatewayIpc } from "../lib/with-gateway-ipc.ts";
 import { type CliPlatformPaths, getCliPlatformPaths } from "../paths.ts";
 import {
+  type ConnectorDetectDeps,
   defaultConnectorDetectDeps,
   runConnectorDetect,
   summarizeLocalLogins,
@@ -638,15 +639,38 @@ export function asDemoSymbol(value: unknown): DemoSymbolLike | null {
 }
 
 /**
+ * The calls `defaultInitDeps` makes that reach past `paths`: `runStart` spawns a
+ * real gateway, `connectorDetectDeps` asks a running gateway about local logins,
+ * `confirm` prompts on the terminal, and `runWow` tours whatever gateway is up.
+ */
+export type InitEffects = {
+  readonly runStart: (args: string[]) => Promise<void>;
+  readonly connectorDetectDeps: (paths: CliPlatformPaths) => ConnectorDetectDeps;
+  readonly confirm: (opts: { message: string; initialValue: boolean }) => Promise<unknown>;
+  readonly runWow: (args: string[]) => Promise<void>;
+};
+
+const REAL_INIT_EFFECTS: InitEffects = {
+  runStart,
+  connectorDetectDeps: defaultConnectorDetectDeps,
+  confirm,
+  runWow,
+};
+
+/**
  * The real effects.
  *
  * `paths` is a parameter rather than a closed-over call so tests can point the
  * gateway-state lookup at a temp directory. It has to be injectable: the state
  * file lives under `dataDir`, which `NIMBUS_CONFIG_DIR` deliberately does NOT
  * relocate, so without this seam these functions would read whatever gateway
- * happens to be running on the developer's machine.
+ * happens to be running on the developer's machine. `effects` is a parameter for
+ * the same reason; production callers pass neither.
  */
-export function defaultInitDeps(paths: CliPlatformPaths = getCliPlatformPaths()): InitDeps {
+export function defaultInitDeps(
+  paths: CliPlatformPaths = getCliPlatformPaths(),
+  effects: InitEffects = REAL_INIT_EFFECTS,
+): InitDeps {
   return {
     cwd: process.cwd(),
     configDir: paths.configDir,
@@ -657,7 +681,7 @@ export function defaultInitDeps(paths: CliPlatformPaths = getCliPlatformPaths())
       // failure through process.exitCode, so clear it first — what is read
       // back afterwards has to be runStart's own verdict and nothing else.
       process.exitCode = 0;
-      await runStart(["--no-wizard"]);
+      await effects.runStart(["--no-wizard"]);
       const startFailed = (process.exitCode ?? 0) !== 0;
       // Clear it again either way: runInit derives init's own code from the
       // outcome, and a stale 1 here would shadow the more specific one.
@@ -684,7 +708,7 @@ export function defaultInitDeps(paths: CliPlatformPaths = getCliPlatformPaths())
     inDemoRoot: paths.demo === true,
     interactive: process.stdin.isTTY === true && process.stdout.isTTY === true,
     offerLocalAuth: async (interactive) => {
-      const detectDeps = defaultConnectorDetectDeps(paths);
+      const detectDeps = effects.connectorDetectDeps(paths);
       if (interactive) {
         await runConnectorDetect([], detectDeps);
         return;
@@ -693,9 +717,9 @@ export function defaultInitDeps(paths: CliPlatformPaths = getCliPlatformPaths())
       if (line !== null) console.log(line);
     },
     confirmTour: async () => {
-      const answer = await confirm({ message: "Run the tour now?", initialValue: true });
+      const answer = await effects.confirm({ message: "Run the tour now?", initialValue: true });
       return !isCancel(answer) && answer === true;
     },
-    runTour: () => runWow([]),
+    runTour: () => effects.runWow([]),
   };
 }

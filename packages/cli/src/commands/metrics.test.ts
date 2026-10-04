@@ -37,6 +37,17 @@ describe("parseMetricsDoraArgs", () => {
     const out = parseMetricsDoraArgs(["--service", "x", "--since", "24h"]);
     expect(out.since).toBe("24h");
   });
+
+  test.each([
+    ["missing", ["--service"]],
+    ["blank", ["--service", "   "]],
+  ])("a %s --service value is refused by name, not read as 'no filter'", (_label, argv) => {
+    expect(() => parseMetricsDoraArgs(argv)).toThrow("--service requires a non-empty value");
+  });
+
+  test("a --service value is trimmed", () => {
+    expect(parseMetricsDoraArgs(["--service", "  svc  "]).service).toBe("svc");
+  });
 });
 
 const WARN_PREFIX = "\x1b[33m⚠\x1b[0m";
@@ -244,5 +255,147 @@ describe("runMetricsCli", () => {
     setFixture({ gatewayState: { socketPath: FAKE_SOCKET_PATH }, ipcClient: mock.client });
     await expect(runMetricsCli(["dora", "--service", "svc"])).rejects.toThrow("process.exit(2)");
     expect(stderrChunks.join("")).toContain("ipc down");
+  });
+
+  // Each case breaks exactly ONE field of an otherwise valid envelope, so a validator that stopped
+  // checking that field would render garbage instead of exiting 2.
+  type Envelope = ReturnType<typeof envelopeFixture>;
+  test.each<[string, (e: Envelope) => unknown]>([
+    ["a null response", () => null],
+    ["a string response", () => "ok"],
+    ["since_ms that is not a number", (e) => ({ ...e, since_ms: "30d" })],
+    ["no computed_at", (e) => ({ ...e, computed_at: undefined })],
+    ["a null metrics block", (e) => ({ ...e, metrics: null })],
+    ["a null metric", (e) => ({ ...e, metrics: { ...e.metrics, mttr: null } })],
+    [
+      "a non-finite sample",
+      (e) => ({
+        ...e,
+        metrics: {
+          ...e.metrics,
+          change_failure_rate: {
+            ...e.metrics.change_failure_rate,
+            sample: Number.POSITIVE_INFINITY,
+          },
+        },
+      }),
+    ],
+    [
+      "a metric with no unit",
+      (e) => ({
+        ...e,
+        metrics: { ...e.metrics, deployment_frequency: { value: 1, sample: 2, gap: null } },
+      }),
+    ],
+  ])("exits 2 on an envelope with %s, rendering nothing", async (_label, corrupt) => {
+    const mock = createMockIpcClient([corrupt(envelopeFixture())]);
+    setFixture({ gatewayState: { socketPath: FAKE_SOCKET_PATH }, ipcClient: mock.client });
+    await expect(runMetricsCli(["dora", "--service", "svc"])).rejects.toThrow("process.exit(2)");
+    expect(stderrChunks.join("")).toStartWith("Malformed metrics.dora response\n");
+    expect(stdoutChunks).toEqual([]);
+  });
+
+  it("connects before it asks for the metrics, and disconnects after rendering", async () => {
+    // The mock client's connect is a no-op, so no other test here would notice a call sent down a
+    // client that was never connected -- which is a failed command against a real gateway.
+    const lifecycle: string[] = [];
+    const mock = createMockIpcClient([envelopeFixture()]);
+    setFixture({
+      gatewayState: { socketPath: FAKE_SOCKET_PATH },
+      ipcClient: {
+        connect: async (): Promise<void> => {
+          lifecycle.push("connect");
+        },
+        call: (m: string, p: unknown): Promise<unknown> => {
+          lifecycle.push(`call ${m}`);
+          return mock.client.call(m, p);
+        },
+        disconnect: async (): Promise<void> => {
+          lifecycle.push("disconnect");
+        },
+      },
+    });
+    await runMetricsCli(["dora", "--service", "svc"]);
+    expect(lifecycle).toEqual(["connect", "call metrics.dora", "disconnect"]);
+    expect(stdoutChunks.join("")).toContain("DORA metrics — svc");
+  });
+
+  it("a disconnect that fails AFTER rendering is swallowed, never turned into an exit", async () => {
+    const mock = createMockIpcClient([envelopeFixture()]);
+    setFixture({
+      gatewayState: { socketPath: FAKE_SOCKET_PATH },
+      ipcClient: {
+        call: (m: string, p: unknown): Promise<unknown> => mock.client.call(m, p),
+        connect: async (): Promise<void> => {},
+        disconnect: async (): Promise<void> => {
+          throw new Error("socket already closed");
+        },
+      },
+    });
+    await runMetricsCli(["dora", "--service", "svc"]);
+    expect(stdoutChunks.join("")).toContain("DORA metrics — svc");
+    expect(stderrChunks).toEqual([]);
+  });
+
+  it("a non-Error rejection from the transport is reported verbatim, exit 2", async () => {
+    setFixture({
+      gatewayState: { socketPath: FAKE_SOCKET_PATH },
+      ipcClient: {
+        call: async (): Promise<unknown> => {
+          throw "socket hung up";
+        },
+        connect: async (): Promise<void> => {},
+        disconnect: async (): Promise<void> => {},
+      },
+    });
+    await expect(runMetricsCli(["dora", "--service", "svc"])).rejects.toThrow("process.exit(2)");
+    expect(stderrChunks.join("")).toBe("socket hung up\n");
+  });
+});
+
+describe("runMetricsCli -- colour follows NO_COLOR on a TTY", () => {
+  let savedNoColor: string | undefined;
+  let savedIsTty: PropertyDescriptor | undefined;
+
+  beforeEach(() => {
+    stdoutChunks.length = 0;
+    stderrChunks.length = 0;
+    savedNoColor = process.env["NO_COLOR"];
+    savedIsTty = Object.getOwnPropertyDescriptor(process.stdout, "isTTY");
+    // A TTY, so NO_COLOR alone decides whether the mixed_source row is coloured.
+    Object.defineProperty(process.stdout, "isTTY", {
+      value: true,
+      configurable: true,
+      writable: true,
+    });
+    installStreamCapture();
+  });
+  afterEach(() => {
+    restoreStreams();
+    if (savedIsTty === undefined) Reflect.deleteProperty(process.stdout, "isTTY");
+    else Object.defineProperty(process.stdout, "isTTY", savedIsTty);
+    if (savedNoColor === undefined) delete process.env["NO_COLOR"];
+    else process.env["NO_COLOR"] = savedNoColor;
+    clearFixture();
+  });
+
+  async function prettyRun(): Promise<string> {
+    const mock = createMockIpcClient([envelopeFixture({ hasMixedSource: true })]);
+    setFixture({ gatewayState: { socketPath: FAKE_SOCKET_PATH }, ipcClient: mock.client });
+    await runMetricsCli(["dora", "--service", "svc"]);
+    return stdoutChunks.join("");
+  }
+
+  it("a non-empty NO_COLOR turns colour off", async () => {
+    process.env["NO_COLOR"] = "1";
+    const out = await prettyRun();
+    expect(out).toContain("[mixed_source]");
+    expect(out).not.toContain("\x1b[");
+  });
+
+  it("an EMPTY NO_COLOR does not", async () => {
+    process.env["NO_COLOR"] = "";
+    const out = await prettyRun();
+    expect(out).toContain(WARN_PREFIX);
   });
 });

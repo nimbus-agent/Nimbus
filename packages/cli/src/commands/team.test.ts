@@ -346,3 +346,77 @@ test("purge parses with --user and --force (alias for --yes)", () => {
     yes: true,
   });
 });
+
+// ---------------------------------------------------------------------------
+// namespace publish: the --tag filter and the value-less filter flags
+// ---------------------------------------------------------------------------
+
+test("namespace publish accepts --tag alongside --type, in argv order, skipping a stray token", () => {
+  expect(
+    parseTeamArgs(["namespace", "publish", "ns", "--tag", "infra", "extra", "--type", "pr"]),
+  ).toEqual({
+    kind: "namespacePublish",
+    name: "ns",
+    filters: [
+      { kind: "tag", value: "infra" },
+      { kind: "type", value: "pr" },
+    ],
+  });
+});
+
+test("a filter flag with no value names itself rather than publishing an empty filter", () => {
+  expect(() => parseTeamArgs(["namespace", "publish", "ns", "--tag"])).toThrow(
+    "--tag requires a value",
+  );
+  expect(() => parseTeamArgs(["namespace", "publish", "ns", "--service", ""])).toThrow(
+    "--service requires a value",
+  );
+});
+
+// ---------------------------------------------------------------------------
+// vault put: tokens that are not --secret, and a --secret with nothing after it
+// ---------------------------------------------------------------------------
+
+test("vault put skips tokens that are not --secret instead of reading them as secrets", () => {
+  expect(parseTeamArgs(["vault", "put", "prod-aws", "aws", "stray", "--secret", "k=v=w"])).toEqual({
+    kind: "vaultPut",
+    entry: "prod-aws",
+    service: "aws",
+    // Split on the FIRST "=": a value may itself contain one.
+    secrets: { k: "v=w" },
+  });
+});
+
+test("vault put with a trailing --secret and no key=value is refused", () => {
+  expect(() => parseTeamArgs(["vault", "put", "prod-aws", "aws", "--secret"])).toThrow(
+    "--secret requires key=value",
+  );
+});
+
+// ---------------------------------------------------------------------------
+// approve / deny
+// ---------------------------------------------------------------------------
+
+test("approve / deny name the verb they were given when the request id is missing", () => {
+  expect(() => parseTeamArgs(["approve"])).toThrow(
+    "Usage: nimbus team approve <requestId> [--as <peerId>]",
+  );
+  expect(() => parseTeamArgs(["deny"])).toThrow(
+    "Usage: nimbus team deny <requestId> [--as <peerId>]",
+  );
+});
+
+test("approve defaults the responder to self; deny carries --as through", () => {
+  expect(parseTeamArgs(["approve", "req-1"])).toEqual({
+    kind: "respond",
+    requestId: "req-1",
+    approved: true,
+    as: "self",
+  });
+  expect(parseTeamArgs(["deny", "req-2", "--as", "peer:bob"])).toEqual({
+    kind: "respond",
+    requestId: "req-2",
+    approved: false,
+    as: "peer:bob",
+  });
+});

@@ -33,7 +33,8 @@ function takeFlag(args: string[], flag: string): string | undefined {
  */
 export const CORRELATION_WINDOW_MS_CLI_MIRROR = 2 * 60 * 60 * 1000;
 
-function formatDurationMs(ms: number): string {
+/** Exported for its test: while the window is a whole number of hours, only the `h` arm runs. */
+export function formatDurationMs(ms: number): string {
   if (ms % (60 * 60 * 1000) === 0) {
     return `${String(ms / (60 * 60 * 1000))}h`;
   }

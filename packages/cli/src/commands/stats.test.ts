@@ -346,6 +346,60 @@ describe("renderStatsSeries — rendering rules", () => {
     expect(out).not.toContain("n=");
     expect(out).not.toContain("buckets had data");
   });
+
+  function emptyBucket(i: number, gap: string | null): StatsPoint {
+    return {
+      start_ms: i * 7 * DAY,
+      end_ms: (i + 1) * 7 * DAY,
+      value: null,
+      unit: "incidents",
+      sample: 0,
+      gap,
+    };
+  }
+
+  test("every bucket null with NO gap at all names no dominant gap rather than inventing one", () => {
+    const out = renderStatsSeries(series([emptyBucket(0, null), emptyBucket(1, null)]));
+    expect(out.split("\n").at(-1)).toBe("No data: all 2 buckets are empty.");
+  });
+
+  test("the dominant gap is the MOST frequent one, wherever it first appears", () => {
+    const out = renderStatsSeries(
+      series([emptyBucket(0, "a_gap"), emptyBucket(1, "b_gap"), emptyBucket(2, "b_gap")]),
+    );
+    expect(out.split("\n").at(-1)).toBe("No data: all 3 buckets are empty (dominant gap: b_gap).");
+  });
+
+  test("a tie keeps the gap seen FIRST, and an ungapped empty bucket counts toward no gap", () => {
+    const out = renderStatsSeries(
+      series([emptyBucket(0, "first_gap"), emptyBucket(1, null), emptyBucket(2, "second_gap")]),
+    );
+    expect(out.split("\n").at(-1)).toBe(
+      "No data: all 3 buckets are empty (dominant gap: first_gap).",
+    );
+  });
+
+  test("a fractional value prints to three places; an integer prints bare", () => {
+    const out = renderStatsSeries(
+      series([
+        { start_ms: 0, end_ms: 7 * DAY, value: 2.5, unit: "per_day", sample: 3, gap: null },
+        { start_ms: 7 * DAY, end_ms: 14 * DAY, value: 4, unit: "per_day", sample: 4, gap: null },
+      ]),
+    );
+    expect(out).toMatch(/ {5}2\.500 per_day/);
+    expect(out).toMatch(/ {9}4 per_day/);
+    expect(out).not.toContain("4.000");
+  });
+
+  test("empty buckets with no recorded gap are counted, with no empty parenthetical", () => {
+    const out = renderStatsSeries(
+      series([
+        { start_ms: 0, end_ms: 7 * DAY, value: 1, unit: "incidents", sample: 1, gap: null },
+        emptyBucket(1, null),
+      ]),
+    );
+    expect(out.split("\n").at(-1)).toBe("1 of 2 buckets had data · 1 empty");
+  });
 });
 
 describe("runStats", () => {
@@ -465,6 +519,39 @@ describe("runStats", () => {
     await expect(runStats(["mttr", "--service", "checkout-web"])).rejects.toThrow(
       /Malformed metrics\.stats response/,
     );
+  });
+
+  // Each case breaks exactly ONE field of an otherwise valid series, so a validator that stopped
+  // checking that field would render garbage rather than refuse.
+  const VALID_SERIES = {
+    metric: "mttr",
+    service: "checkout-web",
+    window: { since_ms: 0, until_ms: 7 * DAY },
+    bucket_ms: 7 * DAY,
+    points: [
+      { start_ms: 0, end_ms: 7 * DAY, value: 1, unit: "seconds_median", sample: 1, gap: null },
+    ],
+  };
+  test.each<[string, unknown]>([
+    ["a null response", null],
+    ["a bucket_ms that is not a number", { ...VALID_SERIES, bucket_ms: "1w" }],
+    ["a null window", { ...VALID_SERIES, window: null }],
+    ["a window with no until_ms", { ...VALID_SERIES, window: { since_ms: 0 } }],
+    ["a null point", { ...VALID_SERIES, points: [null] }],
+  ])("throws on %s", async (_label, response) => {
+    const mock = createMockIpcClient([response]);
+    setFixture({ gatewayState: { socketPath: FAKE_SOCKET_PATH }, ipcClient: mock.client });
+    await expect(runStats(["mttr", "--service", "checkout-web"])).rejects.toThrow(
+      /Malformed metrics\.stats response/,
+    );
+    expect(out.stdout).toBe("");
+  });
+
+  test("the unbroken series those cases are built from DOES render (positive control)", async () => {
+    const mock = createMockIpcClient([VALID_SERIES]);
+    setFixture({ gatewayState: { socketPath: FAKE_SOCKET_PATH }, ipcClient: mock.client });
+    await runStats(["mttr", "--service", "checkout-web"]);
+    expect(out.stdout).toContain("1 of 1 buckets had data");
   });
 
   test("throws when the response has no window object", async () => {

@@ -1,5 +1,15 @@
 import { afterEach, beforeEach, expect, test } from "bun:test";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  closeSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  openSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -75,6 +85,15 @@ test("reports already-configured on a second run", () => {
   expect(initPlan(opts).kind).toBe("already-configured");
 });
 
+test("applyInitPlan writes nothing for a plan that is not an add", () => {
+  // `init` reaches applyInitPlan only on an add today, so the guard is the one thing between a
+  // future caller and a duplicate [[filesystem.roots]] entry (or a root named "undefined").
+  const opts = { cwd: repo, configDir };
+  applyInitPlan({ kind: "already-configured", repoRoot: repo }, opts);
+  applyInitPlan({ kind: "not-a-repo" }, opts);
+  expect(existsSync(join(configDir, "nimbus.toml"))).toBe(false);
+});
+
 test("applyInitPlan writes the root with code indexing enabled", () => {
   const opts = { cwd: repo, configDir };
   applyInitPlan(initPlan(opts), opts);
@@ -136,6 +155,16 @@ test("nextStepLines names `nimbus wow` last when the gateway is running (concret
 
 test("nextStepLines omits `nimbus wow` when nothing is indexed (--no-sync)", () => {
   expect(nextStepLines(null, false).join("\n")).not.toContain("nimbus wow");
+});
+
+test("nextStepLines omits `nimbus wow` from the concrete block too when no gateway is up", () => {
+  // The concrete block has its own copy of the gateway guard; the generic-block test above
+  // cannot see it.
+  expect(nextStepLines({ file: "src/auth.ts", line: 42, name: "verifyToken" }, false)).toEqual([
+    "",
+    "Try it:",
+    "  nimbus why src/auth.ts:42   # verifyToken",
+  ]);
 });
 
 // ------------------------------------------------------------------ runInit
@@ -686,6 +715,31 @@ test("readGatewayLogTail reports an empty log as empty rather than as missing", 
   expect(readGatewayLogTail(logDir)).toEqual({ path: p, lines: [] });
 });
 
+test("readGatewayLogTail reports a log it cannot open as present-but-unreadable, never as missing", () => {
+  const logDir = join(dir, "logs-unreadable");
+  mkdirSync(logDir, { recursive: true });
+  const p = join(logDir, "gateway-2026-07-29.log");
+  writeFileSync(p, "[gateway] started\n", "utf8");
+  chmodSync(p, 0o000);
+  try {
+    // SELF-VALIDATING: mode bits refuse an open only on POSIX for a non-root user (CI's Linux and
+    // macOS legs). On Windows or as root the file is simply readable, and its line comes back.
+    let openRefused = false;
+    try {
+      closeSync(openSync(p, "r"));
+    } catch {
+      openRefused = true;
+    }
+    // The stat that picked this file as the newest log still succeeds, so the report names it.
+    expect(readGatewayLogTail(logDir)).toEqual({
+      path: p,
+      lines: openRefused ? [] : ["started"],
+    });
+  } finally {
+    chmodSync(p, 0o644);
+  }
+});
+
 // ------------------------------------------------- awaitGatewayState (race)
 //
 // The gateway binds its IPC socket and only THEN writes gateway.json
@@ -741,6 +795,29 @@ test("awaitGatewayState does not poll at all when the state file is already ther
   });
   expect(ok).toBe(true);
   expect(reads).toBe(1);
+});
+
+test("awaitGatewayState's defaults: polls every 50 ms and gives up after 5 s", async () => {
+  // Only timeoutMs/pollMs are left to default; the clock is injected so this is exact and instant.
+  let clock = 0;
+  const sleeps = new Set<number>();
+  let reads = 0;
+  const ok = await awaitGatewayState({
+    readState: async () => {
+      reads += 1;
+      return undefined;
+    },
+    now: () => clock,
+    sleep: async (ms) => {
+      sleeps.add(ms);
+      clock += ms;
+    },
+  });
+  expect(ok).toBe(false);
+  expect([...sleeps]).toEqual([50]);
+  expect(clock).toBe(5_000);
+  // One read per 50 ms step across 5 s, plus the read at t=0.
+  expect(reads).toBe(101);
 });
 
 test("awaitGatewayState defaults terminate against a real clock", async () => {

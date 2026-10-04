@@ -75,6 +75,22 @@ describe("formatReplayReport", () => {
     expect(summaryLine).toContain("skipped-invalid-params 1");
   });
 
+  test("a CAPPED replay says how many steps it did not run, so it never reads as complete", () => {
+    const out = formatReplayReport({ ...report, summary: { ...report.summary, capped: 4 } });
+    const lines = out.split("\n");
+    // The summary counts only what ran; the truncation is stated on its own line right under it.
+    expect(lines.at(-2)).toStartWith("Summary: match 1,");
+    expect(lines.at(-1)).toBe(
+      "  4 further step(s) were NOT executed (per-replay ceiling reached).",
+    );
+  });
+
+  test("capped: 0 is a complete replay and adds no truncation line", () => {
+    const out = formatReplayReport({ ...report, summary: { ...report.summary, capped: 0 } });
+    expect(out).not.toContain("NOT executed");
+    expect(out.split("\n").at(-1)).toStartWith("Summary: match 1,");
+  });
+
   test("empty report → a clear 'no steps' line, no crash", () => {
     const out = formatReplayReport({
       sourceSessionId: "s",
