@@ -1,8 +1,12 @@
 import { afterAll, afterEach, beforeEach, describe, expect, it } from "bun:test";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 import { clearFixture, FAKE_SOCKET_PATH, setFixture } from "../../test/helpers/cli-mocks.ts";
 import { captureOutput } from "../../test/helpers/cli-output.ts";
 import { createMockIpcClient } from "../../test/helpers/mock-ipc-client.ts";
+import type { CliPlatformPaths } from "../paths.ts";
 
 const dbMod = await import("./db.ts");
 const { runDb } = dbMod;
@@ -258,6 +262,91 @@ describe("runDb restore", () => {
     await runDb(["restore", "/tmp/x.db.gz"]);
     expect(out.stdout).toContain("Restoring overwrites");
     expect(out.stdout).toContain("/tmp/x.db.gz");
+  });
+});
+
+// The destructive arm: `--yes` overwrites `<dataDir>/nimbus.db`. Every case injects `getPaths` at a
+// fresh temp root, so the restore can only ever write there — never the real data directory, which
+// on macOS an in-process HOME override would not redirect.
+describe("runDb restore --yes (injected paths, temp root)", () => {
+  let root: string;
+
+  function pathsUnder(dir: string): CliPlatformPaths {
+    const dataDir = join(dir, "data");
+    return {
+      configDir: join(dir, "config"),
+      dataDir,
+      logDir: join(dataDir, "logs"),
+      socketPath: FAKE_SOCKET_PATH,
+      extensionsDir: join(dataDir, "extensions"),
+      tempDir: join(dir, "tmp"),
+    };
+  }
+
+  function writeSnapshot(bytes: Uint8Array<ArrayBuffer>): string {
+    const snap = join(root, "snap-1.db.gz");
+    writeFileSync(snap, Bun.gzipSync(bytes));
+    return snap;
+  }
+
+  beforeEach(() => {
+    out.reset();
+    root = mkdtempSync(join(tmpdir(), "nimbus-db-restore-"));
+  });
+  afterEach(() => {
+    clearFixture();
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  it("refuses while the recorded gateway process is alive, before creating or writing anything", async () => {
+    const snap = writeSnapshot(new TextEncoder().encode("snapshot bytes"));
+    setFixture({ gatewayState: { socketPath: FAKE_SOCKET_PATH, pid: 4242 }, processAlive: true });
+    await expect(
+      runDb(["restore", snap, "--yes"], { getPaths: () => pathsUnder(root) }),
+    ).rejects.toThrow("Stop the Gateway before restoring the database file (nimbus stop).");
+    expect(existsSync(join(root, "data"))).toBe(false);
+    // Nothing at all is printed: not the confirmation, and not the --yes hint either.
+    expect(out.stdout).toBe("");
+  });
+
+  it("a stale gateway.json whose process is gone does not block the restore", async () => {
+    const original = new TextEncoder().encode("SQLite format 3\u0000 stale-state restore");
+    const snap = writeSnapshot(original);
+    setFixture({ gatewayState: { socketPath: FAKE_SOCKET_PATH, pid: 4242 }, processAlive: false });
+    const paths = pathsUnder(root);
+    await runDb(["restore", snap, "--yes"], { getPaths: () => paths });
+    expect(new Uint8Array(readFileSync(join(paths.dataDir, "nimbus.db")))).toEqual(original);
+    // EXACTLY the confirmation: a confirmed restore must not also print the "run it with --yes" hint.
+    expect(out.stdout).toBe(`Restored database from ${snap}\n`);
+  });
+
+  it("with no gateway, creates the data directory and REPLACES an existing nimbus.db", async () => {
+    const original = new TextEncoder().encode("SQLite format 3\u0000 the snapshot");
+    const snap = writeSnapshot(original);
+    setFixture({});
+    const paths = pathsUnder(root);
+    // A first restore into a data directory that does not exist yet...
+    await runDb(["restore", snap, "--yes"], { getPaths: () => paths });
+    expect(new Uint8Array(readFileSync(join(paths.dataDir, "nimbus.db")))).toEqual(original);
+    // ...and a second over a live file with different, LONGER contents: replaced, not appended.
+    mkdirSync(paths.dataDir, { recursive: true });
+    writeFileSync(
+      join(paths.dataDir, "nimbus.db"),
+      "a much longer pre-existing database file body",
+    );
+    await runDb(["restore", snap, "--yes"], { getPaths: () => paths });
+    expect(new Uint8Array(readFileSync(join(paths.dataDir, "nimbus.db")))).toEqual(original);
+    expect(out.stdout).toBe(`Restored database from ${snap}\n`.repeat(2));
+  });
+
+  it("without --yes prints the hint naming the snapshot and writes nothing", async () => {
+    const snap = writeSnapshot(new TextEncoder().encode("bytes"));
+    setFixture({});
+    await runDb(["restore", snap], { getPaths: () => pathsUnder(root) });
+    expect(out.stdout).toBe(
+      `Restoring overwrites nimbus.db. Stop the Gateway, then run:\n  nimbus db restore ${snap} --yes\n`,
+    );
+    expect(existsSync(join(root, "data"))).toBe(false);
   });
 });
 

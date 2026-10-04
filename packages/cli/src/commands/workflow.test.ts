@@ -188,6 +188,36 @@ describe("runWorkflowRun", () => {
       /human approval \(HITL\)/,
     );
   });
+
+  it("--no-ttv --agent previews AND runs under that agent", async () => {
+    // The preview must be asked of the SAME agent the run will use: a preview under the default
+    // agent could report no HITL step for a workflow the chosen agent would gate.
+    const ipc = createMockIpcClient([{ stepResults: [] }, { ok: true }]);
+    await runWorkflowRun(ipc.client, ["deploy", "--no-ttv", "--agent", "research"]);
+    expect(ipc.calls).toEqual([
+      {
+        method: "workflow.run",
+        params: { name: "deploy", stream: false, dryRun: true, agent: "research" },
+      },
+      {
+        method: "workflow.run",
+        params: { name: "deploy", stream: true, dryRun: false, agent: "research" },
+      },
+    ]);
+  });
+
+  it("--no-ttv treats a preview with no stepResults as nothing flagged, and runs", async () => {
+    const ipc = createMockIpcClient([{}, { ok: true }]);
+    await runWorkflowRun(ipc.client, ["deploy", "--no-ttv"]);
+    expect(ipc.calls.map((c) => (c.params as { dryRun: boolean }).dryRun)).toEqual([true, false]);
+  });
+
+  it("--no-ttv treats a step that carries no hitlActions field as unflagged", async () => {
+    const ipc = createMockIpcClient([{ stepResults: [{}, { hitlActions: [] }] }, { ok: true }]);
+    await runWorkflowRun(ipc.client, ["deploy", "--no-ttv"]);
+    expect(ipc.calls.map((c) => (c.params as { dryRun: boolean }).dryRun)).toEqual([true, false]);
+    expect(out.stdout).toContain('"ok": true');
+  });
 });
 
 describe("runWorkflowCli (dispatcher)", () => {
@@ -228,6 +258,49 @@ describe("runWorkflowCli (dispatcher)", () => {
     });
     await runWorkflowCli([]);
     expect(ipc.calls[0]?.method).toBe("workflow.list");
+  });
+
+  it("routes 'delete' through IPC on the tight default budget", async () => {
+    const constructions: RecordedClientConstruction[] = [];
+    const ipc = createMockIpcClient([{ ok: true }]);
+    setFixture({
+      gatewayState: { socketPath: FAKE_SOCKET_PATH },
+      clientConstructions: constructions,
+      ipcClient: { call: ipc.client.call, connect: () => {}, disconnect: () => {} },
+    });
+    await runWorkflowCli(["delete", "deploy"]);
+    expect(ipc.calls).toEqual([{ method: "workflow.delete", params: { name: "deploy" } }]);
+    expect(out.stdout).toContain('"ok": true');
+    // Only `run` gets the interactive budget — a delete is a fast RPC.
+    expect(constructions).toHaveLength(1);
+    expect(constructions[0]?.opts).toBeUndefined();
+  });
+
+  it("routes 'save' through IPC on the tight default budget, reading --file", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "nimbus-wf-cli-save-"));
+    try {
+      const file = join(dir, "deploy.json");
+      writeFileSync(file, JSON.stringify({ name: "deploy", steps: [{ kind: "noop" }] }));
+      const constructions: RecordedClientConstruction[] = [];
+      const ipc = createMockIpcClient([{ saved: "deploy" }]);
+      setFixture({
+        gatewayState: { socketPath: FAKE_SOCKET_PATH },
+        clientConstructions: constructions,
+        ipcClient: { call: ipc.client.call, connect: () => {}, disconnect: () => {} },
+      });
+      await runWorkflowCli(["save", "deploy", "--file", file]);
+      // `stepsJson` is the file's PARSED steps array, re-serialised — never the raw file body.
+      // With no description in the file and none on the CLI the key is absent, never `null` or
+      // `undefined` (toStrictEqual tells an undefined-valued key from a missing one).
+      expect(ipc.calls).toStrictEqual([
+        { method: "workflow.save", params: { name: "deploy", stepsJson: '[{"kind":"noop"}]' } },
+      ]);
+      expect(out.stdout).toContain('"saved": "deploy"');
+      expect(constructions).toHaveLength(1);
+      expect(constructions[0]?.opts).toBeUndefined();
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 
   // A workflow step can trip a HITL gate, and the Gateway then blocks on
