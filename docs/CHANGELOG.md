@@ -80,14 +80,21 @@ Phase-level history before `v0.1.0` (Phases 1â€“4) lives in [`docs/roadmap.md` Â
     row, which the upsert-only sync would otherwise have kept forever, its pass/fail never updated.
   - A federated call that fails during the LAN handshake reports the real reason: a refused hello,
     a responder whose key is not the pinned one, a malformed reply, a bad frame. Before, every one of
-    these read `lan-client: connection closed mid-exchange`. What is refused is unchanged.
+    these read `lan-client: connection closed mid-exchange`. Pairing reports an oversized handshake
+    reply the same way, as `lan-client: oversized frame` (before: `lan-client: connection closed
+    without reply`). A refusal names the responder's `kind` only when it is a protocol token: the
+    reply arrives before the responder's key is checked, so any other text reads `unknown` instead
+    of reaching a brief's `## Gaps`. What is refused is unchanged.
   - On Windows, running a generated tool no longer opens a console window: its spawn now passes
     `windowsHide`.
-  - The updater accepts an `http://[::1]` manifest URL outside production, as it already did for
-    `127.0.0.1` and `localhost`. Its IPv6 check compared the hostname with `::1`, but `URL` keeps
-    the brackets, so the check could never match.
-  - `--format slack` and `--format plain` (`changelog`, `standup`, `oncall`) take linear time on any
-    brief. The two S8786 patterns above could take seconds on one long malformed line.
+  - The updater accepts an `http://[::1]` URL wherever it already accepted `http://127.0.0.1` and
+    `http://localhost`: for the manifest and for asset downloads, in any process where `NODE_ENV`
+    is not `production`. That includes release builds, because none sets it. Its IPv6 check
+    compared the hostname with `::1`, but `URL` keeps the brackets, so the check could never match.
+  - `--format slack` and `--format plain` (`changelog`, `standup`, `oncall`) no longer take seconds
+    on a long unclosed link title or heading separator: the two S8786 patterns above are linear now.
+    `--format plain`'s underscore-italic pass is still quadratic on a long line of `_` openers that
+    nothing closes, as it was before this sweep.
   - An on-call push whose brief fails with a non-string error records `brief_error: unknown`, not
     `[object Object]`.
   - In the desktop UI, `HotkeyFailedBanner` no longer leaks its listener when it unmounts before
