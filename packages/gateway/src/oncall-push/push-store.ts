@@ -43,6 +43,23 @@ type Raw = {
 const COLS =
   "incident_id, session_id, status, failure_code, brief_markdown, brief_json, created_at, delivery_json, retried_at";
 
+const PB_COLS = COLS.split(", ")
+  .map((c) => `pb.${c}`)
+  .join(", ");
+
+// json_extract RAISES on malformed JSON. In a projection over a LEFT JOIN, one corrupt item.metadata
+// would fail the whole list, so it is guarded (memory: sqlite-json-extract-raises-on-bad-json).
+const PD_SERVICE_SQL =
+  "CASE WHEN json_valid(i.metadata) THEN json_extract(i.metadata, '$.pagerduty_service_id') END";
+
+export type PushedBriefListing = {
+  readonly row: PushedBriefRow;
+  readonly title: string | null;
+  readonly pagerdutyServiceId: string | null;
+};
+
+type ListingRaw = Raw & { incident_title: string | null; incident_pd_service_id: unknown };
+
 function parseDelivery(json: string): Record<string, SinkOutcome> {
   try {
     const v: unknown = JSON.parse(json);
@@ -147,6 +164,25 @@ export class PushStore {
     return rows.map(toRow);
   }
 
+  /** `list` plus the incident's title and PagerDuty service id, in ONE query (no per-row lookup). */
+  listWithIncident(limit: number): PushedBriefListing[] {
+    const rows = this.db
+      .query(
+        `SELECT ${PB_COLS}, i.title AS incident_title, ${PD_SERVICE_SQL} AS incident_pd_service_id
+           FROM pushed_brief pb
+           LEFT JOIN item i ON i.id = pb.incident_id AND i.type = 'incident'
+          ORDER BY pb.created_at DESC, pb.incident_id ASC
+          LIMIT ?`,
+      )
+      .all(limit) as ListingRaw[];
+    return rows.map((r) => ({
+      row: toRow(r),
+      title: r.incident_title,
+      pagerdutyServiceId:
+        typeof r.incident_pd_service_id === "string" ? r.incident_pd_service_id : null,
+    }));
+  }
+
   pruneOlderThan(cutoffMs: number): number {
     return dbRun(this.db, "DELETE FROM pushed_brief WHERE created_at < ?", [cutoffMs]).changes;
   }
@@ -175,6 +211,13 @@ export class PushStore {
       .query("SELECT title FROM item WHERE id = ? AND type = 'incident'")
       .get(incidentId) as { title: string } | null;
     return r === null ? null : r.title;
+  }
+
+  incidentPagerdutyServiceId(incidentId: string): string | null {
+    const r = this.db
+      .query(`SELECT ${PD_SERVICE_SQL} AS v FROM item i WHERE i.id = ? AND i.type = 'incident'`)
+      .get(incidentId) as { v: unknown } | null;
+    return r !== null && typeof r.v === "string" ? r.v : null;
   }
 
   private mustGet(incidentId: string): PushedBriefRow {
