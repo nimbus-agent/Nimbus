@@ -42,25 +42,40 @@ function result(expectationType: string, column: string): Record<string, unknown
   };
 }
 
+interface Artefact {
+  readonly suite: string;
+  readonly batchId: string;
+  readonly results: readonly Record<string, unknown>[];
+}
+
+/** A results dir holding one file per artefact, and a fresh index to sync it into. */
+async function setupArtefacts(
+  artefacts: readonly Artefact[],
+): Promise<{ db: Database; dir: string }> {
+  const dir = await mkdtemp(join(tmpdir(), "gx-legacy-"));
+  dirs.push(dir);
+  for (const [i, a] of artefacts.entries()) {
+    await writeFile(
+      join(dir, `validation-${i}.json`),
+      JSON.stringify({
+        meta: { expectation_suite_name: a.suite, batch_id: a.batchId, run_id: "run-1" },
+        results: a.results,
+      }),
+      "utf8",
+    );
+  }
+  const db = createMemoryIndexDb();
+  dbs.push(db);
+  return { db, dir };
+}
+
 /** A results dir holding ONE artefact for `suite`/`batchId`, and a fresh index to sync it into. */
-async function setup(
+function setup(
   suite: string,
   batchId: string,
   results: readonly Record<string, unknown>[],
 ): Promise<{ db: Database; dir: string }> {
-  const dir = await mkdtemp(join(tmpdir(), "gx-legacy-"));
-  dirs.push(dir);
-  await writeFile(
-    join(dir, "validation.json"),
-    JSON.stringify({
-      meta: { expectation_suite_name: suite, batch_id: batchId, run_id: "run-1" },
-      results,
-    }),
-    "utf8",
-  );
-  const db = createMemoryIndexDb();
-  dbs.push(db);
-  return { db, dir };
+  return setupArtefacts([{ suite, batchId, results }]);
 }
 
 function sync(db: Database, dir: string) {
@@ -149,5 +164,37 @@ describe("great-expectations-sync — rows written under the pre-fix clamped id"
     expect(r.itemsDeleted).toBe(0);
     expect(externalIds(db)).toContain(shortId ?? "");
     expect(externalIds(db)).toHaveLength(2);
+  });
+
+  test("a row this pass wrote is kept when a legacy id names it only through the primary key", async () => {
+    // `itemPrimaryKey` keeps an external id that already starts with `great_expectations:` as it
+    // is, and prefixes every other. So `a`'s pre-fix id (it starts with the prefix, because its
+    // suite is literally that name) and `b`'s current id (the same string WITHOUT the prefix) are
+    // different external ids naming ONE row. A guard comparing external ids lets the cleanup
+    // delete `b`'s row on every pass; comparing primary keys keeps it.
+    const a: Artefact = {
+      suite: SERVICE,
+      batchId: "s::b::t",
+      results: [result("e", "c".repeat(300))],
+    };
+    const b: Artefact = {
+      suite: ":s",
+      batchId: "b",
+      results: [result("t", `e::${"c".repeat(208)}#0`)],
+    };
+    const legacy = legacyClampedExternalId(a.results[0], mappingCtx(a.suite, a.batchId));
+    const current = mapGreatExpectationsResultToItem(b.results[0], mappingCtx(b.suite, b.batchId));
+    if (legacy === null || current === null) throw new Error("fixture did not map");
+    expect(legacy.startsWith(`${SERVICE}:`)).toBe(true);
+    expect(current.externalId).not.toBe(legacy);
+    expect(`${SERVICE}:${current.externalId}`).toBe(legacy);
+    const { db, dir } = await setupArtefacts([a, b]);
+
+    const r = await sync(db, dir);
+
+    expect(r.itemsUpserted).toBe(2);
+    expect(r.itemsDeleted).toBe(0);
+    expect(externalIds(db)).toHaveLength(2);
+    expect(externalIds(db)).toContain(current.externalId);
   });
 });

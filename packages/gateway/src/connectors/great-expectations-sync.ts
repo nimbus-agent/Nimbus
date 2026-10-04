@@ -146,9 +146,15 @@ async function readArtefact(path: string): Promise<ParsedArtefact | null> {
   }
 }
 
-/** The external ids one sync pass wrote, and the pre-fix ids of the same results. */
+/** The rows one sync pass wrote, and the pre-fix ids of the same results. */
 interface PassIds {
+  /**
+   * The PRIMARY KEY of every row written, the key `itemExists` and `deleteItem` act on. Not the
+   * external id: `itemPrimaryKey` keeps an id that already starts with `great_expectations:` as it
+   * is, so two different external ids can name the same row.
+   */
   readonly written: Set<string>;
+  /** External ids, as `legacyClampedExternalId` derives them. */
   readonly legacy: Set<string>;
 }
 
@@ -169,7 +175,7 @@ function ingestArtefact(
   }
   return upsertMapped(ctx, results, (entry) => {
     const row = mapGreatExpectationsResultToItem(entry, mappingCtx);
-    if (row !== null) ids.written.add(row.externalId);
+    if (row !== null) ids.written.add(itemPrimaryKey(SERVICE_ID, row.externalId));
     return row;
   });
 }
@@ -177,13 +183,14 @@ function ingestArtefact(
 /**
  * Removes the rows an older gateway wrote under a broken clamped id (see
  * `legacyClampedExternalId`) for results this pass has just written under their real ids. Runs
- * after every artefact is ingested and skips any id this pass wrote, so it can never remove a row
- * that is current. Returns how many rows it removed.
+ * after every artefact is ingested and skips any row this pass wrote, compared by primary key, so
+ * it can never remove a row that is current. Returns how many rows it removed.
  */
 function removeLegacyClampedRows(ctx: SyncContext, ids: PassIds): number {
   let removed = 0;
   for (const id of ids.legacy) {
-    if (ids.written.has(id) || !ctx.itemExists(itemPrimaryKey(SERVICE_ID, id))) continue;
+    const key = itemPrimaryKey(SERVICE_ID, id);
+    if (ids.written.has(key) || !ctx.itemExists(key)) continue;
     ctx.deleteItem(SERVICE_ID, id);
     removed += 1;
   }
