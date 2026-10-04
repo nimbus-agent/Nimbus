@@ -844,7 +844,7 @@ Five-layer pyramid:
 4. **UI Components (Vitest + Testing Library)** — React components in the Tauri WebView. Vitest is used here because `bun test` does not support jsdom.
 5. **E2E Desktop (Playwright + Tauri WebDriver)** — full desktop flows on all three platforms. Runs on push to `main` and release tags.
 
-Run `bun run preflight` for full CI parity before opening a PR (`bun run preflight:fast` for the cheap static gates). Security scans: `bun audit`, `trivy`, and CodeQL on every PR; Dependabot for dependency updates; SonarCloud as a blocking quality gate. HIGH/CRITICAL findings block merges. See [`testing.md`](./testing.md).
+Run `bun run preflight` for full CI parity before opening a PR (`bun run preflight:fast` for the cheap static gates). Security scans: `bun audit`, `trivy`, and CodeQL on every PR; Dependabot for dependency updates; SonarCloud as a blocking quality gate. HIGH/CRITICAL findings block merges, except an npm advisory with no fix that holds an open, dated acceptance (see [`security-hardening.md`](./security-hardening.md#accepting-an-advisory-that-has-no-fix)). See [`testing.md`](./testing.md).
 
 ---
 
