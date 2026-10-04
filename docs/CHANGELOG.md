@@ -23,8 +23,8 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
   `typescript:S9382` (promises awaited sequentially in a loop), `typescript:S7503` (async functions
   that use no async feature), `typescript:S9383` (unhandled promises, a BUG-type rule) and
   `typescript:S9381` (nested promises). With the older backlog they left 448 open findings on
-  `main` (439 code smells, 9 bugs). All 448 are addressed: 306 fixed in code and 142 suppressed.
-  By rule: S7503 ×180 (all fixed), S9382 ×177 (35 fixed, 142 suppressed), S3776 ×23, S3358 ×17,
+  `main` (439 code smells, 9 bugs). All 448 are addressed: 307 fixed in code and 141 suppressed.
+  By rule: S7503 ×180 (all fixed), S9382 ×177 (36 fixed, 141 suppressed), S3776 ×23, S3358 ×17,
   S9383 ×9, S4624 ×6, S7778 ×5, S5906 ×4, S7763 ×3, S7781 ×3, S6582 ×2, S8786 ×2, S8968 ×2, and
   one each of S2301, S2699, S3735, S4043, S4144, S5843, S5976, S6353, S6551, S7718, S7744, S7746,
   S7780, S9381 and `c:S886`. Every finding outside S9382 was fixed in code. Two of them, S8786 in
@@ -33,7 +33,7 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
   hand-written scan, the heading pattern a regex that cannot backtrack, and time-bounded tests
   guard both. Merging `main` brought two more, both in #1600's new ChatOps sink in
   `oncall-push/push-sinks.ts`: an S3358, fixed, and an S9382, suppressed. That makes 450 in all,
-  307 fixed and 143 suppressed.
+  308 fixed and 142 suppressed.
   **Suppressions follow one written rule, and no rule was disabled.** No Sonar, coverage or
   duplication exclusion was added either. Every suppression is a trailing
   `// NOSONAR S9382: <reason>` on the reported line, used only where a loop must stay sequential.
@@ -49,9 +49,15 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
   - use `Promise.try` or a restructure when it can.
 
   The duplication pass then folded six marked loops into two shared helpers and added one, and the
-  #1600 headline loop added one more, so 140 markers remain. Each is listed with its reason in
+  #1600 headline loop added one more, so 139 markers remain. Each is listed with its reason in
   [`sonarqube-rule-tuning.md`](./structure-audit/sonarqube-rule-tuning.md#2026-10-03--sonarcloud-rules-s9382--s7503--s9383--s9381-added-to-the-analyzer).
-  **Three changes are deliberate and user-visible, all fixes.**
+  **User-visible changes.** The sweep set out to change no behaviour. These are the exceptions,
+  and every one is a fix:
+  - `nimbus security scan` no longer hangs. It had waited forever since #515 (2026-06-04),
+    `--fail-on-finding` in CI included. The gateway runs the scan inside the `security.scan` call,
+    so `security.scanDone` reaches the CLI BEFORE the reply that names the job, and the CLI dropped
+    any event for a job it did not know yet. It now holds such events and replays them once the
+    reply names the job.
   - `nimbus test` now awaits `runContractTests`. Before, a manifest that violated the extension
     contract printed `Extension contract OK.` and leaked an unhandled rejection. Now it fails with
     the contract error.
@@ -62,6 +68,30 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
     command, which still ran only behind the owner's HITL prompt.
   - The ChatOps service's `stop()` now stops every transport even when an earlier one fails to
     stop, and still rejects.
+  - `catchup`, `impact`, `why`, `changelog`, `standup` and `oncall`: a brief that fails while its
+    `agents.*` call is still in flight now prints the error and exits 2, as every other failure of
+    these commands does. That happens when the brief timer fires first (a low
+    `NIMBUS_BRIEF_TIMEOUT_MS`) or a `briefError` arrives with no session id. Before, Bun also printed
+    an unhandled-rejection stack trace, and every one of them except `changelog` exited 1.
+  - Great Expectations results whose `suite::batch::expectation::column` key is longer than 256
+    characters get distinct ids. The id hash overflowed, so each such result was indexed under its
+    first 240 characters plus `#0`, and results sharing those characters overwrote one another. The
+    first sync after upgrading writes each such result under its real id and deletes its old `#0`
+    row, which the upsert-only sync would otherwise have kept forever, its pass/fail never updated.
+  - A federated call that fails during the LAN handshake reports the real reason: a refused hello,
+    a responder whose key is not the pinned one, a malformed reply, a bad frame. Before, every one of
+    these read `lan-client: connection closed mid-exchange`. What is refused is unchanged.
+  - On Windows, running a generated tool no longer opens a console window: its spawn now passes
+    `windowsHide`.
+  - The updater accepts an `http://[::1]` manifest URL outside production, as it already did
+    `127.0.0.1` and `localhost`. Its IPv6 check compared the hostname with `::1`, but `URL` keeps
+    the brackets, so the check could never match.
+  - `--format slack` and `--format plain` (`changelog`, `standup`, `oncall`) take linear time on any
+    brief. The two S8786 patterns above could take seconds on one long malformed line.
+  - An on-call push whose brief fails with a non-string error records `brief_error: unknown`, not
+    `[object Object]`.
+  - In the desktop UI, `HotkeyFailedBanner` no longer leaks its listener when it unmounts before
+    `listen()` resolves.
 
   **Duplication.** jscpd over `packages/` with the repo's `.jscpd.json` measured 5,373 duplicated
   lines in 488 clones (2.42%) on `main`. The branch measures 3,559 lines in 341 clones (1.60%), and
