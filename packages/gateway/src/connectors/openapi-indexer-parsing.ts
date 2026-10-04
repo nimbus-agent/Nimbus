@@ -1,4 +1,5 @@
 import { load as yamlLoad } from "js-yaml";
+import { USER_YAML_SCHEMA } from "../util/user-yaml-schema.ts";
 
 export type ParsedEndpoint = {
   method: string;
@@ -140,7 +141,7 @@ function parseStringToJson(absPath: string, source: string): unknown {
     }
   }
   try {
-    return yamlLoad(source);
+    return yamlLoad(source, { schema: USER_YAML_SCHEMA });
   } catch {
     return undefined;
   }

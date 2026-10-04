@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
-import yaml from "js-yaml";
+import { load as loadYaml } from "js-yaml";
 
 import {
   ACCEPTED_ADVISORIES,
@@ -286,7 +286,7 @@ describe("security.yml reads the registry instead of carrying a copy", () => {
 
   /** Every `run:` script of the `audit` job (`Dependency audit`) that invokes the blocking audit. */
   function blockingAuditRuns(): string[] {
-    const doc: unknown = yaml.load(source);
+    const doc: unknown = loadYaml(source);
     const jobs = isRecord(doc) ? doc["jobs"] : undefined;
     const audit = isRecord(jobs) ? jobs["audit"] : undefined;
     const steps: unknown[] = isRecord(audit) && Array.isArray(audit["steps"]) ? audit["steps"] : [];

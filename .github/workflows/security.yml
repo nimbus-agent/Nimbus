@@ -224,7 +224,7 @@ jobs:
           cache: false
 
       - name: Upload Trivy results to GitHub Security tab
-        uses: github/codeql-action/upload-sarif@2892aa5e19bbd11bc0cff5427e3b750a04d9e3c2 # v4
+        uses: github/codeql-action/upload-sarif@2892aa5e19bbd11bc0cff5427e3b750a04d9e3c2 # v4.38.2
         if: always()
         with:
           sarif_file: "trivy-results.sarif"
@@ -296,19 +296,22 @@ jobs:
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/.cargo/bin/cargo-audit
-          key: cargo-audit-0.22.1
+          key: cargo-audit-0.22.2
 
       - name: Install cargo-audit
         if: steps.cargo-audit-cache.outputs.cache-hit != 'true'
-        run: cargo install cargo-audit --version 0.22.1 --locked
+        run: cargo install cargo-audit --version 0.22.2 --locked
 
       - name: Run cargo audit (packages/ui/src-tauri)
         working-directory: packages/ui/src-tauri
-        # quick-xml 0.39.4 DoS advisories (transitive via plist/wayland-scanner,
-        # not reachable without an upstream Tauri bump; Tauri desktop deferred to
-        # Phase 13, no runtime exposure). Mirrors the deny.toml ignore list —
-        # revisit at the next Tauri bump. See deny.toml for full rationale.
-        run: cargo audit --ignore RUSTSEC-2026-0194 --ignore RUSTSEC-2026-0195
+        # No `--ignore` flags. The two this step carried (RUSTSEC-2026-0194 and
+        # RUSTSEC-2026-0195, quick-xml 0.39.4) were retired at the tauri 2.12.1
+        # bump: plist and wayland-scanner now resolve quick-xml 0.41/0.42, past
+        # the fix. Two informational advisories still print as allowed warnings
+        # and do not fail the step: proc-macro-error (unmaintained) and glib 0.18
+        # (unsound), both transitive via the Linux gtk3 stack. Keep any future
+        # ignore here in step with deny.toml's list, which has the rationale.
+        run: cargo audit
 
   cargo-deny:
     # Skipped on PRs that touch no Rust. This name is a literal with no `${{ }}`
@@ -345,10 +348,10 @@ jobs:
       # the step that failed (a static.rust-lang.org TLS reset), taking the job
       # down before cargo-deny ever ran. Do not re-add it.
       - name: Run cargo deny
-        # Pinned to v2.0.17 (cargo-deny 0.19.2). The previous pin at
-        # e2f4ede (v2.0.4) bundled a cargo-deny version that couldn't
-        # parse CVSS 4.0 vectors, causing advisory-db sync to fail on
-        # e.g. RUSTSEC-2025-0138.
+        # Pinned to v2.1.1, which bundles cargo-deny 0.20.2 (its Dockerfile's
+        # `deny_version`). An older pin, e2f4ede (v2.0.4), bundled a cargo-deny
+        # that couldn't parse CVSS 4.0 vectors, so the advisory-db sync failed
+        # on e.g. RUSTSEC-2025-0138.
         uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2.1.1
         with:
           manifest-path: packages/ui/src-tauri/Cargo.toml
