@@ -63,11 +63,16 @@ function clampExternalId(id: string): string {
   if (id.length <= ID_MAX) {
     return id;
   }
+  // A 32-bit polynomial hash, reduced mod 2^32 at EVERY step so `h` stays an exact integer
+  // (h * 31 + a code point is below 2^38). Left unreduced, `h` passes 2^84 within ~17 chars, where
+  // a double's spacing exceeds 2^32, so `h >>> 0` read 0 for EVERY clamped id: two results sharing
+  // their first 240 chars got the same external id and the second upsert overwrote the first.
+  // Same value as the GX MCP server's `clampId` (`(h * 31 + cp) | 0`, then `h >>> 0`).
   let h = 0;
   for (let i = 0; i < id.length; i += 1) {
-    h = Math.trunc(h * 31 + (id.codePointAt(i) ?? 0));
+    h = (h * 31 + (id.codePointAt(i) ?? 0)) % 0x1_0000_0000;
   }
-  return `${id.slice(0, ID_MAX - 16)}#${(h >>> 0).toString(16)}`;
+  return `${id.slice(0, ID_MAX - 16)}#${h.toString(16)}`;
 }
 
 /**
