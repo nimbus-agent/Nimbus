@@ -36,6 +36,15 @@ module.exports = {
       from: { path: "^packages/ui/src" },
       to: { path: "^packages/gateway/src" },
     },
+    {
+      // The other half of CLAUDE.md's dependency rule ("`gateway` imports nothing from
+      // cli/ui"). The two rules above only ever covered the client-to-gateway direction.
+      name: "gateway-no-import-cli-ui",
+      severity: "error",
+      comment: "The gateway imports nothing from cli/ui: they are its IPC clients, not its dependencies.",
+      from: { path: "^packages/gateway/src" },
+      to: { path: "^packages/(cli|ui)/" },
+    },
 
     // ─────────── D3: PAL leakage ───────────
     {
