@@ -49,6 +49,10 @@ export function buildFrame(payload: Uint8Array): Uint8Array {
  * One-shot settle guard shared by the single-frame and two-frame exchanges: starts the timeout
  * timer and returns a `finish(body?, err?)` that resolves/rejects exactly once (clearing the timer),
  * mapping a missing body to `closedMsg` and a timeout to `timeoutMsg`.
+ *
+ * Every caller settles BEFORE `socket.end()`, on the error paths as on the success path: Bun fires
+ * `close()` synchronously inside `end()`, and `close()` calls `finish(undefined)` — so ending first
+ * would replace the specific error (a bad hello, a pinned-key mismatch) with `closedMsg`.
  */
 function makeSettler(
   resolve: (body: Uint8Array) => void,
@@ -115,8 +119,8 @@ export function exchangeOneFrame(
               socket.end();
             }
           } catch (e) {
-            socket.end();
             finish(undefined, e instanceof Error ? e : new Error(String(e)));
+            socket.end();
           }
         },
         close() {
@@ -165,8 +169,8 @@ function exchangeHelloThenRpc(
           try {
             body = reader.next();
           } catch (e) {
-            socket.end();
             finish(undefined, e instanceof Error ? e : new Error(String(e)));
+            socket.end();
             return;
           }
           if (body === undefined) return;
@@ -175,24 +179,24 @@ function exchangeHelloThenRpc(
             try {
               reply = JSON.parse(new TextDecoder().decode(body)) as typeof reply;
             } catch {
-              socket.end();
               finish(undefined, new Error("lan-client: bad hello reply"));
+              socket.end();
               return;
             }
             if (reply.kind !== "hello_ok") {
-              socket.end();
               finish(
                 undefined,
                 new Error(`lan-client: hello rejected (${reply.kind ?? "unknown"})`),
               );
+              socket.end();
               return;
             }
             phase = "rpc";
             try {
               writeFrame(socket, buildRpc(reply));
             } catch (e) {
-              socket.end();
               finish(undefined, e instanceof Error ? e : new Error(String(e)));
+              socket.end();
             }
             return;
           }
