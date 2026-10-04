@@ -41,7 +41,8 @@ module.exports = {
       // cli/ui"). The two rules above only ever covered the client-to-gateway direction.
       name: "gateway-no-import-cli-ui",
       severity: "error",
-      comment: "The gateway imports nothing from cli/ui: they are its IPC clients, not its dependencies.",
+      comment:
+        "The gateway imports nothing from cli/ui: they are its IPC clients, not its dependencies.",
       from: { path: "^packages/gateway/src" },
       to: { path: "^packages/(cli|ui)/" },
     },
