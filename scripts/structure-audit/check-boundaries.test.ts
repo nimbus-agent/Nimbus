@@ -6,14 +6,20 @@ import { dirname, join } from "node:path";
 
 import {
   assessCruise,
+  auditBoundaries,
+  type CruiseInvocation,
   CruiseOutputError,
   type CruiseResult,
+  type CruiseRun,
+  type CruiseViolation,
   cruiseArgv,
+  decide,
   dependencyCruiserBin,
   type ForbiddenRule,
   formatViolation,
   PRELOAD_PATH,
   parseCruiseResult,
+  REQUIRED_SOURCES_GLOB,
   repoInvocation,
   requiredSourceFiles,
   runCruise,
@@ -78,6 +84,49 @@ function healthy(overrides: Partial<CruiseResult> = {}): CruiseResult {
   };
 }
 
+/** The line a pass over `healthy()` against REQUIRED prints. */
+const HEALTHY_OK = `audit:boundaries: OK (4 modules, 4 dependencies cruised with ${TS6}; 4/4 required sources covered; 3 rules)`;
+
+/**
+ * The exact shape `bunx dependency-cruiser` printed on main whenever bun linked typescript@7: the
+ * one .mjs file, no edges, its own environment warning, exit 0, "no violations found".
+ */
+const TS7_INERT: CruiseResult = {
+  modules: [{ source: "packages/docs/astro.config.mjs", dependencies: [] }],
+  violations: [],
+  rules: RULES,
+  environmentIssues: [
+    {
+      name: "missing-typescript-transpiler",
+      description:
+        "dependency-cruiser detected a TypeScript environment,\r\n    but not a compatible TypeScript compiler",
+    },
+  ],
+  typescript: null,
+};
+
+const CLI_IMPORTS_GATEWAY: CruiseViolation = {
+  ruleName: "cli-no-import-gateway",
+  severity: "error",
+  from: "packages/cli/src/main.ts",
+  to: "packages/gateway/src/engine.ts",
+  cycle: [],
+};
+
+const ADVISORY_WARNING: CruiseViolation = {
+  ruleName: "advisory",
+  severity: "warn",
+  from: "packages/gateway/src/engine.ts",
+  to: "packages/gateway/src/platform/index.ts",
+  cycle: [],
+};
+
+/** How the audit prints those two: the error with its rule's comment, the warning without one. */
+const CLI_IMPORTS_GATEWAY_LINE =
+  "  error cli-no-import-gateway: packages/cli/src/main.ts → packages/gateway/src/engine.ts\n      CLI talks IPC.";
+const ADVISORY_WARNING_LINE =
+  "  warn advisory: packages/gateway/src/engine.ts → packages/gateway/src/platform/index.ts";
+
 describe("assessCruise", () => {
   test("passes a cruise that read every required file and resolved its imports", () => {
     // RULES includes `no-circular`, whose sides carry no path: it is not a liveness subject, and
@@ -92,24 +141,7 @@ describe("assessCruise", () => {
   });
 
   test("fails the inert cruise TypeScript 7 produced, for every reason it was inert", () => {
-    // The exact shape `bunx dependency-cruiser` printed on main whenever bun linked typescript@7:
-    // the one .mjs file, no edges, its own environment warning, exit 0, "no violations found".
-    const verdict = assessCruise(
-      {
-        modules: [{ source: "packages/docs/astro.config.mjs", dependencies: [] }],
-        violations: [],
-        rules: RULES,
-        environmentIssues: [
-          {
-            name: "missing-typescript-transpiler",
-            description:
-              "dependency-cruiser detected a TypeScript environment,\r\n    but not a compatible TypeScript compiler",
-          },
-        ],
-        typescript: null,
-      },
-      REQUIRED,
-    );
+    const verdict = assessCruise(TS7_INERT, REQUIRED);
     expect(verdict.violations).toEqual([]);
     expect(verdict.inert).toHaveLength(4);
     const [issue, compiler, coverage, edges] = verdict.inert;
@@ -215,34 +247,214 @@ describe("assessCruise", () => {
 
   test("error-severity violations fail with the rule comment; other severities only warn", () => {
     const verdict = assessCruise(
-      healthy({
-        violations: [
-          {
-            ruleName: "cli-no-import-gateway",
-            severity: "error",
-            from: "packages/cli/src/main.ts",
-            to: "packages/gateway/src/engine.ts",
-            cycle: [],
-          },
-          {
-            ruleName: "advisory",
-            severity: "warn",
-            from: "packages/gateway/src/engine.ts",
-            to: "packages/gateway/src/platform/index.ts",
-            cycle: [],
-          },
-        ],
-      }),
+      healthy({ violations: [CLI_IMPORTS_GATEWAY, ADVISORY_WARNING] }),
       REQUIRED,
     );
-    expect(verdict.violations).toEqual([
-      "  error cli-no-import-gateway: packages/cli/src/main.ts → packages/gateway/src/engine.ts\n      CLI talks IPC.",
-    ]);
-    expect(verdict.warnings).toEqual([
-      "  warn advisory: packages/gateway/src/engine.ts → packages/gateway/src/platform/index.ts",
-    ]);
+    expect(verdict.violations).toEqual([CLI_IMPORTS_GATEWAY_LINE]);
+    expect(verdict.warnings).toEqual([ADVISORY_WARNING_LINE]);
     expect(verdict.inert).toEqual([]);
   });
+});
+
+describe("decide: the exit code CI reads", () => {
+  const ran = (result: CruiseResult, stderr = ""): CruiseRun => ({ ok: true, result, stderr });
+
+  test("a healthy cruise exits 0 with one OK line and nothing on stderr", () => {
+    expect(decide(ran(healthy()), REQUIRED)).toEqual({
+      exitCode: 0,
+      stdout: [HEALTHY_OK],
+      stderr: [],
+    });
+  });
+
+  test("an inert cruise exits 1, prints no OK, and gives every reason", () => {
+    // The regression this gate exists to stop is exactly this: every reason printed, exit 0.
+    const reasons = assessCruise(TS7_INERT, REQUIRED).inert;
+    expect(reasons).toHaveLength(4);
+    expect(decide(ran(TS7_INERT), REQUIRED)).toEqual({
+      exitCode: 1,
+      stdout: [],
+      stderr: [
+        "audit:boundaries: the cruise did not check the code it guards, so it cannot pass:",
+        ...reasons.map((reason) => `  - ${reason}`),
+        "audit:boundaries: 1 modules, 0 dependencies cruised with NO TypeScript compiler; 0/4 required sources covered; 3 rules",
+      ],
+    });
+  });
+
+  test("an error-severity violation exits 1 and names it", () => {
+    expect(decide(ran(healthy({ violations: [CLI_IMPORTS_GATEWAY] })), REQUIRED)).toEqual({
+      exitCode: 1,
+      stdout: [],
+      stderr: [
+        "audit:boundaries: 1 boundary violation(s):",
+        CLI_IMPORTS_GATEWAY_LINE,
+        `audit:boundaries: 4 modules, 4 dependencies cruised with ${TS6}; 4/4 required sources covered; 3 rules`,
+      ],
+    });
+  });
+
+  test("warnings alone exit 0, printed after dependency-cruiser's own stderr", () => {
+    const run = ran(
+      healthy({ violations: [ADVISORY_WARNING] }),
+      "a notice from dependency-cruiser",
+    );
+    expect(decide(run, REQUIRED)).toEqual({
+      exitCode: 0,
+      stdout: [HEALTHY_OK],
+      stderr: ["a notice from dependency-cruiser", ADVISORY_WARNING_LINE],
+    });
+  });
+
+  test("a run that produced no result exits 1 with its error", () => {
+    expect(decide({ ok: false, error: "dependency-cruiser exited 2: boom" }, REQUIRED)).toEqual({
+      exitCode: 1,
+      stdout: [],
+      stderr: ["audit:boundaries: dependency-cruiser exited 2: boom"],
+    });
+  });
+});
+
+describe("auditBoundaries: one checkout, start to finish", () => {
+  let root: string;
+
+  beforeEach(() => {
+    // A checkout whose sources are exactly REQUIRED, so `healthy()` is a cruise of all of it.
+    root = mkdtempSync(join(tmpdir(), "boundaries-audit-"));
+    for (const rel of REQUIRED) {
+      const full = join(root, rel);
+      mkdirSync(dirname(full), { recursive: true });
+      writeFileSync(full, "export {};\n");
+    }
+  });
+
+  afterEach(() => {
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  test("cruises the checkout it is given and passes a cruise that read all of it", () => {
+    const calls: Array<readonly [string, CruiseInvocation]> = [];
+    const outcome = auditBoundaries(root, (repoRoot, invocation) => {
+      calls.push([repoRoot, invocation]);
+      return { ok: true, result: healthy(), stderr: "" };
+    });
+    expect(calls).toEqual([[root, repoInvocation(root)]]);
+    expect(outcome).toEqual({ exitCode: 0, stdout: [HEALTHY_OK], stderr: [] });
+  });
+
+  test("judges coverage against every source in that checkout, so a skipped one fails", () => {
+    // The LAST source in sorted order: judging only a prefix of the set cannot fail this.
+    const skipped = REQUIRED.at(-1);
+    const cruise = healthy();
+    const outcome = auditBoundaries(root, () => ({
+      ok: true,
+      result: { ...cruise, modules: cruise.modules.filter((m) => m.source !== skipped) },
+      stderr: "",
+    }));
+    expect(outcome.exitCode).toBe(1);
+    expect(outcome.stdout).toEqual([]);
+    expect(outcome.stderr).toContain(
+      `  - 1 of 4 required source files (${REQUIRED_SOURCES_GLOB}, non-test) were never cruised, so no rule could fire on them: ${skipped}`,
+    );
+  });
+});
+
+describe("the check-boundaries.ts script itself, with a canned cruise", () => {
+  // Its `import.meta.main` block only prints and exits, and these run that REAL block to both exit
+  // codes over the real checkout's sources. A preload replaces Bun.spawnSync in the script's own
+  // process, never this one, so its cruise returns cruise.json instead of running dependency-cruiser.
+  // The stand-in also returns a marker as the cruise's stderr, which the script forwards: a run that
+  // did not go through it fails these on the marker, rather than passing for some other reason.
+  const SCRIPT = join(import.meta.dir, "check-boundaries.ts");
+  const MARKER = "canned cruise: served by the test preload; dependency-cruiser did not run";
+  let dir: string;
+
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), "boundaries-script-"));
+    writeFileSync(
+      join(dir, "canned-cruise.mjs"),
+      `import { readFileSync } from "node:fs";
+const stdout = readFileSync(new URL("./cruise.json", import.meta.url));
+Bun.spawnSync = () => ({ exitCode: 0, stdout, stderr: Buffer.from(${JSON.stringify(MARKER)}) });
+`,
+    );
+  });
+
+  afterEach(() => {
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  /** dependency-cruiser's raw JSON, as `runCruise` parses it, under two live rules. */
+  function rawCruise(modules: readonly unknown[], environment: Record<string, unknown>): unknown {
+    return {
+      modules,
+      summary: {
+        violations: [],
+        ruleSetUsed: {
+          forbidden: [
+            { name: "no-circular", severity: "error", from: {}, to: { circular: true } },
+            {
+              name: "cli-no-import-gateway",
+              severity: "error",
+              from: { path: "^packages/cli/src" },
+              to: { path: "^packages/gateway/src" },
+            },
+          ],
+        },
+        environment,
+      },
+    };
+  }
+
+  function runScript(cruise: unknown): { exitCode: number | null; stdout: string; stderr: string } {
+    writeFileSync(join(dir, "cruise.json"), JSON.stringify(cruise));
+    const preload = join(dir, "canned-cruise.mjs");
+    const proc = Bun.spawnSync([process.execPath, "--preload", preload, SCRIPT], {
+      cwd: dir,
+      stdout: "pipe",
+      stderr: "pipe",
+      windowsHide: true,
+    });
+    return {
+      exitCode: proc.exitCode,
+      stdout: proc.stdout.toString(),
+      stderr: proc.stderr.toString(),
+    };
+  }
+
+  test("an inert cruise exits 1 and prints no OK", () => {
+    const n = requiredSourceFiles(REPO_ROOT).length;
+    const run = runScript(
+      rawCruise([{ source: "packages/docs/astro.config.mjs", dependencies: [] }], {
+        transpilersFound: [{ name: "typescript", available: false, currentVersion: "-" }],
+        issues: [{ severity: "warn", name: "missing-typescript-transpiler", description: "none" }],
+      }),
+    );
+    expect(run.stderr).toContain(MARKER);
+    expect(run.exitCode).toBe(1);
+    expect(run.stdout).toBe("");
+    expect(run.stderr).toContain("the cruise did not check the code it guards, so it cannot pass:");
+    expect(run.stderr).toContain(`${n} of ${n} required source files`);
+  }, 60_000);
+
+  test("a cruise that read every real source exits 0 with the OK line", () => {
+    const required = requiredSourceFiles(REPO_ROOT);
+    const n = required.length;
+    const modules = required.map((source, i) => ({
+      source,
+      dependencies: [{ resolved: required[(i + 1) % n] ?? source, couldNotResolve: false }],
+    }));
+    const run = runScript(
+      rawCruise(modules, {
+        transpilersFound: [{ name: "typescript", available: true, currentVersion: TS6 }],
+      }),
+    );
+    expect(run.stderr).toContain(MARKER);
+    expect(run.stdout).toBe(
+      `audit:boundaries: OK (${n} modules, ${n} dependencies cruised with ${TS6}; ${n}/${n} required sources covered; 2 rules)\n`,
+    );
+    expect(run.exitCode).toBe(0);
+  }, 60_000);
 });
 
 describe("formatViolation", () => {

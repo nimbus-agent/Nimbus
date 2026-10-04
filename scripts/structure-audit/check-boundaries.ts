@@ -44,6 +44,9 @@
  *          fire. That is how `mcp-connectors-only-import-sdk` sat dead after the connectors left
  *          the repository on 2026-08-27. Liveness is judged only once every other check passes,
  *          because on an empty cruise every scoped rule merely LOOKS dead.
+ *   4. Decides in ONE place. `decide` turns a run into every printed line and the exit code CI
+ *      reads; the `import.meta.main` block only prints those lines and exits with that code. The
+ *      tests drive `decide`, `auditBoundaries`, and the real script itself to both exit codes.
  *
  * STATED BOUND. The edge floor catches edges disappearing WHOLESALE, not partially. A resolver
  * regression that loses one import kind in ten would pass it. Coverage and liveness are exact.
@@ -443,28 +446,59 @@ export function runCruise(repoRoot: string, invocation: CruiseInvocation): Cruis
   }
 }
 
-if (import.meta.main) {
-  const run = runCruise(REPO_ROOT, repoInvocation(REPO_ROOT));
-  if (!run.ok) {
-    console.error(`audit:boundaries: ${run.error}`);
-    process.exit(1);
-  }
-  if (run.stderr !== "") console.error(run.stderr);
-  const verdict = assessCruise(run.result, requiredSourceFiles(REPO_ROOT));
-  for (const w of verdict.warnings) console.error(w);
+/** What the gate prints, in order, and the exit code CI reads. */
+export interface AuditOutcome {
+  readonly exitCode: 0 | 1;
+  /** The one `OK` line, on a pass. Empty on a failure. */
+  readonly stdout: readonly string[];
+  readonly stderr: readonly string[];
+}
+
+/**
+ * The gate's verdict on one cruise run: every line it prints and the exit code CI reads. This is
+ * the only place that code is decided. A run that produced no result fails, as does any
+ * error-severity violation and any reason the cruise is inert; only a pass prints `OK`.
+ */
+export function decide(run: CruiseRun, required: readonly string[]): AuditOutcome {
+  if (!run.ok) return { exitCode: 1, stdout: [], stderr: [`audit:boundaries: ${run.error}`] };
+  const verdict = assessCruise(run.result, required);
+  const stderr = run.stderr === "" ? [] : [run.stderr];
+  stderr.push(...verdict.warnings);
   if (verdict.violations.length > 0) {
-    console.error(`audit:boundaries: ${verdict.violations.length} boundary violation(s):`);
-    for (const v of verdict.violations) console.error(v);
+    stderr.push(
+      `audit:boundaries: ${verdict.violations.length} boundary violation(s):`,
+      ...verdict.violations,
+    );
   }
   if (verdict.inert.length > 0) {
-    console.error(
+    stderr.push(
       "audit:boundaries: the cruise did not check the code it guards, so it cannot pass:",
+      ...verdict.inert.map((reason) => `  - ${reason}`),
     );
-    for (const reason of verdict.inert) console.error(`  - ${reason}`);
   }
   if (verdict.violations.length > 0 || verdict.inert.length > 0) {
-    console.error(`audit:boundaries: ${verdict.summary}`);
-    process.exit(1);
+    stderr.push(`audit:boundaries: ${verdict.summary}`);
+    return { exitCode: 1, stdout: [], stderr };
   }
-  console.log(`audit:boundaries: OK (${verdict.summary})`);
+  return { exitCode: 0, stdout: [`audit:boundaries: OK (${verdict.summary})`], stderr };
+}
+
+/** One cruise of a checkout: `runCruise` in production, a stand-in in tests. */
+export type Cruise = (repoRoot: string, invocation: CruiseInvocation) => CruiseRun;
+
+/**
+ * The whole gate for one checkout: cruise it, then judge the cruise against the sources enumerated
+ * from that same checkout.
+ */
+export function auditBoundaries(repoRoot: string, cruise: Cruise = runCruise): AuditOutcome {
+  return decide(cruise(repoRoot, repoInvocation(repoRoot)), requiredSourceFiles(repoRoot));
+}
+
+// Prints and exits, nothing more: every decision is in `decide`. The test file runs this script
+// for real, with a canned cruise, to both exit codes.
+if (import.meta.main) {
+  const outcome = auditBoundaries(REPO_ROOT);
+  for (const line of outcome.stderr) console.error(line);
+  for (const line of outcome.stdout) console.log(line);
+  process.exit(outcome.exitCode);
 }

@@ -48,6 +48,9 @@ Phase-level history before `v0.1.0` (Phases 1â€“4) lives in [`docs/roadmap.md` Â
     reported);
   - a rule whose path matches no cruised module.
 
+  One function decides the exit code. The tests drive that function, and the script itself against a
+  canned cruise, to both exit codes, so dropping a check from the decision fails a test.
+
   The last check caught a dead rule at once. `mcp-connectors-only-import-sdk` had matched nothing since
   the connectors left the repository (#1347, 2026-08-27), so it is deleted. A new
   `gateway-no-import-cli-ui` rule enforces the half of the documented dependency rule ("`gateway`
