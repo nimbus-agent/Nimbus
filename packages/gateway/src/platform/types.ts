@@ -9,6 +9,7 @@ import type { LocalIndex } from "../index/local-index.ts";
 import type { IPCServer } from "../ipc/index.ts";
 import type { LlmRegistry } from "../llm/registry.ts";
 import type { SessionMemoryStore } from "../memory/session-memory-store.ts";
+import type { OncallPushRuntime } from "../oncall-push/push-runtime.ts";
 import type { SyncScheduler } from "../sync/scheduler.ts";
 import type { ToolgenRegistry } from "../toolgen/toolgen-registry.ts";
 import type { NimbusVault } from "../vault/index.ts";
@@ -96,5 +97,10 @@ export interface PlatformServices {
    * in-memory-only and has no on/off switch of its own.
    */
   askExplainRecorder: AskExplainRecorder;
+  /**
+   * The on-call pushed brief runtime. Exposed so the assembly test can assert the ChatOps poster
+   * was settled (`chatopsSinkState()`); the IPC surface reaches it through `oncallPushRpcCtx`.
+   */
+  oncallPush: OncallPushRuntime;
   disposeSidecars?: () => void;
 }

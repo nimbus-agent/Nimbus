@@ -22,6 +22,7 @@ describe("bootPolicyFor", () => {
       telemetryFlush: true,
       embeddingRuntime: true,
       extensionsAutoUpdate: true,
+      chatops: true,
     });
   });
 
@@ -34,6 +35,7 @@ describe("bootPolicyFor", () => {
       telemetryFlush: false,
       embeddingRuntime: false,
       extensionsAutoUpdate: false,
+      chatops: false,
     });
   });
 });

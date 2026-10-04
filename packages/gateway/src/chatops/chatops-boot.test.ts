@@ -533,6 +533,21 @@ describe("buildChatopsBoot — full production graph", () => {
     expect(rows[0]?.method).toBe("chatops.reply");
   });
 
+  test("postPushedBrief posts to the namespace's notify channels and ledgers chatops.pushedBrief", async () => {
+    const h = await buildHarness();
+    expect(await h.boot.postPushedBrief("project:pay", "P1 · svc — title")).toBe(1);
+    expect(h.posts.map((p) => p.channel)).toEqual(["C_ALERT"]);
+    const rows = listEgress(db, { limit: 10 });
+    expect(rows.map((r) => r.method)).toEqual(["chatops.pushedBrief"]);
+  });
+
+  test("postPushedBrief to a namespace with no notify channels posts nothing, ledgers nothing, resolves 0", async () => {
+    const h = await buildHarness();
+    expect(await h.boot.postPushedBrief("project:none", "x")).toBe(0);
+    expect(h.posts).toHaveLength(0);
+    expect(listEgress(db, { limit: 10 })).toHaveLength(0);
+  });
+
   test("identity disabled (no identity dep) → isOperatorValid fallback is false (?? false)", async () => {
     // With `identity` absent the mapper resolves everyone unmapped AND the executor's
     // isOperatorValid seam returns the `?? false` fallback — a write can never be honored.

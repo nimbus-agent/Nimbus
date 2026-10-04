@@ -2469,6 +2469,7 @@ async function bootChatopsIntoAssembly(deps: {
   httpSidecarOpts: HttpSidecarOpts;
   sidecarStops: Array<() => void>;
   tribalSendHolder: { current: (target: ReplyTarget, text: string) => Promise<void> };
+  chatopsAllowedByBootPolicy: boolean;
 }): Promise<ChatopsBoot | undefined> {
   const {
     chatopsCfg,
@@ -2485,8 +2486,10 @@ async function bootChatopsIntoAssembly(deps: {
     httpSidecarOpts,
     sidecarStops,
     tribalSendHolder,
+    chatopsAllowedByBootPolicy,
   } = deps;
-  if (!chatopsCfg.enabled) return undefined;
+  // I41: a demo gateway never boots ChatOps, whatever its config says (BootPolicy.chatops).
+  if (!chatopsCfg.enabled || !chatopsAllowedByBootPolicy) return undefined;
   const identityBootRef = identityBoot;
   // E2E seam (NIMBUS_CHATOPS_E2E_SINK_DIR, precedent: NIMBUS_SKIP_EMBEDDING_RUNTIME): swap the
   // real bot-credentialed connector spawn + mesh dispatch for a file-backed mock — the "mock
@@ -2740,6 +2743,23 @@ function bootAgentsIntoHttpSidecar(deps: {
     router: deps.llmRouter,
     ...(deps.selfIdentity === undefined ? {} : { selfIdentity: deps.selfIdentity }),
   });
+}
+
+/**
+ * Design § 4 (2026-10-02-oncall-push-chatops-design.md) (boot race): the ONE place the on-call push learns whether ChatOps exists. Called right
+ * after `bootChatopsIntoAssembly` on BOTH branches. Until it runs, the push runtime holds every
+ * run, so a PagerDuty sync that completes during boot is delivered after this, never dropped.
+ */
+export function settleOncallPushChatops(
+  oncallPush: Pick<OncallPushRuntime, "settleChatopsPoster" | "config">,
+  chatopsBoot: Pick<ChatopsBoot, "postPushedBrief"> | undefined,
+): void {
+  if (chatopsBoot === undefined) {
+    oncallPush.settleChatopsPoster(undefined);
+    return;
+  }
+  const namespace = oncallPush.config.chatopsNamespace;
+  oncallPush.settleChatopsPoster((text) => chatopsBoot.postPushedBrief(namespace, text));
 }
 
 /**
@@ -3601,6 +3621,7 @@ export async function assemblePlatformServices(
   // the IPC server exists. Identity disabled → every chat user resolves unmapped (fail-closed).
   // (`chatopsBoot` is declared above so the tribal in-chat capture interceptor can late-bind to it.)
   chatopsBoot = await bootChatopsIntoAssembly({
+    chatopsAllowedByBootPolicy: bootPolicy.chatops,
     chatopsCfg,
     policyGate,
     tribalBoot,
@@ -3616,6 +3637,7 @@ export async function assemblePlatformServices(
     sidecarStops,
     tribalSendHolder,
   });
+  settleOncallPushChatops(oncallPush, chatopsBoot);
 
   // ChatOps agent-intent path (Task 9 / FIX 1): `@nimbus agent <name> k=v ...` runs a real
   // built-in agent through `dispatchAgentsRpc`. Bound HERE rather than post-boot in
@@ -4349,6 +4371,7 @@ export async function assemblePlatformServices(
     connectorWriteDeps,
     embeddingReadiness,
     askExplainRecorder,
+    oncallPush,
     ...(sessionMemoryStore === undefined ? {} : { sessionMemoryStore }),
     policyHitl,
     ...(federationBooted === undefined ? {} : { executorDelegation: federationBooted }),
