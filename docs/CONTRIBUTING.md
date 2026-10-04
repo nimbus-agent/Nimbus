@@ -145,7 +145,7 @@ Direct browsing: see `.claude/commands/` and the index in `CLAUDE.md`. The skill
 
 ### Shell scripts and audit gates
 
-The `scripts/` directory holds repository tooling — release packaging (`scripts/release/`, `scripts/install/`, `scripts/linux/`, `scripts/windows/`), structural audits (`scripts/structure-audit/` — invariant checks, OpenAPI drift, doc-ref drift, license check), CI helpers (`scripts/ci/`), per-package coverage-floor (`scripts/coverage-floor/`), README generators (`scripts/audit/`), and the asciinema hero-cast harness (`scripts/cast-driver/`). Every `.ts` script has a sibling `.test.ts`; the suite is wired as `bun run test:scripts` and runs in CI. The full list of contributor-facing `bun run` scripts (and the env-var overrides that gate them) lives in the [`nimbus-commands`](../.claude/commands/nimbus-commands.md) skill / reference file.
+The `scripts/` directory holds repository tooling — release packaging (`scripts/release/`, `scripts/install/`, `scripts/linux/`, `scripts/windows/`), structural audits (`scripts/structure-audit/` — invariant checks, OpenAPI drift, doc-ref drift, license check), CI helpers (`scripts/ci/`), per-package coverage-floor (`scripts/coverage-floor/`), README generators (`scripts/audit/`), and the asciinema hero-cast harness (`scripts/cast-driver/`). Most `.ts` scripts have a sibling `.test.ts` (not every one does); the suite is wired as `bun run test:scripts` and runs in CI. The full list of contributor-facing `bun run` scripts (and the env-var overrides that gate them) lives in the [`nimbus-commands`](../.claude/commands/nimbus-commands.md) skill / reference file.
 
 ### Before Opening a PR
 
@@ -199,9 +199,9 @@ resolves its helpers from the published `@nimbus-dev/sdk` instead of relative `.
 paths.
 
 **`nimbus scaffold extension` is not the tool for this.** It emits a four-file generic extension
-shell with no `src/server.ts`, and every connector gate — `audit:connector-registry-drift`,
-`audit:connector-entrypoints`, `audit:connector-deps` — keys off that file, so its output is
-invisible to all three. They report clean, which is not the same as done.
+shell with no `src/server.ts`, and every connector gate — `audit:connector-registry-drift` here,
+`audit:connector-entrypoints` and `audit:connector-deps` in the connectors repository — keys off
+that file, so its output is invisible to all three. They report clean, which is not the same as done.
 
 ### After generating
 
@@ -272,6 +272,65 @@ bun run check-package <name>
 ```
 
 Verify the printed author, maintainer, created date, and version count look reasonable. The script warns on packages less than 7 days old — these are a common slopsquatting / typosquatting vector and should not be added without an explicit reason.
+
+---
+
+## Updating Dependencies
+
+Nothing updates dependencies automatically. Dependabot version updates were retired on 2026-10-02. Each of its grouped PRs needed a full CI cycle, and clearing its last weekly batch (#1573–#1576) took two days and a dozen hand-pushed fixes, none of them for a real incompatibility. Dependencies now move in a **periodic manual bulk update**: one PR that takes every workspace and every ecosystem forward at once.
+
+Dependabot **alerts** stay on, so a vulnerable dependency still appears under the repository's **Security** tab, and the required `Dependency audit` check still fails a pull request on a live npm advisory. `Cargo audit (Tauri)` and `Cargo deny` do the same for Rust, on every pull request that touches it, on every push to `main` or `develop`, and in the nightly run. When a newly published advisory turns `main` red, a `Security gate is red on main` issue opens on its own. The fix is usually a root `overrides` bump; `scripts/structure-audit/accepted-advisories.ts` records the order of preference.
+
+### The procedure
+
+1. **Find what is behind.** `bun outdated --filter="*"` reports the direct dependencies of every workspace against their `latest` release. It says nothing about a transitive package that only a root `overrides` pin holds, which is most of them, so check each entry in the `overrides` block of `package.json` against its latest release separately.
+2. **Read before you take a major.** That includes a 0.x minor (`0.9` → `0.10`), which semver treats as breaking and which a `^0.9` range will not pick up anyway. Land each major as its own commit within the pass, so it can be reverted alone.
+3. **Edit the range by hand in every workspace manifest that declares the package**, then run `bun install`. `git grep -n '"<pkg>"' -- '*package.json'` finds every declaration. Never run `bun update <pkg>` at the repository root: in a workspace repo it adds `<pkg>` to the **root** `package.json` as a new direct dependency instead of bumping the workspace that declares it. Bumping one workspace and not another leaves two copies installed. Two copies of a peer dependency surface as a type error at your own call site that names neither copy; `ls node_modules/.bun | grep '^<pkg>@'` lists every installed copy, one entry per version (a scoped package is spelled `@scope+name` there, e.g. `@types+react@`).
+4. **Keep root `overrides` consistent with the ranges.** An override outranks every declared range, so moving a declaration past its pin changes nothing that is installed: move the pin in the same change. `audit:override-drift` fails on a pin that contradicts a declared range, and on a pin for a directly declared package that nothing in `bun.lock` depends on transitively, since such a pin lifts nothing. After any change to `overrides`, run `bun install --force`. That includes a rebase onto a `main` whose overrides moved. A plain `bun install` against a lockfile that already satisfies every range does not apply a changed override, and still reports "no changes".
+5. **Rust:** run `cargo update` in `packages/ui/src-tauri` to refresh `Cargo.lock` within the ranges `packages/ui/src-tauri/Cargo.toml` allows; edit `Cargo.toml` itself for a deliberate minor or major move. Two advisory ignore lists move with it: `packages/ui/src-tauri/deny.toml` ignores every accepted advisory, including the unmaintained and unsound ones, while the `cargo audit --ignore` flags in `.github/workflows/security.yml` carry only the accepted vulnerabilities (today the two `quick-xml` advisories), because `cargo audit` only warns on the other kinds. Re-check both whenever Tauri moves, and drop an ignore from both once the advisory no longer applies.
+6. **GitHub Actions:** every third-party `uses:` is pinned to a full 40-character commit SHA, which `audit:action-sha-pins` enforces, with the tag kept as a trailing comment (`uses: <owner>/<action>@<sha> # vX.Y.Z`). To move a pin, resolve the release **tag** to its **commit**: `gh api repos/<owner>/<repo>/commits/<tag> --jq .sha` peels an annotated tag, where reading the tag ref returns the SHA of the tag object instead. Replace the pin in every workflow under `.github/workflows` and every composite action under `.github/actions` that uses that action.
+7. **First-party packages** follow the same steps. `audit:connector-version-skew` already fails `preflight:fast` when the `@nimbus-dev/connectors` pin falls a minor version behind the published release, and moving that pin means regenerating the bundled registry (`bun run gen:connector-registry`, checked by `audit:connector-registry-drift`).
+8. **Verify the whole pass.** Run `bun run preflight`, which is the full CI-parity set. Then run `bun audit` and `bun run audit:advisories`, which only CI runs (they need the npm registry). Add `cd packages/ui && bunx vitest run` when a UI dependency moved, and `bun run docs:build` when anything in `packages/docs` moved (it needs Node >= 22.12). CI runs `cargo audit` and `cargo deny` on every PR that touches `packages/ui/src-tauri`.
+
+Title the PR `chore(deps): …`, or `fix(deps): …` when the pass clears an advisory that users should receive in the next release.
+
+### Packages that move together
+
+- **`react`, `react-dom`, `@types/react` and `@types/react-dom`**, in every workspace that declares them (`packages/ui`; `react` and `@types/react` in `packages/cli` too). React refuses to boot when `react` and `react-dom` differ; a `react-dom`-only bump once failed 47 of 74 UI test files.
+- **`@tauri-apps/*` and the Rust `tauri` crates.** Move `packages/ui/package.json`'s `@tauri-apps/*` in the same pass as `tauri`, `tauri-build` and `tauri-plugin-*` in `packages/ui/src-tauri/Cargo.toml`. The Tauri CLI compares `@tauri-apps/api` with the `tauri` crate, and each `@tauri-apps/plugin-<name>` with its `tauri-plugin-<name>` crate, and stops with "Found version mismatched Tauri packages" when a pair's major.minor differ.
+- **`vitest` and every `@vitest/*` package.** `@vitest/coverage-v8` declares the exact `vitest` version as its peer.
+- **The `github/codeql-action` sub-actions.** `init`, `autobuild` and `analyze` (`.github/workflows/codeql.yml`) and `upload-sarif` (`.github/workflows/security.yml`, `.github/workflows/scorecard.yml`) are one action at one version, so pin all of them to the same SHA.
+- **`@biomejs/biome` and the `$schema` URL in `biome.json`.** Set the URL to the version that actually installed (`node_modules/@biomejs/biome/package.json`), not the range you typed. A mismatch is reported only as an info diagnostic, so `bun run lint` stays green while editors validate the config against a stale schema.
+- **`sharp` and its libvips license pins.** A `sharp` bump usually moves its prebuilt `@img/sharp-libvips-*` binaries, whose LGPL exception in `scripts/structure-audit/check-js-licenses.ts` is pinned to exact versions on purpose. Move those pins and the matching line in `docs/license-policy.md` together. The pinned packages are Linux-only, so `audit:js-licenses` passes no matter what on Windows and macOS: confirm it with `bun run verify:docker`, or on CI.
+
+### Majors that are held back
+
+The bulk update of 2026-10-03 (#1597) cleared two of the three earlier blockers. `vite` 8 and
+`@vitejs/plugin-react` 6 landed together. js-yaml 5 landed with named imports, plus `USER_YAML_SCHEMA`
+to restore the merge keys and tags it dropped. The majors below are still held back. Each entry records
+why at the time it was written, not a standing fact. Blockers clear without notice, so **re-test each one
+before assuming it still holds**, take the major in the pass where it clears, and delete its entry in
+that same pass.
+
+- **TypeScript 7 in `packages/docs`.** The rest of the repository is on TypeScript 7. Under 7.0.2,
+  `astro check` (the docs typecheck and build step) refuses to run: "astro check does not currently
+  support TypeScript 7.0". Astro's TypeScript 7 route needs 7.1+, and `@astrojs/check` 0.9.10 still
+  declares `typescript: ^5.0.0 || ^6.0.0`. The root `typescript-compiler-api` alias also stays on 6, for a
+  different reason: TypeScript 7 exports its compiler API only under explicitly unstable subpaths, and
+  `scripts/cleanup/strip-comments.ts` and `scripts/cleanup/survey-oc.ts` drive it directly. To re-check:
+  `@astrojs/check`'s peer range, then `bun run typecheck` with the docs workspace on 7. Separately, check
+  whether the compiler-API subpaths have stabilised.
+- **msw 3** (gateway devDependency). msw 3 intercepts requests by patching `node:net`/`tls` sockets, and
+  Bun's native `fetch` never goes through them. Under msw 3.0.2 the gateway's handler tests therefore sent
+  real requests to Google and GitHub instead of being intercepted. msw 3 also renamed
+  `onUnhandledRequest` to `onUnhandledFrame`, and the old name is silently ignored at runtime (only
+  tsc flags it). To re-check: run the four tests in `msw-handlers.test.ts` on the new version with the
+  network unplugged.
+- **WiX 6 and 7** (the release MSI). Their binaries are released under the Open Source Maintenance Fee
+  EULA, so adopting them is a licensing decision for the maintainer, not a version bump.
+
+Toolchains are not part of a bulk update and move in their own PRs. That covers the Rust pin in
+`rust-toolchain.toml` and Bun in CI (`setup-nimbus-ci`'s `bun-version` default).
 
 ---
 

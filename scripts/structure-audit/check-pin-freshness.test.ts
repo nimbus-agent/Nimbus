@@ -91,8 +91,8 @@ describe("evaluatePin", () => {
   });
 
   test("behind a release published INSIDE the grace window => ok", () => {
-    // A release cut two days ago must not red the org: humans and Dependabot
-    // need time to move, and a gate that reds instantly is one people mute.
+    // A release cut two days ago must not red the org: whoever moves the pin
+    // needs time to do it, and a gate that reds instantly is one people mute.
     const r = evaluatePin(pin({ sha }), { tag: "v8.0.0", publishedAt: fresh }, "b".repeat(40), 30);
     expect(r.verdict).toBe("ok");
   });

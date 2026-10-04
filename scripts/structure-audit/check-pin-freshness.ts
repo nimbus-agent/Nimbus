@@ -29,8 +29,8 @@ import { classifyReadFailure, isRecord, isStrict, runGh, strictSkip } from "./_g
  *
  * 30 days, not the release-train's 6 hours, because these are different failure
  * classes. A release-train edge is an automated pipeline that should propagate
- * in minutes, so hours of lag is a defect. An action pin moves when a human or
- * Dependabot updates it; a 6-hour window would mean a permanently red sweep,
+ * in minutes, so hours of lag is a defect. An action pin moves when a maintainer
+ * gets round to updating it; a 6-hour window would mean a permanently red sweep,
  * and a gate that is always red is one everybody learns to ignore. Thirty days
  * says "this pin sat through a full release cycle and nobody noticed", which is
  * the condition actually worth alerting on.

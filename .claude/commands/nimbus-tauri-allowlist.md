@@ -126,4 +126,4 @@ When the desktop UI needs a new IPC method:
 - [`docs/SECURITY.md`](../../docs/SECURITY.md) §"IPC Surface" — Gateway IPC trust model
 - [`packages/ui/src-tauri/src/gateway_bridge.rs`](../../packages/ui/src-tauri/src/gateway_bridge.rs) — production source of truth
 - `nimbus-ipc` skill — Gateway-side IPC method conventions; pair with this skill when adding a method that is *both* CLI-callable and renderer-callable
-- `nimbus-security-invariants` skill — the invariant triple rule (wiring + docs + test) that all sixteen invariants follow
+- `nimbus-security-invariants` skill — the invariant triple rule (wiring + docs + test) that every live invariant follows (I1–I27 and I29–I41; I28 is reserved)

@@ -6,7 +6,8 @@ description: >
   dual-table search (`vec_items_384` + `vec_items_1536` via `vectorSearchChunksDual`),
   the V30 migration (1536-dim table + dim-aware delete triggers), the `nimbus index
   reembed` CLI + long-running IPC contract (`index.reembedProgress`), and the
-  MiniLM-only fallback when `openai.api_key` is absent. Use when adding a connector
+  MiniLM-only fallback when no OpenAI key resolves (`OPENAI_API_KEY`, then the Vault's
+  `openai.api_key`). Use when adding a connector
   item type and deciding its routing (MiniLM vs OpenAI), modifying `PROSE_HEAVY_TYPES`,
   changing embedding-table dims (e.g. a new V31 for a 3072-dim provider), writing search
   that must hit both tables, wiring a long-running IPC notification, or asking what
@@ -151,7 +152,7 @@ The dispatcher computes the query embedding(s) using the same routing decision (
 
 `tryCreateRoutingEmbeddingRuntime` is the gateway-startup factory. The important property:
 
-> If `openai.api_key` is missing from the vault but `embedding.provider = "hybrid"` is set in `nimbus.toml`, the factory **falls back to MiniLM-only** and logs one info-level line. The gateway never refuses to start because of the missing optional secret.
+> If no OpenAI key resolves but `embedding.provider = "hybrid"` is set in `nimbus.toml`, the factory **falls back to MiniLM-only** and logs one warn-level line (`Hybrid embedding: openai.api_key missing; routing falls back to MiniLM-only`). The gateway never refuses to start because of the missing optional secret. The key resolves from the `OPENAI_API_KEY` environment variable FIRST, then the Vault's `openai.api_key` (`resolveOpenAIApiKey` in `create-routing-runtime.ts`; `create-embedding-runtime.ts` and `ipc/index-reembed-rpc.ts` do the same) — unlike the LLM vendors, whose environment fallback was removed in `v5.0.0`.
 
 This is the right default for OSS: hybrid is opt-in via vault key, not config. A user who configures `provider = "hybrid"` but never adds the key gets degraded recall, not a startup failure.
 

@@ -10,7 +10,7 @@ description: >
   `decision_pass_state` tables, the single-flight debounced post-connector-sync seam
   in `platform/assemble.ts`, the `ERR_*_PASS_RUNNING` contract, the local-LLM
   adapters and their snippet fallback, and the honesty rules the briefs enforce
-  (confidence ceiling 0.86, per-brief truncation counts, veto durability). Use when
+  (a reachable confidence scale, per-brief truncation counts, veto durability). Use when
   touching either directory, adding a source item type to a pass, changing scoring /
   confidence / corroboration, wiring a new extraction stage, or asking why a term or
   decision is missing, `pending` forever, or keeps failing with
@@ -201,11 +201,14 @@ if you fix it, fix it in the LLM layer, not with a timeout race around a sync ca
 ## Two honesty rules that are requirements, not polish
 
 1. **Never present a full-marks scale the user cannot reach.** `decision_evidence.kind` admits
-   `migration` and `iac` for forward-compatibility, but nothing emits them — both need
-   changed-file paths no connector indexes. With `corroboration` weighted `0.35` and the
-   artifact arm unreachable, the confidence **ceiling is 0.86, not 1.0**, and the brief says
-   so. If you add a connector that supplies changed-file paths, the ceiling moves and the
-   brief's statement must move with it.
+   `migration` and `iac` for forward-compatibility, but nothing emits them. Until #1307
+   (2026-08-22) `corroboration()` still reserved its top score for those two kinds, so the
+   confidence ceiling was 0.86 and every brief had to say so. It now scores only evidence the
+   pass emits (full corroboration for `pr` or `commit`), so the reachable ceiling is **1.0**,
+   pinned by `maxReachableConfidence()` and `decisions/confidence-ceiling.test.ts`, and the
+   standing note is gone. What the brief discloses instead is conditional: how many rows still
+   carry a score from the old scale. If you wire `migration`/`iac` evidence later, re-add the
+   term in `corroboration()` and keep that test green.
 2. **State the recall limit in the brief, not just the docs.** `decisions` reports a per-brief
    truncated-source count keyed on `body_complete = 0` ("N of M source(s) … indexed with a
    truncated body") and stays **silent when nothing is truncated** — a standing disclaimer is

@@ -18,6 +18,35 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
 
 ## Post-Phase-6 deliveries
 
+- **2026-10-03 — `index.regraph` is refused over LAN.** It re-runs the graph populator over every
+  indexed row, upserting entities and clearing and re-emitting relations, yet it was in neither
+  `FORBIDDEN_OVER_LAN` nor `WRITE_METHODS`. The LAN check is a denylist that lets `index.*` reads
+  through, so any paired peer could rewrite the owner's relationship graph on demand. It is now
+  fully forbidden (I5), not merely write-gated, like `index.reembed`, `index.rebody` and the
+  glossary, decisions and ownership passes. `nimbus index regraph` on the owner's own machine is
+  unaffected. No new invariant, no migration, no new IPC method.
+
+- **2026-10-03 — Contributor docs re-derived from code and the live ruleset.** The documentation
+  refresh changes no product behaviour; its one script change pins
+  `scripts/coverage-floor/reseed-docker.sh` to `oven/bun:1.3`, the Bun CI installs, where it had
+  used `oven/bun:latest`, a 1.4.x image by now. Three corrections matter to users:
+  `NIMBUS_UPDATER_DISABLE` only honours `1` (as `config/nimbus-toml.ts` always did;
+  `docs/cli-reference.md` said `true`, which does nothing);
+  `nimbus decisions` confidence has reached `1.0` since #1307 (five documents still described the
+  old `0.86` cap as current); and `nimbus tui`'s sub-task pane and mid-stream consent banner do not
+  work today, which `docs/cli-reference.md` now says. Both listen for notifications nothing in the
+  gateway emits (`agent.subTaskProgress`, `agent.hitlBatch`), and the TUI has no handler for the
+  `consent.request` the gateway does send, so a HITL-gated action started there is never prompted
+  and is rejected when the TUI exits. `.github/BRANCH_PROTECTION.md` and
+  `docs/security-hardening.md` stop recommending individual jobs as required checks (two of them
+  could never report on a pull request, which would then wait forever) and name the ten the General
+  ruleset requires. `CLAUDE.md` gains static rule D25, which was enforced but documented nowhere.
+  The `.claude/` skills and agents were brought up to date: eighteen `agents.*` methods, the
+  namespaces added since S2, schema V64, invariant ceiling I41, eight egress coverage classes and
+  the fourteen-member `source_type` union, 40 preflight gates, and the real `index.*`,
+  `watcher.*`, `workflow.*` and `connector.*` method sets. `docs/CONTRIBUTING.md`'s held-back
+  majors now read as a dated record to re-test, not a standing fact.
+
 - **2026-10-03 — The on-call pushed brief, PR 2 of 3 (ChatOps sink).** Every pushed on-call brief now also
   posts a three-line, escaped headline to the `notify` channels of `[oncall.push] chatops_namespace`
   (default `""`, which posts nothing): at most three headlines per delivery, newest first, then ONE summary
@@ -123,6 +152,41 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
   HIGH/CRITICAL finding blocks merges (`docs/README.md`, `docs/architecture.md`, the
   `nimbus-testing` skill) now name the exception. Detail:
   [`security-hardening.md`](./security-hardening.md#accepting-an-advisory-that-has-no-fix).
+
+- **2026-10-02 — The merge queue and Dependabot are retired; dependencies move in manual bulk
+  updates.** The merge queue that went live on 2026-09-30 took seven entries before it was switched
+  off, and every one re-ran the whole PR gate on the merged result: 21 to 52 minutes of CI after
+  each PR was already green. It was retired as not worth that cost. The `merge_queue` rule is gone
+  from the General ruleset (14784377); its ten required contexts are unchanged, **Require branches
+  to be up to date** stays off, and `gh pr merge --squash --auto` now merges a PR directly once
+  they are green. What that gives up is stated in `CLAUDE.md`'s CI-gating section: a PR's checks
+  test it against `main` as `main` stood when they ran, so two individually green PRs can still
+  break `main` together. #1583's `merge_group` triggers and branches are removed from `ci.yml`,
+  `security.yml`, `codeql.yml` and `cla.yml`, its `cla-merge-queue` stand-in job included, and
+  `cla.yml` and `codeql.yml` are byte-identical to their pre-#1583 state again. **Dependabot is
+  retired with it.** Every open Dependabot PR is closed and security-update PRs are disabled in the
+  repository settings, while Dependabot *alerts* stay on. `.github/dependabot.yml`,
+  `dependabot-shepherd.yml` and `scripts/dependabot/` are deleted. `check-pr-message-parses` loses
+  its Dependabot special case, which judged a Dependabot PR on the summary the shepherd would
+  write, so every PR is again judged on the description it actually carries. The shepherd also
+  drops out of both `RELEASE_BOT_*` entries' `consumedBy`. Kept on purpose: `security.yml`'s
+  `main-health-alert` job; `audit:override-drift`'s redundant-override rule, since a pin nothing
+  consumes still turns every manual bump into a two-place edit; and the `"actions" | "dependabot"`
+  secret-product model in the credential registry, since GitHub's Dependabot secret namespace still
+  exists and the credential audit still reads it. What `dependabot.yml` knew is not lost:
+  `docs/CONTRIBUTING.md` gains an "Updating Dependencies" section with the manual procedure
+  (`bun outdated --filter="*"`; ranges edited in every workspace that declares a package, never
+  `bun update <pkg>` at the root; root `overrides` kept consistent, then `bun install --force`;
+  `cargo update` in `packages/ui/src-tauri`; action pins resolved from tag to commit SHA), the
+  packages that must move together (React with React DOM and their types, `@tauri-apps/*` with the
+  Rust `tauri` crates, `vitest` with `@vitest/*`, the `codeql-action` sub-actions, Biome with
+  `biome.json`'s `$schema`, `sharp` with its libvips license pins), and the three majors held back
+  (vite 8 with `@vitejs/plugin-react` 6, TypeScript 7 in `packages/docs`, js-yaml 5), each with how
+  to re-check its blocker. `.github/BRANCH_PROTECTION.md`'s required-check table was re-derived
+  from the live ruleset in the same change: it listed two checks the ruleset does not require and
+  missed `PR quality — required gates` and `cla`. One consequence to expect: OpenSSF Scorecard's
+  Dependency-Update-Tool check finds no update-tool config any more and will score low; that is
+  by decision, and `BRANCH_PROTECTION.md` now says so.
 
 - **2026-10-02 — The on-call pushed brief, PR 1 of 3 (Phase 17 W2).** A P1 page now reaches you with
   its brief already assembled. With `[oncall.push] enabled = true` (DEFAULT OFF), a PagerDuty sync
