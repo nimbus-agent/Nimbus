@@ -228,6 +228,25 @@ describe("oncall pushed: remaining branches", () => {
     expect(c.calls[0]).toEqual(["oncall.pushedList", { limit: 50 }]);
   });
 
+  test("list shows [service] before the title when known; unchanged when null", async () => {
+    const { s, sink: k } = sink();
+    const c = fake({
+      "oncall.pushedList": {
+        enabled: true,
+        identity: "resolved",
+        briefs: [
+          { ...OK, service: "checkout" },
+          { ...OK, incidentId: "pagerduty:N", service: null },
+        ],
+      },
+    });
+    expect(await runOncallPushedWith(c, { mode: "list", json: false }, k, false)).toBe(0);
+    const lines = s.out.trimEnd().split("\n");
+    expect(lines[0]).toContain("pagerduty:A  [checkout]  P1 A");
+    expect(lines[1]).toContain("pagerduty:N  P1 A");
+    expect(lines[1]).not.toContain("[");
+  });
+
   test("empty list: hint only when disabled", async () => {
     const on = sink();
     await runOncallPushedWith(

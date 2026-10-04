@@ -32,6 +32,7 @@ type Brief = {
   createdAt: number;
   briefMarkdown: string | null;
   failureCode: string | null;
+  service?: string | null;
 };
 type ListResult = { enabled: boolean; identity: string; briefs: Brief[] };
 
@@ -76,8 +77,10 @@ async function runList(c: OncallPushedIpc, json: boolean, sink: OncallPushedSink
   }
   for (const b of r.briefs) {
     const status = b.status === "ok" ? "ok    " : "FAILED";
+    const svc =
+      b.service !== undefined && b.service !== null && b.service !== "" ? `[${b.service}]  ` : "";
     sink.out(
-      `${new Date(b.createdAt).toISOString()}  ${status}  ${b.incidentId}  ${b.title ?? ""}\n`,
+      `${new Date(b.createdAt).toISOString()}  ${status}  ${b.incidentId}  ${svc}${b.title ?? ""}\n`,
     );
   }
   return 0;
