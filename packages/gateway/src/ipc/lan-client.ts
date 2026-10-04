@@ -7,6 +7,18 @@ export { MAX_HANDSHAKE_FRAME } from "./lan-server.ts";
 
 const DEFAULT_TIMEOUT_MS = 5000;
 
+/** Every `kind` a Nimbus responder sends is a short lowercase protocol token. */
+const PROTOCOL_KIND = /^[a-z_]{1,32}$/;
+
+/**
+ * A handshake reply's `kind`, for an error message. The reply arrives BEFORE the responder's key is
+ * checked, so anyone answering at the peer's address controls this text, and the message reaches
+ * brief `## Gaps` and CLI output. Only a protocol token is echoed; anything else reads `unknown`.
+ */
+export function replyKindForMessage(kind: unknown): string {
+  return typeof kind === "string" && PROTOCOL_KIND.test(kind) ? kind : "unknown";
+}
+
 interface FrameReader {
   push(chunk: Uint8Array): void;
   next(): Uint8Array | undefined;
@@ -186,7 +198,7 @@ function exchangeHelloThenRpc(
             if (reply.kind !== "hello_ok") {
               finish(
                 undefined,
-                new Error(`lan-client: hello rejected (${reply.kind ?? "unknown"})`),
+                new Error(`lan-client: hello rejected (${replyKindForMessage(reply.kind)})`),
               );
               socket.end();
               return;
@@ -293,7 +305,7 @@ export async function outboundPairHandshake(
     host_pubkey?: string;
   };
   if (msg.kind !== "pair_ok" || typeof msg.host_pubkey !== "string") {
-    throw new Error(`lan-client: pairing rejected (${msg.kind ?? "unknown"})`);
+    throw new Error(`lan-client: pairing rejected (${replyKindForMessage(msg.kind)})`);
   }
   const hostPub = new Uint8Array(Buffer.from(msg.host_pubkey, "base64"));
   if (hostPub.length !== 32) throw new Error("lan-client: bad host pubkey length");
