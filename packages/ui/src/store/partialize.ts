@@ -4,6 +4,7 @@ export const WHITELISTED_PERSIST_KEYS = [
   "activePullId",
   "active",
   "profiles",
+  "lastSeenPushedAt",
 ] as const;
 
 export const FORBIDDEN_PERSIST_KEYS = [
