@@ -6,7 +6,7 @@
  * handle already keeps the loop alive — that test passes either way, which is why the hold itself
  * is also pinned directly below, independently of the platform.
  */
-import { describe, expect, spyOn, test } from "bun:test";
+import { afterAll, describe, expect, type Mock, spyOn, test } from "bun:test";
 import { awaitHoldingEventLoop } from "./hold-event-loop.ts";
 
 describe("awaitHoldingEventLoop", () => {
@@ -44,7 +44,7 @@ describe("awaitHoldingEventLoop", () => {
         settle();
         await awaited.catch(() => undefined);
 
-        // Released on settling, on either path — so it can never leak into the next test.
+        // Released on settling, on either path. (A promise that never settles is the next block.)
         expect(clearSpy).toHaveBeenCalledTimes(1);
         expect(clearSpy.mock.calls[0]?.[0]).toBe(hold);
       } finally {
@@ -52,5 +52,34 @@ describe("awaitHoldingEventLoop", () => {
         clearSpy.mockRestore();
       }
     }
+  });
+
+  describe("when the test ends with the promise still pending, as a timed-out test does", () => {
+    // A promise that never settles never reaches the helper's `finally`, so the hold must also end
+    // with the test. The first test below ends with the await still pending; `bun test` runs its
+    // onTestFinished hooks before the second test, which checks the hold was released anyway. A
+    // hold that outlived its test would keep the loop alive for every later test in the process,
+    // and on Windows that lets a bare await of an unref'd timer pass instead of hanging.
+    let hold: ReturnType<typeof setInterval> | undefined;
+    let clearSpy: Mock<typeof clearInterval> | undefined;
+    afterAll(() => clearSpy?.mockRestore());
+
+    test("the hold is in place while that test runs", () => {
+      const setSpy = spyOn(globalThis, "setInterval");
+      try {
+        void awaitHoldingEventLoop(new Promise<never>(() => {}));
+        expect(setSpy).toHaveBeenCalledTimes(1);
+        hold = setSpy.mock.results[0]?.value as ReturnType<typeof setInterval>;
+      } finally {
+        setSpy.mockRestore();
+      }
+      expect(hold.hasRef()).toBe(true);
+      clearSpy = spyOn(globalThis, "clearInterval");
+    });
+
+    test("and is released once that test has finished, though the promise never settled", () => {
+      expect(hold).toBeDefined();
+      expect(clearSpy).toHaveBeenCalledWith(hold);
+    });
   });
 });

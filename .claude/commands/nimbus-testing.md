@@ -137,23 +137,33 @@ job**, not just the conclusion.
 
 ## Awaiting an unref'd timer hangs the file when it runs alone on Windows
 
-Some production timers are `unref()`'d on purpose, so a pending wait never holds the gateway open
-(the federation consent broker's TTL safety-net, the preflight runner's kill timer). A test that
-awaits a promise only such a timer can settle — or only an `AbortSignal.timeout()`, whose timer is
-unref'd too — passes on Linux and in the whole-repo run, yet `bun test <that file>` on Windows spins
-one core at 100% forever and never prints a result. Measured on Bun 1.3.14, what CI's `1.3` pin
-resolves to: Windows services every JS timer through one libuv timer that is ref'd only while some
-ref'd JS timer exists, and the promise wait does not drain due timers by itself the way the POSIX
-loop does, so neither the unref'd timer nor `bun test`'s own per-test timeout ever fires. The
-combined run passes only because an earlier file happens to leave a ref'd handle alive. Bun 1.4.2
-no longer hangs here, so this section, and the helper below, can go once the repo moves to Bun 1.4.
+Some production timers are `unref()`'d: the federation consent broker's TTL safety-net on purpose,
+so a pending consent never holds the gateway open; the preflight runner's kill timer too, though in
+production the child it guards is a ref'd handle until it exits. A test that awaits a promise only
+such a timer can settle, with fakes in place of whatever keeps the loop alive in production — or
+only an `AbortSignal.timeout()`, whose timer is unref'd too — passes on Linux and in the whole-repo
+run, yet `bun test <that file>` on Windows spins one core at 100% forever and never prints a
+result. Measured on Bun 1.3.14, what CI's `1.3` pin resolves to: Windows services every JS timer
+through one libuv timer that is ref'd only while some ref'd JS timer exists, and the promise wait
+does not drain due timers by itself the way the POSIX loop does, so neither the unref'd timer nor
+`bun test`'s own per-test timeout ever fires. The combined run passes only because an earlier file
+happens to leave a ref'd handle alive. Bun 1.4.2 no longer hangs here, so this section, and the
+helper below, can go once the repo moves to Bun 1.4.
 
 Await it through `awaitHoldingEventLoop` (`packages/gateway/src/testing/hold-event-loop.ts`), which
-holds one ref'd interval for exactly the duration of the await: the production timer stays unref'd
-and stays the only thing that settles the promise. Prefer it to dropping a deliberate production
-`unref()` or to resolving the promise by hand — both stop the test from exercising the real timer.
-To check a suspect file, run it alone under a hard cap (`timeout 60 bun test <file>` from Git Bash):
-exit 124 with no pass/fail line, after a minute of one core at 100%, is this hang.
+holds one ref'd interval until the await settles or the test ends, whichever comes first: the
+production timer stays unref'd and stays the only thing that settles the promise, and a test that
+times out cannot leak the hold into the tests after it. Prefer it to dropping a deliberate
+production `unref()` or to resolving the promise by hand — both stop the test from exercising the
+real timer. To check a suspect file, run it alone under a hard cap (`timeout 60 bun test <file>`
+from Git Bash): exit 124 with no pass/fail line, after a minute of one core at 100%, is this hang.
+
+A timer merely left PENDING is a different matter and hangs nothing: `bun test` exits with timers
+still pending, ref'd or not (measured on Windows and Linux, Bun 1.3.14). Clear it anyway, because a
+ref'd one keeps the loop alive for every later test in the process, which is exactly how this hang
+gets hidden in a combined run. Until 2026-10 several comments in the gateway and in
+`.claude/agents/` blamed a pending timer for hanging `bun test` teardown; that was measured false
+and they were corrected.
 
 ---
 

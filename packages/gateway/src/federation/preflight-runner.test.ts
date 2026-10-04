@@ -65,10 +65,12 @@ test("non-zero exit → not passed", async () => {
 test("timeout kills the process and reports timed out", async () => {
   let killed = false;
   // The fake child would not exit for 10 s, so ONLY awaitExit's 50 ms kill timer can settle this
-  // run — and that timer is unref'd (as is the fake's own), which under Bun 1.3 on Windows means it
-  // never fires while nothing else is ref'd: awaited bare, this file hangs when it runs alone (see
-  // testing/hold-event-loop.ts). The hold keeps the loop alive; the unref'd kill timer is still what
-  // times the run out.
+  // run, and that timer is unref'd. In production that changes nothing: the real child is a ref'd
+  // handle until it exits, so the loop stays alive and the timer fires. The fake holds nothing (its
+  // own exit timer is unref'd too), and under Bun 1.3 on Windows an unref'd timer never fires while
+  // nothing is ref'd: awaited bare, this file hangs when it runs alone (see
+  // testing/hold-event-loop.ts). The hold stands in for the real child's handle; the kill timer is
+  // still what times the run out.
   const run = runPreflightCommand(
     { ...cfg, timeoutSeconds: 0.05 },
     { ref: "HEAD", changedSurface: [] },
