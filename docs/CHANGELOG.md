@@ -18,6 +18,36 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
 
 ## Post-Phase-6 deliveries
 
+- **2026-10-04 — `--format plain` is linear on a line of underscores that open but never close.**
+  The quality sweep below made two super-linear patterns in `cli/src/format/slack-markdown.ts`
+  linear and recorded a third that was not: plain mode's underscore-italic pass,
+  `/(?<!\w)_(?!\s)(.+?)(?<!\s)_(?!\w)/g`, which `changelog`, `standup` and `oncall` run over every
+  line of a brief under `--format plain`. An `_` with no word character before it and a non-space
+  after it can open a run, but when a space precedes it or a word character follows it, it can
+  never close one, and the regex scanned the rest of the line from every such `_` before trying
+  the next. A line repeating a space and `_a` took 2.4 s at 30 KB, 9.2 s at 60 KB and about 40 s
+  at 120 KB on a developer machine, four times as long per doubling. The pass is now a
+  hand-written scan in the shape of the sweep's link fix, and the same input takes milliseconds.
+  Whether an `_` can close never depends on where its run opened, so once an attempt reaches the
+  end of its line without finding a closer, no later `_` on that line can start a run either, and
+  the scan resumes after the line instead of retrying each one. This supersedes the sweep entry's
+  note that the pass was still quadratic.
+  **The output is unchanged for every input.** The test keeps the old regex as its oracle and
+  compares the two on every string of up to eight characters drawn from the five classes the
+  pattern tells apart (488,281 strings), and on 20,000 seeded pseudo-random strings drawn from
+  real members of each class, among them U+00A0, U+2028, the BOM, a non-BMP character and a lone
+  surrogate. Each of seven deliberate mutations of the scan fails that comparison. Four
+  time-bounded tests hold 120 KB inputs under one second. They also guard the scan's two skips,
+  past the end of the text and past a line terminator, which no output comparison can see: a scan
+  that retried every `_` would return the same text, quadratically.
+  **Nothing else in `cli/src/format/` is super-linear.** The audit covered bold, both
+  single-asterisk italic patterns, strikethrough, the link scan, the heading, table-row and
+  delimiter-cell patterns, the cell split and the unescape pass: 66 adversarial shapes at up to
+  120 KB, each as one line, as four lines, as 1 KB lines, and as stretches separated by `\r` or
+  U+2028, in both modes. The slowest took 11 ms at 120 KB and grew linearly. The module has no
+  inline-code, list or blockquote pass to audit. Slack mode never ran the underscore pass and is
+  unchanged. No new invariant, no migration, no IPC change.
+
 - **2026-10-04 — Quality sweep: the SonarCloud backlog cleared, duplication down by a third, and
   about 2,900 tests added.** On 2026-09-29 SonarCloud's TypeScript analyzer gained four rules:
   `typescript:S9382` (promises awaited sequentially in a loop), `typescript:S7503` (async functions
