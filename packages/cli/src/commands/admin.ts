@@ -1,7 +1,7 @@
 import { IPCClient } from "../ipc-client/index.ts";
 import { gatewayNotRunningMessage } from "../lib/gateway-not-running.ts";
 import { readGatewayState } from "../lib/gateway-process.ts";
-import { getCliPlatformPaths } from "../paths.ts";
+import { type CliPlatformPaths, getCliPlatformPaths } from "../paths.ts";
 
 export type AdminCommand = { kind: "status" } | { kind: "console" } | { kind: "token" };
 
@@ -81,27 +81,59 @@ export async function runAdminCommand(
   }
 }
 
-export async function runAdmin(argv: string[]): Promise<void> {
+/** A gateway client for `runAdmin`: the calls `runAdminCommand` makes, plus the connection. */
+export interface AdminConnection extends AdminIpc {
+  connect(): Promise<void>;
+  disconnect(): Promise<void>;
+}
+
+/**
+ * The outside world `runAdmin` touches. Injected so every branch — a bad subcommand, the
+ * local-only subcommands, no gateway, a live round trip — is testable with no gateway and no real
+ * `process.exit`. The defaults are the real thing; production callers pass nothing.
+ */
+export interface RunAdminDeps {
+  readonly getPaths: () => CliPlatformPaths;
+  readonly readGatewayState: (
+    paths: CliPlatformPaths,
+  ) => Promise<{ readonly socketPath: string } | undefined>;
+  readonly makeClient: (socketPath: string) => AdminConnection;
+  readonly writeErr: (s: string) => void;
+  readonly exit: (code: number) => never;
+}
+
+const defaultRunAdminDeps: RunAdminDeps = {
+  getPaths: getCliPlatformPaths,
+  readGatewayState,
+  makeClient: (socketPath) => new IPCClient(socketPath),
+  writeErr: (s) => void process.stderr.write(s),
+  exit: (code) => process.exit(code),
+};
+
+export async function runAdmin(
+  argv: string[],
+  deps: RunAdminDeps = defaultRunAdminDeps,
+): Promise<void> {
   let cmd: AdminCommand;
   try {
     cmd = parseAdminArgs(argv);
   } catch (e) {
-    process.stderr.write(`${e instanceof Error ? e.message : String(e)}\n`);
-    process.exit(1);
+    deps.writeErr(`${e instanceof Error ? e.message : String(e)}\n`);
+    deps.exit(1);
   }
-  const paths = getCliPlatformPaths();
+  const paths = deps.getPaths();
   const demo = paths.demo === true;
   // `console`/`token` are local-only (no gateway round-trip needed); short-circuit before connecting.
   if (cmd.kind === "console" || cmd.kind === "token") {
     await runAdminCommand({ call: () => Promise.reject(new Error("unused")) }, cmd, demo);
     return;
   }
-  const state = await readGatewayState(paths);
+  const state = await deps.readGatewayState(paths);
   if (state === undefined) {
-    process.stderr.write(`${gatewayNotRunningMessage(demo)}\n`);
-    process.exit(1);
+    deps.writeErr(`${gatewayNotRunningMessage(demo)}\n`);
+    deps.exit(1);
   }
-  const client = new IPCClient(state.socketPath);
+  const client = deps.makeClient(state.socketPath);
   await client.connect();
   try {
     await runAdminCommand(client, cmd, demo);

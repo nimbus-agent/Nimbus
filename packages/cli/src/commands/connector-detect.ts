@@ -142,8 +142,9 @@ function describeFinding(f: FindingWire): string {
  * They used to check this independently and drifted: `adoptable()` learned to offer gcloud's
  * `needs_project`, the hint did not, so a re-adopt-after-`gcloud config unset project` finding
  * was correctly withheld from the offer list but printed no explanation why. Shared here so the
- * two cannot drift again — same discipline as this file's `GCP_PROJECT_ID` validator, which lives
- * once on the gateway side rather than as two regexes that could disagree.
+ * two cannot drift again — same discipline as the gcloud project-id validator, `isGcpProjectId()`
+ * (`local-auth-types.ts`), which lives once on the gateway side rather than as two copies that
+ * could disagree.
  *
  * gcloud's `needs_project` counts as offerable — an active login with no default project just
  * needs the owner to name one. Scoped to gcloud specifically, mirroring the gateway's own

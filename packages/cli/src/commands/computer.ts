@@ -453,8 +453,11 @@ export interface OutcomeSink {
  * asserts `SandboxRunner.canConfine` (it does not spawn through the PAL — see invariant I35), so
  * the gate cannot emit that code, and a message for an unreachable code is documentation drift.
  * A later lane that does spawn through the PAL should add it back with its own wording.
+ *
+ * Exported only so a test can hold EVERY entry to a distinct message, derived from this table
+ * rather than from a copy of its keys that a newly added code would silently fall outside of.
  */
-const REFUSAL_MESSAGES: Readonly<Record<string, string>> = {
+export const REFUSAL_MESSAGES: Readonly<Record<string, string>> = {
   ERR_CU_NO_BROWSER:
     "nimbus: no Chrome, Chromium or Edge was found. Install a Chromium-family browser, or set " +
     "NIMBUS_CHROMIUM_PATH to an absolute path to one (it must exist; a relative path is refused).",
@@ -527,20 +530,28 @@ export interface RunComputerDeps {
   readonly onSignal: (handler: () => void) => () => void;
 }
 
+/**
+ * The production {@link RunComputerDeps.onSignal}: SIGINT and SIGTERM both reach `handler`, and the
+ * returned function removes BOTH registrations. Exported only so a test can prove that symmetry
+ * against the real `process` without raising a signal — a listener left behind would outlive the
+ * command and answer a later Ctrl-C meant for whatever runs next.
+ */
+export function onProcessInterrupt(handler: () => void): () => void {
+  process.on("SIGINT", handler);
+  process.on("SIGTERM", handler);
+  return () => {
+    process.off("SIGINT", handler);
+    process.off("SIGTERM", handler);
+  };
+}
+
 const defaultDeps: RunComputerDeps = {
   // The call can block on the owner answering an envelope/action prompt, and this command then
   // watches the session for as long as it stays open — the interactive budget the shared base
   // connects with, not the 30s default.
   ...interactiveCommandDeps(),
   sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
-  onSignal: (handler) => {
-    process.on("SIGINT", handler);
-    process.on("SIGTERM", handler);
-    return () => {
-      process.off("SIGINT", handler);
-      process.off("SIGTERM", handler);
-    };
-  },
+  onSignal: onProcessInterrupt,
 };
 
 interface OpenSessionResultShape {

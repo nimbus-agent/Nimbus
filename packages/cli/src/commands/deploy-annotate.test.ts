@@ -275,3 +275,131 @@ describe("runDeployAnnotate", () => {
     expect(stderrChunks.join("")).toContain("connection refused");
   });
 });
+
+describe("parseDeployAnnotateArgs — value edges", () => {
+  test("a value flag at the very end, or with an empty value, names that flag", () => {
+    expect(() => parseDeployAnnotateArgs([...REQUIRED, "--workflow-url"])).toThrow(
+      new ArgParseError("--workflow-url requires a non-empty value"),
+    );
+    const emptyEnv = [...REQUIRED];
+    emptyEnv[emptyEnv.indexOf("--env") + 1] = "";
+    expect(() => parseDeployAnnotateArgs(emptyEnv)).toThrow(
+      new ArgParseError("--env requires a non-empty value"),
+    );
+  });
+
+  test("an all-digit --started-at too large to be a finite number is refused, not stored as Infinity", () => {
+    const huge = [...REQUIRED];
+    huge[huge.indexOf("--started-at") + 1] = "9".repeat(400);
+    expect(() => parseDeployAnnotateArgs(huge)).toThrow(
+      new ArgParseError("--started-at must be an integer (ms since epoch)"),
+    );
+  });
+
+  test("a bare positional token is skipped rather than read as a flag or a value", () => {
+    const parsed = parseDeployAnnotateArgs(["stray", ...REQUIRED]);
+    expect(parsed.service).toBe("payment-service");
+    expect(parsed.startedAtMs).toBe(1747142400000);
+  });
+});
+
+describe("runDeployAnnotate — rendering and failure shapes", () => {
+  const RESULT = {
+    external_id: "jenkins:abc1234:prod",
+    service: "payment-service",
+    stored_at_ms: 1_747_142_500_000,
+    is_new: true,
+    dora_eligible: false,
+  };
+  const ttyDesc = Object.getOwnPropertyDescriptor(process.stdout, "isTTY");
+  const savedNoColor = process.env["NO_COLOR"];
+
+  beforeEach(() => {
+    stdoutChunks.length = 0;
+    stderrChunks.length = 0;
+    installStreamCapture();
+  });
+  afterEach(() => {
+    clearFixture();
+    restoreStreams();
+    if (ttyDesc === undefined) delete (process.stdout as unknown as { isTTY?: boolean }).isTTY;
+    else Object.defineProperty(process.stdout, "isTTY", ttyDesc);
+    if (savedNoColor === undefined) delete process.env["NO_COLOR"];
+    else process.env["NO_COLOR"] = savedNoColor;
+  });
+
+  async function annotate(): Promise<number> {
+    const mock = createMockIpcClient([RESULT]);
+    setFixture({ gatewayState: { socketPath: FAKE_SOCKET_PATH }, ipcClient: mock.client });
+    return runDeployAnnotate(VALID_ARGV);
+  }
+
+  it("a deployment that is not DORA-eligible prints no eligibility suffix", async () => {
+    delete process.env["NO_COLOR"];
+    Object.defineProperty(process.stdout, "isTTY", { value: false, configurable: true });
+    expect(await annotate()).toBe(0);
+    expect(stdoutChunks.join("")).toBe("✓ Deployment recorded: jenkins:abc1234:prod\n");
+  });
+
+  it("on a terminal the tick is green — unless NO_COLOR is set to something non-empty", async () => {
+    Object.defineProperty(process.stdout, "isTTY", { value: true, configurable: true });
+    const rendered: string[] = [];
+    for (const noColor of [undefined, "", "1"]) {
+      if (noColor === undefined) delete process.env["NO_COLOR"];
+      else process.env["NO_COLOR"] = noColor;
+      stdoutChunks.length = 0;
+      expect(await annotate()).toBe(0);
+      rendered.push(stdoutChunks.join(""));
+      clearFixture();
+    }
+    const green = "\u001b[32m✓\u001b[0m Deployment recorded: jenkins:abc1234:prod\n";
+    const plain = "✓ Deployment recorded: jenkins:abc1234:prod\n";
+    expect(rendered).toEqual([green, green, plain]);
+  });
+
+  it("a null reply from the gateway is a malformed envelope (exit 1)", async () => {
+    const mock = createMockIpcClient([null]);
+    setFixture({ gatewayState: { socketPath: FAKE_SOCKET_PATH }, ipcClient: mock.client });
+    expect(await runDeployAnnotate(VALID_ARGV)).toBe(1);
+    expect(stderrChunks.join("")).toBe("deployment.annotate returned a malformed envelope\n");
+    expect(stdoutChunks.join("")).toBe("");
+  });
+
+  it("a non-Error IPC failure is printed verbatim (exit 1)", async () => {
+    setFixture({
+      gatewayState: { socketPath: FAKE_SOCKET_PATH },
+      ipcClient: {
+        call: async (): Promise<never> => {
+          throw "write EPIPE";
+        },
+        connect: async () => {},
+        disconnect: async () => {},
+      },
+    });
+    expect(await runDeployAnnotate(VALID_ARGV)).toBe(1);
+    expect(stderrChunks.join("")).toBe("write EPIPE\n");
+  });
+
+  it("a disconnect that fails after the deployment was recorded is swallowed — still exit 0", async () => {
+    delete process.env["NO_COLOR"];
+    Object.defineProperty(process.stdout, "isTTY", { value: false, configurable: true });
+    let disconnects = 0;
+    const mock = createMockIpcClient([RESULT]);
+    setFixture({
+      gatewayState: { socketPath: FAKE_SOCKET_PATH },
+      ipcClient: {
+        call: mock.client.call,
+        connect: async () => {},
+        disconnect: async (): Promise<never> => {
+          disconnects += 1;
+          throw new Error("pipe already closed");
+        },
+      },
+    });
+    expect(await runDeployAnnotate(VALID_ARGV)).toBe(0);
+    expect(disconnects).toBe(1);
+    expect(mock.calls.map((c) => c.method)).toEqual(["deployment.annotate"]);
+    expect(stdoutChunks.join("")).toBe("✓ Deployment recorded: jenkins:abc1234:prod\n");
+    expect(stderrChunks.join("")).toBe("");
+  });
+});
