@@ -160,7 +160,7 @@ describeWithFetchRestore("superset-sync", () => {
     expectServiceItemCount(db, "superset", 0);
   });
 
-  test("login parse_error (invalid JSON) → http-empty pass cursor (covers line 66)", async () => {
+  test("login parse_error (invalid JSON) → http-empty pass cursor", async () => {
     const db = createMemoryIndexDb();
     installFetch((url) =>
       url.includes("/security/login")
@@ -202,7 +202,7 @@ describeWithFetchRestore("superset-sync", () => {
     expect(r.cursor).toContain("nimbus-superset1:");
   });
 
-  test("dashboard list parse_error on page 0 → parse-empty (covers line 143)", async () => {
+  test("dashboard list parse_error on page 0 → parse-empty", async () => {
     const db = createMemoryIndexDb();
     installFetch((url) =>
       url.includes("/security/login") ? loginOk() : new Response("garbage{", { status: 200 }),

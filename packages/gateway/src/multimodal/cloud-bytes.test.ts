@@ -461,6 +461,27 @@ describe("fetchCloudBytes — reading the body (both collectors share one bounde
       expect(readdirSync(deps.scratchDir).filter((n) => n.startsWith("nimbus-media-"))).toEqual([]);
     },
   );
+
+  // The shared read loop promises to release the body's reader lock on EVERY exit. Nothing in this
+  // module reads the body again, so a leaked lock is invisible to every other assertion here — it
+  // is pinned directly on the Response the loop read from, on both a completed read and a refusal,
+  // for both collectors.
+  test.each([
+    ["a completed image read", imageCandidate, 1_000_000_000, true],
+    ["a completed AV read", avCandidate, 1_000_000_000, true],
+    ["an image refused mid-stream for the cap", imageCandidate, 5, false],
+    ["an AV artifact refused mid-stream for the cap", avCandidate, 5, false],
+  ] as const)(
+    "releases the body's reader lock after %s",
+    async (_label, candidate, maxBytes, ok) => {
+      const { stream } = chunkedStream(["AB", "CDEFGH", "IJ"]);
+      const res = new Response(stream);
+      const deps = fakeDeps({ maxBytes, fetchFn: async () => res });
+      const r = await fetchCloudBytes(candidate, providerUrl, deps);
+      expect(r.ok).toBe(ok); // proves which exit was taken
+      expect(res.body?.locked).toBe(false);
+    },
+  );
 });
 
 describe("cleanupFailedScratch", () => {

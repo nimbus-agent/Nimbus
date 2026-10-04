@@ -219,6 +219,18 @@ describe("ExpiringRunRegistry — secondsUntilSoonestExpiry", () => {
     expect(registry.secondsUntilSoonestExpiry()).toBeNull();
   });
 
+  test("null while non-terminal runs ARE held if none expires at a finite time", () => {
+    // The infinite-TTL case `BriefRunController.create` maps back to Infinity: runs hold slots, but
+    // there is no finite expiry to round up. A finite run beside them is still the one reported.
+    const { registry, add } = harness();
+    add("forever-1", Number.POSITIVE_INFINITY);
+    add("forever-2", Number.POSITIVE_INFINITY);
+    expect(registry.activeCount()).toBe(2);
+    expect(registry.secondsUntilSoonestExpiry()).toBeNull();
+    add("finite", 4_500);
+    expect(registry.secondsUntilSoonestExpiry()).toBe(5);
+  });
+
   test("the soonest NON-terminal expiry, rounded up to whole seconds", () => {
     const { registry, add } = harness();
     add("terminal-sooner", 500, "done");

@@ -310,6 +310,11 @@ describe("fetchAgentBrief", () => {
     expect(rec.events.some((e) => e.endsWith(".briefReady") && e !== "probe.briefReady")).toBe(
       false,
     );
+    // The interactive handlers every brief command registered on its own copy of this round trip,
+    // still registered on the shared one: a gateway `consent.request` is answered rather than left
+    // to time out, and `agent.chunk` text reaches the terminal.
+    expect(rec.events).toContain("consent.request");
+    expect(rec.events).toContain("agent.chunk");
     // It RETURNS the brief for the command to print — nothing reaches stdout here.
     expect(stdoutChunks.join("")).toBe("");
     expect(rec.disconnects).toBe(1);
@@ -539,5 +544,96 @@ describe("the brief settles while the agents.* call is still in flight", () => {
 
     expect(unhandled).toEqual([]);
     expect(stderrChunks.join("")).toBe("Agent timed out after 20 ms\n");
+  });
+});
+
+/**
+ * A gateway whose `agents.*` call is answered by `call`, and which keeps every notification handler
+ * the client registers, so a test can deliver a notification AFTER the command has returned.
+ */
+function lateDeliveryGateway(
+  handlers: Map<string, (params: unknown) => void>,
+  call: () => Promise<unknown>,
+) {
+  return {
+    connect: async () => {},
+    disconnect: async () => {},
+    onNotification: (event: string, handler: (params: unknown) => void) => {
+      handlers.set(event, handler);
+    },
+    call,
+  };
+}
+
+describe("a refused agents.* call drops the brief waiter", () => {
+  // The refusals users actually hit — `ERR_STANDUP_IDENTITY_UNRESOLVED`,
+  // `ERR_ONCALL_NO_ACTIVE_INCIDENT` — reject the `agents.*` call itself, so no brief ever follows.
+  // The waiter armed before that call must be dropped in `finally`: one left armed keeps its
+  // NIMBUS_BRIEF_TIMEOUT_MS timer (120 s by default) holding the process open AFTER the refusal is
+  // printed, so the command sits there for the whole timeout before it exits. `changelog` could not
+  // show that while it ended through `process.exit(2)`; on this shared path it would, as would
+  // `standup`, `oncall` and every `runAgentCli` command.
+  //
+  // Observed through the router rather than the clock. A dropped waiter is gone, so a sessionless
+  // `briefReady` delivered later reaches no guard; a waiter still armed is the only one in flight
+  // for its agent, and the router hands it such a notification. The control shows that second half
+  // on the state a refused call leaves behind — armed, never bound — so the refusal test can fail.
+  let guardCalls = 0;
+  const countingGuard = (x: unknown): x is ProbeFindings => {
+    guardCalls += 1;
+    return isProbeFindings(x);
+  };
+  const LATE_BRIEF = { brief: "late", findings: PROBE_FINDINGS };
+
+  beforeEach(() => {
+    guardCalls = 0;
+    stdoutChunks.length = 0;
+    stderrChunks.length = 0;
+    install();
+  });
+  afterEach(() => {
+    clearFixture();
+    restore();
+  });
+
+  it("control: a sessionless briefReady reaches the guard of a waiter still in flight", async () => {
+    const handlers = new Map<string, (params: unknown) => void>();
+    setFixture({
+      gatewayState: { socketPath: FAKE_SOCKET_PATH },
+      ipcClient: lateDeliveryGateway(handlers, async () => {
+        // Delivered while the call is in flight: the waiter is armed and not yet bound.
+        handlers.get("probe.briefReady")?.(LATE_BRIEF);
+        return { sessionId: "s1" };
+      }),
+    });
+
+    const result = await fetchAgentBrief("probe", {}, countingGuard);
+
+    expect(guardCalls).toBe(1);
+    expect(result.brief).toBe("late");
+  });
+
+  it("prints the refusal, and a notification arriving afterwards finds no waiter", async () => {
+    const handlers = new Map<string, (params: unknown) => void>();
+    setFixture({
+      gatewayState: { socketPath: FAKE_SOCKET_PATH },
+      ipcClient: lateDeliveryGateway(handlers, async () => {
+        throw new Error("ERR_PROBE_IDENTITY_UNRESOLVED: set [user] me_person_id in nimbus.toml");
+      }),
+    });
+
+    await expect(fetchAgentBrief("probe", {}, countingGuard)).rejects.toMatchObject({
+      name: "CliExit",
+      code: 2,
+    });
+    expect(stderrChunks.join("")).toBe(
+      "ERR_PROBE_IDENTITY_UNRESOLVED: set [user] me_person_id in nimbus.toml\n",
+    );
+
+    // The delivery the control shows reaching an armed waiter.
+    const deliver = handlers.get("probe.briefReady");
+    expect(deliver).toBeDefined();
+    deliver?.(LATE_BRIEF);
+    expect(guardCalls).toBe(0);
   });
 });

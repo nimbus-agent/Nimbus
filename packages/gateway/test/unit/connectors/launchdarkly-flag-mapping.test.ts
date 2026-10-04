@@ -140,6 +140,16 @@ describe("mapLaunchDarklyFlagToItem", () => {
     expect(m["created_at"]).toBe(1_700_000_000_000);
   });
 
+  test("tags keep an empty-string tag and drop non-strings, in order", () => {
+    const row = mapLaunchDarklyFlagToItem(makeFlag({ tags: ["a", "", 7, null, "b"] }), {
+      baseUrl: BASE,
+      projectKey: "default",
+      syncedAt: NOW,
+    });
+    if (row === null) throw new Error("expected mapping to succeed");
+    expect(meta(row)["tags"]).toEqual(["a", "", "b"]);
+  });
+
   test("environments list + env_states on/off map are derived", () => {
     const row = mapLaunchDarklyFlagToItem(makeFlag(), {
       baseUrl: BASE,

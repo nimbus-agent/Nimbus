@@ -1,4 +1,6 @@
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { readdir, readFile } from "node:fs/promises";
+import { join } from "node:path";
 
 import {
   CLACK_CANCEL,
@@ -8,6 +10,7 @@ import {
   type RecordedClientConstruction,
   setFixture,
 } from "../../test/helpers/cli-mocks.ts";
+import { createStreamCapture } from "../../test/helpers/stream-capture.ts";
 import type { CliPlatformPaths } from "../paths.ts";
 
 // Imported only AFTER cli-mocks has replaced `@clack/prompts`, the gateway-state reader and
@@ -18,6 +21,11 @@ const { interactiveCommandDeps, isExplicitApproval, stringArrayOrEmpty } = await
 const { readGatewayState } = await import("./gateway-process.ts");
 const { INTERACTIVE_RPC_TIMEOUT_MS } = await import("./rpc-timeouts.ts");
 const { isCancel } = await import("@clack/prompts");
+const { GatewayNotRunningError } = await import("./with-gateway-ipc.ts");
+const { gatewayNotRunningMessage } = await import("./gateway-not-running.ts");
+const { runExec } = await import("../commands/exec.ts");
+const { runComputer } = await import("../commands/computer.ts");
+const { runTool } = await import("../commands/tool.ts");
 
 describe("stringArrayOrEmpty", () => {
   test("returns a COPY of an all-string array, never the caller's own array", () => {
@@ -123,6 +131,46 @@ describe("interactiveCommandDeps", () => {
     expect(constructions).toEqual([
       { socketPath: FAKE_SOCKET_PATH, opts: { requestTimeoutMs: INTERACTIVE_RPC_TIMEOUT_MS } },
     ]);
+  });
+
+  test("runWithClient resolves the gateway paths per CALL, so deps built before --demo applies stay demo-rooted (I41)", async () => {
+    // Every command builds its deps from this function while its module is being IMPORTED, and
+    // `index.ts` imports every command before `applyDemoFlag` sets NIMBUS_DEMO. Paths resolved when
+    // the deps are BUILT would therefore be the real install's, and `nimbus --demo exec` would dial
+    // the real gateway. Every other test here passes that, because the fixture's state reader
+    // ignores the paths it is handed; the demo-aware "not running" hint is what tells the roots apart.
+    const ENV = ["NIMBUS_DEMO", "NIMBUS_CONFIG_DIR", "NIMBUS_GATEWAY_SOCKET"] as const;
+    const saved = ENV.map((k) => [k, process.env[k]] as const);
+    // Demo refuses alongside either real-root override, so neither may leak in from the shell.
+    for (const k of ENV) delete process.env[k];
+    try {
+      const deps = interactiveCommandDeps(); // built as at import: NIMBUS_DEMO not yet set
+
+      // Premise: the state reader is the fixture's, so neither root's real state file is read and
+      // no real gateway can be dialled -- then make it find no gateway at all.
+      const state = { socketPath: FAKE_SOCKET_PATH, pid: 4242 };
+      setFixture({ gatewayState: state });
+      expect(await readGatewayState(fakeCliPaths())).toEqual(state);
+      setFixture({});
+      // Premise: the two hints differ, so the assertions below can tell the roots apart.
+      expect(gatewayNotRunningMessage(true)).not.toBe(gatewayNotRunningMessage(false));
+
+      process.env["NIMBUS_DEMO"] = "1"; // what `applyDemoFlag` does, after every command loaded
+      const demo = await deps.runWithClient(async () => "connected").catch((e: unknown) => e);
+      expect(demo).toBeInstanceOf(GatewayNotRunningError);
+      expect((demo as Error).message).toBe(gatewayNotRunningMessage(true));
+
+      // Per call in the other direction too: the same deps object, demo unset again.
+      delete process.env["NIMBUS_DEMO"];
+      const real = await deps.runWithClient(async () => "connected").catch((e: unknown) => e);
+      expect(real).toBeInstanceOf(GatewayNotRunningError);
+      expect((real as Error).message).toBe(gatewayNotRunningMessage(false));
+    } finally {
+      for (const [k, v] of saved) {
+        if (v === undefined) delete process.env[k];
+        else process.env[k] = v;
+      }
+    }
   });
 
   test("runWithClient answers a generic consent.request by PROMPTING the owner, never auto-approving", async () => {
@@ -233,5 +281,180 @@ describe("interactiveCommandDeps", () => {
       process.exitCode = 0;
       if (before !== undefined) process.exitCode = before;
     }
+  });
+});
+
+/**
+ * The commands built on the base, each run with its PRODUCTION deps -- no deps argument -- against
+ * a fake gateway that raises the command's own approval broadcast inside the blocking call, as the
+ * real gate does. Every other test of these commands injects its own `ask` and `runWithClient`, and
+ * the tests above prove only the BASE: a command that spread it and then overrode `ask` with an
+ * auto-approver, or `runWithClient` with the transport's 30s default, passed all of them.
+ */
+describe("the commands built on the base answer with its prompt, over its budget", () => {
+  const streams = createStreamCapture();
+  let savedExitCode: typeof process.exitCode;
+  let savedIsTty: PropertyDescriptor | undefined;
+
+  beforeEach(() => {
+    savedExitCode = process.exitCode;
+    savedIsTty = Object.getOwnPropertyDescriptor(process.stdin, "isTTY");
+    // `nimbus tool` refuses a non-TTY stdin before it connects, so the approval path needs one.
+    Object.defineProperty(process.stdin, "isTTY", {
+      value: true,
+      configurable: true,
+      writable: true,
+    });
+    streams.stdoutChunks.length = 0;
+    streams.stderrChunks.length = 0;
+    streams.install();
+  });
+
+  afterEach(() => {
+    streams.restore();
+    if (savedIsTty === undefined) Reflect.deleteProperty(process.stdin, "isTTY");
+    else Object.defineProperty(process.stdin, "isTTY", savedIsTty);
+    // `?? 0`: Bun ignores `process.exitCode = undefined`, so restoring an unset code that way
+    // would leave the code these commands set behind as the test runner's own.
+    process.exitCode = savedExitCode ?? 0;
+    clearFixture();
+  });
+
+  const TOOL_BROADCAST = {
+    toolName: "generated_tg_a",
+    description: "d",
+    body: "return 1;",
+    approvedHosts: ["a.example.com"],
+    credentialHosts: [],
+  };
+  // Each command's blocking call, the broadcast its gate raises during it, and the respond method
+  // that must carry the owner's answer -- the SAVE broker's own pair for `tool save` (I40).
+  const CONSUMERS = [
+    {
+      name: "nimbus exec",
+      file: "commands/exec.ts",
+      run: () => runExec(["--code", "1"]),
+      call: "exec.run",
+      broadcast: "exec.approvalRequest",
+      respond: "exec.approvalRespond",
+      params: {
+        runtime: "bun",
+        codeBody: "1",
+        grants: { fsRead: [], fsWrite: [], network: [] },
+        wallClockMs: 30_000,
+        cwd: fakePath("work"),
+      },
+    },
+    {
+      name: "nimbus computer browser",
+      file: "commands/computer.ts",
+      run: () => runComputer(["browser", "--origin", "https://a.example.com"]),
+      call: "computer.sessionOpen",
+      broadcast: "computer.envelopeRequest",
+      respond: "computer.approvalRespond",
+      params: {
+        sessionId: "s1",
+        lane: "browser",
+        navigateOrigins: ["https://a.example.com"],
+        scriptOrigins: [],
+        maxActions: 5,
+        maxWallClockMs: 60_000,
+      },
+    },
+    {
+      name: "nimbus tool create",
+      file: "commands/tool.ts",
+      run: () => runTool(["create", "--description", "d", "--host", "a.example.com"]),
+      call: "toolgen.create",
+      broadcast: "toolgen.approvalRequest",
+      respond: "toolgen.approvalRespond",
+      params: TOOL_BROADCAST,
+    },
+    {
+      name: "nimbus tool save",
+      file: "commands/tool.ts",
+      run: () => runTool(["save", "tg_a"]),
+      call: "toolgen.save",
+      broadcast: "toolgen.saveApprovalRequest",
+      respond: "toolgen.saveApprovalRespond",
+      params: { ...TOOL_BROADCAST, persistence: true },
+    },
+  ] as const;
+
+  const ANSWERS: ReadonlyArray<readonly [string, boolean | symbol, boolean]> = [
+    ["declines", false, false],
+    ["approves", true, true],
+    ["cancels the prompt", CLACK_CANCEL, false],
+  ];
+
+  for (const c of CONSUMERS) {
+    test.each(ANSWERS)(
+      `${c.name}: when the owner %s, ${c.respond} carries exactly that`,
+      async (_label, answer, approved) => {
+        const constructions: RecordedClientConstruction[] = [];
+        const handlers = new Map<string, (params: unknown) => unknown>();
+        const calls: Array<{ method: string; params: unknown }> = [];
+        const state = { socketPath: FAKE_SOCKET_PATH, pid: 4242 };
+        setFixture({
+          gatewayState: state,
+          clackAnswer: answer,
+          clientConstructions: constructions,
+          ipcClient: {
+            connect: async () => {},
+            disconnect: async () => {},
+            onNotification: (method: string, handler: (params: unknown) => unknown) => {
+              handlers.set(method, handler);
+            },
+            call: async (method: string, params: unknown) => {
+              calls.push({ method, params });
+              if (method !== c.call) return undefined;
+              // The gate raises its broadcast while this call is still pending, and replies after.
+              await handlers.get(c.broadcast)?.({ requestId: "req-1", ...c.params });
+              return { status: "denied" };
+            },
+          },
+        });
+        // Premise: production deps dial whatever the state reader returns -- prove it is this
+        // fixture, not the developer's own state file, before letting them connect.
+        expect(await readGatewayState(fakeCliPaths())).toEqual(state);
+
+        await c.run();
+
+        expect(calls).toEqual([
+          { method: c.call, params: expect.anything() },
+          { method: c.respond, params: { requestId: "req-1", approved } },
+        ]);
+        // One connection, on the INTERACTIVE budget: the call above stays pending while the owner reads.
+        expect(constructions).toEqual([
+          { socketPath: FAKE_SOCKET_PATH, opts: { requestTimeoutMs: INTERACTIVE_RPC_TIMEOUT_MS } },
+        ]);
+      },
+    );
+  }
+
+  test("the table above is TOTAL: every file that builds its deps on the base has a row", async () => {
+    // A hand-listed table silently omits the next command to adopt the base -- the one most likely
+    // to override a seam after the spread. The adopters are derived from the source instead.
+    const SRC = join(import.meta.dir, "..");
+    const adopters: string[] = [];
+    for (const entry of await readdir(SRC, { recursive: true })) {
+      const rel = entry.replaceAll("\\", "/");
+      if (
+        !/\.tsx?$/.test(rel) ||
+        /\.test\.tsx?$/.test(rel) ||
+        rel === "lib/approval-broadcast.ts"
+      ) {
+        continue;
+      }
+      if (/\binteractiveCommandDeps\(/.test(await readFile(join(SRC, entry), "utf8"))) {
+        adopters.push(rel);
+      }
+    }
+    const byName = (a: string, b: string): number => a.localeCompare(b);
+    // Premise: the scan finds the adopters that exist today, so an empty result cannot pass.
+    expect(adopters.length).toBeGreaterThan(0);
+    expect([...adopters].sort(byName)).toEqual(
+      [...new Set(CONSUMERS.map((c) => c.file))].sort(byName),
+    );
   });
 });

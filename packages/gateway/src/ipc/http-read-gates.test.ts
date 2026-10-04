@@ -37,6 +37,9 @@ const NARROW_TOKEN = "read-gates-narrow-token-0123456789abcdef01234567";
 const BOGUS_TOKEN = "read-gates-not-a-real-token";
 const ADMIN_TOKEN = "read-gates-admin-token";
 
+/** An invalid regex: the loader throws a message that names the service AND the offending value. */
+const MALFORMED_TOML = `[metrics.dora.secret-svc]\nrepos = ["github:acme/web"]\ndeploy_workflow_pattern = "["\n`;
+
 const STATUS_READERS: StatusReaders = {
   policyState: () => ({ signatureValid: true, pendingRestart: false, source: "none" }),
   peers: () => [],
@@ -481,6 +484,28 @@ describe("admin surface", () => {
       else process.env["NIMBUS_ADMIN_CONSOLE_DIST"] = prev;
     }
   });
+
+  test("the console refuses a traversal path with a plain-text 400, and only after the bearer check", async () => {
+    // `..%2f` is not a dot segment to the WHATWG URL parser, so the path reaches `safeAssetPath`
+    // as sent. Had anything normalised it to `/secret`, the answer would be the bare 404 of an
+    // unmatched path rather than the 400 below. Decided before any asset lookup: no console needed.
+    const base = serve({ resolveAdminToken: () => Promise.resolve(ADMIN_TOKEN) });
+    const path = "/admin/..%2fsecret";
+    // Without a bearer the path is never examined: the caller learns nothing about what it names.
+    const anonymous = await fetch(`${base}${path}`);
+    expect({ status: anonymous.status, body: await anonymous.text() }).toEqual({
+      status: 401,
+      body: "unauthorized\n",
+    });
+    const res = await fetch(`${base}${path}`, {
+      headers: { authorization: `Bearer ${ADMIN_TOKEN}` },
+    });
+    expect({
+      status: res.status,
+      type: res.headers.get("content-type"),
+      body: await res.text(),
+    }).toEqual({ status: 400, type: "text/plain; charset=utf-8", body: "bad request\n" });
+  });
 });
 
 describe("required query params", () => {
@@ -590,11 +615,7 @@ describe("RPC-backed public reads", () => {
   });
 
   test("any OTHER dispatcher throw is the generic 500, never the config parser's message", async () => {
-    // An invalid regex: the loader throws a message that names the service and the value.
-    const base = serve(
-      {},
-      `[metrics.dora.secret-svc]\nrepos = ["github:acme/web"]\ndeploy_workflow_pattern = "["\n`,
-    );
+    const base = serve({}, MALFORMED_TOML);
     for (const path of [
       "/v1/metrics/dora?service=secret-svc",
       "/v1/preflight/deploy?service=secret-svc&target_ref=main",
@@ -607,6 +628,39 @@ describe("RPC-backed public reads", () => {
         body: { error: "internal_error" },
       });
       expect(raw).not.toContain("secret-svc");
+    }
+  });
+
+  test("dora and preflight load the config lazily, stats eagerly: who answers a bad request differs", async () => {
+    // dora and preflight hand the loader to their dispatcher as a THUNK, which validates params
+    // before calling it — so on a malformed nimbus.toml a bad request is still told what is wrong
+    // with IT. stats loads BEFORE dispatching, so past its bare-presence checks it answers
+    // `config_unreadable` however invalid the params are. The two orders differ on purpose (see
+    // `loadServiceConfigs`); this pins both.
+    const base = serve({}, MALFORMED_TOML);
+    const cases: readonly [string, number, Record<string, string>][] = [
+      // The control: valid params on the same server reach the loader, so the config IS malformed
+      // and the 400s below are the params' own refusals rather than an absent failure.
+      ["/v1/metrics/dora?service=secret-svc", 500, { error: "internal_error" }],
+      [
+        "/v1/metrics/dora?service=secret-svc&since=bogus",
+        400,
+        { error: String.raw`since must match \d+(d|h), got 'bogus'` },
+      ],
+      [
+        "/v1/preflight/deploy?service=secret-svc&target_ref=main&max_findings=999",
+        400,
+        { error: "max_findings must be an integer 1..50" },
+      ],
+      [
+        "/v1/metrics/stats?service=secret-svc&metric=bogus&window_ms=1&bucket_ms=1",
+        500,
+        { error: "config_unreadable" },
+      ],
+    ];
+    for (const [path, status, body] of cases) {
+      const res = await fetch(`${base}${path}`);
+      expect({ path, status: res.status, body: await res.json() }).toEqual({ path, status, body });
     }
   });
 });

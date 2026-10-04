@@ -94,7 +94,7 @@ describe("measureGatewayRss", () => {
     expect(reader.calls()).toBeGreaterThanOrEqual(4);
   });
 
-  test("beforeIdle runs first with the run's signal, and the idle window waits for it", async () => {
+  test("beforeIdle runs first with the run's signal, and the idle window starts once it settles", async () => {
     const { spawn } = readyGateway(9);
     let release!: () => void;
     const gate = new Promise<void>((resolve) => {
@@ -104,8 +104,9 @@ describe("measureGatewayRss", () => {
     const started = new Promise<AbortSignal>((resolve) => {
       reportStart = resolve;
     });
+    const idleMs = 200;
     const run = measureGatewayRss(
-      { spawn, pidusage: pidusageFor(9).pidusage, durationMs: 20, intervalMs: 5 },
+      { spawn, pidusage: pidusageFor(9).pidusage, durationMs: idleMs, intervalMs: 5 },
       SLOW_DEFAULTS,
       async (signal) => {
         reportStart(signal);
@@ -116,10 +117,15 @@ describe("measureGatewayRss", () => {
     const signal = await within(started, 5_000);
     if (signal === "timeout") throw new Error("beforeIdle was never called");
     expect(signal.aborted).toBe(false);
-    // The 20 ms idle window would long be over, yet the run is still waiting on beforeIdle.
-    expect(await within(run, 100)).toBe("timeout");
+    // Held for longer than the whole idle window, and the run is still waiting on beforeIdle.
+    expect(await within(run, idleMs + 100)).toBe("timeout");
 
     release();
+    // Had the idle window run alongside beforeIdle, it would be over by now and the run would end
+    // at once. It starts only after beforeIdle settles (heavy sync idles AFTER its syncs, as it
+    // always has), so the whole window is still ahead. This wait's timer is armed before the idle
+    // timer and is shorter, so it expires first however late the runner fires timers.
+    expect(await within(run, idleMs / 2)).toBe("timeout");
     await run;
     // The same signal the run aborts once its workload is done.
     expect(signal.aborted).toBe(true);

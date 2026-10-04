@@ -303,6 +303,38 @@ describe("handleConnectorAuth — a service with no auth flow refuses usefully (
 });
 
 /**
+ * Request fields that some OTHER `connector.auth` path reads a credential from (linear's and
+ * datadog's `apiKey`, the Atlassian parser's `apiToken`, datadog's `appKey`, azure's
+ * `clientSecret`, aws's `secretAccessKey`), plus obvious spellings that no handler reads today.
+ * A token reader given its token ONLY under these must refuse. The alias lists are shared data now:
+ * `PAT_TOKEN_FIELDS` feeds eleven handlers, the three token-only ones through their specs. One added
+ * alias would therefore widen what every one of them accepts as the credential, and the precedence
+ * tests below pin only the aliases a reader DOES accept.
+ */
+const NON_TOKEN_FIELDS = [
+  "apiKey",
+  "apiToken",
+  "appKey",
+  "clientSecret",
+  "secretAccessKey",
+  "pat",
+  "api_key",
+  "api_token",
+  "accessToken",
+  "authToken",
+  "botToken",
+  "appPassword",
+  "password",
+] as const;
+
+/** Every {@link NON_TOKEN_FIELDS} entry that is not one of `ownAliases`, each set to a usable token. */
+function tokensOnlyUnder(ownAliases: readonly string[]): Record<string, string> {
+  return Object.fromEntries(
+    NON_TOKEN_FIELDS.filter((f) => !ownAliases.includes(f)).map((f) => [f, `tok-${f}`]),
+  );
+}
+
+/**
  * The shared PAT-handler helpers (`registerAndSucceed`, `writeOrDeleteConnectorSecret`,
  * `tokenOnlyConnectorAuth`), driven through `handleConnectorAuth`. Every Vault op, credential
  * probe, probe-egress append and scheduler registration goes into ONE ordered log, so each
@@ -799,6 +831,24 @@ describe("PAT handlers — the exact Vault plan, then the shared registration ta
         expect(blank).toEqual([]);
       }
     });
+
+    test(`${service}: reads its token from no field but personalAccessToken or token`, async () => {
+      const decoys = tokensOnlyUnder(["personalAccessToken", "token"]);
+      const refused: string[] = [];
+      const err = await refusal(recordingCtx(service, { ...decoys, ...fields }, refused));
+      expect(err).toBeInstanceOf(ConnectorRpcError);
+      expect(err).toMatchObject({ rpcCode: -32602, message: missing });
+      expect(refused).toEqual([]);
+
+      // Positive control: the same request plus `token`, the LAST alias, stores that value and no
+      // decoy. That also catches a field slotted in AHEAD of `token`, not only one appended after it.
+      const accepted: string[] = [];
+      await handleConnectorAuth(
+        recordingCtx(service, { ...decoys, ...fields, token: "real" }, accepted),
+      );
+      expect(accepted).toContain(`write:${tokenKey}=real`);
+      expect(accepted.some((op) => op.includes("=tok-"))).toBe(false);
+    });
   }
 });
 
@@ -905,6 +955,20 @@ describe("token-only connectors (linear, circleci, pagerduty) — reading the to
         expect(writes).toEqual([]);
       }
       expect(loadRegisteredIds()).toEqual([]);
+    });
+
+    test(`${service}: reads its token from no field but its own aliases`, async () => {
+      const decoys = tokensOnlyUnder(fields);
+      const refused: string[] = [];
+      expect(await refusalMessage(tokenCtx(service, decoys, refused))).toBe(missing);
+      expect(refused).toEqual([]);
+      expect(loadRegisteredIds()).toEqual([]);
+
+      // Positive control: the same request plus its LAST alias stores that value and no decoy.
+      const accepted: string[] = [];
+      const lastAlias = fields.at(-1) as string;
+      await handleConnectorAuth(tokenCtx(service, { ...decoys, [lastAlias]: "real" }, accepted));
+      expect(accepted).toEqual([`${key}=real`]);
     });
   }
 

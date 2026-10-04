@@ -82,8 +82,8 @@ describeWithFetchRestore("databricks-sync", () => {
     createStubVault({ "databricks.host": null, "databricks.token": null }),
   );
 
-  // ── host trailing-slash stripping (line 36 true branch) ──────────────────
-  test("strips trailing slash from host URL (line 36 true branch)", async () => {
+  // ── host trailing-slash stripping (trimTrailingSlash true branch) ─────────
+  test("strips trailing slash from host URL (trimTrailingSlash true branch)", async () => {
     const db = createMemoryIndexDb();
     let capturedUrl = "";
     globalThis.fetch = (async (input: SyncTestFetchParams[0]): Promise<Response> => {
@@ -111,8 +111,8 @@ describeWithFetchRestore("databricks-sync", () => {
     expect(capturedUrl).not.toContain("com//api");
   });
 
-  // ── host without trailing slash (line 36 false branch) ───────────────────
-  test("host without trailing slash is kept as-is (line 36 false branch)", async () => {
+  // ── host without trailing slash (trimTrailingSlash false branch) ──────────
+  test("host without trailing slash is kept as-is (trimTrailingSlash false branch)", async () => {
     const db = createMemoryIndexDb();
     let capturedUrl = "";
     globalThis.fetch = (async (input: SyncTestFetchParams[0]): Promise<Response> => {
@@ -228,8 +228,8 @@ describeWithFetchRestore("databricks-sync", () => {
     expect(r.itemsUpserted).toBe(0);
   });
 
-  // ── http_error on page 0 → syncPassCursorHttpEmpty (lines 155-156) ────────
-  test("returns http-empty result on HTTP error during first jobs page (lines 155-156)", async () => {
+  // ── http_error on page 0 → syncPassCursorHttpEmpty ───────────────────────
+  test("returns http-empty result on HTTP error during first jobs page", async () => {
     const db = createMemoryIndexDb();
 
     globalThis.fetch = (async (input: SyncTestFetchParams[0]): Promise<Response> => {
@@ -259,8 +259,8 @@ describeWithFetchRestore("databricks-sync", () => {
     expectServiceItemCount(db, "databricks", 0);
   });
 
-  // ── parse_error on page 0 → syncPassCursorParseEmpty (line 156 else branch) ──
-  test("returns parse-empty result when first jobs page has invalid JSON (line 156 else)", async () => {
+  // ── parse_error on page 0 → syncPassCursorParseEmpty ──────────────────────
+  test("returns parse-empty result when first jobs page has invalid JSON", async () => {
     const db = createMemoryIndexDb();
 
     globalThis.fetch = (async (input: SyncTestFetchParams[0]): Promise<Response> => {
@@ -780,7 +780,7 @@ describeWithFetchRestore("databricks-sync", () => {
     expect(r.itemsUpserted).toBe(1);
   });
 
-  // ── runs fetch HTTP error → empty runsByJobId map (lines 136-138) ─────────
+  // ── runs fetch HTTP error → empty runsByJobId map ─────────────────────────
   test("proceeds with empty runs map when runs fetch returns HTTP error", async () => {
     const db = createMemoryIndexDb();
 

@@ -366,7 +366,7 @@ describeWithFetchRestore("metabase-sync", () => {
     expect(r.itemsUpserted).toBe(1);
   });
 
-  // ── outcome.kind === "http_error" → syncPassCursorHttpEmpty (line 121 true-branch) ──
+  // ── outcome.kind === "http_error" → syncPassCursorHttpEmpty ───────────────────
   test("returns http_error result when dashboard endpoint returns 500", async () => {
     const db = createMemoryIndexDb();
     const vault = createStubVault({
@@ -387,7 +387,7 @@ describeWithFetchRestore("metabase-sync", () => {
     expectServiceItemCount(db, "metabase", 0);
   });
 
-  // ── outcome.kind === "parse_error" → syncPassCursorParseEmpty (line 121 false-branch, line 123) ──
+  // ── outcome.kind === "parse_error" → syncPassCursorParseEmpty ─────────────────
   test("returns parse_error result when dashboard endpoint returns invalid JSON", async () => {
     const db = createMemoryIndexDb();
     const vault = createStubVault({

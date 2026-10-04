@@ -154,6 +154,32 @@ describe("createWarehouseListSyncable", () => {
     expect(result.itemsUpserted).toBe(3);
   });
 
+  it("starts each drain only once the previous one has finished — one connector session at a time", async () => {
+    // The test above records only when each drain STARTS, so it also passes when every drain runs
+    // at once (Promise.all). Each drain spawns the connector or opens a team session, and one at a
+    // time is what the original sequential awaits did, so pin the end of each drain too.
+    const events: string[] = [];
+    __setPersonalDrainForTest(async (_ctx, _service, listToolId) => {
+      events.push(`start:${listToolId}`);
+      await Bun.sleep(0); // a concurrent drain would start while this one is suspended here
+      events.push(`end:${listToolId}`);
+      return [];
+    });
+    const syncable = createWarehouseListSyncable("snowflake", [
+      { listToolId: "first_list", map: () => null },
+      { listToolId: "second_list", map: () => null },
+    ]);
+
+    await syncable.sync(ctx({}), null);
+
+    expect(events).toEqual([
+      "start:first_list",
+      "end:first_list",
+      "start:second_list",
+      "end:second_list",
+    ]);
+  });
+
   it("stamps every row with ONE clock reading, taken after the last drain", async () => {
     // A clock that advances on every read: a per-row, per-source or pre-drain read would show up
     // as a second syncedAt, or as one earlier than a drain. Real time is too coarse to tell them apart.

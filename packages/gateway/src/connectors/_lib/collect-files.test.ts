@@ -1,10 +1,48 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import {
+  lstatSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  rmSync,
+  statSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { collectFiles } from "./collect-files.ts";
 
 const isSql = (name: string): boolean => name.toLowerCase().endsWith(".sql");
+
+/**
+ * A FILE symlink needs privilege on a Windows host without Developer Mode, so the linked-file case
+ * runs only where a real probe can create one — a platform guess would also skip hosts that can. A
+ * directory junction needs no privilege, so the linked-directory case always runs.
+ */
+function canSymlinkFiles(): boolean {
+  const dir = mkdtempSync(join(tmpdir(), "nimbus-collect-files-probe-"));
+  try {
+    writeFileSync(join(dir, "target.sql"), "");
+    symlinkSync(join(dir, "target.sql"), join(dir, "link.sql"), "file");
+    return true;
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === "EPERM") {
+      return false;
+    }
+    throw err; // anything but a privilege refusal is a broken probe, not an unsupported host
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+const CAN_SYMLINK_FILES = canSymlinkFiles();
+if (!CAN_SYMLINK_FILES) {
+  console.warn(
+    "collect-files.test.ts: skipping the linked-file case — symlinkSync raised EPERM (this host " +
+      "cannot create file symlinks); the linked-directory case still runs",
+  );
+}
 
 describe("collectFiles", () => {
   let root: string;
@@ -77,5 +115,67 @@ describe("collectFiles", () => {
     const missing = join(root, "does-not-exist");
 
     expect(await collectFiles(missing, { maxDepth: 12, maxFiles: 100, accept: isSql })).toEqual([]);
+  });
+
+  test("judges each regular file by its base name alone — never its path, never a directory", async () => {
+    const picked = touch("chosen", "pick.sql");
+    touch("chosen", "skip.sql");
+    const judged: string[] = [];
+
+    const found = await collectFiles(root, {
+      maxDepth: 12,
+      maxFiles: 100,
+      accept: (name) => {
+        judged.push(name);
+        return name === "pick.sql";
+      },
+    });
+
+    expect(found).toEqual([picked]);
+    expect(judged.toSorted()).toEqual(["pick.sql", "skip.sql"]);
+  });
+
+  describe("links — the walk must not leave the root through one", () => {
+    let outside: string;
+
+    beforeEach(() => {
+      outside = mkdtempSync(join(tmpdir(), "nimbus-collect-files-outside-"));
+      writeFileSync(join(outside, "outside.sql"), "");
+    });
+
+    afterEach(() => {
+      rmSync(outside, { recursive: true, force: true });
+    });
+
+    test("does not enter a linked directory", async () => {
+      const own = touch("own.sql");
+      const link = join(root, "linked-dir");
+      // A junction needs no privilege on Windows; elsewhere the type is ignored (a directory symlink).
+      symlinkSync(outside, link, "junction");
+      // Premise: the link resolves to a directory holding an accepted file, so following it WOULD
+      // add a result. Without this, an unchanged result would prove nothing.
+      expect(lstatSync(link).isSymbolicLink()).toBe(true);
+      expect(readdirSync(link)).toEqual(["outside.sql"]);
+
+      expect(await collectFiles(root, { maxDepth: 12, maxFiles: 100, accept: isSql })).toEqual([
+        own,
+      ]);
+    });
+
+    test.skipIf(!CAN_SYMLINK_FILES)(
+      "does not collect a linked file, even one whose name is accepted",
+      async () => {
+        const own = touch("own.sql");
+        const link = join(root, "linked.sql");
+        symlinkSync(join(outside, "outside.sql"), link, "file");
+        // Premise: the link resolves to a regular file with an accepted name.
+        expect(lstatSync(link).isSymbolicLink()).toBe(true);
+        expect(statSync(link).isFile()).toBe(true);
+
+        expect(await collectFiles(root, { maxDepth: 12, maxFiles: 100, accept: isSql })).toEqual([
+          own,
+        ]);
+      },
+    );
   });
 });

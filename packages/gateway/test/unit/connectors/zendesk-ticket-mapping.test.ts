@@ -170,6 +170,15 @@ describe("mapZendeskTicketToItem", () => {
     expect(meta(row)["tags"]).toEqual(["checkout", "safari"]);
   });
 
+  test("tags keep an empty-string tag and drop non-strings, in order", () => {
+    const row = mapZendeskTicketToItem(makeTicket({ tags: ["a", "", 7, null, "b"] }), {
+      baseUrl: BASE,
+      syncedAt: NOW,
+    });
+    if (row === null) throw new Error("expected mapping to succeed");
+    expect(meta(row)["tags"]).toEqual(["a", "", "b"]);
+  });
+
   test("via_channel is read from the nested via.channel", () => {
     const row = mapZendeskTicketToItem(makeTicket(), { baseUrl: BASE, syncedAt: NOW });
     if (row === null) throw new Error("expected mapping to succeed");
