@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1791089299928,
+  "lastUpdate": 1791091547016,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "f9f3451f41d6cf73fd57ad2a3d6b85d9c87f7db0",
-          "message": "docs(infra): close P2 Phase 2, P5, and the P1 Plan-B follow-up (sweep 30231918767) (#853)\n\n## Summary\n\nA dispatched `org-drift-sweep` on `main` came back **15/15 green** — the\n**first fully green sweep this program has had**. That closes three open\nitems by this file's own bar: *a gate is done when it is green in CI and\nwould go red on regression, not when its code merges.*\n\n[Run\n30231918767](https://github.com/nimbus-agent/Nimbus/actions/runs/30231918767):\n\n```\nOVERALL: success\nsuccess  release-staleness      success  pin-freshness        success  actions-allowlist\nsuccess  cla-coverage           success  ruleset-drift        success  org-settings-drift\nsuccess  team-reachability      success  sha-pins (×8)\n```\n\n## What this closes\n\n**P2 Phase 2 — done.** `release-staleness` reports **`OK (12 edges\ncurrent)`**: Phase 1's five channel edges plus Phase 2's seven\ndependency edges. Red-before / green-after on real drift, then green in\nthe scheduled harness.\n\nWhat made it green was **remediation at the source, not a gate change**\n— and the two halves needed opposite fixes, which is precisely the\nasymmetry that justifies reading the lockfile rather than the declared\nrange:\n\n| Consumer | Fix | Why |\n| --- | --- | --- |\n| `client:Nimbus`, `client:nimbus-vscode` | **manifest** edit | a caret\non a `0.x` pins the *minor*, so `^0.5.0` could never reach 0.12.1 |\n| the sdk edges | lockfile refresh | `^1.3.0` already permitted 1.7.0 |\n\n**P5 — both gates delivered and green.** `audit:actions-allowlist` found\na *second* live instance of the CLA failure mode on its first correct\nrun: `Lock Threads` had been rejected at startup **every night since at\nleast 2026-07-24** because `dessant/lock-threads` was absent from the\nActions allowlist. Fixed, and proved by dispatch — the workflow now\ncompletes `success`.\n\nAlso records a correction: the five \"missing\" secrets were **narrative\ndrift, not unmanaged credentials** — all five were already in\n`credential-registry.ts`. I had first written this up as row 3 of the\nopening table still being unfixed; reading the code disproved it.\n\n**P1 — Plan B closed.** The freshness follow-up deferred from the very\nfirst sweep now exists, shipped red on three genuinely stale pins, and\nis green at 30/30.\n\n**P3 — corrected, not ticked.** Its stated gate (*\"an invariant\nviolation is caught in CI\"*) was **already met**: `_structure.yml` runs\n`audit:invariants` and all 17 static checks execute there; the one\nbranch `--binary-only` excludes is a *census* that always exits 0. The\nreal gap was the monorepo's missing `.coderabbit.yaml`, which #846\nclosed.\n\n## One rule promoted out of code comments\n\nThe batch hit the same design error **four times across three gates**,\nso it now sits in the operating principles rather than three scattered\ncomments:\n\n> **A gate must never report a permanent mismatch as a fixable\nfailure.** Distinguish a **transient** unknown (a read failed, may\nsucceed next run) from a **permanent** one (no API can answer, or the\nquestion doesn't apply). Only the transient kind may be strict-red.\n\nThe four instances: `verified_allowed` being unknowable; a repo that\npublishes no releases; a pin tracking `stable` whose newest *release* is\n12 commits behind it; and a failed date read manufacturing a `stale`.\n\nThe third is the sharpest — the gate's only route to green was **moving\na pin backwards in code age**. A gate that is always red is one\neverybody learns to ignore, which is indistinguishable from having no\ngate at all: the exact failure this document exists to prevent.\n\nInstance 4 was caught by CodeRabbit citing `_Source: Path instructions_`\n— the `.coderabbit.yaml` rule shipped in #846 one PR earlier. **The\nreview layer caught a violation of a rule the review layer had just been\ntaught**, which is the first hard evidence P3 does real work.\n\n## Testing\n\n- `bun run lint:markdown` — 0 errors\n- `bun run audit:doc-refs` — 622 refs across 16 docs, all resolve\n- `lychee --config lychee.toml 'docs/**/*.md' '*.md'` — 1066 links, **0\nerrors**\n\nDocs-only; no code changed.\n\n## Type of Change\n\n- [x] Documentation only\n\n## Non-Negotiables Checklist\n\n- [x] `bun run typecheck` — n/a, no code changed\n- [x] `bun run lint` — n/a; markdown lint clean\n- [x] All existing tests pass — n/a, docs-only\n- [x] No credentials in logs/IPC/config — secret **names** only, as\nalready documented\n\n## Notes for Reviewers\n\nRemaining after this: the P5 legibility dashboard, P4b (latency), the P6\nbypass-actor audit, and P3's open question of whether a Claude-based\nreview action is still wanted now that the config exists — which the\ndesign deliberately left to be answered by evidence.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)",
-          "timestamp": "2026-07-27T05:33:32+03:00",
-          "tree_id": "f4b868297cce1134b3b7f7ef5e4b621e901c053f",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/f9f3451f41d6cf73fd57ad2a3d6b85d9c87f7db0"
-        },
-        "date": 1785120558541,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 334.4445933999967,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 329.6601608000063,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 329.41995484999643,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "84a335ecc6045b8fac0278113d599f103a514a85",
+          "message": "feat(oncall): post the pushed brief's headline to ChatOps (PR 2 of 3) (#1600)\n\nOn-call pushed brief, PR 2 of 3: the ChatOps sink. When the on-call push\nstores a brief for a new P1 assigned to you, a short headline now also\ngoes to the ChatOps notify channels of a configured namespace, so the\nteam working the incident sees what changed before it fired without\nanyone asking.\n\n## What ships\n\n- **Headline, three lines, escaped.** Severity and service, then the\nincident title; the last deployment before the alert, labelled \"timing\nonly, not a proven cause\"; then the agent command `@nimbus agent oncall\nincidentId=<id>` and the local `nimbus oncall pushed <id>`.\n- Every inserted value is collapsed to one line, capped at 200 code\npoints and Slack-escaped. A title cannot forge a second line, ping\n`<!channel>` or hide a link.\n- Bidi and zero-width format characters are removed. A blank title\nrenders as `(untitled)`.\n- **Volume mirrors the toast.** At most 3 headlines per run, newest\nfirst, then one summary post that lists up to 10 of the remaining ids.\nFailed rows post too.\n- **Destination is server-derived (I23).** `[oncall.push]\nchatops_namespace` names a namespace, and the policy's `notify` list for\nit supplies the channels. Empty means nothing is posted.\n- **Ledgered (I29).** A fourth `ChatPostKind`, `pushedBrief`, gives\n`method = 'chatops.pushedBrief'`. One row per channel is appended before\neach post, and an append failure posts nothing.\n- **Every outcome is recorded** in `delivery_json.chatops`:\n- `skipped` with `no [oncall.push] chatops_namespace`, `ChatOps not\nrunning`, or `namespace <ns> has no notify channels`\n  - `delivered`\n- `failed` with `… (delivery may be partial)`, or `could not render: …`\nwhen the headline itself could not be built\n  - `coalesced`\n- Nothing throws out of `deliver`, and a chat failure never stops the\ntoast.\n- The summary-failure reason is `summary post failed: <reason>`, and\nthat reason includes the partial-delivery suffix, which is accurate.\n\n## Boot race, closed in the push runtime\n\n`syncScheduler.start` runs before ChatOps boots, so a PagerDuty sync\nfinishing in that window would have recorded `ChatOps not running`, and\ndedup would never have reselected those incidents.\n- The push runtime now holds every run until `assemble.ts` calls\n`settleChatopsPoster` exactly once, on both branches: a poster when\nChatOps booted, `undefined` when it did not. Early runs wait instead of\ndropping.\n- **Rejected alternative:** moving the scheduler start to the end of\nassembly. That would change every connector's first-sync timing to\nprotect one consumer, and the next await-bearing boot step would reopen\nthe window.\n\n## I41: no ChatOps in a demo gateway, by construction\n\nA demo gateway stayed ChatOps-free only because its generated\n`nimbus.toml` has no `[chatops]` section. Since this PR makes a demo\npage reach a chat sink, that is now structural.\n- `BootPolicy.chatops` is false in demo, and `bootChatopsIntoAssembly`\nreturns before building anything.\n- Wiring, a static pin in `security-invariants.test.ts`, an in-process\ndemo assembly test and the docs land together.\n\n## Corrections found while planning\n\nThe earlier design used `@nimbus agent oncall incident=<id>`. The\n`oncall` agent's ChatOps parameter is `incidentId`, so every headline's\ncall to action would have been refused. The headline test round-trips\nthe rendered command through the real `parseAgentCommand`.\n\nNo new invariant, static rule, egress class, IPC method or migration.\nNotify posting stays Slack-only, which is existing behaviour. Headline\nonly: no full-brief option.\n\n## Verification\n\n- `bun run preflight:fast` is green, all 34 gates.\n- The touched suites pass 553/553: oncall-push, chatops, egress,\nassemble, demo-boot, demo, and the oncall/demo IPC tests.\n`security-invariants.test.ts` passes 246/246.\n- An integration test uses a real migrated DB, the real demo seed and\npage, the real runtime and sink, and a real `ReplyDispatcher` over the\nreal ledger appender, with two channels. It shows two\n`chatops.pushedBrief` rows, each written before its post. When the\nappend fails, nothing is posted.\n- Every new test was checked by reverting its fix and watching it fail.\n- Local Linux Docker verification was not run because the Docker daemon\nwas unavailable, so the Ubuntu CI leg is the first Linux run.\n\n## Deferred, recorded rather than dropped\n\n- An owner-facing warning when `chatops_namespace` is set but ChatOps is\noff, or the namespace has no notify channels. Today it shows only in\n`nimbus oncall pushed --json`.\n- An assembly-level test that drives a real P1 through the booted\nChatOps graph. The composed path is covered hop by hop, plus the\nintegration test.\n- Escaping the existing `@nimbus agent …` replies with the same\n`escapeSlackText`.\n- A desktop panel, which is PR 3.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n## Summary by CodeRabbit\n\n* **New Features**\n* On-call pushed briefs can be sent to configured ChatOps notification\nchannels. Up to three newest incident headlines are posted, followed by\na summary for any remaining incidents.\n* Delivery outcomes and failures are reported in the command’s JSON\noutput and recorded in delivery history. Posts are skipped when no\nChatOps destination or notification channel is available.\n* Brief text is escaped for Slack, and demo gateways do not send ChatOps\nposts.\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-10-04T05:13:30Z",
+          "tree_id": "525a70d43d281d509ef6fa96ac0098a0614e973d",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/84a335ecc6045b8fac0278113d599f103a514a85"
+        },
+        "date": 1791091543467,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 209.9803959500017,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 208.33681255000192,
             "unit": "ms"
           }
         ]
