@@ -8,12 +8,11 @@ import { afterEach, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-
-import { setGatewayEventBroadcast } from "./gateway-events.ts";
 import { fireDemoPage, seedDemoCorpus } from "../demo/seed.ts";
 import { CURRENT_SCHEMA_VERSION } from "../index/local-index.ts";
 import { runIndexedSchemaMigrations } from "../index/migrations/runner.ts";
 import { assembleOncallPushRuntime } from "../oncall-push/push-runtime.ts";
+import { setGatewayEventBroadcast } from "./gateway-events.ts";
 import { dispatchOncallPushRpc } from "./oncall-push-rpc.ts";
 
 const FIXTURE = join(
