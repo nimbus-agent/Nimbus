@@ -107,8 +107,9 @@ function call(method: string): Promise<{ code: number | null; message: string }>
     // Idempotent, and it clears the deadline. Three paths can reach here — a response, a socket
     // error, the timeout — and this runs 105 times per test: without the guard a late error after
     // a response would resolve twice, and without the clear every completed probe would leave a
-    // live 10s timer behind, which is how a bun test suite ends up hanging after its last
-    // assertion has already passed.
+    // live 10s timer behind. Those would not stop `bun test` from exiting, but they would keep the
+    // event loop alive for every later test in the process, which can hide the Windows hang
+    // testing/hold-event-loop.ts describes.
     const finish = (v: { code: number | null; message: string }): void => {
       if (settled) return;
       settled = true;

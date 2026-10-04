@@ -8,8 +8,10 @@ function makeBroker(): ExecConsentBroker {
   return b;
 }
 
-// Every pending request holds a live (deliberately non-unref'd) TTL timer. Without this hook a
-// test that leaves one pending hangs `bun test` teardown on Windows.
+// Every pending request holds a live (deliberately non-unref'd) TTL timer; this hook clears them so
+// none outlives its test. A pending timer does not stop `bun test` from exiting, but a ref'd one
+// keeps the event loop alive for every later test in the process, which can hide the Windows hang
+// testing/hold-event-loop.ts describes.
 afterEach(() => {
   for (const b of brokers.splice(0)) b.clear();
 });
