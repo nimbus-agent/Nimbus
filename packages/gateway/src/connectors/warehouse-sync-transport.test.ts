@@ -98,6 +98,34 @@ describe("listConnectorItems", () => {
       __setSessionSpawnerForTest(undefined);
     }
   });
+
+  it("personal (real drain): drains the list tool a real session lists as <service>_<tool>", async () => {
+    // A real session lists through MCPClient, which keys the snowflake connector's
+    // `snowflake_list` as `snowflake_snowflake_list`. Every personal-credential warehouse/BI sync
+    // drains through this path with the bare id.
+    const ran: string[] = [];
+    __setSessionSpawnerForTest(() => ({
+      listTools: async () => ({
+        snowflake_snowflake_list: {
+          execute: async () => {
+            ran.push("snowflake_snowflake_list");
+            return {
+              content: [
+                { type: "text", text: JSON.stringify({ items: [{ id: 8 }], nextCursor: null }) },
+              ],
+            };
+          },
+        },
+      }),
+      disconnect: async () => {},
+    }));
+    try {
+      expect(await listConnectorItems(ctx({}), "snowflake", "snowflake_list")).toEqual([{ id: 8 }]);
+      expect(ran).toEqual(["snowflake_snowflake_list"]);
+    } finally {
+      __setSessionSpawnerForTest(undefined);
+    }
+  });
 });
 
 describe("createWarehouseListSyncable", () => {

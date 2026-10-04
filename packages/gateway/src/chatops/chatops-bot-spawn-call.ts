@@ -7,7 +7,7 @@ import {
   chatopsSlackBotServers,
   chatopsTeamsBotServers,
 } from "../connectors/lazy-mesh/chatops-bot-spawn.ts";
-import { listLazyMeshClientTools } from "../connectors/lazy-mesh/tool-map.ts";
+import { listLazyMeshClientTools, resolveServerTool } from "../connectors/lazy-mesh/tool-map.ts";
 import type { NimbusVault } from "../vault/nimbus-vault.ts";
 
 export interface ChatopsBotToolRequest {
@@ -21,9 +21,11 @@ export interface ChatopsBotToolRequest {
 }
 
 /**
- * The testable post-spawn dispatch of {@link spawnChatopsBotToolAndCall}: look up the tool (by id,
- * then platform-prefixed id), execute it, and disconnect in `finally`. Extracted so the dispatch
- * logic is unit-testable with a fake MCPClient, without opening a real bot connector subprocess.
+ * The testable post-spawn dispatch of {@link spawnChatopsBotToolAndCall}: look up the tool on the
+ * platform's own server (the bot spawn names it `slack` / `teams`, and the client lists each of its
+ * tools as `<platform>_<tool>` — see `resolveServerTool`), execute it, and disconnect in `finally`.
+ * Extracted so the dispatch logic is unit-testable with a fake MCPClient, without opening a real bot
+ * connector subprocess.
  */
 export async function runBotToolCall(
   client: MCPClient,
@@ -33,7 +35,7 @@ export async function runBotToolCall(
 ): Promise<unknown> {
   try {
     const tools = await listLazyMeshClientTools(client);
-    const tool = tools[toolId] ?? tools[`${platform}_${toolId}`];
+    const tool = resolveServerTool(tools, platform, toolId);
     if (tool?.execute === undefined) {
       throw new Error(`chatops: tool "${toolId}" not found for platform "${platform}"`);
     }

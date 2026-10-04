@@ -1,7 +1,11 @@
 import type { MCPClient } from "@mastra/mcp";
 import * as spawners from "../connectors/lazy-mesh/connector-spawns.ts";
 import type { MeshSpawnContext } from "../connectors/lazy-mesh/slot.ts";
-import { type LazyMeshToolMap, listLazyMeshClientTools } from "../connectors/lazy-mesh/tool-map.ts";
+import {
+  type LazyMeshToolMap,
+  listLazyMeshClientTools,
+  resolveServerTool,
+} from "../connectors/lazy-mesh/tool-map.ts";
 import type { NimbusVault } from "../vault/nimbus-vault.ts";
 
 export interface ConnectorSessionRequest {
@@ -104,6 +108,12 @@ export async function realSpawn(
 /**
  * Spawn a connector ONCE, execute `body` with a session that can make N calls, then disconnect.
  * D9 primitive: Windows process spawns are expensive — one spawn per sync cycle, N paginated calls.
+ *
+ * `session.call` takes the tool's own MCP name (`snowflake_list`), the id every caller holds, and
+ * resolves it on the session's own server: the spawners key each server by its service id, and the
+ * client lists it as `<service>_<tool>` (see `resolveServerTool`). A bare id never resolves to a
+ * tool of a different server the same client happens to carry (`github_actions` beside `github`);
+ * an exact listed key is answered as it always was.
  */
 export async function withConnectorSession<T>(
   req: ConnectorSessionRequest,
@@ -118,7 +128,7 @@ export async function withConnectorSession<T>(
     const tools = await client.listTools();
     const session: ConnectorToolSession = {
       call(toolId, args) {
-        const tool = tools[toolId];
+        const tool = resolveServerTool(tools, req.service, toolId);
         if (tool?.execute === undefined) {
           return Promise.reject(
             new Error(`connector-session: tool "${toolId}" not found for service "${req.service}"`),

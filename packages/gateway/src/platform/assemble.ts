@@ -287,7 +287,6 @@ import { SyncScheduler } from "../sync/scheduler.ts";
 import { unboundSyncCapabilities } from "../sync/sync-capabilities.ts";
 import { type TargetedFetchOutcome, targetedFetch } from "../sync/targeted-fetch.ts";
 import type { SyncContext, SyncRuntimeContext } from "../sync/types.ts";
-import { withConnectorSession } from "../teamvault/connector-session.ts";
 import {
   drainTeamListSession,
   invokeTeamTool,
@@ -2426,7 +2425,8 @@ function buildTeamCredentialContexts(deps: {
   };
 
   // Wave 7c — team-credentialed local WRITE invoke (I19 single-tool variant). Mirrors localOpListCtx
-  // but uses invokeTeamTool (single call) + a one-shot session call.
+  // but uses invokeTeamTool (single call) + the same one-shot session call the federated anchor's
+  // runTool uses (spawnTeamToolAndCall), so both team paths share one tested lookup.
   const localOpInvokeCtx: LocalOperatorInvokeCtx = {
     db,
     store: new TeamVaultStore(db),
@@ -2439,11 +2439,7 @@ function buildTeamCredentialContexts(deps: {
             CONNECTOR_VAULT_SECRET_KEYS[service as keyof typeof CONNECTOR_VAULT_SECRET_KEYS],
           anyOfSecretGroupsFor: (service: string) =>
             TEAM_SECRET_ANYOF_GROUPS[service as keyof typeof CONNECTOR_VAULT_SECRET_KEYS],
-          spawnAndCall: (r) =>
-            withConnectorSession(
-              { service: r.service, vaultView: r.vaultView, sandboxCwd: r.sandboxCwd },
-              (session) => session.call(r.toolId, r.args),
-            ),
+          spawnAndCall: spawnTeamToolAndCall,
         },
         input,
       ),

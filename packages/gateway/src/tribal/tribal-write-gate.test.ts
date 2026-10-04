@@ -1,5 +1,8 @@
 import { Database } from "bun:sqlite";
 import { expect, test } from "bun:test";
+import { createConnectorDispatcher } from "../connectors/registry.ts";
+import { NULL_EGRESS_SINK } from "../egress/egress-ledger.ts";
+import { ToolExecutor } from "../engine/executor.ts";
 import { runIndexedSchemaMigrations } from "../index/migrations/runner.ts";
 import type { SynthesizedAnswer } from "./answer-synthesizer.ts";
 import { type TribalCluster, TribalClusterStore } from "./cluster-store.ts";
@@ -150,3 +153,57 @@ test("citations are serialized into the payload as citationsJson", async () => {
   expect(typeof json).toBe("string");
   expect(JSON.parse(json as string)).toEqual(draft.citations);
 });
+
+// The production `submitAction` runs the capture through a ToolExecutor whose dispatcher reads
+// the connector mesh, and the mesh lists every tool `<server>_<tool>` — so the notion connector's
+// `notion_kb_append` is keyed `notion_notion_kb_append`. Every test above stops at submitAction;
+// these run the action the gate builds through the real executor and dispatcher into a map keyed
+// that way, with the owner approving.
+for (const target of ["notion", "confluence"] as const) {
+  test(`${target}: an approved capture reaches the KB tool a real mesh lists, ${target}_${target}_kb_append`, async () => {
+    const listedKey = `${target}_${target}_kb_append`;
+    const ran: Array<{ key: string; input: unknown }> = [];
+    const executor = new ToolExecutor(
+      { requestApproval: async () => true },
+      { recordAudit: () => {} },
+      createConnectorDispatcher({
+        async listTools() {
+          return {
+            [listedKey]: {
+              async execute(input: unknown) {
+                ran.push({ key: listedKey, input });
+                return { id: "page-7" };
+              },
+            },
+          };
+        },
+      }),
+      undefined,
+      NULL_EGRESS_SINK,
+    );
+    const { deps: d, store } = deps({
+      cfg: {
+        notion: { databaseId: "db_cfg" },
+        confluence: { spaceKey: "ENG", parentPageId: "9999" },
+      },
+      submitAction: async (action) => {
+        const res = await executor.execute({ type: action.type, payload: action.payload });
+        if (res.status !== "ok") return { status: "rejected" };
+        return {
+          status: "approved",
+          result: { pageRef: `${target}:${(res.result as { id: string }).id}` },
+        };
+      },
+    });
+
+    const r = await captureToKnowledgeBase(d, clusterFrom(store), target);
+
+    expect(r).toEqual({ ok: true, pageRef: `${target}:page-7` });
+    expect(ran.map((x) => x.key)).toEqual([listedKey]);
+    // The destination the connector received is the config one (I25), not anything caller-supplied.
+    const input = ran[0]?.input as Record<string, unknown>;
+    if (target === "notion") expect(input["databaseId"]).toBe("db_cfg");
+    else expect([input["spaceKey"], input["parentPageId"]]).toEqual(["ENG", "9999"]);
+    expect(store.get("k1")?.status).toBe("captured");
+  });
+}

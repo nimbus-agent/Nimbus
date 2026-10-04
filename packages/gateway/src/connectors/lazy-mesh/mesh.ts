@@ -6,7 +6,6 @@ import { wrapToolOutput } from "../../engine/tool-output-envelope.ts";
 import { extensionProcessEnv } from "../../extensions/spawn-env.ts";
 import type { PlatformPaths } from "../../platform/paths.ts";
 import type { NimbusVault } from "../../vault/nimbus-vault.ts";
-import { CONNECTOR_SERVICE_IDS } from "../connector-catalog.ts";
 import type { UserMcpConnectorRow } from "../user-mcp-store.ts";
 import {
   ensureAppleMcp,
@@ -41,25 +40,14 @@ import { LazyDrainTracker } from "./drain.ts";
 import { manifestForFirstParty } from "./first-party-manifests.ts";
 import { LAZY_MESH, USER_MESH_PREFIX, userMcpMeshKey } from "./keys.ts";
 import type { LazyMcpSlot, MeshLogger, MeshSpawnContext } from "./slot.ts";
-import { type LazyMeshToolMap, listLazyMeshClientTools, mergeToolMapsOrThrow } from "./tool-map.ts";
+import {
+  type LazyMeshToolMap,
+  listLazyMeshClientTools,
+  mergeToolMapsOrThrow,
+  serviceIdForToolKey,
+} from "./tool-map.ts";
 import { ensureUserMcpClient } from "./user-mcp.ts";
 import { wrapServerSpec } from "./wrap-server-spec.ts";
-
-// Service ids longest-first so a multi-underscore id (e.g. "google_drive") is matched before a
-// shorter prefix ("google_*" tools must not be mis-attributed). A tool key belongs to service `s`
-// when it equals `s` or starts with `s_` (the mesh names each MCP server by its service id, and
-// the MCP client prefixes every tool with `<serverKey>_`).
-const SERVICE_IDS_BY_LENGTH_DESC: readonly string[] = [...CONNECTOR_SERVICE_IDS].sort(
-  (a, b) => b.length - a.length,
-);
-
-/** The connector service id that owns a dispatcher tool key, or undefined if none matches. */
-function serviceIdForToolKey(toolKey: string): string | undefined {
-  for (const id of SERVICE_IDS_BY_LENGTH_DESC) {
-    if (toolKey === id || toolKey.startsWith(`${id}_`)) return id;
-  }
-  return undefined;
-}
 
 export class LazyConnectorMesh {
   private readonly filesystem: MCPClient;

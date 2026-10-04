@@ -82,6 +82,27 @@ describe("spawnTeamToolAndCall (thin wrapper over withConnectorSession)", () => 
     expect(calls).toEqual([{ a: 1 }]);
   });
 
+  test("calls the tool a real session lists as <service>_<tool> when given its bare id", async () => {
+    // The shared seam of BOTH team paths: the federated anchor's runTool and the local-operator
+    // team write (`localOpInvokeCtx` in platform/assemble.ts) each spawn through this function.
+    const calls: unknown[] = [];
+    __setSessionSpawnerForTest(() =>
+      sessionClient({
+        github_github_issue_list: {
+          execute: (args: unknown) => {
+            calls.push(args);
+            return Promise.resolve({ listed: true });
+          },
+        },
+      }),
+    );
+
+    const result = await spawnTeamToolAndCall(req({ toolId: "github_issue_list" }));
+
+    expect(result).toEqual({ listed: true });
+    expect(calls).toEqual([{ a: 1 }]);
+  });
+
   test("propagates the not-found error (and still disconnects) when the tool is absent", async () => {
     let disconnects = 0;
     __setSessionSpawnerForTest(() =>

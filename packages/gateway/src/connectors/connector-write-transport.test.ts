@@ -69,6 +69,31 @@ describe("invokeConnectorWrite", () => {
     expect(disconnected).toBe(true);
   });
 
+  test("default personal path runs the write a real session lists as <service>_<tool>", async () => {
+    // A real session lists through MCPClient, so the tableau connector's
+    // `tableau_datasource_refresh` is keyed `tableau_tableau_datasource_refresh`; the transport is
+    // handed the bare id the write registry holds.
+    const ran: Array<{ key: string; input: unknown }> = [];
+    __setSessionSpawnerForTest(async () => ({
+      listTools: async () => ({
+        tableau_tableau_datasource_refresh: {
+          execute: async (input: unknown) => {
+            ran.push({ key: "tableau_tableau_datasource_refresh", input });
+            return { status: "queued", jobId: "j-1" };
+          },
+        },
+      }),
+      disconnect: async () => {},
+    }));
+    const out = await invokeConnectorWrite(ctx({ vault: {} as unknown as NimbusVault }), {
+      service: "tableau",
+      writeToolId: "tableau_datasource_refresh",
+      args: { id: "ds-1" },
+    });
+    expect(out).toEqual({ status: "queued", jobId: "j-1" });
+    expect(ran).toEqual([{ key: "tableau_tableau_datasource_refresh", input: { id: "ds-1" } }]);
+  });
+
   test("team path routes through runTeamInvoke with the configured entry", async () => {
     let seen: unknown;
     const out = await invokeConnectorWrite(

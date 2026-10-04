@@ -35,7 +35,7 @@ If your new code hands a tool result to the LLM and does not call `wrapToolOutpu
 |---|---|
 | [`packages/gateway/src/engine/tool-output-envelope.ts`](../../packages/gateway/src/engine/tool-output-envelope.ts) | `wrapToolOutput(ctx, result)` — the only correct way to produce the envelope |
 | [`packages/gateway/src/engine/agent.ts`](../../packages/gateway/src/engine/agent.ts) `wrapToolForLlm` (lines 25–76) | Tool-definition decorator applied to each Mastra-registered tool when the agent is built. Replaces the tool's `execute` so its return value flows through `wrapToolOutput` before reaching the LLM. Every `searchLocalIndex` / `fetchMoreIndexResults` / etc. result is wrapped here. |
-| [`packages/gateway/src/connectors/lazy-mesh/mesh.ts:459`](../../packages/gateway/src/connectors/lazy-mesh/mesh.ts) | Lazy-mesh dispatcher `listTools()` (lines 440–492) — wraps every MCP tool result that is exposed via Mastra to the LLM |
+| [`packages/gateway/src/connectors/lazy-mesh/mesh.ts:478`](../../packages/gateway/src/connectors/lazy-mesh/mesh.ts) | Lazy-mesh dispatcher `listTools()` (lines 478–532) — wraps every MCP tool result that is exposed via Mastra to the LLM |
 | [`packages/gateway/src/security-invariants.test.ts`](../../packages/gateway/src/security-invariants.test.ts) | Enforcement test — fails if a known wiring site stops calling `wrapToolOutput` |
 
 If you add a third LLM-facing path, **you also add a wiring assertion in `security-invariants.test.ts`** so the next regression fails CI immediately.

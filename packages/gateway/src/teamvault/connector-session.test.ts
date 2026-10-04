@@ -112,6 +112,81 @@ describe("withConnectorSession", () => {
   });
 });
 
+// A real session lists tools through `MCPClient.listTools()`, which keys each one `<server>_<tool>`
+// and the spawners name each server by its service id — so the snowflake connector's
+// `snowflake_list` arrives as `snowflake_snowflake_list`. The fakes above are keyed by bare ids,
+// the one shape a real session never has; these are keyed the way it does.
+describe("withConnectorSession — tool maps keyed the way MCPClient lists them", () => {
+  afterEach(() => __setSessionSpawnerForTest(undefined));
+
+  /** Serve `keys` as a listed tool map; each tool records its own key when executed. */
+  function serveListed(keys: readonly string[], ran: string[]): void {
+    __setSessionSpawnerForTest(() => ({
+      listTools: async () =>
+        Object.fromEntries(
+          keys.map((key) => [
+            key,
+            {
+              execute: async (args: unknown) => {
+                ran.push(key);
+                return { key, args };
+              },
+            },
+          ]),
+        ),
+      disconnect: async () => {},
+    }));
+  }
+
+  it("calls a tool by its bare id on the session's own server", async () => {
+    const ran: string[] = [];
+    serveListed(["snowflake_snowflake_list", "snowflake_snowflake_tag_set"], ran);
+    const out = await withConnectorSession(
+      { service: "snowflake", vaultView: fakeVault, sandboxCwd: SANDBOX_CWD },
+      async (s) => [
+        await s.call("snowflake_list", { cursor: null }),
+        await s.call("snowflake_tag_set", { object: "DB.S.T", tag: "pii" }),
+      ],
+    );
+    expect(ran).toEqual(["snowflake_snowflake_list", "snowflake_snowflake_tag_set"]);
+    expect(out[1]).toEqual({
+      key: "snowflake_snowflake_tag_set",
+      args: { object: "DB.S.T", tag: "pii" },
+    });
+  });
+
+  it("still answers a caller that names the listed key exactly", async () => {
+    const ran: string[] = [];
+    serveListed(["snowflake_snowflake_list"], ran);
+    await withConnectorSession(
+      { service: "snowflake", vaultView: fakeVault, sandboxCwd: SANDBOX_CWD },
+      (s) => s.call("snowflake_snowflake_list", { cursor: null }),
+    );
+    expect(ran).toEqual(["snowflake_snowflake_list"]);
+  });
+
+  it("never resolves a bare id onto another server the client carries", async () => {
+    // The github spawner's ONE client carries `github` and `github_actions`; `github_` +
+    // `actions_gha_run_trigger` spells github_actions' trigger, which a github session must not run.
+    const ran: string[] = [];
+    serveListed(
+      ["github_github_pr_list", "github_actions_gha_run_list", "github_actions_gha_run_trigger"],
+      ran,
+    );
+    const session = { service: "github", vaultView: fakeVault, sandboxCwd: SANDBOX_CWD };
+    await expect(
+      withConnectorSession(session, (s) => s.call("actions_gha_run_trigger", {})),
+    ).rejects.toThrow(/tool "actions_gha_run_trigger" not found for service "github"/);
+    await expect(withConnectorSession(session, (s) => s.call("gha_run_list", {}))).rejects.toThrow(
+      /tool "gha_run_list" not found for service "github"/,
+    );
+    expect(ran).toEqual([]);
+    // Control: the session's own server answers its bare id.
+    await withConnectorSession(session, (s) => s.call("github_pr_list", {}));
+    expect(ran).toEqual(["github_github_pr_list"]);
+  });
+});
+
 describe("realSpawn (deterministic client-assembly, injected spawner)", () => {
   function fakeMcpClient(): MCPClient {
     return {
