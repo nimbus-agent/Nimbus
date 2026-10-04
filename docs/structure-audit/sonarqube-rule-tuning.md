@@ -166,6 +166,13 @@ findings** on `main` at `71a06515`: 439 code smells and 9 bugs. One sweep addres
 | one each: `typescript:` S2301, S2699, S3735, S4043, S4144, S5843, S5976, S6353, S6551, S7718, S7744, S7746, S7780, S9381, and `c:S886` | 15 | 15 | 0 |
 | **Total** | **448** | **306** | **142** |
 
+**Two more arrived while the branch was open.** SonarCloud's analysis of `main` at `84a335ec`
+(#1600, the on-call push's ChatOps sink) opened one `typescript:S3358` and one `typescript:S9382`,
+both in `oncall-push/push-sinks.ts`, and the merge of `main` brought them onto the branch. The same
+rules decided them: the nested ternary became `chatSummaryOutcome`, and the headline loop stays
+sequential with a marker (its row is in the table below). That makes **450** findings: **307** fixed
+in code and **143** suppressed.
+
 **The policy is unchanged from Cleanup 6: fix in code, do not disable rules.** No rule was disabled
 and no Sonar, coverage or duplication exclusion was added. A finding was suppressed only when the
 rule's suggested rewrite would change behaviour. The suppression is a TRAILING
@@ -242,16 +249,17 @@ above is silently ignored. Every suppression in this sweep is `typescript:S9382`
   for a null check that wants optional chaining, and S4123 for an `await` left on a now-synchronous
   function.
 
-### The 139 markers in the tree
+### The 140 markers in the tree
 
-142 markers were placed, one per suppressed finding. The duplication pass that followed folded six
-marked loops into two shared helpers: the depth-first file walk of the data-profile,
-great-expectations and localdb syncs into `_lib/collect-files.ts`, and the spawn-timing loop of
-three perf surfaces (`bench-cli-overhead-cold`, `bench-cli-overhead-warm`, `bench-tui-first-paint`)
-into `bench-cli-spawn-shared.ts`. It also folded the six warehouse/BI syncables' straight-line
-`_list` drains into the one loop in `createWarehouseListSyncable`, which needed one new marker,
-because each drain spawns the connector or opens a team session through the I19 gate. That gives
-142 − 6 + 2 + 1 = **139**, all `typescript:S9382`. That is what
+142 markers were placed for the backlog, one per suppressed finding. The duplication pass that
+followed folded six marked loops into two shared helpers: the depth-first file walk of the
+data-profile, great-expectations and localdb syncs into `_lib/collect-files.ts`, and the
+spawn-timing loop of three perf surfaces (`bench-cli-overhead-cold`, `bench-cli-overhead-warm`,
+`bench-tui-first-paint`) into `bench-cli-spawn-shared.ts`. It also folded the six warehouse/BI
+syncables' straight-line `_list` drains into the one loop in `createWarehouseListSyncable`, which
+needed one new marker, because each drain spawns the connector or opens a team session through the
+I19 gate. That gives 142 − 6 + 2 + 1 = 139. The #1600 headline loop adds one more, for **140**, all
+`typescript:S9382`. That is what
 `git diff origin/main...HEAD -- '*.ts' '*.tsx' | grep -c '^+.*NOSONAR'` counts. The pathspec
 matters: this page and the changelog entry mention the token in prose, so an unfiltered diff counts
 3 more.
@@ -262,7 +270,7 @@ key index become plain `Promise.all` candidates if that backend ever serializes 
 `.keyindex.json` updates. Another: a rate-limited loop becomes a candidate if its connector gains a
 concurrency cap of its own. Then delete the marker and its row together.
 
-### Sites (139 markers)
+### Sites (140 markers)
 
 #### Connector syncs, connector libraries and the lazy mesh (49)
 
@@ -382,7 +390,7 @@ concurrency cap of its own. Then delete the marker and its row together.
 | `gateway/src/perf/surfaces/spawn-test-helpers.ts` `start` | `typescript:S9382` | simulated stream pacing - each chunk is enqueued only after the previous chunk's delay |
 | `gateway/src/perf/surfaces/sqlite-worker-shared.ts` `runWorkerLoop` | `typescript:S9382` | SQLITE_BUSY backoff - the next write is attempted only after this wait |
 
-#### Other gateway modules (37)
+#### Other gateway modules (38)
 
 | Site | Rule | Why it stays sequential |
 |---|---|---|
@@ -409,6 +417,7 @@ concurrency cap of its own. Then delete the marker and its row together.
 | `gateway/src/multimodal/media-pass.ts` `runMediaPass` | `typescript:S9382` | cursor-ordered pass - each item spends the budget the previous ones left and advances the resume cursor, and a stop must not start later items |
 | `gateway/src/oncall-push/push-runner.ts` `once` | `typescript:S9382` | one agents.oncall session at a time - the has() re-check above must see every row stored before it, and a failed insert must stop the later briefs (the finally delivers the rows already stored) |
 | `gateway/src/oncall-push/push-runner.ts` `loop` | `typescript:S9382` | single-flight rerun - the loop condition is set by run() calls landing while the previous once() ran, and runs never overlap (each dedups against the rows the last one stored) |
+| `gateway/src/oncall-push/push-sinks.ts` `chatSink` | `typescript:S9382` | headlines post one at a time, newest first (the sort above), each ledgered (I29) before it is sent - concurrent posts would let a slow one reorder the headlines in the channel |
 | `gateway/src/oncall-push/push-sinks.ts` `createPushDeliverer` (a callback inside it) | `typescript:S9382` | human-facing toasts are shown one at a time, newest first (the sort above) - concurrent notify calls would let a slow notifier reorder or stack the capped toasts |
 | `gateway/src/platform/assemble.ts` `drainOnPair` | `typescript:S9382` | FIFO drain - the peer receives its queued forwards one at a time in received_at order, over an unbounded queue |
 | `gateway/src/platform/assemble.ts` `bindCredentials` | `typescript:S9382` | Vault WRITES - macOS set() updates `.keyindex.json` by an unlocked read-modify-write, so concurrent sets lose index entries; one at a time also stops at the first failure rather than writing more secrets for a tool that may never register |

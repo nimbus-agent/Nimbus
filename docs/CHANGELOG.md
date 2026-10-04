@@ -31,7 +31,9 @@ Phase-level history before `v0.1.0` (Phases 1â€“4) lives in [`docs/roadmap.md` Â
   `cli/src/format/slack-markdown.ts`, were real super-linear regexes: a long unclosed link title or
   heading separator took seconds to render. Both now run in linear time. The link pattern became a
   hand-written scan, the heading pattern a regex that cannot backtrack, and time-bounded tests
-  guard both.
+  guard both. Merging `main` brought two more, both in #1600's new ChatOps sink in
+  `oncall-push/push-sinks.ts`: an S3358, fixed, and an S9382, suppressed. That makes 450 in all,
+  307 fixed and 143 suppressed.
   **Suppressions follow one written rule, and no rule was disabled.** No Sonar, coverage or
   duplication exclusion was added either. Every suppression is a trailing
   `// NOSONAR S9382: <reason>` on the reported line, used only where a loop must stay sequential.
@@ -46,8 +48,8 @@ Phase-level history before `v0.1.0` (Phases 1â€“4) lives in [`docs/roadmap.md` Â
   - return `Promise.resolve` when the body cannot throw;
   - use `Promise.try` or a restructure when it can.
 
-  The duplication pass then folded six marked loops into two shared helpers and added one, so 139
-  markers remain. Each is listed with its reason in
+  The duplication pass then folded six marked loops into two shared helpers and added one, and the
+  #1600 headline loop added one more, so 140 markers remain. Each is listed with its reason in
   [`sonarqube-rule-tuning.md`](./structure-audit/sonarqube-rule-tuning.md#2026-10-03--sonarcloud-rules-s9382--s7503--s9383--s9381-added-to-the-analyzer).
   **Three changes are deliberate and user-visible, all fixes.**
   - `nimbus test` now awaits `runContractTests`. Before, a manifest that violated the extension
@@ -72,8 +74,9 @@ Phase-level history before `v0.1.0` (Phases 1â€“4) lives in [`docs/roadmap.md` Â
   **Coverage.** 213 new test files and additions to 141 existing ones bring 2,934 more tests. The
   whole-repo `bun test` run goes from 24,673 tests in 1,639 files to 27,169 in 1,836, and the
   desktop UI's vitest suite goes from 528 tests in 76 files to 966 in 92, all passing. Both trees
-  were measured on the same machine with the same instrumentation: `build-lcov`'s istanbul shards
-  for the gateway and CLI, and vitest's v8 provider for the UI.
+  were measured on the same machine, with `main` at `38d07ce7` (before #1600 landed), and with the
+  same instrumentation: `build-lcov`'s istanbul shards for the gateway and CLI, and vitest's v8
+  provider for the UI.
   - Over the 1,281 gateway and CLI source files both trees share, line coverage goes from 95.24% to
     97.35% and branch coverage from 90.70% to 95.21%. That leaves 1,441 uncovered lines (from
     2,625) and 1,907 uncovered branches (from 3,793).
