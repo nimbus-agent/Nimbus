@@ -303,16 +303,34 @@ Title the PR `chore(deps): …`, or `fix(deps): …` when the pass clears an adv
 - **`@biomejs/biome` and the `$schema` URL in `biome.json`.** Set the URL to the version that actually installed (`node_modules/@biomejs/biome/package.json`), not the range you typed. A mismatch is reported only as an info diagnostic, so `bun run lint` stays green while editors validate the config against a stale schema.
 - **`sharp` and its libvips license pins.** A `sharp` bump usually moves its prebuilt `@img/sharp-libvips-*` binaries, whose LGPL exception in `scripts/structure-audit/check-js-licenses.ts` is pinned to exact versions on purpose. Move those pins and the matching line in `docs/license-policy.md` together. The pinned packages are Linux-only, so `audit:js-licenses` passes no matter what on Windows and macOS: confirm it with `bun run verify:docker`, or on CI.
 
-### Majors that were held back
+### Majors that are held back
 
-These three majors were **previously blocked**: each entry records why it was held back when the
-section was written (2026-10-02), not a standing fact. Blockers clear without notice, so **re-test
-each one before assuming it still holds**, take the major in the pass where it clears, and delete
-its entry in that same pass.
+The bulk update of 2026-10-03 (#1597) cleared two of the three earlier blockers. `vite` 8 and
+`@vitejs/plugin-react` 6 landed together. js-yaml 5 landed with named imports, plus `USER_YAML_SCHEMA`
+to restore the merge keys and tags it dropped. The majors below are still held back. Each entry records
+why at the time it was written, not a standing fact. Blockers clear without notice, so **re-test each one
+before assuming it still holds**, take the major in the pass where it clears, and delete its entry in
+that same pass.
 
-- **`vite` 8 with `@vitejs/plugin-react` 6.** `@vitejs/plugin-react` 6 peered `vite` ^8, so the two majors have to land in the same pass. They were held back while an automated updater would have split them across PRs; with Dependabot retired, that reason is gone and only the coupling remains. To re-check: `@vitejs/plugin-react`'s `peerDependencies.vite`, then the UI suite on the new pair.
-- **TypeScript 7 in `packages/docs`.** When recorded, the rest of the repository was on TypeScript 7 and `packages/docs` declared TypeScript 6. `astro check` runs `@astrojs/language-server`, which called `ts.sys`, and TypeScript 7's native port did not expose it: under 7.0.2 the docs typecheck crashed with `undefined is not an object (evaluating 'this.ts.sys.fileExists')`. `@astrojs/check` 0.9.10 also declared `typescript: ^5.0.0 || ^6.0.0`. To re-check: that peer range, then `bun run typecheck` with the docs workspace on 7. Separately, the root `typescript-compiler-api` alias was kept on TypeScript 6 for a different reason: TypeScript 7 exported its compiler API only under explicitly unstable subpaths, and `scripts/cleanup/strip-comments.ts` and `scripts/cleanup/survey-oc.ts` drive that API directly. Re-check that too: the subpaths may have stabilised.
-- **js-yaml 5.** It was attempted in #1049 and reverted. v5's ESM build dropped the default export. TypeScript did not catch that, only running the tests did, and both this repository (two gateway source files, three CI gate scripts and a test, when recorded) and the Astro/Starlight chain imported it that way. The chain also declared js-yaml `^4` (`astro`, `@astrojs/starlight`, `@astrojs/internal-helpers`), and because the root `overrides` pin is global, the gateway could not get 5 while Astro kept 4. The pin could not simply be dropped either: it also lifted `gray-matter` and `@istanbuljs/load-nyc-config` off js-yaml 3. To re-check: the `js-yaml` range in the `dependencies` of `astro` and `@astrojs/starlight`, and every default-import site in this repository. When it clears, move the override and every declaration in the same PR.
+- **TypeScript 7 in `packages/docs`.** The rest of the repository is on TypeScript 7. Under 7.0.2,
+  `astro check` (the docs typecheck and build step) refuses to run: "astro check does not currently
+  support TypeScript 7.0". Astro's TypeScript 7 route needs 7.1+, and `@astrojs/check` 0.9.10 still
+  declares `typescript: ^5.0.0 || ^6.0.0`. The root `typescript-compiler-api` alias also stays on 6, for a
+  different reason: TypeScript 7 exports its compiler API only under explicitly unstable subpaths, and
+  `scripts/cleanup/strip-comments.ts` and `scripts/cleanup/survey-oc.ts` drive it directly. To re-check:
+  `@astrojs/check`'s peer range, then `bun run typecheck` with the docs workspace on 7. Separately, check
+  whether the compiler-API subpaths have stabilised.
+- **msw 3** (gateway devDependency). msw 3 intercepts requests by patching `node:net`/`tls` sockets, and
+  Bun's native `fetch` never goes through them. Under msw 3.0.2 the gateway's handler tests therefore sent
+  real requests to Google and GitHub instead of being intercepted. msw 3 also renamed
+  `onUnhandledRequest` to `onUnhandledFrame`, and the old name is silently ignored at runtime (only
+  tsc flags it). To re-check: run the four tests in `msw-handlers.test.ts` on the new version with the
+  network unplugged.
+- **WiX 6 and 7** (the release MSI). Their binaries are released under the Open Source Maintenance Fee
+  EULA, so adopting them is a licensing decision for the maintainer, not a version bump.
+
+Toolchains are not part of a bulk update and move in their own PRs. That covers the Rust pin in
+`rust-toolchain.toml` and Bun in CI (`setup-nimbus-ci`'s `bun-version` default).
 
 ---
 
