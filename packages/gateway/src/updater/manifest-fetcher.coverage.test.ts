@@ -159,8 +159,27 @@ describe("isPermittedSchemeForUpdater", () => {
     expect(isPermittedSchemeForUpdater("https://updates.example/latest.json")).toBe(true);
     expect(isPermittedSchemeForUpdater("http://localhost:4000/latest.json")).toBe(true);
     expect(isPermittedSchemeForUpdater("http://127.0.0.1/latest.json")).toBe(true);
+    // The IPv6 loopback, which `URL` reports BRACKETED: a comparison against a bare `::1` could
+    // never match it.
+    expect(isPermittedSchemeForUpdater("http://[::1]/latest.json")).toBe(true);
+    expect(isPermittedSchemeForUpdater("http://[::1]:8080/latest.json")).toBe(true);
+    expect(isPermittedSchemeForUpdater("http://[::2]/latest.json")).toBe(false);
     expect(isPermittedSchemeForUpdater("http://updates.example/latest.json")).toBe(false);
     expect(isPermittedSchemeForUpdater("file:///etc/passwd")).toBe(false);
     expect(isPermittedSchemeForUpdater("::not a url::")).toBe(false);
+  });
+
+  test("in production plain http is refused even to loopback, and https still passes", () => {
+    const saved = process.env["NODE_ENV"];
+    process.env["NODE_ENV"] = "production";
+    try {
+      expect(isPermittedSchemeForUpdater("http://127.0.0.1/latest.json")).toBe(false);
+      expect(isPermittedSchemeForUpdater("http://localhost/latest.json")).toBe(false);
+      expect(isPermittedSchemeForUpdater("http://[::1]/latest.json")).toBe(false);
+      expect(isPermittedSchemeForUpdater("https://updates.example/latest.json")).toBe(true);
+    } finally {
+      if (saved === undefined) delete process.env["NODE_ENV"];
+      else process.env["NODE_ENV"] = saved;
+    }
   });
 });
