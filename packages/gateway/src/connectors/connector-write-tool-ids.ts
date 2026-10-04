@@ -97,7 +97,7 @@ export const MIGRATED_WRITE_TOOL_IDS: ReadonlySet<string> = new Set([
   "k8s_deployment_scale",
   "k8s_pod_delete",
 
-  // Classified 2026-10-04: real mutations the I26 predicate let a federated peer name.
+  // Classified 2026-10-05: real mutations the I26 predicate let a federated peer name.
   //   - Registered as plain READ tools in @nimbus-dev/connectors 0.2.1 and moved to the consent
   //     kit's write registrar in 0.2.2, where the sync guard (`connector-write-sync.test.ts`)
   //     derives them:

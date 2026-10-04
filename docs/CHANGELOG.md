@@ -18,7 +18,7 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
 
 ## Post-Phase-6 deliveries
 
-- **2026-10-04 — I26 holds again: the federated invoke gate refuses every connector write, in the
+- **2026-10-05 — I26 holds again: the federated invoke gate refuses every connector write, in the
   form a session actually executes it, and a sync guard keeps the write list in step with the
   connectors package.** I26 says a federated peer can never trigger a connector write:
   `answerFederatedInvoke` refuses any tool id `isConnectorWriteToolId` classifies. Three gaps made
@@ -48,15 +48,28 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
   not refuse, bare or namespaced. It follows the registrar by data flow from
   `createWriteToolRegistrar`, not by name: 0.2.2 already forwards writes through
   `registerStatusTool`, `registerPipelineActionTool` and `registerFeedbackTool`, which a
-  `register*WriteTool` pattern would miss. A shape it cannot follow fails the test rather than
-  being skipped, and it checks itself against upstream's own manifests: every connector declaring a
-  write must yield a registration. It derives 87 writes from 0.2.1 and 91 from 0.2.2, so the
-  pending connectors bump passes it unchanged, and it has no exception list. It cannot see a
-  mutation registered as a read, which is why `gdrive_file_trash` is listed by hand. Found on the
-  way and not fixed here: because of the same namespacing, a bare id cannot execute through
-  `withConnectorSession` at all, so the gateway's own bare-id callers of it (the local
-  connector-write transport and the team list drain) fail closed against a real session, while
-  their unit tests fake bare-keyed tool maps. No new invariant, no migration, no new IPC method.
+  `register*WriteTool` pattern would miss. It follows an exported registrar or shared kit through
+  named, namespace and dynamic imports, renamed destructurings included, and refuses every import
+  shape it cannot follow: a default export, a module object used other than as `m.member`, an
+  aliased import, a registrar's name spelled as a string, and an exported registrar no file names.
+  It checks itself against upstream's own manifests too: every connector declaring a write must
+  yield a registration. It derives 87 writes from 0.2.1 and 91 from 0.2.2, so the pending
+  connectors bump passes it unchanged, and it has no exception list. Two blind spots are stated
+  rather than hidden: a mutation registered as a read, which is why `gdrive_file_trash` is listed
+  by hand, and an object a registrar was handed off into, then read by a non-literal computed key
+  or by reflection.
+
+  Found on the way and not fixed here: because of the same namespacing, a bare id is not found
+  wherever the gateway looks a tool up verbatim in an `MCPClient`-keyed map, so the gateway's own
+  bare-id callers fail closed against real connectors while their unit tests fake bare-keyed maps.
+  Those callers are the connector-write transport (personal and team-credentialed), the team list
+  drain, the PERSONAL warehouse/BI list drain behind every personal-credential Snowflake, Tableau,
+  Looker, Power BI, Monte Carlo and Bigeye sync, and, through the mesh dispatcher, the tribal KB
+  capture, which fails with "Tool not found" after the owner approves it. The federated path
+  executes only the namespaced key, so `nimbus team vault grant` and `nimbus team invoke` must name
+  `<server>_<tool>`: `docs/cli-reference.md` now shows `stripe_stripe_search` where it showed
+  `stripe.refund.create`, a tool that exists in neither form. No new invariant, no migration, no
+  new IPC method.
 
 - **2026-10-04 — Quality sweep: the SonarCloud backlog cleared, duplication down by a third, and
   about 2,900 tests added.** On 2026-09-29 SonarCloud's TypeScript analyzer gained four rules:

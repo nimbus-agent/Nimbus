@@ -298,7 +298,7 @@ describe("I26 — federated peer gate fail-closed rejects write tool ids", () =>
     expect(audited.action_type).toBe("teamvault.invoke.write_forbidden");
   });
 
-  // Classified 2026-10-04: four moved to the write registrar in connectors 0.2.2, and
+  // Classified 2026-10-05: four moved to the write registrar in connectors 0.2.2, and
   // gdrive_file_trash, which still mutates from a read registration. Each is tried BARE and in the
   // `<server>_<tool>` form a team-credentialed session actually executes (`@mastra/mcp` namespaces
   // every key) — the bare id alone was all the predicate used to match, so the executable form of

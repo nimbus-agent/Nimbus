@@ -39,6 +39,42 @@ function connector(id: string, body: string, file = "server.ts"): PackageSource 
   return { rel: `connectors/${id}/src/${file}`, text: `${KIT_IMPORT}\n${body}\n` };
 }
 
+/**
+ * A module of connector `id` exporting a POSITIONAL forwarder — the tool id first, `mutates` passed
+ * as a plain argument, so no `mutates:` literal ever sits at a call site. That is the shape
+ * connectors 0.2.2 uses inside bigeye, gitlab and monte-carlo, here exported so another module can
+ * reach it through an import.
+ */
+function statusModule(id: string): PackageSource {
+  return connector(
+    id,
+    `${REGISTRAR}
+export function registerStatusTool(name: string, mutates: string, description: string): void {
+  registerWriteTool(name, { mutates, recoverable: true, scopeTargetOf: (p) => ({ kind: "issue", value: p.id }) }, description, schema, h);
+}`,
+    "status.ts",
+  );
+}
+
+/** A shared kit that builds each write-tool id from the `toolPrefix` its CALLER passes. */
+const MAIL_KIT: PackageSource = {
+  rel: "shared/fx-mail-kit.ts",
+  text: `import type { WriteToolRegistrar } from "./consent-kit.ts";
+export function registerFxMailTools(opts: {
+  toolPrefix: string;
+  registerWriteTool: WriteToolRegistrar;
+}): void {
+  const { toolPrefix, registerWriteTool } = opts;
+  registerWriteTool(
+    \`\${toolPrefix}_mail_frobnicate\`,
+    { mutates: \`\${toolPrefix}.mail.frobnicate\`, recoverable: true, scopeTargetOf: (p) => ({ kind: "recipient", value: p.to }) },
+    "Send.",
+    schema,
+    h,
+  );
+}`,
+};
+
 export const SHAPE_FIXTURES: readonly ShapeFixture[] = [
   {
     shape: "a literal id on a multi-line registrar call",
@@ -125,23 +161,7 @@ registerFxWriteTool("fx_factory_frobnicate", ${cfg("fx.factory.frobnicate")}, "d
   {
     shape: "a registrar handed to a shared kit that builds the id from each caller's constant",
     sources: [
-      {
-        rel: "shared/fx-mail-kit.ts",
-        text: `import type { WriteToolRegistrar } from "./consent-kit.ts";
-export function registerFxMailTools(opts: {
-  toolPrefix: string;
-  registerWriteTool: WriteToolRegistrar;
-}): void {
-  const { toolPrefix, registerWriteTool } = opts;
-  registerWriteTool(
-    \`\${toolPrefix}_mail_frobnicate\`,
-    { mutates: \`\${toolPrefix}.mail.frobnicate\`, recoverable: true, scopeTargetOf: (p) => ({ kind: "recipient", value: p.to }) },
-    "Send.",
-    schema,
-    h,
-  );
-}`,
-      },
+      MAIL_KIT,
       connector(
         "fx-mail-a",
         `import { registerFxMailTools } from "../../../shared/fx-mail-kit.ts";
@@ -239,5 +259,115 @@ registerFxWriteTool("fx_exported_frobnicate", ${cfg("fx.exported.frobnicate")}, 
     ],
     ids: ["fx_alias_frobnicate"],
     tags: ["literal"],
+  },
+  {
+    shape: "an exported forwarder called through a namespace import",
+    sources: [
+      statusModule("fx-namespace"),
+      connector(
+        "fx-namespace",
+        `import * as status from "./status.ts";
+status.registerStatusTool("fx_namespace_frobnicate", "fx.namespace.frobnicate", "Frobnicate.");`,
+      ),
+    ],
+    ids: ["fx_namespace_frobnicate"],
+    tags: ["literal", "forwarder"],
+  },
+  {
+    shape: "an exported forwarder aliased off a namespace import",
+    sources: [
+      statusModule("fx-ns-alias"),
+      connector(
+        "fx-ns-alias",
+        `import * as status from "./status.ts";
+const reopen = status.registerStatusTool;
+reopen("fx_nsalias_frobnicate", "fx.nsalias.frobnicate", "Frobnicate.");`,
+      ),
+    ],
+    ids: ["fx_nsalias_frobnicate"],
+    tags: ["literal", "forwarder"],
+  },
+  {
+    shape: "an exported forwarder destructured under a new name from a dynamic import",
+    sources: [
+      statusModule("fx-dynamic"),
+      connector(
+        "fx-dynamic",
+        `export async function registerFxTools(): Promise<void> {
+  const { registerStatusTool: reopen } = await import("./status.ts");
+  reopen("fx_dynamic_frobnicate", "fx.dynamic.frobnicate", "Frobnicate.");
+}`,
+      ),
+    ],
+    ids: ["fx_dynamic_frobnicate"],
+    tags: ["literal", "forwarder"],
+  },
+  {
+    shape: "a dynamic import's module object, bound to a name or dereferenced on the spot",
+    sources: [
+      statusModule("fx-module"),
+      connector(
+        "fx-module",
+        `export async function registerFxTools(): Promise<void> {
+  const status = await import("./status.ts");
+  status.registerStatusTool("fx_module_bound_frobnicate", "fx.module.bound", "Frobnicate.");
+  (await import("./status.ts")).registerStatusTool("fx_module_spot_frobnicate", "fx.module.spot", "Frobnicate.");
+}`,
+      ),
+    ],
+    ids: ["fx_module_bound_frobnicate", "fx_module_spot_frobnicate"],
+    tags: ["literal", "forwarder"],
+  },
+  {
+    shape: "an exported registrar called through a namespace import",
+    sources: [
+      {
+        rel: "connectors/fx-ns-registrar/src/registrar.ts",
+        text: `${KIT_IMPORT}\nexport const registerFxWriteTool = createWriteToolRegistrar(server, FX_WRITE_SCOPE);\n`,
+      },
+      connector(
+        "fx-ns-registrar",
+        `import * as registrar from "./registrar.ts";
+registrar.registerFxWriteTool("fx_nsregistrar_frobnicate", ${cfg("fx.nsregistrar.frobnicate")}, "d", schema, h);`,
+      ),
+    ],
+    ids: ["fx_nsregistrar_frobnicate"],
+    tags: ["literal"],
+  },
+  {
+    shape: "the registrar constructor called through a namespace import of the consent kit",
+    sources: [
+      {
+        rel: "connectors/fx-ns-consent/src/server.ts",
+        text: `import * as consent from "../../../shared/consent-kit.ts";
+const registerWriteTool = consent.createWriteToolRegistrar(server, FX_WRITE_SCOPE);
+registerWriteTool("fx_nsconsent_frobnicate", ${cfg("fx.nsconsent.frobnicate")}, "d", schema, h);
+`,
+      },
+    ],
+    ids: ["fx_nsconsent_frobnicate"],
+    tags: ["literal"],
+  },
+  {
+    shape: "a shared kit called bare by one connector and through a namespace import by another",
+    sources: [
+      MAIL_KIT,
+      connector(
+        "fx-mail-c",
+        `import { registerFxMailTools } from "../../../shared/fx-mail-kit.ts";
+${REGISTRAR}
+registerFxMailTools({ toolPrefix: "fx_kitc", registerWriteTool });`,
+        "tools.ts",
+      ),
+      connector(
+        "fx-mail-d",
+        `import * as mailKit from "../../../shared/fx-mail-kit.ts";
+${REGISTRAR}
+mailKit.registerFxMailTools({ toolPrefix: "fx_kitd", registerWriteTool });`,
+        "tools.ts",
+      ),
+    ],
+    ids: ["fx_kitc_mail_frobnicate", "fx_kitd_mail_frobnicate"],
+    tags: ["template", "kit-alias"],
   },
 ];

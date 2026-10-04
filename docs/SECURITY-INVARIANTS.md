@@ -470,7 +470,7 @@ The comments at `extensions/install-from-local.ts:120,404,556,558` document the 
 
 ## I23 — ChatOps operational posts are bounded to server-derived destinations
 
-**Statement:** ChatOps operational (non-HITL) posts go only through `chatops/reply-dispatcher.ts` to a server-derived `ReplyTarget` — either the originating message's channel (`kind: "originating"`) or a policy-declared `notify` channel for a namespace (`kind: "namespaceNotify"`). The destination is NEVER a caller-supplied raw channel. Arbitrary-destination posting (e.g. to an attacker-controlled channel) remains reachable only via the HITL-gated `*.message.post` action types (I2). No other chatops module may reference the connector post tools (`slack_chat_post` / `teams_chat_post`) directly. No federated peer can name them either: `chatops/transport/connector-post.ts` exports them as `CHATOPS_POST_TOOL_IDS`, which the I26 write predicate refuses at `answerFederatedInvoke`. Until 2026-10-04 it did not, so a peer holding the owner's grant could post to a channel of its own choosing. Static **D17**.
+**Statement:** ChatOps operational (non-HITL) posts go only through `chatops/reply-dispatcher.ts` to a server-derived `ReplyTarget` — either the originating message's channel (`kind: "originating"`) or a policy-declared `notify` channel for a namespace (`kind: "namespaceNotify"`). The destination is NEVER a caller-supplied raw channel. Arbitrary-destination posting (e.g. to an attacker-controlled channel) remains reachable only via the HITL-gated `*.message.post` action types (I2). No other chatops module may reference the connector post tools (`slack_chat_post` / `teams_chat_post`) directly. No federated peer can name them either: `chatops/transport/connector-post.ts` exports them as `CHATOPS_POST_TOOL_IDS`, which the I26 write predicate refuses at `answerFederatedInvoke`. Until 2026-10-05 it did not, so a peer holding the owner's grant could post to a channel of its own choosing. Static **D17**.
 
 **Wired at:**
 
@@ -503,7 +503,7 @@ The comments at `extensions/install-from-local.ts:120,404,556,558` document the 
 
 ## I25 — a tribal-knowledge KB capture writes only the config destination, behind the owner's HITL gate
 
-**Statement:** Capturing a repeated-question Q&A into a shared knowledge base writes ONLY to the destination pinned in the local owner's `nimbus.toml` (`[tribal.notion].database_id` / `[tribal.confluence].space_key` + `parent_page_id`), and only after the LOCAL owner approves it at the executor HITL gate. The caller (CLI `--target` or an in-chat trigger) supplies at most a KB *selector* (`notion` | `confluence`) — never the destination database/space/parent. An unconfigured target fails closed (`not_configured`) before any action is submitted; a rejected HITL leaves the cluster uncaptured. The write reaches the connector mesh only via the HITL-gated `notion.knowledge.write` / `confluence.knowledge.write` action types, whose tool ids (`notion_kb_append` / `confluence_kb_append`) are confined to the write-gate + the two connector definition sites. No federated peer can name them either: `tribal-write-gate.ts` exports them as `TRIBAL_KB_WRITE_TOOL_IDS`, which the I26 write predicate refuses at `answerFederatedInvoke`. Until 2026-10-04 it did not, so a peer holding the owner's grant could append to a knowledge base of its own choosing. Static **D19**.
+**Statement:** Capturing a repeated-question Q&A into a shared knowledge base writes ONLY to the destination pinned in the local owner's `nimbus.toml` (`[tribal.notion].database_id` / `[tribal.confluence].space_key` + `parent_page_id`), and only after the LOCAL owner approves it at the executor HITL gate. The caller (CLI `--target` or an in-chat trigger) supplies at most a KB *selector* (`notion` | `confluence`) — never the destination database/space/parent. An unconfigured target fails closed (`not_configured`) before any action is submitted; a rejected HITL leaves the cluster uncaptured. The write reaches the connector mesh only via the HITL-gated `notion.knowledge.write` / `confluence.knowledge.write` action types, whose tool ids (`notion_kb_append` / `confluence_kb_append`) are confined to the write-gate + the two connector definition sites. No federated peer can name them either: `tribal-write-gate.ts` exports them as `TRIBAL_KB_WRITE_TOOL_IDS`, which the I26 write predicate refuses at `answerFederatedInvoke`. Until 2026-10-05 it did not, so a peer holding the owner's grant could append to a knowledge base of its own choosing. Static **D19**.
 
 **Wired at:**
 
@@ -530,7 +530,7 @@ into a real routing table. The predicate is about write-ness, not routability: a
 be rejected for naming one of these tool ids whether or not the gateway could have dispatched it.
 The registry test asserts the set and the dispatchable rows never overlap.
 
-**Kept in step with the connectors package (2026-10-04).** The predicate is a hand-maintained list,
+**Kept in step with the connectors package (2026-10-05).** The predicate is a hand-maintained list,
 and five mutating tools were on none of it: `aws_ec2_instance_stop`, `aws_ec2_instance_start`,
 `slack_message_post_dm` and `teams_message_post_chat` were registered as plain READ tools in
 `@nimbus-dev/connectors` 0.2.1 and moved to the consent kit's write registrar in 0.2.2, and
@@ -542,16 +542,26 @@ through the write registrar, then fails on any `isConnectorWriteToolId` does not
 derivation follows the registrar by DATA FLOW from `createWriteToolRegistrar` — aliases, kit
 hand-offs, kit factories, and forwarders of any name — rather than by a `register*WriteTool` naming
 convention, which 0.2.2 already breaks (`registerStatusTool`, `registerPipelineActionTool`,
-`registerFeedbackTool`). It is fail-closed: a registration whose id it cannot resolve to a constant,
-a registrar used as a value it does not follow, an unbound factory result, a `mutates:` literal no
-recognised registration consumes, and a file the comment stripper lost its place in are each a
-violation that fails the test. It guards itself with a floor on the count, the registration shapes
-the pinned package uses, and upstream's own signal: every connector whose manifest declares
-`write`/`delete` in `hitlRequired` must yield a derived registration. Per-shape fixtures
-(`connectors/testing/connector-write-fixtures.ts`) prove an unclassified write is reported in every
-shape it follows, not only the shapes the installed version uses. **Stated bound:** it sees write
+`registerFeedbackTool`). It follows an exported registrar, forwarder, factory or shared kit through
+every import shape that keeps its name: a named import, a member of a namespace or dynamic import
+(`kit.registerStatusTool(...)`, or an alias of that member), and a destructuring, renamed or not. It
+is fail-closed: a registration whose id it cannot resolve to a constant, a registrar used as a value
+it does not follow (an aliased import included), an unbound factory result, a registrar exported as
+the DEFAULT, a namespace or dynamic import of a module that may export one used other than as
+`m.member` (or destructured), a namespace re-export of such a module, a string literal spelling a
+registrar's name (a computed access), an exported registrar no file names outside its declaration,
+a `mutates:` literal no recognised registration consumes, and a file the comment stripper lost its
+place in are each a violation that fails the test. It guards itself with a floor on the count, the
+registration shapes the pinned package uses, and upstream's own signal: every connector whose
+manifest declares `write`/`delete` in `hitlRequired` must yield a derived registration. Per-shape
+fixtures (`connectors/testing/connector-write-fixtures.ts`) prove an unclassified write is reported
+in every shape it follows, not only the shapes the installed version uses, and the scanner's own
+tests prove each refused shape is refused. **Stated bound, two blind spots:** it sees write
 REGISTRATIONS only, so a tool that mutates while registered as a read — `gdrive_file_trash` today —
-is invisible to it and has to be classified by hand. It also asserts that no write tool ends in a
+is invisible to it and has to be classified by hand; and an object a registrar was handed off into,
+then read by a NON-literal computed key (`regs[key](...)`) or by reflection (`Object.values(regs)`),
+is not followed — the `mutates:` cross-check catches such a call only when it carries a `mutates:`
+literal, which a positional forwarder's call does not. It also asserts that no write tool ends in a
 verb `share.replay`'s read allowlist (`share/read-tool-registry.ts`) would run, since replay is the
 other path that executes a tool id a caller names. The four comms writes whose literals static
 rules confine to their own gates — `notion_kb_append` / `confluence_kb_append` (D19) and
@@ -563,7 +573,7 @@ the knowledge base or the channel. Each gate now exports its ids as a set
 (`GATE_CONFINED_WRITE_TOOL_IDS`), so the literals stay where D17 / D19 put them and the guard has no
 exception list: it derives these four like every other write.
 
-**Matched in the form a federated session executes (2026-10-04).** A team-credentialed session
+**Matched in the form a federated session executes (2026-10-05).** A team-credentialed session
 lists its tools through `@mastra/mcp`'s `MCPClient.listTools()`, which keys every tool
 `<server>_<tool>` (`aws_aws_ec2_instance_stop`), and `withConnectorSession` looks the requested id
 up in that map verbatim — so the namespaced key is the form a federated invoke executes, and the
@@ -577,10 +587,23 @@ than the longest write id, so a hostile id costs time linear in its length rathe
 `test/integration/connectors/write-tool-namespacing.integration.test.ts` pins the key scheme on REAL
 connector processes listed through a real `MCPClient`: every key is `<server>_<tool>`, and the
 namespaced form always gets the bare id's verdict, in both directions. **Stated bound:** the same
-namespacing means a bare id cannot execute through `withConnectorSession` at all — a separate,
-fail-closed defect in the gateway's own bare-id callers of that seam (the local connector-write
-transport and the team list drain), whose unit tests fake bare-keyed tool maps. Matching both forms
-keeps I26 correct whichever way that is fixed.
+namespacing means a bare id is NOT FOUND wherever the gateway looks a tool up verbatim in an
+`MCPClient`-keyed map — a separate, fail-closed defect (the call errors and nothing runs), not fixed
+here, whose unit tests fake bare-keyed tool maps. Its callers, each confirmed against real connector
+processes listed through a real `MCPClient` (`notion_notion_kb_append`, `snowflake_snowflake_list`
+and `stripe_stripe_search` present, the bare ids absent): through `withConnectorSession`, the
+connector-write transport (personal, `connectors/connector-write-transport.ts`, and
+team-credentialed, the `localOpInvokeCtx` spawn in `platform/assemble.ts`), the team list drain
+(`teamvault/team-tool-invoke.ts` `drainTeamListSession`) and the PERSONAL warehouse/BI list drain
+(`connectors/warehouse-sync-transport.ts` `realPersonalDrain`, which every personal-credential
+Snowflake, Tableau, Looker, Power BI, Monte Carlo and Bigeye sync goes through); and, through the
+mesh dispatcher, the tribal KB capture (`tribal/tribal-write-gate.ts` sets a bare `mcpToolId`, which
+`connectors/registry.ts` looks up verbatim in the mesh's `<server>_<tool>`-keyed map, so an
+owner-approved capture fails with "Tool not found"). The federated invoke path itself executes only
+the namespaced key, so `nimbus team vault grant` / `nimbus team invoke` must name the
+`<server>_<tool>` key (`stripe_stripe_search`, not `stripe_search`); `docs/cli-reference.md` now says
+so, in place of an example that could never run. Matching both forms keeps I26 correct whichever
+way the lookup is fixed.
 
 **Statement:** Connector write actions — warehouse/BI (Snowflake tag/comment set, Tableau / Power BI refresh, Looker datagroup/schedule trigger, Monte Carlo / Bigeye incident-issue acknowledge/resolve) **and** GitOps/ML (ArgoCD app sync/rollback, Flux kustomization/helmrelease reconcile, MLflow model promote/transition-stage) — execute ONLY behind the LOCAL owner's executor HITL gate (I2): their action types are all members of `HITL_REQUIRED_BACKING`. The federated peer invoke gate (`answerFederatedInvoke`) is fail-closed against any write-classified tool id via the injected `isWriteForbiddenToolId` predicate (the union `isConnectorWriteToolId`): a peer's `federation.invoke` for a connector write is rejected with a `write_forbidden` audit decision before any connector dispatch, so a teammate can never trigger a connector write over the wire. The write tool ids themselves are confined to the two single-source-of-truth modules (`connectors/warehouse-write-tools.ts`, `connectors/gitops-ml-write-tools.ts`), the connector definition `server.ts` files, and the gateway transport/dispatch sites. Static **D20**.
 

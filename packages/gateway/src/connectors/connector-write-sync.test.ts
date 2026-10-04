@@ -7,7 +7,11 @@
  * 0.2.2 moved them to the write registrar. This derives the writes from the package's own source
  * (as text: the gateway never imports the package beyond `setConnectorMode`) and fails on any the
  * predicate does not cover. The derivation itself is fail-closed: a registration shape it cannot
- * follow is a violation, never a silent skip.
+ * follow is a violation, never a silent skip — import shapes included (namespace and dynamic
+ * imports are followed, default exports and unfollowable module-object uses refused). Its stated
+ * blind spots — an object a registrar was handed off into and then read by a non-literal computed
+ * key or by reflection, and a mutating tool registered as a READ — are spelled out in
+ * `./testing/connector-write-registrations.ts`.
  *
  * There is no exception list. The four comms writes whose literals static D17 / D19 keep out of the
  * gateway-side set are classified through the sets their gates export — and they are derived here

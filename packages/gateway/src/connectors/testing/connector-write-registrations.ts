@@ -9,27 +9,55 @@
  * Registrations are found by DATA FLOW from the consent kit's `createWriteToolRegistrar`, never by a
  * naming convention. connectors 0.2.2 already forwards writes through `registerStatusTool`,
  * `registerPipelineActionTool` and `registerFeedbackTool`, so a `register*WriteTool(` pattern would
- * miss every tool added through them. Every shape the scan cannot follow is a VIOLATION rather than
- * a silent skip:
- *
- *   - a registration whose tool id is not a literal, a template over constants, a loop over a
- *     constant table, or a string constant;
- *   - a registrar used as a value anywhere the flow below does not follow;
- *   - a registrar factory whose result is not bound to a name or handed off under a property key;
- *   - a `mutates:` literal (the action type `WriteToolConfig` requires of every write) that no
- *     recognised registration consumes, which is how a registration in an unrecognised shape shows
- *     up even when nothing else about it does;
- *   - a file whose brackets do not balance after stripping, i.e. the stripper lost its place.
+ * miss every tool added through them.
  *
  * The flow it follows: a name bound to a registrar factory (`createWriteToolRegistrar`, or a kit
  * factory discovered by the forwarding arrow it returns) is a registrar; so is an alias of one, a
  * property it is handed off under (`{ registerWriteTool }`, `opts.registerWriteTool`), any property
  * or parameter typed `*WriteToolRegistrar`, and any function that forwards its FIRST parameter to a
- * registrar, whatever it is called. Calls of those names are registrations.
+ * registrar, whatever it is called. Calls of those names are registrations. A shared KIT — a
+ * function that builds each registered id from an option its caller passes
+ * (`registerEmailConnectorTools({ toolPrefix, registerWriteTool })`) — registers one id per call
+ * site, read from that call. An EXPORTED registrar, forwarder, factory or kit is followed through
+ * every import shape that keeps its name: a named import, a member of a namespace or dynamic import
+ * (`kit.registerStatusTool(...)`, or an alias of that member), and a destructuring that takes it,
+ * renamed or not (`const { registerStatusTool: reopen } = await import("./status.ts")`).
+ *
+ * Every shape the scan cannot follow is a VIOLATION rather than a silent skip:
+ *
+ *   - a registration whose tool id is not a literal, a template over constants, a loop over a
+ *     constant table, or a string constant;
+ *   - a registrar used as a value anywhere the flow above does not follow: passed positionally,
+ *     stored in an array, listed in an `export { ... }` clause or an aliased import, or read off an
+ *     object and neither called nor bound;
+ *   - a registrar factory whose result is not bound to a name or handed off under a property key;
+ *   - a kit used other than by a call, its declaration or a plain (unaliased) import — its callers
+ *     decide the ids it registers, so a caller reaching it any other way would go unseen;
+ *   - a registrar, forwarder, factory or kit exported as the DEFAULT, which an importer binds under
+ *     a name of its own choosing;
+ *   - a namespace import of a module that exports one, used other than as `ns.member`; that module
+ *     re-exported as a namespace; and a dynamic `import()` / `require()` of it that is not
+ *     destructured, bound to a name used only as `m.member`, or dereferenced on the spot. A module
+ *     specifier the scan cannot resolve (a non-literal, or a package path it does not read) counts
+ *     as one that may export a registrar;
+ *   - a string literal equal to a registrar, forwarder, factory or registrar-key name: a computed
+ *     member access such as `regs["registerWriteTool"]`;
+ *   - an exported registrar, forwarder or factory that no file names outside its own declaration,
+ *     which is either reached in a shape the scan cannot see or dead;
+ *   - a `mutates:` literal (the action type `WriteToolConfig` requires of every write) that no
+ *     recognised registration consumes, which is how a registration in an unrecognised shape shows
+ *     up even when nothing else about it does;
+ *   - a file whose brackets do not balance after stripping, i.e. the stripper lost its place.
+ *
+ * STATED BOUND, what it still cannot see: an object a registrar was handed off into, read other than
+ * by its key — a computed member access whose key is NOT a string literal (`regs[key](...)`), or
+ * reflection over the object (`Object.values(regs)`). The `mutates:` check catches such a call only
+ * when the call itself carries a `mutates:` literal, which a positional forwarder's call does not. A
+ * tool that mutates while registered as a READ is outside the scan altogether.
  */
 import { readdirSync, readFileSync } from "node:fs";
 import { createRequire } from "node:module";
-import { dirname, join, relative, sep } from "node:path";
+import { dirname, join, posix, relative, sep } from "node:path";
 import { stripComments, stripStringLiterals } from "../../../../../scripts/structure-audit/lib.ts";
 
 export const CONNECTORS_PACKAGE = "@nimbus-dev/connectors";
@@ -341,6 +369,8 @@ interface Declaration {
 interface Destructuring {
   readonly bindings: readonly Binding[];
   readonly at: number;
+  /** The pattern's `{`. */
+  readonly open: number;
   readonly rhsStart: number;
   readonly rhsEnd: number;
 }
@@ -384,14 +414,27 @@ interface FileIndex {
   readonly imports: ReadonlyArray<readonly [number, number]>;
 }
 
+/** One element of an object pattern: `key`, `key: local`, either with a default. */
+const PATTERN_ELEMENT = new RegExp(
+  String.raw`^\s*(${IDENT})\s*(?::\s*(${IDENT}))?\s*(?:=[\s\S]*)?$`,
+);
+
 function parsePattern(s: string, open: number): Binding[] {
   const out: Binding[] = [];
-  const re = new RegExp(String.raw`^\s*(${IDENT})\s*(?::\s*(${IDENT}))?\s*(?:=[\s\S]*)?$`);
   for (const [a, b] of splitGroup(s, open)) {
-    const m = re.exec(s.slice(a, b));
+    const m = PATTERN_ELEMENT.exec(s.slice(a, b));
     if (m?.[1] !== undefined) out.push({ key: m[1], local: m[2] ?? m[1] });
   }
   return out;
+}
+
+/**
+ * Whether every element of the object pattern at `open` is one {@link parsePattern} reads. A
+ * computed key (`[k]: r`), a rest element (`...rest`) or a nested pattern binds a value the scan
+ * cannot name.
+ */
+function isSimplePattern(s: string, open: number): boolean {
+  return splitGroup(s, open).every(([a, b]) => PATTERN_ELEMENT.test(s.slice(a, b)));
 }
 
 function parseParams(s: string, open: number): Param[] {
@@ -432,6 +475,7 @@ function destructuringsOf(s: string): Destructuring[] {
     out.push({
       bindings: parsePattern(s, open),
       at: m.index ?? 0,
+      open,
       rhsStart,
       rhsEnd: expressionEnd(s, rhsStart),
     });
@@ -716,12 +760,21 @@ class Analysis {
   readonly callSpans = new Map<string, Array<readonly [number, number]>>();
   /** Per file: `[` offsets of the constant tables a registration resolved through. */
   readonly tablesUsed = new Map<string, Set<number>>();
+  /**
+   * Kit functions: functions a registration's id is built inside from an option EVERY CALLER
+   * supplies (`registerEmailConnectorTools({ toolPrefix, registerWriteTool })`). The callers decide
+   * the ids, so every use of a kit must be a call the scan reads.
+   */
+  readonly kits = new Set<string>();
   private readonly seen = new Set<string>();
+  private readonly byRel: ReadonlyMap<string, File>;
 
   constructor(
     readonly state: State,
     readonly files: readonly File[],
-  ) {}
+  ) {
+    this.byRel = new Map(files.map((f) => [f.p.rel, f]));
+  }
 
   violation(f: File, offset: number, reason: string): void {
     const line = lineAt(f.p, offset);
@@ -743,6 +796,20 @@ class Analysis {
   /** Every registrar callable in `f`: its own names plus every exported one. */
   registrarsIn(f: File): Map<string, RegistrarKind> {
     return new Map([...this.state.exported, ...this.localsOf(f)]);
+  }
+
+  /**
+   * What a member access `.name` reaches: a registrar handed off under that key
+   * (`opts.registerWriteTool`), or an exported registrar or forwarder read off its module — a
+   * namespace or dynamic import (`kit.registerStatusTool`).
+   */
+  memberKind(name: string): RegistrarKind | undefined {
+    return this.state.keys.has(name) ? "kit-alias" : this.state.exported.get(name);
+  }
+
+  /** Every name a member access can reach a registrar through. */
+  memberNames(): Set<string> {
+    return new Set([...this.state.keys, ...this.state.exported.keys()]);
   }
 
   // -- discovery ------------------------------------------------------------------------------
@@ -774,13 +841,15 @@ class Analysis {
     for (const d of f.ix.declarations) {
       const kind = this.registrarValueKind(f, d.initStart, d.initEnd);
       if (kind === undefined) continue;
-      const exported = /\bexport\s+$/.test(f.p.blank.slice(Math.max(0, d.at - 20), d.at));
-      const target = exported ? this.state.exported : this.localsOf(f);
+      const target = isExportedAt(f.p.blank, d.at) ? this.state.exported : this.localsOf(f);
       if (!target.has(d.name)) target.set(d.name, kind);
     }
   }
 
-  /** `const { registerWriteTool } = opts` and `({ registerWriteTool }) =>` take a registrar key. */
+  /**
+   * `const { registerWriteTool } = opts` and `({ registerWriteTool }) =>` take a registrar key;
+   * `const { registerStatusTool: reopen } = await import("./status.ts")` takes an exported one.
+   */
   discoverDestructuredRegistrars(f: File): void {
     const locals = this.localsOf(f);
     const patterns = [
@@ -788,7 +857,8 @@ class Analysis {
       ...f.ix.fns.flatMap((fn) => fn.params.map((p) => p.pattern)),
     ];
     for (const b of patterns.flat()) {
-      if (this.state.keys.has(b.key) && !locals.has(b.local)) locals.set(b.local, "kit-alias");
+      const kind = this.memberKind(b.key);
+      if (kind !== undefined && !locals.has(b.local)) locals.set(b.local, kind);
     }
   }
 
@@ -818,7 +888,10 @@ class Analysis {
     return found;
   }
 
-  /** What one top-level word contributes: a factory call, a registrar value, or nothing. */
+  /**
+   * What one top-level word contributes: a factory call (bare, or a member of a namespace or
+   * dynamic import, `kit.createWriteToolRegistrar(...)`), a registrar value, or nothing.
+   */
   wordRegistrarKind(
     s: string,
     at: number,
@@ -826,14 +899,13 @@ class Analysis {
     registrars: ReadonlyMap<string, RegistrarKind>,
   ): { readonly call: boolean; readonly kind: RegistrarKind } | undefined {
     const next = s.charAt(skipWs(s, at + word.length));
-    const member = s.charAt(skipWsBack(s, at - 1)) === ".";
     const factory = this.state.factories.get(word);
-    if (!member && factory !== undefined && (next === "(" || next === "<")) {
+    if (factory !== undefined && (next === "(" || next === "<")) {
       return { call: true, kind: factory };
     }
     if (next === "(") return undefined; // calling a registrar yields no registrar
-    if (member) return this.state.keys.has(word) ? { call: false, kind: "kit-alias" } : undefined;
-    const kind = registrars.get(word);
+    const member = s.charAt(skipWsBack(s, at - 1)) === ".";
+    const kind = member ? this.memberKind(word) : registrars.get(word);
     return kind === undefined ? undefined : { call: false, kind };
   }
 
@@ -868,8 +940,9 @@ class Analysis {
     for (const [name, kind] of this.registrarsIn(f)) {
       for (const call of callsOf(s, name, false)) visit(call, kind);
     }
-    for (const key of this.state.keys) {
-      for (const call of callsOf(s, key, true)) visit(call, "kit-alias");
+    for (const name of this.memberNames()) {
+      const kind = this.memberKind(name) ?? "kit-alias";
+      for (const call of callsOf(s, name, true)) visit(call, kind);
     }
     this.callSpans.set(f.p.rel, spans);
   }
@@ -1036,11 +1109,8 @@ class Analysis {
       const option = this.optionOf(f, fn, name);
       if (option === undefined) continue;
       if (fn.name === null) return null;
-      const calls = this.files.flatMap((g) =>
-        g === f || fn.exported
-          ? callsOf(g.p.blank, fn.name ?? "", false).map((c) => ({ g, c }))
-          : [],
-      );
+      this.kits.add(fn.name);
+      const calls = this.kitCalls(f, fn);
       if (calls.length === 0) return null;
       const values: Valued[] = [];
       for (const { g, c } of calls) {
@@ -1052,6 +1122,20 @@ class Analysis {
       return values;
     }
     return undefined;
+  }
+
+  /**
+   * Every call of the kit function `fn` (declared in `f`): bare calls in its own file and, when it is
+   * exported, bare or member calls in any file (`mailKit.registerEmailConnectorTools(...)` through
+   * a namespace import).
+   */
+  kitCalls(f: File, fn: FnInfo): Array<{ readonly g: File; readonly c: CallSite }> {
+    const name = fn.name ?? "";
+    return this.files.flatMap((g) => {
+      if (g !== f && !fn.exported) return [];
+      const members = fn.exported ? callsOf(g.p.blank, name, true) : [];
+      return [...callsOf(g.p.blank, name, false), ...members].map((c) => ({ g, c }));
+    });
   }
 
   optionOf(f: File, fn: FnInfo, name: string): { paramIndex: number; key: string } | undefined {
@@ -1097,8 +1181,10 @@ class Analysis {
   /** A registrar or factory used as a value somewhere the flow does not follow. */
   checkEscapes(f: File): void {
     this.checkRegistrarEscapes(f);
-    this.checkKeyEscapes(f);
+    this.checkMemberEscapes(f);
     this.checkFactoryEscapes(f);
+    this.checkKitEscapes(f);
+    this.checkNameStrings(f);
   }
 
   /** Every bare use of a registrar name is a tracked use or a top-level alias. */
@@ -1114,28 +1200,77 @@ class Analysis {
     }
   }
 
-  /** Every `.key` read of a registrar key is a call or a top-level alias. */
-  checkKeyEscapes(f: File): void {
+  /**
+   * Every `.name` read of a registrar key or of an exported registrar (off a namespace or dynamic
+   * import) is a call or a top-level alias.
+   */
+  checkMemberEscapes(f: File): void {
     const s = f.p.blank;
-    for (const key of this.state.keys) {
-      for (const m of s.matchAll(new RegExp(`\\.\\s*${escapeRe(key)}(?![\\w$])`, "g"))) {
-        const o = (m.index ?? 0) + m[0].length - key.length;
-        const next = s.charAt(skipWs(s, o + key.length));
+    for (const name of this.memberNames()) {
+      for (const m of s.matchAll(new RegExp(`\\.\\s*${escapeRe(name)}(?![\\w$])`, "g"))) {
+        const o = (m.index ?? 0) + m[0].length - name.length;
+        const next = s.charAt(skipWs(s, o + name.length));
         if (next !== "(" && next !== "<" && !this.isTopLevelOfInit(f, o)) {
           this.violation(
             f,
             o,
-            `registrar property \`.${key}\` is read somewhere the scan does not follow`,
+            `registrar property \`.${name}\` is read somewhere the scan does not follow`,
           );
         }
       }
     }
   }
 
-  /** Every use of a registrar factory is a bound call, its definition, or a plain import. */
+  /**
+   * A string spelling a registrar, forwarder, factory or registrar key is a computed member access
+   * (`regs["registerWriteTool"]`, `kit["registerStatusTool"]`) the scan cannot follow. Only a
+   * string that IS the name counts: a quote must open and close it in `blank` too.
+   */
+  checkNameStrings(f: File): void {
+    const names = new Set([
+      ...this.state.exported.keys(),
+      ...this.state.factories.keys(),
+      ...this.state.keys,
+      ...this.kits,
+    ]);
+    for (const name of names) {
+      for (const m of f.p.code.matchAll(new RegExp(`(["'\`])${escapeRe(name)}\\1`, "g"))) {
+        const o = m.index ?? 0;
+        if (isWholeStringLiteral(f.p, o, name.length)) {
+          this.violation(f, o, `the string "${name}" names a registrar: a computed access`);
+        }
+      }
+    }
+  }
+
+  /**
+   * Every use of a kit function is a call the scan reads, its declaration, a plain (unaliased)
+   * import of it, or a `typeof`. Its callers supply the ids it registers, so a caller reaching it
+   * any other way — an aliased import, a hand-off as a value — would register ids nobody sees.
+   */
+  checkKitEscapes(f: File): void {
+    for (const name of this.kits) {
+      const re = new RegExp(`(?<![\\w$])${escapeRe(name)}(?![\\w$])`, "g");
+      for (const m of f.p.blank.matchAll(re)) {
+        const o = m.index ?? 0;
+        if (!isKitUse(f, o, name)) {
+          this.violation(
+            f,
+            o,
+            `kit \`${name}\`, whose callers supply its write-tool ids, is used as a value the scan does not follow`,
+          );
+        }
+      }
+    }
+  }
+
+  /**
+   * Every use of a registrar factory is a bound call, its definition, or a plain import — bare, or
+   * read off a namespace or dynamic import (`kit.createWriteToolRegistrar`).
+   */
   checkFactoryEscapes(f: File): void {
     for (const factory of this.state.factories.keys()) {
-      const re = new RegExp(`(?<![\\w$.])${escapeRe(factory)}(?![\\w$])`, "g");
+      const re = new RegExp(`(?<![\\w$])${escapeRe(factory)}(?![\\w$])`, "g");
       for (const m of f.p.blank.matchAll(re)) {
         const o = m.index ?? 0;
         const reason = this.factoryUseViolation(f, o, factory);
@@ -1183,6 +1318,343 @@ class Analysis {
       }
     }
   }
+
+  // -- module shapes: how another file reaches an exported registrar --------------------------
+
+  /** Default exports, namespace imports and re-exports, and dynamic imports. */
+  checkModuleShapes(f: File): void {
+    this.checkDefaultExports(f);
+    this.checkNamespaceImports(f);
+    this.checkDynamicImports(f);
+  }
+
+  /** An exported registrar or forwarder, a registrar factory, or a kit function. */
+  isTrackedExport(name: string | null): boolean {
+    return (
+      name !== null &&
+      (this.state.exported.has(name) || this.state.factories.has(name) || this.kits.has(name))
+    );
+  }
+
+  /** `export default function NAME`: an importer calls NAME under a name of its own choosing. */
+  checkDefaultExports(f: File): void {
+    for (const m of f.p.blank.matchAll(DEFAULT_EXPORTED_FUNCTION)) {
+      const name = m[1] ?? "";
+      if (this.isTrackedExport(name)) {
+        this.violation(
+          f,
+          m.index ?? 0,
+          `registrar \`${name}\` is a default export, which an importer may bind under any name`,
+        );
+      }
+    }
+  }
+
+  /**
+   * `import * as kit from` a module that may export a registrar: `kit` may only be read as
+   * `kit.member`, which the member flow follows. Re-exporting such a module as a namespace puts it
+   * behind a name of the re-exporter's choosing, so that is refused outright.
+   */
+  checkNamespaceImports(f: File): void {
+    const s = f.p.blank;
+    for (const m of s.matchAll(NAMESPACE_IMPORT)) {
+      const end = (m.index ?? 0) + m[0].length;
+      if (this.mayExportRegistrar(f, stringLiteralAt(f.p, end)?.value ?? null)) {
+        this.checkModuleObjectUses(f, m[1] ?? "", [m.index ?? 0, end]);
+      }
+    }
+    for (const m of s.matchAll(NAMESPACE_REEXPORT)) {
+      const end = (m.index ?? 0) + m[0].length;
+      if (this.mayExportRegistrar(f, stringLiteralAt(f.p, end)?.value ?? null)) {
+        this.violation(
+          f,
+          m.index ?? 0,
+          `a module that may export a registrar is re-exported as the namespace \`${m[1] ?? ""}\``,
+        );
+      }
+    }
+  }
+
+  /**
+   * A runtime `import()` / `require()` of a module that may export a registrar must hand its module
+   * object to a shape the member flow follows: a destructuring, a name read only as `m.member`, or
+   * a `.member` taken on the spot. A discarded one, a side-effect import, reaches no export at all.
+   */
+  checkDynamicImports(f: File): void {
+    const s = f.p.blank;
+    for (const d of dynamicImportsOf(f.p)) {
+      if (!this.mayExportRegistrar(f, d.spec)) continue;
+      const v = dynamicImportValue(s, d);
+      if ((v.module && isMemberRead(s, v.end)) || isDiscarded(s, v.start, v.end)) continue;
+      const binding = v.module ? this.bindingOf(f, v.start, v.end) : undefined;
+      if (binding === "destructuring") continue;
+      if (binding === undefined) {
+        this.violation(
+          f,
+          d.at,
+          "a dynamic import of a module that may export a registrar is used in a shape the scan does not follow",
+        );
+      } else {
+        this.checkModuleObjectUses(f, binding.name, binding.span);
+      }
+    }
+  }
+
+  /**
+   * The declaration whose whole initializer is `[start, end)`: a name, or a destructuring whose
+   * every element {@link discoverDestructuredRegistrars} reads. undefined for anything else — a
+   * computed key or a rest element included.
+   */
+  bindingOf(
+    f: File,
+    start: number,
+    end: number,
+  ):
+    | "destructuring"
+    | { readonly name: string; readonly span: readonly [number, number] }
+    | undefined {
+    const s = f.p.blank;
+    const isWhole = (x: number, y: number): boolean =>
+      x <= start && end <= y && s.slice(x, start).trim() === "" && s.slice(end, y).trim() === "";
+    const d = f.ix.declarations.find((x) => isWhole(x.initStart, x.initEnd));
+    if (d !== undefined) return { name: d.name, span: [d.at, d.initStart] };
+    const pattern = f.ix.destructurings.find((x) => isWhole(x.rhsStart, x.rhsEnd));
+    return pattern !== undefined && isSimplePattern(s, pattern.open) ? "destructuring" : undefined;
+  }
+
+  /** Every read of the module object `ns` outside its binding `[from, to)` is `ns.member` or a `typeof`. */
+  checkModuleObjectUses(f: File, ns: string, [from, to]: readonly [number, number]): void {
+    const s = f.p.blank;
+    for (const m of s.matchAll(new RegExp(`(?<![\\w$.])${escapeRe(ns)}(?![\\w$])`, "g"))) {
+      const o = m.index ?? 0;
+      const binding = o >= from && o < to;
+      if (!binding && !isMemberRead(s, o + ns.length) && !isTypeofOperand(s, o)) {
+        this.violation(
+          f,
+          o,
+          `module object \`${ns}\` may hold a registrar and is used other than as \`${ns}.member\``,
+        );
+      }
+    }
+  }
+
+  /**
+   * Whether the module a specifier names may export a registrar: a package file that does, or one
+   * the scan cannot resolve (a non-literal specifier, a relative path it does not read, a subpath
+   * import, the package's own name). Another package (`zod`, `@nimbus-dev/sdk/...`) cannot: the
+   * write registrar is this package's consent kit.
+   */
+  mayExportRegistrar(f: File, spec: string | null): boolean {
+    if (spec === null) return true;
+    if (spec.startsWith(".")) {
+      const target = this.resolveModule(f, spec);
+      return target === undefined || this.exportsRegistrar(target);
+    }
+    return (
+      spec.startsWith("#") ||
+      spec === CONNECTORS_PACKAGE ||
+      spec.startsWith(`${CONNECTORS_PACKAGE}/`)
+    );
+  }
+
+  /** The scanned file a relative specifier names, trying the extensions Bun would. */
+  resolveModule(from: File, spec: string): File | undefined {
+    const base = posix.normalize(posix.join(posix.dirname(from.p.rel), spec));
+    const stem = base.replace(/\.[cm]?[jt]sx?$/, "");
+    return (
+      this.byRel.get(base) ?? this.byRel.get(`${stem}.ts`) ?? this.byRel.get(`${stem}/index.ts`)
+    );
+  }
+
+  /** Whether `f` declares, with `export`, a registrar, forwarder, registrar factory or kit. */
+  exportsRegistrar(f: File): boolean {
+    return (
+      f.ix.fns.some((fn) => fn.exported && this.isTrackedExport(fn.name)) ||
+      f.ix.declarations.some((d) => this.isTrackedExport(d.name) && isExportedAt(f.p.blank, d.at))
+    );
+  }
+
+  /**
+   * Every exported registrar, forwarder and registrar factory is NAMED by some file outside its own
+   * declaration. One that nothing names is either reached in a shape the scan cannot see — the
+   * default import or computed access the checks above refuse, or one nobody anticipated — or dead.
+   */
+  checkNamed(): void {
+    const names = new Set([...this.state.exported.keys(), ...this.state.factories.keys()]);
+    for (const name of names) {
+      if (this.files.some((g) => namedOutsideDeclaration(g, name))) continue;
+      const reason = `registrar \`${name}\` is named nowhere outside its declaration — reached in a shape the scan cannot see, or dead`;
+      const site = this.declarationSite(name);
+      if (site === undefined) this.violations.push({ file: "(package)", line: 0, reason });
+      else this.violation(site.f, site.at, reason);
+    }
+  }
+
+  /** Where `name` is declared: the first `function name` / `const name` the scan reads. */
+  declarationSite(name: string): { readonly f: File; readonly at: number } | undefined {
+    const re = new RegExp(String.raw`${DECLARATION_LEAD}${escapeRe(name)}(?![\w$])`);
+    for (const f of this.files) {
+      const m = re.exec(f.p.blank);
+      if (m !== null) return { f, at: m.index };
+    }
+    return undefined;
+  }
+}
+
+/** What introduces a declared name: `function` (generators too) or `const` / `let` / `var`. */
+const DECLARATION_LEAD = String.raw`\b(?:function\s*\*?\s*|(?:const|let|var)\s+)`;
+
+/** `export default function NAME`, async and generator forms included. */
+const DEFAULT_EXPORTED_FUNCTION = new RegExp(
+  String.raw`\bexport\s+default\s+(?:async\s+)?function\s*\*?\s*(${IDENT})`,
+  "g",
+);
+
+/** `import * as ns from ` (after an optional default binding), up to the specifier's quote. */
+const NAMESPACE_IMPORT = new RegExp(
+  String.raw`\bimport\s+(?:${IDENT}\s*,\s*)?\*\s*as\s+(${IDENT})\s+from\s*`,
+  "g",
+);
+
+/** `export * as ns from `, up to the specifier's quote. */
+const NAMESPACE_REEXPORT = new RegExp(String.raw`\bexport\s+\*\s*as\s+(${IDENT})\s+from\s*`, "g");
+
+/** A runtime module load: `import(...)` or `require(...)`, never a member `.import(`. */
+const DYNAMIC_IMPORT = /(?<![\w$.])(import|require)\s*\(/g;
+
+/** The members a PROMISE has; anything else read off an unawaited `import(...)` is a type. */
+const PROMISE_METHODS: ReadonlySet<string> = new Set(["then", "catch", "finally"]);
+
+interface DynamicImport {
+  /** Offset of `import` / `require`. */
+  readonly at: number;
+  /** Offset of the call's `)`. */
+  readonly close: number;
+  readonly callee: string;
+  /** The first argument when it is a plain string literal, else null. */
+  readonly spec: string | null;
+}
+
+/** Every runtime `import(...)` / `require(...)` in `p`, never a type (`let x: import("m").T`). */
+function dynamicImportsOf(p: Prepared): DynamicImport[] {
+  const s = p.blank;
+  const out: DynamicImport[] = [];
+  for (const m of s.matchAll(DYNAMIC_IMPORT)) {
+    const at = m.index ?? 0;
+    const open = at + m[0].length - 1;
+    const close = matchForward(s, open);
+    const callee = m[1] ?? "";
+    if (close < 0 || (callee === "import" && isTypeImport(s, at, close))) continue;
+    out.push({ at, close, callee, spec: firstStringArgument(p, open) });
+  }
+  return out;
+}
+
+/** The first argument of the call opening at `open`, when it is a plain string literal. */
+function firstStringArgument(p: Prepared, open: number): string | null {
+  const first = splitGroup(p.blank, open)[0];
+  if (first === undefined) return null;
+  const lit = stringLiteralAt(p, skipWs(p.blank, first[0]));
+  return lit !== null && p.blank.slice(lit.end, first[1]).trim() === "" ? lit.value : null;
+}
+
+/**
+ * `typeof import("m")`, or `import("m").T` read without an `await`: a TYPE, which loads nothing. A
+ * runtime import is awaited, or chained with a promise method.
+ */
+function isTypeImport(s: string, at: number, close: number): boolean {
+  if (isTypeofOperand(s, at)) return true;
+  if (/\bawait\s*\(?\s*$/.test(s.slice(Math.max(0, at - 20), at))) return false;
+  const member = new RegExp(String.raw`^\s*\??\.\s*(${IDENT})`).exec(
+    s.slice(close + 1, close + 80),
+  );
+  return member?.[1] !== undefined && !PROMISE_METHODS.has(member[1]);
+}
+
+/**
+ * The span of the value a dynamic import produces — the call, with the `await` before it and one
+ * pair of grouping parentheses around both — and whether that value is the MODULE OBJECT (awaited,
+ * or a `require`) rather than a promise of it.
+ */
+function dynamicImportValue(
+  s: string,
+  d: DynamicImport,
+): { readonly start: number; readonly end: number; readonly module: boolean } {
+  const awaited = /\bawait\s*$/.exec(s.slice(Math.max(0, d.at - 20), d.at));
+  const start = awaited === null ? d.at : d.at - awaited[0].length;
+  const end = d.close + 1;
+  const module = awaited !== null || d.callee === "require";
+  const open = skipWsBack(s, start - 1);
+  const close = skipWs(s, end);
+  if (s.charAt(open) === "(" && s.charAt(close) === ")" && isGroupingParen(s, open)) {
+    return { start: open, end: close + 1, module };
+  }
+  return { start, end, module };
+}
+
+/** Whether the `(` at `open` groups an expression, rather than opening a call's arguments. */
+function isGroupingParen(s: string, open: number): boolean {
+  return !/[\w$)\]]/.test(s.charAt(skipWsBack(s, open - 1)));
+}
+
+/** Whether `[start, end)` is a whole expression statement, its value discarded (`void` allowed). */
+function isDiscarded(s: string, start: number, end: number): boolean {
+  const lead = /\bvoid\s*$/.exec(s.slice(Math.max(0, start - 10), start));
+  const prev = s.charAt(skipWsBack(s, start - (lead?.[0].length ?? 0) - 1));
+  const next = s.charAt(skipWs(s, end));
+  return (prev === "" || "{};".includes(prev)) && (next === "" || "};".includes(next));
+}
+
+/** Whether a `.member` (or `?.member`) read follows offset `end`. */
+function isMemberRead(s: string, end: number): boolean {
+  return /^\s*\??\.\s*[A-Za-z_$]/.test(s.slice(end, end + 40));
+}
+
+/** Whether the word at `o` is the operand of `typeof`. */
+function isTypeofOperand(s: string, o: number): boolean {
+  return /\btypeof\s+$/.test(s.slice(Math.max(0, o - 20), o));
+}
+
+/** Whether the declaration starting at `at` (its `const`, `let` or `var`) is `export`ed. */
+function isExportedAt(s: string, at: number): boolean {
+  return /\bexport\s+$/.test(s.slice(Math.max(0, at - 20), at));
+}
+
+/** Whether a string literal of exactly `len` characters opens at `o` — real quotes in `blank`. */
+function isWholeStringLiteral(p: Prepared, o: number, len: number): boolean {
+  const quote = p.code.charAt(o);
+  return (
+    p.blank.charAt(o) === quote &&
+    p.blank.charAt(o + len + 1) === quote &&
+    p.blank.slice(o + 1, o + 1 + len).trim() === ""
+  );
+}
+
+/**
+ * Whether the kit-function name at `o` is a use the scan reads: a call (bare, or as a member), its
+ * declaration, a `typeof`, or a plain import of it — never an aliased one (`import { kit as k }`).
+ */
+function isKitUse(f: File, o: number, name: string): boolean {
+  const s = f.p.blank;
+  const before = s.slice(Math.max(0, o - 20), o);
+  const after = s.slice(o + name.length, o + name.length + 40);
+  if (/^\s*[<(]/.test(after)) return true;
+  if (/\.\s*$/.test(before)) return false;
+  if (new RegExp(`${DECLARATION_LEAD}$`).test(before) || isTypeofOperand(s, o)) return true;
+  return f.ix.imports.some(([x, y]) => x <= o && o < y) && !/^\s+as\b/.test(after);
+}
+
+/** Whether `g` names `name` anywhere but a declaration of it or an import binding it. */
+function namedOutsideDeclaration(g: File, name: string): boolean {
+  const s = g.p.blank;
+  const lead = new RegExp(`${DECLARATION_LEAD}$`);
+  for (const m of s.matchAll(new RegExp(`(?<![\\w$])${escapeRe(name)}(?![\\w$])`, "g"))) {
+    const o = m.index ?? 0;
+    if (lead.test(s.slice(Math.max(0, o - 20), o))) continue;
+    if (g.ix.imports.some(([x, y]) => x <= o && o < y)) continue;
+    return true;
+  }
+  return false;
 }
 
 /** Offset of the innermost bracket still open at `o`, or -1 at the top level. */
@@ -1272,7 +1744,9 @@ export function scanWriteToolRegistrations(sources: readonly PackageSource[]): W
       }
       analysis.checkEscapes(f);
       analysis.checkMutates(f);
+      analysis.checkModuleShapes(f);
     }
+    analysis.checkNamed();
     return { registrations: analysis.registrations, violations: analysis.violations };
   }
   return {
