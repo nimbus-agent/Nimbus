@@ -173,13 +173,33 @@ describe("createDoctorVaultExec — a real child process", () => {
   const script =
     "process.stdout.write('SECRET-VALUE'); process.stderr.write('diag line'); process.exitCode = 3";
 
+  // Both calls below are TIMED `Bun.spawnSync`s (the exec's 5 s probe budget), and on Windows Bun
+  // 1.3.14 times one from when the process last ran a `spawnSync`, not from the call itself. When
+  // that was more than 5 s earlier (any earlier test file's, in a whole-package run), the call
+  // reports a timeout within ~5 ms, before the child has run: exit code null, SIGTERM, no output.
+  // That is how this test failed under `build-lcov`'s instrumented CLI run, where everything runs
+  // slower. Measured with a probe that sleeps between timed calls: a 2 s timeout misfires after a
+  // 2.5 s gap and holds after a 1 s one, a 10 s timeout holds after 2.5 s, any `spawnSync` resets
+  // the reference point, and the same probe never misfires on Linux. Production runs this exec on
+  // Linux only (the Vault status line and `--fix-keyring`). So each test starts with an untimed
+  // `spawnSync`, which leaves the call under test its real 5 s budget.
+  const resetSpawnSyncClock = (): void => {
+    Bun.spawnSync([process.execPath, "-e", ""], {
+      stdout: "ignore",
+      stderr: "ignore",
+      windowsHide: true,
+    });
+  };
+
   it("runQuery captures stdout, stderr and the exit code", () => {
+    resetSpawnSyncClock();
     const run = createDoctorVaultExec().runQuery([process.execPath, "-e", script]);
     expect(run).toEqual({ code: 3, stdout: "SECRET-VALUE", stderr: "diag line" });
   });
 
   it("lookupStderr returns stderr only — the child's stdout is never captured", () => {
     // The lookup runs against a real credential store, so a matched secret must have nowhere to go.
+    resetSpawnSyncClock();
     const stderr = createDoctorVaultExec().lookupStderr(process.execPath, ["-e", script]);
     expect(stderr).toBe("diag line");
     expect(stderr).not.toContain("SECRET-VALUE");
