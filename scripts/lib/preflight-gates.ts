@@ -97,8 +97,8 @@ const FAST: readonly Gate[] = [
   { name: "audit:release-please", cmd: ["bun", "run", "audit:release-please"], tier: "fast" },
   {
     // A root `overrides` pin outranks every declared range, so a divergence
-    // between the two is invisible: the Dependabot PR that bumps the declared
-    // range merges green and changes nothing in the installed tree. Offline and
+    // between the two is invisible: a PR that bumps only the declared range
+    // merges green and changes nothing in the installed tree. Offline and
     // instant (pure manifest reads), so it belongs in the FAST tier.
     name: "audit:override-drift",
     cmd: ["bun", "run", "audit:override-drift"],

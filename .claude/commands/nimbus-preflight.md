@@ -26,19 +26,22 @@ inside that workflow never needs a ruleset edit. The other nine (six Security co
 `Analyze (…)`, `cla`) are named in the ruleset individually — re-derive the list with
 `gh api repos/nimbus-agent/Nimbus/rulesets/14784377` rather than trusting prose.
 
-**`main` merges through a merge queue.** A queued PR is re-tested on top of the real tip of `main`
-and lands automatically, so nobody has to click "update branch" and re-run every other open PR after
-each merge. The cost is a rule: **every required context must also run on the `merge_group` event** —
-a required check that never reports on a queue entry stalls EVERY merge. So a new required check, or a
-new job in `pr-quality-required`'s `needs:`, must accept `merge_group` too (see the `merge_group:`
-comment in `ci.yml`). `gh pr merge <n> --squash --auto` is how you enqueue.
+**No merge queue, and no up-to-date rule.** A PR can merge the moment its ten required checks are
+green, and `gh pr merge <n> --squash --auto` merges it then with nobody watching. The merge queue
+that ran from 2026-09-30 to 2026-10-02 was retired: every entry re-ran the whole gate, 21–52 minutes,
+after its PR was already green. No workflow listens for `merge_group` any more. What that gives up:
+a PR's checks test it merged into `main` as `main` stood when they ran, so two PRs that are each
+green can still break `main` together. When `main` goes red right after two merges that both passed,
+suspect that interaction before a flake. Re-enabling a queue is not a ruleset-only change: every
+required context must then report on `merge_group` too, or every merge stalls waiting for one that
+never comes (#1583 wired that into four workflows, and the queue's retirement took it out again).
 
-**Dependabot PRs are shepherded, not hand-merged.** `dependabot-shepherd.yml` runs hourly with the
-release-bot App token: it replaces each Dependabot description with a parse-safe summary
-(`scripts/dependabot/dependabot-body.ts`, which the Release-safety gate judges instead of the raw
-upstream release notes) and enqueues every PR whose bumps are all non-breaking. A major — or a 0.x
-minor — is left for a human. If one is still red, the cause is almost never the bump: check the
-nightly Security issue ("Security gate is red on main") and `audit:override-drift` first.
+**No Dependabot.** Version-update PRs were retired on 2026-10-02; security alerts stay on.
+Dependencies move in periodic manual bulk updates, and `docs/CONTRIBUTING.md` § Updating
+Dependencies has the procedure, the packages that must move together and the majors that were
+previously held back (a record to re-test on each pass, not a standing blocker list). When
+a newly published advisory turns `main` red overnight, a "Security gate is red on main" issue opens;
+the fix is usually a root `overrides` bump, checked by `audit:override-drift`.
 
 **The bypass is silent.** The _General_ ruleset (14784377) lists those checks as required, and its
 sole bypass actor is `OrganizationAdmin` with `bypass_mode: "always"`. For a repo admin the merge button stays enabled while checks are pending,
@@ -121,7 +124,7 @@ These only run in CI (other OS, external tooling, or network) — when one reds,
 
 - **Coverage floor** is **Linux-authoritative**: local lcov on Windows/macOS diverges from CI by tens of percent on OS-specific files. Reproduce with `bun run verify:docker --full` or `scripts/coverage-floor/reseed-docker.sh`, both pinned to `oven/bun:1.3` like CI. (The script used `oven/bun:latest` until 2026-10-03, which stopped matching CI once `latest` became a 1.4.x release.) Red gate → **`nimbus-coverage-floor`** agent.
 - **SonarCloud quality gate** (above) → **`nimbus-sonar-gate`** agent.
-- **Cross-platform Windows/macOS** unit legs, **client node-compat** (real Node 20 ESM), **CodeQL / Trivy / cargo-audit / cargo-deny**, **install-smoke (3-OS)** — accept as push-time; a red here → **`nimbus-ci-doctor`** agent.
+- **Cross-platform Windows/macOS** unit legs, **CodeQL / Trivy / cargo-audit / cargo-deny** and **install-smoke (3-OS)** cannot be reproduced on one dev box, but every one of them runs on the PR, not only after merge. The cross-platform legs block through `PR quality — required gates`; CodeQL, Trivy, cargo-audit and cargo-deny are required contexts of their own; install-smoke runs on PRs that touch the installers or gateway/CLI source and is not required. A red one → **`nimbus-ci-doctor`** agent. (The client's real-Node ESM node-compat job left this repository with `@nimbus-dev/client` in #758; its test lives in [nimbus-agent/nimbus-client](https://github.com/nimbus-agent/nimbus-client) now.)
 
 ## Static gates worth knowing
 

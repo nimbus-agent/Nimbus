@@ -365,6 +365,15 @@ describe("I5 — LAN method allowlist is intrinsic to LanServer", () => {
     expect(src).toMatch(/"index\.reembedCancel"/);
   });
 
+  test("FORBIDDEN_OVER_LAN blocks index.regraph (rewrites the graph a paired peer must not churn)", async () => {
+    const src = await read("packages/gateway/src/ipc/lan-rpc.ts");
+    expect(src).toMatch(/"index.regraph"/);
+    const { checkLanMethodAllowed } = await import("./ipc/lan-rpc.ts");
+    expect(() =>
+      checkLanMethodAllowed("index.regraph", { peerId: "peer:x", writeAllowed: true }),
+    ).toThrow(/ERR_METHOD_NOT_ALLOWED/);
+  });
+
   test("FORBIDDEN_OVER_LAN blocks index.rebody* (drives outbound third-party API traffic)", async () => {
     const src = await read("packages/gateway/src/ipc/lan-rpc.ts");
     expect(src).toMatch(/"index\.rebody"/);

@@ -369,6 +369,28 @@ describe("index.rebody over LAN (I5 — drives outbound third-party API traffic)
   });
 });
 
+describe("index.regraph over LAN (I5 — rewrites the owner's relationship graph)", () => {
+  test("index.regraph is forbidden over LAN regardless of grant-write", () => {
+    for (const writeAllowed of [true, false]) {
+      let thrown: LanError | undefined;
+      try {
+        checkLanMethodAllowed("index.regraph", { peerId: "p", writeAllowed });
+      } catch (e) {
+        thrown = e as LanError;
+      }
+      expect(thrown).toBeInstanceOf(LanError);
+      expect(thrown?.rpcCode).toBe(-32601);
+      expect(thrown?.message).toMatch(/ERR_METHOD_NOT_ALLOWED/);
+    }
+  });
+
+  test("a read in the same namespace stays callable (the entry is the method, not index.*)", () => {
+    expect(() =>
+      checkLanMethodAllowed("index.searchRanked", { peerId: "p", writeAllowed: false }),
+    ).not.toThrow();
+  });
+});
+
 describe("clip over LAN (I5 / I30 — pairing must stay owner-opened)", () => {
   test("forbids the clip namespace over LAN regardless of grant-write", () => {
     for (const peer of [

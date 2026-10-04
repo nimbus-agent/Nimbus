@@ -6,10 +6,6 @@ on:
   pull_request:
     branches: [main, develop]
     types: [opened, synchronize, reopened]
-  # Both `Analyze (…)` contexts are required by the General ruleset, so they
-  # must report on merge-queue entries or every merge stalls in the queue.
-  merge_group:
-    types: [checks_requested]
   schedule:
     - cron: "25 4 * * 1"
 

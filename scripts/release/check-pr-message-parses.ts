@@ -50,7 +50,6 @@
  */
 
 import { parser } from "@conventional-commits/parser";
-import { isDependabotLogin, summaryBody } from "../dependabot/dependabot-body.ts";
 
 /**
  * The column GitHub hard-wraps a squash commit BODY at. Derived, not guessed: of the widths tried
@@ -112,48 +111,6 @@ export function githubSquashMessage(
   return squashMessage(title, wrapBody(body.replace(/\r\n/g, "\n")), prNumber);
 }
 
-/**
- * The body this PR will actually be squashed with.
- *
- * For a PR opened by Dependabot that is NOT the body in the event payload: the Dependabot
- * shepherd replaces it with `summaryBody` before it enables auto-merge, because Dependabot quotes
- * upstream release notes verbatim and those routinely carry an unbalanced `(` (#1574, #1580).
- * Judging the raw notes would fail a PR on text that never lands; judging the summary checks the
- * text that does. When no bump can be read, or the list may be partial, the shepherd leaves the
- * body alone, and so does this.
- *
- * STATED BOUND. This judges a body the shepherd has not necessarily WRITTEN yet, so a green
- * result here does not prove the description on the PR parses right now. The alternative —
- * judging the raw body until the shepherd rewrites it — cannot work in this workflow: the gate
- * runs on `opened`/`synchronize`/`reopened`/`labeled`, not `edited`, so the shepherd's rewrite
- * would never turn a red check green, and adding `edited` would re-run the whole PR gate on
- * every description edit. The gap is a person merging a Dependabot PR by hand before the hourly
- * shepherd has reached it; `pendingRewriteFailure` makes that visible as a warning on the run.
- */
-export function effectiveBody(title: string, body: string, author: string | undefined): string {
-  if (!isDependabotLogin(author)) return body;
-  return summaryBody(title, body) ?? body;
-}
-
-/**
- * The parse failure of the description AS IT STANDS, when the gate is judging a different body
- * in its place — i.e. the PR passes only on the strength of a rewrite that has not happened.
- * `undefined` when the two are the same text or the standing one parses anyway.
- */
-export function pendingRewriteFailure(
-  title: string,
-  body: string,
-  author: string | undefined,
-  prNumber: number | undefined,
-): string | undefined {
-  const effective = effectiveBody(title, body, author);
-  if (effective === body.replace(/\r\n/g, "\n")) return undefined;
-  return (
-    parseFailure(githubSquashMessage(title, body, prNumber)) ??
-    parseFailure(squashMessage(title, body, prNumber))
-  );
-}
-
 /** The parser's own error, or undefined when the message parses. */
 export function parseFailure(message: string): string | undefined {
   try {
@@ -184,13 +141,7 @@ export function excerpt(message: string, at: { line: number; col: number }): str
 
 function main(): void {
   const title = process.env["PR_TITLE"] ?? "";
-  const author = process.env["PR_AUTHOR"];
-  const body = effectiveBody(title, process.env["PR_BODY"] ?? "", author);
-  if (isDependabotLogin(author)) {
-    console.log(
-      "check-pr-message-parses: Dependabot PR — judging the summary body the shepherd lands it with.",
-    );
-  }
+  const body = process.env["PR_BODY"] ?? "";
   const numberRaw = process.env["PR_NUMBER"];
   if (title.trim() === "") {
     console.error("::error::PR_TITLE is empty — refusing to report a clean parse on no input.");
@@ -208,12 +159,6 @@ function main(): void {
 
   const failure = parseFailure(message);
   if (failure === undefined) {
-    const pending = pendingRewriteFailure(title, process.env["PR_BODY"] ?? "", author, n);
-    if (pending !== undefined) {
-      console.log(
-        `::warning::The description on this PR right now does NOT parse (${pending}). This check passed on the summary the Dependabot shepherd replaces it with on its next hourly run — do not merge by hand before the description starts with the shepherd's summary marker, or release-please drops the commit.`,
-      );
-    }
     console.log("check-pr-message-parses: OK — the squash commit will parse.");
     return;
   }
