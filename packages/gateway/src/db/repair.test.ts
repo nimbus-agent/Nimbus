@@ -745,7 +745,6 @@ describe("repairIndex — catch false-arm: non-Error thrown from db.run", () => 
 // lines 62 / 165 — `err instanceof Error` FALSE arm:
 //   SQLite (bun:sqlite) always throws real Error instances; a non-Error throw
 //   from the driver is not observable in practice. Covered by Suite 5 tests
-//   for the TRUE arm (normal Error). The FALSE arm (`String(err)`) would require
-//   a non-Error value thrown by a db.query() call inside a transaction, which is
-//   not interceptable without mock.module (prohibited). D-candidate for the
-//   false arm only.
+//   for the TRUE arm (normal Error). The FALSE arm (`String(err)`) is covered in
+//   repair.coverage.test.ts by overriding `query` on ONE real connection (the
+//   throwing `db.query()` runs BEFORE the transaction, so no mock.module needed).
