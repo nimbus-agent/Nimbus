@@ -434,7 +434,7 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
   the census, not the gate — that is PR 2 of this initiative. It reproduces all four bugs the B4
   bug-hunt confirmed by hand, pinned by
   `scripts/structure-audit/check-index-lane-coverage.acceptance.test.ts` against the real tree:
-  `item.type='commit'` is read at `agents/expert.ts:386` but nothing ever writes it (the only
+  `item.type='commit'` is read at `agents/expert.ts:371` but nothing ever writes it (the only
   `commit`-shaped writer, `filesystem-v2-sync.ts`, writes `git_commit`, and `graph-populator.ts`'s
   `commit` write lands in the unrelated `graph_entity` table); `workflow_name` is read at
   `preflight/preflight.ts:166` but every `ci_run` writer emits `workflowName` instead; `branch` is
