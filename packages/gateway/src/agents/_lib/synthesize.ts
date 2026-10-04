@@ -147,6 +147,9 @@ function deterministicRender(brief: SynthInput, opts?: RenderOpts): string {
  *  `reserved-sections.coverage.test.ts` must exercise the real dispatch, not a copy of it. */
 export const deterministicRenderForTest = deterministicRender;
 
+/** The deterministic renderer `synthesizeInner` renders with — `deterministicRender` in production. */
+type BriefRenderer = (brief: SynthInput, opts?: RenderOpts) => string;
+
 /**
  * The `tool` name each brief is enveloped under (`wrapToolOutput`, I11) when it is handed to the
  * model. Total over the brief kinds, so a new kind is a compile error until it is named here —
@@ -305,11 +308,30 @@ export async function synthesize(
   return { ...outcome, provenance: { ...outcome.provenance, persona } };
 }
 
+/**
+ * Test-only: `synthesize`'s pipeline with `render` standing in for the real dispatch.
+ *
+ * Every real renderer honours `omitReserved` (pinned per kind by
+ * `reserved-sections.coverage.test.ts`), so the I31 fail-closed arm below — a renderer that
+ * IGNORED the flag — cannot be reached through `deterministicRender`. Without this, nothing
+ * proves `synthesizeInner` still consults `reservedExtractionFailed` at all: the predicate is
+ * unit-tested on its own, but deleting its call would leave every test green. Production never
+ * passes a renderer; `synthesize` uses the default.
+ */
+export function synthesizeWithRendererForTest(
+  brief: SynthInput,
+  opts: SynthesizeOpts,
+  render: BriefRenderer,
+): Promise<SynthesisOutcome> {
+  return synthesizeInner(brief, opts, render);
+}
+
 async function synthesizeInner(
   brief: SynthInput,
-  opts: SynthesizeOpts = {},
+  opts: SynthesizeOpts,
+  render: BriefRenderer = deterministicRender,
 ): Promise<SynthesisOutcome> {
-  const deterministic = deterministicRender(brief);
+  const deterministic = render(brief);
 
   if (opts.runner === undefined) {
     return {
@@ -320,7 +342,7 @@ async function synthesizeInner(
 
   // The synthesizable half and the reserved half, each CONSTRUCTED from the brief — never
   // recovered by parsing `deterministic`. See `reserved-sections.ts` for why that matters.
-  const body = deterministicRender(brief, { omitReserved: true });
+  const body = render(brief, { omitReserved: true });
   const reservedBlocks = reservedBlocksFor(brief);
 
   // Fail closed if a renderer ignored `omitReserved`: identical output with reserved content
