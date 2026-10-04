@@ -31,6 +31,9 @@ export interface GreatExpectationsMappingContext {
 
 const ID_MAX = 256;
 
+/** 2^32: the clamped-id hash is reduced by it at every step, keeping `h` an exact integer. */
+const HASH_MODULUS = 2 ** 32;
+
 /**
  * RFC3339 / ISO-8601 timestamp → epoch ms, else null. Mirrors the other
  * connectors' local `parseIsoMs`.
@@ -70,7 +73,7 @@ function clampExternalId(id: string): string {
   // Same value as the GX MCP server's `clampId` (`(h * 31 + cp) | 0`, then `h >>> 0`).
   let h = 0;
   for (let i = 0; i < id.length; i += 1) {
-    h = (h * 31 + (id.codePointAt(i) ?? 0)) % 0x1_0000_0000;
+    h = (h * 31 + (id.codePointAt(i) ?? 0)) % HASH_MODULUS;
   }
   return `${id.slice(0, ID_MAX - 16)}#${h.toString(16)}`;
 }

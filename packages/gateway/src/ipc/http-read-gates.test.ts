@@ -379,7 +379,7 @@ describe("the SCOPED_ROUTES table itself", () => {
     expect(keyNames.length).toBeGreaterThan(0);
     expect(keyNames.filter((name) => !name.startsWith("ROUTE_KEY_"))).toEqual([]);
 
-    expect(keyNames.length).toBe(new Set(keyNames).size);
+    expect(keyNames).toHaveLength(new Set(keyNames).size);
     const exported: Record<string, unknown> = routeAuth;
     const gatedKeys = keyNames.map((name) => String(exported[name])).sort();
     expect(gatedKeys).toEqual(SCOPED_ROUTES.map((route) => route.routeKey).sort());
