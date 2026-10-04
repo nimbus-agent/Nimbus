@@ -15,8 +15,14 @@ export interface PurgeStartResult {
   localDeleted: number;
 }
 
-/** Begin a GDPR purge: local revoke + delete now; remote requests durable + retried. */
-export async function startPurge(deps: PurgeDeps, externalId: string): Promise<PurgeStartResult> {
+/**
+ * Begin a GDPR purge: local revoke + delete now; remote requests durable + retried.
+ *
+ * Synchronous: every dep it calls is. An unknown user still fails CLOSED, as a throw — the
+ * `team.purge` handler that reaches this through `PolicyRpcCtx.purge` is `async`, so its caller
+ * sees the same rejection it did when this function was `async` too.
+ */
+export function startPurge(deps: PurgeDeps, externalId: string): PurgeStartResult {
   const peerId = deps.resolvePeer(externalId);
   if (peerId === undefined) throw new Error(`gdpr purge: unknown user ${externalId}`);
   deps.revokeAllGrants(peerId);

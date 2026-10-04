@@ -47,5 +47,6 @@ describe("Onboarding → Syncing", () => {
         expect.objectContaining({ key: "onboarding_completed" }),
       ),
     );
+    expect(await screen.findByText("dashboard")).toBeTruthy();
   });
 });

@@ -23,9 +23,13 @@ export function gatewayDailyLogPath(logDir: string): string {
  * Today's daily-log path for the host OS, or `null` on an unsupported platform. The single
  * per-OS resolution used by both the emergency logger and the lifecycle diagnostics — the
  * platform branching lives here, in the one file already sanctioned for it.
+ *
+ * `os` defaults to the host and every production caller omits it. It is a parameter only so each
+ * arm is assertable from any runner, not only from the one OS it names — the authoritative coverage
+ * run is Linux-only — the same reason `sqlite-runtime.ts`'s `bundledSqlitePath` takes one.
  */
-export function platformDailyLogPath(): string | null {
-  switch (platform()) {
+export function platformDailyLogPath(os: NodeJS.Platform = platform()): string | null {
+  switch (os) {
     case "win32":
       return gatewayDailyLogPath(createWindowsPaths().logDir);
     case "darwin":
@@ -214,9 +218,21 @@ export function createGatewayPinoLoggerForStream(
   );
 }
 
+/** Append a fatal line to the HOST's daily log. Best-effort: never throws. */
 export function emergencyGatewayLog(err: unknown): void {
+  emergencyGatewayLogForPlatform(err, platform());
+}
+
+/**
+ * {@link emergencyGatewayLog} for an explicit platform, so each arm is assertable from any runner
+ * (see {@link platformDailyLogPath}). A separate export rather than a defaulted second parameter on
+ * purpose: an error logger is exactly what gets handed to `process.on("uncaughtException", …)`,
+ * whose listener receives `(err, origin)` — a defaulted `os` would silently take the origin string
+ * as the platform, resolve no log path, and record nothing.
+ */
+export function emergencyGatewayLogForPlatform(err: unknown, os: NodeJS.Platform): void {
   try {
-    const path = platformDailyLogPath();
+    const path = platformDailyLogPath(os);
     if (path === null) {
       return;
     }

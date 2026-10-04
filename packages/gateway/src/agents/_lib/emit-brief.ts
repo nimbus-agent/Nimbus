@@ -28,7 +28,13 @@ export interface EmitBriefWithSynthesisOpts<B extends AnyBrief> {
   readonly briefErrorMethod: string;
   readonly notify: (method: string, params: unknown) => void;
   readonly runner?: SynthesisRunner;
-  buildBrief(): Promise<B>;
+  /**
+   * May be synchronous: a builder that only reads the index has nothing to await. It is only ever
+   * called inside the background task below, where a synchronous throw and a rejection reach
+   * `briefErrorMethod` the same way, so a builder has no reason to be `async` just to satisfy
+   * this signature.
+   */
+  buildBrief(): B | Promise<B>;
 }
 
 /**
@@ -41,9 +47,13 @@ export interface EmitBriefWithSynthesisOpts<B extends AnyBrief> {
  * Use this from each agent's `emit<Agent>Brief` IPC entry point and keep
  * the typed `run<Agent>` builder where it belongs (in the agent module).
  */
-export async function emitBriefWithSynthesis<B extends AnyBrief>(
+export function emitBriefWithSynthesis<B extends AnyBrief>(
   opts: EmitBriefWithSynthesisOpts<B>,
 ): Promise<{ sessionId: string }> {
+  // Not `async`: nothing here is awaited — the work is deliberately fire-and-forget — and
+  // nothing here can throw, because the async task converts even a synchronous `buildBrief`
+  // throw into a rejection its `.catch` handles. `Promise.resolve` keeps the entry points'
+  // Promise contract.
   void (async () => {
     const brief = await opts.buildBrief();
     const { markdown, provenance } = await synthesize(
@@ -62,5 +72,5 @@ export async function emitBriefWithSynthesis<B extends AnyBrief>(
       error: err instanceof Error ? err.message : String(err),
     });
   });
-  return { sessionId: opts.sessionId };
+  return Promise.resolve({ sessionId: opts.sessionId });
 }

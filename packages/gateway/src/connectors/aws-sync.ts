@@ -1,7 +1,11 @@
-import { clampSyncTitle, syncPassCursorParseEmpty } from "../sync/pass-cursor-sync-result.ts";
+import {
+  clampSyncTitle,
+  syncPassCursorHttpEmpty,
+  syncPassCursorParseEmpty,
+} from "../sync/pass-cursor-sync-result.ts";
 import { type Syncable, type SyncContext, type SyncResult, syncNoopResult } from "../sync/types.ts";
 import { awsCliJson, awsCredentialsExtra } from "./_lib/aws-cli.ts";
-import { decodeNimbusJsonCursorPayload, encodeNimbusJsonCursor } from "./nimbus-json-cursor.ts";
+import { decodeNimbusJsonCursorObject, encodeNimbusJsonCursor } from "./nimbus-json-cursor.ts";
 import { asRecord, stringField } from "./unknown-record.ts";
 
 const SERVICE_ID = "aws";
@@ -18,14 +22,10 @@ function encodeAwsPassCursor(nextMarker: string | null): string {
 }
 
 function decodeCursor(raw: string | null): AwsCursorV1 | null {
-  if (raw === null || raw === "") {
+  const rec = decodeNimbusJsonCursorObject(raw, CURSOR_PREFIX);
+  if (rec === null) {
     return null;
   }
-  const parsed = decodeNimbusJsonCursorPayload(raw, CURSOR_PREFIX);
-  if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
-    return null;
-  }
-  const rec = parsed as Record<string, unknown>;
   const m = rec["nextMarker"];
   if (m !== null && m !== undefined && typeof m !== "string") {
     return null;
@@ -53,14 +53,7 @@ async function syncAwsLambdaListPage(
   const res = await awsCliJson(ctx, args);
   if (!res.ok) {
     ctx.logger.warn({ serviceId: SERVICE_ID }, "aws sync: list-functions failed");
-    return {
-      cursor: cursor ?? encodeAwsPassCursor(null),
-      itemsUpserted: 0,
-      itemsDeleted: 0,
-      hasMore: false,
-      durationMs: Math.round(performance.now() - t0),
-      bytesTransferred: res.text.length,
-    };
+    return syncPassCursorHttpEmpty(t0, res.text.length, cursor, encodeAwsPassCursor(null));
   }
 
   let root: unknown;

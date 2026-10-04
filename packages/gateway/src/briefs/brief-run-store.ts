@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { ExpiringRunRegistry } from "../util/expiring-run-registry.ts";
 import { canonicalizeUrl } from "../util/url-canonical.ts";
 import {
   DEFAULT_RUN_TTL_MS,
@@ -45,16 +46,16 @@ function utf8Bytes(s: string): number {
 /**
  * In-memory store for research-brief runs, modelled on
  * `clips/pairing-window.ts` (invariant I30): a plain Map, injected clock, lazy
- * expiry, no timer and no sweeper thread.
+ * expiry, no timer and no sweeper thread. The TTL sweep, terminal trim and
+ * 410-vs-404 tombstones live in `util/expiring-run-registry.ts`, shared with
+ * the agent-run store.
  *
  * A gateway restart drops everything, and that is the point — it makes "source
  * text is ephemeral" a structural property rather than a promise. Source bodies
  * are NEVER written to disk from here.
  */
 export class BriefRunController {
-  private readonly runs = new Map<string, BriefRun>();
-  /** Ids that existed and have since expired — drives 410 vs 404. */
-  private readonly expired = new Set<string>();
+  private readonly runs: ExpiringRunRegistry<BriefRun>;
   private readonly nowMs: () => number;
   private readonly ttlMs: number;
   private readonly genId: () => string;
@@ -63,39 +64,16 @@ export class BriefRunController {
     this.nowMs = deps.nowMs;
     this.ttlMs = deps.ttlMs ?? DEFAULT_RUN_TTL_MS;
     this.genId = deps.genId ?? (() => `run_${randomUUID().replaceAll("-", "").slice(0, 20)}`);
-  }
-
-  /**
-   * Drops every run past its TTL. Called before the concurrency check because
-   * expiry is otherwise access-triggered: three runs created and never polled
-   * would never expire and would pin the cap until the gateway restarted.
-   */
-  private sweep(): void {
-    const now = this.nowMs();
-    for (const [id, run] of this.runs) {
-      if (now > run.expiresAtMs) {
+    this.runs = new ExpiringRunRegistry<BriefRun>({
+      nowMs: deps.nowMs,
+      maxTombstones: MAX_EXPIRED_TOMBSTONES,
+      maxRetainedTerminal: MAX_RETAINED_TERMINAL_RUNS,
+      // EVERY TTL path — the sweep and a lazy get() — drops the source bodies before the run
+      // itself. A run the terminal trim evicts has none left: finish() and fail() dropped them.
+      onExpire: (run) => {
         run.sources.clear();
-        this.runs.delete(id);
-        this.rememberExpired(id);
-      }
-    }
-  }
-
-  private isTerminal(run: BriefRun): boolean {
-    return run.status === "done" || run.status === "failed";
-  }
-
-  /**
-   * Adds `id` to the expired-tombstone set, evicting the OLDEST entry once the
-   * cap is exceeded (a Set preserves insertion order). See MAX_EXPIRED_TOMBSTONES.
-   */
-  private rememberExpired(id: string): void {
-    this.expired.add(id);
-    while (this.expired.size > MAX_EXPIRED_TOMBSTONES) {
-      const oldest = this.expired.values().next().value;
-      if (oldest === undefined) break;
-      this.expired.delete(oldest);
-    }
+      },
+    });
   }
 
   /**
@@ -104,37 +82,23 @@ export class BriefRunController {
    * for the rest of the TTL over a report of at most ~20 KB.
    */
   activeCount(): number {
-    this.sweep();
-    let n = 0;
-    for (const run of this.runs.values()) if (!this.isTerminal(run)) n += 1;
-    return n;
-  }
-
-  /** Bounds retained terminal runs, dropping the oldest first. */
-  private trimTerminal(): void {
-    const terminal = [...this.runs.values()]
-      .filter((r) => this.isTerminal(r))
-      .sort((a, b) => a.createdAtMs - b.createdAtMs);
-    for (let i = 0; i < terminal.length - MAX_RETAINED_TERMINAL_RUNS; i++) {
-      const run = terminal[i] as BriefRun;
-      this.runs.delete(run.id);
-      this.rememberExpired(run.id);
-    }
+    return this.runs.activeCount();
   }
 
   create(input: CreateInput): CreateResult {
-    this.sweep();
+    this.runs.sweep();
     const active = this.activeCount();
     if (active >= MAX_CONCURRENT_RUNS) {
-      const now = this.nowMs();
-      let soonest = Number.POSITIVE_INFINITY;
-      for (const run of this.runs.values()) {
-        if (!this.isTerminal(run)) soonest = Math.min(soonest, run.expiresAtMs);
-      }
       return {
         error: "busy",
         activeRuns: active,
-        oldestExpiresInSeconds: Math.max(0, Math.ceil((soonest - now) / 1000)),
+        // `active >= MAX_CONCURRENT_RUNS` means a non-terminal run is held, so this is null only
+        // when every such run expires at Infinity: a `ttlMs` of Infinity, which is what an absurdly
+        // large `[briefs] ttl_minutes` becomes once `ttlMinutes * 60_000` overflows at the wiring
+        // site. `now + ttlMs` cannot overflow by itself: a finite TTL keeps the sum finite at any
+        // real clock value. Infinity is what the expiry arithmetic yields for those runs too —
+        // never an invented 0.
+        oldestExpiresInSeconds: this.runs.secondsUntilSoonestExpiry() ?? Number.POSITIVE_INFINITY,
       };
     }
 
@@ -158,26 +122,21 @@ export class BriefRunController {
       report: null,
       error: null,
     };
-    this.runs.set(run.id, run);
+    this.runs.add(run);
     return { run };
   }
 
-  /** Returns the run, or null when it is unknown OR has expired (expiry is checked here). */
+  /**
+   * Returns the run, or null when it is unknown OR has expired (expiry is checked
+   * here, and an expired run's source bodies are dropped with it).
+   */
   get(id: string): BriefRun | null {
-    const run = this.runs.get(id);
-    if (run === undefined) return null;
-    if (this.nowMs() > run.expiresAtMs) {
-      run.sources.clear();
-      this.runs.delete(id);
-      this.rememberExpired(id);
-      return null;
-    }
-    return run;
+    return this.runs.get(id);
   }
 
-  /** True when this id was a real run that has since expired — the 410 signal. */
+  /** True when this id was a real run that has since expired or been evicted — the 410 signal. */
   wasKnown(id: string): boolean {
-    return this.expired.has(id);
+    return this.runs.wasKnown(id);
   }
 
   addSource(run: BriefRun, input: AddSourceInput): AddSourceResult {
@@ -217,7 +176,7 @@ export class BriefRunController {
     run.status = "done";
     run.sources.clear();
     run.bytesHeld = 0;
-    this.trimTerminal();
+    this.runs.trimTerminal();
   }
 
   /** Terminal. Drops every source body. */
@@ -226,6 +185,6 @@ export class BriefRunController {
     run.status = "failed";
     run.sources.clear();
     run.bytesHeld = 0;
-    this.trimTerminal();
+    this.runs.trimTerminal();
   }
 }

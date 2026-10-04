@@ -1,3 +1,5 @@
+import { watchForMarker } from "./process-spawn-bench.ts";
+
 const DEFAULT_READY_TIMEOUT_MS = 30_000;
 
 export interface SpawnGatewayForBenchOptions<W, S = void> {
@@ -55,62 +57,20 @@ class StderrRing {
   }
 }
 
-async function readUntilMatch(
-  stream: ReadableStream<Uint8Array>,
-  marker: RegExp,
-  onMatch: () => void,
-  signal: AbortSignal,
-  stderrRing?: StderrRing,
-): Promise<void> {
-  const reader = stream.getReader();
-  const decoder = new TextDecoder();
-  let buf = "";
-  try {
-    while (!signal.aborted) {
-      const { done, value } = await reader.read();
-      if (done) return;
-      const chunk = decoder.decode(value, { stream: true });
-      if (stderrRing !== undefined) stderrRing.push(chunk);
-      buf += chunk;
-      if (marker.test(buf)) {
-        onMatch();
-        return;
-      }
-    }
-  } finally {
-    try {
-      reader.releaseLock();
-    } catch {
-      /* ignore */
-    }
-  }
-}
-
 async function waitForMarker(
   proc: ProcSubset,
   marker: RegExp,
   timeoutMs: number,
   stderrRing: StderrRing,
 ): Promise<void> {
-  const ac = new AbortController();
-  let matched = false;
-  let resolveMatched!: () => void;
-  const matchedPromise = new Promise<void>((resolve) => {
-    resolveMatched = resolve;
+  const watch = watchForMarker(proc, marker, {
+    onStderrChunk: (chunk) => stderrRing.push(chunk),
   });
-  const onMatch = (): void => {
-    if (matched) return;
-    matched = true;
-    ac.abort();
-    resolveMatched();
-  };
-  void readUntilMatch(proc.stdout, marker, onMatch, ac.signal);
-  void readUntilMatch(proc.stderr, marker, onMatch, ac.signal, stderrRing);
 
   let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
   try {
     await Promise.race([
-      matchedPromise,
+      watch.matched,
       new Promise<never>((_, reject) => {
         timeoutHandle = setTimeout(
           () => reject(new Error(`gateway not ready in ${timeoutMs}ms${stderrRing.tail()}`)),
@@ -118,7 +78,7 @@ async function waitForMarker(
         );
       }),
       proc.exited.then((code) => {
-        if (!matched) {
+        if (!watch.isMatched()) {
           throw new Error(
             `child exited with code ${code} before marker matched${stderrRing.tail()}`,
           );
@@ -128,7 +88,7 @@ async function waitForMarker(
   } finally {
     if (timeoutHandle !== undefined) clearTimeout(timeoutHandle);
   }
-  if (!matched) {
+  if (!watch.isMatched()) {
     throw new Error(`gateway not ready in ${timeoutMs}ms${stderrRing.tail()}`);
   }
 }

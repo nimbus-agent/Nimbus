@@ -31,6 +31,9 @@ export interface GreatExpectationsMappingContext {
 
 const ID_MAX = 256;
 
+/** 2^32: the clamped-id hash is reduced by it at every step, keeping `h` an exact integer. */
+const HASH_MODULUS = 2 ** 32;
+
 /**
  * RFC3339 / ISO-8601 timestamp → epoch ms, else null. Mirrors the other
  * connectors' local `parseIsoMs`.
@@ -63,11 +66,62 @@ function clampExternalId(id: string): string {
   if (id.length <= ID_MAX) {
     return id;
   }
+  // A 32-bit polynomial hash, reduced mod 2^32 at EVERY step so `h` stays an exact integer
+  // (h * 31 + a code point is below 2^38). Left unreduced, `h` passes 2^84 within ~17 chars, where
+  // a double's spacing exceeds 2^32, so `h >>> 0` read 0 for EVERY clamped id: two results sharing
+  // their first 240 chars got the same external id and the second upsert overwrote the first.
+  // Same value as the GX MCP server's `clampId` (`(h * 31 + cp) | 0`, then `h >>> 0`).
   let h = 0;
   for (let i = 0; i < id.length; i += 1) {
-    h = Math.trunc(h * 31 + (id.codePointAt(i) ?? 0));
+    h = (h * 31 + (id.codePointAt(i) ?? 0)) % HASH_MODULUS;
   }
-  return `${id.slice(0, ID_MAX - 16)}#${(h >>> 0).toString(16)}`;
+  return `${id.slice(0, ID_MAX - 16)}#${h.toString(16)}`;
+}
+
+/** What names one GX result in the index, read from its `expectation_config`. */
+interface ResultIdentity {
+  readonly expectationType: string;
+  readonly column: string | null;
+  /** `suite::batch::expectation::column` — the external id before {@link clampExternalId}. */
+  readonly key: string;
+}
+
+/** The identity of one `results[]` entry, or null when it names no expectation type. */
+function resultIdentity(
+  entry: Record<string, unknown>,
+  ctx: GreatExpectationsMappingContext,
+): ResultIdentity | null {
+  const config = asRecord(entry["expectation_config"]) ?? {};
+  const expectationType = stringField(config, "expectation_type");
+  if (expectationType === undefined || expectationType === "") {
+    return null;
+  }
+  const kwargs = asRecord(config["kwargs"]) ?? {};
+  const column = stringField(kwargs, "column") ?? null;
+  const key = `${ctx.suiteName}::${ctx.batchId}::${expectationType}::${column ?? "_"}`;
+  return { expectationType, column, key };
+}
+
+/**
+ * The external id an entry was indexed under BEFORE {@link clampExternalId} was fixed, or null
+ * when that is the id it gets today.
+ *
+ * Only a key longer than `ID_MAX` was ever clamped, and the old hash came out 0 for every one of
+ * them, so that id was always the key's first `ID_MAX - 16` chars plus `#0`. The sync removes such
+ * rows: the same results are now written under their real ids, and an old row would otherwise
+ * stay in the index for good — upserts never touch it again, so its pass/fail never updates.
+ */
+export function legacyClampedExternalId(
+  resultEntry: unknown,
+  ctx: GreatExpectationsMappingContext,
+): string | null {
+  const entry = asRecord(resultEntry);
+  const identity = entry === undefined ? null : resultIdentity(entry, ctx);
+  if (identity === null || identity.key.length <= ID_MAX) {
+    return null;
+  }
+  const legacy = `${identity.key.slice(0, ID_MAX - 16)}#0`;
+  return legacy === clampExternalId(identity.key) ? null : legacy;
 }
 
 /**
@@ -89,13 +143,11 @@ export function mapGreatExpectationsResultToItem(
     return null;
   }
 
-  const config = asRecord(entry["expectation_config"]) ?? {};
-  const expectationType = stringField(config, "expectation_type");
-  if (expectationType === undefined || expectationType === "") {
+  const identity = resultIdentity(entry, ctx);
+  if (identity === null) {
     return null;
   }
-  const kwargs = asRecord(config["kwargs"]) ?? {};
-  const column = stringField(kwargs, "column") ?? null;
+  const { expectationType, column } = identity;
   const success = entry["success"] === true;
 
   const result = asRecord(entry["result"]) ?? {};
@@ -104,9 +156,7 @@ export function mapGreatExpectationsResultToItem(
   const unexpectedCount = numberField(result, "unexpected_count") ?? null;
   const unexpectedPercent = numberField(result, "unexpected_percent") ?? null;
 
-  const externalId = clampExternalId(
-    `${ctx.suiteName}::${ctx.batchId}::${expectationType}::${column ?? "_"}`,
-  );
+  const externalId = clampExternalId(identity.key);
 
   const columnSuffix = column ?? "";
   const title = clampSyncTitle(`${ctx.suiteName} · ${expectationType}(${columnSuffix})`);

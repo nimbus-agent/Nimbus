@@ -44,40 +44,53 @@ export class MdnsDiscoveryProvider implements DiscoveryProvider {
     this.makeBonjour = makeBonjour;
   }
 
-  async start(): Promise<void> {
-    this.bonjour = this.makeBonjour();
-    this.browser = this.bonjour.find({ type: SERVICE_TYPE }, (service) => {
-      const host = service.addresses?.[0] ?? service.host;
-      if (typeof host === "string" && typeof service.port === "number") {
-        this.seen.set(service.name, {
-          instanceName: service.name,
-          host,
-          port: service.port,
-        });
-      }
+  // `start`, `stop` and `advertise` await nothing — every bonjour call RETURNS synchronously, while
+  // the library's own socket bind and announcements run in the background, never through these
+  // promises — but the `DiscoveryProvider` contract returns a Promise, and `platform/assemble.ts`
+  // fires all three with `void` (`void discovery.start()`, and likewise `stop` and `advertise`).
+  // `Promise.try` runs each body immediately, exactly as the former `async` did, and turns a throw
+  // from the bonjour library into a REJECTION of the returned promise; a plain synchronous throw
+  // would instead escape into gateway boot or the shutdown drain at the call site.
+  start(): Promise<void> {
+    return Promise.try(() => {
+      this.bonjour = this.makeBonjour();
+      this.browser = this.bonjour.find({ type: SERVICE_TYPE }, (service) => {
+        const host = service.addresses?.[0] ?? service.host;
+        if (typeof host === "string" && typeof service.port === "number") {
+          this.seen.set(service.name, {
+            instanceName: service.name,
+            host,
+            port: service.port,
+          });
+        }
+      });
+      this.unregisterListener = registerListener(() =>
+        this.bonjour === undefined
+          ? null
+          : { name: "mdns", address: "udp *:5353 (mDNS multicast)", loopback: false },
+      );
     });
-    this.unregisterListener = registerListener(() =>
-      this.bonjour === undefined
-        ? null
-        : { name: "mdns", address: "udp *:5353 (mDNS multicast)", loopback: false },
-    );
   }
 
-  async stop(): Promise<void> {
-    this.browser?.stop();
-    this.bonjour?.destroy();
-    this.browser = undefined;
-    this.bonjour = undefined;
-    this.unregisterListener?.();
-    this.unregisterListener = undefined;
+  stop(): Promise<void> {
+    return Promise.try(() => {
+      this.browser?.stop();
+      this.bonjour?.destroy();
+      this.browser = undefined;
+      this.bonjour = undefined;
+      this.unregisterListener?.();
+      this.unregisterListener = undefined;
+    });
   }
 
-  async list(): Promise<readonly DiscoveredPeer[]> {
-    return [...this.seen.values(), ...this.manual];
+  list(): Promise<readonly DiscoveredPeer[]> {
+    return Promise.resolve([...this.seen.values(), ...this.manual]);
   }
 
-  async advertise(instanceName: string, port: number): Promise<void> {
-    this.bonjour?.publish({ name: instanceName, type: SERVICE_TYPE, port });
+  advertise(instanceName: string, port: number): Promise<void> {
+    return Promise.try(() => {
+      this.bonjour?.publish({ name: instanceName, type: SERVICE_TYPE, port });
+    });
   }
 
   addManualPeer(peer: DiscoveredPeer): void {

@@ -48,54 +48,58 @@ function parseDetailsText(actionJson: string | null): string {
   return "[redacted]";
 }
 
+function readSessionTranscript(db: Database, params: unknown): SessionTranscriptResult {
+  if (typeof params !== "object" || params === null) {
+    throw new RpcMethodError(-32602, "engine.getSessionTranscript requires params object");
+  }
+  const sid = (params as { sessionId?: unknown }).sessionId;
+  if (typeof sid !== "string" || sid.length === 0) {
+    throw new RpcMethodError(-32602, "engine.getSessionTranscript requires non-empty sessionId");
+  }
+  const limit = clampLimit((params as { limit?: unknown }).limit);
+
+  const stmt = db.prepare(
+    `SELECT id, action_type, timestamp, action_json
+     FROM audit_log
+     WHERE session_id = ?
+     ORDER BY timestamp ASC, id ASC
+     LIMIT ?`,
+  );
+  type Row = {
+    id: number;
+    action_type: string;
+    timestamp: number;
+    action_json: string | null;
+  };
+  // db.prepare() statements are not released by db.close() (#969).
+  let rows: Row[];
+  try {
+    rows = stmt.all(sid, limit + 1) as Row[];
+  } finally {
+    stmt.finalize();
+  }
+
+  const hasMore = rows.length > limit;
+  const used = hasMore ? rows.slice(0, limit) : rows;
+
+  const turns: TranscriptTurn[] = [];
+  for (const r of used) {
+    const role = actionToRole(r.action_type);
+    if (role === undefined) continue;
+    turns.push({
+      role,
+      text: parseDetailsText(r.action_json),
+      timestamp: r.timestamp,
+      auditLogId: r.id,
+    });
+  }
+  return { sessionId: sid, turns, hasMore };
+}
+
 export function createGetSessionTranscriptHandler(
   db: Database,
 ): (params: unknown) => Promise<SessionTranscriptResult> {
-  return async (params): Promise<SessionTranscriptResult> => {
-    if (typeof params !== "object" || params === null) {
-      throw new RpcMethodError(-32602, "engine.getSessionTranscript requires params object");
-    }
-    const sid = (params as { sessionId?: unknown }).sessionId;
-    if (typeof sid !== "string" || sid.length === 0) {
-      throw new RpcMethodError(-32602, "engine.getSessionTranscript requires non-empty sessionId");
-    }
-    const limit = clampLimit((params as { limit?: unknown }).limit);
-
-    const stmt = db.prepare(
-      `SELECT id, action_type, timestamp, action_json
-       FROM audit_log
-       WHERE session_id = ?
-       ORDER BY timestamp ASC, id ASC
-       LIMIT ?`,
-    );
-    type Row = {
-      id: number;
-      action_type: string;
-      timestamp: number;
-      action_json: string | null;
-    };
-    // db.prepare() statements are not released by db.close() (#969).
-    let rows: Row[];
-    try {
-      rows = stmt.all(sid, limit + 1) as Row[];
-    } finally {
-      stmt.finalize();
-    }
-
-    const hasMore = rows.length > limit;
-    const used = hasMore ? rows.slice(0, limit) : rows;
-
-    const turns: TranscriptTurn[] = [];
-    for (const r of used) {
-      const role = actionToRole(r.action_type);
-      if (role === undefined) continue;
-      turns.push({
-        role,
-        text: parseDetailsText(r.action_json),
-        timestamp: r.timestamp,
-        auditLogId: r.id,
-      });
-    }
-    return { sessionId: sid, turns, hasMore };
-  };
+  // The read is synchronous (bun:sqlite); `Promise.try` keeps the handler's Promise contract, so an
+  // invalid-params `RpcMethodError` still arrives as a rejection.
+  return (params) => Promise.try(() => readSessionTranscript(db, params));
 }

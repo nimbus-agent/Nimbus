@@ -69,7 +69,7 @@ describeWithFetchRestore("dbt-sync", () => {
 
   // ── Happy path: account_id configured (bypasses /accounts/ fetch) ─────────
   // Covers: loadCreds success, resolveAccounts creds.accountId !== null branch,
-  // syncAccountJobs, upsertJobs, syncPassCursorSuccess.
+  // syncAccountJobs, upsertMapped, syncPassCursorSuccess.
   // Also covers trimTrailingSlash false branch (apiBase has no trailing slash).
   test("indexes jobs when account_id is configured (no /accounts/ fetch)", async () => {
     const db = createMemoryIndexDb();
@@ -103,7 +103,7 @@ describeWithFetchRestore("dbt-sync", () => {
   });
 
   // ── Happy path: api_base with trailing slash (trimTrailingSlash true branch) ──
-  // Covers line 37 true branch and line 50 baseRaw !== "" branch.
+  // Also covers loadCreds' baseRaw !== "" branch.
   test("trims trailing slash from custom api_base", async () => {
     const db = createMemoryIndexDb();
 
@@ -344,7 +344,7 @@ describeWithFetchRestore("dbt-sync", () => {
     expect(r.itemsUpserted).toBe(1);
   });
 
-  // ── upsertJobs: mapped === null → continue (line 102) ────────────────────
+  // ── upsertMapped: mapped === null → skipped ──────────────────────────────
   // mapDbtJobToItem returns null when the raw item has no numeric "id".
   test("skips job items that fail mapping (no numeric id)", async () => {
     const db = createMemoryIndexDb();
@@ -379,7 +379,7 @@ describeWithFetchRestore("dbt-sync", () => {
     expectServiceItemCount(db, "dbt", 1);
   });
 
-  // ── upsertJobs: non-record job item → mapped null (asRecord branch) ───────
+  // ── upsertMapped: non-record job item → mapped null (asRecord branch) ─────
   test("skips non-object job entries in data array", async () => {
     const db = createMemoryIndexDb();
 
@@ -408,7 +408,7 @@ describeWithFetchRestore("dbt-sync", () => {
     expectServiceItemCount(db, "dbt", 1);
   });
 
-  // ── resolveAccounts: http_error → syncPassCursorHttpEmpty (lines 170-171) ──
+  // ── resolveAccounts: http_error → syncPassCursorHttpEmpty ─────────────────
   // Covers: "error" in resolved, resolved.error === "http_error" true branch.
   test("returns http-empty cursor when /accounts/ fetch returns HTTP error", async () => {
     const db = createMemoryIndexDb();
@@ -438,7 +438,7 @@ describeWithFetchRestore("dbt-sync", () => {
     expectServiceItemCount(db, "dbt", 0);
   });
 
-  // ── resolveAccounts: parse_error → syncPassCursorParseEmpty (line 171) ────
+  // ── resolveAccounts: parse_error → syncPassCursorParseEmpty ───────────────
   // Covers: "error" in resolved, resolved.error === "http_error" false branch.
   test("returns parse-empty cursor when /accounts/ response is invalid JSON", async () => {
     const db = createMemoryIndexDb();

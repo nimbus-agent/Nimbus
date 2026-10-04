@@ -47,7 +47,12 @@ import type {
   NegotiateTickets,
   NegotiateWriting,
 } from "./negotiate-types.ts";
-import type { OncallBrief, OncallIncident } from "./oncall-types.ts";
+import type {
+  OncallBrief,
+  OncallChange,
+  OncallIncident,
+  OncallPriorIncident,
+} from "./oncall-types.ts";
 import type { OwnershipBrief, OwnershipTargetView } from "./ownership-types.ts";
 import type { PremortemBrief } from "./premortem-types.ts";
 import type { StandupBrief } from "./standup-types.ts";
@@ -118,9 +123,8 @@ function assembleBrief(
 }
 
 function renderExpertFinding(f: ExpertFinding): string {
-  const head = `**${f.displayName}** (${f.confidence} — ${f.evidence.length} evidence row${
-    f.evidence.length === 1 ? "" : "s"
-  })`;
+  const evidenceCount = `${f.evidence.length} ${plural(f.evidence.length, "evidence row")}`;
+  const head = `**${f.displayName}** (${f.confidence} — ${evidenceCount})`;
   if (f.evidence.length === 0) return `- ${head}`;
   const lines = f.evidence
     .slice(0, 5)
@@ -155,9 +159,8 @@ const IMPACT_BUCKET_ORDER: readonly ImpactCategory[] = [
 ];
 
 function renderImpactFinding(f: ImpactFinding): string {
-  return `- **${f.affectedTitle}** (\`${f.serviceId}\`, ${f.hops} hop${
-    f.hops === 1 ? "" : "s"
-  }) — _${f.pathSummary}_`;
+  const hops = `${f.hops} ${plural(f.hops, "hop")}`;
+  return `- **${f.affectedTitle}** (\`${f.serviceId}\`, ${hops}) — _${f.pathSummary}_`;
 }
 
 export function renderImpact(brief: ImpactBrief, opts?: RenderOpts): string {
@@ -1115,8 +1118,8 @@ type RenderableEntry = {
 };
 
 /**
- * One entry. Linked when the indexed item carried a permalink that can be rendered safely,
- * plain otherwise — never a link to nowhere.
+ * A connector-supplied title, linked when its url can be rendered safely and plain otherwise —
+ * never a link to nowhere.
  *
  * Both halves go through `negotiate`'s hardened helpers rather than being interpolated raw,
  * because BOTH halves are connector-supplied: the title is a pull-request or incident subject
@@ -1126,16 +1129,27 @@ type RenderableEntry = {
  * `renderWhy` and `renderDecisionsEvidenceItem` interpolate raw; that is the older shape, not
  * the one to copy.
  *
+ * The ONE copy of this hardening for the entry renderer below and every `oncall` title (a
+ * url-less runner-up passes `null` and gets the hardened plain text), for the reason
+ * {@link RenderableEntry} gives: it is security-relevant, and each inline copy of it is one more
+ * place for it to drift.
+ */
+function hardenedTitleLink(title: string, url: string | null): string {
+  const text = escapeMarkdownLinkText(stripLineStructureChars(title));
+  const href = url === null ? null : safeEvidenceHref(url);
+  return href === null ? text : `[${text}](${href})`;
+}
+
+/**
+ * One entry, its title linked by {@link hardenedTitleLink}.
+ *
  * `stamp` is injected because the right precision is a property of the WINDOW, not of the
  * renderer: a changelog over 7d wants the date, and a standup over 24h wants the time — every
  * entry in it would otherwise read `2026-09-12`, collapsing the ordering information the reader
  * came for into one indistinguishable value.
  */
 function renderBriefEntry(r: RenderableEntry, stamp: (ms: number) => string): string {
-  const title = escapeMarkdownLinkText(stripLineStructureChars(r.title));
-  const href = r.url === null ? null : safeEvidenceHref(r.url);
-  const head = href === null ? title : `[${title}](${href})`;
-  return `- ${head} — ${stamp(r.atMs)}`;
+  return `- ${hardenedTitleLink(r.title, r.url)} — ${stamp(r.atMs)}`;
 }
 
 /**
@@ -1308,9 +1322,9 @@ function renderStandupSlackSection(brief: StandupBrief): string {
   if (brief.counts.messages === 0) return section;
   const n = brief.counts.messages;
   const t = brief.threadCount;
-  const summary =
-    `_${String(n)} message${n === 1 ? "" : "s"} across ` +
-    `${String(t)} thread${t === 1 ? "" : "s"}._`;
+  const messages = `${String(n)} ${plural(n, "message")}`;
+  const threads = `${String(t)} ${plural(t, "thread")}`;
+  const summary = `_${messages} across ${threads}._`;
   // Inserted after the heading's blank line rather than appended, so the summary is read before
   // the bullets it counts. `renderEntrySection` returns `["", "## …", "", body]` joined, so
   // splicing at index 3 puts this exactly where the body starts.
@@ -1356,13 +1370,10 @@ export function renderOncall(brief: OncallBrief, opts?: RenderOpts): string {
 
 /** The incident as one preamble line: title, then the fact that decides how urgent it is. */
 function renderOncallIncidentLine(i: OncallIncident): string {
-  const title = escapeMarkdownLinkText(stripLineStructureChars(i.title));
-  const href = i.url === null ? null : safeEvidenceHref(i.url);
-  const head = href === null ? title : `[${title}](${href})`;
   // `status unknown` rather than omitting the field: a missing status is WHY this incident counts
   // as active at all (`isActiveStatus` treats absent as active), so hiding it would leave the
   // reader unable to see why a row they do not recognise was selected.
-  return `${head} — ${i.status ?? "status unknown"}`;
+  return `${hardenedTitleLink(i.title, i.url)} — ${i.status ?? "status unknown"}`;
 }
 
 function renderOncallIncidentSection(brief: OncallBrief): string {
@@ -1391,11 +1402,12 @@ function renderOncallIncidentSection(brief: OncallBrief): string {
       : [
           "",
           `${oncallRunnerUpLabel(brief.selection)}:`,
-          ...brief.otherActiveIncidents.map(
-            (o) =>
-              `- \`${stripLineStructureChars(o.id)}\` — ${escapeMarkdownLinkText(stripLineStructureChars(o.title))}` +
-              `${o.openedAtMs === null ? "" : ` (opened ${isoMinuteUtc(o.openedAtMs)})`}`,
-          ),
+          ...brief.otherActiveIncidents.map((o) => {
+            // No url on a runner-up, so this is always the hardened PLAIN title.
+            const title = hardenedTitleLink(o.title, null);
+            const opened = o.openedAtMs === null ? "" : ` (opened ${isoMinuteUtc(o.openedAtMs)})`;
+            return `- \`${stripLineStructureChars(o.id)}\` — ${title}${opened}`;
+          }),
         ];
 
   return ["", "## Incident", "", ...lines, ...others].join("\n");
@@ -1447,13 +1459,11 @@ function renderOncallDeploymentSection(brief: OncallBrief): string {
   if (d === null) {
     return ["", "## Last deployment before the alert", "", "_None found._"].join("\n");
   }
-  const title = escapeMarkdownLinkText(stripLineStructureChars(d.title));
-  const href = d.workflowUrl === null ? null : safeEvidenceHref(d.workflowUrl);
   return [
     "",
     "## Last deployment before the alert",
     "",
-    `- **Deployment:** ${href === null ? title : `[${title}](${href})`}`,
+    `- **Deployment:** ${hardenedTitleLink(d.title, d.workflowUrl)}`,
     `- **Started:** ${isoMinuteUtc(d.startedAtMs)}`,
     `- **Environment:** ${stripLineStructureChars(d.environment)}`,
     `- **Result:** ${stripLineStructureChars(d.conclusion)}`,
@@ -1473,35 +1483,41 @@ function renderOncallChangeSection(brief: OncallBrief): string {
   if (c === null) {
     return ["", "## Change in that deployment", "", "_None found._"].join("\n");
   }
-  const title = escapeMarkdownLinkText(stripLineStructureChars(c.title));
-  const href = c.url === null ? null : safeEvidenceHref(c.url);
-  // All three counts absent is a DIFFERENT statement from "+0 −0 across 0 files", which is a
-  // legitimate value for an empty-commit deploy. Only the all-absent case is reported as unknown.
-  const stat =
-    c.additions === null && c.deletions === null && c.changedFiles === null
-      ? "_line counts not recorded_"
-      : `+${String(c.additions ?? 0)} −${String(c.deletions ?? 0)} across ` +
-        `${String(c.changedFiles ?? 0)} file${(c.changedFiles ?? 0) === 1 ? "" : "s"}`;
   return [
     "",
     "## Change in that deployment",
     "",
-    `- **Pull request:** ${href === null ? title : `[${title}](${href})`}`,
+    `- **Pull request:** ${hardenedTitleLink(c.title, c.url)}`,
     `- **Merged:** ${c.mergedAtMs === null ? "_not recorded_" : isoMinuteUtc(c.mergedAtMs)}`,
-    `- **Size:** ${stat}`,
+    `- **Size:** ${oncallChangeSize(c)}`,
   ].join("\n");
+}
+
+/**
+ * The change's diffstat, or that it was not recorded.
+ *
+ * All three counts absent is a DIFFERENT statement from "+0 −0 across 0 files", which is a
+ * legitimate value for an empty-commit deploy. Only the all-absent case is reported as unknown.
+ */
+function oncallChangeSize(c: OncallChange): string {
+  if (c.additions === null && c.deletions === null && c.changedFiles === null) {
+    return "_line counts not recorded_";
+  }
+  const files = c.changedFiles ?? 0;
+  return (
+    `+${String(c.additions ?? 0)} −${String(c.deletions ?? 0)} across ` +
+    `${String(files)} ${plural(files, "file")}`
+  );
 }
 
 function renderOncallCiSection(brief: OncallBrief): string {
   const r = brief.ciRun;
   if (r === null) return ["", "## CI", "", "_None found._"].join("\n");
-  const title = escapeMarkdownLinkText(stripLineStructureChars(r.title));
-  const href = r.url === null ? null : safeEvidenceHref(r.url);
   return [
     "",
     "## CI",
     "",
-    `- **Run:** ${href === null ? title : `[${title}](${href})`}`,
+    `- **Run:** ${hardenedTitleLink(r.title, r.url)}`,
     `- **Result:** ${r.conclusion === null ? "_not recorded_" : stripLineStructureChars(r.conclusion)}`,
     `- **At:** ${isoMinuteUtc(r.atMs)}`,
   ].join("\n");
@@ -1529,19 +1545,23 @@ function renderOncallPriorSection(brief: OncallBrief): string {
   const saturated = n > rows.length;
   const summary = saturated
     ? `_At least ${String(n)} earlier incidents on this service — more than this brief counted._`
-    : `_${String(n)} earlier incident${n === 1 ? "" : "s"} on this service._`;
+    : `_${String(n)} earlier ${plural(n, "incident")} on this service._`;
   const body = rows.map((p) => {
-    const title = escapeMarkdownLinkText(stripLineStructureChars(p.title));
-    const href = p.url === null ? null : safeEvidenceHref(p.url);
-    const head = href === null ? title : `[${title}](${href})`;
+    const head = hardenedTitleLink(p.title, p.url);
     const opened = p.openedAtMs === null ? "date unknown" : isoMinuteUtc(p.openedAtMs);
-    const closed =
-      p.resolvedAtMs === null
-        ? "still open"
-        : `closed ${isoMinuteUtc(p.resolvedAtMs)}${
-            p.resolvedByEmail === null ? "" : ` by ${stripLineStructureChars(p.resolvedByEmail)}`
-          }`;
-    return `- ${head} — opened ${opened}, ${closed}`;
+    return `- ${head} — opened ${opened}, ${priorIncidentClosure(p)}`;
   });
   return ["", "## Prior incidents on this service", "", summary, "", ...body].join("\n");
+}
+
+/** Whether a prior incident is still open, or when it closed and — when recorded — by whom. */
+function priorIncidentClosure(p: OncallPriorIncident): string {
+  if (p.resolvedAtMs === null) return "still open";
+  const by = p.resolvedByEmail === null ? "" : ` by ${stripLineStructureChars(p.resolvedByEmail)}`;
+  return `closed ${isoMinuteUtc(p.resolvedAtMs)}${by}`;
+}
+
+/** `noun` for exactly one, `noun` + "s" otherwise — regular plurals only. */
+function plural(n: number, noun: string): string {
+  return n === 1 ? noun : `${noun}s`;
 }

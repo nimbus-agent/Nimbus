@@ -82,7 +82,7 @@ async function verifySavedToolRows(
         continue;
       }
 
-      const result = await readVerifiedSavedTool(configDir, row.toolId, currentPubkeyB64);
+      const result = await readVerifiedSavedTool(configDir, row.toolId, currentPubkeyB64); // NOSONAR S9382: one saved tool at a time - each row's I40 re-verify feeds that row's own isolated DB write, and the saved-tool count is unbounded at boot
       if (result.ok) {
         // Content axis: disk (once verified) wins over the cached row. This also RE-ENABLES a
         // tool a previous boot disabled — `disabled_reason` is a cache of a past verification, not
@@ -155,7 +155,7 @@ async function sweepOrphanSavedToolDirs(
     // A failed removal is NOT counted in `sweptOrphans`: the directory is still there, and a count
     // that included it would report a cleanup that did not happen.
     try {
-      await removeSavedTool(configDir, dir);
+      await removeSavedTool(configDir, dir); // NOSONAR S9382: destructive sweep, one directory at a time - each removal's failure is isolated and logged before the next starts, and the orphan count on disk is unbounded
       sweptOrphans++;
     } catch (err) {
       logger.warn(

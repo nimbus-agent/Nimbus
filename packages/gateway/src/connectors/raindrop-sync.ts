@@ -102,7 +102,7 @@ export function createRaindropSyncable(options: RaindropSyncableOptions): Syncab
         return syncNoopResult(cursor, t0);
       }
       const alreadyRunning = async (): Promise<void> => {};
-      const alreadyLoaded = async (): Promise<RaindropCreds> => creds;
+      const alreadyLoaded = (): Promise<RaindropCreds> => Promise.resolve(creds);
 
       const bookmarks = await runSinglePassPaginatedSync(ctx, cursor, {
         ensureRunning: alreadyRunning,

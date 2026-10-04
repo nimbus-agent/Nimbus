@@ -53,7 +53,7 @@ export function Syncing() {
       key: "onboarding_completed",
       value: new Date().toISOString(),
     });
-    navigate("/", { replace: true });
+    await navigate("/", { replace: true });
   };
 
   const ageSeconds = Math.floor((Date.now() - lastUpdate) / 1000);

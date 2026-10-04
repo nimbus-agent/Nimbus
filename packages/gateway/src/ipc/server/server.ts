@@ -55,7 +55,16 @@ import {
 } from "./socket-listeners.ts";
 import { rpcVaultOrMethodNotFound } from "./vault-dispatch.ts";
 
-export function createIpcServer(options: CreateIpcServerOptions): IPCServer {
+/**
+ * `hostPlatform` chooses the transport, and exists as a test seam: the coverage run is Linux-only,
+ * so the named-pipe arm below — the ONLY IPC transport on Windows — would otherwise never be
+ * measured. `node:net` listens on a unix-socket path on POSIX exactly as it listens on a pipe name
+ * on Windows, so forcing `"win32"` drives that arm end to end on every OS. Production omits it.
+ */
+export function createIpcServer(
+  options: CreateIpcServerOptions,
+  hostPlatform: () => NodeJS.Platform = platform,
+): IPCServer {
   const startedAtMs = options.startedAtMs ?? Date.now();
   let agentInvokeHandler: AgentInvokeHandler | undefined = options.agentInvoke;
   let workflowRunHandler: WorkflowRunHandler | undefined = options.workflowRun;
@@ -231,7 +240,7 @@ export function createIpcServer(options: CreateIpcServerOptions): IPCServer {
       broadcastNotification(method, params);
     },
     async start(): Promise<void> {
-      if (platform() === "win32") {
+      if (hostPlatform() === "win32") {
         const handle = await startWin32NetServer(options.listenPath, attachSession, (fault) => {
           // stderr is redirected into the daily gateway log by `spawnGateway`, so this reaches the
           // same file the reader is already looking at. Pino's shape keeps existing greps working.

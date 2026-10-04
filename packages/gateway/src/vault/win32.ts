@@ -208,7 +208,15 @@ export class DpapiVault implements NimbusVault {
   private readonly vaultDir: string;
   private cachedEntropy: Buffer | undefined;
 
-  constructor(paths: PlatformPaths) {
+  /**
+   * `removeFile` is used ONLY by the stale-temp-file sweep at the end of `set`, and defaults to
+   * `unlink`. It exists so a test can hold one removal open — the only way to observe that `set`
+   * waits for EVERY removal rather than the first to finish. Production passes nothing.
+   */
+  constructor(
+    paths: PlatformPaths,
+    private readonly removeFile: (path: string) => Promise<void> = unlink,
+  ) {
     this.vaultDir = join(paths.configDir, "vault");
   }
 
@@ -262,15 +270,14 @@ export class DpapiVault implements NimbusVault {
       return;
     }
     const prefix = `${key}.enc.tmp.`;
-    for (const entry of entries) {
-      if (!entry.startsWith(prefix)) continue;
-      const full = join(this.vaultDir, entry);
-      try {
-        await unlink(full);
-      } catch {
-        /* ignore */
-      }
-    }
+    // Independent, best-effort removals: order is unobservable and a failed unlink is ignored (the
+    // next `set` of this key sweeps again), so they run concurrently. `allSettled` never rejects
+    // and still waits for every attempt, so `set` resolves only once each one has been made.
+    await Promise.allSettled(
+      entries
+        .filter((entry) => entry.startsWith(prefix))
+        .map((entry) => this.removeFile(join(this.vaultDir, entry))),
+    );
   }
 
   async get(key: string): Promise<string | null> {

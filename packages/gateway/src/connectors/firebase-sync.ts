@@ -119,7 +119,7 @@ export function createFirebaseSyncable(options: FirebaseSyncableOptions): Syncab
         if (url === null) {
           continue;
         }
-        const outcome = await connectorFetch(ctx, SERVICE_ID, url, { headers });
+        const outcome = await connectorFetch(ctx, SERVICE_ID, url, { headers }); // NOSONAR S9382: one app at a time through the shared Firebase rate limiter - `app_ids` is an uncapped owner-supplied list, so Promise.all would be an unbounded burst
         totalBytes += outcome.bytes;
         if (outcome.kind !== "ok") {
           continue;

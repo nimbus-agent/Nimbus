@@ -1,6 +1,7 @@
 import type { SessionMemoryStore } from "../memory/session-memory-store.ts";
 import { dispatchByMethod, type RpcMissOrHit } from "./_lib/dispatch-by-method.ts";
 import { asRecord } from "./connector-rpc-shared.ts";
+import { requireTrimmedStringField } from "./rpc-params.ts";
 
 export class SessionRpcError extends Error {
   readonly rpcCode: number;
@@ -11,15 +12,9 @@ export class SessionRpcError extends Error {
   }
 }
 
+/** `rec[key]`, trimmed, or `Missing or invalid <key>` as a `SessionRpcError`. */
 function requireString(rec: Record<string, unknown> | undefined, key: string): string {
-  if (rec === undefined) {
-    throw new SessionRpcError(-32602, `Missing or invalid ${key}`);
-  }
-  const v = rec[key];
-  if (typeof v !== "string" || v.trim() === "") {
-    throw new SessionRpcError(-32602, `Missing or invalid ${key}`);
-  }
-  return v.trim();
+  return requireTrimmedStringField(rec, key, SessionRpcError);
 }
 
 async function handleSessionAppend(params: unknown, store: SessionMemoryStore): Promise<unknown> {

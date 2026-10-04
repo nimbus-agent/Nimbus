@@ -36,13 +36,13 @@ export class LlamaCppProvider implements LlmProvider {
     }
   }
 
-  async listModels(): Promise<LlmModelInfo[]> {
-    return [
+  listModels(): Promise<LlmModelInfo[]> {
+    return Promise.resolve([
       {
         provider: "llamacpp",
         modelName: this.modelName,
       },
-    ];
+    ]);
   }
 
   async generate(opts: LlmGenerateOptions): Promise<LlmGenerateResult> {

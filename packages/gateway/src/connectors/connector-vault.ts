@@ -53,9 +53,9 @@ export async function migrateToPerServiceOAuthKeys(vault: NimbusVault): Promise<
   const msShared = await vault.get("microsoft.oauth");
   if (msShared !== null && msShared !== "") {
     for (const key of Object.values(MICROSOFT_SERVICE_VAULT_KEYS)) {
-      const existing = await vault.get(key);
+      const existing = await vault.get(key); // NOSONAR S9382: each key's read decides its own write, and the writes must stay sequential (see the set below) - reading every key up front would also change what a mid-loop failure leaves migrated
       if (existing === null || existing === "") {
-        await vault.set(key, msShared);
+        await vault.set(key, msShared); // NOSONAR S9382: vault writes stay sequential - the macOS Keychain backend updates `.keyindex.json` with an unlocked read-modify-write, so concurrent set() calls lose index entries
       }
     }
   }
@@ -72,7 +72,7 @@ export async function clearOAuthVaultIfProviderUnused(
       await vault.delete("google.oauth");
       cleared.push("google.oauth");
       for (const key of Object.values(GOOGLE_SERVICE_VAULT_KEYS)) {
-        await vault.delete(key);
+        await vault.delete(key); // NOSONAR S9382: fail-fast - on the first failure handleConnectorRemove restores every Google OAuth key, and a still-in-flight sibling delete would race that restore (as would macOS's unlocked `.keyindex.json` read-modify-write)
         cleared.push(key);
       }
     }
@@ -82,7 +82,7 @@ export async function clearOAuthVaultIfProviderUnused(
       await vault.delete("microsoft.oauth");
       cleared.push("microsoft.oauth");
       for (const key of Object.values(MICROSOFT_SERVICE_VAULT_KEYS)) {
-        await vault.delete(key);
+        await vault.delete(key); // NOSONAR S9382: fail-fast - on the first failure handleConnectorRemove restores `microsoft.oauth`, and a still-in-flight sibling delete would race that write through macOS's unlocked `.keyindex.json` read-modify-write
         cleared.push(key);
       }
     }

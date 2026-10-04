@@ -38,9 +38,13 @@ async function snapshotGoogleOAuthIfLastFamilyMember(
   ) {
     return null;
   }
+  // Independent per-key lookups over a short fixed key list, so they run concurrently; `snap` is
+  // still filled in key order.
+  const entries = await Promise.all(
+    ALL_GOOGLE_OAUTH_VAULT_KEYS.map(async (k) => [k, await vault.get(k)] as const),
+  );
   const snap: Record<string, string> = {};
-  for (const k of ALL_GOOGLE_OAUTH_VAULT_KEYS) {
-    const v = await vault.get(k);
+  for (const [k, v] of entries) {
     if (v !== null && v !== "") {
       snap[k] = v;
     }
@@ -92,7 +96,7 @@ async function restoreGoogleAndMicrosoftOAuthBackups(
 ): Promise<void> {
   if (googleOAuthBackup !== null) {
     for (const [k, v] of Object.entries(googleOAuthBackup)) {
-      await vault.set(k, v);
+      await vault.set(k, v); // NOSONAR S9382: sequential by design - the macOS vault's set() read-modify-writes one shared key index, so concurrent restores would drop entries
     }
   }
   if (microsoftOAuthBackup !== null) {
@@ -146,10 +150,10 @@ export async function resumePendingRemovals(
   for (const serviceId of pending) {
     try {
       localIndex.removeConnectorIndexData(serviceId);
-      await clearOAuthVaultIfProviderUnused(vault, db, serviceId);
+      await clearOAuthVaultIfProviderUnused(vault, db, serviceId); // NOSONAR S9382: sequential by design - the provider-unused check counts index rows that the previous pending removal just deleted
       const normalizedBuiltin = normalizeConnectorServiceId(serviceId);
       if (normalizedBuiltin !== null) {
-        await clearConnectorVaultSecretKeys(vault, normalizedBuiltin);
+        await clearConnectorVaultSecretKeys(vault, normalizedBuiltin); // NOSONAR S9382: sequential by design - each pending removal completes (index, OAuth, secrets, intent) before the next one's provider-unused check
       }
       clearRemoveIntent(db, serviceId);
       completed.push(serviceId);

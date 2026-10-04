@@ -98,7 +98,7 @@ export async function sampleRss(opts: SampleRssOptions): Promise<SampleRssResult
   while (now() < deadline) {
     if (opts.signal?.aborted === true) break;
     try {
-      const { memory } = await sampler(opts.pid);
+      const { memory } = await sampler(opts.pid); // NOSONAR S9382: time-series sampler - each RSS reading belongs to its own interval tick, taken after the previous one
       samples.push(memory);
     } catch {
       intervalsMissed += 1;
@@ -107,7 +107,7 @@ export async function sampleRss(opts: SampleRssOptions): Promise<SampleRssResult
     const nextTickAt = start + tickIdx * intervalMs;
     const wait = Math.max(0, Math.min(nextTickAt - now(), deadline - now()));
     if (wait <= 0) continue;
-    await sleep(wait, opts.signal);
+    await sleep(wait, opts.signal); // NOSONAR S9382: the wait until the next interval tick is what spaces the samples
   }
 
   if (samples.length === 0) {

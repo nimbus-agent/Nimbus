@@ -1,7 +1,11 @@
 import { resolve } from "node:path";
-import { confirm, isCancel } from "@clack/prompts";
-import { INTERACTIVE_RPC_TIMEOUT_MS } from "../lib/rpc-timeouts.ts";
-import { withGatewayIpc } from "../lib/with-gateway-ipc.ts";
+import {
+  type AskOwner,
+  interactiveCommandDeps,
+  isExplicitApproval,
+  type RespondToApproval,
+  stringArrayOrEmpty,
+} from "../lib/approval-broadcast.ts";
 
 /**
  * Distinct exit codes for the outcomes a wrapper script needs to tell apart, mirroring `exec.ts`'s
@@ -322,10 +326,6 @@ export function formatActionPrompt(p: ActionPromptInput): string {
   ].join("\n");
 }
 
-const strs = (v: unknown): string[] =>
-  Array.isArray(v) && v.every((e) => typeof e === "string") ? [...(v as string[])] : [];
-
-/** What a `computer.envelopeRequest` broadcast carries. Every field is validated before use. */
 /**
  * What a `computer.envelopeRequest` broadcast carries, as WIRE shape rather than as the prompt
  * type: `lane` is a bare `string` here because the value arrives from the socket and has not been
@@ -354,8 +354,8 @@ type EnvelopeBroadcast = {
  */
 export async function handleEnvelopeBroadcast(
   params: unknown,
-  ask: (message: string) => Promise<unknown>,
-  respond: (requestId: string, approved: boolean) => Promise<unknown>,
+  ask: AskOwner,
+  respond: RespondToApproval,
 ): Promise<void> {
   const p = (params ?? {}) as EnvelopeBroadcast;
   if (typeof p.requestId !== "string" || p.requestId === "") return;
@@ -391,13 +391,13 @@ export async function handleEnvelopeBroadcast(
       : {
           lane: "browser",
           sessionId,
-          navigateOrigins: strs(p.navigateOrigins),
-          scriptOrigins: strs(p.scriptOrigins),
+          navigateOrigins: stringArrayOrEmpty(p.navigateOrigins),
+          scriptOrigins: stringArrayOrEmpty(p.scriptOrigins),
           maxActions,
           maxWallClockMs,
         };
   const answer = await ask(formatEnvelopePrompt(prompt));
-  await respond(p.requestId, !isCancel(answer) && answer === true);
+  await respond(p.requestId, isExplicitApproval(answer));
 }
 
 /** What a `computer.actionRequest` broadcast carries. Every field is validated before use. */
@@ -409,8 +409,8 @@ type ActionBroadcast = Partial<ActionPromptInput> & { requestId?: string };
  */
 export async function handleActionBroadcast(
   params: unknown,
-  ask: (message: string) => Promise<unknown>,
-  respond: (requestId: string, approved: boolean) => Promise<unknown>,
+  ask: AskOwner,
+  respond: RespondToApproval,
 ): Promise<void> {
   const p = (params ?? {}) as ActionBroadcast;
   if (typeof p.requestId !== "string" || p.requestId === "") return;
@@ -428,7 +428,7 @@ export async function handleActionBroadcast(
       modelDescription: typeof p.modelDescription === "string" ? p.modelDescription : null,
     }),
   );
-  await respond(p.requestId, !isCancel(answer) && answer === true);
+  await respond(p.requestId, isExplicitApproval(answer));
 }
 
 /** Where rendered output goes. Injected so rendering is testable without a live process. */
@@ -453,8 +453,11 @@ export interface OutcomeSink {
  * asserts `SandboxRunner.canConfine` (it does not spawn through the PAL — see invariant I35), so
  * the gate cannot emit that code, and a message for an unreachable code is documentation drift.
  * A later lane that does spawn through the PAL should add it back with its own wording.
+ *
+ * Exported only so a test can hold EVERY entry to a distinct message, derived from this table
+ * rather than from a copy of its keys that a newly added code would silently fall outside of.
  */
-const REFUSAL_MESSAGES: Readonly<Record<string, string>> = {
+export const REFUSAL_MESSAGES: Readonly<Record<string, string>> = {
   ERR_CU_NO_BROWSER:
     "nimbus: no Chrome, Chromium or Edge was found. Install a Chromium-family browser, or set " +
     "NIMBUS_CHROMIUM_PATH to an absolute path to one (it must exist; a relative path is refused).",
@@ -527,31 +530,28 @@ export interface RunComputerDeps {
   readonly onSignal: (handler: () => void) => () => void;
 }
 
+/**
+ * The production {@link RunComputerDeps.onSignal}: SIGINT and SIGTERM both reach `handler`, and the
+ * returned function removes BOTH registrations. Exported only so a test can prove that symmetry
+ * against the real `process` without raising a signal — a listener left behind would outlive the
+ * command and answer a later Ctrl-C meant for whatever runs next.
+ */
+export function onProcessInterrupt(handler: () => void): () => void {
+  process.on("SIGINT", handler);
+  process.on("SIGTERM", handler);
+  return () => {
+    process.off("SIGINT", handler);
+    process.off("SIGTERM", handler);
+  };
+}
+
 const defaultDeps: RunComputerDeps = {
-  runWithClient: (fn) =>
-    withGatewayIpc(fn as never, undefined, {
-      // The call can block on the owner answering an envelope/action prompt, and this command then
-      // watches the session for as long as it stays open — the interactive budget, not the 30s
-      // default.
-      requestTimeoutMs: INTERACTIVE_RPC_TIMEOUT_MS,
-    }) as never,
-  ask: (message) => confirm({ message }),
-  sink: {
-    out: (s) => void process.stdout.write(s),
-    err: (s) => void process.stderr.write(s),
-  },
-  setExitCode: (c) => {
-    process.exitCode = c;
-  },
+  // The call can block on the owner answering an envelope/action prompt, and this command then
+  // watches the session for as long as it stays open — the interactive budget the shared base
+  // connects with, not the 30s default.
+  ...interactiveCommandDeps(),
   sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
-  onSignal: (handler) => {
-    process.on("SIGINT", handler);
-    process.on("SIGTERM", handler);
-    return () => {
-      process.off("SIGINT", handler);
-      process.off("SIGTERM", handler);
-    };
-  },
+  onSignal: onProcessInterrupt,
 };
 
 interface OpenSessionResultShape {

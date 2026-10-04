@@ -1,5 +1,9 @@
+import { pickStringArray, trimTrailingSlash } from "./_lib/field-helpers.ts";
 import type { MappedRow } from "./mapped-row.ts";
 import { asRecord, numberField, stringField } from "./unknown-record.ts";
+
+// Zendesk tags are plain strings: every string element is kept, empty ones included.
+export { pickStringArray as tagStrings } from "./_lib/field-helpers.ts";
 
 export interface ZendeskMappingContext {
   readonly baseUrl: string;
@@ -10,23 +14,6 @@ export type ZendeskMappedRow = MappedRow<"zendesk", "ticket">;
 
 function parseIsoMs(v: unknown): number | null {
   return typeof v === "string" && Number.isFinite(Date.parse(v)) ? Date.parse(v) : null;
-}
-
-function trimTrailingSlash(s: string): string {
-  return s.endsWith("/") ? s.slice(0, -1) : s;
-}
-
-export function tagStrings(raw: unknown): string[] {
-  if (!Array.isArray(raw)) {
-    return [];
-  }
-  const names: string[] = [];
-  for (const t of raw) {
-    if (typeof t === "string") {
-      names.push(t);
-    }
-  }
-  return names;
 }
 
 function numericIdString(row: Record<string, unknown>, key: string): string | undefined {
@@ -64,7 +51,7 @@ export function mapZendeskTicketToItem(
   const assigneeId = numberField(row, "assignee_id") ?? null;
   const groupId = numberField(row, "group_id") ?? null;
   const organizationId = numberField(row, "organization_id") ?? null;
-  const tags = tagStrings(row["tags"]);
+  const tags = pickStringArray(row["tags"]);
 
   const via = asRecord(row["via"]) ?? {};
   const viaChannel = stringField(via, "channel") ?? null;

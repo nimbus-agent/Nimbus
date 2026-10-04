@@ -96,7 +96,9 @@ export function UpdaterRestartChrome() {
   useIpcSubscription<unknown>("updater://restart-started", onRestartStarted);
 
   const onRestartComplete = useCallback(() => {
-    (async () => {
+    // `void`: the try/catch/finally inside handles every failure — it surfaces `installer_failed`
+    // through the overlay and always signals the shell — so this promise has nothing left to reject.
+    void (async () => {
       try {
         const version = await createIpcClient().diagGetVersion();
         const latest = useNimbusStore.getState().updaterRestarting;

@@ -30,9 +30,9 @@ const LOCAL_ONLY_SYNC_SERVICE_IDS: ReadonlySet<string> = new Set<LocalOnlySyncSe
 
 export const EMPTY_NIMBUS_VAULT: NimbusVault = {
   set: async () => {},
-  get: async () => null,
+  get: () => Promise.resolve(null),
   delete: async () => {},
-  listKeys: async () => [],
+  listKeys: () => Promise.resolve([]),
 };
 
 export function createMemoryIndexDb(): Database {
@@ -45,9 +45,9 @@ export function createMemoryIndexDb(): Database {
 export function createStubVault(entries: Readonly<Record<string, string | null>>): NimbusVault {
   return {
     set: async () => {},
-    get: async (k: string) => (Object.hasOwn(entries, k) ? (entries[k] ?? null) : null),
+    get: (k: string) => Promise.resolve(Object.hasOwn(entries, k) ? (entries[k] ?? null) : null),
     delete: async () => {},
-    listKeys: async () => [],
+    listKeys: () => Promise.resolve([]),
   };
 }
 
@@ -89,7 +89,7 @@ export function silentSyncContextExtras(): Pick<
     // Wave 7b SyncContext members — personal-credential defaults for sync tests.
     sandboxCwd: os.tmpdir(),
     credentialFor: () => ({ credential: "personal" }),
-    runTeamList: async () => [],
+    runTeamList: () => Promise.resolve([]),
     // Connector sync tests exercise the full-body path unless a test overrides it.
     depth: "full",
   };

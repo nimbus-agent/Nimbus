@@ -14,15 +14,16 @@ export function makeQueuedCall(responseQueue: readonly unknown[]): {
 } {
   const calls: CallRecord[] = [];
   let idx = 0;
-  const call = async <T>(method: string, params?: unknown): Promise<T> => {
+  // Records and dequeues at call time, then settles: a queued Error (or an exhausted queue)
+  // REJECTS, exactly as a failing JSON-RPC call does, rather than throwing at the caller.
+  const call = <T>(method: string, params?: unknown): Promise<T> => {
     calls.push({ method, params });
     if (idx >= responseQueue.length) {
-      throw new Error(`Unexpected call: ${method} (response queue exhausted)`);
+      return Promise.reject(new Error(`Unexpected call: ${method} (response queue exhausted)`));
     }
     const r = responseQueue[idx];
     idx += 1;
-    if (r instanceof Error) throw r;
-    return r as T;
+    return r instanceof Error ? Promise.reject(r) : Promise.resolve(r as T);
   };
   return { call, calls };
 }

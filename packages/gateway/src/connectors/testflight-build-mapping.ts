@@ -1,17 +1,7 @@
+import type { MappedRow } from "./mapped-row.ts";
 import { asRecord, stringField } from "./unknown-record.ts";
 
-export interface TestflightMappedRow {
-  readonly service: "testflight";
-  readonly type: "app" | "build";
-  readonly externalId: string;
-  readonly title: string;
-  readonly bodyPreview: string;
-  readonly url: string | null;
-  readonly canonicalUrl: string | null;
-  readonly modifiedAt: number;
-  readonly metadata: Record<string, unknown>;
-  readonly syncedAt: number;
-}
+export type TestflightMappedRow = MappedRow<"testflight", "app" | "build">;
 
 export interface TestflightBuildMappingContext {
   readonly appId: string;

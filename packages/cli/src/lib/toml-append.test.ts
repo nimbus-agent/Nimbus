@@ -1,7 +1,15 @@
 import { afterEach, beforeEach, expect, test } from "bun:test";
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, sep } from "node:path";
 import { appendFilesystemRoot, hasFilesystemRoot } from "./toml-append.ts";
 
 const FS_ROOTS_HEADER = "[[filesystem.roots]]";
@@ -128,4 +136,94 @@ test("appends a leading newline when the existing file lacks a trailing one", ()
   // whole block would be swallowed as part of that comment.
   expect(after).toContain("# no trailing newline\n");
   expect(hasFilesystemRoot(after, join(dir, "repo-a"))).toBe(true);
+});
+
+test("a config path that exists but cannot be read is an error, never treated as absent", () => {
+  // `readFileIfExists` may swallow ENOENT and nothing else: a nimbus.toml that is there but
+  // unreadable (here a DIRECTORY, so EISDIR) must not be read as "no config yet" and then have a
+  // fresh root appended to it.
+  const tomlPath = join(dir, "nimbus.toml");
+  mkdirSync(tomlPath);
+  writeFileSync(join(tomlPath, "inside.txt"), "untouched", "utf8");
+  let caught: unknown;
+  try {
+    appendFilesystemRoot(dir, join(dir, "repo-a"));
+  } catch (e) {
+    caught = e;
+  }
+  const err = caught as NodeJS.ErrnoException | undefined;
+  expect(err?.code).toBe("EISDIR");
+  // The failure must be the READ of the config. Swallowing it would still end in an EISDIR — from
+  // the append onto the same directory — so the two are told apart by the failing syscall (`read`
+  // vs `open` on Linux, `read` vs `write` on Windows). Both signatures are taken from this platform
+  // rather than hard-coded, and the premise that they differ is asserted, not assumed.
+  const syscallOf = (op: () => unknown): string | undefined => {
+    try {
+      op();
+    } catch (e) {
+      return (e as NodeJS.ErrnoException).syscall;
+    }
+    return undefined;
+  };
+  const readSyscall = syscallOf(() => readFileSync(tomlPath, "utf8"));
+  const appendSyscall = syscallOf(() => writeFileSync(tomlPath, "x", { flag: "a" }));
+  expect(readSyscall).toBeDefined();
+  expect(appendSyscall).not.toBe(readSyscall);
+  expect(err?.syscall).toBe(readSyscall);
+  // Nothing was written: no backup beside it, and the directory's contents are as they were.
+  expect(readdirSync(dir).sort((a, b) => a.localeCompare(b))).toEqual(["nimbus.toml"]);
+  expect(readdirSync(tomlPath)).toEqual(["inside.txt"]);
+  expect(readFileSync(join(tomlPath, "inside.txt"), "utf8")).toBe("untouched");
+});
+
+test("hasFilesystemRoot un-escapes an escaped quote inside a hand-written path", () => {
+  // `\"` is how TOML spells a literal quote in a basic string; the comparison must see the quote,
+  // not the backslash, or a root whose name contains one is reported unconfigured and re-added.
+  const target = join(dir, 'a"b');
+  const tomlValue = target.split(sep).join("/").replaceAll('"', String.raw`\"`);
+  const src = [FS_ROOTS_HEADER, `path = "${tomlValue}"`, ""].join("\n");
+  expect(hasFilesystemRoot(src, target)).toBe(true);
+  // Dropping the escaped character instead of un-escaping it would match this one.
+  expect(hasFilesystemRoot(src, join(dir, "ab"))).toBe(false);
+});
+
+test("hasFilesystemRoot keeps a backslash that escapes anything else, rather than dropping it", () => {
+  // Only `\\` and `\"` are un-escaped. `\t` is kept as the two characters it is, so the value is
+  // compared exactly as written — on POSIX a backslash is an ordinary filename character, on
+  // Windows a separator; either way both sides resolve the same string.
+  const src = [FS_ROOTS_HEADER, String.raw`path = "/srv/a\tb"`, ""].join("\n");
+  expect(hasFilesystemRoot(src, String.raw`/srv/a\tb`)).toBe(true);
+  expect(hasFilesystemRoot(src, "/srv/atb")).toBe(false);
+});
+
+test("hasFilesystemRoot reads past a trailing comment on the header and on the path line", () => {
+  // A hand-edited config annotates its roots. Unless the comment is stripped first, the header no
+  // longer ends in `]` (so the block is never entered) and the quoted value runs into the comment —
+  // either way an already-configured root would read as absent and `init` would append it again.
+  const target = join(dir, "repo-a");
+  const src = [
+    `${FS_ROOTS_HEADER}  # the main checkout`,
+    `path = "${target.split(sep).join("/")}"  # added by hand`,
+    "",
+  ].join("\n");
+  expect(hasFilesystemRoot(src, target)).toBe(true);
+  // A trailing comment is not a wildcard: a different root under the same block is still absent.
+  expect(hasFilesystemRoot(src, join(dir, "repo-b"))).toBe(false);
+});
+
+test("a path value too short to be a quoted string is skipped, never resolved as the cwd", () => {
+  // `path = "` has nothing between its quotes: slicing it would give "", and resolve("") is the
+  // working directory — so without the length guard a broken line would claim the cwd as a root.
+  const broken = [FS_ROOTS_HEADER, 'path = "', ""].join("\n");
+  expect(hasFilesystemRoot(broken, process.cwd())).toBe(false);
+  // Skipping the broken line does not stop the scan: a later valid root is still found.
+  const target = join(dir, "repo-a");
+  const withValid = [
+    FS_ROOTS_HEADER,
+    'path = "',
+    FS_ROOTS_HEADER,
+    `path = "${target.split(sep).join("/")}"`,
+    "",
+  ].join("\n");
+  expect(hasFilesystemRoot(withValid, target)).toBe(true);
 });

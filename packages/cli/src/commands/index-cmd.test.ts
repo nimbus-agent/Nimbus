@@ -1335,3 +1335,185 @@ describe("nimbus index regraph — IPC flow", () => {
     await expect(runIndexCmd(["regraph"])).rejects.toThrow(/network down/);
   });
 });
+
+/**
+ * A gateway whose job-starting call (`index.rebody` / `index.reembed`) answers `jobId`, then emits
+ * `emits` on the next macrotask — the order a real gateway produces. Every other method answers
+ * from `rest`, in order.
+ */
+function streamingGateway(
+  jobId: string,
+  emits: ReadonlyArray<readonly [string, unknown]>,
+  rest: ReadonlyArray<unknown> = [],
+): ReturnType<typeof createMockIpcClient> {
+  const mock = createMockIpcClient([{ jobId }, ...rest]);
+  const base = mock.client as unknown as {
+    call: (m: string, p: unknown) => Promise<unknown>;
+    onNotification: (e: string, h: (params: unknown) => void) => void;
+  };
+  setFixture({
+    gatewayState: { socketPath: FAKE_SOCKET_PATH },
+    ipcClient: {
+      call: async (m: string, p: unknown): Promise<unknown> => {
+        const r = await base.call(m, p);
+        if (m === "index.rebody" || m === "index.reembed") {
+          setTimeout(() => {
+            for (const [method, payload] of emits) mock.emit(method, payload);
+          }, 0);
+        }
+        return r;
+      },
+      connect: async () => {},
+      disconnect: async () => {},
+      onNotification: (e: string, h: (params: unknown) => void): void => base.onNotification(e, h),
+    },
+  });
+  return mock;
+}
+
+describe("nimbus index — summary edges and remaining dispatch", () => {
+  beforeEach(() => {
+    out.reset();
+  });
+  afterEach(() => {
+    clearFixture();
+  });
+
+  it("health is dispatched to index.health over the gateway, with --stale-days as staleThresholdDays", async () => {
+    const report = { confidence: 72, connectors: [] };
+    const mock = createMockIpcClient([report]);
+    setFixture({
+      gatewayState: { socketPath: FAKE_SOCKET_PATH },
+      ipcClient: {
+        call: mock.client.call.bind(mock.client),
+        connect: async () => {},
+        disconnect: async () => {},
+        onNotification: () => {},
+      },
+    });
+    await runIndexCmd(["health", "--json", "--stale-days", "3"]);
+    expect(mock.calls).toEqual([{ method: "index.health", params: { staleThresholdDays: 3 } }]);
+    expect(JSON.parse(out.stdout)).toEqual(report);
+  });
+
+  it("a non-positive reembed --limit / --batch-size is dropped from the plan, not shown", async () => {
+    await runIndexCmd([
+      "reembed",
+      "--model",
+      "Xenova/all-MiniLM-L6-v2",
+      "--limit",
+      "0",
+      "--batch-size",
+      "-3",
+    ]);
+    expect(out.stdout).toContain("Planned reembed:");
+    expect(out.stdout).not.toContain("limit      =");
+    expect(out.stdout).not.toContain("batch-size =");
+  });
+
+  it("a reembed dry run whose summary omits 'planned' reports 0, never 'undefined'", async () => {
+    streamingGateway("job-dry-0", [
+      [
+        "index.reembedDone",
+        { jobId: "job-dry-0", succeeded: 0, skipped: 0, durationMs: 1, dryRun: true },
+      ],
+    ]);
+    await runIndexCmd(["reembed", "--model", "Xenova/all-MiniLM-L6-v2", "--dry-run"]);
+    expect(out.stdout).toContain("Dry run: 0 item(s) would be reembedded.");
+  });
+
+  it("events for a different job are ignored — only this job's progress and result count", async () => {
+    streamingGateway("job-mine", [
+      ["index.reembedProgress", { jobId: "job-other", done: 9, total: 9, skipped: 9 }],
+      ["index.reembedDone", { jobId: "job-other", succeeded: 99, skipped: 0, durationMs: 1 }],
+      ["index.reembedProgress", { jobId: "job-mine", done: 1, total: 2, skipped: 0 }],
+      ["index.reembedDone", { jobId: "job-mine", succeeded: 2, skipped: 0, durationMs: 5 }],
+    ]);
+    await runIndexCmd(["reembed", "--model", "Xenova/all-MiniLM-L6-v2", "--yes"]);
+    expect(out.stdout).toContain("progress: 1/2 (skipped 0)");
+    expect(out.stdout).not.toContain("progress: 9/9");
+    expect(out.stdout).toContain("Reembedded 2 item(s); skipped 0 (5 ms).");
+    expect(out.stdout).not.toContain("Reembedded 99");
+  });
+
+  it("a rebody dry run whose summary omits 'pending' says none are pending", async () => {
+    streamingGateway("job-rb-dry", [
+      ["index.rebodyDone", { jobId: "job-rb-dry", durationMs: 1, dryRun: true }],
+    ]);
+    await runIndexCmd(["rebody", "--dry-run"]);
+    expect(out.stdout).toContain("pending bodies: none.");
+    expect(out.stdout).not.toContain("pending metadata");
+  });
+
+  it("a real rebody run with a bare summary prints zeros and no warnings, never 'undefined'", async () => {
+    streamingGateway("job-rb-bare", [
+      ["index.rebodyDone", { jobId: "job-rb-bare", durationMs: 1, dryRun: false }],
+    ]);
+    await runIndexCmd(["rebody", "--yes", "--since", "90"]);
+    expect(out.stdout).toContain("pending bodies: none.");
+    expect(out.stdout).toContain("targeted 0 service(s); succeeded 0; failed 0");
+    expect(out.stdout).not.toContain("undefined");
+    // No metadata counts on either side: the section stays silent rather than printing a bare
+    // "(before -> after)" header with nothing under it.
+    expect(out.stdout).not.toContain("pending metadata");
+    // --since was given, but no service failed, so there is no retained-window warning.
+    expect(out.stderr).toBe("");
+  });
+
+  it("the before/after transitions cover keys present on only one side, sorted, as 0", async () => {
+    streamingGateway("job-rb-tx", [
+      ["index.rebodyProgress", { jobId: "job-rb-tx", done: 1, total: 1, service: "jira" }],
+      [
+        "index.rebodyDone",
+        {
+          jobId: "job-rb-tx",
+          durationMs: 1,
+          dryRun: false,
+          targeted: ["jira", "linear", "notion"],
+          succeeded: 3,
+          failed: 0,
+          pendingBefore: { notion: 4 },
+          pendingAfter: { github: 2 },
+          pendingMetaBefore: { linear: 1, jira: 3 },
+          pendingMetaAfter: { jira: 0, notion: 2 },
+        },
+      ],
+    ]);
+    await runIndexCmd(["rebody", "--yes", "--json"]);
+    // --json: the progress line is suppressed and the whole summary is one JSON line.
+    expect(out.stdout).not.toContain("progress:");
+    expect(JSON.parse(out.stdout).pendingMetaAfter).toEqual({ jira: 0, notion: 2 });
+
+    out.reset();
+    clearFixture();
+    streamingGateway("job-rb-tx2", [
+      [
+        "index.rebodyDone",
+        {
+          jobId: "job-rb-tx2",
+          durationMs: 1,
+          dryRun: false,
+          pendingBefore: { notion: 4 },
+          pendingAfter: { github: 2 },
+          pendingMetaBefore: { linear: 1, jira: 3 },
+          pendingMetaAfter: { jira: 0, notion: 2 },
+        },
+      ],
+    ]);
+    await runIndexCmd(["rebody", "--yes"]);
+    const lines = out.stdout.split("\n");
+    const bodies = lines.indexOf("pending bodies (before -> after):");
+    expect(lines.slice(bodies, bodies + 3)).toEqual([
+      "pending bodies (before -> after):",
+      "  github: 0 -> 2",
+      "  notion: 4 -> 0",
+    ]);
+    const meta = lines.indexOf("pending metadata (before -> after):");
+    expect(lines.slice(meta, meta + 4)).toEqual([
+      "pending metadata (before -> after):",
+      "  jira: 3 -> 0",
+      "  linear: 1 -> 0",
+      "  notion: 0 -> 2",
+    ]);
+  });
+});

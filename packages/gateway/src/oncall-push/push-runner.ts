@@ -79,6 +79,14 @@ function field(p: unknown, key: string): unknown {
     ? (p as Record<string, unknown>)[key]
     : undefined;
 }
+/**
+ * A `briefError` payload's `error`. `emitBriefWithSynthesis` always sends a string; anything else
+ * carries no usable message and reads as `unknown`, never as `[object Object]`.
+ */
+function briefErrorText(p: unknown): string {
+  const error = field(p, "error");
+  return typeof error === "string" ? error : "unknown";
+}
 
 /** One `agents.oncall` dispatch, awaited through the runner's OWN listener (fleet-invoker's shape). */
 function briefIncident(deps: OncallPushRunnerDeps, incidentId: string): Promise<BriefOutcome> {
@@ -122,7 +130,7 @@ function briefIncident(deps: OncallPushRunnerDeps, incidentId: string): Promise<
         settle({
           status: "failed",
           sessionId: expected,
-          failureCode: `brief_error: ${clip(String(field(p, "error") ?? "unknown"))}`,
+          failureCode: `brief_error: ${clip(briefErrorText(p))}`,
         });
       }
     };
@@ -186,7 +194,7 @@ export function createOncallPushRunner(deps: OncallPushRunnerDeps): OncallPushRu
       for (const incident of candidates) {
         // Defensive: a duplicate candidate within one selection would make `insert` throw on the PK.
         if (deps.store.has(incident.id)) continue;
-        const outcome = await briefIncident(deps, incident.id);
+        const outcome = await briefIncident(deps, incident.id); // NOSONAR S9382: one agents.oncall session at a time - the has() re-check above must see every row stored before it, and a failed insert must stop the later briefs (the finally delivers the rows already stored)
         const row = deps.store.insert(incident.id, outcome, now());
         if (row.status === "ok") ok += 1;
         items.push({ row, incident });
@@ -204,7 +212,7 @@ export function createOncallPushRunner(deps: OncallPushRunnerDeps): OncallPushRu
       let last = await once();
       while (rerunRequested) {
         rerunRequested = false;
-        last = await once();
+        last = await once(); // NOSONAR S9382: single-flight rerun - the loop condition is set by run() calls landing while the previous once() ran, and runs never overlap (each dedups against the rows the last one stored)
       }
       return last;
     } finally {

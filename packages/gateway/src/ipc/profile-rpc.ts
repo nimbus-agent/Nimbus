@@ -23,28 +23,30 @@ function requireName(params: unknown, action: string): string {
   return p.name;
 }
 
-async function handleProfileList(_p: unknown, ctx: ProfileRpcContext): Promise<unknown> {
-  const profiles = await ctx.manager.list();
-  const active = (await ctx.manager.getActive()) ?? null;
+// The handlers are synchronous because `ProfileManager` is. `dispatchByMethod` awaits each one
+// inside an async function, so a throw here still reaches the caller as a REJECTION.
+function handleProfileList(_p: unknown, ctx: ProfileRpcContext): unknown {
+  const profiles = ctx.manager.list();
+  const active = ctx.manager.getActive() ?? null;
   return { profiles, active };
 }
 
-async function handleProfileCreate(params: unknown, ctx: ProfileRpcContext): Promise<unknown> {
+function handleProfileCreate(params: unknown, ctx: ProfileRpcContext): unknown {
   const name = requireName(params, "profile.create");
-  await ctx.manager.create(name);
+  ctx.manager.create(name);
   return { name };
 }
 
-async function handleProfileSwitch(params: unknown, ctx: ProfileRpcContext): Promise<unknown> {
+function handleProfileSwitch(params: unknown, ctx: ProfileRpcContext): unknown {
   const name = requireName(params, "profile.switch");
-  await ctx.manager.switchTo(name);
+  ctx.manager.switchTo(name);
   ctx.notify?.("profile.switched", { name });
   return { active: name };
 }
 
-async function handleProfileDelete(params: unknown, ctx: ProfileRpcContext): Promise<unknown> {
+function handleProfileDelete(params: unknown, ctx: ProfileRpcContext): unknown {
   const name = requireName(params, "profile.delete");
-  await ctx.manager.delete(name);
+  ctx.manager.delete(name);
   return { deleted: name };
 }
 

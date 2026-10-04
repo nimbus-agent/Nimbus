@@ -118,8 +118,9 @@ export class TerminalLineBuffer {
 
   /**
    * Append `text`. WHOLESALE: a refusal changes nothing, so the caller can never end up having
-   * partially composed a command it did not intend. That is the same reasoning `stringArray` in
-   * `ipc/computer-rpc.ts` applies to a half-parsed origin list.
+   * partially composed a command it did not intend. That is the same reasoning
+   * `stringArrayAllOrNothing` (`ipc/rpc-params.ts`) applies to `ipc/computer-rpc.ts`'s half-parsed
+   * origin lists.
    */
   append(text: string): TerminalAppendResult {
     const refused = refusedCharacterIn(text);

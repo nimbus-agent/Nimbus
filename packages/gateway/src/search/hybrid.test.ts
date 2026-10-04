@@ -15,7 +15,7 @@ function vecAvailable(): boolean {
 const VEC_AVAILABLE = vecAvailable();
 
 describe("hybridSearch", () => {
-  test("BM25-only path when query embedding is absent", async () => {
+  test("BM25-only path when query embedding is absent", () => {
     const db = new Database(":memory:");
     LocalIndex.ensureSchema(db);
     const now = Date.now();
@@ -27,7 +27,7 @@ describe("hybridSearch", () => {
       modifiedAt: now,
       syncedAt: now,
     });
-    const rows = await hybridSearch(db, {
+    const rows = hybridSearch(db, {
       query: "alpha",
       limit: 10,
       embeddingModel: "m1",
@@ -37,7 +37,7 @@ describe("hybridSearch", () => {
     expect(rows[0]?.item.id).toBe("s:a");
   });
 
-  test.skipIf(!VEC_AVAILABLE)("vector + BM25 RRF returns both item kinds", async () => {
+  test.skipIf(!VEC_AVAILABLE)("vector + BM25 RRF returns both item kinds", () => {
     const db = new Database(":memory:");
     LocalIndex.ensureSchema(db);
     const now = Date.now();
@@ -82,7 +82,7 @@ describe("hybridSearch", () => {
     q[0] = 1;
     q[1] = 0;
 
-    const rows = await hybridSearch(db, {
+    const rows = hybridSearch(db, {
       query: "keyword",
       limit: 10,
       embeddingModel: model,

@@ -3,6 +3,7 @@ import { afterAll, afterEach, beforeEach, describe, expect, it, test } from "bun
 import { clearFixture, FAKE_SOCKET_PATH, setFixture } from "../../test/helpers/cli-mocks.ts";
 import { captureOutput } from "../../test/helpers/cli-output.ts";
 import { createMockIpcClient } from "../../test/helpers/mock-ipc-client.ts";
+import type { IPCClient } from "../ipc-client/index.ts";
 import { parseSinceDurationToMs } from "../lib/parse-since.ts";
 
 // Imported AFTER cli-mocks installs the gateway-process / ipc-client module mocks (mirrors
@@ -511,6 +512,115 @@ describe("runEgress (dispatcher)", () => {
       "Gateway is not running. Start with: nimbus start",
     );
   });
+
+  it("a bare `nimbus egress` asks for the WHOLE ledger: no since, no sign", async () => {
+    const ipc = createMockIpcClient([
+      {
+        rows: [],
+        completeness: { ...COVERED_COMPLETENESS, outboundEgressEvents: 0 },
+        verify: { ok: true },
+      },
+    ]);
+    wiredGateway(ipc.client.call);
+    await runEgress([]);
+    expect(ipc.calls).toEqual([{ method: "egress.proveWindow", params: {} }]);
+    expect(out.stdout).toContain(
+      "outbound egress events in this window, in the covered classes: 0",
+    );
+  });
+
+  it("`nimbus egress --sign` forwards sign and prints the receipt line", async () => {
+    const ipc = createMockIpcClient([
+      {
+        rows: [],
+        completeness: { ...COVERED_COMPLETENESS, outboundEgressEvents: 0 },
+        verify: { ok: true },
+        receipt: { sigB64: "0123456789abcdefXYZ", pubkeyB64: "pk", digest: "cafe" },
+      },
+    ]);
+    wiredGateway(ipc.client.call);
+    await runEgress(["--sign"]);
+    expect(ipc.calls).toEqual([{ method: "egress.proveWindow", params: { sign: true } }]);
+    expect(out.stdout).toContain("receipt: digest=cafe sig=0123456789abcdef…");
+  });
+});
+
+// The listing below the count is a PAGE of at most 1000 rows; the count itself covers the whole
+// window. A truncated page must say so, or the listing reads as the complete set of what left.
+describe("runEgressReport — a truncated row page says it is one", () => {
+  const ROW = {
+    timestamp: 1_700_000_000_000,
+    destination: "github",
+    method: "github.pr.comment",
+    resultStatus: "authorized",
+  };
+
+  beforeEach(() => {
+    out.reset();
+    process.exitCode = 0;
+  });
+  afterEach(() => {
+    process.exitCode = 0;
+  });
+
+  function clientFor(payload: unknown): ReturnType<typeof fakeClient> {
+    return fakeClient({ "egress.proveWindow": payload });
+  }
+
+  test("names how many of the window's rows the page shows", async () => {
+    const c = clientFor({
+      rows: [ROW, { ...ROW, timestamp: ROW.timestamp + 1 }],
+      rowsTotal: 1500,
+      rowsTruncated: true,
+      completeness: { ...COVERED_COMPLETENESS, outboundEgressEvents: 1500 },
+      verify: { ok: true },
+    });
+    await runEgressReport(c as unknown as IPCClient, { json: false });
+    expect(out.stdout).toContain(
+      "  … showing the oldest 2 of 1500 rows in this window (the count above covers all of them)",
+    );
+    expect(out.stdout).toContain("in the covered classes: 1500");
+  });
+
+  test("falls back to the page size when an older gateway omits rowsTotal", async () => {
+    const c = clientFor({
+      rows: [ROW],
+      rowsTruncated: true,
+      completeness: { ...COVERED_COMPLETENESS, outboundEgressEvents: 1 },
+      verify: { ok: true },
+    });
+    await runEgressReport(c as unknown as IPCClient, { json: false });
+    expect(out.stdout).toContain("  … showing the oldest 1 of 1 rows in this window");
+  });
+
+  test("an untruncated page prints no footer at all", async () => {
+    const c = clientFor({
+      rows: [ROW],
+      rowsTotal: 1,
+      rowsTruncated: false,
+      completeness: { ...COVERED_COMPLETENESS, outboundEgressEvents: 1 },
+      verify: { ok: true },
+    });
+    await runEgressReport(c as unknown as IPCClient, { json: false });
+    expect(out.stdout).toContain("github.pr.comment");
+    expect(out.stdout).not.toContain("showing the oldest");
+  });
+});
+
+test("an observed class with no hand-written label prints its raw name, never 'undefined'", () => {
+  const line = formatProveResult({
+    delta: 0,
+    completeness: {
+      coverage: { task: "per-call", zz_future_class: "per-call", peer: "none" },
+      outboundEgressEvents: 0,
+      indeterminate: false,
+    },
+    chainOk: true,
+    label: "in this window",
+  });
+  expect(line).toBe(
+    "outbound egress events in this window, in the covered classes: 0 (scope: gated connector actions, zz_future_class)\n  not observed: peer",
+  );
 });
 
 describe("the prove headline names its own narrowness (F9)", () => {

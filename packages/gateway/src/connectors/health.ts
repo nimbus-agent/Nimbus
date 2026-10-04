@@ -229,6 +229,67 @@ function applyConfiguredFlag(
   return recorded;
 }
 
+/**
+ * `transitionHealth`'s `configured` / `not_configured` arm, which replaces the state machine below
+ * it entirely: RECORD the flag (`applyConfiguredFlag`), ANNOUNCE it only when it actually changed,
+ * then read the row back for the snapshot — the same record-then-announce order as the main path.
+ * Split out of `transitionHealth` along that seam to keep it under the cognitive-complexity gate
+ * (Sonar `S3776`).
+ */
+function transitionConfiguredFlag(
+  db: Database,
+  connectorId: string,
+  event: Extract<HealthEvent, { type: "not_configured" | "configured" }>,
+  current: SyncStateHealthRow | null,
+  fromState: string | null,
+  now: number,
+): ConnectorHealthSnapshot {
+  const recorded = applyConfiguredFlag(
+    db,
+    connectorId,
+    current,
+    fromState,
+    event.type === "configured",
+    now,
+  );
+  if (recorded !== null) {
+    // The EXTERNALLY VISIBLE previous state, not the raw `health_state` column — that column
+    // doesn't move when only `configured` flips, so using it here would print `healthy ->
+    // healthy` for exactly the `nimbus connector auth` round trip this event exists to surface.
+    // `applyConfiguredFlag` returned non-null, so the flag genuinely changed: for a `configured`
+    // event it was previously 0 (visible state was `not_configured`); for `not_configured` it
+    // was previously 1 (visible state was whatever `health_state` already said).
+    const visibleFromState: ConnectorHealthState | null =
+      event.type === "configured"
+        ? "not_configured"
+        : ((fromState as ConnectorHealthState | null) ?? null);
+    const configReason =
+      event.type === "configured" ? "credential configured" : "no credential configured";
+    emitConnectorHealthChanged({
+      name: connectorId,
+      health: recorded,
+      // Only on the `not_configured` arm, and unconditionally there (`recorded` is ALWAYS
+      // `"not_configured"` on that arm — `applyConfiguredFlag` forces it — so this is never
+      // "healthy" and needs no extra check). `reason`/`degradationReason` mean different things
+      // (see `transitionHealth`'s main switch below) and must not collapse into the same value.
+      //
+      // A `configured` event's `recorded` is the connector's PRIOR stored `health_state`
+      // (`applyConfiguredFlag`'s `fromState ?? "healthy"`), which is not always "healthy" — a
+      // row can hold `error`/`degraded`/`rate_limited` while `configured` was `0`. Attaching
+      // `configReason` ("credential configured") there would explain an error state with a
+      // success message: `recorded === "healthy" ? {} : ...` let exactly that through, since
+      // `recorded === "error"` took the `degradationReason` branch too. `configured` never
+      // attaches `degradationReason` at all — matching `transitionHealth`'s main path below, which
+      // likewise omits it once the destination state is healthy.
+      ...(event.type === "not_configured" ? { degradationReason: configReason } : {}),
+      fromState: visibleFromState,
+      reason: configReason,
+      occurredAt: now,
+    });
+  }
+  return buildSnapshot(connectorId, readHealthRow(db, connectorId));
+}
+
 export const DEFAULT_MAX_BACKOFF_ATTEMPTS = 10;
 
 export function transitionHealth(
@@ -247,50 +308,7 @@ export function transitionHealth(
   }
 
   if (event.type === "not_configured" || event.type === "configured") {
-    const recorded = applyConfiguredFlag(
-      db,
-      connectorId,
-      current,
-      fromState,
-      event.type === "configured",
-      now,
-    );
-    if (recorded !== null) {
-      // The EXTERNALLY VISIBLE previous state, not the raw `health_state` column — that column
-      // doesn't move when only `configured` flips, so using it here would print `healthy ->
-      // healthy` for exactly the `nimbus connector auth` round trip this event exists to surface.
-      // `applyConfiguredFlag` returned non-null, so the flag genuinely changed: for a `configured`
-      // event it was previously 0 (visible state was `not_configured`); for `not_configured` it
-      // was previously 1 (visible state was whatever `health_state` already said).
-      const visibleFromState: ConnectorHealthState | null =
-        event.type === "configured"
-          ? "not_configured"
-          : ((fromState as ConnectorHealthState | null) ?? null);
-      const configReason =
-        event.type === "configured" ? "credential configured" : "no credential configured";
-      emitConnectorHealthChanged({
-        name: connectorId,
-        health: recorded,
-        // Only on the `not_configured` arm, and unconditionally there (`recorded` is ALWAYS
-        // `"not_configured"` on that arm — `applyConfiguredFlag` forces it — so this is never
-        // "healthy" and needs no extra check). `reason`/`degradationReason` mean different things
-        // (see the main switch below) and must not collapse into the same value.
-        //
-        // A `configured` event's `recorded` is the connector's PRIOR stored `health_state`
-        // (`applyConfiguredFlag`'s `fromState ?? "healthy"`), which is not always "healthy" — a
-        // row can hold `error`/`degraded`/`rate_limited` while `configured` was `0`. Attaching
-        // `configReason` ("credential configured") there would explain an error state with a
-        // success message: `recorded === "healthy" ? {} : ...` let exactly that through, since
-        // `recorded === "error"` took the `degradationReason` branch too. `configured` never
-        // attaches `degradationReason` at all — matching the main switch below, which likewise
-        // omits it once the destination state is healthy.
-        ...(event.type === "not_configured" ? { degradationReason: configReason } : {}),
-        fromState: visibleFromState,
-        reason: configReason,
-        occurredAt: now,
-      });
-    }
-    return buildSnapshot(connectorId, readHealthRow(db, connectorId));
+    return transitionConfiguredFlag(db, connectorId, event, current, fromState, now);
   }
 
   const to = nextState(event, maxAttempts);

@@ -1,4 +1,5 @@
 import { itemPrimaryKey } from "../index/item-store.ts";
+import { syncPassCursorSuccess } from "../sync/pass-cursor-sync-result.ts";
 import { type Syncable, type SyncContext, type SyncResult, syncNoopResult } from "../sync/types.ts";
 import {
   fetchNotionPageText,
@@ -356,14 +357,7 @@ export function createNotionSyncable(options: NotionSyncableOptions): Syncable {
 
       const nextEnc = encodeCursor({ v: 1, watermark: nextW });
 
-      return {
-        cursor: nextEnc,
-        itemsUpserted: upserted,
-        itemsDeleted: 0,
-        hasMore: false,
-        durationMs: Math.round(performance.now() - t0),
-        bytesTransferred,
-      };
+      return syncPassCursorSuccess(t0, bytesTransferred, nextEnc, upserted);
     },
   };
 }

@@ -63,6 +63,27 @@ interface FrameCaptionResult {
 }
 
 /**
+ * Grabs ONE frame and captions it, returning the trimmed caption. Throws on any failure (a corrupt
+ * frame, a model error); {@link sampleFrameCaptions}'s per-frame `catch` is what turns that into a
+ * degraded caption count rather than a failed artifact.
+ */
+async function captionFrame(
+  path: string,
+  at: number,
+  vlm: VlmProvider,
+  grab: (input: string, at: number) => Promise<Uint8Array>,
+): Promise<string> {
+  const bytes = await grab(path, at);
+  const { text } = await vlm.describe({
+    bytes,
+    prompt: FRAME_CAPTION_PROMPT,
+    mimeType: "image/jpeg",
+    egressMethod: "multimodal.vlm.frame",
+  });
+  return text.trim();
+}
+
+/**
  * Samples up to `deps.maxFrames` frames and captions each, degrading (never throwing) at every
  * step: an absent VLM, a duration the probe cannot determine, or a single corrupt frame all
  * shrink the caption count rather than aborting the artifact — see the module doc comment for why
@@ -101,14 +122,7 @@ async function sampleFrameCaptions(
   const captions: string[] = [];
   for (const at of stamps) {
     try {
-      const bytes = await grab(path, at);
-      const { text } = await deps.vlm.describe({
-        bytes,
-        prompt: FRAME_CAPTION_PROMPT,
-        mimeType: "image/jpeg",
-        egressMethod: "multimodal.vlm.frame",
-      });
-      const caption = text.trim();
+      const caption = await captionFrame(path, at, deps.vlm, grab); // NOSONAR S9382: one frame at a time - every frame shares this artifact's single GPU lease and one local ffmpeg/VLM, so concurrent frames would only contend for the same device
       if (caption !== "") {
         captions.push(`[${hhmmss(at)}] ${caption}`);
       }

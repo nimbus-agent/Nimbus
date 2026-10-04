@@ -427,7 +427,7 @@ async function runModelQueue(
   successCounter: "extracted" | "upgraded",
 ): Promise<void> {
   for (const row of rows) {
-    const r = await extractOne(db, row, llm, opts);
+    const r = await extractOne(db, row, llm, opts); // NOSONAR S9382: one LOCAL-model call per row - a local runtime queues concurrent requests while each provider fetch's fixed 120 s timeout keeps running, so a burst turns into timed-out attempts
     if (r === "extracted") tally[successCounter]++;
     else if (r === "no-model") {
       tally.noModel++;

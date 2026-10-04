@@ -1,4 +1,4 @@
-import { afterAll, afterEach, describe, expect, test } from "bun:test";
+import { afterAll, afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -17,6 +17,7 @@ import {
   type FireDemoPageSummary,
   parseDemoArgs,
   runDemo,
+  startDemoGateway,
 } from "./demo.ts";
 import type { ProveResult } from "./prove.ts";
 
@@ -290,6 +291,18 @@ describe("runDemo", () => {
       expect(err.join("")).toContain("boom");
     },
   );
+
+  test("a non-Error firePage rejection is stringified into the page error, not dropped", async () => {
+    const { deps, calls, err } = fakeDeps({
+      firePage: () => {
+        calls.push("firePage");
+        return Promise.reject("socket hang up");
+      },
+    });
+    await expect(runDemo(["--no-tour"], deps)).rejects.toMatchObject({ name: "CliExit", code: 1 });
+    expect(err.join("")).toBe("The demo page could not be fired: socket hang up\n");
+    expect(calls.slice(-2)).toEqual(["firePage", "stop"]);
+  });
 
   test("a firePage rejection whose cleanup stop ALSO fails still exits 1 with the page error", async () => {
     let n = 0;
@@ -666,5 +679,53 @@ describe("defaultDemoDeps", () => {
       cap.restore();
     }
     expect(cap.stderrChunks.join("")).toBe("bad demo\n");
+  });
+});
+
+// `runStart` reports failure ONLY through `process.exitCode`. These pin how `defaultDemoDeps.start`
+// reads that: with an injected start, so no gateway is spawned.
+describe("startDemoGateway — reading runStart's exit code", () => {
+  // These cases set `process.exitCode` on purpose, and Bun IGNORES an assignment of `undefined` —
+  // so the file-level restore (to an `undefined` original) cannot undo a 1 set here, and the whole
+  // `bun test` run would exit 1 with every test green. Restore the exact prior value instead; an
+  // unset code is success, i.e. 0.
+  let priorExitCode: typeof process.exitCode;
+  beforeEach(() => {
+    priorExitCode = process.exitCode ?? 0;
+  });
+  afterEach(() => {
+    process.exitCode = priorExitCode;
+  });
+
+  test("starts with exactly --no-wizard, and a start that records no failure is success", async () => {
+    process.exitCode = 0;
+    const seen: string[][] = [];
+    expect(
+      await startDemoGateway(async (args) => {
+        seen.push(args);
+      }),
+    ).toBe(true);
+    expect(seen).toEqual([["--no-wizard"]]);
+    expect(process.exitCode).toBe(0);
+  });
+
+  test("on success the exit code is put back to what it was before the start", async () => {
+    process.exitCode = 5;
+    expect(
+      await startDemoGateway(async () => {
+        process.exitCode = 0;
+      }),
+    ).toBe(true);
+    expect(process.exitCode).toBe(5);
+  });
+
+  test("a failed start reports false and KEEPS its exit code for the process to exit with", async () => {
+    process.exitCode = 0;
+    expect(
+      await startDemoGateway(async () => {
+        process.exitCode = 1;
+      }),
+    ).toBe(false);
+    expect(process.exitCode).toBe(1);
   });
 });

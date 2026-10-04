@@ -24,6 +24,7 @@ async function readUntilMatch(
   marker: RegExp,
   onMatch: () => void,
   signal: AbortSignal,
+  onChunk?: (chunk: string) => void,
 ): Promise<void> {
   const reader = stream.getReader();
   const decoder = new TextDecoder();
@@ -32,7 +33,9 @@ async function readUntilMatch(
     while (!signal.aborted) {
       const { done, value } = await reader.read();
       if (done) return;
-      buf += decoder.decode(value, { stream: true });
+      const chunk = decoder.decode(value, { stream: true });
+      onChunk?.(chunk);
+      buf += chunk;
       if (marker.test(buf)) {
         onMatch();
         return;
@@ -45,6 +48,54 @@ async function readUntilMatch(
       /* ignore */
     }
   }
+}
+
+/** The output streams a marker watch reads. */
+export interface MarkerStreams {
+  stdout: ReadableStream<Uint8Array>;
+  stderr: ReadableStream<Uint8Array>;
+}
+
+export interface MarkerWatchHooks {
+  /** Runs once, synchronously, at the first sighting and before `matched` resolves. */
+  onFirstMatch?: () => void;
+  /** Receives each decoded stderr chunk as it is read. */
+  onStderrChunk?: (chunk: string) => void;
+}
+
+export interface MarkerWatch {
+  /** Resolves at the first sighting; never rejects, and stays pending if the marker never shows. */
+  readonly matched: Promise<void>;
+  isMatched(): boolean;
+}
+
+/**
+ * Reads a child's stdout AND stderr for `marker` and reports the first sighting on either stream:
+ * the TUI writes its first-frame marker to stderr, the gateway its ready banner to stdout. Each
+ * stream is read until it shows the marker or ends; once either has shown it, the other stops at
+ * its next chunk. Deadlines and exit handling stay with the caller, because they differ per bench.
+ */
+export function watchForMarker(
+  streams: MarkerStreams,
+  marker: RegExp,
+  hooks: MarkerWatchHooks = {},
+): MarkerWatch {
+  const ac = new AbortController();
+  let matched = false;
+  let resolveMatched!: () => void;
+  const matchedPromise = new Promise<void>((resolve) => {
+    resolveMatched = resolve;
+  });
+  const onMatch = (): void => {
+    if (matched) return;
+    matched = true;
+    hooks.onFirstMatch?.();
+    ac.abort();
+    resolveMatched();
+  };
+  void readUntilMatch(streams.stdout, marker, onMatch, ac.signal);
+  void readUntilMatch(streams.stderr, marker, onMatch, ac.signal, hooks.onStderrChunk);
+  return { matched: matchedPromise, isMatched: () => matched };
 }
 
 function validateMarkerOpts(opts: SpawnAndTimeOptions): void {
@@ -102,36 +153,23 @@ async function runMarkerMode(
   start: number,
   timeoutMs: number,
 ): Promise<number> {
-  let matched = false;
   let elapsed = 0;
-  const ac = new AbortController();
-
-  let resolveMatched!: () => void;
-  const matchedPromise = new Promise<void>((resolve) => {
-    resolveMatched = resolve;
+  const watch = watchForMarker(proc, marker, {
+    onFirstMatch: () => {
+      elapsed = performance.now() - start;
+    },
   });
-
-  const onMatch = (): void => {
-    if (matched) return;
-    matched = true;
-    elapsed = performance.now() - start;
-    ac.abort();
-    resolveMatched();
-  };
-
-  void readUntilMatch(proc.stdout, marker, onMatch, ac.signal);
-  void readUntilMatch(proc.stderr, marker, onMatch, ac.signal);
 
   let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
   const racers: Promise<unknown>[] = [
-    matchedPromise,
+    watch.matched,
     new Promise((_, reject) => {
       timeoutHandle = setTimeout(() => {
-        if (!matched) reject(new Error(`spawn-and-time timeout after ${timeoutMs}ms`));
+        if (!watch.isMatched()) reject(new Error(`spawn-and-time timeout after ${timeoutMs}ms`));
       }, timeoutMs);
     }),
     proc.exited.then((code) => {
-      if (!matched && code !== 0) {
+      if (!watch.isMatched() && code !== 0) {
         throw new Error(`child exited with code ${code} before marker matched`);
       }
     }),
@@ -153,7 +191,7 @@ async function runMarkerMode(
     }
   }
 
-  if (!matched) {
+  if (!watch.isMatched()) {
     throw new Error(`marker not found before timeout (${timeoutMs}ms)`);
   }
   return elapsed;

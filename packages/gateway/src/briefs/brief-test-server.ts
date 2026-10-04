@@ -28,6 +28,7 @@ import { saveBriefReport } from "./brief-save.ts";
 import type { BriefSynthesizerLlm } from "./brief-synthesis.ts";
 import { runSynthesis } from "./brief-synthesis.ts";
 import type { Report } from "./brief-types.ts";
+import { pollBriefUntilTerminal } from "./poll-until-terminal.ts";
 
 const KNOWN_TOKEN = "brief-test-token-0123456789abcdef0123456789abcdef";
 const KNOWN_LABEL = "brief-test-harness";
@@ -42,12 +43,10 @@ function makeInMemoryVault(tokensJson?: string): NimbusVault {
 
 /** Turns a fixed hit list into the `IndexSearch` seam, ignoring the query and limit. */
 function makeIndexSearch(hits: IndexHit[]): IndexSearch {
-  // `async` already wraps the return value in a promise; `Promise.resolve` on top of it is
-  // redundant (S7746). The seam's signature is unchanged.
-  return async (_query: string, limit: number) => ({
-    hits: hits.slice(0, limit),
-    semanticAvailable: true,
-  });
+  // Nothing here awaits, so the seam's promise comes from `Promise.resolve` rather than `async`
+  // (S7503) — and with no `async`, the `Promise.resolve` is not a redundant second wrap (S7746).
+  return (_query: string, limit: number) =>
+    Promise.resolve({ hits: hits.slice(0, limit), semanticAvailable: true });
 }
 
 /** Kicks off synthesis fire-and-forget — same contract as `BriefsWriteSurface.startRun`. */
@@ -103,7 +102,7 @@ export type BriefTestServer = {
   stop(): void;
 };
 
-export async function startBriefTestServer(opts?: {
+export type BriefTestServerOptions = {
   llm?: BriefSynthesizerLlm | null;
   ttlMs?: number;
   /** false => omit briefRuns, so the seam is absent (every /v1/briefs route 404s). */
@@ -112,7 +111,18 @@ export async function startBriefTestServer(opts?: {
   tokensJson?: string;
   /** Index hits served to any run with `useIndex: true`. Omit to leave the index seam unwired. */
   hits?: IndexHit[];
-}): Promise<BriefTestServer> {
+};
+
+/**
+ * Boots the harness. Promise-returning because every caller awaits it; the setup itself is
+ * synchronous, and `Promise.try` keeps a setup failure (temp dir, DB copy/open, listen) a
+ * rejection, exactly as it was when this function was `async`.
+ */
+export function startBriefTestServer(opts?: BriefTestServerOptions): Promise<BriefTestServer> {
+  return Promise.try(() => bootBriefTestServer(opts));
+}
+
+function bootBriefTestServer(opts?: BriefTestServerOptions): BriefTestServer {
   const enabled = opts?.enabled ?? true;
   const llm = opts?.llm ?? null;
   const search = opts?.hits === undefined ? null : makeIndexSearch(opts.hits);
@@ -154,7 +164,7 @@ export async function startBriefTestServer(opts?: {
         // exercised) so POST /v1/briefs still reaches dispatchWriteRoute's per-route
         // `ctx.briefs === undefined` check (briefsDisabled, 404) instead of the generic
         // writeDb===null 405 — proving the disabled-seam 404 + hint, not a method-not-allowed.
-        { resolveDeploymentToken: async () => "brief-test-server-unused-deploy-token" }),
+        { resolveDeploymentToken: () => Promise.resolve("brief-test-server-unused-deploy-token") }),
   });
 
   return {
@@ -188,30 +198,32 @@ function mustMatch(m: RegExpMatchArray, group: number, what: string): string {
  */
 function citeAllTokensLlm(): BriefSynthesizerLlm {
   return {
-    generateJson: async (prompt: string) => {
-      const tokens = [
-        ...new Set(
-          [...prompt.matchAll(/"token":"([A-Z]\d+)"/g)].map((m) =>
-            mustMatch(m, 1, "citeAllTokensLlm token match"),
+    // Nothing here awaits, so not `async` (S7503); `Promise.try` keeps a `mustMatch` throw a
+    // rejection — which `runSynthesis` maps to `synthesis_invalid` — exactly as `async` did.
+    generateJson: (prompt: string) =>
+      Promise.try(() => {
+        const tokens = [
+          ...new Set(
+            [...prompt.matchAll(/"token":"([A-Z]\d+)"/g)].map((m) =>
+              mustMatch(m, 1, "citeAllTokensLlm token match"),
+            ),
           ),
-        ),
-      ];
-      const findings = tokens.map((t, i) => ({
-        text: `Finding ${i + 1} supported by ${t}.`,
-        refs: [t],
-      }));
-      // `generateJson` is already `async`, so the wrapper is redundant (S7746).
-      return {
-        text: JSON.stringify({
-          summary: "Synthesized summary citing every available token.",
-          findings,
-          conflicts: [],
-          gaps: [],
-        }),
-        model: "stub-cite-all-tokens",
-        remote: false,
-      };
-    },
+        ];
+        const findings = tokens.map((t, i) => ({
+          text: `Finding ${i + 1} supported by ${t}.`,
+          refs: [t],
+        }));
+        return {
+          text: JSON.stringify({
+            summary: "Synthesized summary citing every available token.",
+            findings,
+            conflicts: [],
+            gaps: [],
+          }),
+          model: "stub-cite-all-tokens",
+          remote: false,
+        };
+      }),
   };
 }
 
@@ -265,26 +277,17 @@ export async function runBriefWithIndexHits(hits: IndexHit[]): Promise<Report> {
       throw new Error(`runBriefWithIndexHits: starting the run failed with ${runRes.status}`);
     }
 
-    for (let i = 0; i < 200; i++) {
-      const pollRes = await fetch(`${base}/v1/briefs/${created.id}`, { headers: authHeaders });
-      if (pollRes.status !== 200) {
-        throw new Error(`runBriefWithIndexHits: unexpected GET status ${pollRes.status}`);
-      }
-      const body = (await pollRes.json()) as { status: string; report?: Report };
-      if (body.status === "done") {
-        if (body.report === undefined) {
-          throw new Error("runBriefWithIndexHits: done status but no report in the body");
-        }
-        return body.report;
-      }
-      if (body.status === "failed") {
-        throw new Error("runBriefWithIndexHits: run reached status failed");
-      }
-      await new Promise((r) => setTimeout(r, 5));
+    // The shared wall-clock poller, not an iteration count — see `poll-until-terminal.ts` for why
+    // a fixed number of polls is the wrong budget on a slow runner. It returns only a terminal
+    // (`done` or `failed`) body and throws, naming what it saw, when the budget runs out.
+    const body = await pollBriefUntilTerminal(base, s.token, created.id);
+    if (body.status === "failed") {
+      throw new Error("runBriefWithIndexHits: run reached status failed");
     }
-    throw new Error(
-      "runBriefWithIndexHits: run never reached a terminal state within the poll budget",
-    );
+    if (body.report === undefined) {
+      throw new Error("runBriefWithIndexHits: done status but no report in the body");
+    }
+    return body.report as Report;
   } finally {
     s.stop();
   }

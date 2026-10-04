@@ -229,7 +229,7 @@ async function runOnLocalPort(
 
     await options.openUrl(authUrl.toString());
     while (completion.value === undefined) {
-      await new Promise((r) => setTimeout(r, 50));
+      await new Promise((r) => setTimeout(r, 50)); // NOSONAR S9382: poll loop - each 50 ms wait must elapse before re-checking whether the callback or the timeout settled `completion`
     }
     const done = completion.value;
     if ("error" in done) {
@@ -282,7 +282,7 @@ export async function runPKCEFlow(options: PKCEOptions): Promise<PKCEResult> {
     }
     const bindPort = spec === "ephemeral" ? 0 : spec;
     try {
-      return await runOnLocalPort(options, bindPort, fetchFn);
+      return await runOnLocalPort(options, bindPort, fetchFn); // NOSONAR S9382: port fallback - the next port is tried only after this one failed to bind; each attempt binds a callback server and opens the browser
     } catch (err) {
       if (spec !== "ephemeral" && isAddrInUse(err)) {
         continue;

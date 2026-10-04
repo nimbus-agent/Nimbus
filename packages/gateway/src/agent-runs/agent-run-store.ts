@@ -2,8 +2,9 @@
 
 /**
  * In-memory store for HTTP-invoked agent runs, modelled on `briefs/brief-run-store.ts` (which is
- * itself modelled on `clips/pairing-window.ts`, invariant I30): a plain Map, an injected clock,
- * lazy expiry, no timer and no sweeper thread.
+ * itself modelled on `clips/pairing-window.ts`, invariant I30) and sharing its TTL sweep, terminal
+ * trim and 410-vs-404 tombstones through `util/expiring-run-registry.ts`: a plain Map, an injected
+ * clock, lazy expiry, no timer and no sweeper thread.
  *
  * A gateway restart drops everything, DELIBERATELY. Persisting these would write synthesised brief
  * text — derived from the private index — into a new on-disk table, which is a privacy expansion,
@@ -14,6 +15,7 @@
  */
 
 import type { SynthesisProvenance } from "../agents/_lib/synthesize.ts";
+import { ExpiringRunRegistry } from "../util/expiring-run-registry.ts";
 
 /** Run lifetime from creation. NOT refreshed on access — a polling client must not pin memory. */
 export const AGENT_RUN_TTL_MS = 10 * 60_000;
@@ -105,9 +107,8 @@ function isSynthesisProvenance(v: unknown): v is SynthesisProvenance {
 }
 
 export class AgentRunController {
-  private readonly runs = new Map<string, AgentRun>();
-  /** Ids that existed and have since expired or been evicted — drives 410 vs 404. */
-  private readonly expired = new Set<string>();
+  /** TTL sweep, terminal trim and the 410-vs-404 tombstones — shared with the briefs store. */
+  private readonly runs: ExpiringRunRegistry<AgentRun>;
   /** Admitted but not yet opened. Held across the await between admit() and open(). */
   private pending = 0;
   private readonly nowMs: () => number;
@@ -116,73 +117,20 @@ export class AgentRunController {
   constructor(deps: AgentRunControllerDeps) {
     this.nowMs = deps.nowMs;
     this.ttlMs = deps.ttlMs ?? AGENT_RUN_TTL_MS;
+    this.runs = new ExpiringRunRegistry<AgentRun>({
+      nowMs: deps.nowMs,
+      maxTombstones: MAX_EXPIRED_AGENT_TOMBSTONES,
+      maxRetainedTerminal: MAX_RETAINED_TERMINAL_AGENT_RUNS,
+    });
   }
 
   /**
-   * Drops every run past its TTL. Called before the admission check because expiry is otherwise
-   * access-triggered: three runs created and never polled would never expire and would pin the cap
-   * until the gateway restarted.
+   * Non-terminal runs only — a terminal run holds no work and must not lock a caller out. Sweeps
+   * expired runs first, because expiry is otherwise access-triggered: three runs created and never
+   * polled would never expire and would pin the cap until the gateway restarted.
    */
-  private sweep(): void {
-    const now = this.nowMs();
-    for (const [id, run] of this.runs) {
-      if (now > run.expiresAtMs) {
-        this.runs.delete(id);
-        this.rememberExpired(id);
-      }
-    }
-  }
-
-  private rememberExpired(id: string): void {
-    this.expired.add(id);
-    while (this.expired.size > MAX_EXPIRED_AGENT_TOMBSTONES) {
-      const oldest = this.expired.values().next().value;
-      if (oldest === undefined) break;
-      this.expired.delete(oldest);
-    }
-  }
-
-  private isTerminal(run: AgentRun): boolean {
-    return run.status === "done" || run.status === "failed";
-  }
-
-  /** Non-terminal runs only — a terminal run holds no work and must not lock a caller out. */
   activeCount(): number {
-    this.sweep();
-    let n = 0;
-    for (const run of this.runs.values()) if (!this.isTerminal(run)) n += 1;
-    return n;
-  }
-
-  private trimTerminal(): void {
-    const terminal = [...this.runs.values()]
-      .filter((r) => this.isTerminal(r))
-      .sort((a, b) => a.createdAtMs - b.createdAtMs);
-    for (let i = 0; i < terminal.length - MAX_RETAINED_TERMINAL_AGENT_RUNS; i++) {
-      const run = terminal[i] as AgentRun;
-      this.runs.delete(run.id);
-      this.rememberExpired(run.id);
-    }
-  }
-
-  /**
-   * Seconds until the soonest non-terminal run expires, or null when there is none.
-   *
-   * The null case is real here in a way it is not for briefs: a busy refusal can be caused purely
-   * by in-flight RESERVATIONS, with zero opened runs. The briefs store computes its equivalent only
-   * after `activeCount() >= MAX`, so a run always exists there and POSITIVE_INFINITY is
-   * unreachable. Copying its shape without this guard would return Infinity, which JSON.stringify
-   * turns into `null` anyway — but silently, and meaning "unknown" rather than "not clock-bounded".
-   */
-  private soonestExpiry(): number | null {
-    const now = this.nowMs();
-    let soonest = Number.POSITIVE_INFINITY;
-    for (const run of this.runs.values()) {
-      if (!this.isTerminal(run)) soonest = Math.min(soonest, run.expiresAtMs);
-    }
-    return soonest === Number.POSITIVE_INFINITY
-      ? null
-      : Math.max(0, Math.ceil((soonest - now) / 1000));
+    return this.runs.activeCount();
   }
 
   /**
@@ -193,7 +141,15 @@ export class AgentRunController {
   admit(): AdmitResult {
     const active = this.activeCount() + this.pending;
     if (active >= MAX_CONCURRENT_AGENT_RUNS) {
-      return { ok: false, activeRuns: active, oldestExpiresInSeconds: this.soonestExpiry() };
+      // The soonest expiry can be null here in a way it cannot be for briefs: a busy refusal can be
+      // caused purely by in-flight RESERVATIONS, with zero opened runs, and then nothing on the
+      // clock bounds the wait. The briefs store refuses only after `activeCount() >= MAX`, so an
+      // opened run always exists there.
+      return {
+        ok: false,
+        activeRuns: active,
+        oldestExpiresInSeconds: this.runs.secondsUntilSoonestExpiry(),
+      };
     }
     this.pending += 1;
     return { ok: true };
@@ -216,7 +172,7 @@ export class AgentRunController {
   }
 
   private ensure(runId: string): AgentRun {
-    const existing = this.runs.get(runId);
+    const existing = this.runs.peek(runId);
     if (existing !== undefined) return existing;
     const now = this.nowMs();
     const run: AgentRun = {
@@ -229,7 +185,7 @@ export class AgentRunController {
       error: null,
       synthesis: null,
     };
-    this.runs.set(runId, run);
+    this.runs.add(run);
     return run;
   }
 
@@ -261,23 +217,16 @@ export class AgentRunController {
       run.findings = p.findings ?? null;
       run.synthesis = isSynthesisProvenance(p.synthesis) ? p.synthesis : null;
     }
-    this.trimTerminal();
+    this.runs.trimTerminal();
   }
 
   /** Returns the run, or null when it is unknown OR has expired (expiry is checked here). */
   get(runId: string): AgentRun | null {
-    const run = this.runs.get(runId);
-    if (run === undefined) return null;
-    if (this.nowMs() > run.expiresAtMs) {
-      this.runs.delete(runId);
-      this.rememberExpired(runId);
-      return null;
-    }
-    return run;
+    return this.runs.get(runId);
   }
 
   /** True when this id was a real run that has since expired or been evicted — the 410 signal. */
   wasKnown(runId: string): boolean {
-    return this.expired.has(runId);
+    return this.runs.wasKnown(runId);
   }
 }

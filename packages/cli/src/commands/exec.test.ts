@@ -281,6 +281,25 @@ describe("handleApprovalBroadcast", () => {
     expect(h.answered[0]?.requestId).toBe("r2");
     expect(h.shown[0]).toContain("unknown"); // runtime fallback
   });
+
+  test("each grant list reaches the prompt under its OWN label -- a write never reads as a read", async () => {
+    // All three lists go through one validator, so the mistake left to make is handing it the
+    // wrong field. Every other test here would pass that, while the owner approved a write grant
+    // they had been shown as a read.
+    const h = harness(false);
+    await handleApprovalBroadcast(
+      {
+        ...REQ,
+        grants: { fsRead: ["READ-ONLY-DIR"], fsWrite: ["WRITABLE-DIR"], network: ["NET-HOST"] },
+      },
+      h.ask,
+      h.respond,
+    );
+    const shown = h.shown[0] ?? "";
+    expect(shown).toMatch(/^ *fs read: +READ-ONLY-DIR$/m);
+    expect(shown).toMatch(/^ *fs write: +WRITABLE-DIR$/m);
+    expect(shown).toMatch(/^ *network: +NET-HOST$/m);
+  });
 });
 
 describe("runExec orchestration", () => {

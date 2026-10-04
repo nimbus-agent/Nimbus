@@ -175,6 +175,14 @@ describe("mapRaindropBookmarkToItem", () => {
     expect(meta(row)["tags"]).toEqual(["reliability", "retries"]);
   });
 
+  test("tags keep an empty-string tag and drop non-strings, in order", () => {
+    const row = mapRaindropBookmarkToItem(makeBookmark({ tags: ["a", "", 7, null, "b"] }), {
+      syncedAt: NOW,
+    });
+    if (row === null) throw new Error("expected mapping to succeed");
+    expect(meta(row)["tags"]).toEqual(["a", "", "b"]);
+  });
+
   test("full metadata flows through", () => {
     const row = mapRaindropBookmarkToItem(makeBookmark(), { syncedAt: NOW });
     if (row === null) throw new Error("expected mapping to succeed");

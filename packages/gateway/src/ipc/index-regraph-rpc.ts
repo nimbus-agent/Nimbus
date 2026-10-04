@@ -32,7 +32,7 @@ function requireNoParams(params: unknown): void {
   }
 }
 
-async function handleRegraph(params: unknown, ctx: IndexRegraphRpcContext): Promise<RegraphResult> {
+function handleRegraph(params: unknown, ctx: IndexRegraphRpcContext): RegraphResult {
   requireNoParams(params);
   // Without the resolver, resolver-bound deployments/incidents re-sync with a
   // null affectedService and the retirement clears DESTROY their

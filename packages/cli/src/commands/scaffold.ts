@@ -65,7 +65,12 @@ describe("extension smoke", () => {
   ];
 }
 
-export async function runScaffold(args: string[]): Promise<void> {
+/**
+ * `nimbus scaffold`. Synchronous — nothing here awaits, and a `CommandHandler` may return `void`:
+ * the dispatcher `await`s whatever a handler returns, so a usage or filesystem error thrown here
+ * reaches the CLI's error path exactly as a rejection would.
+ */
+export function runScaffold(args: string[]): void {
   const parsed = parseScaffoldArgs(args);
   const id = parsed.id;
   const dir = join(process.cwd(), id);

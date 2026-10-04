@@ -12,16 +12,22 @@ import type { SubTask } from "../../engine/coordinator.ts";
  * The result is JSON round-tripped through `text` because that is the only
  * channel `SubTask.execute` offers; `decode` is its inverse.
  *
- * Byte-identical copies of this and `decode` lived in `agents/decisions.ts`,
- * `agents/glossary.ts` and `agents/ownership.ts` — the three agents that fan out
- * over locally-computed lanes. A fourth agent written by copying one of them
- * would have carried a fourth copy.
+ * Every agent whose lanes are local computation builds them here. Byte-identical
+ * copies of this and `decode` once lived in `agents/decisions.ts`,
+ * `agents/glossary.ts` and `agents/ownership.ts`; `agents/negotiate.ts` carried a
+ * copy of this under another name; and `catchup`, `expert`, `impact` and `why`
+ * each carried a near-copy wrapping lanes declared `async` with nothing to await.
+ * An agent written by copying any of them would have carried one more.
  */
 export function subAgent(fn: () => unknown): SubTask {
   return {
     taskType: "agent_step",
     prompt: "",
-    execute: async () => ({ text: JSON.stringify(fn()), tokensIn: 0, tokensOut: 0 }),
+    // `Promise.try`, not an `async` arrow with nothing to await. It still calls `fn`
+    // only when the coordinator runs the lane, and a throw from `fn` (a failed SQL
+    // read) still REJECTS — which the coordinator turns into a failed-lane result —
+    // instead of escaping synchronously from a function typed to return a Promise.
+    execute: () => Promise.try(() => ({ text: JSON.stringify(fn()), tokensIn: 0, tokensOut: 0 })),
   };
 }
 

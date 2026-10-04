@@ -1,4 +1,4 @@
-import { expect, test } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import { parsePreflightConfig } from "./nimbus-toml.ts";
 
 test("parses a per-namespace preflight command table", () => {
@@ -52,4 +52,49 @@ test("skips a command line with a genuinely unterminated quoted value — a forg
 command = "C:\\tools\\build
 `);
   expect(cfg.has("ns")).toBe(false);
+});
+
+describe("a malformed header never rewrites the PREVIOUS namespace's command (I24)", () => {
+  const ns1 = ['[federation.preflight."ns1"]', 'command = "bun"', 'args = ["test"]'];
+  const ns2Body = ['command = "rm -rf build"', 'cwd = "/"'];
+  const ns1Only = (cfg: ReturnType<typeof parsePreflightConfig>): void => {
+    expect(cfg.get("ns1")).toEqual({
+      command: "bun",
+      args: ["test"],
+      cwd: ".",
+      timeoutSeconds: 300,
+    });
+    expect([...cfg.keys()]).toEqual(["ns1"]);
+  };
+
+  // Each of these headers used to leave the scanner on the previous, VALID table, so the keys
+  // written under it landed in `ns1`: I24 resolves the command a peer's preflight runs from this
+  // table, and `ns1` would have run `rm -rf build` in `/` instead of the `bun test` it configured.
+  test.each([
+    ["missing its closing bracket", '[federation.preflight."ns2"'],
+    ["whose quote never closes", '[federation.preflight."ns2]'],
+    ["with text after its closing bracket", '[federation.preflight."ns2"] command = "x"'],
+  ])("a header %s ends the previous namespace and opens none", (_label, header) => {
+    ns1Only(parsePreflightConfig([...ns1, header, ...ns2Body].join("\n")));
+  });
+
+  test("a bracketed header with text between its closing quote and bracket opens no namespace", () => {
+    // Recognised as a header but not as a preflight one, so the previous namespace ends here too.
+    ns1Only(parsePreflightConfig([...ns1, '[federation.preflight."ns2"x]', ...ns2Body].join("\n")));
+  });
+
+  test("a VALID header after a malformed one still opens its own namespace", () => {
+    const cfg = parsePreflightConfig(
+      [
+        ...ns1,
+        '[federation.preflight."ns2"',
+        ...ns2Body,
+        '[federation.preflight."ns3"]',
+        'command = "make check"',
+      ].join("\n"),
+    );
+    expect(cfg.get("ns1")?.command).toBe("bun");
+    expect(cfg.get("ns3")?.command).toBe("make check");
+    expect(cfg.has("ns2")).toBe(false);
+  });
 });

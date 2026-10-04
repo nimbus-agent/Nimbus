@@ -1,5 +1,6 @@
 import type { Syncable, SyncContext } from "../sync/types.ts";
 import { connectorFetch } from "./_lib/fetch-outcome.ts";
+import { trimTrailingSlash } from "./_lib/field-helpers.ts";
 import { bareArrayPage, runSinglePassPaginatedSync } from "./_lib/paginated-sync.ts";
 import { mapDependencyTrackProjectToItem } from "./dependencytrack-project-mapping.ts";
 import { encodeNimbusJsonCursor } from "./nimbus-json-cursor.ts";
@@ -22,10 +23,6 @@ export type DependencyTrackSyncableOptions = {
 interface DependencyTrackCreds {
   readonly baseUrl: string;
   readonly apiKey: string;
-}
-
-function trimTrailingSlash(s: string): string {
-  return s.endsWith("/") ? s.slice(0, -1) : s;
 }
 
 async function loadCreds(ctx: SyncContext): Promise<DependencyTrackCreds | null> {

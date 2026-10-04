@@ -19,6 +19,8 @@ import {
 } from "../sync/pass-cursor-sync-result.ts";
 import { type Syncable, type SyncContext, type SyncResult, syncNoopResult } from "../sync/types.ts";
 import { connectorFetch, type FetchOutcome } from "./_lib/fetch-outcome.ts";
+import { trimTrailingSlash } from "./_lib/field-helpers.ts";
+import { upsertMapped } from "./_lib/paginated-sync.ts";
 import { type FastmailEmailInput, mapFastmailEmailToItem } from "./fastmail-email-mapping.ts";
 import { encodeNimbusJsonCursor } from "./nimbus-json-cursor.ts";
 
@@ -41,10 +43,6 @@ export type FastmailSyncableOptions = {
 interface FastmailCreds {
   readonly baseUrl: string;
   readonly apiToken: string;
-}
-
-function trimTrailingSlash(s: string): string {
-  return s.endsWith("/") ? s.slice(0, -1) : s;
 }
 
 async function loadCreds(ctx: SyncContext): Promise<FastmailCreds | null> {
@@ -184,18 +182,10 @@ export function createFastmailSyncable(options: FastmailSyncableOptions): Syncab
       }
 
       const now = Date.now();
-      let upserted = 0;
-      for (const raw of extractEmails(queryOutcome.parsed)) {
+      const upserted = upsertMapped(ctx, extractEmails(queryOutcome.parsed), (raw) => {
         const normalized = normalizeJmapEmail(raw);
-        if (normalized === null) {
-          continue;
-        }
-        const mapped = mapFastmailEmailToItem(normalized, { syncedAt: now });
-        if (mapped !== null) {
-          ctx.upsertItem(mapped);
-          upserted += 1;
-        }
-      }
+        return normalized === null ? null : mapFastmailEmailToItem(normalized, { syncedAt: now });
+      });
 
       return syncPassCursorSuccess(t0, totalBytes, pass1Cursor(), upserted);
     },

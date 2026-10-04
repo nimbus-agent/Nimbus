@@ -152,14 +152,17 @@ async function collectResults(
   perWorker: WorkerBenchResult["perWorker"];
   errors: WorkerBenchResult["errors"];
 }> {
+  // Every worker is already running, so awaiting their `donePromise`s together waits no longer than
+  // awaiting them in turn. None can reject — an errored worker's `donePromise` resolves `{0, 0}`
+  // beside its `error` — and each worker is classified, in order, once all of them have settled.
+  const settled = await Promise.all(states.map(async (s) => ({ s, r: await s.donePromise })));
   const perWorker: WorkerBenchResult["perWorker"] = [];
   const errors: WorkerBenchResult["errors"] = [];
-  for (const s of states) {
+  for (const { s, r } of settled) {
     if (s.error !== undefined) {
       errors.push({ name: s.name, ...s.error });
       continue;
     }
-    const r = await s.donePromise;
     perWorker.push({
       name: s.name,
       writes: r.writes,

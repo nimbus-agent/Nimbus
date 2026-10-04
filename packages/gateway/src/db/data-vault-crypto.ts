@@ -52,12 +52,17 @@ function aesGcmDecrypt(key: Uint8Array, iv: Uint8Array, ctWithTag: Uint8Array): 
   return new Uint8Array(Buffer.concat([decipher.update(ct), decipher.final()]));
 }
 
-export async function encryptVaultManifest(input: {
+/**
+ * Synchronous, like every primitive it calls: `argon2id` and the AES-GCM cipher are both
+ * blocking CPU work, so an `async` signature here only wrapped the result in a Promise. A throw
+ * still reaches `runDataExport`'s caller as a rejection, because that function is `async`.
+ */
+export function encryptVaultManifest(input: {
   plaintext: string;
   passphrase: string;
   seed: string;
   kdfParams?: KdfParams;
-}): Promise<VaultManifestBlob> {
+}): VaultManifestBlob {
   const p = input.kdfParams ?? DEFAULT_KDF;
   const dek = new Uint8Array(randomBytes(DEK_LEN));
   const iv = new Uint8Array(randomBytes(IV_LEN));
@@ -103,10 +108,11 @@ export function _addTestKdfProfile(profile: KdfParams): () => void {
   };
 }
 
-export async function decryptVaultManifest(
+/** Synchronous for the same reason as {@link encryptVaultManifest}; every failure is a throw. */
+export function decryptVaultManifest(
   blob: VaultManifestBlob,
   key: { passphrase?: string; seed?: string },
-): Promise<string> {
+): string {
   if (!isAcceptedKdf(blob.kdf)) {
     throw new Error(
       `decryptVaultManifest: kdf params not in allowlist (got t=${String(blob.kdf.t)} m=${String(blob.kdf.m)} p=${String(blob.kdf.p)})`,

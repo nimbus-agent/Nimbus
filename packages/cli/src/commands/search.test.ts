@@ -127,6 +127,77 @@ describe("runSearch — dispatcher", () => {
     });
   });
 
+  it("--semantic re-enables semantic ranking after an earlier --keyword-only (last flag wins)", async () => {
+    const mock = createMockIpcClient([[]]);
+    setFixture({
+      gatewayState: { socketPath: FAKE_SOCKET_PATH },
+      ipcClient: mock.client,
+    });
+    await runSearch(["hi", "--keyword-only", "--semantic"]);
+    expect(mock.calls[0]?.params).toMatchObject({ name: "hi", semantic: true });
+  });
+
+  // A value-taking flag in the LAST argv slot is skipped, leaving its default -- the same rule
+  // `people search`/`items` follow for a trailing --limit. Pinned so it cannot silently start
+  // consuming nothing as a value (or the query itself).
+  for (const flag of ["--limit", "-n", "--service", "-s", "--type", "-t"]) {
+    it(`a trailing ${flag} with no value is ignored, leaving the defaults`, async () => {
+      const mock = createMockIpcClient([[]]);
+      setFixture({
+        gatewayState: { socketPath: FAKE_SOCKET_PATH },
+        ipcClient: mock.client,
+      });
+      await runSearch(["hi", flag]);
+      expect(mock.calls[0]?.params).toEqual({
+        name: "hi",
+        limit: 20,
+        semantic: true,
+        contextChunks: 2,
+        envelope: true,
+      });
+    });
+  }
+
+  it("connects before it searches, and disconnects once the results are printed", async () => {
+    // The mock client's connect is a no-op, so no other test here would notice a search sent down a
+    // client that was never connected -- which is a failed command against a real gateway.
+    const lifecycle: string[] = [];
+    setFixture({
+      gatewayState: { socketPath: FAKE_SOCKET_PATH },
+      ipcClient: {
+        connect: async (): Promise<void> => {
+          lifecycle.push("connect");
+        },
+        call: async (method: string): Promise<unknown> => {
+          lifecycle.push(`call ${method}`);
+          return [];
+        },
+        disconnect: async (): Promise<void> => {
+          lifecycle.push("disconnect");
+        },
+      },
+    });
+    await runSearch(["foo"]);
+    expect(lifecycle).toEqual(["connect", "call index.searchRanked", "disconnect"]);
+  });
+
+  it("a disconnect that fails after the results printed is swallowed, never thrown", async () => {
+    const mock = createMockIpcClient([[{ id: "github:pr_1", title: "Foo" }]]);
+    setFixture({
+      gatewayState: { socketPath: FAKE_SOCKET_PATH },
+      ipcClient: {
+        call: (m: string, p: unknown): Promise<unknown> => mock.client.call(m, p),
+        connect: async (): Promise<void> => {},
+        disconnect: async (): Promise<void> => {
+          throw new Error("socket already closed");
+        },
+      },
+    });
+    await runSearch(["foo"]);
+    expect(JSON.parse(out.stdout)).toEqual([{ id: "github:pr_1", title: "Foo" }]);
+    expect(out.stderr).toBe("");
+  });
+
   it("prints rows as JSON", async () => {
     const mock = createMockIpcClient([
       [

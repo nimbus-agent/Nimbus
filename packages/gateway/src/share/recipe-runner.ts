@@ -194,7 +194,7 @@ export async function replayRecipe(
       results.push({ ...base, status: "skipped-invalid-params" });
       continue;
     }
-    const outcome = await deps.run(s.tool, s.params);
+    const outcome = await deps.run(s.tool, s.params); // NOSONAR S9382: replay runs the steps in recorded order (see the doc above); concurrent replay would fire up to MAX_REPLAY_STEPS (256) live, credentialed connector calls at once
     if (outcome.kind === "unavailable") {
       results.push({ ...base, status: "missing-connector", detail: s.service });
     } else if (outcome.kind === "threw") {

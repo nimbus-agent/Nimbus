@@ -1,5 +1,6 @@
 import { hostname, platform, release } from "node:os";
 
+import { hasFlag, takeFlag } from "./bench-args.ts";
 import { runBench } from "./bench-harness.ts";
 import { appendHistoryLine, type HistoryLine, type HistoryLineSurface } from "./history-line.ts";
 import { runCliOverheadColdOnce } from "./surfaces/bench-cli-overhead-cold.ts";
@@ -114,17 +115,12 @@ export const LINUX_ONLY_THRESHOLDS: ReadonlySet<BenchSurfaceId> = new Set<BenchS
   "S7-c",
 ]);
 
-function takeFlag(args: string[], flag: string): string | undefined {
-  const i = args.indexOf(flag);
-  if (i < 0 || i + 1 >= args.length) return undefined;
-  return args[i + 1];
-}
-
-function hasFlag(args: string[], flag: string): boolean {
-  return args.includes(flag);
-}
-
-function detectRunner(args: string[]): RunnerKind {
+/**
+ * The runner a bench run is tagged with: `--reference` wins over `--gha`, which picks the
+ * GitHub-hosted runner for this host's OS; neither flag means a local dev run. Exported for
+ * `bench-runner.ts`, whose interrupted-run record must carry the same tag as the history line.
+ */
+export function detectRunner(args: readonly string[]): RunnerKind {
   if (hasFlag(args, "--reference")) return "reference-m1air";
   if (hasFlag(args, "--gha")) {
     if (process.platform === "darwin") return "gha-macos";

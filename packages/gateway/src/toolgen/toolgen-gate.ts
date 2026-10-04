@@ -333,6 +333,17 @@ async function revokeIfBound(
 }
 
 /**
+ * The audit field recording a FAILED credential revoke, for all three non-registering audit rows
+ * (the denial arm, and both outcomes of the outer `catch`). Present ONLY when {@link revokeIfBound}
+ * reported a failure, so its absence is never read as a claim that cleanup succeeded on a run where
+ * nothing was bound. When present it means a bearer token may still sit in the Vault under this
+ * toolId and wants removing by hand.
+ */
+function revokeFailureField(revokeFailed: boolean): { readonly credentialRevokeFailed?: true } {
+  return revokeFailed ? { credentialRevokeFailed: true } : {};
+}
+
+/**
  * The ONE path from a model-authored body to a registered, callable tool (invariant I39).
  *
  * The ORDER is load-bearing and mirrors `runExecution`: every refusal decidable WITHOUT the owner
@@ -445,10 +456,8 @@ export async function createGeneratedTool(
       // `bindCredentials`'s return value -- see {@link CredentialCleanup}.
       const revokeFailed = await revokeIfBound(deps, toolId, cleanup);
       audit(deps, "rejected", "denied_by_owner", {
-        // Only present when TRUE, so its absence is not read as a claim that cleanup succeeded on
-        // a run where nothing was bound. When present it means a bearer token may still sit in the
-        // Vault under this toolId and wants removing by hand.
-        ...(revokeFailed ? { credentialRevokeFailed: true } : {}),
+        // Only present when the revoke FAILED -- see `revokeFailureField`.
+        ...revokeFailureField(revokeFailed),
         toolId,
         body,
         hosts,
@@ -514,7 +523,7 @@ export async function createGeneratedTool(
       audit(deps, "approved", "failed_after_approval", {
         // See the denial arm: present ONLY when a bound credential failed to revoke, so an
         // operator can find the toolId and remove the key by hand.
-        ...(revokeFailed ? { credentialRevokeFailed: true } : {}),
+        ...revokeFailureField(revokeFailed),
         toolId,
         code,
         message: (err as Error).message,
@@ -523,7 +532,7 @@ export async function createGeneratedTool(
       audit(deps, "rejected", "refused_before_consent", {
         // See the denial arm: present ONLY when a bound credential failed to revoke, so an
         // operator can find the toolId and remove the key by hand.
-        ...(revokeFailed ? { credentialRevokeFailed: true } : {}),
+        ...revokeFailureField(revokeFailed),
         toolId,
         code,
         message: (err as Error).message,

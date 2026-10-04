@@ -11,7 +11,7 @@ import { captureOutput } from "../../test/helpers/cli-output.ts";
 import { createMockIpcClient } from "../../test/helpers/mock-ipc-client.ts";
 
 const queryMod = await import("./query.ts");
-const { runQuery, CORRELATION_WINDOW_MS_CLI_MIRROR } = queryMod;
+const { runQuery, CORRELATION_WINDOW_MS_CLI_MIRROR, formatDurationMs } = queryMod;
 
 const out = captureOutput();
 
@@ -417,6 +417,21 @@ describe("runQuery — formatQueryCell branches via kv blocks", () => {
     expect(out.stdout).toContain("field_a:");
   });
 
+  // Values the JSON transport cannot carry still go through formatQueryCell's own arms: a symbol
+  // renders by its description, and a function renders as an EMPTY cell, never as its source.
+  it("renders a symbol cell by its description and a function cell as empty", async () => {
+    setupMock([
+      {
+        rows: [{ tag: Symbol("marker"), fn: () => "function-source-text" }],
+        meta: { count: 1 },
+      },
+    ]);
+    await runQuery(["--sql", "SELECT tag, fn FROM t", "--pretty"]);
+    expect(out.stdout).toBe(
+      "── #1 ──\n  tag: Symbol(marker)\n  fn: \n\n(1 row · use --json for raw)\n",
+    );
+  });
+
   // formatTimestampField with non-finite number falls back to formatQueryCell
   it("renders non-finite _at field via formatQueryCell fallback", async () => {
     setupMock([
@@ -565,6 +580,25 @@ describe("runQuery — printItemCard field-presence branches", () => {
     expect(out.stdout).toContain("…");
     // Should not contain the full 200-char string
     expect(out.stdout).not.toContain("A".repeat(200));
+  });
+
+  // The other side of truncate(): a body that fits is printed whole, with no ellipsis -- and a
+  // body of EXACTLY the 120-char budget fits, so an off-by-one cannot clip the last character.
+  it("prints a body of up to 120 chars in full, whitespace collapsed (raw querySql row)", async () => {
+    const exact = "B".repeat(120);
+    setupMock([
+      {
+        rows: [
+          { title: "short", service: "svc", body_preview: "line one\n\n  line   two" },
+          { title: "edge", service: "svc", body_preview: exact },
+        ],
+        meta: { count: 2 },
+      },
+    ]);
+    await runQuery(["--sql", "SELECT title, service, body_preview FROM items", "--pretty"]);
+    expect(out.stdout).toContain("     line one line two\n");
+    expect(out.stdout).toContain(`     ${exact}\n`);
+    expect(out.stdout).not.toContain("…");
   });
 
   // url absent → no url line printed
@@ -779,6 +813,17 @@ describe("runQuery — negation success output", () => {
 
   it("the CLI's mirror constant is pinned to the real gateway CORRELATION_WINDOW_MS", () => {
     expect(CORRELATION_WINDOW_MS_CLI_MIRROR).toBe(CORRELATION_WINDOW_MS);
+  });
+
+  // The pin above makes the mirror follow the gateway constant, so a window that is not a whole
+  // number of hours would print through the minute or millisecond arm, which today's 2h never runs.
+  it.each([
+    [2 * 60 * 60 * 1000, "2h"],
+    [90 * 60 * 1000, "90m"],
+    [60 * 1000, "1m"],
+    [1500, "1500ms"],
+  ])("formatDurationMs(%d) is %s, in the largest unit that divides it exactly", (ms, expected) => {
+    expect(formatDurationMs(ms)).toBe(expected);
   });
 
   it("--json wraps items+meta+gaps+correlationWindowMs in ONE parseable document", async () => {

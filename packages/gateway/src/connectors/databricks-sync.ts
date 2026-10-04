@@ -5,6 +5,8 @@ import {
 } from "../sync/pass-cursor-sync-result.ts";
 import { type Syncable, type SyncContext, type SyncResult, syncNoopResult } from "../sync/types.ts";
 import { connectorFetch } from "./_lib/fetch-outcome.ts";
+import { trimTrailingSlash } from "./_lib/field-helpers.ts";
+import { upsertMapped } from "./_lib/paginated-sync.ts";
 import { mapDatabricksJobToItem, type RunSummary } from "./databricks-job-mapping.ts";
 import { encodeNimbusJsonCursor } from "./nimbus-json-cursor.ts";
 import { asRecord, numberField, stringField } from "./unknown-record.ts";
@@ -28,10 +30,6 @@ export type DatabricksSyncableOptions = {
 interface DatabricksCreds {
   readonly host: string;
   readonly token: string;
-}
-
-function trimTrailingSlash(s: string): string {
-  return s.endsWith("/") ? s.slice(0, -1) : s;
 }
 
 async function loadCreds(ctx: SyncContext): Promise<DatabricksCreds | null> {
@@ -81,25 +79,6 @@ function extractRunsByJobId(parsed: unknown): Map<number, RunSummary> {
     });
   }
   return map;
-}
-
-function upsertJobs(
-  ctx: SyncContext,
-  creds: DatabricksCreds,
-  runsByJobId: Map<number, RunSummary>,
-  jobs: readonly unknown[],
-  now: number,
-): number {
-  let upserted = 0;
-  for (const j of jobs) {
-    const mapped = mapDatabricksJobToItem(j, { host: creds.host, runsByJobId, syncedAt: now });
-    if (mapped === null) {
-      continue;
-    }
-    ctx.upsertItem(mapped);
-    upserted += 1;
-  }
-  return upserted;
 }
 
 function jobsListPath(pageToken: string | null): string {
@@ -159,12 +138,8 @@ export function createDatabricksSyncable(options: DatabricksSyncableOptions): Sy
         }
 
         const envelope = asRecord(outcome.parsed) ?? {};
-        totalUpserted += upsertJobs(
-          ctx,
-          creds,
-          runsByJobId,
-          extractArray(outcome.parsed, "jobs"),
-          now,
+        totalUpserted += upsertMapped(ctx, extractArray(outcome.parsed, "jobs"), (raw) =>
+          mapDatabricksJobToItem(raw, { host: creds.host, runsByJobId, syncedAt: now }),
         );
 
         const hasMore = envelope["has_more"] === true;

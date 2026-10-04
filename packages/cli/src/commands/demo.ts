@@ -43,17 +43,27 @@ export interface DemoDeps {
 
 const USAGE = "Usage: nimbus demo [--no-tour] | nimbus demo stop | nimbus demo reset";
 
+/**
+ * Runs `start` (production: `nimbus start --no-wizard`) and reports whether the demo gateway came
+ * up. `runStart` signals failure ONLY through `process.exitCode`, so that is what is read — and on
+ * success the code found beforehand is put back, so a successful start leaves no exit code behind.
+ * `start` is injectable for its test alone; `defaultDemoDeps.start` is the production caller.
+ */
+export async function startDemoGateway(
+  start: (args: string[]) => Promise<void> = runStart,
+): Promise<boolean> {
+  const before = process.exitCode;
+  await start(["--no-wizard"]);
+  const ok = process.exitCode === undefined || process.exitCode === 0;
+  if (ok) process.exitCode = before;
+  return ok;
+}
+
 export const defaultDemoDeps: DemoDeps = {
   paths: getCliPlatformPaths,
   stop: (p) => stopAndWaitForExit(p),
   removeDir: (dir) => rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }),
-  start: async () => {
-    const before = process.exitCode;
-    await runStart(["--no-wizard"]);
-    const ok = process.exitCode === undefined || process.exitCode === 0;
-    if (ok) process.exitCode = before;
-    return ok;
-  },
+  start: () => startDemoGateway(),
   seed: (p) =>
     withGatewayIpc((c) => c.call<DemoSeedSummary>("demo.seed", {}), p, {
       requestTimeoutMs: BATCH_RPC_TIMEOUT_MS,

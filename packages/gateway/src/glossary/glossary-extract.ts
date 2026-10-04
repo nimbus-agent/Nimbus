@@ -448,6 +448,12 @@ async function consolidatePhase(
     llmProduced: false,
   };
   let done = 0;
+  // The same for every term — `consolidateTerm` only reads it — so it is built once.
+  const consolidateOpts: Parameters<typeof consolidateTerm>[2] = {
+    ...(opts.llm === undefined ? {} : { llm: opts.llm }),
+    timeoutMs: opts.consolidateTimeoutMs,
+    ...(opts.signal === undefined ? {} : { signal: opts.signal }),
+  };
 
   for (const unit of work) {
     if (opts.signal?.aborted === true) return { ...tally, aborted: true };
@@ -456,11 +462,7 @@ async function consolidatePhase(
       db,
       unit.term.topSources.map((s) => s.itemId),
     );
-    const outcome = await consolidateTerm(unit.term, snippets, {
-      ...(opts.llm === undefined ? {} : { llm: opts.llm }),
-      timeoutMs: opts.consolidateTimeoutMs,
-      ...(opts.signal === undefined ? {} : { signal: opts.signal }),
-    });
+    const outcome = await consolidateTerm(unit.term, snippets, consolidateOpts); // NOSONAR S9382: deliberately sequential (see the doc above) - concurrent calls multiply resident model memory on a local Ollama, and each term re-checks the abort signal and reports ordered progress
 
     applyConsolidationOutcome(db, unit, outcome, { knownKeys, nowMs: opts.nowMs }, tally);
 

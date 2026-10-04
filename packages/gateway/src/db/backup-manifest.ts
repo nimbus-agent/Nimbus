@@ -38,10 +38,16 @@ export async function buildManifest(input: {
   files: Record<string, string>;
   indexIncluded: boolean;
 }): Promise<BackupManifest> {
-  const hashes: Record<string, string> = {};
-  for (const [name, absPath] of Object.entries(input.files)) {
-    hashes[name] = await blake3HashFile(absPath);
-  }
+  // Concurrent reads: each file is hashed independently, the set is the export's fixed handful of
+  // staged files, and nothing here writes. `Promise.all` keeps input order, so `hashes` keeps the
+  // key order the sequential loop produced — the order `manifest.json` serialises in.
+  const hashes: Record<string, string> = Object.fromEntries(
+    await Promise.all(
+      Object.entries(input.files).map(
+        async ([name, absPath]) => [name, await blake3HashFile(absPath)] as const,
+      ),
+    ),
+  );
   return {
     version: 2,
     nimbus_version: input.nimbusVersion,

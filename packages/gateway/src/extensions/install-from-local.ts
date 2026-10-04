@@ -17,11 +17,18 @@ import {
 import { tmpdir } from "node:os";
 import { join, relative, resolve, sep } from "node:path";
 
-export function resolveSystemTarCommand(): string {
-  if (process.platform !== "win32") {
+/**
+ * `platform`/`env` default to the live process and exist so the Windows branch can be exercised on
+ * any host — every production caller passes neither.
+ */
+export function resolveSystemTarCommand(
+  platform: NodeJS.Platform = process.platform,
+  env: Readonly<Record<string, string | undefined>> = process.env,
+): string {
+  if (platform !== "win32") {
     return "tar";
   }
-  const root = process.env["SystemRoot"] ?? process.env["windir"];
+  const root = env["SystemRoot"] ?? env["windir"];
   if (root !== undefined && root !== "") {
     return join(root, "System32", "tar.exe");
   }
@@ -665,14 +672,17 @@ async function installPlanNodes(
 ): Promise<void> {
   const createdDirs: string[] = [];
   try {
+    // SERIAL by design: `plan.nodes` is topologically ordered (dependencies before dependents),
+    // and on the first failure nothing further may start — the catch rolls back exactly the
+    // directories created so far.
     for (const node of plan.nodes) {
       if (!node.newlyInstalled) {
         continue;
       }
       if (node.id === manifest.id) {
-        await installRootNode(options, sourceResolved, manifest, (dir) => createdDirs.push(dir));
+        await installRootNode(options, sourceResolved, manifest, (dir) => createdDirs.push(dir)); // NOSONAR S9382: topological, fail-fast install order (see above)
       } else {
-        createdDirs.push(await installDependencyNode(node, options, signal));
+        createdDirs.push(await installDependencyNode(node, options, signal)); // NOSONAR S9382: topological, fail-fast install order (see above)
       }
     }
   } catch (e) {

@@ -3,15 +3,16 @@ import { existsSync } from "node:fs";
 import { dirname, join } from "node:path";
 import pino from "pino";
 import { load as loadSqliteVec } from "sqlite-vec";
-import { ensureFullSqlite, sidecarFilename, sidecarPath } from "../platform/sqlite-runtime.ts";
+import { ensureFullSqlite, sidecarFilename } from "../platform/sqlite-runtime.ts";
 
 /**
  * Re-exported, not redefined. Both are per-OS filename logic, so they belong in the PAL — and
  * `platform/sqlite-runtime.ts` needs them for its own extension-load probe, which cannot import
  * this module without creating a cycle. Every existing importer (this module's tests, the
- * packaging scripts' prose) keeps working unchanged.
+ * packaging scripts' prose) keeps working unchanged. (`sidecarFilename` is ALSO imported above,
+ * for this module's own sidecar lookup.)
  */
-export { sidecarFilename, sidecarPath };
+export { sidecarFilename, sidecarPath } from "../platform/sqlite-runtime.ts";
 
 const log = pino({
   name: "sqlite-vec-load",

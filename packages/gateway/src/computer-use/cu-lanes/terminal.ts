@@ -4,6 +4,7 @@ import {
   createSandboxRunner,
   type SandboxSpawnOptions,
 } from "../../platform/sandbox/sandbox-runner.ts";
+import { trimPartialUtf8 } from "../../util/utf8-trim.ts";
 import type {
   CuTerminalLaunchPolicy,
   OpenTerminalLaneOptions,
@@ -95,27 +96,6 @@ export interface TerminalLaneRuntime {
     readonly cwd: string;
     readonly launch: CuTerminalLaunchPolicy;
   }): ChildProcess;
-}
-
-/**
- * Drop a trailing INCOMPLETE UTF-8 sequence — needed only where WE made the cut. Decoding a
- * fragment yields a U+FFFD we manufactured, which re-encodes to 3 bytes and can push a capped
- * buffer back OVER its own cap. Same helper, same reasoning, as `exec/exec-run.ts`.
- */
-function sequenceLength(lead: number): number {
-  if (lead < 0x80) return 1;
-  if ((lead & 0xe0) === 0xc0) return 2;
-  if ((lead & 0xf0) === 0xe0) return 3;
-  return 4;
-}
-
-function trimPartialUtf8(buf: Uint8Array): Uint8Array {
-  for (let back = 1; back <= 4 && back <= buf.length; back++) {
-    const b = buf[buf.length - back] as number;
-    if ((b & 0xc0) === 0x80) continue; // continuation byte — keep walking back to the lead byte
-    return sequenceLength(b) === back ? buf : buf.subarray(0, buf.length - back);
-  }
-  return buf;
 }
 
 /**

@@ -1776,6 +1776,44 @@ describe("LocalIndex audit methods", () => {
     expect(typeof entries[0]?.prevHash).toBe("string");
   });
 
+  test("listAuditWithChain returns the entry fields, then the chain hashes, in that key order", () => {
+    // `commands/data-export.ts` writes this array through JSON.stringify, so the key order is
+    // part of the exported file's bytes.
+    const idx = makeIndex();
+    idx.recordAudit({ actionType: "a.b", hitlStatus: "approved", actionJson: "{}", timestamp: 7 });
+    const [entry] = idx.listAuditWithChain(1);
+    expect(Object.keys(entry ?? {})).toEqual([
+      "id",
+      "actionType",
+      "hitlStatus",
+      "actionJson",
+      "timestamp",
+      "rowHash",
+      "prevHash",
+    ]);
+    expect(entry).toMatchObject({
+      actionType: "a.b",
+      hitlStatus: "approved",
+      actionJson: "{}",
+      timestamp: 7,
+    });
+  });
+
+  test("both audit readers refuse a row whose hitl_status is outside the union", () => {
+    const idx = makeIndex();
+    const db = idx.getDatabase();
+    // The column is CHECK-constrained to the same union, so an INSERT cannot produce this row while
+    // the constraint is enforced; lift it for this one INSERT to reach the readers' own guard.
+    db.run("PRAGMA ignore_check_constraints = ON");
+    db.run(
+      "INSERT INTO audit_log (action_type, hitl_status, action_json, timestamp) VALUES (?, ?, ?, ?)",
+      ["x.y", "maybe", "{}", 1],
+    );
+    db.run("PRAGMA ignore_check_constraints = OFF");
+    expect(() => idx.listAudit(10)).toThrow("Corrupt audit_log row: invalid hitl_status");
+    expect(() => idx.listAuditWithChain(10)).toThrow("Corrupt audit_log row: invalid hitl_status");
+  });
+
   test("getAuditSummary aggregates by outcome and service prefix", () => {
     const idx = makeIndex();
     idx.recordAudit({

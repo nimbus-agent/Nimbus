@@ -48,7 +48,7 @@ export interface AutoUpdateRuntime {
   abortController: AbortController;
 }
 
-async function listInstalledRows(db: Database): Promise<InstalledExtensionRow[]> {
+function listInstalledRows(db: Database): InstalledExtensionRow[] {
   const rows = listExtensions(db);
   const out: InstalledExtensionRow[] = [];
   for (const r of rows) {
@@ -109,7 +109,11 @@ export function createAutoUpdateRuntime(opts: AutoUpdateInitOpts): AutoUpdateRun
   const registry: RegistryClient = createRegistryClient({ baseUrl: opts.registryBaseUrl });
   const abortController = new AbortController();
 
-  const wrapAudit = async (type: string, payload: Record<string, unknown>): Promise<void> => {
+  // The SQLite reads/writes below are synchronous, but the daemon and the IPC bag take
+  // Promise-returning callbacks. A body that can throw is lifted with `Promise.try`, which keeps
+  // that throw a REJECTION (what the former `async` wrappers produced); one that cannot throw
+  // just returns `Promise.resolve`.
+  const wrapAudit = (type: string, payload: Record<string, unknown>): Promise<void> => {
     try {
       appendAuditEntry(opts.db, {
         actionType: type,
@@ -121,11 +125,23 @@ export function createAutoUpdateRuntime(opts: AutoUpdateInitOpts): AutoUpdateRun
       // Best-effort — the BLAKE3 chain may be locked or full; do not fault
       // the daemon over an audit-write failure.
     }
+    return Promise.resolve();
   };
+
+  // One definition for the upgrade AND downgrade paths — it is the same row write either way.
+  const dbUpdateExtensionRow: PerformUpgradeDeps["dbUpdateExtensionRow"] = (
+    id,
+    version,
+    manifestHash,
+    entryHash,
+  ) =>
+    Promise.try(() => {
+      updateExtensionRowVersion(opts.db, id, version, manifestHash, entryHash, Date.now());
+    });
 
   const daemon = new ExtensionAutoUpdater({
     cache,
-    listInstalled: () => listInstalledRows(opts.db),
+    listInstalled: () => Promise.try(() => listInstalledRows(opts.db)),
     fetchLatestVersion: (id, channel, signal) => registry.fetchLatestVersion(id, channel, signal),
     fetchManifest: async (id, version, signal) => {
       const r = await registry.fetchManifest(id, version, signal);
@@ -178,18 +194,14 @@ export function createAutoUpdateRuntime(opts: AutoUpdateInitOpts): AutoUpdateRun
     sha256OfTarball: sha256OfBytes,
     extractTarball: extractTarballToDir,
     stopExtensionClient: opts.stopExtensionClient ?? noopStop,
-    dbUpdateExtensionRow: async (id, version, manifestHash, entryHash) => {
-      updateExtensionRowVersion(opts.db, id, version, manifestHash, entryHash, Date.now());
-    },
+    dbUpdateExtensionRow,
   };
 
   const performUpgrade = createPerformUpgrade(performUpgradeDeps);
   const performDowngrade = createPerformDowngrade({
     extensionsRoot: opts.extensionsDir,
     stopExtensionClient: opts.stopExtensionClient ?? noopStop,
-    dbUpdateExtensionRow: async (id, version, manifestHash, entryHash) => {
-      updateExtensionRowVersion(opts.db, id, version, manifestHash, entryHash, Date.now());
-    },
+    dbUpdateExtensionRow,
   });
 
   const deps: AutoUpdateRuntimeBag = {
@@ -198,16 +210,18 @@ export function createAutoUpdateRuntime(opts: AutoUpdateInitOpts): AutoUpdateRun
     performUpgrade,
     performDowngrade,
     appendAudit: wrapAudit,
-    getInstalledVersion: async (id) => {
-      const row = listExtensions(opts.db).find((r) => r.id === id);
-      return row?.version ?? null;
-    },
-    hasPrevVersion: async (id, version) => {
-      const row = listExtensions(opts.db).find((r) => r.id === id);
-      if (!row) return false;
-      const prevPath = join(dirname(row.install_path), "_prev", version);
-      return existsSync(prevPath);
-    },
+    getInstalledVersion: (id) =>
+      Promise.try(() => {
+        const row = listExtensions(opts.db).find((r) => r.id === id);
+        return row?.version ?? null;
+      }),
+    hasPrevVersion: (id, version) =>
+      Promise.try(() => {
+        const row = listExtensions(opts.db).find((r) => r.id === id);
+        if (!row) return false;
+        const prevPath = join(dirname(row.install_path), "_prev", version);
+        return existsSync(prevPath);
+      }),
   };
 
   return { daemon, deps, abortController };

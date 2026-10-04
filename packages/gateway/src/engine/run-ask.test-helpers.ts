@@ -29,9 +29,13 @@ const stubPaths: PlatformPaths = {
   tempDir: join(stubBase, "tmp"),
 };
 
+// The doubles below satisfy Promise-returning contracts without `async`: nothing in them
+// suspends, and a configured failure is returned as a REJECTED promise — never a synchronous
+// throw — which is exactly what an `async` body's `throw` surfaced to its caller.
+
 const stubConsent: ConsentCoordinator = {
-  async requestConsent(): Promise<boolean> {
-    return false;
+  requestConsent(): Promise<boolean> {
+    return Promise.resolve(false);
   },
   rejectAllPending(): void {},
   pendingCount(): number {
@@ -41,11 +45,11 @@ const stubConsent: ConsentCoordinator = {
 
 function makeStubDispatcher(opts: { throws?: string }): ConnectorDispatcher {
   return {
-    async dispatch(): Promise<unknown> {
+    dispatch(): Promise<unknown> {
       if (opts.throws !== undefined) {
-        throw new Error(opts.throws);
+        return Promise.reject(new Error(opts.throws));
       }
-      return null;
+      return Promise.resolve(null);
     },
   };
 }
@@ -76,9 +80,11 @@ function fakeConversationalAgent(opts: {
   throwsOnGenerate?: boolean;
 }): Agent {
   const reply = opts.reply ?? "agent reply";
-  const run = (): { text: string } => {
+  // Runs synchronously at call time — tool calls are recorded before the promise is even
+  // returned, as the `async` original did — and fails as a rejection, never a throw.
+  const run = (): Promise<{ text: string }> => {
     if (opts.throwsOnGenerate === true) {
-      throw new Error("boom");
+      return Promise.reject(new Error("boom"));
     }
     for (const toolId of opts.agentToolCalls ?? []) {
       recordExplainToolCall({
@@ -89,14 +95,12 @@ function fakeConversationalAgent(opts: {
         params: undefined,
       });
     }
-    return { text: reply };
+    return Promise.resolve({ text: reply });
   };
   return {
-    generate: async () => run(),
-    stream: async () => {
-      const out = run();
-      return { fullStream: emptyAsyncIterable(), text: Promise.resolve(out.text) };
-    },
+    generate: run,
+    stream: () =>
+      run().then((out) => ({ fullStream: emptyAsyncIterable(), text: Promise.resolve(out.text) })),
   } as unknown as Agent;
 }
 
@@ -109,18 +113,18 @@ function fakeLocalRouter(opts: { throws?: string }): LlmRouter {
   return {
     prefersLocal: () => true,
     enforcesAirGap: () => false,
-    generate: async () => {
+    generate: () => {
       if (opts.throws !== undefined) {
-        throw new Error(opts.throws);
+        return Promise.reject(new Error(opts.throws));
       }
-      return {
+      return Promise.resolve({
         text: "local reply",
         tokensIn: 1,
         tokensOut: 1,
         modelUsed: "local-test-model",
         isLocal: true,
         provider: "ollama",
-      };
+      });
     },
   } as unknown as LlmRouter;
 }
@@ -138,14 +142,15 @@ function fakeRealClassifierRouter(opts: { responseText: string; provider: string
   return {
     prefersLocal: () => false,
     enforcesAirGap: () => false,
-    generate: async () => ({
-      text: opts.responseText,
-      tokensIn: 1,
-      tokensOut: 1,
-      modelUsed: "classifier-test-model",
-      isLocal: false,
-      provider: opts.provider,
-    }),
+    generate: () =>
+      Promise.resolve({
+        text: opts.responseText,
+        tokensIn: 1,
+        tokensOut: 1,
+        modelUsed: "classifier-test-model",
+        isLocal: false,
+        provider: opts.provider,
+      }),
   } as unknown as LlmRouter;
 }
 
@@ -254,19 +259,8 @@ export function makeRunAskParams(opts: MakeRunAskParamsOptions): RunAskParams {
     );
   }
   const localIndex = new LocalIndex(db);
-
-  // `realClassifierRouter` exercises the REAL classifier seam, so `classify` must be OMITTED
-  // entirely (not merely a pass-through function) — `classifyIntentForAskWithLocalFallback` does
-  // `p.classify ?? (...)`, and any injected function, however transparent, would still win.
-  const classify =
-    opts.realClassifierRouter !== undefined
-      ? undefined
-      : async (): Promise<ClassifiedIntent> => {
-          if (opts.throwAt === "classification") {
-            throw new Error("boom");
-          }
-          return opts.classifyAs ?? DEFAULT_CLASSIFIED;
-        };
+  const classify = classifyDoubleFor(opts);
+  const llmRouter = llmRouterDoubleFor(opts);
 
   return {
     input: opts.input,
@@ -290,13 +284,43 @@ export function makeRunAskParams(opts: MakeRunAskParamsOptions): RunAskParams {
             ...(opts.agentToolCalls === undefined ? {} : { agentToolCalls: opts.agentToolCalls }),
           }),
         }),
-    ...(opts.realClassifierRouter !== undefined
-      ? { llmRouter: fakeRealClassifierRouter(opts.realClassifierRouter) }
-      : opts.localRouterThrows !== undefined
-        ? { llmRouter: fakeLocalRouter({ throws: opts.localRouterThrows }) }
-        : opts.localRouterSucceeds === true
-          ? { llmRouter: fakeLocalRouter({}) }
-          : {}),
+    ...(llmRouter === undefined ? {} : { llmRouter }),
     ...(opts.explainRecorder === undefined ? {} : { explainRecorder: opts.explainRecorder }),
   };
+}
+
+/**
+ * The injected classifier double, or `undefined` under `realClassifierRouter`. That option
+ * exercises the REAL classifier seam, so `classify` must be OMITTED entirely (not merely a
+ * pass-through function) — `classifyIntentForAskWithLocalFallback` does `p.classify ?? (...)`,
+ * and any injected function, however transparent, would still win.
+ */
+function classifyDoubleFor(opts: MakeRunAskParamsOptions): RunAskParams["classify"] {
+  if (opts.realClassifierRouter !== undefined) {
+    return undefined;
+  }
+  return (): Promise<ClassifiedIntent> => {
+    if (opts.throwAt === "classification") {
+      return Promise.reject(new Error("boom"));
+    }
+    return Promise.resolve(opts.classifyAs ?? DEFAULT_CLASSIFIED);
+  };
+}
+
+/**
+ * The router double `opts` asks for, by precedence: `realClassifierRouter` supersedes
+ * `localRouterThrows`, which supersedes `localRouterSucceeds` (see their doc comments). None of
+ * them means no router at all.
+ */
+function llmRouterDoubleFor(opts: MakeRunAskParamsOptions): LlmRouter | undefined {
+  if (opts.realClassifierRouter !== undefined) {
+    return fakeRealClassifierRouter(opts.realClassifierRouter);
+  }
+  if (opts.localRouterThrows !== undefined) {
+    return fakeLocalRouter({ throws: opts.localRouterThrows });
+  }
+  if (opts.localRouterSucceeds === true) {
+    return fakeLocalRouter({});
+  }
+  return undefined;
 }

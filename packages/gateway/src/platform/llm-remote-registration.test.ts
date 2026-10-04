@@ -155,6 +155,68 @@ describe("[llm.remote.*] registration", () => {
     expect(Object.getPrototypeOf(route?.provider)).toBe(Object.prototype);
     db.close();
   });
+
+  test("routes register in CONFIG order even when an earlier vendor's key read finishes last", async () => {
+    // The vendors' keys are read concurrently, but registration order is route order for
+    // `byPreference`, so it must follow the config. Slowing the FIRST vendor's read is what makes
+    // a registration-in-completion-order regression visible: openai would land first.
+    const store = new Map<string, string>([
+      ["anthropic.api_key", "sk-ant"],
+      ["openai.api_key", "sk-oai"],
+    ]);
+    const vault: NimbusVault = {
+      ...vaultOf(store),
+      get: async (k: string) => {
+        if (k === "anthropic.api_key") await new Promise((r) => setTimeout(r, 20));
+        return store.get(k) ?? null;
+      },
+    };
+    const db = new Database(":memory:");
+    const registry = await buildLlmRegistryFromToml(
+      db,
+      tomlWith(
+        `[llm]\n\n[llm.remote.anthropic]\nenabled = true\nmodel = "claude-sonnet-4-6"\n\n` +
+          `[llm.remote.openai]\nenabled = true\nmodel = "gpt-5"\n`,
+      ),
+      vault,
+    );
+    expect(remoteRoutesOf(registry).map((r) => r.routeId)).toEqual([
+      "anthropic/claude-sonnet-4-6",
+      "openai/gpt-5",
+    ]);
+    db.close();
+  });
+
+  test("a failed key read rejects at THAT vendor: every earlier vendor handled, no later one", async () => {
+    // The one-vendor-at-a-time loop this replaced stopped at the failing read, after handling the
+    // vendors before it. Reading every key up front must not change that: a plain `Promise.all`
+    // would reject before warning about anthropic, and handling in completion order could warn
+    // about gemini.
+    const warnings: string[] = [];
+    const vault: NimbusVault = {
+      ...vaultOf(new Map()),
+      get: (k: string) =>
+        k === "openai.api_key"
+          ? Promise.reject(new Error("keychain refused"))
+          : Promise.resolve(null),
+    };
+    const db = new Database(":memory:");
+    await expect(
+      buildLlmRegistryFromToml(
+        db,
+        tomlWith(
+          `[llm]\n\n[llm.remote.anthropic]\nenabled = true\nmodel = "claude-sonnet-4-6"\n\n` +
+            `[llm.remote.openai]\nenabled = true\nmodel = "gpt-5"\n\n` +
+            `[llm.remote.gemini]\nenabled = true\nmodel = "gemini-2.5-pro"\n`,
+        ),
+        vault,
+        { warn: (m: string) => warnings.push(m) },
+      ),
+    ).rejects.toThrow("keychain refused");
+    db.close();
+    expect(warnings.join("\n")).toContain("[llm.remote.anthropic]");
+    expect(warnings.join("\n")).not.toContain("gemini");
+  });
 });
 
 describe("resolveAgentVendor — the Mastra agent's opt-in", () => {

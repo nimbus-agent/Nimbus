@@ -1,4 +1,5 @@
 import { itemPrimaryKey } from "../index/item-store.ts";
+import { syncPassCursorSuccess } from "../sync/pass-cursor-sync-result.ts";
 import {
   FETCH_ONE_TIMEOUT_MS,
   type FetchOneResult,
@@ -19,7 +20,7 @@ import {
 } from "./atlassian-api-sync-helpers.ts";
 import { readConnectorSecret } from "./connector-vault.ts";
 import { fetchOneMissForResponse } from "./fetch-miss-reason.ts";
-import { decodeNimbusJsonCursorPayload, encodeNimbusJsonCursor } from "./nimbus-json-cursor.ts";
+import { decodeNimbusJsonCursorObject, encodeNimbusJsonCursor } from "./nimbus-json-cursor.ts";
 import { msFromIso, normalizeJiraStatusCategory, TICKET_META_VERSION } from "./ticket-depth.ts";
 
 const SERVICE_ID = "jira";
@@ -32,17 +33,10 @@ function encodeCursor(c: JiraSyncCursorV1): string {
 }
 
 function decodeCursor(raw: string | null): JiraSyncCursorV1 | null {
-  if (raw === null || raw === "") {
+  const rec = decodeNimbusJsonCursorObject(raw, CURSOR_PREFIX);
+  if (rec === null) {
     return null;
   }
-  const parsed = decodeNimbusJsonCursorPayload(raw, CURSOR_PREFIX);
-  if (parsed === undefined) {
-    return null;
-  }
-  if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
-    return null;
-  }
-  const rec = parsed as Record<string, unknown>;
   if (rec["v"] !== 1) {
     return null;
   }
@@ -717,14 +711,7 @@ export function createJiraSyncable(options: JiraSyncableOptions): Syncable {
           : isoToJqlExclusiveFloor(maxUpdatedIso.value);
       const nextCursor = encodeCursor({ v: 1, floorJql: nextFloor });
 
-      return {
-        cursor: nextCursor,
-        itemsUpserted: upserted,
-        itemsDeleted: 0,
-        hasMore: false,
-        durationMs: Math.round(performance.now() - t0),
-        bytesTransferred,
-      };
+      return syncPassCursorSuccess(t0, bytesTransferred, nextCursor, upserted);
     },
   };
 }

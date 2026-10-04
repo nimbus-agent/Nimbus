@@ -133,6 +133,19 @@ describe("mapSemgrepFindingToItem", () => {
     expect(meta["column"]).toBeNull();
   });
 
+  test("line, end_line and column each read their own key, truncated toward zero", () => {
+    // Three distinct values, so reading one key in place of another fails here — the default
+    // fixture's line === end_line cannot tell them apart. 7.9 → 7 pins truncation, not rounding.
+    const row = mapSemgrepFindingToItem(
+      makeFinding({ location: { file_path: "src/a.js", line: 7.9, end_line: 12, column: 3 } }),
+      { deploymentSlug: SLUG, syncedAt: NOW },
+    );
+    if (row === null) throw new Error("expected mapping to succeed");
+    expect(row.metadata["line"]).toBe(7);
+    expect(row.metadata["end_line"]).toBe(12);
+    expect(row.metadata["column"]).toBe(3);
+  });
+
   test("repository.name and url propagate to metadata", () => {
     const row = mapSemgrepFindingToItem(makeFinding(), {
       deploymentSlug: SLUG,

@@ -57,7 +57,9 @@ export function createChatOpsAskEngine(
   buildParams: (query: string) => RunAskParams,
   runAskFn: (params: RunAskParams) => Promise<{ reply: string }> = runAsk,
 ): (query: string, namespace: string) => Promise<string> {
-  return async (query, _namespace) =>
+  // No outer `async`: `AsyncLocalStorage.run` returns the callback's own promise, so the async
+  // callback below is already the whole result — wrapping it again only added a second promise.
+  return (query, _namespace) =>
     agentRequestContext.run({}, async () => {
       const r = await runAskFn(buildParams(query));
       return r.reply;

@@ -42,12 +42,14 @@ export class TeamsWebhookAdapter implements ChatTransport {
     return this.running;
   }
 
-  async start(): Promise<void> {
+  start(): Promise<void> {
     this.running = true;
+    return Promise.resolve();
   }
 
-  async stop(): Promise<void> {
+  stop(): Promise<void> {
     this.running = false;
+    return Promise.resolve();
   }
 
   /** Called by the HTTP route after Bot Framework JWT validation. */

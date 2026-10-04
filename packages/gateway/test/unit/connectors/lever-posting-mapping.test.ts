@@ -212,6 +212,14 @@ describe("mapLeverPostingToItem", () => {
     expect(meta(row)["tags"]).toEqual(["backend", "golang"]);
   });
 
+  test("tags keep an empty-string tag and drop non-strings, in order", () => {
+    const row = mapLeverPostingToItem(makePosting({ tags: ["a", "", 7, null, "b"] }), {
+      syncedAt: NOW,
+    });
+    if (row === null) throw new Error("expected mapping to succeed");
+    expect(meta(row)["tags"]).toEqual(["a", "", "b"]);
+  });
+
   test("req_code prefers reqCode, else first of requisitionCodes", () => {
     const direct = mapLeverPostingToItem(makePosting(), { syncedAt: NOW });
     if (direct === null) throw new Error("expected mapping to succeed");

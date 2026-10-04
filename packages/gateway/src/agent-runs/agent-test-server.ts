@@ -47,13 +47,17 @@ export type AgentTestServer = {
   stop(): void;
 };
 
-export async function startAgentTestServer(opts?: {
+/**
+ * Synchronous on purpose: every step below — the migrated-DB copy, the harness handle,
+ * `Bun.serve` — completes before it returns, so there is nothing for a caller to await.
+ */
+export function startAgentTestServer(opts?: {
   ttlMs?: number;
   /** false => omit agentRuns, so the seam is absent (every /v1/agents route 404s). */
   enabled?: boolean;
   /** Raw JSON for `http_api.web_clipper_tokens`. Omit for the scoped agents-capable default. */
   tokensJson?: string;
-}): Promise<AgentTestServer> {
+}): AgentTestServer {
   const enabled = opts?.enabled ?? true;
 
   const tmpDir = mkdtempSync(join(tmpdir(), "nimbus-agent-e2e-"));
@@ -93,7 +97,7 @@ export async function startAgentTestServer(opts?: {
         // exercised) so POST /v1/agents/{agent} still reaches dispatchWriteRoute's per-route
         // `ctx.agents === undefined` check (agents_disabled, 404) instead of the generic
         // writeDb===null 405 — proving the disabled-seam 404 + hint, not a method-not-allowed.
-        { resolveDeploymentToken: async () => "agent-test-server-unused-deploy-token" }),
+        { resolveDeploymentToken: () => Promise.resolve("agent-test-server-unused-deploy-token") }),
   });
 
   return {

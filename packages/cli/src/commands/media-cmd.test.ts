@@ -1,6 +1,11 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 
-import { clearFixture, FAKE_SOCKET_PATH, setFixture } from "../../test/helpers/cli-mocks.ts";
+import {
+  clearFixture,
+  FAKE_SOCKET_PATH,
+  type RecordedClientConstruction,
+  setFixture,
+} from "../../test/helpers/cli-mocks.ts";
 import { captureOutput } from "../../test/helpers/cli-output.ts";
 import { createMockIpcClient } from "../../test/helpers/mock-ipc-client.ts";
 import {
@@ -76,6 +81,12 @@ describe("parseMediaArgs", () => {
 
   test("rejects an unknown subcommand", () => {
     expect(() => parseMediaArgs(["frobnicate"])).toThrow(/unknown/i);
+  });
+
+  test("an EMPTY argv names the missing subcommand as empty, never as 'undefined'", () => {
+    expect(() => parseMediaArgs([])).toThrow(
+      'nimbus media: unknown subcommand "" (expected "understand")',
+    );
   });
 
   test("rejects a flag with no trailing value", () => {
@@ -181,6 +192,18 @@ describe("parseBudget", () => {
 
   test("rejects an unrecognised unit", () => {
     expect(parseBudget("4TB")).toBeNull();
+  });
+
+  test("rejects an all-digit value too large to represent, rather than budgeting Infinity", () => {
+    // "Infinity"/"NaN" above never get past the regex; this one does, and only the finiteness
+    // check stops `Number()` overflowing it into an unbounded budget.
+    const huge = "9".repeat(400);
+    expect(Number(huge)).toBe(Number.POSITIVE_INFINITY);
+    expect(parseBudget(huge)).toBeNull();
+    expect(parseBudget(`${huge}MB`)).toBeNull();
+    expect(() => parseMediaArgs(["understand", "--budget", huge])).toThrow(
+      "nimbus media: --budget must be a byte count",
+    );
   });
 });
 
@@ -325,6 +348,31 @@ describe("renderSummary", () => {
     expect(out).toContain("200 candidates found, none attempted");
   });
 
+  test("a PRE-FLIGHT refusal of a single candidate is worded in the singular", () => {
+    const out = renderSummary({
+      understood: 0,
+      skipped: 0,
+      skippedByReason: { ...zeroReasons },
+      lastItemId: null,
+      stopReason: "budget_exhausted",
+      cloudBytesFetched: 0,
+      preflightRefusal: {
+        candidateCount: 1,
+        cloudCount: 1,
+        knownBytes: 3_000_000_000,
+        knownCount: 1,
+        unknownCount: 0,
+        budgetBytes: 2_000_000_000,
+      },
+    });
+    expect(out).toStartWith(
+      "Refused before fetching anything: 1 candidate found, none attempted.\n",
+    );
+    expect(out).not.toContain("1 candidates");
+    // All-cloud page: the LOCAL-candidates sentence must not appear at all.
+    expect(out).not.toContain("are LOCAL");
+  });
+
   test("a PRE-FLIGHT refusal states that the LOCAL candidates in the page are blocked too", () => {
     const out = renderSummary({
       understood: 0,
@@ -453,6 +501,64 @@ describe("runMediaCmd", () => {
     setFixture({});
     await expect(runMediaCmd(["understand"])).rejects.toThrow(
       "Gateway is not running. Start with: nimbus start",
+    );
+  });
+
+  // `allow-remote` and `grants` are routed BEFORE the `understand` parser: falling through to it
+  // would refuse them as `unknown subcommand ... (expected "understand")` and leave grant
+  // management unreachable from the CLI.
+  test("allow-remote is routed to the grant command, which demands --vendor before dialing", async () => {
+    const constructions: RecordedClientConstruction[] = [];
+    setFixture({
+      gatewayState: { socketPath: FAKE_SOCKET_PATH },
+      clientConstructions: constructions,
+    });
+    const error = await runMediaCmd(["allow-remote", "--service", "google_drive"]).then(
+      () => undefined,
+      (e: unknown) => e,
+    );
+    expect(error).toBeInstanceOf(Error);
+    expect((error as Error).message).toStartWith(
+      "nimbus media allow-remote: --vendor <name> is required",
+    );
+    expect((error as Error).message).not.toContain('expected "understand"');
+    // No client was ever built -- the test below is the positive control that this list fills.
+    expect(constructions).toEqual([]);
+  });
+
+  test("allow-remote with nothing to grant completes over the gateway without prompting", async () => {
+    const mock = createMockIpcClient([{ items: [] }, { grants: [] }]);
+    const constructions: RecordedClientConstruction[] = [];
+    setFixture({
+      gatewayState: { socketPath: FAKE_SOCKET_PATH },
+      ipcClient: mock.client,
+      clientConstructions: constructions,
+    });
+    await runMediaCmd([
+      "allow-remote",
+      "--vendor",
+      "gemini",
+      "--service",
+      "filesystem",
+      "--limit",
+      "5",
+    ]);
+    expect(constructions.map((c) => c.socketPath)).toEqual([FAKE_SOCKET_PATH]);
+    expect(mock.calls.map((c) => c.method)).toEqual(["index.queryItems", "media.grants.list"]);
+    expect(out.stdout).toBe("No matching artifacts found — nothing to grant.\n");
+  });
+
+  test("grants list is routed to the grant listing over the gateway", async () => {
+    const mock = createMockIpcClient([{ grants: [] }]);
+    setFixture({ gatewayState: { socketPath: FAKE_SOCKET_PATH }, ipcClient: mock.client });
+    await runMediaCmd(["grants", "list"]);
+    expect(mock.calls).toEqual([{ method: "media.grants.list", params: {} }]);
+    expect(out.stdout).toBe("No active grants.\n");
+  });
+
+  test("an unknown grants subcommand is refused by the grant command, not the understand parser", async () => {
+    await expect(runMediaCmd(["grants", "bogus"])).rejects.toThrow(
+      'nimbus media grants: unknown subcommand "bogus" (expected "list" or "revoke")',
     );
   });
 

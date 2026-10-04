@@ -80,6 +80,14 @@ test("a stray positional argument throws", () => {
   expect(() => parseDecisionsArgs(["billing"])).toThrow("Unexpected argument");
 });
 
+test("a hole in argv is rejected as an unexpected argument, never matched as a flag", () => {
+  // `?? ""` is not a key in BOOLEAN_FLAGS, so a sparse slot falls through to the same rejection a
+  // stray positional gets rather than being read as some flag.
+  const args: string[] = ["--json"];
+  args.length = 2;
+  expect(() => parseDecisionsArgs(args)).toThrow("Unexpected argument: undefined");
+});
+
 test("--min-confidence rejects a non-numeric value", () => {
   expect(() => parseDecisionsArgs(["--min-confidence", "nope"])).toThrow(
     "--min-confidence must be a number between 0 and 1",
@@ -299,6 +307,20 @@ describe("runDecisionsCommand — dispatch (DI, no mock.module)", () => {
     expect(calls).toEqual([{ method: "decisions.rebuild", params: {} }]);
   });
 
+  test("forwards --min-confidence as a numeric param beside the defaults", async () => {
+    let seenParams: unknown;
+    await runDecisionsCommand(["--min-confidence", "0.7"], {
+      runAgentBriefCli: async <T>(spec: AgentBriefCliSpec<T>): Promise<void> => {
+        seenParams = spec.params;
+      },
+    });
+    expect(seenParams).toEqual({
+      sinceMs: 90 * 24 * 60 * 60 * 1000,
+      minConfidence: 0.7,
+      explain: false,
+    });
+  });
+
   test("no --refresh/--rebuild never touches beforeCall", async () => {
     let beforeCallSeen = false;
     await runDecisionsCommand([], {
@@ -341,6 +363,70 @@ describe("runDecisionsCommand — rebuild without --yes", () => {
     expect(stderrBuf).toContain("clears every veto");
     expect(stderrBuf).toContain("cannot be undone");
     expect(stderrBuf).toContain("Re-run with --yes to confirm.");
+  });
+
+  test("with its DEFAULT deps the refusal still comes first — before any gateway lookup", async () => {
+    // No deps argument: the production `runAgentBriefCli` is wired in, and the refusal must win
+    // before it is ever reached. A tripwire makes a regression fail SAFELY: with NIMBUS_DEMO set
+    // to a value path resolution refuses, the production path throws a DemoModeError at its very
+    // first step (`getCliPlatformPaths`), before reading any gateway.json — so a broken guard can
+    // never reach a developer's running gateway and start a real `decisions.rebuild`.
+    const savedDemo = process.env["NIMBUS_DEMO"];
+    process.env["NIMBUS_DEMO"] = "tripwire";
+    let stderrBuf = "";
+    const origStderrWrite = process.stderr.write.bind(process.stderr);
+    process.stderr.write = ((chunk: string): boolean => {
+      stderrBuf += chunk;
+      return true;
+    }) as typeof process.stderr.write;
+    let err: unknown;
+    try {
+      await runDecisionsCommand(["--rebuild"]);
+    } catch (e) {
+      err = e;
+    } finally {
+      process.stderr.write = origStderrWrite;
+      if (savedDemo === undefined) delete process.env["NIMBUS_DEMO"];
+      else process.env["NIMBUS_DEMO"] = savedDemo;
+    }
+    expect(err).toBeInstanceOf(CliExit);
+    expect((err as CliExit).code).toBe(2);
+    expect(stderrBuf).toContain("Re-run with --yes to confirm.");
+    expect(stderrBuf).not.toContain("NIMBUS_DEMO");
+    expect(stderrBuf).not.toContain("Gateway is not running");
+  });
+});
+
+describe("awaitPass — the pass-start call itself fails", () => {
+  /** Runs `--refresh` with deps that drive `beforeCall` against `client` and nothing else. */
+  function refreshAgainst(client: IPCClient): Promise<void> {
+    return runDecisionsCommand(["--refresh"], {
+      runAgentBriefCli: async <T>(spec: AgentBriefCliSpec<T>): Promise<void> => {
+        if (spec.beforeCall !== undefined) await spec.beforeCall(client);
+      },
+    });
+  }
+
+  test("a rejected decisions.refresh rejects the pass with THAT error and removes every handler", async () => {
+    const { client, calls, liveHandlers } = makeFakeIpcClient(async () => {
+      throw new Error("ERR_DECISIONS_PASS_RUNNING: a pass is already running");
+    });
+    await expect(refreshAgainst(client)).rejects.toThrow(
+      "ERR_DECISIONS_PASS_RUNNING: a pass is already running",
+    );
+    expect(calls).toEqual([{ method: "decisions.refresh", params: {} }]);
+    expect(liveHandlers()).toBe(0);
+  });
+
+  test("a non-Error rejection is wrapped into an Error carrying its text", async () => {
+    const { client, liveHandlers } = makeFakeIpcClient(() => Promise.reject("socket reset"));
+    const err = await refreshAgainst(client).then(
+      () => undefined,
+      (e: unknown) => e,
+    );
+    expect(err).toBeInstanceOf(Error);
+    expect((err as Error).message).toBe("socket reset");
+    expect(liveHandlers()).toBe(0);
   });
 });
 

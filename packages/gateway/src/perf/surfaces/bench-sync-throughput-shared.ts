@@ -5,11 +5,14 @@ import { join, resolve } from "node:path";
 import type { RequestHandler } from "msw";
 import { type SetupServer, setupServer } from "msw/node";
 
-import { spawnGatewayForBench } from "../gateway-spawn-bench.ts";
+import { type SpawnGatewayForBenchOptions, spawnGatewayForBench } from "../gateway-spawn-bench.ts";
 import type { BenchRunOptions, CorpusTier } from "../types.ts";
 
 const READY_MARKER = /\[gateway\] ready/;
 export const SAMPLES_PER_RUN = 5;
+
+/** What one sample's workload reports: the items one full sync added, and how long it took. */
+type SyncWorkloadResult = { items: number; ms: number };
 
 export type IpcCallFn = (method: string, params: unknown) => Promise<unknown>;
 
@@ -30,8 +33,8 @@ function defaultGatewayEntry(): string {
   return resolve(import.meta.dir, "..", "..", "index.ts");
 }
 
-async function defaultIpcCall(_method: string, _params: unknown): Promise<unknown> {
-  throw new Error("IPC client wiring deferred; pass runOpts.ipcCall in tests");
+function defaultIpcCall(_method: string, _params: unknown): Promise<unknown> {
+  return Promise.reject(new Error("IPC client wiring deferred; pass runOpts.ipcCall in tests"));
 }
 
 export async function runSyncThroughputOnce(
@@ -50,7 +53,7 @@ export async function runSyncThroughputOnce(
     const server = runOpts.mswServer ?? setupServer(...config.handlers(tier));
     server.listen({ onUnhandledRequest: "warn" });
     try {
-      const result = await spawnGatewayForBench<{ items: number; ms: number }, void>({
+      const benchOpts: SpawnGatewayForBenchOptions<SyncWorkloadResult> = {
         cmd: process.execPath,
         args: [entry],
         readyMarker: READY_MARKER,
@@ -73,7 +76,8 @@ export async function runSyncThroughputOnce(
             ms,
           };
         },
-      });
+      };
+      const result = await spawnGatewayForBench(benchOpts); // NOSONAR S9382: throughput samples must not overlap - each boots its own gateway and times a full sync, and an injected mswServer is shared across samples
       const itemsPerSec =
         result.workloadResult.ms <= 0
           ? 0

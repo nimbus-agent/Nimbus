@@ -61,6 +61,17 @@ describe("toolgen-keypair", () => {
     expect(second.pubkeyB64).toBe(first.pubkeyB64);
   });
 
+  test("stores the seed under TOOLGEN_SIGNING_PRIVKEY and the public key under TOOLGEN_SIGNING_PUBKEY", async () => {
+    // Both names reach the shared resolver as same-typed positional arguments, so a swapped call
+    // still RETURNS a working pair — every round-trip test above keeps passing — while storing the
+    // seed under the public-key name. The saved-tool loader, spawn and boot reconcile read that
+    // name back as the verification key, so every saved tool would then silently fail to verify.
+    const vault = new FakeVault();
+    const kp = await ensureToolgenKeypair(vault);
+    expect(await vault.get(TOOLGEN_SIGNING_PRIVKEY)).toBe(kp.privkeyB64);
+    expect(await vault.get(TOOLGEN_SIGNING_PUBKEY)).toBe(kp.pubkeyB64);
+  });
+
   test("a mismatched stored pair is regenerated rather than used", async () => {
     const vault = new FakeVault();
     const good = await ensureToolgenKeypair(vault);

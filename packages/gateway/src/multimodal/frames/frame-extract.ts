@@ -305,25 +305,33 @@ function readBounded(stream: ReadableStream<Uint8Array>, maxBytes: number): Boun
     const chunks: Uint8Array[] = [];
     let total = 0;
     try {
+      // Set only by the cap check below, so the breach is handled ONCE, after the loop, rather
+      // than from inside it — and a plain EOF can never be mistaken for one.
+      let capBreached = false;
       for (;;) {
         const { done: atEof, value } = await reader.read();
         if (atEof) break;
         if (value === undefined) continue;
         total += value.byteLength;
         if (total > maxBytes) {
-          // `releaseLock()` alone (in the `finally` below) does not cancel the underlying stream:
-          // with a real ffmpeg, nobody would be draining the pipe from this point on, so ffmpeg
-          // blocks on its next write and never exits. Cancel so the producer sees the consumer
-          // walk away. Guarded: a cancel failure must never mask the cap error itself, which is
-          // what the caller needs to see.
-          try {
-            await reader.cancel();
-          } catch {
-            // best-effort; the cap error below is what matters.
-          }
-          throw new FrameByteCapError(`frame exceeds the ${maxBytes}-byte cap`);
+          capBreached = true;
+          break;
         }
         chunks.push(value);
+      }
+      if (capBreached) {
+        // `releaseLock()` alone (in the `finally` below) does not cancel the underlying stream:
+        // with a real ffmpeg, nobody would be draining the pipe from this point on, so ffmpeg
+        // blocks on its next write and never exits. Cancel so the producer sees the consumer
+        // walk away — still inside this `try`, so the reader is cancelled BEFORE its lock is
+        // released. Guarded: a cancel failure must never mask the cap error itself, which is
+        // what the caller needs to see.
+        try {
+          await reader.cancel();
+        } catch {
+          // best-effort; the cap error below is what matters.
+        }
+        throw new FrameByteCapError(`frame exceeds the ${maxBytes}-byte cap`);
       }
     } finally {
       reader.releaseLock();

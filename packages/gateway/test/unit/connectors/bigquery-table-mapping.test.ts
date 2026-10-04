@@ -134,3 +134,51 @@ describe("extractSchemaFields", () => {
     ).toEqual([{ name: "ok", type: "INT64" }]);
   });
 });
+
+describe("mapBigqueryTableToItem — value shapes and clamping", () => {
+  const REF = { tableReference: { datasetId: "ds", tableId: "t" } };
+
+  function mapped(over: Record<string, unknown>) {
+    const row = mapBigqueryTableToItem({ ...REF, ...over }, CTX);
+    if (row === null) throw new Error("expected mapping to succeed");
+    return row;
+  }
+
+  test("counts and timestamps may arrive as numbers; a non-numeric string reads as absent", () => {
+    const row = mapped({ numRows: 42, numBytes: "lots", lastModifiedTime: 1_699_000_000_001 });
+    expect(row.metadata["numRows"]).toBe(42);
+    expect(row.metadata["numBytes"]).toBeNull();
+    expect(row.modifiedAt).toBe(1_699_000_000_001);
+  });
+
+  test("a non-record schema field is skipped and a field with no type gets an empty one", () => {
+    const fields = extractSchemaFields({
+      fields: ["not a field", null, 7, { name: "a", type: "STRING" }, { name: "b" }],
+    });
+    expect(fields).toEqual([
+      { name: "a", type: "STRING" },
+      { name: "b", type: "" },
+    ]);
+  });
+
+  test("a title over 256 characters is clamped with an ellipsis", () => {
+    const row = mapped({ friendlyName: "x".repeat(300) });
+    expect(row.title).toBe(`${"x".repeat(256)}…`);
+  });
+
+  test("a description over 512 characters is clamped with an ellipsis in the preview only", () => {
+    const description = "d".repeat(600);
+    const row = mapped({ description });
+    expect(row.bodyPreview).toBe(`${"d".repeat(512)}…`);
+    expect(row.metadata["description"]).toBe(description);
+  });
+
+  test("an empty description falls back to the field summary, then the qualified name", () => {
+    const withSchema = mapped({
+      description: "",
+      schema: { fields: [{ name: "id", type: "INT64" }] },
+    });
+    expect(withSchema.bodyPreview).toBe("id:INT64");
+    expect(mapped({ description: "" }).bodyPreview).toBe("ds.t");
+  });
+});

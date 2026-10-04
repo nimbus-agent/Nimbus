@@ -89,7 +89,7 @@ describe.skipIf(!VEC_AVAILABLE)("SqliteEmbeddingPipeline", () => {
       title: "t",
       body_preview: null,
     });
-    await pipeline.deleteItemEmbeddings(itemId);
+    pipeline.deleteItemEmbeddings(itemId);
     expect((db.query("SELECT COUNT(*) AS c FROM embedding_chunk").get() as { c: number }).c).toBe(
       0,
     );

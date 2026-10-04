@@ -1622,10 +1622,10 @@ describe("runConnector — remaining dispatch + formatter edges", () => {
     clearFixture();
   });
 
-  it("truncateText returns a bare ellipsis when maxLen <= 1 (long error, 1-row table)", async () => {
-    // The errCap is fixed at 40 in runConnectorList, so the maxLen<=1 branch of truncateText is
-    // only reachable in isolation. We exercise it indirectly via a list row whose error is long;
-    // the dedicated assertion here is that the list still renders with a truncated error marker.
+  it("a long last-error is cut to the 40-char error column, ending in an ellipsis", async () => {
+    // errCap is fixed at 40 in runConnectorList, so truncateText's maxLen <= 1 arm (a bare
+    // ellipsis) is NOT reachable through the list — this test pins the ordinary cut instead:
+    // 39 characters of the error, then the ellipsis, and never the 40th character.
     const ipc = createMockIpcClient([
       [
         {
@@ -1647,7 +1647,8 @@ describe("runConnector — remaining dispatch + formatter edges", () => {
       ipcClient: { call: ipc.client.call, connect: () => {}, disconnect: () => {} },
     });
     await runConnector(["list"]);
-    expect(out.stdout).toContain("…");
+    expect(out.stdout).toContain(`  ${"x".repeat(39)}…\n`);
+    expect(out.stdout).not.toContain("x".repeat(40));
   });
 
   it("addMcp rejects when the command line is empty", async () => {
@@ -1928,6 +1929,223 @@ describe("a timed-out auth does not claim nothing happened (F17)", () => {
     );
     await expect(runConnector(["auth", "onedrive"])).rejects.not.toThrow(
       "may still have completed",
+    );
+  });
+});
+
+describe("runConnector detect — the production local-auth wiring", () => {
+  // `connector detect` builds `connector-detect.ts`'s PRODUCTION deps, so these pin the wire it
+  // speaks: which RPC method each step calls and with exactly which params. `toStrictEqual`, not
+  // `toEqual`: the latter treats `{ sources: undefined }` as equal to `{}`, so it cannot see a
+  // stray undefined-valued key — the exact difference the no-`--source` case below exists to pin.
+  const origStdinTty = Object.getOwnPropertyDescriptor(process.stdin, "isTTY");
+  const origStdoutTty = Object.getOwnPropertyDescriptor(process.stdout, "isTTY");
+
+  function setTty(value: boolean): void {
+    Object.defineProperty(process.stdin, "isTTY", { value, configurable: true });
+    Object.defineProperty(process.stdout, "isTTY", { value, configurable: true });
+  }
+
+  beforeEach(() => {
+    out.reset();
+    setTty(false);
+  });
+  afterEach(() => {
+    clearFixture();
+    for (const [stream, desc] of [
+      [process.stdin, origStdinTty],
+      [process.stdout, origStdoutTty],
+    ] as const) {
+      if (desc === undefined) delete (stream as unknown as { isTTY?: boolean }).isTTY;
+      else Object.defineProperty(stream, "isTTY", desc);
+    }
+  });
+
+  const GH_FINDING = {
+    source: "gh",
+    status: "available",
+    alreadyConfigured: false,
+    host: "github.com",
+    accounts: ["octocat"],
+    activeAccount: "octocat",
+  };
+
+  it("--json --source gh asks connector.detectLocalAuth for exactly that source and prints the findings", async () => {
+    const ipc = createMockIpcClient([[GH_FINDING]]);
+    setFixture({
+      gatewayState: { socketPath: FAKE_SOCKET_PATH },
+      ipcClient: { call: ipc.client.call, connect: () => {}, disconnect: () => {} },
+    });
+    await runConnector(["detect", "--json", "--source", "gh"]);
+    expect(ipc.calls).toStrictEqual([
+      { method: "connector.detectLocalAuth", params: { sources: ["gh"] } },
+    ]);
+    expect(JSON.parse(out.stdout)).toEqual([GH_FINDING]);
+  });
+
+  it("with no --source, connector.detectLocalAuth gets EMPTY params — not sources: undefined", async () => {
+    const ipc = createMockIpcClient([[]]);
+    setFixture({
+      gatewayState: { socketPath: FAKE_SOCKET_PATH },
+      ipcClient: { call: ipc.client.call, connect: () => {}, disconnect: () => {} },
+    });
+    await runConnector(["detect", "--json"]);
+    expect(ipc.calls).toStrictEqual([{ method: "connector.detectLocalAuth", params: {} }]);
+    expect(JSON.parse(out.stdout)).toEqual([]);
+  });
+
+  it("on a terminal, an adoptable gcloud login is adopted over connector.adoptLocalAuth", async () => {
+    // gcloud with a known default project needs no answer typed, so the adopt step runs without a
+    // line ever being read from the real stdin.
+    setTty(true);
+    const ipc = createMockIpcClient([
+      [
+        {
+          source: "gcloud",
+          status: "available",
+          alreadyConfigured: false,
+          account: "me@example.com",
+          project: "acme-prod",
+        },
+      ],
+      { ok: true, source: "gcloud", service: "gcp", verified: "verified", scopes: [] },
+    ]);
+    setFixture({
+      gatewayState: { socketPath: FAKE_SOCKET_PATH },
+      ipcClient: { call: ipc.client.call, connect: () => {}, disconnect: () => {} },
+    });
+    await runConnector(["detect"]);
+    expect(ipc.calls).toStrictEqual([
+      { method: "connector.detectLocalAuth", params: {} },
+      {
+        method: "connector.adoptLocalAuth",
+        params: { source: "gcloud", project: "acme-prod", replace: false },
+      },
+    ]);
+    expect(out.stdout).toContain("  ✓ gcp connected (verified).");
+  });
+
+  it("the adopt connection answers the gateway's consent prompt by ASKING the owner, never by auto-approving", async () => {
+    // `connector.adoptLocalAuth` is HITL-gated: the gateway raises `consent.request` while the call
+    // is in flight, and whatever answers it IS the approval. The owner declines here, so a
+    // connection registered with an auto-approving handler would send `approved: true` — adopting a
+    // credential the owner just refused — and the recorded `consent.respond` below would differ.
+    setTty(true);
+    const savedScriptSource = process.env["NIMBUS_SCRIPT_CONSENT_SOURCE"];
+    delete process.env["NIMBUS_SCRIPT_CONSENT_SOURCE"]; // which would route `prompt` to a file
+    const handlers = new Map<string, (params: unknown) => void>();
+    const ipc = createMockIpcClient(
+      [
+        [
+          {
+            source: "gcloud",
+            status: "available",
+            alreadyConfigured: false,
+            account: "me@example.com",
+            project: "acme-prod",
+          },
+        ],
+        { status: "rejected" },
+        { ok: true },
+      ],
+      handlers,
+    );
+    setFixture({
+      gatewayState: { socketPath: FAKE_SOCKET_PATH },
+      clackAnswer: false,
+      ipcClient: {
+        connect: () => {},
+        disconnect: () => {},
+        onNotification: ipc.client.onNotification,
+        call: async (method: string, params: unknown): Promise<unknown> => {
+          const reply = await ipc.client.call(method, params);
+          if (method === "connector.adoptLocalAuth") {
+            ipc.emit("consent.request", { requestId: "consent-1", prompt: "Adopt gcloud?" });
+            await flush(); // the gateway answers the adopt only once the prompt is answered
+          }
+          return reply;
+        },
+      },
+    });
+    try {
+      await runConnector(["detect"]);
+    } finally {
+      if (savedScriptSource === undefined) delete process.env["NIMBUS_SCRIPT_CONSENT_SOURCE"];
+      else process.env["NIMBUS_SCRIPT_CONSENT_SOURCE"] = savedScriptSource;
+    }
+    expect(ipc.calls).toStrictEqual([
+      { method: "connector.detectLocalAuth", params: {} },
+      {
+        method: "connector.adoptLocalAuth",
+        params: { source: "gcloud", project: "acme-prod", replace: false },
+      },
+      { method: "consent.respond", params: { requestId: "consent-1", approved: false } },
+    ]);
+    expect(out.stdout).toContain("  Skipped — not approved.");
+  });
+});
+
+describe("runConnector — remaining failure shapes", () => {
+  beforeEach(() => {
+    out.reset();
+  });
+  afterEach(() => {
+    clearFixture();
+  });
+
+  it("add --mcp with nothing after it is a usage error that never reaches the gateway", async () => {
+    const ipc = createMockIpcClient([]);
+    setFixture({
+      gatewayState: { socketPath: FAKE_SOCKET_PATH },
+      ipcClient: { call: ipc.client.call, connect: () => {}, disconnect: () => {} },
+    });
+    await expect(runConnector(["add", "--mcp"])).rejects.toThrow(
+      /^Usage: nimbus connector add --mcp <mcp_id> <command\.\.\.>/,
+    );
+    expect(ipc.calls).toEqual([]);
+  });
+
+  it("a removal the gateway rejects WITHOUT a reason says so rather than printing a count", async () => {
+    const ipc = createMockIpcClient([{ status: "rejected" }]);
+    setFixture({
+      gatewayState: { socketPath: FAKE_SOCKET_PATH },
+      ipcClient: { call: ipc.client.call, connect: () => {}, disconnect: () => {} },
+    });
+    await expect(runConnector(["remove", "github", "--yes"])).rejects.toThrow(
+      'Gateway rejected the removal of "github": no reason given',
+    );
+    expect(out.stdout).not.toContain("Removed index rows:");
+  });
+
+  it("a non-Error auth failure is rethrown unchanged when it is not a timeout", async () => {
+    setFixture({
+      gatewayState: { socketPath: FAKE_SOCKET_PATH },
+      ipcClient: {
+        connect: () => {},
+        disconnect: () => {},
+        call: async (): Promise<never> => {
+          throw "socket hang up";
+        },
+      },
+      clackAnswer: true,
+    });
+    await expect(runConnector(["auth", "onedrive"])).rejects.toBe("socket hang up");
+  });
+
+  it("a non-Error auth TIMEOUT still gets the may-still-have-completed guidance", async () => {
+    setFixture({
+      gatewayState: { socketPath: FAKE_SOCKET_PATH },
+      ipcClient: {
+        connect: () => {},
+        disconnect: () => {},
+        call: async (): Promise<never> => {
+          throw "IPC request timed out after 3600000ms: connector.auth";
+        },
+      },
+      clackAnswer: true,
+    });
+    await expect(runConnector(["auth", "onedrive"])).rejects.toThrow(
+      /^IPC request timed out after 3600000ms: connector\.auth\nThe browser sign-in may still have completed/,
     );
   });
 });

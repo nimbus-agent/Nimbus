@@ -133,4 +133,44 @@ describe("MdnsDiscoveryProvider", () => {
     expect(fake.state.destroyed).toBe(true);
     await provider.stop(); // second stop: both undefined → optional-chain false arms, no throw
   });
+
+  // `platform/assemble.ts` fires these as `void discovery.start()` / `void discovery.stop()`, so a
+  // bonjour failure must SETTLE the returned promise as a rejection — a synchronous throw would
+  // escape into gateway boot or the shutdown drain instead. Each call is made on its own line,
+  // OUTSIDE `expect(...)`, on purpose: a synchronous throw fails the test right there.
+  test("a bonjour failure rejects start/advertise/stop instead of throwing synchronously", async () => {
+    const unstartable = new MdnsDiscoveryProvider(() => {
+      throw new Error("bonjour unavailable");
+    });
+    const started = unstartable.start();
+    await expect(started).rejects.toThrow("bonjour unavailable");
+
+    const fake = makeFakeBonjour();
+    let destroyFailuresLeft = 1;
+    const refusing: BonjourLike = {
+      ...fake.bonjour,
+      publish: () => {
+        throw new Error("publish refused");
+      },
+      destroy: () => {
+        if (destroyFailuresLeft > 0) {
+          destroyFailuresLeft -= 1;
+          throw new Error("destroy refused");
+        }
+        fake.bonjour.destroy();
+      },
+    };
+    const provider = new MdnsDiscoveryProvider(() => refusing);
+    await provider.start();
+    const advertised = provider.advertise("me", 7070);
+    await expect(advertised).rejects.toThrow("publish refused");
+    const stopped = provider.stop();
+    await expect(stopped).rejects.toThrow("destroy refused");
+
+    // The failed stop never reached its unregister. A second, clean stop must still leave nothing
+    // in the process-global registry for the tests that run after this one.
+    await provider.stop();
+    expect(fake.state.destroyed).toBe(true);
+    expect(processListeners.live().some((l) => l.name === "mdns")).toBe(false);
+  });
 });

@@ -20,8 +20,8 @@ describe("profile.list", () => {
 
   test("returns created profiles + current active", async () => {
     const mgr = makeMgr();
-    await mgr.create("work");
-    await mgr.switchTo("work");
+    mgr.create("work");
+    mgr.switchTo("work");
     const r = await dispatchProfileRpc("profile.list", null, { manager: mgr });
     const v = (
       r as { kind: "hit"; value: { profiles: Array<{ name: string }>; active: string | null } }
@@ -36,13 +36,13 @@ describe("profile.create", () => {
     const mgr = makeMgr();
     const r = await dispatchProfileRpc("profile.create", { name: "work" }, { manager: mgr });
     expect(r.kind).toBe("hit");
-    const profiles = await mgr.list();
+    const profiles = mgr.list();
     expect(profiles.map((p) => p.name)).toEqual(["work"]);
   });
 
   test("rejects duplicate names", async () => {
     const mgr = makeMgr();
-    await mgr.create("work");
+    mgr.create("work");
     await expect(
       dispatchProfileRpc("profile.create", { name: "work" }, { manager: mgr }),
     ).rejects.toThrow();
@@ -64,7 +64,7 @@ describe("profile.create", () => {
 describe("profile.switch", () => {
   test("switches active profile and emits profile.switched", async () => {
     const mgr = makeMgr();
-    await mgr.create("work");
+    mgr.create("work");
     const notifications: { method: string; params: unknown }[] = [];
     const r = await dispatchProfileRpc(
       "profile.switch",
@@ -72,7 +72,7 @@ describe("profile.switch", () => {
       { manager: mgr, notify: (m, p) => notifications.push({ method: m, params: p }) },
     );
     expect(r.kind).toBe("hit");
-    expect(await mgr.getActive()).toBe("work");
+    expect(mgr.getActive()).toBe("work");
     expect(notifications.some((n) => n.method === "profile.switched")).toBe(true);
   });
 
@@ -86,18 +86,18 @@ describe("profile.switch", () => {
 describe("profile.delete", () => {
   test("deletes a non-active profile", async () => {
     const mgr = makeMgr();
-    await mgr.create("work");
-    await mgr.create("personal");
-    await mgr.switchTo("work");
+    mgr.create("work");
+    mgr.create("personal");
+    mgr.switchTo("work");
     const r = await dispatchProfileRpc("profile.delete", { name: "personal" }, { manager: mgr });
     expect(r.kind).toBe("hit");
-    expect((await mgr.list()).map((p) => p.name)).toEqual(["work"]);
+    expect(mgr.list().map((p) => p.name)).toEqual(["work"]);
   });
 
   test("refuses to delete the active profile", async () => {
     const mgr = makeMgr();
-    await mgr.create("work");
-    await mgr.switchTo("work");
+    mgr.create("work");
+    mgr.switchTo("work");
     await expect(
       dispatchProfileRpc("profile.delete", { name: "work" }, { manager: mgr }),
     ).rejects.toThrow();

@@ -57,8 +57,8 @@ export abstract class CloudLlmProvider {
   }
 
   /** Static, for the same no-egress reason as `isAvailable`. */
-  async listModels(): Promise<LlmModelInfo[]> {
-    return [{ provider: this.providerId, modelName: this.modelName }];
+  listModels(): Promise<LlmModelInfo[]> {
+    return Promise.resolve([{ provider: this.providerId, modelName: this.modelName }]);
   }
 }
 

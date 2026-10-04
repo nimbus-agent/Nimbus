@@ -70,7 +70,7 @@ export async function waitForGatewayReady(
       return true;
     }
     onTick?.(deps.now() - start);
-    await deps.sleep(READY_POLL_INTERVAL_MS);
+    await deps.sleep(READY_POLL_INTERVAL_MS); // NOSONAR S9382: readiness poll — each probe must wait out the interval after the previous one, and the early returns end it
   }
   return false;
 }

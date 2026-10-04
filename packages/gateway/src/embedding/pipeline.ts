@@ -55,7 +55,7 @@ async function mapWithConcurrency<T>(
     while (cursor < items.length) {
       const index = cursor;
       cursor += 1;
-      await fn(items[index] as T);
+      await fn(items[index] as T); // NOSONAR S9382: bounded pool - a worker takes its next item only after the last settles, which is what caps in-flight embeds at `limit`
     }
   };
   await Promise.all(Array.from({ length: workerCount }, () => runWorker()));
@@ -175,7 +175,7 @@ export class SqliteEmbeddingPipeline implements EmbeddingPipeline {
     })();
   }
 
-  async deleteItemEmbeddings(itemId: string): Promise<void> {
+  deleteItemEmbeddings(itemId: string): void {
     dbRun(this.db, `DELETE FROM embedding_chunk WHERE item_id = ?`, [itemId]);
   }
 
@@ -208,6 +208,10 @@ export class SqliteEmbeddingPipeline implements EmbeddingPipeline {
       .get(model) as { c: number };
     const total = totalRow.c;
     let done = 0;
+    const reportOne = (): void => {
+      done += 1;
+      onProgress?.(done, total);
+    };
 
     while (true) {
       // Before the SELECT, not after it: a paused gate must not hold a page of rows for however
@@ -229,10 +233,7 @@ export class SqliteEmbeddingPipeline implements EmbeddingPipeline {
       if (rows.length === 0) {
         break;
       }
-      await this.embedBatch(rows, () => {
-        done += 1;
-        onProgress?.(done, total);
-      });
+      await this.embedBatch(rows, reportOne); // NOSONAR S9382: drain loop - each page is the items still un-embedded, so it exists only after the previous batch is written
     }
   }
 
@@ -262,6 +263,10 @@ export class SqliteEmbeddingPipeline implements EmbeddingPipeline {
       .get(model, ...keys) as { c: number };
     const total = totalRow.c;
     let done = 0;
+    const reportOne = (): void => {
+      done += 1;
+      onProgress?.(done, total);
+    };
 
     while (true) {
       if (this.backfillGate !== undefined && !(await this.backfillGate())) return;
@@ -281,10 +286,7 @@ export class SqliteEmbeddingPipeline implements EmbeddingPipeline {
       if (rows.length === 0) {
         break;
       }
-      await this.embedBatch(rows, () => {
-        done += 1;
-        onProgress?.(done, total);
-      });
+      await this.embedBatch(rows, reportOne); // NOSONAR S9382: drain loop - each page is the items still un-embedded, so it exists only after the previous batch is written
     }
   }
 }

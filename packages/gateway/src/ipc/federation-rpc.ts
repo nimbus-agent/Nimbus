@@ -39,6 +39,7 @@ import { TeamVaultStore } from "../teamvault/team-vault-store.ts";
 import { dispatchByMethod, type RpcMissOrHit } from "./_lib/dispatch-by-method.ts";
 import { sendFederatedOverWire } from "./lan-client.ts";
 import type { BoxKeypair } from "./lan-crypto.ts";
+import { requireNonEmptyStringField } from "./rpc-params.ts";
 
 export class FederationRpcError extends Error {
   readonly rpcCode: number;
@@ -115,12 +116,9 @@ function asRecord(params: unknown): Record<string, unknown> {
   return params as Record<string, unknown>;
 }
 
+/** `ERR_INVALID_PARAMS: <key> must be a non-empty string`, as a `FederationRpcError`. */
 function requireString(rec: Record<string, unknown>, key: string): string {
-  const v = rec[key];
-  if (typeof v !== "string" || v.length === 0) {
-    throw new FederationRpcError(-32602, `ERR_INVALID_PARAMS: ${key} must be a non-empty string`);
-  }
-  return v;
+  return requireNonEmptyStringField(rec, key, FederationRpcError);
 }
 
 /** Narrow an over-the-wire federation.auditExport result to its entries, or undefined on
@@ -314,17 +312,20 @@ export async function dispatchFederationRpc(
       // Fan out to paired peers only when the asker-side transport is wired (index + identity).
       if (ctx.index !== undefined && ctx.selfIdentity !== undefined) {
         const selfIdentity = ctx.selfIdentity;
+        const exportParams = { namespace, purpose, sinceMs };
+        const fetchSlice = (host: string, port: number, pubkey: Uint8Array): Promise<unknown> =>
+          sendFederatedOverWire(
+            host,
+            port,
+            selfIdentity,
+            pubkey,
+            "federation.auditExport",
+            exportParams,
+          );
         for (const row of ctx.index.listLanPeers()) {
           if (row.host_ip === null || row.host_port === null) continue;
           try {
-            const result = await sendFederatedOverWire(
-              row.host_ip,
-              row.host_port,
-              selfIdentity,
-              row.peer_pubkey,
-              "federation.auditExport",
-              { namespace, purpose, sinceMs },
-            );
+            const result = await fetchSlice(row.host_ip, row.host_port, row.peer_pubkey); // NOSONAR S9382: one peer at a time on purpose - the paired-peer count is unbounded, and federation fan-out is otherwise capped (FANOUT_CONCURRENCY, federation/peer-fanout.ts)
             const entries = extractAuditEntries(result);
             if (entries !== undefined) {
               streams.push({ peerId: row.peer_id, entries });
@@ -538,7 +539,7 @@ export async function dispatchFederationRpc(
       const rec = asRecord(p);
       const actionType = requireString(rec, "actionType");
       const ownerPeerId = requireString(rec, "peerId");
-      const decide = ctx.delegateApproval ?? (async () => false); // no prompter → fail-closed deny
+      const decide = ctx.delegateApproval ?? (() => Promise.resolve(false)); // no prompter → fail-closed deny
       const approved = await decide({ actionType, ownerPeerId });
       // I4: `hitlStatus` is consent-gate-output-only — never written as approved/rejected outside
       // `executor.gate()`. This row records the *delegate's* answer to a federated request, not a

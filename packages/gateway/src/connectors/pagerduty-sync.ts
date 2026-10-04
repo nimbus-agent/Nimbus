@@ -1,6 +1,7 @@
+import { syncPassCursorSuccess } from "../sync/pass-cursor-sync-result.ts";
 import { type Syncable, type SyncContext, type SyncResult, syncNoopResult } from "../sync/types.ts";
 import { usableActorEmail } from "./actor-email.ts";
-import { decodeNimbusJsonCursorPayload, encodeNimbusJsonCursor } from "./nimbus-json-cursor.ts";
+import { decodeNimbusJsonCursorObject, encodeNimbusJsonCursor } from "./nimbus-json-cursor.ts";
 import {
   extractPagerdutyActors,
   PAGERDUTY_INCIDENT_META_VERSION,
@@ -19,17 +20,10 @@ function encodeCursor(c: PdCursorV1): string {
 }
 
 function decodeCursor(raw: string | null): PdCursorV1 | null {
-  if (raw === null || raw === "") {
+  const rec = decodeNimbusJsonCursorObject(raw, CURSOR_PREFIX);
+  if (rec === null) {
     return null;
   }
-  const parsed = decodeNimbusJsonCursorPayload(raw, CURSOR_PREFIX);
-  if (parsed === undefined) {
-    return null;
-  }
-  if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
-    return null;
-  }
-  const rec = parsed as Record<string, unknown>;
   const lu = rec["lastUpdated"];
   if (typeof lu !== "string" || lu === "") {
     return null;
@@ -163,7 +157,7 @@ export const MAX_USER_LOOKUPS_PER_SYNC = 25;
  * Sequential on purpose. The cap bounds TOTAL requests, not their burst rate;
  * fanning 25 concurrent requests at a shared limiter is precisely the spike the
  * limiter exists to smooth. Each lookup acquires the limiter exactly as the
- * list requests do (`:186`).
+ * list requests do (the page loop in `createPagerdutySyncable`'s `sync`).
  *
  * Every failure mode — non-OK status, thrown request, unparseable body — is
  * caught PER LOOKUP and memoised as a miss, then attribution simply degrades to
@@ -181,19 +175,19 @@ async function resolveMissingActorEmails(
   attempted: Set<string>,
 ): Promise<number> {
   let bytes = 0;
+  const headers = {
+    Accept: "application/vnd.pagerduty+json;version=2",
+    Authorization: `Token token=${token.trim()}`,
+  };
   for (const id of ids) {
     if (attempted.size >= MAX_USER_LOOKUPS_PER_SYNC) return bytes;
     if (attempted.has(id) || emailById.has(id)) continue;
     attempted.add(id);
-    await ctx.rateLimiter.acquire("pagerduty");
+    await ctx.rateLimiter.acquire("pagerduty"); // NOSONAR S9382: sequential on purpose (see the docstring) - fanning up to MAX_USER_LOOKUPS_PER_SYNC lookups at the shared limiter at once is the spike it exists to smooth
     try {
-      const res = await fetch(`https://api.pagerduty.com/users/${encodeURIComponent(id)}`, {
-        headers: {
-          Accept: "application/vnd.pagerduty+json;version=2",
-          Authorization: `Token token=${token.trim()}`,
-        },
-      });
-      const text = await res.text();
+      const url = `https://api.pagerduty.com/users/${encodeURIComponent(id)}`;
+      const res = await fetch(url, { headers }); // NOSONAR S9382: sequential on purpose (see the docstring) - one user lookup in flight at a time
+      const text = await res.text(); // NOSONAR S9382: reads this lookup's own response body, inside the deliberately sequential loop
       bytes += text.length;
       if (!res.ok) {
         ctx.logger.warn(
@@ -257,14 +251,12 @@ function partialSyncResult(
   bytesTransferred: number,
   t0: number,
 ): SyncResult {
-  return {
-    cursor: encodeCursor({ lastUpdated: maxUpdated }),
-    itemsUpserted,
-    itemsDeleted: 0,
-    hasMore: false,
-    durationMs: Math.round(performance.now() - t0),
+  return syncPassCursorSuccess(
+    t0,
     bytesTransferred,
-  };
+    encodeCursor({ lastUpdated: maxUpdated }),
+    itemsUpserted,
+  );
 }
 
 export function createPagerdutySyncable(options: PagerdutySyncableOptions): Syncable {

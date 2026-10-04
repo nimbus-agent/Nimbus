@@ -1,7 +1,11 @@
 import { resolve } from "node:path";
-import { confirm, isCancel } from "@clack/prompts";
-import { INTERACTIVE_RPC_TIMEOUT_MS } from "../lib/rpc-timeouts.ts";
-import { withGatewayIpc } from "../lib/with-gateway-ipc.ts";
+import {
+  type AskOwner,
+  interactiveCommandDeps,
+  isExplicitApproval,
+  type RespondToApproval,
+  stringArrayOrEmpty,
+} from "../lib/approval-broadcast.ts";
 
 /**
  * Control outcomes, in the 124–127 band the shell already reserves for "the command did not run":
@@ -220,8 +224,8 @@ type ApprovalBroadcast = Partial<ExecApprovalPrompt> & { requestId?: string };
  */
 export async function handleApprovalBroadcast(
   params: unknown,
-  ask: (message: string) => Promise<unknown>,
-  respond: (requestId: string, approved: boolean) => Promise<unknown>,
+  ask: AskOwner,
+  respond: RespondToApproval,
 ): Promise<void> {
   const p = (params ?? {}) as ApprovalBroadcast;
   if (typeof p.requestId !== "string" || p.requestId === "") return;
@@ -231,22 +235,24 @@ export async function handleApprovalBroadcast(
   // reads `undefined.length` and throws — before the response is sent, so the gate waits out its
   // whole TTL and reports a denial the owner never made. This crosses a process boundary, so it is
   // `unknown` until checked no matter who sent it.
-  const strs = (v: unknown): string[] =>
-    Array.isArray(v) && v.every((e) => typeof e === "string") ? [...(v as string[])] : [];
   const g = (p.grants ?? {}) as Partial<ExecApprovalPrompt["grants"]>;
 
   const answer = await ask(
     formatApprovalPrompt({
       runtime: typeof p.runtime === "string" ? p.runtime : "unknown",
       codeBody: typeof p.codeBody === "string" ? p.codeBody : "",
-      grants: { fsRead: strs(g.fsRead), fsWrite: strs(g.fsWrite), network: strs(g.network) },
+      grants: {
+        fsRead: stringArrayOrEmpty(g.fsRead),
+        fsWrite: stringArrayOrEmpty(g.fsWrite),
+        network: stringArrayOrEmpty(g.network),
+      },
       wallClockMs: typeof p.wallClockMs === "number" ? p.wallClockMs : 0,
       cwd: typeof p.cwd === "string" ? p.cwd : "",
     }),
   );
   // Only an explicit `true` approves. Cancelling the prompt (Ctrl-C) is a DENIAL, and so is any
   // other value -- fail-closed, because the alternative is approving arbitrary code by accident.
-  await respond(p.requestId, !isCancel(answer) && answer === true);
+  await respond(p.requestId, isExplicitApproval(answer));
 }
 
 /** The slice of the IPC client this command uses. Narrow so a test can supply one. */
@@ -271,20 +277,9 @@ export interface RunExecDeps {
 }
 
 const defaultDeps: RunExecDeps = {
-  runWithClient: (fn) =>
-    withGatewayIpc(fn as never, undefined, {
-      // The call blocks on a human answering, so it needs the interactive budget rather than the
-      // 30s default.
-      requestTimeoutMs: INTERACTIVE_RPC_TIMEOUT_MS,
-    }) as never,
-  ask: (message) => confirm({ message }),
-  sink: {
-    out: (s) => void process.stdout.write(s),
-    err: (s) => void process.stderr.write(s),
-  },
-  setExitCode: (c) => {
-    process.exitCode = c;
-  },
+  // `exec.run` blocks on a human answering the approval prompt, so it needs the interactive budget
+  // rather than the 30s default -- which is what the shared base connects with.
+  ...interactiveCommandDeps(),
   cwd: () => process.cwd(),
 };
 

@@ -12,6 +12,7 @@ import type { CuLane } from "../config/nimbus-toml.ts";
 import { Config } from "../config.ts";
 import { CONNECTOR_SERVICE_IDS } from "../connectors/connector-catalog.ts";
 import { getConnectorHealth } from "../connectors/health.ts";
+import { asRecord } from "../connectors/unknown-record.ts";
 import { writeToolCallLog } from "../db/tool-call-log.ts";
 import { wrapLedgeredMastraModel } from "../egress/mastra-model-egress.ts";
 import type { IndexSearchQuery, LocalIndex, TraverseGraphOptions } from "../index/local-index.ts";
@@ -246,10 +247,7 @@ export function createNimbusEngineAgent(deps: NimbusEngineAgentDeps): {
     description:
       "Ranked search of the local SQLite index: FTS5 keywords plus optional semantic (vector) fusion when enabled. Set semantic false for keyword-only. Returns a context window (top full items) plus sourceSummary. When `service` is set, `connectorHealthCaveat` warns if that connector is unhealthy; when `service` is omitted, `connectorHealthCaveats` lists up to 5 warnings for services appearing in the window that are unhealthy — tell the user. Use fetchMoreIndexResults to page within a bucket. It ranks and returns items that MATCH; it cannot answer which items do NOT match. For a negation — PRs that don't touch a path, deployments with no downstream incident, people who haven't reviewed — use findPrsNotTouching, findDeploymentsWithoutIncident or findPeopleWithoutReviews, which prove their substrate before answering.",
     execute: async (inputData: unknown) => {
-      const q =
-        inputData !== null && typeof inputData === "object" && !Array.isArray(inputData)
-          ? (inputData as Record<string, unknown>)
-          : {};
+      const q = asRecord(inputData) ?? {};
       const name =
         typeof q["name"] === "string" ? clipToolString(q["name"].trim()) || undefined : undefined;
       const serviceRaw = typeof q["service"] === "string" ? q["service"] : undefined;
@@ -306,102 +304,99 @@ export function createNimbusEngineAgent(deps: NimbusEngineAgentDeps): {
     id: "fetchMoreIndexResults",
     description:
       "Fetch more index rows for a service and indexed type (raw SQLite item.type, e.g. pr, message, file). Matches sourceSummary buckets from searchLocalIndex. Ordered by modified_at descending.",
-    execute: async (inputData: unknown) => {
-      const q =
-        inputData !== null && typeof inputData === "object" && !Array.isArray(inputData)
-          ? (inputData as Record<string, unknown>)
-          : {};
-      const service = typeof q["service"] === "string" ? clipToolString(q["service"].trim()) : "";
-      const indexedType =
-        typeof q["indexedType"] === "string" ? clipToolString(q["indexedType"].trim()) : "";
-      const offset =
-        typeof q["offset"] === "number" && Number.isFinite(q["offset"])
-          ? Math.max(0, Math.floor(q["offset"]))
-          : 0;
-      const limit =
-        typeof q["limit"] === "number" && Number.isFinite(q["limit"])
-          ? Math.min(100, Math.max(1, Math.floor(q["limit"])))
-          : 20;
-      if (service === "" || indexedType === "") {
-        return { error: "service and indexedType are required strings" };
-      }
-      const items = deps.localIndex.fetchMoreItems(service, indexedType, offset, limit);
-      const db = deps.localIndex.getDatabase();
-      const healthCaveat = formatConnectorHealthCaveatForIndexSearch(
-        service,
-        getConnectorHealth(db, service),
-      );
-      return {
-        count: items.length,
-        items,
-        offset,
-        limit,
-        service,
-        indexedType,
-        ...(healthCaveat === undefined ? {} : { connectorHealthCaveat: healthCaveat }),
-      };
-    },
+    // This and the four tools below have SYNCHRONOUS bodies behind `createTool`'s Promise-returning
+    // `execute` contract. `Promise.try` runs the body at call time and turns a throw (SQLite, a
+    // malformed row) into a rejection — exactly what an `async` body with nothing to await did.
+    execute: (inputData: unknown) =>
+      Promise.try(() => {
+        const q = asRecord(inputData) ?? {};
+        const service = typeof q["service"] === "string" ? clipToolString(q["service"].trim()) : "";
+        const indexedType =
+          typeof q["indexedType"] === "string" ? clipToolString(q["indexedType"].trim()) : "";
+        const offset =
+          typeof q["offset"] === "number" && Number.isFinite(q["offset"])
+            ? Math.max(0, Math.floor(q["offset"]))
+            : 0;
+        const limit =
+          typeof q["limit"] === "number" && Number.isFinite(q["limit"])
+            ? Math.min(100, Math.max(1, Math.floor(q["limit"])))
+            : 20;
+        if (service === "" || indexedType === "") {
+          return { error: "service and indexedType are required strings" };
+        }
+        const items = deps.localIndex.fetchMoreItems(service, indexedType, offset, limit);
+        const db = deps.localIndex.getDatabase();
+        const healthCaveat = formatConnectorHealthCaveatForIndexSearch(
+          service,
+          getConnectorHealth(db, service),
+        );
+        return {
+          count: items.length,
+          items,
+          offset,
+          limit,
+          service,
+          indexedType,
+          ...(healthCaveat === undefined ? {} : { connectorHealthCaveat: healthCaveat }),
+        };
+      }),
   });
 
   const traverseGraph = createTool({
     id: "traverseGraph",
     description:
       "Traverse the local relationship graph (PR/issue/repo/person edges from indexed items). Pass startRef as an item primary key (e.g. github:org/repo#42) or a graph_entity id. Use after locating an entity via searchLocalIndex when the user asks what is connected to an item.",
-    execute: async (inputData: unknown) => {
-      const q =
-        inputData !== null && typeof inputData === "object" && !Array.isArray(inputData)
-          ? (inputData as Record<string, unknown>)
-          : {};
-      const startRef =
-        typeof q["entityId"] === "string" ? clipToolString(q["entityId"].trim()) : "";
-      if (startRef === "") {
-        return { error: "entityId must be a non-empty string (item id or graph entity id)" };
-      }
-      const opts: TraverseGraphOptions = {};
-      if (typeof q["depth"] === "number" && Number.isFinite(q["depth"])) {
-        opts.depth = Math.min(8, Math.max(0, Math.floor(q["depth"])));
-      }
-      const relationTypesRaw = q["relationTypes"];
-      if (isStringArray(relationTypesRaw)) {
-        opts.relationTypes = relationTypesRaw.map((x) => clipToolString(x));
-      }
-      return deps.localIndex.traverseGraph(startRef, opts);
-    },
+    execute: (inputData: unknown) =>
+      Promise.try(() => {
+        const q = asRecord(inputData) ?? {};
+        const startRef =
+          typeof q["entityId"] === "string" ? clipToolString(q["entityId"].trim()) : "";
+        if (startRef === "") {
+          return { error: "entityId must be a non-empty string (item id or graph entity id)" };
+        }
+        const opts: TraverseGraphOptions = {};
+        if (typeof q["depth"] === "number" && Number.isFinite(q["depth"])) {
+          opts.depth = Math.min(8, Math.max(0, Math.floor(q["depth"])));
+        }
+        const relationTypesRaw = q["relationTypes"];
+        if (isStringArray(relationTypesRaw)) {
+          opts.relationTypes = relationTypesRaw.map((x) => clipToolString(x));
+        }
+        return deps.localIndex.traverseGraph(startRef, opts);
+      }),
   });
 
   const resolvePerson = createTool({
     id: "resolvePerson",
     description:
       "Resolve a human name or handle to up to 3 candidate people in the local people graph (cross-service). Returns ids for use with listItemsForAuthor-style workflows.",
-    execute: async (inputData: unknown) => {
-      const q =
-        inputData !== null && typeof inputData === "object" && !Array.isArray(inputData)
-          ? (inputData as Record<string, unknown>)
-          : {};
-      const queryText = typeof q["query"] === "string" ? clipToolString(q["query"].trim()) : "";
-      if (queryText.trim() === "") {
-        return { candidates: [] as const, error: "query must be a non-empty string" };
-      }
-      const db = deps.localIndex.getDatabase();
-      const rows = searchPersons(db, queryText, 3);
-      return {
-        candidates: rows.map((p) => ({
-          id: p.id,
-          displayName: p.displayName,
-          canonicalEmail: p.canonicalEmail,
-          githubLogin: p.githubLogin,
-          gitlabLogin: p.gitlabLogin,
-          slackHandle: p.slackHandle,
-          linearMemberId: p.linearMemberId,
-          jiraAccountId: p.jiraAccountId,
-          notionUserId: p.notionUserId,
-          bitbucketUuid: p.bitbucketUuid,
-          microsoftUserId: p.microsoftUserId,
-          discordUserId: p.discordUserId,
-          linked: p.linked,
-        })),
-      };
-    },
+    execute: (inputData: unknown) =>
+      Promise.try(() => {
+        const q = asRecord(inputData) ?? {};
+        const queryText = typeof q["query"] === "string" ? clipToolString(q["query"].trim()) : "";
+        if (queryText.trim() === "") {
+          return { candidates: [] as const, error: "query must be a non-empty string" };
+        }
+        const db = deps.localIndex.getDatabase();
+        const rows = searchPersons(db, queryText, 3);
+        return {
+          candidates: rows.map((p) => ({
+            id: p.id,
+            displayName: p.displayName,
+            canonicalEmail: p.canonicalEmail,
+            githubLogin: p.githubLogin,
+            gitlabLogin: p.gitlabLogin,
+            slackHandle: p.slackHandle,
+            linearMemberId: p.linearMemberId,
+            jiraAccountId: p.jiraAccountId,
+            notionUserId: p.notionUserId,
+            bitbucketUuid: p.bitbucketUuid,
+            microsoftUserId: p.microsoftUserId,
+            discordUserId: p.discordUserId,
+            linked: p.linked,
+          })),
+        };
+      }),
   });
 
   const listConnectorsStaticFallback: readonly string[] = ["filesystem", ...CONNECTOR_SERVICE_IDS];
@@ -410,51 +405,50 @@ export function createNimbusEngineAgent(deps: NimbusEngineAgentDeps): {
     id: "listConnectors",
     description:
       "List connector service ids: rows from the local index `sync_state` when present, otherwise the full first-party catalog (filesystem is always included; cloud MCPs lazy-start when credentials exist in the Vault).",
-    execute: async () => {
-      try {
-        const db = deps.localIndex.getDatabase();
-        const rows = db
-          .query(`SELECT DISTINCT connector_id FROM sync_state ORDER BY connector_id`)
-          .all() as Array<{ connector_id: string }>;
-        const fromDb = rows
-          .map((r) => r.connector_id)
-          .filter((id) => typeof id === "string" && id.trim() !== "")
-          .map((id) => id.trim());
-        if (fromDb.length === 0) {
+    execute: () =>
+      Promise.try(() => {
+        try {
+          const db = deps.localIndex.getDatabase();
+          const rows = db
+            .query(`SELECT DISTINCT connector_id FROM sync_state ORDER BY connector_id`)
+            .all() as Array<{ connector_id: string }>;
+          const fromDb = rows
+            .map((r) => r.connector_id)
+            .filter((id) => typeof id === "string" && id.trim() !== "")
+            .map((id) => id.trim());
+          if (fromDb.length === 0) {
+            return { connectors: [...listConnectorsStaticFallback] };
+          }
+          const merged = new Set<string>(["filesystem", ...fromDb]);
+          return { connectors: [...merged].sort((a, b) => a.localeCompare(b)) };
+        } catch {
           return { connectors: [...listConnectorsStaticFallback] };
         }
-        const merged = new Set<string>(["filesystem", ...fromDb]);
-        return { connectors: [...merged].sort((a, b) => a.localeCompare(b)) };
-      } catch {
-        return { connectors: [...listConnectorsStaticFallback] };
-      }
-    },
+      }),
   });
 
   const getAuditLog = createTool({
     id: "getAuditLog",
     description: "Return recent HITL audit rows from the local index (newest first).",
-    execute: async (inputData: unknown) => {
-      const q =
-        inputData !== null && typeof inputData === "object" && !Array.isArray(inputData)
-          ? (inputData as Record<string, unknown>)
-          : {};
-      const limit =
-        typeof q["limit"] === "number" && Number.isFinite(q["limit"])
-          ? Math.min(1000, Math.max(1, Math.floor(q["limit"])))
-          : 20;
-      const raw = deps.localIndex.listAudit(limit);
-      const entries = raw.map((row) => {
-        let parsed: unknown;
-        try {
-          parsed = JSON.parse(row.actionJson) as unknown;
-        } catch {
-          parsed = row.actionJson;
-        }
-        return { ...row, actionJson: redactAuditPayload(parsed) };
-      });
-      return { entries };
-    },
+    execute: (inputData: unknown) =>
+      Promise.try(() => {
+        const q = asRecord(inputData) ?? {};
+        const limit =
+          typeof q["limit"] === "number" && Number.isFinite(q["limit"])
+            ? Math.min(1000, Math.max(1, Math.floor(q["limit"])))
+            : 20;
+        const raw = deps.localIndex.listAudit(limit);
+        const entries = raw.map((row) => {
+          let parsed: unknown;
+          try {
+            parsed = JSON.parse(row.actionJson) as unknown;
+          } catch {
+            parsed = row.actionJson;
+          }
+          return { ...row, actionJson: redactAuditPayload(parsed) };
+        });
+        return { entries };
+      }),
   });
 
   const recallSessionMemory =
@@ -465,10 +459,7 @@ export function createNimbusEngineAgent(deps: NimbusEngineAgentDeps): {
           description:
             "Semantic recall over prior turns in the current interactive session. Requires the client to pass sessionId on agent.invoke. Use when the user refers to earlier context (e.g. 'the ones from last month').",
           execute: async (inputData: unknown) => {
-            const q =
-              inputData !== null && typeof inputData === "object" && !Array.isArray(inputData)
-                ? (inputData as Record<string, unknown>)
-                : {};
+            const q = asRecord(inputData) ?? {};
             const sid =
               typeof q["sessionId"] === "string" && q["sessionId"].trim() !== ""
                 ? q["sessionId"].trim()
@@ -504,10 +495,7 @@ export function createNimbusEngineAgent(deps: NimbusEngineAgentDeps): {
           description:
             "Append a short text chunk to session RAG memory (user, assistant, or tool role). Normally the host appends after each turn; use sparingly for explicit user notes.",
           execute: async (inputData: unknown) => {
-            const q =
-              inputData !== null && typeof inputData === "object" && !Array.isArray(inputData)
-                ? (inputData as Record<string, unknown>)
-                : {};
+            const q = asRecord(inputData) ?? {};
             const sid =
               typeof q["sessionId"] === "string" && q["sessionId"].trim() !== ""
                 ? q["sessionId"].trim()

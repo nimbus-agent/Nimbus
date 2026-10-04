@@ -148,6 +148,24 @@ export function createLazyEmbeddingRuntime(
     });
   }
 
+  /**
+   * One background backfill pass. Its two failure points stay distinct: a pass that ran and threw
+   * is logged HERE ("failed") and absorbed, while a pipeline that could not be brought up rejects
+   * to `startBackgroundJobs`' handler ("could not start") — the same two lines, routed the same
+   * way, as the `.then(...).catch(...)` this replaced, without nesting one promise chain in another.
+   */
+  async function runBackgroundBackfill(): Promise<void> {
+    const p = await ensurePipeline();
+    if (p === null) {
+      return;
+    }
+    try {
+      await backfillPass.run((onProgress) => p.backfillAll(onProgress));
+    } catch (err) {
+      logger.warn({ err }, "embedding backfill failed");
+    }
+  }
+
   return {
     scheduleItemEmbedding(itemId: string): void {
       void (async () => {
@@ -221,20 +239,9 @@ export function createLazyEmbeddingRuntime(
         return;
       }
       backfillStarted = true;
-      void ensurePipeline()
-        .then(async (p) => {
-          if (p === null) {
-            return;
-          }
-          await backfillPass
-            .run((onProgress) => p.backfillAll(onProgress))
-            .catch((err: unknown) => {
-              logger.warn({ err }, "embedding backfill failed");
-            });
-        })
-        .catch((err: unknown) => {
-          logger.warn({ err }, "embedding backfill could not start");
-        });
+      void runBackgroundBackfill().catch((err: unknown) => {
+        logger.warn({ err }, "embedding backfill could not start");
+      });
     },
 
     terminate(): void {

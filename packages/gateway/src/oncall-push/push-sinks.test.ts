@@ -216,6 +216,50 @@ test("emit succeeds but its record throws → the event is not re-recorded as fa
   expect(attempted).toHaveLength(1);
 });
 
+test("one sink at a time: events in stored order, toasts newest first, each recorded before the next goes out", async () => {
+  const seen: string[] = [];
+  const spy = new Proxy(store, {
+    get(target, prop, receiver) {
+      if (prop === "recordDelivery") {
+        return (id: string, sink: string, o: Parameters<PushStore["recordDelivery"]>[2]) => {
+          seen.push(`record ${sink} ${id}`);
+          return target.recordDelivery(id, sink, o);
+        };
+      }
+      const v = Reflect.get(target, prop, receiver);
+      return typeof v === "function" ? v.bind(target) : v;
+    },
+  });
+  await createPushDeliverer({
+    store: spy,
+    notify: (_t, b) => {
+      seen.push(`toast ${b.split("nimbus oncall pushed ")[1]}`);
+    },
+    emit: (p) => {
+      seen.push(`emit ${p.incidentId}`);
+    },
+    now: () => 1,
+  })([
+    item("pagerduty:e1", "ok", 1),
+    item("pagerduty:e2", "failed", 3),
+    item("pagerduty:e3", "ok", 2),
+  ]);
+  expect(seen).toEqual([
+    "emit pagerduty:e1",
+    "record event pagerduty:e1",
+    "emit pagerduty:e2",
+    "record event pagerduty:e2",
+    "emit pagerduty:e3",
+    "record event pagerduty:e3",
+    "toast pagerduty:e2",
+    "record toast pagerduty:e2",
+    "toast pagerduty:e3",
+    "record toast pagerduty:e3",
+    "toast pagerduty:e1",
+    "record toast pagerduty:e1",
+  ]);
+});
+
 test("a throwing summary toast records overflow rows coalesced WITH the reason", async () => {
   let calls = 0;
   const items = [1, 2, 3, 4].map((n) => item(`pagerduty:${n}`, "ok", n));
@@ -485,6 +529,33 @@ test(`chatops: past ${PUSH_NOTIFY_CAP}, newest-first headlines then ONE summary;
   for (const id of ["pagerduty:2", "pagerduty:1"]) {
     expect(store.get(id)?.delivery["chatops"]).toEqual({ outcome: "coalesced", at: 7 });
   }
+});
+
+// The headline loop is sequential by design (the S9382 suppression on it): the channel shows the
+// headlines in the order they are posted, so a slow post must hold back the next one rather than
+// let it overtake. The FIRST (newest) post is the slow one, so overlapping posts would interleave.
+test("chatops: one post in flight at a time — a slow headline holds back the next, and the summary follows them", async () => {
+  const items = [1, 2, 3, 4].map((n) => item(`pagerduty:${n}`, "ok", n));
+  const events: string[] = [];
+  let n = 0;
+  await chatDeliverer(async () => {
+    n += 1;
+    const i = n;
+    events.push(`start ${i}`);
+    if (i === 1) await new Promise((r) => setTimeout(r, 5));
+    events.push(`end ${i}`);
+    return 1;
+  })(items);
+  expect(events).toEqual([
+    "start 1",
+    "end 1",
+    "start 2",
+    "end 2",
+    "start 3",
+    "end 3",
+    "start 4",
+    "end 4",
+  ]);
 });
 
 test("chatops: a summary that reaches 0 channels marks the rest skipped, not coalesced", async () => {

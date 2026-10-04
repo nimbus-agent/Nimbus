@@ -127,26 +127,13 @@ function unconfiguredEnvelope(service: string, sinceMs: number, nowMs: number): 
   };
 }
 
-export async function dispatchMetricsRpc(
-  method: "metrics.dora",
-  params: unknown,
-  ctx: MetricsRpcContext,
-): Promise<{ kind: "miss" } | { kind: "hit"; value: DoraMetricsResult }>;
-export async function dispatchMetricsRpc(
-  method: "metrics.stats",
-  params: unknown,
-  ctx: MetricsRpcContext,
-): Promise<{ kind: "miss" } | { kind: "hit"; value: StatsSeries }>;
-export async function dispatchMetricsRpc(
+type MetricsRpcOutcome = { kind: "miss" } | { kind: "hit"; value: DoraMetricsResult | StatsSeries };
+
+function computeMetricsRpc(
   method: string,
   params: unknown,
   ctx: MetricsRpcContext,
-): Promise<{ kind: "miss" } | { kind: "hit"; value: DoraMetricsResult | StatsSeries }>;
-export async function dispatchMetricsRpc(
-  method: string,
-  params: unknown,
-  ctx: MetricsRpcContext,
-): Promise<{ kind: "miss" } | { kind: "hit"; value: DoraMetricsResult | StatsSeries }> {
+): MetricsRpcOutcome {
   if (method === "metrics.stats") {
     const { service, metric, windowMs, bucketMs } = requireStatsParams(params);
     const nowMs = (ctx.nowMs ?? (() => Date.now()))();
@@ -183,4 +170,29 @@ export async function dispatchMetricsRpc(
     return { kind: "hit", value: unconfiguredEnvelope(service, sinceMs, nowMs) };
   }
   return { kind: "hit", value: computeDoraMetrics(ctx.db, cfg, nowMs, sinceMs) };
+}
+
+export function dispatchMetricsRpc(
+  method: "metrics.dora",
+  params: unknown,
+  ctx: MetricsRpcContext,
+): Promise<{ kind: "miss" } | { kind: "hit"; value: DoraMetricsResult }>;
+export function dispatchMetricsRpc(
+  method: "metrics.stats",
+  params: unknown,
+  ctx: MetricsRpcContext,
+): Promise<{ kind: "miss" } | { kind: "hit"; value: StatsSeries }>;
+export function dispatchMetricsRpc(
+  method: string,
+  params: unknown,
+  ctx: MetricsRpcContext,
+): Promise<MetricsRpcOutcome>;
+export function dispatchMetricsRpc(
+  method: string,
+  params: unknown,
+  ctx: MetricsRpcContext,
+): Promise<MetricsRpcOutcome> {
+  // The computation is synchronous (bun:sqlite), but callers await this as an RPC dispatcher:
+  // `Promise.try` keeps that contract, so a `MetricsRpcError` still arrives as a rejection.
+  return Promise.try(() => computeMetricsRpc(method, params, ctx));
 }

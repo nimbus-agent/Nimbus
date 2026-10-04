@@ -24,7 +24,10 @@ import {
 } from "../graph/relationship-graph.ts";
 import { prunePeopleAfterServiceRemoval } from "../people/prune.ts";
 import { hybridSearch } from "../search/hybrid.ts";
-import type { HybridSearchOptions } from "../search/hybrid-types.ts";
+// Aliased to this file's names: `ItemRow` is the same `item` row shape hybrid search selects, and
+// `ftsTitleMatchQuery` is the name engine/ comments use when they describe its tokenising.
+import { ftsMatchQuery as ftsTitleMatchQuery } from "../search/hybrid-internal.ts";
+import type { HybridSearchOptions, HybridIndexedItem as ItemRow } from "../search/hybrid-types.ts";
 import {
   clearSchedulerCursor,
   countItemsForService,
@@ -93,36 +96,31 @@ export type IndexSearchQuery = {
   limit?: number;
 };
 
-type ItemRow = {
-  id: string;
-  service: string;
-  type: string;
-  external_id: string;
-  title: string;
-  body_preview: string | null;
-  url: string | null;
-  canonical_url: string | null;
-  modified_at: number;
-  author_id: string | null;
-  metadata: string | null;
-  synced_at: number;
-  pinned: number;
+type AuditLogRow = {
+  id: number;
+  action_type: string;
+  hitl_status: string;
+  action_json: string;
+  timestamp: number;
 };
 
-function ftsTitleMatchQuery(name: string): string {
-  const tokens = name
-    .trim()
-    .split(/\s+/)
-    .filter((t) => t.length > 0);
-  if (tokens.length === 0) {
-    return "";
+/**
+ * One `audit_log` row as an {@link AuditEntry}, for both audit readers. `hitl_status` is read as a
+ * plain string and narrowed here; a value outside the union throws rather than reaching a caller
+ * typed to it.
+ */
+function auditEntryFromRow(r: AuditLogRow): AuditEntry {
+  const status = r.hitl_status;
+  if (status !== "approved" && status !== "rejected" && status !== "not_required") {
+    throw new Error("Corrupt audit_log row: invalid hitl_status");
   }
-  return tokens
-    .map((t) => {
-      const escaped = t.replaceAll('"', '""');
-      return `(title : "${escaped}"* OR body : "${escaped}"*)`;
-    })
-    .join(" AND ");
+  return {
+    id: r.id,
+    actionType: r.action_type,
+    hitlStatus: status,
+    actionJson: r.action_json,
+    timestamp: r.timestamp,
+  };
 }
 
 function applyItemMetadataColumn(item: NimbusItem, metadata: string): void {
@@ -202,7 +200,7 @@ function rowToRankedItem(
     indexedType: String(row.type),
     ...(trimmed === "" ? {} : { canonicalUrl: trimmed }),
     ...(duplicates !== undefined && duplicates.length > 0 ? { duplicates } : {}),
-    ...(components ?? {}),
+    ...components,
   };
   return item;
 }
@@ -724,7 +722,7 @@ export class LocalIndex {
         // Snapshot the backfill pass when RANKING starts, not before the query embedding: that
         // await can span the whole embedding budget, during which a pass may start or finish.
         const retrieval = retrievalFromOutcome(outcome, ss.activeBackfillPass());
-        const hybridResults = await hybridSearch(this.db, hybridOpts);
+        const hybridResults = hybridSearch(this.db, hybridOpts);
 
         const normRrf = normalizeHigherIsBetter(hybridResults.map((h) => h.rrfScore));
         const now = options?.nowMs ?? Date.now();
@@ -858,30 +856,12 @@ export class LocalIndex {
         `SELECT id, action_type, hitl_status, action_json, timestamp, row_hash, prev_hash
          FROM audit_log ORDER BY id ASC LIMIT ?`,
       )
-      .all(capped) as Array<{
-      id: number;
-      action_type: string;
-      hitl_status: string;
-      action_json: string;
-      timestamp: number;
-      row_hash: string;
-      prev_hash: string;
-    }>;
-    return rows.map((r) => {
-      const status = r.hitl_status;
-      if (status !== "approved" && status !== "rejected" && status !== "not_required") {
-        throw new Error("Corrupt audit_log row: invalid hitl_status");
-      }
-      return {
-        id: r.id,
-        actionType: r.action_type,
-        hitlStatus: status,
-        actionJson: r.action_json,
-        timestamp: r.timestamp,
-        rowHash: r.row_hash,
-        prevHash: r.prev_hash,
-      };
-    });
+      .all(capped) as Array<AuditLogRow & { row_hash: string; prev_hash: string }>;
+    return rows.map((r) => ({
+      ...auditEntryFromRow(r),
+      rowHash: r.row_hash,
+      prevHash: r.prev_hash,
+    }));
   }
 
   getAuditVerifiedThroughId(): number {
@@ -1029,26 +1009,8 @@ export class LocalIndex {
          ORDER BY id DESC
          LIMIT ?`,
       )
-      .all(capped) as Array<{
-      id: number;
-      action_type: string;
-      hitl_status: string;
-      action_json: string;
-      timestamp: number;
-    }>;
+      .all(capped) as AuditLogRow[];
 
-    return rows.map((r) => {
-      const status = r.hitl_status;
-      if (status !== "approved" && status !== "rejected" && status !== "not_required") {
-        throw new Error("Corrupt audit_log row: invalid hitl_status");
-      }
-      return {
-        id: r.id,
-        actionType: r.action_type,
-        hitlStatus: status,
-        actionJson: r.action_json,
-        timestamp: r.timestamp,
-      };
-    });
+    return rows.map((r) => auditEntryFromRow(r));
   }
 }

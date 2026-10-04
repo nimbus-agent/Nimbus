@@ -253,7 +253,7 @@ describe("runExpert gap-note coverage", () => {
 });
 
 describe("subPrReviewed", () => {
-  test("subPrReviewed surfaces a reviewer as pr_reviewed evidence", async () => {
+  test("subPrReviewed surfaces a reviewer as pr_reviewed evidence", () => {
     const db = new Database(":memory:");
     LocalIndex.ensureSchema(db);
     const now = Date.now();
@@ -283,7 +283,7 @@ describe("subPrReviewed", () => {
       metadata: { repo: "acme/app", pr_number: 1 },
     });
 
-    const result = await subPrReviewed(db, "rate limiter");
+    const result = subPrReviewed(db, "rate limiter");
 
     expect(result.gap).toBeUndefined();
     expect(result.stream?.personId).toBe("person:reviewer");
@@ -303,7 +303,7 @@ describe("subPrReviewed", () => {
   // lanes, so a regression in it re-orders every expert brief at once. Two
   // reviewers, one with more evidence than the other: the busier one wins and
   // carries all of their own evidence.
-  test("the person with the most evidence in a lane wins, carrying all of it", async () => {
+  test("the person with the most evidence in a lane wins, carrying all of it", () => {
     const db = new Database(":memory:");
     LocalIndex.ensureSchema(db);
     const now = Date.now();
@@ -350,7 +350,7 @@ describe("subPrReviewed", () => {
       });
     }
 
-    const result = await subPrReviewed(db, "rate limiter");
+    const result = subPrReviewed(db, "rate limiter");
 
     expect(result.gap).toBeUndefined();
     expect(result.stream?.personId).toBe("person:busy");
@@ -360,16 +360,16 @@ describe("subPrReviewed", () => {
     db.close();
   });
 
-  test("subPrReviewed still reports the gap when no reviewed edges exist", async () => {
+  test("subPrReviewed still reports the gap when no reviewed edges exist", () => {
     const db = new Database(":memory:");
     LocalIndex.ensureSchema(db);
-    const result = await subPrReviewed(db, "anything");
+    const result = subPrReviewed(db, "anything");
     expect(result.gap?.category).toBe("missing_relation_emit");
     expect(result.stream).toBeUndefined();
     db.close();
   });
 
-  test("subPrReviewed reports a distinct gap when a reviewed edge exists but its PR does not resolve to an indexed item", async () => {
+  test("subPrReviewed reports a distinct gap when a reviewed edge exists but its PR does not resolve to an indexed item", () => {
     const db = new Database(":memory:");
     LocalIndex.ensureSchema(db);
     const now = Date.now();
@@ -391,7 +391,7 @@ describe("subPrReviewed", () => {
       now,
     ]);
 
-    const result = await subPrReviewed(db, "anything");
+    const result = subPrReviewed(db, "anything");
 
     expect(result.stream).toBeUndefined();
     expect(result.gap?.category).toBe("missing_relation_emit");
@@ -401,7 +401,7 @@ describe("subPrReviewed", () => {
     db.close();
   });
 
-  test("subPrReviewed emits no gap note when a reviewed edge resolves but the topic just has no match (M-10)", async () => {
+  test("subPrReviewed emits no gap note when a reviewed edge resolves but the topic just has no match (M-10)", () => {
     // A fully resolvable `reviewed` edge exists (real person + real indexed PR),
     // but the free-text query below matches nothing in it. This must return
     // `null` from `detectUnresolvedReviewedRelation` — a topic with no match is
@@ -435,7 +435,7 @@ describe("subPrReviewed", () => {
       metadata: { repo: "acme/app", pr_number: 1 },
     });
 
-    const result = await subPrReviewed(db, "no-such-topic-anywhere");
+    const result = subPrReviewed(db, "no-such-topic-anywhere");
 
     expect(result.stream).toBeUndefined();
     expect(result.gap).toBeUndefined();
@@ -444,7 +444,7 @@ describe("subPrReviewed", () => {
 });
 
 describe("subIncidentResolved", () => {
-  test("an incident resolved by a person, matching the topic, surfaces incident_resolved evidence", async () => {
+  test("an incident resolved by a person, matching the topic, surfaces incident_resolved evidence", () => {
     const db = new Database(":memory:");
     LocalIndex.ensureSchema(db);
     const now = Date.now();
@@ -473,7 +473,7 @@ describe("subIncidentResolved", () => {
       },
     });
 
-    const result = await subIncidentResolved(db, "checkout");
+    const result = subIncidentResolved(db, "checkout");
 
     expect(result.gap).toBeUndefined();
     expect(result.stream?.personId).toBe("person:jane");
@@ -485,7 +485,7 @@ describe("subIncidentResolved", () => {
     db.close();
   });
 
-  test("a pr --resolves--> issue edge is NOT reported as a resolved incident (pins the ie.type filter)", async () => {
+  test("a pr --resolves--> issue edge is NOT reported as a resolved incident (pins the ie.type filter)", () => {
     // This fabricates a `person --resolves--> <non-incident>` edge: the
     // `pe.type = 'person'` join already excludes the real `pr -> issue
     // "resolves"` edge production emits (its `from_id` is a `pr` entity, not
@@ -519,7 +519,7 @@ describe("subIncidentResolved", () => {
       now,
     ]);
 
-    const result = await subIncidentResolved(db, "login");
+    const result = subIncidentResolved(db, "login");
 
     // No `incident` graph entity exists at all in this fixture, so the
     // real query correctly finds nothing (the join's `ie.type = 'incident'`
@@ -530,10 +530,10 @@ describe("subIncidentResolved", () => {
     db.close();
   });
 
-  test("the empty case still returns a gap note, not silence", async () => {
+  test("the empty case still returns a gap note, not silence", () => {
     const db = new Database(":memory:");
     LocalIndex.ensureSchema(db);
-    const result = await subIncidentResolved(db, "anything");
+    const result = subIncidentResolved(db, "anything");
     expect(result.stream).toBeUndefined();
     expect(result.gap).toBeDefined();
     expect(result.gap?.category).toBe("missing_entity_type");

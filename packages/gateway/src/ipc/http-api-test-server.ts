@@ -89,33 +89,37 @@ export async function startServerWithClipToken(
  * shape every route behind this seam must degrade to (a named 404, never a fall-through to the
  * unauthenticated GET table). No token is minted since there is no vault to mint it into.
  */
-export async function startServerWithoutClipsVault(
+export function startServerWithoutClipsVault(
   // `clipsVault` is EXCLUDED at the type level, not merely omitted by convention: this helper exists
   // to prove the "surface not mounted" branch, and a caller who spread a vault in through `extraOpts`
   // would silently mount the clip-token surface while the function name still promised the opposite —
   // turning a fail-closed regression test into one that asserts nothing.
   extraOpts: Partial<Omit<ReadOnlyHttpServerOptions, "clipsVault">> = {},
 ): Promise<Omit<ClipTestServer, "token">> {
-  const tmpDir = realpathSync(mkdtempSync(join(tmpdir(), "nimbus-http-api-e2e-unmounted-")));
-  const dbPath = join(tmpDir, "nimbus.db");
-  ensureFullSqlite();
-  const setupDb = new Database(dbPath);
-  applyWritablePragmas(setupDb);
-  runIndexedSchemaMigrations(setupDb, CURRENT_SCHEMA_VERSION);
-  setupDb.close();
-  const db = new Database(dbPath, { create: false, readwrite: true });
+  // Nothing to await (no vault to mint into), but it keeps `startServerWithClipToken`'s Promise
+  // shape so the two stay interchangeable; `Promise.try` still turns a boot failure into a rejection.
+  return Promise.try(() => {
+    const tmpDir = realpathSync(mkdtempSync(join(tmpdir(), "nimbus-http-api-e2e-unmounted-")));
+    const dbPath = join(tmpDir, "nimbus.db");
+    ensureFullSqlite();
+    const setupDb = new Database(dbPath);
+    applyWritablePragmas(setupDb);
+    runIndexedSchemaMigrations(setupDb, CURRENT_SCHEMA_VERSION);
+    setupDb.close();
+    const db = new Database(dbPath, { create: false, readwrite: true });
 
-  const handle: ReadOnlyHttpServerHandle = startReadOnlyHttpServer(dbPath, 0, { ...extraOpts });
+    const handle: ReadOnlyHttpServerHandle = startReadOnlyHttpServer(dbPath, 0, { ...extraOpts });
 
-  return {
-    port: handle.port,
-    db,
-    stop(): void {
-      runQuietly([
-        () => handle.stop(),
-        () => db.close(),
-        () => rmSync(tmpDir, { recursive: true, force: true }),
-      ]);
-    },
-  };
+    return {
+      port: handle.port,
+      db,
+      stop(): void {
+        runQuietly([
+          () => handle.stop(),
+          () => db.close(),
+          () => rmSync(tmpDir, { recursive: true, force: true }),
+        ]);
+      },
+    };
+  });
 }

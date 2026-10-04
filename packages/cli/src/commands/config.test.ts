@@ -1,12 +1,13 @@
 import { afterAll, afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { EventEmitter } from "node:events";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { clearFixture, FAKE_SOCKET_PATH, setFixture } from "../../test/helpers/cli-mocks.ts";
 import { captureOutput } from "../../test/helpers/cli-output.ts";
 import { createMockIpcClient } from "../../test/helpers/mock-ipc-client.ts";
+import type { SpawnFn } from "./config.ts";
 
 const configMod = await import("./config.ts");
 const { runConfig, runConfigEdit, runConfigGet, runConfigList, runConfigSet, runConfigValidate } =
@@ -20,6 +21,58 @@ afterAll(() => {
 
 function makeTmp(): string {
   return mkdtempSync(join(tmpdir(), "nimbus-cli-config-"));
+}
+
+/**
+ * For the cases that let the `runConfig` DISPATCHER resolve its own paths: `NIMBUS_CONFIG_DIR` puts
+ * the config dir in a fresh temp root on every OS, and APPDATA / LOCALAPPDATA / HOME / USERPROFILE /
+ * XDG_* point every OTHER directory `getCliPlatformPaths()` can resolve under that root too. So a
+ * regression that wrote anywhere but the config dir — `set` landing in the data dir, say — lands in
+ * the temp root, where the test sees it, instead of in the developer's real profile. The env the
+ * dispatcher reads or launches from (EDITOR, the telemetry overrides, the demo switches) is cleared.
+ * Stated bound: macOS's `os.homedir()` ignores an in-process HOME, so there the DATA dir still
+ * resolves under the real home; the config dir is redirected everywhere.
+ */
+function relocateConfigEnv(): { root: string; configDir: string; restore: () => void } {
+  const keys = [
+    "APPDATA",
+    "LOCALAPPDATA",
+    "HOME",
+    "USERPROFILE",
+    "XDG_CONFIG_HOME",
+    "XDG_DATA_HOME",
+    "NIMBUS_CONFIG_DIR",
+    "NIMBUS_DEMO",
+    "NIMBUS_GATEWAY_SOCKET",
+    "EDITOR",
+    "NIMBUS_TELEMETRY_ENABLED",
+    "NIMBUS_TELEMETRY_ENDPOINT",
+    "NIMBUS_TELEMETRY_FLUSH_SECONDS",
+  ] as const;
+  // The temp root first: if creating it threw, the environment must not be left half-cleared.
+  const root = makeTmp();
+  const configDir = join(root, "config");
+  mkdirSync(configDir);
+  const saved = new Map<string, string | undefined>(keys.map((k) => [k, process.env[k]]));
+  for (const k of keys) delete process.env[k];
+  process.env["NIMBUS_CONFIG_DIR"] = configDir;
+  process.env["APPDATA"] = join(root, "appdata");
+  process.env["LOCALAPPDATA"] = join(root, "localappdata");
+  process.env["HOME"] = join(root, "home");
+  process.env["USERPROFILE"] = join(root, "home");
+  process.env["XDG_CONFIG_HOME"] = join(root, "xdg-config");
+  process.env["XDG_DATA_HOME"] = join(root, "xdg-data");
+  return {
+    root,
+    configDir,
+    restore: () => {
+      for (const [k, v] of saved) {
+        if (v === undefined) delete process.env[k];
+        else process.env[k] = v;
+      }
+      rmSync(root, { recursive: true, force: true });
+    },
+  };
 }
 
 describe("runConfigValidate", () => {
@@ -266,6 +319,14 @@ describe("runConfigEdit", () => {
     const spawnStub = (): EventEmitter => {
       const emitter = new EventEmitter();
       queueMicrotask(() => {
+        // With no 'error' listener, emit() THROWS inside this microtask: an uncaught error that
+        // leaves the awaited promise pending, and Bun 1.3 then hangs the whole run instead of
+        // timing this test out. Settle through 'close' instead, so the regression this test exists
+        // for (runConfigEdit not listening for 'error') fails HERE, fast, by message.
+        if (emitter.listenerCount("error") === 0) {
+          emitter.emit("close", -1);
+          return;
+        }
         emitter.emit("error", new Error("ENOENT editor"));
       });
       return emitter;
@@ -289,14 +350,16 @@ describe("runConfigEdit", () => {
       });
       return emitter;
     };
+    const tmp = makeTmp();
     try {
-      await runConfigEdit(join(makeTmp(), "nimbus.toml"), spawnStub);
+      await runConfigEdit(join(tmp, "nimbus.toml"), spawnStub);
     } finally {
       if (savedEditor === undefined) {
         delete process.env["EDITOR"];
       } else {
         process.env["EDITOR"] = savedEditor;
       }
+      rmSync(tmp, { recursive: true, force: true });
     }
     expect(calls[0]?.cmd).toBe("myeditor");
   });
@@ -304,12 +367,17 @@ describe("runConfigEdit", () => {
 
 describe("runConfig (dispatcher)", () => {
   let tmp: string;
+  // The dispatcher resolves the platform paths itself; `relocateConfigEnv` keeps them all under a
+  // temp root, so neither the routes that read nor the ones that write can reach the real profile.
+  let env: ReturnType<typeof relocateConfigEnv>;
   beforeEach(() => {
     out.reset();
     process.exitCode = 0;
     tmp = makeTmp();
+    env = relocateConfigEnv();
   });
   afterEach(() => {
+    env.restore();
     clearFixture();
     process.exitCode = 0;
     try {
@@ -358,19 +426,20 @@ describe("runConfig (dispatcher)", () => {
   });
 
   it("routes 'list' to runConfigList", async () => {
-    // runConfig will build tomlPath from getCliPlatformPaths(); we just verify
-    // the subcommand doesn't throw and produces expected output patterns
+    // runConfig builds tomlPath from getCliPlatformPaths() — here the relocated config dir, which
+    // holds no nimbus.toml yet.
     await runConfig(["list"]);
+    expect(out.stdout.split("\n")[0]).toBe(join(env.configDir, "nimbus.toml"));
     // The list command always prints the env-override legend regardless of file presence
     expect(out.stdout).toContain("NIMBUS_PROFILE");
+    expect(out.stdout).toContain("(file missing)");
   });
 
   it("routes 'get' with a key to runConfigGet (not set)", async () => {
-    // Use a key that almost certainly has no env set and the file doesn't exist
-    // at the real config path — output should be "(not set)"
+    // The relocated config dir has no nimbus.toml and `relocateConfigEnv` cleared the env override
+    // for this key, so the only correct answer is the placeholder.
     await runConfig(["get", "telemetry.endpoint"]);
-    // Either prints the value or "(not set)" — just verify it ran without throwing
-    expect(out.stdout.length).toBeGreaterThanOrEqual(0);
+    expect(out.stdout).toBe("(not set)\n");
   });
 
   it("routes 'get' with no key to runConfigGet usage error", async () => {
@@ -499,9 +568,19 @@ describe("nimbus config list --json", () => {
   });
 
   it("is routed from the dispatcher when --json follows the subcommand", async () => {
-    await runConfig(["list", "--json"]);
-    expect(() => parseStdout()).not.toThrow();
-    expect(out.stdout).not.toContain("NIMBUS_PROFILE");
+    // The dispatcher resolves its own config dir, so relocate it: the document must then describe
+    // THAT path (absent), never the developer's real nimbus.toml.
+    const env = relocateConfigEnv();
+    try {
+      await runConfig(["list", "--json"]);
+      const doc = parseStdout();
+      expect(doc.path).toBe(join(env.configDir, "nimbus.toml"));
+      expect(doc.exists).toBe(false);
+      expect(doc.raw).toBeNull();
+      expect(out.stdout).not.toContain("NIMBUS_PROFILE");
+    } finally {
+      env.restore();
+    }
   });
 });
 
@@ -565,5 +644,153 @@ describe("config set/get refuse a nested-table key with an actionable message (#
     runConfigGet(p, "telemetry.enabled");
     expect(out.stdout).toContain("true");
     rmSync(dir, { recursive: true, force: true });
+  });
+});
+
+// The dispatcher derives `tomlPath` from the platform paths. `NIMBUS_CONFIG_DIR` relocates the
+// config directory on every OS (`paths.ts`'s `configDirOverride`), and `relocateConfigEnv` points
+// the rest under the same temp root, so these cases let `runConfig` write for real while the real
+// nimbus.toml — and the real data directory, on Windows and Linux — stays out of reach.
+describe("runConfig (dispatcher) against a relocated config dir", () => {
+  let env: ReturnType<typeof relocateConfigEnv>;
+  let configDir: string;
+
+  beforeEach(() => {
+    out.reset();
+    env = relocateConfigEnv();
+    configDir = env.configDir;
+  });
+  afterEach(() => {
+    env.restore();
+  });
+
+  it("'set' writes nimbus.toml in the resolved config dir, and 'get' reads it back", async () => {
+    const tomlPath = join(configDir, "nimbus.toml");
+    await runConfig(["set", "llm.prefer_local", "true"]);
+    expect(readFileSync(tomlPath, "utf8")).toBe("[llm]\nprefer_local = true\n");
+    expect(out.stdout).toContain(`Updated llm.prefer_local in ${tomlPath}`);
+    // The write went to the config dir and NOWHERE else under the redirected roots — and left no
+    // swap directory beside the file.
+    expect(readdirSync(env.root)).toEqual(["config"]);
+    expect(readdirSync(configDir)).toEqual(["nimbus.toml"]);
+    out.reset();
+    await runConfig(["get", "llm.prefer_local"]);
+    expect(out.stdout).toBe("true\n");
+  });
+
+  it("'get' of a key the resolved file does not set prints (not set)", async () => {
+    writeFileSync(join(configDir, "nimbus.toml"), "[llm]\nprefer_local = true\n");
+    await runConfig(["get", "llm.local_model"]);
+    expect(out.stdout).toBe("(not set)\n");
+  });
+
+  it("'edit' hands the editor exactly the resolved nimbus.toml path", async () => {
+    process.env["EDITOR"] = "my-editor";
+    const calls: Array<{ cmd: string; args: string[]; stdio: string }> = [];
+    const spawnStub: SpawnFn = (cmd, args, opts) => {
+      calls.push({ cmd, args, stdio: opts.stdio });
+      const emitter = new EventEmitter();
+      queueMicrotask(() => {
+        emitter.emit("close", 0);
+      });
+      return emitter;
+    };
+    await runConfig(["edit"], spawnStub);
+    expect(calls).toEqual([
+      { cmd: "my-editor", args: [join(configDir, "nimbus.toml")], stdio: "inherit" },
+    ]);
+  });
+
+  it("'edit' rejects when the editor exits non-zero", async () => {
+    process.env["EDITOR"] = "my-editor";
+    const spawnStub: SpawnFn = () => {
+      const emitter = new EventEmitter();
+      queueMicrotask(() => {
+        emitter.emit("close", 3);
+      });
+      return emitter;
+    };
+    await expect(runConfig(["edit"], spawnStub)).rejects.toThrow("my-editor exited with code 3");
+  });
+});
+
+// `runConfigEdit`'s per-OS behaviour — the fallback editor, and whether it runs through a shell —
+// is chosen by its `platform` argument, so every CI leg checks both sides rather than only its own.
+describe("runConfigEdit — per-platform editor fallback and the real default spawn", () => {
+  let savedEditor: string | undefined;
+  let tmp: string;
+
+  beforeEach(() => {
+    savedEditor = process.env["EDITOR"];
+    delete process.env["EDITOR"];
+    tmp = makeTmp();
+  });
+  afterEach(() => {
+    if (savedEditor === undefined) delete process.env["EDITOR"];
+    else process.env["EDITOR"] = savedEditor;
+    rmSync(tmp, { recursive: true, force: true });
+  });
+
+  /** A spawn stub that records what it was asked to run and exits 0. */
+  function recordingSpawn(): {
+    spawnFn: SpawnFn;
+    calls: Array<{ cmd: string; args: string[]; shell: boolean }>;
+  } {
+    const calls: Array<{ cmd: string; args: string[]; shell: boolean }> = [];
+    const spawnFn: SpawnFn = (cmd, args, opts) => {
+      calls.push({ cmd, args, shell: opts.shell });
+      const emitter = new EventEmitter();
+      queueMicrotask(() => {
+        emitter.emit("close", 0);
+      });
+      return emitter;
+    };
+    return { spawnFn, calls };
+  }
+
+  it("with no EDITOR, opens notepad through the shell on win32 and vi without one elsewhere", async () => {
+    const tomlPath = join(tmp, "nimbus.toml");
+    const seen: Record<string, { cmd: string; shell: boolean }> = {};
+    for (const platform of ["win32", "linux", "darwin"] as const) {
+      const rec = recordingSpawn();
+      await runConfigEdit(tomlPath, rec.spawnFn, platform);
+      expect(rec.calls).toHaveLength(1);
+      expect(rec.calls[0]?.args).toEqual([tomlPath]);
+      seen[platform] = { cmd: rec.calls[0]?.cmd ?? "", shell: rec.calls[0]?.shell ?? false };
+    }
+    expect(seen).toEqual({
+      win32: { cmd: "notepad", shell: true },
+      linux: { cmd: "vi", shell: false },
+      darwin: { cmd: "vi", shell: false },
+    });
+  });
+
+  it("an EDITOR of only whitespace counts as unset, not as an editor named '   '", async () => {
+    process.env["EDITOR"] = "   ";
+    const rec = recordingSpawn();
+    await runConfigEdit(join(tmp, "nimbus.toml"), rec.spawnFn, "linux");
+    expect(rec.calls.map((c) => c.cmd)).toEqual(["vi"]);
+  });
+
+  it("with no spawnFn, really launches $EDITOR on the file and reports its exit code", async () => {
+    // The editor is this test's own Bun binary, and the "file to edit" a script that exits 3 — so a
+    // rejection naming code 3 can only come from a real child that ran it. `linux` means no shell,
+    // so neither path needs quoting on any host, Windows included.
+    const script = join(tmp, "exits-3.js");
+    writeFileSync(script, "process.exit(3);\n", "utf8");
+    process.env["EDITOR"] = process.execPath;
+    await expect(runConfigEdit(script, undefined, "linux")).rejects.toThrow(
+      `${process.execPath} exited with code 3`,
+    );
+  });
+
+  it("with no spawnFn, an editor that cannot be started rejects with the spawn error", async () => {
+    process.env["EDITOR"] = join(tmp, "no-such-editor");
+    const err = await runConfigEdit(join(tmp, "nimbus.toml"), undefined, "linux").then(
+      () => undefined,
+      (e: unknown) => e,
+    );
+    expect(err).toBeInstanceOf(Error);
+    expect((err as NodeJS.ErrnoException).code).toBe("ENOENT");
   });
 });

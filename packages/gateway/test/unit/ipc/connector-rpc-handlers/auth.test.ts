@@ -1,5 +1,12 @@
 import { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import {
+  GOOGLE_OAUTH_CLIENT_ID_HELP,
+  MICROSOFT_OAUTH_CLIENT_ID_HELP,
+  NOTION_OAUTH_CLIENT_ID_HELP,
+  SLACK_OAUTH_CLIENT_ID_HELP,
+} from "../../../../src/auth/oauth-env-help-messages.ts";
+import { Config } from "../../../../src/config.ts";
 import type { ConnectorServiceId } from "../../../../src/connectors/connector-catalog.ts";
 import { LocalIndex } from "../../../../src/index/local-index.ts";
 import { handleConnectorAuth } from "../../../../src/ipc/connector-rpc-handlers/auth.ts";
@@ -1592,52 +1599,99 @@ function makeOAuthCtx(
   };
 }
 
-const GOOGLE_CLIENT_ID_FOR_TESTS = process.env["NIMBUS_OAUTH_GOOGLE_CLIENT_ID"] ?? "";
+/**
+ * The `Config` fields the OAuth error paths below read. `Config` snapshots `NIMBUS_OAUTH_*` ONCE, at
+ * import. A run from the repo root loads bunfig.toml's preload
+ * (`scripts/test-preload/hermetic-credentials.ts`), which blanks them before that import — so there
+ * the google "configured client id" pair, chosen only when `NIMBUS_OAUTH_GOOGLE_CLIENT_ID` was set,
+ * never ran at all. A run that skips the preload (`bun test` from `packages/gateway`, where the root
+ * bunfig.toml is not read) inherited the developer's shell instead, and failed onedrive/outlook on a
+ * machine with `NIMBUS_OAUTH_MICROSOFT_CLIENT_ID` set. Each test now sets the values it depends on —
+ * blank by default, saved before and restored after — so every case runs, and runs the same way,
+ * whatever the working directory or the shell.
+ */
+type OAuthClientFields = {
+  oauthGoogleClientId: string;
+  oauthGoogleClientSecret: string;
+  oauthMicrosoftClientId: string;
+  oauthSlackClientId: string;
+  oauthNotionClientId: string;
+};
+const mutableConfig = Config as unknown as OAuthClientFields;
+const OAUTH_CLIENT_FIELDS = [
+  "oauthGoogleClientId",
+  "oauthGoogleClientSecret",
+  "oauthMicrosoftClientId",
+  "oauthSlackClientId",
+  "oauthNotionClientId",
+] as const;
 
 describe("handleConnectorAuth — OAuth dispatch (error paths)", () => {
   let db: Database;
   let vault: MockVault;
   let localIndex: LocalIndex;
+  let saved: OAuthClientFields;
 
   beforeEach(() => {
     ({ db, vault, localIndex } = freshDeps());
+    saved = {
+      oauthGoogleClientId: mutableConfig.oauthGoogleClientId,
+      oauthGoogleClientSecret: mutableConfig.oauthGoogleClientSecret,
+      oauthMicrosoftClientId: mutableConfig.oauthMicrosoftClientId,
+      oauthSlackClientId: mutableConfig.oauthSlackClientId,
+      oauthNotionClientId: mutableConfig.oauthNotionClientId,
+    };
+    for (const field of OAUTH_CLIENT_FIELDS) mutableConfig[field] = "";
   });
 
   afterEach(() => {
+    for (const field of OAUTH_CLIENT_FIELDS) mutableConfig[field] = saved[field];
     db.close();
   });
 
-  if (GOOGLE_CLIENT_ID_FOR_TESTS === "") {
-    test("google_drive: missing NIMBUS_OAUTH_GOOGLE_CLIENT_ID throws -32602", async () => {
-      const ctx = makeOAuthCtx({ service: "google_drive" }, vault, localIndex);
-      await expect(handleConnectorAuth(ctx)).rejects.toMatchObject({ rpcCode: -32602 });
+  // The provider's own help text, not just -32602: other refusals share that code (an unknown
+  // service, a service with no auth flow), so the code alone cannot show WHICH guard fired.
+  test("google_drive: missing NIMBUS_OAUTH_GOOGLE_CLIENT_ID throws -32602", async () => {
+    const ctx = makeOAuthCtx({ service: "google_drive" }, vault, localIndex);
+    await expect(handleConnectorAuth(ctx)).rejects.toMatchObject({
+      rpcCode: -32602,
+      message: GOOGLE_OAUTH_CLIENT_ID_HELP,
     });
+  });
 
-    test("gmail: missing NIMBUS_OAUTH_GOOGLE_CLIENT_ID throws -32602", async () => {
-      const ctx = makeOAuthCtx({ service: "gmail" }, vault, localIndex);
-      await expect(handleConnectorAuth(ctx)).rejects.toMatchObject({ rpcCode: -32602 });
+  test("gmail: missing NIMBUS_OAUTH_GOOGLE_CLIENT_ID throws -32602", async () => {
+    const ctx = makeOAuthCtx({ service: "gmail" }, vault, localIndex);
+    await expect(handleConnectorAuth(ctx)).rejects.toMatchObject({
+      rpcCode: -32602,
+      message: GOOGLE_OAUTH_CLIENT_ID_HELP,
     });
-  } else {
-    test("google_drive: reaches runPKCEFlow (rejects — openUrl sentinel)", async () => {
-      const ctx = makeOAuthCtx({ service: "google_drive" }, vault, localIndex);
-      await expect(handleConnectorAuth(ctx)).rejects.toThrow("openUrl: PKCE flow aborted in test");
-    });
+  });
 
-    test("gmail: reaches runPKCEFlow (rejects — openUrl sentinel)", async () => {
-      const ctx = makeOAuthCtx({ service: "gmail" }, vault, localIndex);
-      await expect(handleConnectorAuth(ctx)).rejects.toThrow("openUrl: PKCE flow aborted in test");
-    });
-  }
+  test("google_drive: a configured client id reaches runPKCEFlow (rejects — openUrl sentinel)", async () => {
+    mutableConfig.oauthGoogleClientId = "fixture-google-client-id";
+    const ctx = makeOAuthCtx({ service: "google_drive" }, vault, localIndex);
+    await expect(handleConnectorAuth(ctx)).rejects.toThrow("openUrl: PKCE flow aborted in test");
+  });
 
-  // Each service needs its provider's client-id env var; absent it, auth is a -32602.
+  test("gmail: a configured client id reaches runPKCEFlow (rejects — openUrl sentinel)", async () => {
+    mutableConfig.oauthGoogleClientId = "fixture-google-client-id";
+    const ctx = makeOAuthCtx({ service: "gmail" }, vault, localIndex);
+    await expect(handleConnectorAuth(ctx)).rejects.toThrow("openUrl: PKCE flow aborted in test");
+  });
+
+  // Each service needs its provider's client-id env var; absent it, auth is a -32602 carrying that
+  // provider's help text.
   test.each([
-    ["onedrive", "NIMBUS_OAUTH_MICROSOFT_CLIENT_ID"],
-    ["outlook", "NIMBUS_OAUTH_MICROSOFT_CLIENT_ID"],
-    ["slack", "NIMBUS_OAUTH_SLACK_CLIENT_ID"],
-    ["notion", "NIMBUS_OAUTH_NOTION_CLIENT_ID"],
-  ])("%s: missing %s throws -32602", async (service) => {
+    ["onedrive", "NIMBUS_OAUTH_MICROSOFT_CLIENT_ID", MICROSOFT_OAUTH_CLIENT_ID_HELP],
+    ["outlook", "NIMBUS_OAUTH_MICROSOFT_CLIENT_ID", MICROSOFT_OAUTH_CLIENT_ID_HELP],
+    ["slack", "NIMBUS_OAUTH_SLACK_CLIENT_ID", SLACK_OAUTH_CLIENT_ID_HELP],
+    ["notion", "NIMBUS_OAUTH_NOTION_CLIENT_ID", NOTION_OAUTH_CLIENT_ID_HELP],
+  ])("%s: missing %s throws -32602", async (service, _envVar, help) => {
     const ctx = makeOAuthCtx({ service }, vault, localIndex);
-    await expect(handleConnectorAuth(ctx)).rejects.toMatchObject({ rpcCode: -32602 });
+    await expect(handleConnectorAuth(ctx)).rejects.toMatchObject({
+      rpcCode: -32602,
+      message: help,
+    });
   });
 });
 

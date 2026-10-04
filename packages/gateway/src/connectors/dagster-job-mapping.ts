@@ -1,3 +1,4 @@
+import { trimTrailingSlash } from "./_lib/field-helpers.ts";
 import type { MappedRow } from "./mapped-row.ts";
 import { asRecord, stringField } from "./unknown-record.ts";
 
@@ -14,10 +15,6 @@ export interface DagsterMappingContext {
 export type DagsterMappedRow = MappedRow<"dagster", "job">;
 
 const TITLE_MAX = 200;
-
-function trimTrailingSlash(s: string): string {
-  return s.endsWith("/") ? s.slice(0, -1) : s;
-}
 
 /** Dagster pipeline `tags` are a list of `{ key, value }` objects. */
 function tagPairs(raw: unknown): Array<{ key: string; value: string }> {

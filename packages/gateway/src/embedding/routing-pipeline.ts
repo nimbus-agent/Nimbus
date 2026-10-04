@@ -17,7 +17,7 @@ export class RoutingEmbeddingPipeline implements EmbeddingPipeline {
     await target.embedItem(item);
   }
 
-  async deleteItemEmbeddings(itemId: string): Promise<void> {
+  deleteItemEmbeddings(itemId: string): void {
     dbRun(this.db, `DELETE FROM embedding_chunk WHERE item_id = ?`, [itemId]);
   }
 

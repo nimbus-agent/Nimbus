@@ -9,9 +9,9 @@ export const CHATOPS_CHANNEL_SALT = "chatops.channel.salt";
 
 const SALT_BYTES = 32;
 
-// No try/catch: unlike `share/share-keypair.ts`'s `decodeBase64` (which this mirrors and which DOES
-// throw on malformed input), `Buffer.from(s, "base64")` never throws — malformed input just decodes
-// to a short buffer, which the length check below already rejects.
+// No try/catch, unlike the keypair resolver's `isValidB64Len` (`util/ed25519.ts`, behind
+// `ensureShareKeypair`): `Buffer.from(s, "base64")` never throws on a string — malformed input just
+// decodes to a short buffer, which the length check below already rejects.
 function isValidSalt(b64: string): boolean {
   return Buffer.from(b64, "base64").length === SALT_BYTES;
 }

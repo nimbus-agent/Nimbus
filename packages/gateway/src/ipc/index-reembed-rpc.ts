@@ -178,7 +178,7 @@ async function embedSlice(
   counters: BatchCounters,
 ): Promise<void> {
   for (const row of slice) {
-    await pipeline.embedItem(row);
+    await pipeline.embedItem(row); // NOSONAR S9382: sequential by design - a 429/5xx must stop the slice so the caller's retry-after backoff applies; parallel calls would burst the rate-limited remote embedder
     counters.succeeded += 1;
   }
 }
@@ -276,7 +276,7 @@ async function runReembed(
       break;
     }
     const slice = candidates.slice(i, i + batchSize);
-    await embedBatchWithRetry(pipeline, ctx, slice, i, counters);
+    await embedBatchWithRetry(pipeline, ctx, slice, i, counters); // NOSONAR S9382: sequential by design - batches pace the rate-limited embedder (retry-after sleeps), and the loop checks cancellation and reports progress per batch
     progress({ done: counters.succeeded + counters.skipped, total, skipped: counters.skipped });
   }
 

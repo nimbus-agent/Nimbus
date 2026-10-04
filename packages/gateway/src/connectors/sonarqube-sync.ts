@@ -5,6 +5,7 @@ import {
 } from "../sync/pass-cursor-sync-result.ts";
 import { type Syncable, type SyncContext, type SyncResult, syncNoopResult } from "../sync/types.ts";
 import { connectorFetch } from "./_lib/fetch-outcome.ts";
+import { upsertMapped } from "./_lib/paginated-sync.ts";
 import { encodeNimbusJsonCursor } from "./nimbus-json-cursor.ts";
 import { mapSonarIssueToItem, stripTrailingSlashes } from "./sonarqube-issue-mapping.ts";
 import { asRecord, stringField } from "./unknown-record.ts";
@@ -142,20 +143,13 @@ function upsertSonarIssues(
   issues: readonly unknown[],
   now: number,
 ): number {
-  let upserted = 0;
-  for (const issue of issues) {
-    const mapped = mapSonarIssueToItem(issue, {
+  return upsertMapped(ctx, issues, (issue) =>
+    mapSonarIssueToItem(issue, {
       baseUrl: creds.base,
       organization: creds.organization,
       syncedAt: now,
-    });
-    if (mapped === null) {
-      continue;
-    }
-    ctx.upsertItem(mapped);
-    upserted += 1;
-  }
-  return upserted;
+    }),
+  );
 }
 
 function buildComponentsPath(organization: string): string {
@@ -199,7 +193,7 @@ export function createSonarqubeSyncable(options: SonarqubeSyncableOptions): Sync
       const batches = chunkArray(allProjectKeys, 50);
 
       for (const batch of batches) {
-        const projectOutcome = await syncProjects(ctx, creds, batch, now);
+        const projectOutcome = await syncProjects(ctx, creds, batch, now); // NOSONAR S9382: each batch pages through its issues and upserts as it goes - concurrent batches would interleave those index writes nondeterministically through the shared SonarQube rate limiter
         totalUpserted += projectOutcome.upserted;
         totalBytes += projectOutcome.bytes;
       }

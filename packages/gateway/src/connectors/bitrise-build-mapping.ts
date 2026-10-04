@@ -1,17 +1,7 @@
+import type { MappedRow } from "./mapped-row.ts";
 import { asRecord, numberField, stringField } from "./unknown-record.ts";
 
-export interface BitriseMappedRow {
-  readonly service: "bitrise";
-  readonly type: "app" | "build";
-  readonly externalId: string;
-  readonly title: string;
-  readonly bodyPreview: string;
-  readonly url: string | null;
-  readonly canonicalUrl: string;
-  readonly modifiedAt: number;
-  readonly metadata: Record<string, unknown>;
-  readonly syncedAt: number;
-}
+export type BitriseMappedRow = MappedRow<"bitrise", "app" | "build", string>;
 
 export interface BitriseBuildMappingContext {
   readonly appSlug: string;

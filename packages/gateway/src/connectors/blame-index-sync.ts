@@ -195,7 +195,7 @@ async function blameRootFull(ctx: SyncContext, root: string, windowDays: number)
   }
   let filesBlamed = 0;
   for (const f of files.slice(0, MAX_BLAME_FILES)) {
-    if ((await blameOneFile(ctx, root, f)) > 0) filesBlamed += 1;
+    if ((await blameOneFile(ctx, root, f)) > 0) filesBlamed += 1; // NOSONAR S9382: one `git blame` subprocess at a time by design (see MAX_BLAME_FILES) - Promise.all would spawn up to MAX_BLAME_FILES at once
   }
   return filesBlamed;
 }
@@ -207,9 +207,10 @@ async function blameRootIncremental(ctx: SyncContext, root: string, last: string
   for (const ch of await gitChangedSince(root, last)) {
     if (ch.status === "D") {
       ctx.pruneBlameForFile(root, ch.path);
-    } else if ((await blameOneFile(ctx, root, ch.path)) > 0) {
-      filesBlamed += 1;
+      continue;
     }
+    const blamedLines = await blameOneFile(ctx, root, ch.path); // NOSONAR S9382: one `git blame` subprocess at a time by design (see MAX_BLAME_FILES), and each change's prune/re-blame lands in `git diff` order
+    if (blamedLines > 0) filesBlamed += 1;
   }
   return filesBlamed;
 }
@@ -261,7 +262,7 @@ export function createBlameIndexSyncable(options: BlameIndexSyncableOptions): Sy
 
       for (const rootCfg of options.roots) {
         const root = rootCfg.path;
-        const blamed = await blameOneRoot(ctx, root, heads[root], windowDays);
+        const blamed = await blameOneRoot(ctx, root, heads[root], windowDays); // NOSONAR S9382: one git subprocess at a time across ALL roots (see MAX_BLAME_FILES) - concurrent roots would multiply the spawns
         if (blamed === null) continue;
         filesBlamed += blamed.filesBlamed;
         nextHeads[root] = blamed.head;

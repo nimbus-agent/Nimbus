@@ -23,32 +23,35 @@ function read(dir: string, file: string): string | undefined {
  */
 export function createLinuxHostActivity(root: string = DEFAULT_ROOT): HostActivity {
   return {
-    probe: async (): Promise<HostActivityProbe> => {
-      let names: string[];
-      try {
-        names = readdirSync(root);
-      } catch {
-        return UNKNOWN_PROBE;
-      }
-
-      let sawOnlineMains = false;
-      for (const name of names) {
-        const dir = join(root, name);
-        const type = read(dir, "type")?.toLowerCase();
-        if (type === "battery" && read(dir, "status")?.toLowerCase() === "discharging") {
-          // A discharging battery is decisive: the machine is running down regardless of what
-          // any adapter claims.
-          return { power: "battery", idleMs: null, source: "power_only" };
-        }
-        if (type !== undefined && MAINS_TYPES.has(type) && read(dir, "online") === "1") {
-          sawOnlineMains = true;
-        }
-      }
-
-      const power: HostPower = sawOnlineMains ? "ac" : "unknown";
-      // Idle is deliberately unmeasured on Linux: X11, Wayland and headless each answer
-      // differently and a server has no session to be idle from. Stated, not faked.
-      return { power, idleMs: null, source: "power_only" };
-    },
+    probe: (): Promise<HostActivityProbe> => Promise.resolve(scanPowerSupplies(root)),
   };
+}
+
+/** One synchronous sysfs scan. Never throws: every read that can fail degrades instead. */
+function scanPowerSupplies(root: string): HostActivityProbe {
+  let names: string[];
+  try {
+    names = readdirSync(root);
+  } catch {
+    return UNKNOWN_PROBE;
+  }
+
+  let sawOnlineMains = false;
+  for (const name of names) {
+    const dir = join(root, name);
+    const type = read(dir, "type")?.toLowerCase();
+    if (type === "battery" && read(dir, "status")?.toLowerCase() === "discharging") {
+      // A discharging battery is decisive: the machine is running down regardless of what
+      // any adapter claims.
+      return { power: "battery", idleMs: null, source: "power_only" };
+    }
+    if (type !== undefined && MAINS_TYPES.has(type) && read(dir, "online") === "1") {
+      sawOnlineMains = true;
+    }
+  }
+
+  const power: HostPower = sawOnlineMains ? "ac" : "unknown";
+  // Idle is deliberately unmeasured on Linux: X11, Wayland and headless each answer
+  // differently and a server has no session to be idle from. Stated, not faked.
+  return { power, idleMs: null, source: "power_only" };
 }

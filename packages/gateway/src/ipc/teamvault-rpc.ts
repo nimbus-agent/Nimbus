@@ -55,7 +55,7 @@ export async function dispatchTeamVaultRpc(
         if (typeof v !== "string") {
           throw new TeamVaultRpcError(-32602, `ERR_INVALID_PARAMS: secret ${k} must be a string`);
         }
-        await ctx.vault.set(teamVaultKey(entry, k), v);
+        await ctx.vault.set(teamVaultKey(entry, k), v); // NOSONAR S9382: sequential by design - the macOS vault's set() read-modify-writes one shared key index (concurrent sets drop entries), and a non-string secret must stop the loop before later secrets are written
       }
       store.createEntry(entry, service, ctx.operator);
       return { ok: true };
@@ -66,7 +66,7 @@ export async function dispatchTeamVaultRpc(
       const keys = r["keys"];
       if (Array.isArray(keys)) {
         for (const k of keys) {
-          if (typeof k === "string") await ctx.vault.delete(teamVaultKey(entry, k));
+          if (typeof k === "string") await ctx.vault.delete(teamVaultKey(entry, k)); // NOSONAR S9382: sequential by design - the macOS vault's delete() read-modify-writes one shared key index, so concurrent deletes would lose index updates
         }
       }
       return { ok: true };

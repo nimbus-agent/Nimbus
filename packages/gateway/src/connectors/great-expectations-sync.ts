@@ -1,9 +1,13 @@
-import { readdir, readFile, stat } from "node:fs/promises";
-import { join, resolve } from "node:path";
+import { readFile, stat } from "node:fs/promises";
+import { resolve } from "node:path";
+import { itemPrimaryKey } from "../index/item-store.ts";
 import { syncPassCursorSuccess } from "../sync/pass-cursor-sync-result.ts";
 import { type Syncable, type SyncContext, type SyncResult, syncNoopResult } from "../sync/types.ts";
+import { collectFiles } from "./_lib/collect-files.ts";
+import { upsertMapped } from "./_lib/paginated-sync.ts";
 import {
   type GreatExpectationsMappingContext,
+  legacyClampedExternalId,
   mapGreatExpectationsResultToItem,
 } from "./great-expectations-result-mapping.ts";
 import { encodeNimbusJsonCursor } from "./nimbus-json-cursor.ts";
@@ -100,32 +104,12 @@ function buildMappingContext(
   };
 }
 
-async function collectJsonFiles(root: string): Promise<string[]> {
-  const found: string[] = [];
-  async function walk(dir: string, depth: number): Promise<void> {
-    if (depth > MAX_WALK_DEPTH || found.length >= MAX_FILES) {
-      return;
-    }
-    let entries: import("node:fs").Dirent[];
-    try {
-      entries = await readdir(dir, { withFileTypes: true });
-    } catch {
-      return; // unreadable dir — skip
-    }
-    for (const entry of entries) {
-      if (found.length >= MAX_FILES) {
-        return;
-      }
-      const full = join(dir, entry.name);
-      if (entry.isDirectory()) {
-        await walk(full, depth + 1);
-      } else if (entry.isFile() && entry.name.toLowerCase().endsWith(".json")) {
-        found.push(full);
-      }
-    }
-  }
-  await walk(root, 0);
-  return found;
+function collectJsonFiles(root: string): Promise<string[]> {
+  return collectFiles(root, {
+    maxDepth: MAX_WALK_DEPTH,
+    maxFiles: MAX_FILES,
+    accept: (name) => name.toLowerCase().endsWith(".json"),
+  });
 }
 
 interface ParsedArtefact {
@@ -162,21 +146,55 @@ async function readArtefact(path: string): Promise<ParsedArtefact | null> {
   }
 }
 
-function ingestArtefact(ctx: SyncContext, artefact: ParsedArtefact, syncedAt: number): number {
+/** The rows one sync pass wrote, and the pre-fix ids of the same results. */
+interface PassIds {
+  /**
+   * The PRIMARY KEY of every row written, the key `itemExists` and `deleteItem` act on. Not the
+   * external id: `itemPrimaryKey` keeps an id that already starts with `great_expectations:` as it
+   * is, so two different external ids can name the same row.
+   */
+  readonly written: Set<string>;
+  /** External ids, as `legacyClampedExternalId` derives them. */
+  readonly legacy: Set<string>;
+}
+
+function ingestArtefact(
+  ctx: SyncContext,
+  artefact: ParsedArtefact,
+  syncedAt: number,
+  ids: PassIds,
+): number {
   const results = artefact.parsed["results"];
   if (!Array.isArray(results)) {
     return 0;
   }
   const mappingCtx = buildMappingContext(artefact.parsed, syncedAt, artefact.mtimeMs);
-  let upserted = 0;
   for (const entry of results) {
-    const mapped = mapGreatExpectationsResultToItem(entry, mappingCtx);
-    if (mapped !== null) {
-      ctx.upsertItem(mapped);
-      upserted += 1;
-    }
+    const legacy = legacyClampedExternalId(entry, mappingCtx);
+    if (legacy !== null) ids.legacy.add(legacy);
   }
-  return upserted;
+  return upsertMapped(ctx, results, (entry) => {
+    const row = mapGreatExpectationsResultToItem(entry, mappingCtx);
+    if (row !== null) ids.written.add(itemPrimaryKey(SERVICE_ID, row.externalId));
+    return row;
+  });
+}
+
+/**
+ * Removes the rows an older gateway wrote under a broken clamped id (see
+ * `legacyClampedExternalId`) for results this pass has just written under their real ids. Runs
+ * after every artefact is ingested and skips any row this pass wrote, compared by primary key, so
+ * it can never remove a row that is current. Returns how many rows it removed.
+ */
+function removeLegacyClampedRows(ctx: SyncContext, ids: PassIds): number {
+  let removed = 0;
+  for (const id of ids.legacy) {
+    const key = itemPrimaryKey(SERVICE_ID, id);
+    if (ids.written.has(key) || !ctx.itemExists(key)) continue;
+    ctx.deleteItem(SERVICE_ID, id);
+    removed += 1;
+  }
+  return removed;
 }
 
 export function createGreatExpectationsSyncable(
@@ -198,16 +216,18 @@ export function createGreatExpectationsSyncable(
       await ctx.rateLimiter.acquire("filesystem");
       const now = Date.now();
       const files = await collectJsonFiles(dir);
+      const ids: PassIds = { written: new Set(), legacy: new Set() };
       let totalUpserted = 0;
       for (const file of files) {
-        const artefact = await readArtefact(file);
+        const artefact = await readArtefact(file); // NOSONAR S9382: one artefact in memory at a time - readFile loads each file whole before the MAX_FILE_BYTES check, and Promise.all would hold up to MAX_FILES of them
         if (artefact === null) {
           continue;
         }
-        totalUpserted += ingestArtefact(ctx, artefact, now);
+        totalUpserted += ingestArtefact(ctx, artefact, now, ids);
       }
 
-      return syncPassCursorSuccess(t0, 0, pass1Cursor(), totalUpserted);
+      const itemsDeleted = removeLegacyClampedRows(ctx, ids);
+      return { ...syncPassCursorSuccess(t0, 0, pass1Cursor(), totalUpserted), itemsDeleted };
     },
   };
 }

@@ -15,24 +15,27 @@ export class StubIpcClient {
     this.options = options;
   }
 
-  async connect(): Promise<void> {
+  connect(): Promise<void> {
     this.disconnected = false;
+    return Promise.resolve();
   }
 
-  async disconnect(): Promise<void> {
+  disconnect(): Promise<void> {
     this.disconnected = true;
+    return Promise.resolve();
   }
 
-  async call<T>(method: string, params?: unknown): Promise<T> {
+  /** Records the call at call time; a configured error (or no configured result) REJECTS. */
+  call<T>(method: string, params?: unknown): Promise<T> {
     this.calls.push({ method, params });
     const err = this.options.errors?.[method];
     if (err !== undefined) {
-      throw err;
+      return Promise.reject(err);
     }
     if (this.options.results && method in this.options.results) {
-      return this.options.results[method] as T;
+      return Promise.resolve(this.options.results[method] as T);
     }
-    throw new Error(`StubIpcClient: no result configured for method "${method}"`);
+    return Promise.reject(new Error(`StubIpcClient: no result configured for method "${method}"`));
   }
 
   onNotification(method: string, handler: (params: unknown) => void): void {

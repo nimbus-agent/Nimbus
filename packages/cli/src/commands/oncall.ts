@@ -1,14 +1,7 @@
-import { toPlainText, toSlackMrkdwn } from "../format/slack-markdown.ts";
-import { IPCClient } from "../ipc-client/index.ts";
-import { awaitAgentBrief, briefTextFor, type PendingBrief } from "../lib/agent-brief-render.ts";
-import { CliExit } from "../lib/cli-exit.ts";
-import { disconnectQuietly } from "../lib/disconnect-quietly.ts";
-import { gatewayNotRunningMessage } from "../lib/gateway-not-running.ts";
-import { readGatewayState } from "../lib/gateway-process.ts";
-import { registerInteractiveCliIpcHandlers } from "../lib/interactive-ipc-handlers.ts";
+import type { BriefTextFormat } from "../format/slack-markdown.ts";
+import { fetchAgentBrief } from "../lib/agent-cli-dispatcher.ts";
 import { parseDurationToMs } from "../lib/parse-duration.ts";
-import { getCliPlatformPaths } from "../paths.ts";
-import { flagValue } from "./_agent-brief-cli.ts";
+import { scanBriefCommandFlags, writeBriefOutput } from "./_agent-brief-cli.ts";
 import { ONCALL_PUSHED_USAGE, runOncallPushed } from "./oncall-pushed.ts";
 
 /**
@@ -45,13 +38,7 @@ export function isOncallBriefLike(v: unknown): v is OncallBriefLike {
   );
 }
 
-export type OncallFormat = "markdown" | "slack" | "plain";
-
-const ONCALL_FORMATS: ReadonlySet<string> = new Set<OncallFormat>(["markdown", "slack", "plain"]);
-
-function isOncallFormat(v: string): v is OncallFormat {
-  return ONCALL_FORMATS.has(v);
-}
+export type OncallFormat = BriefTextFormat;
 
 export type OncallCliArgs = {
   sinceMs: number;
@@ -96,40 +83,13 @@ const USAGE =
   ONCALL_PUSHED_USAGE;
 
 export function parseOncallArgs(args: string[]): OncallCliArgs {
-  let since = DEFAULT_SINCE;
-  let format: OncallFormat = "markdown";
-  let json = false;
-  let incidentId: string | undefined;
-  let service: string | undefined;
-
-  for (let i = 0; i < args.length; i++) {
-    const a = args[i];
-    if (a === "--json") {
-      json = true;
-    } else if (a === "--since") {
-      since = flagValue(args, i, "--since");
-      i += 1;
-    } else if (a === "--incident") {
-      incidentId = flagValue(args, i, "--incident");
-      i += 1;
-    } else if (a === "--service") {
-      service = flagValue(args, i, "--service");
-      i += 1;
-    } else if (a === "--format") {
-      const raw = flagValue(args, i, "--format");
-      if (!isOncallFormat(raw)) {
-        throw new Error(`--format must be one of markdown, slack, plain (got: ${raw})\n${USAGE}`);
-      }
-      format = raw;
-      i += 1;
-    } else if (a === "--help" || a === "-h") {
-      throw new Error(USAGE);
-    } else if (typeof a === "string" && a.startsWith("--")) {
-      throw new Error(`Unknown flag: ${a}\n${USAGE}`);
-    } else {
-      throw new Error(`Unexpected argument: ${String(a)}\n${USAGE}`);
-    }
-  }
+  const { since, format, json, values } = scanBriefCommandFlags(args, {
+    usage: USAGE,
+    defaultSince: DEFAULT_SINCE,
+    valueFlags: ["--incident", "--service"],
+  });
+  const incidentId = values["--incident"];
+  const service = values["--service"];
 
   // Rejected HERE as well as in the gateway, deliberately. The gateway's check is the real one —
   // it guards every transport — but a CLI that forwarded a contradictory pair would make the user
@@ -159,43 +119,18 @@ export type OncallFetchParams = { sinceMs: number; incidentId?: string; service?
 export type OncallFetchResult = { brief: string; findings: OncallBriefLike };
 
 /**
- * The real `agents.oncall` round trip: gateway-state check (exit 1 if not running), connect,
- * subscribe to `oncall.briefReady`/`oncall.briefError`, call, await, disconnect. Shaped
- * identically to `standup.ts`'s `fetchStandupBrief` — reusing the already-tested
- * `awaitAgentBrief` router rather than reinventing notification plumbing.
+ * The real `agents.oncall` round trip — `lib/agent-cli-dispatcher.ts`'s `fetchAgentBrief` (exit 1
+ * if no gateway is running, exit 2 on any later failure, a failed connect included), returning the
+ * raw `{ brief, findings }` for `runOncallCommand` below to print.
  *
  * All three gateway refusals (`ERR_ONCALL_NO_ACTIVE_INCIDENT`,
  * `ERR_ONCALL_INCIDENT_NOT_FOUND`, `ERR_ONCALL_IDENTITY_UNRESOLVED`) arrive as JSON-RPC errors
- * whose messages name their own remediation, printed verbatim below. None is an empty brief:
+ * whose messages name their own remediation, printed verbatim to stderr. None is an empty brief:
  * every section anchors on a selected incident, so a brief without one would be six headings over
  * nothing — which during an incident reads as "nothing is wrong".
  */
-export async function fetchOncallBrief(params: OncallFetchParams): Promise<OncallFetchResult> {
-  const paths = getCliPlatformPaths();
-  const state = await readGatewayState(paths);
-  if (state === undefined) {
-    process.stderr.write(`${gatewayNotRunningMessage(paths.demo === true)}\n`);
-    throw new CliExit(1);
-  }
-
-  const client = new IPCClient(state.socketPath);
-  let pending: PendingBrief<OncallBriefLike> | undefined;
-  try {
-    await client.connect();
-    registerInteractiveCliIpcHandlers(client);
-    pending = awaitAgentBrief(client, "oncall", isOncallBriefLike);
-    const { sessionId } = await client.call<{ sessionId: string }>("agents.oncall", params);
-    pending.bindSession(sessionId);
-    const result = await pending.result;
-    // Demo-safe commands in the Markdown only; `findings` (the `--json` output) is untouched.
-    return { ...result, brief: briefTextFor(result.brief, paths.demo === true) };
-  } catch (err) {
-    process.stderr.write(`${err instanceof Error ? err.message : String(err)}\n`);
-    throw new CliExit(2);
-  } finally {
-    pending?.cancel();
-    await disconnectQuietly(client);
-  }
+export function fetchOncallBrief(params: OncallFetchParams): Promise<OncallFetchResult> {
+  return fetchAgentBrief("oncall", params, isOncallBriefLike);
 }
 
 /** Testability seam mirroring `StandupCommandDeps`/`ChangelogCommandDeps` — no `mock.module`. */
@@ -224,20 +159,5 @@ export async function runOncallCommand(
     ...(parsed.incidentId === undefined ? {} : { incidentId: parsed.incidentId }),
     ...(parsed.service === undefined ? {} : { service: parsed.service }),
   });
-
-  if (parsed.json) {
-    process.stdout.write(`${JSON.stringify(findings, null, 2)}\n`);
-    return;
-  }
-
-  // These transforms operate on the Markdown the brief already rendered — synthesis may have
-  // rewritten it into prose, and re-deriving output from `findings` here would silently discard
-  // that prose. See `format/slack-markdown.ts`.
-  const rendered =
-    parsed.format === "slack"
-      ? toSlackMrkdwn(brief)
-      : parsed.format === "plain"
-        ? toPlainText(brief)
-        : brief;
-  process.stdout.write(`${rendered}\n`);
+  writeBriefOutput(brief, findings, parsed);
 }

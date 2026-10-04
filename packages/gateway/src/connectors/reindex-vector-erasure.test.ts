@@ -24,8 +24,10 @@ const VEC_AVAILABLE = vecAvailable();
 // cannot fail" of exactly the kind flagged before in this codebase (see
 // scripts/coverage-floor/check.ts's `lcovHasBranchData` instrumentation
 // canary for the same pattern: fail loudly on infrastructure absence rather
-// than let a downstream check read a false, unearned pass). This is an
-// always-running (never skipIf'd) canary.
+// than let a downstream check read a false, unearned pass). This canary is
+// gated on the CI environment ONLY — never on `VEC_AVAILABLE` itself, which
+// would make it vacuous: it runs, and must pass, on every CI platform, and is
+// reported as SKIPPED (not as a silent pass) everywhere else.
 //
 // FATAL ON ALL THREE CI PLATFORMS. It was scoped to Linux from #1026 until the
 // macOS root cause was found, because it fired on `macos-15` and the note here
@@ -44,12 +46,12 @@ const VEC_AVAILABLE = vecAvailable();
 // original defect sit unread for five weeks. Platform equality is
 // non-negotiable #5: a platform where semantic search does not work is a
 // broken platform, not a tolerated one.
-test("CI must have sqlite-vec available on every platform", () => {
-  if (process.env["CI"] !== "true") {
-    return;
-  }
-  expect(VEC_AVAILABLE).toBe(true);
-});
+test.skipIf(process.env["CI"] !== "true")(
+  "CI must have sqlite-vec available on every platform",
+  () => {
+    expect(VEC_AVAILABLE).toBe(true);
+  },
+);
 
 function makeIdx(): LocalIndex {
   const db = new Database(":memory:");
@@ -104,7 +106,7 @@ describe.skipIf(!VEC_AVAILABLE)("metadata_only reindex — erasure completeness"
   // BUG 1: reindex.ts has zero references to embedding_chunk. A metadata_only
   // reindex nulls item.body/body_preview but leaves the plaintext chunk_text
   // sitting in embedding_chunk untouched and readable.
-  test("BUG 1: embedding_chunk rows must not survive a metadata_only reindex", async () => {
+  test("BUG 1: embedding_chunk rows must not survive a metadata_only reindex", () => {
     const idx = makeIdx();
     seedItem(idx, { id: "slack:1", service: "slack", body: "secret".repeat(200) });
     seedChunk(idx, {
@@ -115,7 +117,7 @@ describe.skipIf(!VEC_AVAILABLE)("metadata_only reindex — erasure completeness"
       text: "secret chunk text that must be erased",
     });
 
-    await reindexConnector({ index: idx, service: "slack", depth: "metadata_only" });
+    reindexConnector({ index: idx, service: "slack", depth: "metadata_only" });
 
     const remaining = idx.rawDb
       .query(`SELECT COUNT(*) AS c FROM embedding_chunk WHERE item_id = ?`)
@@ -133,7 +135,7 @@ describe.skipIf(!VEC_AVAILABLE)("metadata_only reindex — erasure completeness"
   // belongs to one of item1's OWN chunks. That is precisely the collision the
   // buggy code exploits: redacting item2 must not touch item1's vectors, and
   // must actually remove item2's own vector (vec_rowid 4).
-  test("BUG 2: vector delete must key off the chunk's vec_rowid, not the item's rowid", async () => {
+  test("BUG 2: vector delete must key off the chunk's vec_rowid, not the item's rowid", () => {
     const idx = makeIdx();
 
     seedItem(idx, { id: "other:item1", service: "other", body: "item1 body" });
@@ -152,7 +154,7 @@ describe.skipIf(!VEC_AVAILABLE)("metadata_only reindex — erasure completeness"
     // expose: item2's own rowid must equal one of item1's vec_rowids (not its own).
     expect(item2Rowid).toBe(2);
 
-    await reindexConnector({ index: idx, service: "target", depth: "metadata_only" });
+    reindexConnector({ index: idx, service: "target", depth: "metadata_only" });
 
     // (i) every vector belonging to the redacted item (vec_rowid 4) must be gone.
     const redactedVec = idx.rawDb
@@ -174,7 +176,7 @@ describe.skipIf(!VEC_AVAILABLE)("metadata_only reindex — erasure completeness"
   // invisible to every later run, including this fix's own. That is exactly
   // the population that already asked for erasure and didn't get it, and a
   // re-run must be able to repair them.
-  test("orphaned embedding_chunk rows are erased even when body/body_preview are already NULL", async () => {
+  test("orphaned embedding_chunk rows are erased even when body/body_preview are already NULL", () => {
     const idx = makeIdx();
     seedItemNoBody(idx, { id: "orphan:1", service: "orphan" });
     seedChunk(idx, {
@@ -185,7 +187,7 @@ describe.skipIf(!VEC_AVAILABLE)("metadata_only reindex — erasure completeness"
       text: "orphaned plaintext from a pre-fix metadata_only run",
     });
 
-    const result = await reindexConnector({
+    const result = reindexConnector({
       index: idx,
       service: "orphan",
       depth: "metadata_only",
@@ -233,8 +235,8 @@ describe.skipIf(!VEC_AVAILABLE)("metadata_only reindex — defensive branch cove
   // delete from at all. The per-chunk loop's explicit delete must throw
   // "no such table", isMissingVecTableError must recognize it and swallow it,
   // and the erasure of embedding_chunk (the actual data-minimization) must
-  // still complete without the promise rejecting.
-  test("tolerates a missing vec table: erasure completes, nothing throws", async () => {
+  // still complete without throwing.
+  test("tolerates a missing vec table: erasure completes, nothing throws", () => {
     const idx = makeNoVecIdx();
     seedItem(idx, { id: "novec:1", service: "novec", body: "secret".repeat(50) });
     idx.rawDb.run(
@@ -243,9 +245,11 @@ describe.skipIf(!VEC_AVAILABLE)("metadata_only reindex — defensive branch cove
       ["novec:1", "chunk text", 1, Date.now()],
     );
 
-    await expect(
-      reindexConnector({ index: idx, service: "novec", depth: "metadata_only" }),
-    ).resolves.toEqual({ itemsAffected: 1, depth: "metadata_only", mode: "shallow" });
+    expect(reindexConnector({ index: idx, service: "novec", depth: "metadata_only" })).toEqual({
+      itemsAffected: 1,
+      depth: "metadata_only",
+      mode: "shallow",
+    });
 
     const remaining = idx.rawDb
       .query(`SELECT COUNT(*) AS c FROM embedding_chunk WHERE item_id = ?`)
@@ -257,7 +261,7 @@ describe.skipIf(!VEC_AVAILABLE)("metadata_only reindex — defensive branch cove
   // to be NULL (there's no vec table to point at). The per-chunk loop must
   // skip such a row (never attempt a delete keyed on a null rowid) while still
   // erasing its embedding_chunk row via the unconditional delete above it.
-  test("tolerates a NULL vec_rowid: skips the vec delete, still erases the chunk row", async () => {
+  test("tolerates a NULL vec_rowid: skips the vec delete, still erases the chunk row", () => {
     const idx = makeNoVecIdx();
     seedItem(idx, { id: "novec:2", service: "novec", body: "secret".repeat(50) });
     idx.rawDb.run(
@@ -266,9 +270,11 @@ describe.skipIf(!VEC_AVAILABLE)("metadata_only reindex — defensive branch cove
       ["novec:2", "chunk text", Date.now()],
     );
 
-    await expect(
-      reindexConnector({ index: idx, service: "novec", depth: "metadata_only" }),
-    ).resolves.toEqual({ itemsAffected: 1, depth: "metadata_only", mode: "shallow" });
+    expect(reindexConnector({ index: idx, service: "novec", depth: "metadata_only" })).toEqual({
+      itemsAffected: 1,
+      depth: "metadata_only",
+      mode: "shallow",
+    });
 
     const remaining = idx.rawDb
       .query(`SELECT COUNT(*) AS c FROM embedding_chunk WHERE item_id = ?`)
@@ -285,7 +291,7 @@ describe.skipIf(!VEC_AVAILABLE)("metadata_only reindex — defensive branch cove
   // seeds the row directly to exercise it: the loop must skip a chunk whose
   // `dims` isn't a table this codebase knows how to route to, rather than
   // guess a table name and blow up.
-  test("tolerates an unsupported dims value: skips the vec delete, still erases the chunk row", async () => {
+  test("tolerates an unsupported dims value: skips the vec delete, still erases the chunk row", () => {
     const idx = makeIdx();
     seedItem(idx, { id: "weird:1", service: "weird", body: "secret".repeat(50) });
     idx.rawDb.run(
@@ -294,9 +300,11 @@ describe.skipIf(!VEC_AVAILABLE)("metadata_only reindex — defensive branch cove
       ["weird:1", "chunk text", Date.now()],
     );
 
-    await expect(
-      reindexConnector({ index: idx, service: "weird", depth: "metadata_only" }),
-    ).resolves.toEqual({ itemsAffected: 1, depth: "metadata_only", mode: "shallow" });
+    expect(reindexConnector({ index: idx, service: "weird", depth: "metadata_only" })).toEqual({
+      itemsAffected: 1,
+      depth: "metadata_only",
+      mode: "shallow",
+    });
 
     const remaining = idx.rawDb
       .query(`SELECT COUNT(*) AS c FROM embedding_chunk WHERE item_id = ?`)
@@ -315,7 +323,7 @@ describe.skipIf(!VEC_AVAILABLE)("metadata_only reindex — defensive branch cove
   // so `DELETE FROM vec_items_384 WHERE rowid = ?` throws a genuine SQLite
   // error — "no such column: rowid" — that does not match "no such table" and
   // must not be swallowed.
-  test("a genuine non-missing-table vec delete failure propagates and rolls back", async () => {
+  test("a genuine non-missing-table vec delete failure propagates and rolls back", () => {
     const idx = makeIdx();
     idx.rawDb.run(`DROP TRIGGER IF EXISTS embedding_chunk_ad_delete_vec384`);
     idx.rawDb.run(`DROP TABLE vec_items_384`);
@@ -333,9 +341,9 @@ describe.skipIf(!VEC_AVAILABLE)("metadata_only reindex — defensive branch cove
       ["broken:1", "chunk text", Date.now()],
     );
 
-    await expect(
+    expect(() =>
       reindexConnector({ index: idx, service: "broken", depth: "metadata_only" }),
-    ).rejects.toThrow(/no such column/i);
+    ).toThrow(/no such column/i);
 
     // Fail-closed: the throw must roll back the WHOLE transaction, not just
     // stop short. The item's body must survive untouched — a real failure

@@ -19,6 +19,7 @@ import {
   type RpcMethodHandlerMap,
   type RpcMissOrHit,
 } from "./_lib/dispatch-by-method.ts";
+import { requireNonEmptyStringParam, stringArrayAllOrNothing } from "./rpc-params.ts";
 
 /** A `ComputerRpcError` carries the JSON-RPC error code surfaced by the dispatcher chain. */
 export class ComputerRpcError extends Error {
@@ -39,30 +40,9 @@ export interface ComputerRpcCtx {
   readonly actionConsent: CuActionConsentBroker;
 }
 
-/**
- * Module-private, matching `exec-rpc.ts`.
- *
- * There is no shared IPC validation module: `requireString` is redefined across several files
- * under `ipc/`. Consolidating them is a worthwhile cleanup but would put most of this feature's
- * diff in unrelated RPC modules, so it is deliberately left alone here.
- */
+/** `ERR_INVALID_PARAMS: <key> (non-empty string) required`, as a `ComputerRpcError`. */
 function requireString(params: unknown, key: string): string {
-  const rec = asRecord(params);
-  const v = rec === undefined ? undefined : rec[key];
-  if (typeof v !== "string" || v.length === 0) {
-    throw new ComputerRpcError(-32602, `ERR_INVALID_PARAMS: ${key} (non-empty string) required`);
-  }
-  return v;
-}
-
-/**
- * Every element must be a string; a non-array or a mixed array yields an EMPTY origin list, never
- * a partial one -- a half-parsed grant set is a grant the caller did not ask for, and silently
- * dropping the bad element would hand the session an origin allowlist nobody chose.
- */
-function stringArray(v: unknown): string[] {
-  if (!Array.isArray(v)) return [];
-  return v.every((e) => typeof e === "string") ? [...(v as string[])] : [];
+  return requireNonEmptyStringParam(params, key, ComputerRpcError);
 }
 
 /**
@@ -171,8 +151,10 @@ const HANDLERS: RpcMethodHandlerMap<ComputerRpcCtx> = {
       lane === "browser"
         ? {
             lane,
-            navigateOrigins: stringArray(rec["navigateOrigins"]),
-            scriptOrigins: stringArray(rec["scriptOrigins"]),
+            // All or nothing: a mixed array is an EMPTY origin list, never the partial allowlist
+            // its string elements would make — a set of origins nobody chose.
+            navigateOrigins: stringArrayAllOrNothing(rec["navigateOrigins"]),
+            scriptOrigins: stringArrayAllOrNothing(rec["scriptOrigins"]),
             ...bounds,
           }
         : {

@@ -9,9 +9,9 @@ import { cliEnvFor } from "./local-auth-env.ts";
 import type { LocalAuthHostDeps } from "./local-auth-host.ts";
 import {
   type AwsFinding,
-  GCP_PROJECT_ID,
   type GcloudFinding,
   type GhFinding,
+  isGcpProjectId,
   type KubectlFinding,
   LOCAL_AUTH_ERR,
   LOCAL_AUTH_SERVICE,
@@ -52,8 +52,11 @@ export interface AdoptSuccess {
   readonly scopes: readonly string[];
 }
 
-/** gh prints `gho_…`, `ghp_…` or `github_pat_…`: word characters only. */
-const TOKEN_SHAPE = /^[A-Za-z0-9_]{20,255}$/;
+/**
+ * gh prints `gho_…`, `ghp_…` or `github_pat_…`: word characters only. (`\w` is exactly
+ * `[A-Za-z0-9_]` here — it widens only under the `u` + `i` flags, which this pattern does not set.)
+ */
+const TOKEN_SHAPE = /^\w{20,255}$/;
 
 function fail(code: string, text: string): never {
   throw new ConnectorRpcError(-32602, `${code}: ${text}`);
@@ -185,7 +188,7 @@ function resolveTarget(req: AdoptRequest, findings: readonly LocalAuthFinding[])
           "gcloud has no default project — pass a project id",
         );
       }
-      if (!GCP_PROJECT_ID.test(project)) {
+      if (!isGcpProjectId(project)) {
         return fail("ERR_INVALID_PARAMS", `"${project}" is not a GCP project id`);
       }
       return { source: "gcloud", finding: f, project };

@@ -18,8 +18,8 @@
  * every hybrid-mode user's whole library through OpenAI on the next embed pass.
  */
 
+import { namedTags } from "./_lib/field-helpers.ts";
 import type { MappedRow } from "./mapped-row.ts";
-import { tagNames } from "./readwise-highlight-mapping.ts";
 import { asRecord, numberField, stringField } from "./unknown-record.ts";
 
 export interface ReadwiseBookMappingContext {
@@ -78,7 +78,7 @@ export function mapReadwiseBookToItem(
   const sourceUrl = trimmedField(row, "source_url");
   const highlightsUrl = trimmedField(row, "highlights_url");
   const numHighlights = numberField(row, "num_highlights") ?? null;
-  const tags = tagNames(row["tags"]);
+  const tags = namedTags(row["tags"]);
 
   const lastHighlightAt = parseIsoMs(row["last_highlight_at"]);
   const updatedAt = parseIsoMs(row["updated"]);

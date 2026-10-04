@@ -1,3 +1,4 @@
+import { syncPassCursorSuccess } from "../sync/pass-cursor-sync-result.ts";
 import type { Syncable, SyncContext, SyncResult } from "../sync/types.ts";
 import {
   deltaKey,
@@ -147,26 +148,12 @@ export function createTeamsSyncable(options: TeamsSyncableOptions): Syncable {
       }
 
       if (state.pairs.length === 0) {
-        return {
-          cursor: encodeTeamsSyncCursor(state),
-          itemsUpserted: 0,
-          itemsDeleted: 0,
-          hasMore: false,
-          durationMs: Math.round(performance.now() - t0),
-          bytesTransferred,
-        };
+        return syncPassCursorSuccess(t0, bytesTransferred, encodeTeamsSyncCursor(state), 0);
       }
 
       const pair = state.pairs[state.pairIdx];
       if (pair === undefined) {
-        return {
-          cursor: encodeTeamsSyncCursor(state),
-          itemsUpserted: 0,
-          itemsDeleted: 0,
-          hasMore: false,
-          durationMs: Math.round(performance.now() - t0),
-          bytesTransferred,
-        };
+        return syncPassCursorSuccess(t0, bytesTransferred, encodeTeamsSyncCursor(state), 0);
       }
 
       const key = deltaKey(pair.teamId, pair.channelId);

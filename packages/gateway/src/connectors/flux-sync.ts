@@ -2,6 +2,7 @@ import { FLUX_KINDS, trimTrailingSlash } from "@nimbus-dev/sdk";
 import { syncPassCursorSuccess } from "../sync/pass-cursor-sync-result.ts";
 import { type Syncable, type SyncContext, type SyncResult, syncNoopResult } from "../sync/types.ts";
 import { connectorFetch } from "./_lib/fetch-outcome.ts";
+import { upsertMapped } from "./_lib/paginated-sync.ts";
 import { mapFluxResourceToItem } from "./flux-resource-mapping.ts";
 import { encodeNimbusJsonCursor } from "./nimbus-json-cursor.ts";
 import { asRecord } from "./unknown-record.ts";
@@ -61,9 +62,19 @@ export function createFluxSyncable(options: FluxSyncableOptions): Syncable {
       let totalBytes = 0;
       let totalUpserted = 0;
 
-      for (const entry of FLUX_KINDS) {
-        const path = `/apis/${entry.group}/${entry.version}/${entry.plural}`;
-        const outcome = await agGet(ctx, creds, path);
+      // One read-only GET per Flux kind. FLUX_KINDS is a small, fixed SDK list of independent
+      // endpoints, so they are fetched concurrently. The outcomes are then handled in FLUX_KINDS
+      // order, so the index writes and this loop's per-kind warnings land exactly as a
+      // one-at-a-time walk leaves them; only `connectorFetch`'s own per-request failure log
+      // follows completion order.
+      const fetched = await Promise.all(
+        FLUX_KINDS.map(async (entry) => {
+          const path = `/apis/${entry.group}/${entry.version}/${entry.plural}`;
+          return { entry, path, outcome: await agGet(ctx, creds, path) };
+        }),
+      );
+
+      for (const { entry, path, outcome } of fetched) {
         totalBytes += outcome.bytes;
         if (outcome.kind !== "ok") {
           ctx.logger.warn(
@@ -72,14 +83,9 @@ export function createFluxSyncable(options: FluxSyncableOptions): Syncable {
           );
           continue;
         }
-        for (const raw of extractItems(outcome.parsed)) {
-          const mapped = mapFluxResourceToItem(raw, { kind: entry.kind, syncedAt: now });
-          if (mapped === null) {
-            continue;
-          }
-          ctx.upsertItem(mapped);
-          totalUpserted += 1;
-        }
+        totalUpserted += upsertMapped(ctx, extractItems(outcome.parsed), (raw) =>
+          mapFluxResourceToItem(raw, { kind: entry.kind, syncedAt: now }),
+        );
       }
 
       return syncPassCursorSuccess(t0, totalBytes, pass1Cursor(), totalUpserted);

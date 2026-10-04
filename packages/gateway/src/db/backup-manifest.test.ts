@@ -2,6 +2,8 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { blake3 } from "@noble/hashes/blake3.js";
+import { bytesToHex } from "@noble/hashes/utils.js";
 import { blake3HashFile, buildManifest, verifyManifest } from "./backup-manifest.ts";
 
 const tempDirs: string[] = [];
@@ -76,6 +78,46 @@ describe("backup manifest", () => {
     });
     expect(m.version).toBe(2);
     expect(m.schema_version).toBe(21);
+  });
+
+  test("buildManifest pairs every digest with its own file and keeps the caller's key order", async () => {
+    // The digests are computed concurrently. Distinct contents make a swapped pairing visible, the
+    // expected values come from hashing the KNOWN bytes directly (an oracle independent of
+    // `blake3HashFile`), and the key order is pinned separately because `toEqual` ignores it —
+    // that order is the order `manifest.json` is written in.
+    const dir = tmp();
+    const contents: Record<string, string> = {
+      "vault-manifest.json.enc": "vault-bytes",
+      "watchers.json": "[]",
+      "audit-chain.json": '[{"seq":1}]',
+    };
+    const files: Record<string, string> = {};
+    for (const [name, body] of Object.entries(contents)) {
+      const p = join(dir, name);
+      writeFileSync(p, body);
+      files[name] = p;
+    }
+    const m = await buildManifest({
+      bundleDir: dir,
+      nimbusVersion: "0.1.0",
+      schemaVersion: 21,
+      platform: "linux",
+      contents: {
+        index_rows: 0,
+        vault_entries: 0,
+        watchers: 0,
+        workflows: 0,
+        extensions: 0,
+        profiles: 0,
+      },
+      files,
+      indexIncluded: false,
+    });
+    const digestOf = (s: string): string => bytesToHex(blake3(new TextEncoder().encode(s)));
+    expect(m.hashes).toEqual(
+      Object.fromEntries(Object.entries(contents).map(([name, body]) => [name, digestOf(body)])),
+    );
+    expect(Object.keys(m.hashes)).toEqual(Object.keys(contents));
   });
 
   test("verifyManifest accepts both version=1 (legacy) and version=2 (current) shapes", async () => {

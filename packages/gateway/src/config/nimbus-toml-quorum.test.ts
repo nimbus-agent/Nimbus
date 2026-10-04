@@ -56,3 +56,46 @@ describe("[hitl.quorum] config", () => {
     expect(parseQuorumConfig(raw).has("x.y")).toBe(false);
   });
 });
+
+describe("[hitl.quorum] — a malformed header never weakens the PREVIOUS rule (I21)", () => {
+  const strict = ['[hitl.quorum."slack.message.post"]', "approvers = 3", "window_seconds = 600"];
+  const weak = ["approvers = 1", "window_seconds = 60"];
+
+  // Each of these headers used to leave the scanner on the previous, VALID table, so the
+  // `approvers = 1` written under it silently replaced `slack.message.post`'s 3 approvers: a typo
+  // in one rule turned a 3-of-N quorum on another into a 1-of-N one.
+  it.each([
+    ["missing its closing bracket", '[hitl.quorum."jira.issue.create"'],
+    ["whose quote never closes", '[hitl.quorum."jira.issue.create]'],
+    ["with text after its closing bracket", '[hitl.quorum."jira.issue.create"] approvers = 1'],
+  ])("a header %s ends the previous rule and opens none", (_label, header) => {
+    const cfg = parseQuorumConfig([...strict, header, ...weak].join("\n"));
+    expect(cfg.get("slack.message.post")).toEqual({ approvers: 3, windowSeconds: 600 });
+    expect([...cfg.keys()]).toEqual(["slack.message.post"]);
+  });
+
+  it("a bracketed header with text between its closing quote and bracket opens no rule", () => {
+    // Recognised as a header but not as a quorum one, so the previous rule ends here too.
+    const cfg = parseQuorumConfig(
+      [...strict, '[hitl.quorum."jira.issue.create"x]', ...weak].join("\n"),
+    );
+    expect(cfg.get("slack.message.post")).toEqual({ approvers: 3, windowSeconds: 600 });
+    expect([...cfg.keys()]).toEqual(["slack.message.post"]);
+  });
+
+  it("a VALID header after a malformed one still opens its own rule", () => {
+    const cfg = parseQuorumConfig(
+      [
+        ...strict,
+        '[hitl.quorum."jira.issue.create"',
+        ...weak,
+        '[hitl.quorum."db.schema.drop"]',
+        "approvers = 2",
+        "window_seconds = 300",
+      ].join("\n"),
+    );
+    expect(cfg.get("slack.message.post")).toEqual({ approvers: 3, windowSeconds: 600 });
+    expect(cfg.get("db.schema.drop")).toEqual({ approvers: 2, windowSeconds: 300 });
+    expect(cfg.has("jira.issue.create")).toBe(false);
+  });
+});

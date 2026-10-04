@@ -5,6 +5,7 @@ import {
 } from "../sync/pass-cursor-sync-result.ts";
 import { type Syncable, type SyncContext, type SyncResult, syncNoopResult } from "../sync/types.ts";
 import { connectorFetch } from "./_lib/fetch-outcome.ts";
+import { upsertMapped } from "./_lib/paginated-sync.ts";
 import { mapLaunchDarklyFlagToItem } from "./launchdarkly-flag-mapping.ts";
 import { encodeNimbusJsonCursor } from "./nimbus-json-cursor.ts";
 import { asRecord, stringField } from "./unknown-record.ts";
@@ -88,20 +89,13 @@ function upsertFlags(
   flags: readonly unknown[],
   now: number,
 ): number {
-  let upserted = 0;
-  for (const f of flags) {
-    const mapped = mapLaunchDarklyFlagToItem(f, {
+  return upsertMapped(ctx, flags, (f) =>
+    mapLaunchDarklyFlagToItem(f, {
       baseUrl: creds.baseUrl,
       projectKey,
       syncedAt: now,
-    });
-    if (mapped === null) {
-      continue;
-    }
-    ctx.upsertItem(mapped);
-    upserted += 1;
-  }
-  return upserted;
+    }),
+  );
 }
 
 type ProjectKeysOutcome =
@@ -169,7 +163,7 @@ export function createLaunchdarklySyncable(options: LaunchdarklySyncableOptions)
       const now = Date.now();
       let totalUpserted = 0;
       for (const projectKey of resolved.keys) {
-        const result = await syncProjectFlags(ctx, creds, projectKey, now);
+        const result = await syncProjectFlags(ctx, creds, projectKey, now); // NOSONAR S9382: one project at a time through the shared LaunchDarkly rate limiter - each project paginates its flags (until a short page) and the project list is uncapped
         totalUpserted += result.upserted;
         totalBytes += result.bytes;
       }

@@ -69,9 +69,9 @@ test("unknown tribal.* method is a miss", async () => {
   expect(out.kind).toBe("miss");
 });
 
-test("tribal.dismiss rejects a non-object params payload (requireString guard)", async () => {
+test("tribal.dismiss rejects a non-object params payload (requireStringParam guard)", async () => {
   // A non-object (string) params hits the `rec === null || typeof rec !== "object"` arm of
-  // requireString — the value reads as undefined → ERR_INVALID_PARAMS.
+  // requireStringParam (rpc-params.ts) — the value reads as undefined → ERR_INVALID_PARAMS.
   await expect(dispatchTribalRpc("tribal.dismiss", "not-an-object", makeCtx())).rejects.toThrow(
     /clusterId/,
   );

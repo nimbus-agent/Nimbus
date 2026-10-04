@@ -71,7 +71,7 @@ export async function runEmbeddingThroughputOnce(
 
   const t0 = performance.now();
   for (let i = 0; i < texts.length; i += opts.batch) {
-    await embedder.embed(texts.slice(i, i + opts.batch));
+    await embedder.embed(texts.slice(i, i + opts.batch)); // NOSONAR S9382: S8 measures throughput AT this batch size - overlapping batches would measure concurrency on one inference session instead
   }
   const elapsed = performance.now() - t0;
   if (elapsed <= 0) return [0];

@@ -11,6 +11,7 @@ import {
   detectMissingRelationToEntityType,
   remediationForEntityType,
 } from "./_lib/gap-notes.ts";
+import { subAgent } from "./_lib/sub-agent.ts";
 import type { SynthesisRunner } from "./_lib/synthesis-llm.ts";
 
 /**
@@ -151,22 +152,6 @@ function topLaneStream(
   return winner === undefined ? {} : { stream: winner };
 }
 
-function makeSubAgent(
-  taskType: "agent_step",
-  fn: (db: Database, input: string) => Promise<SubAgentResult>,
-  db: Database,
-  input: string,
-): SubTask {
-  return {
-    taskType,
-    prompt: "",
-    execute: async () => {
-      const out = await fn(db, input);
-      return { text: JSON.stringify(out), tokensIn: 0, tokensOut: 0 };
-    },
-  };
-}
-
 export async function runExpert(input: ExpertInput, ctx: ExpertContext): Promise<ExpertBrief> {
   const start = performance.now();
   const limit = Math.min(input.limit ?? DEFAULT_LIMIT, MAX_LIMIT);
@@ -200,15 +185,15 @@ export async function runExpert(input: ExpertInput, ctx: ExpertContext): Promise
   const tasks: SubTask[] =
     itemUrl === undefined
       ? [
-          makeSubAgent("agent_step", subBlame, ctx.db, topic),
-          makeSubAgent("agent_step", subPrAuthored, ctx.db, topic),
-          makeSubAgent("agent_step", subPrReviewed, ctx.db, topic),
-          makeSubAgent("agent_step", subIncidentResolved, ctx.db, topic),
-          makeSubAgent("agent_step", subChatMentions, ctx.db, topic),
+          subAgent(() => subBlame(ctx.db, topic)),
+          subAgent(() => subPrAuthored(ctx.db, topic)),
+          subAgent(() => subPrReviewed(ctx.db, topic)),
+          subAgent(() => subIncidentResolved(ctx.db, topic)),
+          subAgent(() => subChatMentions(ctx.db, topic)),
         ]
       : [
-          makeSubAgent("agent_step", subItemOpened, ctx.db, itemUrl),
-          makeSubAgent("agent_step", subItemResolvedBy, ctx.db, itemUrl),
+          subAgent(() => subItemOpened(ctx.db, itemUrl)),
+          subAgent(() => subItemResolvedBy(ctx.db, itemUrl)),
         ];
 
   const results = await coordinator.run(tasks);
@@ -298,7 +283,7 @@ function itemUnreachableGap(itemUrl: string): GapNote {
 }
 
 /** `person --opened--> item`: the one person edge `syncIssueGraph` writes directly. */
-async function subItemOpened(db: Database, itemUrl: string): Promise<SubAgentResult> {
+function subItemOpened(db: Database, itemUrl: string): SubAgentResult {
   const target = itemEntityFor(db, itemUrl);
   if (target === null) return { gap: itemUnreachableGap(itemUrl) };
 
@@ -339,7 +324,7 @@ async function subItemOpened(db: Database, itemUrl: string): Promise<SubAgentRes
  * incident reaches people through this lane alone: `syncIncidentGraph` writes no person
  * edge of its own, which is a real bound and why the empty case gaps rather than pretends.
  */
-async function subItemResolvedBy(db: Database, itemUrl: string): Promise<SubAgentResult> {
+function subItemResolvedBy(db: Database, itemUrl: string): SubAgentResult {
   const target = itemEntityFor(db, itemUrl);
   if (target === null) return { gap: itemUnreachableGap(itemUrl) };
 
@@ -370,7 +355,7 @@ async function subItemResolvedBy(db: Database, itemUrl: string): Promise<SubAgen
   return topLaneStream(rows, "pr_authored", 0.8);
 }
 
-async function subBlame(db: Database, input: string): Promise<SubAgentResult> {
+function subBlame(db: Database, input: string): SubAgentResult {
   const commits = db
     .query(
       `SELECT
@@ -398,7 +383,7 @@ async function subBlame(db: Database, input: string): Promise<SubAgentResult> {
   return topLaneStream(commits, "commit_authored", 1);
 }
 
-async function subPrAuthored(db: Database, input: string): Promise<SubAgentResult> {
+function subPrAuthored(db: Database, input: string): SubAgentResult {
   const ninetyDaysAgo = Date.now() - 90 * 24 * 60 * 60 * 1000;
   const rows = db
     .query(
@@ -481,7 +466,7 @@ function detectUnresolvedReviewedRelation(db: Database): GapNote | null {
   };
 }
 
-export async function subPrReviewed(db: Database, input: string): Promise<SubAgentResult> {
+export function subPrReviewed(db: Database, input: string): SubAgentResult {
   const rows = db
     .query(
       `SELECT
@@ -524,7 +509,7 @@ export async function subPrReviewed(db: Database, input: string): Promise<SubAge
  * `syncIncidentPersonEdges` is the only emitter of `resolves` edges whose
  * source is a `person` entity (see that function's doc comment).
  */
-export async function subIncidentResolved(db: Database, input: string): Promise<SubAgentResult> {
+export function subIncidentResolved(db: Database, input: string): SubAgentResult {
   const rows = db
     .query(
       `SELECT
@@ -569,7 +554,7 @@ export async function subIncidentResolved(db: Database, input: string): Promise<
   return topLaneStream(rows, "incident_resolved", 0.8);
 }
 
-async function subChatMentions(db: Database, input: string): Promise<SubAgentResult> {
+function subChatMentions(db: Database, input: string): SubAgentResult {
   const rows = db
     .query(
       `SELECT

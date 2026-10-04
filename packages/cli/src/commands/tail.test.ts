@@ -757,4 +757,83 @@ describe("runTailCommand lifecycle", () => {
     process.emit("SIGINT");
     await done;
   });
+
+  test("the gateway closing the connection ends the stream with exit 1 and leaks no listener", async () => {
+    // The OTHER way out besides Ctrl+C: a gateway that stops (or crashes) under a running tail.
+    // That must end the command with a non-zero status, not leave it hanging on a dead socket.
+    const before = {
+      sigint: process.listenerCount("SIGINT"),
+      sigterm: process.listenerCount("SIGTERM"),
+      stdoutError: process.stdout.listenerCount("error"),
+    };
+    let closeHandler: ((err: Error) => void) | undefined;
+    let disconnects = 0;
+    const err: string[] = [];
+    const client = {
+      onNotification: () => {},
+      onClose: (h: (err: Error) => void) => {
+        closeHandler = h;
+      },
+      disconnect: async () => {
+        disconnects += 1;
+      },
+    };
+    const done = runTailCommand([], {
+      connect: async () => client,
+      // Never opened: `connect` is injected, so this only has to be a string.
+      readState: async () => ({ socketPath: "unused-socket-path" }),
+      writeOut: () => {},
+      writeErr: (l) => err.push(l),
+      onExit: () => {},
+    });
+    try {
+      await nextMacrotask();
+      expect(closeHandler).toBeDefined();
+      closeHandler?.(new Error("socket closed"));
+      await done;
+      expect(err).toEqual(["[nimbus tail] Gateway connection closed.\n"]);
+      expect(process.exitCode).toBe(1);
+      // The socket is already gone -- there is nothing to disconnect from.
+      expect(disconnects).toBe(0);
+      expect(process.listenerCount("SIGINT")).toBe(before.sigint);
+      expect(process.listenerCount("SIGTERM")).toBe(before.sigterm);
+      expect(process.stdout.listenerCount("error")).toBe(before.stdoutError);
+    } finally {
+      // finish(1) set the REAL exit code; leaving it would fail the whole test run.
+      process.exitCode = 0;
+    }
+  });
+
+  test("--json passes a params-less gateway.event through raw: it has no category, so a filter keeps it", async () => {
+    // The text-mode side (rendered as nothing) is the malformed-notification test above.
+    const h = harness();
+    const done = runTailCommand(["--json", "--filter", "sync"], h.deps);
+    await nextMacrotask();
+    // Both subscriptions exist, so the drop below is the filter's doing, not a missing handler's.
+    expect(Object.keys(h.handlers).sort()).toEqual(["connector.healthChanged", "gateway.event"]);
+    // The filter is live: a connector event it did not name is dropped...
+    h.handlers["connector.healthChanged"]?.({
+      name: "github",
+      health: "error",
+      fromState: "healthy",
+      reason: null,
+      occurredAt: 1,
+    });
+    // ...while the params-less event, with no category to be excluded by, goes out raw.
+    h.handlers["gateway.event"]?.(null);
+    expect(h.out).toEqual([`${JSON.stringify({ method: "gateway.event", params: null })}\n`]);
+    process.emit("SIGINT");
+    await done;
+  });
+});
+
+describe("renderEvent -- oncall.briefPushed without an incident id", () => {
+  test("is shown raw as an unknown event, never as a brief 'for null'", () => {
+    const line = renderEvent("gateway.event", {
+      kind: "oncall.briefPushed",
+      ts: 0,
+      payload: { status: "ok" },
+    });
+    expect(line).toBe('1970-01-01T00:00:00.000Z [unknown: oncall.briefPushed] {"status":"ok"}');
+  });
 });

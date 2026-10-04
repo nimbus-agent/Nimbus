@@ -1072,6 +1072,18 @@ export async function tryDispatchProfileRpc(
   return phase4RpcSkipped;
 }
 
+/**
+ * The platform `data.*` records (`data.export` stamps it into the bundle manifest): the host's own
+ * when it is one of the three Nimbus supports, else `"linux"`. A pure function of its argument so
+ * every arm is provable on any OS — read from `process.platform` inline, only the arm of whichever
+ * OS ran the suite was ever reachable, and the coverage run is Linux-only.
+ */
+export function dataRpcPlatform(hostPlatform: NodeJS.Platform): "win32" | "darwin" | "linux" {
+  if (hostPlatform === "win32") return "win32";
+  if (hostPlatform === "darwin") return "darwin";
+  return "linux";
+}
+
 export async function tryDispatchDataRpc(
   ctx: ServerCtx,
   method: string,
@@ -1080,10 +1092,7 @@ export async function tryDispatchDataRpc(
 ): Promise<unknown> {
   if (!method.startsWith("data.")) return phase4RpcSkipped;
   try {
-    let rpcPlatform: "win32" | "darwin" | "linux";
-    if (process.platform === "win32") rpcPlatform = "win32";
-    else if (process.platform === "darwin") rpcPlatform = "darwin";
-    else rpcPlatform = "linux";
+    const rpcPlatform = dataRpcPlatform(process.platform);
     const stubDispatcher: ConnectorDispatcher = {
       dispatch(): Promise<unknown> {
         return Promise.reject(new Error("IPC-native gate does not dispatch to MCP"));
@@ -1177,13 +1186,15 @@ function handleLanLocalRpc(ctx: ServerCtx, method: string, params: unknown): unk
   }
 }
 
-export async function tryDispatchLanRpc(
+export function tryDispatchLanRpc(
   ctx: ServerCtx,
   method: string,
   params: unknown,
 ): Promise<unknown> {
-  if (!method.startsWith("lan.")) return phase4RpcSkipped;
-  return handleLanLocalRpc(ctx, method, params);
+  if (!method.startsWith("lan.")) return Promise.resolve(phase4RpcSkipped);
+  // `handleLanLocalRpc` is synchronous; `Promise.try` keeps the dispatcher-table contract, so its
+  // `RpcMethodError` still arrives as a rejection.
+  return Promise.try(() => handleLanLocalRpc(ctx, method, params));
 }
 
 export async function tryDispatchPolicyRpc(
@@ -1281,7 +1292,7 @@ export async function tryDispatchTribalRpc(
     const dispatcher = ctx.options.tribalConnectorDispatcher;
     const index = ctx.options.localIndex;
     if (dispatcher === undefined || index === undefined) {
-      return rpc.capture(clusterId, target, async () => ({ status: "rejected" }));
+      return rpc.capture(clusterId, target, () => Promise.resolve({ status: "rejected" }));
     }
     // I29: tribal capture dispatches a real connector write (notion/confluence KB append) — an
     // outbound event — so this executor carries the egress sink (append-before-dispatch).

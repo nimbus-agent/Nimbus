@@ -18,6 +18,114 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
 
 ## Post-Phase-6 deliveries
 
+- **2026-10-04 — Quality sweep: the SonarCloud backlog cleared, duplication down by a third, and
+  about 2,900 tests added.** On 2026-09-29 SonarCloud's TypeScript analyzer gained four rules:
+  `typescript:S9382` (promises awaited sequentially in a loop), `typescript:S7503` (async functions
+  that use no async feature), `typescript:S9383` (unhandled promises, a BUG-type rule) and
+  `typescript:S9381` (nested promises). With the older backlog they left 448 open findings on
+  `main` (439 code smells, 9 bugs). All 448 are addressed: 307 fixed in code and 141 suppressed.
+  By rule: S7503 ×180 (all fixed), S9382 ×177 (36 fixed, 141 suppressed), S3776 ×23, S3358 ×17,
+  S9383 ×9, S4624 ×6, S7778 ×5, S5906 ×4, S7763 ×3, S7781 ×3, S6582 ×2, S8786 ×2, S8968 ×2, and
+  one each of S2301, S2699, S3735, S4043, S4144, S5843, S5976, S6353, S6551, S7718, S7744, S7746,
+  S7780, S9381 and `c:S886`. Every finding outside S9382 was fixed in code. Two of them, S8786 in
+  `cli/src/format/slack-markdown.ts`, were real super-linear regexes: a long unclosed link title or
+  heading separator took seconds to render. Both now run in linear time. The link pattern became a
+  hand-written scan, the heading pattern a regex that cannot backtrack, and time-bounded tests
+  guard both. Merging `main` brought two more, both in #1600's new ChatOps sink in
+  `oncall-push/push-sinks.ts`: an S3358, fixed, and an S9382, suppressed. That makes 450 in all,
+  308 fixed and 142 suppressed.
+  **Suppressions follow one written rule, and no rule was disabled.** No Sonar, coverage or
+  duplication exclusion was added either. Every suppression is a trailing
+  `// NOSONAR S9382: <reason>` on the reported line, used only where a loop must stay sequential.
+  A loop became `Promise.all` only when its iterations were independent, had no
+  ordering-observable side effect, needed no fail-fast stop, had a bounded fan-out, and sat outside
+  any transaction or serialized resource. The loops that stay sequential are mostly paginated walks,
+  shared per-provider rate limiters, fail-fast or fail-closed ordering (I16, I19, I23/I29, the
+  toolgen pre-consent gate), process spawns, and Vault writes. The Vault writes stay serial because
+  the macOS Keychain backend's `.keyindex.json` is an unlocked read-modify-write. S7503 followed a
+  three-way rule that never turns a rejection into a synchronous throw:
+  - make the function synchronous when no caller needs a Promise;
+  - return `Promise.resolve` when the body cannot throw;
+  - use `Promise.try` or a restructure when it can.
+
+  The duplication pass then folded six marked loops into two shared helpers and added one, and the
+  #1600 headline loop added one more, so 139 markers remain. Each is listed with its reason in
+  [`sonarqube-rule-tuning.md`](./structure-audit/sonarqube-rule-tuning.md#2026-10-03--sonarcloud-rules-s9382--s7503--s9383--s9381-added-to-the-analyzer).
+  **User-visible changes.** The sweep set out to change no behaviour. These are the exceptions,
+  and every one is a fix:
+  - `nimbus security scan` no longer hangs. It had waited forever since #515 (2026-06-04),
+    `--fail-on-finding` in CI included. The gateway runs the scan inside the `security.scan` call,
+    so `security.scanDone` reaches the CLI BEFORE the reply that names the job, and the CLI dropped
+    any event for a job it did not know yet. It now holds such events and replays them once the
+    reply names the job.
+  - `nimbus test` now awaits `runContractTests`. Before, a manifest that violated the extension
+    contract printed `Extension contract OK.` and leaked an unhandled rejection. Now it fails with
+    the contract error.
+  - A `[hitl.quorum.*]` or `[federation.preflight.*]` sub-table header missing its closing `]` no
+    longer files the following keys into the PREVIOUS table. The `[llm.*]` collector already dropped
+    such keys, and the three now share one implementation. Before, a typo could lower an earlier
+    action's I21 quorum (`approvers = 3` read as 1), or rewrite an earlier namespace's I24 preflight
+    command, which still ran only behind the owner's HITL prompt.
+  - The ChatOps service's `stop()` now stops every transport even when an earlier one fails to
+    stop, and still rejects.
+  - `catchup`, `impact`, `why`, `changelog`, `standup` and `oncall`: a brief that fails while its
+    `agents.*` call is still in flight now prints the error and exits 2, as every other failure of
+    these commands does. That happens when the brief timer fires first (a low
+    `NIMBUS_BRIEF_TIMEOUT_MS`) or a `briefError` arrives with no session id. Before, Bun also printed
+    an unhandled-rejection stack trace, and every one of them except `changelog` exited 1.
+  - Great Expectations results whose `suite::batch::expectation::column` key is longer than 256
+    characters get distinct ids. The id hash overflowed, so each such result was indexed under its
+    first 240 characters plus `#0`, and results sharing those characters overwrote one another. The
+    first sync after upgrading writes each such result under its real id and deletes its old `#0`
+    row, which the upsert-only sync would otherwise have kept forever, its pass/fail never updated.
+  - A federated call that fails during the LAN handshake reports the real reason: a refused hello,
+    a responder whose key is not the pinned one, a malformed reply, a bad frame. Before, every one of
+    these read `lan-client: connection closed mid-exchange`. Pairing reports an oversized handshake
+    reply the same way, as `lan-client: oversized frame` (before: `lan-client: connection closed
+    without reply`). A refusal names the responder's `kind` only when it is a protocol token: the
+    reply arrives before the responder's key is checked, so any other text reads `unknown` instead
+    of reaching a brief's `## Gaps`. What is refused is unchanged.
+  - On Windows, running a generated tool no longer opens a console window: its spawn now passes
+    `windowsHide`.
+  - The updater accepts an `http://[::1]` URL wherever it already accepted `http://127.0.0.1` and
+    `http://localhost`: for the manifest and for asset downloads, in any process where `NODE_ENV`
+    is not `production`. That includes release builds, because none sets it. Its IPv6 check
+    compared the hostname with `::1`, but `URL` keeps the brackets, so the check could never match.
+  - `--format slack` and `--format plain` (`changelog`, `standup`, `oncall`) no longer take seconds
+    on a long unclosed link title or heading separator: the two S8786 patterns above are linear now.
+    `--format plain`'s underscore-italic pass is still quadratic on a long line of `_` openers that
+    nothing closes, as it was before this sweep.
+  - An on-call push whose brief fails with a non-string error records `brief_error: unknown`, not
+    `[object Object]`.
+  - In the desktop UI, `HotkeyFailedBanner` no longer leaks its listener when it unmounts before
+    `listen()` resolves.
+
+  **Duplication.** jscpd over `packages/` with the repo's `.jscpd.json` measured 5,373 duplicated
+  lines in 488 clones (2.42%) on `main`. The branch measures 3,559 lines in 341 clones (1.60%), and
+  token duplication went from 2.88% to 1.93%. Ten clusters became shared helpers: the sync cursor
+  codec and file walker, mapping field helpers, RPC parameter validators, the expiring run registry
+  and audit-row mapping, brief flag scanning, TOML sub-table parsing with the UTF-8 trim and the
+  Ed25519 keypair code, bench sampling, the token-only connector auth handler, the HTTP scoped-read
+  gate, and the HITL approval-broadcast plumbing. The `.jscpd.json` ratchet drops from 4% to 1.7%,
+  so the gain cannot quietly erode.
+  **Coverage.** 213 new test files and additions to 141 existing ones bring 2,934 more tests, and
+  the two reviews of the sweep's last commits added 29 more, along with one new test file. Before
+  those reviews, the whole-repo `bun test` run went from 24,673 tests in 1,639 files to 27,169 in
+  1,836, and the desktop UI's vitest suite from 528 tests in 76 files to 966 in 92, all passing.
+  Both trees were measured on the same machine, with `main` at `38d07ce7` (before #1600 landed),
+  and with the same instrumentation: `build-lcov`'s istanbul shards for the gateway and CLI, and
+  vitest's v8 provider for the UI.
+  - Over the 1,281 gateway and CLI source files both trees share, line coverage goes from 95.24% to
+    97.35% and branch coverage from 90.70% to 95.21%. That leaves 1,441 uncovered lines (from
+    2,625) and 1,907 uncovered branches (from 3,793).
+  - The 217 gateway and CLI files the pass targeted go from 94.57% to 99.05% of lines, and from
+    88.49% to 97.52% of branches.
+  - The UI goes from 93.10% to 98.86% of lines, and from 80.97% to 94.18% of branches.
+
+  These are Windows measurements. `audit:coverage-floor` is Linux-authoritative, and SonarCloud's
+  PR analysis reports the CI figure. On the same machine the extra tests add about 5–11% to the
+  whole-repo run: 374 s on `main`, 394–416 s here.
+
 - **2026-10-03 — `index.regraph` is refused over LAN.** It re-runs the graph populator over every
   indexed row, upserting entities and clearing and re-emitting relations, yet it was in neither
   `FORBIDDEN_OVER_LAN` nor `WRITE_METHODS`. The LAN check is a denylist that lets `index.*` reads
@@ -334,7 +442,7 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
   the census, not the gate — that is PR 2 of this initiative. It reproduces all four bugs the B4
   bug-hunt confirmed by hand, pinned by
   `scripts/structure-audit/check-index-lane-coverage.acceptance.test.ts` against the real tree:
-  `item.type='commit'` is read at `agents/expert.ts:386` but nothing ever writes it (the only
+  `item.type='commit'` is read at `agents/expert.ts:371` but nothing ever writes it (the only
   `commit`-shaped writer, `filesystem-v2-sync.ts`, writes `git_commit`, and `graph-populator.ts`'s
   `commit` write lands in the unrelated `graph_entity` table); `workflow_name` is read at
   `preflight/preflight.ts:166` but every `ci_run` writer emits `workflowName` instead; `branch` is

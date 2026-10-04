@@ -1,6 +1,6 @@
 import { cliEnvFor } from "./local-auth-env.ts";
 import type { LocalAuthHostDeps } from "./local-auth-host.ts";
-import { GCP_PROJECT_ID, type GcloudFinding } from "./local-auth-types.ts";
+import { type GcloudFinding, isGcpProjectId } from "./local-auth-types.ts";
 
 function str(v: unknown): string | null {
   return typeof v === "string" && v.trim() !== "" ? v.trim() : null;
@@ -50,9 +50,9 @@ export async function detectGcloud(
   }
   const account = str(core["account"]);
   const rawProject = str(core["project"]);
-  // `resolveTarget` (adopt-local-auth.ts) enforces this same `GCP_PROJECT_ID` shape on whatever
+  // `resolveTarget` (adopt-local-auth.ts) enforces this same `isGcpProjectId` shape on whatever
   // project ends up chosen, owner-supplied or detected — the two surfaces must agree on what a
-  // "project id" is (`GCP_PROJECT_ID` itself accepts both the bare and the legacy domain-scoped
+  // "project id" is (`isGcpProjectId` itself accepts both the bare and the legacy domain-scoped
   // `example.com:my-proj` form, so a domain-scoped owner is not caught by this). `gcloud config
   // set project` accepts a project NUMBER too (`gcloud.config.core.project` has no
   // id-vs-number distinction of its own), so without this check an owner whose default project
@@ -64,8 +64,7 @@ export async function detectGcloud(
   // reads `project` on that branch today (`usable()` refuses `not_logged_in` before a caller ever
   // sees it) — the field's own invariant should not depend on which status happens to gate its
   // use, since a later reader (a CLI render, say) has no reason to know that.
-  const validatedProject =
-    rawProject !== null && GCP_PROJECT_ID.test(rawProject) ? rawProject : null;
+  const validatedProject = rawProject !== null && isGcpProjectId(rawProject) ? rawProject : null;
   if (account === null) {
     return {
       ...base,
