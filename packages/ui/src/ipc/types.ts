@@ -465,3 +465,34 @@ export interface WorkflowRunResult {
   readonly ok: boolean;
   readonly dryRun: boolean;
 }
+
+export interface PushedBriefSummary {
+  readonly incidentId: string;
+  readonly status: "ok" | "failed";
+  readonly createdAt: number;
+  readonly retriedAt: number | null;
+  readonly title: string | null;
+  readonly service: string | null;
+}
+
+export interface PushSinkOutcome {
+  readonly outcome: string;
+  readonly reason?: string;
+  readonly at: number;
+}
+
+export interface PushedBriefDetail extends PushedBriefSummary {
+  readonly briefMarkdown: string | null;
+  readonly failureCode: string | null;
+  readonly delivery: Readonly<Record<string, PushSinkOutcome>>;
+}
+
+export interface PushedBriefList {
+  readonly enabled: boolean;
+  readonly identity: "resolved" | "unresolved";
+  readonly briefs: readonly PushedBriefSummary[];
+}
+
+export interface PushedBriefGet {
+  readonly brief: PushedBriefDetail | null;
+}

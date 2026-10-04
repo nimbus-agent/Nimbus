@@ -125,6 +125,8 @@ pub const ALLOWED_METHODS: &[&str] = &[
     "llm.pullModel",
     "llm.setDefault",
     "llm.unloadModel",
+    "oncall.pushedGet",
+    "oncall.pushedList",
     "policy.show",
     "profile.create",
     "profile.delete",
@@ -616,6 +618,18 @@ mod tests {
     }
 
     #[test]
+    fn allowlist_oncall_reads_only() {
+        // Phase 17 W2 PR 3: the desktop panel reads pushed briefs. pushedRetry spawns an agent run
+        // on the owner's behalf and stays CLI-only (I7); named on both sides because a one-for-one
+        // swap would keep allowlist_exact_size unchanged.
+        assert!(is_method_allowed("oncall.pushedList"));
+        assert!(is_method_allowed("oncall.pushedGet"));
+        assert!(!is_method_allowed("oncall.pushedRetry"));
+        assert!(!is_no_timeout_method("oncall.pushedList"));
+        assert!(!is_no_timeout_method("oncall.pushedGet"));
+    }
+
+    #[test]
     fn allowlist_connector_auth_not_start_auth() {
         // A one-for-one substitution, 105 → 105: `connector.startAuth` (the S4-F2 deprecated
         // alias, removed from the gateway on 2026-09-10) out, `connector.auth` (the real method,
@@ -644,7 +658,7 @@ mod tests {
 
     #[test]
     fn allowlist_exact_size() {
-        assert_eq!(ALLOWED_METHODS.len(), 105);
+        assert_eq!(ALLOWED_METHODS.len(), 107);
     }
 
     #[test]

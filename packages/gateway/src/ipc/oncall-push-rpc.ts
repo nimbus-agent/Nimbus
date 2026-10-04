@@ -1,3 +1,4 @@
+import { parseHeadlineBrief, resolvePushService } from "../oncall-push/push-headline.ts";
 import { PushRetryRefusedError } from "../oncall-push/push-runner.ts";
 import type { OncallPushRuntime } from "../oncall-push/push-runtime.ts";
 import type { PushedBriefRow } from "../oncall-push/push-store.ts";
@@ -20,6 +21,7 @@ export type PushedBriefSummary = {
   createdAt: number;
   retriedAt: number | null;
   title: string | null;
+  service: string | null;
 };
 export type PushedBriefDetail = PushedBriefSummary & {
   briefMarkdown: string | null;
@@ -52,18 +54,30 @@ function incidentIdParam(
   return v.trim();
 }
 
-function summarize(ctx: OncallPushRpcCtx, r: PushedBriefRow): PushedBriefSummary {
+function summarize(
+  r: PushedBriefRow,
+  title: string | null,
+  pagerdutyServiceId: string | null,
+): PushedBriefSummary {
+  // Same rule as the ChatOps headline: a failed row has no usable brief.
+  const brief = r.status === "ok" ? parseHeadlineBrief(r.briefJson) : null;
   return {
     incidentId: r.incidentId,
     status: r.status,
     createdAt: r.createdAt,
     retriedAt: r.retriedAt,
-    title: ctx.runtime.store.incidentTitle(r.incidentId),
+    title,
+    service: resolvePushService(brief, pagerdutyServiceId),
   };
 }
 function detail(ctx: OncallPushRpcCtx, r: PushedBriefRow): PushedBriefDetail {
+  const store = ctx.runtime.store;
   return {
-    ...summarize(ctx, r),
+    ...summarize(
+      r,
+      store.incidentTitle(r.incidentId),
+      store.incidentPagerdutyServiceId(r.incidentId),
+    ),
     briefMarkdown: r.briefMarkdown,
     failureCode: r.failureCode,
     delivery: { ...r.delivery },
@@ -83,7 +97,9 @@ async function handleList(params: unknown, ctx: OncallPushRpcCtx) {
   return {
     enabled: ctx.runtime.config.enabled,
     identity: (await ctx.runtime.identityResolved()) ? "resolved" : "unresolved",
-    briefs: ctx.runtime.store.list(limit).map((r) => summarize(ctx, r)),
+    briefs: ctx.runtime.store
+      .listWithIncident(limit)
+      .map((l) => summarize(l.row, l.title, l.pagerdutyServiceId)),
   };
 }
 

@@ -2,6 +2,7 @@ import type { Database } from "bun:sqlite";
 import { afterEach, beforeEach, expect, test } from "bun:test";
 import { DEFAULT_ONCALL_PUSH_CONFIG } from "../config/oncall-push-toml.ts";
 import { createMemoryIndexDb } from "../connectors/connector-sync-test-helpers.ts";
+import { upsertIndexedItem } from "../index/item-store.ts";
 import { PushRetryRefusedError } from "../oncall-push/push-runner.ts";
 import type { OncallPushRuntime } from "../oncall-push/push-runtime.ts";
 import { PushStore } from "../oncall-push/push-store.ts";
@@ -130,6 +131,7 @@ test("pushedRetry retries the trimmed id and returns the row in full", async () 
       createdAt: 1,
       retriedAt: null,
       title: null,
+      service: null,
       briefMarkdown: "# A",
       failureCode: null,
       delivery: {},
@@ -154,4 +156,30 @@ test("an unknown oncall.* method misses (falls through to Method not found)", as
   expect((await dispatchOncallPushRpc("oncall.nope", {}, { runtime: runtime() })).kind).toBe(
     "miss",
   );
+});
+
+test("service: PagerDuty fallback for an unmapped or failed row; null without an incident", async () => {
+  upsertIndexedItem(db, {
+    service: "pagerduty",
+    type: "incident",
+    externalId: "S",
+    title: "svc",
+    body: "",
+    modifiedAt: 1,
+    syncedAt: 1,
+    authorId: null,
+    url: null,
+    metadata: { pagerduty_service_id: "PSVC" },
+  });
+  store.insert("pagerduty:S", { status: "failed", sessionId: null, failureCode: "timeout: x" }, 1);
+  store.insert("pagerduty:NOINC", { status: "failed", sessionId: null, failureCode: "x" }, 2);
+  const list = (await hit("oncall.pushedList", {}))["briefs"] as Record<string, unknown>[];
+  expect(list.map((b) => [b["incidentId"], b["title"], b["service"]])).toEqual([
+    ["pagerduty:NOINC", null, null],
+    ["pagerduty:S", "svc", "PSVC"],
+  ]);
+  expect((await hit("oncall.pushedGet", { incidentId: "pagerduty:S" }))["brief"]).toMatchObject({
+    title: "svc",
+    service: "PSVC",
+  });
 });

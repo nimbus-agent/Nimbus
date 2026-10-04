@@ -1,6 +1,7 @@
 import type { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { createMemoryIndexDb } from "../connectors/connector-sync-test-helpers.ts";
+import { dbRun } from "../db/write.ts";
 import { upsertIndexedItem } from "../index/item-store.ts";
 import { PushStore } from "./push-store.ts";
 
@@ -20,6 +21,58 @@ const FAILED = {
 } as const;
 
 describe("PushStore", () => {
+  const must = <T>(v: T | null): T => {
+    if (v === null) throw new Error("expected a row");
+    return v;
+  };
+
+  const incident = (externalId: string, title: string, metadata: Record<string, unknown>) =>
+    upsertIndexedItem(db, {
+      service: "pagerduty",
+      type: "incident",
+      externalId,
+      title,
+      body: "",
+      modifiedAt: 1,
+      syncedAt: 1,
+      authorId: null,
+      url: null,
+      metadata,
+    });
+
+  test("listWithIncident joins title + PagerDuty service id, newest first, in one query", () => {
+    incident("A", "checkout: 5xx", { pagerduty_service_id: "PSVC" });
+    store.insert("pagerduty:A", OK, 1000);
+    store.insert("pagerduty:GONE", FAILED, 2000); // its incident is not (or no longer) indexed
+    expect(store.listWithIncident(10)).toEqual([
+      { row: must(store.get("pagerduty:GONE")), title: null, pagerdutyServiceId: null },
+      { row: must(store.get("pagerduty:A")), title: "checkout: 5xx", pagerdutyServiceId: "PSVC" },
+    ]);
+  });
+
+  test("one malformed item.metadata does not fail the list (json_extract RAISES unguarded)", () => {
+    incident("A", "a", { pagerduty_service_id: "PSVC" });
+    incident("B", "b", { pagerduty_service_id: "PB" });
+    store.insert("pagerduty:A", OK, 1);
+    store.insert("pagerduty:B", OK, 2);
+    // Simulated corruption: no writer produces this, which is exactly why the guard exists.
+    dbRun(db, "UPDATE item SET metadata = 'not json' WHERE id = ?", ["pagerduty:B"]);
+    const out = store.listWithIncident(10);
+    expect(out.map((l) => [l.row.incidentId, l.title, l.pagerdutyServiceId])).toEqual([
+      ["pagerduty:B", "b", null],
+      ["pagerduty:A", "a", "PSVC"],
+    ]);
+    expect(store.incidentPagerdutyServiceId("pagerduty:B")).toBeNull();
+  });
+
+  test("incidentPagerdutyServiceId: value, absent field, absent incident", () => {
+    incident("A", "a", { pagerduty_service_id: "PSVC" });
+    incident("N", "n", {});
+    expect(store.incidentPagerdutyServiceId("pagerduty:A")).toBe("PSVC");
+    expect(store.incidentPagerdutyServiceId("pagerduty:N")).toBeNull();
+    expect(store.incidentPagerdutyServiceId("pagerduty:NOPE")).toBeNull();
+  });
+
   test("schema is V64", () => {
     expect((db.query("PRAGMA user_version").get() as { user_version: number }).user_version).toBe(
       64,

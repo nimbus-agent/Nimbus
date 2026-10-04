@@ -89,6 +89,13 @@ beforeAll(async () => {
     tribalRpcCtx: { status: t, list: t } as never,
     shareRpcCtx: { list: t, get: t, inbox: t, pubkey: t, verify: t } as never,
     egressRpcCtx: { list: t, head: t, verify: t, proveWindow: t } as never,
+    oncallPushRpcCtx: {
+      runtime: {
+        config: { enabled: true },
+        identityResolved: t,
+        store: { listWithIncident: t, newest: t, get: t },
+      },
+    } as never,
   } as never);
   await server.start();
 });

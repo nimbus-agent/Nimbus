@@ -17,6 +17,7 @@ import {
   pushAgentCommand,
   renderPushHeadline,
   renderPushSummary,
+  resolvePushService,
   SUMMARY_ID_CAP,
 } from "./push-headline.ts";
 import type { PushDelivery } from "./push-runner.ts";
@@ -292,5 +293,24 @@ describe("renderPushSummary", () => {
     expect(out).toContain("pagerduty:S9 … and 37 more (locally: nimbus oncall pushed list)");
     expect(out).not.toContain("pagerduty:S10,");
     expect(out).not.toContain("<");
+  });
+});
+
+describe("resolvePushService", () => {
+  const brief = (nimbusServiceId: string | null) => ({ nimbusServiceId, deployment: null });
+  test("the mapped Nimbus service wins", () => {
+    expect(resolvePushService(brief("payment-service"), "PSVC")).toBe("payment-service");
+  });
+  test("falls back to the PagerDuty service id when unmapped, blank, or no brief", () => {
+    expect(resolvePushService(brief(null), "PSVC")).toBe("PSVC");
+    expect(resolvePushService(brief("  "), "PSVC")).toBe("PSVC");
+    expect(resolvePushService(null, "PSVC")).toBe("PSVC");
+  });
+  test("null when neither is usable", () => {
+    expect(resolvePushService(null, null)).toBeNull();
+    expect(resolvePushService(brief(""), " ")).toBeNull();
+  });
+  test("returns the raw value, never escaped", () => {
+    expect(resolvePushService(brief("a&b"), null)).toBe("a&b");
   });
 });

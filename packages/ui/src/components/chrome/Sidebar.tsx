@@ -1,9 +1,11 @@
 import type { ReactNode } from "react";
+import { useOncallBriefs } from "../../hooks/useOncallBriefs";
 import { useNimbusStore } from "../../store";
 import { NavItem } from "./NavItem";
 
 const ENTRIES: ReadonlyArray<{ to: string; icon: string; label: string }> = [
   { to: "/", icon: "▦", label: "Dashboard" },
+  { to: "/oncall", icon: "☎", label: "On-call" },
   { to: "/hitl", icon: "⚠", label: "HITL" },
   { to: "/marketplace", icon: "⚙", label: "Marketplace" },
   { to: "/watchers", icon: "👁", label: "Watchers" },
@@ -13,6 +15,9 @@ const ENTRIES: ReadonlyArray<{ to: string; icon: string; label: string }> = [
 
 export function Sidebar(): ReactNode {
   const pendingHitl = useNimbusStore((s) => s.pendingHitl);
+  const lastSeenPushedAt = useNimbusStore((s) => s.lastSeenPushedAt);
+  const newest = useOncallBriefs().list?.briefs[0];
+  const oncallDot = newest !== undefined && newest.createdAt > lastSeenPushedAt;
   return (
     <nav
       aria-label="Primary"
@@ -25,6 +30,8 @@ export function Sidebar(): ReactNode {
           icon={e.icon}
           label={e.label}
           badge={e.to === "/hitl" ? pendingHitl : undefined}
+          dot={e.to === "/oncall" ? oncallDot : undefined}
+          dotLabel={e.to === "/oncall" ? "new pushed brief" : undefined}
         />
       ))}
     </nav>
