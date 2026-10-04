@@ -85,24 +85,45 @@ export function tourStepFor(kind: TourStepKind, candidate: TourCandidate, demo: 
   };
 }
 
+/** One kind's selector verdict: a step to offer, or the reason it is skipped. */
+type SelectorOutcome = { readonly step: TourStep } | { readonly skip: TourSkip };
+
+/**
+ * Runs ONE kind's selector and builds its step. A selector that throws or rejects, or a candidate
+ * `tourStepFor` cannot render, is that kind's skip and never fails the plan.
+ */
+async function evaluateSelector(
+  kind: TourStepKind,
+  ctx: TourSelectorCtx,
+  selectors: typeof TOUR_SELECTORS,
+  demo: boolean,
+): Promise<SelectorOutcome> {
+  try {
+    const r = await selectors[kind](ctx);
+    return "skip" in r
+      ? { skip: { kind, reason: r.skip } }
+      : { step: tourStepFor(kind, r.ok, demo) };
+  } catch {
+    return { skip: { kind, reason: "selector error" } };
+  }
+}
+
 export async function buildTourPlan(
   ctx: TourSelectorCtx,
   opts: { steps: number; demo: boolean; selectors?: typeof TOUR_SELECTORS },
 ): Promise<TourPlan> {
   const selectors = opts.selectors ?? TOUR_SELECTORS;
+  // The selectors are independent read-only lookups, so they run concurrently. `Promise.all` keeps
+  // TOUR_PRIORITY order in its result, and each outcome already carries its own failure, so the
+  // plan comes out exactly as a one-at-a-time loop would build it.
+  const outcomes = await Promise.all(
+    TOUR_PRIORITY.map((kind) => evaluateSelector(kind, ctx, selectors, opts.demo)),
+  );
   const candidates: TourStep[] = [];
   const skipped: TourSkip[] = [];
-  for (const kind of TOUR_PRIORITY) {
-    try {
-      const r = await selectors[kind](ctx); // NOSONAR S9382: only standup awaits (resolveSelf); the other 5 selectors are synchronous bun:sqlite reads on one connection, so Promise.all would gain nothing measurable
-      if ("skip" in r) {
-        skipped.push({ kind, reason: r.skip });
-      } else {
-        candidates.push(tourStepFor(kind, r.ok, opts.demo));
-      }
-    } catch {
-      skipped.push({ kind, reason: "selector error" });
-    }
+  for (const outcome of outcomes) {
+    if ("step" in outcome) candidates.push(outcome.step);
+    else skipped.push(outcome.skip);
   }
   return {
     steps: candidates.slice(0, opts.steps),

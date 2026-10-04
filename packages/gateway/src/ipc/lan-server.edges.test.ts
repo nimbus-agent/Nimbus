@@ -321,7 +321,7 @@ describe("LanServer — guards below the socket protocol", () => {
     expect(sock.ended).toBe(1);
     expect(sock.written).toEqual([]);
     expect(lookups).toEqual([]); // the hello was never even read
-    expect(sock.data.buffer.length).toBe(0); // and nothing was buffered
+    expect(sock.data.buffer).toHaveLength(0); // and nothing was buffered
     expect(sock.data.peerPubkey).toBeUndefined();
     // Not a handshake failure: nothing was parsed, so the peer is not rate-limited for it.
     expect(failures).toEqual([]);

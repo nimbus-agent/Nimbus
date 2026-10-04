@@ -49,7 +49,7 @@ export function encodeGoogleMeetSyncCursor(c: GoogleMeetSyncCursorV1): string {
 
 export function decodeGoogleMeetSyncCursor(raw: string): GoogleMeetSyncCursorV1 | undefined {
   const r = decodeNimbusJsonCursorObject(raw, CURSOR_PREFIX);
-  if (r === null || r["v"] !== 1) {
+  if (r?.["v"] !== 1) {
     return undefined;
   }
   const pageToken = r["pageToken"];

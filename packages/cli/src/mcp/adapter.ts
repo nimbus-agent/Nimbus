@@ -319,14 +319,18 @@ export interface ProductionIo {
 }
 
 /**
- * Production deps: real gateway-state read + real IPCClient connect.
- *
- * The default is built per call, not held in a module-level object, so it reads the imported
- * bindings when called — exactly as the closures did before `io` existed.
+ * The real {@link ProductionIo}. A function rather than a module-level object, so each call reads
+ * the imported bindings at that moment — exactly as the closures did before `io` existed.
  */
-export function createProductionDeps(
-  io: ProductionIo = { paths: getCliPlatformPaths, readGatewayState, IpcClient: IPCClient },
-): AdapterDeps {
+function productionIo(): ProductionIo {
+  return { paths: getCliPlatformPaths, readGatewayState, IpcClient: IPCClient };
+}
+
+/**
+ * Production deps: real gateway-state read + real IPCClient connect. The default `io` is built
+ * per call, by {@link productionIo}.
+ */
+export function createProductionDeps(io: ProductionIo = productionIo()): AdapterDeps {
   return createDeps({
     readState: async () => {
       const s = await io.readGatewayState(io.paths());
