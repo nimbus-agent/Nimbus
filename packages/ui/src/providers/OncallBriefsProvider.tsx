@@ -40,7 +40,8 @@ export function OncallBriefsProvider({ children }: { readonly children: ReactNod
       .then((fn) => {
         if (cancelled) fn();
         else unlisten = fn;
-      });
+      })
+      .catch(() => undefined);
     return () => {
       cancelled = true;
       if (unlisten) unlisten();

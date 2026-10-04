@@ -1128,13 +1128,13 @@ describe("I7 — Tauri ALLOWED_METHODS surface for T2 PR 3", () => {
   // By NAME, as for every brief/verb pair: a one-for-one swap of pushedGet for pushedRetry keeps
   // the count at 107. pushedRetry starts an agent run on the owner's behalf; it stays CLI-only.
   test("oncall: the two reads are renderer-callable, pushedRetry never is", async () => {
-    // Scoped to the list itself: `allowlist_oncall_reads_only` in `mod tests` names pushedRetry
-    // on purpose, to assert it absent.
-    const full = await read("packages/ui/src-tauri/src/gateway_bridge.rs");
-    const rust = full.slice(0, full.indexOf("mod tests"));
+    const rust = await read("packages/ui/src-tauri/src/gateway_bridge.rs");
     expect(rust).toMatch(/^\s*"oncall\.pushedGet",\s*$/m);
     expect(rust).toMatch(/^\s*"oncall\.pushedList",\s*$/m);
-    expect(rust).not.toContain('"oncall.pushedRetry"');
+    expect(rust).not.toMatch(/^\s*"oncall\.pushedRetry",\s*$/m);
+    expect(rust).toContain('assert!(is_method_allowed("oncall.pushedList"));');
+    expect(rust).toContain('assert!(is_method_allowed("oncall.pushedGet"));');
+    expect(rust).toContain('assert!(!is_method_allowed("oncall.pushedRetry"));');
   });
 
   test("connector.list stays absent; connector.listStatus is the served one", async () => {

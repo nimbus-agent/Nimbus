@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { useEffect, useRef } from "react";
 import { MemoryRouter, Route, Routes, useLocation, useNavigationType } from "react-router";
@@ -136,6 +136,7 @@ describe("Oncall page", () => {
     render(ui("/oncall"));
     const list = screen.getByRole("list", { name: "Pushed briefs" });
     expect(list.textContent).toContain("payment-service: 5xx rate above 5% on /v1/charges");
+    expect(within(list).getByText("payment-service")).toBeTruthy();
     expect(list.textContent).toContain(FAIL_ID);
     expect(list.textContent).not.toMatch(/undefined|null/);
   });
@@ -207,6 +208,21 @@ describe("Oncall page", () => {
         "Could not load pushed briefs: Method not found. From a terminal: nimbus oncall pushed",
       ),
     ).toBeTruthy();
+  });
+
+  it("8b: cached list data survives a later error; no alert replaces it", () => {
+    setBriefs(fixture.list, { error: "Gateway offline" });
+    render(ui("/oncall"));
+    expect(screen.getByRole("list", { name: "Pushed briefs" })).toBeTruthy();
+    expect(screen.queryByRole("alert")).toBeNull();
+  });
+
+  it("8c: a cached brief survives a later detail error; no alert replaces it", () => {
+    const q = setQuery(OK_ID, fixture.getOk);
+    q.error = "Gateway offline";
+    const { container } = render(ui(`/oncall?id=${enc(OK_ID)}`));
+    expect(container.querySelector("pre")?.textContent).toBe(fixture.getOk.brief.briefMarkdown);
+    expect(screen.queryByRole("alert")).toBeNull();
   });
 
   it("9: a new newest row never moves a reader off the brief they selected", () => {

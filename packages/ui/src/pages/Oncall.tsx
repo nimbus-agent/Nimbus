@@ -81,7 +81,7 @@ function Body(props: {
   readonly onSelect: (id: string) => void;
   readonly onPruned: (id: string) => void;
 }): ReactNode {
-  if (props.error !== null) {
+  if (props.error !== null && props.list === null) {
     return (
       <p role="alert" className="text-sm">
         {`Could not load pushed briefs: ${props.error}. From a terminal: nimbus oncall pushed`}

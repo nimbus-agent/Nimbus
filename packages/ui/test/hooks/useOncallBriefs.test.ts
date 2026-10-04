@@ -6,6 +6,11 @@ import {
   asPushedBriefList,
   parseBriefPushed,
 } from "../../src/hooks/useOncallBriefs";
+import type {
+  JsonRpcNotification,
+  PushedBriefDetail,
+  PushedBriefSummary,
+} from "../../src/ipc/types";
 
 const fixture: unknown = JSON.parse(
   readFileSync(join(import.meta.dirname, "..", "fixtures", "oncall-pushed.json"), "utf8"),
@@ -60,5 +65,45 @@ describe("asPushedBriefList / asPushedBriefGet", () => {
     }
     for (const v of [null, undefined, {}, { brief: 3 }])
       expect(asPushedBriefGet(v)).toBeUndefined();
+  });
+});
+
+describe("the gateway-validated fixture binds the UI's field names", () => {
+  // `satisfies` makes a renamed or added field in the UI type fail typecheck here; the sorted-key
+  // comparison makes a renamed gateway field fail this test once the fixture is regenerated.
+  const summaryKeys = [
+    "createdAt",
+    "incidentId",
+    "retriedAt",
+    "service",
+    "status",
+    "title",
+  ] satisfies (keyof PushedBriefSummary)[];
+  const detailKeys = [
+    "briefMarkdown",
+    "createdAt",
+    "delivery",
+    "failureCode",
+    "incidentId",
+    "retriedAt",
+    "service",
+    "status",
+    "title",
+  ] satisfies (keyof PushedBriefDetail)[];
+  it("a list row has exactly the PushedBriefSummary keys", () => {
+    const list = part("list") as { briefs: Record<string, unknown>[] };
+    expect(Object.keys(list.briefs[0] ?? {}).sort()).toEqual(summaryKeys);
+  });
+  it("a detail has exactly the PushedBriefDetail keys", () => {
+    const ok = part("getOk") as { brief: Record<string, unknown> };
+    expect(Object.keys(ok.brief).sort()).toEqual(detailKeys);
+  });
+});
+
+describe("the captured gateway event", () => {
+  it("is recognised by parseBriefPushed and names the fired incident", () => {
+    expect(parseBriefPushed(part("event") as JsonRpcNotification)).toEqual({
+      incidentId: "pagerduty:PDEMO412",
+    });
   });
 });

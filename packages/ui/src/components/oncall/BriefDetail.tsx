@@ -25,7 +25,7 @@ export function BriefDetail({
     if (isPruned) onPrunedRef.current(incidentId);
   }, [isPruned, incidentId]);
 
-  if (error !== null) {
+  if (error !== null && got === undefined) {
     return (
       <p role="alert" className="text-sm">
         {`Could not load pushed briefs: ${error}. From a terminal: nimbus oncall pushed`}

@@ -57,8 +57,11 @@ describe("RootLayout", () => {
       </MemoryRouter>,
     );
 
-  it("does not render the offline banner when connected", () => {
+  it("does not render the offline banner when connected", async () => {
     renderWith();
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 0));
+    });
     expect(screen.queryByText(/Gateway is not running/i)).toBeNull();
     expect(screen.getByText("child")).toBeTruthy();
   });

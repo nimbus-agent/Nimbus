@@ -29,7 +29,7 @@
       "retriedAt": null,
       "title": "payment-service: 5xx rate above 5% on /v1/charges",
       "service": "payment-service",
-      "briefMarkdown": "# On-call\n\n_incident: payment-service: 5xx rate above 5% on /v1/charges — triggered_\n_chat window: last 1d (2026-10-03 15:31Z → 2026-10-04 15:31Z)_\nIncident status comes from the last PagerDuty sync, which ran less than a minute ago — so an incident shown here as open may have been closed since.\nThe deployment below is the last one recorded before this incident opened. That is timing alone — nothing in the index links a deployment to an incident, so it is a place to look rather than a cause.\n\n## Incident\n\n- **Status:** triggered\n- **Severity:** P1\n- **Urgency:** high\n- **Opened:** 2026-10-04 15:31Z\n- **Assigned to:** sam.rivera@acme.example\n- **Service:** payment-service\n\n## Last deployment before the alert\n\n- **Deployment:** Deploy payment-service → prod (4ec7667)\n- **Started:** 2026-10-04 15:20Z\n- **Environment:** prod\n- **Result:** success\n- **Commit:** `4ec76675c08dd6fd996aca09cc9840fe28fc5b7b`\n\n## Change in that deployment\n\n- **Pull request:** [Cap PSP retry backoff at 8s (PAY-231)](https://github.example/acme/payments/pull/412)\n- **Merged:** 2026-10-04 12:31Z\n- **Size:** +18 −6 across 2 files\n\n## CI\n\n_None found._\n\n## Chat\n\n_None in this window._\n\n## Prior incidents on this service\n\n_2 earlier incidents on this service._\n\n- payment-service: settlement job failing after deploy — opened 2026-09-23 17:51Z, closed 2026-09-23 17:51Z by omar.haddad@acme.example\n- payment-service: charge latency p99 above 4s — opened 2026-09-13 15:31Z, closed 2026-09-13 15:31Z by lee.chen@acme.example\n\n## Gaps\n\n- How any earlier incident was resolved is absent and cannot be listed: an incident is indexed with its status as its entire body, so no resolution note, remediation step or postmortem link exists anywhere in the index. Prior incidents below can say who closed one and when, never what they did. (No action available today — the PagerDuty connector indexes no resolution narrative. Where your team writes postmortems into a connected wiki, `nimbus ask` over that content is the closest available answer.)\n- The contents of the change below are absent: no connector indexes a patch, a changed-file list or a commit message body, so a pull request is described by its title and its added/removed line counts and nothing more. Those counts say how big a change was, never what it did. (No action available today — open the linked pull request to read the diff.)\n- Only PagerDuty incidents are covered. OpsGenie has no Nimbus connector, so if your team pages through it this brief has nothing to select from and its silence is not evidence that nobody is paged. (No action available today — no OpsGenie connector exists to configure.)\n\n_generated in 0.0 s_\n\n_Rendered deterministically — built-in briefs do not use an LLM, regardless of `[llm]` settings._\n",
+      "briefMarkdown": "# On-call\n\n_incident: payment-service: 5xx rate above 5% on /v1/charges — triggered_\n_chat window: last 1d (2026-10-03 16:18Z → 2026-10-04 16:18Z)_\nIncident status comes from the last PagerDuty sync, which ran less than a minute ago — so an incident shown here as open may have been closed since.\nThe deployment below is the last one recorded before this incident opened. That is timing alone — nothing in the index links a deployment to an incident, so it is a place to look rather than a cause.\n\n## Incident\n\n- **Status:** triggered\n- **Severity:** P1\n- **Urgency:** high\n- **Opened:** 2026-10-04 16:18Z\n- **Assigned to:** sam.rivera@acme.example\n- **Service:** payment-service\n\n## Last deployment before the alert\n\n- **Deployment:** Deploy payment-service → prod (4ec7667)\n- **Started:** 2026-10-04 16:07Z\n- **Environment:** prod\n- **Result:** success\n- **Commit:** `4ec76675c08dd6fd996aca09cc9840fe28fc5b7b`\n\n## Change in that deployment\n\n- **Pull request:** [Cap PSP retry backoff at 8s (PAY-231)](https://github.example/acme/payments/pull/412)\n- **Merged:** 2026-10-04 13:18Z\n- **Size:** +18 −6 across 2 files\n\n## CI\n\n_None found._\n\n## Chat\n\n_None in this window._\n\n## Prior incidents on this service\n\n_2 earlier incidents on this service._\n\n- payment-service: settlement job failing after deploy — opened 2026-09-23 18:38Z, closed 2026-09-23 18:38Z by omar.haddad@acme.example\n- payment-service: charge latency p99 above 4s — opened 2026-09-13 16:18Z, closed 2026-09-13 16:18Z by lee.chen@acme.example\n\n## Gaps\n\n- How any earlier incident was resolved is absent and cannot be listed: an incident is indexed with its status as its entire body, so no resolution note, remediation step or postmortem link exists anywhere in the index. Prior incidents below can say who closed one and when, never what they did. (No action available today — the PagerDuty connector indexes no resolution narrative. Where your team writes postmortems into a connected wiki, `nimbus ask` over that content is the closest available answer.)\n- The contents of the change below are absent: no connector indexes a patch, a changed-file list or a commit message body, so a pull request is described by its title and its added/removed line counts and nothing more. Those counts say how big a change was, never what it did. (No action available today — open the linked pull request to read the diff.)\n- Only PagerDuty incidents are covered. OpsGenie has no Nimbus connector, so if your team pages through it this brief has nothing to select from and its silence is not evidence that nobody is paged. (No action available today — no OpsGenie connector exists to configure.)\n\n_generated in 0.0 s_\n\n_Rendered deterministically — built-in briefs do not use an LLM, regardless of `[llm]` settings._\n",
       "failureCode": null,
       "delivery": {
         "event": {
@@ -58,10 +58,31 @@
       "service": null,
       "briefMarkdown": null,
       "failureCode": "timeout: no brief in 30000ms",
-      "delivery": {}
+      "delivery": {
+        "event": {
+          "outcome": "delivered",
+          "at": 1790000121000
+        },
+        "toast": {
+          "outcome": "skipped",
+          "reason": "no brief to show",
+          "at": 1790000121000
+        }
+      }
     }
   },
   "getMissing": {
     "brief": null
+  },
+  "event": {
+    "method": "gateway.event",
+    "params": {
+      "kind": "oncall.briefPushed",
+      "ts": 1790000000000,
+      "payload": {
+        "incidentId": "pagerduty:PDEMO412",
+        "status": "ok"
+      }
+    }
   }
 }

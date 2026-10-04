@@ -9,6 +9,7 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "nod
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+import { setGatewayEventBroadcast } from "./gateway-events.ts";
 import { fireDemoPage, seedDemoCorpus } from "../demo/seed.ts";
 import { CURRENT_SCHEMA_VERSION } from "../index/local-index.ts";
 import { runIndexedSchemaMigrations } from "../index/migrations/runner.ts";
@@ -30,6 +31,7 @@ const FIXED_EPOCH = 1_790_000_000_000;
 let dbs: Database[] = [];
 let roots: string[] = [];
 afterEach(() => {
+  setGatewayEventBroadcast(undefined);
   for (const d of dbs) d.close();
   for (const r of roots) rmSync(r, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
   dbs = [];
@@ -101,7 +103,15 @@ test("the UI fixture has the shape the real oncall.pushedList / pushedGet return
     now: () => nowMs,
     settleImmediately: true,
   });
+  // The REAL `oncall.briefPushed` notification, captured off the gateway's own broadcast seam.
+  const captured: { method: string; params: Record<string, unknown> }[] = [];
+  setGatewayEventBroadcast((method, params) => captured.push({ method, params }));
   const fired = await fireDemoPage(db, rt, nowMs);
+  setGatewayEventBroadcast(undefined);
+  const pushedEvent = captured.find(
+    (c) => (c.params as { kind?: unknown }).kind === "oncall.briefPushed",
+  );
+  if (pushedEvent === undefined) throw new Error("fireDemoPage broadcast no oncall.briefPushed");
   // The pushed_brief row's real writer. No incident is indexed for it, so title and service are
   // null: the desktop's null-handling is exercised from the fixture too.
   rt.store.insert(
@@ -115,6 +125,16 @@ test("the UI fixture has the shape the real oncall.pushedList / pushedGet return
     { status: "failed", sessionId: null, failureCode: "timeout: no brief in 30000ms" },
     nowMs + 120_000,
   );
+  // A failed push still records what each sink did; the real writer, so `delivery` is realistic.
+  rt.store.recordDelivery("pagerduty:PCONTRACTFAIL", "event", {
+    outcome: "delivered",
+    at: nowMs + 121_000,
+  });
+  rt.store.recordDelivery("pagerduty:PCONTRACTFAIL", "toast", {
+    outcome: "skipped",
+    reason: "no brief to show",
+    at: nowMs + 121_000,
+  });
   const ctx = { runtime: rt };
   const live = normalize(
     {
@@ -122,6 +142,10 @@ test("the UI fixture has the shape the real oncall.pushedList / pushedGet return
       getOk: await call("oncall.pushedGet", { incidentId: fired.incidentId }, ctx),
       getFailed: await call("oncall.pushedGet", { incidentId: "pagerduty:PCONTRACTFAIL" }, ctx),
       getMissing: await call("oncall.pushedGet", { incidentId: "pagerduty:NOPE" }, ctx),
+      event: {
+        method: pushedEvent.method,
+        params: { ...pushedEvent.params, ts: FIXED_EPOCH },
+      },
     },
     nowMs,
   );
