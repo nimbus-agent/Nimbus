@@ -1,10 +1,11 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { hostname, tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { processEnvDelete, processEnvSet } from "./env-access.ts";
 import {
+  armGatewayLifecycleDiagnostics,
   createLifecycleWriter,
   DEFAULT_HEARTBEAT_MS,
   formatLifecycleLine,
@@ -384,5 +385,105 @@ describe("createLifecycleWriter", () => {
   test("a failing write is swallowed — diagnostics must never take the gateway down", () => {
     const write = createLifecycleWriter(join(tmpdir(), "no-such-dir-nimbus-xyz", "a.log"));
     expect(() => write("{}\n")).not.toThrow();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The production wiring. `exit-diagnostics.integration.test.ts` proves the records land on disk
+// across a REAL exit, but it does so in a child process this run cannot see into. This drives the
+// same `armGatewayLifecycleDiagnostics` entry point in-process against the REAL `process`, and
+// takes back every listener it adds before returning: an `uncaughtException` handler that calls
+// `process.exit(1)` must never outlive this test inside the shared test runner.
+// ---------------------------------------------------------------------------
+
+describe("armGatewayLifecycleDiagnostics — the production wiring", () => {
+  const EVENTS = ["beforeExit", "exit", "uncaughtException", "unhandledRejection"] as const;
+
+  test("arms the real process: a boot record in the resolved log, one listener per lifecycle event, and an unref'd heartbeat that stop() clears", () => {
+    const dir = mkdtempSync(join(tmpdir(), "nimbus-lifecycle-arm-"));
+    const logPath = join(dir, "gateway-daily.log");
+    const savedLog = process.env["NIMBUS_GATEWAY_LOG_PATH"];
+    const savedHeartbeat = process.env["NIMBUS_HEARTBEAT_MS"];
+    const listenersBefore = new Map(EVENTS.map((e) => [e, new Set(process.listeners(e))]));
+    const realSetInterval = globalThis.setInterval;
+    const realClearInterval = globalThis.clearInterval;
+    const armedTimers: Array<{ fn: () => void; ms: number; handle: { hasRef(): boolean } }> = [];
+    const clearedTimers: unknown[] = [];
+    const addedCounts = new Map<string, number>();
+    try {
+      processEnvSet("NIMBUS_GATEWAY_LOG_PATH", logPath);
+      processEnvSet("NIMBUS_HEARTBEAT_MS", "45000");
+      // Spies that DELEGATE to the real timers: the wiring under test is the real
+      // `setInterval`/`clearInterval` binding, so the real handle (and its unref) must flow.
+      globalThis.setInterval = ((fn: () => void, ms: number) => {
+        const handle = realSetInterval(fn, ms);
+        armedTimers.push({ fn, ms, handle: handle as unknown as { hasRef(): boolean } });
+        return handle;
+      }) as unknown as typeof setInterval;
+      globalThis.clearInterval = ((handle: unknown) => {
+        clearedTimers.push(handle);
+        realClearInterval(handle as ReturnType<typeof setInterval>);
+      }) as unknown as typeof clearInterval;
+
+      const armed = armGatewayLifecycleDiagnostics(
+        "7.7.7-arm",
+        () => ["github"],
+        () => ({ embeddings: "ready" }),
+      );
+      for (const e of EVENTS) {
+        const prior = listenersBefore.get(e) ?? new Set();
+        addedCounts.set(e, process.listeners(e).filter((l) => !prior.has(l)).length);
+      }
+      // Load-bearing (see the module): a ref'd heartbeat would mask the very drain `beforeExit`
+      // exists to detect. Read before stop(), while the timer is still armed.
+      expect(armedTimers).toHaveLength(1);
+      expect(armedTimers[0]?.ms).toBe(45_000);
+      expect(armedTimers[0]?.handle.hasRef()).toBe(false);
+      // Fire one heartbeat by hand rather than waiting 45 s for the real one.
+      armedTimers[0]?.fn();
+      armed.stop();
+    } finally {
+      globalThis.setInterval = realSetInterval;
+      globalThis.clearInterval = realClearInterval;
+      // Remove EVERYTHING the arm added — computed from the snapshot, so even a throw halfway
+      // through arming cannot leak a process-exiting handler into later tests.
+      for (const e of EVENTS) {
+        const prior = listenersBefore.get(e) ?? new Set();
+        for (const l of process.listeners(e)) {
+          if (!prior.has(l)) process.removeListener(e, l);
+        }
+      }
+      processEnvSet("NIMBUS_GATEWAY_LOG_PATH", savedLog);
+      processEnvSet("NIMBUS_HEARTBEAT_MS", savedHeartbeat);
+    }
+
+    try {
+      expect(Object.fromEntries(addedCounts)).toEqual({
+        beforeExit: 1,
+        exit: 1,
+        uncaughtException: 1,
+        unhandledRejection: 1,
+      });
+      // stop() cleared exactly the timer the arm created, through the real clearInterval binding.
+      expect(clearedTimers).toEqual([armedTimers[0]?.handle]);
+
+      const records = readFileSync(logPath, "utf8")
+        .trim()
+        .split("\n")
+        .map((l) => JSON.parse(l) as Record<string, unknown>);
+      expect(records.map((r) => r["event"])).toEqual(["boot", "heartbeat"]);
+      expect(records[0]).toMatchObject({
+        name: LIFECYCLE_LOGGER_NAME,
+        pid: process.pid,
+        hostname: hostname(),
+        version: "7.7.7-arm",
+        heartbeatMs: 45_000,
+      });
+      expect(typeof records[0]?.["time"]).toBe("number");
+      expect(records[1]).toMatchObject({ syncing: ["github"], embeddings: "ready" });
+      expect(typeof records[1]?.["rssMb"]).toBe("number");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });

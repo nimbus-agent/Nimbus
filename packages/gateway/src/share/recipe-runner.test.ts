@@ -3,6 +3,7 @@ import { describe, expect, test } from "bun:test";
 import { isReadOnlyToolId } from "./read-tool-registry.ts";
 import type { RecipeStep } from "./recipe.ts";
 import {
+  hasSafeParamsShape,
   MAX_REPLAY_STEPS,
   replayRecipe,
   replayShare,
@@ -412,5 +413,105 @@ describe("replayShare", () => {
     expect(report.steps[0]?.status).toBe("skipped-non-read"); // acme_destroy (HITL-absent write)
     expect(report.steps[1]?.status).toBe("skipped-non-read"); // snowflake_tag_set (HITL-present write)
     expect(report.steps[2]?.status).toBe("match"); // gmail_get
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Untrusted-step parsing: a share file is attacker-controlled, so every field of every step is
+// validated and a malformed one is dropped — never coerced into something executable.
+// ---------------------------------------------------------------------------
+
+describe("stepsFromShare — per-step validation and defaults", () => {
+  test("drops malformed recipe steps and defaults the optional fields of the rest", () => {
+    const share = shareWith({
+      kind: "recipe",
+      recipe: {
+        steps: [
+          null,
+          "gmail_list",
+          { tool: "gmail_list" }, // no service
+          { tool: 7, service: "gmail" }, // non-string tool
+          { tool: "gmail_list", service: "gmail" }, // valid, every optional field absent
+          {
+            tool: "slack_search",
+            service: "slack",
+            stepId: "custom-id",
+            status: "error",
+            params: { q: "x" },
+            dependsOn: ["step-5", 7, null, "custom-0"],
+          },
+          { tool: "notion_get", service: "notion", status: 3, dependsOn: "step-5" },
+        ],
+      },
+    });
+    const { steps } = stepsFromShare(share);
+    expect(steps).toEqual([
+      // The default id comes from the step's position in the RAW array (index 4 -> "step-5"),
+      // so it still lines up with what the recipe author's own numbering meant.
+      {
+        stepId: "step-5",
+        tool: "gmail_list",
+        service: "gmail",
+        params: undefined,
+        status: "ok",
+        dependsOn: [],
+      },
+      {
+        stepId: "custom-id",
+        tool: "slack_search",
+        service: "slack",
+        params: { q: "x" },
+        status: "error",
+        // Non-string dependency ids are filtered out, not stringified.
+        dependsOn: ["step-5", "custom-0"],
+      },
+      {
+        stepId: "step-7",
+        tool: "notion_get",
+        service: "notion",
+        params: undefined,
+        // A non-string status and a non-array dependsOn both fall back to their defaults.
+        status: "ok",
+        dependsOn: [],
+      },
+    ]);
+  });
+
+  test("a recipe that is not an object yields zero steps", () => {
+    expect(stepsFromShare(shareWith({ kind: "recipe", recipe: null })).steps).toEqual([]);
+    expect(stepsFromShare(shareWith({ kind: "recipe", recipe: "steps" })).steps).toEqual([]);
+  });
+
+  test("a transcript tool call with no string status is recorded as ok", () => {
+    // Cast through `unknown`: the typed `ShareToolCall` requires `status`, which is exactly the
+    // guarantee an untrusted share file does not give.
+    const base = shareWith({ kind: "transcript" });
+    const share = {
+      ...base,
+      body: {
+        ...base.body,
+        toolCalls: [
+          { toolId: "gmail_get", service: "gmail", params: { id: "1" } },
+          { toolId: "slack_search", service: "slack", status: 500 },
+          { toolId: "notion_get", service: "notion", status: "error" },
+        ],
+      },
+    } as unknown as ShareFile;
+    expect(stepsFromShare(share).steps.map((s) => s.status)).toEqual(["ok", "ok", "error"]);
+  });
+});
+
+describe("hasSafeParamsShape — nested values", () => {
+  test("null is a legal nested VALUE (only the root must be an object)", () => {
+    expect(hasSafeParamsShape({ cursor: null, page: { next: null } })).toBe(true);
+    // Control: the same null as the ROOT is still refused.
+    expect(hasSafeParamsShape(null)).toBe(false);
+  });
+
+  test("a function anywhere in the tree is refused — params must be plain data", () => {
+    expect(hasSafeParamsShape({ fn: () => 1 })).toBe(false);
+    expect(hasSafeParamsShape({ a: { b: [1, { c: () => 2 }] } })).toBe(false);
+    // Control: the same shape with the function replaced by data passes.
+    expect(hasSafeParamsShape({ a: { b: [1, { c: 2 }] } })).toBe(true);
   });
 });
