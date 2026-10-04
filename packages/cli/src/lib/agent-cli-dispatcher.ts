@@ -29,7 +29,8 @@ type AgentBriefRequest<B> = {
  * The opening every agent-brief command shares: read the gateway state and build — not connect —
  * an IPC client for it. With no gateway running, prints the not-running message (the demo
  * gateway's, under `--demo`) and exits 1 before any connection is attempted. `demo` is
- * `CliPlatformPaths.demo === true`, the flag `briefTextFor`/`renderAgentBrief` take.
+ * `CliPlatformPaths.demo === true`: the flag `renderAgentBrief` takes, and `briefTextFor` as
+ * `{ demo }`.
  */
 export async function agentBriefClientOrExit(): Promise<{ client: IPCClient; demo: boolean }> {
   const paths = getCliPlatformPaths();
@@ -125,6 +126,6 @@ export function fetchAgentBrief<B>(
 ): Promise<AgentBriefResult<B>> {
   return withAgentBrief(
     { agentName, ipcMethod: `agents.${agentName}`, callParams, guard },
-    (result, demo) => ({ ...result, brief: briefTextFor(result.brief, demo) }),
+    (result, demo) => ({ ...result, brief: briefTextFor(result.brief, { demo }) }),
   );
 }

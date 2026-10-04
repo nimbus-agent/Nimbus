@@ -59,7 +59,7 @@ function renderBrief(b: Brief, sink: OncallPushedSink, demo: boolean): number {
     sink.err(`Retry: nimbus oncall pushed ${b.incidentId} --retry\n`);
     return 1;
   }
-  sink.out(`${briefTextFor(b.briefMarkdown ?? "", demo)}\n`);
+  sink.out(`${briefTextFor(b.briefMarkdown ?? "", { demo })}\n`);
   return 0;
 }
 

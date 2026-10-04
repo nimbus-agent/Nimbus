@@ -217,7 +217,7 @@ export async function runAgentBriefCli<TFindings>(
     if (spec.json) {
       process.stdout.write(`${JSON.stringify(findings, null, 2)}\n`);
     } else {
-      process.stdout.write(`${briefTextFor(brief, demo)}\n`);
+      process.stdout.write(`${briefTextFor(brief, { demo })}\n`);
     }
   } catch (err) {
     // `spec.beforeCall`/`spec.onResult` are caller-supplied extension points (see decisions.ts,

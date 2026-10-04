@@ -120,11 +120,17 @@ describe("demoizeBriefCommands", () => {
 
 describe("briefTextFor", () => {
   it("is the verbatim brief outside the demo", () => {
-    expect(briefTextFor(BRIEF_WITH_COMMANDS, false)).toBe(BRIEF_WITH_COMMANDS);
+    expect(briefTextFor(BRIEF_WITH_COMMANDS, { demo: false })).toBe(BRIEF_WITH_COMMANDS);
+  });
+
+  it("is the verbatim brief for a real install's paths, which carry no `demo` key", () => {
+    expect(briefTextFor(BRIEF_WITH_COMMANDS, {})).toBe(BRIEF_WITH_COMMANDS);
   });
 
   it("is the demoized brief in the demo", () => {
-    expect(briefTextFor(BRIEF_WITH_COMMANDS, true)).toBe(demoizeBriefCommands(BRIEF_WITH_COMMANDS));
+    const demoized = briefTextFor(BRIEF_WITH_COMMANDS, { demo: true });
+    expect(demoized).toBe(demoizeBriefCommands(BRIEF_WITH_COMMANDS));
+    expect(demoized).not.toBe(BRIEF_WITH_COMMANDS);
   });
 });
 
