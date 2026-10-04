@@ -182,9 +182,9 @@ describe("link matching keeps the leftmost-match semantics of the old regex", ()
 // opening `_` a failed attempt proves cannot match (`stripUnderscoreItalic`), which is what keeps a
 // line linear. Unlike the link regex above, this one stays live as the ORACLE: the scan must return
 // what it returned for every input, so these tests compare the two rather than pin outputs by
-// hand — exhaustively over short strings, then over seeded pseudo-random ones, then on the edge
-// cases where a skip could plausibly go wrong — and then hold the time bound on the inputs the
-// regex was quadratic on.
+// hand — exhaustively over short strings, then for every UTF-16 code unit at each place the pattern
+// reads one, then over seeded pseudo-random strings, then on the edge cases where a skip could
+// plausibly go wrong — and then hold the time bound on the inputs the regex was quadratic on.
 const OLD_UNDERSCORE_ITALIC_RE = /(?<!\w)_(?!\s)(.+?)(?<!\s)_(?!\w)/g;
 
 function viaOldRegex(text: string): string {
@@ -221,9 +221,10 @@ function seededRandom(seed: number): () => number {
 
 describe("underscore italic keeps the semantics of the old regex", () => {
   // The pattern tells code units apart by five classes only: `_`, any other word character, a
-  // space `.` accepts, a line terminator (a space `.` refuses), and anything else. The scan reads
-  // them through the same three escapes, so a string's outcome depends only on its sequence of
-  // classes, and this checks every sequence of up to eight: 488,281 strings.
+  // space `.` accepts, a line terminator (a space `.` refuses), and anything else. As long as the
+  // scan sorts every code unit into the class the regex does, which the next test checks for all
+  // 65,536 of them, a string's outcome depends only on its sequence of classes, and this checks
+  // every sequence of up to eight: 488,281 strings.
   test("agrees with the old regex on every arrangement of its five classes up to length 8", () => {
     const mismatches: string[] = [];
     let checked = 0;
@@ -238,6 +239,43 @@ describe("underscore italic keeps the semantics of the old regex", () => {
     expect(checked).toBe(488_281);
     // Not vacuous: the oracle rewrites about one string in eight.
     expect(rewritten).toBeGreaterThan(50_000);
+  });
+
+  // What makes the five classes above stand for every code unit: the scan must sort each one into
+  // the class the regex does, at each of the five places the pattern reads one — before the opener
+  // (`(?<!\w)`), right after it (`(?!\s)` and the first unit of `.`), inside the content (`.`),
+  // before the closer (`(?<!\s)`) and after it (`(?!\w)`). This puts every UTF-16 code unit at each
+  // of them. A whitespace set written out by hand instead of `\s`, whether it leaves out U+1680,
+  // U+2000 to U+200A, U+202F or U+205F or adds U+0085 as Python's does, or a `.` that refuses
+  // U+0085 as Java's does, passes every other test in this file and fails only this one.
+  test("agrees with the old regex on every code unit at each place the pattern reads one", () => {
+    const places = [
+      ["before the opener", (c: string) => `${c}_a_`],
+      ["after the opener", (c: string) => `_${c}a_`],
+      ["inside the content", (c: string) => `_a${c}b_`],
+      ["before the closer", (c: string) => `_a${c}_`],
+      ["after the closer", (c: string) => `_a_${c}`],
+    ] as const;
+    const mismatches: string[] = [];
+    const insensitive: string[] = [];
+    let checked = 0;
+    for (const [place, build] of places) {
+      let kept = 0;
+      for (let unit = 0; unit <= 0xffff; unit++) {
+        const text = build(String.fromCharCode(unit));
+        const want = viaOldRegex(text);
+        if (want === text) kept++;
+        if (stripUnderscoreItalic(text) !== want) {
+          mismatches.push(`U+${unit.toString(16).toUpperCase().padStart(4, "0")} ${place}`);
+        }
+        checked++;
+      }
+      // Not vacuous: at every place, some code units stop the run and the others let it through.
+      if (kept === 0 || kept === 65_536) insensitive.push(place);
+    }
+    expect(mismatches.slice(0, 5)).toEqual([]);
+    expect(checked).toBe(327_680);
+    expect(insensitive).toEqual([]);
   });
 
   // The real members of each class, which the five representatives above stand in for: the

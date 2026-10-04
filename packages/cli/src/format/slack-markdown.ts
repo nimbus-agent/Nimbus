@@ -95,7 +95,11 @@ function unescapeMarkdown(text: string): string {
  * content — written as the very escapes the regex it replaced used, with the same (absent) flags.
  * Tested against one UTF-16 code unit, each answers exactly as that regex's atom did: `é` is not a
  * word character, U+00A0 is a space, `.` refuses only the line terminators `\n`, `\r`, U+2028 and
- * U+2029, and each half of a surrogate pair is a separate non-word, non-space code unit.
+ * U+2029, and each half of a surrogate pair is a separate non-word, non-space code unit. Keep them
+ * as these escapes rather than sets written out by hand: `\s` also covers U+1680, U+2000 to U+200A,
+ * U+202F and U+205F, which a list written from memory tends to miss, and U+0085 is neither a space
+ * nor a line terminator here, unlike in Python's `\s` or Java's `.`. `slack-markdown.test.ts` puts
+ * every code unit at each place the pattern reads one.
  */
 const WORD_RE = /\w/;
 const SPACE_RE = /\s/;

@@ -34,12 +34,16 @@ Phase-level history before `v0.1.0` (Phases 1â€“4) lives in [`docs/roadmap.md` Â
   note that the pass was still quadratic.
   **The output is unchanged for every input.** The test keeps the old regex as its oracle and
   compares the two on every string of up to eight characters drawn from the five classes the
-  pattern tells apart (488,281 strings), and on 20,000 seeded pseudo-random strings drawn from
-  real members of each class, among them U+00A0, U+2028, the BOM, a non-BMP character and a lone
-  surrogate. Each of seven deliberate mutations of the scan fails that comparison. Four
-  time-bounded tests hold 120 KB inputs under one second. They also guard the scan's two skips,
-  past the end of the text and past a line terminator, which no output comparison can see: a scan
-  that retried every `_` would return the same text, quadratically.
+  pattern tells apart (488,281 strings); on every UTF-16 code unit at each of the five places the
+  pattern reads one (327,680 strings), which shows the scan sorts each code unit into the class the
+  regex does instead of assuming it; and on 20,000 seeded pseudo-random strings drawn from real
+  members of each class, among them U+00A0, U+2028, the BOM, a non-BMP character and a lone
+  surrogate. Each of seven deliberate mutations of the scan fails that comparison. So do three more
+  that only the per-code-unit check catches: a whitespace set written out by hand that leaves out
+  U+1680, U+2000 to U+200A, U+202F and U+205F, one that adds U+0085, and a `.` that also refuses
+  U+0085. Four time-bounded tests hold 120 KB inputs under one second. They also guard the scan's
+  two skips, past the end of the text and past a line terminator, which no output comparison can
+  see: a scan that retried every `_` would return the same text, quadratically.
   **Nothing else in `cli/src/format/` is super-linear.** The audit covered bold, both
   single-asterisk italic patterns, strikethrough, the link scan, the heading, table-row and
   delimiter-cell patterns, the cell split and the unescape pass: 66 adversarial shapes at up to
