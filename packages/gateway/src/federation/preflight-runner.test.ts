@@ -3,6 +3,7 @@ import type { ChildProcess } from "node:child_process";
 import { EventEmitter } from "node:events";
 import { isAbsolute } from "node:path";
 import type { SandboxRunner } from "../platform/sandbox/index.ts";
+import { awaitHoldingEventLoop } from "../testing/hold-event-loop.ts";
 import { runPreflightCommand } from "./preflight-runner.ts";
 
 function fakeChild(exitCode: number, delayMs = 0): ChildProcess {
@@ -63,7 +64,12 @@ test("non-zero exit → not passed", async () => {
 
 test("timeout kills the process and reports timed out", async () => {
   let killed = false;
-  const r = await runPreflightCommand(
+  // The fake child would not exit for 10 s, so ONLY awaitExit's 50 ms kill timer can settle this
+  // run — and that timer is unref'd (as is the fake's own), which under Bun 1.3 on Windows means it
+  // never fires while nothing else is ref'd: awaited bare, this file hangs when it runs alone (see
+  // testing/hold-event-loop.ts). The hold keeps the loop alive; the unref'd kill timer is still what
+  // times the run out.
+  const run = runPreflightCommand(
     { ...cfg, timeoutSeconds: 0.05 },
     { ref: "HEAD", changedSurface: [] },
     {
@@ -80,6 +86,7 @@ test("timeout kills the process and reports timed out", async () => {
       now: () => 0,
     },
   );
+  const r = await awaitHoldingEventLoop(run);
   expect(r.passed).toBe(false);
   expect(r.summary).toContain("timed out");
   expect(killed).toBe(true);
@@ -139,8 +146,10 @@ test("a relative cwd is resolved to an absolute sandbox root", async () => {
 });
 
 test("omitting deps.now falls back to the real clock and reports a non-negative duration", async () => {
-  // tiny timeoutSeconds → the awaitExit safety timer is ~10ms (and cleared on the immediate
-  // microtask exit), avoiding a long-lived unref'd timer that spins `bun test` on Windows.
+  // No hold needed here, whatever timeoutSeconds is: the exit arrives on a microtask, so awaitExit
+  // clears its unref'd kill timer before anything waits on it. A long timer left pending, or one
+  // cleared, never spins `bun test` on Windows — only AWAITING a promise that nothing ref'd can
+  // settle does (see the timeout test above).
   const r = await runPreflightCommand(
     { command: "bun", args: ["test"], cwd: "/srv/x", timeoutSeconds: 0.01 },
     { ref: "HEAD", changedSurface: [] },
