@@ -25,8 +25,14 @@ const logs: string[] = [];
 function nextLog(): { signal: Promise<void>; resolve: () => void } {
   let resolve: () => void = () => {};
   const signal = new Promise<void>((res, rej) => {
-    resolve = res;
-    setTimeout(() => rej(new Error("logger was never called within 5s")), 5000).unref();
+    // Ref'd, and cleared once the logger answers. An unref'd guard is inert exactly when it is
+    // needed: if the logger is never called, nothing else is ref'd, and under Bun 1.3 on Windows an
+    // unref'd timer never fires then — the file hung at 100% CPU instead of failing after 5 s.
+    const guard = setTimeout(() => rej(new Error("logger was never called within 5s")), 5000);
+    resolve = () => {
+      clearTimeout(guard);
+      res();
+    };
   });
   return { signal, resolve };
 }
