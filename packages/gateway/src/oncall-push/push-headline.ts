@@ -80,6 +80,18 @@ export function parseHeadlineBrief(json: string | null): HeadlineBrief | null {
   return { nimbusServiceId: sid, deployment: { title, startedAtMs, finishedAtMs } };
 }
 
+/**
+ * The service a pushed brief is about, shared by the ChatOps headline and `oncall.pushedList` so
+ * Slack and the desktop name it identically: the brief's mapped Nimbus service, then the incident's
+ * PagerDuty service id, then null. Blank values fall through. RAW: each surface formats it itself.
+ */
+export function resolvePushService(
+  brief: HeadlineBrief | null,
+  pagerdutyServiceId: string | null,
+): string | null {
+  return nonEmpty(brief?.nimbusServiceId) ?? nonEmpty(pagerdutyServiceId) ?? null;
+}
+
 /** The ChatOps agent intent for one incident. The parameter is `incidentId` (ipc/agent-param-kinds.ts). */
 export function pushAgentCommand(incidentId: string): string {
   return `@nimbus agent oncall incidentId=${field(incidentId)}`;
@@ -101,10 +113,7 @@ function deploymentLine(brief: HeadlineBrief | null, openedAtMs: number | null):
 export function renderPushHeadline(d: PushDelivery): string {
   const brief = d.row.status === "ok" ? parseHeadlineBrief(d.row.briefJson) : null;
   const severity = nonEmpty(d.incident.severity) ?? "P1";
-  const service =
-    nonEmpty(brief?.nimbusServiceId) ??
-    nonEmpty(d.incident.pagerdutyServiceId) ??
-    "unknown service";
+  const service = resolvePushService(brief, d.incident.pagerdutyServiceId) ?? "unknown service";
   const title = nonEmpty(d.incident.title) ?? "(untitled)";
   const id = d.row.incidentId;
   return [
