@@ -14,7 +14,10 @@ export function Oncall(): ReactNode {
   const { list, error, refetch } = useOncallBriefs();
   const [params, setParams] = useSearchParams();
   const markPushedSeen = useNimbusStore((s) => s.markPushedSeen);
+  // The notice names the LAST pruned id; the set remembers EVERY one, so several pruned rows at the
+  // head of a stale list cannot ping-pong the auto-select between them.
   const [pruned, setPruned] = useState<string | null>(null);
+  const [prunedIds, setPrunedIds] = useState<ReadonlySet<string>>(new Set());
   const briefs = list?.briefs ?? [];
   const newest = briefs[0];
   const selectedId = params.get("id");
@@ -29,21 +32,23 @@ export function Oncall(): ReactNode {
   // skips a just-pruned id: the cached list can still name it until the list refetch below lands,
   // and re-selecting it would remount BriefDetail, fetch `{ brief: null }` again, clear `id` again,
   // and loop (plan review section 2.1).
-  const autoId = briefs.find((b) => b.incidentId !== pruned)?.incidentId;
+  const autoId = briefs.find((b) => !prunedIds.has(b.incidentId))?.incidentId;
   useEffect(() => {
     if (selectedId === null && autoId !== undefined) setParams({ id: autoId }, { replace: true });
   }, [selectedId, autoId, setParams]);
 
   const onSelect = useCallback(
     (id: string) => {
+      if (id === selectedId) return; // re-clicking the open row must not push a duplicate entry
       setPruned(null);
       setParams({ id });
     },
-    [setParams],
+    [setParams, selectedId],
   );
   const onPruned = useCallback(
     (id: string) => {
       setPruned(id);
+      setPrunedIds((prev) => new Set(prev).add(id));
       setParams({}, { replace: true });
       refetch(); // the list may still carry the pruned row; refresh it rather than wait 60 s
     },

@@ -33,6 +33,9 @@ vi.mock("../../src/hooks/useIpcQuery", () => ({
   useIpcQuery: (_m: string, _i: number, params?: Record<string, unknown>) => {
     const id = String(params?.["incidentId"]);
     h.calls.push(id);
+    if (h.mounts.filter((m) => m === id).length > 5) {
+      throw new Error(`useIpcQuery mock: ${id} mounted >5 times — auto-select/prune loop`);
+    }
     // biome-ignore lint/correctness/useExhaustiveDependencies: one entry per mount of this id
     useEffect(() => {
       h.mounts.push(id);
@@ -260,6 +263,34 @@ describe("Oncall page", () => {
     expect(search()).toBe(`?id=${enc(FAIL_ID)}`);
     expect(container.textContent).not.toContain("# On-call");
     expect(screen.getByText(/timeout: no brief in 30000ms/)).toBeTruthy();
+  });
+
+  it("15: two pruned rows at the head of a stale list settle on the third, no loop", async () => {
+    const g1 = "pagerduty:PGONE1";
+    const g2 = "pagerduty:PGONE2";
+    setBriefs({
+      enabled: true,
+      identity: "resolved",
+      briefs: [
+        row(g1, 1_790_000_700_000),
+        row(g2, 1_790_000_600_000),
+        row(OK_ID, 1_790_000_000_000),
+      ],
+    });
+    setQuery(g1, { brief: null });
+    setQuery(g2, { brief: null });
+    render(ui("/oncall"));
+    await waitFor(() => expect(search()).toBe(`?id=${enc(OK_ID)}`));
+    await new Promise((r) => setTimeout(r, 50));
+    expect(h.mounts.filter((c) => c === g1).length).toBeLessThanOrEqual(1);
+    expect(h.mounts.filter((c) => c === g2).length).toBeLessThanOrEqual(1);
+    expect(search()).toBe(`?id=${enc(OK_ID)}`);
+  });
+
+  it("16: re-clicking the open row adds no history entry", async () => {
+    render(ui(`/oncall?id=${enc(OK_ID)}`));
+    await userEvent.click(screen.getByRole("button", { name: /payment-service: 5xx/ }));
+    expect(screen.getByTestId("nav").textContent).toBe("POP");
   });
 
   it("13: a pruned newest row does not loop; auto-select skips it and the list refetches once", async () => {
