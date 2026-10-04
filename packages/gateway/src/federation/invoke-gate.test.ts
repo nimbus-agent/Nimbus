@@ -304,6 +304,9 @@ describe("I26 — federated peer gate fail-closed rejects write tool ids", () =>
   // every key) — the bare id alone was all the predicate used to match, so the executable form of
   // even a long-classified write (tableau_datasource_refresh) went through. Each case first proves
   // the grant WOULD let the call through, so the refusal is the write predicate and nothing else.
+  // The last four are the comms writes whose literals D17 / D19 confine to their own gates: those
+  // gates pin the destination when the GATEWAY posts or appends, but a federated invoke carries the
+  // peer's own arguments, so the peer would choose the channel or the knowledge base.
   const cases = [
     ["aws", "aws_ec2_instance_stop"],
     ["aws", "aws_ec2_instance_start"],
@@ -311,6 +314,10 @@ describe("I26 — federated peer gate fail-closed rejects write tool ids", () =>
     ["teams", "teams_message_post_chat"],
     ["google_drive", "gdrive_file_trash"],
     ["tableau", "tableau_datasource_refresh"],
+    ["slack", "slack_chat_post"],
+    ["teams", "teams_chat_post"],
+    ["notion", "notion_kb_append"],
+    ["confluence", "confluence_kb_append"],
   ] as const;
   for (const [service, bare] of cases)
     for (const toolId of [bare, `${service}_${bare}`]) {

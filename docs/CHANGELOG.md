@@ -18,39 +18,45 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
 
 ## Post-Phase-6 deliveries
 
-- **2026-10-04 — I26: the federated invoke gate refuses a connector write in the form a session
-  actually executes, five unclassified writes are classified, and a sync guard keeps the list in
-  step with the connectors package.** I26 says a federated peer can never trigger a connector
-  write: `answerFederatedInvoke` refuses any tool id `isConnectorWriteToolId` classifies. That held
-  for no write at all. A team-credentialed session lists its tools through `@mastra/mcp`, which
-  keys each one `<server>_<tool>`, and the runner looks the requested id up verbatim, so
-  `tableau_tableau_datasource_refresh` is what executes and a bare `tableau_datasource_refresh` is
-  not found. The predicate matched bare ids only: it refused the ids that cannot run and passed the
-  ones that can. A probe through the real gate, predicate, session lookup and `MCPClient` executed
-  the namespaced write behind a grant. The predicate now also matches any `_`-delimited suffix, at
-  a cost bounded by the longest write id, and a new integration test lists real connector processes
-  through a real `MCPClient` to pin the key scheme. The owner's per-tool grant was the one barrier
-  left, so this is the invariant restored, not an open door closed. Separately, the predicate is a
-  hand-maintained list, and five mutating tools were on none of it. `aws_ec2_instance_stop`,
-  `aws_ec2_instance_start`, `slack_message_post_dm` and `teams_message_post_chat` were plain read
-  registrations in `@nimbus-dev/connectors` 0.2.1 and became consent-gated writes in 0.2.2.
-  `gdrive_file_trash` still registers as a read in 0.2.2 although it PATCHes `trashed: true`. All
-  five are now in `MIGRATED_WRITE_TOOL_IDS`. The new `connectors/connector-write-sync.test.ts`
-  reads the INSTALLED connectors package as text and
-  derives every tool id registered through the write registrar, then fails on any the predicate
-  does not cover. It follows the registrar by data flow from `createWriteToolRegistrar`, not by
-  name: 0.2.2 already forwards writes through `registerStatusTool`, `registerPipelineActionTool`
-  and `registerFeedbackTool`, which a `register*WriteTool` pattern would miss. A shape it cannot
-  follow fails the test rather than being skipped, and it checks itself against upstream's own
-  manifests: every connector declaring a write must yield a registration. On 0.2.1 it derives 87
-  writes, exactly the 83 the gateway listed plus four the list leaves to their own gates, and on
-  0.2.2 it derives 91, so the pending connectors bump passes it unchanged. It cannot see a mutation
-  registered as a read, which is why `gdrive_file_trash` is listed by hand. The same namespacing
-  means a BARE id cannot execute through `withConnectorSession` at all, so the gateway's own
-  bare-id callers of it (the local connector-write transport, the team list drain) fail closed
-  against a real session; their unit tests fake bare-keyed tool maps. That is a functional defect,
-  not fixed here, and matching both forms keeps I26 correct whichever way it is fixed. No new
-  invariant, no migration, no new IPC method.
+- **2026-10-04 — I26 holds again: the federated invoke gate refuses every connector write, in the
+  form a session actually executes it, and a sync guard keeps the write list in step with the
+  connectors package.** I26 says a federated peer can never trigger a connector write:
+  `answerFederatedInvoke` refuses any tool id `isConnectorWriteToolId` classifies. Three gaps made
+  that false, each leaving only the owner's per-tool grant in the way:
+  - **No write was refused in the form that runs.** A team-credentialed session lists its tools
+    through `@mastra/mcp`, which keys each one `<server>_<tool>`, and the runner looks the requested
+    id up verbatim, so `tableau_tableau_datasource_refresh` executes and a bare
+    `tableau_datasource_refresh` is not found. The predicate matched bare ids only. A probe through
+    the real gate, predicate, session lookup and `MCPClient` executed the namespaced write behind a
+    grant. The predicate now also matches any `_`-delimited suffix, at a cost bounded by the
+    longest write id, and an integration test lists real connector processes through a real
+    `MCPClient` to pin the key scheme.
+  - **Four comms writes were never on the list.** Static D19 and D17 confine the literals
+    `notion_kb_append`, `confluence_kb_append`, `slack_chat_post` and `teams_chat_post` to their
+    gates, and the list treated that as confining the tools. Those gates pin the destination only
+    when the gateway itself calls them; a federated invoke carries the peer's arguments, so a
+    granted peer chose the channel or the knowledge base, against I23 and I25 as well. Each gate
+    now exports its ids as a set the predicate refuses, so the literals stay where they were.
+  - **Five mutating tools were unclassified.** `aws_ec2_instance_stop`, `aws_ec2_instance_start`,
+    `slack_message_post_dm` and `teams_message_post_chat` were read registrations in
+    `@nimbus-dev/connectors` 0.2.1 and became consent-gated writes in 0.2.2, and
+    `gdrive_file_trash` still registers as a read in 0.2.2 although it PATCHes `trashed: true`.
+    All five are now in `MIGRATED_WRITE_TOOL_IDS`.
+
+  The new `connectors/connector-write-sync.test.ts` reads the INSTALLED connectors package as text,
+  derives every tool id registered through the write registrar, and fails on any the predicate does
+  not refuse, bare or namespaced. It follows the registrar by data flow from
+  `createWriteToolRegistrar`, not by name: 0.2.2 already forwards writes through
+  `registerStatusTool`, `registerPipelineActionTool` and `registerFeedbackTool`, which a
+  `register*WriteTool` pattern would miss. A shape it cannot follow fails the test rather than
+  being skipped, and it checks itself against upstream's own manifests: every connector declaring a
+  write must yield a registration. It derives 87 writes from 0.2.1 and 91 from 0.2.2, so the
+  pending connectors bump passes it unchanged, and it has no exception list. It cannot see a
+  mutation registered as a read, which is why `gdrive_file_trash` is listed by hand. Found on the
+  way and not fixed here: because of the same namespacing, a bare id cannot execute through
+  `withConnectorSession` at all, so the gateway's own bare-id callers of it (the local
+  connector-write transport and the team list drain) fail closed against a real session, while
+  their unit tests fake bare-keyed tool maps. No new invariant, no migration, no new IPC method.
 
 - **2026-10-04 — Quality sweep: the SonarCloud backlog cleared, duplication down by a third, and
   about 2,900 tests added.** On 2026-09-29 SonarCloud's TypeScript analyzer gained four rules:

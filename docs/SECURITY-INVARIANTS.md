@@ -470,7 +470,7 @@ The comments at `extensions/install-from-local.ts:120,404,556,558` document the 
 
 ## I23 — ChatOps operational posts are bounded to server-derived destinations
 
-**Statement:** ChatOps operational (non-HITL) posts go only through `chatops/reply-dispatcher.ts` to a server-derived `ReplyTarget` — either the originating message's channel (`kind: "originating"`) or a policy-declared `notify` channel for a namespace (`kind: "namespaceNotify"`). The destination is NEVER a caller-supplied raw channel. Arbitrary-destination posting (e.g. to an attacker-controlled channel) remains reachable only via the HITL-gated `*.message.post` action types (I2). No other chatops module may reference the connector post tools (`slack_chat_post` / `teams_chat_post`) directly. Static **D17**.
+**Statement:** ChatOps operational (non-HITL) posts go only through `chatops/reply-dispatcher.ts` to a server-derived `ReplyTarget` — either the originating message's channel (`kind: "originating"`) or a policy-declared `notify` channel for a namespace (`kind: "namespaceNotify"`). The destination is NEVER a caller-supplied raw channel. Arbitrary-destination posting (e.g. to an attacker-controlled channel) remains reachable only via the HITL-gated `*.message.post` action types (I2). No other chatops module may reference the connector post tools (`slack_chat_post` / `teams_chat_post`) directly. No federated peer can name them either: `chatops/transport/connector-post.ts` exports them as `CHATOPS_POST_TOOL_IDS`, which the I26 write predicate refuses at `answerFederatedInvoke`. Until 2026-10-04 it did not, so a peer holding the owner's grant could post to a channel of its own choosing. Static **D17**.
 
 **Wired at:**
 
@@ -503,7 +503,7 @@ The comments at `extensions/install-from-local.ts:120,404,556,558` document the 
 
 ## I25 — a tribal-knowledge KB capture writes only the config destination, behind the owner's HITL gate
 
-**Statement:** Capturing a repeated-question Q&A into a shared knowledge base writes ONLY to the destination pinned in the local owner's `nimbus.toml` (`[tribal.notion].database_id` / `[tribal.confluence].space_key` + `parent_page_id`), and only after the LOCAL owner approves it at the executor HITL gate. The caller (CLI `--target` or an in-chat trigger) supplies at most a KB *selector* (`notion` | `confluence`) — never the destination database/space/parent. An unconfigured target fails closed (`not_configured`) before any action is submitted; a rejected HITL leaves the cluster uncaptured. The write reaches the connector mesh only via the HITL-gated `notion.knowledge.write` / `confluence.knowledge.write` action types, whose tool ids (`notion_kb_append` / `confluence_kb_append`) are confined to the write-gate + the two connector definition sites. Static **D19**.
+**Statement:** Capturing a repeated-question Q&A into a shared knowledge base writes ONLY to the destination pinned in the local owner's `nimbus.toml` (`[tribal.notion].database_id` / `[tribal.confluence].space_key` + `parent_page_id`), and only after the LOCAL owner approves it at the executor HITL gate. The caller (CLI `--target` or an in-chat trigger) supplies at most a KB *selector* (`notion` | `confluence`) — never the destination database/space/parent. An unconfigured target fails closed (`not_configured`) before any action is submitted; a rejected HITL leaves the cluster uncaptured. The write reaches the connector mesh only via the HITL-gated `notion.knowledge.write` / `confluence.knowledge.write` action types, whose tool ids (`notion_kb_append` / `confluence_kb_append`) are confined to the write-gate + the two connector definition sites. No federated peer can name them either: `tribal-write-gate.ts` exports them as `TRIBAL_KB_WRITE_TOOL_IDS`, which the I26 write predicate refuses at `answerFederatedInvoke`. Until 2026-10-04 it did not, so a peer holding the owner's grant could append to a knowledge base of its own choosing. Static **D19**.
 
 **Wired at:**
 
@@ -553,10 +553,15 @@ shape it follows, not only the shapes the installed version uses. **Stated bound
 REGISTRATIONS only, so a tool that mutates while registered as a read — `gdrive_file_trash` today —
 is invisible to it and has to be classified by hand. It also asserts that no write tool ends in a
 verb `share.replay`'s read allowlist (`share/read-tool-registry.ts`) would run, since replay is the
-other path that executes a tool id a caller names. Four ids remain outside the predicate:
-`notion_kb_append` / `confluence_kb_append` (static D19) and `slack_chat_post` / `teams_chat_post`
-(static D17) — those rules confine where the GATEWAY names the tools, not which tool id a federated
-peer may send, so today only the owner's per-tool grant stands between a peer and them.
+other path that executes a tool id a caller names. The four comms writes whose literals static
+rules confine to their own gates — `notion_kb_append` / `confluence_kb_append` (D19) and
+`slack_chat_post` / `teams_chat_post` (D17) — used to be left out of the predicate on the theory that
+those gates already confined them. They confine the DESTINATION only when the gateway itself calls
+the tool (I25 / I23); a federated invoke carries the peer's own arguments, so a granted peer chose
+the knowledge base or the channel. Each gate now exports its ids as a set
+(`TRIBAL_KB_WRITE_TOOL_IDS`, `CHATOPS_POST_TOOL_IDS`) and the predicate refuses them through it
+(`GATE_CONFINED_WRITE_TOOL_IDS`), so the literals stay where D17 / D19 put them and the guard has no
+exception list: it derives these four like every other write.
 
 **Matched in the form a federated session executes (2026-10-04).** A team-credentialed session
 lists its tools through `@mastra/mcp`'s `MCPClient.listTools()`, which keys every tool
@@ -582,18 +587,18 @@ keeps I26 correct whichever way that is fixed.
 **Wired at:**
 
 - `packages/gateway/src/connectors/warehouse-write-tools.ts` + `packages/gateway/src/connectors/gitops-ml-write-tools.ts` — the per-group SSoTs (`WAREHOUSE_BI_WRITES` / `GITOPS_ML_WRITES`, each a `ConnectorWrite` `{ actionType, toolId, service }`), their tool-id sets, and the `isWarehouseWriteToolId` / `isGitopsMlWriteToolId` predicates. Kept in drift-sync with `HITL_REQUIRED_BACKING` in `executor.ts` (asserted in `connector-write-registry.test.ts`).
-- `packages/gateway/src/connectors/connector-write-registry.ts` — the union: `CONNECTOR_WRITES`, the `isConnectorWriteToolId(toolId)` predicate (a bare write id, or any `_`-delimited suffix of the id, i.e. the `<server>_<tool>` key a federated session executes), and `connectorWriteByActionType(type)`.
+- `packages/gateway/src/connectors/connector-write-registry.ts` — the union: `CONNECTOR_WRITES`, the `isConnectorWriteToolId(toolId)` predicate (a bare write id, or any `_`-delimited suffix of the id, i.e. the `<server>_<tool>` key a federated session executes), and `connectorWriteByActionType(type)`. The predicate also covers `GATE_CONFINED_WRITE_TOOL_IDS`: `TRIBAL_KB_WRITE_TOOL_IDS` from `tribal/tribal-write-gate.ts` and `CHATOPS_POST_TOOL_IDS` from `chatops/transport/connector-post.ts`, imported as sets so their D19 / D17 literals stay in those files.
 - `packages/gateway/src/engine/executor.ts` — every connector write `actionType` is a member of `HITL_REQUIRED_BACKING` (I2), so the local executor gate always fires before connector dispatch.
 - `packages/gateway/src/ipc/federation-rpc.ts` `"federation.invoke"` — injects `isWriteForbiddenToolId: isConnectorWriteToolId` into the `answerFederatedInvoke` ctx, so the gate rejects connector writes asked for by a peer.
 - `packages/gateway/src/federation/invoke-gate.ts` `answerFederatedInvoke()` — consults `ctx.isWriteForbiddenToolId?.(q.toolId)`; on a match it records a `write_forbidden` audit decision and returns fail-closed without invoking the tool.
 - Enforced statically by **D20** in `scripts/structure-audit/check-nimbus-invariants.ts` — any file outside the SSoT / connector / transport-dispatch allow-list (excluding `.test.ts`) that references a connector write tool id causes `audit:invariants` to exit 1 (`D20-connector-write`); additionally `invoke-gate.ts` must reference `isWriteForbiddenToolId` or the check fails (`D20-invoke-gate-predicate`).
 - Runtime test in `packages/gateway/src/security-invariants.test.ts` — the `I26` describe block: federation-rpc wires `isWriteForbiddenToolId`/`isConnectorWriteToolId`, the invoke gate consults the predicate and emits `write_forbidden`, every `CONNECTOR_WRITES` action type is HITL-gated, plus a `D20` presence assertion. A functional rejection of a GitOps write id via the real `isConnectorWriteToolId` lives in `federation/invoke-gate.test.ts`, as does one per reclassified tool, each first proving the grant would answer it so the refusal is the predicate's alone.
 - Sync guard in `packages/gateway/src/connectors/connector-write-sync.test.ts` — every write the installed connectors package registers is classified, bare and namespaced (see above); the derivation lives in `connectors/testing/connector-write-registrations.ts`, with its own tests beside it.
-- Wire contract in `packages/gateway/test/integration/connectors/write-tool-namespacing.integration.test.ts` — real connector processes listed through a real `MCPClient`: every key is `<server>_<tool>` and gets its bare id's verdict. The namespaced and bounded-cost matching is unit-tested in `connectors/connector-write-registry.test.ts`, and each reclassified id plus `tableau_datasource_refresh` is refused in both forms at the gate in `federation/invoke-gate.test.ts`.
+- Wire contract in `packages/gateway/test/integration/connectors/write-tool-namespacing.integration.test.ts` — real connector processes listed through a real `MCPClient`: every key is `<server>_<tool>` and gets its bare id's verdict. The namespaced and bounded-cost matching is unit-tested in `connectors/connector-write-registry.test.ts`, and each reclassified id, the four gate-confined comms writes and `tableau_datasource_refresh` are refused in both forms at the gate in `federation/invoke-gate.test.ts`.
 
-**Anti-pattern:** exposing a connector write over `federation.invoke` without the predicate; calling a connector write tool id from anywhere but the SSoT / connector / transport-dispatch sites; adding a connector write action type to a connector without adding it to `HITL_REQUIRED_BACKING` + the matching group SSoT.
+**Anti-pattern:** exposing a connector write over `federation.invoke` without the predicate; calling a connector write tool id from anywhere but the SSoT / connector / transport-dispatch sites; adding a connector write action type to a connector without adding it to `HITL_REQUIRED_BACKING` + the matching group SSoT; checking a federated tool id against bare ids only (a session executes `<server>_<tool>`); leaving a write out of the predicate because a static rule confines its literal (that rule confines the gateway's own calls, not a peer's).
 
-**How to comply:** keep the group SSoTs (`WAREHOUSE_BI_WRITES` / `GITOPS_ML_WRITES`) and `HITL_REQUIRED_BACKING` in sync; route every connector write through the local executor gate; pass `isWriteForbiddenToolId: isConnectorWriteToolId` to any federated invoke ctx; never name a write tool id outside the allow-listed sites.
+**How to comply:** keep the group SSoTs (`WAREHOUSE_BI_WRITES` / `GITOPS_ML_WRITES`) and `HITL_REQUIRED_BACKING` in sync; route every connector write through the local executor gate; pass `isWriteForbiddenToolId: isConnectorWriteToolId` to any federated invoke ctx; never name a write tool id outside the allow-listed sites; classify every write the connectors package registers — in `MIGRATED_WRITE_TOOL_IDS`, or, when a static rule confines its literal, through a set its gate exports — since the sync guard fails on any it finds unclassified.
 
 ---
 

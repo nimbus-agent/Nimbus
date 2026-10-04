@@ -8,6 +8,10 @@
  * (as text: the gateway never imports the package beyond `setConnectorMode`) and fails on any the
  * predicate does not cover. The derivation itself is fail-closed: a registration shape it cannot
  * follow is a violation, never a silent skip.
+ *
+ * There is no exception list. The four comms writes whose literals static D17 / D19 keep out of the
+ * gateway-side set are classified through the sets their gates export — and they are derived here
+ * like every other write, so dropping one from its gate's set fails this guard.
  */
 import { describe, expect, test } from "bun:test";
 import { readdirSync, readFileSync } from "node:fs";
@@ -30,20 +34,6 @@ import {
   type WriteToolScan,
 } from "./testing/connector-write-registrations.ts";
 
-/**
- * The four writes `connector-write-tool-ids.ts` leaves out of the I26 set: static D17 / D19
- * confine these literals to their own gates, so the gateway-side set cannot name them, and a test
- * file is the one other place that may. Those rules confine where the GATEWAY names the tools —
- * not which tool id a federated peer may send — so today `answerFederatedInvoke` does not refuse
- * these four; only the owner's per-tool grant stands between a peer and them.
- */
-const DELIBERATE_ABSENCES: ReadonlySet<string> = new Set([
-  "notion_kb_append",
-  "confluence_kb_append",
-  "slack_chat_post",
-  "teams_chat_post",
-]);
-
 /** The shapes connectors 0.2.1 registers through. A bump that drops one should be looked at. */
 const PINNED_SHAPES: readonly RegistrationTag[] = ["literal", "forwarder", "template", "kit-alias"];
 
@@ -52,9 +42,7 @@ const SCAN = scanWriteToolRegistrations(readConnectorPackageSources(ROOT));
 
 /** Derived writes a federated peer could name without the I26 predicate refusing them. */
 function unclassifiedWrites(scan: WriteToolScan): WriteToolRegistration[] {
-  return scan.registrations.filter(
-    (r) => !isConnectorWriteToolId(r.id) && !DELIBERATE_ABSENCES.has(r.id),
-  );
+  return scan.registrations.filter((r) => !isConnectorWriteToolId(r.id));
 }
 
 function where(r: WriteToolRegistration): string {
@@ -70,29 +58,19 @@ describe("I26 sync guard — the installed connectors package", () => {
     ).toEqual([]);
   });
 
-  test("and each gets the same verdict in the `<server>_<tool>` form a federated session executes", () => {
+  test("and each is refused in the `<server>_<tool>` form a federated session executes, too", () => {
     // `@mastra/mcp` keys a session's tools by server, and the federated runner looks the requested
     // id up verbatim, so the namespaced key is what a peer would have to send.
     // test/integration/connectors/write-tool-namespacing.integration.test.ts pins that on real
     // connector processes.
-    for (const r of SCAN.registrations) {
-      const server = (r.origin.split("/")[1] ?? "").replaceAll("-", "_");
-      expect(isConnectorWriteToolId(`${server}_${r.id}`), r.id).toBe(isConnectorWriteToolId(r.id));
-    }
+    const passed = SCAN.registrations
+      .map((r) => `${(r.origin.split("/")[1] ?? "").replaceAll("-", "_")}_${r.id}`)
+      .filter((namespaced) => !isConnectorWriteToolId(namespaced));
+    expect(passed).toEqual([]);
   });
 
   test("the scan followed every registration — no shape it could not resolve", () => {
     expect(SCAN.violations.map((v) => `${v.file}:${String(v.line)} ${v.reason}`)).toEqual([]);
-  });
-
-  test("each deliberate absence is still a registered write, and still outside the predicate", () => {
-    const derived = new Set(SCAN.registrations.map((r) => r.id));
-    for (const id of DELIBERATE_ABSENCES) {
-      expect(derived.has(id), `${id} is no longer a registered write`).toBe(true);
-      expect(isConnectorWriteToolId(id), `${id} is classified — update the absence note`).toBe(
-        false,
-      );
-    }
   });
 
   test("no write tool is read-only to share replay, the other door a caller names tools through", () => {

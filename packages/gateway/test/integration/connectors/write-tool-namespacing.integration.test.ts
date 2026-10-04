@@ -96,6 +96,7 @@ describe("I26 — the predicate refuses a write in the form a federated session 
         "aws_aws_ecs_service_update",
         "kubernetes_k8s_pod_delete",
         "slack_slack_message_post_dm",
+        "slack_slack_chat_post", // a gate-confined write (D17), refused through its gate's set
         "github_actions_gha_run_trigger",
       ]),
     );

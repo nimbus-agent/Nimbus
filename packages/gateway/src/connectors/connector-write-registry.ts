@@ -1,4 +1,6 @@
 // packages/gateway/src/connectors/connector-write-registry.ts
+import { CHATOPS_POST_TOOL_IDS } from "../chatops/transport/connector-post.ts";
+import { TRIBAL_KB_WRITE_TOOL_IDS } from "../tribal/tribal-write-gate.ts";
 import type { ConnectorWrite } from "./connector-write.ts";
 import { MIGRATED_WRITE_TOOL_IDS } from "./connector-write-tool-ids.ts";
 import {
@@ -21,20 +23,35 @@ export const CONNECTOR_WRITES: readonly ConnectorWrite[] = [
   ...GITOPS_ML_WRITES,
 ];
 
+/**
+ * The writes whose literals static rules confine to their own gates, so no set here may name them:
+ * the KB appends (D19, `tribal/tribal-write-gate.ts`) and the ChatOps operational posts (D17,
+ * `chatops/transport/connector-post.ts`). Those gates pin the DESTINATION when the gateway itself
+ * calls the tool (I25 / I23); a federated invoke carries the peer's own arguments, destination
+ * included, so it must be refused like any other write.
+ */
+const GATE_CONFINED_WRITE_TOOL_IDS: readonly ReadonlySet<string>[] = [
+  TRIBAL_KB_WRITE_TOOL_IDS,
+  CHATOPS_POST_TOOL_IDS,
+];
+
 function isWriteToolIdExactly(toolId: string): boolean {
   return (
     isWarehouseWriteToolId(toolId) ||
     isGitopsMlWriteToolId(toolId) ||
     // Migrated connector write tools. They have no dispatch row, but a federated peer must be
     // rejected for naming one just the same — the predicate is about write-ness, not routability.
-    MIGRATED_WRITE_TOOL_IDS.has(toolId)
+    MIGRATED_WRITE_TOOL_IDS.has(toolId) ||
+    GATE_CONFINED_WRITE_TOOL_IDS.some((ids) => ids.has(toolId))
   );
 }
 
 /** The longest write tool id: no suffix longer than this can name a write. */
 const LONGEST_WRITE_TOOL_ID = Math.max(
   ...CONNECTOR_WRITES.map((w) => w.toolId.length),
-  ...[...MIGRATED_WRITE_TOOL_IDS].map((id) => id.length),
+  ...[MIGRATED_WRITE_TOOL_IDS, ...GATE_CONFINED_WRITE_TOOL_IDS].flatMap((ids) =>
+    [...ids].map((id) => id.length),
+  ),
 );
 
 /**
