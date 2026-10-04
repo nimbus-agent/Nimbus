@@ -531,6 +531,33 @@ test(`chatops: past ${PUSH_NOTIFY_CAP}, newest-first headlines then ONE summary;
   }
 });
 
+// The headline loop is sequential by design (the S9382 suppression on it): the channel shows the
+// headlines in the order they are posted, so a slow post must hold back the next one rather than
+// let it overtake. The FIRST (newest) post is the slow one, so overlapping posts would interleave.
+test("chatops: one post in flight at a time — a slow headline holds back the next, and the summary follows them", async () => {
+  const items = [1, 2, 3, 4].map((n) => item(`pagerduty:${n}`, "ok", n));
+  const events: string[] = [];
+  let n = 0;
+  await chatDeliverer(async () => {
+    n += 1;
+    const i = n;
+    events.push(`start ${i}`);
+    if (i === 1) await new Promise((r) => setTimeout(r, 5));
+    events.push(`end ${i}`);
+    return 1;
+  })(items);
+  expect(events).toEqual([
+    "start 1",
+    "end 1",
+    "start 2",
+    "end 2",
+    "start 3",
+    "end 3",
+    "start 4",
+    "end 4",
+  ]);
+});
+
 test("chatops: a summary that reaches 0 channels marks the rest skipped, not coalesced", async () => {
   const items = [1, 2, 3, 4].map((n) => item(`pagerduty:${n}`, "ok", n));
   await chatDeliverer(async () => 0)(items);

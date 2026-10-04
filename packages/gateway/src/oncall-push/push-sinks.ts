@@ -95,6 +95,16 @@ async function chatAttempt(
   }
 }
 
+/**
+ * What the rows behind the chat summary record: `coalesced` when the summary went out, the
+ * summary's own `skipped` when it reached no channel, and `coalesced` with the reason otherwise.
+ */
+function chatSummaryOutcome(s: Attempt): Attempt {
+  if (s.outcome === "delivered") return { outcome: "coalesced" };
+  if (s.outcome === "skipped") return s;
+  return { outcome: "coalesced", reason: `summary post failed: ${s.reason ?? ""}` };
+}
+
 export function createPushDeliverer(
   deps: PushSinkDeps,
 ): (items: readonly PushDelivery[]) => Promise<void> {
@@ -132,19 +142,14 @@ export function createPushDeliverer(
     }
     if (post === undefined) return skipAll(CHATOPS_NOT_RUNNING_REASON);
     for (const d of newestFirst.slice(0, PUSH_NOTIFY_CAP)) {
-      const o = await chatAttempt(post, () => renderPushHeadline(d), c.namespace);
+      const o = await chatAttempt(post, () => renderPushHeadline(d), c.namespace); // NOSONAR S9382: headlines post one at a time, newest first (the sort above), each ledgered (I29) before it is sent - concurrent posts would let a slow one reorder the headlines in the channel
       record(d.row.incidentId, "chatops", o);
       if (o.outcome === "failed") warnFailed(d.row.incidentId, o.reason);
     }
     const rest = newestFirst.slice(PUSH_NOTIFY_CAP);
     if (rest.length === 0) return;
     const s = await chatAttempt(post, () => renderPushSummary(items, rest), c.namespace);
-    const o: Attempt =
-      s.outcome === "delivered"
-        ? { outcome: "coalesced" }
-        : s.outcome === "skipped"
-          ? s
-          : { outcome: "coalesced", reason: `summary post failed: ${s.reason ?? ""}` };
+    const o = chatSummaryOutcome(s);
     for (const d of rest) {
       record(d.row.incidentId, "chatops", o);
       if (s.outcome === "failed") warnFailed(d.row.incidentId, o.reason);
