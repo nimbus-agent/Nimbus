@@ -1,6 +1,13 @@
 // dependency-cruiser config for the B3 structure audit.
 // Encodes D1 (forbidden cross-package imports), D2 (cycles within a workspace),
-// D3 (PAL leakage). Run via `bun run audit:boundaries`.
+// D3 (PAL leakage). Run via `bun run audit:boundaries`, i.e.
+// `scripts/structure-audit/check-boundaries.ts`. Do not run `depcruise` on it directly:
+// dependency-cruiser needs `typescript` <7, and only the wrapper's preload guarantees it
+// one. A bare run can skip every .ts file and still report "no dependency violations".
+// The wrapper also FAILS on a rule here whose from/to path matches no cruised module, so a
+// rule cannot outlive the code it governs. `mcp-connectors-only-import-sdk` was deleted
+// on that basis: the connectors left for nimbus-agent/nimbus-mcp-servers in #1347
+// (2026-08-27), and a separate repository cannot import this one's source at all.
 
 /** @type {import('dependency-cruiser').IConfiguration} */
 module.exports = {
@@ -28,15 +35,6 @@ module.exports = {
       comment: "UI must talk to gateway via IPC, never source imports.",
       from: { path: "^packages/ui/src" },
       to: { path: "^packages/gateway/src" },
-    },
-    {
-      name: "mcp-connectors-only-import-sdk",
-      severity: "error",
-      comment: "First-party MCP connectors depend only on @nimbus-dev/sdk.",
-      from: { path: "^packages/mcp-connectors/[^/]+/src" },
-      to: {
-        path: "^packages/(gateway|cli|ui)/",
-      },
     },
 
     // ─────────── D3: PAL leakage ───────────
