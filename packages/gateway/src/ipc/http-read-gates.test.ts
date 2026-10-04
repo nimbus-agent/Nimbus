@@ -299,7 +299,8 @@ function routeKeyPathMatcher(pattern: string): RegExp {
 
 // Every assertion below is only as wide as SCOPED_ROUTES, so the table is derived-checked rather
 // than trusted: a bearer-scoped read added to the server with no row here would otherwise sit
-// outside all of them while this file stayed green.
+// outside all of them while this file stayed green. It is checked against the exported route
+// keys, against HTTP_ROUTE_AUTH, and against the gate call sites in http-server.ts itself.
 describe("the SCOPED_ROUTES table itself", () => {
   test("has exactly one row per exported ROUTE_KEY_* read — every clip-scoped read in HTTP_ROUTE_AUTH", () => {
     const exportedKeys: string[] = [];
@@ -342,6 +343,33 @@ describe("the SCOPED_ROUTES table itself", () => {
       };
       expect(actual).toEqual(expected);
     }
+  });
+
+  test("every scoped gate in http-server.ts names its own route key, and each key has a row", async () => {
+    // The two tests above tie the table to the exported constants and HTTP_ROUTE_AUTH, neither of
+    // which sees what the server actually gates. A new regex-routed read gated with an EXISTING
+    // key needs no new constant, no new HTTP_ROUTE_AUTH entry and no new row, so it would pass
+    // both. Reading the server's gate call sites catches it: its key then appears twice.
+    const source = await Bun.file(join(import.meta.dir, "http-server.ts")).text();
+    const gateCall = /\b(?:requireScopedSurface|requireEgressRead)\(\s*req,\s*opts,\s*(\w+)/g;
+    const argNames = [...source.matchAll(gateCall)].map((m) => m[1] ?? "");
+    // Every call is visible to the pattern above: anything else (other argument names, a call
+    // spread over an alias) would sit outside this check, so the raw call count must agree.
+    const allCalls = source.match(/\b(?:requireScopedSurface|requireEgressRead)\(/g) ?? [];
+    const definitions =
+      source.match(/\bfunction (?:requireScopedSurface|requireEgressRead)\(/g) ?? [];
+    expect(definitions).toHaveLength(2);
+    expect(argNames).toHaveLength(allCalls.length - definitions.length);
+    // requireEgressRead forwards its own `routeKey` parameter; every other site names a constant.
+    expect(argNames.filter((name) => name === "routeKey")).toHaveLength(1);
+    const keyNames = argNames.filter((name) => name !== "routeKey");
+    expect(keyNames.length).toBeGreaterThan(0);
+    expect(keyNames.filter((name) => !name.startsWith("ROUTE_KEY_"))).toEqual([]);
+
+    expect(keyNames.length).toBe(new Set(keyNames).size);
+    const exported: Record<string, unknown> = routeAuth;
+    const gatedKeys = keyNames.map((name) => String(exported[name])).sort();
+    expect(gatedKeys).toEqual(SCOPED_ROUTES.map((route) => route.routeKey).sort());
   });
 });
 
