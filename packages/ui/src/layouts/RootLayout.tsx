@@ -9,6 +9,7 @@ import { UpdaterRestartChrome } from "../components/updater/UpdaterRestartChrome
 import { useIpcSubscription } from "../hooks/useIpcSubscription";
 import type { HitlRequest } from "../ipc/types";
 import { restartApp } from "../lib/restart";
+import { OncallBriefsProvider } from "../providers/OncallBriefsProvider";
 import { useNimbusStore } from "../store";
 
 interface ConsentRequestPayload {
@@ -106,10 +107,12 @@ export function RootLayout() {
       <HotkeyFailedBanner />
       <UpdaterRestartChrome />
       <div className="flex flex-1 min-h-0">
-        <Sidebar />
-        <main className="flex-1 overflow-auto">
-          <Outlet />
-        </main>
+        <OncallBriefsProvider>
+          <Sidebar />
+          <main className="flex-1 overflow-auto">
+            <Outlet />
+          </main>
+        </OncallBriefsProvider>
       </div>
     </div>
   );
