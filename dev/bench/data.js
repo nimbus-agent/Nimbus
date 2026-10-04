@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1791142174929,
+  "lastUpdate": 1791144794011,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "49699333+dependabot[bot]@users.noreply.github.com",
-            "name": "dependabot[bot]",
-            "username": "dependabot[bot]"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "30ad04cdab9ff2295978c87b38dbde2ce2521bb5",
-          "message": "chore(ci): bump actions/labeler from 6.1.0 to 7.0.0 in the actions-major group (#883)\n\nBumps the actions-major group with 1 update:\n[actions/labeler](https://github.com/actions/labeler).\n\nUpdates `actions/labeler` from 6.1.0 to 7.0.0\n<details>\n<summary>Release notes</summary>\n<p><em>Sourced from <a\nhref=\"https://github.com/actions/labeler/releases\">actions/labeler's\nreleases</a>.</em></p>\n<blockquote>\n<h2>v7.0.0</h2>\n<h2>What's Changed</h2>\n<h3>Enhancements:</h3>\n<ul>\n<li>Migrate to ESM and update dependencies by <a\nhref=\"https://github.com/chiranjib-swain\"><code>@​chiranjib-swain</code></a>\nin <a\nhref=\"https://redirect.github.com/actions/labeler/pull/949\">actions/labeler#949</a></li>\n</ul>\n<p><strong>Full Changelog</strong>: <a\nhref=\"https://github.com/actions/labeler/compare/v6...v7.0.0\">https://github.com/actions/labeler/compare/v6...v7.0.0</a></p>\n<h2>v6.2.0</h2>\n<h2>What's Changed</h2>\n<h3>Bug Fix</h3>\n<ul>\n<li>Improve PR number validation and warning messages in input handling\nby <a\nhref=\"https://github.com/chiranjib-swain\"><code>@​chiranjib-swain</code></a>\nin <a\nhref=\"https://redirect.github.com/actions/labeler/pull/939\">actions/labeler#939</a></li>\n</ul>\n<h3>Dependency Updates</h3>\n<ul>\n<li>Bump js-yaml to 4.2.0, apply npm audit fix, and add undici override\nby <a href=\"https://github.com/dependabot\"><code>@​dependabot</code></a>\nin <a\nhref=\"https://redirect.github.com/actions/labeler/pull/943\">actions/labeler#943</a></li>\n<li>Bump <code>@​typescript-eslint/eslint-plugin</code> from 8.59.1 to\n8.61.1 by <a\nhref=\"https://github.com/dependabot\"><code>@​dependabot</code></a> in <a\nhref=\"https://redirect.github.com/actions/labeler/pull/942\">actions/labeler#942</a></li>\n</ul>\n<p><strong>Full Changelog</strong>: <a\nhref=\"https://github.com/actions/labeler/compare/v6.1.0...v6.2.0\">https://github.com/actions/labeler/compare/v6.1.0...v6.2.0</a></p>\n</blockquote>\n</details>\n<details>\n<summary>Commits</summary>\n<ul>\n<li><a\nhref=\"https://github.com/actions/labeler/commit/bf12e9b00b37c5c0ca2b87b79b2daf7891dbda13\"><code>bf12e9b</code></a>\nfeat: migrate to ESM and update dependencies (<a\nhref=\"https://redirect.github.com/actions/labeler/issues/949\">#949</a>)</li>\n<li><a\nhref=\"https://github.com/actions/labeler/commit/b8dd2d9be0f68b860e7dae5dae7d772984eacd6d\"><code>b8dd2d9</code></a>\nBump <code>@​typescript-eslint/eslint-plugin</code> from 8.59.1 to\n8.61.1 (<a\nhref=\"https://redirect.github.com/actions/labeler/issues/942\">#942</a>)</li>\n<li><a\nhref=\"https://github.com/actions/labeler/commit/53affe8ca4150876fc7eb7d268d3a1f74511a244\"><code>53affe8</code></a>\nBump js-yaml to 4.2.0, apply npm audit fix, and add undici override for\n0 vul...</li>\n<li><a\nhref=\"https://github.com/actions/labeler/commit/f612d9ad188e81643862c2de70f57fbb1d17abd1\"><code>f612d9a</code></a>\nFix: Improve PR number validation and warning messages in input handling\n(<a\nhref=\"https://redirect.github.com/actions/labeler/issues/939\">#939</a>)</li>\n<li>See full diff in <a\nhref=\"https://github.com/actions/labeler/compare/f27b608878404679385c85cfa523b85ccb86e213...bf12e9b00b37c5c0ca2b87b79b2daf7891dbda13\">compare\nview</a></li>\n</ul>\n</details>\n<br />\n\n\n[![Dependabot compatibility\nscore](https://dependabot-badges.githubapp.com/badges/compatibility_score?dependency-name=actions/labeler&package-manager=github_actions&previous-version=6.1.0&new-version=7.0.0)](https://docs.github.com/en/github/managing-security-vulnerabilities/about-dependabot-security-updates#about-compatibility-scores)\n\nDependabot will resolve any conflicts with this PR as long as you don't\nalter it yourself. You can also trigger a rebase manually by commenting\n`@dependabot rebase`.\n\n[//]: # (dependabot-automerge-start)\n[//]: # (dependabot-automerge-end)\n\n---\n\n<details>\n<summary>Dependabot commands and options</summary>\n<br />\n\nYou can trigger Dependabot actions by commenting on this PR:\n- `@dependabot rebase` will rebase this PR\n- `@dependabot recreate` will recreate this PR, overwriting any edits\nthat have been made to it\n- `@dependabot show <dependency name> ignore conditions` will show all\nof the ignore conditions of the specified dependency\n- `@dependabot ignore <dependency name> major version` will close this\ngroup update PR and stop Dependabot creating any more for the specific\ndependency's major version (unless you unignore this specific\ndependency's major version or upgrade to it yourself)\n- `@dependabot ignore <dependency name> minor version` will close this\ngroup update PR and stop Dependabot creating any more for the specific\ndependency's minor version (unless you unignore this specific\ndependency's minor version or upgrade to it yourself)\n- `@dependabot ignore <dependency name>` will close this group update PR\nand stop Dependabot creating any more for the specific dependency\n(unless you unignore this specific dependency or upgrade to it yourself)\n- `@dependabot unignore <dependency name>` will remove all of the ignore\nconditions of the specified dependency\n- `@dependabot unignore <dependency name> <ignore condition>` will\nremove the ignore condition of the specified dependency and ignore\nconditions\n\n\n</details>\n\nSigned-off-by: dependabot[bot] <support@github.com>\nCo-authored-by: dependabot[bot] <49699333+dependabot[bot]@users.noreply.github.com>",
-          "timestamp": "2026-07-27T21:30:24+03:00",
-          "tree_id": "965f8a12f5debaafb88d9aa8ce8b75cda58a68da",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/30ad04cdab9ff2295978c87b38dbde2ce2521bb5"
-        },
-        "date": 1785181923999,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 314.28911110000155,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 313.0036482499912,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 207.07702679999858,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "88e161a279ac8e5e7ab8f54c68f17c4fe8ed0861",
+          "message": "feat(ui): On-call page for pushed briefs (PR 3 of 3) (#1604)\n\nOn-call pushed brief, PR 3 of 3: the desktop panel. The desktop app\ngains an **On-call** page where pushed briefs appear the moment the\ngateway stores them, can be read in full, and show where each one was\ndelivered. This completes the pushed-brief workstream.\n\n## Desktop (`packages/ui`)\n\n- **`/oncall` page:**\n- On the left, a list of pushed briefs: title (or the incident id),\nservice, status and age.\n- On the right, the selected brief's markdown, shown verbatim as\npreformatted text. It is a React text child only: no renderer, no\n`dangerouslySetInnerHTML`, no link detection, no CSP change.\n- A delivery strip shows each sink's outcome and reason. A `chatops:\nskipped` misconfiguration is now visible.\n- A failed row shows its failure code and the `nimbus oncall pushed <id>\n--retry` command. There is **no retry button**.\n- **Live updates:** one `OncallBriefsProvider`, mounted in the root\nlayout, owns the single `oncall.pushedList` query and the single\nsubscription to the existing `oncall.briefPushed` gateway event, with a\n60 s poll as the backstop. The sidebar and the page share it.\n- **Sidebar:** a new \"On-call\" entry with an unread dot. The dot is\ndriven by a persisted, forward-only `lastSeenPushedAt`, and it carries a\nhidden accessible label.\n- **States:** push off, identity unresolved, no briefs, RPC error and\npruned, each with the same wording the CLI uses.\n  - The page keeps showing its last data when a later call fails.\n- Auto-select never re-selects a pruned brief, whichever ids were\npruned.\n\n## Gateway and CLI\n\n- `oncall.pushedList` and `oncall.pushedGet` rows gain `service`. It is\nresolved by the same helper as the PR 2 ChatOps headline (the mapped\nNimbus service, then the PagerDuty service id), so Slack and the desktop\nalways agree.\n- The list reads the incident title and service in **one** LEFT JOIN, so\nthere is no per-row query. The `json_extract` there is guarded by\n`json_valid`, because one malformed `item.metadata` row would otherwise\nfail the whole list.\n- `nimbus oncall pushed list` prints `[service]` when it is known. Lines\nwithout a service are unchanged.\n\n## I7: renderer allowlist, 105 to 107\n\n- `oncall.pushedList` and `oncall.pushedGet` are added. Both are\nread-only.\n- `oncall.pushedRetry` stays CLI-only, because it starts an agent run on\nthe owner's behalf.\n- All three are named on both sides: a Rust test, and a TS pin that also\ngreps the Rust assertions.\n- The `allowlist-resolves` test now serves the `oncall` namespace.\n- The ledger and the skill docs were re-derived, and every present-tense\n\"still 105\" was removed.\n- The `oncall` namespace stays LAN-forbidden.\n\n## Contract\n\nA gateway test drives the REAL `oncall.pushedList`, `oncall.pushedGet`\nand `oncall.briefPushed` over real demo rows, and requires the committed\n`packages/ui/test/fixtures/oncall-pushed.json` to have the same shape.\nThe desktop tests run on that file, so a gateway rename fails on both\nsides. This is the cross-package binding the desktop's connector panel\nlacked.\n\nNo new invariant, egress class, IPC method or migration.\n\n## Verification\n\n- `bun run preflight:fast`: all 34 gates green.\n- Gateway, IPC, security-invariants and CLI suites: 2660 tests, 0\nfailures.\n- UI vitest: 572 tests passing, with 90.9% line and 82.0% branch\ncoverage (the floor is 80 and 75).\n- `cargo test allowlist`: 31 passed, including\n`allowlist_oncall_reads_only` and `allowlist_is_alphabetized`.\n- Every new test was checked by reverting its fix and watching it fail.\n- A regression in the auto-select loop guard now fails fast in tests\ninstead of hanging the run.\n- `verify:docker` was not run locally, so the Ubuntu CI leg is the first\nLinux run.\n\n## Not in this PR\n\n- A `nimbus doctor` warning when ChatOps is configured but cannot post.\n- Escaping the existing `@nimbus agent` ChatOps replies.\n- Copy-to-clipboard buttons, which need a Tauri clipboard permissions\ndecision best made app-wide.\n- A markdown renderer.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n## Summary by CodeRabbit\n\n- **New Features**\n- Added a desktop On-call page to browse pushed incident briefs, view\ndelivery outcomes and brief details, and receive live updates.\n- Added a navigation indicator for unseen briefs and service names in\nbrief lists.\n- Enabled read-only On-call list and detail views in the desktop app;\nretry remains CLI-only.\n- **Documentation**\n- Updated product status, usage guidance, security notes, and changelog\nto reflect the shipped On-call experience.\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-10-04T20:00:23Z",
+          "tree_id": "577e6312d831990668debd37f4955e6e6d5f49d1",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/88e161a279ac8e5e7ab8f54c68f17c4fe8ed0861"
+        },
+        "date": 1791144790710,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 218.77641414999562,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 219.52790870000172,
             "unit": "ms"
           }
         ]
