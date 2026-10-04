@@ -1751,8 +1751,25 @@ deploy finishes about eight minutes before the page, and the incident-channel ch
 **Bounds, stated rather than softened.** An incident with no `opened_at_ms` is never pushed. A GDPR purge does not
 sweep `pushed_brief`; retention (`retention_days`, 90 by default, pruned at every gateway boot whether or not push is enabled, and
 again on each run) is the bound, the same as
-`fleet_brief`. **Not shipped:** ChatOps delivery (PR 2 — `chatops_namespace` is parsed and has no effect yet), the
-desktop panel (PR 3), approve-from-push, and cascade ranking. No new invariant and no new egress class.
+`fleet_brief`.
+
+**ChatOps sink (PR 2).** Every pushed brief also posts a three-line, escaped headline to the `notify` channels of
+`[oncall.push] chatops_namespace` (default `""`, which posts nothing). At most three headlines go out per delivery, newest
+first, then ONE summary post for the rest; every brief is still stored, only the interruption is capped. The headline
+carries a call to action, `@nimbus agent oncall incidentId=<id>` (the parameter is `incidentId`, which the agent grammar
+accepts; `incident=` is refused), and a failed row's second line says the brief could not be assembled and to rerun the
+agent. The post leaves through a `ReplyDispatcher` (I23) built in `chatops/chatops-boot.ts` and exposed as
+`ChatopsBoot.postPushedBrief`, over `egress/chatops-egress.ts`'s fourth post kind, so each channel post appends one
+`chatops.pushedBrief` row under I29's existing `chatops` class, fail-closed. The outcome lands in `delivery_json.chatops`
+(`nimbus oncall pushed --json`): `delivered`, `coalesced` or `skipped`/`failed` with a reason, namely
+`no [oncall.push] chatops_namespace`, `ChatOps not running`, `namespace <ns> has no notify channels`, `<error> (delivery
+may be partial)` or, for a coalesced row whose summary did not go out, `summary post failed: …`. **Boot race:** ChatOps
+boots after the push runtime is built, so the runtime holds every run until `platform/assemble.ts` settles the poster
+(bound or none) right after ChatOps boots, on both branches; early runs wait rather than drop. **Demo:** `BootPolicy.chatops`
+means a demo-rooted gateway never boots ChatOps (I41), so a demo page attempts no ChatOps post. **Bounds:** headline
+only, with no full-brief option; notify posting is Slack-only, as it already was for every other `notify` consumer.
+**Not shipped:** the desktop panel (PR 3), approve-from-push, and cascade ranking. No new invariant, egress class, IPC
+method or migration.
 
 ### Bring-your-own-frontier-model routing (`llm/`)
 

@@ -18,6 +18,8 @@ const runtime = (over: Partial<OncallPushRuntime> = {}): OncallPushRuntime => ({
     throw new PushRetryRefusedError("ERR_ONCALL_PUSH_NOT_FAILED", "x");
   },
   identityResolved: async () => true,
+  settleChatopsPoster: () => {},
+  chatopsSinkState: () => "none",
   ...over,
 });
 beforeEach(() => {

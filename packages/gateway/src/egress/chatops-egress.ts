@@ -7,7 +7,7 @@ import { redactEgressSummary } from "./egress-record.ts";
 import { EgressAppendFailedError } from "./model-egress.ts";
 
 /** Which consumer is posting. Bound at CONSTRUCTION, never passed per call. */
-export type ChatPostKind = "reply" | "approvalCard" | "agentBrief";
+export type ChatPostKind = "reply" | "approvalCard" | "agentBrief" | "pushedBrief";
 
 export type ChatPost = (platform: ChatPlatform, channelId: string, text: string) => Promise<void>;
 
@@ -15,6 +15,7 @@ const METHOD_FOR: Readonly<Record<ChatPostKind, string>> = Object.freeze({
   reply: "chatops.reply",
   approvalCard: "chatops.approvalCard",
   agentBrief: "chatops.agentBrief",
+  pushedBrief: "chatops.pushedBrief",
 });
 
 /**
@@ -82,5 +83,6 @@ export function buildLedgeredChatPosts(
     reply: wrap("reply"),
     approvalCard: wrap("approvalCard"),
     agentBrief: wrap("agentBrief"),
+    pushedBrief: wrap("pushedBrief"),
   });
 }

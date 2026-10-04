@@ -22,6 +22,9 @@ import type { PlatformPaths } from "./paths.ts";
  *   `<dataDir>/models`, which for a demo gateway is the empty, throwaway demo data dir.
  * - `extensionsAutoUpdate`: the extension auto-update daemon polls a registry URL on its own
  *   interval, selected by `NIMBUS_EXTENSIONS_REGISTRY_URL`, not config.
+ * - `chatops`: a `[chatops]` bot opens an outbound Slack/Teams socket and posts. A demo config has
+ *   no `[chatops]` section, but that is config, not construction — and the on-call push would
+ *   post a demo page's headline through it.
  *
  * A pure function so the decision is unit-testable; `assemble.ts` is too large to execute in a
  * unit test, and `security-invariants.test.ts` pins that it consults this.
@@ -34,6 +37,7 @@ export type BootPolicy = {
   readonly telemetryFlush: boolean;
   readonly embeddingRuntime: boolean;
   readonly extensionsAutoUpdate: boolean;
+  readonly chatops: boolean;
 };
 
 /**
@@ -50,5 +54,6 @@ export function bootPolicyFor(paths: Pick<PlatformPaths, "demo">): BootPolicy {
     telemetryFlush: !demo,
     embeddingRuntime: !demo,
     extensionsAutoUpdate: !demo,
+    chatops: !demo,
   };
 }

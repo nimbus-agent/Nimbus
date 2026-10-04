@@ -171,6 +171,13 @@ export interface ChatopsBoot {
    */
   replyTo(target: ReplyTarget, text: string): Promise<void>;
   /**
+   * The on-call pushed brief's headline (oncall-push PR 2). Posts to every policy `notify` channel
+   * of `namespace` through `posts.pushedBrief` (ledgered `chatops.pushedBrief`, I29) and resolves to
+   * the number of channels posted to, 0 when the namespace has none. The destination is
+   * server-derived (I23): the caller names a namespace from its own config, never a channel.
+   */
+  postPushedBrief(namespace: string, text: string): Promise<number>;
+  /**
    * Slice 6c: the chatops owner-consent channel (the same I2 fallback the chatops executor uses),
    * exposed so an in-chat tribal capture routes its HITL approval to the LOCAL owner.
    */
@@ -286,6 +293,8 @@ export async function buildChatopsBoot(deps: ChatopsBootDeps): Promise<ChatopsBo
   // dispatcher shape, so `routerFor`'s reply redirect (below) never has to bypass ReplyDispatcher
   // to change which post kind a reply ledgers as.
   const agentBriefDispatcher = new ReplyDispatcher({ post: posts.agentBrief, notifyChannelsFor });
+  // I23: the pushed-brief counterpart. Same dispatcher shape, ledgered as `chatops.pushedBrief`.
+  const pushedBriefDispatcher = new ReplyDispatcher({ post: posts.pushedBrief, notifyChannelsFor });
 
   const presenter: ApprovalPresenter = new ApprovalPresenter({
     post: async (channelId, text) => {
@@ -433,7 +442,7 @@ export async function buildChatopsBoot(deps: ChatopsBootDeps): Promise<ChatopsBo
             return { approved: result.status === "ok" };
           },
         ),
-      reply: (text) => {
+      reply: async (text) => {
         const target = {
           kind: "originating" as const,
           platform: msg.platform,
@@ -441,9 +450,10 @@ export async function buildChatopsBoot(deps: ChatopsBootDeps): Promise<ChatopsBo
         };
         if (isAgentBrief) {
           isAgentBrief = false;
-          return agentBriefDispatcher.send(target, text);
+          await agentBriefDispatcher.send(target, text);
+          return;
         }
-        return replyDispatcher.send(target, text);
+        await replyDispatcher.send(target, text);
       },
       auditRefusal: (reason, detail, channelId) =>
         deps.audit.recordAudit({
@@ -589,7 +599,11 @@ export async function buildChatopsBoot(deps: ChatopsBootDeps): Promise<ChatopsBo
     bindLocalConsent: (fn) => {
       localConsent = fn;
     },
-    replyTo: (target, text) => replyDispatcher.send(target, text),
+    replyTo: async (target, text) => {
+      await replyDispatcher.send(target, text);
+    },
+    postPushedBrief: (namespace, text) =>
+      pushedBriefDispatcher.send({ kind: "namespaceNotify", namespace }, text),
     requestOwnerApproval: (prompt, details) => consent.requestApproval(prompt, details),
     isSenderMapped: async (platform, userId) =>
       (await mapper.resolve(platform, userId)).kind === "mapped",

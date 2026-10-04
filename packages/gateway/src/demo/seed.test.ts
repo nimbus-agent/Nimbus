@@ -100,6 +100,7 @@ describe("seedDemoCorpus", () => {
 
     // The runtime boots AFTER the seed, as the real gateway does after `nimbus demo`'s restart.
     const rt = assembleOncallPushRuntime({
+      settleImmediately: true,
       db,
       configDir,
       notifications: { show: () => {} },
@@ -137,6 +138,7 @@ describe("seedDemoCorpus", () => {
     const notifications = createUnimplementedNotifications(logger);
     expect(notifications.delivers).toBe(false);
     const rt = assembleOncallPushRuntime({
+      settleImmediately: true,
       db,
       configDir,
       notifications,
@@ -149,6 +151,11 @@ describe("seedDemoCorpus", () => {
       reason: "no OS notification implementation on this platform",
     });
     expect(infoCalls).toHaveLength(0); // show() was never even called
+    // The demo config names no ChatOps namespace, so the chat sink posts nothing (I41).
+    expect(rt.store.get("pagerduty:PDEMO412")?.delivery["chatops"]).toMatchObject({
+      outcome: "skipped",
+      reason: "no [oncall.push] chatops_namespace",
+    });
   });
 
   test("the story deploy finishes ~8 minutes before the page", async () => {
@@ -171,6 +178,7 @@ describe("seedDemoCorpus", () => {
     const nowMs = Date.now();
     await seedDemoCorpus(db, { configDir, dataDir, nowMs });
     const rt = assembleOncallPushRuntime({
+      settleImmediately: true,
       db,
       configDir,
       notifications: { show: () => {} },
