@@ -8,6 +8,21 @@ import starlightLinksValidator from "starlight-links-validator";
 export default defineConfig({
   site: "https://nimbus-agent.dev",
   base: "/",
+  vite: {
+    environments: {
+      prerender: {
+        resolve: {
+          // Starlight is bundled into the prerender output but imports `js-yaml` as a DEFAULT
+          // export (it declares ^4). Left external, that import is resolved at prerender time
+          // from THIS package's location, which reaches the repo's hoisted js-yaml 5 — whose ESM
+          // build has no default export ("does not provide an export named 'default'"). Bundling
+          // it resolves js-yaml relative to each importer instead, so Starlight gets the 4.x it
+          // declares. Astro does the same for its own `neotraverse` (withastro/astro#17508).
+          noExternal: ["js-yaml"],
+        },
+      },
+    },
+  },
   integrations: [
     starlight({
       title: "Nimbus",

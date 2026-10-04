@@ -25,56 +25,34 @@ yanked = "deny"
 # Transitive unmaintained advisories (can't fix without upstream Tauri bump
 # or library author action) are ignored individually below. Workspace-direct
 # unmaintained would still fail — that's the policy we want.
+#
+# Every row must still match a crate in Cargo.lock. cargo-deny warns
+# `advisory-not-detected` for a row that matches nothing, and such a row is
+# deleted, not kept "just in case": retire = delete the row, never leave drift.
+# The 2026-10-03 dependency pass retired twenty rows that way. Only the first
+# two went with its tauri 2.12.1 bump; the other eighteen already matched
+# nothing before it:
+#   - quick-xml 0.39.4 (RUSTSEC-2026-0194, RUSTSEC-2026-0195) left the graph.
+#     plist 1.10.1 and wayland-scanner 0.31.11 now resolve quick-xml 0.41 and
+#     0.42, both past the fix. `cargo audit` in security.yml dropped the same
+#     two `--ignore` flags.
+#   - The ten gtk3-rs "unmaintained" advisories (RUSTSEC-2024-0411 through
+#     RUSTSEC-2024-0420) were WITHDRAWN upstream (rustsec/advisory-db#3189,
+#     2026-08-14), so they no longer match any crate.
+#   - fxhash (RUSTSEC-2025-0057), the unic-* crates (RUSTSEC-2025-0075,
+#     -0080, -0081, -0098, -0100) and rand 0.7.3 (RUSTSEC-2026-0097) are no
+#     longer in the graph at all.
+#   - glib 0.18.5 (RUSTSEC-2024-0429, unsound VariantStrIter impls, fixed in
+#     glib 0.20) IS still in the Linux graph via tray-icon -> libappindicator
+#     -> gtk 0.18, but it needs no row. `unsound` defaults to the `workspace`
+#     scope, which fails only for a DIRECT dependency, and glib is transitive.
+#     `cargo audit` still lists it as an allowed warning. Re-add the row if
+#     this file ever sets `unsound = "all"` or glib becomes a direct dependency.
 ignore = [
-  # --- gtk3-rs bindings: marked unmaintained 2024-10; transitive via Tauri
-  #     2.x on Linux. Tauri is migrating to GTK4; revisit at next Tauri bump.
-  "RUSTSEC-2024-0411", # atk
-  "RUSTSEC-2024-0412", # gdk
-  "RUSTSEC-2024-0413", # gdkwayland-sys
-  "RUSTSEC-2024-0414", # gdkx11-sys
-  "RUSTSEC-2024-0415", # gdkx11
-  "RUSTSEC-2024-0416", # gtk
-  "RUSTSEC-2024-0417", # gtk-sys
-  "RUSTSEC-2024-0418", # atk-sys
-  "RUSTSEC-2024-0419", # gdk-sys
-  "RUSTSEC-2024-0420", # gtk3-macros
-  # --- proc-macro-error: unmaintained. Transitive via borsh-derive. Shallow.
+  # --- proc-macro-error 1.0.4: unmaintained. Transitive via glib-macros 0.18.5
+  #     (the Linux gtk3 stack under tray-icon). Proc-macro, build-time only.
+  #     Revisit when Tauri moves its tray stack off gtk-rs 0.18.
   "RUSTSEC-2024-0370",
-  # --- fxhash: unmaintained. Transitive.
-  "RUSTSEC-2025-0057",
-  # --- unic-*: all open-i18n/rust-unic crates are unmaintained (transitive).
-  "RUSTSEC-2025-0075", # unic-char-range
-  "RUSTSEC-2025-0080", # unic-common
-  "RUSTSEC-2025-0081", # unic-char-property (new advisory, DB updated 2026-04)
-  "RUSTSEC-2025-0098", # unic-char-property (original advisory)
-  "RUSTSEC-2025-0100", # unic-ucd-ident
-  # --- Concrete-bug advisories (not "unmaintained") — kept separate so a
-  #     future maintainer can audit blast radius rather than reflexively
-  #     re-ignore.
-  # glib 0.18.5 unsoundness in VariantStrIter Iterator/DoubleEndedIterator
-  # impls. Fixed in glib 0.20. Transitive via tray-icon → tauri 2.10.3
-  # (Linux GTK stack). Nimbus does not use VariantStrIter directly; trigger
-  # path is GVariant iteration inside Tauri's GTK code on malformed input.
-  # Revisit when Tauri bumps gtk-rs to 0.20+.
-  "RUSTSEC-2024-0429",
-  # rand 0.7.3 unsoundness when combined with a custom logger using
-  # rand::rng(). Fixed in rand 0.8.6. Build-time only: pulled in via
-  # phf_codegen → selectors → kuchikiki → tauri-utils (HTML perfect-hash
-  # codegen). Runtime code uses rand 0.8.6 (also in lockfile). No runtime
-  # exposure; revisit when tauri-utils drops the kuchikiki dep tree.
-  "RUSTSEC-2026-0097",
-  # quick-xml 0.39.4 DoS advisories (published 2026-07): RUSTSEC-2026-0194
-  # (quadratic run time checking a start tag for duplicate attribute names)
-  # and RUSTSEC-2026-0195 (unbounded namespace-declaration allocation in
-  # NsReader → memory-exhaustion DoS). Both fixed in quick-xml >= 0.41.0, but
-  # 0.41 is a semver-breaking 0.x-minor bump pinned by transitive deps
-  # `plist` (macOS Info.plist bundling) and `wayland-scanner` (Linux Wayland)
-  # — not reachable via `cargo update` without an upstream Tauri/plist bump.
-  # Nimbus does not parse untrusted XML directly, and the Tauri desktop is
-  # deferred to Phase 13 (unshipped) → no runtime exposure. Revisit when
-  # Tauri bumps its plist/wayland-scanner dep tree past quick-xml 0.41.
-  "RUSTSEC-2026-0194", # quick-xml quadratic duplicate-attribute check
-  "RUSTSEC-2026-0195", # quick-xml NsReader unbounded namespace allocation
 ]
 
 [licenses]

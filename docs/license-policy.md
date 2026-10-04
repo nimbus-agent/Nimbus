@@ -34,6 +34,7 @@ The default allowlist in [`check-js-licenses.ts`](../scripts/structure-audit/che
 | CC-BY-3.0, CC-BY-4.0 | Used for asset/font deps; permissive with attribution |
 | MPL-2.0 | File-level copyleft; compatible with bundling under both licenses |
 | Python-2.0 | Permissive (legacy) |
+| PSF-2.0 | The PSF License Agreement alone — the rights-granting part of Python-2.0, whose text Python-2.0 already includes; `argparse` 3.x relabelled to it from Python-2.0 |
 | Zlib | Permissive |
 | Artistic-2.0 | OSI-approved permissive; appears on Bevry-maintained transitives |
 
@@ -62,7 +63,7 @@ Each override must:
 **The source is authoritative** — `PACKAGE_OVERRIDES` in [`check-js-licenses.ts`](../scripts/structure-audit/check-js-licenses.ts) is the canonical list; the inline comment on each entry records the manual-review outcome. Reproduced here as a navigation aid (point-in-time, expected to drift):
 
 - `@vscode/vsce-sign@2.0.9`, `@vscode/vsce-sign-{linux,win32}-x64@2.0.6` — Microsoft VSCE signing tooling; redistribution permitted by the LICENSE.txt for vsce-driven extension publishing; not bundled into the gateway binary. Bun installs only the platform-matching variant per runner.
-- `@img/sharp-libvips-{linux-x64,linuxmusl-x64}@1.3.3` — libvips C library shipped as native binary; LGPL-3.0-or-later. Accepted alongside `sharp` itself (dual-licensed Apache-2.0 OR LGPL, passes via Apache). The exception is intentionally narrow — LGPL-3.0-or-later is **not** in the global allowlist, so a stray pure-LGPL dep elsewhere still trips the gate. LGPL §4d compliance is satisfied by sharp's runtime FFI loading of libvips (dynamic-linking model).
+- `@img/sharp-libvips-{linux-x64,linuxmusl-x64}@1.3.4` — libvips C library shipped as native binary; LGPL-3.0-or-later. Accepted alongside `sharp` itself (dual-licensed Apache-2.0 OR LGPL, passes via Apache). The exception is intentionally narrow — LGPL-3.0-or-later is **not** in the global allowlist, so a stray pure-LGPL dep elsewhere still trips the gate. LGPL §4d compliance is satisfied by sharp's runtime FFI loading of libvips (dynamic-linking model).
 - `flatbuffers@1.12.0` — Apache-2.0 per LICENSE.txt; non-SPDX `license` field is the only reason for the override.
 - `@nimbus-dev/connectors` — our own first-party MCP connectors, extracted to
   [nimbus-agent/nimbus-mcp-servers](https://github.com/nimbus-agent/nimbus-mcp-servers) and consumed

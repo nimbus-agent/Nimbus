@@ -81,6 +81,60 @@ test("webhook-only OpenAPI 3.1 yields zero endpoints (paths missing) but does no
   expect(r.endpoints).toHaveLength(0);
 });
 
+test("merge keys (`<<: *anchor`) still contribute operations and their fields", () => {
+  // js-yaml 5's bare CORE schema has no merge type, so `<<` became a literal key: `/things`
+  // indexed NO operations and `/other`'s GET lost the tags it merged in.
+  const source = `openapi: 3.0.0
+info:
+  title: Merge demo
+  version: "1"
+x-ops: &crud
+  get:
+    operationId: listThings
+  post:
+    operationId: createThing
+paths:
+  /things:
+    <<: *crud
+  /other:
+    get:
+      <<: &baseop
+        tags: [shared]
+      operationId: getOther
+`;
+  const r = parseSpec({ absPath: "/specs/openapi.yaml", source, maxBytes: 1024 * 1024 });
+  if (r.kind === "skipped") throw new Error(`should not skip: ${r.reason}`);
+  const byKey = new Map(r.endpoints.map((e) => [`${e.method} ${e.path}`, e]));
+  expect([...byKey.keys()].sort((a, b) => a.localeCompare(b))).toEqual([
+    "GET /other",
+    "GET /things",
+    "POST /things",
+  ]);
+  expect(byKey.get("GET /things")?.operationId).toBe("listThings");
+  expect(byKey.get("POST /things")?.operationId).toBe("createThing");
+  expect(byKey.get("GET /other")?.tags).toEqual(["shared"]);
+});
+
+test("an explicit `!!binary` example does not skip the whole spec", () => {
+  // Under the bare CORE schema an unknown tag throws, so one tagged example anywhere in the
+  // document turned the entire spec into `parse_failed`.
+  const source = `openapi: 3.0.0
+info:
+  title: Tagged example
+paths:
+  /a:
+    get:
+      operationId: getA
+components:
+  examples:
+    blob:
+      value: !!binary aGVsbG8=
+`;
+  const r = parseSpec({ absPath: "/specs/openapi.yaml", source, maxBytes: 1024 * 1024 });
+  if (r.kind === "skipped") throw new Error(`should not skip: ${r.reason}`);
+  expect(r.endpoints.map((e) => e.operationId)).toEqual(["getA"]);
+});
+
 test("oversize spec is skipped with reason 'too_large'", () => {
   const big = "x".repeat(5);
   const r = parseSpec({ absPath: "/tmp/big.yaml", source: big, maxBytes: 4 });

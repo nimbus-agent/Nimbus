@@ -1,5 +1,5 @@
 import { readFileSync } from "node:fs";
-import yaml from "js-yaml";
+import { load as loadYaml } from "js-yaml";
 
 const cache = new Map<string, Uint8Array>();
 
@@ -10,7 +10,7 @@ export type OpenApiLoaderDeps = {
 
 const defaultDeps: OpenApiLoaderDeps = {
   readFile: (path) => readFileSync(path, "utf8"),
-  parseYaml: (raw, path) => yaml.load(raw, { filename: path }),
+  parseYaml: (raw, path) => loadYaml(raw, { filename: path }),
 };
 
 export function loadOpenApiJsonBytes(

@@ -30,6 +30,10 @@ const ALLOWED_LICENSES: ReadonlySet<string> = new Set([
   "Unlicense",
   "MPL-2.0",
   "Python-2.0",
+  // The PSF License Agreement on its own — the rights-granting part of Python-2.0 above, whose
+  // text Python-2.0 already includes verbatim. argparse 3.x (via markdown-it 15) relabelled
+  // from Python-2.0 to PSF-2.0 with no change to the terms that apply to it.
+  "PSF-2.0",
   "WTFPL",
   "Zlib",
   "Artistic-2.0",
@@ -39,17 +43,17 @@ const PACKAGE_OVERRIDES: ReadonlySet<string> = new Set([
   // sharp's prebuilt libvips native binaries are LGPL-3.0, dynamically linked
   // (not statically compiled into our AGPL code) — the standard, already-accepted
   // sharp arrangement. Version-pinned here so a bump is reviewed; sharp 0.35.3
-  // moved these from 1.2.4 to 1.3.2, and 0.35.4 from 1.3.2 to 1.3.3. The linkage
-  // model is what the exception rests on and it is unchanged by a patch bump:
-  // sharp still loads libvips over runtime FFI, so LGPL §4d is satisfied the same
-  // way it was at 1.3.2.
+  // moved these from 1.2.4 to 1.3.2, 0.35.4 from 1.3.2 to 1.3.3, and 0.35.5 from
+  // 1.3.3 to 1.3.4 (still LGPL-3.0-or-later). The linkage model is what the
+  // exception rests on and it is unchanged by a patch bump: sharp still loads
+  // libvips over runtime FFI, so LGPL §4d is satisfied the same way it was at 1.3.2.
   //
   // These two entries are LINUX-ONLY, and that is a trap worth stating: they do
   // not install on Windows or macOS, so `audit:js-licenses` passes locally on
   // those platforms whatever this list says. A sharp bump must be checked on
   // Linux (CI, or `verify:docker`) — a green local run proves nothing here.
-  "@img/sharp-libvips-linux-x64@1.3.3",
-  "@img/sharp-libvips-linuxmusl-x64@1.3.3",
+  "@img/sharp-libvips-linux-x64@1.3.4",
+  "@img/sharp-libvips-linuxmusl-x64@1.3.4",
   "flatbuffers@1.12.0",
   // Our own first-party connectors, extracted to nimbus-agent/nimbus-mcp-servers and consumed
   // from npm. AGPL-3.0-only is flagged by default for a good reason — an AGPL dependency imposes
