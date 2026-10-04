@@ -8,6 +8,10 @@
  * call from a unit test; only its construction is covered.
  */
 import { describe, expect, test } from "bun:test";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { pathToFileURL } from "node:url";
 import { GhCli, type GhSpawnFn, type GhSpawnResult } from "./bench-ci-gh.ts";
 
 function scripted(results: GhSpawnResult[]): { spawn: GhSpawnFn; calls: string[][] } {
@@ -42,11 +46,55 @@ describe("GhCli — defaults", () => {
   });
 
   test("constructing with no options at all does not throw", () => {
-    // `bench-ci.ts`'s entry point builds a GhCli unconditionally, before it knows whether any gh
-    // call is needed, so construction must not depend on gh being installed. Nothing here calls a
-    // method: the default spawn runs the real `gh`.
+    // Covers the all-defaults construction in this process. Nothing here calls a method: the
+    // default spawn runs the real `gh`. Whether construction NEEDS gh is the next test's question —
+    // gh is installed wherever this suite runs, so this one cannot tell.
     expect(() => new GhCli()).not.toThrow();
   });
+
+  test("constructing with no options at all does not need gh on PATH", async () => {
+    // `bench-ci.ts`'s entry point builds a GhCli unconditionally, before it knows whether any gh
+    // call is needed, so construction must not depend on gh being installed. GitHub-hosted runners
+    // have gh, so the premise is ARRANGED rather than assumed: a fresh process whose PATH is an
+    // empty directory builds one, and first reports that it really cannot see gh. It has to be a
+    // fresh process — on Windows, `Bun.which` keeps resolving against the PATH the process started
+    // with after `process.env.PATH` is reassigned.
+    const emptyDir = mkdtempSync(join(tmpdir(), "nimbus-no-gh-"));
+    try {
+      const moduleUrl = pathToFileURL(join(import.meta.dir, "bench-ci-gh.ts")).href;
+      const script = [
+        `const { GhCli } = await import(${JSON.stringify(moduleUrl)});`,
+        `console.log(Bun.which("gh") === null ? "gh not on PATH" : "gh FOUND");`,
+        "new GhCli();",
+        `console.log("constructed");`,
+      ].join("\n");
+      // Windows env names are case-insensitive: drop every spelling of PATH before setting one.
+      const env: Record<string, string> = {};
+      for (const [k, v] of Object.entries(process.env)) {
+        if (v !== undefined && k.toUpperCase() !== "PATH") env[k] = v;
+      }
+      env["PATH"] = emptyDir;
+      const child = Bun.spawn([process.execPath, "-e", script], {
+        cwd: emptyDir,
+        env,
+        stdout: "pipe",
+        stderr: "pipe",
+        windowsHide: true,
+      });
+      const [code, stdout, stderr] = await Promise.all([
+        child.exited,
+        new Response(child.stdout).text(),
+        new Response(child.stderr).text(),
+      ]);
+      expect({ code, stdout: stdout.trim().split(/\r?\n/), stderr: stderr.trim() }).toEqual({
+        code: 0,
+        stdout: ["gh not on PATH", "constructed"],
+        stderr: "",
+      });
+    } finally {
+      rmSync(emptyDir, { recursive: true, force: true });
+    }
+  }, 30_000); // a cold `bun` start, which a loaded CI runner can stretch past the default 5 s
 });
 
 describe("GhCli — retries", () => {

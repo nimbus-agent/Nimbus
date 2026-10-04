@@ -24,11 +24,30 @@ import { applyWritablePragmas } from "../db/writable-pragmas.ts";
 import { materializeMigratedDb } from "../index/migrated-db-template.ts";
 import type { NimbusVault } from "../vault/nimbus-vault.ts";
 import type { StatusReaders } from "./admin-status-rpc.ts";
+import * as routeAuth from "./http-route-auth.ts";
+import {
+  type ClipReadRouteKey,
+  clipScopeFor,
+  HTTP_ROUTE_AUTH,
+  ROUTE_KEY_AGENT_RUN_GET,
+  ROUTE_KEY_AGENTS_LIST,
+  ROUTE_KEY_BRIEF_GET,
+  ROUTE_KEY_CLIPS_RELATED,
+  ROUTE_KEY_EGRESS_HEAD,
+  ROUTE_KEY_EGRESS_LIST,
+  ROUTE_KEY_EGRESS_PROVE,
+  ROUTE_KEY_EGRESS_VERIFY,
+  ROUTE_KEY_ITEMS_RESOLVE,
+  ROUTE_KEY_ITEMS_RESOLVE_FILE,
+  ROUTE_KEY_ITEMS_RESOLVE_IDS,
+  ROUTE_KEY_SERVICES_RESOLVE,
+} from "./http-route-auth.ts";
 import {
   type ReadOnlyHttpServerHandle,
   type ReadOnlyHttpServerOptions,
   startReadOnlyHttpServer,
 } from "./http-server.ts";
+import { WRITE_ROUTE_ALLOWLIST } from "./http-write-routes.ts";
 import { createSeededTokenVault } from "./test-token-vault.ts";
 
 const FULL_TOKEN = "read-gates-full-token-0123456789abcdef0123456789";
@@ -122,6 +141,8 @@ function serve(opts: ReadOnlyHttpServerOptions = {}, toml?: string): string {
 }
 
 type ScopedRoute = {
+  /** The `HTTP_ROUTE_AUTH` key the row exercises — what ties it to the table it is checked against. */
+  readonly routeKey: ClipReadRouteKey;
   readonly method: "GET" | "POST";
   readonly path: string;
   readonly scope: ApiScope;
@@ -149,6 +170,7 @@ const AGENTS_DISABLED = {
 /** Every bearer-scoped inline read the server mounts — one row per `ClipReadRouteKey`. */
 const SCOPED_ROUTES: readonly ScopedRoute[] = [
   {
+    routeKey: ROUTE_KEY_CLIPS_RELATED,
     method: "POST",
     path: "/v1/clips/related",
     scope: "clip",
@@ -156,6 +178,7 @@ const SCOPED_ROUTES: readonly ScopedRoute[] = [
     admitted: { status: 200 },
   },
   {
+    routeKey: ROUTE_KEY_ITEMS_RESOLVE,
     method: "GET",
     path: "/v1/items/resolve?url=https%3A%2F%2Fexample.com%2Fa",
     scope: "resolve",
@@ -163,6 +186,7 @@ const SCOPED_ROUTES: readonly ScopedRoute[] = [
     admitted: { status: 200 },
   },
   {
+    routeKey: ROUTE_KEY_ITEMS_RESOLVE_FILE,
     method: "GET",
     path: "/v1/items/resolve-file?service=github&repo=acme%2Fweb&refAndPath=main%2Fa.ts",
     scope: "resolve",
@@ -170,6 +194,7 @@ const SCOPED_ROUTES: readonly ScopedRoute[] = [
     admitted: { status: 200 },
   },
   {
+    routeKey: ROUTE_KEY_ITEMS_RESOLVE_IDS,
     method: "GET",
     path: "/v1/items/resolve-ids?id=github%3Aweb%231",
     scope: "resolve",
@@ -177,6 +202,7 @@ const SCOPED_ROUTES: readonly ScopedRoute[] = [
     admitted: { status: 200 },
   },
   {
+    routeKey: ROUTE_KEY_SERVICES_RESOLVE,
     method: "GET",
     path: "/v1/services/resolve?repo=github%3Aacme%2Fweb",
     scope: "resolve",
@@ -184,6 +210,7 @@ const SCOPED_ROUTES: readonly ScopedRoute[] = [
     admitted: { status: 200 },
   },
   {
+    routeKey: ROUTE_KEY_EGRESS_LIST,
     method: "GET",
     path: "/v1/egress",
     scope: "egress",
@@ -191,6 +218,7 @@ const SCOPED_ROUTES: readonly ScopedRoute[] = [
     admitted: { status: 200 },
   },
   {
+    routeKey: ROUTE_KEY_EGRESS_HEAD,
     method: "GET",
     path: "/v1/egress/head",
     scope: "egress",
@@ -198,6 +226,7 @@ const SCOPED_ROUTES: readonly ScopedRoute[] = [
     admitted: { status: 200 },
   },
   {
+    routeKey: ROUTE_KEY_EGRESS_VERIFY,
     method: "GET",
     path: "/v1/egress/verify",
     scope: "egress",
@@ -205,6 +234,7 @@ const SCOPED_ROUTES: readonly ScopedRoute[] = [
     admitted: { status: 200 },
   },
   {
+    routeKey: ROUTE_KEY_EGRESS_PROVE,
     method: "GET",
     path: "/v1/egress/prove",
     scope: "egress",
@@ -212,6 +242,7 @@ const SCOPED_ROUTES: readonly ScopedRoute[] = [
     admitted: { status: 200 },
   },
   {
+    routeKey: ROUTE_KEY_BRIEF_GET,
     method: "GET",
     path: "/v1/briefs/run_unknown",
     scope: "briefs",
@@ -219,6 +250,7 @@ const SCOPED_ROUTES: readonly ScopedRoute[] = [
     admitted: { status: 404, runMiss: true },
   },
   {
+    routeKey: ROUTE_KEY_AGENTS_LIST,
     method: "GET",
     path: "/v1/agents",
     scope: "agents",
@@ -226,6 +258,7 @@ const SCOPED_ROUTES: readonly ScopedRoute[] = [
     admitted: { status: 200 },
   },
   {
+    routeKey: ROUTE_KEY_AGENT_RUN_GET,
     method: "GET",
     path: "/v1/agents/runs/expert_1_unknown",
     scope: "agents",
@@ -257,6 +290,60 @@ async function expectDisabled(res: Response, route: ScopedRoute): Promise<void> 
     expect(await res.text()).toBe(route.disabled.text);
   }
 }
+
+/** `"GET /v1/briefs/*"` → a matcher for the request path, `*` standing for ONE path segment. */
+function routeKeyPathMatcher(pattern: string): RegExp {
+  const literal = (s: string): string => s.replaceAll(/[.*+?^${}()|[\]\\]/g, String.raw`\$&`);
+  return new RegExp(`^${pattern.split("*").map(literal).join("[^/]+")}$`);
+}
+
+// Every assertion below is only as wide as SCOPED_ROUTES, so the table is derived-checked rather
+// than trusted: a bearer-scoped read added to the server with no row here would otherwise sit
+// outside all of them while this file stayed green.
+describe("the SCOPED_ROUTES table itself", () => {
+  test("has exactly one row per exported ROUTE_KEY_* read — every clip-scoped read in HTTP_ROUTE_AUTH", () => {
+    const exportedKeys: string[] = [];
+    for (const [name, value] of Object.entries(routeAuth)) {
+      if (name.startsWith("ROUTE_KEY_") && typeof value === "string") exportedKeys.push(value);
+    }
+    exportedKeys.sort();
+    const clipReadKeys = Object.entries(HTTP_ROUTE_AUTH)
+      .filter(([key, auth]) => auth.kind === "clip" && !WRITE_ROUTE_ALLOWLIST.includes(key))
+      .map(([key]) => key)
+      .sort();
+    const rowKeys: string[] = SCOPED_ROUTES.map((route) => route.routeKey);
+
+    expect(new Set(rowKeys).size).toBe(rowKeys.length);
+    expect([...rowKeys].sort()).toEqual(exportedKeys);
+    expect(clipReadKeys).toEqual(exportedKeys);
+  });
+
+  test("each row's method, path and scope are the ones its route key names", () => {
+    type RowShape = {
+      readonly routeKey: string;
+      readonly method: string;
+      readonly pathMatches: boolean;
+      readonly scope: ApiScope | null;
+    };
+    for (const route of SCOPED_ROUTES) {
+      const [method = "", pattern = ""] = route.routeKey.split(" ");
+      const path = route.path.split("?")[0] ?? "";
+      const actual: RowShape = {
+        routeKey: route.routeKey,
+        method: route.method,
+        pathMatches: routeKeyPathMatcher(pattern).test(path),
+        scope: route.scope,
+      };
+      const expected: RowShape = {
+        routeKey: route.routeKey,
+        method,
+        pathMatches: true,
+        scope: clipScopeFor(route.routeKey),
+      };
+      expect(actual).toEqual(expected);
+    }
+  });
+});
 
 describe("scoped reads — the surface gate", () => {
   test("an unmounted surface answers its own 404 to every caller, token or not", async () => {
