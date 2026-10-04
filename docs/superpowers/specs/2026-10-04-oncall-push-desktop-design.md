@@ -44,17 +44,18 @@ they are stored, can be read in full, and show where each one was delivered.
 | `ui/src-tauri/src/gateway_bridge.rs` | `"oncall.pushedGet"` and `"oncall.pushedList"` are added to `ALLOWED_METHODS` in sorted position. Neither is in `NO_TIMEOUT_METHODS`. |
 | `gateway/src/ipc/oncall-push-rpc.ts` | `PushedBriefSummary` gains `service: string \| null`, and so `PushedBriefDetail` gains it too. |
 | `gateway/src/oncall-push/push-headline.ts` (or a sibling) | A shared `resolvePushService(row, incident)` returns the brief's `binding.nimbusServiceId`, then the incident's PagerDuty service id, then `null`. Empty strings fall through. The ChatOps headline uses the same resolver, with `"unknown service"` as its own display fallback, so the desktop and Slack name a service identically. |
-| `gateway/src/oncall-push/push-store.ts` | Whatever `summarize` needs to read the incident's PagerDuty service id without a second query per row. The plan decides between a joined list query and a per-row lookup, measured against the default `limit`. |
-| `cli` `nimbus oncall pushed list` | Prints `service` when non-null. It is already in the payload. |
+| `gateway/src/oncall-push/push-store.ts` | A list query that LEFT JOINs `item` (`i.id = pb.incident_id AND i.type = 'incident'`) and returns the incident title and PagerDuty service id with each row. `summarize` then makes no per-row query (today it already makes one per row for the title). The service id is read as `CASE WHEN json_valid(i.metadata) THEN json_extract(i.metadata, '$.pagerduty_service_id') END`. A bare `json_extract` RAISES on malformed JSON, and in a projection one bad `item.metadata` row would fail the whole list. A pushed row whose incident was pruned from `item` still lists, with `title` and `service` both null. `incidentTitle` stays for `pushedGet`. |
+| `cli` `nimbus oncall pushed list` | Each line becomes `<ISO time>  <status>  <incident id>  [<service>]  <title>`. The bracketed service is omitted entirely when null, so the line reads exactly as it does today. |
 | `ui/src/ipc/types.ts` | `PushedBriefList` = `{ enabled: boolean; identity: "resolved" \| "unresolved"; briefs: PushedBriefSummary[] }`. `PushedBriefSummary` = `{ incidentId; status: "ok" \| "failed"; createdAt; retriedAt: number \| null; title: string \| null; service: string \| null }`. `PushedBriefDetail` adds `briefMarkdown: string \| null; failureCode: string \| null; delivery: Record<string, { outcome: string; reason?: string; at: number }>`. |
 | `ui/src/providers/OncallBriefsProvider.tsx` (new) | Mounted ONCE in `RootLayout`, around the sidebar and the outlet. It owns the single list query and the single event subscription below, and exposes them through `useOncallBriefs()` (context). The sidebar dot and the page read the same state, so one event causes one refetch, not two. `useOncallBriefs()` outside the provider throws, which is a programming error caught by tests. |
-| `ui/src/hooks/useOncallBriefs.ts` (new) | The provider's implementation. It wraps `useIpcQuery<PushedBriefList>("oncall.pushedList", 60_000, { limit: 50 })` and subscribes to `gateway://notification` through `useIpcSubscription`. It calls `refetch()` only for `method === "gateway.event"` with `params.kind === "oncall.briefPushed"`. A malformed `params` is ignored, never thrown. |
-| `ui/src/pages/Oncall.tsx` (new) | The page: `BriefList` on the left, `BriefDetail` on the right. The selection is the `id` URL search param. With none, the newest brief is selected. Mounting the page records `lastSeenPushedAt`. |
+| `ui/src/hooks/useOncallBriefs.ts` (new) | The provider's implementation. It wraps `useIpcQuery<PushedBriefList>("oncall.pushedList", 60_000, { limit: 50 })` and subscribes to `gateway://notification` through `useIpcSubscription`. It calls `refetch()` only for `method === "gateway.event"` with `params.kind === "oncall.briefPushed"`. A malformed `params` is ignored, never thrown, and it is narrowed from `unknown` (no `any`). It also exposes `lastPushed: { incidentId: string; seq: number } \| null`, where `seq` increments on every matching event, so a consumer can react to an event for one id without opening a second subscription. Reconnects need nothing extra: `useIpcQuery` reruns when `connectionState` returns to `connected`. |
+| `ui/src/pages/Oncall.tsx` (new) | The page: `BriefList` on the left, `BriefDetail` on the right. The selection is the `id` URL search param. With none and at least one brief, the page writes the newest id into the URL with `setSearchParams(..., { replace: true })`, so reload and back/forward keep the selection without adding a history entry. While the page is mounted, an effect calls `markPushedSeen(newest.createdAt)` whenever the newest brief changes, not only on mount, so a brief that arrives while you are looking at the page never lights the sidebar dot. |
 | `ui/src/components/oncall/BriefList.tsx` (new) | One row per brief: title (or the incident id when the title is null), service, status, and age. The selected row is highlighted. |
-| `ui/src/components/oncall/BriefDetail.tsx` (new) | Fetches `oncall.pushedGet { incidentId }` for the selection. It refetches when an `oncall.briefPushed` event names that id, which covers a retry that turned `failed` into `ok`. It renders the markdown verbatim and the `DeliveryStrip`. A failed row shows its `failureCode` and the command `nimbus oncall pushed <id> --retry`. |
+| `ui/src/components/oncall/BriefDetail.tsx` (new) | Fetches `oncall.pushedGet { incidentId }` for the selection through `useIpcQuery` (60 s). Switching selection changes the params, and `useIpcQuery`'s generation counter already drops a response that arrives after a newer request, so rapid clicks never show a stale brief. It opens NO subscription of its own: it calls `refetch()` when the provider's `lastPushed` changes and names its `incidentId`, which covers a retry that turned `failed` into `ok`. It renders the markdown verbatim and the `DeliveryStrip`. A failed row shows its `failureCode` and the command `nimbus oncall pushed <id> --retry`. |
 | `ui/src/components/oncall/DeliveryStrip.tsx` (new) | One chip per sink present in `delivery`, in a fixed order (`event`, `toast`, `chatops`, then any others alphabetically): the outcome plus its reason. An absent sink renders nothing. |
 | `ui/src/store/slices/oncall.ts` (new) | `lastSeenPushedAt: number` (0 initially) and `markPushedSeen(createdAt)`, which only ever moves forward. `lastSeenPushedAt` joins `WHITELISTED_PERSIST_KEYS`. |
 | `ui/src/components/chrome/Sidebar.tsx` | A new `ENTRIES` row, `{ to: "/oncall", icon: "☎", label: "On-call" }`, after Dashboard. It shows a dot when the newest brief's `createdAt > lastSeenPushedAt`. The newest brief comes from `useOncallBriefs()`, the provider's context. The dot carries an accessible label ("new pushed brief"), not colour alone. |
+| `ui/src/components/chrome/NavItem.tsx` | Today `badge` is `number` only. It gains `dot?: boolean`, rendered as a small accent dot plus a visually hidden "new pushed brief" text. The numeric badge is unchanged, and a `badge > 0` takes precedence over `dot` when both are set. |
 | `ui/src/App.tsx` | `<Route path="oncall" element={<Oncall />} />`. |
 
 ### 2.3 Data flow
@@ -75,7 +76,13 @@ it, which is PR 1's rule.
 - **I7 (Tauri allowlist).** Two read-only methods are added. Neither is RCE-class: they read stored briefs and
   delivery outcomes, and write nothing.
   - `oncall.pushedRetry`, which spawns an agent run, stays off the list. A test asserts it is absent by name.
-  - The Rust test asserts the count (107) AND both names.
+  - The Rust test asserts the count (107) AND both names. The new entries go between `"llm.unloadModel"` and
+    `"policy.show"`, in the list's sorted order.
+  - `packages/gateway/src/security-invariants.test.ts` ALSO pins the size: its I7 test "allowlist_exact_size assertion
+    is 105" greps the Rust file for `assert_eq!(ALLOWED_METHODS.len(), 105)`. It moves to 107, and gains a named
+    assertion that `oncall.pushedRetry` is absent. (Found in review; the first draft listed only the Rust test.)
+  - `ipc/allowlist-resolves.test.ts` checks that every allowlisted method resolves to a live handler. It covers the
+    two new entries with no change, because both are already routed.
   - The I7 prose ledger in `docs/SECURITY-INVARIANTS.md` re-derives its enumeration, not just its count, as does the
     `nimbus-tauri-allowlist` skill if it restates either.
 - **I8 (CSP).** Unchanged. The markdown is a React text child inside a `<pre>`, with no `dangerouslySetInnerHTML` and
@@ -110,6 +117,12 @@ it, which is PR 1's rule.
 
 **Gateway (`bun test`).**
 - `resolvePushService`: a mapped service, the PagerDuty fallback, `null`, and empty strings.
+- `PushStore` list query:
+  - One `item` row with malformed `metadata` does not fail the list. That row's `service` is null and every other row
+    is intact. Red-proved by dropping the `json_valid` guard.
+  - A pushed row whose incident is gone from `item` still lists, with `title` and `service` null.
+- CLI `pushed list`: the `[service]` segment appears when the service is non-null. When it is null the line is
+  byte-identical to today's format.
 - `pushedList` rows carry `service`. The ChatOps headline still renders the same service as before (PR 2's tests stay
   green).
 
@@ -133,6 +146,13 @@ it, which is PR 1's rule.
   - There are three empty states (disabled, unresolved, none), the pruned state, and the RPC-error state.
 - `DeliveryStrip`: the fixed order, outcome and reason; an absent sink renders nothing; and no "undefined" text ever
   appears.
+- Live arrival while `/oncall` is open: the list updates, `lastSeenPushedAt` advances to the new brief, and the
+  sidebar dot stays off.
+- URL: `/oncall` with briefs becomes `/oncall?id=<newest>` through a REPLACE, so history length is unchanged. A pruned
+  `?id=` is removed.
+- Rapid selection: resolving `pushedGet` for A after B was selected never shows A's brief.
+- `BriefDetail` refetches when `lastPushed` names its id, and not for another id.
+- `NavItem`: `dot` renders a dot and its hidden label. `badge > 0` wins over `dot`. Existing badge tests are unchanged.
 - Sidebar dot:
   - It is shown when the newest `createdAt > lastSeenPushedAt`, and hidden after `/oncall` mounts.
   - `markPushedSeen` never moves backwards.
@@ -153,6 +173,10 @@ it, which is PR 1's rule.
 
 - **No retry button.** `oncall.pushedRetry` starts an agent run on the owner's behalf. The renderer sits behind the I7
   XSS boundary, and a retry is one CLI command away. The detail view prints that command.
+- **No copy buttons, for now** (review § 3.3, deferred). The brief and the retry command are plain, selectable text:
+  nothing in the app sets `user-select: none`. A copy button needs the clipboard from inside the Tauri webview, which
+  is its own permissions question (the `clipboard-manager` plugin or a webview Clipboard API check per platform).
+  It is worth doing once, for every screen, not inside this PR.
 - **No markdown renderer** (decided 2026-10-04). Preformatted text needs no dependency and no CSP review, and it
   matches the CLI. A renderer can come later as its own change, reusable by other screens.
 - **Follow-ups, not in this PR:**
@@ -161,3 +185,20 @@ it, which is PR 1's rule.
     warning extends that check rather than adding a new one.
   - Escaping the existing `@nimbus agent …` ChatOps replies with `escapeSlackText`.
   - An assembly-level test driving a real P1 through the booted ChatOps graph, deferred from PR 2.
+
+## 7. Review dispositions (2026-10-04)
+
+From `2026-10-04-oncall-push-desktop-design-review.md`. Each claim was checked against `origin/main` at `131d0af0`.
+
+| Review item | Disposition |
+|---|---|
+| Q1 dot lights while on `/oncall` | **Fixed.** `markPushedSeen` runs whenever the newest brief changes while the page is mounted, not only on mount (§ 2.2), and a test covers it (§ 4). |
+| Q2 URL sync | **Fixed.** The page writes the newest id into the URL with `replace: true` (§ 2.2). |
+| Q3 CLI `list` format | **Fixed.** `[<service>]` sits before the title and is omitted when null, so null rows print exactly as today (§ 2.2, § 4). |
+| Q4 `BriefDetail` subscription | **Fixed, differently from the suggestion.** The review proposed a second, direct subscription in `BriefDetail`, read through `(n.params as any)`. That reopens the double-subscription the provider exists to prevent, and `any` is a Non-Negotiable. The provider instead exposes `lastPushed`, and `BriefDetail` refetches when it names its id. Stale responses are already handled by `useIpcQuery`'s generation counter (`hooks/useIpcQuery.ts`). |
+| § 3.1 N+1 queries | **Fixed, with a correction.** A joined list query was adopted. The suggested `json_extract(i.metadata, …)` in the projection would RAISE on one malformed `metadata` row and fail the whole list, so it is guarded with `json_valid` (§ 2.2), with a test (§ 4). |
+| § 3.2 `NavItem` | **Fixed.** Verified that `badge` is `number` only (`NavItem.tsx:8`). `NavItem` gains `dot` (§ 2.2). |
+| § 3.3 copy buttons | **Deferred** (§ 6). The text is already selectable: nothing in `ui/src` sets `user-select: none`. Clipboard access from the Tauri webview is its own permissions decision, best made once for the whole app. |
+| § 4 edge-case table | **No change, except one confirmation.** Reconnect is verified: `useIpcQuery`'s effect depends on `connectionState`, so it re-runs when the gateway returns to `connected`. Every other row is already covered by § 3 and § 4. |
+| § 5 security checklist | **One real gap fixed:** `security-invariants.test.ts` pins `ALLOWED_METHODS.len() == 105` by grepping the Rust file. The first draft missed it (§ 2.4). The sorted insertion point (between `llm.unloadModel` and `policy.show`) is verified. The remaining items restate the spec. |
+| § 6 next steps | Steps 1 and 3 are done above. Step 2 is the next stage. |
