@@ -2,6 +2,13 @@
 
 All notable changes to the `nimbus` core (headless Gateway + CLI binary + first-party MCP connectors) are documented in this file. release-please appends new entries between this header and the most recent version below when a release PR merges.
 
+## [7.34.0](https://github.com/nimbus-agent/Nimbus/compare/v7.33.0...v7.34.0) (2026-10-04)
+
+
+### Features
+
+* **oncall:** post the pushed brief's headline to ChatOps (PR 2 of 3) ([#1600](https://github.com/nimbus-agent/Nimbus/issues/1600)) ([84a335e](https://github.com/nimbus-agent/Nimbus/commit/84a335ecc6045b8fac0278113d599f103a514a85))
+
 ## [7.33.0](https://github.com/nimbus-agent/Nimbus/compare/v7.32.2...v7.33.0) (2026-10-02)
 
 
