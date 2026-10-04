@@ -3,11 +3,21 @@
 /**
  * audit:advisories — hold every live npm advisory to a written decision.
  *
- * `bun audit --audit-level high` (security.yml) blocks merges on HIGH/CRITICAL.
- * Everything below that threshold used to just sit there: two advisories lived
- * in `bun audit` output for weeks because nothing failed and nothing recorded
- * that anyone had looked. This gate closes that gap. It runs `bun audit --json`
- * and fails when:
+ * `bun audit --audit-level high` (security.yml) blocks merges on HIGH/CRITICAL,
+ * passing over only the advisories that have an OPEN row in
+ * `accepted-advisories.ts`. Its `--ignore` arguments come from
+ * `advisory-ignore-args.ts`, which is built on the row rules exported below
+ * (`checkRowShape`, `isExpired`), so the two steps share one definition of a
+ * well-formed, unexpired row. The blocking step is stricter in two ways, both
+ * forced by bun's `--ignore`: it needs an exact GHSA id, because bun matches by
+ * substring, and it passes over a GHSA only while EVERY row naming it is open,
+ * because bun cannot scope an ignore to one package.
+ *
+ * Everything below HIGH used to just sit there: two advisories lived in
+ * `bun audit` output for weeks because nothing failed and nothing recorded that
+ * anyone had looked. This gate closes that gap. It runs `bun audit --json`,
+ * never with `--ignore`, so it also sees every advisory the blocking step
+ * passed over, and fails when:
  *
  *   unaccepted         a live advisory nobody has judged (fix it, or add a row)
  *   expired            an accepted row past its `recheckBy` date
@@ -115,16 +125,31 @@ export function parseBunAudit(stdout: string): LiveAdvisory[] {
 
 const ISO_DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 
-function isIsoDate(s: string): boolean {
+export function isIsoDate(s: string): boolean {
   return ISO_DATE_RE.test(s) && !Number.isNaN(Date.parse(s));
+}
+
+/** Today's date in UTC, as YYYY-MM-DD — the clock every `recheckBy` is judged against. */
+export function utcToday(now: Date = new Date()): string {
+  return now.toISOString().slice(0, 10);
 }
 
 function daysBetween(fromIso: string, toIso: string): number {
   return (Date.parse(toIso) - Date.parse(fromIso)) / 86_400_000;
 }
 
-function keyOf(pkg: string, ghsa: string): string {
+/** The identity of a row: package-scoped, so one advisory id alone never satisfies a row. */
+export function keyOf(pkg: string, ghsa: string): string {
   return `${pkg}@${ghsa}`;
+}
+
+/**
+ * Is this row past its `recheckBy`? Inclusive: the row still holds ON that date and lapses the day
+ * after. A row whose `recheckBy` is not a date is reported as `malformed` by `checkRowShape`
+ * instead, so it is never ALSO reported here.
+ */
+export function isExpired(row: AcceptedAdvisory, today: string): boolean {
+  return isIsoDate(row.recheckBy) && daysBetween(today, row.recheckBy) < 0;
 }
 
 /** Every row must carry a real justification — a blank field is not a decision. */
@@ -135,7 +160,21 @@ const REQUIRED_PROSE: ReadonlyArray<keyof AcceptedAdvisory> = [
   "owner",
 ];
 
-function checkRowShape(row: AcceptedAdvisory): Finding[] {
+/**
+ * How far past `today` an `acceptedOn` may sit: one day, for an author whose local date is
+ * already tomorrow in UTC. The window cap is measured from `acceptedOn`, so a row dated any later
+ * would be open for longer than `MAX_ACCEPTANCE_DAYS` from the day it lands, and a far-future date
+ * would make the cap meaningless.
+ */
+const ACCEPTED_ON_SLACK_DAYS = 1;
+
+/**
+ * The row rules that do not depend on what `bun audit` reports: a justification in every prose
+ * field, ISO dates, a window of 1..`MAX_ACCEPTANCE_DAYS` days, and an `acceptedOn` no later than
+ * `ACCEPTED_ON_SLACK_DAYS` after `today`. Shared with `advisory-ignore-args.ts`, which withholds
+ * any row this returns a finding for.
+ */
+export function checkRowShape(row: AcceptedAdvisory, today: string): Finding[] {
   const key = keyOf(row.package, row.ghsa);
   const findings: Finding[] = [];
   for (const field of REQUIRED_PROSE) {
@@ -161,14 +200,21 @@ function checkRowShape(row: AcceptedAdvisory): Finding[] {
       detail: `acceptance window is ${window} days (max ${MAX_ACCEPTANCE_DAYS})`,
     });
   }
+  if (daysBetween(today, row.acceptedOn) > ACCEPTED_ON_SLACK_DAYS) {
+    findings.push({
+      kind: "malformed",
+      key,
+      detail: `acceptedOn ${row.acceptedOn} is after today (${today}); date a row on the day it is judged, or it stays open past the ${MAX_ACCEPTANCE_DAYS}-day cap`,
+    });
+  }
   return findings;
 }
 
 /**
  * Compare live advisories against the committed registry.
  *
- * `today` is injected rather than read from the clock so the expiry rule can be
- * tested at fixed dates. A test that asserted against `new Date()` would either
+ * `today` is injected rather than read from the clock so the expiry and
+ * future-`acceptedOn` rules can be tested at fixed dates. A test that asserted against `new Date()` would either
  * rot or silently stop exercising the boundary it was written for.
  */
 export function evaluateAdvisories(
@@ -186,7 +232,7 @@ export function evaluateAdvisories(
       continue;
     }
     byKey.set(key, row);
-    findings.push(...checkRowShape(row));
+    findings.push(...checkRowShape(row, today));
   }
 
   const liveKeys = new Set<string>();
@@ -209,7 +255,7 @@ export function evaluateAdvisories(
         detail: `re-scored ${row.severity} -> ${adv.severity}; the acceptance was made against the old score`,
       });
     }
-    if (isIsoDate(row.recheckBy) && daysBetween(today, row.recheckBy) < 0) {
+    if (isExpired(row, today)) {
       findings.push({
         kind: "expired",
         key,
@@ -315,7 +361,7 @@ if (import.meta.main) {
   }
 
   const live = parseBunAudit(stdout);
-  const today = new Date().toISOString().slice(0, 10);
+  const today = utcToday();
   const out = decideExit(evaluateAdvisories(live, ACCEPTED_ADVISORIES, today));
   for (const m of out.messages) console.error(m);
   if (out.code === 0) {

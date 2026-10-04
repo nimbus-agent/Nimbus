@@ -156,6 +156,16 @@ describe("evaluateAdvisories", () => {
     expect(kinds(evaluateAdvisories([LIVE], [row], "2026-03-31"))).toContain("malformed");
   });
 
+  test("an acceptedOn after today is a finding, with one day of slack for time zones", () => {
+    // The window cap counts from acceptedOn, so a future date would keep the row open longer than
+    // MAX_ACCEPTANCE_DAYS from the day it lands. ROW is dated 2026-01-01.
+    expect(evaluateAdvisories([LIVE], [ROW], "2025-12-31")).toEqual([]);
+    expect(kinds(evaluateAdvisories([LIVE], [ROW], "2025-12-30"))).toEqual(["malformed"]);
+    // A far-future row with an in-cap window is exactly the shape the rule exists for.
+    const future = { ...ROW, acceptedOn: "2036-01-01", recheckBy: "2036-04-01" };
+    expect(kinds(evaluateAdvisories([LIVE], [future], "2026-03-31"))).toEqual(["malformed"]);
+  });
+
   test("an empty justification field is a finding", () => {
     const row = { ...ROW, reachability: "   " };
     expect(kinds(evaluateAdvisories([LIVE], [row], "2026-03-31"))).toContain("malformed");

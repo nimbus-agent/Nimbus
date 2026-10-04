@@ -2669,7 +2669,7 @@ PRs that drop below threshold are blocked when checks are required.
 - **Push to `main` only:** E2E Desktop on the full 3-platform matrix, after `ci-ts` and `ci-rust` succeed.
 - **Reusable workflows under `.github/workflows/`:** `_test-suite.yml` (unit + coverage + integration + e2e + UI, parameterized by runner), `_perf.yml` / `_perf-reference.yml` (B2 perf benches), `_structure.yml` (boundaries + any-count + Nimbus invariants — wired into `ci.yml` as `pr-quality-structure` on PRs and `ci-structure` on pushes).
 
-**Security scans:** `bun audit` + `trivy` on every PR and nightly; `CodeQL` static analysis; Dependabot for dependency updates. HIGH/CRITICAL findings block merges.
+**Security scans:** `bun audit` + `trivy` on every PR and nightly; `CodeQL` static analysis; Dependabot for dependency updates. HIGH/CRITICAL findings block merges, except an npm advisory with no fix that holds an open, dated acceptance in `scripts/structure-audit/accepted-advisories.ts` (see [`security-hardening.md`](./security-hardening.md#accepting-an-advisory-that-has-no-fix)).
 
 ---
 
