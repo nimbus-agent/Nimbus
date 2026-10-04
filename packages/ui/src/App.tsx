@@ -11,6 +11,7 @@ import { Dashboard } from "./pages/Dashboard";
 import { HitlPopup } from "./pages/HitlPopup";
 import { Marketplace } from "./pages/Marketplace";
 import { Onboarding } from "./pages/Onboarding";
+import { Oncall } from "./pages/Oncall";
 import { Connect } from "./pages/onboarding/Connect";
 import { Syncing } from "./pages/onboarding/Syncing";
 import { Welcome } from "./pages/onboarding/Welcome";
@@ -42,6 +43,7 @@ const router = createBrowserRouter(
       }
     >
       <Route index element={<Dashboard />} />
+      <Route path="oncall" element={<Oncall />} />
       <Route path="onboarding" element={<Onboarding />}>
         <Route index element={<Navigate to="welcome" replace />} />
         <Route path="welcome" element={<Welcome />} />
