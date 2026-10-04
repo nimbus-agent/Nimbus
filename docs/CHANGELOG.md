@@ -18,11 +18,20 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
 
 ## Post-Phase-6 deliveries
 
-- **2026-10-03 — Contributor docs re-derived from code and the live ruleset.** No product
-  behaviour changed; the one script change pins `scripts/coverage-floor/reseed-docker.sh` to
-  `oven/bun:1.3`, the Bun CI installs, where it had used `oven/bun:latest`, a 1.4.x image by now.
-  Three corrections matter to users: `NIMBUS_UPDATER_DISABLE` only honours `1` (as
-  `config/nimbus-toml.ts` always did; `docs/cli-reference.md` said `true`, which does nothing);
+- **2026-10-03 — `index.regraph` is refused over LAN.** It re-runs the graph populator over every
+  indexed row, upserting entities and clearing and re-emitting relations, yet it was in neither
+  `FORBIDDEN_OVER_LAN` nor `WRITE_METHODS`. The LAN check is a denylist that lets `index.*` reads
+  through, so any paired peer could rewrite the owner's relationship graph on demand. It is now
+  fully forbidden (I5), not merely write-gated, like `index.reembed`, `index.rebody` and the
+  glossary, decisions and ownership passes. `nimbus index regraph` on the owner's own machine is
+  unaffected. No new invariant, no migration, no new IPC method.
+
+- **2026-10-03 — Contributor docs re-derived from code and the live ruleset.** The documentation
+  refresh changes no product behaviour; its one script change pins
+  `scripts/coverage-floor/reseed-docker.sh` to `oven/bun:1.3`, the Bun CI installs, where it had
+  used `oven/bun:latest`, a 1.4.x image by now. Three corrections matter to users:
+  `NIMBUS_UPDATER_DISABLE` only honours `1` (as `config/nimbus-toml.ts` always did;
+  `docs/cli-reference.md` said `true`, which does nothing);
   `nimbus decisions` confidence has reached `1.0` since #1307 (five documents still described the
   old `0.86` cap as current); and `nimbus tui`'s sub-task pane and mid-stream consent banner do not
   work today, which `docs/cli-reference.md` now says. Both listen for notifications nothing in the

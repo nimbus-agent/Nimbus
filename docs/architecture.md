@@ -2672,7 +2672,7 @@ PRs that drop below threshold are blocked when checks are required.
 
 **Security scans:** `bun audit` + `trivy` on every PR and nightly; `CodeQL` static analysis; Dependabot alerts (no update PRs: dependencies move in periodic manual bulk updates, see [`CONTRIBUTING.md` § Updating Dependencies](./CONTRIBUTING.md#updating-dependencies)). HIGH/CRITICAL findings block merges, except an npm advisory with no fix that holds an open, dated acceptance in `scripts/structure-audit/accepted-advisories.ts` (see [`security-hardening.md`](./security-hardening.md#accepting-an-advisory-that-has-no-fix)).
 
-**Merging:** no merge queue, and branches need not be up to date: a PR can merge as soon as the General ruleset's required checks are green. The list, and which of them aggregate others, is in [`CLAUDE.md` § CI gating](../CLAUDE.md#ci-gating).
+**Merging:** no merge queue, and branches need not be up to date. A PR can merge once the General ruleset's required checks are green and every review thread is resolved. The ruleset also carries a `code_quality` rule at severity `all`; no GitHub Code Quality run has appeared on a recent PR, so what that rule gates in practice is unverified. The required checks, and which of them aggregate others, are listed in [`CLAUDE.md` § CI gating](../CLAUDE.md#ci-gating).
 
 ---
 
