@@ -31,7 +31,7 @@ nimbus/
 ├── packages/
 │   ├── gateway/          ← Core headless process (Bun runtime)
 │   ├── cli/              ← nimbus CLI + TUI (Bun)
-│   ├── ui/               ← Tauri 2.0 desktop app (React 18 + Rust bridge)
+│   ├── ui/               ← Tauri 2.0 desktop app (React 19 + Rust bridge)
 │   ├── admin-console/    ← dependency-free static admin console (Phase 6 Slice 4)
 │   ├── github-actions/   ← Composite GitHub Actions (DORA data layer)
 │   └── docs/             ← Astro Starlight documentation site
