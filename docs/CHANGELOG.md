@@ -19,8 +19,9 @@ Phase-level history before `v0.1.0` (Phases 1â€“4) lives in [`docs/roadmap.md` Â
 ## Post-Phase-6 deliveries
 
 - **2026-10-04 â€” `--format plain` is linear on a line of underscores that open but never close.**
-  The quality sweep below made two super-linear patterns in `cli/src/format/slack-markdown.ts`
-  linear and recorded a third that was not: plain mode's underscore-italic pass,
+  The quality sweep below made two super-linear patterns in
+  `packages/cli/src/format/slack-markdown.ts` linear and recorded a third that was not: plain
+  mode's underscore-italic pass,
   `/(?<!\w)_(?!\s)(.+?)(?<!\s)_(?!\w)/g`, which `changelog`, `standup` and `oncall` run over every
   line of a brief under `--format plain`. An `_` with no word character before it and a non-space
   after it can open a run, but when a space precedes it or a word character follows it, it can
@@ -44,7 +45,7 @@ Phase-level history before `v0.1.0` (Phases 1â€“4) lives in [`docs/roadmap.md` Â
   U+0085. Four time-bounded tests hold 120 KB inputs under one second. They also guard the scan's
   two skips, past the end of the text and past a line terminator, which no output comparison can
   see: a scan that retried every `_` would return the same text, quadratically.
-  **Nothing else in `cli/src/format/` is super-linear.** The audit covered bold, both
+  **Nothing else in `packages/cli/src/format/` is super-linear.** The audit covered bold, both
   single-asterisk italic patterns, strikethrough, the link scan, the heading, table-row and
   delimiter-cell patterns, the cell split and the unescape pass: 66 adversarial shapes at up to
   120 KB, each as one line, as four lines, as 1 KB lines, and as stretches separated by `\r` or
