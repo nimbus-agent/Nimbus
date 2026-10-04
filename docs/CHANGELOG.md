@@ -18,6 +18,73 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
 
 ## Post-Phase-6 deliveries
 
+- **2026-10-04 — Quality sweep: the SonarCloud backlog cleared, duplication down by a third, and
+  about 2,900 tests added.** On 2026-09-29 SonarCloud's TypeScript analyzer gained four rules:
+  `typescript:S9382` (promises awaited sequentially in a loop), `typescript:S7503` (async functions
+  that use no async feature), `typescript:S9383` (unhandled promises, a BUG-type rule) and
+  `typescript:S9381` (nested promises). With the older backlog they left 448 open findings on
+  `main` (439 code smells, 9 bugs). All 448 are addressed: 306 fixed in code and 142 suppressed.
+  By rule: S7503 ×180 (all fixed), S9382 ×177 (35 fixed, 142 suppressed), S3776 ×23, S3358 ×17,
+  S9383 ×9, S4624 ×6, S7778 ×5, S5906 ×4, S7763 ×3, S7781 ×3, S6582 ×2, S8786 ×2, S8968 ×2, and
+  one each of S2301, S2699, S3735, S4043, S4144, S5843, S5976, S6353, S6551, S7718, S7744, S7746,
+  S7780, S9381 and `c:S886`. Every finding outside S9382 was fixed in code. Two of them, S8786 in
+  `cli/src/format/slack-markdown.ts`, were real super-linear regexes: a long unclosed link title or
+  heading separator took seconds to render. Both now run in linear time. The link pattern became a
+  hand-written scan, the heading pattern a regex that cannot backtrack, and time-bounded tests
+  guard both.
+  **Suppressions follow one written rule, and no rule was disabled.** No Sonar, coverage or
+  duplication exclusion was added either. Every suppression is a trailing
+  `// NOSONAR S9382: <reason>` on the reported line, used only where a loop must stay sequential.
+  A loop became `Promise.all` only when its iterations were independent, had no
+  ordering-observable side effect, needed no fail-fast stop, had a bounded fan-out, and sat outside
+  any transaction or serialized resource. The loops that stay sequential are mostly paginated walks,
+  shared per-provider rate limiters, fail-fast or fail-closed ordering (I16, I19, I23/I29, the
+  toolgen pre-consent gate), process spawns, and Vault writes. The Vault writes stay serial because
+  the macOS Keychain backend's `.keyindex.json` is an unlocked read-modify-write. S7503 followed a
+  three-way rule that never turns a rejection into a synchronous throw:
+  - make the function synchronous when no caller needs a Promise;
+  - return `Promise.resolve` when the body cannot throw;
+  - use `Promise.try` or a restructure when it can.
+
+  The duplication pass then folded six marked loops into two shared helpers and added one, so 139
+  markers remain. Each is listed with its reason in
+  [`sonarqube-rule-tuning.md`](./structure-audit/sonarqube-rule-tuning.md#2026-10-03--sonarcloud-rules-s9382--s7503--s9383--s9381-added-to-the-analyzer).
+  **Three changes are deliberate and user-visible, all fixes.**
+  - `nimbus test` now awaits `runContractTests`. Before, a manifest that violated the extension
+    contract printed `Extension contract OK.` and leaked an unhandled rejection. Now it fails with
+    the contract error.
+  - A `[hitl.quorum.*]` or `[federation.preflight.*]` sub-table header missing its closing `]` no
+    longer files the following keys into the PREVIOUS table. The `[llm.*]` collector already dropped
+    such keys, and the three now share one implementation. Before, a typo could lower an earlier
+    action's I21 quorum (`approvers = 3` read as 1), or rewrite an earlier namespace's I24 preflight
+    command, which still ran only behind the owner's HITL prompt.
+  - The ChatOps service's `stop()` now stops every transport even when an earlier one fails to
+    stop, and still rejects.
+
+  **Duplication.** jscpd over `packages/` with the repo's `.jscpd.json` measured 5,373 duplicated
+  lines in 488 clones (2.42%) on `main`. The branch measures 3,559 lines in 341 clones (1.60%), and
+  token duplication went from 2.88% to 1.93%. Ten clusters became shared helpers: the sync cursor
+  codec and file walker, mapping field helpers, RPC parameter validators, the expiring run registry
+  and audit-row mapping, brief flag scanning, TOML sub-table parsing with the UTF-8 trim and the
+  Ed25519 keypair code, bench sampling, the token-only connector auth handler, the HTTP scoped-read
+  gate, and the HITL approval-broadcast plumbing. The `.jscpd.json` ratchet drops from 4% to 1.7%,
+  so the gain cannot quietly erode.
+  **Coverage.** 213 new test files and additions to 141 existing ones bring 2,934 more tests. The
+  whole-repo `bun test` run goes from 24,673 tests in 1,639 files to 27,169 in 1,836, and the
+  desktop UI's vitest suite goes from 528 tests in 76 files to 966 in 92, all passing. Both trees
+  were measured on the same machine with the same instrumentation: `build-lcov`'s istanbul shards
+  for the gateway and CLI, and vitest's v8 provider for the UI.
+  - Over the 1,281 gateway and CLI source files both trees share, line coverage goes from 95.24% to
+    97.35% and branch coverage from 90.70% to 95.21%. That leaves 1,441 uncovered lines (from
+    2,625) and 1,907 uncovered branches (from 3,793).
+  - The 217 gateway and CLI files the pass targeted go from 94.57% to 99.05% of lines, and from
+    88.49% to 97.52% of branches.
+  - The UI goes from 93.10% to 98.86% of lines, and from 80.97% to 94.18% of branches.
+
+  These are Windows measurements. `audit:coverage-floor` is Linux-authoritative, and SonarCloud's
+  PR analysis reports the CI figure. On the same machine the extra tests add about 5–11% to the
+  whole-repo run: 374 s on `main`, 394–416 s here.
+
 - **2026-10-03 — Third-party dependencies moved to their latest releases, except five holds
   written down with their evidence.** npm: each direct dependency moved in every workspace that declares it,
   the root `overrides` went from 27 pins to 5, and `bun.lock` was regenerated from the manifests.
