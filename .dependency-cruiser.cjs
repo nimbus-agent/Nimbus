@@ -1,6 +1,13 @@
 // dependency-cruiser config for the B3 structure audit.
 // Encodes D1 (forbidden cross-package imports), D2 (cycles within a workspace),
-// D3 (PAL leakage). Run via `bun run audit:boundaries`.
+// D3 (PAL leakage). Run via `bun run audit:boundaries`, i.e.
+// `scripts/structure-audit/check-boundaries.ts`. Do not run `depcruise` on it directly:
+// dependency-cruiser needs `typescript` <7, and only the wrapper's preload guarantees it
+// one. A bare run can skip every .ts file and still report "no dependency violations".
+// The wrapper also FAILS on a rule here whose from/to path matches no cruised module, so a
+// rule cannot outlive the code it governs. `mcp-connectors-only-import-sdk` was deleted
+// on that basis: the connectors left for nimbus-agent/nimbus-mcp-servers in #1347
+// (2026-08-27), and a separate repository cannot import this one's source at all.
 
 /** @type {import('dependency-cruiser').IConfiguration} */
 module.exports = {
@@ -30,13 +37,14 @@ module.exports = {
       to: { path: "^packages/gateway/src" },
     },
     {
-      name: "mcp-connectors-only-import-sdk",
+      // The other half of CLAUDE.md's dependency rule ("`gateway` imports nothing from
+      // cli/ui"). The two rules above only ever covered the client-to-gateway direction.
+      name: "gateway-no-import-cli-ui",
       severity: "error",
-      comment: "First-party MCP connectors depend only on @nimbus-dev/sdk.",
-      from: { path: "^packages/mcp-connectors/[^/]+/src" },
-      to: {
-        path: "^packages/(gateway|cli|ui)/",
-      },
+      comment:
+        "The gateway imports nothing from cli/ui: they are its IPC clients, not its dependencies.",
+      from: { path: "^packages/gateway/src" },
+      to: { path: "^packages/(cli|ui)/" },
     },
 
     // ─────────── D3: PAL leakage ───────────
