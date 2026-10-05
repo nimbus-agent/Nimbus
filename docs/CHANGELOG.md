@@ -18,51 +18,71 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
 
 ## Post-Phase-6 deliveries
 
-- **2026-10-05 — Connector sessions find tools by their bare id: the connector writes, the
-  warehouse/BI syncs and the tribal KB capture work against real connectors.** A credentialed
-  connector session lists its tools through `@mastra/mcp`'s `MCPClient.listTools()`, which keys
-  every tool `<server>_<tool>` (the snowflake connector's `snowflake_list` arrives as
-  `snowflake_snowflake_list`), while the gateway names each tool by its own MCP name and looked that
-  up verbatim. Every one of these failed closed with "tool not found" against a real connector,
-  while their unit tests, which faked bare-keyed tool maps, passed:
-  - every HITL-gated connector write the transport dispatches, with a personal or a team credential:
-    Snowflake tag/comment set, Tableau and Power BI refresh, Looker datagroup trigger and schedule
-    run, Monte Carlo and Bigeye acknowledge/resolve, ArgoCD sync/rollback, Flux reconcile, and
-    MLflow promote/transition;
+- **2026-10-05 — Connector sessions find tools by their bare id: the warehouse/BI syncs and the
+  tribal KB capture work against real connectors, and the connector-write transport resolves its
+  writes.** A credentialed connector session lists its tools through `@mastra/mcp`'s
+  `MCPClient.listTools()`, which keys every tool `<server>_<tool>` (the snowflake connector's
+  `snowflake_list` arrives as `snowflake_snowflake_list`), while the gateway names each tool by its
+  own MCP name and looked that up verbatim. These failed closed with "tool not found" against a real
+  connector, while their unit tests, which faked bare-keyed tool maps, passed:
   - every Snowflake, Tableau, Looker, Power BI, Monte Carlo and Bigeye sync, personal and
-    team-credentialed alike (both list drains);
+    team-credentialed alike (both list drains), which now index;
   - the tribal KB capture to Notion or Confluence, which reaches the connector mesh through the
-    executor's dispatcher.
+    executor's dispatcher, so an owner-approved capture now appends;
+  - the connector-write transport, personal and team-credentialed: Snowflake tag/comment set,
+    Tableau and Power BI refresh, Looker datagroup trigger and schedule run, Monte Carlo and Bigeye
+    acknowledge/resolve, ArgoCD sync/rollback, Flux reconcile, MLflow promote/transition. It now
+    resolves every one of those writes, but **no shipped surface sends a connector-write action into
+    it yet**: `runAsk` plans only filesystem actions, and a ChatOps-approved `@nimbus run <type>` is
+    dispatched by the plain mesh dispatcher rather than the transport. That dispatcher looks the
+    dotted action type up as a tool id and still fails with "Tool not found", unless the command
+    names the tool's own `mcpToolId` (`mcpToolId=snowflake_tag_set`), which the mesh now resolves
+    and runs with its personal credential, not the one `[connectors.<name>]` selects.
 
-  All three lookup sites now share ONE resolver, `resolveServerTool` in
-  `connectors/lazy-mesh/tool-map.ts`. It tries the exact key first, so a caller holding a listed key
-  or a bare-keyed map behaves as before. Then it tries `<server>_<id>` on the caller's OWN server:
-  the session's service in `withConnectorSession`, the platform in ChatOps' `runBotToolCall` (whose
-  hand-rolled `platform_` fallback it replaces), and, in the mesh dispatcher, the service of the
-  action type the HITL gate approved. Even then it refuses a key that a LONGER sibling server owns.
-  The github spawner puts `github` and `github_actions` in ONE client, so `github_` +
-  `actions_gha_run_trigger` spells github_actions' `gha_run_trigger`. Ownership is decided by
-  `serviceIdForToolKey`, the rule the mesh's I22 policy filter already used, moved out of
-  `mesh.ts` so the two cannot disagree. The fallback makes no new tool reachable: every key it can
-  return could already be named exactly. It only ever returns a tool whose own MCP name IS the
-  requested id, so I26's check on that id, made before the lookup, is a check on the tool that
-  runs. A federated `nimbus team invoke` of a READ now also runs by bare id. A granted bare WRITE id
-  is still refused by I26 before `runTool`, which a test proves for every dispatchable write and
-  `github_pr_merge` through the real `federation.invoke` handler, while the same `runTool`, called
-  directly, would execute it. The local team write (`localOpInvokeCtx` in `platform/assemble.ts`)
-  now spawns through `spawnTeamToolAndCall`, the seam the federated anchor already used, in place
-  of an inline copy. `test/integration/connectors/session-tool-resolution.integration.test.ts`
-  lists 15 real connector processes through a real `MCPClient` in a child process (other test files
-  `mock.module` it with bare-keyed fakes) and checks four things. The listed keys are exactly
-  `<server>_<tool>` over `listToolsets()`. Every server resolves exactly its own tools by bare id,
-  across every name any server in its client lists. Each fixed caller, driven over the real keys
-  with the ids the gateway really sends, resolves them. And one real read, through the real session
-  and the real dispatcher, reaches the snowflake connector's own handler, which fails before any
-  network call for want of a credential. The unit tests of each caller now also use maps keyed the
-  way a real session keys them. No new invariant, IPC method, egress class or migration.
-  **Stated bound:** a write the I26 predicate does not classify was already reachable by its listed
-  key over `federation.invoke`, and is now reachable by its bare id too. Classifying writes is the
-  predicate's job, and the lookup cannot do it.
+  The gateway's own lookups share ONE resolver, `resolveServerTool` in
+  `connectors/lazy-mesh/tool-map.ts`. It tries the exact key first, as before, then `<server>_<id>`
+  on the caller's OWN server: the session's service in `withConnectorSession`, the platform in
+  ChatOps' `runBotToolCall` (whose hand-rolled `platform_` fallback it replaces), and, in the mesh
+  dispatcher, the service of the action type the HITL gate approved. It refuses a key a LONGER
+  sibling server owns: the github spawner puts `github` and `github_actions` in one client, so
+  `github_` + `actions_gha_run_trigger` spells github_actions' `gha_run_trigger`. Ownership is
+  `serviceIdForToolKey`, the rule the mesh's I22 policy filter already used, moved out of `mesh.ts`
+  so the two cannot disagree. The team-credentialed local write (`localOpInvokeCtx`) now spawns
+  through `spawnTeamWriteAndCall` in `teamvault/team-tool-spawn.ts`.
+
+  **The federated path does not resolve, and is exactly as permissive as before.** The owner's
+  grant, its revocation, the quorum rule and I26's write predicate all judge a peer's
+  `federation.invoke` id as a STRING, so the federated anchor's seam (`spawnTeamToolAndCall`) calls
+  only the exact listed key (`session.callListed`, over `listedTool`). A peer still names
+  `<server>_<tool>` (`stripe_stripe_search`), and a grant on the bare spelling stays inert.
+  Resolving there would give every tool a second spelling under a second grant, and would make the
+  bare id of a write the predicate does not classify runnable where only its listed key was.
+  `ipc/federation-rpc-invoke.test.ts` drives the real handler, invoke gate, secret check and session
+  lookup, with only the spawn faked: a granted bare write id is refused by I26 before any spawn; a
+  granted bare id never runs, for reads and for writes alike, whether or not the predicate
+  classifies them (`aws_ec2_instance_stop`/`_start`, `notion_kb_append`, `confluence_kb_append`,
+  `slack_chat_post`, `slack_message_post_dm`, `teams_chat_post` and `teams_message_post_chat` among
+  them); a grant on either spelling never authorizes the other; and revoking the listed key cuts
+  access even beside a stale grant on the bare one.
+
+  **The write transport checks the org policy's connector allowlist (I22) itself.** It spawns its
+  own session, never the mesh, so the mesh's policy filter never saw it. A write to a connector the
+  policy blocks is now refused before any credential is selected or any process spawned, on both
+  credentials, reading `policyGate.enforced()` on every call; the policy gate now boots before the
+  team-credential contexts in `platform/assemble.ts` so the transport can hold it.
+
+  `test/integration/connectors/session-tool-resolution.integration.test.ts` lists 16 real connector
+  processes through a real `MCPClient` in a child process (other test files `mock.module` it with
+  bare-keyed fakes). It checks that the keys are exactly `<server>_<tool>`, that every server
+  resolves exactly its own tools by bare id, that each fixed caller resolves the ids the gateway
+  really sends, and that the federated seam runs every real tool by its listed key and never by its
+  bare name. One real read reaches the snowflake connector's own handler through the session, the
+  dispatcher and the federated seam, failing before any network call for want of a credential. No
+  new invariant, IPC method, egress class or migration. **Stated bounds:** the federated invoke
+  path does not consult the I22 connector allowlist (it did not before; the list drains are covered
+  because the scheduler registers no syncable for a connector the policy blocks at boot), and
+  whether a federated invoke of a LISTED write key is refused is decided by the I26 predicate alone,
+  which this entry neither changes nor asks about anything new.
 
 - **2026-10-04 — The on-call pushed brief, PR 3 of 3 (desktop panel).** The desktop app now has an
   `/oncall` page ("On-call" in the sidebar, after Dashboard, with an unread dot driven by a persisted
