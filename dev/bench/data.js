@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1791215451436,
+  "lastUpdate": 1791218899576,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "306811640+nimbus-release-bot[bot]@users.noreply.github.com",
-            "name": "nimbus-release-bot[bot]",
-            "username": "nimbus-release-bot[bot]"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "dd2b021f9bdc894325df56f0e1b17d27d1f9455a",
-          "message": "chore: release main (#900)\n\n:robot: I have created a release *beep* *boop*\n---\n\n\n<details><summary>1.4.3</summary>\n\n##\n[1.4.3](https://github.com/nimbus-agent/Nimbus/compare/v1.4.2...v1.4.3)\n(2026-07-28)\n\n\n### Bug Fixes\n\n* **cast-driver:** normalize macOS's /private tmpdir alias — unbreaks\nmain on macOS\n([#899](https://github.com/nimbus-agent/Nimbus/issues/899))\n([de0a5f2](https://github.com/nimbus-agent/Nimbus/commit/de0a5f28c3313eef2c5f54c1c5aa616586bb6d50))\n</details>\n\n---\nThis PR was generated with [Release\nPlease](https://github.com/googleapis/release-please). See\n[documentation](https://github.com/googleapis/release-please#release-please).\n\nCo-authored-by: nimbus-release-bot[bot] <306811640+nimbus-release-bot[bot]@users.noreply.github.com>",
-          "timestamp": "2026-07-28T14:47:01+03:00",
-          "tree_id": "8ae22689359950da74a0d88dd1e9f39082b15ede",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/dd2b021f9bdc894325df56f0e1b17d27d1f9455a"
-        },
-        "date": 1785239970225,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 310.6935637500061,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 310.0937011499962,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 330.12392955000104,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "e54cf3330e0622b4ca51d52e8236ae45d641acc2",
+          "message": "test(release): the demo-tour check accepts only oncall pushed (#1619)\n\nThe release demo-tour check now accepts only `oncall pushed` as the\nfirst step.\n\n`scripts/release/assert-demo-tour.ts` judges a published binary's\n`nimbus demo` output (`released-install-smoke.yml`). While the on-call\npushed brief rolled out, the weekly run judged the LATEST release with\n`main`'s script, so the first step accepted two forms:\n- `oncall pushed`;\n- the older `oncall --incident pagerduty:PDEMO412`, which that release\nstill printed.\n\nEvery release since v7.33.0 prints `oncall pushed`, so the old form is\nnow a failure, as the script's own comment said to do.\n\n## Changes\n\n- `COMMANDS` is a plain `string[]` again. The alternatives branch and\nits `OR` message are gone.\n- **A new real fixture.**\n`scripts/release/fixtures/demo-tour-capture.txt` is a fresh, real\n`nimbus demo` capture from the published **v7.35.0** Windows binary. It\nwas taken non-TTY, with spinner frames, the same way as the original,\nand the zip's SHA256 was checked against the release's `SHA256SUMS`. It\nran with `LOCALAPPDATA`/`APPDATA` pointed at a temp sandbox, so no real\ninstall was touched; the demo gateway was stopped with `nimbus demo\nreset` and the sandbox deleted.\n- **Masking.** Machine paths are masked exactly as before: `<demo-root>`\nand the truncated spinner `<path>`. No username, host name or sandbox\npath remains.\n- **Tests.** The three transition tests are replaced:\n- a premise check that the capture prints `oncall pushed` and not the\nold form;\n- a test that the old `--incident` first step now fails, naming the one\naccepted form. It is red-proved against the previous script, which\naccepts it.\n\nAll 33 tests in the file pass on the new capture, including every\nsection anchor and the locality-panel zero-egress line. `bun run\npreflight:fast` is green.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-10-05T19:32:15+03:00",
+          "tree_id": "f561b8f96830531b0eb7ec877b65d4aac987257e",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/e54cf3330e0622b4ca51d52e8236ae45d641acc2"
+        },
+        "date": 1791218894577,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 382.32327179999555,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 378.19512920001216,
             "unit": "ms"
           }
         ]
