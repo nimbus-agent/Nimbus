@@ -20,8 +20,8 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
 
 - **2026-10-05 — The federated invoke gate asks the org policy's connector allowlist, and a
   connector write approved from chat runs through the connector-write transport.** One off-mesh
-  door the I22 stated bounds named is closed, and a ChatOps write defect the entry below recorded
-  is fixed:
+  door the I22 stated bounds named is closed, and a ChatOps write defect recorded by the
+  "Connector sessions find tools by their bare id" entry below is fixed:
   - `answerFederatedInvoke` never consulted `[policy.connectors] allow`. A peer holding a grant on a
     team-vault entry ran its tool however the policy stood, since the anchor runs the tool in its own
     team-credentialed connector, off the mesh whose filter drops a blocked connector. The gate now
