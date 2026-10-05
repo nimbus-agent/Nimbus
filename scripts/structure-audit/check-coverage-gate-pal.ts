@@ -119,10 +119,12 @@ function collectSources(dir: string, out: string[]): string[] {
 /**
  * Every `src` directory anywhere under `packages/`, at any depth.
  *
- * NOT `packages/{*}/src`: `packages/mcp-connectors/src` does not exist — the 94
- * connectors each have their own `packages/mcp-connectors/{name}/src`. A
- * one-level scan silently skipped all of them, and a detector with a silent
- * blind spot is worse than none, because its green is read as coverage.
+ * NOT `packages/{*}/src`: `packages/github-actions/src` does not exist — each
+ * action has its own `packages/github-actions/{name}/src`. A one-level scan
+ * silently skips them, and a detector with a silent blind spot is worse than
+ * none, because its green is read as coverage. (The same shape held for the 94
+ * `packages/mcp-connectors/{name}/src` directories until the connectors left
+ * the repository, which is what this was first written for.)
  */
 function findSrcDirs(dir: string, out: string[]): string[] {
   if (!existsSync(dir)) return out;

@@ -63,9 +63,9 @@ describe("auditOverrideDrift", () => {
   test("fails when the pin is ABOVE the declared range", () => {
     write("package.json", {
       overrides: { nodemailer: "9.0.1" },
-      workspaces: ["packages/mcp-connectors/imap"],
+      workspaces: ["packages/gateway"],
     });
-    write("packages/mcp-connectors/imap/package.json", { dependencies: { nodemailer: "^8.0.0" } });
+    write("packages/gateway/package.json", { dependencies: { nodemailer: "^8.0.0" } });
 
     const result = auditOverrideDrift(root);
     expect(result.ok).toBe(false);
