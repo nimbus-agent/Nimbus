@@ -179,8 +179,7 @@ export class FleetScheduler {
 
   start(): void {
     if (this.timer !== undefined) return;
-    // `unref` so a pending tick never holds the process open — a hung fleet timer would make
-    // `bun test` and a clean gateway shutdown hang identically.
+    // `unref` so a pending tick never holds the process open on its own.
     this.timer = setInterval(
       () => void this.runOnce().catch(() => undefined),
       this.deps.tickMs ?? DEFAULT_TICK_MS,
