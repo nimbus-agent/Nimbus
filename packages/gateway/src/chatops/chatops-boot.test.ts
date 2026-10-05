@@ -248,7 +248,9 @@ describe("buildChatopsBoot — full production graph", () => {
     expect(h.dispatched[0]?.payload).toEqual({ service: "payment-service", version: "v1.4" });
     const gateRow = h.audits.find((a) => a.actionType === "deployment.rollback");
     expect(gateRow?.hitlStatus).toBe("approved");
-    await until(() => h.posts.some((p) => p.text.includes("approved & executed")));
+    // The WIRE form: every Slack post is escaped at the ledger wrapper (`toWireText`), so the
+    // reply's "&" leaves as "&amp;" — Slack renders it back as "&".
+    await until(() => h.posts.some((p) => p.text.includes("approved &amp; executed")));
     await h.boot.service.stop();
   });
 
@@ -319,7 +321,9 @@ describe("buildChatopsBoot — full production graph", () => {
     );
     await until(() => h.posts.some((p) => p.text.includes("Approval needed")));
     h.socket.emit(mention("C0", "U_ALICE", "@nimbus approve", "12"));
-    await until(() => h.posts.some((p) => p.text.includes("approved & executed")));
+    // The WIRE form: every Slack post is escaped at the ledger wrapper (`toWireText`), so the
+    // reply's "&" leaves as "&amp;" — Slack renders it back as "&".
+    await until(() => h.posts.some((p) => p.text.includes("approved &amp; executed")));
     expect(h.posts.every((p) => p.channel === "C0" || p.channel === "C_ALERT")).toBe(true);
     await h.boot.service.stop();
   });

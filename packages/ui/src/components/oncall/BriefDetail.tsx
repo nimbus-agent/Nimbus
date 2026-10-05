@@ -16,7 +16,7 @@ export function BriefDetail({
     if (lastPushed !== null && lastPushed.incidentId === incidentId) refetch();
   }, [lastPushed, incidentId, refetch]);
   const got = asPushedBriefGet(data);
-  const isPruned = got !== undefined && got.brief === null;
+  const isPruned = got?.brief === null;
   // onPruned changes identity when the URL changes (it closes over setParams), and clearing the id
   // is exactly what it does; keying the effect on it would announce the same prune twice.
   const onPrunedRef = useRef(onPruned);
@@ -32,7 +32,7 @@ export function BriefDetail({
       </p>
     );
   }
-  if (got === undefined || got.brief === null || got.brief.incidentId !== incidentId) {
+  if (got?.brief?.incidentId !== incidentId) {
     return <p className="text-sm text-[var(--color-fg-muted)]">Loading…</p>;
   }
   const b = got.brief;

@@ -1755,7 +1755,7 @@ sweep `pushed_brief`; retention (`retention_days`, 90 by default, pruned at ever
 again on each run) is the bound, the same as
 `fleet_brief`.
 
-**ChatOps sink (PR 2).** Every pushed brief also posts a three-line, escaped headline to the `notify` channels of
+**ChatOps sink (PR 2).** Every pushed brief also posts a three-line headline (escaped for Slack at the wire, like every ChatOps post) to the `notify` channels of
 `[oncall.push] chatops_namespace` (default `""`, which posts nothing). At most three headlines go out per delivery, newest
 first, then ONE summary post for the rest; every brief is still stored, only the interruption is capped. The headline
 carries a call to action, `@nimbus agent oncall incidentId=<id>` (the parameter is `incidentId`, which the agent grammar

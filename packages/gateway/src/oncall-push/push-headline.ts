@@ -1,4 +1,3 @@
-import { escapeSlackText } from "../chatops/escape-outbound.ts";
 import type { PushDelivery } from "./push-runner.ts";
 
 /** Coalesced ids the summary post lists; the rest stay reachable locally (design: 2026-10-02-oncall-push-chatops-design.md § 3). */
@@ -22,9 +21,13 @@ export function oneLine(s: string): string {
     : `${cps.slice(0, FIELD_MAX_CODEPOINTS - 1).join("")}…`;
 }
 
-/** Every inserted value goes through here: normalise, cap, THEN escape (so a cut never splits an entity). */
+/**
+ * Every inserted value goes through here: single-lined and capped. NOT escaped: Slack escaping
+ * happens once, at the wire, in `chatops/escape-outbound.ts`'s `toWireText`, which the ledger
+ * wrapper applies to EVERY post. Escaping here too would double it (`&amp;lt;`).
+ */
 function field(s: string): string {
-  return escapeSlackText(oneLine(s));
+  return oneLine(s);
 }
 
 function nonEmpty(s: string | null | undefined): string | undefined {
@@ -138,6 +141,6 @@ export function renderPushSummary(
     more > 0
       ? `${shown.join(", ")} … and ${more} more (locally: nimbus oncall pushed list)`
       : shown.join(", ");
-  // `<id>` is template text, but `<` would still start a Slack token, so it is escaped too.
-  return `${all.length} P1 incidents paged (${ready} brief${ready === 1 ? "" : "s"} ready). Not posted individually: ${list} — ${escapeSlackText("@nimbus agent oncall incidentId=<id>")} for any of them`;
+  // `<id>` is template text; `toWireText` escapes it at the wire, like every other `<` here.
+  return `${all.length} P1 incidents paged (${ready} brief${ready === 1 ? "" : "s"} ready). Not posted individually: ${list} — @nimbus agent oncall incidentId=<id> for any of them`;
 }

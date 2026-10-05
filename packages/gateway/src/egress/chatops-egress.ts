@@ -1,6 +1,7 @@
 import type { Database } from "bun:sqlite";
 
 import { hashChannelId } from "../chatops/channel-salt.ts";
+import { toWireText } from "../chatops/escape-outbound.ts";
 import type { ChatPlatform } from "../chatops/types.ts";
 import { appendEgressEntry } from "./egress-ledger.ts";
 import { redactEgressSummary } from "./egress-record.ts";
@@ -49,6 +50,9 @@ export function buildLedgeredChatPosts(
 ): Readonly<Record<ChatPostKind, ChatPost>> {
   const wrap = (kind: ChatPostKind): ChatPost => {
     return async (platform, channelId, text): Promise<void> => {
+      // Escaped HERE, before the append: the row must count the bytes that actually leave, and
+      // this is the one decorator every post passes through (D17).
+      const wire = toWireText(platform, text);
       try {
         appendEgressEntry(db, {
           timestamp: now(),
@@ -60,7 +64,7 @@ export function buildLedgeredChatPosts(
           method: METHOD_FOR[kind],
           // Byte length only. Never the text — the ledger proves what left, it does not keep a
           // second copy of it.
-          payloadSummary: redactEgressSummary({ bytes: Buffer.byteLength(text, "utf8") }),
+          payloadSummary: redactEgressSummary({ bytes: Buffer.byteLength(wire, "utf8") }),
           hitlStatus: "not_required",
           resultStatus: "authorized",
         });
@@ -75,7 +79,7 @@ export function buildLedgeredChatPosts(
           chatopsChannelId: channelId,
         });
       }
-      await raw(platform, channelId, text);
+      await raw(platform, channelId, wire);
     };
   };
 
