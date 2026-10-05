@@ -17,14 +17,14 @@
  * 11 local checkouts at one lockfile hash split 3 to 8. Since TypeScript 7 landed (#1049,
  * 2026-08-05), 19 of the 33 `main` pushes sampled (one per lockfile change) ran the gate inert in CI.
  *
- * HOW. Bun virtual modules (`build.module`) answer both lookups dependency-cruiser makes:
- * `require("typescript/package.json")` for its version gate, and `import("typescript")` for the
- * compiler. They are answered from the alias, so the result no longer depends on the install.
- * dependency-cruiser's `tsconfig` reader and `tsc` parser go through the same import. An `onResolve`
- * path redirect was tried first and REJECTED. On Windows, Bun 1.3.14 turns an absolute path returned
- * from a runtime `onResolve` into `file:C:\...` and fails with ENOENT, and dependency-cruiser's
- * try/catch reports that as "no compatible compiler". That is the same silent outcome this file
- * exists to remove.
+ * HOW. Bun virtual modules (`build.module`) answer all three lookups dependency-cruiser makes:
+ * `require("typescript/package.json")` for its version gate, `require.resolve("typescript")` for
+ * whether it scans `.ts`/`.tsx` files at all, and `import("typescript")` for the compiler. They are
+ * answered from the alias, so the result no longer depends on the install. dependency-cruiser's
+ * `tsconfig` reader and `tsc` parser go through the same import. An `onResolve` path redirect was
+ * tried first and REJECTED. On Windows, Bun 1.3.14 turns an absolute path returned from a runtime
+ * `onResolve` into `file:C:\...` and fails with ENOENT, and dependency-cruiser's try/catch reports
+ * that as "no compatible compiler". That is the same silent outcome this file exists to remove.
  *
  * The alias is resolved from THIS file's location (the repo root), not the process cwd, so a
  * fixture cruise run from a temp directory gets the same compiler. If the alias is ever moved to

@@ -689,14 +689,27 @@ describe("dependency-cruiser-ts6-preload", () => {
       JSON.stringify({ name: "typescript", version: "7.0.2", main: "index.js" }),
     );
     writeFileSync(join(fakeTs7, "index.js"), 'module.exports = { version: "7.0.2" };\n');
-    // The two lookups dependency-cruiser makes: the manifest for its version gate, and the module.
+    // The three lookups dependency-cruiser makes: the manifest for its version gate,
+    // `require.resolve` for whether it scans .ts/.tsx files at all (any truthy answer will do, so
+    // the probe asks only whether it is the planted 7), and the module itself, i.e. the compiler.
     writeFileSync(
       join(dir, "probe.mjs"),
-      `import { createRequire } from "node:module";
-const manifest = createRequire(import.meta.url)("typescript/package.json");
+      `import { existsSync, realpathSync } from "node:fs";
+import { createRequire } from "node:module";
+import { fileURLToPath } from "node:url";
+const require = createRequire(import.meta.url);
+const manifest = require("typescript/package.json");
+const planted = realpathSync(fileURLToPath(new URL("./node_modules/typescript/index.js", import.meta.url)));
+let resolve;
+try {
+  const found = require.resolve("typescript");
+  resolve = existsSync(found) && realpathSync(found) === planted ? "the planted typescript@7" : "not the planted typescript@7";
+} catch {
+  resolve = "threw";
+}
 const loaded = await import("typescript");
 const ts = loaded.default ?? loaded;
-console.log(JSON.stringify({ manifest: manifest.version, module: ts.version, transpileModule: typeof ts.transpileModule }));
+console.log(JSON.stringify({ manifest: manifest.version, resolve, module: ts.version, transpileModule: typeof ts.transpileModule }));
 `,
     );
   });
@@ -716,12 +729,18 @@ console.log(JSON.stringify({ manifest: manifest.version, module: ts.version, tra
     return JSON.parse(proc.stdout.toString());
   }
 
-  test("answers both typescript lookups with the alias, even where typescript@7 is installed", () => {
-    // Negative control: without the preload the installed 7 wins both lookups. That is the
+  test("answers all three typescript lookups with the alias, even where typescript@7 is installed", () => {
+    // Negative control: without the preload the installed 7 wins all three lookups. That is the
     // inert case, and it shows the probe can tell the two apart.
-    expect(probe([])).toEqual({ manifest: "7.0.2", module: "7.0.2", transpileModule: "undefined" });
+    expect(probe([])).toEqual({
+      manifest: "7.0.2",
+      resolve: "the planted typescript@7",
+      module: "7.0.2",
+      transpileModule: "undefined",
+    });
     expect(probe(["--preload", PRELOAD_PATH])).toEqual({
       manifest: aliasVersion(),
+      resolve: "not the planted typescript@7",
       module: aliasVersion(),
       transpileModule: "function",
     });
