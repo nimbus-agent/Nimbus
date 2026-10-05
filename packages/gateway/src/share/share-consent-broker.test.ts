@@ -2,7 +2,9 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { ShareConsentBroker } from "./share-consent-broker.ts";
 
 // Track every broker so afterEach can clear its TTL timers. A fire-and-forget request() (result
-// ignored) otherwise leaves a dangling unref'd setTimeout that hangs `bun test` teardown on Windows.
+// ignored) otherwise leaves its ref'd TTL timer pending past the test. That does not stop `bun test`
+// from exiting, but it keeps the event loop alive for every later test in the process, which can
+// hide the Windows hang testing/hold-event-loop.ts describes.
 const liveBrokers: ShareConsentBroker[] = [];
 function makeBroker(): ShareConsentBroker {
   const b = new ShareConsentBroker();

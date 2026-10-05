@@ -2,6 +2,18 @@
 
 All notable changes to the `nimbus` core (headless Gateway + CLI binary + first-party MCP connectors) are documented in this file. release-please appends new entries between this header and the most recent version below when a release PR merges.
 
+## [7.35.0](https://github.com/nimbus-agent/Nimbus/compare/v7.34.0...v7.35.0) (2026-10-04)
+
+
+### Features
+
+* **ui:** On-call page for pushed briefs (PR 3 of 3) ([#1604](https://github.com/nimbus-agent/Nimbus/issues/1604)) ([88e161a](https://github.com/nimbus-agent/Nimbus/commit/88e161a279ac8e5e7ab8f54c68f17c4fe8ed0861))
+
+
+### Bug Fixes
+
+* clear the SonarCloud backlog, reduce duplication and raise test coverage ([#1603](https://github.com/nimbus-agent/Nimbus/issues/1603)) ([4663fbb](https://github.com/nimbus-agent/Nimbus/commit/4663fbb9b4c5139e449e0481b0b2d0dc3f357d6f))
+
 ## [7.34.0](https://github.com/nimbus-agent/Nimbus/compare/v7.33.0...v7.34.0) (2026-10-04)
 
 
