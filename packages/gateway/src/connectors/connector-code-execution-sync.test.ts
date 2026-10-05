@@ -41,33 +41,37 @@ const SCAN = scanProcessSpawningConnectors(
 const REVIEWED_PROCESS_CONNECTORS: Readonly<
   Record<string, { readonly reads: readonly string[]; readonly why: string }>
 > = {
+  // `aws` and `kubectl` install as native `.exe` on Windows, so no `cmd.exe` re-parses their argv;
+  // the caller value rides a flag-value slot / an isSafeCliArg-guarded positional and picks a
+  // RESOURCE, never the code. STATED RESIDUAL: this rests on those CLIs being native executables —
+  // were one resolved to a `.cmd` wrapper, the `az`/`gcloud` reasoning below would apply to it too.
   athena: {
     reads: ["athena_get", "athena_list", "athena_search"],
-    why: "fixed `aws athena` list/get calls; every caller value is an isSafeCliArg-guarded flag value",
+    why: "fixed `aws athena` list/get calls; every caller value is an isSafeCliArg-guarded flag value (aws → native .exe)",
   },
   aws: {
     reads: ["aws_ecs_service_list", "aws_lambda_list"],
-    why: "fixed `aws` subcommands; the one caller value (`--cluster`) is a flag value",
+    why: "fixed `aws` subcommands; the one caller value (`--cluster`) is a flag value (aws → native .exe)",
   },
   azure: {
-    reads: ["azure_app_service_list"],
-    why: "fixed `az webapp list`; the caller values are flag values",
+    reads: [],
+    why: "its reads invoke `az`, a `.cmd` wrapper on Windows whose argv cmd.exe re-parses; a caller value reaches it (azure_app_service_list, unguarded subscriptionId/resourceGroup), so all reads are refused as code execution",
   },
   bigquery: {
     reads: ["bigquery_get", "bigquery_list", "bigquery_search"],
-    why: "its only spawn is `gcloud auth print-access-token`, with no caller input; tools are REST",
+    why: "its only spawn is `gcloud auth print-access-token`, with no caller input; tools are REST (no caller value reaches any CLI argv)",
   },
   "cloud-logging": {
-    reads: ["cloud_logging_get", "cloud_logging_list", "cloud_logging_search"],
-    why: "fixed `gcloud logging sinks` calls; the one positional (the sink) is isSafeCliArg-guarded",
+    reads: [],
+    why: "its reads invoke `gcloud`, a `.cmd` wrapper on Windows whose argv cmd.exe re-parses; a caller value reaches it (cloud_logging_get's sinkName; isSafeCliArg permits `\"`/`&`), so all reads are refused as code execution",
   },
   cloudwatch: {
     reads: ["cloudwatch_get", "cloudwatch_list", "cloudwatch_search"],
-    why: "fixed `aws logs` calls; every caller value is an isSafeCliArg-guarded flag value",
+    why: "fixed `aws logs` calls; every caller value is an isSafeCliArg-guarded flag value (aws → native .exe)",
   },
   gcp: {
-    reads: ["gcp_cloud_run_service_list"],
-    why: "fixed `gcloud run services list`; caller values sit inside `--flag=value` tokens",
+    reads: [],
+    why: "its reads invoke `gcloud`, a `.cmd` wrapper on Windows whose argv cmd.exe re-parses; a caller value reaches it (gcp_cloud_run_service_list's projectId/region in `--flag=value`), so all reads are refused as code execution",
   },
   iac: {
     reads: [],
@@ -75,17 +79,20 @@ const REVIEWED_PROCESS_CONNECTORS: Readonly<
   },
   kubernetes: {
     reads: ["k8s_deployment_list", "k8s_event_list", "k8s_pod_list"],
-    why: "fixed `kubectl get <resource>`; the one caller value is the `-n` flag's value",
+    why: "fixed `kubectl get <resource>`; the one caller value is the `-n` flag's value (kubectl → native .exe)",
   },
   sagemaker: {
     reads: ["sagemaker_get", "sagemaker_list", "sagemaker_search"],
-    why: "fixed `aws sagemaker` calls; every caller value is an isSafeCliArg-guarded flag value",
+    why: "fixed `aws sagemaker` calls; every caller value is an isSafeCliArg-guarded flag value (aws → native .exe)",
   },
   "vertex-ai": {
-    reads: ["vertex_ai_get", "vertex_ai_list", "vertex_ai_search"],
-    why: "fixed `gcloud ai models` calls; the model positional and the region are isSafeCliArg-guarded",
+    reads: [],
+    why: "its reads invoke `gcloud`, a `.cmd` wrapper on Windows whose argv cmd.exe re-parses; a caller value reaches it (vertex_ai_get's modelId, the region; isSafeCliArg permits `\"`/`&`), so all reads are refused as code execution",
   },
 };
+
+/** The connectors whose reads invoke an `az` / `gcloud` `.cmd` wrapper and are refused on Windows. */
+const CMD_WRAPPER_CONNECTORS = ["azure", "cloud-logging", "gcp", "vertex-ai"] as const;
 
 /** The key a session lists a connector's tools under: its directory, `-` → `_`. */
 function serverKey(connector: string): string {
@@ -157,6 +164,25 @@ describe("I26 code-execution sync guard — the installed connectors package", (
       }
     }
     expect(stale).toEqual([]);
+  });
+
+  test("every az/gcloud-backed connector's reads are refused, leaving none answerable to a peer", () => {
+    // The Windows `.cmd` argument-injection class: `az` / `gcloud` re-parse their argv, so a caller
+    // value reaching one escapes its slot. Refused at connector-read granularity — every tool these
+    // connectors register is a refused write or refused code execution, never a reviewed read — so an
+    // argv change inside one cannot silently reopen the vector.
+    const stillAnswerable: string[] = [];
+    for (const id of CMD_WRAPPER_CONNECTORS) {
+      expect(REVIEWED_PROCESS_CONNECTORS[id]?.reads, id).toEqual([]);
+      const derived = SCAN.connectors.find((c) => c.id === id);
+      expect(derived, `${id} is no longer process-capable in the census`).toBeDefined();
+      for (const tool of derived?.toolIds ?? []) {
+        if (verdict(id, tool) === "reviewed read" || verdict(id, tool) === "UNCLASSIFIED") {
+          stillAnswerable.push(`${id}: ${tool} (${verdict(id, tool)})`);
+        }
+      }
+    }
+    expect(stillAnswerable).toEqual([]);
   });
 
   test("no code-executing tool is read-only to share replay, the other door a caller names tools through", () => {

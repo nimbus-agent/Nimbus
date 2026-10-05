@@ -62,6 +62,23 @@ describe("connector process census — what counts as able to start a process", 
     }
   });
 
+  test("a member-form require of a literal capability module makes it able to", () => {
+    // `module.require("node:child_process")` and `import.meta.require("bun:ffi")` load a module the
+    // bare `require(...)` pattern's lookbehind would skip — a literal one is followed like any other.
+    for (const body of [
+      `const cp = module.require("node:child_process");`,
+      `const ffi = import.meta.require("bun:ffi");`,
+      `const cp = globalThis.require("child_process");`,
+    ]) {
+      const scan = scanProcessSpawningConnectors(pkg(body));
+      expect(scan.violations, body).toEqual([]);
+      expect(
+        scan.connectors.map((c) => c.id),
+        body,
+      ).toEqual(["fx"]);
+    }
+  });
+
   test("the capability flows back along relative imports, through shared modules", () => {
     // connectors/fx → shared/run-cli.ts → shared/spawn.ts → node:child_process
     const sources = pkg(`import { runCli } from "../../../shared/run-cli.ts";`, [
@@ -138,12 +155,31 @@ describe("connector process census — what it refuses rather than skips", () =>
       'const m = await import("node:" + "child_process");',
       `const m = await import(\`node:\${which}\`);`,
       "const m = require(name);",
+      // Member forms the bare `require(...)` pattern's `(?<![\\w$.])` lookbehind would skip: without
+      // this each loads any module with no violation recorded (the review's census blind spot).
+      "const m = module.require(name);",
+      "const m = import.meta.require(name);",
+      "const m = globalThis.require(name);",
     ]) {
       const scan = scanProcessSpawningConnectors(pkg(body));
       expect(
         scan.violations.map((v) => v.reason),
         body,
       ).toEqual(["a dynamic import/require whose specifier is not a plain string literal"]);
+    }
+  });
+
+  test("a member named `require` that is not a call is not treated as a loader", () => {
+    // No `(` after the member access: `foo.requireAuth(...)` and a bare `.require` value must not be
+    // mistaken for `module.require(...)`, or every such property would be a spurious violation.
+    for (const body of [
+      "svc.requireAuth(token);",
+      "const r = obj.require;",
+      "cfg.required = true;",
+    ]) {
+      const scan = scanProcessSpawningConnectors(pkg(body));
+      expect(scan.violations, body).toEqual([]);
+      expect(scan.connectors, body).toEqual([]);
     }
   });
 

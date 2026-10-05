@@ -551,6 +551,51 @@ describe("I26 — federated peer gate fail-closed rejects tools that run caller-
   });
 });
 
+describe("I26 — federated peer gate refuses az/gcloud reads (Windows .cmd argument injection)", () => {
+  // On Windows `az` / `gcloud` resolve to `.cmd` wrappers that re-parse argv, so a caller value
+  // reaching one escapes its slot and runs a command. These READ registrations hand the caller's
+  // value to the CLI, so the write predicate never saw them — refused here as code execution, bare
+  // and in the `<server>_<tool>` form a session executes, after a control proves the grant answers.
+  for (const [service, bare] of [
+    ["azure", "azure_app_service_list"],
+    ["gcp", "gcp_cloud_run_service_list"],
+  ] as const)
+    for (const toolId of [bare, `${service}_${bare}`]) {
+      it(`${toolId}: granted, yet refused (audited code_execution_forbidden) before runTool`, async () => {
+        const ran: string[] = [];
+        const { db, ctx } = freshI26Ctx({
+          runTool: async (input) => {
+            ran.push(input.toolId);
+            return { ok: true };
+          },
+          isWriteForbiddenToolId: isConnectorWriteToolId,
+        });
+        ctx.store.createEntry(`team-${service}`, service, "owner", 1000);
+        ctx.store.grant(`team-${service}`, "peer-1", toolId, 1000);
+        const request = {
+          peerId: "peer-1",
+          entry: `team-${service}`,
+          toolId,
+          purpose: "p",
+          // The arg content is immaterial: the gate refuses on the tool id alone, before runTool.
+          args: { subscriptionId: "sub-1", resourceGroup: "rg-1", projectId: "proj-1" },
+        };
+
+        // Control: with the code-execution check off, the grant answers it.
+        const unchecked: InvokeGateCtx = { ...ctx, isCodeExecutionForbiddenToolId: () => false };
+        expect(await answerFederatedInvoke(unchecked, request)).toEqual({
+          kind: "ok",
+          result: { ok: true },
+        });
+        expect(ran).toEqual([toolId]);
+
+        expect(await answerFederatedInvoke(ctx, request)).toEqual(REFUSED);
+        expect(ran).toEqual([toolId]); // never reached the connector
+        expect(lastDecisionOf(db)).toBe("teamvault.invoke.code_execution_forbidden");
+      });
+    }
+});
+
 // ---------------------------------------------------------------------------
 // resolveIdentitySubject threading (Wave 7b deferral — I19 audit enrichment)
 // ---------------------------------------------------------------------------

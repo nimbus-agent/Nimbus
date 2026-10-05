@@ -20,16 +20,19 @@
  * (`reg("iac_terraform_plan", ...)`, `registerWriteTool("k8s_pod_delete", ...)`). When a connector
  * also exports upstream's own `<NAME>_TOOL_NAMES` list, the two must agree.
  *
- * Every shape it cannot follow is a VIOLATION, never a silent skip: an `import()` / `require()`
- * whose specifier is not a plain string literal (it could load any module), a relative import of
- * code that resolves to no source file, a connector with the capability but no derived tool id,
- * and a `<NAME>_TOOL_NAMES` export that disagrees with the derivation.
+ * Every shape it cannot follow is a VIOLATION, never a silent skip: a dynamic loader whose specifier
+ * is not a plain string literal (it could load any module) — BOTH the bare form (`import(x)` /
+ * `require(x)`) and the member form (`module.require(x)`, `import.meta.require(x)`,
+ * `globalThis.require(x)`), which the bare pattern's lookbehind would otherwise skip — a relative
+ * import of code that resolves to no source file, a connector with the capability but no derived tool
+ * id, and a `<NAME>_TOOL_NAMES` export that disagrees with the derivation.
  *
- * STATED BOUND: the capability is recognised by NAME, so reflection (`globalThis["Bun"]`) and a
- * third-party package that spawns internally (a bare specifier not listed below) are not seen; and
- * a tool id not written as a literal is derived only when the connector's `<NAME>_TOOL_NAMES` export
- * names it. The wire test (`test/integration/connectors/write-tool-namespacing.integration.test.ts`)
- * checks the derivation against what real `aws`, `kubernetes` and `iac` processes list.
+ * STATED BOUND: the capability is recognised by NAME, so reflection (`globalThis["Bun"]`,
+ * `globalThis["req"+"uire"](x)`) and a third-party package that spawns internally (a bare specifier
+ * not listed below) are not seen; and a tool id not written as a literal is derived only when the
+ * connector's `<NAME>_TOOL_NAMES` export names it. The wire test
+ * (`test/integration/connectors/write-tool-namespacing.integration.test.ts`) checks the derivation
+ * against what real `aws`, `kubernetes` and `iac` processes list.
  */
 import { posix } from "node:path";
 import { stripComments, stripStringLiterals } from "../../../../../scripts/structure-audit/lib.ts";
@@ -118,6 +121,17 @@ function soleLiteralArgument(code: string, at: number): string | undefined {
   return /^\s*\)/.test(code.slice(at + spec.length + 2)) ? spec : undefined;
 }
 
+/** Dynamic-loader call shapes: a literal specifier is followed, a non-literal one is a violation. */
+const DYNAMIC_LOADER_RES: readonly RegExp[] = [
+  // Bare: `import(...)` / `require(...)`.
+  /(?<![\w$.])(?:import|require)\s*\(\s*/g,
+  // Member: `module.require(...)`, `import.meta.require(...)`, `globalThis.require(...)`. The bare
+  // pattern's `(?<![\w$.])` lookbehind EXCLUDES a `.`-prefixed call, so without this a
+  // `module.require(name)` with a computed specifier is neither followed nor flagged — it loads any
+  // module all the same. (There is no member-form dynamic `import()` in JS, so only `require` here.)
+  /\.\s*require(?![\w$])\s*\(\s*/g,
+];
+
 /** Every module specifier a file names; a dynamic load it cannot read is a violation. */
 function specifiersOf(p: Prepared, violations: ScanViolation[]): string[] {
   const out: string[] = [];
@@ -126,16 +140,18 @@ function specifiersOf(p: Prepared, violations: ScanViolation[]): string[] {
     const spec = literalAt(p.code, (m.index ?? 0) + m[0].length);
     if (spec !== undefined) out.push(spec);
   }
-  // Dynamic: `import(...)` / `require(...)` can load ANY module unless its specifier is a literal.
-  for (const m of p.blank.matchAll(/(?<![\w$.])(?:import|require)\s*\(\s*/g)) {
-    const spec = soleLiteralArgument(p.code, (m.index ?? 0) + m[0].length);
-    if (spec !== undefined) out.push(spec);
-    else {
-      violations.push({
-        file: p.rel,
-        line: lineAt(p.code, m.index ?? 0),
-        reason: "a dynamic import/require whose specifier is not a plain string literal",
-      });
+  // Dynamic: a loader call reaches ANY module unless its specifier is a plain string literal.
+  for (const re of DYNAMIC_LOADER_RES) {
+    for (const m of p.blank.matchAll(re)) {
+      const spec = soleLiteralArgument(p.code, (m.index ?? 0) + m[0].length);
+      if (spec !== undefined) out.push(spec);
+      else {
+        violations.push({
+          file: p.rel,
+          line: lineAt(p.code, m.index ?? 0),
+          reason: "a dynamic import/require whose specifier is not a plain string literal",
+        });
+      }
     }
   }
   return out;

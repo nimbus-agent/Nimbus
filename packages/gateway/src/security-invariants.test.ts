@@ -1978,6 +1978,21 @@ describe("I26 — connector writes (warehouse/BI ∪ GitOps/ML) are confined to 
       expect(isConnectorCodeExecutionToolId(id), id).toBe(true);
     }
   });
+
+  // The Windows `.cmd`-wrapper argument-injection class (2026-10-05): `az` / `gcloud` re-parse their
+  // argv, so a caller value reaching one escapes its slot. Every read of the four `.cmd`-backed
+  // connectors is refused, bare and in the session form, so the sweep's "only iac" verdict — true on
+  // POSIX — cannot leave a federated RCE path open on the Windows push leg.
+  test("the az/gcloud-backed reads are refused as code execution, bare and namespaced", async () => {
+    const { WINDOWS_CLI_ARG_INJECTION_TOOL_IDS, isConnectorCodeExecutionToolId } = await import(
+      "./connectors/connector-code-execution-tool-ids.ts"
+    );
+    expect(WINDOWS_CLI_ARG_INJECTION_TOOL_IDS.size).toBeGreaterThanOrEqual(8);
+    for (const id of WINDOWS_CLI_ARG_INJECTION_TOOL_IDS) {
+      expect(isConnectorCodeExecutionToolId(id), id).toBe(true);
+      expect(isConnectorCodeExecutionToolId(`azure_${id}`), id).toBe(true);
+    }
+  });
 });
 
 describe("I33 — user code executes only behind the exec gate", () => {

@@ -36,6 +36,8 @@ const CONNECTORS = [
   { pkg: "slack", server: "slack" },
   { pkg: "github-actions", server: "github_actions" }, // a key that itself contains `_`
   { pkg: "iac", server: "iac" }, // the code-execution half: its reads run caller-directed code
+  { pkg: "azure", server: "azure" }, // az → `.cmd` on Windows: its read is refused as code execution
+  { pkg: "gcp", server: "gcp" }, // gcloud → `.cmd` on Windows: its read is refused too
 ] as const;
 
 const PROBE = join(import.meta.dir, "..", "..", "fixtures", "session-tool-keys-probe.ts");
@@ -120,7 +122,7 @@ describe("I26 — the predicate refuses a write in the form a federated session 
 });
 
 describe("I26 — the code-execution refusal holds in the form a federated session executes it", () => {
-  test("namespacing never changes the verdict, and only the iac tools that evaluate code are refused", async () => {
+  test("namespacing never changes the verdict; the iac tools and the az/gcloud reads are refused", async () => {
     const keysByPackage = await probedKeys();
     const refused: string[] = [];
     for (const { pkg, server } of CONNECTORS) {
@@ -130,8 +132,12 @@ describe("I26 — the code-execution refusal holds in the form a federated sessi
         if (isConnectorCodeExecutionToolId(key)) refused.push(key);
       }
     }
-    // Exactly these, out of every key five real connectors list: no bypass, and no over-blocking.
+    // Exactly these, out of every key seven real connectors list: no bypass, and no over-blocking.
+    // The iac five evaluate a caller-named directory; the az/gcloud reads reach a `.cmd` wrapper's
+    // argv on Windows. (azure/gcp writes are refused by the WRITE predicate, asserted above.)
     expect(refused.sort()).toEqual([
+      "azure_azure_app_service_list",
+      "gcp_gcp_cloud_run_service_list",
       "iac_iac_pulumi_preview",
       "iac_iac_pulumi_up",
       "iac_iac_terraform_apply",

@@ -72,21 +72,40 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
   quorum and the run, audits `code_execution_forbidden`, and returns the same opaque `no_grant`. It
   matches bare and namespaced ids through `matchesBareOrNamespacedToolId`, which the write predicate
   now shares. The list also names the three iac writes that evaluate the same directory; those are
-  still refused as writes first. A sweep of every connector in 0.2.1 and 0.2.2 found exactly eleven
-  that can start a process (athena, aws, azure, bigquery, cloud-logging, cloudwatch, gcp, iac,
-  kubernetes, sagemaker and vertex-ai), and only iac lets the caller choose the code: the other ten
-  run a fixed `aws` / `az` / `gcloud` / `kubectl` call, their reads hand it caller values only as
-  flag values or `isSafeCliArg`-guarded arguments, and their mutating tools are writes, already
-  refused. The new
-  `connectors/connector-code-execution-sync.test.ts` makes that sweep a gate. Every listed id must
-  still be registered, and every connector whose source can start a process or evaluate code must be
-  in its review, with each of its tools refused or reviewed. So a new process-capable connector, or a
-  new tool in one, fails until someone classifies it. The wire test checks the census against what
-  real `aws`, `kubernetes` and `iac` processes list. Static D20 now requires the gate to CALL both
-  predicates; the old check accepted the name alone, which the ctx interface already declares. This
-  is I26 rather than I19 or I24: the enforcement point is I26's tool-id refusal, I19's credential
-  custody is unchanged, and I24's preflight gate is the precedent for the principle but a different
-  gate. The local owner's own paths are unchanged.
+  still refused as writes first.
+
+  A sweep of every connector in 0.2.1 and 0.2.2 found exactly eleven that can start a process (athena,
+  aws, azure, bigquery, cloud-logging, cloudwatch, gcp, iac, kubernetes, sagemaker and vertex-ai).
+  iac is not the only one that lets a caller reach code, once Windows is in scope: `az` (Azure CLI)
+  and `gcloud` (Google Cloud SDK) install as `.cmd` / batch wrappers there, and spawning a bare name
+  runs the batch target through `cmd.exe`, which re-parses the reconstructed command line — so a flag
+  value or an `isSafeCliArg`-guarded positional carrying a `cmd` metacharacter (`"`, `&`, `|`, `%`)
+  escapes its slot and runs an arbitrary command (`isSafeCliArg` rejects only a leading `-` and
+  control characters). Every read of the four `az` / `gcloud`-backed connectors — `azure`, `gcp`,
+  `cloud-logging`, `vertex-ai` — now joins the code-execution refusal, in a second documented set
+  `WINDOWS_CLI_ARG_INJECTION_TOOL_IDS`, at connector-read granularity so an argv change inside one
+  cannot silently reopen it. (`bigquery` is `gcloud`-backed too, but its only spawn is
+  `gcloud auth print-access-token` with no caller input and its tools are REST, so its reads stay
+  reviewed.) The reads that remain reviewed are backed by `aws` / `kubectl`, which install as native
+  `.exe` on Windows — no `cmd.exe` re-parse — a stated residual the reviews rest on; the durable fix
+  is upstream. The same ids are refused at the `share.replay` door as well: `isReadOnlyToolId`
+  excludes every code-execution id by explicit id, because these reads end in `list` / `get` /
+  `search`, verbs hundreds of genuine reads carry, so the verb could not be dropped the way `preview`
+  was for `iac_pulumi_preview`.
+
+  The new `connectors/connector-code-execution-sync.test.ts` makes the sweep a gate. Every listed id
+  must still be registered, and every connector whose source can start a process or evaluate code must
+  be in its review, with each of its tools refused or reviewed and no `az` / `gcloud`-backed read left
+  answerable. So a new process-capable connector, or a new tool in one, fails until someone classifies
+  it. Its source census now also follows a member-form dynamic loader (`module.require(x)`,
+  `import.meta.require(x)`) that the bare-`require(x)` pattern's lookbehind had skipped — following a
+  literal specifier, flagging a computed one — closing a fail-closed hole in the census. The wire test
+  checks the census and the refusal against what real `aws`, `kubernetes`, `iac`, `azure` and `gcp`
+  processes list. Static D20 now requires the gate to CALL both predicates; the old check accepted the
+  name alone, which the ctx interface already declares. This is I26 rather than I19 or I24: the
+  enforcement point is I26's tool-id refusal, I19's credential custody is unchanged, and I24's
+  preflight gate is the precedent for the principle but a different gate. The local owner's own paths
+  are unchanged.
 
   Found on the way and not fixed here: because of the same namespacing, a bare id is not found
   wherever the gateway looks a tool up verbatim in an `MCPClient`-keyed map, so the gateway's own

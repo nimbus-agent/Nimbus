@@ -1,7 +1,9 @@
 import { describe, expect, test } from "bun:test";
 import {
   CONNECTOR_CODE_EXECUTION_TOOL_IDS,
+  DIRECTORY_EVALUATION_TOOL_IDS,
   isConnectorCodeExecutionToolId,
+  WINDOWS_CLI_ARG_INJECTION_TOOL_IDS,
 } from "./connector-code-execution-tool-ids.ts";
 import { isConnectorWriteToolId } from "./connector-write-registry.ts";
 
@@ -28,15 +30,45 @@ describe("isConnectorCodeExecutionToolId (I26)", () => {
     }
   });
 
+  test("names every az/gcloud-backed read that can carry a caller value, bare and namespaced", () => {
+    // On Windows `az` / `gcloud` resolve to `.cmd` wrappers that re-parse argv, so a caller value
+    // reaching them escapes its slot — refused at the federated door, bare and in the session form.
+    for (const id of [
+      "azure_app_service_list",
+      "gcp_cloud_run_service_list",
+      "cloud_logging_get",
+      "cloud_logging_list",
+      "cloud_logging_search",
+      "vertex_ai_get",
+      "vertex_ai_list",
+      "vertex_ai_search",
+    ]) {
+      expect(WINDOWS_CLI_ARG_INJECTION_TOOL_IDS.has(id), id).toBe(true);
+      expect(isConnectorCodeExecutionToolId(id), id).toBe(true);
+      expect(isConnectorCodeExecutionToolId(`azure_${id}`), id).toBe(true);
+      expect(isConnectorCodeExecutionToolId(`team_bundle_gcp_${id}`), id).toBe(true);
+    }
+  });
+
+  test("the union is exactly the two documented subsets, and they are disjoint", () => {
+    expect(new Set(CONNECTOR_CODE_EXECUTION_TOOL_IDS)).toEqual(
+      new Set([...DIRECTORY_EVALUATION_TOOL_IDS, ...WINDOWS_CLI_ARG_INJECTION_TOOL_IDS]),
+    );
+    for (const id of DIRECTORY_EVALUATION_TOOL_IDS) {
+      expect(WINDOWS_CLI_ARG_INJECTION_TOOL_IDS.has(id), id).toBe(false);
+    }
+  });
+
   test("over-blocks nothing: other tools of process-spawning connectors are not code execution", () => {
     for (const id of [
       "iac_cloudformation_deploy", // remote deploy, refused as a write instead
       "iac_iac_cloudformation_deploy",
-      "aws_aws_ecs_service_list",
-      "kubernetes_k8s_pod_list",
-      "athena_athena_get",
-      "gcp_gcp_cloud_run_service_list",
-      "vertex_ai_vertex_ai_get",
+      "aws_aws_ecs_service_list", // aws → native .exe on Windows, no cmd re-parse
+      "kubernetes_k8s_pod_list", // kubectl → native .exe
+      "athena_athena_get", // aws
+      "cloudwatch_cloudwatch_list", // aws
+      "sagemaker_sagemaker_get", // aws
+      "bigquery_bigquery_get", // REST; its only spawn takes no caller input
     ]) {
       expect(isConnectorCodeExecutionToolId(id), id).toBe(false);
     }
