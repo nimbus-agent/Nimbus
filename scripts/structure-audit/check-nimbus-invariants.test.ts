@@ -593,11 +593,50 @@ describe("D20 — connector write-id confinement (warehouse/BI ∪ GitOps/ML)", 
     expect(v.some((x) => x.rule === "D20-invoke-gate-predicate")).toBe(true);
   });
 
-  test("does NOT flag invoke-gate.ts when it consults isWriteForbiddenToolId", () => {
+  test("requires answerFederatedInvoke to consult isCodeExecutionForbiddenToolId too", () => {
     const v = checkConnectorWriteConfinement([
       {
         relPath: "packages/gateway/src/federation/invoke-gate.ts",
         contents: `if (ctx.isWriteForbiddenToolId?.(q.toolId) === true) audit(ctx, q, "write_forbidden");`,
+      },
+    ]);
+    expect(v.map((x) => x.rule)).toEqual(["D20-invoke-gate-code-execution"]);
+  });
+
+  test("a mention in a comment does not count as consulting it", () => {
+    const v = checkConnectorWriteConfinement([
+      {
+        relPath: "packages/gateway/src/federation/invoke-gate.ts",
+        contents: `if (ctx.isWriteForbiddenToolId?.(q.toolId) === true) return;\n// isCodeExecutionForbiddenToolId(q.toolId): TODO`,
+      },
+    ]);
+    expect(v.map((x) => x.rule)).toEqual(["D20-invoke-gate-code-execution"]);
+  });
+
+  test("declaring the ctx fields is not consulting them — the gate must CALL both", () => {
+    // The real InvokeGateCtx declares both fields, so a name-only check passed with the calls gone.
+    const v = checkConnectorWriteConfinement([
+      {
+        relPath: "packages/gateway/src/federation/invoke-gate.ts",
+        contents: `export interface InvokeGateCtx {
+  readonly isWriteForbiddenToolId?: (toolId: string) => boolean;
+  readonly isCodeExecutionForbiddenToolId: (toolId: string) => boolean;
+}
+export async function answerFederatedInvoke(ctx: InvokeGateCtx) { return ctx; }`,
+      },
+    ]);
+    expect(v.map((x) => x.rule)).toEqual([
+      "D20-invoke-gate-predicate",
+      "D20-invoke-gate-code-execution",
+    ]);
+  });
+
+  test("does NOT flag invoke-gate.ts when it consults both predicates", () => {
+    const v = checkConnectorWriteConfinement([
+      {
+        relPath: "packages/gateway/src/federation/invoke-gate.ts",
+        contents: `if (ctx.isWriteForbiddenToolId?.(q.toolId) === true) audit(ctx, q, "write_forbidden");
+if (ctx.isCodeExecutionForbiddenToolId(q.toolId)) audit(ctx, q, "code_execution_forbidden");`,
       },
     ]);
     expect(v).toHaveLength(0);
@@ -1274,8 +1313,9 @@ describe("the scan floor (every rule below it reports clean on an empty scan)", 
   // That shape reports "clean" when `files` is empty or has lost the subtree it polices, and
   // this auditor runs BEFORE the test suite precisely so it fails first. Proven, not assumed:
   // pointing `iterateSourceFiles`'s package glob at a directory that does not exist left 179
-  // files scanned (the mcp-connectors glob still matched) and the pre-fix auditor exited 0
-  // with zero errors, all fourteen D-rules silently no-op.
+  // files scanned (its second glob, over the since-deleted `packages/mcp-connectors`, still
+  // matched) and the pre-fix auditor exited 0 with zero errors, all fourteen D-rules silently
+  // no-op.
   const entry = (relPath: string): FileEntry => ({ relPath, contents: "" });
 
   test("passes when every policed file is in the scanned set", () => {
@@ -1288,11 +1328,12 @@ describe("the scan floor (every rule below it reports clean on an empty scan)", 
 
   test("a large scan that lost the gateway subtree still fails", () => {
     // The case a raw `files.length > 0` floor cannot catch, and the reason the floor is the
-    // anchors rather than a count: 500 real files, none of them the ones the rules confine.
-    const connectorsOnly = Array.from({ length: 500 }, (_, i) =>
-      entry(`packages/mcp-connectors/c${String(i)}/src/index.ts`),
+    // anchors rather than a count: 500 real files, none of them the ones the rules confine. Every
+    // anchor is a gateway file, so a scan that kept the other packages' sources is this shape.
+    const cliOnly = Array.from({ length: 500 }, (_, i) =>
+      entry(`packages/cli/src/commands/c${String(i)}.ts`),
     );
-    expect(assertScanIsMeaningful(connectorsOnly)).toEqual([...RULE_ANCHORS]);
+    expect(assertScanIsMeaningful(cliOnly)).toEqual([...RULE_ANCHORS]);
   });
 
   test("names exactly the anchor that went missing, not all of them", () => {

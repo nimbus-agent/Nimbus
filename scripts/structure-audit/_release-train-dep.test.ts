@@ -78,17 +78,19 @@ describe("selectTaggedRelease", () => {
 describe("resolvedFromBunLock", () => {
   // Mirrors the real bun.lock shape: workspaces carry RANGES, packages carry
   // resolutions whose element [0] is "<name>@<version>". Trailing commas are
-  // legal in a real bun.lock, so one is included deliberately.
+  // legal in a real bun.lock, so one is included deliberately. The nested
+  // resolution sits under a SCOPED workspace name, as every workspace here is
+  // named today, so the owner is everything before the last `/@nimbus-dev/sdk`.
   const lock = `{
     "lockfileVersion": 1,
     "workspaces": {
       "": { "name": "nimbus" },
       "packages/cli": { "name": "@nimbus/cli", "dependencies": { "@nimbus-dev/sdk": "^1.5.0" } },
-      "packages/mcp-connectors/github": { "name": "nimbus-mcp-github" },
+      "packages/gateway": { "name": "@nimbus/gateway", "dependencies": { "@nimbus-dev/sdk": "^1.4.0" } },
     },
     "packages": {
       "@nimbus-dev/sdk": ["@nimbus-dev/sdk@1.6.0", "", {}, "sha512-aaa"],
-      "nimbus-mcp-github/@nimbus-dev/sdk": ["@nimbus-dev/sdk@1.4.0", "", {}, "sha512-bbb"],
+      "@nimbus/gateway/@nimbus-dev/sdk": ["@nimbus-dev/sdk@1.4.0", "", {}, "sha512-bbb"],
       "@nimbus-dev/client/@nimbus-dev/sdk": ["@nimbus-dev/sdk@1.3.0", "", {}, "sha512-ccc"],
     },
   }`;

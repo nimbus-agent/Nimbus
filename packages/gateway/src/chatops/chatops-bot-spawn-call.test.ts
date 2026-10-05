@@ -10,7 +10,9 @@ import type { NimbusVault } from "../vault/nimbus-vault.ts";
 // seam by design). To cover that construction + the `runBotToolCall` hand-off WITHOUT opening a
 // connector subprocess, mock `@mastra/mcp` — the same canonical pattern used by
 // `test/unit/connectors/lazy-mesh/connector-spawns.test.ts`. The mock captures the constructor
-// args (so the spawned id can be asserted) and serves a fixed tool map through `listTools`.
+// args (so the spawned id can be asserted) and serves a fixed tool map through `listTools`, keyed
+// the way the real client keys it: `<server>_<tool>`, the bot spawn naming its server `slack` /
+// `teams` — so `slack_chat_post` is listed as `slack_slack_chat_post`.
 const capturedClients: Array<{ id: string; servers: Record<string, ServerSpec> }> = [];
 
 mock.module("@mastra/mcp", () => ({
@@ -24,8 +26,8 @@ mock.module("@mastra/mcp", () => ({
     }
     listTools(): Promise<LazyMeshToolMap> {
       return Promise.resolve({
-        slack_chat_post: { execute: (a: unknown) => Promise.resolve({ posted: a }) },
-        teams_chat_post: { execute: (a: unknown) => Promise.resolve({ posted: a }) },
+        slack_slack_chat_post: { execute: (a: unknown) => Promise.resolve({ posted: a }) },
+        teams_teams_chat_post: { execute: (a: unknown) => Promise.resolve({ posted: a }) },
       });
     }
     // Superset surface so this process-global mock is also safe for any sibling SUT that only
@@ -144,6 +146,32 @@ describe("runBotToolCall — post-spawn tool dispatch (fake client, no subproces
     const client = fakeClient({ slack_chat_post: { execute: () => Promise.resolve("ok") } });
     // caller passes the bare id; lookup falls back to `${platform}_${toolId}`
     expect(await runBotToolCall(client, "slack", "chat_post", {})).toBe("ok");
+  });
+
+  test("calls the post tool a real bot session lists, <platform>_<tool>, by its bare id", async () => {
+    // The real bot client lists the slack connector's `slack_chat_post` as `slack_slack_chat_post`.
+    const slack = fakeClient({
+      slack_slack_chat_post: { execute: (a) => Promise.resolve({ slack: a }) },
+    });
+    expect(await runBotToolCall(slack, "slack", "slack_chat_post", { text: "hi" })).toEqual({
+      slack: { text: "hi" },
+    });
+    const teams = fakeClient({
+      teams_teams_chat_post: { execute: (a) => Promise.resolve({ teams: a }) },
+    });
+    expect(await runBotToolCall(teams, "teams", "teams_chat_post", { text: "yo" })).toEqual({
+      teams: { text: "yo" },
+    });
+  });
+
+  test("never resolves a bare id onto the other platform's server", async () => {
+    // A slack bot call must not reach a teams tool even if one client listed both servers.
+    const client = fakeClient({
+      teams_teams_chat_post: { execute: () => Promise.resolve("teams") },
+    });
+    await expect(runBotToolCall(client, "slack", "teams_chat_post", {})).rejects.toThrow(
+      /tool "teams_chat_post" not found for platform "slack"/,
+    );
   });
 
   test("throws not-found when neither the id nor the prefixed id resolves to an executable tool", async () => {

@@ -1,4 +1,5 @@
 import type { Database } from "bun:sqlite";
+import { serviceIdForToolKey } from "../connectors/lazy-mesh/tool-map.ts";
 import { appendTeamVaultAudit, type TeamVaultDecision } from "../teamvault/team-vault-audit.ts";
 import type { TeamVaultStore } from "../teamvault/team-vault-store.ts";
 
@@ -35,6 +36,19 @@ export interface InvokeGateCtx {
    *  — when this returns true for the requested toolId, the federated peer invoke is rejected
    *  fail-closed (opaque), before grant/quorum. Omitted → no write confinement (back-compat). */
   readonly isWriteForbiddenToolId?: (toolId: string) => boolean;
+  /** I26: connector tools that run CALLER-DIRECTED CODE on this machine (`iac_terraform_plan`,
+   *  `iac_pulumi_preview`, ...: `isConnectorCodeExecutionToolId`) — when this returns true for the
+   *  requested toolId, the federated peer invoke is rejected fail-closed (opaque), before identity,
+   *  grant, quorum and runTool. REQUIRED, unlike the write predicate above (which predates I26 and
+   *  stayed optional for back-compat): a federated invoke ctx cannot be built without deciding. */
+  readonly isCodeExecutionForbiddenToolId: (toolId: string) => boolean;
+  /** I22: the org policy's connector allowlist, asked of the connector the granted team-vault entry
+   *  names AND of the server the requested listed key belongs to, when that is another one (see
+   *  `connectorsRunBy`); the invoke is refused unless every one of them is allowed. The tool runs
+   *  in an ephemeral connector off the mesh whose policy filter would otherwise drop it, so the
+   *  gate asks the policy itself. REQUIRED, and the policy gate's own per-call predicate
+   *  (`connectorAllowPredicate`), never a value captured at boot. */
+  readonly isConnectorAllowed: (service: string) => boolean;
   /** Wave 7b deferral: when identity is enabled, returns the resolved identity subject for audit
    *  enrichment. Omitted → the audit row carries no identity_subject (no sentinel). */
   readonly resolveIdentitySubject?: () => string | undefined;
@@ -71,9 +85,43 @@ function audit(
 }
 
 /**
- * I19 — the ONLY path that consumes a team-vault credential. identity → RBAC → quorum →
- * run-with-injected-secret. Returns only `{ result }`; the secret never enters this scope and is
- * never placed in any outbound payload. Every outcome is audited.
+ * I22: every connector whose tool a granted invoke can run. The anchor runs the peer's key exactly as
+ * the session's client lists it (`session.callListed`), and a client can carry more than the entry's
+ * server: the github spawner registers `github_actions` beside `github`, so the listed key
+ * `github_actions_gha_run_list` runs on a `github` entry's session. The server a key belongs to is
+ * attributed by `serviceIdForToolKey`, the function the mesh's own policy filter uses.
+ */
+function connectorsRunBy(entryService: string, toolId: string): readonly string[] {
+  const keyService = serviceIdForToolKey(toolId);
+  return keyService === undefined || keyService === entryService
+    ? [entryService]
+    : [entryService, keyService];
+}
+
+/**
+ * I22: the opaque refusal when the org policy's allowlist blocks any connector the invoke could run
+ * a tool of, audited as `connector_blocked`; `undefined` when it allows them all. One function for
+ * both of the gate's checks, before quorum and after it, so neither copy can drift from the other.
+ */
+function refuseBlockedConnector(
+  ctx: InvokeGateCtx,
+  q: InboundInvoke,
+  entryService: string,
+  approvers?: readonly string[],
+): InvokeResult | undefined {
+  if (connectorsRunBy(entryService, q.toolId).every((s) => ctx.isConnectorAllowed(s))) {
+    return undefined;
+  }
+  audit(ctx, q, "connector_blocked", approvers);
+  return { kind: "error", error: "no_grant" }; // opaque — never reveal the policy
+}
+
+/**
+ * I19 — the ONLY path that consumes a team-vault credential. identity → RBAC → the I22 connector
+ * allowlist → quorum → the allowlist again → run-with-injected-secret, behind the two I26 tool-id
+ * refusals (a connector write; a connector tool that runs caller-directed code), which come first.
+ * Returns only `{ result }`; the secret never enters this scope and is never placed in any outbound
+ * payload. Every outcome is audited.
  */
 export async function answerFederatedInvoke(
   ctx: InvokeGateCtx,
@@ -82,6 +130,12 @@ export async function answerFederatedInvoke(
   if (ctx.isWriteForbiddenToolId?.(q.toolId) === true) {
     audit(ctx, q, "write_forbidden");
     return { kind: "error", error: "no_grant" }; // opaque — never reveal write confinement
+  }
+  // A peer must never choose what code runs on this machine — the one federated path that runs a
+  // command here (I24's preflight) takes it from local config only, behind the owner's HITL.
+  if (ctx.isCodeExecutionForbiddenToolId(q.toolId)) {
+    audit(ctx, q, "code_execution_forbidden");
+    return { kind: "error", error: "no_grant" }; // opaque — never reveal execution confinement
   }
   if (ctx.identity?.enabled === true && !ctx.identity.isOperatorValid()) {
     audit(ctx, q, "identity_invalid");
@@ -94,6 +148,10 @@ export async function answerFederatedInvoke(
     return { kind: "error", error: "no_grant" };
   }
 
+  // I22: asked before quorum asks anyone to vote on a connector the policy blocks.
+  const blocked = refuseBlockedConnector(ctx, q, entryDef.service);
+  if (blocked !== undefined) return blocked;
+
   const rule = ctx.quorumFor(q.toolId);
   if (rule !== undefined) {
     const outcome = await ctx.runQuorum(rule);
@@ -105,6 +163,9 @@ export async function answerFederatedInvoke(
       audit(ctx, q, "quorum_failed", outcome.approvers);
       return { kind: "error", error: "quorum_failed" };
     }
+    // And again after the quorum's wait: a bundle verified meanwhile applies to this run too.
+    const blockedAfterQuorum = refuseBlockedConnector(ctx, q, entryDef.service, outcome.approvers);
+    if (blockedAfterQuorum !== undefined) return blockedAfterQuorum;
   }
 
   const result = await ctx.runTool({

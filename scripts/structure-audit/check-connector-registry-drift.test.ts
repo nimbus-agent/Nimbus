@@ -11,15 +11,14 @@ afterAll(() => {
   rmSync(ROOT, { recursive: true, force: true });
 });
 
+// The entry shape `gen-bundled-connector-registry.ts` emits.
+function entry(id: string): string {
+  return `  ${JSON.stringify(id)}: () => import("@nimbus-dev/connectors/${id}"),`;
+}
+
 function registry(ids: readonly string[]): string {
   const path = join(ROOT, `registry-${ids.join("-") || "empty"}.ts`);
-  const entries = ids
-    .map(
-      (id) =>
-        `  ${JSON.stringify(id)}: () => import("../../../mcp-connectors/${id}/src/server.ts"),`,
-    )
-    .join("\n");
-  writeFileSync(path, `export const BUNDLED_CONNECTORS = {\n${entries}\n};\n`);
+  writeFileSync(path, `export const BUNDLED_CONNECTORS = {\n${ids.map(entry).join("\n")}\n};\n`);
   return path;
 }
 
@@ -29,13 +28,17 @@ const CONNECTORS = ["airflow", "monte-carlo"];
 const EMPTY_CONNECTORS: readonly string[] = [];
 
 describe("checkConnectorRegistryDrift", () => {
-  test("passes when the registry lists exactly the connectors on disk", () => {
+  test("passes when the registry lists exactly the exported connectors", () => {
     expect(checkConnectorRegistryDrift(CONNECTORS, registry(["airflow", "monte-carlo"]))).toEqual({
       status: "ok",
     });
   });
 
-  test("flags a connector on disk that the registry omits", () => {
+  test("reads each id from its import specifier", () => {
+    expect(registryIds(registry(["airflow", "monte-carlo"]))).toEqual(["airflow", "monte-carlo"]);
+  });
+
+  test("flags an exported connector that the registry omits", () => {
     const result = checkConnectorRegistryDrift(CONNECTORS, registry(["airflow"]));
     expect(result.status).toBe("drift");
     if (result.status !== "drift") throw new Error("expected drift");
@@ -43,7 +46,7 @@ describe("checkConnectorRegistryDrift", () => {
     expect(result.violations[0]?.reason).toContain("gen:connector-registry");
   });
 
-  test("flags a registry entry with no connector on disk", () => {
+  test("flags a registry entry the package no longer exports", () => {
     const result = checkConnectorRegistryDrift(
       CONNECTORS,
       registry(["airflow", "monte-carlo", "ghost"]),
@@ -51,7 +54,7 @@ describe("checkConnectorRegistryDrift", () => {
     expect(result.status).toBe("drift");
     if (result.status !== "drift") throw new Error("expected drift");
     expect(result.violations.map((e) => e.connector)).toEqual(["ghost"]);
-    expect(result.violations[0]?.reason).toContain("no longer exists");
+    expect(result.violations[0]?.reason).toContain("no longer exports");
   });
 
   test("reads ids from the import path, not the object key", () => {
@@ -59,7 +62,7 @@ describe("checkConnectorRegistryDrift", () => {
     const path = join(ROOT, "registry-unquoted.ts");
     writeFileSync(
       path,
-      `export const BUNDLED_CONNECTORS = {\n  airflow: () => import("../../../mcp-connectors/airflow/src/server.ts"),\n  "monte-carlo": () => import("../../../mcp-connectors/monte-carlo/src/server.ts"),\n};\n`,
+      `export const BUNDLED_CONNECTORS = {\n  airflow: () => import("@nimbus-dev/connectors/airflow"),\n  "monte-carlo": () => import("@nimbus-dev/connectors/monte-carlo"),\n};\n`,
     );
     expect(checkConnectorRegistryDrift(CONNECTORS, path)).toEqual({ status: "ok" });
   });
@@ -72,7 +75,7 @@ describe("checkConnectorRegistryDrift", () => {
     expect(result.violations.map((e) => e.connector)).toEqual(["airflow", "monte-carlo"]);
   });
 
-  test("a registry that exists but parses to zero entries while connectors exist on disk is indeterminate, not a wall of violations", () => {
+  test("a registry that exists but parses to zero entries while the package exports connectors is indeterminate, not a wall of violations", () => {
     // Simulates the generator's emitted import format changing out from under ENTRY_RE: the file
     // exists and plainly registers two connectors, but not in the shape the regex looks for.
     const path = join(ROOT, "registry-reformatted.ts");
@@ -95,12 +98,11 @@ describe("checkConnectorRegistryDrift", () => {
     // The printed remedy must NOT be "run gen:connector-registry" — that fixes real drift, not a
     // stale parser, and would be actively misleading here.
     expect(result.indeterminate.reason).not.toContain("gen:connector-registry");
-    expect(result.indeterminate.reason).not.toContain("gen:connector-registry");
   });
 
-  test("a genuinely empty connectors directory does not trip the indeterminate path", () => {
-    // Registry parses to zero entries too — but there is nothing on disk to compare against, so
-    // this is a clean pass, not an unparseable-input signal.
+  test("a package that exports no connectors does not trip the indeterminate path", () => {
+    // Registry parses to zero entries too — but nothing is exported to compare against, so this
+    // is a clean pass, not an unparseable-input signal.
     const path = join(ROOT, "registry-truly-empty.ts");
     writeFileSync(path, "export const BUNDLED_CONNECTORS = {};\n");
 
@@ -108,36 +110,30 @@ describe("checkConnectorRegistryDrift", () => {
   });
 });
 
-describe("both specifier forms the generator can emit are parsed", () => {
-  // `specifierFor` in gen-bundled-connector-registry.ts emits a relative path today and
-  // `@nimbus-dev/connectors/<id>` after the extraction. A parser that knows only one form does not
-  // fail loudly: registryIds() returns [], the check reports "indeterminate", and indeterminate is
-  // a WARNING — so the drift gate goes quietly inert exactly when the extraction makes it matter.
-  function packageRegistry(ids: readonly string[]): string {
-    const path = join(ROOT, `pkg-registry-${ids.join("-") || "empty"}.ts`);
-    const entries = ids
-      .map((id) => `  ${JSON.stringify(id)}: () => import("@nimbus-dev/connectors/${id}"),`)
-      .join("\n");
-    writeFileSync(path, `export const BUNDLED_CONNECTORS = {\n${entries}\n};\n`);
-    return path;
+describe("an entry in the relative form the generator used to emit", () => {
+  // `NIMBUS_CONNECTOR_SPECIFIER=workspace` made the generator import each connector from the
+  // in-repo copy, until #1347 deleted `packages/mcp-connectors` and the form with it. An entry
+  // still written that way imports a file that does not exist, so it must not count as
+  // registering its connector — the shipped binary could not start it.
+  function relativeEntry(id: string): string {
+    return `  ${JSON.stringify(id)}: () => import("../../../mcp-connectors/${id}/src/server.ts"),`;
   }
 
-  test("a package-mode registry parses its ids", () => {
-    expect(registryIds(packageRegistry(["airflow", "monte-carlo"]))).toEqual([
-      "airflow",
-      "monte-carlo",
-    ]);
+  test("is not parsed as a registered connector", () => {
+    const path = join(ROOT, "registry-relative-only.ts");
+    writeFileSync(path, `export const BUNDLED_CONNECTORS = {\n${relativeEntry("airflow")}\n};\n`);
+    expect(registryIds(path)).toEqual([]);
   });
 
-  test("a package-mode registry still DETECTS drift rather than reporting indeterminate", () => {
-    // The regression that matters: a missing connector must be found, not masked by an
-    // unparseable registry.
-    const v = checkConnectorRegistryDrift(CONNECTORS, packageRegistry(["airflow"]));
-    expect(JSON.stringify(v)).toMatch(/monte-carlo/);
-    expect(JSON.stringify(v)).not.toMatch(/indeterminate/i);
-  });
-
-  test("relative-mode parsing is unchanged", () => {
-    expect(registryIds(registry(["airflow", "monte-carlo"]))).toEqual(["airflow", "monte-carlo"]);
+  test("mixed into a current registry, reports its connector as missing", () => {
+    const path = join(ROOT, "registry-mixed.ts");
+    writeFileSync(
+      path,
+      `export const BUNDLED_CONNECTORS = {\n${entry("airflow")}\n${relativeEntry("monte-carlo")}\n};\n`,
+    );
+    const result = checkConnectorRegistryDrift(CONNECTORS, path);
+    expect(result.status).toBe("drift");
+    if (result.status !== "drift") throw new Error("expected drift");
+    expect(result.violations.map((e) => e.connector)).toEqual(["monte-carlo"]);
   });
 });

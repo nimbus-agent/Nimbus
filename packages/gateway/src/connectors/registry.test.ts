@@ -75,6 +75,64 @@ describe("createConnectorDispatcher", () => {
   });
 });
 
+// The mesh lists every connector tool as `<server>_<tool>` (each server named by its service id),
+// so the notion connector's `notion_kb_append` reaches the dispatcher as `notion_notion_kb_append`.
+describe("createConnectorDispatcher — a bare mcpToolId against a mesh-keyed tool map", () => {
+  function meshListing(ran: string[]): McpToolListingClient {
+    const listed = (key: string) => ({
+      async execute(input: unknown) {
+        ran.push(key);
+        return { key, input };
+      },
+    });
+    return {
+      async listTools() {
+        return {
+          notion_notion_kb_append: listed("notion_notion_kb_append"),
+          confluence_confluence_kb_append: listed("confluence_confluence_kb_append"),
+          github_github_pr_list: listed("github_github_pr_list"),
+          github_actions_gha_run_trigger: listed("github_actions_gha_run_trigger"),
+        };
+      },
+    };
+  }
+
+  test("resolves the bare id on the server of the action type the gate approved", async () => {
+    const ran: string[] = [];
+    const d = createConnectorDispatcher(meshListing(ran));
+    const out = await d.dispatch({
+      type: "notion.knowledge.write",
+      payload: { mcpToolId: "notion_kb_append", input: { databaseId: "db" } },
+    });
+    expect(out).toEqual({ key: "notion_notion_kb_append", input: { databaseId: "db" } });
+    expect(ran).toEqual(["notion_notion_kb_append"]);
+  });
+
+  test("never resolves a bare id onto a different connector than the action type's", async () => {
+    const ran: string[] = [];
+    const d = createConnectorDispatcher(meshListing(ran));
+    // A notion action naming confluence's KB tool: `notion_confluence_kb_append` is no tool.
+    await expect(
+      d.dispatch({
+        type: "notion.knowledge.write",
+        payload: { mcpToolId: "confluence_kb_append", input: {} },
+      }),
+    ).rejects.toThrow(/Tool not found/);
+    // `github_` + `actions_gha_run_trigger` spells github_actions' trigger: refused, not run.
+    await expect(
+      d.dispatch({ type: "github.pr.list", payload: { mcpToolId: "actions_gha_run_trigger" } }),
+    ).rejects.toThrow(/Tool not found/);
+    expect(ran).toEqual([]);
+  });
+
+  test("an exact mesh key still dispatches as before, whatever the action type", async () => {
+    const ran: string[] = [];
+    const d = createConnectorDispatcher(meshListing(ran));
+    await d.dispatch({ type: "github_github_pr_list", payload: {} });
+    expect(ran).toEqual(["github_github_pr_list"]);
+  });
+});
+
 describe("createConnectorDispatcher G8 — size cap + timeout", () => {
   test("rejects oversized tool result (S8-F5)", async () => {
     const big = "x".repeat(5 * 1024 * 1024);

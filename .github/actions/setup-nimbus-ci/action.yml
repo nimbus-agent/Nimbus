@@ -112,7 +112,6 @@ runs:
         path: |
           node_modules
           packages/*/node_modules
-          packages/mcp-connectors/*/node_modules
           packages/github-actions/*/node_modules
         key: ${{ runner.os }}-node-modules-${{ hashFiles('bun.lock') }}
 

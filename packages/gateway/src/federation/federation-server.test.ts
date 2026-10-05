@@ -387,6 +387,7 @@ test("buildFederationLanServer threads teamVault + identityGuard + delegateAppro
   const teamVault: Parameters<typeof buildFederationLanServer>[0]["teamVault"] = {
     quorumFor: (_toolId) => undefined,
     runTool: async (_input) => ({}),
+    isConnectorAllowed: () => true,
   };
 
   const identityGuard: Parameters<typeof buildFederationLanServer>[0]["identityGuard"] = {

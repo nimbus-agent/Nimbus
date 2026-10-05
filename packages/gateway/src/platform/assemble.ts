@@ -115,6 +115,7 @@ import {
   migrateToPerServiceOAuthKeys,
   readConnectorSecret,
 } from "../connectors/connector-vault.ts";
+import { createConnectorWriteDispatcher } from "../connectors/connector-write-dispatch.ts";
 import type { ConnectorWriteContext } from "../connectors/connector-write-transport.ts";
 import { createFilesystemV2Syncable } from "../connectors/filesystem-v2-sync.ts";
 import { githubFetchOneUrlIsSupported } from "../connectors/github-sync.ts";
@@ -249,7 +250,7 @@ import {
 } from "../ownership/ownership-refresh.ts";
 import { ownershipRoots } from "../ownership/ownership-target.ts";
 import { ensureAnchorKeypair } from "../policy/anchor-keypair.ts";
-import { partitionByAllowlist } from "../policy/connector-allowlist.ts";
+import { connectorAllowPredicate, partitionByAllowlist } from "../policy/connector-allowlist.ts";
 import { startPurge } from "../policy/gdpr-purge.ts";
 import { startGdprPurgeRetry } from "../policy/gdpr-purge-retry-sidecar.ts";
 import { GdprPurgeStore } from "../policy/gdpr-purge-store.ts";
@@ -287,13 +288,12 @@ import { SyncScheduler } from "../sync/scheduler.ts";
 import { unboundSyncCapabilities } from "../sync/sync-capabilities.ts";
 import { type TargetedFetchOutcome, targetedFetch } from "../sync/targeted-fetch.ts";
 import type { SyncContext, SyncRuntimeContext } from "../sync/types.ts";
-import { withConnectorSession } from "../teamvault/connector-session.ts";
 import {
   drainTeamListSession,
   invokeTeamTool,
   invokeTeamToolList,
 } from "../teamvault/team-tool-invoke.ts";
-import { spawnTeamToolAndCall } from "../teamvault/team-tool-spawn.ts";
+import { spawnTeamToolAndCall, spawnTeamWriteAndCall } from "../teamvault/team-tool-spawn.ts";
 import { TeamVaultStore } from "../teamvault/team-vault-store.ts";
 import { startTelemetryFlushScheduler } from "../telemetry/flush-scheduler.ts";
 import { reconcileSavedToolsOrWarn } from "../toolgen/toolgen-boot-reconcile.ts";
@@ -1120,6 +1120,8 @@ interface BootFederationOpts {
   ipcOpts: Parameters<typeof createIpcServer>[0];
   sidecarStops: Array<() => void>;
   policyGate: PolicyGate;
+  /** I22: the policy gate's per-call connector allowlist, from `bootPolicyGateWithConnectorAllowlist`. */
+  isConnectorAllowed: (serviceId: string) => boolean;
   // I18 — operator validity for answers served OVER THE WIRE. `identityBoot` happens AFTER this
   // function runs (bootFederationIntoIpcOpts at ~2434, bootIdentityIntoIpcOpts at ~2497), so the
   // guard has to be late-bound through the holder rather than captured, exactly as
@@ -1142,6 +1144,7 @@ async function bootFederationIntoIpcOpts(
     ipcOpts,
     sidecarStops,
     policyGate,
+    isConnectorAllowed,
     identityEnabled,
     identityBootRefHolder,
   } = opts;
@@ -1255,6 +1258,9 @@ async function bootFederationIntoIpcOpts(
         },
         input,
       ),
+    // I22: the invoke gate refuses an invoke when the org policy blocks the entry's connector or
+    // the server the requested key belongs to.
+    isConnectorAllowed,
   };
   ipcOpts.teamVault = teamVault;
   // Delegated HITL (Slice 2, I20). As a DELEGATE, this gateway answers an owner's routed approval by
@@ -1448,11 +1454,9 @@ function bootPolicyGateWithConnectorAllowlist(
       timestamp: blockedAt,
     });
   }
-  const isConnectorAllowed = (serviceId: string): boolean => {
-    const allow = policyGate.enforced().connectorAllow;
-    return allow === undefined || allow.includes(serviceId);
-  };
-  return { policyStore, policyGate, isConnectorAllowed };
+  // The live decision, read per call (`connectorAllowPredicate`), never `enforcedConnectorAllow`:
+  // that boot-time value only names the connectors audited as blocked above.
+  return { policyStore, policyGate, isConnectorAllowed: connectorAllowPredicate(policyGate) };
 }
 
 const OLLAMA_DEFAULT_BASE_URL = "http://127.0.0.1:11434";
@@ -2372,11 +2376,22 @@ function buildTeamCredentialContexts(deps: {
   connectorsConfig: ConnectorsConfig;
   identityEnabled: boolean;
   identityBootRefHolder: { current: ReturnType<typeof buildIdentityBoot> | undefined };
+  /** I22 connector allowlist, read per call: the write transport spawns its own session, outside
+   *  the mesh's policy filter, so it checks this itself. */
+  isConnectorAllowed: (serviceId: string) => boolean;
 }): {
   teamCredentialExtras: Pick<SyncContext, "sandboxCwd" | "credentialFor" | "runTeamList">;
   connectorWriteDeps: ConnectorWriteContext;
 } {
-  const { db, vault, paths, connectorsConfig, identityEnabled, identityBootRefHolder } = deps;
+  const {
+    db,
+    vault,
+    paths,
+    connectorsConfig,
+    identityEnabled,
+    identityBootRefHolder,
+    isConnectorAllowed,
+  } = deps;
   // Shared by the list + invoke ctxs (previously duplicated): the late-bound operator-validity guard.
   const identitySpread = identityEnabled
     ? {
@@ -2426,7 +2441,10 @@ function buildTeamCredentialContexts(deps: {
   };
 
   // Wave 7c — team-credentialed local WRITE invoke (I19 single-tool variant). Mirrors localOpListCtx
-  // but uses invokeTeamTool (single call) + a one-shot session call.
+  // but uses invokeTeamTool (single call) + a one-shot session call. The write's tool id is the
+  // gateway's own (the write registry's bare MCP name), so it is resolved on the session's server
+  // (spawnTeamWriteAndCall) — unlike the federated anchor's runTool, whose peer-named id is matched
+  // to the listed key exactly (spawnTeamToolAndCall), because a grant is keyed on that string.
   const localOpInvokeCtx: LocalOperatorInvokeCtx = {
     db,
     store: new TeamVaultStore(db),
@@ -2439,11 +2457,7 @@ function buildTeamCredentialContexts(deps: {
             CONNECTOR_VAULT_SECRET_KEYS[service as keyof typeof CONNECTOR_VAULT_SECRET_KEYS],
           anyOfSecretGroupsFor: (service: string) =>
             TEAM_SECRET_ANYOF_GROUPS[service as keyof typeof CONNECTOR_VAULT_SECRET_KEYS],
-          spawnAndCall: (r) =>
-            withConnectorSession(
-              { service: r.service, vaultView: r.vaultView, sandboxCwd: r.sandboxCwd },
-              (session) => session.call(r.toolId, r.args),
-            ),
+          spawnAndCall: spawnTeamWriteAndCall,
         },
         input,
       ),
@@ -2453,6 +2467,7 @@ function buildTeamCredentialContexts(deps: {
   const connectorWriteDeps: ConnectorWriteContext = {
     vault,
     sandboxCwd: paths.dataDir,
+    isConnectorAllowed,
     credentialFor: (service: string) =>
       connectorsConfig.get(service as TeamCredentialConnector) ?? { credential: "personal" },
     runTeamInvoke: (req) =>
@@ -2487,6 +2502,8 @@ async function bootChatopsIntoAssembly(deps: {
   sidecarStops: Array<() => void>;
   tribalSendHolder: { current: (target: ReplyTarget, text: string) => Promise<void> };
   chatopsAllowedByBootPolicy: boolean;
+  /** The connector-write transport's context, the one `runAsk`'s dispatcher is wrapped with too. */
+  connectorWriteDeps: ConnectorWriteContext;
 }): Promise<ChatopsBoot | undefined> {
   const {
     chatopsCfg,
@@ -2504,6 +2521,7 @@ async function bootChatopsIntoAssembly(deps: {
     sidecarStops,
     tribalSendHolder,
     chatopsAllowedByBootPolicy,
+    connectorWriteDeps,
   } = deps;
   // I41: a demo gateway never boots ChatOps, whatever its config says (BootPolicy.chatops).
   if (!chatopsCfg.enabled || !chatopsAllowedByBootPolicy) return undefined;
@@ -2551,12 +2569,21 @@ async function bootChatopsIntoAssembly(deps: {
           })
         : buildE2eSinkRunChatopsTool(chatopsE2eSinkDir),
     audit: { recordAudit: (entry) => appendAuditEntry(db, entry) },
+    // A connector write the owner approves from chat runs through the connector-write transport,
+    // with the credential [connectors.<name>] configures and the I22 allowlist asked first: the
+    // same wrapper and context gateway-main.ts installs around runAsk's dispatcher, and the first
+    // shipped surface whose connector writes reach it. The plain mesh dispatcher found no tool for a
+    // write that names no mcpToolId, and ran one that names it with the personal credential
+    // whatever the config said.
     dispatcher:
       chatopsE2eSinkDir === undefined || chatopsE2eSinkDir === ""
-        ? createConnectorDispatcher({
-            listTools: () => connectorMesh.listToolsForDispatcher(),
-            getToolsEpoch: () => connectorMesh.getToolsEpoch(),
-          })
+        ? createConnectorWriteDispatcher(
+            createConnectorDispatcher({
+              listTools: () => connectorMesh.listToolsForDispatcher(),
+              getToolsEpoch: () => connectorMesh.getToolsEpoch(),
+            }),
+            connectorWriteDeps,
+          )
         : buildE2eSinkDispatcher(chatopsE2eSinkDir),
     // I29: chatops-approved writes dispatch real connector actions — ledger them (append-before-dispatch).
     egressSink: makeEgressSink(db),
@@ -3293,6 +3320,17 @@ export async function assemblePlatformServices(
 
   await resumePendingRemovals(vault, localIndex);
 
+  const auditCfg = loadNimbusAuditFromConfigDir(paths.configDir);
+
+  // Org policy (I22): built BEFORE the team-credential contexts, whose connector-write transport
+  // reads the connector allowlist per call, and before the retention sidecar, so the latter can
+  // honor `enforced().retentionDays` (the monotonic floor).
+  const { policyStore, policyGate, isConnectorAllowed } = bootPolicyGateWithConnectorAllowlist(
+    db,
+    paths.configDir,
+    auditCfg,
+  );
+
   // Wave 7b — team-shared credentials. `credentialFor` reads the per-connector [connectors.<name>]
   // pin (default personal); `runTeamList` routes the localOperator path through the principal-
   // polymorphic gate (I19 — the one secret-consumption chokepoint). identityBoot is built later in
@@ -3312,6 +3350,7 @@ export async function assemblePlatformServices(
     connectorsConfig,
     identityEnabled,
     identityBootRefHolder,
+    isConnectorAllowed,
   });
 
   // Timeline correlation (deployment <-> incident, `correlates_with`): binds an item's
@@ -3355,16 +3394,6 @@ export async function assemblePlatformServices(
   assignIfPresent(syncContext, "scheduleItemEmbedding", scheduleItemEmbedding);
 
   const sessionMemoryStore = maybeAttachSessionMemoryStore(db, rt, sessionToml, sidecarStops);
-
-  const auditCfg = loadNimbusAuditFromConfigDir(paths.configDir);
-
-  // Org policy (I22): built BEFORE the retention sidecar so the latter can honor
-  // `enforced().retentionDays` (the monotonic floor).
-  const { policyStore, policyGate, isConnectorAllowed } = bootPolicyGateWithConnectorAllowlist(
-    db,
-    paths.configDir,
-    auditCfg,
-  );
 
   // I22 — the tighten-only HITL overlay every ToolExecutor in this process consults, alongside
   // I2's frozen set. Defined here, next to the gate it reads, so there is one instance rather than
@@ -3524,6 +3553,7 @@ export async function assemblePlatformServices(
     ipcOpts,
     sidecarStops,
     policyGate,
+    isConnectorAllowed,
     identityEnabled,
     identityBootRefHolder,
   });
@@ -3656,6 +3686,7 @@ export async function assemblePlatformServices(
     httpSidecarOpts,
     sidecarStops,
     tribalSendHolder,
+    connectorWriteDeps,
   });
   settleOncallPushChatops(oncallPush, chatopsBoot);
 

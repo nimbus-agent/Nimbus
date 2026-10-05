@@ -8,7 +8,9 @@
  * imposes a network dependency on the test suite.
  *
  * Architecture notes:
- *  - The gateway must NOT import from packages/mcp-connectors.
+ *  - The gateway must NOT import from the connectors package (`@nimbus-dev/connectors`). Its one
+ *    sanctioned static import is `setConnectorMode`, in `connectors/run-bundled-connector.ts`;
+ *    the only other references are the generated registry's lazy `import()` of each entrypoint.
  *  - parseICalendar / ParsedEvent come from @nimbus-dev/sdk.
  *  - The fetch ORCHESTRATION (login → discover → select → expand) lives in
  *    `collectCalDavEvents`, which runs against an injected `CalDavBootstrap` so it

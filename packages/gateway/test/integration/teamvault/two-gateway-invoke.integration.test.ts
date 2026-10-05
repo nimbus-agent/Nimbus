@@ -65,6 +65,7 @@ test("payoff: teammate invokes a team-vault tool on the anchor over the wire —
         const _creds = SECRET; // would be read from the team vault + injected into the subprocess
         return { stopped: true, tool: toolId, echoedArgs: args };
       },
+      isConnectorAllowed: () => true,
     },
   });
   await bBuilt.lanServer.start();

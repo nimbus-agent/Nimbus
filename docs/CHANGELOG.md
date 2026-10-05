@@ -33,6 +33,374 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
   after escaping (`&` becomes five bytes), far under Slack's limit. No new invariant, egress class,
   IPC method or migration.
 
+- **2026-10-05 — The release demo-tour check accepts only `oncall pushed` as its first step.** The
+  check on a published binary's `nimbus demo` (`scripts/release/assert-demo-tour.ts`, run by
+  `released-install-smoke.yml`) accepted two first steps while the pushed brief was rolling out:
+  `oncall pushed`, and the older `oncall --incident pagerduty:PDEMO412` that the latest release
+  still printed. Every release since v7.33.0 prints `oncall pushed`, so the old form now fails. The
+  test fixture is a fresh, real `nimbus demo` capture from the published v7.35.0 binary (Windows,
+  non-TTY, spinner frames included, run with LOCALAPPDATA/APPDATA in a temp sandbox), with
+  machine paths masked as before. The three transition tests are replaced by a premise check and a
+  test that the old form fails.
+
+- **2026-10-05 — The bundled connectors move to 0.2.4.** `@nimbus-dev/connectors` goes from
+  0.2.2 to 0.2.4 (two releases, the same dependencies), and the gateway binary bundles it. As Nimbus
+  runs them, the connectors now:
+  - check every caller-supplied value that reaches a CLI at the tool's schema, so a refused value
+    never reaches the CLI (inside the gateway that check runs when the tool is called, which for
+    a write is after the executor's HITL prompt): a value starting with `-` is refused for
+    every CLI (`aws`, `azure` and `iac` checked nothing before, and kubectl and gcloud took pod,
+    deployment, service and cluster names unchecked), as is a value `aws` or `az` would replace by
+    a file's contents (`file://`, `fileb://`, `http(s)://` and `@=` for `aws`; a leading `@` and
+    `=@` for `az`);
+  - on Windows, refuse at the spawn an argument holding a `cmd.exe` metacharacter when the CLI that
+    would start is a batch file, as `az.cmd` and `gcloud.cmd` are;
+  - run `iac_terraform_plan`, `apply` and `destroy` with `-chdir=DIR`, and deploy a CloudFormation
+    template from a file with `--template-file`: given `-chdir DIR` and `--template-body`, real
+    terraform and AWS CLI refused every call of all four tools. The template is read as UTF-8 by
+    AWS CLI v1 and v2, and one over 51,200 bytes is refused at the schema.
+
+  The consent kit's budget, audit log and client notifications, which these releases also fixed,
+  run only when a connector is used standalone: inside the gateway the kit is a pass-through and
+  the executor is the gate. So is the Windows `Path` spelling fix, since the gateway hands every
+  connector its search path as `PATH`. In the gateway the iac connector now writes the template to
+  its temp directory: the macOS sandbox profile and the Linux tmpfs give it one, and the Windows
+  AppContainer grants ACLs only to the working directory and the policy's paths, a limit its
+  terraform and pulumi tools already have.
+
+  `nimbus connector auth workday`'s help now names what the Workday client needs for the flow
+  the gateway runs: the Authorization Code Grant, the redirect URI
+  `http://127.0.0.1:<port>/oauth/callback`, and `--port` to listen on that port; without it the
+  gateway picks a port of its own. This file's Workday entry said the connector uses client
+  credentials; it uses the authorization-code grant, and the entry is corrected. No migration, no
+  invariant change, no new IPC method.
+
+- **2026-10-05 — The federated invoke gate asks the org policy's connector allowlist, and a
+  connector write approved from chat runs through the connector-write transport.** One off-mesh
+  door the I22 stated bounds named is closed, and a ChatOps write defect recorded by the
+  "Connector sessions find tools by their bare id" entry below is fixed:
+  - `answerFederatedInvoke` never consulted `[policy.connectors] allow`. A peer holding a grant on a
+    team-vault entry ran its tool however the policy stood, since the anchor runs the tool in its own
+    team-credentialed connector, off the mesh whose filter drops a blocked connector. The gate now
+    asks the policy gate's own per-call predicate after the grant check, before quorum asks anyone
+    to vote, and again after the quorum's wait, since a bundle verified meanwhile applies to that
+    run too. A blocked invoke audits `connector_blocked` and returns the same opaque `no_grant`.
+    It asks of the entry's connector and of the server the peer's key belongs to: the anchor runs a
+    key exactly as the session lists it, and the github spawner registers `github_actions` beside
+    `github`, so `github_actions_gha_run_list` granted on a `github` entry runs github_actions'
+    tool. The predicate is a REQUIRED field of the invoke gate's context and of the federation
+    context's `teamVault`, which `ipc/server/options.ts` now types as that same field rather than a
+    copy of it.
+  - The ChatOps executor dispatched an owner-approved connector write (warehouse/BI ∪ GitOps/ML)
+    through the mesh alone. One that named no `mcpToolId` failed with "tool not found"; one that
+    named it ran with the personal credential, whatever `[connectors.<name>] credential` said.
+    `bootChatopsIntoAssembly` now wraps that executor's real dispatcher in
+    `createConnectorWriteDispatcher` with the same `connectorWriteDeps` `gateway-main.ts` installs
+    around `runAsk`'s dispatcher, so such a write selects its configured credential and asks the
+    allowlist first. `runAsk` plans no connector write, so `@nimbus run` is the first shipped
+    surface whose connector writes reach the transport. The ChatOps e2e sink dispatcher is
+    unchanged.
+
+  Two stated bounds remain and are unchanged: the ChatOps bot's own `slack`/`teams` calls, and the
+  warehouse/BI list drains, which honour a runtime allowlist change only after a restart.
+  `security-invariants.test.ts` pins the wiring in a new I22 case (j), and case (f)'s count of
+  `connectorWriteDeps` in `assemblePlatformServices` goes from two to three for the ChatOps boot.
+
+- **2026-10-05 — The last live references to the deleted `packages/mcp-connectors` workspace are
+  gone, and the local test commands are held to CI's list.** #1347 (2026-08-27) deleted the
+  workspace and dropped it from the two CI test commands, but `bun run test` and `test:ci` (the unit
+  run behind the full `preflight` tier) kept it as a test path for five more weeks. Nothing noticed,
+  because nothing could: `bun test` exits 0 when one of its path filters matches no test file as
+  long as another matches something (measured on bun 1.3.14); only a list that matches nothing at
+  all fails. The parity test's own comment claimed the opposite, that a dead path makes `bun test`
+  exit non-zero, and is corrected. Dropping the path changes no run: on its own,
+  `bun test packages/mcp-connectors` exits 1 because it matches no test file, and bun runs the union
+  of what each filter matches. `scripts/ci/cross-platform-parity.test.ts` now also holds the
+  `test` script, and the command `test:ci`'s unit run spawns (`unitTestCommand()`, exported from
+  `scripts/lib/ci-tests.ts`), to the push leg's paths, so a dead path kept or a real one missing
+  fails in either. Both checks read every path in their command, including one after a flag,
+  because bun treats a positional after a flag as a path filter too. The two workflow lines are
+  still read only up to their first flag, since their flags take separate values.
+
+  Also removed, each matching nothing: the `packages/mcp-connectors/*/node_modules` path in
+  `setup-nimbus-ci`'s `node_modules` cache (the cache key is unchanged, but `actions/cache` hashes
+  the path list into each entry's version, so Linux and macOS each miss once and save a fresh
+  entry, while Windows does not cache `node_modules` at all; the separately cached Bun download
+  cache is untouched); the two `.gitignore` lines for the workspace's old build bundles; the second
+  glob in `iterateSourceFiles`, which `audit:invariants`, `audit:any` and the other structure audits
+  walk; and `gen:connector-registry`'s `NIMBUS_CONNECTOR_SPECIFIER=workspace` form, which could only
+  emit imports into the deleted directory. The regenerated registry is byte-identical. `audit:connector-registry-drift` now parses
+  only the package specifier, so an entry hand-written in the old relative form no longer counts as
+  registering its connector, and its findings name `@nimbus-dev/connectors` instead of the deleted
+  directory.
+
+  Docs that still described the old layout now point at nimbus-agent/nimbus-mcp-servers: the docs
+  site's connectors overview and getting-started layout table, the CodeQL row in
+  `security-hardening.md`, the documentation issue form, the coverage section of the
+  connector-authoring skill (no connector source is in this repository's coverage), Sonar config
+  comments, and gateway source comments that cited `packages/mcp-connectors` paths or the gates that
+  left with the connectors. Dated records keep the old name: this changelog, the roadmap, and
+  comments describing what was true when they were written. Test fixtures that modelled the old
+  layout now model the current one. The bun.lock fixture in `_release-train-dep.test.ts` now nests
+  under a scoped workspace name (`@nimbus/gateway`), so a parser that took the owner to be the text
+  before the first `/` fails it; the old unscoped name let that parser pass.
+
+  The instructions for starting a connector had the same stale path in a place a search for it
+  cannot find: inside the tool they pointed to. The README's "adding a connector" paragraph,
+  `CONTRIBUTING.md`'s connector section and the architecture skill's quickstart all sent a
+  contributor to run `create-nimbus-connector` in nimbus-mcp-servers. That generator's default
+  target, as of 0.13.4, is still the pre-move layout. It writes `packages/mcp-connectors/<name>/`,
+  and even pointed at `connectors/<name>/` with `--out-dir`, its `../../shared/*` imports and its
+  `extends` of `../../../tsconfig.base.json` resolve one level off (checked by generating its own
+  netlify fixture into a scratch directory laid out the same way). It also emits no `src/tools.ts`, which
+  nimbus-mcp-servers' guide asks for, and its README says it has not been re-targeted. All three now
+  send contributors to that guide, and keep the generator for `--standalone` connectors outside that
+  repository. The connector-authoring skill's `## Scaffold` section named a third tool,
+  `nimbus scaffold extension`, which `CONTRIBUTING.md` has said is not one for connectors since
+  2026-08-20; it now points at the same guide. No runtime change.
+
+- **2026-10-05 — Connector sessions find tools by their bare id: the warehouse/BI syncs and the
+  tribal KB capture work against real connectors, and the connector-write transport resolves its
+  writes.** A credentialed connector session lists its tools through `@mastra/mcp`'s
+  `MCPClient.listTools()`, which keys every tool `<server>_<tool>` (the snowflake connector's
+  `snowflake_list` arrives as `snowflake_snowflake_list`), while the gateway names each tool by its
+  own MCP name and looked that up verbatim. These failed closed with "tool not found" against a real
+  connector, while their unit tests, which faked bare-keyed tool maps, passed:
+  - every Snowflake, Tableau, Looker, Power BI, Monte Carlo and Bigeye sync, personal and
+    team-credentialed alike (both list drains), which now index;
+  - the tribal KB capture to Notion or Confluence, which reaches the connector mesh through the
+    executor's dispatcher, so an owner-approved capture now appends;
+  - the connector-write transport, personal and team-credentialed: Snowflake tag/comment set,
+    Tableau and Power BI refresh, Looker datagroup trigger and schedule run, Monte Carlo and Bigeye
+    acknowledge/resolve, ArgoCD sync/rollback, Flux reconcile, MLflow promote/transition. It now
+    resolves every one of those writes, but **no shipped surface sends a connector-write action into
+    it yet**: `runAsk` plans only filesystem actions, and a ChatOps-approved `@nimbus run <type>` is
+    dispatched by the plain mesh dispatcher rather than the transport. That dispatcher looks the
+    dotted action type up as a tool id and still fails with "Tool not found", unless the command
+    names the tool's own `mcpToolId` (`mcpToolId=snowflake_tag_set`), which the mesh now resolves
+    and runs with its personal credential, not the one `[connectors.<name>]` selects.
+
+  The gateway's own lookups share ONE resolver, `resolveServerTool` in
+  `connectors/lazy-mesh/tool-map.ts`. It tries the exact key first, as before, then `<server>_<id>`
+  on the caller's OWN server: the session's service in `withConnectorSession`, the platform in
+  ChatOps' `runBotToolCall` (whose hand-rolled `platform_` fallback it replaces), and, in the mesh
+  dispatcher, the service of the action type the HITL gate approved. It refuses a key a LONGER
+  sibling server owns: the github spawner puts `github` and `github_actions` in one client, so
+  `github_` + `actions_gha_run_trigger` spells github_actions' `gha_run_trigger`. Ownership is
+  `serviceIdForToolKey`, the rule the mesh's I22 policy filter already used, moved out of `mesh.ts`
+  so the two cannot disagree. The team-credentialed local write (`localOpInvokeCtx`) now spawns
+  through `spawnTeamWriteAndCall` in `teamvault/team-tool-spawn.ts`.
+
+  **The federated path does not resolve, and is exactly as permissive as before.** The owner's
+  grant, its revocation, the quorum rule and I26's write predicate all judge a peer's
+  `federation.invoke` id as a STRING, so the federated anchor's seam (`spawnTeamToolAndCall`) calls
+  only the exact listed key (`session.callListed`, over `listedTool`). A peer still names
+  `<server>_<tool>` (`stripe_stripe_search`), and a grant on the bare spelling stays inert.
+  Resolving there would give every tool a second spelling under a second grant, and would make the
+  bare id of a write the predicate does not classify runnable where only its listed key was.
+  `ipc/federation-rpc-invoke.test.ts` drives the real handler, invoke gate, secret check and session
+  lookup, with only the spawn faked: a granted bare write id is refused by I26 before any spawn; a
+  granted bare id never runs, for reads and for writes alike, whether or not the predicate
+  classifies them (`aws_ec2_instance_stop`/`_start`, `notion_kb_append`, `confluence_kb_append`,
+  `slack_chat_post`, `slack_message_post_dm`, `teams_chat_post` and `teams_message_post_chat` among
+  them); a grant on either spelling never authorizes the other; and revoking the listed key cuts
+  access even beside a stale grant on the bare one.
+
+  **The write transport checks the org policy's connector allowlist (I22) itself.** It spawns its
+  own session, never the mesh, so the mesh's policy filter never saw it. A write to a connector the
+  policy blocks is now refused before any credential is selected or any process spawned, on both
+  credentials. The decision is `connectorAllowPredicate` in `policy/connector-allowlist.ts`, the
+  one the mesh filter, sync registration and the admin status report are handed too, and it reads
+  `policyGate.enforced()` on every call; the policy gate now boots before the team-credential
+  contexts in `platform/assemble.ts` so the transport can hold it. That check judges the connector
+  a write NAMES, so it covers the tool that runs only because the bare-id lookup never lands on a
+  sibling server. Both are recorded under I22 in `docs/SECURITY-INVARIANTS.md`, with enforcement
+  tests `(e)`–`(i)` in that invariant's block of `security-invariants.test.ts`, `(e)` driving the
+  predicate itself on a real policy gate.
+
+  `test/integration/connectors/session-tool-resolution.integration.test.ts` lists 16 real connector
+  processes through a real `MCPClient` in a child process (other test files `mock.module` it with
+  bare-keyed fakes). It checks that the keys are exactly `<server>_<tool>`, that every server
+  resolves exactly its own tools by bare id, that each fixed caller resolves the ids the gateway
+  really sends, and that the federated seam runs every real tool by its listed key and never by its
+  bare name. One real read reaches the snowflake connector's own handler through the session, the
+  dispatcher and the federated seam, failing before any network call for want of a credential. No
+  new invariant, IPC method, egress class or migration. **Stated bounds:** the write transport is
+  the only off-mesh path that asks the I22 connector allowlist on every call. The federated invoke
+  path does not consult it (it did not before). ChatOps' bot calls spawn the `slack`/`teams`
+  connector on the bot's credentials, bounded by `[policy.chatops]` and I23, not by the allowlist.
+  The list drains are covered only because the scheduler registers no syncable for a connector the
+  policy blocks at boot, so an allowlist applied at runtime reaches sync after a restart. Whether a
+  federated invoke of a LISTED write key is refused is decided by the I26 predicate alone, which
+  this entry neither changes nor asks about anything new.
+
+- **2026-10-05 — I26 holds again: the federated invoke gate refuses every connector write and every
+  connector tool found to run caller-directed code, in the form a session actually executes it,
+  and sync guards keep both lists in step with the connectors package.** I26 says a federated peer can
+  never trigger a connector write: `answerFederatedInvoke` refuses any tool id
+  `isConnectorWriteToolId` classifies. Three gaps made that false, each leaving only the owner's
+  per-tool grant in the way:
+  - **No write was refused in the form that runs.** A team-credentialed session lists its tools
+    through `@mastra/mcp`, which keys each one `<server>_<tool>`, and the runner looks the requested
+    id up verbatim, so `tableau_tableau_datasource_refresh` executes and a bare
+    `tableau_datasource_refresh` is not found. The predicate matched bare ids only. A probe through
+    the real gate, predicate, session lookup and `MCPClient` executed the namespaced write behind a
+    grant. The predicate now also matches any `_`-delimited suffix, at a cost bounded by the
+    longest write id, and an integration test lists real connector processes through a real
+    `MCPClient` to pin the key scheme.
+  - **Four comms writes were never on the list.** Static D19 and D17 confine the literals
+    `notion_kb_append`, `confluence_kb_append`, `slack_chat_post` and `teams_chat_post` to their
+    gates, and the list treated that as confining the tools. Those gates pin the destination only
+    when the gateway itself calls them; a federated invoke carries the peer's arguments, so a
+    granted peer chose the channel or the knowledge base, against I23 and I25 as well. Each gate
+    now exports its ids as a set the predicate refuses, so the literals stay where they were.
+  - **Five mutating tools were unclassified.** `aws_ec2_instance_stop`, `aws_ec2_instance_start`,
+    `slack_message_post_dm` and `teams_message_post_chat` were read registrations in
+    `@nimbus-dev/connectors` 0.2.1 and became consent-gated writes in 0.2.2, and
+    `gdrive_file_trash` still registers as a read in 0.2.2 although it PATCHes `trashed: true`.
+    All five are now in `MIGRATED_WRITE_TOOL_IDS`.
+
+  The new `connectors/connector-write-sync.test.ts` reads the INSTALLED connectors package as text,
+  derives every tool id registered through the write registrar, and fails on any the predicate does
+  not refuse, bare or namespaced. It follows the registrar by data flow from
+  `createWriteToolRegistrar`, not by name: 0.2.2 already forwards writes through
+  `registerStatusTool`, `registerPipelineActionTool` and `registerFeedbackTool`, which a
+  `register*WriteTool` pattern would miss. It follows an exported registrar or shared kit through
+  named, namespace and dynamic imports, renamed destructurings included, and refuses every import
+  shape it cannot follow: a default export, a module object used other than as `m.member`, an
+  aliased import, a registrar's name spelled as a string, and an exported registrar no file names.
+  Every identifier an id is read through (a loop's table, a string constant, a loop variable, a
+  kit option, a forwarded parameter) is read through the one binding of its name its use can see,
+  never a same-named one in another connector or another function. A second visible binding that
+  could shadow it is refused, whatever binds it: a declaration (initialised or not, any declarator,
+  any pattern), a function, arrow or method parameter, a `catch` binding, an import, or a function,
+  class, enum or namespace name. A table or constant counts only as a `const` holding exactly an
+  array or string literal, and an imported table only as one its module declares with
+  `export const`. It checks itself against upstream's own manifests too: every connector declaring
+  a write must yield a registration. It derives 87 writes from 0.2.1 and 91 from 0.2.2, so the
+  pending connectors bump passes it unchanged, and it has no exception list. Three blind spots are
+  stated rather than hidden: a mutation registered as a read, which is why `gdrive_file_trash` is
+  listed by hand; an object a registrar was handed off into, then read by a non-literal computed
+  key or by reflection; and a constant table mutated after its declaration (`ACTIONS.push(...)`).
+
+  **The gate now also refuses connector tools that run caller-directed code.** `iac_terraform_plan`
+  and `iac_pulumi_preview` are READ registrations, so no write list could name them, yet each hands
+  terraform or pulumi a caller-supplied `workingDirectory`. Planning a Terraform configuration runs
+  its provider plugins and any `external` data source program, and a Pulumi preview runs the stack
+  program. `iac` is team-invokable through its `iac.enabled` team-vault key, so a peer granted
+  `iac_iac_terraform_plan` could have had the anchor evaluate code at a path of its choosing, with
+  no owner approval of that code. `answerFederatedInvoke` now calls a second, REQUIRED predicate,
+  `isCodeExecutionForbiddenToolId`, wired to `isConnectorCodeExecutionToolId` over
+  `CONNECTOR_CODE_EXECUTION_TOOL_IDS`. It runs after the write check and before identity, the grant,
+  quorum and the run, audits `code_execution_forbidden`, and returns the same opaque `no_grant`. It
+  matches bare and namespaced ids through `matchesBareOrNamespacedToolId`, which the write predicate
+  now shares. The list also names the three iac writes that evaluate the same directory; those are
+  still refused as writes first.
+
+  A sweep of every connector in 0.2.1 and 0.2.2 found eleven that can start a process (athena,
+  aws, azure, bigquery, cloud-logging, cloudwatch, gcp, iac, kubernetes, sagemaker and vertex-ai).
+  The sweep, and the census test that now repeats it, read the connectors' own source and recognise
+  process and code-evaluation capability by name, so a spawn done through reflection or inside a
+  third-party package the connectors import is outside what either can see.
+  iac is not the only one that lets a caller reach code, once Windows is in scope: `az` (Azure CLI)
+  and `gcloud` (Google Cloud SDK) install as `.cmd` / batch wrappers there, and spawning a bare name
+  runs the batch target through `cmd.exe`, which re-parses the reconstructed command line — so a flag
+  value or an `isSafeCliArg`-guarded positional carrying a `cmd` metacharacter (`"`, `&`, `|`, `%`)
+  escapes its slot and runs an arbitrary command (`isSafeCliArg` rejects only a leading `-` and
+  control characters). Every read of the four `az` / `gcloud`-backed connectors — `azure`, `gcp`,
+  `cloud-logging`, `vertex-ai` — now joins the code-execution refusal, in a second documented set
+  `WINDOWS_CLI_ARG_INJECTION_TOOL_IDS`, at connector-read granularity so an argv change inside one
+  cannot silently reopen it. (`bigquery` is `gcloud`-backed too, but its only spawn is
+  `gcloud auth print-access-token` with no caller input and its tools are REST, so its reads stay
+  reviewed.) The reads that remain reviewed are backed by `aws` / `kubectl`, which install as native
+  `.exe` on Windows — no `cmd.exe` re-parse — a stated residual the reviews rest on; the durable fix
+  is upstream. The same ids are refused at the `share.replay` door as well: `isReadOnlyToolId`
+  excludes every code-execution id by explicit id, because these reads end in `list` / `get` /
+  `search`, verbs hundreds of genuine reads carry, so the verb could not be dropped the way `preview`
+  was for `iac_pulumi_preview`.
+
+  The new `connectors/connector-code-execution-sync.test.ts` makes the sweep a gate. Every listed id
+  must still be registered, and every connector whose source can start a process or evaluate code must
+  be in its review, with each of its tools refused or reviewed and no `az` / `gcloud`-backed read left
+  answerable. So a new process-capable connector, or a new tool in one, fails until someone classifies
+  it. Its source census now also follows a member-form dynamic loader (`module.require(x)`,
+  `import.meta.require(x)`) that the bare-`require(x)` pattern's lookbehind had skipped — following a
+  literal specifier, flagging a computed one — closing a fail-closed hole in the census. The wire test
+  checks the census and the refusal against what real `aws`, `kubernetes`, `iac`, `azure` and `gcp`
+  processes list. Static D20 now requires the gate to CALL both predicates; the old check accepted the
+  name alone, which the ctx interface already declares. This is I26 rather than I19 or I24: the
+  enforcement point is I26's tool-id refusal, I19's credential custody is unchanged, and I24's
+  preflight gate is the precedent for the principle but a different gate. The local owner's own paths
+  are unchanged.
+
+  Found on the way and not fixed here: because of the same namespacing, a bare id is not found
+  wherever the gateway looks a tool up verbatim in an `MCPClient`-keyed map, so the gateway's own
+  bare-id callers fail closed against real connectors while their unit tests fake bare-keyed maps.
+  Those callers are the connector-write transport (personal and team-credentialed), the team list
+  drain, the PERSONAL warehouse/BI list drain behind every personal-credential Snowflake, Tableau,
+  Looker, Power BI, Monte Carlo and Bigeye sync, and, through the mesh dispatcher, the tribal KB
+  capture, which fails with "Tool not found" after the owner approves it. The federated path
+  executes only the namespaced key, so `nimbus team vault grant` and `nimbus team invoke` must name
+  `<server>_<tool>`: `docs/cli-reference.md` now shows `stripe_stripe_search` where it showed
+  `stripe.refund.create`, a tool that exists in neither form. No new invariant, no migration, no
+  new IPC method.
+
+- **2026-10-05 — `--format plain` is linear on a line of underscores that open but never close.**
+  The quality sweep below made two super-linear patterns in
+  `packages/cli/src/format/slack-markdown.ts` linear and recorded a third that was not: plain
+  mode's underscore-italic pass,
+  `/(?<!\w)_(?!\s)(.+?)(?<!\s)_(?!\w)/g`, which `changelog`, `standup` and `oncall` run over every
+  line of a brief under `--format plain`. An `_` with no word character before it and a non-space
+  after it can open a run, but when a space precedes it or a word character follows it, it can
+  never close one, and the regex scanned the rest of the line from every such `_` before trying
+  the next. A line repeating a space and `_a` took 2.4 s at 30 KB, 9.2 s at 60 KB and about 40 s
+  at 120 KB on a developer machine, four times as long per doubling. The pass is now a
+  hand-written scan in the shape of the sweep's link fix, and the same input takes milliseconds.
+  Whether an `_` can close never depends on where its run opened, so once an attempt reaches the
+  end of its line without finding a closer, no later `_` on that line can start a run either, and
+  the scan resumes after the line instead of retrying each one. This supersedes the sweep entry's
+  note that the pass was still quadratic.
+  **The output is unchanged for every input.** The test keeps the old regex as its oracle and
+  compares the two on every string of up to eight characters drawn from the five classes the
+  pattern tells apart (488,281 strings); on every UTF-16 code unit at each of the five places the
+  pattern reads one (327,680 strings), which shows the scan sorts each code unit into the class the
+  regex does instead of assuming it; and on 20,000 seeded pseudo-random strings drawn from real
+  members of each class, among them U+00A0, U+2028, the BOM, a non-BMP character and a lone
+  surrogate. Each of seven deliberate mutations of the scan fails that comparison. So do three more
+  that only the per-code-unit check catches: a whitespace set written out by hand that leaves out
+  U+1680, U+2000 to U+200A, U+202F and U+205F, one that adds U+0085, and a `.` that also refuses
+  U+0085. Four time-bounded tests hold 120 KB inputs under one second. They also guard the scan's
+  two skips, past the end of the text and past a line terminator, which no output comparison can
+  see: a scan that retried every `_` would return the same text, quadratically.
+  **Nothing else in `packages/cli/src/format/` is super-linear.** The audit covered bold, both
+  single-asterisk italic patterns, strikethrough, the link scan, the heading, table-row and
+  delimiter-cell patterns, the cell split and the unescape pass: 66 adversarial shapes at up to
+  120 KB, each as one line, as four lines, as 1 KB lines, and as stretches separated by `\r` or
+  U+2028, in both modes. The slowest took 11 ms at 120 KB and grew linearly. The module has no
+  inline-code, list or blockquote pass to audit. Slack mode never ran the underscore pass and is
+  unchanged. No new invariant, no migration, no IPC change.
+
+- **2026-10-05 — The bundled connectors move to 0.2.2, and the `nodemailer` override is gone.**
+  `@nimbus-dev/connectors` goes from 0.2.1 to 0.2.2, and the gateway binary bundles it. As Nimbus
+  runs them, the connectors now:
+  - refuse a Bitbucket next-page link on another host instead of fetching it with the Bitbucket
+    credential attached;
+  - request six list and search tools (Outlook mail, CircleCI pipelines, Discord messages, Google
+    Meet list and search, Google Photos albums) under their API base once, not with a doubled
+    version segment;
+  - remove `aws_lambda_invoke`'s temp directory after every call;
+  - verify an audit entry whose detail holds an `undefined` value;
+  - use the latest MCP SDK, zod, imapflow, nodemailer, tsdav and hyparquet.
+
+  Four mutating tools are now registered as writes in the connectors' consent kit:
+  `aws_ec2_instance_stop`, `aws_ec2_instance_start`, `slack_message_post_dm` and
+  `teams_message_post_chat`. The root `nodemailer` override (10.0.13) existed to lift 0.2.1's
+  `^9.0.5` past its advisories. 0.2.2 declares `^10.0.14`, so the override could only force a
+  version below the connectors' own floor. It is removed, and `nodemailer` resolves to 10.0.14,
+  which `bun audit` reports clean at every severity. The gateway's own `imapflow` range moves
+  from `^2.2.1` to `^2.2.5`, so it shares one copy with the connectors instead of installing two.
+  No migration, no invariant change, no new IPC method.
+
 - **2026-10-05 — `audit:boundaries` enforces its rules again, and fails when it cannot.** The gate
   runs dependency-cruiser over `.dependency-cruiser.cjs`: no cycles, no cross-package source imports,
   and PAL isolation. It had been inert on a coin flip since TypeScript 7 landed (#1049, 2026-08-05).
@@ -5589,7 +5957,7 @@ Phase 6 ships as 9 sequenced delivery slices (see [`docs/roadmap.md` § Phase 6]
 - **Slice 9 E — Apple Mail + iCloud Calendar connector (`apple`):** A single first-party MCP connector that indexes **iCloud Mail** (over IMAP, `imap.mail.me.com:993` TLS) and **iCloud Calendar** (over CalDAV, `caldav.icloud.com` → per-account `p##-caldav.icloud.com`) into the local index as `apple:email` and `apple:event` items, and exposes **four HITL-gated write tools** — `apple_mail_send`, `apple_mail_draft_create`, `apple_calendar_event_create`, `apple_calendar_event_delete`. The mail side **reuses** the shared email tool kit (`registerEmailConnectorTools` + the gateway's `fetchImapMessages` / `mapImapLikeMessageToItem`); the calendar side introduces the codebase's **first CalDAV path** — a pure iCalendar build/parse module hoisted into `@nimbus-dev/sdk` (`parseICalendar` / `buildVEvent`, shared by the connector and the gateway sync, no parser dependency) plus an injectable `CalDavClient` whose real (tsdav, two-phase principal-discovery) implementation is confined to the coverage-excluded `server.ts`. Recurrence is expanded **server-side** via CalDAV `<C:expand>` (no client RRULE engine); overridden occurrences key on `<UID>:<RECURRENCE-ID>`. **Privacy bounds:** mail = headers + attachment METADATA + ≤2000-char preview (never bodies/bytes); calendar = summary/start/end/location/organizer/status/recurrence + ≤2000-char notes preview + attendee emails. **Forced sender:** both write-mail tools pin `From` to the authenticated `apple.icloud_email`. **Auth:** two Vault keys `apple.icloud_email` / `apple.icloud_app_password` (a single app-specific password authenticates IMAP+SMTP+CalDAV), injected as `APPLE_ICLOUD_EMAIL` / `APPLE_ICLOUD_APP_PASSWORD` at spawn; sync + spawn both no-op when either is unset. The lazy-mesh manifest declares `caldav.icloud.com` statically and folds the non-443 `imap.mail.me.com:993` / `smtp.mail.me.com:587` host:port endpoints in at spawn (mirroring `phase3AddImapMcp`). New rate-limiter provider `apple` (60 rpm / burst 10); `apple:email` routes to 1536-dim embeddings (prose), `apple:event` stays on local MiniLM 384-dim. **Cross-platform** (the roadmap's "macOS only" label is relaxed — the IMAP/CalDAV transport has no native macOS dependency; available + tested on Windows/macOS/Linux). **Writes ride the generic email/calendar dispatch path** behind the existing executor I2 HITL gate — **no new invariant, no `connector-write-registry`/I26 entry, no migration** (`event` is a new item type but the index is type-agnostic). The four write action types (`email.send` / `email.draft.create` / `calendar.event.create` / `calendar.event.delete`) are already in `HITL_REQUIRED_BACKING`; a connector contract test locks the 8-tool surface + the metadata-only invariant, and an executor-level test proves the gate fires (consent before dispatch; reject ⇒ no dispatch) for all four writes.
 - **Slice 9 W1 — HITL-gated GitOps + ML writes (ArgoCD / Flux / MLflow):** Six new write tools, each executing ONLY behind the LOCAL owner's executor HITL gate (I2): `argocd_app_sync` / `argocd_app_rollback` (`POST /api/v1/applications/{name}/sync|rollback`), `flux_kustomization_reconcile` / `flux_helmrelease_reconcile` (PATCH the CR with a `reconcile.fluxcd.io/requestedAt` annotation — the `flux reconcile` mechanism, requiring the SA's `patch` RBAC verb), and `mlflow_model_promote` / `mlflow_model_transition_stage` (`POST /api/2.0/mlflow/model-versions/transition-stage`; promote defaults `archive_existing_versions=true`, transition defaults false). All are async (the action is *requested*; verify via the next metadata sync). Each connector's three read tools were extracted into an exported `register<Svc>Tools(reg)` registrar (the `import.meta.main` guard now runs the stdio server), so the write tools register alongside them and stay unit-testable via `captureTools()`. **Personal + team credentials:** writes route through the credential-aware transport (personal spawn with a service-scoped vault view, or the I19 localOperator team rail); `argocd`/`flux`/`mlflow` are enrolled in `TEAM_CREDENTIAL_CONNECTORS` + `TEAM_SECRET_ANYOF_GROUPS`. **No new invariant, no migration (no schema change):** the Wave 7c warehouse-write machinery was *generalized in place* to all connector writes — `warehouse-write-{transport,dispatch}.ts` → `connector-write-{transport,dispatch}.ts`, a hoisted `ConnectorWrite` descriptor + a per-group SSoT (`gitops-ml-write-tools.ts`) + a union registry (`connector-write-registry.ts`), and **I26/D20 reworded** from "warehouse/BI write tool ids" to "connector write tool ids (warehouse/BI ∪ GitOps/ML)": the federated peer invoke gate now fail-closed rejects ANY connector write id via the union `isConnectorWriteToolId` predicate, so a peer can never trigger a GitOps/ML write over the wire (proven by a functional rejection test in `invoke-gate.test.ts`). A drift test ties the six new action types to `HITL_REQUIRED_BACKING`. **Deferred:** SageMaker + Vertex AI writes (CLI-credential connectors with no discrete token — they don't fit the team-vault/discrete-token write model) and all destructive `delete`/`drop` writes. **Adds no new invariant (the I-count is unchanged by this work).**
 
-- **Workday connector** (read-only) — indexes workers (org chart / employee directory), time-off requests, job postings, and admin-configured RaaS custom reports from a Workday tenant (Phase 6 Slice 9). Tenant-specific OAuth2 (client-credentials); directory-safe PII allowlist (name/title/department/manager/location — no compensation/SSN/home-address/leave-reason). Four item types: `workday:worker`, `workday:time_off`, `workday:job_posting`, `workday:report`. Optional `[[connectors.workday.reports]]` nimbus.toml config for RaaS reports (same-host guard). No migration, no HITL, no new invariant.
+- **Workday connector** (read-only) — indexes workers (org chart / employee directory), time-off requests, job postings, and admin-configured RaaS custom reports from a Workday tenant (Phase 6 Slice 9). Tenant-specific OAuth2 (authorization-code grant); directory-safe PII allowlist (name/title/department/manager/location — no compensation/SSN/home-address/leave-reason). Four item types: `workday:worker`, `workday:time_off`, `workday:job_posting`, `workday:report`. Optional `[[connectors.workday.reports]]` nimbus.toml config for RaaS reports (same-host guard). No migration, no HITL, no new invariant.
 
 ### 2026-06-20
 

@@ -1,9 +1,11 @@
 import pino from "pino";
 
+import { serviceOf } from "../engine/service-of.ts";
 import type { ConnectorDispatcher, PlannedAction } from "../engine/types.ts";
 import type { PlatformPaths } from "../platform/paths.ts";
 import type { NimbusVault } from "../vault/nimbus-vault.ts";
 import { createLazyConnectorMesh, type LazyConnectorMesh } from "./lazy-mesh/index.ts";
+import { resolveServerTool } from "./lazy-mesh/tool-map.ts";
 
 const registryLog = pino({
   name: "connector-registry",
@@ -65,7 +67,11 @@ export function createConnectorDispatcher(
       const fromPayload = action.payload?.["mcpToolId"];
       const toolId =
         typeof fromPayload === "string" && fromPayload.length > 0 ? fromPayload : action.type;
-      const tool = map[toolId];
+      // The mesh lists every tool as `<server>_<tool>`, so a bare id (the tribal KB capture's
+      // `mcpToolId`) is resolved on the server of the action type the HITL gate approved (I3:
+      // the gate consults action.type), never on another connector's server. An exact mesh key
+      // is answered as it always was.
+      const tool = resolveServerTool(map, serviceOf(action.type), toolId);
       if (tool === undefined) {
         const available = Object.keys(map).sort((a, b) => a.localeCompare(b));
         registryLog.warn(

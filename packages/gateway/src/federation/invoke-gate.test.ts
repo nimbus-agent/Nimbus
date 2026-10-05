@@ -1,5 +1,6 @@
 import { Database } from "bun:sqlite";
 import { describe, expect, it } from "bun:test";
+import { isConnectorCodeExecutionToolId } from "../connectors/connector-code-execution-tool-ids.ts";
 import { isConnectorWriteToolId } from "../connectors/connector-write-registry.ts";
 import { runIndexedSchemaMigrations } from "../index/migrations/runner.ts";
 import { TeamVaultStore } from "../teamvault/team-vault-store.ts";
@@ -24,6 +25,10 @@ function freshCtx(over: Partial<InvokeGateCtx> = {}): { db: Database; ctx: Invok
     quorumFor: () => undefined, // no quorum by default
     runQuorum: async () => ({ outcome: "approved", approvers: [] }),
     runTool: async () => ({ stopped: true }),
+    // REQUIRED field: the production predicate, so every case here also proves it over-blocks nothing.
+    isCodeExecutionForbiddenToolId: isConnectorCodeExecutionToolId,
+    // REQUIRED field: an ungoverned gateway's allowlist, which allows every connector.
+    isConnectorAllowed: () => true,
     now: () => 5000,
     ...over,
   };
@@ -130,6 +135,129 @@ describe("answerFederatedInvoke (I19)", () => {
   });
 });
 
+describe("I22 — federated invoke refuses an entry whose connector the org policy blocks", () => {
+  const request = {
+    peerId: "peer:abc",
+    entry: "prod-aws",
+    toolId: "aws.ec2.instance.stop",
+    args: {},
+    purpose: "stop idle box",
+  };
+  function lastDecision(db: Database): string {
+    return (
+      db.query(`SELECT action_type FROM audit_log ORDER BY id DESC LIMIT 1`).get() as {
+        action_type: string;
+      }
+    ).action_type;
+  }
+
+  it("refuses a granted tool, opaque, before quorum is asked and before runTool", async () => {
+    const asked: string[] = [];
+    let quorumRuns = 0;
+    let toolRuns = 0;
+    const { db, ctx } = freshCtx({
+      isConnectorAllowed: (service) => {
+        asked.push(service);
+        return service !== "aws";
+      },
+      quorumFor: () => ({ approvers: 2, windowSeconds: 300 }),
+      runQuorum: async () => {
+        quorumRuns++;
+        return { outcome: "approved", approvers: ["peer:x", "peer:y"] };
+      },
+      runTool: async () => {
+        toolRuns++;
+        return {};
+      },
+    });
+    expect(await answerFederatedInvoke(ctx, request)).toEqual({ kind: "error", error: "no_grant" });
+    // Asked of the connector the entry names: this tool id is no `<server>_<tool>` key of another.
+    expect(asked).toEqual(["aws"]);
+    expect({ quorumRuns, toolRuns }).toEqual({ quorumRuns: 0, toolRuns: 0 });
+    expect(lastDecision(db)).toBe("teamvault.invoke.connector_blocked");
+  });
+
+  it("refuses after the quorum when a bundle blocking the connector applied during its wait", async () => {
+    let allowed = true;
+    let toolRuns = 0;
+    const { db, ctx } = freshCtx({
+      isConnectorAllowed: () => allowed,
+      quorumFor: () => ({ approvers: 2, windowSeconds: 300 }),
+      runQuorum: async () => {
+        allowed = false; // a newly verified bundle lands while the approvers vote
+        return { outcome: "approved", approvers: ["peer:x", "peer:y"] };
+      },
+      runTool: async () => {
+        toolRuns++;
+        return {};
+      },
+    });
+    expect(await answerFederatedInvoke(ctx, request)).toEqual({ kind: "error", error: "no_grant" });
+    expect(toolRuns).toBe(0);
+    expect(lastDecision(db)).toBe("teamvault.invoke.connector_blocked");
+  });
+
+  it("answers the same request when the policy allows the connector (the control)", async () => {
+    const { db, ctx } = freshCtx({ isConnectorAllowed: (service) => service === "aws" });
+    expect(await answerFederatedInvoke(ctx, request)).toEqual({
+      kind: "ok",
+      result: { stopped: true },
+    });
+    expect(lastDecision(db)).toBe("teamvault.invoke.answered");
+  });
+
+  it("asks of the server a listed key belongs to as well: a sibling's tool on a github entry", async () => {
+    // The github spawner registers `github_actions` beside `github`, and the anchor runs a peer's
+    // key exactly as the client lists it, so this key runs github_actions' tool on a github entry.
+    const siblingKey = "github_actions_gha_run_list";
+    const sibling = { ...request, entry: "repo-team", toolId: siblingKey };
+    const githubOnly = (asked: string[]) => (service: string) => {
+      asked.push(service);
+      return service === "github";
+    };
+    const asked: string[] = [];
+    let toolRuns = 0;
+    const { db, ctx } = freshCtx({
+      isConnectorAllowed: githubOnly(asked),
+      runTool: async () => {
+        toolRuns++;
+        return {};
+      },
+    });
+    ctx.store.createEntry("repo-team", "github", "owner", 1000);
+    ctx.store.grant("repo-team", "peer:abc", siblingKey, 1000);
+    expect(await answerFederatedInvoke(ctx, sibling)).toEqual({ kind: "error", error: "no_grant" });
+    expect({ asked, toolRuns }).toEqual({ asked: ["github", "github_actions"], toolRuns: 0 });
+    expect(lastDecision(db)).toBe("teamvault.invoke.connector_blocked");
+
+    // A key of the entry's own server is asked of that server alone, and answered.
+    const ownKey = "github_github_pr_list";
+    ctx.store.grant("repo-team", "peer:abc", ownKey, 1000);
+    asked.length = 0;
+    expect(await answerFederatedInvoke(ctx, { ...sibling, toolId: ownKey })).toEqual({
+      kind: "ok",
+      result: {},
+    });
+    expect({ asked, toolRuns }).toEqual({ asked: ["github"], toolRuns: 1 });
+  });
+
+  it("an ungranted request is no_grant first: the policy is not consulted for it", async () => {
+    let asked = 0;
+    const { db, ctx } = freshCtx({
+      isConnectorAllowed: () => {
+        asked++;
+        return false;
+      },
+    });
+    expect(await answerFederatedInvoke(ctx, { ...request, toolId: "aws.lambda.invoke" })).toEqual({
+      kind: "error",
+      error: "no_grant",
+    });
+    expect(asked).toBe(0);
+    expect(lastDecision(db)).toBe("teamvault.invoke.no_grant");
+  });
+});
+
 describe("answerLocalOperatorList (I19 — localOperator principal)", () => {
   it("authorizes on entry-presence + service match, returns items, audits answered", async () => {
     const { db, ctx } = freshLocalCtx();
@@ -222,6 +350,8 @@ function freshI26Ctx(over: Partial<InvokeGateCtx> = {}): { db: Database; ctx: In
     quorumFor: () => undefined,
     runQuorum: async () => ({ outcome: "approved", approvers: [] }),
     runTool: async () => ({ ok: true }),
+    isCodeExecutionForbiddenToolId: isConnectorCodeExecutionToolId,
+    isConnectorAllowed: () => true,
     now: () => 9000,
     ...over,
   };
@@ -298,6 +428,92 @@ describe("I26 — federated peer gate fail-closed rejects write tool ids", () =>
     expect(audited.action_type).toBe("teamvault.invoke.write_forbidden");
   });
 
+  // Classified 2026-10-05: four moved to the write registrar in connectors 0.2.2, and
+  // gdrive_file_trash, which still mutates from a read registration. Each is tried BARE and in the
+  // `<server>_<tool>` form a team-credentialed session actually executes (`@mastra/mcp` namespaces
+  // every key) — the bare id alone was all the predicate used to match, so the executable form of
+  // even a long-classified write (tableau_datasource_refresh) went through. Each case first proves
+  // the grant WOULD let the call through, so the refusal is the write predicate and nothing else.
+  // The last four are the comms writes whose literals D17 / D19 confine to their own gates: those
+  // gates pin the destination when the GATEWAY posts or appends, but a federated invoke carries the
+  // peer's own arguments, so the peer would choose the channel or the knowledge base.
+  const cases = [
+    ["aws", "aws_ec2_instance_stop"],
+    ["aws", "aws_ec2_instance_start"],
+    ["slack", "slack_message_post_dm"],
+    ["teams", "teams_message_post_chat"],
+    ["google_drive", "gdrive_file_trash"],
+    ["tableau", "tableau_datasource_refresh"],
+    ["slack", "slack_chat_post"],
+    ["teams", "teams_chat_post"],
+    ["notion", "notion_kb_append"],
+    ["confluence", "confluence_kb_append"],
+  ] as const;
+  for (const [service, bare] of cases)
+    for (const toolId of [bare, `${service}_${bare}`]) {
+      it(`${toolId}: granted, yet refused (opaque no_grant, audited write_forbidden) before runTool`, async () => {
+        let runToolCalls = 0;
+        const { db, ctx } = freshI26Ctx({
+          runTool: async () => {
+            runToolCalls++;
+            return { ok: true };
+          },
+        });
+        ctx.store.createEntry(`team-${service}`, service, "owner", 1000);
+        ctx.store.grant(`team-${service}`, "peer-1", toolId, 1000);
+        const request = {
+          peerId: "peer-1",
+          entry: `team-${service}`,
+          toolId,
+          purpose: "p",
+          args: {},
+        };
+        const lastDecision = (): string =>
+          (
+            db.query(`SELECT action_type FROM audit_log ORDER BY id DESC LIMIT 1`).get() as {
+              action_type: string;
+            }
+          ).action_type;
+
+        // Control: without the predicate the grant answers it.
+        expect(await answerFederatedInvoke(ctx, request)).toEqual({
+          kind: "ok",
+          result: { ok: true },
+        });
+        expect(runToolCalls).toBe(1);
+        expect(lastDecision()).toBe("teamvault.invoke.answered");
+
+        const guarded: InvokeGateCtx = { ...ctx, isWriteForbiddenToolId: isConnectorWriteToolId };
+        expect(await answerFederatedInvoke(guarded, request)).toEqual({
+          kind: "error",
+          error: "no_grant",
+        });
+        expect(runToolCalls).toBe(1); // never reached the connector
+        expect(lastDecision()).toBe("teamvault.invoke.write_forbidden");
+      });
+    }
+
+  it("a namespaced READ is still answered under the real predicate — no over-blocking", async () => {
+    let runToolCalls = 0;
+    const { ctx } = freshI26Ctx({
+      runTool: async () => {
+        runToolCalls++;
+        return { ok: true };
+      },
+      isWriteForbiddenToolId: isConnectorWriteToolId,
+    });
+    ctx.store.grant("warehouse", "peer-1", "tableau_tableau_list", 1000);
+    const result = await answerFederatedInvoke(ctx, {
+      peerId: "peer-1",
+      entry: "warehouse",
+      toolId: "tableau_tableau_list",
+      purpose: "p",
+      args: {},
+    });
+    expect(result).toEqual({ kind: "ok", result: { ok: true } });
+    expect(runToolCalls).toBe(1);
+  });
+
   it("a read tool id is unaffected by the predicate", async () => {
     let ran = false;
     const { ctx } = freshI26Ctx({
@@ -317,6 +533,193 @@ describe("I26 — federated peer gate fail-closed rejects write tool ids", () =>
     expect(result).toEqual({ kind: "ok", result: { ok: true } });
     expect(ran).toBe(true);
   });
+});
+
+// ---------------------------------------------------------------------------
+// I26 — connector tools that run caller-directed code on this machine
+// ---------------------------------------------------------------------------
+
+function lastDecisionOf(db: Database): string {
+  return (
+    db.query(`SELECT action_type FROM audit_log ORDER BY id DESC LIMIT 1`).get() as {
+      action_type: string;
+    }
+  ).action_type;
+}
+
+const REFUSED = { kind: "error", error: "no_grant" } as const;
+
+describe("I26 — federated peer gate fail-closed rejects tools that run caller-directed code", () => {
+  // `iac_terraform_plan` and `iac_pulumi_preview` are READ registrations, so the write predicate
+  // never saw them — yet each hands terraform / pulumi a caller-named directory, which evaluates
+  // the code in it. Each is tried bare and in the `<server>_<tool>` form a session executes, with
+  // the production wiring (both predicates, write first), after a control proving the grant would
+  // answer it — so the refusal is the code-execution check and nothing else.
+  for (const bare of ["iac_terraform_plan", "iac_pulumi_preview"])
+    for (const toolId of [bare, `iac_${bare}`]) {
+      it(`${toolId}: granted, yet refused (opaque no_grant, audited code_execution_forbidden) before runTool`, async () => {
+        const ran: string[] = [];
+        const { db, ctx } = freshI26Ctx({
+          runTool: async (input) => {
+            ran.push(input.toolId);
+            return { ok: true };
+          },
+          isWriteForbiddenToolId: isConnectorWriteToolId,
+        });
+        ctx.store.createEntry("team-iac", "iac", "owner", 1000);
+        ctx.store.grant("team-iac", "peer-1", toolId, 1000);
+        const request = {
+          peerId: "peer-1",
+          entry: "team-iac",
+          toolId,
+          purpose: "p",
+          args: { workingDirectory: "/srv/checkout/infra" },
+        };
+
+        // Control: with the code-execution check off, the grant answers it.
+        const unchecked: InvokeGateCtx = { ...ctx, isCodeExecutionForbiddenToolId: () => false };
+        expect(await answerFederatedInvoke(unchecked, request)).toEqual({
+          kind: "ok",
+          result: { ok: true },
+        });
+        expect(ran).toEqual([toolId]);
+        expect(lastDecisionOf(db)).toBe("teamvault.invoke.answered");
+
+        expect(await answerFederatedInvoke(ctx, request)).toEqual(REFUSED);
+        expect(ran).toEqual([toolId]); // never reached the connector
+        expect(lastDecisionOf(db)).toBe("teamvault.invoke.code_execution_forbidden");
+      });
+    }
+
+  it("refuses before identity, the grant and quorum are consulted", async () => {
+    const consulted: string[] = [];
+    const { db, ctx } = freshI26Ctx({
+      identity: {
+        enabled: true,
+        isOperatorValid: () => {
+          consulted.push("identity");
+          return false;
+        },
+      },
+      quorumFor: () => {
+        consulted.push("quorumFor");
+        return { approvers: 2, windowSeconds: 60 };
+      },
+      runQuorum: async () => {
+        consulted.push("runQuorum");
+        return { outcome: "approved", approvers: [] };
+      },
+      runTool: async () => {
+        consulted.push("runTool");
+        return {};
+      },
+    });
+    // No such entry and no grant: a check placed after identity or the grant lookup would audit
+    // `identity_invalid` or `no_grant` here instead.
+    const result = await answerFederatedInvoke(ctx, {
+      peerId: "peer-1",
+      entry: "no-such-entry",
+      toolId: "iac_iac_pulumi_preview",
+      purpose: "p",
+      args: {},
+    });
+    expect(result).toEqual(REFUSED);
+    expect(lastDecisionOf(db)).toBe("teamvault.invoke.code_execution_forbidden");
+    expect(consulted).toEqual([]);
+  });
+
+  it("an iac write is refused as a write first, and as code execution with no write predicate", async () => {
+    for (const toolId of [
+      "iac_iac_terraform_apply",
+      "iac_terraform_destroy",
+      "iac_iac_pulumi_up",
+    ]) {
+      const request = { peerId: "peer-1", entry: "team-iac", toolId, purpose: "p", args: {} };
+
+      const wired = freshI26Ctx({ isWriteForbiddenToolId: isConnectorWriteToolId });
+      expect(await answerFederatedInvoke(wired.ctx, request)).toEqual(REFUSED);
+      expect(lastDecisionOf(wired.db)).toBe("teamvault.invoke.write_forbidden");
+
+      // The code-execution classification stands on its own, whatever happens to the write list.
+      const unwired = freshI26Ctx();
+      expect(await answerFederatedInvoke(unwired.ctx, request)).toEqual(REFUSED);
+      expect(lastDecisionOf(unwired.db)).toBe("teamvault.invoke.code_execution_forbidden");
+    }
+  });
+
+  it("a granted read of a process-spawning connector is still answered — no over-blocking", async () => {
+    for (const [service, toolId] of [
+      ["kubernetes", "kubernetes_k8s_pod_list"],
+      ["aws", "aws_aws_ecs_service_list"],
+      ["athena", "athena_athena_get"],
+    ] as const) {
+      let runs = 0;
+      const { db, ctx } = freshI26Ctx({
+        runTool: async () => {
+          runs++;
+          return { ok: true };
+        },
+        isWriteForbiddenToolId: isConnectorWriteToolId,
+      });
+      ctx.store.createEntry(`team-${service}`, service, "owner", 1000);
+      ctx.store.grant(`team-${service}`, "peer-1", toolId, 1000);
+      const result = await answerFederatedInvoke(ctx, {
+        peerId: "peer-1",
+        entry: `team-${service}`,
+        toolId,
+        purpose: "p",
+        args: {},
+      });
+      expect(result, toolId).toEqual({ kind: "ok", result: { ok: true } });
+      expect(runs, toolId).toBe(1);
+      expect(lastDecisionOf(db), toolId).toBe("teamvault.invoke.answered");
+    }
+  });
+});
+
+describe("I26 — federated peer gate refuses az/gcloud reads (Windows .cmd argument injection)", () => {
+  // On Windows `az` / `gcloud` resolve to `.cmd` wrappers that re-parse argv, so a caller value
+  // reaching one escapes its slot and runs a command. These READ registrations hand the caller's
+  // value to the CLI, so the write predicate never saw them — refused here as code execution, bare
+  // and in the `<server>_<tool>` form a session executes, after a control proves the grant answers.
+  for (const [service, bare] of [
+    ["azure", "azure_app_service_list"],
+    ["gcp", "gcp_cloud_run_service_list"],
+  ] as const)
+    for (const toolId of [bare, `${service}_${bare}`]) {
+      it(`${toolId}: granted, yet refused (audited code_execution_forbidden) before runTool`, async () => {
+        const ran: string[] = [];
+        const { db, ctx } = freshI26Ctx({
+          runTool: async (input) => {
+            ran.push(input.toolId);
+            return { ok: true };
+          },
+          isWriteForbiddenToolId: isConnectorWriteToolId,
+        });
+        ctx.store.createEntry(`team-${service}`, service, "owner", 1000);
+        ctx.store.grant(`team-${service}`, "peer-1", toolId, 1000);
+        const request = {
+          peerId: "peer-1",
+          entry: `team-${service}`,
+          toolId,
+          purpose: "p",
+          // The arg content is immaterial: the gate refuses on the tool id alone, before runTool.
+          args: { subscriptionId: "sub-1", resourceGroup: "rg-1", projectId: "proj-1" },
+        };
+
+        // Control: with the code-execution check off, the grant answers it.
+        const unchecked: InvokeGateCtx = { ...ctx, isCodeExecutionForbiddenToolId: () => false };
+        expect(await answerFederatedInvoke(unchecked, request)).toEqual({
+          kind: "ok",
+          result: { ok: true },
+        });
+        expect(ran).toEqual([toolId]);
+
+        expect(await answerFederatedInvoke(ctx, request)).toEqual(REFUSED);
+        expect(ran).toEqual([toolId]); // never reached the connector
+        expect(lastDecisionOf(db)).toBe("teamvault.invoke.code_execution_forbidden");
+      });
+    }
 });
 
 // ---------------------------------------------------------------------------

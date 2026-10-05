@@ -20,6 +20,7 @@ describe("createConnectorWriteDispatcher", () => {
     const d = createConnectorWriteDispatcher(inner, {
       vault: {} as never,
       sandboxCwd: SANDBOX_CWD,
+      isConnectorAllowed: () => true,
       credentialFor: () => ({ credential: "personal" }),
       runTeamInvoke: async () => ({}),
     });
@@ -34,6 +35,7 @@ describe("createConnectorWriteDispatcher", () => {
     const d = createConnectorWriteDispatcher(inner, {
       vault: {} as never,
       sandboxCwd: SANDBOX_CWD,
+      isConnectorAllowed: () => true,
       credentialFor: () => ({ credential: "team", teamEntry: "wh" }),
       runTeamInvoke: async (req) => {
         seen = req;
@@ -59,6 +61,7 @@ describe("createConnectorWriteDispatcher", () => {
     const d = createConnectorWriteDispatcher(inner, {
       vault: {} as never,
       sandboxCwd: SANDBOX_CWD,
+      isConnectorAllowed: () => true,
       credentialFor: () => ({ credential: "team", teamEntry: "argo" }),
       runTeamInvoke: async (req) => {
         seen = req;
