@@ -68,11 +68,14 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
   **The write transport checks the org policy's connector allowlist (I22) itself.** It spawns its
   own session, never the mesh, so the mesh's policy filter never saw it. A write to a connector the
   policy blocks is now refused before any credential is selected or any process spawned, on both
-  credentials, reading `policyGate.enforced()` on every call; the policy gate now boots before the
-  team-credential contexts in `platform/assemble.ts` so the transport can hold it. That check judges
-  the connector a write NAMES, so it covers the tool that runs only because the bare-id lookup
-  never lands on a sibling server. Both are recorded under I22 in `docs/SECURITY-INVARIANTS.md`,
-  with enforcement tests `(e)`–`(h)` in that invariant's block of `security-invariants.test.ts`.
+  credentials. The decision is `connectorAllowPredicate` in `policy/connector-allowlist.ts`, the
+  one the mesh filter, sync registration and the admin status report are handed too, and it reads
+  `policyGate.enforced()` on every call; the policy gate now boots before the team-credential
+  contexts in `platform/assemble.ts` so the transport can hold it. That check judges the connector
+  a write NAMES, so it covers the tool that runs only because the bare-id lookup never lands on a
+  sibling server. Both are recorded under I22 in `docs/SECURITY-INVARIANTS.md`, with enforcement
+  tests `(e)`–`(i)` in that invariant's block of `security-invariants.test.ts`, `(e)` driving the
+  predicate itself on a real policy gate.
 
   `test/integration/connectors/session-tool-resolution.integration.test.ts` lists 16 real connector
   processes through a real `MCPClient` in a child process (other test files `mock.module` it with
@@ -81,11 +84,14 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
   really sends, and that the federated seam runs every real tool by its listed key and never by its
   bare name. One real read reaches the snowflake connector's own handler through the session, the
   dispatcher and the federated seam, failing before any network call for want of a credential. No
-  new invariant, IPC method, egress class or migration. **Stated bounds:** the federated invoke
-  path does not consult the I22 connector allowlist (it did not before; the list drains are covered
-  because the scheduler registers no syncable for a connector the policy blocks at boot), and
-  whether a federated invoke of a LISTED write key is refused is decided by the I26 predicate alone,
-  which this entry neither changes nor asks about anything new.
+  new invariant, IPC method, egress class or migration. **Stated bounds:** the write transport is
+  the only off-mesh path that asks the I22 connector allowlist on every call. The federated invoke
+  path does not consult it (it did not before). ChatOps' bot calls spawn the `slack`/`teams`
+  connector on the bot's credentials, bounded by `[policy.chatops]` and I23, not by the allowlist.
+  The list drains are covered only because the scheduler registers no syncable for a connector the
+  policy blocks at boot, so an allowlist applied at runtime reaches sync after a restart. Whether a
+  federated invoke of a LISTED write key is refused is decided by the I26 predicate alone, which
+  this entry neither changes nor asks about anything new.
 
 - **2026-10-04 — The on-call pushed brief, PR 3 of 3 (desktop panel).** The desktop app now has an
   `/oncall` page ("On-call" in the sidebar, after Dashboard, with an unread dot driven by a persisted

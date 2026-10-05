@@ -74,7 +74,9 @@ import {
   createWindowsPaths,
   type PlatformPaths,
 } from "./platform/paths.ts";
+import { connectorAllowPredicate } from "./policy/connector-allowlist.ts";
 import { type LocalBaseline, PolicyGate } from "./policy/policy-gate.ts";
+import { refreshPolicy } from "./policy/policy-runtime.ts";
 import { signPolicy } from "./policy/policy-signing.ts";
 import { PolicyStore } from "./policy/policy-store.ts";
 import { ProviderRateLimiter } from "./sync/rate-limiter.ts";
@@ -1921,12 +1923,61 @@ code_execution=true
 
   // The connector allowlist (`EnforcedPolicy.connectorAllow`) OFF the mesh. The mesh drops a
   // blocked connector's tools from its own dispatcher map, but the connector-write transport spawns
-  // its OWN session, so it checks the allowlist itself: (e) pins the predicate the gateway hands it,
-  // (f) that the transport consults it before anything else. (g)/(h) pin what lets that
+  // its OWN session, so it checks the allowlist itself: (e) drives the predicate the gateway builds
+  // on a real policy gate, (f) pins that the gateway hands the transport exactly that predicate,
+  // (g) that the transport consults it before anything else. (h)/(i) pin what lets that
   // per-connector check cover the tool that RUNS: a bare tool id resolves only on the caller's own
   // server, never on a sibling server the same client carries.
 
-  test("(e) assemble.ts hands the write transport the policy gate's own allowlist, read per call", async () => {
+  test("(e) the gateway's allowlist predicate decides from the policy gate's CURRENT policy", async () => {
+    // `connectorAllowPredicate` is the decision every `connectorAllow` consumer is handed: the
+    // mesh's tool filter, sync registration, the admin status report and the write transport.
+    // Each consumer's own tests inject a predicate of their own, so without this case a decision
+    // that inverted its membership test, ignored the list or captured it once would pass the whole
+    // suite. Driven on a REAL gate, through the real apply path (`refreshPolicy`: verify, persist,
+    // `applyVerified`); (f) pins that assemble.ts builds its predicate from this helper.
+    const kp = generateEd25519Keypair();
+    const pubkey = encodeBase64(kp.pubkey);
+    const db = new Database(":memory:");
+    runIndexedSchemaMigrations(db, 36);
+    const store = new PolicyStore(db);
+    store.pinAnchorPubkey(pubkey, "manual", 1);
+    const gate = new PolicyGate(store, baseline);
+    const ids = [...CONNECTOR_SERVICE_IDS];
+    // Premise: the sibling server the bundle below leaves out is a catalogued connector.
+    expect(ids).toContain("github_actions");
+    const isConnectorAllowed = connectorAllowPredicate(gate);
+    const allowedBy = (predicate: (serviceId: string) => boolean) =>
+      ids.filter((id) => predicate(id));
+    const apply = async (version: number, allow: string) => {
+      const toml = `[policy]\nversion=${version}\norg="acme"\n[policy.connectors]\nallow=${allow}\n`;
+      const out = await refreshPolicy({
+        store,
+        gate,
+        pinnedPubkey: pubkey,
+        nowMs: version,
+        fetch: async () => ({ toml, sig: signPolicy(toml, encodeBase64(kp.privkey)) }),
+      });
+      expect(out.applied).toBe(true);
+    };
+
+    // 1. Ungoverned: no allowlist, so every catalogued connector is allowed.
+    expect(allowedBy(isConnectorAllowed)).toEqual(ids);
+
+    // 2. A signed allowlist naming only github, applied AFTER the predicate was built: github is
+    //    the one connector allowed, its sibling server github_actions refused with the rest.
+    await apply(1, `["github"]`);
+    expect(allowedBy(isConnectorAllowed)).toEqual(["github"]);
+
+    // 3. A later bundle without github: the SAME predicate refuses it on its next call.
+    await apply(2, `["slack"]`);
+    expect(allowedBy(isConnectorAllowed)).toEqual(["slack"]);
+
+    // 4. A restart rehydrates the last-valid bundle, and a predicate built at boot agrees.
+    expect(allowedBy(connectorAllowPredicate(new PolicyGate(store, baseline)))).toEqual(["slack"]);
+  });
+
+  test("(f) assemble.ts hands the write transport the policy gate's own allowlist, read per call", async () => {
     // The transport's own tests drive an INJECTED predicate, so they would pass just as well if
     // the gateway injected `() => true`. This pins the link they cannot see, from the policy gate
     // through the team-credential contexts and `PlatformServices` to the dispatcher the gateway
@@ -1938,18 +1989,19 @@ code_execution=true
       return src.slice(at, src.indexOf("\n}\n", at));
     };
 
-    // 1. The predicate reads `policyGate.enforced()` on EVERY call, so a newly verified bundle
-    //    reaches the next write. The value the same function captures at boot for its audit rows
-    //    (`enforcedConnectorAllow`) would never change.
+    // 1. The predicate is `connectorAllowPredicate` over the gate this function built: the
+    //    decision (e) drives, which reads `policyGate.enforced()` on every call. The value this
+    //    function captures at boot for its audit rows (`enforcedConnectorAllow`) never changes.
+    //    The helper is imported and named nowhere else, so no local copy can stand in for it.
     const boot = bodyOf("function bootPolicyGateWithConnectorAllowlist(");
-    const predicateAt = boot.indexOf(
-      "const isConnectorAllowed = (serviceId: string): boolean => {",
+    expect(boot).toContain(
+      "return { policyStore, policyGate, isConnectorAllowed: connectorAllowPredicate(policyGate) };",
     );
-    expect(predicateAt).toBeGreaterThan(-1);
-    const predicate = boot.slice(predicateAt, boot.indexOf("\n  };", predicateAt));
-    expect(predicate).toContain("policyGate.enforced().connectorAllow");
-    expect(predicate).not.toContain("enforcedConnectorAllow");
-    expect(boot).toContain("return { policyStore, policyGate, isConnectorAllowed };");
+    const imported = src.match(/import \{([^}]*)\} from "\.\.\/policy\/connector-allowlist\.ts";/);
+    expect(imported?.[1]?.split(",").map((name) => name.trim())).toContain(
+      "connectorAllowPredicate",
+    );
+    expect(src.match(/\bconnectorAllowPredicate\b/g)).toHaveLength(2);
 
     // 2. Booted ONCE, before the one construction of the team-credential contexts, which is handed
     //    that predicate.
@@ -1971,16 +2023,26 @@ code_execution=true
       /\n\s*isConnectorAllowed,\n/,
     );
 
-    // 4. That context leaves assembly as `PlatformServices.connectorWriteDeps`, and the gateway
-    //    wraps its executor's dispatcher in the write transport with exactly it.
-    expect(src).toMatch(/\n\s*connectorWriteDeps,\n/);
+    // 4. That context leaves assembly as `PlatformServices.connectorWriteDeps`, unchanged: the
+    //    services literal carries the binding itself, and `assemblePlatformServices` names it
+    //    nowhere else (no widened copy, no later reassignment). The gateway then wraps its
+    //    executor's dispatcher in the write transport with exactly it.
+    const assembly = bodyOf("export async function assemblePlatformServices(");
+    expect(assembly).toContain("return services;");
+    const servicesAt = assembly.indexOf("const services: PlatformServices = {");
+    expect(servicesAt).toBeGreaterThan(-1);
+    expect(assembly.slice(servicesAt, assembly.indexOf("\n  };", servicesAt))).toMatch(
+      /\n\s*connectorWriteDeps,\n/,
+    );
+    // The destructuring from `buildTeamCredentialContexts` and the services literal: two.
+    expect(assembly.match(/\bconnectorWriteDeps\b/g)).toHaveLength(2);
     const main = stripComments(await read("packages/gateway/src/gateway-main.ts"));
     expect(main).toMatch(
       /createConnectorWriteDispatcher\(\s*createConnectorDispatcher\(dispatcherClient\),\s*platform\.connectorWriteDeps,?\s*\)/,
     );
   });
 
-  test("(f) the write transport refuses a blocked connector BEFORE it selects a credential", async () => {
+  test("(g) the write transport refuses a blocked connector BEFORE it selects a credential", async () => {
     // Every dispatchable connector write, through the wrapper the gateway installs around the
     // executor's dispatcher. A blocked connector must reach neither credential selection
     // (`credentialFor`), nor the team hand-off, nor a spawn, whichever credential it is pinned to.
@@ -2071,7 +2133,7 @@ code_execution=true
     }
   });
 
-  test("(g) a bare tool id never resolves onto a sibling server the same client carries", () => {
+  test("(h) a bare tool id never resolves onto a sibling server the same client carries", () => {
     // `MCPClient.listTools()` keys a tool `<server>_<tool>`, and one first-party server name can
     // extend another: the github spawner registers `github` AND `github_actions` in ONE client, so
     // `github_` + `actions_<tool>` spells github_actions' key exactly. The pairs are derived from
@@ -2095,7 +2157,7 @@ code_execution=true
     }
   });
 
-  test("(h) every seam that resolves a bare id runs the NAMED connector's tool, so a blocked sibling stays blocked", async () => {
+  test("(i) every seam that resolves a bare id runs the NAMED connector's tool, so a blocked sibling stays blocked", async () => {
     // The github spawner's client as a real session lists it, and an org policy that allows
     // `github` but blocks `github_actions`. The write transport checks the connector it is ASKED
     // for, so the blocked tool, named as a bare id on the allowed server, must find nothing.

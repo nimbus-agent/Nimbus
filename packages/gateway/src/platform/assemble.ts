@@ -249,7 +249,7 @@ import {
 } from "../ownership/ownership-refresh.ts";
 import { ownershipRoots } from "../ownership/ownership-target.ts";
 import { ensureAnchorKeypair } from "../policy/anchor-keypair.ts";
-import { partitionByAllowlist } from "../policy/connector-allowlist.ts";
+import { connectorAllowPredicate, partitionByAllowlist } from "../policy/connector-allowlist.ts";
 import { startPurge } from "../policy/gdpr-purge.ts";
 import { startGdprPurgeRetry } from "../policy/gdpr-purge-retry-sidecar.ts";
 import { GdprPurgeStore } from "../policy/gdpr-purge-store.ts";
@@ -1447,11 +1447,9 @@ function bootPolicyGateWithConnectorAllowlist(
       timestamp: blockedAt,
     });
   }
-  const isConnectorAllowed = (serviceId: string): boolean => {
-    const allow = policyGate.enforced().connectorAllow;
-    return allow === undefined || allow.includes(serviceId);
-  };
-  return { policyStore, policyGate, isConnectorAllowed };
+  // The live decision, read per call (`connectorAllowPredicate`), never `enforcedConnectorAllow`:
+  // that boot-time value only names the connectors audited as blocked above.
+  return { policyStore, policyGate, isConnectorAllowed: connectorAllowPredicate(policyGate) };
 }
 
 const OLLAMA_DEFAULT_BASE_URL = "http://127.0.0.1:11434";
