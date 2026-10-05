@@ -113,17 +113,16 @@ The gateway-side half — the sync handler and its mapper under `packages/gatewa
 
 ## Scaffold
 
-Always start from:
+No generator produces a first-party connector today. Write it by hand from nimbus-mcp-servers' [guide to adding a connector](https://github.com/nimbus-agent/nimbus-mcp-servers/blob/main/docs/adding-a-connector.md). Neither shortcut works there:
 
-```bash
-nimbus scaffold extension connectors/<name>   # run from the connectors repo root
-```
+- `create-nimbus-connector`'s default target is still the pre-move `packages/mcp-connectors/<name>/` layout. Its `../../shared/*` imports and `extends: "../../../tsconfig.base.json"` do not resolve in nimbus-mcp-servers, even with `--out-dir connectors/<id>`, and it emits no `src/tools.ts`. Its `--standalone` output is for a connector outside that repository.
+- `nimbus scaffold extension` emits a generic extension shell with no `src/server.ts`, which every connector gate keys off, so its output is invisible to all of them.
 
 Then add the sync handler and register in the connector registry at `packages/gateway/src/connectors/registry.ts`.
 
 ## Authoring Checklist
 
-- [ ] Package created under `connectors/<name>/` in the connectors repo via `nimbus scaffold extension`.
+- [ ] Package created under `connectors/<name>/` in the connectors repo, by hand from its guide to adding a connector (see § Scaffold).
 - [ ] `nimbus.extension.json` populated with `id`, `displayName`, `version`, `entrypoint`, `runtime: "bun"`, `permissions`, `hitlRequired`, `syncInterval`, `minNimbusVersion`.
 - [ ] Mandatory `list`, `get`, `search` tools exposed.
 - [ ] Every write tool listed in `hitlRequired` and calls `server.assertHitlRequired()` at the top of its handler.
