@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1791144794011,
+  "lastUpdate": 1791175007242,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "22938ac57788eed724d1ab6a28553bb7138b7631",
-          "message": "fix(perf): stop a huggingface.co stall from blowing the 45m bench timeout (#885)\n\n## What broke\n\n[`Bench\n(ubuntu-24.04)`](https://github.com/nimbus-agent/Nimbus/actions/runs/30300911723/job/90093517497)\nwas **cancelled on the job's `timeout-minutes: 45`**, not on any\nmeasurement.\n\nWorth stating up front, because it inverts the usual read of a red perf\nleg: **individual surface failures are tolerated.** `bench-cli.ts`\nrecords them as `S<n> failed: …` and still exits 0. On Linux, S1 / S4 /\nS6-\\* / S7-a / S7-b fail on *every* run (the spawned gateway child can't\ninit the Vault), and [the green leg 90 minutes\nearlier](https://github.com/nimbus-agent/Nimbus/actions/runs/30294063937)\nhad exactly those failures and finished in 11m48s. Wall-clock is the\nonly thing that reds this job.\n\n## Root cause\n\nThe outage was the trigger; the amplifier was ours.\n\n1. **Trigger (transient)** — huggingface.co became unreachable from the\nrunner. The Harden Runner DNS trace shows `huggingface.co` returning\nAAAA-only records, re-queried every 25 s, never connecting. The 12 S8\ncells need `Xenova/all-MiniLM-L6-v2`, fetched live on a cold cache.\n2. **Amplifier (structural)** —\n`bench-embedding-throughput.ts::getEmbedder()` called\n`createLocalEmbedder()` **fresh for every cell**. With nothing on disk,\neach cell independently paid the full `@xenova/transformers` failure\nladder — **~6m45s each**, measured off consecutive log timestamps. 12 ×\nthat ≈ **81 min** of dead wall-clock.\n\nThe job died at cell 6 of 12 (`S8-l500-b1`), which is *before* the\nstep's own `for attempt in 1 2` retry could run — so no artifact and no\nhistory line either.\n\nA resource load placed inside a fan-out surface is paid N times, so a\ntransient failure is multiplied by the fan-out factor rather than\nbounded by it.\n\n## The fix\n\n**`bench-embedding-throughput.ts`** — memoise the MiniLM load per cache\ndir for the process lifetime. The **rejected** promise is cached\ndeliberately: one stall now costs one attempt instead of twelve, so the\nleg finishes and still reports its other surfaces. Injection goes\nthrough a new `opts.createEmbedder` DI seam rather than `mock.module`,\nper the repo's CI-Linux guidance.\n\n**`_perf.yml`** — belt-and-braces, `actions/cache` the weights at `${{\nrunner.temp }}/perf-models` and point the bench at them via\n`NIMBUS_EMBEDDING_MODEL_DIR`. This takes huggingface.co off the critical\npath entirely, so S8 stays *measurable* rather than merely failing fast.\nBump the key's `-v1` when the model pin in\n`embedding/load-feature-extraction-pipeline.ts` changes —\n`actions/cache` never overwrites an existing key.\n\nModel load sits outside the timed window (there's already an explicit\nwarm-up embed before `t0`), so none of this shifts what S8 measures.\n\n## Verification\n\n- **4 new tests, all red-proven** — with the memo disabled, the failure\ntest reports `Received: 12` instead of `1`.\n- `bun test packages/gateway/src/perf/` — 259 pass, 0 fail.\n- `bun run preflight:fast` — **PASSED**, all 20 gates (incl.\n`audit:action-sha-pins` for the new pinned action).\n- CI unit suite (`packages/gateway packages/cli packages/mcp-connectors\nscripts`) — **14965 pass, 1 fail**, and that one failure\n(`test/integration/updater/wiring.test.ts`) **reproduces identically on\n`main`** — pre-existing, not this diff.\n- `packages/gateway/src/perf/` is coverage-floor exempt, so no baseline\nupdate is needed.\n- No markdown touched, so the lychee link total is unchanged from\n`main`.\n\n**Not verified locally:** the `build` gate fails on this machine with\n`Export named 'forEach' not found in module 'neotraverse'` — it **fails\nidentically on `main`**, and Docs Quality is green on `main` in CI, so\nit's a local Windows ESM artifact rather than a branch regression. It\ndoes mean `test:ci` aborts before its test phases here, which is why the\nunit suite was run directly.\n\n## Left out\n\n`bench-harness.ts` has no per-surface timeout, so a future hang in a\nnon-S8 surface can still eat the 45-minute budget. That's a broader\nchange with its own flake risk (picking a default that doesn't\nfalse-trip on `S8-l5000-b64`, which legitimately runs ~6m22s on\nWindows), so it's deliberately not in scope here.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n\n## Summary by CodeRabbit\n\n* **Performance**\n* Improved embedding benchmark performance by reusing downloaded model\nweights across workflow runs.\n* Prevented repeated model loading during benchmark runs, reducing\nunnecessary setup overhead.\n* Added safeguards for model-loading failures and separate cache\nlocations.\n\n* **Tests**\n* Expanded benchmark coverage for shared model loading, isolated caches,\nfailure handling, and explicit embedder configuration.\n\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\nCo-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>",
-          "timestamp": "2026-07-28T07:17:27+03:00",
-          "tree_id": "c486c2136a8bfc13593fa921773508c2626200e9",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/22938ac57788eed724d1ab6a28553bb7138b7631"
-        },
-        "date": 1785212990899,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 318.3593852499973,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 319.5809850500074,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 219.52790870000172,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "306811640+nimbus-release-bot[bot]@users.noreply.github.com",
+            "name": "nimbus-release-bot[bot]",
+            "username": "nimbus-release-bot[bot]"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "b0e54fcdef8ed58c5d3172f60359451ca50c02ac",
+          "message": "chore: release main (#1605)\n\n:robot: I have created a release *beep* *boop*\n---\n\n\n<details><summary>7.35.0</summary>\n\n##\n[7.35.0](https://github.com/nimbus-agent/Nimbus/compare/v7.34.0...v7.35.0)\n(2026-10-04)\n\n\n### Features\n\n* **ui:** On-call page for pushed briefs (PR 3 of 3)\n([#1604](https://github.com/nimbus-agent/Nimbus/issues/1604))\n([88e161a](https://github.com/nimbus-agent/Nimbus/commit/88e161a279ac8e5e7ab8f54c68f17c4fe8ed0861))\n\n\n### Bug Fixes\n\n* clear the SonarCloud backlog, reduce duplication and raise test\ncoverage ([#1603](https://github.com/nimbus-agent/Nimbus/issues/1603))\n([4663fbb](https://github.com/nimbus-agent/Nimbus/commit/4663fbb9b4c5139e449e0481b0b2d0dc3f357d6f))\n</details>\n\n---\nThis PR was generated with [Release\nPlease](https://github.com/googleapis/release-please). See\n[documentation](https://github.com/googleapis/release-please#release-please).\n\nCo-authored-by: nimbus-release-bot[bot] <306811640+nimbus-release-bot[bot]@users.noreply.github.com>",
+          "timestamp": "2026-10-05T06:59:52+03:00",
+          "tree_id": "ceba71b5f420f72f3a9dd6200bfaa106a77c96f4",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/b0e54fcdef8ed58c5d3172f60359451ca50c02ac"
+        },
+        "date": 1791175002730,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 251.04308975000458,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 249.83911564999215,
             "unit": "ms"
           }
         ]
