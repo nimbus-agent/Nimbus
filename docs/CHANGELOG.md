@@ -126,6 +126,27 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
   `stripe.refund.create`, a tool that exists in neither form. No new invariant, no migration, no
   new IPC method.
 
+- **2026-10-05 — The bundled connectors move to 0.2.2, and the `nodemailer` override is gone.**
+  `@nimbus-dev/connectors` goes from 0.2.1 to 0.2.2, and the gateway binary bundles it. As Nimbus
+  runs them, the connectors now:
+  - refuse a Bitbucket next-page link on another host instead of fetching it with the Bitbucket
+    credential attached;
+  - request six list and search tools (Outlook mail, CircleCI pipelines, Discord messages, Google
+    Meet list and search, Google Photos albums) under their API base once, not with a doubled
+    version segment;
+  - remove `aws_lambda_invoke`'s temp directory after every call;
+  - verify an audit entry whose detail holds an `undefined` value;
+  - use the latest MCP SDK, zod, imapflow, nodemailer, tsdav and hyparquet.
+
+  Four mutating tools are now registered as writes in the connectors' consent kit:
+  `aws_ec2_instance_stop`, `aws_ec2_instance_start`, `slack_message_post_dm` and
+  `teams_message_post_chat`. The root `nodemailer` override (10.0.13) existed to lift 0.2.1's
+  `^9.0.5` past its advisories. 0.2.2 declares `^10.0.14`, so the override could only force a
+  version below the connectors' own floor. It is removed, and `nodemailer` resolves to 10.0.14,
+  which `bun audit` reports clean at every severity. The gateway's own `imapflow` range moves
+  from `^2.2.1` to `^2.2.5`, so it shares one copy with the connectors instead of installing two.
+  No migration, no invariant change, no new IPC method.
+
 - **2026-10-05 — `audit:boundaries` enforces its rules again, and fails when it cannot.** The gate
   runs dependency-cruiser over `.dependency-cruiser.cjs`: no cycles, no cross-package source imports,
   and PAL isolation. It had been inert on a coin flip since TypeScript 7 landed (#1049, 2026-08-05).
