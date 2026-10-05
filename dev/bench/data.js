@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1791194195999,
+  "lastUpdate": 1791196577481,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "306811640+nimbus-release-bot[bot]@users.noreply.github.com",
-            "name": "nimbus-release-bot[bot]",
-            "username": "nimbus-release-bot[bot]"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "54936cdb816f174ca2114c44e97979413e84d483",
-          "message": "chore: release main (#898)\n\n:robot: I have created a release *beep* *boop*\n---\n\n\n<details><summary>1.4.2</summary>\n\n##\n[1.4.2](https://github.com/nimbus-agent/Nimbus/compare/v1.4.1...v1.4.2)\n(2026-07-28)\n\n\n### Bug Fixes\n\n* **cast-driver:** print the diff on DRIFT so a macOS-only failure is\ndiagnosable ([#897](https://github.com/nimbus-agent/Nimbus/issues/897))\n([b9d074c](https://github.com/nimbus-agent/Nimbus/commit/b9d074cd25629eef66f373ad26b2469b1ba02911))\n</details>\n\n---\nThis PR was generated with [Release\nPlease](https://github.com/googleapis/release-please). See\n[documentation](https://github.com/googleapis/release-please#release-please).\n\nCo-authored-by: nimbus-release-bot[bot] <306811640+nimbus-release-bot[bot]@users.noreply.github.com>",
-          "timestamp": "2026-07-28T10:44:47Z",
-          "tree_id": "44fd2b1d9665c6e5b1b4b800a6eab16f200f1206",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/54936cdb816f174ca2114c44e97979413e84d483"
-        },
-        "date": 1785236225495,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 307.02387164999965,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 310.0832242999997,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 324.39404664999455,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "306811640+nimbus-release-bot[bot]@users.noreply.github.com",
+            "name": "nimbus-release-bot[bot]",
+            "username": "nimbus-release-bot[bot]"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "d17799d2ae326c53afabe1fcbd0f272d8ecf8097",
+          "message": "chore: release main (#1612)\n\n:robot: I have created a release *beep* *boop*\n---\n\n\n<details><summary>7.35.1</summary>\n\n##\n[7.35.1](https://github.com/nimbus-agent/Nimbus/compare/v7.35.0...v7.35.1)\n(2026-10-05)\n\n\n### Bug Fixes\n\n* **cli:** make --format plain's underscore-italic pass linear\n([#1608](https://github.com/nimbus-agent/Nimbus/issues/1608))\n([475735e](https://github.com/nimbus-agent/Nimbus/commit/475735ee7c9d54dca0b9d5a605506f420cd20d58))\n* **deps:** bump the bundled connectors to 0.2.2 and drop the nodemailer\noverride ([#1606](https://github.com/nimbus-agent/Nimbus/issues/1606))\n([58ad04f](https://github.com/nimbus-agent/Nimbus/commit/58ad04fad78a7c7f3c79f8602b41e7798fc05b62))\n* **deps:** bundle connectors 0.2.4, and name the right Workday task in\nthe auth help\n([#1614](https://github.com/nimbus-agent/Nimbus/issues/1614))\n([d25fbea](https://github.com/nimbus-agent/Nimbus/commit/d25fbea19f8d3042e68ec17eeacf5d3b96b962a9))\n* **gateway:** enforce the connector allowlist at the federated invoke\ngate, and route ChatOps writes through the write transport\n([#1615](https://github.com/nimbus-agent/Nimbus/issues/1615))\n([1c578cb](https://github.com/nimbus-agent/Nimbus/commit/1c578cbbda71f4645726b5348050ccfab2d200bf))\n* **gateway:** refuse connector writes and code-executing connector\ntools at the federated invoke gate (I26)\n([#1607](https://github.com/nimbus-agent/Nimbus/issues/1607))\n([eeb5245](https://github.com/nimbus-agent/Nimbus/commit/eeb5245bf3237abb4cf9e70407cddc1e527583ac))\n* **gateway:** resolve bare connector tool ids on the caller's own MCP\nserver ([#1610](https://github.com/nimbus-agent/Nimbus/issues/1610))\n([3e41d5b](https://github.com/nimbus-agent/Nimbus/commit/3e41d5b34c216d74e63c83473525718633f93210))\n</details>\n\n---\nThis PR was generated with [Release\nPlease](https://github.com/googleapis/release-please). See\n[documentation](https://github.com/googleapis/release-please#release-please).\n\nCo-authored-by: nimbus-release-bot[bot] <306811640+nimbus-release-bot[bot]@users.noreply.github.com>",
+          "timestamp": "2026-10-05T13:21:26+03:00",
+          "tree_id": "7e676879b3169c41565c41e85fa1873be10d08fe",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/d17799d2ae326c53afabe1fcbd0f272d8ecf8097"
+        },
+        "date": 1791196573304,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 336.7239921500004,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 340.33415085001144,
             "unit": "ms"
           }
         ]
