@@ -308,7 +308,7 @@ Everything else follows the standard triple. These break from it in a way worth 
 | File | Purpose |
 |---|---|
 | `packages/gateway/src/federation/query-gate.ts` | `answerFederatedQuery` — invariant `I17`/`D13` leak-proof federated read gate |
-| `packages/gateway/src/federation/invoke-gate.ts` | `answerFederatedInvoke` — invariants `I19`/`I26` team-tool / warehouse-write peer gate |
+| `packages/gateway/src/federation/invoke-gate.ts` | `answerFederatedInvoke` — invariants `I19`/`I22`/`I26` team-tool peer gate: write and code-execution refusals, the org policy's connector allowlist |
 | `packages/gateway/src/federation/preflight-gate.ts` | `I24`/`D18` federated action-request preflight (LOCAL owner HITL, sandboxed) |
 | `packages/gateway/src/identity/verifier.ts` | `isOperatorValid` — invariant `I18`/`D14` sole IdP-token validation site |
 | `packages/gateway/src/teamvault/team-tool-invoke.ts` | `I19`/`D15` ephemeral team-credentialed connector |

@@ -2024,9 +2024,10 @@ code_execution=true
     );
 
     // 4. That context leaves assembly as `PlatformServices.connectorWriteDeps`, unchanged: the
-    //    services literal carries the binding itself, and `assemblePlatformServices` names it
-    //    nowhere else (no widened copy, no later reassignment). The gateway then wraps its
-    //    executor's dispatcher in the write transport with exactly it.
+    //    services literal carries the binding itself, and `assemblePlatformServices` names it only
+    //    at its destructuring, the ChatOps boot (pinned by (j)) and that literal, with no widened
+    //    copy and no later reassignment. The gateway then wraps its executor's dispatcher in the
+    //    write transport with exactly it.
     const assembly = bodyOf("export async function assemblePlatformServices(");
     expect(assembly).toContain("return services;");
     const servicesAt = assembly.indexOf("const services: PlatformServices = {");
@@ -2034,11 +2035,56 @@ code_execution=true
     expect(assembly.slice(servicesAt, assembly.indexOf("\n  };", servicesAt))).toMatch(
       /\n\s*connectorWriteDeps,\n/,
     );
-    // The destructuring from `buildTeamCredentialContexts` and the services literal: two.
-    expect(assembly.match(/\bconnectorWriteDeps\b/g)).toHaveLength(2);
+    // The destructuring from `buildTeamCredentialContexts`, the ChatOps boot (see (j)) and the
+    // services literal: three.
+    expect(assembly.match(/\bconnectorWriteDeps\b/g)).toHaveLength(3);
     const main = stripComments(await read("packages/gateway/src/gateway-main.ts"));
     expect(main).toMatch(
       /createConnectorWriteDispatcher\(\s*createConnectorDispatcher\(dispatcherClient\),\s*platform\.connectorWriteDeps,?\s*\)/,
+    );
+  });
+
+  test("(j) the federated invoke gate and the ChatOps executor get that same allowlist and transport", async () => {
+    // Two more off-mesh doors, each pinned from the boot predicate to its consumer. The invoke gate's
+    // own tests drive an injected predicate, and the ChatOps boot takes its dispatcher as a dep, so
+    // neither would notice a stand-in here. Comments stripped: every pattern below is about code.
+    const src = stripComments(await read("packages/gateway/src/platform/assemble.ts"));
+    const bodyOf = (signature: string): string => {
+      const at = src.indexOf(signature);
+      expect(at, signature).toBeGreaterThan(-1);
+      return src.slice(at, src.indexOf("\n}\n", at));
+    };
+    const onlyCall = (name: string): string => {
+      const calls = [...src.matchAll(new RegExp(`(?<!function )${name}\\(`, "g"))];
+      expect(calls, name).toHaveLength(1);
+      const at = calls[0]?.index ?? -1;
+      return src.slice(at, src.indexOf("});", at));
+    };
+
+    // 1. Federation: the boot predicate itself reaches the anchor's team-vault backing, which
+    //    `federation.invoke` hands to `answerFederatedInvoke`.
+    expect(onlyCall("bootFederationIntoIpcOpts")).toMatch(/\n\s*isConnectorAllowed,\n/);
+    const federation = bodyOf("async function bootFederationIntoIpcOpts(");
+    expect(federation).toMatch(/const \{[^}]*\bisConnectorAllowed\b[^}]*\} = opts;/);
+    const teamVaultAt = federation.indexOf("const teamVault = {");
+    expect(teamVaultAt).toBeGreaterThan(-1);
+    // The literal's last field ends the slice, so the shorthand need not be followed by a newline.
+    expect(federation.slice(teamVaultAt, federation.indexOf("\n  };", teamVaultAt))).toMatch(
+      /\n\s*isConnectorAllowed,(?:\n|$)/,
+    );
+    const rpc = stripComments(await read("packages/gateway/src/ipc/federation-rpc.ts"));
+    expect(rpc).toMatch(
+      /answerFederatedInvoke\([\s\S]*?isConnectorAllowed: tv\.isConnectorAllowed,/,
+    );
+
+    // 2. ChatOps: the executor's real dispatcher is wrapped in the write transport with the one
+    //    `connectorWriteDeps`, exactly as `runAsk`'s is in gateway-main.ts, so an owner-approved write
+    //    from chat selects its configured credential and asks the allowlist first.
+    expect(onlyCall("bootChatopsIntoAssembly")).toMatch(/\n\s*connectorWriteDeps,\n/);
+    const chatops = bodyOf("async function bootChatopsIntoAssembly(");
+    expect(chatops).toMatch(/const \{[^}]*\bconnectorWriteDeps\b[^}]*\} = deps;/);
+    expect(chatops).toMatch(
+      /dispatcher:\s*chatopsE2eSinkDir === undefined \|\| chatopsE2eSinkDir === ""\s*\?\s*createConnectorWriteDispatcher\(\s*createConnectorDispatcher\(\{[\s\S]*?\}\),\s*connectorWriteDeps,?\s*\)/,
     );
   });
 

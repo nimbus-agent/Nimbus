@@ -380,6 +380,7 @@ describe("tryDispatchFederationRpc — optional spread branches", () => {
       teamVault: {
         quorumFor: () => undefined,
         runTool: async () => ({}),
+        isConnectorAllowed: () => true,
       },
     });
     const out = await tryDispatchFederationRpc(ctx, "federation.discover", {});
