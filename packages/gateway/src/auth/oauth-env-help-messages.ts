@@ -217,7 +217,7 @@ https://dev.mendeley.com/myapps.html → your application → copy the secret.
 PowerShell:
   $env:NIMBUS_OAUTH_MENDELEY_CLIENT_SECRET = "..."`;
 
-export const WORKDAY_OAUTH_CLIENT_ID_HELP = `Set NIMBUS_OAUTH_WORKDAY_CLIENT_ID to your Workday API client ID (register an API Client for Integrations in your Workday tenant with the authorization-code grant).
+export const WORKDAY_OAUTH_CLIENT_ID_HELP = `Set NIMBUS_OAUTH_WORKDAY_CLIENT_ID to your Workday API client ID. Register the client with Workday's "Register API Client" task, not "Register API Client for Integrations", which has no grant type or redirect URI: choose the Authorization Code Grant and the redirection URI http://127.0.0.1:<port>/oauth/callback, then run nimbus connector auth workday --port <port> with the same port.
 
 You must also set NIMBUS_OAUTH_WORKDAY_CLIENT_SECRET, NIMBUS_WORKDAY_TENANT_HOST (e.g. https://wd5-services1.workday.com) and NIMBUS_WORKDAY_TENANT (your tenant name).
 
