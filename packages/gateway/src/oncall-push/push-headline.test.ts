@@ -6,6 +6,7 @@ import { join } from "node:path";
 
 import { parseAgentCommand } from "../agent-commands/parse-agent-command.ts";
 import { selectIncidentById } from "../agents/_lib/oncall-queries.ts";
+import { toWireText } from "../chatops/escape-outbound.ts";
 import { fireDemoPage, seedDemoCorpus } from "../demo/seed.ts";
 import { CURRENT_SCHEMA_VERSION } from "../index/local-index.ts";
 import { runIndexedSchemaMigrations } from "../index/migrations/runner.ts";
@@ -188,17 +189,20 @@ describe("renderPushHeadline", () => {
     expect(lines(renderPushHeadline(sev2))[0]).toStartWith("SEV2 · ");
   });
 
-  test("a hostile title renders inert", async () => {
+  // The headline is RAW; escaping happens once, at the wire (`toWireText`, applied by the ledger
+  // wrapper every post goes through). Asserting the wire form here pins "escaped exactly once".
+  test("a hostile title renders inert on the wire, escaped exactly once", async () => {
     const d = await realDelivery();
     const x: PushDelivery = {
       ...d,
       incident: { ...d.incident, title: "DB down <!channel> <https://evil|Rollback docs> & more" },
     };
-    const first = lines(renderPushHeadline(x))[0] ?? "";
+    const first = lines(toWireText("slack", renderPushHeadline(x)))[0] ?? "";
     expect(first).not.toContain("<");
     expect(first).toContain(
       "DB down &lt;!channel&gt; &lt;https://evil|Rollback docs&gt; &amp; more",
     );
+    expect(first).not.toContain("&amp;lt;");
   });
 
   test("line breaks in either title cannot forge a line: still exactly three lines", async () => {
@@ -233,7 +237,7 @@ describe("renderPushHeadline", () => {
   test("an id with Slack control characters (<, &, >) renders escaped", async () => {
     const d = await realDelivery();
     const x: PushDelivery = { ...d, row: { ...d.row, incidentId: "pagerduty:P<&>" } };
-    const third = lines(renderPushHeadline(x))[2] ?? "";
+    const third = lines(toWireText("slack", renderPushHeadline(x)))[2] ?? "";
     expect(third).not.toContain("<");
     expect(third).toContain("incidentId=pagerduty:P&lt;&amp;&gt;");
   });
@@ -270,7 +274,7 @@ describe("renderPushSummary", () => {
     ];
     const rest = all.slice(3);
     expect(renderPushSummary(all, rest)).toBe(
-      "5 P1 incidents paged (3 briefs ready). Not posted individually: pagerduty:D, pagerduty:E — @nimbus agent oncall incidentId=&lt;id&gt; for any of them",
+      "5 P1 incidents paged (3 briefs ready). Not posted individually: pagerduty:D, pagerduty:E — @nimbus agent oncall incidentId=<id> for any of them",
     );
   });
   test("singular brief", async () => {
@@ -292,7 +296,7 @@ describe("renderPushSummary", () => {
     const out = renderPushSummary(rest, rest);
     expect(out).toContain("pagerduty:S9 … and 37 more (locally: nimbus oncall pushed list)");
     expect(out).not.toContain("pagerduty:S10,");
-    expect(out).not.toContain("<");
+    expect(toWireText("slack", out)).not.toContain("<");
   });
 });
 

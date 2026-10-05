@@ -342,7 +342,13 @@ describe("chatops e2e (real gateway subprocess + mock connector sink)", () => {
     );
     expect(rollback.payload).toEqual({ service: "payment-service", version: "v1.4" });
     await until(
-      () => chatPosts().find((p) => p.text.includes("approved & executed")),
+      () =>
+        chatPosts().find(
+          (p) =>
+            p.text.includes(
+              "approved &amp; executed",
+            ) /* Slack wire form: every post is escaped at the ledger wrapper */,
+        ),
       "approved reply",
     );
     const rows = await auditRowsWhen(

@@ -58,6 +58,23 @@ describe("chatops egress appender", () => {
     expect(s.calls).toHaveLength(1);
   });
 
+  test("Slack-bound text is escaped BEFORE the append, so the ledger counts the bytes that leave", async () => {
+    const s = spy();
+    const posts = buildLedgeredChatPosts(db, s.fn, SALT);
+    await posts.agentBrief("slack", "C1", "brief <!channel> & more");
+    const wire = "brief &lt;!channel&gt; &amp; more";
+    expect(s.calls).toEqual([["slack", "C1", wire]]);
+    expect(listEgress(db, { limit: 1 })[0]?.payloadSummary).toContain(
+      `"bytes":${Buffer.byteLength(wire, "utf8")}`,
+    );
+  });
+
+  test("Teams-bound text is posted unchanged", async () => {
+    const s = spy();
+    await buildLedgeredChatPosts(db, s.fn, SALT).reply("teams", "19:abc", "a <b> & c");
+    expect(s.calls).toEqual([["teams", "19:abc", "a <b> & c"]]);
+  });
+
   test("the channel id is never stored in cleartext", async () => {
     const s = spy();
     await buildLedgeredChatPosts(db, s.fn, SALT).reply("slack", "C01ABC2DEF3", "hi");
