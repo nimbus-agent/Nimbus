@@ -6,6 +6,13 @@ import { createServiceScopedVaultView } from "./service-scoped-vault-view.ts";
 export interface ConnectorWriteContext {
   readonly vault: NimbusVault;
   readonly sandboxCwd: string;
+  /**
+   * I22: the org policy's connector allowlist (`policyGate.enforced().connectorAllow`, read per call
+   * so a newly verified bundle applies without a restart). This transport spawns its OWN connector
+   * session rather than going through the mesh, so the mesh's policy filter never sees it; a write
+   * to a connector the policy blocks is refused here, before any credential is selected or read.
+   */
+  readonly isConnectorAllowed: (service: string) => boolean;
   /** Per-connector credential selection from [connectors.<name>]; defaults to personal. */
   readonly credentialFor: (service: string) => {
     credential: "personal" | "team";
@@ -48,12 +55,19 @@ export function __setPersonalInvokeForTest(fn: PersonalInvoke | undefined): void
  * Run a connector write tool with the connector's configured credential. Mirrors
  * {@link listConnectorItems}: personal → spawn once with a service-scoped vault view and call the
  * write tool; team → the I19 localOperator invoke gate. The HITL (I2) check is upstream in the
- * executor — this transport is reached only after `gate()` returns "proceed".
+ * executor — this transport is reached only after `gate()` returns "proceed". A connector the org
+ * policy blocks (I22) is refused first, on both credentials, and nothing is spawned.
  */
 export async function invokeConnectorWrite(
   ctx: ConnectorWriteContext,
   req: { service: string; writeToolId: string; args: unknown },
 ): Promise<unknown> {
+  if (!ctx.isConnectorAllowed(req.service)) {
+    throw new Error(
+      `connectors.${req.service}: blocked by the org policy's connector allowlist (I22); ` +
+        `${req.writeToolId} was not run`,
+    );
+  }
   const cfg = ctx.credentialFor(req.service);
   if (cfg.credential === "team") {
     if (cfg.teamEntry === undefined || cfg.teamEntry === "") {

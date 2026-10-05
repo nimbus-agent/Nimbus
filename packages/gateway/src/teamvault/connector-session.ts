@@ -1,7 +1,12 @@
 import type { MCPClient } from "@mastra/mcp";
 import * as spawners from "../connectors/lazy-mesh/connector-spawns.ts";
 import type { MeshSpawnContext } from "../connectors/lazy-mesh/slot.ts";
-import { type LazyMeshToolMap, listLazyMeshClientTools } from "../connectors/lazy-mesh/tool-map.ts";
+import {
+  type LazyMeshToolMap,
+  listedTool,
+  listLazyMeshClientTools,
+  resolveServerTool,
+} from "../connectors/lazy-mesh/tool-map.ts";
 import type { NimbusVault } from "../vault/nimbus-vault.ts";
 
 export interface ConnectorSessionRequest {
@@ -11,7 +16,22 @@ export interface ConnectorSessionRequest {
 }
 
 export interface ConnectorToolSession {
+  /**
+   * Call a tool by its connector's own MCP name (`snowflake_list`) — the id the gateway's own code
+   * holds — resolved on the session's server (see `resolveServerTool`).
+   */
   call(toolId: string, args: unknown): Promise<unknown>;
+}
+
+/** What {@link withConnectorSession} hands its body. */
+export interface ConnectorSession extends ConnectorToolSession {
+  /**
+   * Call a tool by the EXACT key the session lists it under (`snowflake_snowflake_list`), never
+   * resolved from a bare id (see `listedTool`). For an id an authorization was granted on — a
+   * federated peer's invoke — so the one string the grant, its revocation and the quorum rule were
+   * checked against is the one key that runs.
+   */
+  callListed(key: string, args: unknown): Promise<unknown>;
 }
 
 type Spawner = (ctx: MeshSpawnContext) => Promise<void>;
@@ -104,10 +124,17 @@ export async function realSpawn(
 /**
  * Spawn a connector ONCE, execute `body` with a session that can make N calls, then disconnect.
  * D9 primitive: Windows process spawns are expensive — one spawn per sync cycle, N paginated calls.
+ *
+ * `session.call` takes the tool's own MCP name (`snowflake_list`), the id the gateway's own callers
+ * hold, and resolves it on the session's own server: the spawners key each server by its service
+ * id, and the client lists it as `<service>_<tool>` (see `resolveServerTool`). A bare id never
+ * resolves to a tool of a different server the same client happens to carry (`github_actions`
+ * beside `github`); an exact listed key is answered as it always was. `session.callListed` answers
+ * the exact listed key only, for a caller whose id an authorization was granted on.
  */
 export async function withConnectorSession<T>(
   req: ConnectorSessionRequest,
-  body: (session: ConnectorToolSession) => Promise<T>,
+  body: (session: ConnectorSession) => Promise<T>,
 ): Promise<T> {
   const spawn = spawnOverride ?? realSpawn;
   const client = await spawn(req);
@@ -116,16 +143,17 @@ export async function withConnectorSession<T>(
   }
   try {
     const tools = await client.listTools();
-    const session: ConnectorToolSession = {
-      call(toolId, args) {
-        const tool = tools[toolId];
-        if (tool?.execute === undefined) {
-          return Promise.reject(
-            new Error(`connector-session: tool "${toolId}" not found for service "${req.service}"`),
-          );
-        }
-        return tool.execute(args);
-      },
+    const run = (tool: LazyMeshToolMap[string] | undefined, id: string, args: unknown) => {
+      if (tool?.execute === undefined) {
+        return Promise.reject(
+          new Error(`connector-session: tool "${id}" not found for service "${req.service}"`),
+        );
+      }
+      return tool.execute(args);
+    };
+    const session: ConnectorSession = {
+      call: (toolId, args) => run(resolveServerTool(tools, req.service, toolId), toolId, args),
+      callListed: (key, args) => run(listedTool(tools, key), key, args),
     };
     return await body(session);
   } finally {
