@@ -205,7 +205,8 @@ function stepDefault(src: string, state: StripState): void {
  * and no audit reads that file as input.
  *
  * If you need comment-stripping for a NEW guard, consider whether a line-based skip suffices —
- * `check-connector-consent.ts` uses one. Note the trade: line-based handles block comments and
+ * `check-connector-consent.ts` uses one (it left this repository with the connectors and lives in
+ * nimbus-agent/nimbus-mcp-servers now). Note the trade: line-based handles block comments and
  * misses TRAILING ones (`const x = 1; // marker`), which this function handles correctly.
  */
 export function stripComments(src: string): string {
@@ -358,7 +359,6 @@ export async function* iterateSourceFiles(): AsyncGenerator<{
 }> {
   const seen = new Set<string>();
   yield* iterateGlob(new Glob("packages/*/src/**/*.ts"), seen);
-  yield* iterateGlob(new Glob("packages/mcp-connectors/*/src/**/*.ts"), seen);
 }
 
 export function auditOutputPath(name: string): string {

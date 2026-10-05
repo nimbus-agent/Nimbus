@@ -175,40 +175,44 @@ If a file is genuinely untestable glue rather than logic, it can be excluded —
 ## Adding a New MCP Connector
 
 Connectors live in their own repository, [nimbus-agent/nimbus-mcp-servers](https://github.com/nimbus-agent/nimbus-mcp-servers), and ship as
-the `@nimbus-dev/connectors` npm package that this gateway consumes. Add or change one there.
-
-Use [`create-nimbus-connector`](https://github.com/nimbus-agent/create-nimbus-connector). It is
-published on npm and emits the whole connector package from a JSON spec — `src/server.ts`, the
-`nimbus.extension.json` manifest, a per-package TypeScript config, a `package.json` matching the
-connector convention, a `README.md`, and `test/sandbox.test.ts`, plus `src/search-filter.ts` when
-the spec declares a search tool.
-
-```bash
-bunx create-nimbus-connector --spec ./your-service.spec.json
-```
-
-**Run it from the connectors repository's root**, where it writes to `connectors/<name>` relative
-to your current directory. Running it from inside `connectors/` nests the output one level too deep.
+the `@nimbus-dev/connectors` npm package that this gateway consumes. Add or change one there, by
+hand, following that repository's
+[guide to adding a connector](https://github.com/nimbus-agent/nimbus-mcp-servers/blob/main/docs/adding-a-connector.md):
+the `connectors/<id>/` layout, the manifest, the tool surface, credentials and the gates.
 
 A connector that the gateway should also INDEX needs its sync handler and registry entry here, in
-this repository — adding one touches both repos. See [nimbus-agent/nimbus-mcp-servers](https://github.com/nimbus-agent/nimbus-mcp-servers).
+this repository — adding one touches both repos.
 
-Model your spec on one of the generator's own fixtures — `fixtures/netlify.spec.json` is a good
-read-only example. Add `--standalone` if you want the connector outside this repo; that variant
-resolves its helpers from the published `@nimbus-dev/sdk` instead of relative `../../shared/*`
-paths.
+**[`create-nimbus-connector`](https://github.com/nimbus-agent/create-nimbus-connector) cannot
+generate a connector for that repository yet.** Its default target is still the layout this
+repository had before the connectors moved out. It writes `packages/mcp-connectors/<name>/` under
+the current directory, its `src/server.ts` imports `../../shared/*`, and its TypeScript config
+extends `../../../tsconfig.base.json`. In the connectors repository a connector sits at
+`connectors/<id>/`, imports `../../../shared/*` and extends `../../tsconfig.base.json`. So neither
+the imports nor the `extends` resolve there, even when `--out-dir` points the output at
+`connectors/<id>/`. The generator also emits no `src/tools.ts`, which the guide asks for. Its own
+README says it has not been re-targeted.
 
-**`nimbus scaffold extension` is not the tool for this.** It emits a four-file generic extension
-shell with no `src/server.ts`, and every connector gate — `audit:connector-registry-drift` here,
-`audit:connector-entrypoints` and `audit:connector-deps` in the connectors repository — keys off
-that file, so its output is invisible to all three. They report clean, which is not the same as done.
+Its `--standalone` output does not depend on that layout. It is for a connector that lives outside
+the connectors repository: a self-contained package that resolves its helpers from the published
+`@nimbus-dev/sdk` instead of relative paths. Model its spec on one of the generator's own fixtures;
+`fixtures/netlify.spec.json` is a good read-only example.
 
-### After generating
+```bash
+bunx create-nimbus-connector --spec ./your-service.spec.json --standalone
+```
+
+**`nimbus scaffold extension` is not the tool for a connector either.** It emits a four-file
+generic extension shell with no `src/server.ts`, and every connector gate —
+`audit:connector-registry-drift` here, `audit:connector-entrypoints` and `audit:connector-deps` in
+the connectors repository — keys off that file, so its output is invisible to all three. They report
+clean, which is not the same as done.
+
+### After writing it
 
 Everything else about the connector package happens in the connectors repository and is described
-there — its [guide to adding a connector](https://github.com/nimbus-agent/nimbus-mcp-servers/blob/main/docs/adding-a-connector.md)
-and its contributing guide. Its single pre-push command is `bun run check` (lint, typecheck, the
-connector audits and the full suite).
+there, in the guide linked above and in its contributing guide. Its single pre-push command is
+`bun run check` (lint, typecheck, the connector audits and the full suite).
 
 This repository picks the connector up only after it is **published** in a new
 `@nimbus-dev/connectors` release: the maintainer bumps the pin here and regenerates the bundled

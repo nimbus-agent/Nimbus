@@ -136,7 +136,7 @@ export class NegatedWorkspaceEntryError extends Error {
 /**
  * Every manifest root `overrides` actually governs: the root manifest plus each
  * workspace member. Workspace entries may be globs, so a literal path and a
- * `packages/*` pattern both resolve correctly — Nimbus lists 99 literal paths
+ * `packages/*` pattern both resolve correctly — Nimbus lists only literal paths
  * today, but a future glob must not silently shrink this gate's scope.
  *
  * NEGATED entries (`"!packages/legacy-thing"`) are refused outright. Bun honours
@@ -150,7 +150,7 @@ export class NegatedWorkspaceEntryError extends Error {
  * silently divergent answer. Supporting negation means replicating bun's ordering
  * semantics deliberately, as its own change with its own tests — not as a
  * side-effect of this one. Nothing in this repo is affected today: root
- * `workspaces` is 99 literal paths with no negated entries and no globs.
+ * `workspaces` lists only literal paths, with no negated entries and no globs.
  */
 export function workspaceManifests(repoRoot: string): string[] {
   const root = readJson(join(repoRoot, "package.json"));

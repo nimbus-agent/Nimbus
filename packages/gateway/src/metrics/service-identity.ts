@@ -120,9 +120,9 @@ function deploymentEnvironment(meta: Record<string, unknown>): string | undefine
  * F2 DECISION (no-signal case, REVISED — was fail-open): a deployment with
  * NEITHER `metadata.environment` NOR `metadata.target` now resolves
  * `excluded`, not `bound`. The prior fail-open reasoning leaned on Vercel
- * "always" writing `target` — but this repo's own connector description
- * (`packages/mcp-connectors/vercel/nimbus.extension.json`) documents
- * `target` as `production/staging` only (no "always present" guarantee),
+ * "always" writing `target` — but the Vercel connector's own description
+ * (`connectors/vercel/nimbus.extension.json` in `@nimbus-dev/connectors`)
+ * documents `target` as `production/staging` only (no "always present" guarantee),
  * and `vercel-deployment-mapping.ts` already treats it as possibly absent
  * (`stringField(row, "target") ?? null`). If the Vercel API ever returns
  * `target: null` for a preview deploy, fail-open would filter nothing while

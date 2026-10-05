@@ -5,12 +5,14 @@ import { isConnectorCodeExecutionToolId } from "../connectors/connector-code-exe
  *
  * A tool is read-only iff its trailing `_`-segment is a recognized READ verb. The set is the
  * spec's four (`list`/`get`/`query`/`search`) plus a curated read surface grounded in a scan of
- * `packages/mcp-connectors/*` tool ids (e.g. `slack_channel_history`, `dataprofile_preview`,
- * `*_read`/`*_fetch`/`*_download`). This is intentionally a POSITIVE allowlist — a write tool
- * absent from `HITL_REQUIRED_BACKING` (a real risk the design review flagged) is STILL classified
- * non-read here, because classification never consults the HITL set. Anything unrecognized is
- * skipped (`skipped-non-read`), which is fail-safe: a missed read tool costs replay coverage, never
- * safety. Broadening the set is a safe, additive follow-up.
+ * the first-party connectors' tool ids — then `packages/mcp-connectors/*`, now the
+ * `@nimbus-dev/connectors` package built from nimbus-agent/nimbus-mcp-servers (e.g.
+ * `slack_channel_history`, `gdrive_file_metadata`, `*_read`/`*_fetch`/`*_download`). This is
+ * intentionally a POSITIVE allowlist — a write tool absent from `HITL_REQUIRED_BACKING` (a real
+ * risk the design review flagged) is STILL classified non-read here, because classification never
+ * consults the HITL set. Anything unrecognized is skipped (`skipped-non-read`), which is fail-safe:
+ * a missed read tool costs replay coverage, never safety. Broadening the set is a safe, additive
+ * follow-up.
  *
  * A code-execution tool id (I26 `isConnectorCodeExecutionToolId`) is EXCLUDED whatever its verb,
  * because `share.replay` is a second door a caller names tools through (an untrusted share file,
