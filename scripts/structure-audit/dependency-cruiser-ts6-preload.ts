@@ -15,7 +15,8 @@
  * EITHER `typescript@6.0.3` (the alias, and `packages/docs`' own pin) OR `typescript@7.0.2` (the
  * root compiler), and the choice varies between installs of the SAME `bun.lock`. On 2026-10-05,
  * 11 local checkouts at one lockfile hash split 3 to 8. Since TypeScript 7 landed (#1049,
- * 2026-08-05), 19 of the 33 `main` pushes sampled (one per lockfile change) ran the gate inert in CI.
+ * 2026-08-05), the gate ran inert in CI on 19 of the 33 first `main` runs after a lockfile change,
+ * each a fresh install (`check-boundaries.ts` covers how later runs inherit a cached tree).
  *
  * HOW. Bun virtual modules (`build.module`) answer all three lookups dependency-cruiser makes:
  * `require("typescript/package.json")` for its version gate, `require.resolve("typescript")` for

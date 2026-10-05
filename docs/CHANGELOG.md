@@ -27,9 +27,12 @@ Phase-level history before `v0.1.0` (Phases 1â€“4) lives in [`docs/roadmap.md` Â
   the 6.0.3 alias or at the 7.0.2 compiler, and the choice varies between installs of the same
   lockfile. On one machine, a single lockfile hash linked 6 in three checkouts and 7 in eight. On 7,
   dependency-cruiser skipped every `.ts`/`.tsx` file and cruised one `.mjs`. It then printed "no
-  dependency violations found (1 modules, 0 dependencies cruised)" and exited 0. In CI, 19 of 33
-  sampled `main` pushes (one per lockfile change) ran it that way, because the `node_modules` cache,
-  keyed on `bun.lock`, carried each lockfile's first draw forward.
+  dependency violations found (1 modules, 0 dependencies cruised)" and exited 0. In CI it ran that
+  way on 19 of the 33 first `main` runs after a lockfile change. Those runs miss the `node_modules`
+  cache, which is keyed on `bun.lock`, so every job in them installs, and draws, on its own; later
+  runs restore whichever job's tree was saved first. #1593's structure job drew 7 and ran inert, and
+  the next push, on the same lockfile, restored another job's tree and cruised 1,448 modules. So 19 of
+  33 is a rate of fresh installs; the share of all `main` runs that were inert was never measured.
 
   **The fix pins the compiler.** `audit:boundaries` now runs
   `scripts/structure-audit/check-boundaries.ts`, which spawns the CLI under a Bun preload. The preload

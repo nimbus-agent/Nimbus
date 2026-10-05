@@ -13,10 +13,13 @@
  * lockfile (see `dependency-cruiser-ts6-preload.ts` for the resolution walk). When it found 7, it
  * skipped every `.ts`/`.tsx` file and printed "no dependency violations found (1 modules, 0
  * dependencies cruised)". The one module was `packages/docs/astro.config.mjs`. It exited 0, so the
- * gate read green while enforcing nothing. One CI run per lockfile change on `main` was sampled
- * since then: 19 of 33 were inert, the rest cruised ~1,450 modules. The CI node_modules cache is keyed
- * on `bun.lock`, so whichever outcome the first install of a lockfile drew held for every run
- * after it.
+ * gate read green while enforcing nothing. In CI it ran inert on 19 of the 33 first `main` runs
+ * after a lockfile change; the other 14 cruised ~1,450 modules. A first run misses the node_modules
+ * cache (keyed on `bun.lock`), so every job in it installs, and draws, on its own. Later runs
+ * restore whichever job's tree was saved first: 693f62ba's structure job drew 7 and ran inert, and
+ * 7a4feb5e, on the same lockfile, restored another job's tree and cruised 1,448 modules. So 19 of
+ * 33 is a rate of fresh installs, not the share of all `main` runs that were inert, which was never
+ * measured.
  *
  * WHAT THIS DOES.
  *   1. Pins the compiler. The CLI is spawned under `dependency-cruiser-ts6-preload.ts`, which hands
