@@ -39,6 +39,26 @@ describe("isReadOnlyToolId — positive read-only allowlist", () => {
     }
   });
 
+  // SECURITY-LOAD-BEARING: these end in genuine read verbs (`list`/`get`/`search`) that hundreds of
+  // real reads carry, so the verb cannot be dropped the way `preview` was. They reach an `az` /
+  // `gcloud` `.cmd` wrapper's argv on Windows, where a share-supplied value injects a command, so
+  // they are excluded by explicit id (I26 `isConnectorCodeExecutionToolId`) — closing the share
+  // door, as the federated gate closes its own.
+  test("az/gcloud code-execution reads are NON-read despite ending in a read verb", () => {
+    for (const id of [
+      "azure_app_service_list",
+      "gcp_cloud_run_service_list",
+      "cloud_logging_get",
+      "cloud_logging_search",
+      "vertex_ai_get",
+      "vertex_ai_list",
+      // and the `<server>_<tool>` session form, which a forwarded recipe can also name
+      "azure_azure_app_service_list",
+    ]) {
+      expect(isReadOnlyToolId(id)).toBe(false);
+    }
+  });
+
   test("write verbs classify NON-read", () => {
     for (const w of ["email_send", "file_delete", "jira_issue_create", "calendar_event_update"]) {
       expect(isReadOnlyToolId(w)).toBe(false);

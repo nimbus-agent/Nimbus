@@ -10,6 +10,17 @@ const DAY_MS = 86_400_000;
 const NOTION_KB_TOOL = "notion_kb_append";
 const CONFLUENCE_KB_TOOL = "confluence_kb_append";
 
+/**
+ * The KB-write tool ids, for the I26 write predicate (`connectors/connector-write-registry.ts`).
+ * Exported as a set so that predicate can refuse a federated peer naming one without naming the
+ * literal itself — D19 confines these literals to this file, and D19 only governs where the
+ * GATEWAY names them; it says nothing about which tool id a federated invoke may carry.
+ */
+export const TRIBAL_KB_WRITE_TOOL_IDS: ReadonlySet<string> = new Set([
+  NOTION_KB_TOOL,
+  CONFLUENCE_KB_TOOL,
+]);
+
 export type CaptureTarget = "notion" | "confluence";
 
 export interface WriteGateDeps {

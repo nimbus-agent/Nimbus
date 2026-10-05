@@ -593,11 +593,50 @@ describe("D20 — connector write-id confinement (warehouse/BI ∪ GitOps/ML)", 
     expect(v.some((x) => x.rule === "D20-invoke-gate-predicate")).toBe(true);
   });
 
-  test("does NOT flag invoke-gate.ts when it consults isWriteForbiddenToolId", () => {
+  test("requires answerFederatedInvoke to consult isCodeExecutionForbiddenToolId too", () => {
     const v = checkConnectorWriteConfinement([
       {
         relPath: "packages/gateway/src/federation/invoke-gate.ts",
         contents: `if (ctx.isWriteForbiddenToolId?.(q.toolId) === true) audit(ctx, q, "write_forbidden");`,
+      },
+    ]);
+    expect(v.map((x) => x.rule)).toEqual(["D20-invoke-gate-code-execution"]);
+  });
+
+  test("a mention in a comment does not count as consulting it", () => {
+    const v = checkConnectorWriteConfinement([
+      {
+        relPath: "packages/gateway/src/federation/invoke-gate.ts",
+        contents: `if (ctx.isWriteForbiddenToolId?.(q.toolId) === true) return;\n// isCodeExecutionForbiddenToolId(q.toolId): TODO`,
+      },
+    ]);
+    expect(v.map((x) => x.rule)).toEqual(["D20-invoke-gate-code-execution"]);
+  });
+
+  test("declaring the ctx fields is not consulting them — the gate must CALL both", () => {
+    // The real InvokeGateCtx declares both fields, so a name-only check passed with the calls gone.
+    const v = checkConnectorWriteConfinement([
+      {
+        relPath: "packages/gateway/src/federation/invoke-gate.ts",
+        contents: `export interface InvokeGateCtx {
+  readonly isWriteForbiddenToolId?: (toolId: string) => boolean;
+  readonly isCodeExecutionForbiddenToolId: (toolId: string) => boolean;
+}
+export async function answerFederatedInvoke(ctx: InvokeGateCtx) { return ctx; }`,
+      },
+    ]);
+    expect(v.map((x) => x.rule)).toEqual([
+      "D20-invoke-gate-predicate",
+      "D20-invoke-gate-code-execution",
+    ]);
+  });
+
+  test("does NOT flag invoke-gate.ts when it consults both predicates", () => {
+    const v = checkConnectorWriteConfinement([
+      {
+        relPath: "packages/gateway/src/federation/invoke-gate.ts",
+        contents: `if (ctx.isWriteForbiddenToolId?.(q.toolId) === true) audit(ctx, q, "write_forbidden");
+if (ctx.isCodeExecutionForbiddenToolId(q.toolId)) audit(ctx, q, "code_execution_forbidden");`,
       },
     ]);
     expect(v).toHaveLength(0);
