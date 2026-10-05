@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1791221891187,
+  "lastUpdate": 1791223870295,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "49699333+dependabot[bot]@users.noreply.github.com",
-            "name": "dependabot[bot]",
-            "username": "dependabot[bot]"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "644b1e424e8697f4a1922584b0532a8850b08991",
-          "message": "chore(deps): bump dependency-cruiser from 17.4.3 to 18.1.0 (#903)\n\nBumps\n[dependency-cruiser](https://github.com/sverweij/dependency-cruiser)\nfrom 17.4.3 to 18.1.0.\n<details>\n<summary>Release notes</summary>\n<p><em>Sourced from <a\nhref=\"https://github.com/sverweij/dependency-cruiser/releases\">dependency-cruiser's\nreleases</a>.</em></p>\n<blockquote>\n<h2>v18.1.0</h2>\n<h2>✨ new functionality</h2>\n<ul>\n<li>65c432cc feat: adds environment inconsistency checks (<a\nhref=\"https://redirect.github.com/sverweij/dependency-cruiser/issues/1070\">#1070</a>)\ndependency-cruiser now also warns at runtime if it detects typescript is\nneeded, but (a usable version of the) typescript compiler isn't present\n(+ the same for <em>babel</em> and <em>swc</em>). It already did so on\n<code>--init</code>. Thanks <a\nhref=\"https://github.com/kbarendrecht\"><code>@​kbarendrecht</code></a>\nfor the suggestion!</li>\n<li>6bb22b6f feat(report/error-html): makes the table heads sticky</li>\n</ul>\n<blockquote>\n<p>TypeScript 7 support: typescript@7.1.0 is expected to ship with a\npublic API - so that's the\nfirst version in the TypeScript 7 (formerly tsgo) version range\ndependency-cruiser will be able\nto support.</p>\n</blockquote>\n<h2>👷 maintenance</h2>\n<ul>\n<li>f04f2fad build(npm): updates external dependencies</li>\n</ul>\n<h2>v18.0.0</h2>\n<h2>🚨 breaking changes</h2>\n<ul>\n<li>40f42e96 chore!: drops support for nodejs 20 and 25 BREAKING (<a\nhref=\"https://redirect.github.com/sverweij/dependency-cruiser/issues/1060\">#1060</a>)</li>\n</ul>\n<p>This is because we follow the Node.js <a\nhref=\"https://nodejs.org/en/about/previous-releases\">release cycle</a>\nwho dropped support for version 20 and 25 (a while ago already).</p>\n<h2>🐛 fixes</h2>\n<ul>\n<li>a25fe7f7 fix(graph-utl): makes the summary more deterministic (<a\nhref=\"https://redirect.github.com/sverweij/dependency-cruiser/issues/1066\">#1066</a>)\n- thanks <a\nhref=\"https://github.com/Sebastian-G\"><code>@​Sebastian-G</code></a> for\nraising the issue and providing the first feedback!</li>\n</ul>\n<h2>👷 maintenance</h2>\n<ul>\n<li>92d6a1f9/ ee3dc3a9/ c9974443 build(npm): updates external\ndependencies</li>\n<li>0d8becbe refactor(config-utl): only imports json5 when it's used (<a\nhref=\"https://redirect.github.com/sverweij/dependency-cruiser/issues/1062\">#1062</a>)</li>\n<li>793bd4d4 chore(ci): updates known violations</li>\n<li>41911765 chore: updates copilot instructions</li>\n</ul>\n<h2>v18.0.0-beta-2</h2>\n<h2>🐛 fixes</h2>\n<ul>\n<li>15e84477/ 878511d3 fix(graph-utl): makes the summary more\ndeterministic (thanks to <a\nhref=\"https://github.com/Sebastian-G\"><code>@​Sebastian-G</code></a> for\nraising the well-documented issue!)</li>\n</ul>\n<h2>👷 maintenacne</h2>\n<ul>\n<li>ee3dc3a9/ 92d6a1f9 build(npm): updates external dependencies and\nrefreshes package lock</li>\n<li>0d8becbe refactor(config-utl): only imports json5 when it's used (<a\nhref=\"https://redirect.github.com/sverweij/dependency-cruiser/issues/1062\">#1062</a>)</li>\n<li>793bd4d4 chore(ci): updates known violations</li>\n<li>41911765 chore: updates copilot instructions</li>\n<li>40f42e96 chore!: drops support for nodejs 20 and 25 BREAKING (<a\nhref=\"https://redirect.github.com/sverweij/dependency-cruiser/issues/1060\">#1060</a>)</li>\n</ul>\n<h2>v18.0.0-beta-1</h2>\n<h2>👷 maintenance</h2>\n<ul>\n<li>ecb63545 refactor(resolve)!: replaces tsconfig-paths-webpack-plugin\nwith enhanced-resolve's own tsconfig-paths feature SLIGHTLY BREAKING (<a\nhref=\"https://redirect.github.com/sverweij/dependency-cruiser/issues/1061\">#1061</a>)</li>\n<li>41911765 chore: updates copilot instructions</li>\n<li>92d6a1f9 build(npm): updates external dependencies</li>\n</ul>\n<!-- raw HTML omitted -->\n</blockquote>\n<p>... (truncated)</p>\n</details>\n<details>\n<summary>Commits</summary>\n<ul>\n<li><a\nhref=\"https://github.com/sverweij/dependency-cruiser/commit/26dffc05710bc7663315e4d70863dd46c009c48e\"><code>26dffc0</code></a>\n18.1.0</li>\n<li><a\nhref=\"https://github.com/sverweij/dependency-cruiser/commit/f04f2fadae1962c9b17184a09d77062ee7d83027\"><code>f04f2fa</code></a>\nbuild(npm): updates external dependencies</li>\n<li><a\nhref=\"https://github.com/sverweij/dependency-cruiser/commit/65c432cc444a850983b476c0f58e6d4082f160d8\"><code>65c432c</code></a>\nfeat: adds environment inconsistency checks (starting with typescript\nand bab...</li>\n<li><a\nhref=\"https://github.com/sverweij/dependency-cruiser/commit/6bb22b6fe0815e6bdac0d6a52e676f2b2dc4cd5e\"><code>6bb22b6</code></a>\nfeat(report/error-html): makes the table heads sticky</li>\n<li><a\nhref=\"https://github.com/sverweij/dependency-cruiser/commit/d139a8e8952195d1f4a0296b69f53f7d75f119ee\"><code>d139a8e</code></a>\n18.0.0</li>\n<li><a\nhref=\"https://github.com/sverweij/dependency-cruiser/commit/c9974443819bd8fdf9273ebef0d938302b46a662\"><code>c997444</code></a>\nbuild(npm): updates external dependencies</li>\n<li><a\nhref=\"https://github.com/sverweij/dependency-cruiser/commit/a25fe7f77ac00cb20a6f3aaff4b741c3d294ec1a\"><code>a25fe7f</code></a>\nfix(graph-utl): makes the summary more deterministic (<a\nhref=\"https://redirect.github.com/sverweij/dependency-cruiser/issues/1066\">#1066</a>)</li>\n<li><a\nhref=\"https://github.com/sverweij/dependency-cruiser/commit/ee3dc3a9dbc657669b8457ba521679c0537b7986\"><code>ee3dc3a</code></a>\nbuild(npm): updates external dependencies and refreshes package\nlock</li>\n<li><a\nhref=\"https://github.com/sverweij/dependency-cruiser/commit/7106ce608566f8caaea382768f7373591dbef2b8\"><code>7106ce6</code></a>\nrevert: &quot;refactor(resolve)!: replaces tsconfig-paths-webpack-plugin\nwith enha...</li>\n<li><a\nhref=\"https://github.com/sverweij/dependency-cruiser/commit/0d8becbe9e0aa5ba7455afff7ad8ff476dc85c13\"><code>0d8becb</code></a>\nrefactor(config-utl): only imports json5 when it's used (<a\nhref=\"https://redirect.github.com/sverweij/dependency-cruiser/issues/1062\">#1062</a>)</li>\n<li>Additional commits viewable in <a\nhref=\"https://github.com/sverweij/dependency-cruiser/compare/v17.4.3...v18.1.0\">compare\nview</a></li>\n</ul>\n</details>\n<br />\n\n\n[![Dependabot compatibility\nscore](https://dependabot-badges.githubapp.com/badges/compatibility_score?dependency-name=dependency-cruiser&package-manager=bun&previous-version=17.4.3&new-version=18.1.0)](https://docs.github.com/en/github/managing-security-vulnerabilities/about-dependabot-security-updates#about-compatibility-scores)\n\nDependabot will resolve any conflicts with this PR as long as you don't\nalter it yourself. You can also trigger a rebase manually by commenting\n`@dependabot rebase`.\n\n[//]: # (dependabot-automerge-start)\n[//]: # (dependabot-automerge-end)\n\n---\n\n<details>\n<summary>Dependabot commands and options</summary>\n<br />\n\nYou can trigger Dependabot actions by commenting on this PR:\n- `@dependabot rebase` will rebase this PR\n- `@dependabot recreate` will recreate this PR, overwriting any edits\nthat have been made to it\n- `@dependabot show <dependency name> ignore conditions` will show all\nof the ignore conditions of the specified dependency\n- `@dependabot ignore this major version` will close this PR and stop\nDependabot creating any more for this major version (unless you reopen\nthe PR or upgrade to it yourself)\n- `@dependabot ignore this minor version` will close this PR and stop\nDependabot creating any more for this minor version (unless you reopen\nthe PR or upgrade to it yourself)\n- `@dependabot ignore this dependency` will close this PR and stop\nDependabot creating any more for this dependency (unless you reopen the\nPR or upgrade to it yourself)\n\n\n</details>\n\nSigned-off-by: dependabot[bot] <support@github.com>\nCo-authored-by: dependabot[bot] <49699333+dependabot[bot]@users.noreply.github.com>",
-          "timestamp": "2026-07-28T16:18:03+03:00",
-          "tree_id": "f9a7338c478e9bce42ca8d6290f9b22ffd81caaf",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/644b1e424e8697f4a1922584b0532a8850b08991"
-        },
-        "date": 1785246315567,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 306.76286849999633,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 307.82499159999713,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 352.1277721499988,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "f560d929382731ad6f2bc98a4d63953fa17f1c32",
+          "message": "feat(doctor): warn when the on-call push cannot reach ChatOps (#1618)\n\n`nimbus doctor` now warns when the on-call pushed brief cannot reach\nChatOps. Before this, a pushed brief's ChatOps outcome was visible only\nin `nimbus oncall pushed --json`, so a namespace that could never post\nfailed silently.\n\n## Two checks, because they fail differently\n\n1. **A namespace is set but ChatOps is not running.** This is known up\nfront. `oncall.pushedList` now returns `chatops: { namespace, posting\n}`, where `namespace` is null when unset and `posting` comes from the\npush runtime's settled poster. Doctor warns and names both fixes: enable\n`[chatops]`, or clear `[oncall.push] chatops_namespace`.\n2. **The namespace has no `notify` channels in the org policy.** That is\nonly learned when a post resolves to zero channels, so doctor reads it\nfrom the newest pushed brief's `delivery.chatops` via one\n`oncall.pushedGet` call, made only when push is enabled. It quotes the\nrecorded reason.\n\nAn unset namespace is the intended \"no chat sink\" configuration and is\nnever warned about. When everything posts, the `[ok]` line names the\nnamespace. An older gateway, which omits the field or the method, keeps\ndoctor quiet.\n\n## Tests\n\n- **RPC:** the `chatops` field when unset, when bound, and when not\nrunning. Existing exact-shape expectations are updated.\n- **Contract:** the gateway-validated fixture\n`packages/ui/test/fixtures/oncall-pushed.json` was regenerated. The\ncontract test failed on the new field before regeneration, so the drift\nguard works.\n- **Desktop:** the type gains an optional `chatops` field, and the UI\ntests pass.\n- **Doctor:**\n- ChatOps not running gives exit 1 and names the namespace and both\nfixes;\n  - a namespace that is posting gives an `[ok]` line naming it;\n  - an unset namespace stays silent;\n- a no-notify-channels newest brief gives exit 1 and quotes the reason;\n  - a delivered, malformed or missing newest brief adds no warning.\n- `bun run preflight:fast` is green, and the CLI, gateway IPC and\noncall-push suites pass (7,028 tests).\n\nNo new invariant, egress class, IPC method or migration. Docs:\narchitecture.md (the oncall-push section), cli-reference.md and the\nCHANGELOG.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-10-05T18:03:26Z",
+          "tree_id": "f11a887289fe63aad569978d3fee1b2f95770dce",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/f560d929382731ad6f2bc98a4d63953fa17f1c32"
+        },
+        "date": 1791223866491,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 211.8436688999969,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 213.95535780000026,
             "unit": "ms"
           }
         ]
