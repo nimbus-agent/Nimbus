@@ -18,7 +18,7 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
 
 ## Post-Phase-6 deliveries
 
-- **2026-10-04 — The bundled connectors move to 0.2.2, and the `nodemailer` override is gone.**
+- **2026-10-05 — The bundled connectors move to 0.2.2, and the `nodemailer` override is gone.**
   `@nimbus-dev/connectors` goes from 0.2.1 to 0.2.2, and the gateway binary bundles it. As Nimbus
   runs them, the connectors now:
   - refuse a Bitbucket next-page link on another host instead of fetching it with the Bitbucket
