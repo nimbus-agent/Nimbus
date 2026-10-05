@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import {
   formatBriefText,
   isBriefTextFormat,
+  stripUnderscoreItalic,
   toPlainText,
   toSlackMrkdwn,
 } from "./slack-markdown.ts";
@@ -167,6 +168,218 @@ describe("link matching keeps the leftmost-match semantics of the old regex", ()
     ["`[](` repeated with no `)` anywhere", "[](".repeat(40_000)],
     ["`[` repeated with no `]`", "[".repeat(40_000)],
     ["`[` repeated, closed once but never followed by `(`", `${"[".repeat(40_000)}]`],
+  ] as const) {
+    test(`stays linear on ${shape}`, () => {
+      const started = performance.now();
+      expect(toPlainText(line)).toBe(line);
+      expect(toSlackMrkdwn(line)).toBe(line);
+      expect(performance.now() - started).toBeLessThan(1_000);
+    });
+  }
+});
+
+// Plain mode's underscore-italic pass used to be this regex. It is now a scan that skips every
+// opening `_` a failed attempt proves cannot match (`stripUnderscoreItalic`), which is what keeps a
+// line linear. Unlike the link regex above, this one stays live as the ORACLE: the scan must return
+// what it returned for every input, so these tests compare the two rather than pin outputs by
+// hand — exhaustively over short strings, then for every UTF-16 code unit at each place the pattern
+// reads one, then over seeded pseudo-random strings, then on the edge cases where a skip could
+// plausibly go wrong — and then hold the time bound on the inputs the regex was quadratic on.
+const OLD_UNDERSCORE_ITALIC_RE = /(?<!\w)_(?!\s)(.+?)(?<!\s)_(?!\w)/g;
+
+function viaOldRegex(text: string): string {
+  return text.replace(OLD_UNDERSCORE_ITALIC_RE, (_m, i: string) => i);
+}
+
+/** Every string of `units` of length 0 to `maxLength`, shortest first. */
+function* arrangements(units: readonly string[], maxLength: number): Generator<string> {
+  for (let length = 0; length <= maxLength; length++) {
+    const count = units.length ** length;
+    for (let n = 0; n < count; n++) {
+      let text = "";
+      let rest = n;
+      for (let k = 0; k < length; k++) {
+        text += units[rest % units.length];
+        rest = Math.floor(rest / units.length);
+      }
+      yield text;
+    }
+  }
+}
+
+/** Mulberry32: a seeded 32-bit generator, so every run draws the same corpus. */
+function seededRandom(seed: number): () => number {
+  let a = seed >>> 0;
+  return () => {
+    a = (a + 0x6d2b79f5) >>> 0;
+    let t = a;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4_294_967_296;
+  };
+}
+
+describe("underscore italic keeps the semantics of the old regex", () => {
+  // The pattern tells code units apart by five classes only: `_`, any other word character, a
+  // space `.` accepts, a line terminator (a space `.` refuses), and anything else. As long as the
+  // scan sorts every code unit into the class the regex does, which the next test checks for all
+  // 65,536 of them, a string's outcome depends only on its sequence of classes, and this checks
+  // every sequence of up to eight: 488,281 strings.
+  test("agrees with the old regex on every arrangement of its five classes up to length 8", () => {
+    const mismatches: string[] = [];
+    let checked = 0;
+    let rewritten = 0;
+    for (const text of arrangements(["_", "a", " ", "\n", "*"], 8)) {
+      const want = viaOldRegex(text);
+      if (want !== text) rewritten++;
+      if (stripUnderscoreItalic(text) !== want) mismatches.push(JSON.stringify(text));
+      checked++;
+    }
+    expect(mismatches.slice(0, 5)).toEqual([]);
+    expect(checked).toBe(488_281);
+    // Not vacuous: the oracle rewrites about one string in eight.
+    expect(rewritten).toBeGreaterThan(50_000);
+  });
+
+  // What makes the five classes above stand for every code unit: the scan must sort each one into
+  // the class the regex does, at each of the five places the pattern reads one — before the opener
+  // (`(?<!\w)`), right after it (`(?!\s)` and the first unit of `.`), inside the content (`.`),
+  // before the closer (`(?<!\s)`) and after it (`(?!\w)`). This puts every UTF-16 code unit at each
+  // of them. A whitespace set written out by hand instead of `\s`, whether it leaves out U+1680,
+  // U+2000 to U+200A, U+202F or U+205F or adds U+0085 as Python's does, or a `.` that refuses
+  // U+0085 as Java's does, passes every other test in this file and fails only this one.
+  test("agrees with the old regex on every code unit at each place the pattern reads one", () => {
+    const places = [
+      ["before the opener", (c: string) => `${c}_a_`],
+      ["after the opener", (c: string) => `_${c}a_`],
+      ["inside the content", (c: string) => `_a${c}b_`],
+      ["before the closer", (c: string) => `_a${c}_`],
+      ["after the closer", (c: string) => `_a_${c}`],
+    ] as const;
+    const mismatches: string[] = [];
+    const insensitive: string[] = [];
+    let checked = 0;
+    for (const [place, build] of places) {
+      let kept = 0;
+      for (let unit = 0; unit <= 0xffff; unit++) {
+        const text = build(String.fromCharCode(unit));
+        const want = viaOldRegex(text);
+        if (want === text) kept++;
+        if (stripUnderscoreItalic(text) !== want) {
+          mismatches.push(`U+${unit.toString(16).toUpperCase().padStart(4, "0")} ${place}`);
+        }
+        checked++;
+      }
+      // Not vacuous: at every place, some code units stop the run and the others let it through.
+      if (kept === 0 || kept === 65_536) insensitive.push(place);
+    }
+    expect(mismatches.slice(0, 5)).toEqual([]);
+    expect(checked).toBe(327_680);
+    expect(insensitive).toEqual([]);
+  });
+
+  // The real members of each class, which the five representatives above stand in for: the
+  // markers every other pass reacts to, spaces `.` accepts (U+00A0, U+3000, the BOM and more),
+  // U+180E (a space in Unicode before 6.3, not after), a letter `\w` does not cover (`é`), a
+  // non-BMP character (two code units) and a lone surrogate. `_` is weighted up because it is the
+  // only character the pass acts on.
+  const ALPHABET = Array.from(
+    "____aZ09\u00e9  \t\v\f\u00a0\u3000\ufeff\u180e*~`[]()#|\\\u{1F600}\ud83d",
+  );
+  const LINE_TERMINATORS = ["\n", "\r", "\u2028", "\u2029"];
+
+  test("agrees with the old regex on 20,000 seeded pseudo-random strings", () => {
+    const random = seededRandom(0x5eed);
+    const pick = (from: readonly string[]): string =>
+      from[Math.floor(random() * from.length)] ?? "";
+    const mismatches: string[] = [];
+    let rewritten = 0;
+    for (let n = 0; n < 20_000; n++) {
+      // Mostly short strings where every character meets every other, crossed by a line terminator
+      // one character in ten; every tenth one long, with a line terminator one in a hundred, so it
+      // holds several runs and several openers that fail before the end of their line.
+      const isLong = n % 10 === 0;
+      const length = isLong ? 100 + Math.floor(random() * 400) : Math.floor(random() * 40);
+      const terminatorRate = isLong ? 0.01 : 0.1;
+      let text = "";
+      for (let k = 0; k < length; k++) {
+        text += pick(random() < terminatorRate ? LINE_TERMINATORS : ALPHABET);
+      }
+      const want = viaOldRegex(text);
+      if (want !== text) rewritten++;
+      if (stripUnderscoreItalic(text) !== want) mismatches.push(JSON.stringify(text));
+    }
+    expect(mismatches.slice(0, 5)).toEqual([]);
+    expect(rewritten).toBeGreaterThan(5_000);
+  });
+
+  for (const [shape, text] of [
+    ["the empty string", ""],
+    ["a lone `_`", "_"],
+    ["two adjacent `_`", "__"],
+    ["three adjacent `_`, the middle one the content", "___"],
+    ["four adjacent `_`", "____"],
+    ["a run that is the whole string", "_a_"],
+    ["a run closing at the end of the string", "x _a_"],
+    ["an opener at the end of the string", "x _"],
+    ["an opener nothing after it can close", "_a"],
+    ["doubled delimiters on both sides", "__a__"],
+    ["an inner `_` that a word character keeps from closing", "_a_b_"],
+    ["two runs on one line", "_a_ _b_"],
+    ["a space after the opener", "_ a_"],
+    ["a space before the closer", "_a _"],
+    ["punctuation on both sides", "(_a_)"],
+    ["a word character before the opener", "x_a_ y"],
+    ["a word character after the closer", "_a_b"],
+    ["a letter `\\w` does not cover on both sides", "\u00e9_a_\u00e9"],
+    ["CRLF after a run", "_a_\r\n"],
+    ["CRLF inside a would-be run, then a run", "_a\r\n_b_"],
+    ["a lone `\\r` inside a would-be run, then a run", "_a\r_b_"],
+    ["an opener at the end of a line", "a _\nb_"],
+    ["U+2028 inside a would-be run", "_a\u2028b_"],
+    ["U+2029 inside a would-be run", "_a\u2029b_"],
+    ["a no-break space on both sides", "\u00a0_a_\u00a0"],
+    ["a BOM before the opener", "\ufeff_a_"],
+    ["a BOM after the opener", "_\ufeffa_"],
+    ["U+180E before the closer", "_a\u180e_"],
+    ["a non-BMP character as the content", "_\u{1F600}_"],
+    ["a non-BMP character before the opener", "\u{1F600}_a_"],
+    ["a lone surrogate as the content", "_\ud83d_"],
+    ["a run nested in bold", "**_a_**"],
+    ["bold nested in a run", "_**a**_"],
+    ["a run nested in single-asterisk italic", "*_a_*"],
+    ["single-asterisk italic nested in a run", "_a *b* c_"],
+    ["openers that fail, then a closer at the end of the string", `${" _a".repeat(5)} _b_`],
+    ["openers that fail at a line terminator, then a run", `${" _a".repeat(5)}\n_b_`],
+  ] as const) {
+    test(`agrees with the old regex on ${shape}`, () => {
+      expect(stripUnderscoreItalic(text)).toBe(viaOldRegex(text));
+    });
+  }
+
+  test("plain text strips a run and leaves failed openers, identifiers and other lines alone", () => {
+    expect(toPlainText("a _b_ c")).toBe("a b c");
+    expect(toPlainText("x _\n_y_")).toBe("x _\ny");
+    expect(toPlainText("_a_\r\n_b_")).toBe("a\r\nb");
+    expect(toPlainText("**_a_**")).toBe("a");
+    expect(toPlainText("_a **b** c_")).toBe("a b c");
+    expect(toPlainText("| _a_ | b_c |")).toBe("a | b_c");
+    expect(toPlainText("## _Deployments_")).toBe("Deployments");
+    expect(toPlainText("[_t_](https://x/1)")).toBe("t");
+  });
+
+  // Each `_` in these opens a run that nothing on its line can close, and the regex rescanned the
+  // rest of the line from every one of them: ` _a` repeated took 0.6 s at 15 KB, 2.4 s at 30 KB,
+  // 9.2 s at 60 KB and over 40 s at the 120 KB here on a developer machine, four times as long per
+  // doubling. The scan takes milliseconds. These also hold the scan's own skips to the bound —
+  // past the end of the text in the first three, past a line terminator in the last — which the
+  // equivalence tests above cannot see: a scan that retried every opener would return the same
+  // output, quadratically.
+  for (const [shape, line] of [
+    ["` _a`: a space before each `_` and a word character after it", " _a".repeat(40_000)],
+    ["`(_a`: only the word character after each `_` keeps it from closing", "(_a".repeat(40_000)],
+    ["` _(`: only the space before each `_` keeps it from closing", " _(".repeat(40_000)],
+    ["` _a` in four stretches each ended by `\\r`", `${" _a".repeat(10_000)}\r`.repeat(4)],
   ] as const) {
     test(`stays linear on ${shape}`, () => {
       const started = performance.now();
