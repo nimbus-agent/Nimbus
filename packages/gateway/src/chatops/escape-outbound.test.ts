@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { escapeSlackText } from "./escape-outbound.ts";
+import { escapeSlackText, toWireText } from "./escape-outbound.ts";
 
 describe("escapeSlackText", () => {
   test("escapes Slack's three control characters", () => {
@@ -30,5 +30,16 @@ describe("escapeSlackText", () => {
     expect(escapeSlackText("payment-service: 5xx rate above 5% on /v1/charges")).toBe(
       "payment-service: 5xx rate above 5% on /v1/charges",
     );
+  });
+});
+
+describe("toWireText", () => {
+  test("Slack text is escaped: a hostile brief cannot ping a channel or hide a link", () => {
+    expect(toWireText("slack", "x <!channel> <https://evil|docs> & y")).toBe(
+      "x &lt;!channel&gt; &lt;https://evil|docs&gt; &amp; y",
+    );
+  });
+  test("Teams text is unchanged: entities would render there as literal text", () => {
+    expect(toWireText("teams", "x <b> & y")).toBe("x <b> & y");
   });
 });

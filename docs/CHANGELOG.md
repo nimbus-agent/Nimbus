@@ -18,6 +18,21 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
 
 ## Post-Phase-6 deliveries
 
+- **2026-10-05 — Every Slack-bound ChatOps post is escaped at the wire.** The on-call pushed brief's
+  headline already escaped Slack's control characters, but every other post did not: `@nimbus agent`
+  briefs, `ask` answers, approval cards and tribal suggestions carry text from the private index
+  straight into a shared channel, so a title like `DB down <!channel>` pinged the whole channel and a
+  `<https://evil|Rollback docs>` showed a link whose label hid its target. The escape now happens
+  once, inside `egress/chatops-egress.ts`'s `buildLedgeredChatPosts` (the one decorator every post
+  passes through, per D17), via `chatops/escape-outbound.ts`'s new `toWireText`: `&`, `<` and `>`
+  become entities for Slack, and Teams text is unchanged, since an entity there would render as
+  literal text. It runs BEFORE the I29 append, so the ledger row's byte count is now the bytes that
+  actually leave, not the pre-escape length. Nothing Nimbus sends uses Slack markup on purpose, so
+  escaping everything removes nothing intended. The headline drops its own escaping so nothing is
+  escaped twice. Known effect: a brief truncated to the 3,000-byte chat budget can grow slightly
+  after escaping (`&` becomes five bytes), far under Slack's limit. No new invariant, egress class,
+  IPC method or migration.
+
 - **2026-10-05 — The release demo-tour check accepts only `oncall pushed` as its first step.** The
   check on a published binary's `nimbus demo` (`scripts/release/assert-demo-tour.ts`, run by
   `released-install-smoke.yml`) accepted two first steps while the pushed brief was rolling out:
