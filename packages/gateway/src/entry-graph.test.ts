@@ -70,9 +70,12 @@ const STATEFUL = /[\\/](db|vault|ipc)[\\/]/;
 
 // SCOPE: this walker follows STATIC imports only, so it stops at the registry's `() => import(...)`
 // thunks and never enters a connector's own graph. That half of the guarantee — no connector
-// reaching into the gateway — is enforced by the `mcp-connectors-only-import-sdk` rule in
-// .dependency-cruiser.cjs, run by `bun run audit:boundaries` in the fast preflight tier. Do not
-// read these assertions as covering connector sources.
+// reaching into the gateway — is structural, and no test or audit here checks it: since #1347 the
+// connectors live in nimbus-agent/nimbus-mcp-servers and arrive as the published
+// `@nimbus-dev/connectors` package, which cannot import this repository's source. The gateway's
+// only static import from that package is `setConnectorMode`, in
+// `connectors/run-bundled-connector.ts`; the registry's thunks are the rest. Do not read these
+// assertions as covering connector sources.
 describe("the entry shim", () => {
   test("statically imports exactly one module — the runtime layout", () => {
     expect(staticDepsOf(resolve(SRC, "index.ts"))).toEqual([

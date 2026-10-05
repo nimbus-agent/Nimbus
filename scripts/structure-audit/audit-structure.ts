@@ -24,19 +24,9 @@ async function run(): Promise<void> {
   const timestamp = new Date().toISOString().replaceAll(/[:.]/g, "-");
 
   const steps: ReadonlyArray<readonly [string, readonly string[]]> = [
-    [
-      "dependency-cruiser",
-      [
-        "bunx",
-        "dependency-cruiser",
-        "--config",
-        ".dependency-cruiser.cjs",
-        "--no-progress",
-        "--output-type",
-        "err",
-        "packages",
-      ],
-    ],
+    // Through the gate, never a bare `bunx dependency-cruiser`: that invocation can skip every
+    // .ts file and still exit 0 (see check-boundaries.ts), which would record a false OK here.
+    ["dependency-cruiser", ["bun", "run", "audit:boundaries"]],
     ["jscpd", ["bunx", "jscpd", "packages"]],
     ["knip", ["bunx", "knip", "--reporter", "json"]],
     ["file-loc", ["bun", "run", "scripts/structure-audit/measure-file-loc.ts"]],
