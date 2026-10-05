@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1791176010878,
+  "lastUpdate": 1791178351942,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "306811640+nimbus-release-bot[bot]@users.noreply.github.com",
-            "name": "nimbus-release-bot[bot]",
-            "username": "nimbus-release-bot[bot]"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "6116f312e22029d68a554b9b480be66cfc49a947",
-          "message": "chore: release main (#886)\n\n:robot: I have created a release *beep* *boop*\n---\n\n\n<details><summary>1.3.0</summary>\n\n##\n[1.3.0](https://github.com/nimbus-agent/Nimbus/compare/v1.2.0...v1.3.0)\n(2026-07-28)\n\n\n### Features\n\n* zero-config onboarding — nimbus init, and the LLM demoted to optional\n([#887](https://github.com/nimbus-agent/Nimbus/issues/887))\n([3e51aaf](https://github.com/nimbus-agent/Nimbus/commit/3e51aaf9f8171415c81d97a9b77f0f0141d40c76))\n\n\n### Bug Fixes\n\n* **perf:** stop a huggingface.co stall from blowing the 45m bench\ntimeout ([#885](https://github.com/nimbus-agent/Nimbus/issues/885))\n([22938ac](https://github.com/nimbus-agent/Nimbus/commit/22938ac57788eed724d1ab6a28553bb7138b7631))\n</details>\n\n---\nThis PR was generated with [Release\nPlease](https://github.com/googleapis/release-please). See\n[documentation](https://github.com/googleapis/release-please#release-please).\n\nCo-authored-by: nimbus-release-bot[bot] <306811640+nimbus-release-bot[bot]@users.noreply.github.com>",
-          "timestamp": "2026-07-28T05:12:56Z",
-          "tree_id": "7a256e06b5dacba63a58c2c6397511b254d805c2",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/6116f312e22029d68a554b9b480be66cfc49a947"
-        },
-        "date": 1785216345059,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 316.3507044999962,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 315.12992369999995,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 315.74523035000675,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "58ad04fad78a7c7f3c79f8602b41e7798fc05b62",
+          "message": "fix(deps): bump the bundled connectors to 0.2.2 and drop the nodemailer override (#1606)\n\n## Summary\n\n- **`@nimbus-dev/connectors` 0.2.1 → 0.2.2.** The gateway binary bundles\nthe connectors, so their 0.2.2 fixes reach every Nimbus user:\n- a Bitbucket next-page link on another host is refused instead of\nfetched with the credential attached;\n- six list and search tools stop requesting a doubled API version path;\n  - `aws_lambda_invoke` removes its temp directory after every call;\n  - audit entries with `undefined` details verify;\n- the MCP SDK, zod, imapflow, nodemailer, tsdav and hyparquet are at\ntheir latest.\n- **The root `nodemailer` override is removed.** It pinned 10.0.13 to\nlift 0.2.1's `^9.0.5` past its advisories (#1577). 0.2.2 declares\n`^10.0.14`, so the override could only force a version below the\nconnectors' own floor. `audit:override-drift` cannot catch that, because\nit compares overrides with this repo's workspace ranges, not with a\ndependency's. `nodemailer` now resolves to 10.0.14.\n- **The gateway's `imapflow` moves from `^2.2.1` to `^2.2.5`.** It now\nshares one copy with the connectors (`^2.2.4`) instead of installing\nboth 2.2.1 and 2.2.5.\n\nFour mutating tools are registered as consent-gated writes in 0.2.2:\n`aws_ec2_instance_stop`, `aws_ec2_instance_start`,\n`slack_message_post_dm` and `teams_message_post_chat`. The gateway's I26\nwrite classification for them lands in its own PR.\n\n## Verification\n\nAll on Windows 11 with Bun 1.3.14.\n\n- `bun install --frozen-lockfile`: no changes. `bun why nodemailer`\nshows 10.0.14 via the connectors only, and `bun why imapflow` shows a\nsingle 2.2.5.\n- `bun audit --audit-level high` with the registry's ignore arguments\npasses. A full `bun audit` lists only the two already-accepted\nadvisories (`braces`, `http-cache-semantics`), with none for\n`nodemailer` or `imapflow`.\n- `audit:advisories`, `audit:js-licenses` (1041 packages),\n`audit:connector-version-skew` (pinned 0.2.2, latest 0.2.2) and\n`audit:override-drift` all pass.\n- `bun run preflight --no-bail`: 38 of 40 gates pass, including `build`,\nwhich compiles the binary with the bundled connectors, and\n`test:connector-boot`.\n- The whole-repo `bun test` ran 27,198 tests: 27,104 passed, 94 skipped,\n0 failed.\n- `test:ci`: one integration test failed in its cleanup, with `EBUSY`\nremoving a temp directory, the Windows file-handle race after a\nsandboxed child exits. That file (`toolgen-draft-e2e.test.ts`) then\npassed three runs out of three on its own.\n- `audit:coverage-floor`: the five known Windows-only violations, none\nin a file this PR touches. The floor is Linux-authoritative in CI.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n\n## Summary by CodeRabbit\n\n* **Bug Fixes**\n  * Bitbucket pagination now rejects links to other hosts.\n* Fixed duplicate API version segments in several Outlook, CircleCI,\nDiscord, Meet, and Photos tools.\n* Temporary files created during AWS Lambda calls are now cleaned up\nafterward.\n  * Audit entries with undefined details are now verified.\n* **Security & Permissions**\n* Four tools that modify data are now identified as write operations in\nconsent prompts.\n\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-10-05T08:18:29+03:00",
+          "tree_id": "cc41149d6a37ed87090e8305c74b25de13f9947d",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/58ad04fad78a7c7f3c79f8602b41e7798fc05b62"
+        },
+        "date": 1791178347885,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 218.03758054999997,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 221.69332419999847,
             "unit": "ms"
           }
         ]
