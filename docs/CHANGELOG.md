@@ -19,8 +19,8 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
 ## Post-Phase-6 deliveries
 
 - **2026-10-05 — I26 holds again: the federated invoke gate refuses every connector write and every
-  connector tool that runs caller-directed code, in the form a session actually executes it, and
-  sync guards keep both lists in step with the connectors package.** I26 says a federated peer can
+  connector tool found to run caller-directed code, in the form a session actually executes it,
+  and sync guards keep both lists in step with the connectors package.** I26 says a federated peer can
   never trigger a connector write: `answerFederatedInvoke` refuses any tool id
   `isConnectorWriteToolId` classifies. Three gaps made that false, each leaving only the owner's
   per-tool grant in the way:
@@ -81,8 +81,11 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
   now shares. The list also names the three iac writes that evaluate the same directory; those are
   still refused as writes first.
 
-  A sweep of every connector in 0.2.1 and 0.2.2 found exactly eleven that can start a process (athena,
+  A sweep of every connector in 0.2.1 and 0.2.2 found eleven that can start a process (athena,
   aws, azure, bigquery, cloud-logging, cloudwatch, gcp, iac, kubernetes, sagemaker and vertex-ai).
+  The sweep, and the census test that now repeats it, read the connectors' own source and recognise
+  process and code-evaluation capability by name, so a spawn done through reflection or inside a
+  third-party package the connectors import is outside what either can see.
   iac is not the only one that lets a caller reach code, once Windows is in scope: `az` (Azure CLI)
   and `gcloud` (Google Cloud SDK) install as `.cmd` / batch wrappers there, and spawning a bare name
   runs the batch target through `cmd.exe`, which re-parses the reconstructed command line — so a flag
