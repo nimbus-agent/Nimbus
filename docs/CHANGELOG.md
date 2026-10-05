@@ -18,7 +18,7 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
 
 ## Post-Phase-6 deliveries
 
-- **2026-10-04 — `--format plain` is linear on a line of underscores that open but never close.**
+- **2026-10-05 — `--format plain` is linear on a line of underscores that open but never close.**
   The quality sweep below made two super-linear patterns in
   `packages/cli/src/format/slack-markdown.ts` linear and recorded a third that was not: plain
   mode's underscore-italic pass,
