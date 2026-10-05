@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
-import { UNIT_TEST_PATHS } from "../lib/ci-tests.ts";
+import { unitTestCommand } from "../lib/ci-tests.ts";
 import { REPO_ROOT } from "../structure-audit/lib.ts";
 
 /**
@@ -31,11 +31,12 @@ const CI_YML = join(REPO_ROOT, ".github", "workflows", "ci.yml");
 const TEST_SUITE_YML = join(REPO_ROOT, ".github", "workflows", "_test-suite.yml");
 
 /**
- * Positional (non-flag) arguments of a `bun test …` invocation on one line — a workflow `run:`
- * line, which contains it, or a `package.json` script, which starts with it.
+ * Positional (non-flag) arguments of a `bun test …` invocation on a workflow `run:` line.
  *
  * Stops at the first token that starts with `-` or a redirect, which is where the paths end in
- * every invocation. Returns `undefined` when the line has no `bun test` at all.
+ * both workflow invocations. It cannot read on: their flags take separate values (`--timeout
+ * 60000`, `--preload <file>`), which would count as paths. Returns `undefined` when the line has no
+ * `bun test` at all.
  */
 function bunTestPaths(line: string): readonly string[] | undefined {
   const marker = /(?:^|\s)bun test\s/.exec(line);
@@ -51,6 +52,24 @@ function bunTestPaths(line: string): readonly string[] | undefined {
     paths.push(token.replace(/^["']|["']$/g, ""));
   }
   return paths;
+}
+
+/**
+ * Every non-flag argument of a command that starts with `bun test` and that this repository writes
+ * in full: the `test` script and the command `test:ci`'s unit run spawns.
+ *
+ * Unlike `bunTestPaths`, it does not stop at the first flag. Bun takes a positional after a flag as
+ * a path filter too (measured on bun 1.3.14: `bun test alpha --coverage beta` runs both
+ * directories), so stopping there would miss a path added after one. Neither command has a flag
+ * that takes a separate value; one that did would show up here as a path and fail the check, so
+ * write such a flag as `--flag=value`. Returns `undefined` unless the command starts with
+ * `bun test`.
+ */
+function everyBunTestPath(argv: readonly string[]): readonly string[] | undefined {
+  if (argv[0] !== "bun" || argv[1] !== "test") {
+    return undefined;
+  }
+  return argv.slice(2).filter((arg) => !arg.startsWith("-"));
 }
 
 /** Every line of `file` matching `predicate`, as a list — so "exactly one" is assertable. */
@@ -140,12 +159,18 @@ describe("the local entry points run the same tests as the push matrix", () => {
     };
     const script = pkg.scripts["test"];
     expect(script).toBeDefined();
+    const paths = everyBunTestPath((script ?? "").trim().split(/\s+/));
+    expect(paths).toBeDefined();
     expect(push).toBeDefined();
-    expect(bunTestPaths(script ?? "")).toEqual(push as readonly string[]);
+    expect(paths).toEqual(push as readonly string[]);
   });
 
-  test("`test:ci`'s whole-repo unit run names exactly the push leg's test paths", () => {
+  test("`test:ci`'s whole-repo unit run spawns exactly the push leg's test paths", () => {
+    // Read from the command the run spawns, not from a list beside it: a path added to the command
+    // beside the list would pass a check of the list alone.
+    const paths = everyBunTestPath(unitTestCommand());
+    expect(paths).toBeDefined();
     expect(push).toBeDefined();
-    expect(UNIT_TEST_PATHS).toEqual(push as readonly string[]);
+    expect(paths).toEqual(push as readonly string[]);
   });
 });
