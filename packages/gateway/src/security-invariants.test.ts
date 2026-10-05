@@ -20,7 +20,19 @@ import { buildTerminalLaunchPolicy } from "./computer-use/cu-lanes/terminal-laun
 import { DEFAULT_SHELL_ID, resolveShellById } from "./computer-use/cu-lanes/terminal-shells.ts";
 import { TerminalLineBuffer } from "./computer-use/cu-terminal-buffer.ts";
 import type { NimbusFleetJobToml } from "./config/fleet-toml.ts";
+import { CONNECTOR_SERVICE_IDS } from "./connectors/connector-catalog.ts";
+import { createConnectorWriteDispatcher } from "./connectors/connector-write-dispatch.ts";
 import { CONNECTOR_WRITES } from "./connectors/connector-write-registry.ts";
+import {
+  type ConnectorWriteContext,
+  invokeConnectorWrite,
+} from "./connectors/connector-write-transport.ts";
+import {
+  type LazyMeshToolMap,
+  mcpClientToolKey,
+  resolveServerTool,
+} from "./connectors/lazy-mesh/tool-map.ts";
+import { createConnectorDispatcher } from "./connectors/registry.ts";
 import { egressSourceTypeForClientKind } from "./egress/egress-bearing-kinds.ts";
 import { COVERAGE_CLASSES, THIS_BINARY_COVERAGE } from "./egress/egress-coverage.ts";
 import { makeEgressSink, NULL_EGRESS_SINK } from "./egress/egress-ledger.ts";
@@ -62,13 +74,17 @@ import {
   createWindowsPaths,
   type PlatformPaths,
 } from "./platform/paths.ts";
+import { connectorAllowPredicate } from "./policy/connector-allowlist.ts";
 import { type LocalBaseline, PolicyGate } from "./policy/policy-gate.ts";
+import { refreshPolicy } from "./policy/policy-runtime.ts";
 import { signPolicy } from "./policy/policy-signing.ts";
 import { PolicyStore } from "./policy/policy-store.ts";
 import { ProviderRateLimiter } from "./sync/rate-limiter.ts";
 import { SyncScheduler } from "./sync/scheduler.ts";
 import { unboundSyncCapabilities } from "./sync/sync-capabilities.ts";
 import type { SyncRuntimeContext } from "./sync/types.ts";
+import { __setSessionSpawnerForTest } from "./teamvault/connector-session.ts";
+import { spawnTeamToolAndCall, spawnTeamWriteAndCall } from "./teamvault/team-tool-spawn.ts";
 import { openMemoryIndexDatabase } from "./testing/bun-test-support.ts";
 import { artifactDigest, canonicalArtifactBytes } from "./toolgen/toolgen-artifact.ts";
 import { sweepToolgenCredentials } from "./toolgen/toolgen-credential-sweep.ts";
@@ -1903,6 +1919,334 @@ code_execution=true
     expect(dispatchers).toContain("capabilitiesDisabled.has(MULTIMODAL_CAPABILITY)");
     const assemble = await read("packages/gateway/src/platform/assemble.ts");
     expect(assemble).toContain("ipcOpts.mediaRpcCtx");
+  });
+
+  // The connector allowlist (`EnforcedPolicy.connectorAllow`) OFF the mesh. The mesh drops a
+  // blocked connector's tools from its own dispatcher map, but the connector-write transport spawns
+  // its OWN session, so it checks the allowlist itself: (e) drives the predicate the gateway builds
+  // on a real policy gate, (f) pins that the gateway hands the transport exactly that predicate,
+  // (g) that the transport consults it before anything else. (h)/(i) pin what lets that
+  // per-connector check cover the tool that RUNS: a bare tool id resolves only on the caller's own
+  // server, never on a sibling server the same client carries.
+
+  test("(e) the gateway's allowlist predicate decides from the policy gate's CURRENT policy", async () => {
+    // `connectorAllowPredicate` is the decision every `connectorAllow` consumer is handed: the
+    // mesh's tool filter, sync registration, the admin status report and the write transport.
+    // Each consumer's own tests inject a predicate of their own, so without this case a decision
+    // that inverted its membership test, ignored the list or captured it once would pass the whole
+    // suite. Driven on a REAL gate, through the real apply path (`refreshPolicy`: verify, persist,
+    // `applyVerified`); (f) pins that assemble.ts builds its predicate from this helper.
+    const kp = generateEd25519Keypair();
+    const pubkey = encodeBase64(kp.pubkey);
+    const db = new Database(":memory:");
+    runIndexedSchemaMigrations(db, 36);
+    const store = new PolicyStore(db);
+    store.pinAnchorPubkey(pubkey, "manual", 1);
+    const gate = new PolicyGate(store, baseline);
+    const ids = [...CONNECTOR_SERVICE_IDS];
+    // Premise: the sibling server the bundle below leaves out is a catalogued connector.
+    expect(ids).toContain("github_actions");
+    const isConnectorAllowed = connectorAllowPredicate(gate);
+    const allowedBy = (predicate: (serviceId: string) => boolean) =>
+      ids.filter((id) => predicate(id));
+    const apply = async (version: number, allow: string) => {
+      const toml = `[policy]\nversion=${version}\norg="acme"\n[policy.connectors]\nallow=${allow}\n`;
+      const out = await refreshPolicy({
+        store,
+        gate,
+        pinnedPubkey: pubkey,
+        nowMs: version,
+        fetch: async () => ({ toml, sig: signPolicy(toml, encodeBase64(kp.privkey)) }),
+      });
+      expect(out.applied).toBe(true);
+    };
+
+    // 1. Ungoverned: no allowlist, so every catalogued connector is allowed.
+    expect(allowedBy(isConnectorAllowed)).toEqual(ids);
+
+    // 2. A signed allowlist naming only github, applied AFTER the predicate was built: github is
+    //    the one connector allowed, its sibling server github_actions refused with the rest.
+    await apply(1, `["github"]`);
+    expect(allowedBy(isConnectorAllowed)).toEqual(["github"]);
+
+    // 3. A later bundle without github: the SAME predicate refuses it on its next call.
+    await apply(2, `["slack"]`);
+    expect(allowedBy(isConnectorAllowed)).toEqual(["slack"]);
+
+    // 4. A restart rehydrates the last-valid bundle, and a predicate built at boot agrees.
+    expect(allowedBy(connectorAllowPredicate(new PolicyGate(store, baseline)))).toEqual(["slack"]);
+  });
+
+  test("(f) assemble.ts hands the write transport the policy gate's own allowlist, read per call", async () => {
+    // The transport's own tests drive an INJECTED predicate, so they would pass just as well if
+    // the gateway injected `() => true`. This pins the link they cannot see, from the policy gate
+    // through the team-credential contexts and `PlatformServices` to the dispatcher the gateway
+    // installs. Comments stripped: every pattern below is about code, never prose.
+    const src = stripComments(await read("packages/gateway/src/platform/assemble.ts"));
+    const bodyOf = (signature: string): string => {
+      const at = src.indexOf(signature);
+      expect(at, signature).toBeGreaterThan(-1);
+      return src.slice(at, src.indexOf("\n}\n", at));
+    };
+
+    // 1. The predicate is `connectorAllowPredicate` over the gate this function built: the
+    //    decision (e) drives, which reads `policyGate.enforced()` on every call. The value this
+    //    function captures at boot for its audit rows (`enforcedConnectorAllow`) never changes.
+    //    The helper is imported and named nowhere else, so no local copy can stand in for it.
+    const boot = bodyOf("function bootPolicyGateWithConnectorAllowlist(");
+    expect(boot).toContain(
+      "return { policyStore, policyGate, isConnectorAllowed: connectorAllowPredicate(policyGate) };",
+    );
+    const imported = src.match(/import \{([^}]*)\} from "\.\.\/policy\/connector-allowlist\.ts";/);
+    expect(imported?.[1]?.split(",").map((name) => name.trim())).toContain(
+      "connectorAllowPredicate",
+    );
+    expect(src.match(/\bconnectorAllowPredicate\b/g)).toHaveLength(2);
+
+    // 2. Booted ONCE, before the one construction of the team-credential contexts, which is handed
+    //    that predicate.
+    const booted =
+      "const { policyStore, policyGate, isConnectorAllowed } = bootPolicyGateWithConnectorAllowlist(";
+    expect(src.split(booted)).toHaveLength(2);
+    const calls = [...src.matchAll(/(?<!function )buildTeamCredentialContexts\(/g)];
+    expect(calls).toHaveLength(1);
+    const callAt = calls[0]?.index ?? -1;
+    expect(src.indexOf(booted)).toBeLessThan(callAt);
+    expect(src.slice(callAt, src.indexOf("});", callAt))).toMatch(/\n\s*isConnectorAllowed,\n/);
+
+    // 3. Inside, the transport's context carries the predicate it was handed, not a stand-in.
+    const contexts = bodyOf("function buildTeamCredentialContexts(");
+    expect(contexts).toMatch(/const \{[^}]*\bisConnectorAllowed\b[^}]*\} = deps;/);
+    const literalAt = contexts.indexOf("const connectorWriteDeps: ConnectorWriteContext = {");
+    expect(literalAt).toBeGreaterThan(-1);
+    expect(contexts.slice(literalAt, contexts.indexOf("\n  };", literalAt))).toMatch(
+      /\n\s*isConnectorAllowed,\n/,
+    );
+
+    // 4. That context leaves assembly as `PlatformServices.connectorWriteDeps`, unchanged: the
+    //    services literal carries the binding itself, and `assemblePlatformServices` names it
+    //    nowhere else (no widened copy, no later reassignment). The gateway then wraps its
+    //    executor's dispatcher in the write transport with exactly it.
+    const assembly = bodyOf("export async function assemblePlatformServices(");
+    expect(assembly).toContain("return services;");
+    const servicesAt = assembly.indexOf("const services: PlatformServices = {");
+    expect(servicesAt).toBeGreaterThan(-1);
+    expect(assembly.slice(servicesAt, assembly.indexOf("\n  };", servicesAt))).toMatch(
+      /\n\s*connectorWriteDeps,\n/,
+    );
+    // The destructuring from `buildTeamCredentialContexts` and the services literal: two.
+    expect(assembly.match(/\bconnectorWriteDeps\b/g)).toHaveLength(2);
+    const main = stripComments(await read("packages/gateway/src/gateway-main.ts"));
+    expect(main).toMatch(
+      /createConnectorWriteDispatcher\(\s*createConnectorDispatcher\(dispatcherClient\),\s*platform\.connectorWriteDeps,?\s*\)/,
+    );
+  });
+
+  test("(g) the write transport refuses a blocked connector BEFORE it selects a credential", async () => {
+    // Every dispatchable connector write, through the wrapper the gateway installs around the
+    // executor's dispatcher. A blocked connector must reach neither credential selection
+    // (`credentialFor`), nor the team hand-off, nor a spawn, whichever credential it is pinned to.
+    const services = CONNECTOR_WRITES.map((w) => w.service);
+    const listedKeys = CONNECTOR_WRITES.map((w) => mcpClientToolKey(w.service, w.toolId));
+    const spawned: string[] = [];
+    const ran: string[] = [];
+
+    const runEveryWrite = async (allowed: boolean, credential: "personal" | "team") => {
+      const seen = {
+        asked: [] as string[],
+        selected: [] as string[],
+        handedOff: [] as string[],
+        refused: 0,
+        fellThrough: 0,
+      };
+      spawned.length = 0;
+      ran.length = 0;
+      const dispatcher = createConnectorWriteDispatcher(
+        {
+          dispatch: async () => {
+            seen.fellThrough++;
+            return {};
+          },
+        },
+        {
+          vault: fakeVault(),
+          sandboxCwd: "/tmp",
+          isConnectorAllowed: (service) => {
+            seen.asked.push(service);
+            return allowed;
+          },
+          credentialFor: (service) => {
+            seen.selected.push(service);
+            return credential === "team" ? { credential, teamEntry: "e" } : { credential };
+          },
+          runTeamInvoke: async (req) => {
+            seen.handedOff.push(req.toolId);
+            return {};
+          },
+        },
+      );
+      for (const w of CONNECTOR_WRITES) {
+        try {
+          await dispatcher.dispatch({ type: w.actionType, payload: {} });
+        } catch (err) {
+          expect(String(err)).toContain(
+            `connectors.${w.service}: blocked by the org policy's connector allowlist (I22)`,
+          );
+          seen.refused++;
+        }
+      }
+      return seen;
+    };
+
+    try {
+      // Each session is served what a real one lists: every write, keyed `<server>_<tool>`.
+      __setSessionSpawnerForTest((req) => {
+        spawned.push(req.service);
+        const listing: LazyMeshToolMap = {};
+        for (const key of listedKeys) listing[key] = { execute: async () => void ran.push(key) };
+        return { listTools: async () => listing, disconnect: async () => {} };
+      });
+      for (const credential of ["personal", "team"] as const) {
+        const blocked = await runEveryWrite(false, credential);
+        expect(blocked.asked).toEqual(services);
+        expect(blocked.refused).toBe(CONNECTOR_WRITES.length);
+        // Nothing past the check: no credential selected, no team hand-off, no process, no tool.
+        expect(blocked.selected).toEqual([]);
+        expect(blocked.handedOff).toEqual([]);
+        expect(spawned).toEqual([]);
+        expect(ran).toEqual([]);
+        expect(blocked.fellThrough).toBe(0);
+
+        // Control: allowed, the same writes DO select a credential and run, so the empty lists
+        // above are the check's doing rather than a dispatcher that never got that far.
+        const allowed = await runEveryWrite(true, credential);
+        expect(allowed.refused).toBe(0);
+        expect(allowed.selected).toEqual(services);
+        expect(allowed.handedOff).toEqual(
+          credential === "team" ? CONNECTOR_WRITES.map((w) => w.toolId) : [],
+        );
+        expect(spawned).toEqual(credential === "team" ? [] : services);
+        expect(ran).toEqual(credential === "team" ? [] : listedKeys);
+      }
+    } finally {
+      __setSessionSpawnerForTest(undefined);
+    }
+  });
+
+  test("(h) a bare tool id never resolves onto a sibling server the same client carries", () => {
+    // `MCPClient.listTools()` keys a tool `<server>_<tool>`, and one first-party server name can
+    // extend another: the github spawner registers `github` AND `github_actions` in ONE client, so
+    // `github_` + `actions_<tool>` spells github_actions' key exactly. The pairs are derived from
+    // the catalogue, not listed, so a nested pair added later is covered the day it lands.
+    const ids = [...CONNECTOR_SERVICE_IDS];
+    const nested = ids.flatMap((outer) =>
+      ids.filter((inner) => inner.startsWith(`${outer}_`)).map((inner) => [outer, inner] as const),
+    );
+    expect(nested).toContainEqual(["github", "github_actions"]);
+    for (const [outer, inner] of nested) {
+      const own = mcpClientToolKey(outer, "own_tool");
+      const sibling = mcpClientToolKey(inner, "sibling_tool");
+      const tools: LazyMeshToolMap = { [own]: {}, [sibling]: {} };
+      // Premise: prefixed with the caller's server name, this bare id IS the sibling's listed key.
+      const spelling = `${inner.slice(outer.length + 1)}_sibling_tool`;
+      expect(mcpClientToolKey(outer, spelling)).toBe(sibling);
+      expect(resolveServerTool(tools, outer, spelling), `${outer} <- ${spelling}`).toBeUndefined();
+      // Controls: each server's own tool resolves by its bare id, the sibling's on ITS server.
+      expect(resolveServerTool(tools, outer, "own_tool")).toBe(tools[own]);
+      expect(resolveServerTool(tools, inner, "sibling_tool")).toBe(tools[sibling]);
+    }
+  });
+
+  test("(i) every seam that resolves a bare id runs the NAMED connector's tool, so a blocked sibling stays blocked", async () => {
+    // The github spawner's client as a real session lists it, and an org policy that allows
+    // `github` but blocks `github_actions`. The write transport checks the connector it is ASKED
+    // for, so the blocked tool, named as a bare id on the allowed server, must find nothing.
+    const ran: string[] = [];
+    const listing: LazyMeshToolMap = {};
+    for (const [server, name] of [
+      ["github", "github_pr_list"],
+      ["github_actions", "gha_run_trigger"],
+    ] as const) {
+      const key = mcpClientToolKey(server, name);
+      listing[key] = { execute: async () => void ran.push(key) };
+    }
+    const ctx: ConnectorWriteContext = {
+      vault: fakeVault(),
+      sandboxCwd: "/tmp",
+      isConnectorAllowed: (service) => service !== "github_actions",
+      credentialFor: () => ({ credential: "personal" }),
+      runTeamInvoke: () => Promise.reject(new Error("not the team path")),
+    };
+    const personalWrite = (writeToolId: string) =>
+      invokeConnectorWrite(ctx, { service: "github", writeToolId, args: {} });
+    // The team-credentialed local write's seam (`localOpInvokeCtx` in assemble.ts).
+    const teamWrite = (toolId: string) =>
+      spawnTeamWriteAndCall({
+        service: "github",
+        toolId,
+        args: {},
+        vaultView: fakeVault(),
+        sandboxCwd: "/tmp",
+      });
+    // The mesh dispatcher resolves a bare `mcpToolId` on the service of the action's type. The
+    // mesh's own map is policy-filtered before it gets there, so for it the rule is what keeps a
+    // bare id on the connector of the action even when both are allowed; same listing here.
+    const mesh = createConnectorDispatcher({ listTools: async () => listing });
+    const meshRun = (type: string, mcpToolId: string) =>
+      mesh.dispatch({ type, payload: { mcpToolId } });
+
+    try {
+      __setSessionSpawnerForTest(() => ({
+        listTools: async () => listing,
+        disconnect: async () => {},
+      }));
+      // Premise: asked for by its own connector, the blocked tool never gets past the policy.
+      await expect(
+        invokeConnectorWrite(ctx, {
+          service: "github_actions",
+          writeToolId: "gha_run_trigger",
+          args: {},
+        }),
+      ).rejects.toThrow("blocked by the org policy's connector allowlist (I22)");
+
+      // The same tool spelled as a bare id on the ALLOWED server: the policy check passes, and
+      // the lookup refuses the key, because a longer sibling server owns it.
+      const spelling = "actions_gha_run_trigger";
+      const miss = `connector-session: tool "${spelling}" not found for service "github"`;
+      await expect(personalWrite(spelling)).rejects.toThrow(miss);
+      await expect(teamWrite(spelling)).rejects.toThrow(miss);
+      await expect(meshRun("github.workflow.run", spelling)).rejects.toThrow("Tool not found");
+      expect(ran).toEqual([]);
+
+      // Controls: each seam runs the named connector's own tool by its bare id.
+      await personalWrite("github_pr_list");
+      await teamWrite("github_pr_list");
+      await meshRun("github.pr.list", "github_pr_list");
+      expect(ran).toEqual([
+        "github_github_pr_list",
+        "github_github_pr_list",
+        "github_github_pr_list",
+      ]);
+
+      // The one seam that must NOT resolve: the federated anchor's, whose id a grant was made on.
+      // A bare id names nothing there; only the exact listed key runs.
+      ran.length = 0;
+      const federated = (toolId: string) =>
+        spawnTeamToolAndCall({
+          service: "github",
+          toolId,
+          args: {},
+          vaultView: fakeVault(),
+          sandboxCwd: "/tmp",
+        });
+      await expect(federated("github_pr_list")).rejects.toThrow(
+        'connector-session: tool "github_pr_list" not found for service "github"',
+      );
+      await federated("github_github_pr_list");
+      expect(ran).toEqual(["github_github_pr_list"]);
+    } finally {
+      __setSessionSpawnerForTest(undefined);
+    }
   });
 });
 

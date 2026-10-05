@@ -256,4 +256,37 @@ describe("drainTeamListSession (production openSession — D9 one-spawn multi-pa
     // D9: only ONE spawn for N pages.
     expect(spawnCount).toBe(1);
   });
+
+  it("drains the list tool a real session lists as <service>_<tool>, from its bare id", async () => {
+    // A real team session lists through MCPClient, so the snowflake connector's `snowflake_list`
+    // is keyed `snowflake_snowflake_list`; the caller still names it `snowflake_list`.
+    const pages = [
+      { items: [{ id: "a" }], nextCursor: "1" },
+      { items: [{ id: "b" }], nextCursor: null },
+    ];
+    const cursors: unknown[] = [];
+    __setSessionSpawnerForTest(() => ({
+      listTools: async () => ({
+        snowflake_snowflake_list: {
+          execute: async (args: unknown) => {
+            const { cursor } = args as { cursor: string | null };
+            cursors.push(cursor);
+            const page = pages[cursor === null ? 0 : 1];
+            return { content: [{ type: "text", text: JSON.stringify(page) }] };
+          },
+        },
+      }),
+      disconnect: async () => {},
+    }));
+
+    const result = await drainTeamListSession({
+      service: "snowflake",
+      vaultView: fakeVault({ "snowflake.account": "ACCT" }),
+      sandboxCwd: SANDBOX_CWD,
+      listToolId: "snowflake_list",
+    });
+
+    expect(result).toEqual([{ id: "a" }, { id: "b" }]);
+    expect(cursors).toEqual([null, "1"]);
+  });
 });
