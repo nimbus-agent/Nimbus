@@ -10,7 +10,6 @@
     "sharp": "0.35.5",
     "protobufjs": "8.8.0",
     "qs": "6.16.0",
-    "nodemailer": "10.0.13",
     "zod": "4.6.5"
   },
   "workspaces": [

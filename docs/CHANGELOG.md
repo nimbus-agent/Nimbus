@@ -71,6 +71,62 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
   `nimbus scaffold extension`, which `CONTRIBUTING.md` has said is not one for connectors since
   2026-08-20; it now points at the same guide. No runtime change.
 
+- **2026-10-05 — `--format plain` is linear on a line of underscores that open but never close.**
+  The quality sweep below made two super-linear patterns in
+  `packages/cli/src/format/slack-markdown.ts` linear and recorded a third that was not: plain
+  mode's underscore-italic pass,
+  `/(?<!\w)_(?!\s)(.+?)(?<!\s)_(?!\w)/g`, which `changelog`, `standup` and `oncall` run over every
+  line of a brief under `--format plain`. An `_` with no word character before it and a non-space
+  after it can open a run, but when a space precedes it or a word character follows it, it can
+  never close one, and the regex scanned the rest of the line from every such `_` before trying
+  the next. A line repeating a space and `_a` took 2.4 s at 30 KB, 9.2 s at 60 KB and about 40 s
+  at 120 KB on a developer machine, four times as long per doubling. The pass is now a
+  hand-written scan in the shape of the sweep's link fix, and the same input takes milliseconds.
+  Whether an `_` can close never depends on where its run opened, so once an attempt reaches the
+  end of its line without finding a closer, no later `_` on that line can start a run either, and
+  the scan resumes after the line instead of retrying each one. This supersedes the sweep entry's
+  note that the pass was still quadratic.
+  **The output is unchanged for every input.** The test keeps the old regex as its oracle and
+  compares the two on every string of up to eight characters drawn from the five classes the
+  pattern tells apart (488,281 strings); on every UTF-16 code unit at each of the five places the
+  pattern reads one (327,680 strings), which shows the scan sorts each code unit into the class the
+  regex does instead of assuming it; and on 20,000 seeded pseudo-random strings drawn from real
+  members of each class, among them U+00A0, U+2028, the BOM, a non-BMP character and a lone
+  surrogate. Each of seven deliberate mutations of the scan fails that comparison. So do three more
+  that only the per-code-unit check catches: a whitespace set written out by hand that leaves out
+  U+1680, U+2000 to U+200A, U+202F and U+205F, one that adds U+0085, and a `.` that also refuses
+  U+0085. Four time-bounded tests hold 120 KB inputs under one second. They also guard the scan's
+  two skips, past the end of the text and past a line terminator, which no output comparison can
+  see: a scan that retried every `_` would return the same text, quadratically.
+  **Nothing else in `packages/cli/src/format/` is super-linear.** The audit covered bold, both
+  single-asterisk italic patterns, strikethrough, the link scan, the heading, table-row and
+  delimiter-cell patterns, the cell split and the unescape pass: 66 adversarial shapes at up to
+  120 KB, each as one line, as four lines, as 1 KB lines, and as stretches separated by `\r` or
+  U+2028, in both modes. The slowest took 11 ms at 120 KB and grew linearly. The module has no
+  inline-code, list or blockquote pass to audit. Slack mode never ran the underscore pass and is
+  unchanged. No new invariant, no migration, no IPC change.
+
+- **2026-10-05 — The bundled connectors move to 0.2.2, and the `nodemailer` override is gone.**
+  `@nimbus-dev/connectors` goes from 0.2.1 to 0.2.2, and the gateway binary bundles it. As Nimbus
+  runs them, the connectors now:
+  - refuse a Bitbucket next-page link on another host instead of fetching it with the Bitbucket
+    credential attached;
+  - request six list and search tools (Outlook mail, CircleCI pipelines, Discord messages, Google
+    Meet list and search, Google Photos albums) under their API base once, not with a doubled
+    version segment;
+  - remove `aws_lambda_invoke`'s temp directory after every call;
+  - verify an audit entry whose detail holds an `undefined` value;
+  - use the latest MCP SDK, zod, imapflow, nodemailer, tsdav and hyparquet.
+
+  Four mutating tools are now registered as writes in the connectors' consent kit:
+  `aws_ec2_instance_stop`, `aws_ec2_instance_start`, `slack_message_post_dm` and
+  `teams_message_post_chat`. The root `nodemailer` override (10.0.13) existed to lift 0.2.1's
+  `^9.0.5` past its advisories. 0.2.2 declares `^10.0.14`, so the override could only force a
+  version below the connectors' own floor. It is removed, and `nodemailer` resolves to 10.0.14,
+  which `bun audit` reports clean at every severity. The gateway's own `imapflow` range moves
+  from `^2.2.1` to `^2.2.5`, so it shares one copy with the connectors instead of installing two.
+  No migration, no invariant change, no new IPC method.
+
 - **2026-10-05 — `audit:boundaries` enforces its rules again, and fails when it cannot.** The gate
   runs dependency-cruiser over `.dependency-cruiser.cjs`: no cycles, no cross-package source imports,
   and PAL isolation. It had been inert on a coin flip since TypeScript 7 landed (#1049, 2026-08-05).
