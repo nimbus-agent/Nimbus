@@ -58,9 +58,11 @@ export class ConsentBroker<TInput extends object> {
 
   /**
    * Cancel and drop every pending request, clearing each TTL timer. Callers that hold no live
-   * promise (fire-and-forget `request()` whose result is ignored) MUST be able to release the
-   * timer — otherwise a dangling `unref`'d timer hangs `bun test` teardown on Windows. Safe to
-   * call on shutdown and from test `afterEach`.
+   * promise (fire-and-forget `request()` whose result is ignored) need a way to release the timer,
+   * which is ref'd (see `request`), so until it fires it keeps the event loop alive. Left pending,
+   * it does not stop `bun test` from exiting (measured on Windows and Linux, Bun 1.3.14), but it
+   * does keep the loop alive for every later test in the process, which can hide the Windows hang
+   * `testing/hold-event-loop.ts` describes. Safe to call on shutdown and from test `afterEach`.
    */
   clear(): void {
     for (const { timer } of this.pending.values()) {

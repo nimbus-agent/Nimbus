@@ -166,7 +166,11 @@ the honest local answer. CI's step adds the registry's `--ignore=<GHSA>` argumen
 
 ```bash
 bun run audit:structure                 # full pack via orchestrator → run-<ts>.json
-bun run audit:boundaries                # dep-cruiser: D1 cross-pkg / D2 cycles / D3 PAL leakage
+bun run audit:boundaries                # dep-cruiser: D1 cross-pkg / D2 cycles / D3 PAL leakage, run by
+                                        # scripts/structure-audit/check-boundaries.ts, which pins its
+                                        # TypeScript 6 and FAILS an inert cruise (uncruised gateway/cli/ui
+                                        # sources, missing edges, a rule that matches nothing); never
+                                        # run `depcruise` bare, since it can skip every .ts file and pass
 bun run audit:coverage-floor                 # per-file floor: ≥85% line / ≥80% branch (with ratcheting baseline)
 bun run audit:coverage-floor:build-lcov      # per-package bun test + lcov merge (reproduces CI input for the floor gate)
 bun run audit:coverage-floor:update-baseline # raise must-raise watermarks + drop must-remove entries
