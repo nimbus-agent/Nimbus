@@ -5,7 +5,7 @@ sidebar:
   order: 0
 ---
 
-Nimbus ships first-party MCP servers under `packages/mcp-connectors/` in the repository. Each connector syncs metadata into your local SQLite index; the Engine talks to connectors **only over MCP** (never direct cloud SDK calls from the Gateway).
+Nimbus ships its first-party MCP servers inside the Gateway binary. They are developed in their own repository, [nimbus-agent/nimbus-mcp-servers](https://github.com/nimbus-agent/nimbus-mcp-servers), and published as the `@nimbus-dev/connectors` package that the Gateway bundles. Each connector syncs metadata into your local SQLite index; the Engine talks to connectors **only over MCP** (never direct cloud SDK calls from the Gateway).
 
 ### Authenticate
 
@@ -27,7 +27,7 @@ nimbus connector sync github
 | Chat | `slack`, `discord` (opt-in) | OAuth / bot token |
 | CI / cloud | `jenkins`, `github_actions`, `circleci`, `gitlab` (CI), `aws`, `azure`, `gcp`, `iac`, `kubernetes`, … | Tokens / CLI |
 
-Use `nimbus connector help` for the full command surface. Source for each connector lives beside its MCP package in the monorepo.
+Use `nimbus connector help` for the full command surface. Each connector's MCP server lives at `connectors/<name>/` in [nimbus-agent/nimbus-mcp-servers](https://github.com/nimbus-agent/nimbus-mcp-servers); the sync and indexing logic that fills your local index stays in the Gateway, under `packages/gateway/src/connectors/` in the main repository.
 
 ### Health
 

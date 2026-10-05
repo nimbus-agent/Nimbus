@@ -15,9 +15,10 @@ describe("iterateSourceFiles", () => {
     // .toEqual([])` is satisfied just as well by visiting NOTHING, and this generator is the
     // single source of files for every D10-D22 rule in check-nimbus-invariants.ts — so a walk
     // that silently stopped matching would leave those rules scanning an empty set and
-    // reporting clean. That is not hypothetical: pointing the package glob at a directory
-    // that does not exist still yields ~179 files from the mcp-connectors glob, which is why
-    // the auditor's own floor keys on specific files rather than a count.
+    // reporting clean. That is not hypothetical: while the walk carried a second glob over the
+    // since-deleted `packages/mcp-connectors`, pointing the package glob at a directory that
+    // does not exist still yielded ~179 files from that second glob, which is why the auditor's
+    // own floor keys on specific files rather than a count.
     expect(visited.length).toBeGreaterThan(500);
     expect(visited).toContain("packages/gateway/src/engine/executor.ts");
   });

@@ -10,6 +10,10 @@ body:
         at https://nimbus-agent.dev, the per-package READMEs, `docs/*.md`
         files, or the inline CLI `--help` text.
 
+        A connector's own README or tool reference lives with its code in
+        [nimbus-agent/nimbus-mcp-servers](https://github.com/nimbus-agent/nimbus-mcp-servers) —
+        please file those there.
+
   - type: input
     id: page_or_path
     attributes:
@@ -41,6 +45,6 @@ body:
         - "Gateway (packages/gateway/)"
         - "CLI (packages/cli/)"
         - "UI (packages/ui/)"
-        - "MCP connector (packages/mcp-connectors/*)"
+        - "MCP connector (docs/connectors/, or a connector page on the docs site)"
         - "Repo-root docs (docs/*.md)"
         - "Other / cross-cutting"

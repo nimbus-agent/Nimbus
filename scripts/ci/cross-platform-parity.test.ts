@@ -2,11 +2,12 @@ import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
+import { unitTestCommand } from "../lib/ci-tests.ts";
 import { REPO_ROOT } from "../structure-audit/lib.ts";
 
 /**
  * The PR cross-platform legs and the macOS/Windows push leg must run the SAME `bun test`
- * package list.
+ * package list — and so must the two local entry points, `bun run test` and `test:ci`.
  *
  * They did not, from whenever `pr-quality-cross-platform` was introduced until 2026-08-23. The
  * PR leg ran `bun test packages/<pkg>/src`; the push leg ran
@@ -30,18 +31,19 @@ const CI_YML = join(REPO_ROOT, ".github", "workflows", "ci.yml");
 const TEST_SUITE_YML = join(REPO_ROOT, ".github", "workflows", "_test-suite.yml");
 
 /**
- * Positional (non-flag) arguments of a `bun test …` invocation on one line.
+ * Positional (non-flag) arguments of a `bun test …` invocation on a workflow `run:` line.
  *
  * Stops at the first token that starts with `-` or a redirect, which is where the paths end in
- * both invocations. Returns `undefined` when the line has no `bun test` at all.
+ * both workflow invocations. It cannot read on: their flags take separate values (`--timeout
+ * 60000`, `--preload <file>`), which would count as paths. Returns `undefined` when the line has no
+ * `bun test` at all.
  */
 function bunTestPaths(line: string): readonly string[] | undefined {
-  const marker = " bun test ";
-  const at = line.indexOf(marker);
-  if (at === -1) {
+  const marker = /(?:^|\s)bun test\s/.exec(line);
+  if (marker === null) {
     return undefined;
   }
-  const rest = line.slice(at + marker.length).trim();
+  const rest = line.slice(marker.index + marker[0].length).trim();
   const paths: string[] = [];
   for (const token of rest.split(/\s+/)) {
     if (token.startsWith("-") || token.startsWith(">") || token.startsWith("2>")) {
@@ -52,12 +54,37 @@ function bunTestPaths(line: string): readonly string[] | undefined {
   return paths;
 }
 
+/**
+ * Every non-flag argument of a command that starts with `bun test` and that this repository writes
+ * in full: the `test` script and the command `test:ci`'s unit run spawns.
+ *
+ * Unlike `bunTestPaths`, it does not stop at the first flag. Bun takes a positional after a flag as
+ * a path filter too (measured on bun 1.3.14: `bun test alpha --coverage beta` runs both
+ * directories), so stopping there would miss a path added after one. Neither command has a flag
+ * that takes a separate value; one that did would show up here as a path and fail the check, so
+ * write such a flag as `--flag=value`. Returns `undefined` unless the command starts with
+ * `bun test`.
+ */
+function everyBunTestPath(argv: readonly string[]): readonly string[] | undefined {
+  if (argv[0] !== "bun" || argv[1] !== "test") {
+    return undefined;
+  }
+  return argv.slice(2).filter((arg) => !arg.startsWith("-"));
+}
+
 /** Every line of `file` matching `predicate`, as a list — so "exactly one" is assertable. */
 function matchingLines(file: string, predicate: (line: string) => boolean): readonly string[] {
   return readFileSync(file, "utf8")
     .split(/\r?\n/)
     .filter((l) => predicate(l));
 }
+
+// The push leg's command, identified by the JUnit outfile, which names the unit shard and appears
+// exactly once. Module scope because both describes below compare against it.
+const pushLines = matchingLines(
+  TEST_SUITE_YML,
+  (l) => l.includes(" bun test ") && l.includes("junit-reports/junit-unit.xml"),
+);
 
 describe("PR cross-platform legs run the same tests as the push matrix", () => {
   // Identified by the wall-clock wrapper, which is unique to this step in ci.yml. Keying on
@@ -71,12 +98,6 @@ describe("PR cross-platform legs run the same tests as the push matrix", () => {
   // which the length assertion below is here to catch, but only if the predicate still
   // identifies the step at all. The cap's VALUE is not this file's subject; the test PATHS are.
   const prLines = matchingLines(CI_YML, (l) => /run-with-timeout\.ts \d+ bun test/.test(l));
-
-  // Identified by the JUnit outfile, which names the unit shard and appears exactly once.
-  const pushLines = matchingLines(
-    TEST_SUITE_YML,
-    (l) => l.includes(" bun test ") && l.includes("junit-reports/junit-unit.xml"),
-  );
 
   test("each command is found exactly once", () => {
     // A zero match would make the parity assertion below vacuously true — the classic shape of
@@ -109,13 +130,47 @@ describe("PR cross-platform legs run the same tests as the push matrix", () => {
       expect(paths).toContain("packages/cli");
       expect(paths).toContain("scripts");
       // `packages/mcp-connectors` was in this list until the connectors were extracted to their
-      // own repository. It is asserted ABSENT rather than simply dropped: a path that no longer
-      // exists would make `bun test` exit non-zero on both legs, so re-adding it is a mistake the
-      // equality check above cannot catch — both lists would agree, and both would be wrong.
+      // own repository. It is asserted ABSENT rather than simply dropped because nothing else
+      // would ever flag it: `bun test` exits 0 when one of its paths matches no test file as long
+      // as another matches something (measured on bun 1.3.14), so a dead path is silently
+      // ignored, and the equality check above cannot catch it either — both lists would agree,
+      // and both would be wrong. This comment used to claim the dead path fails `bun test`; it
+      // does not, which is how the two local entry points tested below kept it for five weeks.
       expect(paths).not.toContain("packages/mcp-connectors");
       for (const p of paths) {
         expect(p.endsWith("/src")).toBe(false);
       }
     }
+  });
+});
+
+describe("the local entry points run the same tests as the push matrix", () => {
+  // `bun run test` and `test:ci` are what a contributor runs locally, and the full `preflight`
+  // tier runs the second. Neither was held to the CI list, and when #1347 deleted
+  // `packages/mcp-connectors` and dropped it from the two CI commands above, both kept it — five
+  // weeks, unnoticed, because `bun test` does not report a path that matches nothing (see the
+  // comment above). Equality with the push leg is the check; a drift in either direction — a
+  // dead path kept, or a real one missing — fails it.
+  const push = bunTestPaths(pushLines[0] ?? "");
+
+  test("`bun run test` names exactly the push leg's test paths", () => {
+    const pkg = JSON.parse(readFileSync(join(REPO_ROOT, "package.json"), "utf8")) as {
+      scripts: Record<string, string>;
+    };
+    const script = pkg.scripts["test"];
+    expect(script).toBeDefined();
+    const paths = everyBunTestPath((script ?? "").trim().split(/\s+/));
+    expect(paths).toBeDefined();
+    expect(push).toBeDefined();
+    expect(paths).toEqual(push as readonly string[]);
+  });
+
+  test("`test:ci`'s whole-repo unit run spawns exactly the push leg's test paths", () => {
+    // Read from the command the run spawns, not from a list beside it: a path added to the command
+    // beside the list would pass a check of the list alone.
+    const paths = everyBunTestPath(unitTestCommand());
+    expect(paths).toBeDefined();
+    expect(push).toBeDefined();
+    expect(paths).toEqual(push as readonly string[]);
   });
 });

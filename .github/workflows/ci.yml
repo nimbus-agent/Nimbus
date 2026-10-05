@@ -179,10 +179,11 @@ jobs:
   # let a gateway test's global `mock.restore()` corrupt CLI repl tests on macOS.
   #
   # That isolation was never a property of the product — only of this job. The
-  # macOS and Windows PUSH legs have run gateway + cli + mcp-connectors + scripts
-  # in ONE process the whole time (`_test-suite.yml`), so `main` was already
-  # paying whatever that costs while the PR gate was insulated from it. Checked
-  # against the 2026-08-22 macOS push run before this job was changed: every
+  # macOS and Windows PUSH legs have run gateway + cli + scripts (plus
+  # mcp-connectors, until #1347 extracted it) in ONE process the whole time
+  # (`_test-suite.yml`), so `main` was already paying whatever that costs
+  # while the PR gate was insulated from it. Checked against the 2026-08-22
+  # macOS push run before this job was changed: every
   # `cli-mocks` consumer (`ask`/`audit`/`catchup`/`clip`…) and `repl-core.test.ts`
   # loaded in the same process as the gateway suite, and not one CLI test failed.
   # The hazard is stale.

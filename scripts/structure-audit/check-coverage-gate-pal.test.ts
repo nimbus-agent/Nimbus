@@ -237,15 +237,16 @@ describe("detectPlatformBranchingFiles", () => {
   });
 
   test("reaches a NESTED src directory, not just packages/{pkg}/src", () => {
-    // packages/mcp-connectors/src does not exist; each of the 94 connectors has
-    // its own packages/mcp-connectors/{name}/src. A one-level scan skipped all
-    // of them silently. No connector branches on platform today, so this uses a
-    // fixture tree — asserting against the real repo would pass for the wrong
-    // reason (nothing to find) and would not catch the regression.
+    // packages/github-actions/src does not exist; each action has its own
+    // packages/github-actions/{name}/src. A one-level scan skips them silently
+    // (it skipped all 94 packages/mcp-connectors/{name}/src the same way, before
+    // the connectors left the repository). No action branches on platform today,
+    // so this uses a fixture tree — asserting against the real repo would pass
+    // for the wrong reason (nothing to find) and would not catch the regression.
     const root = mkdtempSync(join(tmpdir(), "pal-detect-"));
     try {
       const shallow = join(root, "packages", "gateway", "src");
-      const nested = join(root, "packages", "mcp-connectors", "airflow", "src");
+      const nested = join(root, "packages", "github-actions", "annotate-action", "src");
       mkdirSync(shallow, { recursive: true });
       mkdirSync(nested, { recursive: true });
       writeFileSync(join(shallow, "a.ts"), "if (process.platform === 'win32') {}\n");
@@ -253,7 +254,7 @@ describe("detectPlatformBranchingFiles", () => {
 
       expect(detectPlatformBranchingFiles(root)).toEqual([
         "packages/gateway/src/a.ts",
-        "packages/mcp-connectors/airflow/src/b.ts",
+        "packages/github-actions/annotate-action/src/b.ts",
       ]);
     } finally {
       rmSync(root, { recursive: true, force: true });

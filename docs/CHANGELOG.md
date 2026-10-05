@@ -18,6 +18,59 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
 
 ## Post-Phase-6 deliveries
 
+- **2026-10-05 — The last live references to the deleted `packages/mcp-connectors` workspace are
+  gone, and the local test commands are held to CI's list.** #1347 (2026-08-27) deleted the
+  workspace and dropped it from the two CI test commands, but `bun run test` and `test:ci` (the unit
+  run behind the full `preflight` tier) kept it as a test path for five more weeks. Nothing noticed,
+  because nothing could: `bun test` exits 0 when one of its path filters matches no test file as
+  long as another matches something (measured on bun 1.3.14); only a list that matches nothing at
+  all fails. The parity test's own comment claimed the opposite, that a dead path makes `bun test`
+  exit non-zero, and is corrected. Dropping the path changes no run: on its own,
+  `bun test packages/mcp-connectors` exits 1 because it matches no test file, and bun runs the union
+  of what each filter matches. `scripts/ci/cross-platform-parity.test.ts` now also holds the
+  `test` script, and the command `test:ci`'s unit run spawns (`unitTestCommand()`, exported from
+  `scripts/lib/ci-tests.ts`), to the push leg's paths, so a dead path kept or a real one missing
+  fails in either. Both checks read every path in their command, including one after a flag,
+  because bun treats a positional after a flag as a path filter too. The two workflow lines are
+  still read only up to their first flag, since their flags take separate values.
+
+  Also removed, each matching nothing: the `packages/mcp-connectors/*/node_modules` path in
+  `setup-nimbus-ci`'s `node_modules` cache (the cache key is unchanged, but `actions/cache` hashes
+  the path list into each entry's version, so Linux and macOS each miss once and save a fresh
+  entry, while Windows does not cache `node_modules` at all; the separately cached Bun download
+  cache is untouched); the two `.gitignore` lines for the workspace's old build bundles; the second
+  glob in `iterateSourceFiles`, which `audit:invariants`, `audit:any` and the other structure audits
+  walk; and `gen:connector-registry`'s `NIMBUS_CONNECTOR_SPECIFIER=workspace` form, which could only
+  emit imports into the deleted directory. The regenerated registry is byte-identical. `audit:connector-registry-drift` now parses
+  only the package specifier, so an entry hand-written in the old relative form no longer counts as
+  registering its connector, and its findings name `@nimbus-dev/connectors` instead of the deleted
+  directory.
+
+  Docs that still described the old layout now point at nimbus-agent/nimbus-mcp-servers: the docs
+  site's connectors overview and getting-started layout table, the CodeQL row in
+  `security-hardening.md`, the documentation issue form, the coverage section of the
+  connector-authoring skill (no connector source is in this repository's coverage), Sonar config
+  comments, and gateway source comments that cited `packages/mcp-connectors` paths or the gates that
+  left with the connectors. Dated records keep the old name: this changelog, the roadmap, and
+  comments describing what was true when they were written. Test fixtures that modelled the old
+  layout now model the current one. The bun.lock fixture in `_release-train-dep.test.ts` now nests
+  under a scoped workspace name (`@nimbus/gateway`), so a parser that took the owner to be the text
+  before the first `/` fails it; the old unscoped name let that parser pass.
+
+  The instructions for starting a connector had the same stale path in a place a search for it
+  cannot find: inside the tool they pointed to. The README's "adding a connector" paragraph,
+  `CONTRIBUTING.md`'s connector section and the architecture skill's quickstart all sent a
+  contributor to run `create-nimbus-connector` in nimbus-mcp-servers. That generator's default
+  target, as of 0.13.4, is still the pre-move layout. It writes `packages/mcp-connectors/<name>/`,
+  and even pointed at `connectors/<name>/` with `--out-dir`, its `../../shared/*` imports and its
+  `extends` of `../../../tsconfig.base.json` resolve one level off (checked by generating its own
+  netlify fixture into a scratch directory laid out the same way). It also emits no `src/tools.ts`, which
+  nimbus-mcp-servers' guide asks for, and its README says it has not been re-targeted. All three now
+  send contributors to that guide, and keep the generator for `--standalone` connectors outside that
+  repository. The connector-authoring skill's `## Scaffold` section named a third tool,
+  `nimbus scaffold extension`, which `CONTRIBUTING.md` has said is not one for connectors since
+  2026-08-20; it now points at the same guide. No runtime change.
+
 - **2026-10-05 — Connector sessions find tools by their bare id: the warehouse/BI syncs and the
   tribal KB capture work against real connectors, and the connector-write transport resolves its
   writes.** A credentialed connector session lists its tools through `@mastra/mcp`'s

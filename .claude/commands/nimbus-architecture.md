@@ -160,12 +160,8 @@ Every connector lives in [nimbus-agent/nimbus-mcp-servers](https://github.com/ni
 
 The Engine calls connectors through the MCP tool interface only. No connector imports are allowed inside `packages/gateway/src/engine/`.
 
-**Connector quickstart** (from the connectors repo's root):
-```bash
-bunx create-nimbus-connector --spec ./<service-name>.spec.json
-# → generates connectors/<service-name>/: src/server.ts, the manifest, tsconfig, package.json, README, sandbox test
-```
-`nimbus scaffold extension <id>` is **not** the tool for a connector: it emits a generic extension shell with no `src/server.ts`, which every connector gate keys off. See `docs/CONTRIBUTING.md` § Adding a New MCP Connector. Extension (not connector) walkthrough: `docs/contributors/extension-author-walkthrough.md`
+**Connector quickstart:** write it by hand from nimbus-mcp-servers' [guide to adding a connector](https://github.com/nimbus-agent/nimbus-mcp-servers/blob/main/docs/adding-a-connector.md): `connectors/<id>/` with `src/server.ts` kept a bootstrap and the tool surface in `src/tools.ts`, the manifest, a TypeScript config extending `../../tsconfig.base.json`, and an `exports` entry in that repository's root manifest. **`create-nimbus-connector` cannot generate one there yet.** Its default target is still the pre-move `packages/mcp-connectors/<name>/` layout, with `../../shared/*` imports and `extends: "../../../tsconfig.base.json"`. Neither resolves in nimbus-mcp-servers, even with `--out-dir connectors/<id>`, and the generator emits no `src/tools.ts`. Only its `--standalone` output is independent of that layout, and it is for a connector outside that repository.
+`nimbus scaffold extension <id>` is **not** the tool for a connector either: it emits a generic extension shell with no `src/server.ts`, which every connector gate keys off. See `docs/CONTRIBUTING.md` § Adding a New MCP Connector. Extension (not connector) walkthrough: `docs/contributors/extension-author-walkthrough.md`
 
 ---
 

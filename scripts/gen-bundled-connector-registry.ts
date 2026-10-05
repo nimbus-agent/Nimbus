@@ -93,25 +93,20 @@ export function bundledConnectorIds(packageName: string = CONNECTOR_PACKAGE): st
 }
 
 /**
- * Where a connector entrypoint is imported FROM.
+ * Where a connector entrypoint is imported FROM: a bare specifier into `@nimbus-dev/connectors`,
+ * the published package the connectors live in.
  *
- * `package` (the DEFAULT) emits a bare specifier into `@nimbus-dev/connectors`, the published
- * package the connectors now live in. `workspace` emits a relative path into
- * `packages/mcp-connectors`, the in-repo copy that has not been deleted yet.
+ * That `bun build --compile` embeds a BARE-specifier dynamic import as reliably as a relative one
+ * was measured before the switch: against the published 0.1.1 tarball, a compiled binary booted
+ * all 94 connectors with the same verdict as the relative build — 89 answered, 5 refused without
+ * credentials, 0 failed.
  *
- * The default flipped once the assumption the flag existed to test was proven: that
- * `bun build --compile` embeds a BARE-specifier dynamic import as reliably as a relative one.
- * Measured against the published 0.1.1 tarball, a compiled binary booted all 94 connectors with
- * the same verdict as the relative build — 89 answered, 5 refused without credentials, 0 failed.
- *
- * `workspace` is kept, not as a fallback but as a bisection tool: if a connector misbehaves after
- * the switch, regenerating against the in-repo copy says whether the package boundary is implicated
- * or the connector itself is. It stops being meaningful once packages/mcp-connectors is deleted.
+ * There used to be a second form. `NIMBUS_CONNECTOR_SPECIFIER=workspace` emitted a relative import
+ * into `packages/mcp-connectors`, kept as a bisection tool while that in-repo copy still existed.
+ * #1347 deleted the copy, after which the form could only generate imports that do not resolve.
  */
 function specifierFor(id: string): string {
-  return process.env["NIMBUS_CONNECTOR_SPECIFIER"] === "workspace"
-    ? `../../../mcp-connectors/${id}/src/server.ts`
-    : `@nimbus-dev/connectors/${id}`;
+  return `${CONNECTOR_PACKAGE}/${id}`;
 }
 
 function render(ids: readonly string[]): string {

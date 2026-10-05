@@ -29,10 +29,13 @@ function makeManifest(
   };
 }
 
+// The shape `connectorSpawn` (keys.ts) gives a first-party connector in a compiled binary: the
+// binary re-executing itself in its `__nimbus-connector` role. Deliberately NOT the dev-tree form,
+// whose `<gateway>/src/index.ts` argument would also satisfy the entry assertion below.
 function makeSpec(env: Record<string, string> = {}): ServerSpec {
   return {
-    command: "bun",
-    args: ["packages/mcp-connectors/github/src/server.ts", "--mode", "stdio"],
+    command: "nimbus-gateway",
+    args: ["__nimbus-connector", "github"],
     env: { GITHUB_PAT: "ghp_test", ...env },
   };
 }
@@ -51,10 +54,7 @@ describe("wrapServerSpec", () => {
 
   test("preserves the original command + args after the sentinel", () => {
     const wrapped = wrapServerSpec(makeSpec(), makeManifest(), CWD);
-    expect(wrapped.args[2]).toBe("bun");
-    expect(wrapped.args[3]).toBe("packages/mcp-connectors/github/src/server.ts");
-    expect(wrapped.args[4]).toBe("--mode");
-    expect(wrapped.args[5]).toBe("stdio");
+    expect(wrapped.args.slice(2)).toEqual(["nimbus-gateway", "__nimbus-connector", "github"]);
   });
 
   test("preserves caller-supplied env keys", () => {
