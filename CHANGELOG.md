@@ -2,6 +2,18 @@
 
 All notable changes to the `nimbus` core (headless Gateway + CLI binary + first-party MCP connectors) are documented in this file. release-please appends new entries between this header and the most recent version below when a release PR merges.
 
+## [7.35.1](https://github.com/nimbus-agent/Nimbus/compare/v7.35.0...v7.35.1) (2026-10-05)
+
+
+### Bug Fixes
+
+* **cli:** make --format plain's underscore-italic pass linear ([#1608](https://github.com/nimbus-agent/Nimbus/issues/1608)) ([475735e](https://github.com/nimbus-agent/Nimbus/commit/475735ee7c9d54dca0b9d5a605506f420cd20d58))
+* **deps:** bump the bundled connectors to 0.2.2 and drop the nodemailer override ([#1606](https://github.com/nimbus-agent/Nimbus/issues/1606)) ([58ad04f](https://github.com/nimbus-agent/Nimbus/commit/58ad04fad78a7c7f3c79f8602b41e7798fc05b62))
+* **deps:** bundle connectors 0.2.4, and name the right Workday task in the auth help ([#1614](https://github.com/nimbus-agent/Nimbus/issues/1614)) ([d25fbea](https://github.com/nimbus-agent/Nimbus/commit/d25fbea19f8d3042e68ec17eeacf5d3b96b962a9))
+* **gateway:** enforce the connector allowlist at the federated invoke gate, and route ChatOps writes through the write transport ([#1615](https://github.com/nimbus-agent/Nimbus/issues/1615)) ([1c578cb](https://github.com/nimbus-agent/Nimbus/commit/1c578cbbda71f4645726b5348050ccfab2d200bf))
+* **gateway:** refuse connector writes and code-executing connector tools at the federated invoke gate (I26) ([#1607](https://github.com/nimbus-agent/Nimbus/issues/1607)) ([eeb5245](https://github.com/nimbus-agent/Nimbus/commit/eeb5245bf3237abb4cf9e70407cddc1e527583ac))
+* **gateway:** resolve bare connector tool ids on the caller's own MCP server ([#1610](https://github.com/nimbus-agent/Nimbus/issues/1610)) ([3e41d5b](https://github.com/nimbus-agent/Nimbus/commit/3e41d5b34c216d74e63c83473525718633f93210))
+
 ## [7.35.0](https://github.com/nimbus-agent/Nimbus/compare/v7.34.0...v7.35.0) (2026-10-04)
 
 
