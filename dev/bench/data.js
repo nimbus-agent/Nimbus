@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1791189165086,
+  "lastUpdate": 1791191718050,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "306811640+nimbus-release-bot[bot]@users.noreply.github.com",
-            "name": "nimbus-release-bot[bot]",
-            "username": "nimbus-release-bot[bot]"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "a39b8696f27d73a0932850441d9d51118ec187e2",
-          "message": "chore: release main (#896)\n\n:robot: I have created a release *beep* *boop*\n---\n\n\n<details><summary>1.4.1</summary>\n\n##\n[1.4.1](https://github.com/nimbus-agent/Nimbus/compare/v1.4.0...v1.4.1)\n(2026-07-28)\n\n\n### Bug Fixes\n\n* **gateway:** nimbus init could never index — connector.sync rejected\nevery local syncable\n([#895](https://github.com/nimbus-agent/Nimbus/issues/895))\n([f16b012](https://github.com/nimbus-agent/Nimbus/commit/f16b012cd2d4af2f2bc3ccf90cf74cc34ab12a99))\n\n\n### Performance Improvements\n\n* **ci:** cut a push run 105 -&gt; 75 jobs — CI was queueing behind its\nown fan-out ([#894](https://github.com/nimbus-agent/Nimbus/issues/894))\n([1462894](https://github.com/nimbus-agent/Nimbus/commit/146289412bcc865d8583093a25a747c5fb979563))\n</details>\n\n---\nThis PR was generated with [Release\nPlease](https://github.com/googleapis/release-please). See\n[documentation](https://github.com/googleapis/release-please#release-please).\n\nCo-authored-by: nimbus-release-bot[bot] <306811640+nimbus-release-bot[bot]@users.noreply.github.com>",
-          "timestamp": "2026-07-28T09:57:21Z",
-          "tree_id": "e675c08d7685950139c79a5630b5cd09a7e32b9e",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/a39b8696f27d73a0932850441d9d51118ec187e2"
-        },
-        "date": 1785233772322,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 317.4808936499994,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 321.9110020499931,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 253.29829460000911,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "1c578cbbda71f4645726b5348050ccfab2d200bf",
+          "message": "fix(gateway): enforce the connector allowlist at the federated invoke gate, and route ChatOps writes through the write transport (#1615)\n\n## Summary\n\nTwo follow-ups from the 2026-10 maintenance sweep, both on paths that\nrun a connector tool off the mesh, where the mesh's policy filter never\nlooks.\n\n1. **The federated invoke gate now asks the org policy's connector\nallowlist (I22).** `answerFederatedInvoke` never consulted\n`[policy.connectors] allow`: a peer holding a grant on a team-vault\nentry ran its tool however the policy stood, because the anchor runs the\ntool in its own team-credentialed connector. This was the first of the\nthree gaps the I22 stated bounds recorded.\n2. **A connector write approved from ChatOps runs through the\nconnector-write transport.** The ChatOps executor dispatched an\nowner-approved connector write (warehouse/BI ∪ GitOps/ML) through the\nmesh alone. One naming no `mcpToolId` failed with \"tool not found\", and\none naming it ran with the personal credential, whatever\n`[connectors.<name>] credential` said. #1610 recorded this as a\nfollow-up.\n\n## What changed\n\n**Gate.** `InvokeGateCtx.isConnectorAllowed` is REQUIRED, and it is the\npolicy gate's own per-call predicate (`connectorAllowPredicate`). After\nthe grant check, the gate refuses unless every connector the invoke\ncould run a tool of is allowed, and it checks again after an approved\nquorum, since a bundle verified during the wait applies to that run too.\nA refusal audits `connector_blocked` and returns the same opaque\n`no_grant`. The gate asks about the entry's connector **and** the server\nthe peer's key belongs to (`serviceIdForToolKey`, the attribution the\nmesh's own filter uses). The anchor runs a peer's key exactly as the\nsession's client lists it, and the github spawner registers\n`github_actions` beside `github`. So a granted\n`github_actions_gha_run_list` on a `github` entry runs github_actions'\ntool, and asking only about the entry's connector would have let it\nthrough.\n\n**Wiring.** `bootFederationIntoIpcOpts` puts the boot predicate on the\nanchor's `teamVault`, `federation.invoke` hands it to the gate, and\n`ipc/server/options.ts` now types `teamVault` as\n`FederationRpcContext[\"teamVault\"]` rather than a copy.\n`bootChatopsIntoAssembly` wraps the ChatOps executor's real dispatcher\nin `createConnectorWriteDispatcher`, with the same `connectorWriteDeps`\nthat `gateway-main.ts` installs around `runAsk`'s dispatcher. `runAsk`\nplans no connector write, so `@nimbus run` is the first shipped surface\nwhose connector writes reach the transport. The e2e sink dispatcher is\nunchanged.\n\n**Docs.** `docs/SECURITY-INVARIANTS.md` (I22 consumers, stated bounds\ntwo instead of three, enforcement case (j), the I19 order),\n`docs/CHANGELOG.md`, and two `.claude/commands` skills.\n\n## Verification\n\n- `bun run typecheck`, `bun run typecheck:tests` (0 new) and `bun run\npreflight:fast`: all exit 0.\n- `bun test\npackages/gateway/src/{federation,ipc,chatops,teamvault,policy,connectors}\npackages/gateway/src/security-invariants.test.ts\npackages/gateway/test/integration/teamvault`: 7373 pass, 0 fail, 23\nskip, after merging `main`.\n- Every new check fails with its code reverted:\n- removing the pre-quorum or the post-quorum allowlist check fails its\nown gate test;\n- asking only about the entry's connector fails the sibling-key test,\nboth at the gate and through the real `federation.invoke` seam, whose\nsession is listed the way a real `MCPClient` lists it;\n  - a stand-in `() => true` in the RPC wiring fails the dispatch test;\n- stand-in predicates in `assemble.ts` fail I22 cases (f) and (j), and\nan unwrapped ChatOps dispatcher fails (j).\n- Adversarial review: a 22-agent workflow over four dimensions (the\ngate, the ChatOps wrap, test integrity, docs) found 16 candidates.\nIndependent skeptics refuted 9, including a claimed team-credential\nattribution problem for ChatOps writes and a claimed gap in the (j) pin.\nThe 7 upheld were all doc or comment inaccuracies, fixed here: a stale\n\"three paths\", a claim that `nimbus ask` approves connector writes, a\nCHANGELOG framing, three comments that omitted the sibling-key check,\nand a test comment.\n\n## Stated bounds, unchanged\n\n- ChatOps bot calls (`spawnChatopsBotToolAndCall`) are bounded by\n`[policy.chatops]` and I23, not by the connector allowlist.\n- The warehouse/BI list drains honour a runtime allowlist change only\nafter a restart.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n---------\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-10-05T12:04:23+03:00",
+          "tree_id": "22fd8e6d783ffd36b1bccdce4a7b75ff5e746e64",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/1c578cbbda71f4645726b5348050ccfab2d200bf"
+        },
+        "date": 1791191713407,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 252.738121150004,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 252.3969421000016,
             "unit": "ms"
           }
         ]
