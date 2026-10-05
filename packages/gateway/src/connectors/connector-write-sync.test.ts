@@ -8,10 +8,11 @@
  * (as text: the gateway never imports the package beyond `setConnectorMode`) and fails on any the
  * predicate does not cover. The derivation itself is fail-closed: a registration shape it cannot
  * follow is a violation, never a silent skip — import shapes included (namespace and dynamic
- * imports are followed, default exports and unfollowable module-object uses refused). Its stated
+ * imports are followed, default exports and unfollowable module-object uses refused), and so is an
+ * identifier a second binding of its name may shadow where an id is read through it. Its stated
  * blind spots — an object a registrar was handed off into and then read by a non-literal computed
- * key or by reflection, and a mutating tool registered as a READ — are spelled out in
- * `./testing/connector-write-registrations.ts`.
+ * key or by reflection, a mutating tool registered as a READ, and a constant table mutated after its
+ * declaration — are spelled out in `./testing/connector-write-registrations.ts`.
  *
  * There is no exception list. The four comms writes whose literals static D17 / D19 keep out of the
  * gateway-side set are classified through the sets their gates export — and they are derived here

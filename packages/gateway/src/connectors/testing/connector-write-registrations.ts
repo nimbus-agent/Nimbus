@@ -21,18 +21,24 @@
  * site, read from that call. An EXPORTED registrar, forwarder, factory or kit is followed through
  * every import shape that keeps its name: a named import, a member of a namespace or dynamic import
  * (`kit.registerStatusTool(...)`, or an alias of that member), and a destructuring that takes it,
- * renamed or not (`const { registerStatusTool: reopen } = await import("./status.ts")`). A loop's
- * constant table is read through the file's OWN binding of its name — the array it declares, or the
- * one a named import binds it to — and is never looked up by name in another file: two connectors
- * can each declare an `ACTIONS`.
+ * renamed or not (`const { registerStatusTool: reopen } = await import("./status.ts")`).
+ *
+ * Every identifier an id is read through — a loop's table, a string constant, a loop variable, a kit
+ * option, a forwarded parameter — is read through the ONE binding of that name its use can see,
+ * never by name alone: two connectors can each declare an `ACTIONS`, and a parameter can shadow a
+ * module-level constant. Which bindings a use can see comes from a census of every way a file binds
+ * a name (below), and a table or constant counts only when it is a `const` holding exactly an array
+ * or string literal (`as const` allowed).
  *
  * Every shape the scan cannot follow is a VIOLATION rather than a silent skip:
  *
  *   - a registration whose tool id is not a literal, a template over constants, a loop over a
  *     constant table, or a string constant;
- *   - a loop table its file does not bind exactly once, to an array it declares or imports by
- *     name: a name declared twice, or shadowed by a parameter or loop variable enclosing the loop,
- *     or imported from a module the scan does not read or that re-exports rather than declares it;
+ *   - an identifier a second binding of its name may shadow where it is used, or whose one visible
+ *     binding is not a value the scan reads. A loop table must be a `const` array declared where the
+ *     loop can see it, or a named import of one its module declares once, with `export const`; an
+ *     import from a module the scan does not read, a re-export, an `export { ... }` clause and a
+ *     `let` are each refused;
  *   - a registrar used as a value anywhere the flow above does not follow: passed positionally,
  *     stored in an array, listed in an `export { ... }` clause or an aliased import, or read off an
  *     object and neither called nor bound;
@@ -59,10 +65,16 @@
  * by its key — a computed member access whose key is NOT a string literal (`regs[key](...)`), or
  * reflection over the object (`Object.values(regs)`). The `mutates:` check catches such a call only
  * when the call itself carries a `mutates:` literal, which a positional forwarder's call does not. A
- * tool that mutates while registered as a READ is outside the scan altogether. And a loop table's
- * name counts as rebound only by the bindings the index records — a declaration, an object
- * destructuring, a named import, a function or arrow parameter, a for-of variable — so a method or
- * `catch` parameter, or an array-pattern binding, shadowing a same-named file-level table goes unseen.
+ * tool that mutates while registered as a READ is outside the scan altogether. And a constant table
+ * MUTATED after its declaration (`ACTIONS.push(...)`) is read as declared: the `mutates:` cross-check
+ * catches the push only when the pushed element carries a `mutates:` literal.
+ *
+ * The binding census is a text scan. It records every declarator of a `const` / `let` / `var` /
+ * `using` declaration (initialised or not, nested, rest and array patterns included), the parameters
+ * of functions, arrows and methods, `catch` bindings, every form of import, and function, class,
+ * enum and namespace names. Where a use can see each one is over-approximated — a block-scoped
+ * declaration counts across its whole function — so the scan refuses some shadowing a type checker
+ * would resolve rather than resolve any it cannot rule out.
  */
 import { readdirSync, readFileSync } from "node:fs";
 import { createRequire } from "node:module";
@@ -373,7 +385,11 @@ interface Binding {
 
 interface Declaration {
   readonly name: string;
+  /** Offset of its `const` / `let` / `var` keyword. */
   readonly at: number;
+  /** Offset of the declared name. */
+  readonly nameAt: number;
+  readonly isConst: boolean;
   readonly initStart: number;
   readonly initEnd: number;
 }
@@ -392,14 +408,12 @@ interface Param {
   readonly pattern: readonly Binding[];
 }
 
-interface FnInfo {
+interface FnInfo extends FnShape {
   readonly name: string | null;
   readonly exported: boolean;
   /** An anonymous function that is directly `return`ed. */
   readonly returned: boolean;
   readonly params: readonly Param[];
-  readonly bodyStart: number;
-  readonly bodyEnd: number;
 }
 
 interface ForOf {
@@ -419,21 +433,23 @@ interface ForOf {
 interface NamedImport {
   readonly imported: string;
   readonly local: string;
+  /** Offset of the local name. */
+  readonly at: number;
   /** The module specifier when it is a plain string literal, else null. */
   readonly spec: string | null;
 }
+
+/** `[start, end)` spans of `import ... from` statements. */
+type ImportSpans = ReadonlyArray<readonly [number, number]>;
 
 interface FileIndex {
   readonly declarations: readonly Declaration[];
   readonly destructurings: readonly Destructuring[];
   readonly fns: readonly FnInfo[];
   readonly loops: readonly ForOf[];
-  /** `const NAME = [ ... ]` → the array's `[` offset (the last, when a name is declared twice). */
-  readonly tables: ReadonlyMap<string, number>;
-  /** `const NAME = "literal"` → value. */
-  readonly strings: ReadonlyMap<string, string>;
-  /** `[start, end)` spans of `import ... from` statements. */
-  readonly imports: ReadonlyArray<readonly [number, number]>;
+  /** Every name the file binds, and where a use might see it: the binding census. */
+  readonly bindings: readonly BindingSite[];
+  readonly imports: ImportSpans;
   /** Every binding of those statements' `{ ... }` clauses. */
   readonly namedImports: readonly NamedImport[];
 }
@@ -475,13 +491,21 @@ function parseParams(s: string, open: number): Param[] {
 
 function declarationsOf(s: string): Declaration[] {
   const out: Declaration[] = [];
-  for (const m of s.matchAll(new RegExp(String.raw`\b(?:const|let|var)\s+(${IDENT})\s*`, "g"))) {
-    const name = m[1];
+  for (const m of s.matchAll(new RegExp(String.raw`\b(const|let|var)\s+(${IDENT})\s*`, "g"))) {
+    const name = m[2];
     if (name === undefined) continue;
-    let i = (m.index ?? 0) + m[0].length;
+    const at = m.index ?? 0;
+    let i = at + m[0].length;
     if (s.charAt(i) === ":") i = skipTypeToAssign(s, i + 1);
     if (i < 0 || s.charAt(i) !== "=" || "=>".includes(s.charAt(i + 1))) continue;
-    out.push({ name, at: m.index ?? 0, initStart: i + 1, initEnd: expressionEnd(s, i + 1) });
+    out.push({
+      name,
+      at,
+      nameAt: at + m[0].trimEnd().length - name.length,
+      isConst: m[1] === "const",
+      initStart: i + 1,
+      initEnd: expressionEnd(s, i + 1),
+    });
   }
   return out;
 }
@@ -507,11 +531,11 @@ function destructuringsOf(s: string): Destructuring[] {
   return out;
 }
 
+/** What a function's head says about it: the name it is bound to, and whether it is exported or returned. */
+type FnContext = Omit<FnInfo, "params" | "paramsAt" | "bodyStart" | "bodyEnd">;
+
 /** What precedes a function head: the name it is bound to, and whether it is exported/returned. */
-function headContext(
-  s: string,
-  headStart: number,
-): Omit<FnInfo, "params" | "bodyStart" | "bodyEnd"> {
+function headContext(s: string, headStart: number): FnContext {
   const before = s.slice(Math.max(0, headStart - 200), headStart);
   const bound = new RegExp(
     String.raw`(\bexport\s+)?\b(?:const|let|var)\s+(${IDENT})\s*(?::[^=;]*)?=\s*(?:async\s+)?$`,
@@ -537,11 +561,7 @@ function functionHeadAt(s: string, i: number): { paramsOpen: number; bodyStart: 
 }
 
 /** A declaration `function name` is bound to `name`, exported when `export` precedes it. */
-function namedFunctionContext(
-  s: string,
-  at: number,
-  name: string,
-): Omit<FnInfo, "params" | "bodyStart" | "bodyEnd"> {
+function namedFunctionContext(s: string, at: number, name: string): FnContext {
   const before = s.slice(Math.max(0, at - 40), at);
   return {
     name,
@@ -561,6 +581,7 @@ function functionDeclarationsOf(s: string): FnInfo[] {
     out.push({
       ...ctx,
       params: parseParams(s, head.paramsOpen),
+      paramsAt: head.paramsOpen,
       bodyStart: head.bodyStart,
       bodyEnd: matchForward(s, head.bodyStart),
     });
@@ -577,9 +598,15 @@ function blockOrExpressionEnd(s: string, b: number): number {
 function arrowParamsOpen(s: string, arrow: number): number {
   const k = skipWsBack(s, arrow - 1);
   if (s.charAt(k) === ")") return matchBackward(s, k);
-  // `(...): ReturnType =>` — walk back over a simple type to its `:`, then to the `)`.
+  // `(...): ReturnType =>` — walk back over the return type to its `:`, then to the `)`. An object
+  // or parenthesised part of the type (`): { name?: string } =>`) is stepped over whole.
   let m = k;
-  while (m >= 0 && /[\w$.<>[\]|&,\s]/.test(s.charAt(m))) m--;
+  while (m >= 0) {
+    const c = s.charAt(m);
+    if (c === "}" || c === ")") m = matchBackward(s, m) - 1;
+    else if (/[\w$.<>[\]|&,\s]/.test(c)) m--;
+    else break;
+  }
   if (s.charAt(m) !== ":") return -1;
   const close = skipWsBack(s, m - 1);
   return s.charAt(close) === ")" ? matchBackward(s, close) : -1;
@@ -598,15 +625,24 @@ function genericStart(s: string, open: number): number {
   return open;
 }
 
-/** The parameters and head start of the arrow function whose `=>` is at `arrow`, or null. */
-function arrowHead(s: string, arrow: number): { params: Param[]; headStart: number } | null {
+/**
+ * The parameters and head start of the arrow function whose `=>` is at `arrow`, or null. Its
+ * parameters start at `paramsAt`: the list's `(`, or the bare parameter of `x => ...`.
+ */
+function arrowHead(
+  s: string,
+  arrow: number,
+): { params: Param[]; headStart: number; paramsAt: number } | null {
   const open = arrowParamsOpen(s, arrow);
-  if (open >= 0) return { params: parseParams(s, open), headStart: genericStart(s, open) };
+  if (open >= 0) {
+    return { params: parseParams(s, open), headStart: genericStart(s, open), paramsAt: open };
+  }
   const single = new RegExp(String.raw`(${IDENT})\s*$`).exec(
     s.slice(Math.max(0, arrow - 80), arrow),
   );
   if (single?.[1] === undefined) return null;
-  return { params: [{ name: single[1], pattern: [] }], headStart: arrow - single[0].length };
+  const headStart = arrow - single[0].length;
+  return { params: [{ name: single[1], pattern: [] }], headStart, paramsAt: headStart };
 }
 
 function arrowFunctionsOf(s: string): FnInfo[] {
@@ -618,6 +654,7 @@ function arrowFunctionsOf(s: string): FnInfo[] {
     out.push({
       ...headContext(s, head.headStart),
       params: head.params,
+      paramsAt: head.paramsAt,
       bodyStart: b,
       bodyEnd: blockOrExpressionEnd(s, b),
     });
@@ -667,30 +704,20 @@ function forOfLoopsOf(s: string): ForOf[] {
 
 function indexFile(p: Prepared): FileIndex {
   const s = p.blank;
-  const tables = new Map<string, number>();
-  const strings = new Map<string, string>();
-  const declarations = declarationsOf(s);
-  for (const d of declarations) {
-    const v = skipWs(s, d.initStart);
-    if (s.charAt(v) === "[") tables.set(d.name, v);
-    const lit = stringLiteralAt(p, v);
-    if (lit !== null && /^\s*(?:as\s+const\s*)?$/.test(s.slice(lit.end, d.initEnd))) {
-      strings.set(d.name, lit.value);
-    }
-  }
   const imports: Array<readonly [number, number]> = [];
   for (const m of s.matchAll(/\bimport\b[^;]*?\bfrom\b/g)) {
     imports.push([m.index ?? 0, (m.index ?? 0) + m[0].length]);
   }
+  const fns = [...functionDeclarationsOf(s), ...arrowFunctionsOf(s)];
+  const namedImports = namedImportsOf(p, imports);
   return {
-    declarations,
+    declarations: declarationsOf(s),
     destructurings: destructuringsOf(s),
-    fns: [...functionDeclarationsOf(s), ...arrowFunctionsOf(s)],
+    fns,
     loops: forOfLoopsOf(s),
-    tables,
-    strings,
+    bindings: bindingSitesOf(s, fns, namedImports, imports),
     imports,
-    namedImports: namedImportsOf(p, imports),
+    namedImports,
   };
 }
 
@@ -707,10 +734,7 @@ const IMPORT_ELEMENT = new RegExp(
  * that is really an expression — `import("m").then(({ a }) => Array.from(a))`, which runs on to a
  * later `from` — has something else before its first `{`, and binds nothing.
  */
-function namedImportsOf(
-  p: Prepared,
-  imports: ReadonlyArray<readonly [number, number]>,
-): NamedImport[] {
+function namedImportsOf(p: Prepared, imports: ImportSpans): NamedImport[] {
   const s = p.blank;
   const out: NamedImport[] = [];
   for (const [start, end] of imports) {
@@ -719,8 +743,12 @@ function namedImportsOf(
     if (!NAMED_CLAUSE_LEAD.test(s.slice(start + "import".length, open))) continue;
     const spec = stringLiteralAt(p, skipWs(s, end))?.value ?? null;
     for (const [a, b] of splitGroup(s, open)) {
-      const m = IMPORT_ELEMENT.exec(s.slice(a, b));
-      if (m?.[1] !== undefined) out.push({ imported: m[1], local: m[2] ?? m[1], spec });
+      const element = s.slice(a, b);
+      const m = IMPORT_ELEMENT.exec(element);
+      if (m?.[1] === undefined) continue;
+      const local = m[2] ?? m[1];
+      // The local name ends the element, so its offset is read back from the trimmed end.
+      out.push({ imported: m[1], local, at: a + element.trimEnd().length - local.length, spec });
     }
   }
   return out;
@@ -750,30 +778,471 @@ function enclosingFns(ix: FileIndex, offset: number): FnInfo[] {
     .sort((a, b) => b.bodyStart - a.bodyStart);
 }
 
-/** How many times a file binds `name` anywhere: declarations, destructurings and named imports. */
-function bindingCount(ix: FileIndex, name: string): number {
-  const declared = ix.declarations.filter((d) => d.name === name).length;
-  const destructured = ix.destructurings.filter((d) =>
-    d.bindings.some((b) => b.local === name),
-  ).length;
-  return declared + destructured + ix.namedImports.filter((i) => i.local === name).length;
+// ---------------------------------------------------------------------------------------------
+// The binding census. An id is read through identifiers — a loop's table, a string constant, a
+// loop variable, a kit option, a forwarded parameter — and each must be read through the ONE
+// binding its use can see. Reading a same-named binding the use cannot see (a table another
+// function declares), or one a nearer binding shadows (a constant a parameter redeclares), derives
+// the wrong ids with no violation at all.
+// ---------------------------------------------------------------------------------------------
+
+/** `[start, end]`, both offsets inclusive. */
+type Range = readonly [number, number];
+
+/** A bound name, at the offset of its identifier. */
+interface Named {
+  readonly name: string;
+  readonly at: number;
+}
+
+/** One binding of a name, and where a use might see it. */
+interface BindingSite extends Named {
+  /**
+   * Never SMALLER than the region that sees the binding, so a use outside it does not: a
+   * parameter's function, a `catch` binding's clause, a block-scoped loop variable's loop, and for
+   * anything else the body of the innermost function around it, or the whole file.
+   */
+  readonly reach: Range;
+}
+
+/** Names bound together, all reaching over one range. */
+interface SiteGroup {
+  readonly names: readonly Named[];
+  readonly reach: Range;
+}
+
+/** A function-like whose parameters the census reads: a function, an arrow or a method. */
+interface FnShape {
+  /** The parameter list's `(`, or the bare parameter of `x => ...`. */
+  readonly paramsAt: number;
+  readonly bodyStart: number;
+  readonly bodyEnd: number;
+}
+
+function within(o: number, [start, end]: Range): boolean {
+  return start <= o && o <= end;
+}
+
+/** The identifier starting at `i`, or "" when none does. */
+function identAt(s: string, i: number): string {
+  if (!/[A-Za-z_$]/.test(s.charAt(i))) return "";
+  let j = i + 1;
+  while (j < s.length && /[\w$]/.test(s.charAt(j))) j++;
+  return s.slice(i, j);
+}
+
+/** Words that stand where a bound name would and bind nothing: `const enum`, `class extends`, `of`. */
+const NOT_A_BINDING: ReadonlySet<string> = new Set(["enum", "extends", "implements", "in", "of"]);
+
+/** The binding target at `i` — one identifier, or a destructuring pattern — its names and its end. */
+function bindingTarget(
+  s: string,
+  i: number,
+): { readonly names: readonly Named[]; readonly end: number } | null {
+  const c = s.charAt(i);
+  if (c === "{" || c === "[") {
+    const close = matchForward(s, i);
+    return close < 0 ? null : { names: patternNames(s, i), end: close + 1 };
+  }
+  const name = identAt(s, i);
+  if (name === "" || NOT_A_BINDING.has(name)) return null;
+  return { names: [{ name, at: i }], end: i + name.length };
+}
+
+/** Every name the object or array pattern at `open` binds: nested, rest and defaulted elements too. */
+function patternNames(s: string, open: number): Named[] {
+  const array = s.charAt(open) === "[";
+  return splitGroup(s, open).flatMap(([a, b]) => {
+    const target = array ? arrayElementTarget(s, a, b) : objectElementTarget(s, a, b);
+    return target < 0 ? [] : (bindingTarget(s, target)?.names ?? []);
+  });
+}
+
+/** Where an object-pattern element's target starts: past its `key:` (computed or quoted too), or the shorthand. */
+function objectElementTarget(s: string, a: number, b: number): number {
+  const i = skipWs(s, a);
+  if (s.startsWith("...", i)) return skipWs(s, i + 3);
+  const colon = keyColon(s, i, b);
+  return colon < 0 ? i : skipWs(s, colon + 1);
+}
+
+/** The `:` after an object-pattern element's key, or -1 for a shorthand, whose default `=` comes first. */
+function keyColon(s: string, from: number, to: number): number {
+  let depth = 0;
+  for (let i = from; i < to; i++) {
+    const c = s.charAt(i);
+    if (OPEN.includes(c)) depth++;
+    else if (CLOSE.includes(c)) depth--;
+    else if (depth === 0 && (c === ":" || c === "=")) return c === ":" ? i : -1;
+  }
+  return -1;
+}
+
+/** Where an array-pattern element's target starts, past a rest `...`; -1 for a hole. */
+function arrayElementTarget(s: string, a: number, b: number): number {
+  const i = skipWs(s, a);
+  if (i >= b) return -1;
+  return s.startsWith("...", i) ? skipWs(s, i + 3) : i;
+}
+
+/** What a declaration binds — every declarator, initialised or not — read from just past its keyword. */
+function declaratorNames(s: string, from: number): Named[] {
+  const out: Named[] = [];
+  let target = bindingTarget(s, skipWs(s, from));
+  while (target !== null) {
+    out.push(...target.names);
+    const comma = nextDeclarator(s, target.end);
+    target = comma < 0 ? null : bindingTarget(s, skipWs(s, comma + 1));
+  }
+  return out;
+}
+
+/** After a declarator's binding target: the `,` before the next declarator, or -1 for the last. */
+function nextDeclarator(s: string, from: number): number {
+  let j = skipWs(s, from);
+  if (s.charAt(j) === "!") j = skipWs(s, j + 1); // a definite assignment, `let x!: T`
+  if (s.charAt(j) === ":") j = typeAnnotationEnd(s, j + 1);
+  if (s.charAt(j) === "=" && s.charAt(j + 1) !== "=" && s.charAt(j + 1) !== ">") {
+    j = initializerEnd(s, j + 1);
+  }
+  return s.charAt(j) === "," ? j : -1;
+}
+
+/** Past a declarator's type (after its `:`): the `=` `,` or `;` ending it at depth 0, a stray closer, or -1. */
+function typeAnnotationEnd(s: string, from: number): number {
+  let depth = 0;
+  let j = from;
+  while (j < s.length) {
+    const c = s.charAt(j);
+    if (s.startsWith("=>", j)) {
+      j += 2;
+    } else {
+      depth += typeDepthDelta(c);
+      if (depth < 0 || (depth === 0 && "=,;".includes(c))) return j;
+      j++;
+    }
+  }
+  return -1;
+}
+
+/** End of a declarator's initializer: its `,` or `;` at depth 0, or a stray closer. Type arguments are skipped. */
+function initializerEnd(s: string, from: number): number {
+  let depth = 0;
+  let i = from;
+  while (i < s.length) {
+    const c = s.charAt(i);
+    const typeArgs = c === "<" ? typeArgumentsEnd(s, i) : -1;
+    if (typeArgs > 0) {
+      i = typeArgs;
+    } else {
+      if (OPEN.includes(c)) depth++;
+      else if (CLOSE.includes(c)) depth--;
+      if (depth < 0 || (depth === 0 && (c === "," || c === ";"))) return i;
+      i++;
+    }
+  }
+  return s.length;
 }
 
 /**
- * How many bindings of `name` enclose `loop`, and so shadow any file-level one: a parameter of an
- * enclosing function, or the variable of an enclosing for-of loop.
+ * Past the type arguments of a generic call (`f<A, B>(`) whose `<` is at `open`, or -1 for a
+ * comparison. Type arguments hold no `=` but an arrow's and no `;`, and a `(` follows them.
  */
-function enclosingShadows(ix: FileIndex, loop: ForOf, name: string): number {
-  const binds = (ident: string | null, pattern: readonly Binding[]): boolean =>
-    ident === name || pattern.some((b) => b.local === name);
-  const params = enclosingFns(ix, loop.at).filter((fn) =>
-    fn.params.some((p) => binds(p.name, p.pattern)),
-  ).length;
-  const loops = ix.loops.filter(
-    (l) =>
-      l !== loop && l.bodyStart <= loop.at && loop.at <= l.bodyEnd && binds(l.ident, l.pattern),
-  ).length;
-  return params + loops;
+function typeArgumentsEnd(s: string, open: number): number {
+  const close = skipAngles(s, open);
+  if (close < 0 || s.charAt(skipWs(s, close)) !== "(") return -1;
+  return /[;=]/.test(s.slice(open, close).replaceAll("=>", "")) ? -1 : close;
+}
+
+/** A parameter's own leads: a decorator, a rest `...`, an accessibility or `readonly` modifier. */
+const PARAM_LEAD = /^(?:@[\w$.]+|\.\.\.|(?:readonly|public|private|protected|override)\s)/;
+
+/** Where a parameter's binding target starts, past its decorators and modifiers. */
+function paramTarget(s: string, from: number): number {
+  let i = skipWs(s, from);
+  let lead = PARAM_LEAD.exec(s.slice(i, i + 40));
+  while (lead !== null) {
+    const decorator = lead[0].startsWith("@");
+    i = skipWs(s, i + lead[0].length);
+    if (decorator && s.charAt(i) === "(") i = skipWs(s, closeOrEnd(s, i) + 1);
+    lead = PARAM_LEAD.exec(s.slice(i, i + 40));
+  }
+  return i;
+}
+
+/** What a parameter list binds: each parameter's name or pattern. */
+function paramNames(s: string, paramsAt: number): readonly Named[] {
+  if (s.charAt(paramsAt) !== "(") return bindingTarget(s, paramsAt)?.names ?? [];
+  return splitGroup(s, paramsAt).flatMap(([a]) => bindingTarget(s, paramTarget(s, a))?.names ?? []);
+}
+
+/** Words a `(` follows that make it something other than a method's parameter list. */
+const NOT_A_METHOD: ReadonlySet<string> = new Set([
+  "await",
+  "case",
+  "catch",
+  "delete",
+  "do",
+  "else",
+  "for",
+  "function",
+  "if",
+  "import",
+  "in",
+  "instanceof",
+  "new",
+  "of",
+  "return",
+  "super",
+  "switch",
+  "throw",
+  "typeof",
+  "void",
+  "while",
+  "with",
+  "yield",
+]);
+
+/**
+ * Methods and accessors — `name(...) {`, `get name() {`, `[key](...) {`, generic or not — which the
+ * function index leaves out: their parameters bind names like any other function's.
+ */
+function methodsOf(s: string): FnShape[] {
+  const out: FnShape[] = [];
+  for (let open = s.indexOf("("); open >= 0; open = s.indexOf("(", open + 1)) {
+    const head = followsMethodName(s, open) ? functionHeadAt(s, open) : null;
+    // A signature ending a one-line type literal (`{ run(a: T): void }`) has no body: the `{` past
+    // its closing `}` belongs to something else.
+    if (head !== null && closesNothingBetween(s, open, head.bodyStart)) {
+      out.push({
+        paramsAt: open,
+        bodyStart: head.bodyStart,
+        bodyEnd: matchForward(s, head.bodyStart),
+      });
+    }
+  }
+  return out;
+}
+
+/** Whether no bracket closes between `from` and `to` that did not open there: the two are siblings. */
+function closesNothingBetween(s: string, from: number, to: number): boolean {
+  let depth = 0;
+  for (let i = from; i < to; i++) {
+    const c = s.charAt(i);
+    if (OPEN.includes(c)) depth++;
+    else if (CLOSE.includes(c)) depth--;
+    if (depth < 0) return false;
+  }
+  return true;
+}
+
+/** Whether the `(` at `open` follows a method's name: an identifier that is no keyword, or a computed or quoted key. */
+function followsMethodName(s: string, open: number): boolean {
+  if (s.startsWith("=>", skipWsBack(s, open - 1) - 1)) return false; // an arrow's parenthesised body
+  const k = skipWsBack(s, genericStart(s, open) - 1);
+  const c = s.charAt(k);
+  if (c === "]" || c === '"' || c === "'") return true;
+  let start = k;
+  while (start >= 0 && /[\w$]/.test(s.charAt(start))) start--;
+  return start < k && !NOT_A_METHOD.has(s.slice(start + 1, k + 1));
+}
+
+/** A `for (...)` or `for await (...)` statement. */
+interface ForStatement {
+  readonly at: number;
+  readonly headOpen: number;
+  readonly headClose: number;
+  /** The `}` closing its body when that is a block, else -1. */
+  readonly end: number;
+}
+
+function forStatementsOf(s: string): ForStatement[] {
+  const out: ForStatement[] = [];
+  for (const m of s.matchAll(/(?<![\w$.])for(?:\s+await)?\s*\(/g)) {
+    const at = m.index ?? 0;
+    const headOpen = at + m[0].length - 1;
+    const headClose = matchForward(s, headOpen);
+    if (headClose < 0) continue;
+    const body = skipWs(s, headClose + 1);
+    out.push({ at, headOpen, headClose, end: s.charAt(body) === "{" ? matchForward(s, body) : -1 });
+  }
+  return out;
+}
+
+/** The keywords that open a declaration. `as const` is not one. */
+const DECLARATION_KEYWORD = /(?<![\w$.])(?:const|let|var|using)\b/g;
+
+/** What every declaration binds, each reaching as far as `reachOf` says. */
+function declarationGroups(
+  s: string,
+  reachOf: (keyword: string, at: number) => Range,
+): SiteGroup[] {
+  const out: SiteGroup[] = [];
+  for (const m of s.matchAll(DECLARATION_KEYWORD)) {
+    const at = m.index ?? 0;
+    if (/\bas\s+$/.test(s.slice(Math.max(0, at - 12), at))) continue;
+    out.push({ names: declaratorNames(s, at + m[0].length), reach: reachOf(m[0], at) });
+  }
+  return out;
+}
+
+/** What every `catch (binding) { ... }` binds, reaching over its clause. */
+function catchGroups(s: string): SiteGroup[] {
+  const out: SiteGroup[] = [];
+  for (const m of s.matchAll(/(?<![\w$.])catch\s*\(/g)) {
+    const at = m.index ?? 0;
+    const open = at + m[0].length - 1;
+    const close = matchForward(s, open);
+    const block = close < 0 ? -1 : skipWs(s, close + 1);
+    if (s.charAt(block) === "{") {
+      const names = bindingTarget(s, skipWs(s, open + 1))?.names ?? [];
+      out.push({ names, reach: [at, matchForward(s, block)] });
+    }
+  }
+  return out;
+}
+
+/** `import name from` and `import name, ...`: a default import. */
+const DEFAULT_IMPORT = new RegExp(String.raw`^import\s+(?:type\s+)?(${IDENT})\s*(?:,|from\b)`, "d");
+/** `* as name` in an import clause: a namespace import. */
+const NAMESPACE_BINDING = new RegExp(String.raw`\*\s*as\s+(${IDENT})`, "d");
+/** `import name = require(...)` and `import name = Some.Namespace`. */
+const IMPORT_EQUALS = new RegExp(
+  String.raw`(?<![\w$.])import\s+(?:type\s+)?(${IDENT})\s*=(?!=)`,
+  "dg",
+);
+
+/** What every import binds — named, default, namespace and `import name =` — reaching over the file. */
+function importGroup(
+  s: string,
+  namedImports: readonly NamedImport[],
+  imports: ImportSpans,
+): SiteGroup {
+  const names: Named[] = namedImports.map((i) => ({ name: i.local, at: i.at }));
+  const add = (m: RegExpExecArray | null, base: number): void => {
+    const at = m?.indices?.[1]?.[0];
+    if (m?.[1] !== undefined && at !== undefined) names.push({ name: m[1], at: base + at });
+  };
+  for (const [start, end] of imports) {
+    const statement = s.slice(start, end);
+    add(DEFAULT_IMPORT.exec(statement), start);
+    add(NAMESPACE_BINDING.exec(statement), start);
+  }
+  for (const m of s.matchAll(IMPORT_EQUALS)) add(m, 0);
+  return { names, reach: [0, s.length] };
+}
+
+/** `function name`, `class name`, `enum name`, `namespace name`: a declared name. */
+const DECLARED_NAME = new RegExp(
+  String.raw`(?<![\w$.])(?:function\b(?:\s*\*)?|class\b|enum\b|namespace\b|module\b)\s*(${IDENT})`,
+  "dg",
+);
+
+/** Every function, class, enum and namespace name, reaching over the function around it. */
+function declaredNameGroups(s: string, reachOf: (at: number) => Range): SiteGroup[] {
+  return [...s.matchAll(DECLARED_NAME)].flatMap((m) => {
+    const name = m[1] ?? "";
+    const at = m.indices?.[1]?.[0];
+    if (at === undefined || NOT_A_BINDING.has(name)) return [];
+    return [{ names: [{ name, at }], reach: reachOf(at) }];
+  });
+}
+
+/** One site per bound identifier; a second record of the same one widens its reach. */
+function mergeSites(groups: readonly SiteGroup[]): BindingSite[] {
+  const sites = new Map<string, BindingSite>();
+  for (const { names, reach } of groups) {
+    for (const { name, at } of names) {
+      const key = `${name}@${at}`;
+      const had = sites.get(key)?.reach ?? reach;
+      sites.set(key, { name, at, reach: [Math.min(had[0], reach[0]), Math.max(had[1], reach[1])] });
+    }
+  }
+  return [...sites.values()];
+}
+
+/** Every name a file binds — the binding census, one {@link BindingSite} per bound identifier. */
+function bindingSitesOf(
+  s: string,
+  fns: readonly FnShape[],
+  namedImports: readonly NamedImport[],
+  imports: ImportSpans,
+): BindingSite[] {
+  const shapes = [...fns, ...methodsOf(s)];
+  const fors = forStatementsOf(s);
+  // The innermost function BLOCK body around `at`, or the whole file. Only a block can hold a
+  // declaration, and only a block's extent is exact: an expression body is read to the next `,` or
+  // `;`, which for the `=>` of a function TYPE (`): (x: T) => Promise<U> {`) runs on past the end
+  // of the function into the next statement.
+  const bodyReach = (at: number): Range => {
+    let best: Range = [0, s.length];
+    for (const g of shapes) {
+      const holds = s.charAt(g.bodyStart) === "{" && g.bodyStart <= at && at <= g.bodyEnd;
+      if (holds && g.bodyStart > best[0]) best = [g.bodyStart, g.bodyEnd];
+    }
+    return best;
+  };
+  // A block-scoped loop variable reaches over its loop; anything else over its function body.
+  const declarationReach = (keyword: string, at: number): Range => {
+    const loop =
+      keyword === "var" ? undefined : fors.find((l) => l.headOpen < at && at < l.headClose);
+    return loop === undefined || loop.end < 0 ? bodyReach(at) : [loop.at, loop.end];
+  };
+  return mergeSites([
+    ...declarationGroups(s, declarationReach),
+    ...shapes.map(
+      (g): SiteGroup => ({ names: paramNames(s, g.paramsAt), reach: [g.paramsAt, g.bodyEnd] }),
+    ),
+    ...catchGroups(s),
+    importGroup(s, namedImports, imports),
+    ...declaredNameGroups(s, bodyReach),
+  ]);
+}
+
+/** The bindings of `name` a use at `at` might see. */
+function bindingsSeenAt(ix: FileIndex, name: string, at: number): BindingSite[] {
+  return ix.bindings.filter((b) => b.name === name && within(at, b.reach));
+}
+
+/** Where a binding the scan reads is written (`own`), and the function or loop it is bound for (`scope`). */
+interface ReadBinding {
+  readonly own: Range;
+  readonly scope: Range;
+}
+
+/**
+ * Whether a use of `name` at `at` might see a binding that shadows the one the scan reads: one
+ * written inside that binding's `scope` other than at its `own` site. A binding written OUTSIDE the
+ * scope encloses it instead, and is the one shadowed.
+ */
+function isShadowed(ix: FileIndex, name: string, at: number, read: ReadBinding): boolean {
+  return bindingsSeenAt(ix, name, at).some(
+    (b) => !within(b.at, read.own) && within(b.at, read.scope),
+  );
+}
+
+/** Whether the declaration whose keyword is at `kw` is visible at `at`: it is top level, or its block holds `at`. */
+function blockHolds(s: string, kw: number, at: number): boolean {
+  const open = innermostOpener(s, kw);
+  return open < 0 || (s.charAt(open) === "{" && within(at, [open, matchForward(s, open)]));
+}
+
+/** What may follow a constant's literal: nothing, or `as const`. */
+const EXACT_LITERAL_TAIL = /^\s*(?:as\s+const\s*)?$/;
+
+/** The string literal a `const` holds, exactly; else null. */
+function stringInitializer(p: Prepared, d: Declaration): string | null {
+  const lit = d.isConst ? stringLiteralAt(p, skipWs(p.blank, d.initStart)) : null;
+  return lit !== null && EXACT_LITERAL_TAIL.test(p.blank.slice(lit.end, d.initEnd))
+    ? lit.value
+    : null;
+}
+
+/** The `[` of the array literal a `const` holds, exactly; else -1. `[...].concat(more)` is not one. */
+function arrayInitializer(s: string, d: Declaration): number {
+  const open = skipWs(s, d.initStart);
+  const close = d.isConst && s.charAt(open) === "[" ? matchForward(s, open) : -1;
+  return close >= 0 && EXACT_LITERAL_TAIL.test(s.slice(close + 1, d.initEnd)) ? open : -1;
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -851,6 +1320,17 @@ type Resolution =
   | { readonly kind: "ids"; readonly ids: readonly Valued[]; readonly tag: RegistrationTag }
   | { readonly kind: "forward"; readonly fn: FnInfo }
   | { readonly kind: "unresolved"; readonly reason: string };
+
+/** Why an identifier holds no value the scan can name. */
+const NO_CONSTANT = "resolves to no constant";
+
+/** Why an identifier may not be the binding the scan would read: a second one is visible at the use. */
+const REBOUND = "is bound more than once where it is used";
+
+/** What an identifier holds where it is used: its values, or why the scan cannot name them. */
+type IdentResolution =
+  | { readonly values: readonly Valued[]; readonly tag: RegistrationTag }
+  | { readonly reason: string };
 
 class Analysis {
   readonly registrations: WriteToolRegistration[] = [];
@@ -1074,14 +1554,14 @@ class Analysis {
     if (f.p.code.charAt(start) === "`") return this.resolveTemplate(f, at, start, b);
     if (IDENT_RE.test(text)) {
       const forwarded = enclosingFns(f.ix, at)[0];
-      if (forwarded?.params[0]?.name === text && !this.isLoopVar(f, at, text)) {
+      if (forwarded !== undefined && this.forwardsParam(f, at, text, forwarded)) {
         return { kind: "forward", fn: forwarded };
       }
-      const values = this.resolveIdent(f, at, text);
-      if (values === null) {
-        return { kind: "unresolved", reason: `write-tool id \`${text}\` resolves to no constant` };
+      const r = this.resolveIdent(f, at, text);
+      if ("reason" in r) {
+        return { kind: "unresolved", reason: `write-tool id \`${text}\` ${r.reason}` };
       }
-      return { kind: "ids", ids: values.values, tag: values.tag };
+      return { kind: "ids", ids: r.values, tag: r.tag };
     }
     return {
       kind: "unresolved",
@@ -1103,11 +1583,13 @@ class Analysis {
       if (chunkEnd === close) break;
       const subClose = matchForward(s, sub + 1);
       const expr = s.slice(sub + 2, subClose).trim();
-      const resolved = IDENT_RE.test(expr) ? this.resolveIdent(f, at, expr) : null;
-      if (resolved === null) {
+      const resolved = IDENT_RE.test(expr)
+        ? this.resolveIdent(f, at, expr)
+        : { reason: NO_CONSTANT };
+      if ("reason" in resolved) {
         return {
           kind: "unresolved",
-          reason: `template id substitution \`${expr}\` resolves to no constant`,
+          reason: `template id substitution \`${expr}\` ${resolved.reason}`,
         };
       }
       combos = combos.flatMap((c) =>
@@ -1116,6 +1598,16 @@ class Analysis {
       i = subClose + 1;
     }
     return { kind: "ids", ids: combos, tag: "template" };
+  }
+
+  /**
+   * Whether `name` at `at` is `fn`'s first parameter, passed on with nothing inside `fn` rebinding
+   * it there: the id a forwarder's callers supply.
+   */
+  forwardsParam(f: File, at: number, name: string, fn: FnInfo): boolean {
+    if (fn.params[0]?.name !== name || this.isLoopVar(f, at, name)) return false;
+    const read = { own: [fn.paramsAt, fn.bodyStart], scope: [fn.paramsAt, fn.bodyEnd] } as const;
+    return !isShadowed(f.ix, name, at, read);
   }
 
   isLoopVar(f: File, at: number, name: string): boolean {
@@ -1133,22 +1625,46 @@ class Analysis {
   }
 
   /** The string values `name` takes at `at`: a loop table, kit call-site constants, or a const. */
-  resolveIdent(
+  resolveIdent(f: File, at: number, name: string): IdentResolution {
+    const loop = this.loopFor(f, at, name);
+    if (loop !== undefined) return this.loopValues(f, at, name, loop);
+    return this.kitOptionValues(f, at, name) ?? this.constantValue(f, at, name);
+  }
+
+  /** A loop variable's values — its table's — unless a binding inside the loop rebinds it at `at`. */
+  loopValues(
     f: File,
     at: number,
     name: string,
-  ): { values: Valued[]; tag: RegistrationTag } | null {
-    const loop = this.loopFor(f, at, name);
-    if (loop !== undefined) {
-      const values = this.tableValues(f, loop.loop, loop.key);
-      return values === null ? null : { values, tag: "loop" };
-    }
-    const fromCallers = this.kitOptionValues(f, at, name);
-    if (fromCallers !== undefined) {
-      return fromCallers === null ? null : { values: fromCallers, tag: "const" };
-    }
-    const value = f.ix.strings.get(name);
-    return value === undefined ? null : { values: [{ value, origin: f.p.rel }], tag: "const" };
+    { loop, key }: { readonly loop: ForOf; readonly key: string | null },
+  ): IdentResolution {
+    const read = { own: [loop.at, loop.bodyStart], scope: [loop.at, loop.bodyEnd] } as const;
+    if (isShadowed(f.ix, name, at, read)) return { reason: REBOUND };
+    const values = this.tableValues(f, loop, key);
+    return values === null ? { reason: NO_CONSTANT } : { values, tag: "loop" };
+  }
+
+  /** A string constant's value at `at`, as one id. */
+  constantValue(f: File, at: number, name: string): IdentResolution {
+    const value = this.constantString(f, at, name);
+    return typeof value === "string"
+      ? { values: [{ value, origin: f.p.rel }], tag: "const" }
+      : value;
+  }
+
+  /**
+   * The string `name` holds at `at`: the ONE binding of it a use there can see must be a `const`
+   * holding exactly a string literal. Never the value of a same-named constant the use cannot see,
+   * or one a parameter or inner declaration shadows.
+   */
+  constantString(f: File, at: number, name: string): string | { readonly reason: string } {
+    const seen = bindingsSeenAt(f.ix, name, at);
+    if (seen.length > 1) return { reason: REBOUND };
+    const only = seen[0];
+    const d = only === undefined ? undefined : f.ix.declarations.find((x) => x.nameAt === only.at);
+    const value =
+      d !== undefined && blockHolds(f.p.blank, d.at, at) ? stringInitializer(f.p, d) : null;
+    return value ?? { reason: NO_CONSTANT };
   }
 
   /** Each element's `key` value (or each element itself, for `key === null`) of a constant table. */
@@ -1181,31 +1697,51 @@ class Analysis {
   }
 
   /**
-   * The constant array a loop names, read through `f`'s OWN binding of that name: the one `f`
-   * declares, or the one a named import binds it to. Never a same-named table another file happens
-   * to declare — two connectors can each have an `ACTIONS`, and reading the wrong one derives the
-   * wrong ids with no violation at all. Otherwise, why the table cannot be read: the name is not
-   * bound in `f` exactly once (a parameter or loop variable enclosing the loop counts, since either
-   * shadows a file-level table), or that binding is not a constant array the scan reads. A
-   * re-export is not followed.
+   * The constant array a loop names, read through the ONE binding of that name the loop can see: a
+   * `const` array `f` declares there, or a named import of one. Never a same-named table another
+   * file or another function declares — two connectors can each have an `ACTIONS`, and reading the
+   * wrong one derives the wrong ids with no violation at all. Otherwise, why the table cannot be
+   * read: no binding is visible at the loop, a second one is (an inner declaration, parameter, loop
+   * variable or `catch` binding shadows the table), or the one visible is not a constant array.
    */
   boundTable(f: File, loop: ForOf, name: string): TableRef | string {
-    const bindings = bindingCount(f.ix, name) + enclosingShadows(f.ix, loop, name);
-    if (bindings === 0) return "is neither declared nor imported by name in this file";
-    if (bindings > 1) return "is bound more than once in this file";
-    const imported = f.ix.namedImports.find((i) => i.local === name);
-    if (imported === undefined) {
-      const open = f.ix.tables.get(name);
-      return open === undefined ? "is not a constant array this file declares" : { host: f, open };
+    const seen = bindingsSeenAt(f.ix, name, loop.at);
+    const only = seen.length === 1 ? seen[0] : undefined;
+    if (only === undefined) {
+      return seen.length === 0
+        ? "is not bound where the loop reads it"
+        : "is bound more than once where the loop reads it";
     }
+    const imported = f.ix.namedImports.find((i) => i.at === only.at);
+    if (imported !== undefined) return this.importedTable(f, imported);
+    const d = f.ix.declarations.find((x) => x.nameAt === only.at);
+    const open =
+      d !== undefined && blockHolds(f.p.blank, d.at, loop.at) ? arrayInitializer(f.p.blank, d) : -1;
+    return open < 0
+      ? "is not a constant array this file declares or imports by name"
+      : { host: f, open };
+  }
+
+  /**
+   * The array a named import binds. Its module must bind the name exactly once, by declaring it with
+   * `export const` at its top level: the binding a module EXPORTS can differ from a same-named
+   * private one beside it (`export { WRITES as ACTIONS }`, `export * from`), and a re-export is not
+   * followed.
+   */
+  importedTable(f: File, imported: NamedImport): TableRef | string {
     const spec = imported.spec ?? "";
     const target = spec.startsWith(".") ? this.resolveModule(f, spec) : undefined;
     if (target === undefined) return "is imported from a module the scan does not read";
-    const open = target.ix.tables.get(imported.imported);
-    if (open === undefined || bindingCount(target.ix, imported.imported) !== 1) {
-      return "is not one constant array its module declares";
-    }
-    return { host: target, open };
+    const s = target.p.blank;
+    const sites = target.ix.bindings.filter((b) => b.name === imported.imported);
+    const only = sites.length === 1 ? sites[0] : undefined;
+    const d =
+      only === undefined ? undefined : target.ix.declarations.find((x) => x.nameAt === only.at);
+    const exported = d !== undefined && isExportedAt(s, d.at) && innermostOpener(s, d.at) < 0;
+    const open = exported ? arrayInitializer(s, d) : -1;
+    return open < 0
+      ? "is not one constant array its module declares and exports"
+      : { host: target, open };
   }
 
   literalSpan(f: File, a: number, b: number): string | null {
@@ -1223,7 +1759,8 @@ class Analysis {
       const m = new RegExp(String.raw`^\s*${escapeRe(key)}\s*:\s*`).exec(s.slice(x, y));
       if (m !== null) return this.literalSpan(f, x + m[0].length, y);
       if (new RegExp(String.raw`^\s*${escapeRe(key)}\s*$`).test(s.slice(x, y))) {
-        return f.ix.strings.get(key) ?? null; // shorthand of a string constant
+        const value = this.constantString(f, x, key); // the constant the shorthand names there
+        return typeof value === "string" ? value : null;
       }
     }
     return null;
@@ -1231,27 +1768,39 @@ class Analysis {
 
   /**
    * `name` destructured from a parameter of an enclosing named function: its values are that
-   * property's literal at EVERY call site. `undefined` = not a kit option; `null` = it is one, and a
-   * call site does not pin it to a literal.
+   * property's literal at EVERY call site. `undefined` = not a kit option; a reason = it is one, and
+   * a call site does not pin it to a literal, or a binding inside the kit rebinds it at `at`.
    */
-  kitOptionValues(f: File, at: number, name: string): Valued[] | null | undefined {
+  kitOptionValues(f: File, at: number, name: string): IdentResolution | undefined {
     for (const fn of enclosingFns(f.ix, at)) {
-      const option = this.optionOf(f, fn, name);
+      const option = this.optionOf(f, fn, name, at);
       if (option === undefined) continue;
-      if (fn.name === null) return null;
-      this.kits.add(fn.name);
-      const calls = this.kitCalls(f, fn);
-      if (calls.length === 0) return null;
-      const values: Valued[] = [];
-      for (const { g, c } of calls) {
-        const arg = splitGroup(g.p.blank, c.open)[option.paramIndex];
-        const v = arg === undefined ? null : this.propertyLiteral(g, arg[0], option.key);
-        if (v === null) return null;
-        values.push({ value: v, origin: g.p.rel });
+      if (fn.name === null) return { reason: NO_CONSTANT };
+      if (isShadowed(f.ix, name, at, { own: option.own, scope: [fn.paramsAt, fn.bodyEnd] })) {
+        return { reason: REBOUND };
       }
-      return values;
+      this.kits.add(fn.name);
+      return this.kitCallValues(f, fn, option);
     }
     return undefined;
+  }
+
+  /** A kit option's values: the property's literal at every call of the kit. */
+  kitCallValues(
+    f: File,
+    fn: FnInfo,
+    option: { readonly paramIndex: number; readonly key: string },
+  ): IdentResolution {
+    const calls = this.kitCalls(f, fn);
+    if (calls.length === 0) return { reason: NO_CONSTANT };
+    const values: Valued[] = [];
+    for (const { g, c } of calls) {
+      const arg = splitGroup(g.p.blank, c.open)[option.paramIndex];
+      const v = arg === undefined ? null : this.propertyLiteral(g, arg[0], option.key);
+      if (v === null) return { reason: NO_CONSTANT };
+      values.push({ value: v, origin: g.p.rel });
+    }
+    return { values, tag: "const" };
   }
 
   /**
@@ -1268,17 +1817,30 @@ class Analysis {
     });
   }
 
-  optionOf(f: File, fn: FnInfo, name: string): { paramIndex: number; key: string } | undefined {
+  /**
+   * How `fn` binds `name` from one of its parameters, as seen at `at`: which parameter, under which
+   * key, and where the binding is written (`own`) — a pattern in the parameter list, or a
+   * destructuring of the parameter whose block holds `at`.
+   */
+  optionOf(
+    f: File,
+    fn: FnInfo,
+    name: string,
+    at: number,
+  ): { paramIndex: number; key: string; own: Range } | undefined {
     for (const [i, param] of fn.params.entries()) {
       const b = param.pattern.find((x) => x.local === name);
-      if (b !== undefined) return { paramIndex: i, key: b.key };
+      if (b !== undefined) return { paramIndex: i, key: b.key, own: [fn.paramsAt, fn.bodyStart] };
     }
+    const s = f.p.blank;
     for (const d of f.ix.destructurings) {
-      if (d.at < fn.bodyStart || d.at > fn.bodyEnd) continue;
+      if (d.at < fn.bodyStart || d.at > fn.bodyEnd || !blockHolds(s, d.at, at)) continue;
       const b = d.bindings.find((x) => x.local === name);
-      const rhs = f.p.blank.slice(d.rhsStart, d.rhsEnd).trim();
+      const rhs = s.slice(d.rhsStart, d.rhsEnd).trim();
       const paramIndex = fn.params.findIndex((p) => p.name === rhs);
-      if (b !== undefined && paramIndex >= 0) return { paramIndex, key: b.key };
+      if (b !== undefined && paramIndex >= 0) {
+        return { paramIndex, key: b.key, own: [d.open, matchForward(s, d.open)] };
+      }
     }
     return undefined;
   }

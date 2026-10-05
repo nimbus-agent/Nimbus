@@ -546,12 +546,18 @@ hand-offs, kit factories, and forwarders of any name — rather than by a `regis
 convention, which 0.2.2 already breaks (`registerStatusTool`, `registerPipelineActionTool`,
 `registerFeedbackTool`). It follows an exported registrar, forwarder, factory or shared kit through
 every import shape that keeps its name: a named import, a member of a namespace or dynamic import
-(`kit.registerStatusTool(...)`, or an alias of that member), and a destructuring, renamed or not. A
-loop's table is read only through the file's own binding of its name — the array it declares, or the
-one a named import binds — never a same-named table another connector happens to declare. It
-is fail-closed: a registration whose id it cannot resolve to a constant (a loop table bound more
-than once, shadowed, or imported from a module it does not read included), a registrar used as a value
-it does not follow (an aliased import included), an unbound factory result, a registrar exported as
+(`kit.registerStatusTool(...)`, or an alias of that member), and a destructuring, renamed or not.
+Every identifier an id is read through — a loop's table, a string constant, a loop variable, a kit
+option, a forwarded parameter — is read through the ONE binding of its name the use can see, taken
+from a census of every way a file binds a name (each declarator, initialised or not, nested, rest
+and array patterns included; function, arrow and method parameters; `catch` bindings; every form of
+import; function, class, enum and namespace names), never a same-named binding another connector or
+another function declares. A table or constant counts only as a `const` holding exactly an array or
+string literal, and an imported table only as one its module declares once with `export const`. It
+is fail-closed: a registration whose id it cannot resolve to a constant (including an identifier a
+second visible binding may shadow, and a loop table imported from a module it does not read,
+re-exported, or bound by a `let`), a registrar used as a value it does not follow (an aliased
+import included), an unbound factory result, a registrar exported as
 the DEFAULT, a namespace or dynamic import of a module that may export one used other than as
 `m.member` (or destructured), a namespace re-export of such a module, a string literal spelling a
 registrar's name (a computed access), an exported registrar no file names outside its declaration,
@@ -561,12 +567,16 @@ registration shapes the pinned package uses, and upstream's own signal: every co
 manifest declares `write`/`delete` in `hitlRequired` must yield a derived registration. Per-shape
 fixtures (`connectors/testing/connector-write-fixtures.ts`) prove an unclassified write is reported
 in every shape it follows, not only the shapes the installed version uses, and the scanner's own
-tests prove each refused shape is refused. **Stated bound, two blind spots:** it sees write
+tests prove each refused shape is refused. **Stated bound, three blind spots:** it sees write
 REGISTRATIONS only, so a tool that mutates while registered as a read — `gdrive_file_trash` today —
-is invisible to it and has to be classified by hand; and an object a registrar was handed off into,
+is invisible to it and has to be classified by hand; an object a registrar was handed off into,
 then read by a NON-literal computed key (`regs[key](...)`) or by reflection (`Object.values(regs)`),
 is not followed — the `mutates:` cross-check catches such a call only when it carries a `mutates:`
-literal, which a positional forwarder's call does not. It also asserts that no write tool ends in a
+literal, which a positional forwarder's call does not; and a constant table MUTATED after its
+declaration (`ACTIONS.push(...)`) is read as declared — the `mutates:` cross-check catches the push
+only when the pushed element carries a `mutates:` literal. The binding census is a text scan that
+over-approximates where each binding is visible, so it refuses some shadowing a type checker would
+resolve rather than resolve any it cannot rule out. It also asserts that no write tool ends in a
 verb `share.replay`'s read allowlist (`share/read-tool-registry.ts`) would run, since replay is the
 other path that executes a tool id a caller names. The four comms writes whose literals static
 rules confine to their own gates — `notion_kb_append` / `confluence_kb_append` (D19) and

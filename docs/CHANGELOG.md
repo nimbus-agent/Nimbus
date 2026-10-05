@@ -53,14 +53,19 @@ Phase-level history before `v0.1.0` (Phases 1â€“4) lives in [`docs/roadmap.md` Â
   named, namespace and dynamic imports, renamed destructurings included, and refuses every import
   shape it cannot follow: a default export, a module object used other than as `m.member`, an
   aliased import, a registrar's name spelled as a string, and an exported registrar no file names.
-  A loop's table is read only through the file's own declaration or named import of it, never a
-  same-named table in another connector, and a name the file binds more than once is refused.
-  It checks itself against upstream's own manifests too: every connector declaring a write must
-  yield a registration. It derives 87 writes from 0.2.1 and 91 from 0.2.2, so the pending
-  connectors bump passes it unchanged, and it has no exception list. Two blind spots are stated
-  rather than hidden: a mutation registered as a read, which is why `gdrive_file_trash` is listed
-  by hand, and an object a registrar was handed off into, then read by a non-literal computed key
-  or by reflection.
+  Every identifier an id is read through (a loop's table, a string constant, a loop variable, a
+  kit option, a forwarded parameter) is read through the one binding of its name its use can see,
+  never a same-named one in another connector or another function. A second visible binding that
+  could shadow it is refused, whatever binds it: a declaration (initialised or not, any declarator,
+  any pattern), a function, arrow or method parameter, a `catch` binding, an import, or a function,
+  class, enum or namespace name. A table or constant counts only as a `const` holding exactly an
+  array or string literal, and an imported table only as one its module declares with
+  `export const`. It checks itself against upstream's own manifests too: every connector declaring
+  a write must yield a registration. It derives 87 writes from 0.2.1 and 91 from 0.2.2, so the
+  pending connectors bump passes it unchanged, and it has no exception list. Three blind spots are
+  stated rather than hidden: a mutation registered as a read, which is why `gdrive_file_trash` is
+  listed by hand; an object a registrar was handed off into, then read by a non-literal computed
+  key or by reflection; and a constant table mutated after its declaration (`ACTIONS.push(...)`).
 
   **The gate now also refuses connector tools that run caller-directed code.** `iac_terraform_plan`
   and `iac_pulumi_preview` are READ registrations, so no write list could name them, yet each hands
