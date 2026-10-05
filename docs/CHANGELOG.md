@@ -18,6 +18,38 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
 
 ## Post-Phase-6 deliveries
 
+- **2026-10-05 — The bundled connectors move to 0.2.4.** `@nimbus-dev/connectors` goes from
+  0.2.2 to 0.2.4 (two releases, the same dependencies), and the gateway binary bundles it. As Nimbus
+  runs them, the connectors now:
+  - check every caller-supplied value that reaches a CLI at the tool's schema, so a refused value
+    never reaches the CLI (inside the gateway that check runs when the tool is called, which for
+    a write is after the executor's HITL prompt): a value starting with `-` is refused for
+    every CLI (`aws`, `azure` and `iac` checked nothing before, and kubectl and gcloud took pod,
+    deployment, service and cluster names unchecked), as is a value `aws` or `az` would replace by
+    a file's contents (`file://`, `fileb://`, `http(s)://` and `@=` for `aws`; a leading `@` and
+    `=@` for `az`);
+  - on Windows, refuse at the spawn an argument holding a `cmd.exe` metacharacter when the CLI that
+    would start is a batch file, as `az.cmd` and `gcloud.cmd` are;
+  - run `iac_terraform_plan`, `apply` and `destroy` with `-chdir=DIR`, and deploy a CloudFormation
+    template from a file with `--template-file`: given `-chdir DIR` and `--template-body`, real
+    terraform and AWS CLI refused every call of all four tools. The template is read as UTF-8 by
+    AWS CLI v1 and v2, and one over 51,200 bytes is refused at the schema.
+
+  The consent kit's budget, audit log and client notifications, which these releases also fixed,
+  run only when a connector is used standalone: inside the gateway the kit is a pass-through and
+  the executor is the gate. So is the Windows `Path` spelling fix, since the gateway hands every
+  connector its search path as `PATH`. In the gateway the iac connector now writes the template to
+  its temp directory: the macOS sandbox profile and the Linux tmpfs give it one, and the Windows
+  AppContainer grants ACLs only to the working directory and the policy's paths, a limit its
+  terraform and pulumi tools already have.
+
+  `nimbus connector auth workday`'s help now names what the Workday client needs for the flow
+  the gateway runs: the Authorization Code Grant, the redirect URI
+  `http://127.0.0.1:<port>/oauth/callback`, and `--port` to listen on that port; without it the
+  gateway picks a port of its own. This file's Workday entry said the connector uses client
+  credentials; it uses the authorization-code grant, and the entry is corrected. No migration, no
+  invariant change, no new IPC method.
+
 - **2026-10-05 — The federated invoke gate asks the org policy's connector allowlist, and a
   connector write approved from chat runs through the connector-write transport.** One off-mesh
   door the I22 stated bounds named is closed, and a ChatOps write defect recorded by the
@@ -5900,7 +5932,7 @@ Phase 6 ships as 9 sequenced delivery slices (see [`docs/roadmap.md` § Phase 6]
 - **Slice 9 E — Apple Mail + iCloud Calendar connector (`apple`):** A single first-party MCP connector that indexes **iCloud Mail** (over IMAP, `imap.mail.me.com:993` TLS) and **iCloud Calendar** (over CalDAV, `caldav.icloud.com` → per-account `p##-caldav.icloud.com`) into the local index as `apple:email` and `apple:event` items, and exposes **four HITL-gated write tools** — `apple_mail_send`, `apple_mail_draft_create`, `apple_calendar_event_create`, `apple_calendar_event_delete`. The mail side **reuses** the shared email tool kit (`registerEmailConnectorTools` + the gateway's `fetchImapMessages` / `mapImapLikeMessageToItem`); the calendar side introduces the codebase's **first CalDAV path** — a pure iCalendar build/parse module hoisted into `@nimbus-dev/sdk` (`parseICalendar` / `buildVEvent`, shared by the connector and the gateway sync, no parser dependency) plus an injectable `CalDavClient` whose real (tsdav, two-phase principal-discovery) implementation is confined to the coverage-excluded `server.ts`. Recurrence is expanded **server-side** via CalDAV `<C:expand>` (no client RRULE engine); overridden occurrences key on `<UID>:<RECURRENCE-ID>`. **Privacy bounds:** mail = headers + attachment METADATA + ≤2000-char preview (never bodies/bytes); calendar = summary/start/end/location/organizer/status/recurrence + ≤2000-char notes preview + attendee emails. **Forced sender:** both write-mail tools pin `From` to the authenticated `apple.icloud_email`. **Auth:** two Vault keys `apple.icloud_email` / `apple.icloud_app_password` (a single app-specific password authenticates IMAP+SMTP+CalDAV), injected as `APPLE_ICLOUD_EMAIL` / `APPLE_ICLOUD_APP_PASSWORD` at spawn; sync + spawn both no-op when either is unset. The lazy-mesh manifest declares `caldav.icloud.com` statically and folds the non-443 `imap.mail.me.com:993` / `smtp.mail.me.com:587` host:port endpoints in at spawn (mirroring `phase3AddImapMcp`). New rate-limiter provider `apple` (60 rpm / burst 10); `apple:email` routes to 1536-dim embeddings (prose), `apple:event` stays on local MiniLM 384-dim. **Cross-platform** (the roadmap's "macOS only" label is relaxed — the IMAP/CalDAV transport has no native macOS dependency; available + tested on Windows/macOS/Linux). **Writes ride the generic email/calendar dispatch path** behind the existing executor I2 HITL gate — **no new invariant, no `connector-write-registry`/I26 entry, no migration** (`event` is a new item type but the index is type-agnostic). The four write action types (`email.send` / `email.draft.create` / `calendar.event.create` / `calendar.event.delete`) are already in `HITL_REQUIRED_BACKING`; a connector contract test locks the 8-tool surface + the metadata-only invariant, and an executor-level test proves the gate fires (consent before dispatch; reject ⇒ no dispatch) for all four writes.
 - **Slice 9 W1 — HITL-gated GitOps + ML writes (ArgoCD / Flux / MLflow):** Six new write tools, each executing ONLY behind the LOCAL owner's executor HITL gate (I2): `argocd_app_sync` / `argocd_app_rollback` (`POST /api/v1/applications/{name}/sync|rollback`), `flux_kustomization_reconcile` / `flux_helmrelease_reconcile` (PATCH the CR with a `reconcile.fluxcd.io/requestedAt` annotation — the `flux reconcile` mechanism, requiring the SA's `patch` RBAC verb), and `mlflow_model_promote` / `mlflow_model_transition_stage` (`POST /api/2.0/mlflow/model-versions/transition-stage`; promote defaults `archive_existing_versions=true`, transition defaults false). All are async (the action is *requested*; verify via the next metadata sync). Each connector's three read tools were extracted into an exported `register<Svc>Tools(reg)` registrar (the `import.meta.main` guard now runs the stdio server), so the write tools register alongside them and stay unit-testable via `captureTools()`. **Personal + team credentials:** writes route through the credential-aware transport (personal spawn with a service-scoped vault view, or the I19 localOperator team rail); `argocd`/`flux`/`mlflow` are enrolled in `TEAM_CREDENTIAL_CONNECTORS` + `TEAM_SECRET_ANYOF_GROUPS`. **No new invariant, no migration (no schema change):** the Wave 7c warehouse-write machinery was *generalized in place* to all connector writes — `warehouse-write-{transport,dispatch}.ts` → `connector-write-{transport,dispatch}.ts`, a hoisted `ConnectorWrite` descriptor + a per-group SSoT (`gitops-ml-write-tools.ts`) + a union registry (`connector-write-registry.ts`), and **I26/D20 reworded** from "warehouse/BI write tool ids" to "connector write tool ids (warehouse/BI ∪ GitOps/ML)": the federated peer invoke gate now fail-closed rejects ANY connector write id via the union `isConnectorWriteToolId` predicate, so a peer can never trigger a GitOps/ML write over the wire (proven by a functional rejection test in `invoke-gate.test.ts`). A drift test ties the six new action types to `HITL_REQUIRED_BACKING`. **Deferred:** SageMaker + Vertex AI writes (CLI-credential connectors with no discrete token — they don't fit the team-vault/discrete-token write model) and all destructive `delete`/`drop` writes. **Adds no new invariant (the I-count is unchanged by this work).**
 
-- **Workday connector** (read-only) — indexes workers (org chart / employee directory), time-off requests, job postings, and admin-configured RaaS custom reports from a Workday tenant (Phase 6 Slice 9). Tenant-specific OAuth2 (client-credentials); directory-safe PII allowlist (name/title/department/manager/location — no compensation/SSN/home-address/leave-reason). Four item types: `workday:worker`, `workday:time_off`, `workday:job_posting`, `workday:report`. Optional `[[connectors.workday.reports]]` nimbus.toml config for RaaS reports (same-host guard). No migration, no HITL, no new invariant.
+- **Workday connector** (read-only) — indexes workers (org chart / employee directory), time-off requests, job postings, and admin-configured RaaS custom reports from a Workday tenant (Phase 6 Slice 9). Tenant-specific OAuth2 (authorization-code grant); directory-safe PII allowlist (name/title/department/manager/location — no compensation/SSN/home-address/leave-reason). Four item types: `workday:worker`, `workday:time_off`, `workday:job_posting`, `workday:report`. Optional `[[connectors.workday.reports]]` nimbus.toml config for RaaS reports (same-host guard). No migration, no HITL, no new invariant.
 
 ### 2026-06-20
 
