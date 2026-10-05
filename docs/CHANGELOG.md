@@ -18,6 +18,38 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
 
 ## Post-Phase-6 deliveries
 
+- **2026-10-05 — The bundled connectors move to 0.2.4.** `@nimbus-dev/connectors` goes from
+  0.2.2 to 0.2.4 (two releases, the same dependencies), and the gateway binary bundles it. As Nimbus
+  runs them, the connectors now:
+  - check every caller-supplied value that reaches a CLI at the tool's schema, so a refused value
+    never reaches the CLI (inside the gateway that check runs when the tool is called, which for
+    a write is after the executor's HITL prompt): a value starting with `-` is refused for
+    every CLI (`aws`, `azure` and `iac` checked nothing before, and kubectl and gcloud took pod,
+    deployment, service and cluster names unchecked), as is a value `aws` or `az` would replace by
+    a file's contents (`file://`, `fileb://`, `http(s)://` and `@=` for `aws`; a leading `@` and
+    `=@` for `az`);
+  - on Windows, refuse at the spawn an argument holding a `cmd.exe` metacharacter when the CLI that
+    would start is a batch file, as `az.cmd` and `gcloud.cmd` are;
+  - run `iac_terraform_plan`, `apply` and `destroy` with `-chdir=DIR`, and deploy a CloudFormation
+    template from a file with `--template-file`: given `-chdir DIR` and `--template-body`, real
+    terraform and AWS CLI refused every call of all four tools. The template is read as UTF-8 by
+    AWS CLI v1 and v2, and one over 51,200 bytes is refused at the schema.
+
+  The consent kit's budget, audit log and client notifications, which these releases also fixed,
+  run only when a connector is used standalone: inside the gateway the kit is a pass-through and
+  the executor is the gate. So is the Windows `Path` spelling fix, since the gateway hands every
+  connector its search path as `PATH`. In the gateway the iac connector now writes the template to
+  its temp directory: the macOS sandbox profile and the Linux tmpfs give it one, and the Windows
+  AppContainer grants ACLs only to the working directory and the policy's paths, a limit its
+  terraform and pulumi tools already have.
+
+  `nimbus connector auth workday`'s help named the wrong Workday task. "Register API Client for
+  Integrations" has no grant type or redirect URI; the help now names "Register API Client", the
+  Authorization Code Grant, the redirect URI `http://127.0.0.1:<port>/oauth/callback` and
+  `--port`. This file's Workday entry said the connector uses client credentials; it uses the
+  authorization-code grant, and the entry is corrected. No migration, no invariant change, no new
+  IPC method.
+
 - **2026-10-05 — The last live references to the deleted `packages/mcp-connectors` workspace are
   gone, and the local test commands are held to CI's list.** #1347 (2026-08-27) deleted the
   workspace and dropped it from the two CI test commands, but `bun run test` and `test:ci` (the unit

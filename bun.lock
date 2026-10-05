@@ -83,7 +83,7 @@
       "dependencies": {
         "@mastra/core": "^1.74.0",
         "@mastra/mcp": "^2.1.2",
-        "@nimbus-dev/connectors": "^0.2.2",
+        "@nimbus-dev/connectors": "^0.2.4",
         "@nimbus-dev/sdk": "^2.0.0",
         "@noble/hashes": "^2.4.0",
         "@scure/bip39": "^2.4.0",
@@ -584,7 +584,7 @@
 
     "@nimbus-dev/client": ["@nimbus-dev/client@0.18.0", "", { "dependencies": { "@nimbus-dev/sdk": "^1.34.0" } }, "sha512-vFetTND4TNVJUytwJL1muE0H65cUbwGdQGwK+kxo2EJPPvXKWza109MrB7oUXoPOyxi0rSHVNLmwpI21Ai+lmw=="],
 
-    "@nimbus-dev/connectors": ["@nimbus-dev/connectors@0.2.2", "", { "dependencies": { "@modelcontextprotocol/sdk": "1.32.0", "@nimbus-dev/sdk": "^2.0.0", "@types/nodemailer": "^8.0.2", "zod": "^4.6.5" }, "optionalDependencies": { "hyparquet": "^1.31.2", "imapflow": "^2.2.4", "nodemailer": "^10.0.14", "tsdav": "^2.3.5" }, "bin": { "nimbus-connector": "standalone/src/bin.ts" } }, "sha512-85sejeVbTzZQzPvojutqtOut2+iYS5UL4EGjMd+pLqvjo/qrnOWfgcuZwq7j9G99grp31g2ekT6p9G5aO7wo2Q=="],
+    "@nimbus-dev/connectors": ["@nimbus-dev/connectors@0.2.4", "", { "dependencies": { "@modelcontextprotocol/sdk": "1.32.0", "@nimbus-dev/sdk": "^2.0.0", "@types/nodemailer": "^8.0.2", "zod": "^4.6.5" }, "optionalDependencies": { "hyparquet": "^1.31.2", "imapflow": "^2.2.4", "nodemailer": "^10.0.14", "tsdav": "^2.3.5" }, "bin": { "nimbus-connector": "standalone/src/bin.ts" } }, "sha512-kHkapo6roR83Qo3ukthBet7ksFjK06Nhq9rB3h1HZcAHj4MuINDEiAdsHYa9DsN2Ic5SvbDKZmSW9RQF29jMsA=="],
 
     "@nimbus-dev/sdk": ["@nimbus-dev/sdk@2.0.0", "", {}, "sha512-5SMQjKl3jh2l2tSmN17nYk9LxFZqMiFUNLmfxyg3oEgB1WxGBc/HuqunNuIxY9Qqxt/hyEyoXBVTyi5bPO08Nw=="],
 
