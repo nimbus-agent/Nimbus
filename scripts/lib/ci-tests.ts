@@ -35,17 +35,28 @@ function runBunTest(args: readonly string[], wrapDbus: boolean): void {
   }
 }
 
+/** The test paths `test:ci`'s whole-repo unit run hands to `bun test`. */
+const UNIT_TEST_PATHS: readonly string[] = ["packages/gateway", "packages/cli", "scripts"];
+
+/**
+ * The command `test:ci`'s whole-repo unit run spawns, as-is or behind the Linux D-Bus wrapper.
+ *
+ * Exported so `scripts/ci/cross-platform-parity.test.ts` can hold the paths in it equal to the CI
+ * push leg's list. The test reads this command, not `UNIT_TEST_PATHS`, because the command is what
+ * runs: a path added here beside the list would pass a check of the list alone. The spawn site
+ * below uses the command unchanged; keep it that way, since a path appended there is out of the
+ * test's reach. Nothing checked this run before, and it kept `packages/mcp-connectors` for five
+ * weeks after the connectors left the repository (#1347), because `bun test` exits 0 when a path
+ * matches nothing as long as another path matches something.
+ */
+export function unitTestCommand(): string[] {
+  return ["bun", "test", ...UNIT_TEST_PATHS, "--coverage"];
+}
+
 function runInitialUnitTestsWithCoverage(): void {
-  const args = [
-    "packages/gateway",
-    "packages/cli",
-    "packages/mcp-connectors",
-    "scripts",
-    "--coverage",
-  ];
+  const cmd = unitTestCommand();
 
   const runOnce = (): number => {
-    const cmd = ["bun", "test", ...args];
     if (process.platform === "linux" && dbusAvailable()) {
       const p = Bun.spawnSync(["bash", DBUS_WRAPPER, ...cmd], {
         cwd: REPO_ROOT,

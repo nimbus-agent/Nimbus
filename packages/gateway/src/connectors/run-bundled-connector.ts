@@ -5,7 +5,8 @@ import { BUNDLED_CONNECTORS } from "./bundled-connector-registry.ts";
  * The two shapes a connector entrypoint can take: 84 connect their stdio transport at module scope,
  * so importing them starts them; ten guard that behind `import.meta.main` — false under an import —
  * and export `startConnector()` instead. `check-connector-entrypoints.ts` enforces that a guarded
- * entrypoint always exports it.
+ * entrypoint always exports it; it left this repository with the connectors and runs in
+ * nimbus-agent/nimbus-mcp-servers.
  */
 interface ConnectorModule {
   readonly startConnector?: () => Promise<void>;
@@ -26,7 +27,9 @@ export async function runBundledConnector(
   // I2 lives in the gateway's executor, so a gateway-spawned connector keeps its full tool surface
   // and does not gate itself. Set BEFORE the dynamic import below: connectors register tools at
   // module scope, so a mode set afterwards would be read too late. This is the ONLY production
-  // caller that passes "gateway" — `audit:connector-consent` confines the setter to it.
+  // caller that passes "gateway". `audit:connector-consent` used to confine the setter to it; that
+  // gate left with the connectors and, from nimbus-agent/nimbus-mcp-servers, keeps every connector
+  // from naming the setter — nothing in THIS repository confines its gateway-side callers.
   setConnectorMode("gateway");
 
   const load = id === undefined ? undefined : registry[id];

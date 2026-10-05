@@ -32,9 +32,10 @@ export const VERTEX_AI_DEFAULT_REGION = "us-central1";
 /**
  * Inline argv flag-smuggling guard for the optional Vertex AI region before it
  * is interpolated into the spawned MCP's `VERTEX_AI_REGION` env and the per-region
- * network host (the gateway package cannot import `mcp-connectors/shared`). A value
- * that is empty, over-long, `-`-prefixed, or carries control characters is rejected
- * so the caller falls back to the safe default.
+ * network host (the gateway cannot import the `shared/` helpers of the
+ * `@nimbus-dev/connectors` package). A value that is empty, over-long,
+ * `-`-prefixed, or carries control characters is rejected so the caller falls
+ * back to the safe default.
  */
 export function isSafeRegion(value: string): boolean {
   if (value.length === 0 || value.length > 1024 || value.startsWith("-")) {

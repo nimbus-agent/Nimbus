@@ -67,7 +67,12 @@ nimbus ask "what is in my Drive?"
 | `packages/gateway` | The Gateway — JSON-RPC IPC, agent runtime, MCP mesh, Vault, local SQLite index. |
 | `packages/cli` | The `nimbus` command — thin client, talks to the Gateway over the local socket. |
 | `packages/ui` | The Tauri 2.0 desktop app (Rust shell + React renderer). |
-| `packages/mcp-connectors/*` | First-party MCP servers (Google Drive, Gmail, GitHub, Slack, Linear, etc.). |
+
+The first-party MCP servers (Google Drive, Gmail, GitHub, Slack, Linear, etc.)
+are not a workspace here: they live in
+[nimbus-agent/nimbus-mcp-servers](https://github.com/nimbus-agent/nimbus-mcp-servers)
+and arrive as the `@nimbus-dev/connectors` package, which the Gateway bundles
+into its binary.
 
 The Gateway never imports from the CLI or UI; clients communicate with the
 Gateway exclusively over JSON-RPC. See the

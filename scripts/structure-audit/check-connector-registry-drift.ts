@@ -51,48 +51,47 @@ export type RegistryDriftCheck =
 //
 // No platform normalization is needed and none should be added: the separators here are
 // literal characters in the generator's template string, not the output of any path API, and
-// the interpolated id is a readdirSync entry NAME, which never contains a separator. The
-// generated file is byte-identical on Windows, macOS and Linux.
-// BOTH specifier forms the generator can emit — see `specifierFor` in
-// scripts/gen-bundled-connector-registry.ts. The relative form is what ships today; the package
-// form (`@nimbus-dev/connectors/<id>`) is what ships after the extraction.
+// the interpolated id is an exports-map key that the generator's `CONNECTOR_ID_RE` limits to
+// lowercase letters, digits and hyphens, so it never contains a separator. The generated file is
+// byte-identical on Windows, macOS and Linux.
 //
-// Matching only one of them does not fail loudly: `registryIds` returns [], the check reports
-// "indeterminate", and that is a WARNING rather than an error — so the drift gate would go quietly
-// inert at exactly the moment the extraction made it matter most.
-const ENTRY_RE =
-  /import\("(?:\.\.\/\.\.\/\.\.\/mcp-connectors\/([^"/]+)\/src\/server\.ts|@nimbus-dev\/connectors\/([^"/]+))"\)/g;
+// The ONE specifier form the generator emits — see `specifierFor` in
+// scripts/gen-bundled-connector-registry.ts. It also had a relative form into
+// `packages/mcp-connectors` until #1347 deleted that directory; an entry still written that way
+// is deliberately NOT counted, because its import can no longer resolve. A registry made only of
+// such entries parses to zero ids and reports "indeterminate"; one mixed into a current registry
+// reports its connector as missing, which is true of the shipped binary.
+const ENTRY_RE = /import\("@nimbus-dev\/connectors\/([^"/]+)"\)/g;
 
 export function registryIds(registryFile: string): string[] {
   if (!existsSync(registryFile)) return [];
   const src = readFileSync(registryFile, "utf8");
-  return [...src.matchAll(ENTRY_RE)]
-    .map((m) => (m[1] ?? m[2]) as string)
-    .sort((a, b) => a.localeCompare(b));
+  return [...src.matchAll(ENTRY_RE)].map((m) => m[1] as string).sort((a, b) => a.localeCompare(b));
 }
 
 function buildViolations(
-  onDisk: ReadonlySet<string>,
+  exported: ReadonlySet<string>,
   listed: ReadonlySet<string>,
 ): RegistryDriftViolation[] {
   const out: RegistryDriftViolation[] = [];
 
-  for (const id of [...onDisk].sort((a, b) => a.localeCompare(b))) {
+  for (const id of [...exported].sort((a, b) => a.localeCompare(b))) {
     if (listed.has(id)) continue;
     out.push({
       connector: id,
       reason:
-        "exists in packages/mcp-connectors/ but is absent from the bundled registry: the shipped " +
+        `is exported by ${CONNECTOR_PACKAGE} but absent from the bundled registry: the shipped ` +
         "binary can never start it. Run `bun run gen:connector-registry` and commit the result",
     });
   }
   for (const id of [...listed].sort((a, b) => a.localeCompare(b))) {
-    if (onDisk.has(id)) continue;
+    if (exported.has(id)) continue;
     out.push({
       connector: id,
       reason:
-        "is listed in the bundled registry but no longer exists on disk: the generated import " +
-        "will fail to resolve. Run `bun run gen:connector-registry` and commit the result",
+        `is listed in the bundled registry but ${CONNECTOR_PACKAGE} no longer exports it: the ` +
+        "generated import will fail to resolve. Run `bun run gen:connector-registry` and commit " +
+        "the result",
     });
   }
   return out;
@@ -101,11 +100,11 @@ function buildViolations(
 /**
  * The bundled connector registry is GENERATED into a committed file. Nothing else diffs it, and
  * `test:connector-boot` structurally cannot: it boots the connectors the registry ships, so one
- * missing FROM the registry is invisible to it. A stale registry means a connector that exists in
- * the tree, passes every other gate, and can never be started by the shipped binary.
+ * missing FROM the registry is invisible to it. A stale registry means a connector the package
+ * exports, that passes every other gate, and that the shipped binary can never start.
  *
- * A registry file that EXISTS but parses to zero entries, while connectors exist on disk, is
- * reported as `indeterminate` rather than as a violation for every connector on disk. The repo's
+ * A registry file that EXISTS but parses to zero entries, while the package exports connectors, is
+ * reported as `indeterminate` rather than as a violation for every exported connector. The repo's
  * convention (matching `check-doc-references.ts` and friends) is that unreadable/unparseable
  * input degrades to indeterminate, never to a finding: `registryIds` matches on a specific import
  * shape emitted by `gen-bundled-connector-registry.ts`, and if that generator's emitted format
@@ -124,21 +123,21 @@ export function checkConnectorRegistryDrift(
   exportedIds: readonly string[] = bundledConnectorIds(),
   registryFile: string = REGISTRY_FILE,
 ): RegistryDriftCheck {
-  const onDisk = new Set(exportedIds);
+  const exported = new Set(exportedIds);
 
   if (!existsSync(registryFile)) {
-    const violations = buildViolations(onDisk, new Set());
+    const violations = buildViolations(exported, new Set());
     return violations.length === 0 ? { status: "ok" } : { status: "drift", violations };
   }
 
   const listedIds = registryIds(registryFile);
-  if (listedIds.length === 0 && onDisk.size > 0) {
+  if (listedIds.length === 0 && exported.size > 0) {
     return {
       status: "indeterminate",
       indeterminate: {
         reason:
           `${registryFile} exists but zero connector entries could be parsed from it, even ` +
-          `though ${onDisk.size} connector(s) are exported by ${CONNECTOR_PACKAGE}. The registry ` +
+          `though ${exported.size} connector(s) are exported by ${CONNECTOR_PACKAGE}. The registry ` +
           "could not be read as connector entries. The likely cause is that the registry " +
           "generator's emitted import format changed and this check's parser (the ENTRY_RE " +
           "regex in check-connector-registry-drift.ts) no longer matches it — NOT that every " +
@@ -148,7 +147,7 @@ export function checkConnectorRegistryDrift(
     };
   }
 
-  const violations = buildViolations(onDisk, new Set(listedIds));
+  const violations = buildViolations(exported, new Set(listedIds));
   return violations.length === 0 ? { status: "ok" } : { status: "drift", violations };
 }
 
