@@ -367,7 +367,7 @@ Operational (non-HITL) posts go only through `chatops/reply-dispatcher.ts` to a 
 | `teamvault.put` / `teamvault.delete` | request | Entry lifecycle. NOT in the Tauri allowlist (`I7`) |
 | `teamvault.grant` / `teamvault.revoke` | request | Per-peer, per-tool-id grants |
 
-Team-vault secrets are **consumed** only via `federation/invoke-gate.ts` `answerFederatedInvoke` (reached by `federation.invoke`), which mints an ephemeral team-credentialed connector and returns a leak-proof result, fail-closed on a missing secret (`I19` / `D15`). Never read a team secret from an RPC handler directly.
+Team-vault secrets are **consumed** only via `federation/invoke-gate.ts` `answerFederatedInvoke` (reached by `federation.invoke`), which mints an ephemeral team-credentialed connector and returns a leak-proof result, fail-closed on a missing secret (`I19` / `D15`). The gate refuses connector writes and code-executing tools first (`I26`), and a connector the org policy's allowlist blocks after the grant check (`I22`). Never read a team secret from an RPC handler directly.
 
 ---
 

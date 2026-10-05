@@ -330,6 +330,7 @@ describe("the identity guard reaches the answering gates", () => {
             runs++;
             return {};
           },
+          isConnectorAllowed: () => true,
         },
       },
     );
@@ -357,6 +358,7 @@ describe("federation.invoke — the quorum a rule demands", () => {
           runs++;
           return { stopped: true };
         },
+        isConnectorAllowed: () => true,
       },
     };
     // The coordinator broadcasts each request; answer it the way an approver's gateway would.

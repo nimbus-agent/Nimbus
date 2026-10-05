@@ -18,6 +18,37 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
 
 ## Post-Phase-6 deliveries
 
+- **2026-10-05 — The federated invoke gate asks the org policy's connector allowlist, and a
+  connector write approved from chat runs through the connector-write transport.** One off-mesh
+  door the I22 stated bounds named is closed, and a ChatOps write defect recorded by the
+  "Connector sessions find tools by their bare id" entry below is fixed:
+  - `answerFederatedInvoke` never consulted `[policy.connectors] allow`. A peer holding a grant on a
+    team-vault entry ran its tool however the policy stood, since the anchor runs the tool in its own
+    team-credentialed connector, off the mesh whose filter drops a blocked connector. The gate now
+    asks the policy gate's own per-call predicate after the grant check, before quorum asks anyone
+    to vote, and again after the quorum's wait, since a bundle verified meanwhile applies to that
+    run too. A blocked invoke audits `connector_blocked` and returns the same opaque `no_grant`.
+    It asks of the entry's connector and of the server the peer's key belongs to: the anchor runs a
+    key exactly as the session lists it, and the github spawner registers `github_actions` beside
+    `github`, so `github_actions_gha_run_list` granted on a `github` entry runs github_actions'
+    tool. The predicate is a REQUIRED field of the invoke gate's context and of the federation
+    context's `teamVault`, which `ipc/server/options.ts` now types as that same field rather than a
+    copy of it.
+  - The ChatOps executor dispatched an owner-approved connector write (warehouse/BI ∪ GitOps/ML)
+    through the mesh alone. One that named no `mcpToolId` failed with "tool not found"; one that
+    named it ran with the personal credential, whatever `[connectors.<name>] credential` said.
+    `bootChatopsIntoAssembly` now wraps that executor's real dispatcher in
+    `createConnectorWriteDispatcher` with the same `connectorWriteDeps` `gateway-main.ts` installs
+    around `runAsk`'s dispatcher, so such a write selects its configured credential and asks the
+    allowlist first. `runAsk` plans no connector write, so `@nimbus run` is the first shipped
+    surface whose connector writes reach the transport. The ChatOps e2e sink dispatcher is
+    unchanged.
+
+  Two stated bounds remain and are unchanged: the ChatOps bot's own `slack`/`teams` calls, and the
+  warehouse/BI list drains, which honour a runtime allowlist change only after a restart.
+  `security-invariants.test.ts` pins the wiring in a new I22 case (j), and case (f)'s count of
+  `connectorWriteDeps` in `assemblePlatformServices` goes from two to three for the ChatOps boot.
+
 - **2026-10-05 — The last live references to the deleted `packages/mcp-connectors` workspace are
   gone, and the local test commands are held to CI's list.** #1347 (2026-08-27) deleted the
   workspace and dropped it from the two CI test commands, but `bun run test` and `test:ci` (the unit

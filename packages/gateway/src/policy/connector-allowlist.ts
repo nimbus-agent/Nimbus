@@ -20,9 +20,10 @@ export function partitionByAllowlist(
 /**
  * The connector-allowlist decision the gateway hands every consumer of
  * `EnforcedPolicy.connectorAllow` (I22): the mesh's tool filter, sync registration at boot, the
- * admin status report and the connector-write transport. The predicate reads `gate.enforced()` on
- * EVERY call, never a value captured when it was built, so a newly verified bundle reaches the
- * next call without a restart. Sync registration calls it only at boot, so sync sees a new bundle
+ * admin status report, the connector-write transport and the federated invoke gate
+ * (`answerFederatedInvoke`, through the anchor's `teamVault`). The predicate reads
+ * `gate.enforced()` on EVERY call, never a value captured when it was built, so a newly verified
+ * bundle reaches the next call without a restart. Sync registration calls it only at boot, so sync sees a new bundle
  * only after one. With no `[policy.connectors] allow` (an ungoverned gateway, or a policy that sets
  * none) every connector is allowed.
  */

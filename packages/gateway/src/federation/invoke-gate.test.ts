@@ -27,6 +27,8 @@ function freshCtx(over: Partial<InvokeGateCtx> = {}): { db: Database; ctx: Invok
     runTool: async () => ({ stopped: true }),
     // REQUIRED field: the production predicate, so every case here also proves it over-blocks nothing.
     isCodeExecutionForbiddenToolId: isConnectorCodeExecutionToolId,
+    // REQUIRED field: an ungoverned gateway's allowlist, which allows every connector.
+    isConnectorAllowed: () => true,
     now: () => 5000,
     ...over,
   };
@@ -133,6 +135,129 @@ describe("answerFederatedInvoke (I19)", () => {
   });
 });
 
+describe("I22 — federated invoke refuses an entry whose connector the org policy blocks", () => {
+  const request = {
+    peerId: "peer:abc",
+    entry: "prod-aws",
+    toolId: "aws.ec2.instance.stop",
+    args: {},
+    purpose: "stop idle box",
+  };
+  function lastDecision(db: Database): string {
+    return (
+      db.query(`SELECT action_type FROM audit_log ORDER BY id DESC LIMIT 1`).get() as {
+        action_type: string;
+      }
+    ).action_type;
+  }
+
+  it("refuses a granted tool, opaque, before quorum is asked and before runTool", async () => {
+    const asked: string[] = [];
+    let quorumRuns = 0;
+    let toolRuns = 0;
+    const { db, ctx } = freshCtx({
+      isConnectorAllowed: (service) => {
+        asked.push(service);
+        return service !== "aws";
+      },
+      quorumFor: () => ({ approvers: 2, windowSeconds: 300 }),
+      runQuorum: async () => {
+        quorumRuns++;
+        return { outcome: "approved", approvers: ["peer:x", "peer:y"] };
+      },
+      runTool: async () => {
+        toolRuns++;
+        return {};
+      },
+    });
+    expect(await answerFederatedInvoke(ctx, request)).toEqual({ kind: "error", error: "no_grant" });
+    // Asked of the connector the entry names: this tool id is no `<server>_<tool>` key of another.
+    expect(asked).toEqual(["aws"]);
+    expect({ quorumRuns, toolRuns }).toEqual({ quorumRuns: 0, toolRuns: 0 });
+    expect(lastDecision(db)).toBe("teamvault.invoke.connector_blocked");
+  });
+
+  it("refuses after the quorum when a bundle blocking the connector applied during its wait", async () => {
+    let allowed = true;
+    let toolRuns = 0;
+    const { db, ctx } = freshCtx({
+      isConnectorAllowed: () => allowed,
+      quorumFor: () => ({ approvers: 2, windowSeconds: 300 }),
+      runQuorum: async () => {
+        allowed = false; // a newly verified bundle lands while the approvers vote
+        return { outcome: "approved", approvers: ["peer:x", "peer:y"] };
+      },
+      runTool: async () => {
+        toolRuns++;
+        return {};
+      },
+    });
+    expect(await answerFederatedInvoke(ctx, request)).toEqual({ kind: "error", error: "no_grant" });
+    expect(toolRuns).toBe(0);
+    expect(lastDecision(db)).toBe("teamvault.invoke.connector_blocked");
+  });
+
+  it("answers the same request when the policy allows the connector (the control)", async () => {
+    const { db, ctx } = freshCtx({ isConnectorAllowed: (service) => service === "aws" });
+    expect(await answerFederatedInvoke(ctx, request)).toEqual({
+      kind: "ok",
+      result: { stopped: true },
+    });
+    expect(lastDecision(db)).toBe("teamvault.invoke.answered");
+  });
+
+  it("asks of the server a listed key belongs to as well: a sibling's tool on a github entry", async () => {
+    // The github spawner registers `github_actions` beside `github`, and the anchor runs a peer's
+    // key exactly as the client lists it, so this key runs github_actions' tool on a github entry.
+    const siblingKey = "github_actions_gha_run_list";
+    const sibling = { ...request, entry: "repo-team", toolId: siblingKey };
+    const githubOnly = (asked: string[]) => (service: string) => {
+      asked.push(service);
+      return service === "github";
+    };
+    const asked: string[] = [];
+    let toolRuns = 0;
+    const { db, ctx } = freshCtx({
+      isConnectorAllowed: githubOnly(asked),
+      runTool: async () => {
+        toolRuns++;
+        return {};
+      },
+    });
+    ctx.store.createEntry("repo-team", "github", "owner", 1000);
+    ctx.store.grant("repo-team", "peer:abc", siblingKey, 1000);
+    expect(await answerFederatedInvoke(ctx, sibling)).toEqual({ kind: "error", error: "no_grant" });
+    expect({ asked, toolRuns }).toEqual({ asked: ["github", "github_actions"], toolRuns: 0 });
+    expect(lastDecision(db)).toBe("teamvault.invoke.connector_blocked");
+
+    // A key of the entry's own server is asked of that server alone, and answered.
+    const ownKey = "github_github_pr_list";
+    ctx.store.grant("repo-team", "peer:abc", ownKey, 1000);
+    asked.length = 0;
+    expect(await answerFederatedInvoke(ctx, { ...sibling, toolId: ownKey })).toEqual({
+      kind: "ok",
+      result: {},
+    });
+    expect({ asked, toolRuns }).toEqual({ asked: ["github"], toolRuns: 1 });
+  });
+
+  it("an ungranted request is no_grant first: the policy is not consulted for it", async () => {
+    let asked = 0;
+    const { db, ctx } = freshCtx({
+      isConnectorAllowed: () => {
+        asked++;
+        return false;
+      },
+    });
+    expect(await answerFederatedInvoke(ctx, { ...request, toolId: "aws.lambda.invoke" })).toEqual({
+      kind: "error",
+      error: "no_grant",
+    });
+    expect(asked).toBe(0);
+    expect(lastDecision(db)).toBe("teamvault.invoke.no_grant");
+  });
+});
+
 describe("answerLocalOperatorList (I19 — localOperator principal)", () => {
   it("authorizes on entry-presence + service match, returns items, audits answered", async () => {
     const { db, ctx } = freshLocalCtx();
@@ -226,6 +351,7 @@ function freshI26Ctx(over: Partial<InvokeGateCtx> = {}): { db: Database; ctx: In
     runQuorum: async () => ({ outcome: "approved", approvers: [] }),
     runTool: async () => ({ ok: true }),
     isCodeExecutionForbiddenToolId: isConnectorCodeExecutionToolId,
+    isConnectorAllowed: () => true,
     now: () => 9000,
     ...over,
   };

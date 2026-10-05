@@ -64,6 +64,7 @@ test("a single approval stays locked; two distinct approvals unlock the team too
         runToolCalls += 1;
         return { destroyed: true, tool: toolId };
       },
+      isConnectorAllowed: () => true,
     },
   });
   await bBuilt.lanServer.start();
