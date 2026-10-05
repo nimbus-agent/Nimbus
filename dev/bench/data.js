@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1791191718050,
+  "lastUpdate": 1791194195999,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "b9d074cd25629eef66f373ad26b2469b1ba02911",
-          "message": "fix(cast-driver): print the diff on DRIFT so a macOS-only failure is diagnosable (#897)\n\n## Summary\n\n`main` is red on macOS and has been since #888, but the failure was\nundiagnosable by anyone without a Mac.\n\n`Unit + Coverage — macos-15` fails on `cast-driver e2e\n(incident-response committed snapshot)`, and the entire output is:\n\n```\nincident-response: OK (hash=2cb4d6f912e7)\nzero-config: DRIFT (hash=c957257a1b7c)\n```\n\nA hash says *that* the transcript changed and nothing about *what*\nchanged. This PR does not fix the drift — it makes the drift readable,\nso the next macOS run reports the actual difference.\n\n**What is already established about the drift** (this PR does not depend\non it, but it is why the gap mattered):\n\n- **Deterministic, not flaky.** Byte-identical drift hash `c957257a1b7c`\nacross two independent runs on different commits (`30333319359`,\n`30334421390`). That rules out a leaked random temp path, which would\nvary per run.\n- **macOS only.** ubuntu and windows pass the identical check; the\ncommitted hash `52230bd9f728…` reproduces exactly on Windows.\n- So it is a stable, macOS-specific rendering difference in the\n`zero-config` cast.\n\n## The change\n\n`driver.ts` already computed a unified diff — it just wrote it to disk\n**only when `--artifacts-dir` was passed**, and the failing path\n(`scripts/cast-driver/e2e.test.ts`) does not pass it. So the diff\nexisted and was thrown away exactly when it was needed.\n\n- the diff is now computed unconditionally and carried on the `mismatch`\nsummary\n- `run.ts` prints it on DRIFT, bounded to `MAX_DIFF_LINES` (60),\npointing at `--artifacts-dir` for the full text\n- the confusing case where the hash differs but the transcript text is\n**byte-identical** now says so explicitly — a stale committed `.hash`,\nnot a content change. Previously that rendered as `DRIFT` with no\nexplanation whatsoever.\n\n## Type of Change\n\n- [x] Bug fix (non-breaking change that fixes an issue)\n- [x] CI / tooling\n\n## Non-Negotiables Checklist\n\n- [x] `bun run typecheck` passes with zero errors\n- [x] `bun run lint` passes (Biome) — verified as `bunx biome check\n--error-on-warnings scripts`\n- [x] All existing tests pass — `bun test scripts/` 903 pass / 0 fail\n- [x] New behaviour is covered by tests\n- [x] No `any` types introduced\n- [x] No credentials, tokens, or secret values appear anywhere\n- [x] Platform-specific code behind `PlatformServices` — n/a, no\nproduction code changed\n- [x] The HITL consent gate has not been touched\n\n## Coverage\n\nn/a — neither `engine/` nor `vault/` was modified.\n\n## Testing\n\nBoth drift shapes were exercised end-to-end against the real\n`zero-config` snapshot by mutating it locally and restoring afterwards.\n\n**Text differs** (the real macOS shape):\n\n```\nzero-config: DRIFT (hash=52230bd9f728)\n--- zero-config.txt\n+++ zero-config.actual.txt\n@@ -1,22 +1,21 @@\n Added <TMP>/sample-repo to nimbus.toml (code indexing on).\n```\n\n**Stale hash, identical text:**\n\n```\nzero-config: DRIFT (hash=52230bd9f728)\n  transcript text is IDENTICAL to the committed .txt — the committed .hash is stale; re-run `bun run record-casts`\n```\n\n- `bun test scripts/cast-driver/` → 74 pass / 0 fail\n- `bun test scripts/` → 903 pass / 0 fail\n- `bunx tsc -p scripts/tsconfig.json --noEmit` → exit 0\n- **Red-proved:** removing `diff` from the mismatch summary fails the\nnew test (8 pass / 1 fail). The test asserts both sides appear in the\ndiff — one side alone would be useless.\n\n## Notes for Reviewers\n\nThe two new tests deliberately pass `artifactsDir: undefined`, because\nthat is the configuration the failing CI path actually uses. A test that\npassed an artifacts dir would have gone green against the old code and\nproved nothing.\n\nThis is diagnostic instrumentation, not a fix for the underlying macOS\ndifference. Once a macOS run reports the actual diff, the root cause can\nbe fixed with evidence instead of a guess — which is the reason I did\nnot attempt the fix blind from a Windows machine.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n\n## Summary by CodeRabbit\n\n* **New Features**\n* CI drift reports now include readable transcript differences when\nsnapshot checks fail.\n* Long differences are truncated for concise output, with guidance for\naccessing the full diff.\n  * Reports identify stale hash files when transcript content matches.\n\n* **Bug Fixes**\n* Snapshot mismatch details are now available even without an artifacts\ndirectory.\n  * Matching snapshots no longer produce unnecessary diff output.\n\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>",
-          "timestamp": "2026-07-28T13:27:24+03:00",
-          "tree_id": "512caf6116d51276d8280549ca59e63d69331219",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/b9d074cd25629eef66f373ad26b2469b1ba02911"
-        },
-        "date": 1785235045874,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 277.4219272000017,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 275.46457129999544,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 252.3969421000016,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "d25fbea19f8d3042e68ec17eeacf5d3b96b962a9",
+          "message": "fix(deps): bundle connectors 0.2.4, and name the right Workday task in the auth help (#1614)\n\n## Summary\n\n`@nimbus-dev/connectors` moves from 0.2.2 to 0.2.4, the two releases the\n2026-10 maintenance follow-ups produced in\nnimbus-agent/nimbus-mcp-servers (#51, #53, #54, #55), with the same\ndependencies. The gateway binary bundles the package, so this is what\nputs those fixes into Nimbus. The changes that apply inside the gateway:\n\n- Every caller-supplied value that reaches a CLI is checked at the\ntool's schema: a leading `-` for every CLI (`aws`, `azure` and `iac`\nchecked nothing before, and kubectl and gcloud took pod, deployment,\nservice and cluster names unchecked), plus the values `aws` and `az`\nwould replace by a file's contents.\n- On Windows, the spawn refuses an argument holding a `cmd.exe`\nmetacharacter when the CLI that would start is a batch file (`az.cmd`,\n`gcloud.cmd`).\n- `iac_terraform_plan`/`apply`/`destroy` and `iac_cloudformation_deploy`\nwork: real terraform and AWS CLI refused every call of all four (`-chdir\nDIR`, `--template-body`).\n\nThe consent kit's fixes (write budget, audit-log serialisation, client\nnotifications) and the Windows `Path` spelling fix apply only to\nstandalone use: inside the gateway the kit is a pass-through and every\nconnector gets its search path as `PATH` (`extensions/spawn-env.ts`).\n`docs/CHANGELOG.md` has the full entry.\n\nAlso here: `nimbus connector auth workday`'s help now names what the\nWorkday client needs for the flow the gateway runs: the Authorization\nCode Grant, the redirect URI `http://127.0.0.1:<port>/oauth/callback`,\nand `--port` to listen on that port. It no longer names a Workday task:\nGoogle Cloud's Workday guide registers an authorization-code client with\n\"Register API Client for Integrations\". The CHANGELOG's Workday entry no\nlonger says client credentials.\n\n## Verification\n\n- `bun run preflight:fast`: exit 0, which includes\n`audit:connector-version-skew`.\n- `bun test\npackages/gateway/src/{connectors,federation,share,auth,ipc/connector-rpc-handlers}\npackages/gateway/test/integration/connectors`: 4692 pass, 0 fail, 2\nskip. This includes the write and code-execution sync guards against the\ninstalled 0.2.4 package, and the namespacing integration test, which\nlists tools from real connector processes.\n- `bun.lock` changes only the package entry: version and integrity.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n---------\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-10-05T12:44:29+03:00",
+          "tree_id": "e7eb4030053938b9994e630d08acef58206991de",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/d25fbea19f8d3042e68ec17eeacf5d3b96b962a9"
+        },
+        "date": 1791194191147,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 324.4881220499992,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 324.39404664999455,
             "unit": "ms"
           }
         ]
