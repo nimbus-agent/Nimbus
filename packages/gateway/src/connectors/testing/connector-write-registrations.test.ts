@@ -359,6 +359,146 @@ describe("scanWriteToolRegistrations — fails CLOSED on every import shape it c
   });
 });
 
+/**
+ * A loop's table is read only through the file's OWN binding of its name. `DECOY` is another
+ * connector's same-named table, scanned first — exactly where a lookup by name across files lands —
+ * so a scan that looked there would derive `fx_list` from it and report nothing.
+ */
+const DECOY: PackageSource = {
+  rel: "connectors/fx-aa-decoy/src/server.ts",
+  text: `const ACTIONS = [{ action: "list" }];\n`,
+};
+const LOOP = `for (const { action } of ACTIONS) {
+  registerWriteTool(\`fx_\${action}\`, CFG, "d", schema, h);
+}`;
+
+/** `DECOY`, then `others`, then `connectors/fx/src/server.ts` holding `server`. */
+function scanLoop(server: string, ...others: PackageSource[]): WriteToolScan {
+  return scanWriteToolRegistrations([
+    DECOY,
+    ...others,
+    { rel: "connectors/fx/src/server.ts", text: `${HEAD}\n${server}\n` },
+  ]);
+}
+
+/** `connectors/fx/src/actions.ts`, the module the loops below import their table from. */
+function actionsModule(text: string): PackageSource {
+  return { rel: "connectors/fx/src/actions.ts", text };
+}
+
+describe("scanWriteToolRegistrations — reads a loop's table only through the file's own binding", () => {
+  const IMPORTED_LOOP = `import { ACTIONS } from "./actions.ts";\n${LOOP}`;
+  const cases: ReadonlyArray<readonly [string, () => WriteToolScan, RegExp]> = [
+    [
+      "a table the file neither declares nor imports",
+      () => scanLoop(LOOP),
+      /loop table `ACTIONS` is neither declared nor imported by name in this file/,
+    ],
+    [
+      "a parameter of the enclosing function",
+      () =>
+        scanLoop(`export function reg(ACTIONS: readonly { action: string }[]): void {\n${LOOP}\n}`),
+      /loop table `ACTIONS` is not a constant array this file declares/,
+    ],
+    [
+      "a destructured binding",
+      () => scanLoop(`const { ACTIONS } = loadConfig();\n${LOOP}`),
+      /loop table `ACTIONS` is not a constant array this file declares/,
+    ],
+    [
+      "a module-level table shadowed by a parameter of the enclosing function",
+      () =>
+        scanLoop(
+          `const ACTIONS = [{ action: "frobnicate" }];\nexport function reg(ACTIONS: readonly { action: string }[]): void {\n${LOOP}\n}`,
+        ),
+      /loop table `ACTIONS` is bound more than once in this file/,
+    ],
+    [
+      "a module-level table shadowed by an enclosing loop's variable",
+      () =>
+        scanLoop(
+          `const ACTIONS = [{ action: "frobnicate" }];\nfor (const ACTIONS of GROUPS) {\n${LOOP}\n}`,
+        ),
+      /loop table `ACTIONS` is bound more than once in this file/,
+    ],
+    [
+      "a table the file declares twice",
+      () =>
+        scanLoop(
+          `const ACTIONS = [{ action: "frobnicate" }];\nexport function reg(): void {\n  const ACTIONS = [{ action: "defrobnicate" }];\n${LOOP}\n}`,
+        ),
+      /loop table `ACTIONS` is bound more than once in this file/,
+    ],
+    [
+      "a table imported from a module that declares the name twice",
+      () =>
+        scanLoop(
+          IMPORTED_LOOP,
+          actionsModule(
+            `export const ACTIONS = [{ action: "frobnicate" }];\nexport function other(): unknown {\n  const ACTIONS = [{ action: "defrobnicate" }];\n  return ACTIONS;\n}\n`,
+          ),
+        ),
+      /loop table `ACTIONS` is not one constant array its module declares/,
+    ],
+    [
+      "a table its module re-exports rather than declares",
+      () =>
+        scanLoop(IMPORTED_LOOP, actionsModule(`export { ACTIONS } from "./tables.ts";\n`), {
+          rel: "connectors/fx/src/tables.ts",
+          text: `export const ACTIONS = [{ action: "frobnicate" }];\n`,
+        }),
+      /loop table `ACTIONS` is not one constant array its module declares/,
+    ],
+    [
+      "a table imported from a module the scan does not read",
+      () => scanLoop(`import { ACTIONS } from "@acme/actions";\n${LOOP}`),
+      /loop table `ACTIONS` is imported from a module the scan does not read/,
+    ],
+  ];
+  for (const [what, scan, reason] of cases) {
+    test(`refuses ${what}`, () => {
+      const result = scan();
+      const r = reasons(result);
+      expect(
+        r.some((x) => reason.test(x)),
+        r.join("\n"),
+      ).toBe(true);
+      expect(ids(result)).not.toContain("fx_list");
+    });
+  }
+
+  test("follows an aliased named import to the table its module declares", () => {
+    const scan = scanLoop(
+      `import { ACTIONS as STATUS_ACTIONS } from "./actions.ts";\n${LOOP.replace("of ACTIONS", "of STATUS_ACTIONS")}`,
+      actionsModule(
+        `export const ACTIONS = [{ action: "frobnicate" }, { action: "defrobnicate" }];\n`,
+      ),
+    );
+    expect(scan.violations).toEqual([]);
+    expect(ids(scan)).toEqual(["fx_defrobnicate", "fx_frobnicate"]);
+    for (const r of scan.registrations) {
+      expect(r.file).toBe("connectors/fx/src/server.ts");
+      expect(r.origin).toBe("connectors/fx/src/actions.ts");
+    }
+  });
+
+  test("reads a table the file declares there, whatever another file declares", () => {
+    const scan = scanLoop(`const ACTIONS = [{ action: "frobnicate" }];\n${LOOP}`);
+    expect(scan.violations).toEqual([]);
+    expect(ids(scan)).toEqual(["fx_frobnicate"]);
+  });
+
+  test("a dynamic import whose callback destructures the name does not bind it again", () => {
+    // `import(...)` up to `Array.from` reads like `import ... from` to the span pattern; it is an
+    // expression, so its `{ ACTIONS }` is not an import of the table.
+    const scan = scanLoop(
+      `const ACTIONS = [{ action: "frobnicate" }];\nexport async function sizes(): Promise<number> {\n  return import("hyparquet").then(({ ACTIONS }) => Array.from(ACTIONS).length);\n}\n${LOOP}`,
+    );
+    expect(scan.violations).toEqual([]);
+    expect(ids(scan)).toEqual(["fx_frobnicate"]);
+  });
+});
+
 describe("scanWriteToolRegistrations — and stays quiet where nothing can reach a registrar", () => {
   const USED = `import { registerStatusTool } from "./status.ts";\nregisterStatusTool(${STATUS_CALL});`;
   const clean: ReadonlyArray<readonly [string, string]> = [

@@ -21,12 +21,18 @@
  * site, read from that call. An EXPORTED registrar, forwarder, factory or kit is followed through
  * every import shape that keeps its name: a named import, a member of a namespace or dynamic import
  * (`kit.registerStatusTool(...)`, or an alias of that member), and a destructuring that takes it,
- * renamed or not (`const { registerStatusTool: reopen } = await import("./status.ts")`).
+ * renamed or not (`const { registerStatusTool: reopen } = await import("./status.ts")`). A loop's
+ * constant table is read through the file's OWN binding of its name — the array it declares, or the
+ * one a named import binds it to — and is never looked up by name in another file: two connectors
+ * can each declare an `ACTIONS`.
  *
  * Every shape the scan cannot follow is a VIOLATION rather than a silent skip:
  *
  *   - a registration whose tool id is not a literal, a template over constants, a loop over a
  *     constant table, or a string constant;
+ *   - a loop table its file does not bind exactly once, to an array it declares or imports by
+ *     name: a name declared twice, or shadowed by a parameter or loop variable enclosing the loop,
+ *     or imported from a module the scan does not read or that re-exports rather than declares it;
  *   - a registrar used as a value anywhere the flow above does not follow: passed positionally,
  *     stored in an array, listed in an `export { ... }` clause or an aliased import, or read off an
  *     object and neither called nor bound;
@@ -53,7 +59,10 @@
  * by its key — a computed member access whose key is NOT a string literal (`regs[key](...)`), or
  * reflection over the object (`Object.values(regs)`). The `mutates:` check catches such a call only
  * when the call itself carries a `mutates:` literal, which a positional forwarder's call does not. A
- * tool that mutates while registered as a READ is outside the scan altogether.
+ * tool that mutates while registered as a READ is outside the scan altogether. And a loop table's
+ * name counts as rebound only by the bindings the index records — a declaration, an object
+ * destructuring, a named import, a function or arrow parameter, a for-of variable — so a method or
+ * `catch` parameter, or an array-pattern binding, shadowing a same-named file-level table goes unseen.
  */
 import { readdirSync, readFileSync } from "node:fs";
 import { createRequire } from "node:module";
@@ -394,6 +403,8 @@ interface FnInfo {
 }
 
 interface ForOf {
+  /** Offset of the `for` keyword. */
+  readonly at: number;
   readonly ident: string | null;
   readonly pattern: readonly Binding[];
   /** The iterated table's name, or null for an inline array literal. */
@@ -404,17 +415,27 @@ interface ForOf {
   readonly bodyEnd: number;
 }
 
+/** One binding of a static `import { imported as local } from "spec"`, or of an unaliased one. */
+interface NamedImport {
+  readonly imported: string;
+  readonly local: string;
+  /** The module specifier when it is a plain string literal, else null. */
+  readonly spec: string | null;
+}
+
 interface FileIndex {
   readonly declarations: readonly Declaration[];
   readonly destructurings: readonly Destructuring[];
   readonly fns: readonly FnInfo[];
   readonly loops: readonly ForOf[];
-  /** `const NAME = [ ... ]` → the array's `[` offset. */
+  /** `const NAME = [ ... ]` → the array's `[` offset (the last, when a name is declared twice). */
   readonly tables: ReadonlyMap<string, number>;
   /** `const NAME = "literal"` → value. */
   readonly strings: ReadonlyMap<string, string>;
   /** `[start, end)` spans of `import ... from` statements. */
   readonly imports: ReadonlyArray<readonly [number, number]>;
+  /** Every binding of those statements' `{ ... }` clauses. */
+  readonly namedImports: readonly NamedImport[];
 }
 
 /** One element of an object pattern: `key`, `key: local`, either with a default. */
@@ -632,6 +653,7 @@ function forOfLoopsOf(s: string): ForOf[] {
     if (of === null) continue;
     const b = skipWs(s, headClose + 1);
     out.push({
+      at: m.index ?? 0,
       ident: binding.ident,
       pattern: binding.pattern,
       iterable: of[1] ?? null,
@@ -668,7 +690,40 @@ function indexFile(p: Prepared): FileIndex {
     tables,
     strings,
     imports,
+    namedImports: namedImportsOf(p, imports),
   };
+}
+
+/** What may stand between `import` and its `{ ... }` clause: `type`, or a default binding and comma. */
+const NAMED_CLAUSE_LEAD = new RegExp(String.raw`^\s*(?:type\s+)?(?:${IDENT}\s*,\s*)?$`);
+
+/** One element of a named-import clause: `name` or `name as local`, either one `type`-only. */
+const IMPORT_ELEMENT = new RegExp(
+  String.raw`^\s*(?:type\s+)?(${IDENT})(?:\s+as\s+(${IDENT}))?\s*$`,
+);
+
+/**
+ * The bindings of each `import { ... } from "spec"` statement among the `imports` spans. A span
+ * that is really an expression — `import("m").then(({ a }) => Array.from(a))`, which runs on to a
+ * later `from` — has something else before its first `{`, and binds nothing.
+ */
+function namedImportsOf(
+  p: Prepared,
+  imports: ReadonlyArray<readonly [number, number]>,
+): NamedImport[] {
+  const s = p.blank;
+  const out: NamedImport[] = [];
+  for (const [start, end] of imports) {
+    const open = s.indexOf("{", start);
+    if (open < 0 || open >= end) continue;
+    if (!NAMED_CLAUSE_LEAD.test(s.slice(start + "import".length, open))) continue;
+    const spec = stringLiteralAt(p, skipWs(s, end))?.value ?? null;
+    for (const [a, b] of splitGroup(s, open)) {
+      const m = IMPORT_ELEMENT.exec(s.slice(a, b));
+      if (m?.[1] !== undefined) out.push({ imported: m[1], local: m[2] ?? m[1], spec });
+    }
+  }
+  return out;
 }
 
 /** Identifiers that START at bracket depth 0 of `s[start, end)`, with their offsets. */
@@ -693,6 +748,32 @@ function enclosingFns(ix: FileIndex, offset: number): FnInfo[] {
   return ix.fns
     .filter((f) => f.bodyStart <= offset && offset <= f.bodyEnd)
     .sort((a, b) => b.bodyStart - a.bodyStart);
+}
+
+/** How many times a file binds `name` anywhere: declarations, destructurings and named imports. */
+function bindingCount(ix: FileIndex, name: string): number {
+  const declared = ix.declarations.filter((d) => d.name === name).length;
+  const destructured = ix.destructurings.filter((d) =>
+    d.bindings.some((b) => b.local === name),
+  ).length;
+  return declared + destructured + ix.namedImports.filter((i) => i.local === name).length;
+}
+
+/**
+ * How many bindings of `name` enclose `loop`, and so shadow any file-level one: a parameter of an
+ * enclosing function, or the variable of an enclosing for-of loop.
+ */
+function enclosingShadows(ix: FileIndex, loop: ForOf, name: string): number {
+  const binds = (ident: string | null, pattern: readonly Binding[]): boolean =>
+    ident === name || pattern.some((b) => b.local === name);
+  const params = enclosingFns(ix, loop.at).filter((fn) =>
+    fn.params.some((p) => binds(p.name, p.pattern)),
+  ).length;
+  const loops = ix.loops.filter(
+    (l) =>
+      l !== loop && l.bodyStart <= loop.at && loop.at <= l.bodyEnd && binds(l.ident, l.pattern),
+  ).length;
+  return params + loops;
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -758,6 +839,12 @@ function escapeRe(s: string): string {
 interface Valued {
   readonly value: string;
   readonly origin: string;
+}
+
+/** Where a constant table lives: the file declaring it, and the offset of its `[`. */
+interface TableRef {
+  readonly host: File;
+  readonly open: number;
 }
 
 type Resolution =
@@ -1066,15 +1153,9 @@ class Analysis {
 
   /** Each element's `key` value (or each element itself, for `key === null`) of a constant table. */
   tableValues(f: File, loop: ForOf, key: string | null): Valued[] | null {
-    let host = f;
-    let open = loop.inlineArray;
-    if (loop.iterable !== null) {
-      const local = f.ix.tables.get(loop.iterable);
-      const other = this.files.find((g) => g.ix.tables.has(loop.iterable ?? ""));
-      host = local === undefined && other !== undefined ? other : f;
-      open = host.ix.tables.get(loop.iterable) ?? -1;
-    }
-    if (open < 0) return null;
+    const table = this.loopTable(f, loop);
+    if (table === undefined || table.open < 0) return null;
+    const { host, open } = table;
     let used = this.tablesUsed.get(host.p.rel);
     if (used === undefined) {
       used = new Set();
@@ -1088,6 +1169,43 @@ class Analysis {
       values.push({ value: v, origin: host.p.rel });
     }
     return values.length === 0 ? null : values;
+  }
+
+  /** The table `loop` iterates — an inline array, or one it names — or undefined, with a violation. */
+  loopTable(f: File, loop: ForOf): TableRef | undefined {
+    if (loop.iterable === null) return { host: f, open: loop.inlineArray };
+    const table = this.boundTable(f, loop, loop.iterable);
+    if (typeof table !== "string") return table;
+    this.violation(f, loop.at, `loop table \`${loop.iterable}\` ${table}`);
+    return undefined;
+  }
+
+  /**
+   * The constant array a loop names, read through `f`'s OWN binding of that name: the one `f`
+   * declares, or the one a named import binds it to. Never a same-named table another file happens
+   * to declare — two connectors can each have an `ACTIONS`, and reading the wrong one derives the
+   * wrong ids with no violation at all. Otherwise, why the table cannot be read: the name is not
+   * bound in `f` exactly once (a parameter or loop variable enclosing the loop counts, since either
+   * shadows a file-level table), or that binding is not a constant array the scan reads. A
+   * re-export is not followed.
+   */
+  boundTable(f: File, loop: ForOf, name: string): TableRef | string {
+    const bindings = bindingCount(f.ix, name) + enclosingShadows(f.ix, loop, name);
+    if (bindings === 0) return "is neither declared nor imported by name in this file";
+    if (bindings > 1) return "is bound more than once in this file";
+    const imported = f.ix.namedImports.find((i) => i.local === name);
+    if (imported === undefined) {
+      const open = f.ix.tables.get(name);
+      return open === undefined ? "is not a constant array this file declares" : { host: f, open };
+    }
+    const spec = imported.spec ?? "";
+    const target = spec.startsWith(".") ? this.resolveModule(f, spec) : undefined;
+    if (target === undefined) return "is imported from a module the scan does not read";
+    const open = target.ix.tables.get(imported.imported);
+    if (open === undefined || bindingCount(target.ix, imported.imported) !== 1) {
+      return "is not one constant array its module declares";
+    }
+    return { host: target, open };
   }
 
   literalSpan(f: File, a: number, b: number): string | null {

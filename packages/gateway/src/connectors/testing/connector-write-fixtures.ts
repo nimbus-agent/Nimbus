@@ -216,6 +216,33 @@ for (const { action } of ACTIONS) {
     tags: ["template"],
   },
   {
+    shape: "an id from a table imported by name, beside another connector's same-named table",
+    sources: [
+      // Scanned first, as an alphabetically earlier connector is: a READ table that happens to share
+      // the name. Looking the loop's table up by name across files lands here, on the wrong ids.
+      {
+        rel: "connectors/fx-aa-decoy/src/server.ts",
+        text: `const ACTIONS = [{ action: "list" }, { action: "get" }];
+for (const { action } of ACTIONS) server.registerTool(\`fx_decoy_\${action}\`, { description: "d" }, h);
+`,
+      },
+      {
+        rel: "connectors/fx-imported/src/actions.ts",
+        text: `export const ACTIONS = [{ action: "frobnicate" }, { action: "defrobnicate" }] as const;\n`,
+      },
+      connector(
+        "fx-imported",
+        `import { ACTIONS } from "./actions.ts";
+${REGISTRAR}
+for (const { action } of ACTIONS) {
+  registerWriteTool(\`fx_imported_\${action}\`, { mutates: \`fx.imported.\${action}\`, recoverable: true, scopeTargetOf: (p) => ({ kind: "repo", value: p.repo }) }, "d", schema, h);
+}`,
+      ),
+    ],
+    ids: ["fx_imported_frobnicate", "fx_imported_defrobnicate"],
+    tags: ["template"],
+  },
+  {
     shape: "an id held in a string constant",
     sources: [
       connector(

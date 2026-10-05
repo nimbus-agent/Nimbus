@@ -53,6 +53,8 @@ Phase-level history before `v0.1.0` (Phases 1â€“4) lives in [`docs/roadmap.md` Â
   named, namespace and dynamic imports, renamed destructurings included, and refuses every import
   shape it cannot follow: a default export, a module object used other than as `m.member`, an
   aliased import, a registrar's name spelled as a string, and an exported registrar no file names.
+  A loop's table is read only through the file's own declaration or named import of it, never a
+  same-named table in another connector, and a name the file binds more than once is refused.
   It checks itself against upstream's own manifests too: every connector declaring a write must
   yield a registration. It derives 87 writes from 0.2.1 and 91 from 0.2.2, so the pending
   connectors bump passes it unchanged, and it has no exception list. Two blind spots are stated

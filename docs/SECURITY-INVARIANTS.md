@@ -546,8 +546,11 @@ hand-offs, kit factories, and forwarders of any name — rather than by a `regis
 convention, which 0.2.2 already breaks (`registerStatusTool`, `registerPipelineActionTool`,
 `registerFeedbackTool`). It follows an exported registrar, forwarder, factory or shared kit through
 every import shape that keeps its name: a named import, a member of a namespace or dynamic import
-(`kit.registerStatusTool(...)`, or an alias of that member), and a destructuring, renamed or not. It
-is fail-closed: a registration whose id it cannot resolve to a constant, a registrar used as a value
+(`kit.registerStatusTool(...)`, or an alias of that member), and a destructuring, renamed or not. A
+loop's table is read only through the file's own binding of its name — the array it declares, or the
+one a named import binds — never a same-named table another connector happens to declare. It
+is fail-closed: a registration whose id it cannot resolve to a constant (a loop table bound more
+than once, shadowed, or imported from a module it does not read included), a registrar used as a value
 it does not follow (an aliased import included), an unbound factory result, a registrar exported as
 the DEFAULT, a namespace or dynamic import of a module that may export one used other than as
 `m.member` (or destructured), a namespace re-export of such a module, a string literal spelling a
