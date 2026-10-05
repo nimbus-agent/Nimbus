@@ -43,12 +43,12 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
   AppContainer grants ACLs only to the working directory and the policy's paths, a limit its
   terraform and pulumi tools already have.
 
-  `nimbus connector auth workday`'s help named the wrong Workday task. "Register API Client for
-  Integrations" has no grant type or redirect URI; the help now names "Register API Client", the
-  Authorization Code Grant, the redirect URI `http://127.0.0.1:<port>/oauth/callback` and
-  `--port`. This file's Workday entry said the connector uses client credentials; it uses the
-  authorization-code grant, and the entry is corrected. No migration, no invariant change, no new
-  IPC method.
+  `nimbus connector auth workday`'s help now names what the Workday client needs for the flow
+  the gateway runs: the Authorization Code Grant, the redirect URI
+  `http://127.0.0.1:<port>/oauth/callback`, and `--port` to listen on that port; without it the
+  gateway picks a port of its own. This file's Workday entry said the connector uses client
+  credentials; it uses the authorization-code grant, and the entry is corrected. No migration, no
+  invariant change, no new IPC method.
 
 - **2026-10-05 — The last live references to the deleted `packages/mcp-connectors` workspace are
   gone, and the local test commands are held to CI's list.** #1347 (2026-08-27) deleted the
