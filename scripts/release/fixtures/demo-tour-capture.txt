@@ -1,30 +1,37 @@
 [?25l[90m│[39m
-[35m◒[39m  Waiting for Gateway IPC (0s) — --- 2026-09-22T18:14:55.955Z nimbus: spawning 
-gateway (<path>…[1A[1G[J[35m◐[39m  Waiting for Gateway IPC (0s) — --- 2026-09-22T18:14:55.955Z nimbus: spawning 
-gateway (<path>…[1A[1G[J[35m◓[39m  Waiting for Gateway IPC (0s) — --- 2026-09-22T18:14:55.955Z nimbus: spawning 
-gateway (<path>…[1A[1G[J[35m◑[39m  Waiting for Gateway IPC (0s) — --- 2026-09-22T18:14:55.955Z nimbus: spawning 
-gateway (<path>…[1A[1G[J[35m◒[39m  Waiting for Gateway IPC (0s) — --- 2026-09-22T18:14:55.955Z nimbus: spawning 
-gateway (<path>…[1A[1G[J[35m◐[39m  Waiting for Gateway IPC (1s) — initializing platform services[1G[J[35m◓[39m  Waiting for Gateway IPC (1s) — initializing platform services[1G[J[35m◑[39m  Waiting for Gateway IPC (1s) — initializing platform services[1G[J[35m◒[39m  Waiting for Gateway IPC (1s) — initializing platform services.[1G[J[35m◐[39m  Waiting for Gateway IPC (1s) — initializing platform services.[1G[J[35m◓[39m  Waiting for Gateway IPC (1s) — initializing platform services.[1G[J[35m◑[39m  Waiting for Gateway IPC (1s) — initializing platform services.[1G[J[35m◒[39m  Waiting for Gateway IPC (1s) — initializing platform services.[1G[J[32m◇[39m  Gateway started (pid 6560)
-[?25hSocket: \\.\pipe\nimbus-gateway-demo-a45bd1e1c1dd
-Log:    <demo-root>\data\logs\gateway-2026-09-22.log
-Seeded the synthetic "Acme" org: 8 people, 132 items.
+[35m◒[39m  Waiting for Gateway IPC (0s) — --- 2026-10-05T15:28:51.462Z nimbus: spawning 
+gateway (<path>…[1A[1G[J[35m◐[39m  Waiting for Gateway IPC (0s) — --- 2026-10-05T15:28:51.462Z nimbus: spawning 
+gateway (<path>…[1A[1G[J[35m◓[39m  Waiting for Gateway IPC (0s) — --- 2026-10-05T15:28:51.462Z nimbus: spawning 
+gateway (<path>…[1A[1G[J[35m◑[39m  Waiting for Gateway IPC (0s) — --- 2026-10-05T15:28:51.462Z nimbus: spawning 
+gateway (<path>…[1A[1G[J[35m◒[39m  Waiting for Gateway IPC (0s) — --- 2026-10-05T15:28:51.462Z nimbus: spawning 
+gateway (<path>…[1A[1G[J[35m◐[39m  Waiting for Gateway IPC (0s) — --- 2026-10-05T15:28:51.462Z nimbus: spawning 
+gateway (<path>…[1A[1G[J[35m◓[39m  Waiting for Gateway IPC (1s) — --- 2026-10-05T15:28:51.462Z nimbus: spawning 
+gateway (<path>…[1A[1G[J[35m◑[39m  Waiting for Gateway IPC (1s) — --- 2026-10-05T15:28:51.462Z nimbus: spawning 
+gateway (<path>…[1A[1G[J[35m◒[39m  Waiting for Gateway IPC (1s) — initializing platform services.[1G[J[35m◐[39m  Waiting for Gateway IPC (1s) — initializing platform services.[1G[J[35m◓[39m  Waiting for Gateway IPC (1s) — initializing platform services.[1G[J[35m◑[39m  Waiting for Gateway IPC (1s) — initializing platform services.[1G[J[35m◒[39m  Waiting for Gateway IPC (1s) — initializing platform services.[1G[J[35m◐[39m  Waiting for Gateway IPC (1s) — initializing platform services.[1G[J[32m◇[39m  Gateway started (pid 35324)
+[?25hSocket: \\.\pipe\nimbus-gateway-demo-ae593045397f
+Log:    <demo-root>\data\logs\gateway-2026-10-05.log
+Seeded the synthetic "Acme" org: 8 people, 128 items.
 [?25l[90m│[39m
-[35m◒[39m  Waiting for Gateway IPC (0s) — --- 2026-09-22T18:14:57.621Z nimbus: spawning 
-gateway (<path>…[1A[1G[J[35m◐[39m  Waiting for Gateway IPC (0s) — --- 2026-09-22T18:14:57.621Z nimbus: spawning 
-gateway (<path>…[1A[1G[J[35m◓[39m  Waiting for Gateway IPC (0s) — --- 2026-09-22T18:14:57.621Z nimbus: spawning 
-gateway (<path>…[1A[1G[J[35m◑[39m  Waiting for Gateway IPC (0s) — --- 2026-09-22T18:14:57.621Z nimbus: spawning 
-gateway (<path>…[1A[1G[J[35m◒[39m  Waiting for Gateway IPC (0s) — --- 2026-09-22T18:14:57.621Z nimbus: spawning 
-gateway (<path>…[1A[1G[J[35m◐[39m  Waiting for Gateway IPC (1s) — initializing platform services[1G[J[35m◓[39m  Waiting for Gateway IPC (1s) — initializing platform services[1G[J[35m◑[39m  Waiting for Gateway IPC (1s) — initializing platform services[1G[J[32m◇[39m  Gateway started (pid 5816)
-[?25hSocket: \\.\pipe\nimbus-gateway-demo-a45bd1e1c1dd
-Log:    <demo-root>\data\logs\gateway-2026-09-22.log
+[35m◒[39m  Waiting for Gateway IPC (0s) — --- 2026-10-05T15:28:53.215Z nimbus: spawning 
+gateway (<path>…[1A[1G[J[35m◐[39m  Waiting for Gateway IPC (0s) — --- 2026-10-05T15:28:53.215Z nimbus: spawning 
+gateway (<path>…[1A[1G[J[35m◓[39m  Waiting for Gateway IPC (0s) — --- 2026-10-05T15:28:53.215Z nimbus: spawning 
+gateway (<path>…[1A[1G[J[35m◑[39m  Waiting for Gateway IPC (0s) — --- 2026-10-05T15:28:53.215Z nimbus: spawning 
+gateway (<path>…[1A[1G[J[35m◒[39m  Waiting for Gateway IPC (0s) — --- 2026-10-05T15:28:53.215Z nimbus: spawning 
+gateway (<path>…[1A[1G[J[35m◐[39m  Waiting for Gateway IPC (1s) — --- 2026-10-05T15:28:53.215Z nimbus: spawning 
+gateway (<path>…[1A[1G[J[35m◓[39m  Waiting for Gateway IPC (1s) — --- 2026-10-05T15:28:53.215Z nimbus: spawning 
+gateway (<path>…[1A[1G[J[35m◑[39m  Waiting for Gateway IPC (1s) — --- 2026-10-05T15:28:53.215Z nimbus: spawning 
+gateway (<path>…[1A[1G[J[32m◇[39m  Gateway started (pid 49696)
+[?25hSocket: \\.\pipe\nimbus-gateway-demo-ae593045397f
+Log:    <demo-root>\data\logs\gateway-2026-10-05.log
+A page just fired: P1 on payment-service. Its brief was assembled before anyone asked.
 
 ── [1/4] On-call triage ────────────────────────────────
-$ nimbus --demo oncall --incident pagerduty:PDEMO412
+$ nimbus --demo oncall pushed
 # On-call
 
 _incident: payment-service: 5xx rate above 5% on /v1/charges — triggered_
-_chat window: last 1d (2026-09-21 18:14Z → 2026-09-22 18:14Z)_
-Incident status comes from the last PagerDuty sync, which ran 2 minutes ago — so an incident shown here as open may have been closed since.
+_chat window: last 1d (2026-10-04 15:28Z → 2026-10-05 15:28Z)_
+Incident status comes from the last PagerDuty sync, which ran less than a minute ago — so an incident shown here as open may have been closed since.
 The deployment below is the last one recorded before this incident opened. That is timing alone — nothing in the index links a deployment to an incident, so it is a place to look rather than a cause.
 
 ## Incident
@@ -32,14 +39,14 @@ The deployment below is the last one recorded before this incident opened. That 
 - **Status:** triggered
 - **Severity:** P1
 - **Urgency:** high
-- **Opened:** 2026-09-22 17:36Z
+- **Opened:** 2026-10-05 15:28Z
 - **Assigned to:** sam.rivera@acme.example
 - **Service:** payment-service
 
 ## Last deployment before the alert
 
 - **Deployment:** Deploy payment-service → prod (4ec7667)
-- **Started:** 2026-09-22 17:27Z
+- **Started:** 2026-10-05 15:17Z
 - **Environment:** prod
 - **Result:** success
 - **Commit:** `4ec76675c08dd6fd996aca09cc9840fe28fc5b7b`
@@ -47,7 +54,7 @@ The deployment below is the last one recorded before this incident opened. That 
 ## Change in that deployment
 
 - **Pull request:** [Cap PSP retry backoff at 8s (PAY-231)](https://github.example/acme/payments/pull/412)
-- **Merged:** 2026-09-22 15:14Z
+- **Merged:** 2026-10-05 12:28Z
 - **Size:** +18 −6 across 2 files
 
 ## CI
@@ -56,16 +63,14 @@ _None found._
 
 ## Chat
 
-- payment-service errors are all PSP timeouts. Same shape as the incident three... — 2026-09-22 17:52Z
-- PR #412 (PAY-231) went out to payment-service about ten minutes before the al... — 2026-09-22 17:43Z
-- Paged: payment-service 5xx above 5% on /v1/charges. Looking now. — 2026-09-22 17:39Z
+_None in this window._
 
 ## Prior incidents on this service
 
 _2 earlier incidents on this service._
 
-- payment-service: settlement job failing after deploy — opened 2026-09-11 20:34Z, closed 2026-09-11 20:34Z by omar.haddad@acme.example
-- payment-service: charge latency p99 above 4s — opened 2026-09-01 18:14Z, closed 2026-09-01 18:14Z by lee.chen@acme.example
+- payment-service: settlement job failing after deploy — opened 2026-09-24 17:48Z, closed 2026-09-24 17:48Z by omar.haddad@acme.example
+- payment-service: charge latency p99 above 4s — opened 2026-09-14 15:28Z, closed 2026-09-14 15:28Z by lee.chen@acme.example
 
 ## Gaps
 
@@ -75,7 +80,7 @@ _2 earlier incidents on this service._
 
 _generated in 0.0 s_
 
-_Rendered deterministically — no eligible LLM provider was available for this brief. Depends on both `[llm]` (whether a provider is configured and reachable) and `[agents] synthesis` (whether it may be used here)._
+_Rendered deterministically — built-in briefs do not use an LLM, regardless of `[llm]` settings._
 
 
 ── [2/4] Why this line changed ─────────────────────────
@@ -84,21 +89,21 @@ $ nimbus --demo why src/retry/backoff.ts:42
 `src/retry/backoff.ts:42` in `<demo-root>\workspace\acme-payments`
 
 ## Authorship
-- **Dana Okafor · 4ec76675c08d** — 2026-09-22
+- **Dana Okafor · 4ec76675c08d** — 2026-10-05
   Cap PSP retry backoff at 8s (PAY-231)
 
 ## Pull request
-- **[#412 Cap PSP retry backoff at 8s (PAY-231)](https://github.example/acme/payments/pull/412)** — 2026-09-22
+- **[#412 Cap PSP retry backoff at 8s (PAY-231)](https://github.example/acme/payments/pull/412)** — 2026-10-05
   Opened by Dana Okafor · Reviewed by Lee Chen
 
 ## Ticket
-- **PAY-231 PAY-231: retry storms on card-authorization timeouts** — 2026-09-13
+- **PAY-231 PAY-231: retry storms on card-authorization timeouts** — 2026-09-26
   Referenced from the merged PR.
 
 ## Discussion
-- **PR #412 (PAY-231) went out to payment-service about ten minutes before the al...** — 2026-09-22
-  PR #412 (PAY-231) went out to payment-service about ten minutes before the alert. Checking whether the 8s cap is involved.
-- **The PSP brown-out last month is why PAY-231 exists.** — 2026-09-11
+- **PR #412 (PAY-231) went out to payment-service about eight minutes before the ...** — 2026-10-05
+  PR #412 (PAY-231) went out to payment-service about eight minutes before the alert. Checking whether the 8s cap is involved.
+- **The PSP brown-out last month is why PAY-231 exists.** — 2026-09-24
   The PSP brown-out last month is why PAY-231 exists.
 
 ## Gaps
@@ -142,10 +147,10 @@ _Rendered deterministically — no eligible LLM provider was available for this 
 
 ── [4/4] Where your data is ────────────────────────────
 Listeners the gateway has open right now:
-  local socket   \\.\pipe\nimbus-gateway-demo-a45bd1e1c1dd
+  local socket   \\.\pipe\nimbus-gateway-demo-ae593045397f
 Local index:
   <demo-root>\data\nimbus.db  (5.4 MB)
-  172 items across 8 services:  github 76 · github-actions 37 · github_actions 36 · slack 10 · filesystem 5 · nimbus 3 · +2 more
+  171 items across 8 services:  github 76 · github-actions 37 · github_actions 36 · slack 10 · filesystem 5 · pagerduty 3 · +2 more
 Outbound activity during this tour (gateway-wide):
 outbound egress events during this tour, in the covered classes: 0 (scope: origins the computer-use browser lane's page contacted, Slack/Teams posts, agents.* briefs served over the local HTTP API, agents.* briefs served to MCP clients, prompts and embedding batches sent to a non-local model, configured connector sync runs, targeted fetch-on-miss calls, and cloud media byte-URL resolves and byte-fetches, gated connector actions, outbound requests made by runtime-generated tools)
   not observed: peer, session

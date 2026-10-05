@@ -22,13 +22,12 @@ const HEADERS = [
 ] as const;
 
 /**
- * A step's command line, or a set of accepted alternatives. The first step has TWO during the
- * transition: the weekly run judges the LATEST RELEASE with `main`'s script, so until a release
- * carrying the pushed brief ships, `main` must still accept the old `--incident` form. Drop the
- * old alternative once the release after 2026-10 carries `oncall pushed`.
+ * Each step's command line, printed verbatim before it runs. The first step is `oncall pushed` only:
+ * the old `oncall --incident pagerduty:PDEMO412` form was accepted while the latest release still
+ * printed it, and every release since v7.33.0 prints `oncall pushed`, so it is now a failure.
  */
-const COMMANDS: readonly (string | readonly string[])[] = [
-  ["$ nimbus --demo oncall pushed", "$ nimbus --demo oncall --incident pagerduty:PDEMO412"],
+const COMMANDS: readonly string[] = [
+  "$ nimbus --demo oncall pushed",
   "$ nimbus --demo why src/retry/backoff.ts:42",
   "$ nimbus --demo owners src/retry",
 ];
@@ -102,10 +101,7 @@ export function checkDemoTour(rawStdout: string): string[] {
     }
   });
   for (const c of COMMANDS) {
-    const options = typeof c === "string" ? [c] : c;
-    if (!options.some((o) => out.includes(o))) {
-      failures.push(`the tour did not print its command line: ${options.join(" OR ")}`);
-    }
+    if (!out.includes(c)) failures.push(`the tour did not print its command line: ${c}`);
   }
   for (const f of FORBIDDEN) {
     if (out.includes(f)) failures.push(`the output contains a failure marker: ${f}`);
