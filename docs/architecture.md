@@ -1736,7 +1736,9 @@ surfaces are `nimbus tail --filter oncall` (the event) and `nimbus oncall pushed
 `nimbus oncall pushed [list|<incident-id>] [--retry] [--json]` through three methods,
 `oncall.pushedList` / `oncall.pushedGet` / `oncall.pushedRetry`; the whole `oncall` namespace is LAN-forbidden, and of the
 three only the two reads are on the Tauri allowlist (105 → 107); `oncall.pushedRetry` stays CLI-only. `nimbus tail --filter oncall` follows the event and `nimbus doctor` warns when
-push is enabled but the identity is unresolved (nothing could ever be selected).
+push is enabled but the identity is unresolved (nothing could ever be selected), when `[oncall.push] chatops_namespace`
+names a namespace but ChatOps is not running, and when the newest pushed brief skipped ChatOps because the namespace has
+no policy `notify` channels (`oncall.pushedList` reports `chatops: { namespace, posting }` for the first check).
 
 **`push` ClientKind.** Derived by the gateway, absent from `RECOGNISED` so no socket client can declare it;
 `EGRESS_BEARING_CLIENT_KINDS.push` is `null` (a push brief is local SQLite; nothing leaves the machine); and

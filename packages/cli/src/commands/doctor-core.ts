@@ -522,18 +522,71 @@ export function doctorPrintIndexConfidence(health: {
   return 0;
 }
 
-/** Spec § 4: push enabled but no identity selects nothing — say so rather than stay silent. */
-export function doctorPrintOncallPush(r: { enabled?: unknown; identity?: unknown }): number {
+function asRecord(v: unknown): Record<string, unknown> | undefined {
+  return v !== null && typeof v === "object" && !Array.isArray(v)
+    ? (v as Record<string, unknown>)
+    : undefined;
+}
+
+/** The newest pushed brief's ChatOps skip reason when it was "no notify channels", else undefined. */
+function noNotifyChannelsReason(newest: unknown): string | undefined {
+  const chatops = asRecord(asRecord(asRecord(newest)?.["delivery"])?.["chatops"]);
+  const reason = chatops?.["reason"];
+  return chatops?.["outcome"] === "skipped" &&
+    typeof reason === "string" &&
+    reason.endsWith("has no notify channels")
+    ? reason
+    : undefined;
+}
+
+/**
+ * Spec § 4: push enabled but no identity selects nothing — say so rather than stay silent. Also
+ * the ChatOps sink (oncall-push PR 2): a configured namespace that cannot post is otherwise
+ * visible only in `nimbus oncall pushed --json`. Two checks, because they fail differently:
+ * ChatOps not running is known up front (`chatops.posting`), while a namespace with no policy
+ * `notify` channels is only learned when a post resolves to zero channels, so it is read off the
+ * newest pushed brief's `delivery.chatops`. An unset namespace is the intended "no chat sink"
+ * configuration and is never warned about.
+ */
+export function doctorPrintOncallPush(
+  r: { enabled?: unknown; identity?: unknown; chatops?: unknown },
+  newest?: unknown,
+): number {
   if (r.enabled !== true) return 0;
+  let exit = 0;
   if (r.identity === "unresolved") {
     console.log(
       "[warn] On-call push is enabled but your identity is unresolved, so no incident can be selected. " +
         "Set [user] me_person_id in nimbus.toml or `git config user.email`.",
     );
-    return 1;
+    exit = 1;
   }
-  console.log("[ok] On-call push: enabled.");
-  return 0;
+  const chatops = asRecord(r.chatops);
+  const namespace = typeof chatops?.["namespace"] === "string" ? chatops["namespace"] : undefined;
+  if (namespace !== undefined && chatops?.["posting"] === false) {
+    console.log(
+      `[warn] On-call push names the ChatOps namespace "${namespace}", but ChatOps is not running, ` +
+        "so pushed briefs are not posted to its channels. Enable [chatops] in nimbus.toml, or clear " +
+        "[oncall.push] chatops_namespace.",
+    );
+    exit = 1;
+  }
+  const skipped = noNotifyChannelsReason(newest);
+  if (skipped !== undefined) {
+    console.log(
+      `[warn] The newest pushed brief was not posted to ChatOps: ${skipped}. Add notify channels ` +
+        'for that namespace in the org policy ([policy.chatops.channel."<id>"] notify).',
+    );
+    exit = 1;
+  }
+  if (exit === 0) {
+    console.log(
+      namespace === undefined
+        ? "[ok] On-call push: enabled."
+        : `[ok] On-call push: enabled, posting to ChatOps namespace "${namespace}".`,
+    );
+  }
+  return exit;
 }
 
 /**
@@ -722,9 +775,20 @@ async function doctorRunGatewayRpcs(client: IPCClient): Promise<number> {
     .catch(() => ({}) as { confidence?: unknown; confidenceUnavailableReason?: unknown });
   exit = Math.max(exit, doctorPrintIndexConfidence(health));
   const push = await client
-    .call<{ enabled?: unknown; identity?: unknown }>("oncall.pushedList", { limit: 1 })
-    .catch(() => ({}) as { enabled?: unknown; identity?: unknown });
-  exit = Math.max(exit, doctorPrintOncallPush(push));
+    .call<{ enabled?: unknown; identity?: unknown; chatops?: unknown }>("oncall.pushedList", {
+      limit: 1,
+    })
+    .catch(() => ({}) as { enabled?: unknown; identity?: unknown; chatops?: unknown });
+  // The newest brief's `delivery.chatops` is the only place a zero-channel namespace shows up.
+  // Fetched only when push is on; an older gateway (or none yet) yields undefined, which is quiet.
+  const newest =
+    push.enabled === true
+      ? await client
+          .call<{ brief?: unknown }>("oncall.pushedGet", {})
+          .then((g) => g.brief)
+          .catch(() => undefined)
+      : undefined;
+  exit = Math.max(exit, doctorPrintOncallPush(push, newest));
   // Reported BEFORE connector health: a dead embedding runtime disables semantic search for the
   // whole gateway run, which outranks any one connector being unreachable.
   exit = Math.max(exit, doctorPrintEmbeddingFromSnapshot(snap));
