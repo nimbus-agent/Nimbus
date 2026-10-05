@@ -40,6 +40,7 @@ test("pushedList: empty, with status", async () => {
     enabled: true,
     identity: "resolved",
     briefs: [],
+    chatops: { namespace: null, posting: false },
   });
 });
 
@@ -107,6 +108,7 @@ test("no params at all: pushedList uses its defaults, pushedGet reads the newest
     enabled: true,
     identity: "unresolved",
     briefs: [],
+    chatops: { namespace: null, posting: false },
   });
   expect((await hit("oncall.pushedGet", undefined, rt))["brief"]).toBeNull();
 });
@@ -181,5 +183,24 @@ test("service: PagerDuty fallback for an unmapped or failed row; null without an
   expect((await hit("oncall.pushedGet", { incidentId: "pagerduty:S" }))["brief"]).toMatchObject({
     title: "svc",
     service: "PSVC",
+  });
+});
+
+test("pushedList reports whether ChatOps can post for the configured namespace (for nimbus doctor)", async () => {
+  const bound = runtime({
+    config: { ...DEFAULT_ONCALL_PUSH_CONFIG, enabled: true, chatopsNamespace: "project:pay" },
+    chatopsSinkState: () => "bound",
+  });
+  expect((await hit("oncall.pushedList", {}, bound))["chatops"]).toEqual({
+    namespace: "project:pay",
+    posting: true,
+  });
+  const off = runtime({
+    config: { ...DEFAULT_ONCALL_PUSH_CONFIG, enabled: true, chatopsNamespace: "project:pay" },
+    chatopsSinkState: () => "none",
+  });
+  expect((await hit("oncall.pushedList", {}, off))["chatops"]).toEqual({
+    namespace: "project:pay",
+    posting: false,
   });
 });

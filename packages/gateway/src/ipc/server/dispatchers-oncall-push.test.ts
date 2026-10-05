@@ -25,12 +25,12 @@ import { RpcMethodError } from "./rpc-error.ts";
 
 type FakeRuntime = Pick<
   OncallPushRuntime,
-  "config" | "store" | "retry" | "identityResolved" | "run"
+  "config" | "store" | "retry" | "identityResolved" | "run" | "chatopsSinkState"
 >;
 
 function fakeRuntime(over: Partial<FakeRuntime> = {}): OncallPushRuntime {
   const base: FakeRuntime = {
-    config: { enabled: true } as OncallPushRuntime["config"],
+    config: { enabled: true, chatopsNamespace: "" } as OncallPushRuntime["config"],
     store: {
       list: () => [],
       listWithIncident: () => [],
@@ -44,6 +44,7 @@ function fakeRuntime(over: Partial<FakeRuntime> = {}): OncallPushRuntime {
     },
     identityResolved: async () => true,
     run: async () => ({ selected: 0, ok: 0, failed: 0 }),
+    chatopsSinkState: () => "none",
   };
   return { ...base, ...over } as OncallPushRuntime;
 }
@@ -95,7 +96,12 @@ describe("tryDispatchOncallPushRpc", () => {
       "oncall.pushedList",
       {},
     )) as Record<string, unknown>;
-    expect(out).toEqual({ enabled: true, identity: "unresolved", briefs: [] });
+    expect(out).toEqual({
+      enabled: true,
+      identity: "unresolved",
+      briefs: [],
+      chatops: { namespace: null, posting: false },
+    });
   });
 
   test("an unclaimed oncall.* verb is skipped, not answered", async () => {

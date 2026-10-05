@@ -1123,6 +1123,71 @@ describe("doctorPrintOncallPush", () => {
     expect(doctorPrintOncallPush({ enabled: true, identity: "resolved" })).toBe(0);
     expect(log.some((l) => l.includes("[ok]"))).toBe(true);
   });
+  it("a ChatOps namespace with ChatOps not running -> 1, names the namespace and both fixes", () => {
+    const code = doctorPrintOncallPush({
+      enabled: true,
+      identity: "resolved",
+      chatops: { namespace: "project:pay", posting: false },
+    });
+    expect(code).toBe(1);
+    const warn = log.find((l) => l.startsWith("[warn]")) ?? "";
+    expect(warn).toContain('"project:pay"');
+    expect(warn).toContain("[chatops]");
+    expect(warn).toContain("chatops_namespace");
+  });
+  it("a ChatOps namespace that is posting -> 0, and the [ok] line names it", () => {
+    expect(
+      doctorPrintOncallPush({
+        enabled: true,
+        identity: "resolved",
+        chatops: { namespace: "project:pay", posting: true },
+      }),
+    ).toBe(0);
+    expect(log.some((l) => l.startsWith("[ok]") && l.includes("project:pay"))).toBe(true);
+  });
+  it("no namespace (no chat sink, by design) -> 0, no ChatOps warning", () => {
+    expect(
+      doctorPrintOncallPush({
+        enabled: true,
+        identity: "resolved",
+        chatops: { namespace: null, posting: false },
+      }),
+    ).toBe(0);
+    expect(log.some((l) => l.startsWith("[warn]"))).toBe(false);
+  });
+  it("the newest brief skipped ChatOps for lack of notify channels -> 1, quoting the reason", () => {
+    const newest = {
+      delivery: {
+        chatops: {
+          outcome: "skipped",
+          reason: "namespace project:pay has no notify channels",
+          at: 1,
+        },
+      },
+    };
+    const code = doctorPrintOncallPush(
+      { enabled: true, identity: "resolved", chatops: { namespace: "project:pay", posting: true } },
+      newest,
+    );
+    expect(code).toBe(1);
+    expect(log.some((l) => l.includes("namespace project:pay has no notify channels"))).toBe(true);
+  });
+  it("a newest brief that posted, or a malformed one, adds no warning", () => {
+    for (const newest of [
+      { delivery: { chatops: { outcome: "delivered", at: 1 } } },
+      { delivery: "x" },
+      null,
+      undefined,
+    ]) {
+      log.length = 0;
+      const r = {
+        enabled: true,
+        identity: "resolved",
+        chatops: { namespace: "project:pay", posting: true },
+      };
+      expect(doctorPrintOncallPush(r, newest)).toBe(0);
+    }
+  });
   it("empty object (older gateway) -> 0, silent", () => {
     expect(doctorPrintOncallPush({})).toBe(0);
     expect(log).toHaveLength(0);

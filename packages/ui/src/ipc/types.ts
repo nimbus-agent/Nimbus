@@ -491,6 +491,8 @@ export interface PushedBriefList {
   readonly enabled: boolean;
   readonly identity: "resolved" | "unresolved";
   readonly briefs: readonly PushedBriefSummary[];
+  /** Whether pushed briefs can post to ChatOps. Optional: a gateway before this field omits it. */
+  readonly chatops?: { readonly namespace: string | null; readonly posting: boolean };
 }
 
 export interface PushedBriefGet {

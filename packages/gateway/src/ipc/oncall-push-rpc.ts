@@ -100,6 +100,14 @@ async function handleList(params: unknown, ctx: OncallPushRpcCtx) {
     briefs: ctx.runtime.store
       .listWithIncident(limit)
       .map((l) => summarize(l.row, l.title, l.pagerdutyServiceId)),
+    // For `nimbus doctor`: a namespace set while ChatOps is not running means every pushed brief
+    // silently skips the channel (`delivery.chatops` = "ChatOps not running"). `namespace` is null
+    // when unset, which is the intended "no chat sink" configuration, not a fault.
+    chatops: {
+      namespace:
+        ctx.runtime.config.chatopsNamespace === "" ? null : ctx.runtime.config.chatopsNamespace,
+      posting: ctx.runtime.chatopsSinkState() === "bound",
+    },
   };
 }
 

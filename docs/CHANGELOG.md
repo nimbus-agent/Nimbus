@@ -18,6 +18,18 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
 
 ## Post-Phase-6 deliveries
 
+- **2026-10-05 — `nimbus doctor` warns when the on-call push cannot reach ChatOps.** A pushed brief's
+  ChatOps outcome was visible only in `nimbus oncall pushed --json`, so a namespace that could never
+  post failed silently. Doctor's existing on-call check now warns in two cases, because they fail in
+  different ways. First, `[oncall.push] chatops_namespace` names a namespace but ChatOps is not
+  running: `oncall.pushedList` now reports `chatops: { namespace, posting }`, read from the push
+  runtime's settled poster. Second, the newest pushed brief skipped ChatOps because the namespace has
+  no `notify` channels in the org policy: doctor reads that from the brief's `delivery.chatops`,
+  since a zero-channel namespace is only learned when a post resolves to no channels. An unset
+  namespace is the intended "no chat sink" configuration and is never warned about. The desktop
+  type gains the optional field, and the gateway-validated contract fixture was regenerated. No new
+  invariant, egress class, IPC method or migration.
+
 - **2026-10-05 — The bundled connectors move to 0.2.4.** `@nimbus-dev/connectors` goes from
   0.2.2 to 0.2.4 (two releases, the same dependencies), and the gateway binary bundles it. As Nimbus
   runs them, the connectors now:
