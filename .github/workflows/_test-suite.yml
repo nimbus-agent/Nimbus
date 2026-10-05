@@ -133,7 +133,7 @@ jobs:
 
       # The three audits below guard the compiled binary. They shipped into the local preflight
       # manifest but no workflow ran them, so nothing gated a contributor's PR on them.
-      - name: Connector registry drift (generated file vs. tree)
+      - name: Connector registry drift (generated file vs. package exports)
         # The bundled registry is generated into a committed file. Nothing else diffs it, and
         # test:connector-boot cannot: it boots what the registry ships, so a connector missing
         # FROM the registry is invisible to it.
@@ -275,8 +275,11 @@ jobs:
             local safe_name="${pkg//\//-}"
             # Skip packages with no test files — `bun test` exits 1 with
             # "No tests found!" which would fail the step under
-            # `set -eo pipefail`. Several mcp-connectors are scaffold-only
-            # today and have no co-located *.test.ts yet.
+            # `set -eo pipefail`. Every package this loop reaches has tests
+            # today; the guard is for a new packages/github-actions/* action
+            # landing before its first *.test.ts. (It was written for the
+            # scaffold-only connectors under packages/mcp-connectors, which
+            # left the repository in #1347.)
             if [ -z "$(find "${pkg}" -path "${pkg}/node_modules" -prune -o \( -name '*.test.ts' -o -name '*.test.tsx' -o -name '*.spec.ts' -o -name '*.spec.tsx' \) -print -quit)" ]; then
               echo "::notice::Skipping ${pkg} — no test files."
               return 0

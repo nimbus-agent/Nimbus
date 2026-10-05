@@ -35,14 +35,18 @@ function runBunTest(args: readonly string[], wrapDbus: boolean): void {
   }
 }
 
+/**
+ * The test paths `test:ci`'s whole-repo unit run hands to `bun test`.
+ *
+ * Exported so `scripts/ci/cross-platform-parity.test.ts` can hold it equal to the CI push leg's
+ * list. Nothing did before, and this list kept `packages/mcp-connectors` for five weeks after the
+ * connectors left the repository (#1347), because `bun test` exits 0 when a path matches nothing
+ * as long as another path matches something.
+ */
+export const UNIT_TEST_PATHS: readonly string[] = ["packages/gateway", "packages/cli", "scripts"];
+
 function runInitialUnitTestsWithCoverage(): void {
-  const args = [
-    "packages/gateway",
-    "packages/cli",
-    "packages/mcp-connectors",
-    "scripts",
-    "--coverage",
-  ];
+  const args = [...UNIT_TEST_PATHS, "--coverage"];
 
   const runOnce = (): number => {
     const cmd = ["bun", "test", ...args];
