@@ -16,9 +16,12 @@
  *      server's key and never another's, the nested pair the github spawner puts in ONE client
  *      (`github`, `github_actions`) included;
  *   3. each fixed caller, driven here over maps keyed by the real listing, with the bare ids the
- *      gateway really sends — from its registries, syncables and gates, not copied into this file;
- *   4. one real read end to end, through the real session and the real dispatcher, reaching the
- *      connector's own handler — which fails before any network call, for want of credentials.
+ *      gateway really sends — from its registries, syncables and gates, not copied into this file —
+ *      and the ONE caller that must not resolve: the federated anchor's seam, which runs a peer's
+ *      id only as the exact listed key, for every tool every listed server has;
+ *   4. one real read end to end, through the real session, the real dispatcher and the federated
+ *      seam (by its listed key; by its bare id it is not found), reaching the connector's own
+ *      handler — which fails before any network call, for want of credentials.
  */
 import { Database } from "bun:sqlite";
 import { afterAll, describe, expect, test } from "bun:test";
@@ -49,7 +52,10 @@ import { buildSyncCapabilities } from "../../../src/sync/sync-capabilities.ts";
 import type { Syncable, SyncContext } from "../../../src/sync/types.ts";
 import { __setSessionSpawnerForTest } from "../../../src/teamvault/connector-session.ts";
 import { drainTeamListSession } from "../../../src/teamvault/team-tool-invoke.ts";
-import { spawnTeamToolAndCall } from "../../../src/teamvault/team-tool-spawn.ts";
+import {
+  spawnTeamToolAndCall,
+  spawnTeamWriteAndCall,
+} from "../../../src/teamvault/team-tool-spawn.ts";
 import type { TribalCluster } from "../../../src/tribal/cluster-store.ts";
 import { captureToKnowledgeBase } from "../../../src/tribal/tribal-write-gate.ts";
 import type { ProbeReport, ProbeSpec } from "../../fixtures/session-tool-resolution-probe.ts";
@@ -57,7 +63,9 @@ import type { ProbeReport, ProbeSpec } from "../../fixtures/session-tool-resolut
 /** Client name → `{ serverKey: connectorPackage }`, keyed the way the production spawners key them. */
 const CLIENTS: ProbeSpec["clients"] = {
   // The phase-3 bundle spawner registers every configured warehouse/BI and GitOps/ML connector as a
-  // server of ONE client. These nine are every connector with a dispatchable write.
+  // server of ONE client. These nine are every connector with a dispatchable write; aws rides in
+  // the same bundle and lists `aws_ec2_instance_stop` / `_start`, mutations a federated peer must
+  // not reach by their bare names whatever the I26 predicate says of them.
   phase3: {
     snowflake: "snowflake",
     tableau: "tableau",
@@ -68,6 +76,7 @@ const CLIENTS: ProbeSpec["clients"] = {
     argocd: "argocd",
     flux: "flux",
     mlflow: "mlflow",
+    aws: "aws",
   },
   // The github spawner registers both servers in one client: the pair whose names nest.
   github: { github: "github", github_actions: "github-actions" },
@@ -210,13 +219,14 @@ describe("resolveServerTool over every real listing", () => {
 
 describe("the bare ids the gateway sends, through each caller, over the real listing", () => {
   test(
-    "every dispatchable connector write: personal transport, and the team session seam",
+    "every dispatchable connector write: personal transport, and the local team write's seam",
     async () => {
       const ran: string[] = [];
       await serveSessions("phase3", ran);
       const personal = {
         vault: EMPTY_NIMBUS_VAULT,
         sandboxCwd: sandboxHome,
+        isConnectorAllowed: () => true,
         credentialFor: () => ({ credential: "personal" as const }),
         runTeamInvoke: () => Promise.reject(new Error("not the team path")),
       };
@@ -230,8 +240,8 @@ describe("the bare ids the gateway sends, through each caller, over the real lis
         });
         expect(ran, `personal ${w.toolId}`).toEqual([key]);
         ran.length = 0;
-        // The federated anchor's runTool and the local team write both spawn through this seam.
-        await spawnTeamToolAndCall({
+        // The team-credentialed local write (`localOpInvokeCtx`) spawns through this seam.
+        await spawnTeamWriteAndCall({
           service: w.service,
           toolId: w.toolId,
           args: {},
@@ -239,6 +249,57 @@ describe("the bare ids the gateway sends, through each caller, over the real lis
           sandboxCwd: sandboxHome,
         });
         expect(ran, `team ${w.toolId}`).toEqual([key]);
+      }
+    },
+    PROBE_TIMEOUT_MS,
+  );
+
+  test(
+    "the federated seam runs a peer's id only as the exact listed key, for every real tool",
+    async () => {
+      // The owner's grant, its revocation, the quorum rule and I26 all judge a peer's id as a
+      // string, so the federated anchor's seam must not give any tool a second spelling: for every
+      // tool every listed server has — reads and writes, classified by I26 or not — its bare name
+      // runs nothing, and its listed key runs exactly that tool.
+      const { clients } = await report();
+      let checked = 0;
+      for (const client of Object.keys(CLIENTS)) {
+        const ran: string[] = [];
+        await serveSessions(client, ran);
+        for (const [server, names] of Object.entries(clients[client]?.toolsets ?? {})) {
+          for (const name of names) {
+            const call = (toolId: string) =>
+              spawnTeamToolAndCall({
+                service: server,
+                toolId,
+                args: {},
+                vaultView: EMPTY_NIMBUS_VAULT,
+                sandboxCwd: sandboxHome,
+              });
+            ran.length = 0;
+            await expect(call(name), `${server}: bare ${name}`).rejects.toThrow(
+              `connector-session: tool "${name}" not found for service "${server}"`,
+            );
+            expect(ran, `${server}: bare ${name}`).toEqual([]);
+            await call(`${server}_${name}`);
+            expect(ran, `${server}: listed ${name}`).toEqual([`${server}_${name}`]);
+            checked++;
+          }
+        }
+      }
+      // Non-vacuity: the listings are real and large, and carry the mutations a peer must not reach
+      // by bare name — gate-confined writes and writes once registered as reads among them.
+      expect(checked).toBeGreaterThan(100);
+      for (const [server, name] of [
+        ["aws", "aws_ec2_instance_stop"],
+        ["aws", "aws_ec2_instance_start"],
+        ["notion", "notion_kb_append"],
+        ["confluence", "confluence_kb_append"],
+        ["slack", "slack_chat_post"],
+        ["teams", "teams_chat_post"],
+      ] as const) {
+        const client = server === "aws" ? "phase3" : "comms";
+        expect(clients[client]?.toolsets[server], `${server} lists ${name}`).toContain(name);
       }
     },
     PROBE_TIMEOUT_MS,
@@ -359,7 +420,7 @@ describe("the bare ids the gateway sends, through each caller, over the real lis
 
 describe("a real read, end to end", () => {
   test(
-    "reaches the connector's own handler through the real session and the real dispatcher",
+    "reaches the connector's own handler through the real session, dispatcher and federated seam",
     async () => {
       const { reads } = await report();
       const [hit, miss] = reads;
@@ -367,11 +428,18 @@ describe("a real read, end to end", () => {
       // before any network call. A lookup miss would say "not found" instead.
       expect(hit?.session).toContain("SNOWFLAKE_ACCOUNT is not set");
       expect(hit?.dispatcher).toContain("SNOWFLAKE_ACCOUNT is not set");
-      // Control: a tool the connector does not list is still a miss, on both paths.
+      // The federated seam reaches it by its listed key only; the bare id is no name for it there.
+      expect(hit?.federatedListed).toContain("SNOWFLAKE_ACCOUNT is not set");
+      expect(hit?.federatedBare).toBe(
+        'connector-session: tool "snowflake_list" not found for service "snowflake"',
+      );
+      // Control: a tool the connector does not list is still a miss, on every path.
       expect(miss?.session).toMatch(
         /tool "snowflake_no_such_tool" not found for service "snowflake"/,
       );
       expect(miss?.dispatcher).toMatch(/Tool not found/);
+      expect(miss?.federatedBare).toMatch(/tool "snowflake_no_such_tool" not found/);
+      expect(miss?.federatedListed).toMatch(/tool "snowflake_snowflake_no_such_tool" not found/);
     },
     PROBE_TIMEOUT_MS,
   );

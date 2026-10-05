@@ -48,6 +48,11 @@ const SERVICE_IDS_BY_LENGTH_DESC: readonly string[] = [...CONNECTOR_SERVICE_IDS]
  * ownership rule for `<server>_<tool>` keys: the mesh's org-policy filter (I22) attributes a key to
  * a connector with it, and {@link resolveServerTool} will only hand a bare id a key it attributes to
  * the caller's own server, so the two can never disagree about whose tool a key is.
+ *
+ * Sharing the RULE is not sharing the ENFORCEMENT. The I22 filter runs over the mesh's own tool map
+ * only; a session that spawns its own connector (`teamvault/connector-session.ts`) never passes
+ * through it, so a path that must honour the org's connector allowlist checks it itself — the
+ * connector-write transport does (`connectors/connector-write-transport.ts`).
  */
 export function serviceIdForToolKey(toolKey: string): string | undefined {
   for (const id of SERVICE_IDS_BY_LENGTH_DESC) {
@@ -83,13 +88,14 @@ export function mcpClientToolKey(serverName: string, toolName: string): string {
  *    check refuses that rather than hand a bare id another server's tool. It also confines this
  *    step to first-party connector servers, the only names the rule knows.
  *
- * Step 2 makes no new TOOL reachable: every key it can return could already be named exactly. It
- * lets the bare id name it, and only ever a tool whose MCP name IS `toolId`, so a check made on
- * `toolId` before the lookup (the I26 write predicate at the federated invoke gate) is a check on
- * the tool that runs. Stated bound: a first-party tool whose own name began with a longer sibling
- * server's suffix (`github` registering `actions_x`) would be filed under the same key as that
- * sibling's tool by MCPClient itself; no connector does, and the integration test pins the real
- * key sets.
+ * Step 2 makes no new TOOL reachable: every key it can return could already be named exactly, and
+ * it only ever returns a tool whose MCP name IS `toolId`. It does give that tool a SECOND spelling,
+ * which is why it is for the ids the gateway's own code holds (its write registry, its list tools,
+ * the KB and chat-post ids its gates name) and never for an id an authorization was granted on: the
+ * federated invoke path looks a peer's id up with {@link listedTool} instead. Stated bound: a
+ * first-party tool whose own name began with a longer sibling server's suffix (`github` registering
+ * `actions_x`) would be filed under the same key as that sibling's tool by MCPClient itself; no
+ * connector does, and the integration test pins the real key sets.
  */
 export function resolveServerTool<T>(
   tools: Readonly<Record<string, T>>,
@@ -100,6 +106,18 @@ export function resolveServerTool<T>(
   if (exact !== undefined) return exact;
   const key = mcpClientToolKey(serverName, toolId);
   if (serviceIdForToolKey(key) !== serverName) return undefined;
+  return ownEntry(tools, key);
+}
+
+/**
+ * The tool listed under exactly `key`, never resolved from a bare id. For an id an authorization was
+ * granted ON: a federated peer's invoke is checked against the owner's grant, its revocation and
+ * the quorum rule by the very string it names, so that string has to be the ONE key that runs.
+ * {@link resolveServerTool} would let a second spelling (`snowflake_list` beside the listed
+ * `snowflake_snowflake_list`) run the same tool under a grant made for the other one, and would make
+ * a bare id the I26 write predicate does not know about runnable where only its listed key was.
+ */
+export function listedTool<T>(tools: Readonly<Record<string, T>>, key: string): T | undefined {
   return ownEntry(tools, key);
 }
 

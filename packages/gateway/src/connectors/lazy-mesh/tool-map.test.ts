@@ -2,6 +2,7 @@ import { describe, expect, it } from "bun:test";
 
 import {
   type LazyMeshToolMap,
+  listedTool,
   listLazyMeshClientTools,
   mcpClientToolKey,
   mergeToolMapsOrThrow,
@@ -173,5 +174,43 @@ describe("resolveServerTool", () => {
     expect(await resolvedKey(tools, "snowflake", "snowflake_list")).toBe(
       "snowflake_snowflake_list",
     );
+  });
+});
+
+// The lookup for an id an authorization was granted on (a federated peer's invoke): the string a
+// grant matched must be the one key that runs, so no second spelling may reach the same tool.
+describe("listedTool", () => {
+  it("answers the exact listed key only, never the bare id resolveServerTool would map", () => {
+    const tools = listedAs({
+      snowflake: ["snowflake_list", "snowflake_tag_set"],
+      github: ["github_pr_list"],
+      github_actions: ["gha_run_trigger"],
+    });
+    // Premise: each bare id below resolves under the gateway's own lookup.
+    expect(resolveServerTool(tools, "snowflake", "snowflake_tag_set")).toBeDefined();
+    expect(resolveServerTool(tools, "github", "github_pr_list")).toBeDefined();
+
+    expect(listedTool(tools, "snowflake_tag_set")).toBeUndefined();
+    expect(listedTool(tools, "github_pr_list")).toBeUndefined();
+    expect(listedTool(tools, "gha_run_trigger")).toBeUndefined();
+    // Control: the listed keys themselves, each its own tool.
+    expect(listedTool(tools, "snowflake_snowflake_tag_set")).toBe(
+      tools["snowflake_snowflake_tag_set"],
+    );
+    expect(listedTool(tools, "github_actions_gha_run_trigger")).toBe(
+      tools["github_actions_gha_run_trigger"],
+    );
+  });
+
+  it("returns undefined for an inherited member, a prototype one included", () => {
+    const own = listedAs({ snowflake: ["snowflake_list"] });
+    const polluted = Object.assign(
+      Object.create({ polluted_tool: tool("polluted_tool") }) as LazyMeshToolMap,
+      own,
+    );
+    expect(listedTool(polluted, "polluted_tool")).toBeUndefined();
+    expect(listedTool(polluted, "constructor")).toBeUndefined();
+    expect(listedTool(polluted, "toString")).toBeUndefined();
+    expect(listedTool(polluted, "snowflake_snowflake_list")).toBe(own["snowflake_snowflake_list"]);
   });
 });

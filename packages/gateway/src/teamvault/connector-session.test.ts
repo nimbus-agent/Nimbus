@@ -4,6 +4,7 @@ import { join } from "node:path";
 import type { MCPClient } from "@mastra/mcp";
 import * as spawners from "../connectors/lazy-mesh/connector-spawns.ts";
 import type { MeshSpawnContext } from "../connectors/lazy-mesh/slot.ts";
+import type { LazyMeshToolMap } from "../connectors/lazy-mesh/tool-map.ts";
 import type { NimbusVault } from "../vault/nimbus-vault.ts";
 import {
   __setSessionSpawnerForTest,
@@ -184,6 +185,69 @@ describe("withConnectorSession — tool maps keyed the way MCPClient lists them"
     // Control: the session's own server answers its bare id.
     await withConnectorSession(session, (s) => s.call("github_pr_list", {}));
     expect(ran).toEqual(["github_github_pr_list"]);
+  });
+
+  // `callListed` is the lookup for an id an authorization was granted on (a federated peer's
+  // invoke): the string the grant, its revocation and the quorum rule matched must be the one key
+  // that runs, so a second spelling of the same tool must not.
+  it("callListed runs only the exact listed key, never a bare id `call` would resolve", async () => {
+    const ran: string[] = [];
+    serveListed(["snowflake_snowflake_list", "snowflake_snowflake_tag_set"], ran);
+    const session = { service: "snowflake", vaultView: fakeVault, sandboxCwd: SANDBOX_CWD };
+    // Premise: on the SAME session, `call` resolves the bare id — the tool is there to be found.
+    await withConnectorSession(session, (s) => s.call("snowflake_tag_set", {}));
+    expect(ran).toEqual(["snowflake_snowflake_tag_set"]);
+    ran.length = 0;
+
+    for (const bare of ["snowflake_tag_set", "snowflake_list"]) {
+      await expect(withConnectorSession(session, (s) => s.callListed(bare, {}))).rejects.toThrow(
+        `connector-session: tool "${bare}" not found for service "snowflake"`,
+      );
+    }
+    expect(ran).toEqual([]);
+    // Control: the listed key itself runs, with its args.
+    expect(
+      await withConnectorSession(session, (s) =>
+        s.callListed("snowflake_snowflake_list", { cursor: null }),
+      ),
+    ).toEqual({ key: "snowflake_snowflake_list", args: { cursor: null } });
+    expect(ran).toEqual(["snowflake_snowflake_list"]);
+  });
+
+  it("callListed runs only an OWN listed key, never an inherited member, however tool-shaped", async () => {
+    // A map whose prototype carries a tool-shaped member — what prototype pollution would add. The
+    // session's tools are its own listed keys; an inherited name is no tool, executable or not.
+    const ran: string[] = [];
+    let disconnects = 0;
+    const inherited = {
+      polluted_tool: {
+        execute: async () => {
+          ran.push("polluted_tool");
+          return "inherited";
+        },
+      },
+    };
+    __setSessionSpawnerForTest(() => ({
+      listTools: async () =>
+        Object.assign(Object.create(inherited) as LazyMeshToolMap, {
+          snowflake_snowflake_list: { execute: async () => "listed" },
+        }),
+      disconnect: async () => {
+        disconnects += 1;
+      },
+    }));
+    const session = { service: "snowflake", vaultView: fakeVault, sandboxCwd: SANDBOX_CWD };
+    for (const member of ["polluted_tool", "constructor", "toString", "__proto__"]) {
+      await expect(withConnectorSession(session, (s) => s.callListed(member, {}))).rejects.toThrow(
+        `connector-session: tool "${member}" not found for service "snowflake"`,
+      );
+    }
+    expect(ran).toEqual([]);
+    expect(disconnects).toBe(4);
+    // Control: the own listed key on the same map runs.
+    expect(
+      await withConnectorSession(session, (s) => s.callListed("snowflake_snowflake_list", {})),
+    ).toBe("listed");
   });
 });
 

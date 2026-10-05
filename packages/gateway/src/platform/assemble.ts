@@ -292,7 +292,7 @@ import {
   invokeTeamTool,
   invokeTeamToolList,
 } from "../teamvault/team-tool-invoke.ts";
-import { spawnTeamToolAndCall } from "../teamvault/team-tool-spawn.ts";
+import { spawnTeamToolAndCall, spawnTeamWriteAndCall } from "../teamvault/team-tool-spawn.ts";
 import { TeamVaultStore } from "../teamvault/team-vault-store.ts";
 import { startTelemetryFlushScheduler } from "../telemetry/flush-scheduler.ts";
 import { reconcileSavedToolsOrWarn } from "../toolgen/toolgen-boot-reconcile.ts";
@@ -2371,11 +2371,22 @@ function buildTeamCredentialContexts(deps: {
   connectorsConfig: ConnectorsConfig;
   identityEnabled: boolean;
   identityBootRefHolder: { current: ReturnType<typeof buildIdentityBoot> | undefined };
+  /** I22 connector allowlist, read per call: the write transport spawns its own session, outside
+   *  the mesh's policy filter, so it checks this itself. */
+  isConnectorAllowed: (serviceId: string) => boolean;
 }): {
   teamCredentialExtras: Pick<SyncContext, "sandboxCwd" | "credentialFor" | "runTeamList">;
   connectorWriteDeps: ConnectorWriteContext;
 } {
-  const { db, vault, paths, connectorsConfig, identityEnabled, identityBootRefHolder } = deps;
+  const {
+    db,
+    vault,
+    paths,
+    connectorsConfig,
+    identityEnabled,
+    identityBootRefHolder,
+    isConnectorAllowed,
+  } = deps;
   // Shared by the list + invoke ctxs (previously duplicated): the late-bound operator-validity guard.
   const identitySpread = identityEnabled
     ? {
@@ -2425,8 +2436,10 @@ function buildTeamCredentialContexts(deps: {
   };
 
   // Wave 7c — team-credentialed local WRITE invoke (I19 single-tool variant). Mirrors localOpListCtx
-  // but uses invokeTeamTool (single call) + the same one-shot session call the federated anchor's
-  // runTool uses (spawnTeamToolAndCall), so both team paths share one tested lookup.
+  // but uses invokeTeamTool (single call) + a one-shot session call. The write's tool id is the
+  // gateway's own (the write registry's bare MCP name), so it is resolved on the session's server
+  // (spawnTeamWriteAndCall) — unlike the federated anchor's runTool, whose peer-named id is matched
+  // to the listed key exactly (spawnTeamToolAndCall), because a grant is keyed on that string.
   const localOpInvokeCtx: LocalOperatorInvokeCtx = {
     db,
     store: new TeamVaultStore(db),
@@ -2439,7 +2452,7 @@ function buildTeamCredentialContexts(deps: {
             CONNECTOR_VAULT_SECRET_KEYS[service as keyof typeof CONNECTOR_VAULT_SECRET_KEYS],
           anyOfSecretGroupsFor: (service: string) =>
             TEAM_SECRET_ANYOF_GROUPS[service as keyof typeof CONNECTOR_VAULT_SECRET_KEYS],
-          spawnAndCall: spawnTeamToolAndCall,
+          spawnAndCall: spawnTeamWriteAndCall,
         },
         input,
       ),
@@ -2449,6 +2462,7 @@ function buildTeamCredentialContexts(deps: {
   const connectorWriteDeps: ConnectorWriteContext = {
     vault,
     sandboxCwd: paths.dataDir,
+    isConnectorAllowed,
     credentialFor: (service: string) =>
       connectorsConfig.get(service as TeamCredentialConnector) ?? { credential: "personal" },
     runTeamInvoke: (req) =>
@@ -3289,6 +3303,17 @@ export async function assemblePlatformServices(
 
   await resumePendingRemovals(vault, localIndex);
 
+  const auditCfg = loadNimbusAuditFromConfigDir(paths.configDir);
+
+  // Org policy (I22): built BEFORE the team-credential contexts, whose connector-write transport
+  // reads the connector allowlist per call, and before the retention sidecar, so the latter can
+  // honor `enforced().retentionDays` (the monotonic floor).
+  const { policyStore, policyGate, isConnectorAllowed } = bootPolicyGateWithConnectorAllowlist(
+    db,
+    paths.configDir,
+    auditCfg,
+  );
+
   // Wave 7b — team-shared credentials. `credentialFor` reads the per-connector [connectors.<name>]
   // pin (default personal); `runTeamList` routes the localOperator path through the principal-
   // polymorphic gate (I19 — the one secret-consumption chokepoint). identityBoot is built later in
@@ -3308,6 +3333,7 @@ export async function assemblePlatformServices(
     connectorsConfig,
     identityEnabled,
     identityBootRefHolder,
+    isConnectorAllowed,
   });
 
   // Timeline correlation (deployment <-> incident, `correlates_with`): binds an item's
@@ -3351,16 +3377,6 @@ export async function assemblePlatformServices(
   assignIfPresent(syncContext, "scheduleItemEmbedding", scheduleItemEmbedding);
 
   const sessionMemoryStore = maybeAttachSessionMemoryStore(db, rt, sessionToml, sidecarStops);
-
-  const auditCfg = loadNimbusAuditFromConfigDir(paths.configDir);
-
-  // Org policy (I22): built BEFORE the retention sidecar so the latter can honor
-  // `enforced().retentionDays` (the monotonic floor).
-  const { policyStore, policyGate, isConnectorAllowed } = bootPolicyGateWithConnectorAllowlist(
-    db,
-    paths.configDir,
-    auditCfg,
-  );
 
   // I22 — the tighten-only HITL overlay every ToolExecutor in this process consults, alongside
   // I2's frozen set. Defined here, next to the gate it reads, so there is one instance rather than

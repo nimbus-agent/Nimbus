@@ -7,7 +7,9 @@
  *    and for every spelling that would name a nested sibling's tool (`github_` + `actions_<tool>`),
  *    from every server's point of view; and
  *  - runs each requested read end to end, through `drainTeamListSession` (the real
- *    `withConnectorSession` lookup) and through `createConnectorDispatcher` (the mesh dispatcher).
+ *    `withConnectorSession` lookup), through `createConnectorDispatcher` (the mesh dispatcher), and
+ *    through `spawnTeamToolAndCall` (the federated anchor's seam) by its bare id and by its listed
+ *    `<server>_<tool>` key.
  * It prints one line, `SESSION_TOOL_RESOLUTION <json>` (a {@link ProbeReport}).
  *
  * A SEPARATE PROCESS on purpose, as `session-tool-keys-probe.ts` is: other test files
@@ -28,6 +30,7 @@ import {
 import { createConnectorDispatcher } from "../../src/connectors/registry.ts";
 import { __setSessionSpawnerForTest } from "../../src/teamvault/connector-session.ts";
 import { drainTeamListSession } from "../../src/teamvault/team-tool-invoke.ts";
+import { spawnTeamToolAndCall } from "../../src/teamvault/team-tool-spawn.ts";
 import type { NimbusVault } from "../../src/vault/nimbus-vault.ts";
 
 export interface ProbeSpec {
@@ -49,13 +52,18 @@ export interface ProbeReport {
       readonly resolved: Record<string, Record<string, string | null>>;
     }
   >;
-  /** Each read's outcome through the session and through the dispatcher: "ok" or the error text. */
+  /**
+   * Each read's outcome, "ok" or the error text: through the session (a list drain), through the
+   * dispatcher, and through the federated seam named by its bare id and by its listed key.
+   */
   readonly reads: ReadonlyArray<{
     client: string;
     service: string;
     toolId: string;
     session: string;
     dispatcher: string;
+    federatedBare: string;
+    federatedListed: string;
   }>;
 }
 
@@ -103,7 +111,10 @@ const NO_VAULT: NimbusVault = {
 
 const clients = new Map<string, MCPClient>();
 
-/** One read, through the real session lookup and then through the real mesh dispatcher. */
+/**
+ * One read, through the real session lookup (a list drain and the federated seam) and then through
+ * the real mesh dispatcher.
+ */
 async function runRead(read: ProbeSpec["reads"][number]): Promise<ProbeReport["reads"][number]> {
   const client = clients.get(read.client);
   if (client === undefined) throw new Error(`read names an unlisted client: ${read.client}`);
@@ -112,15 +123,28 @@ async function runRead(read: ProbeSpec["reads"][number]): Promise<ProbeReport["r
     listTools: () => listLazyMeshClientTools(client),
     disconnect: async () => {},
   }));
+  const sandboxCwd = join(tmpdir(), "nimbus-session-tool-resolution");
   // `outcome` never throws, so the seam is always restored before the dispatcher runs.
   const session = await outcome(() =>
     drainTeamListSession({
       service: read.service,
       vaultView: NO_VAULT,
-      sandboxCwd: join(tmpdir(), "nimbus-session-tool-resolution"),
+      sandboxCwd,
       listToolId: read.toolId,
     }),
   );
+  const federated = (toolId: string) =>
+    outcome(() =>
+      spawnTeamToolAndCall({
+        service: read.service,
+        toolId,
+        args: { cursor: null },
+        vaultView: NO_VAULT,
+        sandboxCwd,
+      }),
+    );
+  const federatedBare = await federated(read.toolId);
+  const federatedListed = await federated(`${read.service}_${read.toolId}`);
   __setSessionSpawnerForTest(undefined);
   const dispatcher = await outcome(() =>
     createConnectorDispatcher({ listTools: () => listLazyMeshClientTools(client) }).dispatch({
@@ -128,7 +152,7 @@ async function runRead(read: ProbeSpec["reads"][number]): Promise<ProbeReport["r
       payload: { mcpToolId: read.toolId, input: { cursor: null } },
     }),
   );
-  return { ...read, session, dispatcher };
+  return { ...read, session, dispatcher, federatedBare, federatedListed };
 }
 
 /** Start one client's connector processes, list them both ways, and resolve against the listing. */
