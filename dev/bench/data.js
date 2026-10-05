@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1791196577481,
+  "lastUpdate": 1791215451436,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "de0a5f28c3313eef2c5f54c1c5aa616586bb6d50",
-          "message": "fix(cast-driver): normalize macOS's /private tmpdir alias — unbreaks main on macOS (#899)\n\n## Summary\n\nFixes the macOS-only failure that has kept `main` red since #888.\n\n`Unit + Coverage — macos-15` failed on the `zero-config` cast snapshot.\n#897 made the drift printable instead of reporting a bare hash, and on\nits very first run it showed the cause in one line:\n\n```diff\n-Added <TMP>/sample-repo to nimbus.toml (code indexing on).\n+Added /private<TMP>/sample-repo to nimbus.toml (code indexing on).\n```\n\n## Root cause\n\nOn macOS `/var` is a symlink to `/private/var`. So `os.tmpdir()` reports\n`/var/folders/…`, while any command printing a **resolved** path —\n`nimbus init` prints its repo root — emits `/private/var/folders/…`.\n\nThe `tmp-prefix` normalisation rule replaced only the unresolved prefix,\nso the resolved form was rewritten into the nonsense string\n`/private<TMP>`.\n\nubuntu and windows have no such alias, so the committed snapshot —\nrecorded there — never contained it. That is why the drift was\n**macOS-only** and **deterministic**: byte-identical hash `c957257a1b7c`\nacross two independent runs on different commits, which is what ruled\nout a leaked random temp path early on.\n\n## The fix\n\nReplace the resolved `/private`-prefixed form **first** (it is the\nlonger match), then the unresolved form. Replacing it second would\nstrand the `/private` fragment.\n\n**No re-record is required.** macOS now produces exactly what Linux\nrecorded; the committed hash `52230bd9f728` is unchanged, and `bun\nscripts/cast-driver/run.ts --check` still passes locally.\n\n## Type of Change\n\n- [x] Bug fix (non-breaking change that fixes an issue)\n- [x] CI / tooling\n\n## Non-Negotiables Checklist\n\n- [x] `bun run typecheck` passes with zero errors\n- [x] `bun run lint` passes (Biome) — verified as `bunx biome check\n--error-on-warnings scripts`\n- [x] All existing tests pass — `bun test scripts/` 913 pass / 0 fail\n- [x] New behaviour is covered by tests\n- [x] No `any` types introduced\n- [x] No credentials, tokens, or secret values appear anywhere\n- [x] Platform-specific code behind `PlatformServices` — n/a; this is\nrecording-time transcript normalisation in `scripts/`, not gateway\nbusiness logic\n- [x] The HITL consent gate has not been touched\n\n## Coverage\n\nn/a — neither `engine/` nor `vault/` was modified.\n\n## Testing\n\n- `bun test scripts/cast-driver/` → 84 pass / 0 fail\n- `bun test scripts/` → 913 pass / 0 fail\n- `bunx tsc -p scripts/tsconfig.json --noEmit` → exit 0\n- `bun scripts/cast-driver/run.ts --check` → both snapshots OK, hashes\nunchanged\n- **Red-proved:** reverting the fix fails exactly the two tests that\nassert resolved-path handling (28 pass / 2 fail → 30 pass / 0 fail\nrestored)\n\nFive tests were added, covering the resolved form, the unresolved form,\ncross-platform agreement, a negative case, and idempotency:\n\n- a resolved macOS temp path normalises to `<TMP>`, not `/private<TMP>`\n- the unresolved form still normalises, so **both spellings agree** —\notherwise the snapshot would depend on which form a given command\nhappened to print\n- a macOS transcript matches the Linux one **byte-for-byte**, which is\nthe actual regression\n- an unrelated `/private/etc/hosts` is left untouched, pinning that the\nrule keys on the harness tmpdir rather than on the literal string\n`/private`\n- idempotency, matching the existing convention in this file\n\n## Notes for Reviewers\n\nThe `/private` literal is deliberate rather than a `realpathSync` call:\n`normalize.ts` is a pure function over recorded text with no filesystem\naccess, and keeping it pure is what makes the whole rule set\nunit-testable. The alias is a documented, stable macOS property.\n\nThis is the third and final PR in a chain: #894 cut the CI fan-out, #897\nmade this drift diagnosable, and this one fixes the drift itself. It\nshould return `main` to green on all three platforms — which in turn\nunblocks the P4b after-measurement, since both latency probes sample\nonly `status=success` push runs and there has not been one since the\ntuning landed.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nCo-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>",
-          "timestamp": "2026-07-28T14:08:33+03:00",
-          "tree_id": "7af09243ce65dbaeb218979ee20684b121351b37",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/de0a5f28c3313eef2c5f54c1c5aa616586bb6d50"
-        },
-        "date": 1785237657213,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 310.8246272000033,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 314.30566919999984,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 340.33415085001144,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "5445c59e9ed2a2282e57d4c7d7de8d87f5866b78",
+          "message": "refactor(ui): use optional chains in the on-call brief detail (#1616)\n\n## Summary\n\nClears the two Sonar issues open on `main`, both S6582 (prefer an\noptional chain), in `packages/ui/src/components/oncall/BriefDetail.tsx`\nfrom #1604:\n\n- `got !== undefined && got.brief === null` → `got?.brief === null`,\nwhich is false when `got` is undefined, as before.\n- `got === undefined || got.brief === null || got.brief.incidentId !==\nincidentId` → `got?.brief?.incidentId !== incidentId`, which is true\nwhen either is missing, since `incidentId` is a string. TypeScript still\nnarrows `got.brief` to non-null after the early return.\n\nWith these two, every one of the eight repositories has no open Sonar\nissue on `main`.\n\n## Verification\n\n`bun run typecheck` and `bun run preflight:fast`: exit 0. `bunx vitest\nrun test/pages/Oncall.test.tsx test/hooks/useOncallBriefs.test.ts` in\n`packages/ui`: 26 pass, covering the loading, pruned and failed-brief\nstates.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n\n## Summary by CodeRabbit\n\n* **Bug Fixes**\n* Prevented errors when brief data is missing by keeping the loading\nstate visible until the data is available.\n\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-10-05T18:37:58+03:00",
+          "tree_id": "897cc5e96cfc7a6ad03e76649ae7e0bd91bc8d14",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/5445c59e9ed2a2282e57d4c7d7de8d87f5866b78"
+        },
+        "date": 1791215445838,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 329.6184739500022,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 330.12392955000104,
             "unit": "ms"
           }
         ]
