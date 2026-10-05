@@ -69,7 +69,10 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
   own session, never the mesh, so the mesh's policy filter never saw it. A write to a connector the
   policy blocks is now refused before any credential is selected or any process spawned, on both
   credentials, reading `policyGate.enforced()` on every call; the policy gate now boots before the
-  team-credential contexts in `platform/assemble.ts` so the transport can hold it.
+  team-credential contexts in `platform/assemble.ts` so the transport can hold it. That check judges
+  the connector a write NAMES, so it covers the tool that runs only because the bare-id lookup
+  never lands on a sibling server. Both are recorded under I22 in `docs/SECURITY-INVARIANTS.md`,
+  with enforcement tests `(e)`–`(h)` in that invariant's block of `security-invariants.test.ts`.
 
   `test/integration/connectors/session-tool-resolution.integration.test.ts` lists 16 real connector
   processes through a real `MCPClient` in a child process (other test files `mock.module` it with

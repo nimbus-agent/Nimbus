@@ -96,6 +96,11 @@ export function mcpClientToolKey(serverName: string, toolName: string): string {
  * first-party tool whose own name began with a longer sibling server's suffix (`github` registering
  * `actions_x`) would be filed under the same key as that sibling's tool by MCPClient itself; no
  * connector does, and the integration test pins the real key sets.
+ *
+ * Step 2's ownership check is recorded under I22 in docs/SECURITY-INVARIANTS.md. The connector-write
+ * transport checks the org policy's connector allowlist on the service it is ASKED for, and its
+ * session's tool map is not policy-filtered, so on that path this check is the only thing that
+ * stops a bare id from running a sibling server's tool the policy blocks.
  */
 export function resolveServerTool<T>(
   tools: Readonly<Record<string, T>>,
