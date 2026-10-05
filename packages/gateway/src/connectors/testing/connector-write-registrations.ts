@@ -59,6 +59,7 @@ import { readdirSync, readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { dirname, join, posix, relative, sep } from "node:path";
 import { stripComments, stripStringLiterals } from "../../../../../scripts/structure-audit/lib.ts";
+import { codeUnitCompare } from "../../util/code-unit-compare.ts";
 
 export const CONNECTORS_PACKAGE = "@nimbus-dev/connectors";
 
@@ -303,7 +304,8 @@ function closeOrEnd(s: string, open: number): number {
 function skipReturnTypeToBody(s: string, i: number): number {
   let depth = 0;
   let prev = ":";
-  for (let j = skipWs(s, i); j < s.length; j = skipWs(s, j + 1)) {
+  let j = skipWs(s, i);
+  while (j < s.length) {
     const c = s.charAt(j);
     if (c === "{" && depth === 0) {
       if (!OBJECT_TYPE_LEADS.includes(prev)) return j;
@@ -315,6 +317,7 @@ function skipReturnTypeToBody(s: string, i: number): number {
       if (depth === 0 && c === ";") return -1;
     }
     prev = s.charAt(j);
+    j = skipWs(s, j + 1);
   }
   return -1;
 }
@@ -578,7 +581,9 @@ function genericStart(s: string, open: number): number {
 function arrowHead(s: string, arrow: number): { params: Param[]; headStart: number } | null {
   const open = arrowParamsOpen(s, arrow);
   if (open >= 0) return { params: parseParams(s, open), headStart: genericStart(s, open) };
-  const single = new RegExp(`(${IDENT})\\s*$`).exec(s.slice(Math.max(0, arrow - 80), arrow));
+  const single = new RegExp(String.raw`(${IDENT})\s*$`).exec(
+    s.slice(Math.max(0, arrow - 80), arrow),
+  );
   if (single?.[1] === undefined) return null;
   return { params: [{ name: single[1], pattern: [] }], headStart: arrow - single[0].length };
 }
@@ -720,6 +725,13 @@ interface CallSite {
 }
 
 /**
+ * Text ending in the `function` keyword, a generator's `*` included: the name after it is being
+ * declared, not called or read. The `*` takes its own leading whitespace so the two whitespace runs
+ * cannot trade characters — `\s*\*?\s*` backtracks quadratically when the match fails.
+ */
+const ENDS_IN_FUNCTION_KEYWORD = /\bfunction(?:\s*\*)?\s*$/;
+
+/**
  * Calls of `name` (bare, or `.name` when `member`), including ones with explicit type arguments —
  * `f<T>(...)` is exactly the spelling a guard keyed on `f(` misses. A `function name(` declaration
  * is not a call.
@@ -727,12 +739,12 @@ interface CallSite {
 function callsOf(s: string, name: string, member: boolean): CallSite[] {
   const out: CallSite[] = [];
   const lead = member ? String.raw`\.\s*` : String.raw`(?<![\w$.])`;
-  for (const m of s.matchAll(new RegExp(`${lead}${escapeRe(name)}(?![\\w$])`, "g"))) {
+  for (const m of s.matchAll(new RegExp(String.raw`${lead}${escapeRe(name)}(?![\w$])`, "g"))) {
     const at = (m.index ?? 0) + m[0].length - name.length;
     let i = skipWs(s, at + name.length);
     if (s.charAt(i) === "<") i = skipWs(s, skipAngles(s, i));
     if (i < 0 || s.charAt(i) !== "(") continue;
-    if (/\bfunction\s*\*?\s*$/.test(s.slice(Math.max(0, at - 20), at))) continue;
+    if (ENDS_IN_FUNCTION_KEYWORD.test(s.slice(Math.max(0, at - 20), at))) continue;
     out.push({ at, open: i });
   }
   return out;
@@ -1191,7 +1203,9 @@ class Analysis {
   checkRegistrarEscapes(f: File): void {
     const s = f.p.blank;
     for (const name of this.registrarsIn(f).keys()) {
-      for (const m of s.matchAll(new RegExp(`(?<![\\w$.])${escapeRe(name)}(?![\\w$])`, "g"))) {
+      for (const m of s.matchAll(
+        new RegExp(String.raw`(?<![\w$.])${escapeRe(name)}(?![\w$])`, "g"),
+      )) {
         const o = m.index ?? 0;
         if (!isTrackedUse(s, o, name.length) && !this.isTopLevelOfInit(f, o)) {
           this.violation(f, o, `registrar \`${name}\` is used as a value the scan does not follow`);
@@ -1207,7 +1221,7 @@ class Analysis {
   checkMemberEscapes(f: File): void {
     const s = f.p.blank;
     for (const name of this.memberNames()) {
-      for (const m of s.matchAll(new RegExp(`\\.\\s*${escapeRe(name)}(?![\\w$])`, "g"))) {
+      for (const m of s.matchAll(new RegExp(String.raw`\.\s*${escapeRe(name)}(?![\w$])`, "g"))) {
         const o = (m.index ?? 0) + m[0].length - name.length;
         const next = s.charAt(skipWs(s, o + name.length));
         if (next !== "(" && next !== "<" && !this.isTopLevelOfInit(f, o)) {
@@ -1250,7 +1264,7 @@ class Analysis {
    */
   checkKitEscapes(f: File): void {
     for (const name of this.kits) {
-      const re = new RegExp(`(?<![\\w$])${escapeRe(name)}(?![\\w$])`, "g");
+      const re = new RegExp(String.raw`(?<![\w$])${escapeRe(name)}(?![\w$])`, "g");
       for (const m of f.p.blank.matchAll(re)) {
         const o = m.index ?? 0;
         if (!isKitUse(f, o, name)) {
@@ -1270,7 +1284,7 @@ class Analysis {
    */
   checkFactoryEscapes(f: File): void {
     for (const factory of this.state.factories.keys()) {
-      const re = new RegExp(`(?<![\\w$])${escapeRe(factory)}(?![\\w$])`, "g");
+      const re = new RegExp(String.raw`(?<![\w$])${escapeRe(factory)}(?![\w$])`, "g");
       for (const m of f.p.blank.matchAll(re)) {
         const o = m.index ?? 0;
         const reason = this.factoryUseViolation(f, o, factory);
@@ -1287,7 +1301,7 @@ class Analysis {
     if (f.ix.imports.some(([x, y]) => x <= o && o < y)) {
       return /^\s+as\b/.test(after) ? `\`${factory}\` is imported under an alias` : undefined;
     }
-    if (/\bfunction\s*\*?\s*$/.test(before) || /\btypeof\s+$/.test(before)) return undefined;
+    if (ENDS_IN_FUNCTION_KEYWORD.test(before) || /\btypeof\s+$/.test(before)) return undefined;
     if (!/^\s*[<(]/.test(after)) return `registrar factory \`${factory}\` is used as a value`;
     if (this.isTopLevelOfInit(f, o) || isKeyedValue(s, o)) return undefined;
     return `registrar factory \`${factory}\`'s result is not bound to a name`;
@@ -1307,7 +1321,7 @@ class Analysis {
           d.initStart <= o &&
           o < d.initEnd &&
           spans.some(([x, y]) =>
-            new RegExp(`(?<![\\w$.])${escapeRe(d.name)}(?![\\w$])`).test(s.slice(x, y)),
+            new RegExp(String.raw`(?<![\w$.])${escapeRe(d.name)}(?![\w$])`).test(s.slice(x, y)),
           ),
       );
     for (const m of s.matchAll(/(?<![\w$.])mutates\s*:\s*/g)) {
@@ -1425,7 +1439,7 @@ class Analysis {
   /** Every read of the module object `ns` outside its binding `[from, to)` is `ns.member` or a `typeof`. */
   checkModuleObjectUses(f: File, ns: string, [from, to]: readonly [number, number]): void {
     const s = f.p.blank;
-    for (const m of s.matchAll(new RegExp(`(?<![\\w$.])${escapeRe(ns)}(?![\\w$])`, "g"))) {
+    for (const m of s.matchAll(new RegExp(String.raw`(?<![\w$.])${escapeRe(ns)}(?![\w$])`, "g"))) {
       const o = m.index ?? 0;
       const binding = o >= from && o < to;
       if (!binding && !isMemberRead(s, o + ns.length) && !isTypeofOperand(s, o)) {
@@ -1564,7 +1578,7 @@ function firstStringArgument(p: Prepared, open: number): string | null {
  */
 function isTypeImport(s: string, at: number, close: number): boolean {
   if (isTypeofOperand(s, at)) return true;
-  if (/\bawait\s*\(?\s*$/.test(s.slice(Math.max(0, at - 20), at))) return false;
+  if (/\bawait(?:\s*\()?\s*$/.test(s.slice(Math.max(0, at - 20), at))) return false;
   const member = new RegExp(String.raw`^\s*\??\.\s*(${IDENT})`).exec(
     s.slice(close + 1, close + 80),
   );
@@ -1648,7 +1662,7 @@ function isKitUse(f: File, o: number, name: string): boolean {
 function namedOutsideDeclaration(g: File, name: string): boolean {
   const s = g.p.blank;
   const lead = new RegExp(`${DECLARATION_LEAD}$`);
-  for (const m of s.matchAll(new RegExp(`(?<![\\w$])${escapeRe(name)}(?![\\w$])`, "g"))) {
+  for (const m of s.matchAll(new RegExp(String.raw`(?<![\w$])${escapeRe(name)}(?![\w$])`, "g"))) {
     const o = m.index ?? 0;
     if (lead.test(s.slice(Math.max(0, o - 20), o))) continue;
     if (g.ix.imports.some(([x, y]) => x <= o && o < y)) continue;
@@ -1687,11 +1701,11 @@ function isTrackedUse(s: string, o: number, len: number): boolean {
   const before = s.slice(Math.max(0, o - 40), o);
   const after = s.slice(o + len, o + len + 40);
   if (/^\s*[<(]/.test(after)) return true;
-  if (/\b(?:const|let|var)\s+$/.test(before) || /\bfunction\s*\*?\s*$/.test(before)) return true;
+  if (/\b(?:const|let|var)\s+$/.test(before) || ENDS_IN_FUNCTION_KEYWORD.test(before)) return true;
   if (/\btypeof\s+$/.test(before)) return true;
   const at = innermostOpener(s, o);
   const opener = s.charAt(at);
-  const typedOrKey = /^\s*\??\s*:/.test(after);
+  const typedOrKey = /^\s*(?:\?\s*)?:/.test(after);
   if (opener === "{") {
     if (/\bexport\s*(?:type\s*)?$/.test(s.slice(Math.max(0, at - 20), at))) return false;
     const memberLead = /(?:[{,;]|\breadonly)\s*$/.test(before);
@@ -1701,14 +1715,19 @@ function isTrackedUse(s: string, o: number, len: number): boolean {
   return opener === "(" && /(?:[(,]|\breadonly)\s*$/.test(before) && typedOrKey;
 }
 
+/** `names` in code-unit order (the default `sort()` order, locale-independent), joined. */
+function sortedJoin(names: Iterable<string>, separator: string): string {
+  return [...names].sort(codeUnitCompare).join(separator);
+}
+
 /** Snapshot of everything discovery can grow, to detect the fixpoint. */
 function fingerprint(state: State): string {
-  const locals = [...state.locals].map(([f, m]) => `${f}=${[...m.keys()].sort().join(",")}`);
+  const locals = [...state.locals].map(([f, m]) => `${f}=${sortedJoin(m.keys(), ",")}`);
   return [
-    [...state.factories.keys()].sort().join(","),
-    [...state.keys].sort().join(","),
-    [...state.exported.keys()].sort().join(","),
-    locals.sort().join(";"),
+    sortedJoin(state.factories.keys(), ","),
+    sortedJoin(state.keys, ","),
+    sortedJoin(state.exported.keys(), ","),
+    sortedJoin(locals, ";"),
   ].join("|");
 }
 
