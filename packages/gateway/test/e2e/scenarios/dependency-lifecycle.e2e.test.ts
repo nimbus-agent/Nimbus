@@ -14,7 +14,7 @@ import {
 } from "../../../src/extensions/missing-dependency-registry.ts";
 import { verifyExtensionsBestEffort } from "../../../src/extensions/verify-extensions.ts";
 import { AutomationRpcError, dispatchAutomationRpc } from "../../../src/ipc/automation-rpc.ts";
-import { setupFreshExtensionDb } from "../../fixtures/extension.ts";
+import { cleanupExtensionTestDirs, setupFreshExtensionDb } from "../../fixtures/extension.ts";
 
 function buildExtensionDir(opts: {
   baseDir: string;
@@ -75,11 +75,7 @@ describe("T2 PR 4 — dependency lifecycle (end-to-end in-process)", () => {
   afterEach(() => {
     db.close();
     rmSync(workDir, { recursive: true, force: true });
-    try {
-      rmSync(extensionsDir, { recursive: true, force: true });
-    } catch {
-      /* best-effort */
-    }
+    cleanupExtensionTestDirs();
   });
 
   test("install + conflict refusal + --force remove + startup-disable + reinstall clears", async () => {

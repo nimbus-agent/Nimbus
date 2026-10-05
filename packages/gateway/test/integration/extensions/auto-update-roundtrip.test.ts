@@ -26,7 +26,7 @@ import {
   signManifest,
 } from "../../../src/extensions/verify-signature.ts";
 import { MockVault } from "../../../src/vault/mock.ts";
-import { setupFreshExtensionDb } from "../../fixtures/extension.ts";
+import { cleanupExtensionTestDirs, setupFreshExtensionDb } from "../../fixtures/extension.ts";
 
 interface RegistryEntry {
   version: string;
@@ -168,6 +168,7 @@ beforeEach(async () => {
 afterEach(() => {
   registry.stop();
   rmSync(tmpRoot, { recursive: true, force: true });
+  cleanupExtensionTestDirs();
 });
 
 describe("Extension auto-update — integration roundtrip (T2 PR 3 Task 22)", () => {
