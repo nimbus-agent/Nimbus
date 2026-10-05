@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1791223870295,
+  "lastUpdate": 1791225894792,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "306811640+nimbus-release-bot[bot]@users.noreply.github.com",
-            "name": "nimbus-release-bot[bot]",
-            "username": "nimbus-release-bot[bot]"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "c1cc50552fbd899249ee4bb9964d69c070965ef2",
-          "message": "chore: release main (#907)\n\n:robot: I have created a release *beep* *boop*\n---\n\n\n<details><summary>1.5.0</summary>\n\n##\n[1.5.0](https://github.com/nimbus-agent/Nimbus/compare/v1.4.3...v1.5.0)\n(2026-07-28)\n\n\n### Features\n\n* **ci:** close out P4b — after-measurement, co-gate enforcement, sweep\nproof ([#901](https://github.com/nimbus-agent/Nimbus/issues/901))\n([eaa1999](https://github.com/nimbus-agent/Nimbus/commit/eaa199953e2253cf03d24b7efb82d64a12bbb872))\n</details>\n\n---\nThis PR was generated with [Release\nPlease](https://github.com/googleapis/release-please). See\n[documentation](https://github.com/googleapis/release-please#release-please).\n\nCo-authored-by: nimbus-release-bot[bot] <306811640+nimbus-release-bot[bot]@users.noreply.github.com>",
-          "timestamp": "2026-07-28T18:07:41+03:00",
-          "tree_id": "9a6a1228e4dfbc9cdf1b4dc073b37066fc73fc0e",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/c1cc50552fbd899249ee4bb9964d69c070965ef2"
-        },
-        "date": 1785251989267,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 310.4413129500041,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 311.230293949999,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 213.95535780000026,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "306811640+nimbus-release-bot[bot]@users.noreply.github.com",
+            "name": "nimbus-release-bot[bot]",
+            "username": "nimbus-release-bot[bot]"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "7c33cf51c4b9a5d9f3119c0cd2b4912e6227d722",
+          "message": "chore: release main (#1621)\n\n:robot: I have created a release *beep* *boop*\n---\n\n\n<details><summary>7.36.0</summary>\n\n##\n[7.36.0](https://github.com/nimbus-agent/Nimbus/compare/v7.35.1...v7.36.0)\n(2026-10-05)\n\n\n### Features\n\n* **doctor:** warn when the on-call push cannot reach ChatOps\n([#1618](https://github.com/nimbus-agent/Nimbus/issues/1618))\n([f560d92](https://github.com/nimbus-agent/Nimbus/commit/f560d929382731ad6f2bc98a4d63953fa17f1c32))\n\n\n### Bug Fixes\n\n* **chatops:** escape every Slack-bound post at the wire\n([#1617](https://github.com/nimbus-agent/Nimbus/issues/1617))\n([2e76680](https://github.com/nimbus-agent/Nimbus/commit/2e76680d8e7a15519630b0f3543be0177703817a))\n</details>\n\n---\nThis PR was generated with [Release\nPlease](https://github.com/googleapis/release-please). See\n[documentation](https://github.com/googleapis/release-please#release-please).\n\nCo-authored-by: nimbus-release-bot[bot] <306811640+nimbus-release-bot[bot]@users.noreply.github.com>",
+          "timestamp": "2026-10-05T18:31:23Z",
+          "tree_id": "c448cdd52ac13a35ab6de3fbffdba9aff75bd1c8",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/7c33cf51c4b9a5d9f3119c0cd2b4912e6227d722"
+        },
+        "date": 1791225889547,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 340.5426218499982,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 345.2705407499969,
             "unit": "ms"
           }
         ]
