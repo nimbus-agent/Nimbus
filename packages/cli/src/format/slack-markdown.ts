@@ -91,6 +91,86 @@ function unescapeMarkdown(text: string): string {
 }
 
 /**
+ * The three character classes the underscore-italic pass reads — `\w`, `\s`, and the `.` of its
+ * content — written as the very escapes the regex it replaced used, with the same (absent) flags.
+ * Tested against one UTF-16 code unit, each answers exactly as that regex's atom did: `é` is not a
+ * word character, U+00A0 is a space, `.` refuses only the line terminators `\n`, `\r`, U+2028 and
+ * U+2029, and each half of a surrogate pair is a separate non-word, non-space code unit. Keep them
+ * as these escapes rather than sets written out by hand: `\s` also covers U+1680, U+2000 to U+200A,
+ * U+202F and U+205F, which a list written from memory tends to miss, and U+0085 is neither a space
+ * nor a line terminator here, unlike in Python's `\s` or Java's `.`. `slack-markdown.test.ts` puts
+ * every code unit at each place the pattern reads one.
+ */
+const WORD_RE = /\w/;
+const SPACE_RE = /\s/;
+const DOT_RE = /./;
+
+/**
+ * Whether `re` matches the code unit at `i`. Outside the text `charAt` returns `""`, which none of
+ * the three classes matches: the answer a lookaround gives at either end, where `(?<!\w)` and
+ * `(?!\w)` both hold.
+ */
+function codeUnitMatches(re: RegExp, text: string, i: number): boolean {
+  return re.test(text.charAt(i));
+}
+
+/**
+ * Whether the `_` at `open` can OPEN an underscore-italic run: no word character before it, and a
+ * content code unit after it that is not a space — `(?<!\w)_(?!\s)` and the first unit of `(.+?)`.
+ * The caller has already found the `_`.
+ */
+function opensUnderscoreItalic(text: string, open: number): boolean {
+  return (
+    !codeUnitMatches(WORD_RE, text, open - 1) &&
+    !codeUnitMatches(SPACE_RE, text, open + 1) &&
+    codeUnitMatches(DOT_RE, text, open + 1)
+  );
+}
+
+/**
+ * Whether the code unit at `i` can CLOSE one: an `_` with no space before it and no word character
+ * after it — `(?<!\s)_(?!\w)`. Nothing here depends on where the run opened, which is what lets
+ * {@link scanUnderscoreItalic} skip ahead.
+ */
+function closesUnderscoreItalic(text: string, i: number): boolean {
+  return (
+    text[i] === "_" &&
+    !codeUnitMatches(SPACE_RE, text, i - 1) &&
+    !codeUnitMatches(WORD_RE, text, i + 1)
+  );
+}
+
+type UnderscoreScan = { readonly resumeAt: number; readonly close?: number };
+
+/**
+ * One attempt to read `_content_` with its opening `_` at `open`, in the order the lazy `(.+?)`
+ * tried it: past the first content unit, close at `i` when an `_` there can close, otherwise take
+ * `i` into the content — which a line terminator refuses, ending the attempt. `resumeAt` is where
+ * the search for the next run continues: just past the closing `_` when one matched, otherwise the
+ * first index at which a run could still start.
+ *
+ * Skipping ahead on a failed attempt is what keeps a line linear, and, as in {@link scanLink}, it
+ * is exact rather than a heuristic. Whether an `_` can close never depends on where its run opened,
+ * so once this attempt reaches a line terminator, or the end of the text, without finding a
+ * closer, every closer that a later `_` before that point could use lies in the stretch this
+ * attempt has already searched, and none of those `_` can open a run either. The regex this scan
+ * replaced retried each of them anyway, which made a line of `_` that open but never close
+ * quadratic: ` _a` repeated, where the space before each `_` and the word character after it each
+ * rule out a close.
+ */
+function scanUnderscoreItalic(text: string, open: number): UnderscoreScan {
+  if (!opensUnderscoreItalic(text, open)) return { resumeAt: open + 1 };
+  for (let i = open + 2; i < text.length; i++) {
+    if (closesUnderscoreItalic(text, i)) return { resumeAt: i + 1, close: i };
+    if (!codeUnitMatches(DOT_RE, text, i)) return { resumeAt: i + 1 };
+  }
+  return { resumeAt: text.length };
+}
+
+/**
+ * Plain mode's underscore pass: every underscore-italic run in `text`, leftmost first, replaced by
+ * its content.
+ *
  * Underscore italic requires a word boundary on both sides of the delimiter pair, mirroring
  * CommonMark's intraword-underscore restriction: `\w` (which includes `_` itself) must NOT be
  * adjacent to either delimiter. Without this, a bare `/_(.+?)_/` treats every underscore pair
@@ -100,8 +180,28 @@ function unescapeMarkdown(text: string): string {
  *
  * Single-asterisk italic gets no such guard: CommonMark allows `*` to open/close emphasis
  * intraword, so `*i*` mid-word is legitimate and `ASTERISK_ITALIC_RE` is unrestricted.
+ *
+ * This pass was `text.replace(/(?<!\w)_(?!\s)(.+?)(?<!\s)_(?!\w)/g, (_m, i) => i)`, and it returns
+ * what that returned for every input — the same runs, matched left to right without overlap, with
+ * every lookaround reading the ORIGINAL text — in time linear in the line rather than quadratic.
+ * Exported for `slack-markdown.test.ts`, which keeps that regex as the oracle it compares against
+ * and pins the time bound.
  */
-const UNDERSCORE_ITALIC_RE = /(?<!\w)_(?!\s)(.+?)(?<!\s)_(?!\w)/g;
+export function stripUnderscoreItalic(text: string): string {
+  let out = "";
+  let copied = 0;
+  let open = text.indexOf("_");
+  while (open !== -1) {
+    const { resumeAt, close } = scanUnderscoreItalic(text, open);
+    if (close !== undefined) {
+      out += text.slice(copied, open) + text.slice(open + 1, close);
+      copied = resumeAt;
+    }
+    open = text.indexOf("_", resumeAt);
+  }
+  return out + text.slice(copied);
+}
+
 const ASTERISK_ITALIC_RE = /\*(.+?)\*/g;
 /**
  * `#`–`######`, a run of spaces/tabs, then the heading text — captured WITHOUT its leading
@@ -217,13 +317,13 @@ function convertLink(text: string, mode: InlineMode): string {
  *
  * Link conversion is NOT order-dependent against this pair: `[t](u)` and `**b**`/`*i*`/`_i_`
  * match independently of each other (the link scan cares about `[`/`]`/`(`/`)`, the emphasis
- * regexes care about `*`/`_`), so converting links before or after this step produces
+ * passes care about `*`/`_`), so converting links before or after this step produces
  * byte-identical output either way.
  */
 function convertBoldItalic(text: string, mode: InlineMode): string {
   if (mode === "plain") {
     let s = text.replace(BOLD_RE, (_m, b: string) => b);
-    s = s.replace(UNDERSCORE_ITALIC_RE, (_m, i: string) => i);
+    s = stripUnderscoreItalic(s);
     s = s.replace(ASTERISK_ITALIC_RE, (_m, i: string) => i);
     return s;
   }
@@ -297,7 +397,7 @@ export function toSlackMrkdwn(markdown: string): string {
  * Markdown → plain text. The same structural pass as {@link toSlackMrkdwn}, but every marker is
  * STRIPPED rather than converted: a link keeps its title and drops the URL (a plain-text
  * changelog pasted into an email should not carry bare URLs), every emphasis marker is removed
- * (see {@link UNDERSCORE_ITALIC_RE} for the word-boundary rule that keeps this from mangling
+ * (see {@link stripUnderscoreItalic} for the word-boundary rule that keeps this from mangling
  * `SCREAMING_SNAKE_CASE` identifiers), and list hyphens are left alone since they already read
  * correctly as-is.
  */
