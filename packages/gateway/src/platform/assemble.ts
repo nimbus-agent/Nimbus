@@ -1258,7 +1258,8 @@ async function bootFederationIntoIpcOpts(
         },
         input,
       ),
-    // I22: the invoke gate refuses an entry whose connector the org policy blocks.
+    // I22: the invoke gate refuses an invoke when the org policy blocks the entry's connector or
+    // the server the requested key belongs to.
     isConnectorAllowed,
   };
   ipcOpts.teamVault = teamVault;
@@ -2568,10 +2569,12 @@ async function bootChatopsIntoAssembly(deps: {
           })
         : buildE2eSinkRunChatopsTool(chatopsE2eSinkDir),
     audit: { recordAudit: (entry) => appendAuditEntry(db, entry) },
-    // A connector write the owner approves from chat runs as one approved from `nimbus ask` does:
-    // through the connector-write transport, with the credential [connectors.<name>] configures and
-    // the I22 allowlist asked first. The plain mesh dispatcher found no tool for a write that names
-    // no mcpToolId, and ran one that names it with the personal credential whatever the config said.
+    // A connector write the owner approves from chat runs through the connector-write transport,
+    // with the credential [connectors.<name>] configures and the I22 allowlist asked first: the
+    // same wrapper and context gateway-main.ts installs around runAsk's dispatcher, and the first
+    // shipped surface whose connector writes reach it. The plain mesh dispatcher found no tool for a
+    // write that names no mcpToolId, and ran one that names it with the personal credential
+    // whatever the config said.
     dispatcher:
       chatopsE2eSinkDir === undefined || chatopsE2eSinkDir === ""
         ? createConnectorWriteDispatcher(

@@ -2024,9 +2024,10 @@ code_execution=true
     );
 
     // 4. That context leaves assembly as `PlatformServices.connectorWriteDeps`, unchanged: the
-    //    services literal carries the binding itself, and `assemblePlatformServices` names it
-    //    nowhere else (no widened copy, no later reassignment). The gateway then wraps its
-    //    executor's dispatcher in the write transport with exactly it.
+    //    services literal carries the binding itself, and `assemblePlatformServices` names it only
+    //    at its destructuring, the ChatOps boot (pinned by (j)) and that literal, with no widened
+    //    copy and no later reassignment. The gateway then wraps its executor's dispatcher in the
+    //    write transport with exactly it.
     const assembly = bodyOf("export async function assemblePlatformServices(");
     expect(assembly).toContain("return services;");
     const servicesAt = assembly.indexOf("const services: PlatformServices = {");

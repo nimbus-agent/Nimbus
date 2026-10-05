@@ -43,9 +43,11 @@ export interface InvokeGateCtx {
    *  stayed optional for back-compat): a federated invoke ctx cannot be built without deciding. */
   readonly isCodeExecutionForbiddenToolId: (toolId: string) => boolean;
   /** I22: the org policy's connector allowlist, asked of the connector the granted team-vault entry
-   *  names. The tool runs in an ephemeral connector of that service, off the mesh whose policy
-   *  filter would otherwise drop it, so the gate asks the policy itself. REQUIRED, and the policy
-   *  gate's own per-call predicate (`connectorAllowPredicate`), never a value captured at boot. */
+   *  names AND of the server the requested listed key belongs to, when that is another one (see
+   *  `connectorsRunBy`); the invoke is refused unless every one of them is allowed. The tool runs
+   *  in an ephemeral connector off the mesh whose policy filter would otherwise drop it, so the
+   *  gate asks the policy itself. REQUIRED, and the policy gate's own per-call predicate
+   *  (`connectorAllowPredicate`), never a value captured at boot. */
   readonly isConnectorAllowed: (service: string) => boolean;
   /** Wave 7b deferral: when identity is enabled, returns the resolved identity subject for audit
    *  enrichment. Omitted → the audit row carries no identity_subject (no sentinel). */

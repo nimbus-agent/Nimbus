@@ -19,8 +19,9 @@ Phase-level history before `v0.1.0` (Phases 1â€“4) lives in [`docs/roadmap.md` Â
 ## Post-Phase-6 deliveries
 
 - **2026-10-05 â€” The federated invoke gate asks the org policy's connector allowlist, and a
-  connector write approved from chat runs through the connector-write transport.** Two off-mesh
-  doors the I22 stated bounds named:
+  connector write approved from chat runs through the connector-write transport.** One off-mesh
+  door the I22 stated bounds named is closed, and a ChatOps write defect the entry below recorded
+  is fixed:
   - `answerFederatedInvoke` never consulted `[policy.connectors] allow`. A peer holding a grant on a
     team-vault entry ran its tool however the policy stood, since the anchor runs the tool in its own
     team-credentialed connector, off the mesh whose filter drops a blocked connector. The gate now
@@ -37,9 +38,11 @@ Phase-level history before `v0.1.0` (Phases 1â€“4) lives in [`docs/roadmap.md` Â
     through the mesh alone. One that named no `mcpToolId` failed with "tool not found"; one that
     named it ran with the personal credential, whatever `[connectors.<name>] credential` said.
     `bootChatopsIntoAssembly` now wraps that executor's real dispatcher in
-    `createConnectorWriteDispatcher` with the same `connectorWriteDeps` `runAsk`'s executor uses, so
-    such a write selects its configured credential and asks the allowlist first, as one approved
-    from `nimbus ask` does. The ChatOps e2e sink dispatcher is unchanged.
+    `createConnectorWriteDispatcher` with the same `connectorWriteDeps` `gateway-main.ts` installs
+    around `runAsk`'s dispatcher, so such a write selects its configured credential and asks the
+    allowlist first. `runAsk` plans no connector write, so `@nimbus run` is the first shipped
+    surface whose connector writes reach the transport. The ChatOps e2e sink dispatcher is
+    unchanged.
 
   Two stated bounds remain and are unchanged: the ChatOps bot's own `slack`/`teams` calls, and the
   warehouse/BI list drains, which honour a runtime allowlist change only after a restart.

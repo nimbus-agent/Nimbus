@@ -501,8 +501,9 @@ export async function dispatchFederationRpc(
           // I26: nor a connector tool that runs caller-directed code on this machine — terraform
           // plan / pulumi preview evaluate the directory the caller names, read-registered or not.
           isCodeExecutionForbiddenToolId: isConnectorCodeExecutionToolId,
-          // I22: the entry's connector must be one the org policy allows. The tool runs in its own
-          // team-credentialed connector, off the mesh whose policy filter would otherwise drop it.
+          // I22: the entry's connector, and the server the requested key belongs to, must each be
+          // one the org policy allows. The tool runs in its own team-credentialed connector, off the
+          // mesh whose policy filter would otherwise drop it.
           isConnectorAllowed: tv.isConnectorAllowed,
           ...(ctx.identityGuard === undefined ? {} : { identity: ctx.identityGuard }),
         },
