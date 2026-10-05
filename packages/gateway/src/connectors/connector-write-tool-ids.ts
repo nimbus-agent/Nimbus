@@ -8,7 +8,9 @@
  *
  * Grows one wave at a time as connectors migrate to `registerWriteTool`. When a tool gains a
  * dispatch path it graduates to a `ConnectorWrite` row and leaves this set — the registry test
- * asserts the two never overlap.
+ * asserts the two never overlap. `connector-write-sync.test.ts` derives every write the INSTALLED
+ * connectors package registers and fails on one `isConnectorWriteToolId` does not refuse, so a
+ * connectors bump that adds a write cannot land unclassified.
  */
 export const MIGRATED_WRITE_TOOL_IDS: ReadonlySet<string> = new Set([
   // github — Part 1 (#1318)
@@ -34,14 +36,14 @@ export const MIGRATED_WRITE_TOOL_IDS: ReadonlySet<string> = new Set([
   "circleci_pipeline_trigger",
   "circleci_job_cancel",
 
-  // Wave 4 — comms. FOUR ids are deliberately ABSENT, each already confined by a stricter,
-  // purpose-built gate that a generic write-id set would only duplicate:
-  //   notion_kb_append, confluence_kb_append — static D19 confines them to tribal-write-gate.ts
-  //     and their own connectors; I25 pins their destination to config, not to a caller.
-  //   slack_chat_post, teams_chat_post — static D17 confines them to the ChatOps reply
-  //     dispatcher; I23 derives their destination server-side so it is never caller-supplied.
-  // All four are still routed through the consent kit IN THEIR CONNECTOR, which is what makes
-  // them safe standalone; only the gateway-side id set omits them.
+  // Wave 4 — comms. FOUR comms writes are not listed here because static rules forbid naming their
+  // literals outside their own gates:
+  //   notion_kb_append, confluence_kb_append — D19 confines them to tribal-write-gate.ts;
+  //   slack_chat_post, teams_chat_post — D17 confines them to the ChatOps reply surface.
+  // They are NOT exempt from I26. Those gates pin the destination only when the GATEWAY calls the
+  // tool (I25 / I23); a federated invoke carries the peer's own arguments. So each gate exports its
+  // ids as a set, and `isConnectorWriteToolId` refuses them through it
+  // (connector-write-registry.ts `GATE_CONFINED_WRITE_TOOL_IDS`).
   "slack_message_post",
   "teams_message_post",
   "notion_page_create",
@@ -94,4 +96,18 @@ export const MIGRATED_WRITE_TOOL_IDS: ReadonlySet<string> = new Set([
   "k8s_rollout_restart",
   "k8s_deployment_scale",
   "k8s_pod_delete",
+
+  // Classified 2026-10-05: real mutations the I26 predicate let a federated peer name.
+  //   - Registered as plain READ tools in @nimbus-dev/connectors 0.2.1 and moved to the consent
+  //     kit's write registrar in 0.2.2, where the sync guard (`connector-write-sync.test.ts`)
+  //     derives them:
+  "aws_ec2_instance_stop",
+  "aws_ec2_instance_start",
+  "slack_message_post_dm",
+  "teams_message_post_chat",
+  //   - STILL registered as a read in 0.2.2 (`registerDriveTool`), though it PATCHes
+  //     `trashed: true`. The guard derives write REGISTRATIONS only, so it cannot see this one,
+  //     which is listed by hand. google_drive has no team-injectable secret today, so no federated
+  //     invoke can reach it yet; classified now so it is refused the day one can.
+  "gdrive_file_trash",
 ]);

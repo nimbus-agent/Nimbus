@@ -93,6 +93,117 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
   federated invoke of a LISTED write key is refused is decided by the I26 predicate alone, which
   this entry neither changes nor asks about anything new.
 
+- **2026-10-05 — I26 holds again: the federated invoke gate refuses every connector write and every
+  connector tool found to run caller-directed code, in the form a session actually executes it,
+  and sync guards keep both lists in step with the connectors package.** I26 says a federated peer can
+  never trigger a connector write: `answerFederatedInvoke` refuses any tool id
+  `isConnectorWriteToolId` classifies. Three gaps made that false, each leaving only the owner's
+  per-tool grant in the way:
+  - **No write was refused in the form that runs.** A team-credentialed session lists its tools
+    through `@mastra/mcp`, which keys each one `<server>_<tool>`, and the runner looks the requested
+    id up verbatim, so `tableau_tableau_datasource_refresh` executes and a bare
+    `tableau_datasource_refresh` is not found. The predicate matched bare ids only. A probe through
+    the real gate, predicate, session lookup and `MCPClient` executed the namespaced write behind a
+    grant. The predicate now also matches any `_`-delimited suffix, at a cost bounded by the
+    longest write id, and an integration test lists real connector processes through a real
+    `MCPClient` to pin the key scheme.
+  - **Four comms writes were never on the list.** Static D19 and D17 confine the literals
+    `notion_kb_append`, `confluence_kb_append`, `slack_chat_post` and `teams_chat_post` to their
+    gates, and the list treated that as confining the tools. Those gates pin the destination only
+    when the gateway itself calls them; a federated invoke carries the peer's arguments, so a
+    granted peer chose the channel or the knowledge base, against I23 and I25 as well. Each gate
+    now exports its ids as a set the predicate refuses, so the literals stay where they were.
+  - **Five mutating tools were unclassified.** `aws_ec2_instance_stop`, `aws_ec2_instance_start`,
+    `slack_message_post_dm` and `teams_message_post_chat` were read registrations in
+    `@nimbus-dev/connectors` 0.2.1 and became consent-gated writes in 0.2.2, and
+    `gdrive_file_trash` still registers as a read in 0.2.2 although it PATCHes `trashed: true`.
+    All five are now in `MIGRATED_WRITE_TOOL_IDS`.
+
+  The new `connectors/connector-write-sync.test.ts` reads the INSTALLED connectors package as text,
+  derives every tool id registered through the write registrar, and fails on any the predicate does
+  not refuse, bare or namespaced. It follows the registrar by data flow from
+  `createWriteToolRegistrar`, not by name: 0.2.2 already forwards writes through
+  `registerStatusTool`, `registerPipelineActionTool` and `registerFeedbackTool`, which a
+  `register*WriteTool` pattern would miss. It follows an exported registrar or shared kit through
+  named, namespace and dynamic imports, renamed destructurings included, and refuses every import
+  shape it cannot follow: a default export, a module object used other than as `m.member`, an
+  aliased import, a registrar's name spelled as a string, and an exported registrar no file names.
+  Every identifier an id is read through (a loop's table, a string constant, a loop variable, a
+  kit option, a forwarded parameter) is read through the one binding of its name its use can see,
+  never a same-named one in another connector or another function. A second visible binding that
+  could shadow it is refused, whatever binds it: a declaration (initialised or not, any declarator,
+  any pattern), a function, arrow or method parameter, a `catch` binding, an import, or a function,
+  class, enum or namespace name. A table or constant counts only as a `const` holding exactly an
+  array or string literal, and an imported table only as one its module declares with
+  `export const`. It checks itself against upstream's own manifests too: every connector declaring
+  a write must yield a registration. It derives 87 writes from 0.2.1 and 91 from 0.2.2, so the
+  pending connectors bump passes it unchanged, and it has no exception list. Three blind spots are
+  stated rather than hidden: a mutation registered as a read, which is why `gdrive_file_trash` is
+  listed by hand; an object a registrar was handed off into, then read by a non-literal computed
+  key or by reflection; and a constant table mutated after its declaration (`ACTIONS.push(...)`).
+
+  **The gate now also refuses connector tools that run caller-directed code.** `iac_terraform_plan`
+  and `iac_pulumi_preview` are READ registrations, so no write list could name them, yet each hands
+  terraform or pulumi a caller-supplied `workingDirectory`. Planning a Terraform configuration runs
+  its provider plugins and any `external` data source program, and a Pulumi preview runs the stack
+  program. `iac` is team-invokable through its `iac.enabled` team-vault key, so a peer granted
+  `iac_iac_terraform_plan` could have had the anchor evaluate code at a path of its choosing, with
+  no owner approval of that code. `answerFederatedInvoke` now calls a second, REQUIRED predicate,
+  `isCodeExecutionForbiddenToolId`, wired to `isConnectorCodeExecutionToolId` over
+  `CONNECTOR_CODE_EXECUTION_TOOL_IDS`. It runs after the write check and before identity, the grant,
+  quorum and the run, audits `code_execution_forbidden`, and returns the same opaque `no_grant`. It
+  matches bare and namespaced ids through `matchesBareOrNamespacedToolId`, which the write predicate
+  now shares. The list also names the three iac writes that evaluate the same directory; those are
+  still refused as writes first.
+
+  A sweep of every connector in 0.2.1 and 0.2.2 found eleven that can start a process (athena,
+  aws, azure, bigquery, cloud-logging, cloudwatch, gcp, iac, kubernetes, sagemaker and vertex-ai).
+  The sweep, and the census test that now repeats it, read the connectors' own source and recognise
+  process and code-evaluation capability by name, so a spawn done through reflection or inside a
+  third-party package the connectors import is outside what either can see.
+  iac is not the only one that lets a caller reach code, once Windows is in scope: `az` (Azure CLI)
+  and `gcloud` (Google Cloud SDK) install as `.cmd` / batch wrappers there, and spawning a bare name
+  runs the batch target through `cmd.exe`, which re-parses the reconstructed command line — so a flag
+  value or an `isSafeCliArg`-guarded positional carrying a `cmd` metacharacter (`"`, `&`, `|`, `%`)
+  escapes its slot and runs an arbitrary command (`isSafeCliArg` rejects only a leading `-` and
+  control characters). Every read of the four `az` / `gcloud`-backed connectors — `azure`, `gcp`,
+  `cloud-logging`, `vertex-ai` — now joins the code-execution refusal, in a second documented set
+  `WINDOWS_CLI_ARG_INJECTION_TOOL_IDS`, at connector-read granularity so an argv change inside one
+  cannot silently reopen it. (`bigquery` is `gcloud`-backed too, but its only spawn is
+  `gcloud auth print-access-token` with no caller input and its tools are REST, so its reads stay
+  reviewed.) The reads that remain reviewed are backed by `aws` / `kubectl`, which install as native
+  `.exe` on Windows — no `cmd.exe` re-parse — a stated residual the reviews rest on; the durable fix
+  is upstream. The same ids are refused at the `share.replay` door as well: `isReadOnlyToolId`
+  excludes every code-execution id by explicit id, because these reads end in `list` / `get` /
+  `search`, verbs hundreds of genuine reads carry, so the verb could not be dropped the way `preview`
+  was for `iac_pulumi_preview`.
+
+  The new `connectors/connector-code-execution-sync.test.ts` makes the sweep a gate. Every listed id
+  must still be registered, and every connector whose source can start a process or evaluate code must
+  be in its review, with each of its tools refused or reviewed and no `az` / `gcloud`-backed read left
+  answerable. So a new process-capable connector, or a new tool in one, fails until someone classifies
+  it. Its source census now also follows a member-form dynamic loader (`module.require(x)`,
+  `import.meta.require(x)`) that the bare-`require(x)` pattern's lookbehind had skipped — following a
+  literal specifier, flagging a computed one — closing a fail-closed hole in the census. The wire test
+  checks the census and the refusal against what real `aws`, `kubernetes`, `iac`, `azure` and `gcp`
+  processes list. Static D20 now requires the gate to CALL both predicates; the old check accepted the
+  name alone, which the ctx interface already declares. This is I26 rather than I19 or I24: the
+  enforcement point is I26's tool-id refusal, I19's credential custody is unchanged, and I24's
+  preflight gate is the precedent for the principle but a different gate. The local owner's own paths
+  are unchanged.
+
+  Found on the way and not fixed here: because of the same namespacing, a bare id is not found
+  wherever the gateway looks a tool up verbatim in an `MCPClient`-keyed map, so the gateway's own
+  bare-id callers fail closed against real connectors while their unit tests fake bare-keyed maps.
+  Those callers are the connector-write transport (personal and team-credentialed), the team list
+  drain, the PERSONAL warehouse/BI list drain behind every personal-credential Snowflake, Tableau,
+  Looker, Power BI, Monte Carlo and Bigeye sync, and, through the mesh dispatcher, the tribal KB
+  capture, which fails with "Tool not found" after the owner approves it. The federated path
+  executes only the namespaced key, so `nimbus team vault grant` and `nimbus team invoke` must name
+  `<server>_<tool>`: `docs/cli-reference.md` now shows `stripe_stripe_search` where it showed
+  `stripe.refund.create`, a tool that exists in neither form. No new invariant, no migration, no
+  new IPC method.
+
 - **2026-10-05 — `--format plain` is linear on a line of underscores that open but never close.**
   The quality sweep below made two super-linear patterns in
   `packages/cli/src/format/slack-markdown.ts` linear and recorded a third that was not: plain

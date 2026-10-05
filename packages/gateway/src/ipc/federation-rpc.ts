@@ -1,4 +1,5 @@
 import type { Database } from "bun:sqlite";
+import { isConnectorCodeExecutionToolId } from "../connectors/connector-code-execution-tool-ids.ts";
 import { isConnectorWriteToolId } from "../connectors/connector-write-registry.ts";
 import { appendAuditEntry } from "../db/audit-chain.ts";
 import { delegatedApprovalBroker } from "../engine/delegated-approval-broker.ts";
@@ -495,6 +496,9 @@ export async function dispatchFederationRpc(
           // execute only behind the LOCAL owner's executor HITL gate (I2); they have no over-the-wire
           // entry point.
           isWriteForbiddenToolId: isConnectorWriteToolId,
+          // I26: nor a connector tool that runs caller-directed code on this machine — terraform
+          // plan / pulumi preview evaluate the directory the caller names, read-registered or not.
+          isCodeExecutionForbiddenToolId: isConnectorCodeExecutionToolId,
           ...(ctx.identityGuard === undefined ? {} : { identity: ctx.identityGuard }),
         },
         {

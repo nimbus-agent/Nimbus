@@ -35,6 +35,12 @@ export interface InvokeGateCtx {
    *  — when this returns true for the requested toolId, the federated peer invoke is rejected
    *  fail-closed (opaque), before grant/quorum. Omitted → no write confinement (back-compat). */
   readonly isWriteForbiddenToolId?: (toolId: string) => boolean;
+  /** I26: connector tools that run CALLER-DIRECTED CODE on this machine (`iac_terraform_plan`,
+   *  `iac_pulumi_preview`, ...: `isConnectorCodeExecutionToolId`) — when this returns true for the
+   *  requested toolId, the federated peer invoke is rejected fail-closed (opaque), before identity,
+   *  grant, quorum and runTool. REQUIRED, unlike the write predicate above (which predates I26 and
+   *  stayed optional for back-compat): a federated invoke ctx cannot be built without deciding. */
+  readonly isCodeExecutionForbiddenToolId: (toolId: string) => boolean;
   /** Wave 7b deferral: when identity is enabled, returns the resolved identity subject for audit
    *  enrichment. Omitted → the audit row carries no identity_subject (no sentinel). */
   readonly resolveIdentitySubject?: () => string | undefined;
@@ -72,8 +78,9 @@ function audit(
 
 /**
  * I19 — the ONLY path that consumes a team-vault credential. identity → RBAC → quorum →
- * run-with-injected-secret. Returns only `{ result }`; the secret never enters this scope and is
- * never placed in any outbound payload. Every outcome is audited.
+ * run-with-injected-secret, behind the two I26 tool-id refusals (a connector write; a connector
+ * tool that runs caller-directed code), which come first. Returns only `{ result }`; the secret
+ * never enters this scope and is never placed in any outbound payload. Every outcome is audited.
  */
 export async function answerFederatedInvoke(
   ctx: InvokeGateCtx,
@@ -82,6 +89,12 @@ export async function answerFederatedInvoke(
   if (ctx.isWriteForbiddenToolId?.(q.toolId) === true) {
     audit(ctx, q, "write_forbidden");
     return { kind: "error", error: "no_grant" }; // opaque — never reveal write confinement
+  }
+  // A peer must never choose what code runs on this machine — the one federated path that runs a
+  // command here (I24's preflight) takes it from local config only, behind the owner's HITL.
+  if (ctx.isCodeExecutionForbiddenToolId(q.toolId)) {
+    audit(ctx, q, "code_execution_forbidden");
+    return { kind: "error", error: "no_grant" }; // opaque — never reveal execution confinement
   }
   if (ctx.identity?.enabled === true && !ctx.identity.isOperatorValid()) {
     audit(ctx, q, "identity_invalid");

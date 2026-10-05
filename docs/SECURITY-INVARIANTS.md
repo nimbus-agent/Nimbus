@@ -482,7 +482,7 @@ Enforcement test: the `(e)`–`(i)` cases in the I22 block of `security-invarian
 
 ## I23 — ChatOps operational posts are bounded to server-derived destinations
 
-**Statement:** ChatOps operational (non-HITL) posts go only through `chatops/reply-dispatcher.ts` to a server-derived `ReplyTarget` — either the originating message's channel (`kind: "originating"`) or a policy-declared `notify` channel for a namespace (`kind: "namespaceNotify"`). The destination is NEVER a caller-supplied raw channel. Arbitrary-destination posting (e.g. to an attacker-controlled channel) remains reachable only via the HITL-gated `*.message.post` action types (I2). No other chatops module may reference the connector post tools (`slack_chat_post` / `teams_chat_post`) directly. Static **D17**.
+**Statement:** ChatOps operational (non-HITL) posts go only through `chatops/reply-dispatcher.ts` to a server-derived `ReplyTarget` — either the originating message's channel (`kind: "originating"`) or a policy-declared `notify` channel for a namespace (`kind: "namespaceNotify"`). The destination is NEVER a caller-supplied raw channel. Arbitrary-destination posting (e.g. to an attacker-controlled channel) remains reachable only via the HITL-gated `*.message.post` action types (I2). No other chatops module may reference the connector post tools (`slack_chat_post` / `teams_chat_post`) directly. No federated peer can name them either: `chatops/transport/connector-post.ts` exports them as `CHATOPS_POST_TOOL_IDS`, which the I26 write predicate refuses at `answerFederatedInvoke`. Until 2026-10-05 it did not, so a peer holding the owner's grant could post to a channel of its own choosing. Static **D17**.
 
 **Wired at:**
 
@@ -515,7 +515,7 @@ Enforcement test: the `(e)`–`(i)` cases in the I22 block of `security-invarian
 
 ## I25 — a tribal-knowledge KB capture writes only the config destination, behind the owner's HITL gate
 
-**Statement:** Capturing a repeated-question Q&A into a shared knowledge base writes ONLY to the destination pinned in the local owner's `nimbus.toml` (`[tribal.notion].database_id` / `[tribal.confluence].space_key` + `parent_page_id`), and only after the LOCAL owner approves it at the executor HITL gate. The caller (CLI `--target` or an in-chat trigger) supplies at most a KB *selector* (`notion` | `confluence`) — never the destination database/space/parent. An unconfigured target fails closed (`not_configured`) before any action is submitted; a rejected HITL leaves the cluster uncaptured. The write reaches the connector mesh only via the HITL-gated `notion.knowledge.write` / `confluence.knowledge.write` action types, whose tool ids (`notion_kb_append` / `confluence_kb_append`) are confined to the write-gate + the two connector definition sites. Static **D19**.
+**Statement:** Capturing a repeated-question Q&A into a shared knowledge base writes ONLY to the destination pinned in the local owner's `nimbus.toml` (`[tribal.notion].database_id` / `[tribal.confluence].space_key` + `parent_page_id`), and only after the LOCAL owner approves it at the executor HITL gate. The caller (CLI `--target` or an in-chat trigger) supplies at most a KB *selector* (`notion` | `confluence`) — never the destination database/space/parent. An unconfigured target fails closed (`not_configured`) before any action is submitted; a rejected HITL leaves the cluster uncaptured. The write reaches the connector mesh only via the HITL-gated `notion.knowledge.write` / `confluence.knowledge.write` action types, whose tool ids (`notion_kb_append` / `confluence_kb_append`) are confined to the write-gate + the two connector definition sites. No federated peer can name them either: `tribal-write-gate.ts` exports them as `TRIBAL_KB_WRITE_TOOL_IDS`, which the I26 write predicate refuses at `answerFederatedInvoke`. Until 2026-10-05 it did not, so a peer holding the owner's grant could append to a knowledge base of its own choosing. Static **D19**.
 
 **Wired at:**
 
@@ -531,7 +531,7 @@ Enforcement test: the `(e)`–`(i)` cases in the I22 block of `security-invarian
 
 ---
 
-## I26 — connector writes (warehouse/BI ∪ GitOps/ML) execute only behind the local HITL gate; the federated invoke gate rejects them
+## I26 — connector writes (warehouse/BI ∪ GitOps/ML) execute only behind the local HITL gate; the federated invoke gate rejects them, and every connector tool that runs caller-directed code
 
 **Extended (Part 2).** `isConnectorWriteToolId` now also consults `MIGRATED_WRITE_TOOL_IDS`
 (`connectors/connector-write-tool-ids.ts`) — connector write tools routed through the standalone
@@ -542,21 +542,195 @@ into a real routing table. The predicate is about write-ness, not routability: a
 be rejected for naming one of these tool ids whether or not the gateway could have dispatched it.
 The registry test asserts the set and the dispatchable rows never overlap.
 
-**Statement:** Connector write actions — warehouse/BI (Snowflake tag/comment set, Tableau / Power BI refresh, Looker datagroup/schedule trigger, Monte Carlo / Bigeye incident-issue acknowledge/resolve) **and** GitOps/ML (ArgoCD app sync/rollback, Flux kustomization/helmrelease reconcile, MLflow model promote/transition-stage) — execute ONLY behind the LOCAL owner's executor HITL gate (I2): their action types are all members of `HITL_REQUIRED_BACKING`. The federated peer invoke gate (`answerFederatedInvoke`) is fail-closed against any write-classified tool id via the injected `isWriteForbiddenToolId` predicate (the union `isConnectorWriteToolId`): a peer's `federation.invoke` for a connector write is rejected with a `write_forbidden` audit decision before any connector dispatch, so a teammate can never trigger a connector write over the wire. The write tool ids themselves are confined to the two single-source-of-truth modules (`connectors/warehouse-write-tools.ts`, `connectors/gitops-ml-write-tools.ts`), the connector definition `server.ts` files, and the gateway transport/dispatch sites. Static **D20**.
+**Kept in step with the connectors package (2026-10-05).** The predicate is a hand-maintained list,
+and five mutating tools were on none of it: `aws_ec2_instance_stop`, `aws_ec2_instance_start`,
+`slack_message_post_dm` and `teams_message_post_chat` were registered as plain READ tools in
+`@nimbus-dev/connectors` 0.2.1 and moved to the consent kit's write registrar in 0.2.2, and
+`gdrive_file_trash` still registers as a read in 0.2.2 although it PATCHes `trashed: true`. All
+five are now in `MIGRATED_WRITE_TOOL_IDS`. `connectors/connector-write-sync.test.ts` keeps the list
+honest from now on: it reads the INSTALLED connectors package as text (never importing it — the
+gateway's only import from that package is `setConnectorMode`) and derives every tool id registered
+through the write registrar, then fails on any `isConnectorWriteToolId` does not classify. The
+derivation follows the registrar by DATA FLOW from `createWriteToolRegistrar` — aliases, kit
+hand-offs, kit factories, and forwarders of any name — rather than by a `register*WriteTool` naming
+convention, which 0.2.2 already breaks (`registerStatusTool`, `registerPipelineActionTool`,
+`registerFeedbackTool`). It follows an exported registrar, forwarder, factory or shared kit through
+every import shape that keeps its name: a named import, a member of a namespace or dynamic import
+(`kit.registerStatusTool(...)`, or an alias of that member), and a destructuring, renamed or not.
+Every identifier an id is read through — a loop's table, a string constant, a loop variable, a kit
+option, a forwarded parameter — is read through the ONE binding of its name the use can see, taken
+from a census of every way a file binds a name (each declarator, initialised or not, nested, rest
+and array patterns included; function, arrow and method parameters; `catch` bindings; every form of
+import; function, class, enum and namespace names), never a same-named binding another connector or
+another function declares. A table or constant counts only as a `const` holding exactly an array or
+string literal, and an imported table only as one its module declares once with `export const`. It
+is fail-closed: a registration whose id it cannot resolve to a constant (including an identifier a
+second visible binding may shadow, and a loop table imported from a module it does not read,
+re-exported, or bound by a `let`), a registrar used as a value it does not follow (an aliased
+import included), an unbound factory result, a registrar exported as
+the DEFAULT, a namespace or dynamic import of a module that may export one used other than as
+`m.member` (or destructured), a namespace re-export of such a module, a string literal spelling a
+registrar's name (a computed access), an exported registrar no file names outside its declaration,
+a `mutates:` literal no recognised registration consumes, and a file the comment stripper lost its
+place in are each a violation that fails the test. It guards itself with a floor on the count, the
+registration shapes the pinned package uses, and upstream's own signal: every connector whose
+manifest declares `write`/`delete` in `hitlRequired` must yield a derived registration. Per-shape
+fixtures (`connectors/testing/connector-write-fixtures.ts`) prove an unclassified write is reported
+in every shape it follows, not only the shapes the installed version uses, and the scanner's own
+tests prove each refused shape is refused. **Stated bound, three blind spots:** it sees write
+REGISTRATIONS only, so a tool that mutates while registered as a read — `gdrive_file_trash` today —
+is invisible to it and has to be classified by hand; an object a registrar was handed off into,
+then read by a NON-literal computed key (`regs[key](...)`) or by reflection (`Object.values(regs)`),
+is not followed — the `mutates:` cross-check catches such a call only when it carries a `mutates:`
+literal, which a positional forwarder's call does not; and a constant table MUTATED after its
+declaration (`ACTIONS.push(...)`) is read as declared — the `mutates:` cross-check catches the push
+only when the pushed element carries a `mutates:` literal. The binding census is a text scan that
+over-approximates where each binding is visible, so it refuses some shadowing a type checker would
+resolve rather than resolve any it cannot rule out. It also asserts that no write tool ends in a
+verb `share.replay`'s read allowlist (`share/read-tool-registry.ts`) would run, since replay is the
+other path that executes a tool id a caller names. The four comms writes whose literals static
+rules confine to their own gates — `notion_kb_append` / `confluence_kb_append` (D19) and
+`slack_chat_post` / `teams_chat_post` (D17) — used to be left out of the predicate on the theory that
+those gates already confined them. They confine the DESTINATION only when the gateway itself calls
+the tool (I25 / I23); a federated invoke carries the peer's own arguments, so a granted peer chose
+the knowledge base or the channel. Each gate now exports its ids as a set
+(`TRIBAL_KB_WRITE_TOOL_IDS`, `CHATOPS_POST_TOOL_IDS`) and the predicate refuses them through it
+(`GATE_CONFINED_WRITE_TOOL_IDS`), so the literals stay where D17 / D19 put them and the guard has no
+exception list: it derives these four like every other write.
+
+**Matched in the form a federated session executes (2026-10-05).** A team-credentialed session
+lists its tools through `@mastra/mcp`'s `MCPClient.listTools()`, which keys every tool
+`<server>_<tool>` (`aws_aws_ec2_instance_stop`), and `withConnectorSession` looks the requested id
+up in that map verbatim — so the namespaced key is the form a federated invoke executes, and the
+bare id is not found. The predicate used to match bare ids only: it refused exactly the ids that
+cannot run and passed the ones that can, for EVERY write, long-classified ones included. A probe
+through the real invoke gate, the real predicate, the real `withConnectorSession` lookup and a real
+`MCPClient` refused `tableau_datasource_refresh` and executed `tableau_tableau_datasource_refresh`
+behind a grant. `isConnectorWriteToolId` now also matches any `_`-delimited suffix of the id, so every
+server key is covered (`github_actions_gha_run_trigger` included); it tests only suffixes no longer
+than the longest write id, so a hostile id costs time linear in its length rather than quadratic.
+`test/integration/connectors/write-tool-namespacing.integration.test.ts` pins the key scheme on REAL
+connector processes listed through a real `MCPClient`: every key is `<server>_<tool>`, and the
+namespaced form always gets the bare id's verdict, in both directions. **Stated bound:** the same
+namespacing means a bare id is NOT FOUND wherever the gateway looks a tool up verbatim in an
+`MCPClient`-keyed map — a separate, fail-closed defect (the call errors and nothing runs), not fixed
+here, whose unit tests fake bare-keyed tool maps. Its callers, each confirmed against real connector
+processes listed through a real `MCPClient` (`notion_notion_kb_append`, `snowflake_snowflake_list`
+and `stripe_stripe_search` present, the bare ids absent): through `withConnectorSession`, the
+connector-write transport (personal, `connectors/connector-write-transport.ts`, and
+team-credentialed, the `localOpInvokeCtx` spawn in `platform/assemble.ts`), the team list drain
+(`teamvault/team-tool-invoke.ts` `drainTeamListSession`) and the PERSONAL warehouse/BI list drain
+(`connectors/warehouse-sync-transport.ts` `realPersonalDrain`, which every personal-credential
+Snowflake, Tableau, Looker, Power BI, Monte Carlo and Bigeye sync goes through); and, through the
+mesh dispatcher, the tribal KB capture (`tribal/tribal-write-gate.ts` sets a bare `mcpToolId`, which
+`connectors/registry.ts` looks up verbatim in the mesh's `<server>_<tool>`-keyed map, so an
+owner-approved capture fails with "Tool not found"). The federated invoke path itself executes only
+the namespaced key, so `nimbus team vault grant` / `nimbus team invoke` must name the
+`<server>_<tool>` key (`stripe_stripe_search`, not `stripe_search`); `docs/cli-reference.md` now says
+so, in place of an example that could never run. Matching both forms keeps I26 correct whichever
+way the lookup is fixed.
+
+**Code-executing connector tools are refused too (2026-10-05).** The write predicate classifies by
+write-ness, and two READ registrations escaped it while letting the caller decide what code runs on
+the anchor: `iac_terraform_plan` and `iac_pulumi_preview` each hand a caller-supplied
+`workingDirectory` to terraform or pulumi. Planning a Terraform configuration loads it and runs its
+provider plugins and any `external` data source program; a Pulumi preview runs the stack program.
+`iac` is team-invokable (its team-vault key is `iac.enabled`), so a peer granted either id — in the
+namespaced form that executes, `iac_iac_terraform_plan` — could have had the anchor evaluate code at
+a path of its choosing, with no owner approval of that code. That is worse than a write, and it is
+what the federation already refuses elsewhere: the one federated path that runs a command on the
+owner's machine, `federation.preflight` (I24), takes the command from local config only, behind the
+owner's HITL. `answerFederatedInvoke` now also calls `ctx.isCodeExecutionForbiddenToolId`, wired to
+`isConnectorCodeExecutionToolId` over `CONNECTOR_CODE_EXECUTION_TOOL_IDS`
+(`connectors/connector-code-execution-tool-ids.ts`) and matched bare and namespaced by the same
+`matchesBareOrNamespacedToolId` (`connectors/namespaced-tool-id.ts`) the write predicate now
+delegates to, so the two cannot match by different rules. The check runs right after the write
+check and before identity, the grant, quorum and the run; it audits `code_execution_forbidden` and
+returns the same opaque `no_grant`. Unlike the write predicate, the ctx field is REQUIRED, so no
+federated invoke ctx can be built without it. The list also names the three iac writes that evaluate
+the same directory (`iac_terraform_apply`, `iac_terraform_destroy`, `iac_pulumi_up`): the write check
+refuses them first, so they audit `write_forbidden`, but their code-execution classification no
+longer depends on the write list. **Why I26, not I19 or I24:** the enforcement point is I26's — the
+tool-id refusal at the top of `answerFederatedInvoke`, wired in `federation-rpc.ts` and pinned by
+D20 — and it reuses I26's namespaced matching and sync-guard approach. I19 governs credential
+custody, which this does not touch, since the refusal comes before any secret is read. I24 is the
+precedent for the principle but names a different gate (`preflight-gate.ts`) and static rule (D18).
+`connectors/connector-code-execution-sync.test.ts` keeps the list honest against the INSTALLED
+package. Every listed id must still be registered there, so a rename cannot leave the list naming
+nothing. Every connector whose source can start a process or evaluate code must appear in its
+review: `connectors/testing/connector-process-spawns.ts` derives that set from the source text,
+following relative imports to a fixed point (eleven connectors and 42 tools in both 0.2.1 and 0.2.2).
+Each such tool must be refused as code execution, refused as a write, or reviewed as a read whose
+caller values cannot select code. The review that places a read in that last bucket is **platform-aware**:
+a caller value is safe only if it never reaches a CLI that `cmd.exe` would re-parse.
+
+**The `az` / `gcloud` reads are refused too — the Windows `.cmd` door (2026-10-05).** Judging a read
+safe because "the caller picks a RESOURCE but never the code" is POSIX-only reasoning. On Windows,
+spawning a bare command name resolves it through `PATHEXT`, and `az` (Azure CLI) and `gcloud`
+(Google Cloud SDK) install as `.cmd` / batch wrappers; a batch target runs through `cmd.exe`, which
+RE-PARSES the reconstructed command line, so a flag VALUE or an `isSafeCliArg`-guarded positional
+carrying a `cmd` metacharacter (`"`, `&`, `|`, `%`) escapes its slot and runs an arbitrary command —
+`shared/safe-cli-arg.ts`'s `isSafeCliArg` rejects only a leading `-` and control characters, not
+those. So a federated peer (or an untrusted share, below) granted an `az` / `gcloud`-backed read
+could run a command on a Windows anchor, the same class the iac refusal closes, through a tool the
+sweep had called safe and the shipped docs had affirmed. `WINDOWS_CLI_ARG_INJECTION_TOOL_IDS` now
+refuses every read of the four `.cmd`-backed connectors — `azure`, `gcp`, `cloud-logging`,
+`vertex-ai` — at connector-read granularity, so a later argv change inside one cannot silently
+reopen the vector. (`bigquery` is `gcloud`-backed too, but its only spawn is
+`gcloud auth print-access-token` with no caller input and its tools are REST, so no caller value
+reaches a CLI argv; its reads stay reviewed.) The reads that REMAIN reviewed are backed by `aws` or
+`kubectl`, which install as native `.exe` on Windows — no `cmd.exe` re-parse — and pass caller
+values only as flag values or `isSafeCliArg`-guarded positionals. **Stated residual:** that native-`.exe`
+basis is the one assumption the `aws` / `kubectl` reviews rest on; were such a CLI resolved to a
+`.cmd` wrapper, the same reasoning would move its reads into the refusal. The durable fix is
+upstream (reject `cmd` metacharacters for a value handed to a `.cmd` CLI, or spawn it shell-safe);
+the gate refusal does not wait on it.
+
+**The same ids are refused at the `share.replay` door.** Replay is the other path a caller names
+tools through — an untrusted share file, which can arrive via `federation.shareForward` — run against
+the owner's own credentialed mesh. It gates by a NAME-based read-verb allowlist (`share/read-tool-registry.ts`),
+and dropping the `preview` verb closed that door for `iac_pulumi_preview`; but the `az` / `gcloud`
+reads end in `list` / `get` / `search`, verbs hundreds of genuine reads carry, so the verb cannot be
+dropped. `isReadOnlyToolId` therefore EXCLUDES any `isConnectorCodeExecutionToolId` id by explicit
+id whatever its verb, so these reads are unreplayable exactly as the federated gate refuses them
+(kept in step by the same sync guard).
+
+A connector that gains the capability, or a new
+tool in one that has it, fails the guard until someone classifies it. The wire test now lists real
+`iac`, `azure` and `gcp` processes beside the others: each namespaced key gets its bare id's verdict,
+exactly the five iac ids and the two `azure` / `gcp` reads among them are refused as code execution,
+and the source census derives what the real `aws`, `kubernetes`, `iac`, `azure` and `gcp` processes
+list. **Stated
+bounds:** the iac connector's own I15 sandbox (no network, no granted paths) narrows what such a run
+could read, platform by platform, and the refusal does not lean on it. The census recognises the
+capability by name, so reflection and a third-party package that spawns internally are outside it —
+it does now follow a member-form dynamic loader (`module.require(x)`, `import.meta.require(x)`), which
+its bare-`require(x)` pattern's lookbehind had skipped, following a literal specifier and flagging a
+computed one. A read was reviewed against the argv it builds today, so a connectors bump that changes
+a reviewed read's arguments without adding a tool is not flagged — this is why the `az` / `gcloud`
+refusal is at connector-read granularity rather than per-tool. And the local owner's own paths do not
+consult the list.
+
+**Statement:** Connector write actions — warehouse/BI (Snowflake tag/comment set, Tableau / Power BI refresh, Looker datagroup/schedule trigger, Monte Carlo / Bigeye incident-issue acknowledge/resolve) **and** GitOps/ML (ArgoCD app sync/rollback, Flux kustomization/helmrelease reconcile, MLflow model promote/transition-stage) — execute ONLY behind the LOCAL owner's executor HITL gate (I2): their action types are all members of `HITL_REQUIRED_BACKING`. The federated peer invoke gate (`answerFederatedInvoke`) is fail-closed against any write-classified tool id via the injected `isWriteForbiddenToolId` predicate (the union `isConnectorWriteToolId`): a peer's `federation.invoke` for a connector write is rejected with a `write_forbidden` audit decision before any connector dispatch, so a teammate can never trigger a connector write over the wire. The same gate is fail-closed against any connector tool that runs caller-directed code on the anchor, write or read, via the REQUIRED `isCodeExecutionForbiddenToolId` predicate (`isConnectorCodeExecutionToolId`): the request is rejected with a `code_execution_forbidden` audit decision before identity, the grant, quorum and the run, so a teammate can never choose what code the anchor evaluates. The write tool ids themselves are confined to the two single-source-of-truth modules (`connectors/warehouse-write-tools.ts`, `connectors/gitops-ml-write-tools.ts`), the connector definition `server.ts` files, and the gateway transport/dispatch sites. Static **D20**.
 
 **Wired at:**
 
 - `packages/gateway/src/connectors/warehouse-write-tools.ts` + `packages/gateway/src/connectors/gitops-ml-write-tools.ts` — the per-group SSoTs (`WAREHOUSE_BI_WRITES` / `GITOPS_ML_WRITES`, each a `ConnectorWrite` `{ actionType, toolId, service }`), their tool-id sets, and the `isWarehouseWriteToolId` / `isGitopsMlWriteToolId` predicates. Kept in drift-sync with `HITL_REQUIRED_BACKING` in `executor.ts` (asserted in `connector-write-registry.test.ts`).
-- `packages/gateway/src/connectors/connector-write-registry.ts` — the union: `CONNECTOR_WRITES`, the `isConnectorWriteToolId(toolId)` predicate, and `connectorWriteByActionType(type)`.
+- `packages/gateway/src/connectors/connector-write-registry.ts` — the union: `CONNECTOR_WRITES`, the `isConnectorWriteToolId(toolId)` predicate (a bare write id, or any `_`-delimited suffix of the id, i.e. the `<server>_<tool>` key a federated session executes), and `connectorWriteByActionType(type)`. The predicate also covers `GATE_CONFINED_WRITE_TOOL_IDS`: `TRIBAL_KB_WRITE_TOOL_IDS` from `tribal/tribal-write-gate.ts` and `CHATOPS_POST_TOOL_IDS` from `chatops/transport/connector-post.ts`, imported as sets so their D19 / D17 literals stay in those files.
 - `packages/gateway/src/engine/executor.ts` — every connector write `actionType` is a member of `HITL_REQUIRED_BACKING` (I2), so the local executor gate always fires before connector dispatch.
-- `packages/gateway/src/ipc/federation-rpc.ts` `"federation.invoke"` — injects `isWriteForbiddenToolId: isConnectorWriteToolId` into the `answerFederatedInvoke` ctx, so the gate rejects connector writes asked for by a peer.
-- `packages/gateway/src/federation/invoke-gate.ts` `answerFederatedInvoke()` — consults `ctx.isWriteForbiddenToolId?.(q.toolId)`; on a match it records a `write_forbidden` audit decision and returns fail-closed without invoking the tool.
-- Enforced statically by **D20** in `scripts/structure-audit/check-nimbus-invariants.ts` — any file outside the SSoT / connector / transport-dispatch allow-list (excluding `.test.ts`) that references a connector write tool id causes `audit:invariants` to exit 1 (`D20-connector-write`); additionally `invoke-gate.ts` must reference `isWriteForbiddenToolId` or the check fails (`D20-invoke-gate-predicate`).
-- Runtime test in `packages/gateway/src/security-invariants.test.ts` — the `I26` describe block: federation-rpc wires `isWriteForbiddenToolId`/`isConnectorWriteToolId`, the invoke gate consults the predicate and emits `write_forbidden`, every `CONNECTOR_WRITES` action type is HITL-gated, plus a `D20` presence assertion. A functional rejection of a GitOps write id via the real `isConnectorWriteToolId` lives in `federation/invoke-gate.test.ts`.
+- `packages/gateway/src/connectors/connector-code-execution-tool-ids.ts` — `CONNECTOR_CODE_EXECUTION_TOOL_IDS`, the union of two documented subsets: `DIRECTORY_EVALUATION_TOOL_IDS` (iac tools that evaluate code at a caller-named path: `iac_terraform_plan`, `iac_pulumi_preview`, plus the three iac writes that do the same) and `WINDOWS_CLI_ARG_INJECTION_TOOL_IDS` (every read of the `az` / `gcloud`-backed `azure` / `gcp` / `cloud-logging` / `vertex-ai` connectors, whose caller value reaches a `.cmd` wrapper's argv on Windows). Both are refused by the `isConnectorCodeExecutionToolId(toolId)` predicate, bare or any `_`-delimited suffix. Both predicates match through `connectors/namespaced-tool-id.ts` `matchesBareOrNamespacedToolId`, one implementation with one cost bound.
+- `packages/gateway/src/share/read-tool-registry.ts` `isReadOnlyToolId` — excludes any `isConnectorCodeExecutionToolId` id by explicit id, so a `.cmd`-backed read whose verb is `list` / `get` / `search` is never replayable from an untrusted share, closing the second caller-names-a-tool door the same way the gate closes the federated one.
+- `packages/gateway/src/ipc/federation-rpc.ts` `"federation.invoke"` — injects `isWriteForbiddenToolId: isConnectorWriteToolId` and `isCodeExecutionForbiddenToolId: isConnectorCodeExecutionToolId` into the `answerFederatedInvoke` ctx, so the gate rejects connector writes and code-executing connector tools asked for by a peer.
+- `packages/gateway/src/federation/invoke-gate.ts` `answerFederatedInvoke()` — consults `ctx.isWriteForbiddenToolId?.(q.toolId)`, then `ctx.isCodeExecutionForbiddenToolId(q.toolId)` (a REQUIRED `InvokeGateCtx` field), both before identity, the grant, quorum and the run; on a match it records a `write_forbidden` or `code_execution_forbidden` audit decision and returns the opaque `no_grant` without invoking the tool.
+- Enforced statically by **D20** in `scripts/structure-audit/check-nimbus-invariants.ts` — any file outside the SSoT / connector / transport-dispatch allow-list (excluding `.test.ts`) that references a connector write tool id causes `audit:invariants` to exit 1 (`D20-connector-write`); additionally `invoke-gate.ts` must CALL `isWriteForbiddenToolId` (`D20-invoke-gate-predicate`) and `isCodeExecutionForbiddenToolId` (`D20-invoke-gate-code-execution`) or the check fails. Until 2026-10-05 the write rule accepted the name alone, which the `InvokeGateCtx` field declaration supplies, so deleting the call passed it.
+- Runtime test in `packages/gateway/src/security-invariants.test.ts` — the `I26` describe block: federation-rpc wires `isWriteForbiddenToolId`/`isConnectorWriteToolId` and `isCodeExecutionForbiddenToolId`/`isConnectorCodeExecutionToolId`, the invoke gate consults the write predicate and emits `write_forbidden`, it calls the code-execution predicate before identity, the grant, quorum and the run and emits `code_execution_forbidden`, the code-execution field is required, every `CONNECTOR_WRITES` action type is HITL-gated, plus a `D20` presence assertion. A functional rejection of a GitOps write id via the real `isConnectorWriteToolId` lives in `federation/invoke-gate.test.ts`, as does one per reclassified tool and per code-executing iac read in both forms, each first proving the grant would answer it so the refusal is the predicate's alone, plus the ordering case (refused with no entry and no grant while identity, quorum and the run are never consulted).
+- Sync guard in `packages/gateway/src/connectors/connector-write-sync.test.ts` — every write the installed connectors package registers is classified, bare and namespaced (see above); the derivation lives in `connectors/testing/connector-write-registrations.ts`, with its own tests beside it.
+- Sync guard in `packages/gateway/src/connectors/connector-code-execution-sync.test.ts` — every listed code-executing id is still registered, and every tool of every connector that can start a process or evaluate code is refused or reviewed (see above), with every read of the four `az` / `gcloud`-backed connectors refused so none stays answerable to a peer; the census lives in `connectors/testing/connector-process-spawns.ts`, with per-shape tests beside it. The `az` / `gcloud` reads being refused at the `share.replay` door too is pinned in `share/read-tool-registry.test.ts`.
+- Wire contract in `packages/gateway/test/integration/connectors/write-tool-namespacing.integration.test.ts` — real connector processes listed through a real `MCPClient`: every key is `<server>_<tool>` and gets its bare id's verdict under both predicates, exactly the five iac code-executing keys plus `azure_azure_app_service_list` and `gcp_gcp_cloud_run_service_list` are refused as code execution, and the process census matches what real `aws`, `kubernetes`, `iac`, `azure` and `gcp` processes list. The namespaced and bounded-cost matching is unit-tested in `connectors/connector-write-registry.test.ts`, `connectors/connector-code-execution-tool-ids.test.ts` and `connectors/namespaced-tool-id.test.ts`, and each reclassified id, the four gate-confined comms writes, `tableau_datasource_refresh`, the two code-executing iac reads and the `azure` / `gcp` `.cmd`-backed reads are refused in both forms at the gate in `federation/invoke-gate.test.ts`.
 
-**Anti-pattern:** exposing a connector write over `federation.invoke` without the predicate; calling a connector write tool id from anywhere but the SSoT / connector / transport-dispatch sites; adding a connector write action type to a connector without adding it to `HITL_REQUIRED_BACKING` + the matching group SSoT.
+**Anti-pattern:** exposing a connector write over `federation.invoke` without the predicate; calling a connector write tool id from anywhere but the SSoT / connector / transport-dispatch sites; adding a connector write action type to a connector without adding it to `HITL_REQUIRED_BACKING` + the matching group SSoT; checking a federated tool id against bare ids only (a session executes `<server>_<tool>`); leaving a write out of the predicate because a static rule confines its literal (that rule confines the gateway's own calls, not a peer's); treating a tool as safe to federate because it mutates nothing, when it hands a caller-supplied path or program to something that evaluates it; judging a read safe because its caller value is "only a flag value" without checking what runs the command — on Windows a value handed to an `az` / `gcloud` (`.cmd`) CLI is re-parsed by `cmd.exe` and can break out of its argument.
 
-**How to comply:** keep the group SSoTs (`WAREHOUSE_BI_WRITES` / `GITOPS_ML_WRITES`) and `HITL_REQUIRED_BACKING` in sync; route every connector write through the local executor gate; pass `isWriteForbiddenToolId: isConnectorWriteToolId` to any federated invoke ctx; never name a write tool id outside the allow-listed sites.
+**How to comply:** keep the group SSoTs (`WAREHOUSE_BI_WRITES` / `GITOPS_ML_WRITES`) and `HITL_REQUIRED_BACKING` in sync; route every connector write through the local executor gate; pass `isWriteForbiddenToolId: isConnectorWriteToolId` and `isCodeExecutionForbiddenToolId: isConnectorCodeExecutionToolId` to any federated invoke ctx; never name a write tool id outside the allow-listed sites; classify every write the connectors package registers — in `MIGRATED_WRITE_TOOL_IDS`, or, when a static rule confines its literal, through a set its gate exports — since the sync guard fails on any it finds unclassified; and classify every tool of a connector that can start a process — into `CONNECTOR_CODE_EXECUTION_TOOL_IDS` when the caller can choose what it runs, otherwise into the code-execution sync guard's review — since that guard fails on any it finds unclassified; and make that classification platform-aware: a read backed by a CLI that installs as a `.cmd` / batch wrapper on Windows (`az`, `gcloud`) belongs in `WINDOWS_CLI_ARG_INJECTION_TOOL_IDS` the moment a caller value can reach its argv, because `cmd.exe` re-parses it.
 
 ---
 
