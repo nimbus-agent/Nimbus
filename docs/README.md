@@ -951,7 +951,7 @@ Architecture is stabilizing; not all interfaces are frozen.
 3. Check issues tagged `good first issue`.
 4. Open a discussion before large PRs.
 
-**Adding a connector is the easiest way in.** Run [`create-nimbus-connector`](https://github.com/nimbus-agent/create-nimbus-connector) from the repository root — `bunx create-nimbus-connector --spec ./your-service.spec.json` — and it emits the whole connector package: the server, the manifest, the tsconfig, the package.json and a test. See [Contributing](./CONTRIBUTING.md#adding-a-new-mcp-connector).
+**Adding a connector is the easiest way in.** Run [`create-nimbus-connector`](https://github.com/nimbus-agent/create-nimbus-connector) from the root of the connectors repository, [nimbus-agent/nimbus-mcp-servers](https://github.com/nimbus-agent/nimbus-mcp-servers) — `bunx create-nimbus-connector --spec ./your-service.spec.json` — and it emits the whole connector package: the server, the manifest, the tsconfig, the package.json and a test. See [Contributing](./CONTRIBUTING.md#adding-a-new-mcp-connector).
 
 For workflow, verification commands, and PR expectations, see [`CONTRIBUTING.md`](./CONTRIBUTING.md). Community standards are in [`CODE_OF_CONDUCT.md`](./CODE_OF_CONDUCT.md).
 

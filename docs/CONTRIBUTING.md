@@ -194,9 +194,9 @@ A connector that the gateway should also INDEX needs its sync handler and regist
 this repository — adding one touches both repos. See [nimbus-agent/nimbus-mcp-servers](https://github.com/nimbus-agent/nimbus-mcp-servers).
 
 Model your spec on one of the generator's own fixtures — `fixtures/netlify.spec.json` is a good
-read-only example. Add `--standalone` if you want the connector outside this repo; that variant
-resolves its helpers from the published `@nimbus-dev/sdk` instead of relative `../../shared/*`
-paths.
+read-only example. Add `--standalone` if you want the connector outside the connectors repository;
+that variant resolves its helpers from the published `@nimbus-dev/sdk` instead of relative
+`../../shared/*` paths.
 
 **`nimbus scaffold extension` is not the tool for this.** It emits a four-file generic extension
 shell with no `src/server.ts`, and every connector gate — `audit:connector-registry-drift` here,

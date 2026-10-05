@@ -109,7 +109,7 @@ Run `nimbus test` from the connector directory before submitting. This executes 
 
 ## Coverage Gate
 
-MCP connectors: **≥ 85% line + ≥ 80% branch coverage** (the per-file floor; tracked in `docs/structure-audit/coverage-baseline.json`). Integration tests use a fresh temp dir and real SQLite — no mocking the DB layer.
+The gateway-side half — the sync handler and its mapper under `packages/gateway/src/connectors/` — is held to this repository's per-file floor: **≥ 85% line + ≥ 80% branch coverage** (`audit:coverage-floor`; below-floor debt is tracked in `docs/structure-audit/coverage-baseline.json`). The MCP server half is measured in [nimbus-agent/nimbus-mcp-servers](https://github.com/nimbus-agent/nimbus-mcp-servers), not here: no connector source is in this repository's coverage. Integration tests use a fresh temp dir and real SQLite — no mocking the DB layer.
 
 ## Scaffold
 

@@ -18,6 +18,42 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
 
 ## Post-Phase-6 deliveries
 
+- **2026-10-05 — The last live references to the deleted `packages/mcp-connectors` workspace are
+  gone, and the local test commands are held to CI's list.** #1347 (2026-08-27) deleted the
+  workspace and dropped it from the two CI test commands, but `bun run test` and `test:ci` (the unit
+  run behind the full `preflight` tier) kept it as a test path for five more weeks. Nothing noticed,
+  because nothing could: `bun test` exits 0 when one of its path filters matches no test file as
+  long as another matches something (measured on bun 1.3.14); only a list that matches nothing at
+  all fails. The parity test's own comment claimed the opposite, that a dead path makes `bun test`
+  exit non-zero, and is corrected. Dropping the path changes no run: on its own,
+  `bun test packages/mcp-connectors` matches none of the 4,320 files it searches, and bun runs the
+  union of what each filter matches. `scripts/ci/cross-platform-parity.test.ts` now also holds the
+  `test` script and `test:ci`'s list (`UNIT_TEST_PATHS`, exported from `scripts/lib/ci-tests.ts`)
+  equal to the push leg's, so a dead path kept or a real one missing fails in either.
+
+  Also removed, each matching nothing: the `packages/mcp-connectors/*/node_modules` path in
+  `setup-nimbus-ci`'s `node_modules` cache (the cache key is unchanged, but `actions/cache` hashes
+  the path list into each entry's version, so every OS misses once and saves a fresh entry; the
+  separately cached Bun download cache is untouched); the two `.gitignore` lines for the
+  workspace's old build bundles; the second glob in `iterateSourceFiles`, which `audit:invariants`,
+  `audit:any` and the other structure audits walk; and `gen:connector-registry`'s
+  `NIMBUS_CONNECTOR_SPECIFIER=workspace` form, which could only emit imports into the deleted
+  directory. The regenerated registry is byte-identical. `audit:connector-registry-drift` now parses
+  only the package specifier, so an entry hand-written in the old relative form no longer counts as
+  registering its connector, and its findings name `@nimbus-dev/connectors` instead of the deleted
+  directory.
+
+  Docs that still described the old layout now point at nimbus-agent/nimbus-mcp-servers: the docs
+  site's connectors overview and getting-started layout table, the README's "adding a connector"
+  paragraph, the CodeQL row in `security-hardening.md`, the documentation issue form, the coverage
+  section of the connector-authoring skill (no connector source is in this repository's coverage),
+  Sonar config comments, and gateway source comments that cited `packages/mcp-connectors` paths or
+  the gates that left with the connectors. Dated records keep the old name: this changelog, the
+  roadmap, and comments describing what was true when they were written. Test fixtures that modelled
+  the old layout now model the current one. The bun.lock fixture in `_release-train-dep.test.ts` now
+  nests under a scoped workspace name (`@nimbus/gateway`), so a parser that took the owner to be the
+  text before the first `/` fails it; the old unscoped name let that parser pass. No runtime change.
+
 - **2026-10-05 — `audit:boundaries` enforces its rules again, and fails when it cannot.** The gate
   runs dependency-cruiser over `.dependency-cruiser.cjs`: no cycles, no cross-package source imports,
   and PAL isolation. It had been inert on a coin flip since TypeScript 7 landed (#1049, 2026-08-05).
