@@ -18,6 +18,16 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
 
 ## Post-Phase-6 deliveries
 
+- **2026-10-05 — The release demo-tour check accepts only `oncall pushed` as its first step.** The
+  check on a published binary's `nimbus demo` (`scripts/release/assert-demo-tour.ts`, run by
+  `released-install-smoke.yml`) accepted two first steps while the pushed brief was rolling out:
+  `oncall pushed`, and the older `oncall --incident pagerduty:PDEMO412` that the latest release
+  still printed. Every release since v7.33.0 prints `oncall pushed`, so the old form now fails. The
+  test fixture is a fresh, real `nimbus demo` capture from the published v7.35.0 binary (Windows,
+  non-TTY, spinner frames included, run with LOCALAPPDATA/APPDATA in a temp sandbox), with
+  machine paths masked as before. The three transition tests are replaced by a premise check and a
+  test that the old form fails.
+
 - **2026-10-05 — The bundled connectors move to 0.2.4.** `@nimbus-dev/connectors` goes from
   0.2.2 to 0.2.4 (two releases, the same dependencies), and the gateway binary bundles it. As Nimbus
   runs them, the connectors now:
