@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1791218899576,
+  "lastUpdate": 1791221891187,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "6cfee34647e8533a0628c2a752b4512efc865d6f",
-          "message": "docs(launch): prove-then-launch design + execution plan (#906)\n\n## Summary\n\nNimbus is already published in every mechanical sense — public repo,\nlive docs site, npm, winget/brew/scoop/apt/yum, native installers, VS\nCode extension — and has **3 stars, 0 forks, and no known user other\nthan the author**. The bottleneck is not packaging. It is discovery,\nplus a first-run path that has never executed on a machine the author\ndoes not own.\n\nThis PR adds the design and the execution plan for closing that gap.\n**Docs only — no code changes.**\n\n- `docs/superpowers/specs/2026-07-28-launch-plan-design.md` — three\nblocking gates: foreign-machine proof, private alpha, public launch\n(Show HN last).\n- `docs/superpowers/plans/2026-07-28-launch-execution.md` — four\nengineering tasks with TDD steps, plus runbooks for the human gates.\n- Both review documents and their responses, per repo convention.\n\n## Related Issue\n\nNo tracking issue. Follows up #887 (zero-config onboarding) and #895\n(`nimbus init` could never index).\n\n## Type of Change\n\n- [ ] Bug fix (non-breaking change that fixes an issue)\n- [ ] New feature (non-breaking change that adds functionality)\n- [ ] Breaking change (fix or feature that changes existing behaviour)\n- [ ] Refactor (no behaviour change)\n- [ ] Test improvement\n- [x] Documentation only\n- [ ] CI / tooling\n\n## Non-Negotiables Checklist\n\n- [x] `bun run typecheck` — N/A, no source changed\n- [x] `bun run lint` — N/A, no source changed (`lint:markdown` clean: 95\nfiles, 0 errors)\n- [x] All existing tests pass — N/A, no source or test changed\n- [x] New behaviour is covered by tests — N/A, documentation only\n- [x] No `any` types introduced — N/A\n- [x] No credentials, tokens, or secret values appear in logs, IPC\nmessages, config, or test fixtures\n- [x] Platform-specific code is behind the `PlatformServices`\nabstraction — N/A\n- [x] The HITL consent gate has not been weakened, bypassed, or made\nconfigurable\n- [x] N/A — `docs/README.md` is not touched\n\n## Testing\n\nDoc gates run locally in the worktree:\n\n- `bun run lint:markdown` → **95 files, 0 errors**\n- `bun run audit:doc-refs` → **625 refs across 16 docs — all resolve**\n- `lychee --offline` on the five new files → **6 links, 0 errors**\n\n## Notes for Reviewers\n\nThree claims were checked against the code during planning, and two\nturned out to be wrong. They are corrected in-tree rather than left to\nmislead:\n\n1. **\"Some connectors are stubs\" — false.** No `not implemented` markers\nexist anywhere in `packages/mcp-connectors/`; the eleven 6-line\n`server.ts` files are the `runReadOnlyMcpConnector` helper with real\nlogic in a sibling `tools.ts`. The claim came from a stale Phase 6 Slice\n7 note. The honest risk is narrower: ~95 connectors implemented and\ncontract-tested, essentially none verified against a live API.\n\n2. **\"No telemetry\" — imprecise.** An opt-in, aggregate-only collector\nexists in `packages/gateway/src/telemetry/`, defaulting to `[telemetry]\nenabled = false`. The conclusion (it cannot measure the launch) is\nunchanged, but `docs/cli-reference.md` documents a default endpoint, so\nanyone grepping for URLs will find one. The plan makes stating the\ndefault-off position a pre-launch task.\n\n3. **`nimbus init` exits 0 even when indexing fails.** `syncAndPickDemo`\ncatches every error and degrades to `null` by design, because the config\nedit is the durable half of the work. This is why the planned CI\nassertion greps for `\"Try it:\"` rather than trusting the exit code —\nworth knowing before reviewing that task.\n\nThe plan's highest-value item is extending\n`.github/workflows/install-smoke.yml`: today its only product assertion\nis `nimbus --help`, which passes while indexing is entirely broken. That\nis exactly how #895 shipped. The task includes a red-prove step and\nkeeps the CI budget flat by collapsing the matrix to Ubuntu on\nsource-only PRs.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n---------\n\nCo-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>",
-          "timestamp": "2026-07-28T16:17:01+03:00",
-          "tree_id": "b4268697ce36831cce1fcb4b75dc210c642804a2",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/6cfee34647e8533a0628c2a752b4512efc865d6f"
-        },
-        "date": 1785245318446,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 299.5859083500003,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 301.3496907000037,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 378.19512920001216,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "2e76680d8e7a15519630b0f3543be0177703817a",
+          "message": "fix(chatops): escape every Slack-bound post at the wire (#1617)\n\nEvery Slack-bound ChatOps post is now escaped at the wire. Before this,\nonly the on-call pushed headline escaped Slack's control characters.\n`@nimbus agent` briefs, `ask` answers, approval cards and tribal\nsuggestions all carry text from the private index into a shared channel\nunescaped:\n- an indexed title like `DB down <!channel>` pinged the whole channel;\n- `<https://evil|Rollback docs>` rendered as a link whose label hid its\ntarget.\n\n## What changed\n\n- **One escape point.** `chatops/escape-outbound.ts` gains\n`toWireText(platform, text)`: Slack gets `&`, `<` and `>` as entities;\nTeams text is unchanged, since an entity there would render as literal\ntext. It is applied inside `egress/chatops-egress.ts`'s\n`buildLedgeredChatPosts`, the one decorator every post passes through\n(D17), so every current and future consumer is covered with no\ncooperation from its caller.\n- **The I29 byte count is now the wire byte count.** The escape runs\nBEFORE the ledger append, so `payload_summary` records the bytes that\nactually leave. Escaping in the transport, as first proposed, would have\nrecorded the pre-escape length.\n- **No double escaping.** The on-call headline (`push-headline.ts`)\ndrops its own escape and keeps only its single-line normalisation. Its\ntests now assert the wire form, escaped exactly once (no `&amp;lt;`).\n- Nothing Nimbus sends uses Slack markup on purpose (checked for `<@`,\n`<!`, `<#` and links), so escaping everything removes nothing intended.\n\n**Known effect:** an agent brief truncated to the 3,000-byte chat budget\ncan grow slightly after escaping, since `&` becomes five bytes. That is\nfar under Slack's limit.\n\n## Tests\n\n- `toWireText`: Slack is escaped and Teams is unchanged.\n- The ledger wrapper:\n  - a hostile Slack agent brief reaches the transport escaped;\n  - the ledger's byte count equals the escaped length;\n  - Teams text passes through untouched.\n  - Red-proved by reverting the wrapper change.\n- `chatops-boot` and the real-gateway ChatOps e2e now assert the wire\nform of an ordinary reply (`approved &amp; executed`), which shows the\nescape reaches every reply path, not just briefs.\n- `bun run preflight:fast` is green. The full gateway, CLI and scripts\nsuite passes, except the toolgen tests that need the locally unbuilt\nsandbox helper (CI builds it).\n\nNo new invariant, egress class, IPC method or migration. Docs: the\nCHANGELOG, the `buildLedgeredChatPosts` entry in SECURITY-INVARIANTS\n(I29), and the oncall ChatOps paragraph in architecture.md.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n## Summary by CodeRabbit\n\n* **Bug Fixes**\n* Slack messages now escape `&`, `<` and `>` before being sent; Teams\nmessages remain unchanged.\n* Headline text is escaped once when sent to Slack, avoiding double\nescaping.\n* Message byte counts now reflect the escaped text sent to the\nconnector. Escaping may cause a brief to exceed the 3,000-byte chat\nbudget.\n* **Documentation**\n* Updated the changelog and technical documentation to describe outbound\nmessage escaping and byte-count behavior.\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-10-05T17:26:00Z",
+          "tree_id": "f7abac7f20799b721efffe1eb4919cbb8ae07e1c",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/2e76680d8e7a15519630b0f3543be0177703817a"
+        },
+        "date": 1791221886277,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 352.48785229999777,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 352.1277721499988,
             "unit": "ms"
           }
         ]
