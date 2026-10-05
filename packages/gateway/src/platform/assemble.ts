@@ -115,6 +115,7 @@ import {
   migrateToPerServiceOAuthKeys,
   readConnectorSecret,
 } from "../connectors/connector-vault.ts";
+import { createConnectorWriteDispatcher } from "../connectors/connector-write-dispatch.ts";
 import type { ConnectorWriteContext } from "../connectors/connector-write-transport.ts";
 import { createFilesystemV2Syncable } from "../connectors/filesystem-v2-sync.ts";
 import { githubFetchOneUrlIsSupported } from "../connectors/github-sync.ts";
@@ -1119,6 +1120,8 @@ interface BootFederationOpts {
   ipcOpts: Parameters<typeof createIpcServer>[0];
   sidecarStops: Array<() => void>;
   policyGate: PolicyGate;
+  /** I22: the policy gate's per-call connector allowlist, from `bootPolicyGateWithConnectorAllowlist`. */
+  isConnectorAllowed: (serviceId: string) => boolean;
   // I18 — operator validity for answers served OVER THE WIRE. `identityBoot` happens AFTER this
   // function runs (bootFederationIntoIpcOpts at ~2434, bootIdentityIntoIpcOpts at ~2497), so the
   // guard has to be late-bound through the holder rather than captured, exactly as
@@ -1141,6 +1144,7 @@ async function bootFederationIntoIpcOpts(
     ipcOpts,
     sidecarStops,
     policyGate,
+    isConnectorAllowed,
     identityEnabled,
     identityBootRefHolder,
   } = opts;
@@ -1254,6 +1258,8 @@ async function bootFederationIntoIpcOpts(
         },
         input,
       ),
+    // I22: the invoke gate refuses an entry whose connector the org policy blocks.
+    isConnectorAllowed,
   };
   ipcOpts.teamVault = teamVault;
   // Delegated HITL (Slice 2, I20). As a DELEGATE, this gateway answers an owner's routed approval by
@@ -2495,6 +2501,8 @@ async function bootChatopsIntoAssembly(deps: {
   sidecarStops: Array<() => void>;
   tribalSendHolder: { current: (target: ReplyTarget, text: string) => Promise<void> };
   chatopsAllowedByBootPolicy: boolean;
+  /** The connector-write transport's context, the one `runAsk`'s dispatcher is wrapped with too. */
+  connectorWriteDeps: ConnectorWriteContext;
 }): Promise<ChatopsBoot | undefined> {
   const {
     chatopsCfg,
@@ -2512,6 +2520,7 @@ async function bootChatopsIntoAssembly(deps: {
     sidecarStops,
     tribalSendHolder,
     chatopsAllowedByBootPolicy,
+    connectorWriteDeps,
   } = deps;
   // I41: a demo gateway never boots ChatOps, whatever its config says (BootPolicy.chatops).
   if (!chatopsCfg.enabled || !chatopsAllowedByBootPolicy) return undefined;
@@ -2559,12 +2568,19 @@ async function bootChatopsIntoAssembly(deps: {
           })
         : buildE2eSinkRunChatopsTool(chatopsE2eSinkDir),
     audit: { recordAudit: (entry) => appendAuditEntry(db, entry) },
+    // A connector write the owner approves from chat runs as one approved from `nimbus ask` does:
+    // through the connector-write transport, with the credential [connectors.<name>] configures and
+    // the I22 allowlist asked first. The plain mesh dispatcher found no tool for a write that names
+    // no mcpToolId, and ran one that names it with the personal credential whatever the config said.
     dispatcher:
       chatopsE2eSinkDir === undefined || chatopsE2eSinkDir === ""
-        ? createConnectorDispatcher({
-            listTools: () => connectorMesh.listToolsForDispatcher(),
-            getToolsEpoch: () => connectorMesh.getToolsEpoch(),
-          })
+        ? createConnectorWriteDispatcher(
+            createConnectorDispatcher({
+              listTools: () => connectorMesh.listToolsForDispatcher(),
+              getToolsEpoch: () => connectorMesh.getToolsEpoch(),
+            }),
+            connectorWriteDeps,
+          )
         : buildE2eSinkDispatcher(chatopsE2eSinkDir),
     // I29: chatops-approved writes dispatch real connector actions — ledger them (append-before-dispatch).
     egressSink: makeEgressSink(db),
@@ -3534,6 +3550,7 @@ export async function assemblePlatformServices(
     ipcOpts,
     sidecarStops,
     policyGate,
+    isConnectorAllowed,
     identityEnabled,
     identityBootRefHolder,
   });
@@ -3666,6 +3683,7 @@ export async function assemblePlatformServices(
     httpSidecarOpts,
     sidecarStops,
     tribalSendHolder,
+    connectorWriteDeps,
   });
   settleOncallPushChatops(oncallPush, chatopsBoot);
 

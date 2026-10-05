@@ -33,6 +33,7 @@ function ctx(db: Database): FederationRpcContext {
     teamVault: {
       quorumFor: () => undefined,
       runTool: async () => ({ ok: 1 }),
+      isConnectorAllowed: () => true,
     },
   };
 }
@@ -68,6 +69,38 @@ describe("federation.invoke dispatch", () => {
     if (out.kind === "hit") {
       expect(out.value).toEqual({ kind: "ok", result: { ok: 1 } });
     }
+  });
+
+  it("hands the gate the context's own connector allowlist (I22): a blocked entry never runs", async () => {
+    const db = new Database(":memory:");
+    runIndexedSchemaMigrations(db, 35);
+    const store = new TeamVaultStore(db);
+    store.createEntry("prod-aws", "aws", "owner", 1);
+    store.grant("prod-aws", "peer:abc", "aws.ec2.instance.stop", 1);
+    const asked: string[] = [];
+    let ran = 0;
+    const base = ctx(db);
+    const blocking: FederationRpcContext = {
+      ...base,
+      teamVault: {
+        quorumFor: () => undefined,
+        runTool: async () => {
+          ran++;
+          return { ok: 1 };
+        },
+        isConnectorAllowed: (service) => {
+          asked.push(service);
+          return false;
+        },
+      },
+    };
+    const out = await dispatchFederationRpc(
+      "federation.invoke",
+      { peerId: "peer:abc", entry: "prod-aws", toolId: "aws.ec2.instance.stop", purpose: "x" },
+      blocking,
+    );
+    expect(out).toEqual({ kind: "hit", value: { kind: "error", error: "no_grant" } });
+    expect({ asked, ran }).toEqual({ asked: ["aws"], ran: 0 });
   });
 
   it("federation.quorumRespond feeds the coordinator (no live request → matched false)", async () => {
@@ -185,6 +218,7 @@ describe("federation.invoke over a real-shaped session: the peer names the liste
           return undefined;
         },
         runTool,
+        isConnectorAllowed: () => true,
       },
     };
   }
@@ -215,6 +249,38 @@ describe("federation.invoke over a real-shaped session: the peer names the liste
         | { action_type: string }
         | undefined
     )?.action_type;
+
+  test("a granted sibling server's key on a github entry runs only when the policy allows that server too (I22)", async () => {
+    // The github spawner registers `github_actions` beside `github` in ONE client, so a github
+    // session lists the sibling's tools under the sibling's name, and the anchor runs a peer's key
+    // exactly as listed. The entry names github; the tool that would run is github_actions'.
+    const siblingKey = "github_actions_gha_run_list";
+    const { db, runTool } = anchor([{ service: "github", toolId: siblingKey }]);
+    const spawns: string[] = [];
+    const ran: string[] = [];
+    __setSessionSpawnerForTest((req) => {
+      spawns.push(req.service);
+      const tools = listedTools("github_actions", ["gha_run_list"], ran);
+      return { listTools: async () => tools, disconnect: async () => {} };
+    });
+    const allowing = (allowed: ReadonlySet<string>): FederationRpcContext => {
+      const base = rpc(db, runTool);
+      const tv = base.teamVault;
+      if (tv === undefined) throw new Error("rpc() builds a teamVault");
+      return { ...base, teamVault: { ...tv, isConnectorAllowed: (s) => allowed.has(s) } };
+    };
+
+    // Premise: with both servers allowed the anchor does run the sibling's tool on the github session.
+    expect(
+      await invoke(allowing(new Set(["github", "github_actions"])), "github", siblingKey),
+    ).toEqual({ value: { kind: "hit", value: { kind: "ok", result: { ran: siblingKey } } } });
+    expect({ spawns, ran }).toEqual({ spawns: ["github"], ran: [siblingKey] });
+
+    // Blocking github_actions refuses it though the entry names github: nothing more spawns or runs.
+    expect(await invoke(allowing(new Set(["github"])), "github", siblingKey)).toEqual(REFUSED);
+    expect({ spawns, ran }).toEqual({ spawns: ["github"], ran: [siblingKey] });
+    expect(lastDecision(db)).toBe("teamvault.invoke.connector_blocked");
+  });
 
   // Every dispatchable connector write (from the registry, not a hand list), plus a migrated
   // write on a single-service spawner.

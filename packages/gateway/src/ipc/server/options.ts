@@ -34,6 +34,7 @@ import type { ChatopsRpcCtx } from "../chatops-rpc.ts";
 import type { ComputerRpcCtx } from "../computer-rpc.ts";
 import type { EgressRpcCtx } from "../egress-rpc.ts";
 import type { ExecRpcCtx } from "../exec-rpc.ts";
+import type { FederationRpcContext } from "../federation-rpc.ts";
 import type { FleetRpcCtx } from "../fleet-rpc.ts";
 import type { BoxKeypair } from "../lan-crypto.ts";
 import type { PairingWindow } from "../lan-pairing.ts";
@@ -116,18 +117,11 @@ export type CreateIpcServerOptions = {
   identityGraceSeconds?: number;
   identityStartLogin?: () => { jobId: string };
   identityVault?: NimbusVault; // for scim.setToken
-  // Team Vault (Phase 6 Slice 2). The anchor's invoke backing: per-action quorum lookup + the
-  // credential-injecting runTool. Present only when [federation].enabled; the federation dispatcher
-  // throws ERR_TEAMVAULT_UNAVAILABLE when unset, and teamvault.*/hitl.* dispatch skips cleanly.
-  teamVault?: {
-    quorumFor: (toolId: string) => { approvers: number; windowSeconds: number } | undefined;
-    runTool: (input: {
-      entry: string;
-      service: string;
-      toolId: string;
-      args: unknown;
-    }) => Promise<unknown>;
-  };
+  // Team Vault (Phase 6 Slice 2). The anchor's invoke backing: per-action quorum lookup, the
+  // credential-injecting runTool and the I22 connector allowlist. Present only when
+  // [federation].enabled; the federation dispatcher throws ERR_TEAMVAULT_UNAVAILABLE when unset, and
+  // teamvault.*/hitl.* dispatch skips cleanly. The federation context's own type, not a copy of it.
+  teamVault?: FederationRpcContext["teamVault"];
   // Policy / admin / GDPR-purge (Phase 6 Slice 4). The dependency seam behind the policy.* + team.purge
   // IPC namespace (Lanes A–G). Present only when assembled at boot; the dispatcher skips cleanly when unset.
   policyRpcCtx?: PolicyRpcCtx;

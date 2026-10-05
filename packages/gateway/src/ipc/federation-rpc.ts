@@ -75,6 +75,8 @@ export interface FederationRpcContext {
       toolId: string;
       args: unknown;
     }) => Promise<unknown>;
+    /** I22: the policy gate's per-call connector allowlist predicate, handed to the invoke gate. */
+    readonly isConnectorAllowed: (service: string) => boolean;
   };
   // Delegated HITL (Slice 2, I20). Present on the answering (delegate) dispatch path: the delegate's
   // local decision for an owner's routed approval. The handler audits the decision on the DELEGATE's
@@ -499,6 +501,9 @@ export async function dispatchFederationRpc(
           // I26: nor a connector tool that runs caller-directed code on this machine — terraform
           // plan / pulumi preview evaluate the directory the caller names, read-registered or not.
           isCodeExecutionForbiddenToolId: isConnectorCodeExecutionToolId,
+          // I22: the entry's connector must be one the org policy allows. The tool runs in its own
+          // team-credentialed connector, off the mesh whose policy filter would otherwise drop it.
+          isConnectorAllowed: tv.isConnectorAllowed,
           ...(ctx.identityGuard === undefined ? {} : { identity: ctx.identityGuard }),
         },
         {
