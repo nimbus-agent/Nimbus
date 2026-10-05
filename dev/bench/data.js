@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1791181409445,
+  "lastUpdate": 1791184789262,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "306811640+nimbus-release-bot[bot]@users.noreply.github.com",
-            "name": "nimbus-release-bot[bot]",
-            "username": "nimbus-release-bot[bot]"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "69ac42dc9812d52133c95694a5c5de1876188ce9",
-          "message": "chore: release main (#889)\n\n:robot: I have created a release *beep* *boop*\n---\n\n\n<details><summary>1.4.0</summary>\n\n##\n[1.4.0](https://github.com/nimbus-agent/Nimbus/compare/v1.3.0...v1.4.0)\n(2026-07-28)\n\n\n### Features\n\n* **demos:** recut the hero cast to the zero-config path\n([#888](https://github.com/nimbus-agent/Nimbus/issues/888))\n([ad437ba](https://github.com/nimbus-agent/Nimbus/commit/ad437ba28522369411d96289998e8f2b9d95d016))\n</details>\n\n---\nThis PR was generated with [Release\nPlease](https://github.com/googleapis/release-please). See\n[documentation](https://github.com/googleapis/release-please#release-please).\n\nCo-authored-by: nimbus-release-bot[bot] <306811640+nimbus-release-bot[bot]@users.noreply.github.com>",
-          "timestamp": "2026-07-28T06:19:22Z",
-          "tree_id": "fef79477ae86ca293c9c83783dc20f3e612d3205",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/69ac42dc9812d52133c95694a5c5de1876188ce9"
-        },
-        "date": 1785220337960,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 314.8414257499997,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 312.61675130000185,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 298.66331900001313,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "eeb5245bf3237abb4cf9e70407cddc1e527583ac",
+          "message": "fix(gateway): refuse connector writes and code-executing connector tools at the federated invoke gate (I26) (#1607)\n\n## Summary\n\nI26 requires that a federated peer can never trigger a connector write,\nnor run caller-directed code, on the owner's machine:\n`answerFederatedInvoke` must refuse the tool before any grant, quorum or\ndispatch. Several gaps had made that false, each leaving only the\nowner's per-tool grant in the way. This PR refuses connector writes in\nthe `<server>_<tool>` form a session actually executes, adds the writes\nthat had slipped the predicate, and refuses the connector tools that run\ncaller-directed code on the anchor — the `iac` directory-evaluation\nreads and, on Windows, the `az` / `gcloud`-backed reads whose caller\nvalue reaches a `.cmd` wrapper's argv. Two sync guards and a source\ncensus keep all three lists in step with the connectors package.\n\n## What changed and why\n\n**Writes are refused in the form a session executes them.** A\nteam-credentialed session lists its tools through `@mastra/mcp`, which\nkeys each one `<server>_<tool>` (`tableau_tableau_datasource_refresh`),\nand the runner looks the requested id up verbatim — so the namespaced\nkey is the form that runs, and the bare id is not found.\n`isConnectorWriteToolId` matched bare ids only: it refused exactly the\nids that cannot run and passed the ones that can. It now also matches\nany `_`-delimited suffix of the id, at a cost bounded by the longest\nwrite id, through the shared `matchesBareOrNamespacedToolId`.\n\n**Four gate-confined comms writes were never on the list.** Static rules\nD19 and D17 confine the literals `notion_kb_append`,\n`confluence_kb_append`, `slack_chat_post` and `teams_chat_post` to their\ngates (I25 / I23). Those gates pin the destination only when the gateway\nitself calls them; a federated invoke carries the peer's own arguments,\nso a granted peer could post to a channel or append to a knowledge base\nof its choosing. Each gate now exports its ids as a set the predicate\nrefuses, so the literals stay exactly where the static rules require\nthem.\n\n**Five mutating tools were unclassified.** `aws_ec2_instance_stop`,\n`aws_ec2_instance_start`, `slack_message_post_dm` and\n`teams_message_post_chat` are read registrations in\n`@nimbus-dev/connectors` 0.2.1 and consent-gated writes in 0.2.2, and\n`gdrive_file_trash` registers as a read while it PATCHes `trashed:\ntrue`. All five now join `MIGRATED_WRITE_TOOL_IDS`.\n\n**A write sync guard keeps the list honest.**\n`connector-write-sync.test.ts` reads the installed connectors package as\ntext, derives every tool id registered through the write registrar —\nfollowing it by data flow, not by name, through aliases, kit hand-offs\nand forwarders of any name — and fails on any the predicate does not\nrefuse, bare or namespaced. It derives 87 writes from 0.2.1 and 91 from\n0.2.2, so the pending connectors bump passes it unchanged, and it has no\nexception list.\n\n**Code-executing connector tools are refused — directory evaluation.**\n`iac_terraform_plan` and `iac_pulumi_preview` are read registrations, so\nno write list could name them, yet each hands `terraform` or `pulumi` a\ncaller-supplied `workingDirectory`. Planning a Terraform configuration\nruns its provider plugins and any `external` data source program; a\nPulumi preview runs the stack program. `iac` is team-invokable (its\nteam-vault key is `iac.enabled`), so a peer granted\n`iac_iac_terraform_plan` could have had the anchor evaluate code at a\npath of its choosing, with no owner approval of that code.\n`answerFederatedInvoke` now calls a second, required predicate,\n`isConnectorCodeExecutionToolId`, right after the write check and before\nidentity, the grant, quorum and the run; it audits\n`code_execution_forbidden` and returns the same opaque `no_grant`. The\nthree iac writes that evaluate the same directory are listed too, so the\nclassification stands whatever happens to the write list.\n\n**Code-executing connector tools are refused — the Windows `.cmd`\npath.** Judging a read safe because \"the caller picks a resource, never\nthe code\" is POSIX-only. On Windows, spawning a bare command name\nresolves it through `PATHEXT`, and `az` (Azure CLI) and `gcloud` (Google\nCloud SDK) install as `.cmd` / batch wrappers; a batch target runs\nthrough `cmd.exe`, which re-parses the reconstructed command line, so a\nflag value or an `isSafeCliArg`-guarded positional carrying a `cmd`\nmetacharacter (`\"`, `&`, `|`, `%`) escapes its slot and runs an\narbitrary command — `isSafeCliArg` rejects only a leading `-` and\ncontrol characters, not those. The reads backed by `az` / `gcloud`\n(`azure`, `gcp`, `cloud-logging`, `vertex-ai`) pass a caller value\nstraight into that argv, and they were classified \"reviewed read\" and\nleft answerable at the federated gate; the whole-repo push matrix runs\non Windows, so this was a live federated-peer code-execution path\nthrough a tool the earlier sweep had called safe. They now join the\ncode-execution refusal in a second documented set,\n`WINDOWS_CLI_ARG_INJECTION_TOOL_IDS`, at connector-read granularity so a\nlater argv change inside one cannot silently reopen the vector.\n`bigquery` is `gcloud`-backed too, but its only spawn is `gcloud auth\nprint-access-token` with no caller input and its tools are REST, so its\nreads stay reviewed. The reads that remain reviewed are backed by `aws`\n/ `kubectl`, which install as native `.exe` on Windows, where no\nre-parse occurs.\n\n**The same ids are refused at the `share.replay` door.** Replay is the\nsecond path a caller names tools through — an untrusted share file,\nwhich can arrive via `federation.shareForward` — run against the owner's\nown credentialed mesh. It gates by a name-based read-verb allowlist;\ndropping the `preview` verb closed that door for `iac_pulumi_preview`,\nbut the `az` / `gcloud` reads end in `list` / `get` / `search`, verbs\nhundreds of genuine reads carry, so the verb cannot be dropped.\n`isReadOnlyToolId` now excludes any code-execution id by explicit id, so\nthese reads are unreplayable exactly as the federated gate refuses them.\n\n**The code-execution sync guard and census.**\n`connector-code-execution-sync.test.ts` reads the installed package:\nevery listed id must still be registered, and every connector whose\nsource can start a process or evaluate code must be in a reviewed table,\nwith each of its tools refused or reviewed and no `az` / `gcloud`-backed\nread left answerable. The census (`connector-process-spawns.ts`) derives\nprocess capability from source text, following relative imports to a\nfixed point; it now also follows a member-form dynamic loader\n(`module.require(x)`, `import.meta.require(x)`), which its\nbare-`require(x)` pattern's lookbehind had skipped — following a literal\nspecifier and flagging a computed one — closing a fail-closed hole in\nthe census. The sweep finds the same eleven process-capable connectors\nand 42 tools in 0.2.1, 0.2.2 and upstream main.\n\n**Static D20 now requires the gate to call both predicates.** The\nearlier rule accepted the bare predicate name, which the `InvokeGateCtx`\nfield declaration already supplies, so the check passed with the call\ndeleted; `D20-invoke-gate-code-execution` and the tightened\n`D20-invoke-gate-predicate` require the actual call. The code-execution\nctx field is required (not optional like the pre-existing write\npredicate), so no federated invoke context can be built without\ndeciding.\n\n**Found on the way, recorded not fixed here.** Because of the same\nnamespacing, a bare id is not found wherever the gateway looks a tool up\nverbatim in an `MCPClient`-keyed map, so the gateway's own bare-id\ncallers fail closed against real connectors while their unit tests fake\nbare-keyed maps. Those callers are the connector-write transport\n(personal and team-credentialed), the team list drain, the personal\nwarehouse/BI list drain, and, through the mesh dispatcher, the tribal KB\ncapture. Matching both forms keeps the predicates correct whichever way\nthat is fixed. `nimbus team vault grant` and `nimbus team invoke` take\nthe `<server>_<tool>` key (`stripe_stripe_search`);\n`docs/cli-reference.md` is updated.\n\n## Verification\n\n- `bun run preflight:fast` — PASSED (all 34 gates, including lint,\nlint:markdown, typecheck, typecheck:tests, audit:doc-refs,\naudit:invariants, audit:status-drift, duplication).\n- `bun run typecheck` — all workspaces clean.\n- `bun run typecheck:tests` — ok (478 known errors baselined, 0 new).\n- `bun run audit:invariants` — exit 0; deleting either gate call reds it\n(`D20-invoke-gate-predicate` / `D20-invoke-gate-code-execution`).\n- `bun test packages/gateway/src/connectors packages/gateway/src/share\nscripts/structure-audit` — 4750 pass, 2 skip, 0 fail (278 files).\n- `bun test packages/gateway/src/security-invariants.test.ts` — 253\npass, 0 fail.\n- `bun test <federation suite, less the two unref-timer files that hang\nwhen run alone> packages/gateway/src/ipc/federation-rpc-invoke.test.ts`\n— 177 pass, 0 fail (22 files).\n- `bun test packages/gateway/src/federation/invoke-gate.test.ts` — 53\npass, 0 fail.\n- `bun test\npackages/gateway/test/integration/connectors/write-tool-namespacing.integration.test.ts`\n— 3 pass, 0 fail (149 expect() calls), listing real `aws`, `kubernetes`,\n`iac`, `azure` and `gcp` processes through a real `MCPClient`.\n- Red-proofs (each sabotage restored byte-for-byte, cmp-verified):\ndropping `WINDOWS_CLI_ARG_INJECTION_TOOL_IDS` from the union reds 10\ncases across the predicate, gate, sync guard, share classifier and\nsecurity-invariants tests; dropping the member-form loader regex reds\nboth census tests; dropping the `isReadOnlyToolId` exclusion reds the\nshare classifier and the share-replay sync guard.\n\n## Caveats\n\n- The `aws` / `kubectl` reads stay reviewed on the basis that those CLIs\ninstall as native `.exe` on Windows, where `cmd.exe` does not re-parse\nargv. That native-`.exe` basis is the one assumption those reviews rest\non; were such a CLI resolved to a `.cmd` wrapper, the same reasoning\nwould move its reads into the refusal. Stated as a residual, not relied\non silently.\n- The durable fix for the `.cmd` argument-injection class is upstream in\nthe connectors package (reject `cmd` metacharacters for a value handed\nto a `.cmd` CLI, or spawn it shell-safe); the gate and share-replay\nrefusals do not wait on it. The upstream repository is untouched here.\n- The census recognises process capability by name, so reflection and a\nthird-party package that spawns internally are outside it; a reviewed\nread is checked against the argv it builds today, which is why the `az`\n/ `gcloud` refusal is at connector-read granularity rather than\nper-tool.\n- The `iac` connector's own I15 sandbox (no network, no granted paths)\nnarrows what such a run could read; the refusal does not lean on it.\n- The gateway's own bare-id callers failing closed against real\nconnectors (listed above) is a pre-existing consequence of the\nnamespacing, surfaced but not changed here; matching both the bare and\nnamespaced forms keeps the predicates correct whichever way it is later\nfixed.\n- The CLAUDE.md and GEMINI.md I26 rows describe the write half and\nremain accurate, so they are unchanged; the full invariant text (write\nand code-execution halves, with the stated bounds) lives in\n`docs/SECURITY-INVARIANTS.md`.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n## Summary by CodeRabbit\n\n* **Security**\n* Federated invocations now refuse connector tools that can make changes\nor execute caller-directed code, even when access has been granted. This\nincludes selected infrastructure, cloud, and communications tools.\nRefusals remain indistinguishable from a missing grant.\n* Tool grants, invocations, and revocations require the exact namespaced\ntool ID; invocation arguments must be a JSON object.\n* Potentially code-executing tools are excluded from read-only sharing\nand replay.\n* **Documentation**\n* Updated security guidance and command-line references to describe\nthese restrictions and their effects.\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-10-05T10:07:29+03:00",
+          "tree_id": "89423c82da67f3d9c25b2750286502fbdbb7bd8f",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/eeb5245bf3237abb4cf9e70407cddc1e527583ac"
+        },
+        "date": 1791184784966,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 332.9984195999994,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 332.4439822999928,
             "unit": "ms"
           }
         ]
