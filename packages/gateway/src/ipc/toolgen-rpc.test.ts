@@ -69,8 +69,9 @@ const saveBrokers: ToolgenSaveConsentBroker[] = [];
 /** Every `makeCtx` database and temp `configDir`, released after the test that made them. */
 const ctxDbs: Database[] = [];
 const ctxConfigDirs: string[] = [];
-// Pending approvals hold live TTL timers; without this, a test that leaves one pending hangs
-// `bun test` teardown on Windows (the same trap `exec-rpc.test.ts` guards against).
+// Pending approvals hold live, ref'd TTL timers; clear them so none outlives its test. One left
+// pending does not stop `bun test` from exiting, but it keeps the event loop alive for every later
+// test in the process, which can hide the Windows hang testing/hold-event-loop.ts describes.
 afterEach(() => {
   for (const b of brokers.splice(0)) b.clear();
   for (const b of saveBrokers.splice(0)) b.clear();

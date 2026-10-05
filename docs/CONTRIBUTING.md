@@ -317,9 +317,15 @@ that same pass.
   support TypeScript 7.0". Astro's TypeScript 7 route needs 7.1+, and `@astrojs/check` 0.9.10 still
   declares `typescript: ^5.0.0 || ^6.0.0`. The root `typescript-compiler-api` alias also stays on 6, for a
   different reason: TypeScript 7 exports its compiler API only under explicitly unstable subpaths, and
-  `scripts/cleanup/strip-comments.ts` and `scripts/cleanup/survey-oc.ts` drive it directly. To re-check:
-  `@astrojs/check`'s peer range, then `bun run typecheck` with the docs workspace on 7. Separately, check
-  whether the compiler-API subpaths have stabilised.
+  `scripts/cleanup/strip-comments.ts` and `scripts/cleanup/survey-oc.ts` drive it directly.
+  `audit:boundaries` depends on the alias too. dependency-cruiser (18.5.0, its latest release) parses
+  TypeScript only through a `typescript` below 7, so
+  `scripts/structure-audit/dependency-cruiser-ts6-preload.ts` hands it this alias. It cannot rely on
+  whichever `typescript` bun links where dependency-cruiser looks: that link flips between 6 and 7 from one
+  install to the next, and on 7 the gate cruised one file and passed. Moving the alias to 7 before
+  dependency-cruiser supports it fails `audit:boundaries` loudly. To re-check: `@astrojs/check`'s peer
+  range, then `bun run typecheck` with the docs workspace on 7. Separately, check whether the compiler-API
+  subpaths have stabilised, and whether a dependency-cruiser release supports TypeScript 7.
 - **msw 3** (gateway devDependency). msw 3 intercepts requests by patching `node:net`/`tls` sockets, and
   Bun's native `fetch` never goes through them. Under msw 3.0.2 the gateway's handler tests therefore sent
   real requests to Google and GitHub instead of being intercepted. msw 3 also renamed

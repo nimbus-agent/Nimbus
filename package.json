@@ -1,6 +1,6 @@
 {
   "name": "nimbus",
-  "version": "7.34.0",
+  "version": "7.35.0",
   "private": true,
   "repository": {
     "type": "git",
@@ -37,7 +37,7 @@
     "dev-doctor": "bun scripts/dev-doctor.ts",
     "clean-deep": "bun scripts/clean-deep.ts",
     "audit:structure": "bun scripts/structure-audit/audit-structure.ts",
-    "audit:boundaries": "bunx dependency-cruiser --config .dependency-cruiser.cjs --no-progress packages",
+    "audit:boundaries": "bun scripts/structure-audit/check-boundaries.ts",
     "audit:coverage-floor": "bun scripts/coverage-floor/check.ts",
     "audit:coverage-scopes": "bun scripts/coverage-floor/check-scopes.ts",
     "mutation": "stryker run",
