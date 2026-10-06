@@ -72,4 +72,16 @@ export type ConnectorRpcHandlerContext = {
    * proven with no browser round-trip and no network, for the reason `runCredentialProbe` is.
    */
   runPkceFlow?: (options: PKCEOptions) => Promise<PKCEResult>;
+  /**
+   * Test seam. Omitted in production, where `connector.addMcp` resolves a bare command name on
+   * `PATH` with `Bun.which` (`config.ts`'s `defaultUserMcpWhich`).
+   */
+  resolveCommand?: (cmd: string) => string | null;
+  /**
+   * Test seam. Omitted in production, where `connector.addMcp` canonicalises paths with
+   * `realpathSync.native` (`config.ts`'s `defaultUserMcpRealpath`) — never the JS
+   * `realpathSync`, which keeps the caller's case and 8.3 spelling. Throws when the path is
+   * missing.
+   */
+  realpath?: (p: string) => string;
 };

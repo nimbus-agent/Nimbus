@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import pino from "pino";
 import { createRpcFixture, type RpcFixture } from "../../../test/helpers/rpc-harness.ts";
+import type { ResolvedUserMcpRegistration } from "../../connectors/user-mcp-registration.ts";
 import type { Syncable, SyncContext } from "../../sync/types.ts";
 import { ConnectorRpcError } from "../connector-rpc-shared.ts";
 import { handleConnectorAddMcp } from "./config.ts";
@@ -27,6 +28,7 @@ type Harness = {
   ctx: ConnectorRpcHandlerContext;
   registered: Syncable[];
   ensured: string[];
+  resolved: ResolvedUserMcpRegistration;
 };
 
 function harness(serviceId: string): Harness {
@@ -45,8 +47,16 @@ function harness(serviceId: string): Harness {
   return {
     registered,
     ensured,
+    resolved: {
+      serviceId,
+      command: "/usr/bin/node",
+      args: ["server.js", "--stdio"],
+      readPaths: [],
+      netHosts: [],
+      modelAccess: false,
+    },
     ctx: {
-      rec: { serviceId, commandLine: "node server.js --stdio" },
+      rec: undefined,
       vault: fixture.vault,
       localIndex: fixture.localIndex,
       openUrl: async () => {},
@@ -70,7 +80,7 @@ function rpcErrorOf(fn: () => unknown): ConnectorRpcError {
 describe("handleConnectorAddMcp — the registered syncable", () => {
   test("running it starts THIS service's MCP server through the mesh, and indexes nothing", async () => {
     const h = harness("mcp_notes");
-    handleConnectorAddMcp(h.ctx);
+    handleConnectorAddMcp(h.ctx, h.resolved);
 
     expect(h.registered.map((s) => s.serviceId)).toEqual(["mcp_notes"]);
     expect(h.ensured).toEqual([]); // registration alone starts nothing
@@ -91,7 +101,7 @@ describe("handleConnectorAddMcp — store failures", () => {
     fixture.db.run("DROP TABLE user_mcp_connector");
     const h = harness("mcp_lost");
 
-    const err = rpcErrorOf(() => handleConnectorAddMcp(h.ctx));
+    const err = rpcErrorOf(() => handleConnectorAddMcp(h.ctx, h.resolved));
 
     expect(err.rpcCode).toBe(-32603);
     expect(err.message.startsWith("Failed to save user MCP connector: ")).toBe(true);
@@ -108,7 +118,7 @@ describe("handleConnectorAddMcp — store failures", () => {
     );
     const h = harness("mcp_lower");
 
-    const err = rpcErrorOf(() => handleConnectorAddMcp(h.ctx));
+    const err = rpcErrorOf(() => handleConnectorAddMcp(h.ctx, h.resolved));
 
     expect(err.rpcCode).toBe(-32602);
     expect(err.message).toBe("User MCP connector already exists: mcp_lower");

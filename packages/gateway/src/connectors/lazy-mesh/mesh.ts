@@ -1,3 +1,5 @@
+import { rmSync } from "node:fs";
+
 import { MCPClient } from "@mastra/mcp";
 
 import { writeToolCallLog } from "../../db/tool-call-log.ts";
@@ -5,6 +7,7 @@ import { getAgentRequestSessionId } from "../../engine/agent-request-context.ts"
 import { wrapToolOutput } from "../../engine/tool-output-envelope.ts";
 import { extensionProcessEnv } from "../../extensions/spawn-env.ts";
 import type { PlatformPaths } from "../../platform/paths.ts";
+import { sandboxCwdFor } from "../../platform/sandbox/sandbox-cwd.ts";
 import type { NimbusVault } from "../../vault/nimbus-vault.ts";
 import type { UserMcpConnectorRow } from "../user-mcp-store.ts";
 import {
@@ -60,6 +63,8 @@ export class LazyConnectorMesh {
   private readonly isConnectorAllowed: (serviceId: string) => boolean;
   private toolsEpoch = 0;
   private readonly spawnContext: MeshSpawnContext;
+  private readonly paths: PlatformPaths;
+  private readonly removeSandboxDir: (dir: string) => void;
 
   constructor(
     paths: PlatformPaths,
@@ -72,8 +77,13 @@ export class LazyConnectorMesh {
       auditDb?: import("bun:sqlite").Database;
       obsidianVaultPaths?: readonly string[];
       isConnectorAllowed?: (serviceId: string) => boolean;
+      /** Test seam: deletes a user MCP sandbox leaf. Production: recursive, forced `rmSync`. */
+      removeSandboxDir?: (dir: string) => void;
     },
   ) {
+    this.paths = paths;
+    this.removeSandboxDir =
+      options?.removeSandboxDir ?? ((dir) => rmSync(dir, { recursive: true, force: true }));
     this.inactivityMs = options?.inactivityMs ?? 300_000;
     this.listUserMcpConnectors = options?.listUserMcpConnectors ?? (() => []);
     this.healthDb = options?.healthDb;
@@ -191,6 +201,37 @@ export class LazyConnectorMesh {
 
   private async stopUserMcpClient(serviceId: string): Promise<void> {
     await this.stopLazyClient(userMcpMeshKey(serviceId));
+  }
+
+  /** Directories no user MCP may be granted a read of: Nimbus's own data, config and sandbox root. */
+  userMcpProtectedRoots(): readonly string[] {
+    return [this.paths.dataDir, this.paths.configDir, this.paths.sandboxDir];
+  }
+
+  /**
+   * Stops a removed user MCP and deletes its sandbox leaf. Best-effort and NEVER throws: a Windows
+   * child releases its cwd handle a moment after it exits, so the delete is tried up to three times
+   * 100 ms apart, and a leaf that still will not go is logged, not raised — `connector.remove` must
+   * not fail on a locked directory.
+   */
+  async removeUserMcpSandbox(serviceId: string): Promise<void> {
+    try {
+      await this.stopUserMcpClient(serviceId);
+    } catch (err) {
+      this.logger?.warn({ serviceId, err }, "user MCP client not stopped before sandbox removal");
+    }
+    const leaf = sandboxCwdFor(this.paths.sandboxDir, `user.${serviceId}`);
+    let lastErr: unknown;
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      try {
+        this.removeSandboxDir(leaf);
+        return;
+      } catch (err) {
+        lastErr = err;
+        if (attempt < 3) await Bun.sleep(100);
+      }
+    }
+    this.logger?.warn({ serviceId, err: lastErr }, "user MCP sandbox directory not removed");
   }
 
   public async stopExtensionClient(extensionId: string): Promise<void> {
@@ -561,6 +602,7 @@ export function createLazyConnectorMesh(
     logger?: MeshLogger;
     obsidianVaultPaths?: readonly string[];
     isConnectorAllowed?: (serviceId: string) => boolean;
+    removeSandboxDir?: (dir: string) => void;
   },
 ): Promise<LazyConnectorMesh> {
   return Promise.try(() => new LazyConnectorMesh(paths, vault, options));

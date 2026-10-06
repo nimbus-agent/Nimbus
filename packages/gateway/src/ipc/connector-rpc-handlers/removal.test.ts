@@ -6,7 +6,10 @@
  * uncovered branch.  No mock.module usage; all seams are real implementations.
  */
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { join } from "node:path";
 import { createRpcFixture, type RpcFixture } from "../../../test/helpers/rpc-harness.ts";
+import { LazyConnectorMesh } from "../../connectors/lazy-mesh/mesh.ts";
+import { createMockVault } from "../../vault/mock.ts";
 import type { NimbusVault } from "../../vault/nimbus-vault.ts";
 import type { ConnectorRpcHandlerContext } from "./context.ts";
 import { handleConnectorRemove, resumePendingRemovals } from "./removal.ts";
@@ -510,5 +513,79 @@ describe("resumePendingRemovals — error during removal leaves intent intact", 
       )
       .get("github");
     expect(githubRow).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// handleConnectorRemove — a user MCP's sandbox leaf is cleaned through the mesh
+// ---------------------------------------------------------------------------
+
+describe("handleConnectorRemove — user MCP sandbox cleanup", () => {
+  function meshDouble(impl: (id: string) => Promise<void>): {
+    mesh: ConnectorRpcHandlerContext["connectorMesh"];
+    calls: string[];
+  } {
+    const calls: string[] = [];
+    const mesh = {
+      async removeUserMcpSandbox(id: string): Promise<void> {
+        calls.push(id);
+        await impl(id);
+      },
+    } as unknown as ConnectorRpcHandlerContext["connectorMesh"];
+    return { mesh, calls };
+  }
+
+  test("removing a user MCP asks the mesh to remove its sandbox exactly once", async () => {
+    registerConnector("mcp_myserver");
+    const { mesh, calls } = meshDouble(async () => {});
+    const r = await handleConnectorRemove({
+      ...buildCtx({ serviceId: "mcp_myserver" }),
+      connectorMesh: mesh,
+    });
+    expect((r.value as { ok: boolean }).ok).toBe(true);
+    expect(calls).toEqual(["mcp_myserver"]);
+  });
+
+  test("a built-in connector's removal never touches the user MCP sandbox", async () => {
+    registerConnector("slack");
+    const { mesh, calls } = meshDouble(async () => {});
+    await handleConnectorRemove({ ...buildCtx({ serviceId: "slack" }), connectorMesh: mesh });
+    expect(calls).toEqual([]);
+  });
+
+  test("a sandbox directory that cannot be deleted does not fail the remove (real mesh)", async () => {
+    const root = fixture.dataDir;
+    const mesh = new LazyConnectorMesh(
+      {
+        configDir: join(root, "config"),
+        dataDir: join(root, "data"),
+        logDir: join(root, "log"),
+        socketPath: join(root, "sock"),
+        extensionsDir: join(root, "ext"),
+        tempDir: join(root, "tmp"),
+        sandboxDir: join(root, "sandbox"),
+      },
+      createMockVault(),
+      {
+        logger: { warn: () => {} },
+        removeSandboxDir: () => {
+          throw new Error("EBUSY: resource busy or locked");
+        },
+      },
+    );
+    try {
+      registerConnector("mcp_locked");
+      const r = await handleConnectorRemove({
+        ...buildCtx({ serviceId: "mcp_locked" }),
+        connectorMesh: mesh,
+      });
+      expect((r.value as { ok: boolean }).ok).toBe(true);
+      const intent = fixture.db
+        .query("SELECT service_id FROM connector_remove_intent WHERE service_id = ?")
+        .get("mcp_locked");
+      expect(intent).toBeNull();
+    } finally {
+      await mesh.disconnect();
+    }
   });
 });

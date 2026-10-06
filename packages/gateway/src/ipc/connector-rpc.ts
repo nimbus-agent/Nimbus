@@ -20,10 +20,18 @@ import {
   handleConnectorSetInterval,
   handleConnectorStatus,
   handleConnectorSync,
+  resolveConnectorAddMcp,
 } from "./connector-rpc-handlers/index.ts";
 import { asRecord, ConnectorRpcError } from "./connector-rpc-shared.ts";
 
 export { ConnectorRpcError } from "./connector-rpc-shared.ts";
+
+/**
+ * Shown in the `connector.addMcp` prompt on Windows when hosts are requested: the AppContainer
+ * `internetClient` capability cannot be scoped per host, so the listed hosts are not a bound there.
+ */
+const WIN32_USER_MCP_NETWORK_NOTE =
+  "Windows AppContainer network access is all-or-nothing (internetClient): this server can reach any host, not only the ones listed.";
 
 /**
  * Extracted from the `connector.adoptLocalAuth` case below and exported so the WIRING — which
@@ -48,6 +56,10 @@ export async function dispatchConnectorRpc(options: {
   connectorMesh?: LazyConnectorMesh;
   notify?: (method: string, params: Record<string, unknown>) => void;
   toolExecutor?: ToolExecutor;
+  /** Test seam for `connector.addMcp`: PATH lookup (production: `Bun.which`). */
+  resolveCommand?: (cmd: string) => string | null;
+  /** Test seam for `connector.addMcp`: canonicalisation (production: `realpathSync.native`). */
+  realpath?: (p: string) => string;
 }): Promise<{ kind: "hit"; value: unknown } | { kind: "miss" }> {
   const {
     method,
@@ -59,6 +71,8 @@ export async function dispatchConnectorRpc(options: {
     connectorMesh,
     notify,
     toolExecutor,
+    resolveCommand,
+    realpath,
   } = options;
   const rec = asRecord(params);
   const ctx = {
@@ -69,6 +83,8 @@ export async function dispatchConnectorRpc(options: {
     syncScheduler,
     connectorMesh,
     ...(notify === undefined ? {} : { notify }),
+    ...(resolveCommand === undefined ? {} : { resolveCommand }),
+    ...(realpath === undefined ? {} : { realpath }),
   };
 
   switch (method) {
@@ -76,23 +92,30 @@ export async function dispatchConnectorRpc(options: {
       if (toolExecutor === undefined) {
         throw new ConnectorRpcError(-32603, "connector.addMcp requires a toolExecutor");
       }
-      const addMcpRec = asRecord(params) ?? {};
-      // The payload MUST name the keys the handler actually consumes
-      // (`serviceId`/`commandLine`) — it used to read `command`/`args`, which no
-      // caller sends, so the owner was asked to authorize spawning an arbitrary
-      // local process while the prompt, the audit row and the egress-ledger row
-      // all rendered empty (#808). `commandLine` is the raw string the handler
-      // parses; showing it verbatim keeps the prompt identical to what was asked
-      // for, rather than a re-derivation that could disagree with it.
-      const gateResult = await toolExecutor.gate({
-        type: "connector.addMcp",
-        payload: {
-          serviceId: addMcpRec["serviceId"],
-          commandLine: addMcpRec["commandLine"],
-        },
-      });
+      // Resolve and validate FIRST: an invalid request (protected read path, unknown command,
+      // bad host, id collision) throws here and never prompts the owner.
+      const resolved = resolveConnectorAddMcp(ctx);
+      // The payload MUST name exactly what the handler consumes and stores. It used to read
+      // `command`/`args` off the raw params, which no caller sent, so the owner was asked to
+      // authorize spawning an arbitrary local process while the prompt, the audit row and the
+      // egress-ledger row all rendered empty (#808). It is now the RESOLVED registration itself
+      // — absolute command, verbatim args, canonical read paths, normalised hosts — the same
+      // object `handleConnectorAddMcp` writes, so what the owner approves cannot disagree with
+      // what is stored.
+      const payload: Record<string, unknown> = {
+        serviceId: resolved.serviceId,
+        command: resolved.command,
+        args: resolved.args,
+        readPaths: resolved.readPaths,
+        netHosts: resolved.netHosts,
+        modelAccess: resolved.modelAccess,
+      };
+      if (process.platform === "win32" && resolved.netHosts.length > 0) {
+        payload["networkNote"] = WIN32_USER_MCP_NETWORK_NOTE;
+      }
+      const gateResult = await toolExecutor.gate({ type: "connector.addMcp", payload });
       if (gateResult !== "proceed") return { kind: "hit", value: gateResult };
-      return handleConnectorAddMcp(ctx);
+      return handleConnectorAddMcp(ctx, resolved);
     }
     case "connector.listStatus":
       return handleConnectorListStatus(ctx);
