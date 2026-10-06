@@ -65,6 +65,7 @@ export class LazyConnectorMesh {
   private readonly spawnContext: MeshSpawnContext;
   private readonly paths: PlatformPaths;
   private readonly removeSandboxDir: (dir: string) => void;
+  private readonly filesystemSpawnGate: Promise<void>;
 
   constructor(
     paths: PlatformPaths,
@@ -79,8 +80,16 @@ export class LazyConnectorMesh {
       isConnectorAllowed?: (serviceId: string) => boolean;
       /** Test seam: deletes a user MCP sandbox leaf. Production: recursive, forced `rmSync`. */
       removeSandboxDir?: (dir: string) => void;
+      /**
+       * Settles when the boot-time Windows revoke of stale `dataDir` ACEs is done. The filesystem
+       * MCP is the one spawn still granted `dataDir`, and its sandbox grant rewrites that same
+       * DACL with an unlocked read-modify-write, so its first listing (which spawns it) awaits
+       * this. Never rejects in production (`revokeLegacyDataDirGrantsAtBoot`).
+       */
+      filesystemSpawnGate?: Promise<void>;
     },
   ) {
+    this.filesystemSpawnGate = options?.filesystemSpawnGate ?? Promise.resolve();
     this.paths = paths;
     this.removeSandboxDir =
       options?.removeSandboxDir ?? ((dir) => rmSync(dir, { recursive: true, force: true }));
@@ -399,6 +408,9 @@ export class LazyConnectorMesh {
   > {
     const list = async (mesh: string): Promise<LazyMeshToolMap> =>
       listLazyMeshClientTools(this.getLazyClient(mesh));
+    // The filesystem MCP spawns on its first listing; on Windows that grant must not race the
+    // boot revoke of stale data-directory ACEs on the same DACL (see `filesystemSpawnGate`).
+    await this.filesystemSpawnGate;
     const fsTools = (await this.filesystem.listTools()) as LazyMeshToolMap;
     return [
       { map: fsTools, name: "filesystem" },
@@ -618,6 +630,7 @@ export function createLazyConnectorMesh(
     obsidianVaultPaths?: readonly string[];
     isConnectorAllowed?: (serviceId: string) => boolean;
     removeSandboxDir?: (dir: string) => void;
+    filesystemSpawnGate?: Promise<void>;
   },
 ): Promise<LazyConnectorMesh> {
   return Promise.try(() => new LazyConnectorMesh(paths, vault, options));

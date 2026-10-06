@@ -635,6 +635,8 @@ interface SchedulerWithMeshOpts {
    * degraded boots keep the snippet path. Gated below on `[decisions].use_llm`.
    */
   decisionLlm?: DecisionLlm;
+  /** Settles when the boot-time Windows data-directory revoke is done; gates the filesystem MCP’s first spawn. */
+  filesystemSpawnGate?: Promise<void>;
 }
 
 async function createSchedulerWithMesh(opts: SchedulerWithMeshOpts): Promise<{
@@ -657,6 +659,7 @@ async function createSchedulerWithMesh(opts: SchedulerWithMeshOpts): Promise<{
     isConnectorAllowed,
     glossaryLlm,
     decisionLlm,
+    filesystemSpawnGate,
   } = opts;
   // I41 clause (6), spec § 11.2: a demo gateway's scheduler exists (IPC and the post-sync
   // refreshers are built alongside it) but can never run a job.
@@ -888,6 +891,7 @@ async function createSchedulerWithMesh(opts: SchedulerWithMeshOpts): Promise<{
     // roots must not be silently treated as note vaults.
     obsidianVaultPaths: tomlRoots.map((r) => r.path),
     isConnectorAllowed,
+    ...(filesystemSpawnGate === undefined ? {} : { filesystemSpawnGate }),
   });
   const pagerdutyCfg = loadNimbusPagerdutyFromConfigDir(paths.configDir);
   const workdayCfg = loadNimbusWorkdayFromConfigDir(paths.configDir);
@@ -3273,6 +3277,7 @@ export async function assemblePlatformServices(
   // otherwise gained one unresolvable ACE per distinct SID until the DACL overflowed. Non-fatal by
   // construction: see the function.
   // Skipped for a demo-rooted gateway (I41 clause 4, platform/demo-boot.ts).
+  let dataDirRevoke: Promise<void> | undefined;
   if (bootPolicy.reapAppContainers) {
     void reapAppContainersAtBoot({
       db,
@@ -3281,8 +3286,16 @@ export async function assemblePlatformServices(
     });
     // Spec § A: before per-policy working directories, every connector ran with `dataDir` as its
     // cwd and the helper left an inheritable ACE there per SID. Nothing re-grants it now (except
-    // the filesystem MCP, deliberately), so revoke once and record a marker.
-    void revokeLegacyDataDirGrantsAtBoot({ db, dataDir: paths.dataDir, logger: syncLogger });
+    // the filesystem MCP, deliberately), so revoke once and record a marker. The revoke rewrites the
+    // dataDir DACL, and so does the filesystem MCP’s spawn-time grant (an unlocked read-modify-
+    // write), and that MCP spawns lazily on its first listing — which a request arriving in the
+    // seconds the revoke takes CAN trigger. So the mesh holds that first spawn on this promise
+    // (never rejects) rather than letting the two race; nothing else at boot awaits it.
+    dataDirRevoke = revokeLegacyDataDirGrantsAtBoot({
+      db,
+      dataDir: paths.dataDir,
+      logger: syncLogger,
+    });
   }
   const notifications = createUnimplementedNotifications(syncLogger);
   const rateLimiter = new ProviderRateLimiter();
@@ -3471,6 +3484,7 @@ export async function assemblePlatformServices(
     isConnectorAllowed,
     glossaryLlm: createGlossaryLlm(llmRegistry.llmRouter),
     decisionLlm: createDecisionLlm(llmRegistry.llmRouter),
+    ...(dataDirRevoke === undefined ? {} : { filesystemSpawnGate: dataDirRevoke }),
   });
   // One `stop` per refresher that actually started. Three of the four are
   // optional (their passes are config-gated), and the repeated
