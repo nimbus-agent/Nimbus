@@ -45,6 +45,8 @@
 - Modify: `packages/cli/src/lib/demo-root.ts` (`deriveDemoPaths`)
 - Create: `packages/gateway/src/platform/sandbox-dir-placement.test.ts`
 - Modify: every test/fixture that builds a `PlatformPaths`/`CliPlatformPaths` literal (find them with `bun run typecheck` and `bun run typecheck:tests`; today ~49 files contain `tempDir:`)
+- Modify: `packages/gateway/src/platform/dirs.ts` (`ensurePlatformDirectories` creates `sandboxDir`) + its test
+- Modify: every E2E file that serialises paths into `NIMBUS_E2E_PATHS_JSON` (`grep -rln PATHS_JSON packages/gateway/test` — ~9 files today) and `packages/gateway/test/e2e/_fixtures/gateway-runner.ts`
 
 **Interfaces:**
 - Produces: `PlatformPaths.sandboxDir: string` and `CliPlatformPaths.sandboxDir: string` (REQUIRED, not optional — a `?` with a fallback would silently put the root somewhere unreviewed).
@@ -114,8 +116,11 @@ Run: `bun test packages/gateway/src/platform/sandbox-dir-placement.test.ts`
   - gateway `deriveDemoPaths`: `sandboxDir: join(root, "sandbox"),`
   - CLI mirrors: identical values using `envGet`; CLI `deriveDemoPaths` identical line. (`scripts/parity/demo-root.parity.test.ts` compares both `deriveDemoPaths` with `toEqual`, so both MUST change.)
   - Update every fixture literal: add `sandboxDir: join(<that fixture's temp root>, "sandbox")` (or a sibling of its `tempDir`). Never point a fixture at a real user path.
+  - `dirs.ts`: add `paths.sandboxDir` to the `dirs` array in `ensurePlatformDirectories`; its test asserts the directory exists after the call.
+  - E2E: the runner casts JSON to `PlatformPaths`, so a test that omits `sandboxDir` compiles and then crashes at the first spawn (`join(undefined, ...)`) — typecheck cannot see it. Add `sandboxDir: join(tmp, "sandbox")` to EVERY E2E `paths` object, and make `gateway-runner.ts` refuse loudly right after parsing: `if (typeof paths.sandboxDir !== "string" || paths.sandboxDir === "") { process.stderr.write("[e2e-runner] NIMBUS_E2E_PATHS_JSON lacks sandboxDir
+"); process.exit(1); }` — a refusal, never a default.
 
-- [ ] **Step 4: Run** `bun test packages/gateway/src/platform scripts/parity` then `bun run typecheck` and `bun run typecheck:tests` — expect PASS / clean (typecheck:tests is advisory on win32; also run it to find fixtures).
+- [ ] **Step 4: Run** `bun test packages/gateway/src/platform scripts/parity` packages/gateway/test/e2e/explain-last.e2e.test.ts (one E2E as a smoke for the runner change) then `bun run typecheck` and `bun run typecheck:tests` — expect PASS / clean (typecheck:tests is advisory on win32; also run it to find fixtures).
 
 - [ ] **Step 5: Commit** — `git commit -m "feat(platform): add PlatformPaths.sandboxDir outside data and config"`
 
@@ -354,7 +359,7 @@ export const USER_MCP_GRANTS_V65_SQL = [
 
 `user-mcp.ts`: replace `userMcpDefaultManifest` with `userMcpManifestFromRow` (strict `string[]` parse per column, same shape as the `args_json` parse); in `ensureUserMcpClient`, after the args parse, `const m = userMcpManifestFromRow(row); if (!m.ok) { recordUserMcpRowFailure(ctx, row.service_id, m.column, m.reason); return; }` and pass `m.manifest` to `wrapServerSpec`. Rename `recordArgsJsonFailure` → `recordUserMcpRowFailure(ctx, serviceId, column, reason)`; message `malformed ${column} (${reason})`.
 
-- [ ] **Step 4: Run** the tests + `bun test packages/gateway/src/index packages/gateway/src/connectors/lazy-mesh packages/gateway/src/connectors/user-mcp*` + `bun run typecheck`. CLAUDE.md/GEMINI.md say `schema V64` — change both to `V65` here (status-drift reads them).
+- [ ] **Step 4: Run** the tests + `bun test packages/gateway/src/index packages/gateway/src/connectors/lazy-mesh packages/gateway/src/connectors/user-mcp*` + `bun test packages/gateway/test/integration/index` (the real-schema tests, e.g. `index-health-real-schema.test.ts`, migrate to `CURRENT_SCHEMA_VERSION`) + `bun run typecheck`. CLAUDE.md/GEMINI.md say `schema V64` — change both to `V65` here (status-drift reads them).
 
 - [ ] **Step 5: Commit** — `feat(user-mcp): store owner-approved grants (schema V65)`
 
@@ -411,19 +416,22 @@ export function resolveUserMcpRegistration(
   - empty argv → `ERR_USER_MCP_ARGV_EMPTY`.
   - bare `echo-srv` resolved by `which` → `command` absolute; unresolvable → `ERR_USER_MCP_COMMAND_NOT_FOUND`.
   - absolute command kept, then `realpath`ed; a missing absolute command → `ERR_USER_MCP_COMMAND_NOT_FOUND`.
+  - win32 only: absolute `C:wdistcho` (no extension) that does not exist but `C:wdistcho.exe` does → resolves to the `.exe` (`bun build --compile` appends it, and a user copying the README's POSIX line will omit it); linux: no such fallback.
   - command with a space in its path stays one token (`argv[0] = "/home/Jane Doe/srv/x"`).
   - relative `--read` → `ERR_USER_MCP_READ_PATH_RELATIVE`; missing → `ERR_USER_MCP_READ_PATH_MISSING`.
   - read path equal to, inside, and an ANCESTOR of each protected root → `ERR_USER_MCP_READ_PATH_PROTECTED` (three directions × three roots — table-driven).
   - linux/darwin: command `/opt/srv/bin/x` → `readPaths` includes `/opt/srv/bin`; win32: not added.
   - linux: command inside `dataDir` → `ERR_USER_MCP_READ_PATH_PROTECTED` (the auto-added dir is checked too).
   - win32 comparison is case-insensitive: read `C:\USERS\U\APPDATA\LOCAL\NIMBUS\DATA\x` vs root `C:\Users\u\AppData\Local\Nimbus\data` → protected.
+  - win32 separators are normalised: root `C:/Users/u/AppData/Local/Nimbus/data` (forward slashes) vs read `c:Sersppdataocal
+imbusdata ` → protected.
   - net: `API.Example.com` → `api.example.com`; `host:443` ok; `10.0.0.1` ok; `https://x`, `x/y`, `*.x.com`, `x:0`, `x:70000`, `` → `ERR_USER_MCP_NET_HOST_INVALID`.
   - ids: registering `mcp_a_x` while `mcp_a` exists, and `mcp_a` while `mcp_a_x` exists → `ERR_USER_MCP_ID_COLLISION`; `mcp_ab` with `mcp_a` → allowed.
   - duplicates in read/net are deduped; output order is input order.
 
 - [ ] **Step 2: Run** — FAIL.
 
-- [ ] **Step 3: Implement.** Rules in this order (first failure throws): argv non-empty → id collision → command resolution (`isAbsolute(argv[0])` ? `realpath(argv[0])` (catch → NOT_FOUND) : `which(argv[0])` then `realpath`) → each read path (absolute, `realpath`, protected check) → append `dirname(command)` when `platform !== "win32"` and protected-check it → net hosts. Overlap: `isSameOrInside(a, b) || isSameOrInside(b, a)` using `path.relative` (for `win32`, compare lowercased strings through `path.win32.relative`; else `path.posix.relative`). Net host regex (after `.toLowerCase().trim()`):
+- [ ] **Step 3: Implement.** Rules in this order (first failure throws): argv non-empty → id collision → command resolution (`isAbsolute(argv[0])` ? `realpath(argv[0])` (on `win32`, when that throws and `extname(argv[0]) === ""`, try `realpath(argv[0] + ".exe")`; catch → NOT_FOUND) : `which(argv[0])` then `realpath`) → each read path (absolute, `realpath`, protected check) → append `dirname(command)` when `platform !== "win32"` and protected-check it → net hosts. Overlap: `isSameOrInside(a, b) || isSameOrInside(b, a)` using `path.relative` (for `win32`, `path.win32.normalize` both sides, lowercase them, then `path.win32.relative`; else `path.posix.relative`). Net host regex (after `.toLowerCase().trim()`):
 
 ```ts
 const LABEL = "[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?";
@@ -451,7 +459,7 @@ Every error message names the offending value.
 - Consumes: Task 5's resolver; Task 4's insert; Task 2's `sandboxCwdFor`.
 - Produces on `LazyConnectorMesh`:
   - `userMcpProtectedRoots(): readonly string[]` → `[paths.dataDir, paths.configDir, paths.sandboxDir]` (store `paths` on the instance if not already).
-  - `async removeUserMcpSandbox(serviceId: string): Promise<void>` — `await this.stopUserMcpClient(serviceId)`, then `rmSync(sandboxCwdFor(sandboxRoot, \`user.${serviceId}\`), { recursive: true, force: true })` in try/catch → `this.logger?.warn({ serviceId, err }, "user MCP sandbox directory not removed")`. Never throws.
+  - `async removeUserMcpSandbox(serviceId: string): Promise<void>` — `await this.stopUserMcpClient(serviceId)`, then `rmSync(sandboxCwdFor(sandboxRoot, \`user.${serviceId}\`), { recursive: true, force: true })` with up to 3 attempts 100 ms apart (a Windows child releases its cwd handle a moment after it exits), then `this.logger?.warn({ serviceId, err }, "user MCP sandbox directory not removed")`. Never throws.
 - IPC params for `connector.addMcp`: `{ serviceId: string; argv?: string[]; commandLine?: string; readPaths?: string[]; netHosts?: string[]; modelAccess?: boolean }` — exactly one of `argv`/`commandLine` (`commandLine` → `parseUserMcpCommandLine` for compatibility).
 - Gate payload, exactly: `{ serviceId, command, args, readPaths, netHosts, modelAccess }` plus `networkNote: "Windows AppContainer network access is all-or-nothing (internetClient): this server can reach any host, not only the ones listed."` only when `process.platform === "win32" && netHosts.length > 0`.
 
