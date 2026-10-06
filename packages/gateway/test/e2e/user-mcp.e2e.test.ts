@@ -289,6 +289,13 @@ describe.skipIf(!sandboxAvailable)("a scaffolded user MCP over a real gateway", 
   let restoreHelper: () => void = () => {};
   const client = new TestIpcClient();
 
+  type LedgerRow = { id: number; destination: string; hitlStatus: string; method: string };
+  /** The egress-ledger rows naming `destination`, read over the real `egress.list` IPC method. */
+  async function ledgerRowsFor(destination: string): Promise<LedgerRow[]> {
+    const out = await client.call<{ rows: LedgerRow[] }>("egress.list", { limit: 10_000 });
+    return out.rows.filter((r) => r.destination === destination);
+  }
+
   /** Every consent prompt the gateway raised, in order; and whether the next one is approved. */
   const prompts: string[] = [];
   let approve = true;
@@ -414,6 +421,7 @@ describe.skipIf(!sandboxAvailable)("a scaffolded user MCP over a real gateway", 
 
   test("an approved echo call answers, and the I42 prompt named the tool", async () => {
     const before = prompts.length;
+    const ledgerBefore = await ledgerRowsFor("mcp_echo_srv");
     const out = await client.call<CallOutcome>("connector.userMcpCall", {
       serviceId: "mcp_echo_srv",
       tool: "echo",
@@ -422,6 +430,16 @@ describe.skipIf(!sandboxAvailable)("a scaffolded user MCP over a real gateway", 
     expect(out.status).toBe("ok");
     expect(resultText(out)).toBe("hello");
     expect(prompts.slice(before).some((p) => p.includes("mcp_echo_srv.echo"))).toBe(true);
+    // I29: the userMcpCall executor carries a REAL egress sink, not NULL_EGRESS_SINK — exactly one
+    // new ledger row for THIS call, read back over the real `egress.list` IPC method, names the
+    // service id. Filtered by method because the same destination also gets `sync.run` rows from
+    // the user MCP's scheduler heartbeat (`createUserMcpSyncable`), which race with this call.
+    const ledgerAfter = await ledgerRowsFor("mcp_echo_srv");
+    const added = ledgerAfter.filter(
+      (r) => r.method === "mcp_echo_srv.echo" && !ledgerBefore.some((b) => b.id === r.id),
+    );
+    expect(added).toHaveLength(1);
+    expect(added[0]).toMatchObject({ destination: "mcp_echo_srv", hitlStatus: "approved" });
   }, 60_000);
 
   // Without this, DENIED below would also appear if the probe could read NOTHING inside the
