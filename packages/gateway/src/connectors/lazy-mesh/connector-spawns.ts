@@ -133,7 +133,7 @@ function classifyGoogleCredentialFailure(err: unknown): string {
  * happened to boot the mesh — in practice `gmail`, the one Google connector whose credential
  * was fine — so `sync_state.last_error` and `connector_health_history` both named the wrong
  * service and re-authing it changed nothing. Naming `id` here puts the error on the connector
- * that actually owns the credential. Mirrors `recordArgsJsonFailure` in `user-mcp.ts`.
+ * that actually owns the credential. Mirrors `recordUserMcpRowFailure` in `user-mcp.ts`.
  */
 function recordGoogleCredentialFailure(
   ctx: MeshSpawnContext,

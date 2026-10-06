@@ -1019,6 +1019,15 @@ CREATE TABLE IF NOT EXISTS oncall_push_state (
     id         INTEGER PRIMARY KEY CHECK (id = 1),
     enabled_at INTEGER NOT NULL
 );
+
+-- V65 -- owner-approved grants for user MCP servers (2026-10-06). Additive columns on the V11
+-- `user_mcp_connector` table; defaults keep every existing row at deny-all.
+-- Authoritative source: packages/gateway/src/index/user-mcp-grants-v65-sql.ts
+-- `read_paths_json` / `net_hosts_json` are JSON string arrays that become the spawn manifest's
+-- filesystem.read / network; `model_access` is stored now and read by a later PR.
+ALTER TABLE user_mcp_connector ADD COLUMN read_paths_json TEXT NOT NULL DEFAULT '[]';
+ALTER TABLE user_mcp_connector ADD COLUMN net_hosts_json  TEXT NOT NULL DEFAULT '[]';
+ALTER TABLE user_mcp_connector ADD COLUMN model_access    INTEGER NOT NULL DEFAULT 0;
 ```
 
 **SQLite write boundary.** Every production write goes through `dbRun` / `dbExec` / `dbStmtRun` in `packages/gateway/src/db/write.ts` (invariant `I14`). The wrappers translate `SQLITE_FULL` into a typed `DiskFullError`; the static-audit gate `D12` (`bun run audit:invariants`) fails the build on any direct `db.run(` / `db.exec(` outside the wrapper.

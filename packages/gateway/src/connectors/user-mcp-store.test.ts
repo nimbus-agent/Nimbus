@@ -2,6 +2,7 @@ import { Database } from "bun:sqlite";
 import { describe, expect, test } from "bun:test";
 
 import { LocalIndex } from "../index/local-index.ts";
+import { runIndexedSchemaMigrations } from "../index/migrations/runner.ts";
 import {
   deleteUserMcpConnector,
   getUserMcpConnector,
@@ -92,6 +93,9 @@ describe("user-mcp-store", () => {
         service_id: "mcp_test",
         command: "node",
         args_json: "[]",
+        read_paths_json: "[]",
+        net_hosts_json: "[]",
+        model_access: 0,
       }),
     ).toThrow(/schema v11/);
   });
@@ -109,6 +113,9 @@ describe("user-mcp-store", () => {
       service_id: "mcp_auto_ts",
       command: "bun",
       args_json: "[]",
+      read_paths_json: "[]",
+      net_hosts_json: "[]",
+      model_access: 0,
       // created_at intentionally omitted — exercises the ?? Date.now() branch
     });
     const after = Date.now();
@@ -138,6 +145,9 @@ describe("user-mcp-store", () => {
       service_id: "mcp_demo",
       command: "bun",
       args_json: '["run","./srv.ts"]',
+      read_paths_json: "[]",
+      net_hosts_json: "[]",
+      model_access: 0,
       created_at: Date.now() - 1000,
     });
     const row = getUserMcpConnector(db, "mcp_demo");
@@ -163,5 +173,43 @@ describe("user-mcp-store", () => {
     expect(rows).toHaveLength(2);
     expect(rows[0]?.service_id).toBe("mcp_a");
     expect(rows[1]?.service_id).toBe("mcp_z");
+  });
+
+  test("grants round-trip through insert and list verbatim", () => {
+    const db = new Database(":memory:");
+    LocalIndex.ensureSchema(db);
+    insertUserMcpConnector(db, {
+      service_id: "mcp_g",
+      command: "bun",
+      args_json: "[]",
+      read_paths_json: '["/a"]',
+      net_hosts_json: '["api.x.com"]',
+      model_access: 1,
+    });
+    const row = listUserMcpConnectors(db)[0];
+    expect(row?.read_paths_json).toBe('["/a"]');
+    expect(row?.net_hosts_json).toBe('["api.x.com"]');
+    expect(row?.model_access).toBe(1);
+    expect(getUserMcpConnector(db, "mcp_g")?.model_access).toBe(1);
+  });
+
+  test("a v64 DB lists rows with default grants and refuses insert", () => {
+    const db = new Database(":memory:");
+    runIndexedSchemaMigrations(db, 64);
+    db.run(
+      `INSERT INTO user_mcp_connector (service_id, command, args_json, created_at) VALUES ('mcp_old', 'x', '[]', 1)`,
+    );
+    const row = listUserMcpConnectors(db)[0];
+    expect([row?.read_paths_json, row?.net_hosts_json, row?.model_access]).toEqual(["[]", "[]", 0]);
+    expect(() =>
+      insertUserMcpConnector(db, {
+        service_id: "mcp_n",
+        command: "x",
+        args_json: "[]",
+        read_paths_json: "[]",
+        net_hosts_json: "[]",
+        model_access: 0,
+      }),
+    ).toThrow(/v65/);
   });
 });

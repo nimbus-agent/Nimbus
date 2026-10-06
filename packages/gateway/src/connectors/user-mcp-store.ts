@@ -8,6 +8,9 @@ export type UserMcpConnectorRow = {
   command: string;
   args_json: string;
   created_at: number;
+  read_paths_json: string;
+  net_hosts_json: string;
+  model_access: number;
 };
 
 export const USER_MCP_SERVICE_ID_PATTERN = /^mcp_[a-z0-9_]{1,62}$/;
@@ -37,15 +40,20 @@ export function validateUserMcpArgsJson(args: string[]): string {
   return JSON.stringify(args);
 }
 
+const SELECT_V65 =
+  "SELECT service_id, command, args_json, created_at, read_paths_json, net_hosts_json, model_access FROM user_mcp_connector";
+const SELECT_PRE_V65 =
+  "SELECT service_id, command, args_json, created_at, '[]' AS read_paths_json, '[]' AS net_hosts_json, 0 AS model_access FROM user_mcp_connector";
+
+function selectUserMcp(db: Database): string {
+  return readIndexedUserVersion(db) >= 65 ? SELECT_V65 : SELECT_PRE_V65;
+}
+
 export function listUserMcpConnectors(db: Database): UserMcpConnectorRow[] {
   if (readIndexedUserVersion(db) < 11) {
     return [];
   }
-  return db
-    .query(
-      `SELECT service_id, command, args_json, created_at FROM user_mcp_connector ORDER BY service_id`,
-    )
-    .all() as UserMcpConnectorRow[];
+  return db.query(`${selectUserMcp(db)} ORDER BY service_id`).all() as UserMcpConnectorRow[];
 }
 
 export function getUserMcpConnector(db: Database, serviceId: string): UserMcpConnectorRow | null {
@@ -53,9 +61,7 @@ export function getUserMcpConnector(db: Database, serviceId: string): UserMcpCon
     return null;
   }
   return db
-    .query(
-      `SELECT service_id, command, args_json, created_at FROM user_mcp_connector WHERE service_id = ?`,
-    )
+    .query(`${selectUserMcp(db)} WHERE service_id = ?`)
     .get(serviceId) as UserMcpConnectorRow | null;
 }
 
@@ -63,14 +69,26 @@ export function insertUserMcpConnector(
   db: Database,
   row: Omit<UserMcpConnectorRow, "created_at"> & { created_at?: number },
 ): void {
-  if (readIndexedUserVersion(db) < 11) {
+  const version = readIndexedUserVersion(db);
+  if (version < 11) {
     throw new Error("user_mcp_connector requires schema v11+");
+  }
+  if (version < 65) {
+    throw new Error("user_mcp_connector grants require schema v65+");
   }
   const created = row.created_at ?? Date.now();
   dbRun(
     db,
-    `INSERT INTO user_mcp_connector (service_id, command, args_json, created_at) VALUES (?, ?, ?, ?)`,
-    [row.service_id, row.command, row.args_json, created],
+    `INSERT INTO user_mcp_connector (service_id, command, args_json, created_at, read_paths_json, net_hosts_json, model_access) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    [
+      row.service_id,
+      row.command,
+      row.args_json,
+      created,
+      row.read_paths_json,
+      row.net_hosts_json,
+      row.model_access,
+    ],
   );
 }
 

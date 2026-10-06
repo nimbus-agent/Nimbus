@@ -35,7 +35,14 @@ export function handleConnectorAddMcp(ctx: ConnectorRpcHandlerContext): Connecto
   const argsJson = validateUserMcpArgsJson(args);
   const db = localIndex.getDatabase();
   try {
-    insertUserMcpConnector(db, { service_id: serviceId, command, args_json: argsJson });
+    insertUserMcpConnector(db, {
+      service_id: serviceId,
+      command,
+      args_json: argsJson,
+      read_paths_json: "[]",
+      net_hosts_json: "[]",
+      model_access: 0,
+    });
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     if (msg.includes("UNIQUE") || msg.includes("unique")) {

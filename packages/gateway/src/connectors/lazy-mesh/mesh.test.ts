@@ -266,6 +266,9 @@ describe("listToolsForDispatcher merges fs + builtin + user slot tools", () => {
         command: "/bin/echo",
         args_json: "[]",
         created_at: 0,
+        read_paths_json: "[]",
+        net_hosts_json: "[]",
+        model_access: 0,
       },
     ];
     mesh = new LazyConnectorMesh(makePaths(), createMockVault(), {
@@ -503,6 +506,9 @@ describe("ensureUserMcpRunning constructs a slot when a matching row exists", ()
         command: "/bin/echo",
         args_json: '["arg1"]',
         created_at: 0,
+        read_paths_json: "[]",
+        net_hosts_json: "[]",
+        model_access: 0,
       },
     ];
     mesh = new LazyConnectorMesh(makePaths(), createMockVault(), {
@@ -523,6 +529,9 @@ describe("ensureUserMcpRunning constructs a slot when a matching row exists", ()
         command: "/bin/echo",
         args_json: "not-json",
         created_at: 0,
+        read_paths_json: "[]",
+        net_hosts_json: "[]",
+        model_access: 0,
       },
     ];
     mesh = new LazyConnectorMesh(makePaths(), createMockVault(), {
