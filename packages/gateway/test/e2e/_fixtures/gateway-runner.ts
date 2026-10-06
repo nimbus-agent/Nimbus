@@ -28,6 +28,12 @@ if (paths === undefined) {
   process.stderr.write("[e2e-runner] NIMBUS_E2E_PATHS_JSON is required\n");
   process.exit(1);
 }
+// A refusal, never a default: a test that omits sandboxDir would otherwise compile (the JSON is
+// cast to PlatformPaths) and crash at the first spawn with join(undefined, ...).
+if (typeof paths.sandboxDir !== "string" || paths.sandboxDir === "") {
+  process.stderr.write("[e2e-runner] NIMBUS_E2E_PATHS_JSON lacks sandboxDir\n");
+  process.exit(1);
+}
 
 // Seed the vault BEFORE assembly (same backing store the gateway opens).
 const vaultSeeds = envJson<Record<string, string>>("NIMBUS_E2E_SEED_VAULT_JSON") ?? {};

@@ -216,6 +216,7 @@ describe("nimbus exec e2e (real gateway subprocess)", () => {
       socketPath,
       extensionsDir: join(tmp, "extensions"),
       tempDir: join(tmp, "tmp"),
+      sandboxDir: join(tmp, "sandbox"),
     };
     mkdirSync(paths.configDir, { recursive: true });
     mkdirSync(paths.dataDir, { recursive: true });

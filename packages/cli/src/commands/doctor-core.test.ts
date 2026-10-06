@@ -59,6 +59,7 @@ const FAKE_PATHS = {
   socketPath: join(FAKE_ROOT, "gateway.sock"),
   extensionsDir: join(FAKE_ROOT, "data", "extensions"),
   tempDir: join(FAKE_ROOT, "temp"),
+  sandboxDir: join(FAKE_ROOT, "sandbox"),
 };
 
 function makeFixKeyringDeps(overrides: Partial<FixKeyringDeps> = {}): FixKeyringDeps {
@@ -938,6 +939,7 @@ describe("runDoctor — voice-line exit-code escalation (lines 184-186)", () => 
       socketPath: join(voiceRoot, "gateway.sock"),
       extensionsDir: join(voiceRoot, "data", "extensions"),
       tempDir: join(voiceRoot, "temp"),
+      sandboxDir: join(voiceRoot, "sandbox"),
     };
 
     await runDoctor(
@@ -989,6 +991,7 @@ describe("runDoctor — voice-line exit-code escalation (lines 184-186)", () => 
       socketPath: join(voiceRoot, "gateway.sock"),
       extensionsDir: join(voiceRoot, "data", "extensions"),
       tempDir: join(voiceRoot, "temp"),
+      sandboxDir: join(voiceRoot, "sandbox"),
     };
 
     await runDoctor(
@@ -1031,6 +1034,7 @@ describe("runDoctor — voice-line exit-code escalation (lines 184-186)", () => 
       socketPath: join(voiceRoot, "gateway.sock"),
       extensionsDir: join(voiceRoot, "data", "extensions"),
       tempDir: join(voiceRoot, "temp"),
+      sandboxDir: join(voiceRoot, "sandbox"),
     };
 
     await runDoctor(

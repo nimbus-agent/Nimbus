@@ -11,6 +11,8 @@ export interface PlatformPaths {
   socketPath: string;
   extensionsDir: string;
   tempDir: string;
+  /** Root of per-policy sandbox working directories (one leaf per policy id, created at spawn). Never equal to, inside, or an ancestor of dataDir/configDir — see docs/sandbox.md. */
+  sandboxDir: string;
   /**
    * Set ONLY by the three `create*Paths` resolvers below, when `NIMBUS_DEMO=1` (invariant I41).
    * Everything host-global that must differ for a demo process — the vault factory, the Windows
@@ -81,6 +83,7 @@ export function createWindowsPaths(): PlatformPaths {
     socketPath: socketPathOverride() ?? String.raw`\\.\pipe\nimbus-gateway`,
     extensionsDir: join(localAppData, "Nimbus", "extensions"),
     tempDir: join(tmpdir(), "nimbus"),
+    sandboxDir: join(localAppData, "Nimbus", "sandbox"),
   };
   return demo ? deriveDemoPaths(real) : real;
 }
@@ -97,6 +100,7 @@ export function createDarwinPaths(): PlatformPaths {
     socketPath: socketPathOverride() ?? join(tmp, "nimbus-gateway.sock"),
     extensionsDir: join(root, "extensions"),
     tempDir: join(tmpdir(), "nimbus"),
+    sandboxDir: join(homedir(), "Library", "Caches", "Nimbus", "sandbox"),
   };
   return demo ? deriveDemoPaths(real) : real;
 }
@@ -106,6 +110,7 @@ export function createLinuxPaths(): PlatformPaths {
   const home = homedir();
   const configRoot = processEnvGet("XDG_CONFIG_HOME") ?? join(home, ".config");
   const dataRoot = processEnvGet("XDG_DATA_HOME") ?? join(home, ".local", "share");
+  const cacheRoot = processEnvGet("XDG_CACHE_HOME") ?? join(home, ".cache");
   const runtimeDir = processEnvGet("XDG_RUNTIME_DIR") ?? tmpdir();
   const configDir = configDirOverride() ?? join(configRoot, "nimbus");
   const dataDir = join(dataRoot, "nimbus");
@@ -116,6 +121,7 @@ export function createLinuxPaths(): PlatformPaths {
     socketPath: socketPathOverride() ?? join(runtimeDir, "nimbus-gateway.sock"),
     extensionsDir: join(dataDir, "extensions"),
     tempDir: join(tmpdir(), "nimbus"),
+    sandboxDir: join(cacheRoot, "nimbus", "sandbox"),
   };
   return demo ? deriveDemoPaths(real) : real;
 }

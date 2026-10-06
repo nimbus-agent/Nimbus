@@ -245,6 +245,7 @@ async function startTestGateway(
     socketPath: pipeOrSocket(tmp, tag),
     extensionsDir: join(tmp, "extensions"),
     tempDir: join(tmp, "tmp"),
+    sandboxDir: join(tmp, "sandbox"),
   };
   mkdirSync(paths.logDir, { recursive: true });
 

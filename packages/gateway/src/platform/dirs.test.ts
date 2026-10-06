@@ -50,6 +50,7 @@ describe("ensurePlatformDirectories — non-pipe socketPath", () => {
     const logDir = join(base, "data", "logs");
     const extensionsDir = join(base, "data", "extensions");
     const tempDir = join(base, "temp", "nimbus");
+    const sandboxDir = join(base, "cache", "sandbox");
     const socketPath = join(base, "run", "nimbus-gateway.sock");
 
     const paths: PlatformPaths = {
@@ -59,6 +60,7 @@ describe("ensurePlatformDirectories — non-pipe socketPath", () => {
       socketPath,
       extensionsDir,
       tempDir,
+      sandboxDir,
     };
 
     await ensurePlatformDirectories(paths);
@@ -69,6 +71,7 @@ describe("ensurePlatformDirectories — non-pipe socketPath", () => {
     expect(existsSync(logDir)).toBe(true);
     expect(existsSync(extensionsDir)).toBe(true);
     expect(existsSync(tempDir)).toBe(true);
+    expect(existsSync(sandboxDir)).toBe(true);
     // The parent directory of the socket path must be created.
     expect(existsSync(dirname(socketPath))).toBe(true);
   });
@@ -82,6 +85,7 @@ describe("ensurePlatformDirectories — non-pipe socketPath", () => {
       socketPath: join(base, "run", "nimbus-gateway.sock"),
       extensionsDir: join(base, "data", "extensions"),
       tempDir: join(base, "temp", "nimbus"),
+      sandboxDir: join(base, "cache", "sandbox"),
     };
     await ensurePlatformDirectories(paths);
     // Second call must not throw (mkdir recursive is idempotent).
@@ -101,6 +105,7 @@ describe("ensurePlatformDirectories — Windows named-pipe socketPath", () => {
       socketPath: String.raw`\\.\pipe\nimbus-gateway`, // cross-platform-ok: literal Windows named-pipe fixture
       extensionsDir: join(base, "data", "extensions"),
       tempDir: join(base, "temp", "nimbus"),
+      sandboxDir: join(base, "cache", "sandbox"),
     };
 
     // Must not throw even though \\.\pipe\ is not a real mkdir-able directory.

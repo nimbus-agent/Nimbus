@@ -18,6 +18,7 @@ const REALS = [
       socketPath: "\\\\.\\pipe\\nimbus-gateway",
       extensionsDir: join("C:", "Users", "u", "AppData", "Local", "Nimbus", "extensions"),
       tempDir: join("T", "nimbus"),
+      sandboxDir: join("T", "sandbox"),
     },
   },
   {
@@ -31,6 +32,7 @@ const REALS = [
       socketPath: "\\\\.\\PIPE\\nimbus-gateway",
       extensionsDir: join("C:", "Users", "u", "AppData", "Local", "Nimbus", "extensions"),
       tempDir: join("T", "nimbus"),
+      sandboxDir: join("T", "sandbox"),
     },
   },
   {
@@ -42,6 +44,7 @@ const REALS = [
       socketPath: join("var", "folders", "x", "T", "nimbus-gateway.sock"),
       extensionsDir: join("Users", "u", "Library", "Application Support", "Nimbus", "extensions"),
       tempDir: join("T", "nimbus"),
+      sandboxDir: join("T", "sandbox"),
     },
   },
   {
@@ -53,6 +56,7 @@ const REALS = [
       socketPath: join("run", "user", "1000", "nimbus-gateway.sock"),
       extensionsDir: join("home", "u", ".local", "share", "nimbus", "extensions"),
       tempDir: join("T", "nimbus"),
+      sandboxDir: join("T", "sandbox"),
     },
   },
 ] as const;

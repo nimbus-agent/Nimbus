@@ -25,6 +25,7 @@ const DEMO_PATHS: CliPlatformPaths = {
   socketPath: FAKE_SOCKET_PATH,
   extensionsDir: join("demo-root", "data", "extensions"),
   tempDir: join("demo-root", "tmp"),
+  sandboxDir: join("demo-root", "sandbox"),
   demo: true,
 };
 

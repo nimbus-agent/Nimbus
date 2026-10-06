@@ -27,6 +27,7 @@ const stubPaths: PlatformPaths = {
   socketPath: join(stubBase, "gateway.sock"),
   extensionsDir: join(stubBase, "ext"),
   tempDir: join(stubBase, "tmp"),
+  sandboxDir: join(stubBase, "sandbox"),
 };
 
 // The doubles below satisfy Promise-returning contracts without `async`: nothing in them

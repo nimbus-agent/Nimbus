@@ -77,6 +77,7 @@ export function deriveDemoPaths(real: PlatformPaths): PlatformPaths {
     socketPath: demoSocketPathFor(real.socketPath, root),
     extensionsDir: join(dataDir, "extensions"),
     tempDir: join(tmpdir(), DEMO_TEMP_DIRNAME),
+    sandboxDir: join(root, "sandbox"),
     demo: true,
   };
 }

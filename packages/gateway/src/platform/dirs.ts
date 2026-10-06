@@ -14,6 +14,7 @@ export async function ensurePlatformDirectories(paths: PlatformPaths): Promise<v
     paths.logDir,
     paths.extensionsDir,
     paths.tempDir,
+    paths.sandboxDir,
   ];
   if (!isWindowsNamedPipe(paths.socketPath)) {
     dirs.push(dirname(paths.socketPath));

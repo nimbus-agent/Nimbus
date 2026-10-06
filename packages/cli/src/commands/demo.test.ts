@@ -31,6 +31,7 @@ function demoPaths(): CliPlatformPaths {
     socketPath: join("demo-root", "fake.sock"),
     extensionsDir: join(DEMO_DATA_DIR, "extensions"),
     tempDir: join("demo-root", "tmp"),
+    sandboxDir: join("demo-root", "sandbox"),
     demo: true,
   };
 }
@@ -569,6 +570,7 @@ function tempDemoPaths(): CliPlatformPaths {
     socketPath: join(root, "fake.sock"),
     extensionsDir: join(dataDir, "extensions"),
     tempDir: join(root, "tmp"),
+    sandboxDir: join(root, "sandbox"),
     demo: true,
   };
 }

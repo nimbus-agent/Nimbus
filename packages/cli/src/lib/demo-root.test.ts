@@ -95,6 +95,7 @@ describe("deriveDemoPaths (cli mirror)", () => {
       socketPath: join("R", "run", "nimbus-gateway.sock"),
       extensionsDir: join("R", "extensions"),
       tempDir: join(tmpdir(), "nimbus"),
+      sandboxDir: join("R", "cache", "sandbox"),
     };
     const root = demoRootFor(real.dataDir);
     const hash = createHash("sha256").update(root, "utf8").digest("hex").slice(0, 12);
@@ -105,6 +106,7 @@ describe("deriveDemoPaths (cli mirror)", () => {
       socketPath: join("R", "run", `nimbus-gateway-demo-${hash}.sock`),
       extensionsDir: join(root, "data", "extensions"),
       tempDir: join(tmpdir(), DEMO_TEMP_DIRNAME),
+      sandboxDir: join(root, "sandbox"),
       demo: true,
     });
   });

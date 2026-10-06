@@ -94,6 +94,7 @@ function fakeCliPaths(): CliPlatformPaths {
     socketPath: FAKE_SOCKET_PATH,
     extensionsDir: fakePath("extensions"),
     tempDir: fakePath("tmp"),
+    sandboxDir: fakePath("sandbox"),
   };
 }
 

@@ -18,6 +18,7 @@ function makePaths(): PlatformPaths {
     socketPath: join(root, "sock"),
     extensionsDir: join(root, "ext"),
     tempDir: join(root, "tmp"),
+    sandboxDir: join(root, "sandbox"),
   };
 }
 

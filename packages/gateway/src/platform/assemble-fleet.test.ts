@@ -81,6 +81,7 @@ describe("assembleFleetRuntime", () => {
         socketPath: join(dir, "gw.sock"),
         extensionsDir: join(dir, "ext"),
         tempDir: dir,
+        sandboxDir: `${dir}-sandbox`,
       } satisfies PlatformPaths,
       localIndex: {} as unknown as LocalIndex,
       llmRegistry: { llmRouter: undefined } as unknown as LlmRegistry,

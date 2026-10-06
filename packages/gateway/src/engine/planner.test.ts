@@ -10,6 +10,7 @@ const paths = {
   socketPath: "/s.sock",
   extensionsDir: "/e",
   tempDir: "/t",
+  sandboxDir: "/sandbox",
 };
 
 describe("planFromIntent", () => {

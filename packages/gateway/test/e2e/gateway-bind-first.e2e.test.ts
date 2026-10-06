@@ -154,6 +154,7 @@ async function bootGateway(tag: string, proxyPort: number): Promise<Booted> {
     socketPath: pipeOrSocket(tmp, tag),
     extensionsDir: join(tmp, "extensions"),
     tempDir: join(tmp, "tmp"),
+    sandboxDir: join(tmp, "sandbox"),
   };
   mkdirSync(paths.configDir, { recursive: true });
   mkdirSync(paths.dataDir, { recursive: true });

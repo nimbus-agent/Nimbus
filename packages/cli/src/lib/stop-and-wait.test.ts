@@ -20,6 +20,7 @@ function fakePaths(dataDir: string): CliPlatformPaths {
     socketPath: join(dataDir, "fake.sock"),
     extensionsDir: join(dataDir, "extensions"),
     tempDir: join(dataDir, "tmp"),
+    sandboxDir: join(dataDir, "sandbox"),
   };
 }
 

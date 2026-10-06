@@ -375,6 +375,7 @@ describe("assemblePlatformServices — in-process assembly", () => {
       socketPath,
       extensionsDir: join(tmpDir, "extensions"),
       tempDir: join(tmpDir, "tmp"),
+      sandboxDir: join(tmpDir, "sandbox"),
     };
   }
 

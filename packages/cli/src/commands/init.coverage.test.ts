@@ -30,6 +30,7 @@ function fakePaths(): CliPlatformPaths {
     socketPath: join(dir, "nimbus.sock"),
     extensionsDir: join(dir, "data", "extensions"),
     tempDir: join(dir, "tmp"),
+    sandboxDir: join(dir, "sandbox"),
   };
 }
 

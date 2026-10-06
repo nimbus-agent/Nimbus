@@ -73,6 +73,7 @@ describe("darwin vault refuses the keychain UI (issue #932)", () => {
         socketPath: join(root, "sock"),
         extensionsDir: root,
         tempDir: root,
+        sandboxDir: `${root}-sandbox`,
       });
       // listKeys reads the on-disk index only — no keychain call, so this is safe
       // even on a locked-keychain runner and still proves construction works.
