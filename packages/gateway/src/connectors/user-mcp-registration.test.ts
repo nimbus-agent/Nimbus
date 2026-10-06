@@ -93,7 +93,7 @@ describe("resolveUserMcpRegistration", () => {
   test("win32 extension-less absolute command falls back to .exe; linux does not", () => {
     const wenv = makeEnv({ platform: "win32", existing: ["C:\\w\\dist\\echo.exe"] });
     const r = resolveUserMcpRegistration(input({ argv: ["C:\\w\\dist\\echo"] }), wenv);
-    expect(r.command).toBe("C:\\w\\dist\\echo.exe");
+    expect(r.command).toBe("C:\\w\\dist\\echo.exe"); // cross-platform-ok
     const lenv = makeEnv({ existing: ["/w/dist/echo.exe"] });
     expect(code(() => resolveUserMcpRegistration(input({ argv: ["/w/dist/echo"] }), lenv))).toBe(
       "ERR_USER_MCP_COMMAND_NOT_FOUND",
