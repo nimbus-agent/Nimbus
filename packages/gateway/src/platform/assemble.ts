@@ -366,7 +366,7 @@ import type { PlatformPaths } from "./paths.ts";
 import { registerUserMcpSyncablesFromDatabase } from "./register-user-mcp-sync.ts";
 import { sandboxCwdFor } from "./sandbox/sandbox-cwd.ts";
 import { createSandboxRunner } from "./sandbox/sandbox-runner.ts";
-import { reapAppContainersAtBoot } from "./sandbox/win32-reap.ts";
+import { reapAppContainersAtBoot, revokeLegacyDataDirGrantsAtBoot } from "./sandbox/win32-reap.ts";
 import { ensureFullSqlite } from "./sqlite-runtime.ts";
 import type { AutostartManager, NotificationService, PlatformServices } from "./types.ts";
 
@@ -3279,6 +3279,10 @@ export async function assemblePlatformServices(
       logger: syncLogger,
       sweepPaths: resolveRuntimeById("bun").requiredReadPaths(),
     });
+    // Spec § A: before per-policy working directories, every connector ran with `dataDir` as its
+    // cwd and the helper left an inheritable ACE there per SID. Nothing re-grants it now (except
+    // the filesystem MCP, deliberately), so revoke once and record a marker.
+    void revokeLegacyDataDirGrantsAtBoot({ db, dataDir: paths.dataDir, logger: syncLogger });
   }
   const notifications = createUnimplementedNotifications(syncLogger);
   const rateLimiter = new ProviderRateLimiter();
