@@ -15,6 +15,31 @@ export type UserMcpConnectorRow = {
 
 export const USER_MCP_SERVICE_ID_PATTERN = /^mcp_[a-z0-9_]{1,62}$/;
 
+/**
+ * True when a dispatcher tool key belongs to a user-registered MCP server. The mesh files a user
+ * server under its service id (which {@link USER_MCP_SERVICE_ID_PATTERN} pins to `mcp_...`), and
+ * MCPClient prefixes every tool with `<server>_`, so such a key always starts with `mcp_`; no
+ * first-party connector service id does. A server id may itself contain `_`, so a key cannot be
+ * split back into server and tool — a caller that needs the owning server compares against the
+ * canonical key for an action type ({@link userMcpToolKeyForActionType}).
+ */
+export function isUserMcpToolKey(key: string): boolean {
+  return key.startsWith("mcp_");
+}
+
+/**
+ * The ONE tool key a user-MCP action type may dispatch: `<serviceId>.<tool>` -> `<serviceId>_<tool>`,
+ * exactly the pair `connector.userMcpCall` builds. `undefined` when the action type is not a
+ * user-MCP type or names no tool.
+ */
+export function userMcpToolKeyForActionType(actionType: string): string | undefined {
+  const dot = actionType.indexOf(".");
+  if (dot <= 0 || dot === actionType.length - 1) return undefined;
+  const serviceId = actionType.slice(0, dot);
+  if (!USER_MCP_SERVICE_ID_PATTERN.test(serviceId)) return undefined;
+  return `${serviceId}_${actionType.slice(dot + 1)}`;
+}
+
 export function normalizeUserMcpServiceId(raw: string): string | null {
   const s = raw.trim().toLowerCase();
   if (!USER_MCP_SERVICE_ID_PATTERN.test(s)) {

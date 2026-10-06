@@ -84,3 +84,17 @@ describe("isReadOnlyToolId — positive read-only allowlist", () => {
     }
   });
 });
+
+// I42: a user-registered MCP server's tools are owner-approved per call. A share file is a door a
+// third party names tools through, so a user-MCP key is never replayable whatever verb it ends in.
+describe("isReadOnlyToolId — user-MCP tool keys (I42)", () => {
+  test("a user-MCP key ending in a read verb is NOT read-only", () => {
+    expect(isReadOnlyToolId("mcp_notes_search")).toBe(false);
+    expect(isReadOnlyToolId("mcp_x_get")).toBe(false);
+    expect(isReadOnlyToolId("mcp_a_b_list")).toBe(false);
+  });
+
+  test("a first-party key with the same verb is unaffected", () => {
+    expect(isReadOnlyToolId("notes_search")).toBe(true);
+  });
+});

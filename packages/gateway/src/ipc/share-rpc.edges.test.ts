@@ -172,6 +172,39 @@ describe("share.replay — how each tool outcome is reported", () => {
   });
 });
 
+describe("share.replay — a user-MCP tool is never replayed (I42)", () => {
+  test("a share naming a user-MCP read-verb tool is skipped and the tool never executes", async () => {
+    let executed = 0;
+    let resolved = 0;
+    const out = await dispatchShareRpc(
+      "share.replay",
+      { bytesB64: signedRecipeB64([{ tool: "mcp_notes_search", service: "mcp_notes" }]) },
+      ctxWith({
+        listReplayTools: async () => {
+          resolved++;
+          const tools: LazyMeshToolMap = {
+            mcp_notes_search: {
+              execute: async () => {
+                executed++;
+                return {};
+              },
+            },
+          };
+          return tools;
+        },
+      }),
+    );
+    const value = hitValue<ReplayValue>(out);
+    expect(value.verify.ok).toBe(true);
+    expect(value.report.steps.map((s) => [s.tool, s.status])).toEqual([
+      ["mcp_notes_search", "skipped-non-read"],
+    ]);
+    expect(executed).toBe(0);
+    // Refused before the mesh is even resolved: no user MCP server is spawned for it.
+    expect(resolved).toBe(0);
+  });
+});
+
 describe("share.replay — refusals before anything runs", () => {
   test("neither input nor bytesB64 (including a non-object payload) is ERR_INVALID_PARAMS", async () => {
     for (const params of [null, {}, { bytesB64: 7, input: false }]) {

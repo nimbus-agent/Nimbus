@@ -3,6 +3,7 @@ import { mkdir } from "node:fs/promises";
 import { dirname } from "node:path";
 import type { LazyMeshToolMap } from "../connectors/lazy-mesh/tool-map.ts";
 import { asRecord } from "../connectors/unknown-record.ts";
+import { isUserMcpToolKey } from "../connectors/user-mcp-store.ts";
 import { isReadOnlyToolId } from "../share/read-tool-registry.ts";
 import { buildRecipeFromSession } from "../share/recipe.ts";
 import { replayShare, type ToolRunOutcome } from "../share/recipe-runner.ts";
@@ -161,6 +162,12 @@ async function runReplayTool(
   toolId: string,
   params: unknown,
 ): Promise<ToolRunOutcome> {
+  // I42, second layer: `isReadOnlyToolId` already refuses every user-MCP key, so the replay runner
+  // never hands one here today. This keeps a user-registered server's tool unrunnable from a share
+  // even if the classifier is ever broadened — such a tool counts as absent from the replay map.
+  if (isUserMcpToolKey(toolId)) {
+    return { kind: "unavailable" };
+  }
   const tool = tools[toolId];
   if (tool === undefined || typeof tool.execute !== "function") {
     return { kind: "unavailable" };

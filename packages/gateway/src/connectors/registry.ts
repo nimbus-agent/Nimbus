@@ -5,7 +5,8 @@ import type { ConnectorDispatcher, PlannedAction } from "../engine/types.ts";
 import type { PlatformPaths } from "../platform/paths.ts";
 import type { NimbusVault } from "../vault/nimbus-vault.ts";
 import { createLazyConnectorMesh, type LazyConnectorMesh } from "./lazy-mesh/index.ts";
-import { resolveServerTool } from "./lazy-mesh/tool-map.ts";
+import { mcpClientToolKey, resolveServerTool } from "./lazy-mesh/tool-map.ts";
+import { isUserMcpToolKey, userMcpToolKeyForActionType } from "./user-mcp-store.ts";
 
 const registryLog = pino({
   name: "connector-registry",
@@ -80,6 +81,10 @@ export function createConnectorDispatcher(
         );
         throw new Error("Tool not found");
       }
+      assertUserMcpKeyMatchesActionType(
+        action.type,
+        Object.hasOwn(map, toolId) ? toolId : mcpClientToolKey(serviceOf(action.type), toolId),
+      );
       const execute = tool.execute;
       if (execute === undefined) {
         throw new Error(`MCP tool "${toolId}" has no execute implementation`);
@@ -107,6 +112,24 @@ export function createConnectorDispatcher(
       return result;
     },
   };
+}
+
+/**
+ * I42 at the dispatcher: a user-registered MCP server’s tool runs only under its OWN action type
+ * (`mcp_<id>.<tool>` <-> key `mcp_<id>_<tool>`), and a user-MCP action type runs only that key.
+ * The executor gate decides owner approval from `action.type` alone (I3) and never reads the
+ * payload, so without this a payload `mcpToolId` naming a user-MCP key could ride an action of any
+ * other type — one a delegate approved (I20), or one needing no approval — past I42. The check
+ * stays HERE, on the key the dispatcher actually resolved, so the gate keeps reading the type only.
+ * Exact equality (not a prefix test) also refuses `mcp_a.b_tool` running server `mcp_a_b`’s tool.
+ */
+function assertUserMcpKeyMatchesActionType(actionType: string, resolvedKey: string): void {
+  const expected = userMcpToolKeyForActionType(actionType);
+  if (expected === undefined && !isUserMcpToolKey(resolvedKey)) return;
+  if (expected === resolvedKey) return;
+  throw new Error(
+    `ERR_USER_MCP_ACTION_MISMATCH: action type ${JSON.stringify(actionType)} may not dispatch tool ${JSON.stringify(resolvedKey)}`,
+  );
 }
 
 export function extractToolInput(action: PlannedAction): unknown {

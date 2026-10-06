@@ -5236,4 +5236,52 @@ describe("I42 — every user-MCP tool call needs the local owner's approval", ()
     expect(prompts).toBe(1);
     expect(dispatches).toBe(0);
   });
+
+  test("share replay never runs a user-MCP tool: the classifier refuses it, and the runner refuses it again", async () => {
+    // Replay runs tools with NO consent, from a share file a third party may have supplied, so a
+    // user-MCP key must never classify read-only whatever verb it ends in.
+    const { isReadOnlyToolId } = await import("./share/read-tool-registry.ts");
+    for (const id of ["mcp_notes_search", "mcp_x_get", "mcp_a_b_list", "mcp_x_read"]) {
+      expect(isReadOnlyToolId(id)).toBe(false);
+    }
+    const reg = await read("packages/gateway/src/share/read-tool-registry.ts");
+    expect(reg).toMatch(/if \(isUserMcpToolKey\(toolId\)\) return false;/);
+    // Second layer: the replay runner treats a user-MCP key as absent before it looks the tool up.
+    const rpc = await read("packages/gateway/src/ipc/share-rpc.ts");
+    const fnAt = rpc.indexOf("async function runReplayTool(");
+    expect(fnAt).toBeGreaterThan(-1);
+    const body = rpc.slice(fnAt, rpc.indexOf("\n}\n", fnAt));
+    const guardAt = body.indexOf("if (isUserMcpToolKey(toolId))");
+    expect(guardAt).toBeGreaterThan(-1);
+    expect(guardAt).toBeLessThan(body.indexOf("tools[toolId]"));
+  });
+
+  test("the dispatcher refuses a user-MCP key under any action type but its own (gate stays type-only, I3)", async () => {
+    const { createConnectorDispatcher } = await import("./connectors/registry.ts");
+    const ran: string[] = [];
+    const d = createConnectorDispatcher({
+      listTools: async () => ({
+        mcp_x_echo: {
+          execute: async () => {
+            ran.push("mcp_x_echo");
+            return {};
+          },
+        },
+      }),
+    });
+    // An action of a first-party HITL type (delegable under I20) smuggling a user-MCP key.
+    await expect(
+      d.dispatch({ type: "github.pr_list", payload: { mcpToolId: "mcp_x_echo" } }),
+    ).rejects.toThrow(/ERR_USER_MCP_ACTION_MISMATCH/);
+    expect(ran).toEqual([]);
+    await d.dispatch({ type: "mcp_x.echo", payload: { mcpToolId: "mcp_x_echo" } });
+    expect(ran).toEqual(["mcp_x_echo"]);
+    // Source pin: the check runs on the RESOLVED key, before the tool executes.
+    const src = await read("packages/gateway/src/connectors/registry.ts");
+    const dispatchAt = src.indexOf("async dispatch(action: PlannedAction)");
+    expect(dispatchAt).toBeGreaterThan(-1);
+    const assertAt = src.indexOf("assertUserMcpKeyMatchesActionType(", dispatchAt);
+    expect(assertAt).toBeGreaterThan(dispatchAt);
+    expect(assertAt).toBeLessThan(src.indexOf("execute(input, {})", dispatchAt));
+  });
 });
