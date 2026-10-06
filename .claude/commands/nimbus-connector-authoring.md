@@ -116,7 +116,7 @@ The gateway-side half — the sync handler and its mapper under `packages/gatewa
 No generator produces a first-party connector today. Write it by hand from nimbus-mcp-servers' [guide to adding a connector](https://github.com/nimbus-agent/nimbus-mcp-servers/blob/main/docs/adding-a-connector.md). Neither shortcut works there:
 
 - `create-nimbus-connector`'s default target is still the pre-move `packages/mcp-connectors/<name>/` layout. Its `../../shared/*` imports and `extends: "../../../tsconfig.base.json"` do not resolve in nimbus-mcp-servers, even with `--out-dir connectors/<id>`, and it emits no `src/tools.ts`. Its `--standalone` output is for a connector outside that repository.
-- `nimbus scaffold extension` emits a generic extension shell with no `src/server.ts`, which every connector gate keys off, so its output is invisible to all of them.
+- `nimbus scaffold mcp` (alias `scaffold extension`) emits a standalone user MCP server, not a first-party connector, so its output is invisible to every connector gate.
 
 Then add the sync handler and register in the connector registry at `packages/gateway/src/connectors/registry.ts`.
 

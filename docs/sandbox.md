@@ -210,6 +210,37 @@ this limitation, not a regression — relocate the sandboxed cwd out
 from under the user profile, or run against a built `nimbus-gateway.exe`
 instead of `bun run`.
 
+## Per-policy working directories {#per-policy-cwd}
+
+Every sandboxed spawn runs in its own working directory, `<sandboxDir>/<leaf>`, where the leaf is the policy id lower-cased with every character outside `a-z0-9_-` replaced by `_` (`platform/sandbox/sandbox-cwd.ts`). Before this, every connector ran in the Nimbus data directory with read and write on it, which is where the index database lives. `PlatformPaths.sandboxDir` is a cache location outside both the data and config directories:
+
+| OS | `sandboxDir` |
+| -- | ------------ |
+| Windows | `%LOCALAPPDATA%\Nimbus\sandbox` |
+| macOS | `~/Library/Caches/Nimbus/sandbox` |
+| Linux | `${XDG_CACHE_HOME:-~/.cache}/nimbus/sandbox` |
+| Demo (`--demo`) | `<demoRoot>/sandbox` |
+
+The toolgen confinement probe runs in its own leaf too. `nimbus connector remove` deletes a user MCP server's leaf, best-effort.
+
+**Windows one-time revoke.** Earlier builds granted each connector's AppContainer SID an ACE on the data directory. On first boot after upgrading, the gateway revokes those stale ACEs once and writes the marker `sandbox-cwd-migration-v1.done` in the data directory; the step does not repeat while the marker exists.
+
+## User MCP servers {#user-mcp}
+
+`nimbus connector add --mcp` registers a server the user supplied. Its sandbox policy is built only from what the owner approved: the `--read` paths (read-only; there is no write grant), the `--net` hosts, and its own working-directory leaf. On Linux and macOS the binary's directory is also granted read automatically; on Windows it is not. Grants that overlap the data, config or sandbox directory are refused at registration, in either direction. Every tool call additionally needs the owner's approval (invariant I42). `--model` is stored but has no effect: model access is not shipped.
+
+### Stated bounds
+
+- **Windows network is all-or-nothing for a user MCP.** Any `--net` host enables AppContainer `internetClient`, which opens the whole network, not the named host. The approval prompt says so. (See [Platform asymmetry](#platform-asymmetry).)
+- **Same-policy-id spawns still share one directory and SID.** The unlocked DACL read-modify-write race for a given policy id remains; what is gone is contention between different connectors.
+- **The filesystem MCP keeps a deliberate data-directory grant.** It is the one first-party connector whose job is the Nimbus data directory, so it is excepted from the per-policy directory.
+- **No IPv6 host literals.** `--net` does not accept them.
+- **A Windows `--read` on a directory the user cannot change the ACL of** (for example under `C:\Program Files`) is not caught at registration; it fails at spawn time and appears as the connector's health error.
+- **The I15 source guard against a `dataDir`/`configDir` working directory is spelling-based.** A renamed alias would evade it; capability is the real defense.
+- **A crash between a remove's intent and its sandbox cleanup leaves that server's leaf behind.** The resumed remove does not clean it.
+- **A user MCP removed before upgrading keeps any stale Windows data-directory ACE.** No row is left to name its SID, so the one-time revoke cannot find it.
+- **Script-mode servers cannot run on Windows.** `bun src/server.ts` fails with `CouldntReadCurrentDirectory` under AppContainer (see the known limitation above); compile the server.
+
 ## Platform asymmetry {#platform-asymmetry}
 
 | OS | Network policy when `permissions.network: ["a.com", "b.com:993"]` |
@@ -279,6 +310,6 @@ boundary.
 
 ## See also
 
-- `docs/SECURITY-INVARIANTS.md` §I15 — sandbox-runner-intrinsic-to-spawn invariant.
+- `docs/SECURITY-INVARIANTS.md` §I15 — sandbox-runner-intrinsic-to-spawn invariant; §I42 — user-MCP tool calls need owner approval.
 - `docs/release/headless-postinst-linux-setcap.md` — Linux installer setcap flow.
 - The PR 1 design spec for the architectural rationale.

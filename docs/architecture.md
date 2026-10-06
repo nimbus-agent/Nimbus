@@ -927,45 +927,17 @@ Per-host network filtering depth varies by OS. Mirrors [`docs/sandbox.md` §"Pla
 }
 ```
 
-### Extension Scaffold
+### User MCP Servers and Scaffold
 
-```bash
-nimbus scaffold extension ./nimbus-notion
-```
+`nimbus scaffold mcp <name>` emits a real, tested MCP server (SDK 1.32.0, one `echo` tool) that compiles with `bun build --compile`; `nimbus scaffold extension` is an alias. The old `NimbusExtensionServer` shell is gone.
 
-```typescript
-// src/server.ts — generated scaffold
-import { NimbusExtensionServer } from "@nimbus-dev/sdk";
+A user registers it with `nimbus connector add --mcp <mcp_id> [--read <path>]... [--net <host[:port]>]... [--model] -- <command> [args...]`. The gateway resolves and validates the request **before** the approval prompt (absolute command, canonical paths, a refusal on any overlap with the data/config/sandbox directories in either direction, the binary's directory auto-granted read on Linux/macOS only, a `.exe` retry on Windows, ids that extend each other by `_` refused). The owner approves the resolved command, args, read paths, net hosts and model access; the grants are stored on the connector row (schema V65). The server is then spawned through `wrapServerSpec` like every other connector (I15).
 
-const server = new NimbusExtensionServer({
-  manifest: require("../nimbus.extension.json"),
-  onAuth: ({ accessToken }) => new NotionClient({ auth: accessToken }),
-});
+**Per-policy sandbox directories.** Every sandboxed spawn runs in its own working directory `<sandboxDir>/<leaf>` (`platform/sandbox/sandbox-cwd.ts`), not the data directory it used to share with the index database. `PlatformPaths.sandboxDir` is a cache location outside data and config: `%LOCALAPPDATA%\Nimbus\sandbox` (Windows), `~/Library/Caches/Nimbus/sandbox` (macOS), `${XDG_CACHE_HOME:-~/.cache}/nimbus/sandbox` (Linux), `<demoRoot>/sandbox` (demo). On Windows a one-time boot step revokes the stale data-directory ACEs earlier builds granted. See [`sandbox.md`](./sandbox.md) for the stated bounds.
 
-// Read tool — no HITL
-server.registerTool("search", {
-  description: "Search Notion pages by keyword",
-  inputSchema: { query: { type: "string" }, limit: { type: "number", default: 10 } },
-  handler: async ({ query, limit }, { client }) => {
-    const results = await client.search({ query });
-    return { items: results.results.slice(0, limit).map(mapToNimbusItem) };
-  },
-});
+**Calling a user MCP tool** is owner-initiated and CLI-only: `nimbus connector tools <mcp_id>` and `nimbus connector call <mcp_id> <tool>` ride the LAN-forbidden `connector.userMcpTools` / `connector.userMcpCall` methods (not on the Tauri allowlist). Invariant I42: every call needs the local owner's approval and a delegate never approves one; each call is audited and egress-ledgered.
 
-// Write tool — HITL enforced by Gateway (declared in manifest hitlRequired)
-server.registerTool("createPage", {
-  description: "Create a new Notion page",
-  inputSchema: { title: { type: "string" }, content: { type: "string" } },
-  handler: async ({ title, content }, { client }) => {
-    const page = await client.pages.create({
-      properties: { title: [{ text: { content: title } }] },
-    });
-    return { id: page.id, url: page.url };
-  },
-});
-
-server.start();
-```
+**Not shipped:** model access. `--model` is stored and shown in the prompt but gives the server nothing. There is no write grant. A script-mode server (`bun src/server.ts`) cannot run on Windows (`CouldntReadCurrentDirectory` under AppContainer), so register a compiled binary.
 
 ### Extension Auto-Update (T2 PR 3)
 

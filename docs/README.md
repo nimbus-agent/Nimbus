@@ -62,7 +62,7 @@ The non-negotiables in [Contributing](#contributing) follow from that question �
 
 - **local** — the SQLite index, the Vault, and the audit log all live on your machine. The cloud is a connector, not the source of truth. Telemetry is opt-in and off by default (`[telemetry] enabled = false`).
 - **consent-gated** — every destructive or outbound action is intercepted by a human-in-the-loop gate *before* it runs. It lives in the executor, not the prompt, so it cannot be jailbroken away.
-- **MCP** — Nimbus speaks the [Model Context Protocol](https://modelcontextprotocol.io/) in both directions. As an **MCP client** it drives every connector as an MCP server, and hosts any third-party server you register with `nimbus connector add --mcp`. As an **MCP server**, it exposes your local index *and* its built-in agents to any MCP client through 21 read-only tools — 9 index tools plus 12 agent tools (`explainWhy`, `findExpert`, `assessImpact`, `getCatchup`, …). Install it with `npx -y @nimbus-dev/mcp`, or run `nimbus mcp-server --stdio` directly from a checkout. The engine never calls a cloud API directly.
+- **MCP** — Nimbus speaks the [Model Context Protocol](https://modelcontextprotocol.io/) in both directions. As an **MCP client** it drives every connector as an MCP server, and hosts any third-party server you register with `nimbus connector add --mcp` — it runs sandboxed in its own working directory with only the read paths and hosts you approved, and every tool call asks your approval first (model access for such servers is not shipped yet). As an **MCP server**, it exposes your local index *and* its built-in agents to any MCP client through 21 read-only tools — 9 index tools plus 12 agent tools (`explainWhy`, `findExpert`, `assessImpact`, `getCatchup`, …). Install it with `npx -y @nimbus-dev/mcp`, or run `nimbus mcp-server --stdio` directly from a checkout. The engine never calls a cloud API directly.
 
 ---
 
@@ -818,15 +818,15 @@ bunx create-nimbus-connector --spec ./my-service.spec.json --standalone
 cd my-service && bun run typecheck && bun test
 ```
 
-**Writing a generic extension** — anything that is not a connector. `nimbus scaffold extension`
-emits a four-file shell for that case; it does not produce a connector, and a package it
-generates is invisible to the connector gates because it has no `src/server.ts`.
+**Writing your own MCP server** — anything that is not a first-party connector. `nimbus scaffold mcp`
+emits a real, tested MCP server (one `echo` tool) that you compile and register; it does not
+produce a first-party connector. `nimbus scaffold extension` is kept as an alias.
 
 ```bash
-nimbus scaffold extension my-extension   # always created at ./my-extension/ in the cwd
-cd my-extension                          # the scaffold does NOT change your working directory
-nimbus extension install .               # Test locally
-npm publish --access public              # Publish to the community
+nimbus scaffold mcp my_server               # always created at ./my_server/ in the cwd
+cd my_server && bun test && bun run build   # the scaffold does NOT change your working directory
+nimbus connector add --mcp mcp_my_server -- "$PWD/dist/my_server"
+nimbus connector call mcp_my_server echo --input '{"text":"hi"}'   # asks your approval
 ```
 
 The Gateway handles OAuth, credential storage, sync scheduling, and HITL enforcement either way.
