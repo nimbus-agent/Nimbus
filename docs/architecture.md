@@ -929,7 +929,7 @@ Per-host network filtering depth varies by OS. Mirrors [`docs/sandbox.md` §"Pla
 
 ### User MCP Servers and Scaffold
 
-`nimbus scaffold mcp <name>` emits a real, tested MCP server (SDK 1.32.0, one `echo` tool) that compiles with `bun build --compile`; `nimbus scaffold extension` is an alias. The old `NimbusExtensionServer` shell is gone.
+`nimbus scaffold mcp <name>` emits a real, tested MCP server (MCP SDK 1.32.0, one `echo` tool) that compiles with `bun build --compile`; `nimbus scaffold extension` is an alias. The old `NimbusExtensionServer` shell is gone.
 
 A user registers it with `nimbus connector add --mcp <mcp_id> [--read <path>]... [--net <host[:port]>]... [--model] -- <command> [args...]`. The gateway resolves and validates the request **before** the approval prompt (absolute command, canonical paths, a refusal on any overlap with the data/config/sandbox directories in either direction, the binary's directory auto-granted read on Linux/macOS only, a `.exe` retry on Windows, ids that extend each other by `_` refused). The owner approves the resolved command, args, read paths, net hosts and model access; the grants are stored on the connector row (schema V65). The server is then spawned through `wrapServerSpec` like every other connector (I15).
 

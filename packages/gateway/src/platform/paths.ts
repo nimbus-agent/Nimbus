@@ -11,7 +11,13 @@ export interface PlatformPaths {
   socketPath: string;
   extensionsDir: string;
   tempDir: string;
-  /** Root of per-policy sandbox working directories (one leaf per policy id, created at spawn). Never equal to, inside, or an ancestor of dataDir/configDir — see docs/sandbox.md. */
+  /**
+   * Root of per-policy sandbox working directories (one leaf per policy id, created at spawn). In
+   * the DEFAULT layout it is never equal to, inside, or an ancestor of dataDir/configDir. That is
+   * not enforced: an override can nest them (Linux `XDG_CACHE_HOME` equal to `XDG_DATA_HOME`, or a
+   * `NIMBUS_CONFIG_DIR` under `~/.cache/nimbus`) and nothing refuses it — a stated bound, see
+   * docs/sandbox.md § Per-policy working directories.
+   */
   sandboxDir: string;
   /**
    * Set ONLY by the three `create*Paths` resolvers below, when `NIMBUS_DEMO=1` (invariant I41).

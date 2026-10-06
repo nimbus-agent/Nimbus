@@ -34,8 +34,8 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
   needs the local owner's approval and a delegate never approves one, behind `nimbus connector tools` and
   `nimbus connector call` (exit 0 ok / 1 error / 2 refused) over CLI-only, LAN-forbidden
   `connector.userMcpTools` / `connector.userMcpCall` (not on the Tauri allowlist, still 107); calls are
-  audited and egress-ledgered. Fourth, `nimbus scaffold mcp <name>` emits a real, tested MCP server (SDK
-  1.32.0, one `echo` tool) compiled with `bun build --compile`; `scaffold extension` is now an alias, and
+  audited and egress-ledgered. Fourth, `nimbus scaffold mcp <name>` emits a real, tested MCP server (MCP
+  SDK 1.32.0, one `echo` tool) compiled with `bun build --compile`; `scaffold extension` is now an alias, and
   the old four-file shell is gone. An e2e test proves scaffold, compile, register, list, call and
   confinement (run on Windows; CI proves Linux and macOS). **Not shipped:** model access — `--model` is
   stored and shown in the prompt but has no effect (PR 2); write grants; script-mode servers on Windows

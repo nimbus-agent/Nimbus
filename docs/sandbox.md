@@ -212,7 +212,7 @@ instead of `bun run`.
 
 ## Per-policy working directories {#per-policy-cwd}
 
-Every sandboxed spawn runs in its own working directory, `<sandboxDir>/<leaf>`, where the leaf is the policy id lower-cased with every character outside `a-z0-9_-` replaced by `_` (`platform/sandbox/sandbox-cwd.ts`). Before this, every connector ran in the Nimbus data directory with read and write on it, which is where the index database lives. `PlatformPaths.sandboxDir` is a cache location outside both the data and config directories:
+Every sandboxed spawn runs in its own working directory, `<sandboxDir>/<leaf>`, where the leaf is the policy id lower-cased with every character outside `a-z0-9_-` replaced by `_` (`platform/sandbox/sandbox-cwd.ts`). Before this, every connector ran in the Nimbus data directory with read and write on it, which is where the index database lives. `PlatformPaths.sandboxDir` is a cache location outside both the data and config directories in the default layout:
 
 | OS | `sandboxDir` |
 | -- | ------------ |
@@ -221,9 +221,11 @@ Every sandboxed spawn runs in its own working directory, `<sandboxDir>/<leaf>`, 
 | Linux | `${XDG_CACHE_HOME:-~/.cache}/nimbus/sandbox` |
 | Demo (`--demo`) | `<demoRoot>/sandbox` |
 
+That separation holds for the defaults above and is not enforced: an override can nest them — on Linux `XDG_CACHE_HOME` set equal to `XDG_DATA_HOME`, or a `NIMBUS_CONFIG_DIR` under `~/.cache/nimbus` — and the gateway does not refuse to boot when it does. Keep the cache, data and config locations apart if you override them.
+
 The toolgen confinement probe runs in its own leaf too. `nimbus connector remove` deletes a user MCP server's leaf, best-effort.
 
-**Windows one-time revoke.** Earlier builds granted each connector's AppContainer SID an ACE on the data directory. On first boot after upgrading, the gateway revokes those stale ACEs once and writes the marker `sandbox-cwd-migration-v1.done` in the data directory; the step does not repeat while the marker exists.
+**Windows one-time revoke.** Earlier builds granted each connector's AppContainer SID an ACE on the data directory. On first boot after upgrading, the gateway revokes those stale ACEs once and writes the marker `sandbox-cwd-migration-v1.done` in the data directory; the step does not repeat while the marker exists. The revoke runs in the background, so the gateway accepts requests at once, but the filesystem MCP — the one spawn still granted the data directory, whose grant rewrites the same DACL — does not spawn until the revoke has finished.
 
 ## User MCP servers {#user-mcp}
 
@@ -233,7 +235,8 @@ The toolgen confinement probe runs in its own leaf too. `nimbus connector remove
 
 - **Windows network is all-or-nothing for a user MCP.** Any `--net` host enables AppContainer `internetClient`, which opens the whole network, not the named host. The approval prompt says so. (See [Platform asymmetry](#platform-asymmetry).)
 - **Same-policy-id spawns still share one directory and SID.** The unlocked DACL read-modify-write race for a given policy id remains; what is gone is contention between different connectors.
-- **The filesystem MCP keeps a deliberate data-directory grant.** It is the one first-party connector whose job is the Nimbus data directory, so it is excepted from the per-policy directory.
+- **The filesystem MCP keeps a deliberate data-directory grant.** It is the one first-party connector whose job is the Nimbus data directory, so its manifest grants it read and write on `dataDir` explicitly. It is NOT excepted from the per-policy directory: it runs in its own leaf under `sandboxDir` like every other spawn. The exception is that explicit `dataDir` GRANT, not its working directory.
+- **On Windows a command binary located inside the data directory is accepted.** The overlap check covers the `--read` grants and the directory granted automatically for the binary; Linux and macOS grant the binary’s directory and so refuse one inside a protected directory, but Windows grants none, so nothing is checked for the binary’s own location there. Registering a binary under the data directory is still an owner-approved act (the prompt shows its path), and the server does not gain a grant on that directory by it.
 - **No IPv6 host literals.** `--net` does not accept them.
 - **A Windows `--read` on a directory the user cannot change the ACL of** (for example under `C:\Program Files`) is not caught at registration; it fails at spawn time and appears as the connector's health error.
 - **The I15 source guard against a `dataDir`/`configDir` working directory is spelling-based.** A renamed alias would evade it; capability is the real defense.
