@@ -121,7 +121,12 @@ export function createConnectorDispatcher(
  * payload, so without this a payload `mcpToolId` naming a user-MCP key could ride an action of any
  * other type — one a delegate approved (I20), or one needing no approval — past I42. The check
  * stays HERE, on the key the dispatcher actually resolved, so the gate keeps reading the type only.
- * Exact equality (not a prefix test) also refuses `mcp_a.b_tool` running server `mcp_a_b`’s tool.
+ * Exact equality refuses a user-MCP key under a first-party or different action type, and a
+ * first-party key under a user-MCP type, in both directions. It does NOT by itself separate
+ * `mcp_a.b_tool` from server `mcp_a_b`’s `tool` (both map to key `mcp_a_b_tool`); that ambiguity
+ * cannot arise because registration (`resolveUserMcpRegistration`,
+ * `connectors/user-mcp-registration.ts`) refuses a user-MCP id that extends another registered id
+ * by `_` (or is extended by one), so `mcp_a` and `mcp_a_b` are never both registered.
  */
 function assertUserMcpKeyMatchesActionType(actionType: string, resolvedKey: string): void {
   const expected = userMcpToolKeyForActionType(actionType);

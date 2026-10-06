@@ -3289,8 +3289,12 @@ export async function assemblePlatformServices(
     // the filesystem MCP, deliberately), so revoke once and record a marker. The revoke rewrites the
     // dataDir DACL, and so does the filesystem MCP’s spawn-time grant (an unlocked read-modify-
     // write), and that MCP spawns lazily on its first listing — which a request arriving in the
-    // seconds the revoke takes CAN trigger. So the mesh holds that first spawn on this promise
-    // (never rejects) rather than letting the two race; nothing else at boot awaits it.
+    // seconds the revoke takes CAN trigger. So the mesh awaits this promise (never rejects) at the
+    // top of `collectBuiltInToolMaps`, which holds EVERY dispatcher tool listing (all connector
+    // dispatches, user-MCP list/call, share replay, tribal capture, ChatOps writes), not only the
+    // filesystem MCP. The helper calls have no per-call timeout, so a hung helper holds them until
+    // it exits; no marker is written, so the next boot retries. Nothing else at boot awaits it, and
+    // Linux/macOS/demo gateways never reach this branch, so they never wait.
     dataDirRevoke = revokeLegacyDataDirGrantsAtBoot({
       db,
       dataDir: paths.dataDir,

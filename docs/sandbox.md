@@ -225,7 +225,7 @@ That separation holds for the defaults above and is not enforced: an override ca
 
 The toolgen confinement probe runs in its own leaf too. `nimbus connector remove` deletes a user MCP server's leaf, best-effort.
 
-**Windows one-time revoke.** Earlier builds granted each connector's AppContainer SID an ACE on the data directory. On first boot after upgrading, the gateway revokes those stale ACEs once and writes the marker `sandbox-cwd-migration-v1.done` in the data directory; the step does not repeat while the marker exists. The revoke runs in the background, so the gateway accepts requests at once, but the filesystem MCP — the one spawn still granted the data directory, whose grant rewrites the same DACL — does not spawn until the revoke has finished.
+**Windows one-time revoke.** Earlier builds granted each connector's AppContainer SID an ACE on the data directory. On first boot after upgrading, the gateway revokes those stale ACEs once and writes the marker `sandbox-cwd-migration-v1.done` in the data directory; the step does not repeat while the marker exists. The revoke runs in the background, so the gateway accepts requests at once, but every dispatcher tool listing waits for it (`LazyConnectorMesh` awaits it at the top of `collectBuiltInToolMaps`): every connector dispatch, `connector.userMcpTools`/`userMcpCall`, share replay, tribal capture and ChatOps writes, not only the filesystem MCP (the one spawn still granted the data directory, whose grant rewrites the same DACL). Linux, macOS and demo-rooted gateways never wait, because the revoke is a Windows-only, non-demo step.
 
 ## User MCP servers {#user-mcp}
 
@@ -241,6 +241,7 @@ The toolgen confinement probe runs in its own leaf too. `nimbus connector remove
 - **A Windows `--read` on a directory the user cannot change the ACL of** (for example under `C:\Program Files`) is not caught at registration; it fails at spawn time and appears as the connector's health error.
 - **The I15 source guard against a `dataDir`/`configDir` working directory is spelling-based.** A renamed alias would evade it; capability is the real defense.
 - **A crash between a remove's intent and its sandbox cleanup leaves that server's leaf behind.** The resumed remove does not clean it.
+- **The Windows boot revoke has no per-call timeout.** The helper runs through `execFile` without one, so a hung helper holds every tool listing described above until it exits. No marker is written until the revoke completes, so the next boot retries it.
 - **A user MCP removed before upgrading keeps any stale Windows data-directory ACE.** No row is left to name its SID, so the one-time revoke cannot find it.
 - **Script-mode servers cannot run on Windows.** `bun src/server.ts` fails with `CouldntReadCurrentDirectory` under AppContainer (see the known limitation above); compile the server.
 
