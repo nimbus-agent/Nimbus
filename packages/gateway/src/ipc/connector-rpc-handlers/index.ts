@@ -17,3 +17,4 @@ export {
   handleConnectorListStatus,
   handleConnectorStatus,
 } from "./status.ts";
+export { handleConnectorUserMcpCall, handleConnectorUserMcpTools } from "./user-mcp.ts";

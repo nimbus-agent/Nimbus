@@ -8,6 +8,7 @@ import {
   loadNimbusServiceConfigsFromConfigDir,
   resolveNimbusTomlForProfile,
 } from "../../config/nimbus-toml.ts";
+import { createConnectorDispatcher } from "../../connectors/registry.ts";
 import { asRecord } from "../../connectors/unknown-record.ts";
 import { makeEgressSink, NULL_EGRESS_SINK } from "../../egress/egress-ledger.ts";
 import { bindConsentChannel, NO_POLICY_OVERLAY, ToolExecutor } from "../../engine/executor.ts";
@@ -1944,6 +1945,23 @@ export async function tryDispatchConnectorRpc(
       NULL_EGRESS_SINK,
       ctx.options.policyHitl ?? NO_POLICY_OVERLAY,
     );
+    const mesh = ctx.options.connectorMesh;
+    // I42 + I29: unlike the gate-only executor above, this one DISPATCHES, so it carries a real
+    // egress sink and the real connector dispatcher. No delegation dep: I42 asks the local owner.
+    const userMcpExecutor =
+      method === "connector.userMcpCall" && mesh !== undefined
+        ? new ToolExecutor(
+            bindConsentChannel(ctx.consentImpl, clientId),
+            ctx.options.localIndex,
+            createConnectorDispatcher({
+              listTools: () => mesh.listToolsForDispatcher(),
+              getToolsEpoch: () => mesh.getToolsEpoch(),
+            }),
+            undefined,
+            makeEgressSink(ctx.options.localIndex.getDatabase()),
+            ctx.options.policyHitl ?? NO_POLICY_OVERLAY,
+          )
+        : undefined;
     const out = await dispatchConnectorRpc({
       method,
       params,
@@ -1951,11 +1969,10 @@ export async function tryDispatchConnectorRpc(
       localIndex: ctx.options.localIndex,
       openUrl: openUrl ?? (async () => {}),
       syncScheduler: ctx.options.syncScheduler,
-      ...(ctx.options.connectorMesh === undefined
-        ? {}
-        : { connectorMesh: ctx.options.connectorMesh }),
+      ...(mesh === undefined ? {} : { connectorMesh: mesh }),
       notify: (m, p) => ctx.broadcastNotification(m, p),
       toolExecutor,
+      ...(userMcpExecutor === undefined ? {} : { userMcpExecutor }),
     });
     if (out.kind === "hit") {
       return out.value;

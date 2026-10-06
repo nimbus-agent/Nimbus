@@ -255,6 +255,21 @@ export class LazyConnectorMesh {
     });
   }
 
+  /**
+   * The tools of ONE registered user MCP server — its own slot only, never the merged dispatcher
+   * map, so `connector.userMcpTools` cannot be used to enumerate another server's (or a built-in
+   * connector's) tools. `undefined` when no `user_mcp_connector` row names the id. Keys are as the
+   * slot's `MCPClient` lists them: `<serviceId>_<tool>`.
+   */
+  async listUserMcpTools(serviceId: string): Promise<LazyMeshToolMap | undefined> {
+    const registered = this.listUserMcpConnectors().some((r) => r.service_id === serviceId);
+    if (!registered) {
+      return undefined;
+    }
+    await this.ensureUserMcpRunning(serviceId);
+    return listLazyMeshClientTools(this.getLazyClient(userMcpMeshKey(serviceId)));
+  }
+
   private async ensureUserMcpConnectorsRunning(): Promise<void> {
     const rows = this.listUserMcpConnectors();
     const active = new Set(rows.map((r) => r.service_id));

@@ -20,6 +20,8 @@ import {
   handleConnectorSetInterval,
   handleConnectorStatus,
   handleConnectorSync,
+  handleConnectorUserMcpCall,
+  handleConnectorUserMcpTools,
   resolveConnectorAddMcp,
 } from "./connector-rpc-handlers/index.ts";
 import { asRecord, ConnectorRpcError } from "./connector-rpc-shared.ts";
@@ -56,6 +58,12 @@ export async function dispatchConnectorRpc(options: {
   connectorMesh?: LazyConnectorMesh;
   notify?: (method: string, params: Record<string, unknown>) => void;
   toolExecutor?: ToolExecutor;
+  /**
+   * `connector.userMcpCall` only: a DISPATCHING executor (real connector dispatcher + real egress
+   * sink), unlike the gate-only `toolExecutor`. Its `gate()` writes the audit and I29 egress rows
+   * and asks the local owner (I42) before the user MCP tool runs.
+   */
+  userMcpExecutor?: ToolExecutor;
   /** Test seam for `connector.addMcp`: PATH lookup (production: `Bun.which`). */
   resolveCommand?: (cmd: string) => string | null;
   /** Test seam for `connector.addMcp`: canonicalisation (production: `realpathSync.native`). */
@@ -71,6 +79,7 @@ export async function dispatchConnectorRpc(options: {
     connectorMesh,
     notify,
     toolExecutor,
+    userMcpExecutor,
     resolveCommand,
     realpath,
   } = options;
@@ -146,6 +155,13 @@ export async function dispatchConnectorRpc(options: {
       if (gateResult !== "proceed") return { kind: "hit", value: gateResult };
       return handleConnectorRemove(ctx);
     }
+    case "connector.userMcpTools":
+      return { kind: "hit", value: await handleConnectorUserMcpTools(connectorMesh, rec) };
+    case "connector.userMcpCall":
+      return {
+        kind: "hit",
+        value: await handleConnectorUserMcpCall(connectorMesh, userMcpExecutor, rec),
+      };
     case "connector.sync":
       return handleConnectorSync(ctx);
     case "connector.auth":
