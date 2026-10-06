@@ -30,6 +30,21 @@ describe("parseAddMcpArgs", () => {
     });
   });
 
+  it("keeps a `--` INSIDE a legacy command as argv — only a leading flag opens the flag form", () => {
+    expect(parseAddMcpArgs(["mcp_x", "npx", "-y", "pkg", "--", "--stdio"], C)).toEqual({
+      serviceId: "mcp_x",
+      argv: ["npx", "-y", "pkg", "--", "--stdio"],
+      readPaths: [],
+      netHosts: [],
+      modelAccess: false,
+    });
+    // The flag form is unchanged: its first token is a flag, so its first `--` is the separator,
+    // and a later `--` is the command's own.
+    const req = parseAddMcpArgs(["mcp_x", "--model", "--", "npx", "pkg", "--", "--stdio"], C);
+    expect(req.argv).toEqual(["npx", "pkg", "--", "--stdio"]);
+    expect(req.modelAccess).toBe(true);
+  });
+
   it("resolves relative-with-separator commands only", () => {
     expect(parseAddMcpArgs(["mcp_x", "--", "dist/x"], C).argv[0]).toBe(resolve(C, "dist/x"));
     expect(parseAddMcpArgs(["mcp_x", "--", "..\\x.exe"], C).argv[0]).toBe(resolve(C, "..\\x.exe"));

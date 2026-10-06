@@ -23,14 +23,17 @@ function resolveCommand(command: string, cwd: string): string {
 }
 
 /**
- * `tail` is everything after `--mcp`. Grants are flags before a `--`; everything after `--`
- * is the command verbatim. Without a `--` the remainder is the command (legacy form).
+ * `tail` is everything after `--mcp`. When the first token after the id is a flag (or the `--`
+ * itself), grants are the flags before the FIRST `--` and everything after it is the command
+ * verbatim. Otherwise the whole remainder is the command (legacy form) — including any `--` the
+ * command carries itself, so `mcp_x npx -y pkg -- --stdio` keeps all five tokens as argv.
  */
 export function parseAddMcpArgs(tail: readonly string[], cwd: string): AddMcpRequest {
   const serviceId = tail[0]?.trim() ?? "";
   if (serviceId === "" || serviceId.startsWith("-")) throw usageError();
   const rest = tail.slice(1);
-  const sep = rest.indexOf("--");
+  const flagForm = rest[0]?.startsWith("-") === true;
+  const sep = flagForm ? rest.indexOf("--") : -1;
 
   const readPaths: string[] = [];
   const netHosts: string[] = [];
@@ -38,7 +41,7 @@ export function parseAddMcpArgs(tail: readonly string[], cwd: string): AddMcpReq
   let command: string[];
 
   if (sep === -1) {
-    if (rest[0]?.startsWith("-") === true) throw usageError();
+    if (flagForm) throw usageError();
     command = rest;
   } else {
     command = rest.slice(sep + 1);
