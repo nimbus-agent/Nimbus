@@ -1363,7 +1363,7 @@ The fix does NOT widen `SynthesisAttempt`, which was the obvious route and the w
 
 **Static rule: none.** The property is one expression in one function; the enforcement test pins its exact source shape (the three-operand OR and the early `"fallback"` return) alongside a behavioural denial case.
 
-**Wiring:** `engine/executor.ts` (`isUserMcpActionType`, `gate()`, `tryDelegatedApproval`), `connectors/user-mcp-store.ts` (`USER_MCP_SERVICE_ID_PATTERN`). **Test:** `security-invariants.test.ts` `I42`; unit `engine/executor-user-mcp.test.ts`; an end-to-end test through a real gateway follows with the user-MCP invoke path.
+**Wiring:** `engine/executor.ts` (`isUserMcpActionType`, `gate()`, `tryDelegatedApproval`), `connectors/user-mcp-store.ts` (`USER_MCP_SERVICE_ID_PATTERN`). **Test:** `security-invariants.test.ts` `I42`; unit `engine/executor-user-mcp.test.ts`; e2e `test/e2e/user-mcp.e2e.test.ts` (a scaffolded, compiled user MCP driven through a real gateway: the approved call raises a consent prompt naming `<serviceId>.<tool>`, a denied one returns `rejected`).
 
 ---
 
