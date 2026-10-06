@@ -1,7 +1,7 @@
 import { Database } from "bun:sqlite";
 import { randomUUID } from "node:crypto";
 import { lookup } from "node:dns/promises";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import os from "node:os";
 import { dirname, join } from "node:path";
 import { bytesToHex } from "@noble/hashes/utils.js";
@@ -364,6 +364,7 @@ import { createGatewayPinoLogger } from "./gateway-log-file.ts";
 import { createHostActivity, type HostActivity } from "./host-activity.ts";
 import type { PlatformPaths } from "./paths.ts";
 import { registerUserMcpSyncablesFromDatabase } from "./register-user-mcp-sync.ts";
+import { sandboxCwdFor } from "./sandbox/sandbox-cwd.ts";
 import { createSandboxRunner } from "./sandbox/sandbox-runner.ts";
 import { reapAppContainersAtBoot } from "./sandbox/win32-reap.ts";
 import { ensureFullSqlite } from "./sqlite-runtime.ts";
@@ -4135,8 +4136,14 @@ export async function assemblePlatformServices(
       ),
       findEndpoints: createEndpointFinder(localIndex),
     }),
-    assertConfinement: (manifest) =>
-      assertToolConfinement({ runner: sandboxRunner, manifest, cwd: paths.configDir }),
+    assertConfinement: (manifest) => {
+      // The probe spawns through the runner directly (not sandbox-wrapper.ts), so its own per-policy
+      // directory must exist before the spawn: canonical-path.ts falls back to the input spelling
+      // for a missing path.
+      const probeCwd = sandboxCwdFor(paths.sandboxDir, "toolgen-probe");
+      mkdirSync(probeCwd, { recursive: true });
+      return assertToolConfinement({ runner: sandboxRunner, manifest, cwd: probeCwd });
+    },
     scriptDir: (toolId) => toolScriptDir(paths.configDir, toolId),
     writeScript: (toolId, source) => writeToolScript(paths.configDir, toolId, source),
     // cwd is the script's OWN directory: the manifest grants read only to `scriptDir(toolId)` plus

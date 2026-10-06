@@ -895,10 +895,11 @@ describe("I15 — SandboxRunner is intrinsic to every extension spawn", () => {
     expect(src).toMatch(/runner\.spawn\s*\(/);
   });
 
-  test("I15 — no sandboxed spawn runs in the data directory", async () => {
+  test("no sandboxed spawn runs in the data or config directory", async () => {
     for (const rel of ["platform/assemble.ts", "connectors/lazy-mesh/mesh.ts"]) {
       const src = await read(`packages/gateway/src/${rel}`);
       expect(src).not.toMatch(/sandboxCwd:\s*paths\.dataDir/);
+      expect(src).not.toMatch(/\bcwd:\s*paths\.(dataDir|configDir)/);
       expect(src).toMatch(/sandboxCwd:\s*paths\.sandboxDir/);
     }
     const wrap = await read("packages/gateway/src/connectors/lazy-mesh/wrap-server-spec.ts");
