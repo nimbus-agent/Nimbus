@@ -15,6 +15,7 @@ import { BATCH_RPC_TIMEOUT_MS, INTERACTIVE_RPC_TIMEOUT_MS } from "../lib/rpc-tim
 import { stripTrailingSlashes } from "../lib/strip-trailing-slashes.ts";
 import { withGatewayIpc } from "../lib/with-gateway-ipc.ts";
 import { getCliPlatformPaths } from "../paths.ts";
+import { ADD_MCP_USAGE, parseAddMcpArgs } from "./connector-add-mcp-args.ts";
 import { runConnectorDetect } from "./connector-detect.ts";
 
 type SyncStatus = {
@@ -1154,15 +1155,18 @@ The browser sign-in may still have completed — the gateway finishes the flow `
 }
 
 async function runConnectorAddMcp(tail: string[]): Promise<void> {
-  const id = tail[0]?.trim() ?? "";
-  const commandLine = tail.slice(1).join(" ").trim();
-  if (id === "" || commandLine === "") {
-    throw new Error(
-      "Usage: nimbus connector add --mcp <mcp_id> <command...>\nExample: nimbus connector add --mcp mcp_brave npx -y @some/mcp-server",
-    );
+  const req = parseAddMcpArgs(tail, process.cwd());
+  const r = await withIpc(
+    (c) => c.call<{ ok: boolean; serviceId: string }>("connector.addMcp", req),
+    undefined,
+    INTERACTIVE_RPC_TIMEOUT_MS,
+  );
+  console.log(`Registered user MCP connector: ${r.serviceId ?? req.serviceId}`);
+  for (const p of req.readPaths) console.log(`  read: ${p}`);
+  for (const h of req.netHosts) console.log(`  net:  ${h}`);
+  if (req.modelAccess) {
+    console.log("  model: tools offered to the model (takes effect in a later release)");
   }
-  await withIpc((c) => c.call("connector.addMcp", { serviceId: id, commandLine }));
-  console.log(`Registered user MCP connector: ${id}`);
 }
 
 const REMOVE_YES_FLAGS: ReadonlySet<string> = new Set(["--yes", "-y"]);
@@ -1320,7 +1324,7 @@ export async function runConnector(args: string[]): Promise<void> {
         await runConnectorAddMcp(tail.slice(1));
         return;
       }
-      throw new Error("Usage: nimbus connector add --mcp <mcp_id> <command...>");
+      throw new Error(ADD_MCP_USAGE);
     }
     case "list":
       await runConnectorList({ json: tail.includes("--json") });
@@ -1356,7 +1360,10 @@ function printConnectorHelp(): void {
 Usage:
   nimbus connector auth <service> [--port <n>] [--scopes a,b] [--token <pat>] [--api-base <url>] [--help]
   nimbus connector detect [--json] [--source gh|aws|kubectl|gcloud] [--replace] [--project <id>]   Reuse gh/aws/kubectl/gcloud logins you already have
-  nimbus connector add --mcp <mcp_id> <command...>   Register a user MCP server (id must be mcp_*)
+  nimbus connector add --mcp <mcp_id> [--read <path>]... [--net <host[:port]>]... [--model] -- <command> [args...]
+      Register a user MCP server (id must be mcp_*). --read/--net grant filesystem/network access;
+      --model: offer this server's tools to the model; takes effect in a later release.
+      Example: nimbus connector add --mcp mcp_echo -- /abs/path/echo/dist/echo
   nimbus connector list [--json]
   nimbus connector history <service> [--limit N]
   nimbus connector status <service> [--stats]
