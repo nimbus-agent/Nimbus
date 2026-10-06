@@ -163,6 +163,32 @@ describe("connector tools / call", () => {
     expect(process.exitCode).toBe(2);
   });
 
+  // The gateway's MCP client throws on an `isError` result by default (that is the "tool error"
+  // case below), but a result that arrives carrying `isError: true` must not exit 0 either.
+  test("an ok outcome whose MCP result carries isError: true exits 1 with its text on stderr", async () => {
+    const res: UserMcpCallOutcome = {
+      status: "ok",
+      result: { isError: true, content: [{ type: "text", text: "no such note" }] },
+    };
+    await runConnectorCall(
+      ["mcp_x", "echo"],
+      makeDeps(() => res, sent, out, err),
+    );
+    expect(process.exitCode).toBe(1);
+    expect(err).toEqual(["no such note"]);
+    expect(out).toEqual([]);
+  });
+
+  test("--json still prints the isError outcome, and still exits 1", async () => {
+    const res = { status: "ok", result: { isError: true, content: [] } };
+    await runConnectorCall(
+      ["mcp_x", "echo", "--json"],
+      makeDeps(() => res, sent, out, err),
+    );
+    expect(JSON.parse(out.join("\n"))).toEqual(res);
+    expect(process.exitCode).toBe(1);
+  });
+
   test("tool error exits 1", async () => {
     await runConnectorCall(
       ["mcp_x", "echo"],

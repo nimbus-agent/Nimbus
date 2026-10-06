@@ -228,6 +228,11 @@ server.registerTool(
     }
   },
 );
+server.registerTool(
+  "fail",
+  { description: "Report an in-band tool error", inputSchema: {} },
+  async () => ({ isError: true, content: [{ type: "text", text: "FAIL-MARKER no such thing" }] }),
+);
 await server.connect(new StdioServerTransport());
 `;
 
@@ -466,6 +471,25 @@ describe.skipIf(!sandboxAvailable)("a scaffolded user MCP over a real gateway", 
     expect(text.startsWith("DENIED")).toBe(true);
     // Linux bwrap hides the directory (ENOENT); macOS and Windows refuse it (EPERM/EACCES).
     expect(text).toMatch(/EACCES|EPERM|ENOENT/);
+  }, 60_000);
+
+  // `nimbus connector call` documents exit 1 for a tool that returned an error. An MCP tool reports
+  // that IN-BAND (`isError: true`), and the gateway's MCP client throws on it by default, so the
+  // RPC fails carrying the tool's own text rather than answering `ok` — the CLI maps that to 1.
+  test("a tool's in-band isError result fails the call with the tool's text", async () => {
+    const err = await client
+      .call<CallOutcome>("connector.userMcpCall", {
+        serviceId: "mcp_echo_srv",
+        tool: "fail",
+        input: {},
+      })
+      .then(
+        (v) => new Error(`resolved: ${JSON.stringify(v)}`),
+        (e: unknown) => e,
+      );
+    expect(err).toBeInstanceOf(Error);
+    expect((err as Error).message).not.toContain("resolved:");
+    expect((err as Error).message).toContain("FAIL-MARKER");
   }, 60_000);
 
   test("a denied consent leaves the call rejected", async () => {

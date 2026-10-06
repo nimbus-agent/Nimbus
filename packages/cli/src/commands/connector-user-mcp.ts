@@ -145,7 +145,18 @@ export async function runConnectorCall(tail: string[], deps?: UserMcpDeps): Prom
       process.exitCode = 2;
       return;
     }
-    d.log(args.json ? JSON.stringify(res, null, 2) : renderResult(res.result));
+    // An MCP tool reports its own failure IN-BAND (`isError: true`). The gateway's MCP client
+    // throws on one by default, so this arrives as an RPC error (exit 1 below); if one ever
+    // reaches here as a result instead, it is still a failed call, never exit 0.
+    const failed = isPlainObject(res.result) && res.result["isError"] === true;
+    if (args.json) {
+      d.log(JSON.stringify(res, null, 2));
+    } else if (failed) {
+      d.error(renderResult(res.result));
+    } else {
+      d.log(renderResult(res.result));
+    }
+    if (failed) process.exitCode = 1;
   } catch (e) {
     reportError(d, e);
   }
