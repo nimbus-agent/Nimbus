@@ -22,6 +22,7 @@ function stubPaths(): PlatformPaths {
     configDir: "/tmp/mock-config",
     dataDir: "/tmp/mock-data",
     logDir: "/tmp/mock-logs",
+    sandboxDir: "/tmp/mock-sandbox",
   } as unknown as PlatformPaths;
 }
 

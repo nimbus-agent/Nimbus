@@ -329,7 +329,6 @@
       "TS4111": 3
     },
     "packages/gateway/test/unit/connectors/lazy-mesh/connector-spawns.test.ts": {
-      "TS2741": 1,
       "TS4111": 4
     },
     "packages/gateway/test/unit/connectors/lazy-mesh/credential-orchestration.test.ts": {
