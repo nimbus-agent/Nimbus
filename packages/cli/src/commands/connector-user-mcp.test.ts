@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 
 import {
+  runConnectorAddMcp,
   runConnectorCall,
   runConnectorTools,
   type UserMcpCallOutcome,
@@ -176,5 +177,49 @@ describe("connector tools / call", () => {
     );
     expect(process.exitCode).toBe(1);
     expect(err.join("\n")).toContain("tool blew up");
+  });
+});
+
+describe("connector add --mcp — the owner decides", () => {
+  let sent: Sent[];
+  let out: string[];
+  let err: string[];
+  beforeEach(() => {
+    sent = [];
+    out = [];
+    err = [];
+    process.exitCode = 0;
+  });
+  afterEach(() => {
+    process.exitCode = 0;
+  });
+
+  const tail = ["mcp_x", "--read", "notes", "--net", "api.example.com", "--", "npx", "-y", "pkg"];
+
+  test("a denied prompt prints Refused, no grant lines, and exits 2", async () => {
+    await runConnectorAddMcp(
+      tail,
+      makeDeps(() => ({ status: "rejected", reason: "owner denied" }), sent, out, err),
+      "/work",
+    );
+    expect(sent.map((s) => s.method)).toEqual(["connector.addMcp"]);
+    expect(out).toEqual(["Refused: owner denied"]);
+    const printed = out.join(" | ");
+    expect(printed).not.toContain("Registered");
+    expect(printed).not.toContain("read:");
+    expect(printed).not.toContain("net:");
+    expect(process.exitCode).toBe(2);
+  });
+
+  test("an approved registration prints the id and every grant, exit 0", async () => {
+    await runConnectorAddMcp(
+      tail,
+      makeDeps(() => ({ ok: true, serviceId: "mcp_x" }), sent, out, err),
+      "/work",
+    );
+    expect(out[0]).toBe("Registered user MCP connector: mcp_x");
+    expect(out.some((l) => l.startsWith("  read: "))).toBe(true);
+    expect(out).toContain("  net:  api.example.com");
+    expect(process.exitCode).toBe(0);
   });
 });

@@ -15,9 +15,9 @@ import { BATCH_RPC_TIMEOUT_MS, INTERACTIVE_RPC_TIMEOUT_MS } from "../lib/rpc-tim
 import { stripTrailingSlashes } from "../lib/strip-trailing-slashes.ts";
 import { withGatewayIpc } from "../lib/with-gateway-ipc.ts";
 import { getCliPlatformPaths } from "../paths.ts";
-import { ADD_MCP_USAGE, parseAddMcpArgs } from "./connector-add-mcp-args.ts";
+import { ADD_MCP_USAGE } from "./connector-add-mcp-args.ts";
 import { runConnectorDetect } from "./connector-detect.ts";
-import { runConnectorCall, runConnectorTools } from "./connector-user-mcp.ts";
+import { runConnectorAddMcp, runConnectorCall, runConnectorTools } from "./connector-user-mcp.ts";
 
 type SyncStatus = {
   serviceId: string;
@@ -1152,21 +1152,6 @@ async function authCallWithTimeoutGuidance(
 The browser sign-in may still have completed — the gateway finishes the flow ` +
         `on its own. Check with: nimbus vault list ${service}  /  nimbus connector list`,
     );
-  }
-}
-
-async function runConnectorAddMcp(tail: string[]): Promise<void> {
-  const req = parseAddMcpArgs(tail, process.cwd());
-  const r = await withIpc(
-    (c) => c.call<{ ok: boolean; serviceId: string }>("connector.addMcp", req),
-    undefined,
-    INTERACTIVE_RPC_TIMEOUT_MS,
-  );
-  console.log(`Registered user MCP connector: ${r.serviceId ?? req.serviceId}`);
-  for (const p of req.readPaths) console.log(`  read: ${p}`);
-  for (const h of req.netHosts) console.log(`  net:  ${h}`);
-  if (req.modelAccess) {
-    console.log("  model: tools offered to the model (takes effect in a later release)");
   }
 }
 

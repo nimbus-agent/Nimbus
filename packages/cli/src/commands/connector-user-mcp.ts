@@ -1,6 +1,7 @@
 import type { IPCClient } from "../ipc-client/index.ts";
 import { INTERACTIVE_RPC_TIMEOUT_MS } from "../lib/rpc-timeouts.ts";
 import { withGatewayIpc } from "../lib/with-gateway-ipc.ts";
+import { parseAddMcpArgs } from "./connector-add-mcp-args.ts";
 
 /** The gateway's `connector.userMcpCall` result, restated for the IPC boundary. */
 export type UserMcpCallOutcome =
@@ -147,5 +148,42 @@ export async function runConnectorCall(tail: string[], deps?: UserMcpDeps): Prom
     d.log(args.json ? JSON.stringify(res, null, 2) : renderResult(res.result));
   } catch (e) {
     reportError(d, e);
+  }
+}
+
+type AddMcpRejection = { status: "rejected"; reason?: string };
+
+function isAddMcpRejection(r: unknown): r is AddMcpRejection {
+  return typeof r === "object" && r !== null && (r as { status?: unknown }).status === "rejected";
+}
+
+/**
+ * `nimbus connector add --mcp`. The gateway gates the registration on the owner's approval
+ * (`connector.addMcp` is in the HITL frozen set), and a denied prompt comes back as a
+ * `{ status: "rejected" }` RESULT, not an error — so it must be detected here, or a refused
+ * registration would print "Registered" and every grant line and exit 0. Exit 2 matches
+ * `connector call`'s refusal.
+ */
+export async function runConnectorAddMcp(
+  tail: string[],
+  deps?: UserMcpDeps,
+  cwd: string = process.cwd(),
+): Promise<void> {
+  const d = deps ?? defaultDeps();
+  const req = parseAddMcpArgs(tail, cwd);
+  const r = await d.call("connector.addMcp", req);
+  if (isAddMcpRejection(r)) {
+    d.log(`Refused: ${r.reason ?? "no reason given"}`);
+    process.exitCode = 2;
+    return;
+  }
+  const serviceId = (r as { serviceId?: unknown }).serviceId;
+  d.log(
+    `Registered user MCP connector: ${typeof serviceId === "string" ? serviceId : req.serviceId}`,
+  );
+  for (const p of req.readPaths) d.log(`  read: ${p}`);
+  for (const h of req.netHosts) d.log(`  net:  ${h}`);
+  if (req.modelAccess) {
+    d.log("  model: tools offered to the model (takes effect in a later release)");
   }
 }
