@@ -196,19 +196,47 @@ export async function revokeLegacyDataDirGrants(deps: {
   return "done";
 }
 
+/**
+ * The host-touching seams of {@link revokeLegacyDataDirGrantsAtBoot}. Production supplies none and
+ * gets {@link PRODUCTION_REVOKE_BOOT_SEAMS}; tests override any subset so the wrapper's body runs on
+ * every OS, not only on Windows with a built helper.
+ */
+export interface RevokeBootSeams {
+  platform: NodeJS.Platform;
+  helperPath: () => string;
+  helperExists: (helper: string) => boolean;
+  helperRun: (helper: string) => HelperRun;
+  listUserServiceIds: (db: Database) => string[];
+  markerExists: (marker: string) => boolean;
+  writeMarker: (marker: string) => void;
+}
+
+const PRODUCTION_REVOKE_BOOT_SEAMS: RevokeBootSeams = {
+  platform: process.platform,
+  helperPath,
+  helperExists: existsSync,
+  helperRun: helperRunner,
+  listUserServiceIds: (db) => listUserMcpConnectors(db).map((r) => r.service_id),
+  markerExists: existsSync,
+  writeMarker: (marker) => writeFileSync(marker, new Date().toISOString()),
+};
+
 /** Boot wrapper: Windows-only, helper-gated, never rejects. */
 export async function revokeLegacyDataDirGrantsAtBoot(deps: {
   db: Database;
   dataDir: string;
   logger: Logger;
+  /** Test-only overrides; production passes none. */
+  seams?: Partial<RevokeBootSeams>;
 }): Promise<void> {
-  if (process.platform !== "win32") return;
+  const s: RevokeBootSeams = { ...PRODUCTION_REVOKE_BOOT_SEAMS, ...deps.seams };
+  if (s.platform !== "win32") return;
   try {
-    const helper = helperPath();
-    if (!existsSync(helper)) return;
+    const helper = s.helperPath();
+    if (!s.helperExists(helper)) return;
     let userIds: string[] = [];
     try {
-      userIds = listUserMcpConnectors(deps.db).map((r) => r.service_id);
+      userIds = s.listUserServiceIds(deps.db);
     } catch (e) {
       deps.logger.warn(
         { err: e },
@@ -219,9 +247,9 @@ export async function revokeLegacyDataDirGrantsAtBoot(deps: {
     const result = await revokeLegacyDataDirGrants({
       dataDir: deps.dataDir,
       ids: legacyDataDirGrantIds(userIds),
-      run: helperRunner(helper),
-      markerExists: () => existsSync(marker),
-      writeMarker: () => writeFileSync(marker, new Date().toISOString()),
+      run: s.helperRun(helper),
+      markerExists: () => s.markerExists(marker),
+      writeMarker: () => s.writeMarker(marker),
       logger: deps.logger,
     });
     if (result === "done") deps.logger.info("sandbox: revoked legacy data-directory grants");
