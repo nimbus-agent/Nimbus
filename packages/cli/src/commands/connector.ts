@@ -17,6 +17,7 @@ import { withGatewayIpc } from "../lib/with-gateway-ipc.ts";
 import { getCliPlatformPaths } from "../paths.ts";
 import { ADD_MCP_USAGE, parseAddMcpArgs } from "./connector-add-mcp-args.ts";
 import { runConnectorDetect } from "./connector-detect.ts";
+import { runConnectorCall, runConnectorTools } from "./connector-user-mcp.ts";
 
 type SyncStatus = {
   serviceId: string;
@@ -1326,6 +1327,12 @@ export async function runConnector(args: string[]): Promise<void> {
       }
       throw new Error(ADD_MCP_USAGE);
     }
+    case "tools":
+      await runConnectorTools(tail);
+      return;
+    case "call":
+      await runConnectorCall(tail);
+      return;
     case "list":
       await runConnectorList({ json: tail.includes("--json") });
       return;
@@ -1364,6 +1371,8 @@ Usage:
       Register a user MCP server (id must be mcp_*). --read/--net grant filesystem/network access;
       --model: offer this server's tools to the model; takes effect in a later release.
       Example: nimbus connector add --mcp mcp_echo -- /abs/path/echo/dist/echo
+  nimbus connector tools <mcp_id> [--json]                         List a user MCP server's tools
+  nimbus connector call <mcp_id> <tool> [--input <json>] [--json]   Call one (asks for approval)
   nimbus connector list [--json]
   nimbus connector history <service> [--limit N]
   nimbus connector status <service> [--stats]
