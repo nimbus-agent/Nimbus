@@ -24,6 +24,7 @@ export interface SyncContext<S extends ConnectorServiceId = ConnectorServiceId>
   rateLimiter: ProviderRateLimiter;
   scheduleItemEmbedding?: (itemId: string) => void;
   // Wave 7b:
+  /** The sandbox ROOT (`PlatformPaths.sandboxDir`). Despite the name, not a cwd: `wrapServerSpec` derives each spawn's own leaf under it. */
   sandboxCwd: string;
   /** Per-connector credential selection from [connectors.<name>]; defaults to personal. */
   credentialFor: (service: string) => { credential: "personal" | "team"; teamEntry?: string };

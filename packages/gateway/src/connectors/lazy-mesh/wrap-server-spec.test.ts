@@ -4,9 +4,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import type { ExtensionManifest } from "../../extensions/manifest.ts";
+import { sandboxCwdFor } from "../../platform/sandbox/sandbox-cwd.ts";
 import type { SandboxPolicy } from "../../platform/sandbox/sandbox-policy.ts";
 import type { ServerSpec } from "./slot.ts";
-import { wrapServerSpec } from "./wrap-server-spec.ts";
+import { wrapServerSpec, wrapServerSpecInCwd } from "./wrap-server-spec.ts";
 
 // Real, unique temp root for the fake sandbox cwd args (S5443). wrapServerSpec
 // only string-copies the cwd into env — it is never written to.
@@ -78,9 +79,16 @@ describe("wrapServerSpec", () => {
     expect(parsed.permissions.network).toEqual(["api.github.com"]);
   });
 
-  test("adds NIMBUS_SANDBOX_CWD env from the cwd argument", () => {
-    const wrapped = wrapServerSpec(makeSpec(), makeManifest(), "/home/user/data");
-    expect(wrapped.env["NIMBUS_SANDBOX_CWD"]).toBe("/home/user/data");
+  test("adds NIMBUS_SANDBOX_CWD env as the per-policy leaf under the root", () => {
+    const wrapped = wrapServerSpec(makeSpec(), makeManifest(), "/home/user/sbx");
+    expect(wrapped.env["NIMBUS_SANDBOX_CWD"]).toBe(
+      sandboxCwdFor("/home/user/sbx", "com.nimbus.test"),
+    );
+  });
+
+  test("wrapServerSpecInCwd sets the cwd exactly as given", () => {
+    const wrapped = wrapServerSpecInCwd(makeSpec(), makeManifest(), "/home/user/exact");
+    expect(wrapped.env["NIMBUS_SANDBOX_CWD"]).toBe("/home/user/exact");
   });
 
   test("does not mutate the input spec", () => {
@@ -107,6 +115,6 @@ describe("wrapServerSpec", () => {
     const parsed = JSON.parse(wrapped.env["NIMBUS_SANDBOX_POLICY_JSON"] as string) as SandboxPolicy;
     expect(parsed.id).toBe("com.nimbus.test");
     expect(parsed.permissions.network).toEqual(["api.github.com"]);
-    expect(wrapped.env["NIMBUS_SANDBOX_CWD"]).toBe(LEGIT_CWD);
+    expect(wrapped.env["NIMBUS_SANDBOX_CWD"]).toBe(sandboxCwdFor(LEGIT_CWD, "com.nimbus.test"));
   });
 });

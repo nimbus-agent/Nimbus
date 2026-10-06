@@ -102,7 +102,7 @@ export class LazyConnectorMesh {
             env: extensionProcessEnv({}),
           },
           fsManifest,
-          paths.dataDir,
+          paths.sandboxDir,
         ),
       },
     });
@@ -111,7 +111,7 @@ export class LazyConnectorMesh {
       logger: this.logger,
       healthDb: this.healthDb,
       obsidianVaultPaths: options?.obsidianVaultPaths,
-      sandboxCwd: paths.dataDir,
+      sandboxCwd: paths.sandboxDir,
       clearLazyIdle: (k) => this.clearLazyIdle(k),
       getLazyClient: (k) => this.getLazyClient(k),
       setLazyClient: (k, c) => this.setLazyClient(k, c),

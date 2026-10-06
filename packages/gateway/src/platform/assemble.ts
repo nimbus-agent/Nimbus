@@ -1249,7 +1249,7 @@ async function bootFederationIntoIpcOpts(
       invokeTeamTool(
         {
           vault,
-          sandboxCwd: paths.dataDir,
+          sandboxCwd: paths.sandboxDir,
           requiredSecretKeysFor: (service: string) =>
             CONNECTOR_VAULT_SECRET_KEYS[service as keyof typeof CONNECTOR_VAULT_SECRET_KEYS],
           anyOfSecretGroupsFor: (service: string) =>
@@ -2415,7 +2415,7 @@ function buildTeamCredentialContexts(deps: {
       invokeTeamToolList(
         {
           vault,
-          sandboxCwd: paths.dataDir,
+          sandboxCwd: paths.sandboxDir,
           requiredSecretKeysFor: (service: string) =>
             CONNECTOR_VAULT_SECRET_KEYS[service as keyof typeof CONNECTOR_VAULT_SECRET_KEYS],
           anyOfSecretGroupsFor: (service: string) =>
@@ -2430,7 +2430,7 @@ function buildTeamCredentialContexts(deps: {
     ...identitySpread,
   };
   const teamCredentialExtras: Pick<SyncContext, "sandboxCwd" | "credentialFor" | "runTeamList"> = {
-    sandboxCwd: paths.dataDir,
+    sandboxCwd: paths.sandboxDir,
     credentialFor: (service: string) =>
       connectorsConfig.get(service as TeamCredentialConnector) ?? { credential: "personal" },
     runTeamList: (req) =>
@@ -2452,7 +2452,7 @@ function buildTeamCredentialContexts(deps: {
       invokeTeamTool(
         {
           vault,
-          sandboxCwd: paths.dataDir,
+          sandboxCwd: paths.sandboxDir,
           requiredSecretKeysFor: (service: string) =>
             CONNECTOR_VAULT_SECRET_KEYS[service as keyof typeof CONNECTOR_VAULT_SECRET_KEYS],
           anyOfSecretGroupsFor: (service: string) =>
@@ -2466,7 +2466,7 @@ function buildTeamCredentialContexts(deps: {
 
   const connectorWriteDeps: ConnectorWriteContext = {
     vault,
-    sandboxCwd: paths.dataDir,
+    sandboxCwd: paths.sandboxDir,
     isConnectorAllowed,
     credentialFor: (service: string) =>
       connectorsConfig.get(service as TeamCredentialConnector) ?? { credential: "personal" },
@@ -2565,7 +2565,7 @@ async function bootChatopsIntoAssembly(deps: {
         ? buildChatopsToolRunner({
             vault,
             botVaultEntry: chatopsCfg.botVaultEntry,
-            sandboxCwd: paths.dataDir,
+            sandboxCwd: paths.sandboxDir,
           })
         : buildE2eSinkRunChatopsTool(chatopsE2eSinkDir),
     audit: { recordAudit: (entry) => appendAuditEntry(db, entry) },
