@@ -268,6 +268,9 @@ describe.skipIf(!sandboxAvailable)("a scaffolded user MCP over a real gateway", 
   const project = join(tmp, "echo_srv");
   const binary = join(project, "dist", process.platform === "win32" ? "echo_srv.exe" : "echo_srv");
   const sentinel = join(tmp, "outside", "secret.txt");
+  /** Granted to the server: the IN-SANDBOX positive control for the probe. */
+  const grantedDir = join(tmp, "granted");
+  const allowed = join(grantedDir, "allowed.txt");
   const paths = {
     configDir: join(tmp, "config"),
     dataDir: join(tmp, "data"),
@@ -327,6 +330,8 @@ describe.skipIf(!sandboxAvailable)("a scaffolded user MCP over a real gateway", 
     // 4. The sentinel, outside every grant (not under the project, not under the gateway's dirs).
     mkdirSync(join(tmp, "outside"), { recursive: true });
     writeFileSync(sentinel, "TOP-SECRET", "utf8");
+    mkdirSync(grantedDir, { recursive: true });
+    writeFileSync(allowed, "ALLOWED-CONTENT", "utf8");
 
     // 5. Boot the gateway.
     restoreHelper = installDefaultHelper();
@@ -386,6 +391,7 @@ describe.skipIf(!sandboxAvailable)("a scaffolded user MCP over a real gateway", 
     const out = await client.call<{ ok?: boolean; serviceId?: string }>("connector.addMcp", {
       serviceId: "mcp_echo_srv",
       argv: [binary],
+      readPaths: [grantedDir],
     });
     expect(out).toMatchObject({ ok: true, serviceId: "mcp_echo_srv" });
   }, 60_000);
@@ -418,6 +424,19 @@ describe.skipIf(!sandboxAvailable)("a scaffolded user MCP over a real gateway", 
     expect(prompts.slice(before).some((p) => p.includes("mcp_echo_srv.echo"))).toBe(true);
   }, 60_000);
 
+  // Without this, DENIED below would also appear if the probe could read NOTHING inside the
+  // sandbox (path mangling, a hidden mount) — the denial must be the grant boundary, not that.
+  test("in-sandbox positive control: the probe reads a file it IS granted", async () => {
+    const out = await client.call<CallOutcome>("connector.userMcpCall", {
+      serviceId: "mcp_echo_srv",
+      tool: "probe",
+      input: { path: allowed },
+    });
+    const text = resultText(out);
+    expect(text.startsWith("READ")).toBe(true);
+    expect(text).toContain("ALLOWED-CONTENT");
+  }, 60_000);
+
   test("the user MCP is CONFINED: a read outside its grants is denied", async () => {
     const out = await client.call<CallOutcome>("connector.userMcpCall", {
       serviceId: "mcp_echo_srv",
@@ -427,6 +446,8 @@ describe.skipIf(!sandboxAvailable)("a scaffolded user MCP over a real gateway", 
     const text = resultText(out);
     expect(text).not.toContain("TOP-SECRET");
     expect(text.startsWith("DENIED")).toBe(true);
+    // Linux bwrap hides the directory (ENOENT); macOS and Windows refuse it (EPERM/EACCES).
+    expect(text).toMatch(/EACCES|EPERM|ENOENT/);
   }, 60_000);
 
   test("a denied consent leaves the call rejected", async () => {
