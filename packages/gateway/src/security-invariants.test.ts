@@ -1902,8 +1902,10 @@ code_execution=true
     // assignment would each turn a tighten-only ratchet into something a policy can loosen, which
     // is precisely what I2 says must be impossible.
     const src = await read("packages/gateway/src/engine/executor.ts");
-    expect(src).toContain(
-      "const requiresHITL = HITL_REQUIRED.has(action.type) || this.requiredByPolicy(action.type);",
+    // I42's user-MCP floor sits between the two operands (also an OR), so the policy overlay is
+    // still the LAST disjunct and never the only one.
+    expect(src).toMatch(
+      /const requiresHITL =\s*HITL_REQUIRED\.has\(action\.type\)\s*\|\|\s*isUserMcpActionType\(action\.type\)\s*\|\|\s*this\.requiredByPolicy\(action\.type\);/,
     );
   });
 
@@ -5168,5 +5170,70 @@ describe("I41 — a demo-rooted process never reaches the real install", () => {
       const at = body.indexOf(construction);
       expect(at).toBeGreaterThan(guardAt);
     }
+  });
+});
+
+describe("I42 — every user-MCP tool call needs the local owner's approval", () => {
+  test("gate() ORs the user-MCP floor with I2, after the frozen set and before the policy overlay", async () => {
+    // OR, never assignment, and derived from `action.type` (I3) — so it only ever tightens and
+    // a payload field cannot opt a call out.
+    const src = await read("packages/gateway/src/engine/executor.ts");
+    expect(src).toMatch(
+      /HITL_REQUIRED\.has\(action\.type\)\s*\|\|\s*isUserMcpActionType\(action\.type\)/,
+    );
+    expect(src).toMatch(
+      /const requiresHITL =\s*HITL_REQUIRED\.has\(action\.type\)\s*\|\|\s*isUserMcpActionType\(action\.type\)\s*\|\|\s*this\.requiredByPolicy\(action\.type\);/,
+    );
+    expect(src).not.toMatch(/isUserMcpActionType\(\s*action\.payload/);
+  });
+
+  test('tryDelegatedApproval returns "fallback" for a user-MCP type before consulting any delegate (I20 not consulted)', async () => {
+    const src = await read("packages/gateway/src/engine/executor.ts");
+    const fnAt = src.indexOf("private async tryDelegatedApproval(");
+    expect(fnAt).toBeGreaterThan(-1);
+    const fnEnd = src.indexOf("\n  }\n", fnAt);
+    expect(fnEnd).toBeGreaterThan(fnAt);
+    const body = src.slice(fnAt, fnEnd);
+    expect(body).toMatch(
+      /if \(this\.delegation === undefined \|\| isUserMcpActionType\(action\.type\)\) return "fallback";/,
+    );
+    // ORDER: the early return precedes the first store lookup.
+    expect(body.indexOf("isUserMcpActionType(action.type)")).toBeLessThan(
+      body.indexOf("activeDelegateePeer("),
+    );
+  });
+
+  test("behavioural: a DENYING owner blocks a user-MCP call that no frozen-set entry or policy names", async () => {
+    const { HITL_REQUIRED, NO_POLICY_OVERLAY, ToolExecutor, isUserMcpActionType } = await import(
+      "./engine/executor.ts"
+    );
+    const type = "mcp_x.y";
+    expect(isUserMcpActionType(type)).toBe(true);
+    // Precondition: neither I2 nor a policy is what gates it here.
+    expect(HITL_REQUIRED.has(type)).toBe(false);
+    let prompts = 0;
+    let dispatches = 0;
+    const exec = new ToolExecutor(
+      {
+        requestApproval: async () => {
+          prompts += 1;
+          return false;
+        },
+      },
+      { recordAudit: () => {} },
+      {
+        dispatch: async () => {
+          dispatches += 1;
+          return {};
+        },
+      },
+      undefined,
+      NULL_EGRESS_SINK,
+      NO_POLICY_OVERLAY,
+    );
+    const res = await exec.execute({ type, payload: {} });
+    expect(res.status).toBe("rejected");
+    expect(prompts).toBe(1);
+    expect(dispatches).toBe(0);
   });
 });

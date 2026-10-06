@@ -3,7 +3,7 @@
 Nimbus takes security seriously. The full security model and threat model live
 in [`docs/SECURITY.md`](../docs/SECURITY.md) and the central
 [nimbus-security](https://github.com/nimbus-agent/nimbus-security) repository;
-the invariant catalogue (I1–I41, with I28 reserved) lives in
+the invariant catalogue (I1–I42, with I28 reserved) lives in
 [`docs/SECURITY-INVARIANTS.md`](../docs/SECURITY-INVARIANTS.md).
 
 ## Reporting a vulnerability
