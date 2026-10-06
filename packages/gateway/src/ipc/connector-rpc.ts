@@ -3,11 +3,16 @@ import type { LazyConnectorMesh } from "../connectors/lazy-mesh/index.ts";
 import { adoptLocalAuth, parseAdoptRequest } from "../connectors/local-auth/adopt-local-auth.ts";
 import { detectLocalAuth, parseSources } from "../connectors/local-auth/detect-local-auth.ts";
 import { defaultLocalAuthHostDeps } from "../connectors/local-auth/local-auth-host.ts";
+import type { ResolvedUserMcpRegistration } from "../connectors/user-mcp-registration.ts";
 import type { ToolExecutor } from "../engine/executor.ts";
 import type { LocalIndex } from "../index/local-index.ts";
 import { isConnectorConfigured } from "../sync/connector-configured.ts";
 import type { SyncScheduler } from "../sync/scheduler.ts";
 import type { NimbusVault } from "../vault/nimbus-vault.ts";
+import type {
+  ConnectorRpcHandlerContext,
+  ConnectorRpcHit,
+} from "./connector-rpc-handlers/context.ts";
 import {
   handleConnectorAddMcp,
   handleConnectorAuth,
@@ -46,6 +51,53 @@ const WIN32_USER_MCP_NETWORK_NOTE =
  */
 export function buildReadGcpKeyPath(vault: NimbusVault): () => Promise<string | null> {
   return () => readConnectorSecret(vault, "gcp", "credentials_json_path");
+}
+
+/**
+ * `connector.addMcp`, in its fixed order: resolve and validate, build the exact consent payload,
+ * ask the LOCAL owner, and only then store. Each step is one line below so the order reads as a list.
+ */
+async function addMcpBehindOwnerGate(
+  ctx: ConnectorRpcHandlerContext,
+  toolExecutor: ToolExecutor | undefined,
+): Promise<ConnectorRpcHit> {
+  if (toolExecutor === undefined) {
+    throw new ConnectorRpcError(-32603, "connector.addMcp requires a toolExecutor");
+  }
+  // 1. Resolve and validate FIRST: an invalid request (protected read path, unknown command,
+  //    bad host, id collision) throws here and never prompts the owner.
+  const resolved = resolveConnectorAddMcp(ctx);
+  // 2. The payload the owner approves IS the resolved registration that step 4 stores.
+  const payload = buildAddMcpConsentPayload(resolved);
+  // 3. The HITL gate: anything but "proceed" stops here, before any write.
+  const gateResult = await toolExecutor.gate({ type: "connector.addMcp", payload });
+  if (gateResult !== "proceed") return { kind: "hit", value: gateResult };
+  // 4. Store exactly what was approved.
+  return handleConnectorAddMcp(ctx, resolved);
+}
+
+/**
+ * The payload MUST name exactly what the handler consumes and stores. It used to read
+ * `command`/`args` off the raw params, which no caller sent, so the owner was asked to
+ * authorize spawning an arbitrary local process while the prompt, the audit row and the
+ * egress-ledger row all rendered empty (#808). It is now the RESOLVED registration itself
+ * — absolute command, verbatim args, canonical read paths, normalised hosts — the same
+ * object `handleConnectorAddMcp` writes, so what the owner approves cannot disagree with
+ * what is stored.
+ */
+function buildAddMcpConsentPayload(resolved: ResolvedUserMcpRegistration): Record<string, unknown> {
+  const payload: Record<string, unknown> = {
+    serviceId: resolved.serviceId,
+    command: resolved.command,
+    args: resolved.args,
+    readPaths: resolved.readPaths,
+    netHosts: resolved.netHosts,
+    modelAccess: resolved.modelAccess,
+  };
+  if (process.platform === "win32" && resolved.netHosts.length > 0) {
+    payload["networkNote"] = WIN32_USER_MCP_NETWORK_NOTE;
+  }
+  return payload;
 }
 
 export async function dispatchConnectorRpc(options: {
@@ -97,35 +149,8 @@ export async function dispatchConnectorRpc(options: {
   };
 
   switch (method) {
-    case "connector.addMcp": {
-      if (toolExecutor === undefined) {
-        throw new ConnectorRpcError(-32603, "connector.addMcp requires a toolExecutor");
-      }
-      // Resolve and validate FIRST: an invalid request (protected read path, unknown command,
-      // bad host, id collision) throws here and never prompts the owner.
-      const resolved = resolveConnectorAddMcp(ctx);
-      // The payload MUST name exactly what the handler consumes and stores. It used to read
-      // `command`/`args` off the raw params, which no caller sent, so the owner was asked to
-      // authorize spawning an arbitrary local process while the prompt, the audit row and the
-      // egress-ledger row all rendered empty (#808). It is now the RESOLVED registration itself
-      // — absolute command, verbatim args, canonical read paths, normalised hosts — the same
-      // object `handleConnectorAddMcp` writes, so what the owner approves cannot disagree with
-      // what is stored.
-      const payload: Record<string, unknown> = {
-        serviceId: resolved.serviceId,
-        command: resolved.command,
-        args: resolved.args,
-        readPaths: resolved.readPaths,
-        netHosts: resolved.netHosts,
-        modelAccess: resolved.modelAccess,
-      };
-      if (process.platform === "win32" && resolved.netHosts.length > 0) {
-        payload["networkNote"] = WIN32_USER_MCP_NETWORK_NOTE;
-      }
-      const gateResult = await toolExecutor.gate({ type: "connector.addMcp", payload });
-      if (gateResult !== "proceed") return { kind: "hit", value: gateResult };
-      return handleConnectorAddMcp(ctx, resolved);
-    }
+    case "connector.addMcp":
+      return addMcpBehindOwnerGate(ctx, toolExecutor);
     case "connector.listStatus":
       return handleConnectorListStatus(ctx);
     case "connector.pause":

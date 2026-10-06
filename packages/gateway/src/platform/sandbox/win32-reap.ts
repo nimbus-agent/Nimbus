@@ -155,7 +155,8 @@ export function legacyDataDirGrantIds(userMcpServiceIds: readonly string[]): str
   }
   for (const s of userMcpServiceIds) ids.add(`user.${s}`);
   ids.delete("com.nimbus.filesystem");
-  return [...ids].sort();
+  // Code-unit order, as the default sort gave; ids are unique (a Set), so no pair compares equal.
+  return [...ids].sort((a, b) => (a < b ? -1 : 1));
 }
 
 /**
@@ -175,12 +176,11 @@ export async function revokeLegacyDataDirGrants(deps: {
   const failed: string[] = [];
   for (const id of deps.ids) {
     try {
-      await deps.run(
-        buildRevokeGrantsArgv(
-          { id, permissions: { network: [], filesystem: { read: [], write: [] } } },
-          { cwd: deps.dataDir },
-        ),
+      const argv = buildRevokeGrantsArgv(
+        { id, permissions: { network: [], filesystem: { read: [], write: [] } } },
+        { cwd: deps.dataDir },
       );
+      await deps.run(argv); // NOSONAR S9382: sequential on purpose (see above): concurrent DACL rewrites race
     } catch {
       failed.push(id);
     }

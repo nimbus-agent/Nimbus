@@ -50,7 +50,7 @@ export class UserMcpRegistrationError extends Error {
 
 const LABEL = "[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?";
 // IPv6 literals are NOT accepted in this slice (stated bound).
-const HOST_RE = new RegExp(`^${LABEL}(?:\\.${LABEL})*(?::(\\d{1,5}))?$`);
+const HOST_RE = new RegExp(String.raw`^${LABEL}(?:\.${LABEL})*(?::(\d{1,5}))?$`);
 
 function pathApi(platform: NodeJS.Platform): typeof path.posix {
   return platform === "win32" ? path.win32 : path.posix;

@@ -65,7 +65,7 @@ export class LazyConnectorMesh {
   private readonly spawnContext: MeshSpawnContext;
   private readonly paths: PlatformPaths;
   private readonly removeSandboxDir: (dir: string) => void;
-  private readonly filesystemSpawnGate: Promise<void>;
+  private readonly filesystemSpawnGate: Promise<void> | undefined;
 
   constructor(
     paths: PlatformPaths,
@@ -89,7 +89,8 @@ export class LazyConnectorMesh {
       filesystemSpawnGate?: Promise<void>;
     },
   ) {
-    this.filesystemSpawnGate = options?.filesystemSpawnGate ?? Promise.resolve();
+    // Only stored here; `collectBuiltInToolMaps` awaits it (undefined means no gate).
+    this.filesystemSpawnGate = options?.filesystemSpawnGate;
     this.paths = paths;
     this.removeSandboxDir =
       options?.removeSandboxDir ?? ((dir) => rmSync(dir, { recursive: true, force: true }));
@@ -237,7 +238,7 @@ export class LazyConnectorMesh {
         return;
       } catch (err) {
         lastErr = err;
-        if (attempt < 3) await Bun.sleep(100);
+        if (attempt < 3) await Bun.sleep(100); // NOSONAR S9382: a retry backoff is sequential by definition
       }
     }
     this.logger?.warn({ serviceId, err: lastErr }, "user MCP sandbox directory not removed");

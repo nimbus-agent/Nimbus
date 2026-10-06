@@ -22,6 +22,35 @@ function resolveCommand(command: string, cwd: string): string {
   return hasSeparator && !isAbsolute(command) ? resolve(cwd, command) : command;
 }
 
+type Grants = Pick<AddMcpRequest, "readPaths" | "netHosts" | "modelAccess">;
+
+/** Parses the grant flags that precede the `--`; any unknown flag or missing value is a usage error. */
+function parseGrantFlags(flags: readonly string[], cwd: string): Grants {
+  const grants: Grants = { readPaths: [], netHosts: [], modelAccess: false };
+  for (let i = 0; i < flags.length; i++) {
+    const flag = flags[i];
+    if (flag === "--model") {
+      grants.modelAccess = true;
+      continue;
+    }
+    if (flag !== "--read" && flag !== "--net") throw usageError();
+    const value = flags[++i];
+    if (value === undefined || value === "" || value.startsWith("-")) throw usageError();
+    if (flag === "--read") grants.readPaths.push(resolve(cwd, value));
+    else grants.netHosts.push(value);
+  }
+  return grants;
+}
+
+/** Splits the remainder after the id into its grant flags and the command (see `parseAddMcpArgs`). */
+function splitFlagsAndCommand(rest: readonly string[]): { flags: string[]; command: string[] } {
+  const flagForm = rest[0]?.startsWith("-") === true;
+  if (!flagForm) return { flags: [], command: [...rest] };
+  const sep = rest.indexOf("--");
+  if (sep === -1) throw usageError();
+  return { flags: rest.slice(0, sep), command: rest.slice(sep + 1) };
+}
+
 /**
  * `tail` is everything after `--mcp`. When the first token after the id is a flag (or the `--`
  * itself), grants are the flags before the FIRST `--` and everything after it is the command
@@ -31,43 +60,13 @@ function resolveCommand(command: string, cwd: string): string {
 export function parseAddMcpArgs(tail: readonly string[], cwd: string): AddMcpRequest {
   const serviceId = tail[0]?.trim() ?? "";
   if (serviceId === "" || serviceId.startsWith("-")) throw usageError();
-  const rest = tail.slice(1);
-  const flagForm = rest[0]?.startsWith("-") === true;
-  const sep = flagForm ? rest.indexOf("--") : -1;
-
-  const readPaths: string[] = [];
-  const netHosts: string[] = [];
-  let modelAccess = false;
-  let command: string[];
-
-  if (sep === -1) {
-    if (flagForm) throw usageError();
-    command = rest;
-  } else {
-    command = rest.slice(sep + 1);
-    const flags = rest.slice(0, sep);
-    for (let i = 0; i < flags.length; i++) {
-      const flag = flags[i];
-      if (flag === "--model") {
-        modelAccess = true;
-      } else if (flag === "--read" || flag === "--net") {
-        const value = flags[++i];
-        if (value === undefined || value === "" || value.startsWith("-")) throw usageError();
-        if (flag === "--read") readPaths.push(resolve(cwd, value));
-        else netHosts.push(value);
-      } else {
-        throw usageError();
-      }
-    }
-  }
-
+  const { flags, command } = splitFlagsAndCommand(tail.slice(1));
+  const grants = parseGrantFlags(flags, cwd);
   const first = command[0];
   if (first === undefined || first.trim() === "") throw usageError();
   return {
     serviceId,
     argv: [resolveCommand(first, cwd), ...command.slice(1)],
-    readPaths,
-    netHosts,
-    modelAccess,
+    ...grants,
   };
 }
