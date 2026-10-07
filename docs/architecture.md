@@ -1061,13 +1061,11 @@ The multi-agent system extends the single-agent cognitive loop with a **Coordina
 
 Both limits are checked in `AgentCoordinator.run` *before* any sub-task is dispatched: exceeding either throws (`Agent depth limit reached: …` / `Tool call limit reached: …`) and halts decomposition, so no sub-agent for that batch starts. The `agent.gasLimitReached` IPC notification is reserved and not yet emitted by any code path.
 
-### Voice Interface and Rich TUI
+### Voice (not shipped) and Rich TUI
 
-Both Phase 4 clients use the **existing JSON-RPC 2.0 IPC socket** — no new Gateway API surface is introduced.
+**Voice is not a shipped capability.** `packages/gateway/src/voice/` and `ipc/voice-rpc.ts` exist (STT via `whisper-cli`, TTS via `say` / SAPI / `espeak-ng`, an opt-in wake-word loop), but no production code constructs a `VoiceService`, so every `voice.*` IPC method falls through to `Method not found`, and there is no CLI or desktop entry point. It is recorded as dark code in [`ecosystem-roadmap.md` § Track 0](./ecosystem-roadmap.md#track-0--shipped-but-dark). Not to be confused with the `[persona] voice` key (answer register) or the local `whisper-cli` transcription `nimbus media understand` runs over audio/video files, both of which ship.
 
-**Voice interface** — implemented as a Gateway service (`packages/gateway/src/voice/`). STT calls `whisper-cli` as a subprocess on the recorded audio file; transcribed text is dispatched to the engine as a standard prompt. TTS uses `NativeTtsProvider`: `say` on macOS, PowerShell SAPI on Windows, `espeak-ng` or `spd-say` on Linux. Wake-word detection runs as an opt-in background loop inside the Gateway. IPC methods (`voice.transcribe`, `voice.speak`, `voice.startWakeWord`, `voice.stopWakeWord`, `voice.getStatus`) are dispatched via `packages/gateway/src/ipc/voice-rpc.ts`. Audio never leaves the machine.
-
-**Rich TUI** (`nimbus tui`) — an Ink-based terminal layout using `@nimbus-dev/client` IPC transport. HITL consent is surfaced inline in the terminal pane, identical in behaviour to the existing CLI consent prompt.
+**Rich TUI** (`nimbus tui`) — an Ink-based terminal layout over the **existing JSON-RPC 2.0 IPC socket** (no new Gateway API surface), using `@nimbus-dev/client` IPC transport. HITL consent is surfaced inline in the terminal pane, identical in behaviour to the existing CLI consent prompt.
 
 ### Watchers
 
@@ -2726,7 +2724,7 @@ nimbus/
 │   │       ├── llm/            ← Ollama + llama.cpp providers (Phase 4) + the four cloud
 │   │       │                      adapters (S2 slice 2b: Anthropic/OpenAI/Gemini/xAI), router,
 │   │       │                      registry, GPU arbiter
-│   │       ├── voice/          ← STT (whisper-cli), TTS, wake-word (Phase 4)
+│   │       ├── voice/          ← STT/TTS/wake-word code — NOT wired, no production caller
 │   │       ├── updater/        ← Auto-update state machine, manifest fetcher, Ed25519 verifier (Phase 4)
 │   │       ├── automation/     ← Watcher engine, graph-predicate evaluator
 │   │       ├── federation/      ← Consent-scoped federated query gate (I17), namespaces/RBAC,

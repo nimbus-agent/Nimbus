@@ -1,6 +1,4 @@
-import { existsSync, readFileSync } from "node:fs";
 import { platform } from "node:os";
-import { join } from "node:path";
 
 import type { IPCClient } from "../ipc-client/index.ts";
 import { nimbusCommand } from "../lib/demo-hint.ts";
@@ -800,31 +798,6 @@ async function doctorRunGatewayRpcs(client: IPCClient): Promise<number> {
   return exit;
 }
 
-/**
- * Print diagnostic lines and return the exit code they imply: 2 when a `[fail]` is
- * present, 1 when a `[warn]` is, 0 otherwise. The caller folds it in with `Math.max`, so
- * severity only ever ratchets up.
- *
- * Lifted out of {@link runDoctor} — inline, the loop plus its if/else-if was worth about
- * eight points of cognitive complexity (Sonar `S3776`) for one idea, and that idea is
- * reusable by every future check emitting the same prefixed lines.
- *
- * (Prose in this file deliberately avoids the bare TypeScript escape-hatch keyword. The
- * `audit:a-n-y` gate strips comments with a scanner that does not understand regex
- * literals; the one near the top of this file defeats it, so comment prose below that
- * point is counted as real usage. It over-counts only — a genuine occurrence appended
- * here is still detected, verified — but it will fail the gate on a comment.)
- */
-function printAndScoreLines(lines: readonly string[]): number {
-  let exit = 0;
-  for (const line of lines) {
-    console.log(line);
-    if (line.startsWith("[fail]")) exit = Math.max(exit, 2);
-    else if (line.startsWith("[warn]")) exit = Math.max(exit, 1);
-  }
-  return exit;
-}
-
 /** Printed instead of running `--fix-keyring` in the demo root (I41 clause 3). */
 export const DEMO_FIX_KEYRING_REFUSAL =
   "Refusing --fix-keyring in the demo: the demo uses an in-memory vault, not the OS keyring. " +
@@ -865,13 +838,6 @@ export async function runDoctor(args: string[], deps: DoctorCoreDeps): Promise<v
 
   exit = Math.max(exit, doctorPrintVaultCheck(paths.demo === true));
 
-  const voiceCfg = loadVoiceConfigFromDir(paths.configDir);
-  const voiceLines = doctorVoiceLines(voiceCfg, {
-    which: (n) => Bun.which(n),
-    platform: platform() as "win32" | "darwin" | "linux",
-  });
-  exit = Math.max(exit, printAndScoreLines(voiceLines));
-
   const state = await deps.readGatewayState(paths);
   if (state !== undefined && deps.isProcessAlive(state.pid)) {
     const client = deps.makeClient(state.socketPath);
@@ -898,119 +864,4 @@ export async function runDoctor(args: string[], deps: DoctorCoreDeps): Promise<v
   }
 
   process.exitCode = exit;
-}
-
-export type DoctorVoiceConfig = {
-  enabled: boolean;
-  whisperPath: string;
-  piperPath: string;
-  piperModel: string;
-};
-
-export type DoctorEnv = {
-  which: (name: string) => string | null;
-  platform: "win32" | "darwin" | "linux";
-};
-
-function doctorPiperLines(cfg: DoctorVoiceConfig, env: DoctorEnv): string[] {
-  if (cfg.piperPath === "" && cfg.piperModel === "") return [];
-  const lines: string[] = [];
-  const hasAbsPath = cfg.piperPath.includes("/") || cfg.piperPath.includes("\\");
-  const piperBinOk = cfg.piperPath !== "" && (hasAbsPath || env.which(cfg.piperPath) !== null);
-  if (!piperBinOk) {
-    lines.push(`[warn] Voice: piper_path is set but the binary was not found: ${cfg.piperPath}`);
-  }
-  if (cfg.piperModel === "") {
-    lines.push(
-      "[warn] Voice: piper_path is set but piper_model is empty — Piper TTS will not run.",
-    );
-  }
-  return lines;
-}
-
-export function doctorVoiceLines(cfg: DoctorVoiceConfig, env: DoctorEnv): string[] {
-  if (!cfg.enabled) return [];
-  const lines: string[] = [];
-
-  const whisperOk =
-    cfg.whisperPath !== "" || env.which("whisper-cli") !== null || env.which("main") !== null;
-  lines.push(
-    whisperOk
-      ? "[ok] Voice: whisper-cli is available."
-      : "[warn] Voice: whisper-cli not found on PATH and voice.whisper_path is unset — STT will not work.",
-  );
-
-  const ffmpegOk = env.which("ffmpeg") !== null;
-  lines.push(
-    ffmpegOk
-      ? "[ok] Voice: ffmpeg is on PATH."
-      : "[warn] Voice: ffmpeg not found on PATH — wake word detection requires ffmpeg for audio capture.",
-  );
-
-  if (env.platform === "darwin") {
-    lines.push("[ok] Voice: macOS `say` is always available.");
-  } else if (env.platform === "win32") {
-    lines.push("[ok] Voice: Windows SAPI via PowerShell is always available.");
-  } else {
-    const espeakOk = env.which("espeak-ng") !== null;
-    const spdSayOk = env.which("spd-say") !== null;
-    if (espeakOk) {
-      lines.push("[ok] Voice: Linux TTS via espeak-ng.");
-    } else if (spdSayOk) {
-      lines.push("[ok] Voice: Linux TTS via spd-say (espeak-ng preferred).");
-    } else {
-      lines.push(
-        "[warn] Voice: neither espeak-ng nor spd-say found on PATH — install one to enable TTS on Linux.",
-      );
-    }
-  }
-
-  lines.push(...doctorPiperLines(cfg, env));
-  return lines;
-}
-
-function applyVoiceKey(out: Partial<DoctorVoiceConfig>, key: string, val: string): void {
-  if (key === "enabled") out.enabled = val === "true";
-  else if (key === "whisper_path") out.whisperPath = val;
-  else if (key === "piper_path") out.piperPath = val;
-  else if (key === "piper_model") out.piperModel = val;
-}
-
-function parseVoiceTomlLines(lines: string[]): Partial<DoctorVoiceConfig> {
-  let inVoice = false;
-  const out: Partial<DoctorVoiceConfig> = {};
-  for (const line of lines) {
-    const hashIdx = line.indexOf("#");
-    const trimmed = (hashIdx >= 0 ? line.slice(0, hashIdx) : line).trim();
-    if (trimmed === "") continue;
-    if (trimmed.startsWith("[") && trimmed.endsWith("]")) {
-      inVoice = trimmed === "[voice]";
-      continue;
-    }
-    if (!inVoice) continue;
-    const eq = trimmed.indexOf("=");
-    if (eq <= 0) continue;
-    const key = trimmed.slice(0, eq).trim();
-    const valRaw = trimmed.slice(eq + 1).trim();
-    const val = valRaw.startsWith('"') && valRaw.endsWith('"') ? valRaw.slice(1, -1) : valRaw;
-    applyVoiceKey(out, key, val);
-  }
-  return out;
-}
-
-function loadVoiceConfigFromDir(configDir: string): DoctorVoiceConfig {
-  const tomlPath = join(configDir, "nimbus.toml");
-  const defaults: DoctorVoiceConfig = {
-    enabled: false,
-    whisperPath: "",
-    piperPath: "",
-    piperModel: "",
-  };
-  if (!existsSync(tomlPath)) return defaults;
-  try {
-    const src = readFileSync(tomlPath, "utf8");
-    return { ...defaults, ...parseVoiceTomlLines(src.split(/\r?\n/)) };
-  } catch {
-    return defaults;
-  }
 }

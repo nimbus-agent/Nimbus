@@ -21,7 +21,6 @@ nimbus doctor
 
 - **Bun version** — confirms Bun ≥ 1.2 is installed.
 - **Vault** — on Linux, verifies `secret-tool` is on PATH; on Windows and macOS, confirms the OS-native store is reachable.
-- **Voice binaries** — if `[voice]` is enabled in `nimbus.toml`, checks that `whisper-cli` (or the configured `whisper_path`) is on PATH and that the configured Piper binary and model file are present.
 - **Gateway process** — checks that the Gateway is running and that the IPC socket is reachable.
 - **Config** — calls `config.validate` to surface any schema errors or warnings in `nimbus.toml`.
 - **Index** — reports the total number of indexed items; warns if the count is zero (meaning the initial sync has not yet completed).
@@ -151,7 +150,6 @@ Snapshots live in `<dataDir>/snapshots/` and pre-migration backups in `<dataDir>
 | Connector shows `unauthenticated` | OAuth token expired or was revoked | Re-auth via Settings → Connectors → Connect, or `nimbus connector auth <service>` |
 | `nimbus ask` returns "no results" | Indexer hasn't completed initial sync | Run `nimbus connector list` to see sync state; wait for the first sync to finish or trigger one manually with `nimbus connector sync <service>` |
 | Tauri app banner "Gateway is not running" | Gateway process exited or was not started | Run `nimbus start` from a terminal; or click "Start Gateway" in the banner |
-| Voice doesn't transcribe | `whisper-cli` not on PATH; or `whisper_path` in `nimbus.toml` points to a missing binary | Run `nimbus doctor` — it checks voice binary paths; update `[voice] whisper_path` if needed |
 | Slow queries accumulate | Large index without FTS5 vacuum; vec alignment drift | Run `nimbus diag slow-queries` to identify culprits; then `nimbus db verify` and `nimbus db repair --yes` if findings are reported |
 | `nimbus connector sync` hangs | Rate-limit or network timeout on the upstream API | Check `nimbus connector list` for `rate_limited` state; wait for backoff to expire; verify connectivity |
 

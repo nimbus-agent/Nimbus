@@ -407,6 +407,8 @@ First-party demonstrations of multi-agent orchestration. **Deferred to the v0.1.
 
 #### Voice Interface
 
+> **Correction (2026-10-07): the code below was written but never wired.** No production code constructs a `VoiceService`, so every `voice.*` IPC method answers `Method not found` and there is no CLI or desktop entry point; the boxes record code that exists, not a capability a user can reach. Tracked in [`ecosystem-roadmap.md` § Track 0](./ecosystem-roadmap.md#track-0--shipped-but-dark).
+
 - [x] **Local STT** — `whisper-cli` subprocess called by the Gateway voice service; model: `whisper-base.en` (default) / user-selectable via config; audio never leaves the machine
 - [x] **Voice queries** — `voice.transcribe` + `voice.speak` IPC methods; TTS via `NativeTtsProvider` (`say` on macOS, PowerShell SAPI on Windows, `espeak-ng`/`spd-say` on Linux)
 - [x] **Wake word** (opt-in, disabled by default) — background loop in Gateway voice service; `voice.startWakeWord` / `voice.stopWakeWord` IPC

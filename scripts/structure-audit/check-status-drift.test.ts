@@ -274,3 +274,54 @@ describe("ceiling ranges", () => {
     expect(auditStatusDrift(makeRepo(withRules({}))).ok).toBe(true);
   });
 });
+
+describe("auditStatusDrift — the I7 allowlist count in the tauri-allowlist skill", () => {
+  const RS = "packages/ui/src-tauri/src/gateway_bridge.rs";
+  const SKILL = ".claude/commands/nimbus-tauri-allowlist.md";
+  const rs = (n: number): string =>
+    `#[test]\nfn allowlist_exact_size() {\n    assert_eq!(ALLOWED_METHODS.len(), ${String(n)});\n}\n`;
+  const skill = (current: number, len: number): string =>
+    [
+      `Every method. Currently ${String(current)} entries (verify the live constant).`,
+      `- **Size-asserted** — \`allowlist_exact_size\` checks \`ALLOWED_METHODS.len() == ${String(len)}\`.`,
+      "- **Size-asserted** — `no_timeout_methods_exact_size` checks `NO_TIMEOUT_METHODS.len() == 6`.",
+      '- [ ] Update the "Currently N entries" line in this skill.',
+    ].join("\n");
+
+  test("passes when both skill statements match the Rust assertion", () => {
+    const result = auditStatusDrift(makeRepo(inSync({ [RS]: rs(107), [SKILL]: skill(107, 107) })));
+    expect(result.errors).toEqual([]);
+    expect(result.ok).toBe(true);
+  });
+
+  test("FAILS on a stale 'Currently N entries'", () => {
+    const result = auditStatusDrift(makeRepo(inSync({ [RS]: rs(107), [SKILL]: skill(105, 107) })));
+    expect(result.ok).toBe(false);
+    expect(result.errors).toEqual([
+      `${SKILL}: "Currently N entries" says 105 — gateway_bridge.rs asserts 107`,
+    ]);
+  });
+
+  test("FAILS on a stale `ALLOWED_METHODS.len() == N`, and ignores NO_TIMEOUT_METHODS", () => {
+    const result = auditStatusDrift(makeRepo(inSync({ [RS]: rs(107), [SKILL]: skill(107, 103) })));
+    expect(result.ok).toBe(false);
+    expect(result.errors).toEqual([
+      `${SKILL}: \`ALLOWED_METHODS.len() == N\` says 103 — gateway_bridge.rs asserts 107`,
+    ]);
+  });
+
+  test("FAILS when a statement disappears, rather than passing vacuously", () => {
+    const result = auditStatusDrift(
+      makeRepo(inSync({ [RS]: rs(107), [SKILL]: "The allowlist is large.\n" })),
+    );
+    expect(result.ok).toBe(false);
+    expect(result.errors).toHaveLength(2);
+    expect(result.errors.every((e) => e.includes("cannot run"))).toBe(true);
+  });
+
+  test("the real repo's skill agrees with the real Rust assertion", () => {
+    const repoRoot = join(import.meta.dir, "..", "..");
+    const errors = auditStatusDrift(repoRoot).errors.filter((e) => e.includes(SKILL));
+    expect(errors).toEqual([]);
+  });
+});

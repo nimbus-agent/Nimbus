@@ -106,8 +106,9 @@ other sockets.
 ### Other confirmed gaps
 
 - **Runtime assets resolve against source layout.** Several modules locate assets by walking up from
-  `import.meta.dir`, in a binary that ships alone. The `/admin` 503 is the visible, harmless
-  instance; the connector spawn path is the one that matters.
+  `import.meta.dir`, in a binary that ships alone. The `/admin` 503 was the visible, harmless
+  instance and is fixed (#1058 embeds the console; `install-smoke.yml` now asserts a 200 from the
+  installed binary); the connector spawn path is the one that matters.
 - **The author-facing contract validator always passes.** `runContractTests` is invoked without
   `await`, so `nimbus test` can print success before the failure surfaces.
 - **Two first-party generators emit mutually incompatible manifests**, and the gateway's rejection
@@ -122,11 +123,11 @@ Every row below was verified against the tree on 2026-08-02.
 
 | Capability | State | Evidence |
 |---|---|---|
-| Extension system | `install` copies, hashes, Ed25519-verifies (I16), rows and enables — then nothing ever spawns the entry file | `listExtensions` is consumed only by `ipc/automation-rpc.ts` list/info/remove; every `wrapServerSpec()` call site is first-party or user-MCP |
-| Desktop app | Code-complete Tauri app — 8 pages, a 103-method Rust allowlist, `tauri build` runs in CI — that has never shipped a binary | no `build-ui` job anywhere in `.github/workflows` |
-| Admin console | `nimbus admin console` prints a URL that returns HTTP 503 on every installed binary | `admin-console` appears in no workflow and in no release build step |
+| Extension system | `install` copies, hashes, Ed25519-verifies (I16), rows and enables — then nothing ever spawns the entry file. User docs (`README.md`, `cli-reference.md`) now say so plainly (2026-10-07) | `listExtensions` is consumed only by `ipc/automation-rpc.ts` list/info/remove; every `wrapServerSpec()` call site is first-party or user-MCP |
+| Desktop app | Code-complete Tauri app — a 107-method Rust allowlist, `tauri build` runs in CI — that has never shipped a binary. The FAQ and `cli-reference.md` now say it is not released (2026-10-07) | `tauri build` runs only in `ci.yml`; no release workflow publishes a desktop artifact |
+| Admin console | **Repaired.** The console's three files are embedded in the compiled gateway (`ipc/embedded-assets.ts`, #1058) and built before every compile (`compile-gateway.ts`, release.yml's "Build the admin console" step). `install-smoke.yml` asserts `GET /admin` → 200 with the console's `index.html` on the installed binary, behind the `http_api.deployment_token` bearer (2026-10-07) | `EMBEDDED_CONSOLE_ASSETS`; the install-smoke `/admin` assertion |
 | OS notifications | `NotificationService.show()` delivers nothing, and it is the only implementation — so watchers notify nobody and a pending consent prompt reaches you only if you are looking at the right terminal. The events themselves are persisted before the notify, so this is a reachability gap, not data loss; the drop is now logged as `notification.dropped` rather than being silent | `createUnimplementedNotifications()` in `packages/gateway/src/platform/assemble.ts`, wired in `assemblePlatformServices` |
-| Voice subsystem | Ships with no client surface | no CLI entry point |
+| Voice subsystem | Dark: no production code constructs a `VoiceService`, so every `voice.*` method is `Method not found` and there is no CLI or desktop entry point. The user-facing claims are retracted (the docs-site Voice page, the README prerequisite rows, `nimbus doctor`'s voice section — 2026-10-07); the code remains | `ctx.options.voiceService` is never set outside tests (`ipc/server/dispatchers.ts` `tryDispatchVoiceRpc`) |
 | Portability layer | `data export/import/delete`, `db snapshot/restore`, recovery seeds, backup manifests and signed deletion records all ship, with no coherent story on top | `packages/gateway/src/db/`, `ipc/data-rpc.ts` |
 | Profile isolation | `profile.list/create/switch/delete` ships and is correctly LAN-forbidden, but nothing proves it is an isolation *boundary* | `ipc/profile-rpc.ts` |
 

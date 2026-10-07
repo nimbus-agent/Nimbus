@@ -144,7 +144,7 @@ Everything else follows the standard triple. These break from it in a way worth 
 | `packages/gateway/src/llm/llamacpp-provider.ts` | `LlamaCppProvider` — llama-server HTTP wrapper |
 | `packages/gateway/src/llm/router.ts` | `LlmRouter` — task routing, air-gap enforcement |
 | `packages/gateway/src/llm/registry.ts` | `LlmRegistry` — discovery, `llm_models` DB sync |
-| `packages/gateway/src/voice/service.ts` | `VoiceService` — STT (`whisper-cli`), TTS, wake-word loop |
+| `packages/gateway/src/voice/service.ts` | `VoiceService` — STT (`whisper-cli`), TTS, wake-word loop. **Not wired** — no production caller constructs it |
 | `packages/gateway/src/voice/tts.ts` | `NativeTtsProvider` — `say` (mac), SAPI (Win), `espeak-ng`/`spd-say` (Linux) |
 
 ## Built-in Agents

@@ -10,9 +10,7 @@ import type { CliPlatformPaths } from "../paths.ts";
 import {
   DEMO_FIX_KEYRING_REFUSAL,
   type DoctorCoreDeps,
-  type DoctorEnv,
   type DoctorGatewayState,
-  type DoctorVoiceConfig,
   doctorPrintConfigValidation,
   doctorPrintEmbeddingFromSnapshot,
   doctorPrintHealthFromSnapshot,
@@ -20,34 +18,11 @@ import {
   doctorPrintIndexFromSnapshot,
   doctorPrintOncallPush,
   doctorPrintVectorSearchFromSnapshot,
-  doctorVoiceLines,
   healthStateMark,
   runDoctor,
   worstHealthSeverity,
 } from "./doctor-core.ts";
 import type { FixKeyringDeps } from "./doctor-fix-keyring.ts";
-
-type WhichMap = Record<string, string | null>;
-
-function makeEnv(
-  whichMap: WhichMap,
-  envPlatform: "win32" | "darwin" | "linux" = "linux",
-): DoctorEnv {
-  return {
-    which: (name: string) => whichMap[name] ?? null,
-    platform: envPlatform,
-  };
-}
-
-function makeVoiceCfg(overrides: Partial<DoctorVoiceConfig> = {}): DoctorVoiceConfig {
-  return {
-    enabled: true,
-    whisperPath: "",
-    piperPath: "",
-    piperModel: "",
-    ...overrides,
-  };
-}
 
 // Single real mkdtemp root; all paths are stubbed (deps never touch disk), so
 // these only need to be unique, non-publicly-writable strings (S5443).
@@ -594,220 +569,6 @@ describe("runDoctor --fix-keyring wiring", () => {
     expect(process.exitCode).toBe(0);
   });
 });
-
-describe("doctorVoiceLines", () => {
-  it("returns [] when voice is disabled", () => {
-    const lines = doctorVoiceLines(makeVoiceCfg({ enabled: false }), makeEnv({}));
-    expect(lines).toHaveLength(0);
-  });
-
-  it("reports whisper ok when whisperPath is explicitly set", () => {
-    const lines = doctorVoiceLines(
-      makeVoiceCfg({ whisperPath: "/usr/local/bin/whisper-cli" }),
-      makeEnv({ ffmpeg: "/usr/bin/ffmpeg", "espeak-ng": "/usr/bin/espeak-ng" }),
-    );
-    expect(lines.some((l) => l.includes("[ok] Voice: whisper-cli is available."))).toBe(true);
-  });
-
-  it("reports whisper ok when whisper-cli is on PATH", () => {
-    const lines = doctorVoiceLines(
-      makeVoiceCfg(),
-      makeEnv({
-        "whisper-cli": "/usr/bin/whisper-cli",
-        ffmpeg: "/usr/bin/ffmpeg",
-        "espeak-ng": "/usr/bin/espeak-ng",
-      }),
-    );
-    expect(lines.some((l) => l.includes("[ok] Voice: whisper-cli is available."))).toBe(true);
-  });
-
-  it("reports whisper ok when 'main' binary is on PATH (llama.cpp fallback)", () => {
-    const lines = doctorVoiceLines(
-      makeVoiceCfg(),
-      makeEnv({
-        main: "/usr/local/bin/main",
-        ffmpeg: "/usr/bin/ffmpeg",
-        "espeak-ng": "/usr/bin/espeak-ng",
-      }),
-    );
-    expect(lines.some((l) => l.includes("[ok] Voice: whisper-cli is available."))).toBe(true);
-  });
-
-  it("warns when whisper not found anywhere", () => {
-    const lines = doctorVoiceLines(
-      makeVoiceCfg(),
-      makeEnv({ ffmpeg: "/usr/bin/ffmpeg", "espeak-ng": "/usr/bin/espeak-ng" }),
-    );
-    expect(
-      lines.some((l) =>
-        l.includes(
-          "[warn] Voice: whisper-cli not found on PATH and voice.whisper_path is unset — STT will not work.",
-        ),
-      ),
-    ).toBe(true);
-  });
-
-  it("reports ffmpeg ok when it is on PATH", () => {
-    const lines = doctorVoiceLines(
-      makeVoiceCfg({ whisperPath: "/bin/whisper-cli" }),
-      makeEnv({ ffmpeg: "/usr/bin/ffmpeg", "espeak-ng": "/usr/bin/espeak-ng" }),
-    );
-    expect(lines.some((l) => l.includes("[ok] Voice: ffmpeg is on PATH."))).toBe(true);
-  });
-
-  it("warns when ffmpeg is absent", () => {
-    const lines = doctorVoiceLines(
-      makeVoiceCfg({ whisperPath: "/bin/whisper-cli" }),
-      makeEnv({ "espeak-ng": "/usr/bin/espeak-ng" }),
-    );
-    expect(
-      lines.some((l) =>
-        l.includes(
-          "[warn] Voice: ffmpeg not found on PATH — wake word detection requires ffmpeg for audio capture.",
-        ),
-      ),
-    ).toBe(true);
-  });
-
-  it("reports macOS say always available on darwin", () => {
-    const lines = doctorVoiceLines(
-      makeVoiceCfg({ whisperPath: "/bin/whisper-cli" }),
-      makeEnv({ ffmpeg: "/usr/bin/ffmpeg" }, "darwin"),
-    );
-    expect(lines.some((l) => l.includes("[ok] Voice: macOS `say` is always available."))).toBe(
-      true,
-    );
-  });
-
-  it("reports Windows SAPI always available on win32", () => {
-    const lines = doctorVoiceLines(
-      makeVoiceCfg({ whisperPath: "/bin/whisper-cli" }),
-      makeEnv({ ffmpeg: "/usr/bin/ffmpeg" }, "win32"),
-    );
-    expect(
-      lines.some((l) => l.includes("[ok] Voice: Windows SAPI via PowerShell is always available.")),
-    ).toBe(true);
-  });
-
-  it("reports espeak-ng on Linux when present", () => {
-    const lines = doctorVoiceLines(
-      makeVoiceCfg({ whisperPath: "/bin/whisper-cli" }),
-      makeEnv({ ffmpeg: "/usr/bin/ffmpeg", "espeak-ng": "/usr/bin/espeak-ng" }, "linux"),
-    );
-    expect(lines.some((l) => l.includes("[ok] Voice: Linux TTS via espeak-ng."))).toBe(true);
-  });
-
-  it("falls back to spd-say on Linux when espeak-ng absent", () => {
-    const lines = doctorVoiceLines(
-      makeVoiceCfg({ whisperPath: "/bin/whisper-cli" }),
-      makeEnv({ ffmpeg: "/usr/bin/ffmpeg", "spd-say": "/usr/bin/spd-say" }, "linux"),
-    );
-    expect(
-      lines.some((l) => l.includes("[ok] Voice: Linux TTS via spd-say (espeak-ng preferred).")),
-    ).toBe(true);
-  });
-
-  it("warns when neither espeak-ng nor spd-say found on Linux", () => {
-    const lines = doctorVoiceLines(
-      makeVoiceCfg({ whisperPath: "/bin/whisper-cli" }),
-      makeEnv({ ffmpeg: "/usr/bin/ffmpeg" }, "linux"),
-    );
-    expect(
-      lines.some((l) =>
-        l.includes(
-          "[warn] Voice: neither espeak-ng nor spd-say found on PATH — install one to enable TTS on Linux.",
-        ),
-      ),
-    ).toBe(true);
-  });
-
-  it("emits no piper lines when piperPath and piperModel are both empty", () => {
-    const lines = doctorVoiceLines(
-      makeVoiceCfg({ whisperPath: "/bin/whisper-cli" }),
-      makeEnv({ ffmpeg: "/usr/bin/ffmpeg", "espeak-ng": "/usr/bin/espeak-ng" }),
-    );
-    expect(lines.some((l) => l.includes("piper"))).toBe(false);
-  });
-
-  it("warns when piperPath is set but binary is not found (relative, not on PATH)", () => {
-    const lines = doctorVoiceLines(
-      makeVoiceCfg({
-        whisperPath: "/bin/whisper-cli",
-        piperPath: "piper",
-        piperModel: "/m.onnx",
-      }),
-      makeEnv({ ffmpeg: "/usr/bin/ffmpeg", "espeak-ng": "/usr/bin/espeak-ng" }),
-    );
-    expect(
-      lines.some((l) =>
-        l.includes("[warn] Voice: piper_path is set but the binary was not found:"),
-      ),
-    ).toBe(true);
-  });
-
-  it("does not warn about binary when piperPath contains a slash (absolute path)", () => {
-    const lines = doctorVoiceLines(
-      makeVoiceCfg({
-        whisperPath: "/bin/whisper-cli",
-        piperPath: "/usr/local/bin/piper",
-        piperModel: "/m.onnx",
-      }),
-      makeEnv({ ffmpeg: "/usr/bin/ffmpeg", "espeak-ng": "/usr/bin/espeak-ng" }),
-    );
-    expect(
-      lines.some((l) => l.includes("[warn] Voice: piper_path is set but the binary was not found")),
-    ).toBe(false);
-  });
-
-  it("warns when piperPath is set but piperModel is empty", () => {
-    const lines = doctorVoiceLines(
-      makeVoiceCfg({
-        whisperPath: "/bin/whisper-cli",
-        piperPath: "/usr/local/bin/piper",
-        piperModel: "",
-      }),
-      makeEnv({ ffmpeg: "/usr/bin/ffmpeg", "espeak-ng": "/usr/bin/espeak-ng" }),
-    );
-    expect(
-      lines.some((l) =>
-        l.includes(
-          "[warn] Voice: piper_path is set but piper_model is empty — Piper TTS will not run.",
-        ),
-      ),
-    ).toBe(true);
-  });
-
-  it("emits no warnings when piperPath is absolute and piperModel is set", () => {
-    const lines = doctorVoiceLines(
-      makeVoiceCfg({
-        whisperPath: "/bin/whisper-cli",
-        piperPath: "/usr/local/bin/piper",
-        piperModel: "/m.onnx",
-      }),
-      makeEnv({ ffmpeg: "/usr/bin/ffmpeg", "espeak-ng": "/usr/bin/espeak-ng" }),
-    );
-    expect(lines.some((l) => l.includes("piper"))).toBe(false);
-  });
-
-  it("finds piper via which() when piperPath is a bare binary name on PATH", () => {
-    const lines = doctorVoiceLines(
-      makeVoiceCfg({
-        whisperPath: "/bin/whisper-cli",
-        piperPath: "piper",
-        piperModel: "/m.onnx",
-      }),
-      makeEnv({
-        ffmpeg: "/usr/bin/ffmpeg",
-        "espeak-ng": "/usr/bin/espeak-ng",
-        piper: "/usr/local/bin/piper",
-      }),
-    );
-    expect(lines.some((l) => l.includes("[warn] Voice: piper_path is set but the binary"))).toBe(
-      false,
-    );
-  });
-});
-
 // ---------------------------------------------------------------------------
 // Additional branch coverage
 // ---------------------------------------------------------------------------
@@ -895,12 +656,11 @@ describe("doctorPrintHealthFromSnapshot — additional branches", () => {
   });
 });
 
-describe("runDoctor — voice-line exit-code escalation (lines 184-186)", () => {
-  // Create a temp dir with a nimbus.toml that enables voice but has no
-  // binaries available, so doctorVoiceLines returns [warn] lines that
-  // escalate the exit code.
+describe("runDoctor — no voice section", () => {
+  // The voice subsystem is not reachable in any shipped build (nothing constructs a
+  // VoiceService), so doctor no longer checks prerequisites for it — even when a stale
+  // nimbus.toml still carries `[voice] enabled = true`.
   let voiceRoot: string;
-  let voiceConfigDir: string;
   let origExitCode: typeof process.exitCode;
 
   beforeEach(() => {
@@ -908,8 +668,7 @@ describe("runDoctor — voice-line exit-code escalation (lines 184-186)", () => 
     origExitCode = process.exitCode;
     process.exitCode = 0;
     voiceRoot = mkdtempSync(join(tmpdir(), "nimbus-doctor-voice-"));
-    voiceConfigDir = join(voiceRoot, "config");
-    mkdirSync(voiceConfigDir, { recursive: true });
+    mkdirSync(join(voiceRoot, "config"), { recursive: true });
   });
 
   afterEach(() => {
@@ -917,23 +676,15 @@ describe("runDoctor — voice-line exit-code escalation (lines 184-186)", () => 
     if (origExitCode !== undefined) process.exitCode = origExitCode;
   });
 
-  it("escalates exit to 1 via voice [warn] lines when toml enables voice with no binaries", async () => {
-    // Write a nimbus.toml with [voice] enabled=true so loadVoiceConfigFromDir
-    // reads it and produces warn lines (no whisper/ffmpeg/espeak in the env).
+  it("prints no Voice: line even when nimbus.toml enables [voice]", async () => {
+    const configDir = join(voiceRoot, "config");
     writeFileSync(
-      join(voiceConfigDir, "nimbus.toml"),
-      [
-        "[voice]",
-        "enabled = true",
-        'whisper_path = ""',
-        'piper_path = ""',
-        'piper_model = ""',
-      ].join("\n"),
+      join(configDir, "nimbus.toml"),
+      ["[voice]", "enabled = true", 'whisper_path = ""'].join("\n"),
       "utf8",
     );
-
     const voicePaths: CliPlatformPaths = {
-      configDir: voiceConfigDir,
+      configDir,
       dataDir: join(voiceRoot, "data"),
       logDir: join(voiceRoot, "data", "logs"),
       socketPath: join(voiceRoot, "gateway.sock"),
@@ -951,103 +702,9 @@ describe("runDoctor — voice-line exit-code escalation (lines 184-186)", () => 
       }),
     );
 
-    // Voice lines with no binaries produce [warn] messages that escalate exit.
-    // The gateway is also absent (exit=2 from "[fail] Gateway: not running").
+    // Positive control: runDoctor really ran past the point where the voice section used to print.
     expect(out.stdout).toContain("[fail] Gateway: not running");
-    // Prove the voice branch actually ran (the absent gateway alone would escalate the
-    // exit code, so assert a concrete [warn] Voice: line rather than just exitCode >= 1).
-    expect(out.stdout).toMatch(/\[warn\] Voice:/);
-    expect(process.exitCode).toBeGreaterThanOrEqual(1);
-  });
-
-  it("covers loadVoiceConfigFromDir: reads all voice keys from toml", async () => {
-    // Write a nimbus.toml with all voice keys set; this exercises applyVoiceKey
-    // for every branch (enabled, whisper_path, piper_path, piper_model) and
-    // all parseVoiceTomlLines branches (comment stripping, section detection,
-    // quoted values, unquoted values, skip non-voice sections).
-    writeFileSync(
-      join(voiceConfigDir, "nimbus.toml"),
-      [
-        "# top-level comment",
-        "[llm]",
-        'remote_model = "gpt-4"',
-        "",
-        "[voice]",
-        "enabled = true",
-        'whisper_path = "/usr/bin/whisper-cli"',
-        'piper_path = "/usr/bin/piper"',
-        'piper_model = "/models/en.onnx"',
-        "",
-        "[other]",
-        "key = value",
-      ].join("\n"),
-      "utf8",
-    );
-
-    const voicePaths: CliPlatformPaths = {
-      configDir: voiceConfigDir,
-      dataDir: join(voiceRoot, "data"),
-      logDir: join(voiceRoot, "data", "logs"),
-      socketPath: join(voiceRoot, "gateway.sock"),
-      extensionsDir: join(voiceRoot, "data", "extensions"),
-      tempDir: join(voiceRoot, "temp"),
-      sandboxDir: join(voiceRoot, "sandbox"),
-    };
-
-    await runDoctor(
-      [],
-      makeDeps({
-        getCliPlatformPaths: () => voicePaths,
-        gatewayStatePath: () => join(voiceRoot, "gateway.json"),
-        readGatewayState: async () => undefined,
-      }),
-    );
-
-    // whisper_path is set so "[ok] Voice: whisper-cli is available." is printed.
-    // piper has an absolute path so no piper-binary warning.
-    // The exact TTS line depends on the test platform; we just verify it ran.
-    expect(out.stdout).toContain("[ok] Voice: whisper-cli is available.");
-    // ffmpeg may or may not be on PATH; just check the gateway line is present.
-    expect(out.stdout).toContain("[fail] Gateway: not running");
-  });
-
-  it("covers parseVoiceTomlLines: inline comments, empty key (eq<=0), unquoted values", async () => {
-    // Write a TOML variant with inline comments and an unquoted boolean,
-    // plus a malformed line (no '=') that should be skipped.
-    writeFileSync(
-      join(voiceConfigDir, "nimbus.toml"),
-      [
-        "[voice]",
-        "enabled = true # inline comment",
-        "whisper_path = /absolute/path  # another comment",
-        "bad-line-no-equals",
-        'piper_path = ""',
-        'piper_model = ""',
-      ].join("\n"),
-      "utf8",
-    );
-
-    const voicePaths: CliPlatformPaths = {
-      configDir: voiceConfigDir,
-      dataDir: join(voiceRoot, "data"),
-      logDir: join(voiceRoot, "data", "logs"),
-      socketPath: join(voiceRoot, "gateway.sock"),
-      extensionsDir: join(voiceRoot, "data", "extensions"),
-      tempDir: join(voiceRoot, "temp"),
-      sandboxDir: join(voiceRoot, "sandbox"),
-    };
-
-    await runDoctor(
-      [],
-      makeDeps({
-        getCliPlatformPaths: () => voicePaths,
-        gatewayStatePath: () => join(voiceRoot, "gateway.json"),
-        readGatewayState: async () => undefined,
-      }),
-    );
-
-    // whisper_path is set (unquoted absolute path parsed correctly) so whisper ok.
-    expect(out.stdout).toContain("[ok] Voice: whisper-cli is available.");
+    expect(out.stdout).not.toContain("Voice:");
   });
 });
 
