@@ -331,6 +331,13 @@ jobs:
           # assertion below must be satisfied by the libsqlite3.dylib install.sh placed beside
           # the installed gateway, not by a path into this checkout.
           unset NIMBUS_SQLITE_PATH
+          # macOS only, TEMPORARY diagnostics: `diag.snapshot` timed out (30 s) here while
+          # `gateway.ping` and `config.validate` answered (CI job 112973084399), and the post-failure
+          # `sample` caught the main thread already idle. Debug logging has to be in the gateway's
+          # environment, and `nimbus init` below is what spawns it, so it is exported here.
+          if [ "$(uname)" = "Darwin" ]; then
+            export NIMBUS_LOG_LEVEL=debug
+          fi
 
           nimbus init | tee "$RUNNER_TEMP/init.log"
           # `nimbus init` EXITS 0 even when indexing fails: syncAndPickDemo()
@@ -391,7 +398,26 @@ jobs:
           # and session recall are all off without it, and the only other signal is one log line.
           # `nimbus doctor`'s exit code is deliberately ignored: other lines (no LLM, no connector
           # credentials) legitimately fail on a bare runner. The Vector search line is the claim.
-          nimbus doctor > "$RUNNER_TEMP/doctor.log" 2>&1 || true
+          if [ "$(uname)" = "Darwin" ]; then
+            # Catch the gateway DURING a hang rather than after the client gives up: doctor runs in
+            # the background, the gateway is sampled ~10 s in (well inside doctor's 30 s per-call
+            # IPC timeout), and the WHOLE sample file is printed — the post-failure probe in
+            # dump_gateway_log truncates it to 120 lines, which cut off every thread but main.
+            nimbus doctor > "$RUNNER_TEMP/doctor.log" 2>&1 &
+            doctor_pid=$!
+            sleep 10
+            gwpid="$(pgrep -f nimbus-gateway | head -1 || true)"
+            if [ -n "$gwpid" ] && kill -0 "$doctor_pid" 2>/dev/null; then
+              echo "-- doctor still running at ~10 s; sampling gateway pid $gwpid --"
+              sample "$gwpid" 5 -mayDie -file "$RUNNER_TEMP/gateway-during-doctor.sample.txt" >/dev/null 2>&1 || true
+              cat "$RUNNER_TEMP/gateway-during-doctor.sample.txt" 2>/dev/null || echo "(sample produced no file)"
+            else
+              echo "-- doctor finished within ~10 s (or no gateway pid); no in-flight sample taken --"
+            fi
+            wait "$doctor_pid" || true
+          else
+            nimbus doctor > "$RUNNER_TEMP/doctor.log" 2>&1 || true
+          fi
           cat "$RUNNER_TEMP/doctor.log"
           grep -qF "[ok] Vector search" "$RUNNER_TEMP/doctor.log" || {
             echo "::error::nimbus doctor did not report '[ok] Vector search' — sqlite-vec is not loaded in the installed binary"; exit 1; }
