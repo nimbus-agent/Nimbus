@@ -47,8 +47,9 @@ Phase-level history before `v0.1.0` (Phases 1â€“4) lives in [`docs/roadmap.md` Â
   transcription are untouched. **Extensions** install, verify and list but never execute, and the
   README, the `nimbus extension install` reference and the extension-author walkthrough now say so.
   **No desktop app** has been released: the docs-site FAQ, `first-run-setup`,
-  `connect-your-first-service`, `connectors`, `troubleshooting`, `hitl-and-safety`, `profiles` and
-  `watchers` pages now say so and give the CLI path (`nimbus init`, `nimbus connector auth` /
+  `connect-your-first-service`, `connectors`, `troubleshooting`, `hitl-and-safety`, `profiles`,
+  `watchers`, `your-first-query` and `workflows` pages now say so and give the CLI path (`nimbus init`,
+  `nimbus ask`, `nimbus connector auth` /
   `set-interval` / `remove`, the CLI consent prompt), as do the README and cli-reference. **No OS notifications** are delivered, so the README's per-OS notification
   row is gone. `audit:status-drift` now also checks the `nimbus-tauri-allowlist` skill's "Currently
   N entries" and `` `ALLOWED_METHODS.len() == N` `` against `gateway_bridge.rs`, and fails if either

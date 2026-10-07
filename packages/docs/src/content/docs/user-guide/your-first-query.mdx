@@ -1,6 +1,6 @@
 ---
 title: Your first query
-description: Ask Nimbus a question against your indexed data — from the desktop app or the CLI.
+description: Ask Nimbus a question against your indexed data from the CLI. The desktop app's Quick Query is described too, but the desktop app is not released yet.
 ---
 
 import { CardGrid, LinkCard } from "@astrojs/starlight/components";
@@ -8,6 +8,17 @@ import { CardGrid, LinkCard } from "@astrojs/starlight/components";
 Once at least one connector is syncing, Nimbus can answer questions against
 your local index. This page shows the two surfaces — the Tauri desktop app and
 the CLI — and explains what happens under the hood when you ask a question.
+
+:::caution[The desktop app is not released yet]
+No desktop build has shipped, so today the CLI is the way to ask:
+
+```bash
+nimbus ask "What PRs did I open in the last 7 days?"
+```
+
+The Quick Query popup and Chat panel below describe the desktop app as it is built, for when it
+ships. Skip to [`nimbus ask` (CLI)](#nimbus-ask-cli).
+:::
 
 ---
 
@@ -21,7 +32,9 @@ results back. Both surfaces produce the same answer from the same audit trail.
 
 ---
 
-## Quick Query (desktop)
+## Quick Query (desktop — not released yet)
+
+Desktop app only; the desktop app has not been released yet. Use `nimbus ask` (below) today.
 
 **Quick Query** is the fastest way to ask a one-off question without switching
 away from your current application.
@@ -136,8 +149,8 @@ statements are rejected at the parser before reaching the database.
 ## Streaming details
 
 All `nimbus ask` responses stream token-by-token over the IPC notification
-channel (`engine.askStream`). The Tauri Chat panel renders Markdown
-incrementally as tokens arrive. The CLI writes each chunk to stdout as a UTF-8
+channel (`engine.askStream`). The Tauri Chat panel (in the unreleased desktop app) renders
+Markdown incrementally as tokens arrive. The CLI writes each chunk to stdout as a UTF-8
 string fragment without buffering.
 
 If the stream stalls for more than 15 seconds with no new tokens (network
@@ -151,8 +164,8 @@ The stream resumes automatically when the model produces the next token.
 | Surface | How to cancel |
 |---|---|
 | CLI | `Ctrl + C` |
-| Chat panel | **Stop** button |
-| Quick Query | `Esc` (closes the window and cancels) |
+| Chat panel (desktop, not released yet) | **Stop** button |
+| Quick Query (desktop, not released yet) | `Esc` (closes the window and cancels) |
 
 Cancelling sends a cancel signal to the Gateway's agent executor. The LLM may
 complete the current in-flight chunk before stopping — no partial chunks are
