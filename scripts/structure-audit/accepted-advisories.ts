@@ -107,4 +107,51 @@ export const ACCEPTED_ADVISORIES: readonly AcceptedAdvisory[] = [
     recheckBy: "2026-11-02",
     owner: "asafgolombek",
   },
+  // Three LOW/MODERATE advisories surfaced on 2026-10-07, once the @modelcontextprotocol/client
+  // override cleared the HIGH that had been failing `bun audit` and hiding this gate. A fourth from
+  // the same batch, smol-toml GHSA-r4xh-jqrq-34v2, was fixed instead: 1.9.0 is published and a root
+  // override took it. Each of the three below has a fixed release that no installed dependent
+  // accepts, or no fixed release at all, so step 1 above has nothing to point at.
+  {
+    ghsa: "GHSA-238p-pmpm-9mq7",
+    package: "katex",
+    severity: "low",
+    noFixReason:
+      "The fix is katex 0.18.2, outside every installed dependent's range. The advisory (CWE-807) covers >=0.11.0 <0.18.2 and 0.16.47 is installed. The only dependent, micromark-extension-math 3.1.0 (latest), requires katex ^0.16.0, which a 0.x minor bump leaves; markdownlint 0.41.1 (latest) pins micromark-extension-math 3.1.0 exactly, and markdownlint-cli2 0.23.3 (latest, already installed) pins markdownlint 0.41.1 exactly. An override to 0.18.x would force a breaking 0.x minor under a library that declares it does not support it. Checked against the npm registry on 2026-10-07.",
+    reachability:
+      "Dev tooling only; nothing that ships contains it. `bun pm why katex`: the sole chain is the root devDependency markdownlint-cli2 > markdownlint > micromark-extension-math. No packages/* workspace depends on it, `bun audit --production` does not report it, and neither the compiled gateway nor the CLI binary contains the katex library. The flaw lets an ALREADY-EXISTING prototype pollution bypass katex's `trust` restriction when it renders math. markdownlint only parses Markdown to lint it, over the repository's own committed docs, and renders nothing for anyone; the input is our own files, not an attacker's.",
+    unblockedBy:
+      "micromark-extension-math, or markdownlint replacing it, accepts katex >=0.18.2, and markdownlint-cli2 ships a release that takes it. A root `overrides` pin can then follow. Either way `bun audit` stops reporting it, and audit:advisories then fails on this row as stale until the row is deleted.",
+    acceptedOn: "2026-10-07",
+    recheckBy: "2026-11-02",
+    owner: "asafgolombek",
+  },
+  {
+    ghsa: "GHSA-rj75-hqrm-r3gf",
+    package: "postcss-selector-parser",
+    severity: "moderate",
+    noFixReason:
+      "The fix is postcss-selector-parser 7.1.6, a major above what its dependent accepts. The advisory (CVSS 5.9, CWE-400/CWE-407) covers <7.1.6 and 6.1.4 is installed. The only dependent, postcss-nested 6.2.0, requires ^6.1.1; postcss-nested 8.0.1 does take ^7.1.4, but @expressive-code/core 0.44.2 (latest) requires postcss-nested ^6.0.1, and astro-expressive-code 0.44.2 and @astrojs/starlight 0.42.5 (both latest, already installed) sit above that. Overriding across a major under every one of them is a breaking change in a library none of them declares support for. Checked against the npm registry on 2026-10-07.",
+    reachability:
+      "Build-time only, inside the private docs site; nothing that ships contains it. `bun pm why postcss-selector-parser`: the sole chain is @nimbus/docs > @astrojs/starlight > astro-expressive-code > @expressive-code/core > postcss-nested. It shows up under `bun audit --production` only because starlight is a runtime dependency of that private workspace; gateway, cli, ui and admin-console do not depend on it, and neither compiled binary contains it. The flaw is quadratic CPU on a crafted flat selector. It runs only while the static docs build processes expressive-code's own theme CSS, which is fixed library input, not attacker input; the worst case is a slow docs build. The site ships as static files to GitHub Pages and the parser does not ship with it.",
+    unblockedBy:
+      "@expressive-code/core moves to postcss-nested 7+ or 8 (which take postcss-selector-parser ^7), and astro-expressive-code / @astrojs/starlight release with it. Either way `bun audit` stops reporting it, and audit:advisories then fails on this row as stale until the row is deleted.",
+    acceptedOn: "2026-10-07",
+    recheckBy: "2026-11-02",
+    owner: "asafgolombek",
+  },
+  {
+    ghsa: "GHSA-hp3w-g68c-fv3c",
+    package: "sprintf-js",
+    severity: "moderate",
+    noFixReason:
+      "No patched sprintf-js exists. The advisory (CVSS 5.3, CWE-1284) covers <=1.1.3, 1.1.3 is the latest release, and GitHub lists no first patched version. The installed 1.0.3 comes from argparse 1.0.10 (latest 1.x, requires ~1.0.2), from js-yaml 3.15.2 (latest 3.x, requires argparse ^1.0.7). js-yaml 4 dropped sprintf-js, but gray-matter 4.0.3 (latest) requires js-yaml ^3.13.1. A root override has nothing to point at. Checked against the npm registry on 2026-10-07.",
+    reachability:
+      "In the dependency GRAPH of a runtime package, but not in any shipped code path. `bun pm why sprintf-js` gives two chains: the root devDependency babel-plugin-istanbul > @istanbuljs/load-nyc-config > js-yaml 3, and the gateway's RUNTIME dependency @mastra/core 1.74.0 > gray-matter 4.0.3 > js-yaml 3.15.2 > argparse > sprintf-js. The second chain is why this row is not 'dev tooling only'. js-yaml 3 requires argparse only from its CLI entry point (bin/js-yaml.js); index.js and lib/ never import it, and gray-matter imports only the library. So the bundler never reaches argparse or sprintf-js: the compiled gateway binary built from this tree on 2026-10-07 contains no `sprintf-js`, `argparse` or `sprintf_format` string, and `bun audit --production` does not report it. The flaw is a denial of service through an unbounded precision specifier in a FORMAT string, which only argparse's own help/usage formatting would supply.",
+    unblockedBy:
+      "sprintf-js publishes a release outside <=1.1.3 (a 1.0.x release satisfies argparse's ~1.0.2, so a root `overrides` pin can take it the same day), or gray-matter moves to js-yaml 4, or @mastra/core drops gray-matter. Either way `bun audit` stops reporting it, and audit:advisories then fails on this row as stale until the row is deleted.",
+    acceptedOn: "2026-10-07",
+    recheckBy: "2026-11-02",
+    owner: "asafgolombek",
+  },
 ];
