@@ -34,6 +34,9 @@ import { RpcMethodError } from "./rpc-error.ts";
  * TOTAL over `ClientKind` on purpose: a new kind is a compile error here until someone decides,
  * rather than silently inheriting either answer. The kind is the session's server-held one
  * (`ctx.getClientKind`), looked up for the connection the request ARRIVED on — never a param.
+ * LAN peers never reach these handlers: the LanServer's `onMessage` dispatches federation RPC
+ * only (`federation/federation-server.ts`), whatever `engine.askStream`'s LAN write-list entry
+ * suggests.
  */
 export const USER_MCP_OFFER_BY_KIND: Readonly<Record<ClientKind, boolean>> = {
   cli: true,

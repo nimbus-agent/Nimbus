@@ -5315,19 +5315,25 @@ describe("I42 — every user-MCP tool call needs the local owner's approval", ()
 
   test("a user-MCP agent tool never calls the listing's own execute — only the turn's executor", async () => {
     const src = stripComments(await read("packages/gateway/src/engine/user-mcp-agent-tools.ts"));
-    // Every `<receiver>.execute(` call names the executor (`ex` or `executor`), never a listing
-    // entry; bracket access and destructuring of `execute` are refused outright.
-    // Counted, not captured: EVERY `.execute` property ACCESS — called or not, so neither
-    // `entry.execute?.(x)` nor `const f = entry.execute; f(x)` slips past — must be immediately
-    // preceded by the bare identifier `ex`/`executor`. `entry.execute`, `tools[k].execute` and
-    // `executor().execute` all make the two counts differ.
+    // Every `.execute` property ACCESS — called or not, so neither `entry.execute?.(x)` nor
+    // `const f = entry.execute; f(x)` slips past — must be immediately preceded by the bare
+    // identifier `ex`/`executor`; `entry.execute`, `tools[k].execute` and `executor().execute`
+    // all make the two counts differ.
     const allAccesses = src.match(/\.\s*execute\b/g) ?? [];
     const executorAccesses = src.match(/(?<![\w$.])(?:ex|executor)\s*\??\.\s*execute\b/g) ?? [];
     expect(allAccesses.length).toBeGreaterThan(0);
     expect(executorAccesses.length).toBe(allAccesses.length);
+    // Bracket access (`entry["execute"]`) and reflection (`Reflect.get(entry, "execute")`).
     expect(src).not.toMatch(/\[\s*["'`]execute["'`]\s*\]/);
-    // Destructuring `execute` off a listing entry (`const { execute } = entry`).
-    expect(src).not.toMatch(/\{[^{}]*\bexecute\b[^{}:]*\}\s*=/);
+    expect(src).not.toMatch(/Reflect\s*\.\s*get\s*\([^)]*["'`]execute["'`]/);
+    // Destructuring, plain or renamed, as a binding or a parameter: `const { execute } = entry`,
+    // `const { execute: run } = entry`, `({ execute }) => …`. Must NOT match the file's own
+    // `createTool({ …, execute: async (…) => { … } })` literal, whose span contains a `{`.
+    expect(src).not.toMatch(/\{[^{}]*\bexecute\b[^{}]*\}\s*[=)]/);
+    // STATED BOUND: this check is name-based — a listing entry aliased to a variable named
+    // `ex`/`executor`, or a dynamically composed property name, evades it. The real defense is
+    // that listing entries are typed `Record<string, unknown>` and the only dispatch goes through
+    // `executor()` (the turn's ToolExecutor).
   });
 
   test("share replay refuses an OFFERED user-MCP tool name (<mcp_id>__<tool>) whatever its verb", async () => {
