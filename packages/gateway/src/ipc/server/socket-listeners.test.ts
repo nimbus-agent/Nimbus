@@ -439,4 +439,54 @@ describe("startBunUnixListener (POSIX-only)", () => {
       expect(processListeners.live().some((l) => l.address === socketPath)).toBe(false);
     },
   );
+
+  // Regression: Bun's raw socket write drops what the kernel does not accept, so a reply above
+  // the send buffer (8 KiB on macOS) arrived without its newline and `nimbus doctor` timed out on
+  // `diag.snapshot`. 4 MiB exceeds the Linux buffer too, so this reproduces on every POSIX runner.
+  test.skipIf(platform() === "win32")(
+    "a reply far larger than the socket send buffer arrives whole, newline included",
+    async () => {
+      const big = `${"y".repeat(4 * 1024 * 1024)}\n`;
+      const attach = (write: SessionWrite): ClientSession =>
+        ({
+          push: () => {
+            write(big);
+          },
+          endInput: () => {},
+          dispose: () => {},
+          writeNotification: () => {},
+        }) as unknown as ClientSession;
+
+      const handle = startBunUnixListener(socketPath, attach);
+      try {
+        const received = await new Promise<number>((resolve, reject) => {
+          let total = 0;
+          const client = net.connect(socketPath, () => {
+            client.write(Buffer.from("go\n"));
+          });
+          const timer = setTimeout(() => {
+            client.destroy();
+            reject(new Error(`timed out after receiving ${total} of ${big.length} bytes`));
+          }, 20_000);
+          client.on("data", (buf: Buffer) => {
+            total += buf.byteLength;
+            if (buf[buf.byteLength - 1] === 0x0a) {
+              clearTimeout(timer);
+              client.end();
+              resolve(total);
+            }
+          });
+          client.on("error", (err) => {
+            clearTimeout(timer);
+            reject(err);
+          });
+        });
+        expect(received).toBe(big.length);
+      } finally {
+        handle.unregisterListener();
+        handle.listener.stop(true);
+      }
+    },
+    30_000,
+  );
 });
