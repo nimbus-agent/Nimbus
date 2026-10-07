@@ -18,6 +18,7 @@ function makePaths(): PlatformPaths {
     socketPath: join(root, "sock"),
     extensionsDir: join(root, "ext"),
     tempDir: join(root, "tmp"),
+    sandboxDir: join(root, "sandbox"),
   };
 }
 
@@ -48,6 +49,9 @@ function makeArgsJsonFixture(serviceId: string, argsJson: string) {
         command: "/bin/echo",
         args_json: argsJson,
         created_at: 0,
+        read_paths_json: "[]",
+        net_hosts_json: "[]",
+        model_access: 0,
       },
     ],
     healthDb: db,
@@ -85,6 +89,9 @@ describe("LazyConnectorMesh — args_json failure (S8-F9)", () => {
           command: "/bin/echo",
           args_json: "not-json",
           created_at: 0,
+          read_paths_json: "[]",
+          net_hosts_json: "[]",
+          model_access: 0,
         },
       ],
     });

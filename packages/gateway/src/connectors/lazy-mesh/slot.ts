@@ -27,6 +27,7 @@ export interface MeshSpawnContext {
   readonly logger?: MeshLogger | undefined;
   readonly healthDb?: import("bun:sqlite").Database | undefined;
   readonly obsidianVaultPaths?: readonly string[] | undefined;
+  /** The sandbox ROOT (`PlatformPaths.sandboxDir`). Despite the name, not a cwd: `wrapServerSpec` derives each spawn's own leaf under it. */
   readonly sandboxCwd: string;
   clearLazyIdle(key: string): void;
   getLazyClient(key: string): MCPClient | undefined;

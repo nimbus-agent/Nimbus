@@ -2841,9 +2841,43 @@ Output is always JSON.
 
 ---
 
+### `nimbus connector add --mcp <mcp_id> [--read <path>]... [--net <host[:port]>]... [--model] -- <command> [args...]`
+
+Register a user-supplied MCP server and approve what it may touch. The id must start with `mcp_`. Everything after `--` is the server command and its arguments. Without any grant flags the `--` may be omitted (`nimbus connector add --mcp mcp_x npx -y pkg`); in that form the whole remainder is the command, including any `--` of its own (`... npx -y pkg -- --stdio`). Once the first token after the id is a flag, the FIRST `--` ends the flags.
+
+```bash
+nimbus connector add --mcp mcp_notes --read ~/notes -- /opt/notes-mcp/server
+nimbus connector add --mcp mcp_api --net api.example.com:443 -- /opt/api-mcp/server
+```
+
+- **`--read <path>`** (repeatable) grants read access to a directory or file. There is no write grant.
+- **`--net <host[:port]>`** (repeatable) grants network access to a host. IPv6 host literals are not accepted. On Windows the network grant is **all-or-nothing** (AppContainer `internetClient`): any `--net` opens the network for that server, not just the named host; the approval prompt says so.
+- **`--model`** is stored and shown in the prompt as `modelAccess`, but has **no effect yet**: giving a user MCP access to a model is not shipped.
+
+The gateway resolves and validates the registration **before** the approval prompt: the command is resolved to a canonical absolute path and stored that way — an absolute path is used as given (a `.exe` is tried on Windows when it has no extension), a path with a separator is made absolute against the CLI’s working directory, and a **bare command name is looked up on the GATEWAY’s `PATH`** (`Bun.which` in the gateway process), which can differ from your shell’s `PATH` when the gateway was started from another environment (a service, a login item, a different terminal) — pass an absolute path if in doubt; the prompt shows the resolved path either way. `--read` paths are canonicalised, and a grant that overlaps the Nimbus data, config or sandbox directory, in either direction, is refused. On Linux and macOS the binary's own directory is granted read automatically; on Windows it is not. An id that extends another registered id by `_` (`mcp_a` and `mcp_a_b`) is refused. The prompt shows the command, args, `readPaths`, `netHosts` and `modelAccess`. The server then runs in its own sandbox working directory (see [`docs/sandbox.md`](./sandbox.md)). On Windows a `--read` on a directory you cannot change the ACL of (for example under `C:\Program Files`) is not caught here: it fails at spawn time and shows as the connector's health error.
+
+---
+
+### `nimbus connector tools <mcp_id> [--json]`
+
+List the tools a registered user MCP server exposes. Backed by the CLI-only, LAN-forbidden `connector.userMcpTools` method, which is not on the Tauri allowlist.
+
+---
+
+### `nimbus connector call <mcp_id> <tool> [--input <json>] [--json]`
+
+Call one tool on a user MCP server. **Every call needs the local owner's approval** (invariant I42) — there is no standing approval, and a delegate can never approve one. The call is audited and ledgered in the egress ledger. Exit codes: `0` the tool ran and reported success; `1` the call failed — the tool reported an error in-band (an MCP `isError: true` result, whose text is printed on stderr) or the gateway/transport failed; `2` refused (declined, denied, an unknown tool, or an unregistered server — nothing ran). Backed by the CLI-only, LAN-forbidden `connector.userMcpCall` method.
+
+```bash
+nimbus connector tools mcp_my_server
+nimbus connector call mcp_my_server echo --input '{"text":"hi"}'
+```
+
+---
+
 ### `nimbus connector remove <name>`
 
-Remove a connector: deletes all associated Vault entries and index rows atomically.
+Remove a connector: deletes all associated Vault entries and index rows atomically. For a user MCP server it also deletes that server's sandbox working directory, best-effort.
 
 ```bash
 nimbus connector remove github          # Prompts: y/n
@@ -4316,13 +4350,19 @@ nimbus extension sync --json
 
 ---
 
-### `nimbus scaffold extension`
+### `nimbus scaffold mcp <name>`
 
-Scaffold a new extension package from the `@nimbus-dev/sdk` template. The extension id is positional and the package is always created at `./<id>/` in the current working directory — there is no `--name` or `--output` flag (`--name` would be taken as the id and create a directory literally called `--name`).
+Scaffold a real, tested MCP server you can register with `nimbus connector add --mcp`. The name is positional (lowercase letters, digits and underscores, 1-62 characters) and the package is always created at `./<name>/` in the current working directory — there is no `--name` or `--output` flag, and the command refuses if that directory already exists. The server is built on `@modelcontextprotocol/sdk` 1.32.0 (the version the CLI itself pins) and exposes one tool, `echo`; the package carries its own test and a `bun run build` that compiles it with `bun build --compile` to `dist/<name>` (`.exe` on Windows), plus a README with the register and call commands.
 
 ```bash
-nimbus scaffold extension my-connector    # creates ./my-connector/
+nimbus scaffold mcp my_server    # creates ./my_server/
+cd my_server && bun test && bun run build
+nimbus connector add --mcp mcp_my_server -- "$PWD/dist/my_server"
 ```
+
+**Compile it; do not register script mode.** A server registered as `bun src/server.ts` cannot run on Windows (Bun fails with `CouldntReadCurrentDirectory` under AppContainer), so the scaffold registers the compiled binary.
+
+`nimbus scaffold extension <name>` is kept as an alias: it prints a one-line notice and does the same thing as `scaffold mcp`. It no longer emits the old four-file extension shell. Neither is for first-party connectors — those live in the connectors repository (see `docs/CONTRIBUTING.md`).
 
 ---
 

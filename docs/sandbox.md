@@ -210,6 +210,41 @@ this limitation, not a regression — relocate the sandboxed cwd out
 from under the user profile, or run against a built `nimbus-gateway.exe`
 instead of `bun run`.
 
+## Per-policy working directories {#per-policy-cwd}
+
+Every sandboxed spawn runs in its own working directory, `<sandboxDir>/<leaf>`, where the leaf is the policy id lower-cased with every character outside `a-z0-9_-` replaced by `_` (`platform/sandbox/sandbox-cwd.ts`). Before this, every connector ran in the Nimbus data directory with read and write on it, which is where the index database lives. `PlatformPaths.sandboxDir` is a cache location outside both the data and config directories in the default layout:
+
+| OS | `sandboxDir` |
+| -- | ------------ |
+| Windows | `%LOCALAPPDATA%\Nimbus\sandbox` |
+| macOS | `~/Library/Caches/Nimbus/sandbox` |
+| Linux | `${XDG_CACHE_HOME:-~/.cache}/nimbus/sandbox` |
+| Demo (`--demo`) | `<demoRoot>/sandbox` |
+
+That separation holds for the defaults above and is not enforced: an override can nest them — on Linux `XDG_CACHE_HOME` set equal to `XDG_DATA_HOME`, or a `NIMBUS_CONFIG_DIR` under `~/.cache/nimbus` — and the gateway does not refuse to boot when it does. Keep the cache, data and config locations apart if you override them.
+
+The toolgen confinement probe runs in its own leaf too. `nimbus connector remove` deletes a user MCP server's leaf, best-effort. Re-registering the same id clears a leftover leaf or refuses (see [Stated bounds](#user-mcp)).
+
+**Windows one-time revoke.** Earlier builds granted each connector's AppContainer SID an ACE on the data directory. On first boot after upgrading, the gateway revokes those stale ACEs once and writes the marker `sandbox-cwd-migration-v1.done` in the data directory; the step does not repeat while the marker exists. The revoke runs in the background, so the gateway accepts requests at once, but every dispatcher tool listing waits for it (`LazyConnectorMesh` awaits it at the top of `collectBuiltInToolMaps`): every connector dispatch, `connector.userMcpTools`/`userMcpCall`, share replay, tribal capture and ChatOps writes, not only the filesystem MCP (the one spawn still granted the data directory, whose grant rewrites the same DACL). Linux, macOS and demo-rooted gateways never wait, because the revoke is a Windows-only, non-demo step.
+
+## User MCP servers {#user-mcp}
+
+`nimbus connector add --mcp` registers a server the user supplied. Its sandbox policy is built only from what the owner approved: the `--read` paths (read-only; there is no write grant), the `--net` hosts, and its own working-directory leaf. On Linux and macOS the binary's directory is also granted read automatically; on Windows it is not. Grants that overlap the data, config or sandbox directory are refused at registration, in either direction. Every tool call additionally needs the owner's approval (invariant I42). `--model` is stored but has no effect: model access is not shipped.
+
+### Stated bounds
+
+- **Windows network is all-or-nothing for a user MCP.** Any `--net` host enables AppContainer `internetClient`, which opens the whole network, not the named host. The approval prompt says so. (See [Platform asymmetry](#platform-asymmetry).)
+- **Same-policy-id spawns still share one directory and SID.** The unlocked DACL read-modify-write race for a given policy id remains; what is gone is contention between different connectors.
+- **The filesystem MCP keeps a deliberate data-directory grant.** It is the one first-party connector whose job is the Nimbus data directory, so its manifest grants it read and write on `dataDir` explicitly. It is NOT excepted from the per-policy directory: it runs in its own leaf under `sandboxDir` like every other spawn. The exception is that explicit `dataDir` GRANT, not its working directory.
+- **On Windows a command binary located inside the data directory is accepted.** The overlap check covers the `--read` grants and the directory granted automatically for the binary; Linux and macOS grant the binary’s directory and so refuse one inside a protected directory, but Windows grants none, so nothing is checked for the binary’s own location there. Registering a binary under the data directory is still an owner-approved act (the prompt shows its path), and the server does not gain a grant on that directory by it.
+- **No IPv6 host literals.** `--net` does not accept them.
+- **A Windows `--read` on a directory the user cannot change the ACL of** (for example under `C:\Program Files`) is not caught at registration; it fails at spawn time and appears as the connector's health error.
+- **The I15 source guard against a `dataDir`/`configDir` working directory is spelling-based.** A renamed alias would evade it; capability is the real defense.
+- **A crash between a remove's intent and its sandbox cleanup leaves that server's leaf behind.** The resumed remove does not clean it. Neither does a remove whose delete a file lock defeated (it is retried three times, then logged). A leftover leaf is never inherited: re-registering the same id clears it after the owner approves and before the row is stored, and if it still cannot be cleared the registration is refused with `ERR_USER_MCP_SANDBOX_NOT_CLEAN` and nothing is stored.
+- **The Windows boot revoke has no per-call timeout.** The helper runs through `execFile` without one, so a hung helper holds every tool listing described above until it exits. No marker is written until the revoke completes, so the next boot retries it.
+- **A user MCP removed before upgrading keeps any stale Windows data-directory ACE.** No row is left to name its SID, so the one-time revoke cannot find it.
+- **Script-mode servers cannot run on Windows.** `bun src/server.ts` fails with `CouldntReadCurrentDirectory` under AppContainer (see the known limitation above); compile the server.
+
 ## Platform asymmetry {#platform-asymmetry}
 
 | OS | Network policy when `permissions.network: ["a.com", "b.com:993"]` |
@@ -279,6 +314,6 @@ boundary.
 
 ## See also
 
-- `docs/SECURITY-INVARIANTS.md` §I15 — sandbox-runner-intrinsic-to-spawn invariant.
+- `docs/SECURITY-INVARIANTS.md` §I15 — sandbox-runner-intrinsic-to-spawn invariant; §I42 — user-MCP tool calls need owner approval.
 - `docs/release/headless-postinst-linux-setcap.md` — Linux installer setcap flow.
 - The PR 1 design spec for the architectural rationale.

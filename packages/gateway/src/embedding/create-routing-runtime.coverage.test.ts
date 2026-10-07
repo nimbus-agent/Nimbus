@@ -33,6 +33,7 @@ const PATHS: PlatformPaths = {
   socketPath: join(DIR, "gw.sock"),
   extensionsDir: join(DIR, "ext"),
   tempDir: DIR,
+  sandboxDir: `${DIR}-sandbox`,
 };
 const TOML = { chunkTokens: 200, chunkOverlapTokens: 20, backfillBatchSize: 1 };
 const REAL_FETCH = globalThis.fetch;

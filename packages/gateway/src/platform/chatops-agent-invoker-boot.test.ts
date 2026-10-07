@@ -97,6 +97,7 @@ describe("FIX 1 (boot-level): the ChatOps agent invoker carries the real federat
           process.platform === "win32" ? `\\\\.\\pipe\\${socketBaseName}` : join(tmpDir, "g.sock"),
         extensionsDir: join(tmpDir, "extensions"),
         tempDir: join(tmpDir, "tmp"),
+        sandboxDir: join(tmpDir, "sandbox"),
       };
       mkdirSync(paths.configDir, { recursive: true });
       writeFileSync(

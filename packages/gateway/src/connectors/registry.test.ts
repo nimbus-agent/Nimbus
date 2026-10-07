@@ -184,3 +184,71 @@ describe("createConnectorDispatcher G8 — size cap + timeout", () => {
     await expect(d.dispatch({ type: "small_tool" })).resolves.toEqual({ ok: true });
   });
 });
+
+// I42: a user-MCP tool needs the LOCAL owner's approval on every call, and the gate decides that
+// from `action.type` alone (I3). So the dispatcher must never let a payload's `mcpToolId` run a
+// user-MCP tool under any action type but that tool's own — otherwise an action of another type
+// (approved by a delegate, or needing no approval at all) could smuggle the call through.
+describe("createConnectorDispatcher — user-MCP keys dispatch only under their own action type (I42)", () => {
+  function listing(ran: string[]): McpToolListingClient {
+    const listed = (key: string) => ({
+      async execute() {
+        ran.push(key);
+        return { key };
+      },
+    });
+    return {
+      async listTools() {
+        return {
+          mcp_x_echo: listed("mcp_x_echo"),
+          mcp_x_y_echo: listed("mcp_x_y_echo"),
+          github_github_pr_list: listed("github_github_pr_list"),
+        };
+      },
+    };
+  }
+
+  test("a user-MCP key smuggled under a first-party action type is refused and never runs", async () => {
+    const ran: string[] = [];
+    const d = createConnectorDispatcher(listing(ran));
+    await expect(
+      d.dispatch({ type: "github.pr_list", payload: { mcpToolId: "mcp_x_echo" } }),
+    ).rejects.toThrow(/ERR_USER_MCP_ACTION_MISMATCH/);
+    // A bare user-MCP key as the action type itself is no user-MCP action type either.
+    await expect(d.dispatch({ type: "mcp_x_echo", payload: {} })).rejects.toThrow(
+      /ERR_USER_MCP_ACTION_MISMATCH/,
+    );
+    expect(ran).toEqual([]);
+  });
+
+  test("a user-MCP key under ANOTHER user-MCP server's action type is refused", async () => {
+    const ran: string[] = [];
+    const d = createConnectorDispatcher(listing(ran));
+    await expect(
+      d.dispatch({ type: "mcp_x.y_echo", payload: { mcpToolId: "mcp_x_y_echo" } }),
+    ).resolves.toEqual({ key: "mcp_x_y_echo" });
+    // ...but the owner approved `mcp_x.echo`; running `mcp_x_y_echo` under it is refused.
+    await expect(
+      d.dispatch({ type: "mcp_x.echo", payload: { mcpToolId: "mcp_x_y_echo" } }),
+    ).rejects.toThrow(/ERR_USER_MCP_ACTION_MISMATCH/);
+    expect(ran).toEqual(["mcp_x_y_echo"]);
+  });
+
+  test("a user-MCP action type cannot dispatch a first-party tool through mcpToolId", async () => {
+    const ran: string[] = [];
+    const d = createConnectorDispatcher(listing(ran));
+    await expect(
+      d.dispatch({ type: "mcp_x.echo", payload: { mcpToolId: "github_github_pr_list" } }),
+    ).rejects.toThrow(/ERR_USER_MCP_ACTION_MISMATCH/);
+    expect(ran).toEqual([]);
+  });
+
+  test("the user-MCP key under its own action type still dispatches", async () => {
+    const ran: string[] = [];
+    const d = createConnectorDispatcher(listing(ran));
+    await expect(
+      d.dispatch({ type: "mcp_x.echo", payload: { mcpToolId: "mcp_x_echo" } }),
+    ).resolves.toEqual({ key: "mcp_x_echo" });
+    expect(ran).toEqual(["mcp_x_echo"]);
+  });
+});

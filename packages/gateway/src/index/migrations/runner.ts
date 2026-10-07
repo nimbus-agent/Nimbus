@@ -79,6 +79,7 @@ import {
   UNIFIED_ITEM_V3_MIGRATE_FROM_LEGACY_SQL,
   UNIFIED_ITEM_V3_SCHEMA_SQL,
 } from "../unified-item-v3-sql.ts";
+import { USER_MCP_GRANTS_V65_SQL } from "../user-mcp-grants-v65-sql.ts";
 import { USER_MCP_V11_MIGRATION_SQL } from "../user-mcp-v11-sql.ts";
 import {
   VEC_ITEMS_1536_V30_NO_VEC_SQL,
@@ -582,6 +583,12 @@ const INDEXED_SCHEMA_STEPS: readonly IndexedSchemaStep[] = [
     64,
     "on-call pushed briefs (pushed_brief + oncall_push_state)",
     ONCALL_PUSH_V64_SQL,
+  ),
+  simpleStep(
+    64,
+    65,
+    "user MCP grants (read paths, network hosts, model access)",
+    USER_MCP_GRANTS_V65_SQL,
   ),
 ];
 

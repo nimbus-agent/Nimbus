@@ -1,3 +1,5 @@
+import { existsSync, rmSync } from "node:fs";
+
 import { MCPClient } from "@mastra/mcp";
 
 import { writeToolCallLog } from "../../db/tool-call-log.ts";
@@ -5,6 +7,7 @@ import { getAgentRequestSessionId } from "../../engine/agent-request-context.ts"
 import { wrapToolOutput } from "../../engine/tool-output-envelope.ts";
 import { extensionProcessEnv } from "../../extensions/spawn-env.ts";
 import type { PlatformPaths } from "../../platform/paths.ts";
+import { sandboxCwdFor } from "../../platform/sandbox/sandbox-cwd.ts";
 import type { NimbusVault } from "../../vault/nimbus-vault.ts";
 import type { UserMcpConnectorRow } from "../user-mcp-store.ts";
 import {
@@ -60,6 +63,10 @@ export class LazyConnectorMesh {
   private readonly isConnectorAllowed: (serviceId: string) => boolean;
   private toolsEpoch = 0;
   private readonly spawnContext: MeshSpawnContext;
+  private readonly paths: PlatformPaths;
+  private readonly removeSandboxDir: (dir: string) => void;
+  private readonly sandboxDirExists: (dir: string) => boolean;
+  private readonly filesystemSpawnGate: Promise<void> | undefined;
 
   constructor(
     paths: PlatformPaths,
@@ -72,8 +79,25 @@ export class LazyConnectorMesh {
       auditDb?: import("bun:sqlite").Database;
       obsidianVaultPaths?: readonly string[];
       isConnectorAllowed?: (serviceId: string) => boolean;
+      /** Test seam: deletes a user MCP sandbox leaf. Production: recursive, forced `rmSync`. */
+      removeSandboxDir?: (dir: string) => void;
+      /** Test seam: whether a user MCP sandbox leaf exists. Production: `existsSync`. */
+      sandboxDirExists?: (dir: string) => boolean;
+      /**
+       * Settles when the boot-time Windows revoke of stale `dataDir` ACEs is done. The filesystem
+       * MCP is the one spawn still granted `dataDir`, and its sandbox grant rewrites that same
+       * DACL with an unlocked read-modify-write, so its first listing (which spawns it) awaits
+       * this. Never rejects in production (`revokeLegacyDataDirGrantsAtBoot`).
+       */
+      filesystemSpawnGate?: Promise<void>;
     },
   ) {
+    // Only stored here; `collectBuiltInToolMaps` awaits it (undefined means no gate).
+    this.filesystemSpawnGate = options?.filesystemSpawnGate;
+    this.paths = paths;
+    this.removeSandboxDir =
+      options?.removeSandboxDir ?? ((dir) => rmSync(dir, { recursive: true, force: true }));
+    this.sandboxDirExists = options?.sandboxDirExists ?? existsSync;
     this.inactivityMs = options?.inactivityMs ?? 300_000;
     this.listUserMcpConnectors = options?.listUserMcpConnectors ?? (() => []);
     this.healthDb = options?.healthDb;
@@ -102,7 +126,7 @@ export class LazyConnectorMesh {
             env: extensionProcessEnv({}),
           },
           fsManifest,
-          paths.dataDir,
+          paths.sandboxDir,
         ),
       },
     });
@@ -111,7 +135,7 @@ export class LazyConnectorMesh {
       logger: this.logger,
       healthDb: this.healthDb,
       obsidianVaultPaths: options?.obsidianVaultPaths,
-      sandboxCwd: paths.dataDir,
+      sandboxCwd: paths.sandboxDir,
       clearLazyIdle: (k) => this.clearLazyIdle(k),
       getLazyClient: (k) => this.getLazyClient(k),
       setLazyClient: (k, c) => this.setLazyClient(k, c),
@@ -193,6 +217,74 @@ export class LazyConnectorMesh {
     await this.stopLazyClient(userMcpMeshKey(serviceId));
   }
 
+  /** Directories no user MCP may be granted a read of: Nimbus's own data, config and sandbox root. */
+  userMcpProtectedRoots(): readonly string[] {
+    return [this.paths.dataDir, this.paths.configDir, this.paths.sandboxDir];
+  }
+
+  /**
+   * Stops a removed user MCP and deletes its sandbox leaf. Best-effort and NEVER throws: a Windows
+   * child releases its cwd handle a moment after it exits, so the delete is tried up to three times
+   * 100 ms apart, and a leaf that still will not go is logged, not raised — `connector.remove` must
+   * not fail on a locked directory.
+   */
+  async removeUserMcpSandbox(serviceId: string): Promise<void> {
+    try {
+      await this.stopUserMcpClient(serviceId);
+    } catch (err) {
+      this.logger?.warn({ serviceId, err }, "user MCP client not stopped before sandbox removal");
+    }
+    const leaf = this.userMcpSandboxLeaf(serviceId);
+    const lastErr = await this.deleteSandboxLeaf(leaf);
+    if (lastErr !== undefined) {
+      this.logger?.warn({ serviceId, err: lastErr }, "user MCP sandbox directory not removed");
+    }
+  }
+
+  /** The deterministic sandbox leaf a user MCP server with this id spawns in. */
+  userMcpSandboxLeaf(serviceId: string): string {
+    return sandboxCwdFor(this.paths.sandboxDir, `user.${serviceId}`);
+  }
+
+  /**
+   * Ensures no sandbox leaf is left over for `serviceId` before it is (re-)registered. The leaf is
+   * deterministic and `removeUserMcpSandbox` is best-effort, so a removed registration whose leaf a
+   * Windows lock kept alive would otherwise hand its files to the NEXT server registered under the
+   * same id — the sandbox wrapper's recursive mkdir keeps whatever is there. Deletes a leftover leaf
+   * with the same retry policy as removal; returns `false` when the leaf still exists afterwards,
+   * and the caller must then refuse the registration. Never throws.
+   */
+  async ensureUserMcpSandboxClean(serviceId: string): Promise<boolean> {
+    const leaf = this.userMcpSandboxLeaf(serviceId);
+    if (!this.sandboxDirExists(leaf)) return true;
+    const lastErr = await this.deleteSandboxLeaf(leaf);
+    if (lastErr === undefined && !this.sandboxDirExists(leaf)) return true;
+    this.logger?.warn(
+      { serviceId, err: lastErr },
+      "stale user MCP sandbox directory not cleared before registration",
+    );
+    return false;
+  }
+
+  /**
+   * Deletes a sandbox leaf, tried up to three times 100 ms apart (a Windows child releases its cwd
+   * handle a moment after it exits). Returns the last error when every attempt failed, else
+   * `undefined`. Never throws.
+   */
+  private async deleteSandboxLeaf(leaf: string): Promise<unknown> {
+    let lastErr: unknown;
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      try {
+        this.removeSandboxDir(leaf);
+        return undefined;
+      } catch (err) {
+        lastErr = err ?? new Error("sandbox directory delete failed");
+        if (attempt < 3) await Bun.sleep(100); // NOSONAR S9382: a retry backoff is sequential by definition
+      }
+    }
+    return lastErr;
+  }
+
   public async stopExtensionClient(extensionId: string): Promise<void> {
     await this.stopUserMcpClient(extensionId);
     await this.stopLazyClient(extensionId);
@@ -212,6 +304,21 @@ export class LazyConnectorMesh {
       }
       ensureUserMcpClient(this.spawnContext, row);
     });
+  }
+
+  /**
+   * The tools of ONE registered user MCP server — its own slot only, never the merged dispatcher
+   * map, so `connector.userMcpTools` cannot be used to enumerate another server's (or a built-in
+   * connector's) tools. `undefined` when no `user_mcp_connector` row names the id. Keys are as the
+   * slot's `MCPClient` lists them: `<serviceId>_<tool>`.
+   */
+  async listUserMcpTools(serviceId: string): Promise<LazyMeshToolMap | undefined> {
+    const registered = this.listUserMcpConnectors().some((r) => r.service_id === serviceId);
+    if (!registered) {
+      return undefined;
+    }
+    await this.ensureUserMcpRunning(serviceId);
+    return listLazyMeshClientTools(this.getLazyClient(userMcpMeshKey(serviceId)));
   }
 
   private async ensureUserMcpConnectorsRunning(): Promise<void> {
@@ -343,6 +450,9 @@ export class LazyConnectorMesh {
   > {
     const list = async (mesh: string): Promise<LazyMeshToolMap> =>
       listLazyMeshClientTools(this.getLazyClient(mesh));
+    // The filesystem MCP spawns on its first listing; on Windows that grant must not race the
+    // boot revoke of stale data-directory ACEs on the same DACL (see `filesystemSpawnGate`).
+    await this.filesystemSpawnGate;
     const fsTools = (await this.filesystem.listTools()) as LazyMeshToolMap;
     return [
       { map: fsTools, name: "filesystem" },
@@ -561,6 +671,8 @@ export function createLazyConnectorMesh(
     logger?: MeshLogger;
     obsidianVaultPaths?: readonly string[];
     isConnectorAllowed?: (serviceId: string) => boolean;
+    removeSandboxDir?: (dir: string) => void;
+    filesystemSpawnGate?: Promise<void>;
   },
 ): Promise<LazyConnectorMesh> {
   return Promise.try(() => new LazyConnectorMesh(paths, vault, options));

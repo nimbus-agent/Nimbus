@@ -514,8 +514,14 @@ describe("connector.* — forwarded notify and connector mesh", () => {
         registered.push(syncable);
       },
     } as unknown as SyncScheduler;
-    const mesh = { ensureUserMcpRunning: async () => {} } as unknown as LazyConnectorMesh;
-    const request = { serviceId: "mcp_wiring_demo", commandLine: "node server.js" };
+    const mesh = {
+      ensureUserMcpRunning: async () => {},
+      userMcpProtectedRoots: () => [],
+      ensureUserMcpSandboxClean: async () => true,
+    } as unknown as LazyConnectorMesh;
+    // An absolute command that exists on every runner: the production `which`/`realpath`
+    // defaults resolve it for real (no PATH dependency on `node`).
+    const request = { serviceId: "mcp_wiring_demo", argv: [process.execPath, "server.js"] };
 
     const { ctx: withoutMesh } = harness(
       { localIndex: freshIndex(), syncScheduler: scheduler },

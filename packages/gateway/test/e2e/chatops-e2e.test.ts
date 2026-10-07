@@ -205,6 +205,7 @@ describe("chatops e2e (real gateway subprocess + mock connector sink)", () => {
       socketPath,
       extensionsDir: join(tmp, "extensions"),
       tempDir: join(tmp, "tmp"),
+      sandboxDir: join(tmp, "sandbox"),
     };
     mkdirSync(paths.configDir, { recursive: true });
     mkdirSync(dataDir, { recursive: true });

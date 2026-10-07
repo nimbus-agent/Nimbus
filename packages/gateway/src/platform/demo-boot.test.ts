@@ -10,6 +10,7 @@ const base: PlatformPaths = {
   socketPath: "s",
   extensionsDir: "e",
   tempDir: "t",
+  sandboxDir: "sandbox",
 };
 
 describe("bootPolicyFor", () => {

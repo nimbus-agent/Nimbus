@@ -175,6 +175,7 @@ describe("share e2e (real gateway subprocess — I27 create → owner approve �
       socketPath,
       extensionsDir: join(tmp, "extensions"),
       tempDir: join(tmp, "tmp"),
+      sandboxDir: join(tmp, "sandbox"),
     };
     mkdirSync(paths.configDir, { recursive: true });
     mkdirSync(dataDir, { recursive: true });

@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { createMemoryIndexDb } from "../connectors/connector-sync-test-helpers.ts";
 import { dbRun } from "../db/write.ts";
 import { upsertIndexedItem } from "../index/item-store.ts";
+import { CURRENT_SCHEMA_VERSION } from "../index/local-index.ts";
 import { PushStore } from "./push-store.ts";
 
 let db: Database;
@@ -73,9 +74,9 @@ describe("PushStore", () => {
     expect(store.incidentPagerdutyServiceId("pagerduty:NOPE")).toBeNull();
   });
 
-  test("schema is V64", () => {
+  test("schema is at the current version", () => {
     expect((db.query("PRAGMA user_version").get() as { user_version: number }).user_version).toBe(
-      64,
+      CURRENT_SCHEMA_VERSION,
     );
   });
 

@@ -1,13 +1,20 @@
 import type { Database } from "bun:sqlite";
 import { execFile } from "node:child_process";
-import { existsSync } from "node:fs";
+import { existsSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import { promisify } from "node:util";
 import type { Logger } from "pino";
 
-import { FIRST_PARTY_MANIFESTS } from "../../connectors/lazy-mesh/first-party-manifests.ts";
+import { BUNDLED_CONNECTORS } from "../../connectors/bundled-connector-registry.ts";
+import {
+  FIRST_PARTY_MANIFESTS,
+  manifestForFirstParty,
+} from "../../connectors/lazy-mesh/first-party-manifests.ts";
+import { listUserMcpConnectors } from "../../connectors/user-mcp-store.ts";
 import { type ReapOpts, reapOrphanedAppContainers } from "./orphan-reap.ts";
-import { helperPath } from "./win32.ts";
-import { buildSweepArgv } from "./win32-argv.ts";
+import { helperPath, helperRunner } from "./win32.ts";
+import { buildRevokeGrantsArgv, buildSweepArgv } from "./win32-argv.ts";
+import type { HelperRun } from "./win32-release.ts";
 
 /**
  * Every extension id that may legitimately own an AppContainer profile right now.
@@ -130,5 +137,137 @@ export async function reapAppContainersAtBoot(deps: {
   } catch (e) {
     deps.logger.warn({ err: e }, "sandbox: AppContainer reap failed (non-fatal)");
     return [];
+  }
+}
+
+export const SANDBOX_CWD_MIGRATION_MARKER = "sandbox-cwd-migration-v1.done";
+
+/**
+ * Every policy id that may have left an inheritable ACE on `dataDir` while it was the shared
+ * connector cwd. The filesystem MCP is excluded: it is still deliberately granted `dataDir`.
+ */
+export function legacyDataDirGrantIds(userMcpServiceIds: readonly string[]): string[] {
+  const ids = new Set<string>();
+  for (const m of Object.values(FIRST_PARTY_MANIFESTS)) ids.add(m.id);
+  for (const k of Object.keys(BUNDLED_CONNECTORS)) {
+    ids.add(manifestForFirstParty(k).id);
+    ids.add(manifestForFirstParty(k.replaceAll("-", "_")).id);
+  }
+  for (const s of userMcpServiceIds) ids.add(`user.${s}`);
+  ids.delete("com.nimbus.filesystem");
+  // Code-unit order, as the default sort gave; ids are unique (a Set), so no pair compares equal.
+  return [...ids].sort((a, b) => (a < b ? -1 : 1));
+}
+
+/**
+ * Revoke the stale per-SID ACEs on `dataDir`, once. Sequential on purpose: each revoke rewrites the
+ * same DACL and concurrent rewrites race. The marker is written only when every revoke succeeded,
+ * so a partial run is retried at the next boot.
+ */
+export async function revokeLegacyDataDirGrants(deps: {
+  dataDir: string;
+  ids: readonly string[];
+  run: HelperRun;
+  markerExists: () => boolean;
+  writeMarker: () => void;
+  logger: Pick<Logger, "info" | "warn">;
+}): Promise<"skipped" | "done" | "partial"> {
+  if (deps.markerExists()) return "skipped";
+  const failed: string[] = [];
+  for (const id of deps.ids) {
+    try {
+      const argv = buildRevokeGrantsArgv(
+        { id, permissions: { network: [], filesystem: { read: [], write: [] } } },
+        { cwd: deps.dataDir },
+      );
+      await deps.run(argv); // NOSONAR S9382: sequential on purpose (see above): concurrent DACL rewrites race
+    } catch {
+      failed.push(id);
+    }
+  }
+  if (failed.length > 0) {
+    deps.logger.warn(
+      { failed },
+      "sandbox: legacy data-directory grant revoke incomplete; will retry next boot",
+    );
+    return "partial";
+  }
+  deps.writeMarker();
+  return "done";
+}
+
+/**
+ * The host-touching seams of {@link revokeLegacyDataDirGrantsAtBoot}. Production supplies none and
+ * gets {@link PRODUCTION_REVOKE_BOOT_SEAMS}; tests override any subset so the wrapper's body runs on
+ * every OS, not only on Windows with a built helper.
+ */
+export interface RevokeBootSeams {
+  platform: NodeJS.Platform;
+  helperPath: () => string;
+  helperExists: (helper: string) => boolean;
+  helperRun: (helper: string) => HelperRun;
+  listUserServiceIds: (db: Database) => string[];
+  markerExists: (marker: string) => boolean;
+  writeMarker: (marker: string) => void;
+}
+
+const PRODUCTION_REVOKE_BOOT_SEAMS: RevokeBootSeams = {
+  platform: process.platform,
+  helperPath,
+  helperExists: existsSync,
+  helperRun: helperRunner,
+  listUserServiceIds: (db) => listUserMcpConnectors(db).map((r) => r.service_id),
+  markerExists: existsSync,
+  writeMarker: (marker) => writeFileSync(marker, new Date().toISOString()),
+};
+
+/** Boot wrapper: Windows-only, helper-gated, never rejects. */
+export async function revokeLegacyDataDirGrantsAtBoot(deps: {
+  db: Database;
+  dataDir: string;
+  logger: Logger;
+  /** Test-only overrides; production passes none. */
+  seams?: Partial<RevokeBootSeams>;
+}): Promise<void> {
+  const s: RevokeBootSeams = { ...PRODUCTION_REVOKE_BOOT_SEAMS, ...deps.seams };
+  if (s.platform !== "win32") return;
+  try {
+    const helper = s.helperPath();
+    if (!s.helperExists(helper)) return;
+    let userIds: string[] = [];
+    let listFailed = false;
+    try {
+      userIds = s.listUserServiceIds(deps.db);
+    } catch (e) {
+      listFailed = true;
+      deps.logger.warn(
+        { err: e },
+        "sandbox: could not list user MCP ids; revoking first-party only",
+      );
+    }
+    const marker = join(deps.dataDir, SANDBOX_CWD_MIGRATION_MARKER);
+    const result = await revokeLegacyDataDirGrants({
+      dataDir: deps.dataDir,
+      ids: legacyDataDirGrantIds(userIds),
+      run: s.helperRun(helper),
+      markerExists: () => s.markerExists(marker),
+      // A failed user listing means user-MCP SIDs were not revoked: withhold the marker so the
+      // next boot retries with a working listing.
+      writeMarker: () => {
+        if (!listFailed) s.writeMarker(marker);
+      },
+      logger: deps.logger,
+    });
+    if (result === "done") {
+      if (listFailed) {
+        deps.logger.warn(
+          "sandbox: migration marker withheld (user MCP listing failed); will retry next boot",
+        );
+      } else {
+        deps.logger.info("sandbox: revoked legacy data-directory grants");
+      }
+    }
+  } catch (e) {
+    deps.logger.warn({ err: e }, "sandbox: legacy data-directory revoke failed (non-fatal)");
   }
 }

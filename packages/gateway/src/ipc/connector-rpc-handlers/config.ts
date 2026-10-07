@@ -1,9 +1,15 @@
+import { realpathSync } from "node:fs";
 import { normalizeConnectorServiceId } from "../../connectors/connector-catalog.ts";
 import {
+  type ResolvedUserMcpRegistration,
+  resolveUserMcpRegistration,
+  UserMcpRegistrationError,
+} from "../../connectors/user-mcp-registration.ts";
+import {
   insertUserMcpConnector,
+  listUserMcpConnectors,
   normalizeUserMcpServiceId,
   parseUserMcpCommandLine,
-  validateUserMcpArgsJson,
 } from "../../connectors/user-mcp-store.ts";
 import { createUserMcpSyncable } from "../../connectors/user-mcp-sync.ts";
 import { MIN_SYNC_INTERVAL_MS } from "../../sync/constants.ts";
@@ -11,15 +17,72 @@ import { ConnectorRpcError, requireRegisteredSchedulerServiceId } from "../conne
 import type { ConnectorRpcHandlerContext, ConnectorRpcHit } from "./context.ts";
 import { emitConfigChanged, pauseConnector, resumeConnector } from "./lifecycle.ts";
 
-export function handleConnectorAddMcp(ctx: ConnectorRpcHandlerContext): ConnectorRpcHit {
+/**
+ * Production `realpath` for `connector.addMcp`. The NATIVE variant on purpose: the JS
+ * `realpathSync` returns the caller's spelling, not the on-disk case on a case-insensitive volume
+ * (APFS, NTFS), and does not expand Windows 8.3 short names or trailing dots — so a protected
+ * Nimbus directory could be named past the overlap check in a different spelling.
+ */
+export const defaultUserMcpRealpath: (p: string) => string = realpathSync.native;
+
+/** Production `which` for `connector.addMcp`: resolves a bare command name on `PATH`. */
+export const defaultUserMcpWhich: (cmd: string) => string | null = Bun.which;
+
+function stringArrayParam(rec: Record<string, unknown> | undefined, key: string): string[] {
+  const v = rec?.[key];
+  if (v === undefined) return [];
+  if (!Array.isArray(v) || !v.every((x): x is string => typeof x === "string")) {
+    throw new ConnectorRpcError(-32602, `${key} must be an array of strings`);
+  }
+  return v;
+}
+
+function argvParam(rec: Record<string, unknown> | undefined): string[] {
+  const argvRaw = rec?.["argv"];
+  const cmdRaw = rec?.["commandLine"];
+  if ((argvRaw === undefined) === (cmdRaw === undefined)) {
+    throw new ConnectorRpcError(-32602, "Provide exactly one of argv or commandLine");
+  }
+  if (cmdRaw !== undefined) {
+    if (typeof cmdRaw !== "string") {
+      throw new ConnectorRpcError(-32602, "commandLine must be a string");
+    }
+    // Compatibility path: whitespace-split, so a path containing a space cannot be expressed here.
+    try {
+      const { command, args } = parseUserMcpCommandLine(cmdRaw);
+      return [command, ...args];
+    } catch (e) {
+      throw new ConnectorRpcError(-32602, e instanceof Error ? e.message : String(e));
+    }
+  }
+  // argv tokens are taken VERBATIM: `["C:\Users\Jane Doe\x.exe"]` stays one token.
+  return stringArrayParam(rec, "argv");
+}
+
+/** The host OS `connector.addMcp` resolves for; refuses rather than guessing when none was passed. */
+export function requireAddMcpPlatform(ctx: ConnectorRpcHandlerContext): NodeJS.Platform {
+  if (ctx.platform === undefined) {
+    throw new ConnectorRpcError(-32603, "connector.addMcp requires the host platform");
+  }
+  return ctx.platform;
+}
+
+/**
+ * Parses `connector.addMcp`'s params and resolves them to the FINAL values the row will store
+ * (absolute command, canonical read paths, normalised hosts) — BEFORE the HITL gate, so the owner
+ * approves exactly what is stored and an invalid request never prompts. Every refusal is a
+ * `ConnectorRpcError`; a resolver refusal carries its `ERR_USER_MCP_*` code as the message prefix.
+ */
+export function resolveConnectorAddMcp(
+  ctx: ConnectorRpcHandlerContext,
+): ResolvedUserMcpRegistration {
   const { rec, localIndex, syncScheduler, connectorMesh } = ctx;
   if (syncScheduler === undefined || connectorMesh === undefined) {
     throw new ConnectorRpcError(-32603, "User MCP registration requires sync and connector mesh");
   }
   const serviceRaw = rec?.["serviceId"];
-  const cmdRaw = rec?.["commandLine"];
-  if (typeof serviceRaw !== "string" || typeof cmdRaw !== "string") {
-    throw new ConnectorRpcError(-32602, "Missing serviceId or commandLine");
+  if (typeof serviceRaw !== "string") {
+    throw new ConnectorRpcError(-32602, "Missing serviceId");
   }
   const serviceId = normalizeUserMcpServiceId(serviceRaw);
   if (serviceId === null) {
@@ -31,11 +94,75 @@ export function handleConnectorAddMcp(ctx: ConnectorRpcHandlerContext): Connecto
   if (normalizeConnectorServiceId(serviceId) !== null) {
     throw new ConnectorRpcError(-32602, "serviceId conflicts with a built-in connector id");
   }
-  const { command, args } = parseUserMcpCommandLine(cmdRaw);
-  const argsJson = validateUserMcpArgsJson(args);
+  const argv = argvParam(rec);
+  const readPaths = stringArrayParam(rec, "readPaths");
+  const netHosts = stringArrayParam(rec, "netHosts");
+  const modelAccessRaw = rec?.["modelAccess"];
+  if (modelAccessRaw !== undefined && typeof modelAccessRaw !== "boolean") {
+    throw new ConnectorRpcError(-32602, "modelAccess must be a boolean");
+  }
+  try {
+    return resolveUserMcpRegistration(
+      { serviceId, argv, readPaths, netHosts, modelAccess: modelAccessRaw === true },
+      {
+        platform: requireAddMcpPlatform(ctx),
+        protectedRoots: connectorMesh.userMcpProtectedRoots(),
+        registeredServiceIds: listUserMcpConnectors(localIndex.getDatabase()).map(
+          (r) => r.service_id,
+        ),
+        which: ctx.resolveCommand ?? defaultUserMcpWhich,
+        realpath: ctx.realpath ?? defaultUserMcpRealpath,
+      },
+    );
+  } catch (e) {
+    if (e instanceof UserMcpRegistrationError) {
+      throw new ConnectorRpcError(-32602, `${e.code}: ${e.message}`);
+    }
+    throw e;
+  }
+}
+
+/**
+ * Runs AFTER the owner approved and BEFORE the row is stored: a sandbox leaf left over from an
+ * earlier registration of the same id (its removal is best-effort, so a locked leaf can survive)
+ * is cleared, or the registration is REFUSED and nothing is stored — the leaf is deterministic, so
+ * a new server would otherwise inherit the previous one's files.
+ */
+export async function assertUserMcpSandboxClean(
+  ctx: ConnectorRpcHandlerContext,
+  serviceId: string,
+): Promise<void> {
+  const { connectorMesh } = ctx;
+  if (connectorMesh === undefined) {
+    throw new ConnectorRpcError(-32603, "User MCP registration requires sync and connector mesh");
+  }
+  if (await connectorMesh.ensureUserMcpSandboxClean(serviceId)) return;
+  throw new ConnectorRpcError(
+    -32602,
+    `ERR_USER_MCP_SANDBOX_NOT_CLEAN: ${connectorMesh.userMcpSandboxLeaf(serviceId)} could not be cleared; stop any process using it and retry`,
+  );
+}
+
+/** Stores an ALREADY-APPROVED registration (resolved by `resolveConnectorAddMcp`) and registers its syncable. */
+export function handleConnectorAddMcp(
+  ctx: ConnectorRpcHandlerContext,
+  resolved: ResolvedUserMcpRegistration,
+): ConnectorRpcHit {
+  const { localIndex, syncScheduler, connectorMesh } = ctx;
+  if (syncScheduler === undefined || connectorMesh === undefined) {
+    throw new ConnectorRpcError(-32603, "User MCP registration requires sync and connector mesh");
+  }
+  const { serviceId } = resolved;
   const db = localIndex.getDatabase();
   try {
-    insertUserMcpConnector(db, { service_id: serviceId, command, args_json: argsJson });
+    insertUserMcpConnector(db, {
+      service_id: serviceId,
+      command: resolved.command,
+      args_json: JSON.stringify(resolved.args),
+      read_paths_json: JSON.stringify(resolved.readPaths),
+      net_hosts_json: JSON.stringify(resolved.netHosts),
+      model_access: resolved.modelAccess ? 1 : 0,
+    });
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     if (msg.includes("UNIQUE") || msg.includes("unique")) {

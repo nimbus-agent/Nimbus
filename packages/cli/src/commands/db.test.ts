@@ -280,6 +280,7 @@ describe("runDb restore --yes (injected paths, temp root)", () => {
       socketPath: FAKE_SOCKET_PATH,
       extensionsDir: join(dataDir, "extensions"),
       tempDir: join(dir, "tmp"),
+      sandboxDir: join(dir, "sandbox"),
     };
   }
 

@@ -202,8 +202,8 @@ the connectors repository: a self-contained package that resolves its helpers fr
 bunx create-nimbus-connector --spec ./your-service.spec.json --standalone
 ```
 
-**`nimbus scaffold extension` is not the tool for a connector either.** It emits a four-file
-generic extension shell with no `src/server.ts`, and every connector gate —
+**`nimbus scaffold mcp` is not the tool for a first-party connector either.** It emits a standalone
+user MCP server (`nimbus scaffold extension` is an alias for it) with no connector manifest, and every connector gate —
 `audit:connector-registry-drift` here, `audit:connector-entrypoints` and `audit:connector-deps` in
 the connectors repository — keys off that file, so its output is invisible to all three. They report
 clean, which is not the same as done.

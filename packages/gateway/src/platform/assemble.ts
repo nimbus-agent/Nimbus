@@ -1,7 +1,7 @@
 import { Database } from "bun:sqlite";
 import { randomUUID } from "node:crypto";
 import { lookup } from "node:dns/promises";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import os from "node:os";
 import { dirname, join } from "node:path";
 import { bytesToHex } from "@noble/hashes/utils.js";
@@ -364,8 +364,9 @@ import { createGatewayPinoLogger } from "./gateway-log-file.ts";
 import { createHostActivity, type HostActivity } from "./host-activity.ts";
 import type { PlatformPaths } from "./paths.ts";
 import { registerUserMcpSyncablesFromDatabase } from "./register-user-mcp-sync.ts";
+import { sandboxCwdFor } from "./sandbox/sandbox-cwd.ts";
 import { createSandboxRunner } from "./sandbox/sandbox-runner.ts";
-import { reapAppContainersAtBoot } from "./sandbox/win32-reap.ts";
+import { reapAppContainersAtBoot, revokeLegacyDataDirGrantsAtBoot } from "./sandbox/win32-reap.ts";
 import { ensureFullSqlite } from "./sqlite-runtime.ts";
 import type { AutostartManager, NotificationService, PlatformServices } from "./types.ts";
 
@@ -634,6 +635,8 @@ interface SchedulerWithMeshOpts {
    * degraded boots keep the snippet path. Gated below on `[decisions].use_llm`.
    */
   decisionLlm?: DecisionLlm;
+  /** Settles when the boot-time Windows data-directory revoke is done; gates the filesystem MCP’s first spawn. */
+  filesystemSpawnGate?: Promise<void>;
 }
 
 async function createSchedulerWithMesh(opts: SchedulerWithMeshOpts): Promise<{
@@ -656,6 +659,7 @@ async function createSchedulerWithMesh(opts: SchedulerWithMeshOpts): Promise<{
     isConnectorAllowed,
     glossaryLlm,
     decisionLlm,
+    filesystemSpawnGate,
   } = opts;
   // I41 clause (6), spec § 11.2: a demo gateway's scheduler exists (IPC and the post-sync
   // refreshers are built alongside it) but can never run a job.
@@ -887,6 +891,7 @@ async function createSchedulerWithMesh(opts: SchedulerWithMeshOpts): Promise<{
     // roots must not be silently treated as note vaults.
     obsidianVaultPaths: tomlRoots.map((r) => r.path),
     isConnectorAllowed,
+    ...(filesystemSpawnGate === undefined ? {} : { filesystemSpawnGate }),
   });
   const pagerdutyCfg = loadNimbusPagerdutyFromConfigDir(paths.configDir);
   const workdayCfg = loadNimbusWorkdayFromConfigDir(paths.configDir);
@@ -1249,7 +1254,7 @@ async function bootFederationIntoIpcOpts(
       invokeTeamTool(
         {
           vault,
-          sandboxCwd: paths.dataDir,
+          sandboxCwd: paths.sandboxDir,
           requiredSecretKeysFor: (service: string) =>
             CONNECTOR_VAULT_SECRET_KEYS[service as keyof typeof CONNECTOR_VAULT_SECRET_KEYS],
           anyOfSecretGroupsFor: (service: string) =>
@@ -2415,7 +2420,7 @@ function buildTeamCredentialContexts(deps: {
       invokeTeamToolList(
         {
           vault,
-          sandboxCwd: paths.dataDir,
+          sandboxCwd: paths.sandboxDir,
           requiredSecretKeysFor: (service: string) =>
             CONNECTOR_VAULT_SECRET_KEYS[service as keyof typeof CONNECTOR_VAULT_SECRET_KEYS],
           anyOfSecretGroupsFor: (service: string) =>
@@ -2430,7 +2435,7 @@ function buildTeamCredentialContexts(deps: {
     ...identitySpread,
   };
   const teamCredentialExtras: Pick<SyncContext, "sandboxCwd" | "credentialFor" | "runTeamList"> = {
-    sandboxCwd: paths.dataDir,
+    sandboxCwd: paths.sandboxDir,
     credentialFor: (service: string) =>
       connectorsConfig.get(service as TeamCredentialConnector) ?? { credential: "personal" },
     runTeamList: (req) =>
@@ -2452,7 +2457,7 @@ function buildTeamCredentialContexts(deps: {
       invokeTeamTool(
         {
           vault,
-          sandboxCwd: paths.dataDir,
+          sandboxCwd: paths.sandboxDir,
           requiredSecretKeysFor: (service: string) =>
             CONNECTOR_VAULT_SECRET_KEYS[service as keyof typeof CONNECTOR_VAULT_SECRET_KEYS],
           anyOfSecretGroupsFor: (service: string) =>
@@ -2466,7 +2471,7 @@ function buildTeamCredentialContexts(deps: {
 
   const connectorWriteDeps: ConnectorWriteContext = {
     vault,
-    sandboxCwd: paths.dataDir,
+    sandboxCwd: paths.sandboxDir,
     isConnectorAllowed,
     credentialFor: (service: string) =>
       connectorsConfig.get(service as TeamCredentialConnector) ?? { credential: "personal" },
@@ -2565,7 +2570,7 @@ async function bootChatopsIntoAssembly(deps: {
         ? buildChatopsToolRunner({
             vault,
             botVaultEntry: chatopsCfg.botVaultEntry,
-            sandboxCwd: paths.dataDir,
+            sandboxCwd: paths.sandboxDir,
           })
         : buildE2eSinkRunChatopsTool(chatopsE2eSinkDir),
     audit: { recordAudit: (entry) => appendAuditEntry(db, entry) },
@@ -3272,11 +3277,28 @@ export async function assemblePlatformServices(
   // otherwise gained one unresolvable ACE per distinct SID until the DACL overflowed. Non-fatal by
   // construction: see the function.
   // Skipped for a demo-rooted gateway (I41 clause 4, platform/demo-boot.ts).
+  let dataDirRevoke: Promise<void> | undefined;
   if (bootPolicy.reapAppContainers) {
     void reapAppContainersAtBoot({
       db,
       logger: syncLogger,
       sweepPaths: resolveRuntimeById("bun").requiredReadPaths(),
+    });
+    // Spec § A: before per-policy working directories, every connector ran with `dataDir` as its
+    // cwd and the helper left an inheritable ACE there per SID. Nothing re-grants it now (except
+    // the filesystem MCP, deliberately), so revoke once and record a marker. The revoke rewrites the
+    // dataDir DACL, and so does the filesystem MCP’s spawn-time grant (an unlocked read-modify-
+    // write), and that MCP spawns lazily on its first listing — which a request arriving in the
+    // seconds the revoke takes CAN trigger. So the mesh awaits this promise (never rejects) at the
+    // top of `collectBuiltInToolMaps`, which holds EVERY dispatcher tool listing (all connector
+    // dispatches, user-MCP list/call, share replay, tribal capture, ChatOps writes), not only the
+    // filesystem MCP. The helper calls have no per-call timeout, so a hung helper holds them until
+    // it exits; no marker is written, so the next boot retries. Nothing else at boot awaits it, and
+    // Linux/macOS/demo gateways never reach this branch, so they never wait.
+    dataDirRevoke = revokeLegacyDataDirGrantsAtBoot({
+      db,
+      dataDir: paths.dataDir,
+      logger: syncLogger,
     });
   }
   const notifications = createUnimplementedNotifications(syncLogger);
@@ -3466,6 +3488,7 @@ export async function assemblePlatformServices(
     isConnectorAllowed,
     glossaryLlm: createGlossaryLlm(llmRegistry.llmRouter),
     decisionLlm: createDecisionLlm(llmRegistry.llmRouter),
+    ...(dataDirRevoke === undefined ? {} : { filesystemSpawnGate: dataDirRevoke }),
   });
   // One `stop` per refresher that actually started. Three of the four are
   // optional (their passes are config-gated), and the repeated
@@ -4135,8 +4158,14 @@ export async function assemblePlatformServices(
       ),
       findEndpoints: createEndpointFinder(localIndex),
     }),
-    assertConfinement: (manifest) =>
-      assertToolConfinement({ runner: sandboxRunner, manifest, cwd: paths.configDir }),
+    assertConfinement: (manifest) => {
+      // The probe spawns through the runner directly (not sandbox-wrapper.ts), so its own per-policy
+      // directory must exist before the spawn: canonical-path.ts falls back to the input spelling
+      // for a missing path.
+      const probeCwd = sandboxCwdFor(paths.sandboxDir, "toolgen-probe");
+      mkdirSync(probeCwd, { recursive: true });
+      return assertToolConfinement({ runner: sandboxRunner, manifest, cwd: probeCwd });
+    },
     scriptDir: (toolId) => toolScriptDir(paths.configDir, toolId),
     writeScript: (toolId, source) => writeToolScript(paths.configDir, toolId, source),
     // cwd is the script's OWN directory: the manifest grants read only to `scriptDir(toolId)` plus

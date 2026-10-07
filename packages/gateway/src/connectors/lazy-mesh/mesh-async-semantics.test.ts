@@ -52,6 +52,7 @@ function makePaths(): PlatformPaths {
     socketPath: join(root, "sock"),
     extensionsDir: join(root, "ext"),
     tempDir: join(root, "tmp"),
+    sandboxDir: join(root, "sandbox"),
   };
 }
 
@@ -163,7 +164,17 @@ describe("lazy mesh slot walks run concurrently, and still answer in slot order"
   });
 
   test("reconcile stops every stale user slot at once and keeps active and built-in slots", async () => {
-    const rows = [{ service_id: "mcp_keep", command: "/bin/echo", args_json: "[]", created_at: 0 }];
+    const rows = [
+      {
+        service_id: "mcp_keep",
+        command: "/bin/echo",
+        args_json: "[]",
+        created_at: 0,
+        read_paths_json: "[]",
+        net_hosts_json: "[]",
+        model_access: 0,
+      },
+    ];
     mesh = new LazyConnectorMesh(makePaths(), createMockVault(), {
       listUserMcpConnectors: () => rows,
     });

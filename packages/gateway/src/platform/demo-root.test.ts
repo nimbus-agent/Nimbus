@@ -102,6 +102,7 @@ describe("deriveDemoPaths", () => {
     socketPath: join("R", "run", "nimbus-gateway.sock"),
     extensionsDir: join("R", "extensions"),
     tempDir: join(tmpdir(), "nimbus"),
+    sandboxDir: join("R", "cache", "sandbox"),
   };
 
   test("every path moves under <realDataDir>/demo and the result is marked demo", () => {
@@ -115,6 +116,7 @@ describe("deriveDemoPaths", () => {
       socketPath: join("R", "run", `nimbus-gateway-demo-${hash}.sock`),
       extensionsDir: join(root, "data", "extensions"),
       tempDir: join(tmpdir(), DEMO_TEMP_DIRNAME),
+      sandboxDir: join(root, "sandbox"),
       demo: true,
     });
   });

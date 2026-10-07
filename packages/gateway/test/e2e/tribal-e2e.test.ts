@@ -108,6 +108,7 @@ describe("tribal e2e (real gateway subprocess, IPC surface + I25 fail-closed)", 
       socketPath,
       extensionsDir: join(tmp, "extensions"),
       tempDir: join(tmp, "tmp"),
+      sandboxDir: join(tmp, "sandbox"),
     };
     mkdirSync(paths.configDir, { recursive: true });
     mkdirSync(dataDir, { recursive: true });
@@ -222,6 +223,7 @@ describe("tribal e2e — privacy fail-closed (enabled with empty watch_channels)
       socketPath,
       extensionsDir: join(tmp, "extensions"),
       tempDir: join(tmp, "tmp"),
+      sandboxDir: join(tmp, "sandbox"),
     };
     mkdirSync(paths.configDir, { recursive: true });
     mkdirSync(paths.dataDir, { recursive: true });

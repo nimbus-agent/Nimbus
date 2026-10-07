@@ -43,6 +43,13 @@ export type ConnectorRpcHandlerContext = {
   openUrl: (url: string) => Promise<void>;
   syncScheduler: SyncScheduler | undefined;
   connectorMesh: LazyConnectorMesh | undefined;
+  /**
+   * The host OS, passed in rather than read from `process.platform` here (PAL): `connector.addMcp`'s
+   * per-OS path rules and its Windows all-or-nothing network note both read it. Supplied by the one
+   * production caller (`ipc/server/dispatchers.ts`); `connector.addMcp` REFUSES without it rather
+   * than guessing, and no other method reads it.
+   */
+  platform?: NodeJS.Platform;
   notify?: (method: string, params: Record<string, unknown>) => void;
   /**
    * Test seam. Omitted in production, where `auth.ts` falls back to its
@@ -72,4 +79,16 @@ export type ConnectorRpcHandlerContext = {
    * proven with no browser round-trip and no network, for the reason `runCredentialProbe` is.
    */
   runPkceFlow?: (options: PKCEOptions) => Promise<PKCEResult>;
+  /**
+   * Test seam. Omitted in production, where `connector.addMcp` resolves a bare command name on
+   * `PATH` with `Bun.which` (`config.ts`'s `defaultUserMcpWhich`).
+   */
+  resolveCommand?: (cmd: string) => string | null;
+  /**
+   * Test seam. Omitted in production, where `connector.addMcp` canonicalises paths with
+   * `realpathSync.native` (`config.ts`'s `defaultUserMcpRealpath`) — never the JS
+   * `realpathSync`, which keeps the caller's case and 8.3 spelling. Throws when the path is
+   * missing.
+   */
+  realpath?: (p: string) => string;
 };

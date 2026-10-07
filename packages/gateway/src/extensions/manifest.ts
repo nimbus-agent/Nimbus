@@ -136,7 +136,7 @@ function parseDependsOn(value: unknown): Readonly<Record<string, string>> | unde
 }
 
 // All 94 first-party connectors (each `connectors/<id>/nimbus.extension.json` in
-// `@nimbus-dev/connectors`) and `nimbus scaffold extension` declare `entrypoint`; this parser
+// `@nimbus-dev/connectors`) declare `entrypoint`; this parser
 // read only `entry`, so every one of them fell back to "dist/index.js" while building
 // dist/server.js — an install recorded an empty entry hash and verification then failed
 // with "entry file missing". `entry` still wins where both are present.

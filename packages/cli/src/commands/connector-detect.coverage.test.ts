@@ -212,6 +212,7 @@ describe("defaultConnectorDetectDeps — the production wiring", () => {
       socketPath: join(root, "gw.sock"),
       extensionsDir: join(root, "ext"),
       tempDir: join(root, "tmp"),
+      sandboxDir: join(root, "sandbox"),
     };
   }
 

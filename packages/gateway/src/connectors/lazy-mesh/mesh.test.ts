@@ -31,6 +31,7 @@ function makePaths(): PlatformPaths {
     socketPath: join(root, "sock"),
     extensionsDir: join(root, "ext"),
     tempDir: join(root, "tmp"),
+    sandboxDir: join(root, "sandbox"),
   };
 }
 
@@ -265,6 +266,9 @@ describe("listToolsForDispatcher merges fs + builtin + user slot tools", () => {
         command: "/bin/echo",
         args_json: "[]",
         created_at: 0,
+        read_paths_json: "[]",
+        net_hosts_json: "[]",
+        model_access: 0,
       },
     ];
     mesh = new LazyConnectorMesh(makePaths(), createMockVault(), {
@@ -502,6 +506,9 @@ describe("ensureUserMcpRunning constructs a slot when a matching row exists", ()
         command: "/bin/echo",
         args_json: '["arg1"]',
         created_at: 0,
+        read_paths_json: "[]",
+        net_hosts_json: "[]",
+        model_access: 0,
       },
     ];
     mesh = new LazyConnectorMesh(makePaths(), createMockVault(), {
@@ -522,6 +529,9 @@ describe("ensureUserMcpRunning constructs a slot when a matching row exists", ()
         command: "/bin/echo",
         args_json: "not-json",
         created_at: 0,
+        read_paths_json: "[]",
+        net_hosts_json: "[]",
+        model_access: 0,
       },
     ];
     mesh = new LazyConnectorMesh(makePaths(), createMockVault(), {
@@ -531,5 +541,53 @@ describe("ensureUserMcpRunning constructs a slot when a matching row exists", ()
     const epochBefore = mesh.getToolsEpoch();
     await mesh.ensureUserMcpRunning("mcp_bad_args");
     expect(mesh.getToolsEpoch()).toBe(epochBefore);
+  });
+});
+
+describe("listUserMcpTools lists ONE user slot, never the merged map", () => {
+  function userRow(serviceId: string) {
+    return {
+      service_id: serviceId,
+      command: "/bin/echo",
+      args_json: "[]",
+      created_at: 0,
+      read_paths_json: "[]",
+      net_hosts_json: "[]",
+      model_access: 0,
+    };
+  }
+
+  test("no row for the id → undefined (and no slot is listed)", async () => {
+    mesh = new LazyConnectorMesh(makePaths(), createMockVault(), {
+      listUserMcpConnectors: () => [],
+    });
+    expect(await mesh.listUserMcpTools("mcp_missing")).toBeUndefined();
+  });
+
+  test("registered id → that slot's tools only, not another user slot's or a built-in's", async () => {
+    mesh = new LazyConnectorMesh(makePaths(), createMockVault(), {
+      listUserMcpConnectors: () => [userRow("mcp_a"), userRow("mcp_b")],
+    });
+    const echo = async (): Promise<unknown> => "echo";
+    const fakeA = makeFakeMcpClient({ tools: { mcp_a_echo: { execute: echo } } });
+    const fakeB = makeFakeMcpClient({ tools: { mcp_b_other: { execute: echo } } });
+    const fakeDiscord = makeFakeMcpClient({ tools: { discord_send: { execute: echo } } });
+    for (const [key, fake] of [
+      [userMcpMeshKey("mcp_a"), fakeA],
+      [userMcpMeshKey("mcp_b"), fakeB],
+      [LAZY_MESH.discord, fakeDiscord],
+    ] as const) {
+      asPrivate(mesh).lazySlots.set(key, {
+        client: fake as unknown as import("@mastra/mcp").MCPClient,
+        idleTimer: undefined,
+        drain: new LazyDrainTracker(),
+      });
+    }
+
+    const tools = await mesh.listUserMcpTools("mcp_a");
+    expect(Object.keys(tools ?? {})).toEqual(["mcp_a_echo"]);
+    expect(fakeA.listToolsCalls).toBe(1);
+    expect(fakeB.listToolsCalls).toBe(0);
+    expect(fakeDiscord.listToolsCalls).toBe(0);
   });
 });

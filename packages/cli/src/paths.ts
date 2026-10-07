@@ -11,6 +11,7 @@ export type CliPlatformPaths = {
   socketPath: string;
   extensionsDir: string;
   tempDir: string;
+  sandboxDir: string;
   /** Set by `deriveDemoPaths` when the demo root is active (invariant I41). See `lib/demo-root.ts`. */
   demo?: true;
 };
@@ -77,6 +78,7 @@ function realCliPlatformPaths(): CliPlatformPaths {
         socketPath: resolveSocketPath(),
         extensionsDir: join(localAppData, "Nimbus", "extensions"),
         tempDir: join(tmpdir(), "nimbus"),
+        sandboxDir: join(localAppData, "Nimbus", "sandbox"),
       };
     }
     case "darwin": {
@@ -91,12 +93,14 @@ function realCliPlatformPaths(): CliPlatformPaths {
         socketPath: resolveSocketPath(),
         extensionsDir: join(root, "extensions"),
         tempDir: join(tmpdir(), "nimbus"),
+        sandboxDir: join(homedir(), "Library", "Caches", "Nimbus", "sandbox"),
       };
     }
     default: {
       const home = homedir();
       const configRoot = envGet("XDG_CONFIG_HOME") ?? join(home, ".config");
       const dataRoot = envGet("XDG_DATA_HOME") ?? join(home, ".local", "share");
+      const cacheRoot = envGet("XDG_CACHE_HOME") ?? join(home, ".cache");
       const configDir = configDirOverride() ?? join(configRoot, "nimbus");
       const dataDir = join(dataRoot, "nimbus");
       return {
@@ -106,6 +110,7 @@ function realCliPlatformPaths(): CliPlatformPaths {
         socketPath: resolveSocketPath(),
         extensionsDir: join(dataDir, "extensions"),
         tempDir: join(tmpdir(), "nimbus"),
+        sandboxDir: join(cacheRoot, "nimbus", "sandbox"),
       };
     }
   }

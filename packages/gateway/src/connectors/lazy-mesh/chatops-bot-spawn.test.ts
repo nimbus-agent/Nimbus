@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { sandboxCwdFor } from "../../platform/sandbox/sandbox-cwd.ts";
 import { parseSandboxPolicy, SANDBOX_POLICY_ENV } from "../../platform/sandbox/sandbox-policy.ts";
 import type { NimbusVault } from "../../vault/nimbus-vault.ts";
 import {
@@ -57,7 +58,8 @@ describe("chatopsSlackBotServers (I1/I15 bot-token spawn spec)", () => {
     expect(spec?.env["SLACK_APP_TOKEN"]).toBe("xapp-1");
     // I15: the spec must be sandbox-wrapped (wrapServerSpec adds the manifest + cwd env).
     expect(spec?.env["NIMBUS_SANDBOX_POLICY_JSON"]).toBeDefined();
-    expect(spec?.env["NIMBUS_SANDBOX_CWD"]).toBe("/cwd");
+    const policyId = parseSandboxPolicy(spec?.env[SANDBOX_POLICY_ENV] ?? "").id;
+    expect(spec?.env["NIMBUS_SANDBOX_CWD"]).toBe(sandboxCwdFor("/cwd", policyId));
     expect(spec?.args.join(" ")).toContain("slack");
   });
 });

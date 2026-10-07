@@ -465,3 +465,22 @@ test("both local-auth methods are refused over LAN; a sibling connector read is 
   // Negative control: the denylist is not simply refusing every connector.* method.
   expect(() => checkLanMethodAllowed("connector.listStatus", peer)).not.toThrow();
 });
+
+describe("user-MCP list/call over LAN (I42 — CLI-only)", () => {
+  test.each(["connector.userMcpTools", "connector.userMcpCall"])(
+    "%s is refused regardless of grant-write",
+    (method) => {
+      for (const writeAllowed of [true, false]) {
+        expect(() => checkLanMethodAllowed(method, { peerId: "p", writeAllowed })).toThrow(
+          /ERR_METHOD_NOT_ALLOWED/,
+        );
+      }
+    },
+  );
+
+  test("negative control: connector.listStatus is still LAN-callable", () => {
+    expect(() =>
+      checkLanMethodAllowed("connector.listStatus", { peerId: "p", writeAllowed: false }),
+    ).not.toThrow();
+  });
+});

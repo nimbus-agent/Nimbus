@@ -1,5 +1,5 @@
 import { pathToFileURL } from "node:url";
-import { wrapServerSpec } from "../connectors/lazy-mesh/wrap-server-spec.ts";
+import { wrapServerSpecInCwd } from "../connectors/lazy-mesh/wrap-server-spec.ts";
 import { extensionProcessEnv } from "../extensions/spawn-env.ts";
 import type { ToolgenBroker } from "./toolgen-broker.ts";
 import { BROKERED_FETCH_METHOD, type ToolgenEnvelope } from "./toolgen-types.ts";
@@ -34,7 +34,7 @@ export interface ToolSpawnSpec {
  * the body inline is bounded by the Windows helper's `wchar_t cmdline[32768]`, and a generated tool
  * is a whole module, not a snippet. The `-e` import stub satisfies both constraints at once.
  *
- * Goes through `wrapServerSpec`, so I15/D10 applies to a generated tool exactly as to a connector:
+ * Goes through `wrapServerSpecInCwd` (exact cwd), so I15/D10 applies to a generated tool exactly as to a connector:
  * the resulting command/args re-launch this same binary in the `__nimbus-sandbox` role, which reads
  * `NIMBUS_SANDBOX_POLICY_JSON`/`NIMBUS_SANDBOX_CWD` and is what actually confines the real `bun -e`
  * process — see `sandbox-wrapper.ts`'s `runSandboxWrapper`. That is the ONE confinement layer.
@@ -47,7 +47,7 @@ export interface ToolSpawnSpec {
  */
 export function buildToolSpawnSpec(envelope: ToolgenEnvelope, cwd: string): ToolSpawnSpec {
   const href = pathToFileURL(envelope.scriptPath).href;
-  const spec = wrapServerSpec(
+  const spec = wrapServerSpecInCwd(
     {
       command: process.execPath,
       args: ["-e", `await import(${JSON.stringify(href)});`],

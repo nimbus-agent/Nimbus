@@ -125,7 +125,7 @@ AUTOMATION & EXTENSIONS
   nimbus workflow …         List/save/run/delete saved workflows (agent steps)
   nimbus run <file>         Save + run workflow from JSON/YAML file
   nimbus extension …        Install/list/enable/disable/remove local extensions
-  nimbus scaffold extension <id>   Minimal extension folder + manifest
+  nimbus scaffold mcp <name>        Minimal, tested MCP server you can register with connector add --mcp
   nimbus test [dir]         Extension manifest contract + bun test when a test script exists
 
 CONFIG & DIAGNOSTICS

@@ -7,7 +7,11 @@ import { LocalIndex } from "../../index/local-index.ts";
 import { getConnectorHealth } from "../health.ts";
 import type { UserMcpConnectorRow } from "../user-mcp-store.ts";
 import type { MeshLogger, MeshSpawnContext } from "./slot.ts";
-import { ensureUserMcpClient, recordArgsJsonFailure } from "./user-mcp.ts";
+import {
+  ensureUserMcpClient,
+  recordUserMcpRowFailure,
+  userMcpManifestFromRow,
+} from "./user-mcp.ts";
 
 // Real, unique temp root for the fake sandbox cwd string (S5443) — never written.
 const SANDBOX_CWD = join(mkdtempSync(join(tmpdir(), "nimbus-user-mcp-test-")), "sandbox-cwd");
@@ -100,18 +104,21 @@ function makeRow(overrides: Partial<UserMcpConnectorRow> = {}): UserMcpConnector
     command: "/bin/echo",
     args_json: '["hello"]',
     created_at: 0,
+    read_paths_json: "[]",
+    net_hosts_json: "[]",
+    model_access: 0,
     ...overrides,
   };
 }
 
-describe("recordArgsJsonFailure — branch coverage", () => {
+describe("recordUserMcpRowFailure — branch coverage", () => {
   test("with logger AND healthDb: warns and transitions health to error", () => {
     const { ctx, warns, healthDb } = makeSpyContext({
       withLogger: true,
       withHealthDb: true,
     });
 
-    recordArgsJsonFailure(ctx, "broken-svc", "expected string array");
+    recordUserMcpRowFailure(ctx, "broken-svc", "args_json", "expected string array");
 
     expect(warns).toHaveLength(1);
     expect(warns[0]?.bindings["serviceId"]).toBe("broken-svc");
@@ -132,7 +139,7 @@ describe("recordArgsJsonFailure — branch coverage", () => {
       withHealthDb: false,
     });
 
-    recordArgsJsonFailure(ctx, "no-db-svc", "JSON parse failed");
+    recordUserMcpRowFailure(ctx, "no-db-svc", "args_json", "JSON parse failed");
 
     expect(warns).toHaveLength(1);
     expect(warns[0]?.bindings["serviceId"]).toBe("no-db-svc");
@@ -147,7 +154,7 @@ describe("recordArgsJsonFailure — branch coverage", () => {
     });
 
     expect(() => {
-      recordArgsJsonFailure(ctx, "silent-svc", "JSON parse failed");
+      recordUserMcpRowFailure(ctx, "silent-svc", "args_json", "JSON parse failed");
     }).not.toThrow();
     expect(warns).toHaveLength(0);
     expect(healthDb).toBeUndefined();
@@ -159,7 +166,7 @@ describe("recordArgsJsonFailure — branch coverage", () => {
       withHealthDb: true,
     });
 
-    recordArgsJsonFailure(ctx, "db-only-svc", "expected string array");
+    recordUserMcpRowFailure(ctx, "db-only-svc", "args_json", "expected string array");
 
     expect(warns).toHaveLength(0);
     if (healthDb === undefined) throw new Error("healthDb should be defined");
@@ -368,5 +375,51 @@ describe("ensureUserMcpClient — successful path (constructs MCPClient lazily)"
     expect(calls.setLazyClient[0]?.key).toBe("mesh:user:mcp_with.dots+plus");
     expect(calls.bumpToolsEpoch).toBe(1);
     expect(warns).toHaveLength(0);
+  });
+});
+
+describe("userMcpManifestFromRow", () => {
+  test("builds the manifest from the stored grants", () => {
+    const r = userMcpManifestFromRow(
+      makeRow({
+        service_id: "mcp_x",
+        read_paths_json: '["/a"]',
+        net_hosts_json: '["api.x.com"]',
+      }),
+    );
+    expect(r).toEqual({
+      ok: true,
+      manifest: {
+        id: "user.mcp_x",
+        version: "0.0.0",
+        permissions: { network: ["api.x.com"], filesystem: { read: ["/a"], write: [] } },
+        updateChannel: "stable",
+      },
+    });
+  });
+
+  test("unparseable read_paths_json is named", () => {
+    const r = userMcpManifestFromRow(makeRow({ read_paths_json: "nope" }));
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.column).toBe("read_paths_json");
+  });
+
+  test("non-string net_hosts_json is named", () => {
+    const r = userMcpManifestFromRow(makeRow({ net_hosts_json: "[1]" }));
+    expect(r).toEqual({ ok: false, column: "net_hosts_json", reason: "expected string array" });
+  });
+});
+
+describe("ensureUserMcpClient — grant column failures", () => {
+  test("malformed net_hosts_json registers no client and records a persistent_error", () => {
+    const { ctx, calls, healthDb } = makeSpyContext({ withLogger: true, withHealthDb: true });
+    ensureUserMcpClient(ctx, makeRow({ service_id: "mcp_bad_net", net_hosts_json: "[1]" }));
+    expect(calls.setLazyClient).toHaveLength(0);
+    expect(calls.bumpToolsEpoch).toBe(0);
+    if (healthDb === undefined) throw new Error("healthDb should be defined");
+    const snap = getConnectorHealth(healthDb, "mcp_bad_net");
+    expect(snap.state).toBe("error");
+    expect(snap.lastError ?? "").toMatch(/net_hosts_json/);
+    healthDb.close();
   });
 });

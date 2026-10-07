@@ -308,6 +308,7 @@ describe("runDoctor — IPC and voice-config edges", () => {
       socketPath: join(root, "gw.sock"),
       extensionsDir: join(root, "ext"),
       tempDir: join(root, "tmp"),
+      sandboxDir: join(root, "sandbox"),
       // Demo-rooted: the vault line is the in-memory one, so no OS keyring probe ever runs.
       demo: true,
     };

@@ -1,3 +1,4 @@
+import { mkdirSync } from "node:fs";
 import { constants as osConstants } from "node:os";
 import {
   parseSandboxPolicy,
@@ -47,6 +48,15 @@ export async function runSandboxWrapper(args: readonly string[]): Promise<never>
   for (const [k, v] of Object.entries(process.env)) {
     if (k === SANDBOX_POLICY_ENV || k === SANDBOX_CWD_ENV) continue;
     if (v !== undefined) childEnv[k] = v;
+  }
+
+  // The per-policy leaf (spec § A) is created here, at the single point every wrapped spawn passes
+  // through, and BEFORE the runner canonicalises it: `canonical-path.ts` falls back to the input
+  // spelling for a path that does not exist, which would apply the Windows ACE to the wrong name.
+  try {
+    mkdirSync(cwd, { recursive: true });
+  } catch (e) {
+    fatal(`cannot create sandbox working directory ${cwd}: ${(e as Error).message}`);
   }
 
   const runner = await createSandboxRunner();

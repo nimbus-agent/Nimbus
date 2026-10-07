@@ -67,6 +67,7 @@ function makePaths(root: string): CliPlatformPaths {
     socketPath: join(root, "fake.sock"),
     extensionsDir: join(root, "ext"),
     tempDir: join(root, "tmp"),
+    sandboxDir: join(root, "sandbox"),
   };
 }
 

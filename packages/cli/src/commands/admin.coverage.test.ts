@@ -27,6 +27,7 @@ const PATHS: CliPlatformPaths = {
   socketPath: join(ROOT, "gw.sock"),
   extensionsDir: join(ROOT, "ext"),
   tempDir: join(ROOT, "tmp"),
+  sandboxDir: join(ROOT, "sandbox"),
 };
 
 interface Recorder {

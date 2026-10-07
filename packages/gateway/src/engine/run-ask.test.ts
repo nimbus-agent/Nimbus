@@ -31,6 +31,7 @@ const stubPaths: PlatformPaths = {
   socketPath: join(stubBase, "gateway.sock"),
   extensionsDir: join(stubBase, "ext"),
   tempDir: join(stubBase, "tmp"),
+  sandboxDir: join(stubBase, "sandbox"),
 };
 /** A demo-rooted gateway's paths (I41): `runAsk` derives demo-ness from `paths.demo` alone. */
 const demoPaths: PlatformPaths = { ...stubPaths, demo: true };
@@ -1718,6 +1719,7 @@ describe("persona (A2) is resolved from disk by runAsk itself", () => {
         socketPath: join(dir, "gateway.sock"),
         extensionsDir: join(dir, "ext"),
         tempDir: join(dir, "tmp"),
+        sandboxDir: join(dir, "sandbox"),
       },
     };
   }

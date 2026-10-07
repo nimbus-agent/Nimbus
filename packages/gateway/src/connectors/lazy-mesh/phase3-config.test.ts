@@ -3,6 +3,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+import { sandboxCwdFor } from "../../platform/sandbox/sandbox-cwd.ts";
 import { createMockVault } from "../../vault/mock.ts";
 import type { NimbusVault } from "../../vault/nimbus-vault.ts";
 import {
@@ -93,7 +94,9 @@ function readSandboxPolicy(spec: ServerSpec): {
 function expectSandboxed(spec: ServerSpec, expectedHost?: string): void {
   expect(spec.command).toBe(process.execPath);
   expect(spec.env?.["NIMBUS_SANDBOX_POLICY_JSON"]).toBeDefined();
-  expect(spec.env?.["NIMBUS_SANDBOX_CWD"]).toBe(SANDBOX_CWD);
+  const policyId = (JSON.parse(spec.env?.["NIMBUS_SANDBOX_POLICY_JSON"] ?? "{}") as { id: string })
+    .id;
+  expect(spec.env?.["NIMBUS_SANDBOX_CWD"]).toBe(sandboxCwdFor(SANDBOX_CWD, policyId));
   if (expectedHost !== undefined) {
     const manifest = readSandboxPolicy(spec);
     expect(manifest.permissions.network).toContain(expectedHost);

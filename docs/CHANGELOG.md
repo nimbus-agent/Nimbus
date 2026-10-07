@@ -18,6 +18,35 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
 
 ## Post-Phase-6 deliveries
 
+- **2026-10-06 — User MCP servers that actually run (PR 1 of 2): per-connector sandbox directories,
+  registration grants, owner-approved calls, a real `scaffold mcp`.** Registering a third-party MCP
+  server with `nimbus connector add --mcp` used to produce a server that could not usefully run, and
+  every sandboxed connector ran with the Nimbus data directory (the index database) as its working
+  directory with read and write on it. Four changes. First, every sandboxed spawn now runs in its own
+  `<sandboxDir>/<leaf>` (`PlatformPaths.sandboxDir`: `%LOCALAPPDATA%\Nimbus\sandbox`,
+  `~/Library/Caches/Nimbus/sandbox`, `${XDG_CACHE_HOME:-~/.cache}/nimbus/sandbox`, `<demoRoot>/sandbox`
+  for a demo); the toolgen confinement probe moved into its own leaf, and on Windows a one-time boot
+  revoke (marker `sandbox-cwd-migration-v1.done`) removes the stale data-directory ACEs. The filesystem
+  MCP keeps its deliberate data-directory grant. Second, `connector add --mcp <mcp_id> [--read <path>]...
+  [--net <host[:port]>]... [--model] -- <command> [args...]` resolves and validates before the approval
+  prompt, shows the resolved grants, and stores them (schema **V65**, three columns); `connector remove`
+  deletes the server's sandbox leaf best-effort. Third, new invariant **I42**: every user-MCP tool call
+  needs the local owner's approval and a delegate never approves one, behind `nimbus connector tools` and
+  `nimbus connector call` (exit 0 ok / 1 error / 2 refused) over CLI-only, LAN-forbidden
+  `connector.userMcpTools` / `connector.userMcpCall` (not on the Tauri allowlist, still 107); calls are
+  audited and egress-ledgered. Fourth, `nimbus scaffold mcp <name>` emits a real, tested MCP server (MCP
+  SDK 1.32.0, one `echo` tool) compiled with `bun build --compile`; `scaffold extension` is now an alias, and
+  the old four-file shell is gone. An e2e test proves scaffold, compile, register, list, call and
+  confinement (run on Windows; CI proves Linux and macOS). **Not shipped:** model access — `--model` is
+  stored and shown in the prompt but has no effect (PR 2); write grants; script-mode servers on Windows
+  (`CouldntReadCurrentDirectory` under AppContainer — compile them). **Stated bounds:** Windows network
+  for a user MCP is all-or-nothing, not per host; same-policy-id spawns still share one directory/SID so
+  the unlocked DACL read-modify-write race remains for that id; `--net` takes no IPv6 literals; a Windows
+  `--read` on a directory the user cannot change the ACL of fails at spawn, as a health error; the I15
+  source guard against a `dataDir`/`configDir` cwd is spelling-based; a crash between a remove's intent
+  and its sandbox cleanup leaves the leaf; a user MCP removed before upgrading keeps any stale Windows
+  data-directory ACE. See `docs/sandbox.md`.
+
 - **2026-10-05 — `nimbus doctor` warns when the on-call push cannot reach ChatOps.** A pushed brief's
   ChatOps outcome was visible only in `nimbus oncall pushed --json`, so a namespace that could never
   post failed silently. Doctor's existing on-call check now warns in two cases, because they fail in

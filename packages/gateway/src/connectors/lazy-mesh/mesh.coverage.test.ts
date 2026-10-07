@@ -86,6 +86,7 @@ function makePaths(): PlatformPaths {
     socketPath: join(root, "sock"),
     extensionsDir: join(root, "ext"),
     tempDir: join(root, "tmp"),
+    sandboxDir: join(root, "sandbox"),
   };
 }
 
@@ -295,5 +296,35 @@ describe("the dispatcher tool map", () => {
     // Control: a real tool IS wrapped, in the I11 envelope.
     const out = await merged["fs_read"]?.execute?.({}, undefined);
     expect(out).toBe('<tool_output service="fs" tool="fs_read">"contents"</tool_output>');
+  });
+});
+
+describe("the filesystem MCP's first spawn waits on the boot data-directory revoke", () => {
+  // On Windows the filesystem MCP is the one spawn still granted `dataDir`, and the boot-time
+  // revoke of stale per-SID ACEs rewrites that same DACL with an unlocked read-modify-write. The
+  // filesystem server spawns on its first listing, which an early request can trigger while the
+  // revoke is still running, so that listing must wait for the revoke to settle.
+  test("listToolsForDispatcher does not list (spawn) the filesystem server until the gate settles", async () => {
+    const gate = Promise.withResolvers<void>();
+    mesh = new LazyConnectorMesh(makePaths(), createMockVault(), {
+      filesystemSpawnGate: gate.promise,
+    });
+    let fsListings = 0;
+    const fs = fakeClient({ fs_read: tool("file") });
+    internals(mesh).filesystem = {
+      ...fs,
+      listTools: () => {
+        fsListings += 1;
+        return fs.listTools();
+      },
+    };
+    const pending = mesh.listToolsForDispatcher();
+    for (let i = 0; i < 20; i++) await Promise.resolve();
+    await new Promise((r) => setTimeout(r, 10));
+    expect(fsListings).toBe(0);
+    gate.resolve();
+    const merged = await pending;
+    expect(fsListings).toBe(1);
+    expect(Object.keys(merged)).toContain("fs_read");
   });
 });

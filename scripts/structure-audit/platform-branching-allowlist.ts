@@ -214,6 +214,11 @@ export const PLATFORM_BRANCHING_ALLOWLIST: readonly PlatformFileEntry[] = [
     gate: "none",
     why: "per-OS extension paths",
   },
+  {
+    file: "packages/cli/src/commands/scaffold.ts",
+    gate: "none",
+    why: "per-OS binary name/path rendering in the generated README",
+  },
   { file: "packages/cli/src/commands/start.ts", gate: "none", why: "per-OS gateway launch" },
   {
     file: "packages/cli/src/lib/resolve-gateway-launch.ts",

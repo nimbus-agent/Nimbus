@@ -642,6 +642,16 @@ mod tests {
     }
 
     #[test]
+    fn allowlist_excludes_user_mcp_list_and_call() {
+        // I42: listing and calling an owner-registered user MCP server's tools is CLI-only.
+        // `connector.userMcpCall` runs an arbitrary owner-registered process's tool, so it is
+        // RCE-adjacent (I7); `connector.addMcp`, which registers that process, is absent too.
+        assert!(!is_method_allowed("connector.userMcpTools"));
+        assert!(!is_method_allowed("connector.userMcpCall"));
+        assert!(!is_method_allowed("connector.addMcp"));
+    }
+
+    #[test]
     fn allowlist_excludes_fleet_namespace() {
         // S2 overnight agent fleets (Task 9, I7). `fleet.runNow` spends the machine's resources
         // and `fleet.briefs`/`fleet.show` return synthesised answers over the private index —

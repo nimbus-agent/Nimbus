@@ -1,4 +1,5 @@
 import { isConnectorCodeExecutionToolId } from "../connectors/connector-code-execution-tool-ids.ts";
+import { isUserMcpToolKey } from "../connectors/user-mcp-store.ts";
 
 /**
  * Positive read-only tool allowlist for recipe replay (Phase 6 Slice 8c, spec §8.1).
@@ -22,6 +23,11 @@ import { isConnectorCodeExecutionToolId } from "../connectors/connector-code-exe
  * dropped. Those reads reach a `.cmd` wrapper's argv on Windows, where a share-supplied value
  * injects a command, so they must be unreplayable by explicit id, exactly as the federated gate
  * refuses them. Kept in step by `connector-code-execution-sync.test.ts`.
+ *
+ * A user-registered MCP server's tool key (`mcp_<id>_<tool>`) is EXCLUDED likewise (invariant I42):
+ * every call to one needs the LOCAL owner's approval, while replay runs tools with no consent at
+ * all, from a file a third party may have supplied — and the verbs of an owner-registered server
+ * mean whatever that server says they mean.
  */
 const READ_VERBS: ReadonlySet<string> = new Set([
   // spec §8.1 core
@@ -55,6 +61,8 @@ export function isReadOnlyToolId(toolId: string): boolean {
   if (typeof toolId !== "string") return false;
   // A code-execution tool id is never replayable, whatever read verb its name happens to end in.
   if (isConnectorCodeExecutionToolId(toolId)) return false;
+  // I42: a user-MCP tool is never replayable — every call to one needs the local owner.
+  if (isUserMcpToolKey(toolId)) return false;
   const idx = toolId.lastIndexOf("_");
   if (idx <= 0 || idx === toolId.length - 1) return false; // no prefix, or trailing "_"
   return READ_VERBS.has(toolId.slice(idx + 1));

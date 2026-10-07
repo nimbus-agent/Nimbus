@@ -62,7 +62,7 @@ The non-negotiables in [Contributing](#contributing) follow from that question �
 
 - **local** — the SQLite index, the Vault, and the audit log all live on your machine. The cloud is a connector, not the source of truth. Telemetry is opt-in and off by default (`[telemetry] enabled = false`).
 - **consent-gated** — every destructive or outbound action is intercepted by a human-in-the-loop gate *before* it runs. It lives in the executor, not the prompt, so it cannot be jailbroken away.
-- **MCP** — Nimbus speaks the [Model Context Protocol](https://modelcontextprotocol.io/) in both directions. As an **MCP client** it drives every connector as an MCP server, and hosts any third-party server you register with `nimbus connector add --mcp`. As an **MCP server**, it exposes your local index *and* its built-in agents to any MCP client through 21 read-only tools — 9 index tools plus 12 agent tools (`explainWhy`, `findExpert`, `assessImpact`, `getCatchup`, …). Install it with `npx -y @nimbus-dev/mcp`, or run `nimbus mcp-server --stdio` directly from a checkout. The engine never calls a cloud API directly.
+- **MCP** — Nimbus speaks the [Model Context Protocol](https://modelcontextprotocol.io/) in both directions. As an **MCP client** it drives every connector as an MCP server, and hosts any third-party server you register with `nimbus connector add --mcp` — it runs sandboxed in its own working directory with only the read paths and hosts you approved (on Windows a network grant is all-or-nothing: approving any host opens the whole network to that server, and the approval prompt says so), and every tool call asks your approval first (model access for such servers is not shipped yet). As an **MCP server**, it exposes your local index *and* its built-in agents to any MCP client through 21 read-only tools — 9 index tools plus 12 agent tools (`explainWhy`, `findExpert`, `assessImpact`, `getCatchup`, …). Install it with `npx -y @nimbus-dev/mcp`, or run `nimbus mcp-server --stdio` directly from a checkout. The engine never calls a cloud API directly.
 
 ---
 
@@ -189,7 +189,7 @@ Nimbus maintains a local SQLite metadata index. Searching across 50,000 indexed 
 - **The HITL consent gate** is implemented in the executor, not the prompt. A model that generates a plan to skip confirmation produces a plan that simply does not execute.
 - **Extensions** run in sandboxed child processes. They receive only credentials for their declared service and cannot enumerate Vault keys or access other connectors.
 - **Prompt injection** is mitigated by injecting file content and API responses as typed `<tool_output>` data blocks, never as instructions.
-- **Every authorized outbound action is ledgered.** An append-only, BLAKE3-chained egress ledger records what left the machine, and `nimbus prove` reports it. The structural rules behind all of this are enumerated in [`SECURITY-INVARIANTS.md`](./SECURITY-INVARIANTS.md); each of the forty LIVE invariants — `I1`–`I27` and `I29`–`I41` — has a production wiring site *and* an enforcement test. `I28` is a reserved number with neither.
+- **Every authorized outbound action is ledgered.** An append-only, BLAKE3-chained egress ledger records what left the machine, and `nimbus prove` reports it. The structural rules behind all of this are enumerated in [`SECURITY-INVARIANTS.md`](./SECURITY-INVARIANTS.md); each of the forty-one LIVE invariants — `I1`–`I27` and `I29`–`I42` — has a production wiring site *and* an enforcement test. `I28` is a reserved number with neither.
 
 ### True Cross-Platform
 
@@ -794,7 +794,7 @@ The complete command reference — every subcommand, flag, exit code, and the fu
 - **Extension isolation** — third-party extensions run as sandboxed child processes (bwrap + seccomp on Linux, `sandbox-exec` on macOS, AppContainer on Windows), receive only their declared service's credentials, and cannot reach the Vault or other connectors. Publisher manifests are Ed25519-verified at install and on every Gateway startup.
 - **Full audit log** — every action, including every HITL decision, is recorded in a local BLAKE3-chained SQLite table before the action executes; `nimbus audit verify` proves the chain.
 - **Egress ledger** — every authorized outbound action is appended to an append-only, BLAKE3-chained ledger before dispatch, and a failed append aborts the action. `nimbus prove` reports what left the machine.
-- **Forty enumerated invariants** — `I1`–`I27` and `I29`–`I41`, each with a production wiring site, a section in [`SECURITY-INVARIANTS.md`](./SECURITY-INVARIANTS.md), and an enforcement test. `I28` is a reserved number, deliberately skipped: it has no wiring, no section and no test, so it is not one of the forty. A static audit runs before the test suite; the runtime tests stay authoritative.
+- **Forty-one enumerated invariants** — `I1`–`I27` and `I29`–`I42`, each with a production wiring site, a section in [`SECURITY-INVARIANTS.md`](./SECURITY-INVARIANTS.md), and an enforcement test. `I28` is a reserved number, deliberately skipped: it has no wiring, no section and no test, so it is not one of the forty-one. A static audit runs before the test suite; the runtime tests stay authoritative.
 - **Internal security audit (B1, 2026-04-25)** — 8 trust surfaces reviewed; 78 unique findings filed (0 Critical); all High and Medium items closed pre-`v0.1.0`. One Low item (`S6-F1`) closed in `v0.1.0`, and the two Tauri-specific Low items (`S4-F6`, `S4-F8`) are deferred to Phase 13 (`desktop-v0.1.0`); see [SECURITY.md](./SECURITY.md#security-audits) for the full record. A formal third-party penetration test is scheduled for Phase 12.
 
 > **Note:** Nimbus's guarantees hold at the process boundary. It is not a firewall, antivirus, or VPN application; endpoint protection (AV/EDR), network security (VPN/Firewall), and OS-level hardening are your responsibility. See [SECURITY.md](./SECURITY.md) for the full boundary definition.
@@ -818,15 +818,15 @@ bunx create-nimbus-connector --spec ./my-service.spec.json --standalone
 cd my-service && bun run typecheck && bun test
 ```
 
-**Writing a generic extension** — anything that is not a connector. `nimbus scaffold extension`
-emits a four-file shell for that case; it does not produce a connector, and a package it
-generates is invisible to the connector gates because it has no `src/server.ts`.
+**Writing your own MCP server** — anything that is not a first-party connector. `nimbus scaffold mcp`
+emits a real, tested MCP server (one `echo` tool) that you compile and register; it does not
+produce a first-party connector. `nimbus scaffold extension` is kept as an alias.
 
 ```bash
-nimbus scaffold extension my-extension   # always created at ./my-extension/ in the cwd
-cd my-extension                          # the scaffold does NOT change your working directory
-nimbus extension install .               # Test locally
-npm publish --access public              # Publish to the community
+nimbus scaffold mcp my_server               # always created at ./my_server/ in the cwd
+cd my_server && bun test && bun run build   # the scaffold does NOT change your working directory
+nimbus connector add --mcp mcp_my_server -- "$PWD/dist/my_server"
+nimbus connector call mcp_my_server echo --input '{"text":"hi"}'   # asks your approval
 ```
 
 The Gateway handles OAuth, credential storage, sync scheduling, and HITL enforcement either way.
@@ -904,7 +904,7 @@ nimbus/
 │   ├── README.md             # this file — the repository landing page
 │   ├── architecture.md       # subsystem design, IPC catalogue, schema reference
 │   ├── SECURITY.md           # security model + vulnerability reporting
-│   ├── SECURITY-INVARIANTS.md# I1–I41 rationale + anti-patterns
+│   ├── SECURITY-INVARIANTS.md# I1–I42 rationale + anti-patterns
 │   ├── roadmap.md            # acceptance-criteria-driven roadmap
 │   ├── CHANGELOG.md          # dated delivery log (canonical)
 │   ├── cli-reference.md      # full CLI + nimbus.toml reference

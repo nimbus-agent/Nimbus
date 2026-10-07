@@ -172,6 +172,7 @@ describe("local auth over a real gateway", () => {
         : join(tmp, "gw.sock"),
     extensionsDir: join(tmp, "extensions"),
     tempDir: join(tmp, "tmp"),
+    sandboxDir: join(tmp, "sandbox"),
   };
   let proc: ReturnType<typeof Bun.spawn> | undefined;
   let gatewayLog = "";

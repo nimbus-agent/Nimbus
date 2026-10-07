@@ -23,6 +23,7 @@ function baseParams(
       socketPath: "/s",
       extensionsDir: "/e",
       tempDir: "/t",
+      sandboxDir: "/sandbox",
     },
     consentCoordinator: {
       requestConsent: async () => false,

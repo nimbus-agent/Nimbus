@@ -805,6 +805,7 @@ function scriptedPaths(label: string, demo: boolean): CliPlatformPaths {
     socketPath: `paths-socket-${label}`,
     extensionsDir: `extensions-${label}`,
     tempDir: `temp-${label}`,
+    sandboxDir: `sandbox-${label}`,
   };
   return demo ? { ...paths, demo: true } : paths;
 }

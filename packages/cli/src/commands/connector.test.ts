@@ -954,7 +954,7 @@ describe("runConnector add", () => {
 
   it("rejects bare 'add' without --mcp", async () => {
     await expect(runConnector(["add"])).rejects.toThrow(
-      "Usage: nimbus connector add --mcp <mcp_id> <command...>",
+      /Usage: nimbus connector add --mcp <mcp_id> \[--read/,
     );
   });
 
@@ -971,7 +971,13 @@ describe("runConnector add", () => {
     await runConnector(["add", "--mcp", "mcp_test", "npx", "-y", "@some/mcp-server"]);
     expect(ipc.calls[0]).toEqual({
       method: "connector.addMcp",
-      params: { serviceId: "mcp_test", commandLine: "npx -y @some/mcp-server" },
+      params: {
+        serviceId: "mcp_test",
+        argv: ["npx", "-y", "@some/mcp-server"],
+        readPaths: [],
+        netHosts: [],
+        modelAccess: false,
+      },
     });
     expect(out.stdout).toContain("Registered user MCP connector: mcp_test");
   });
@@ -1833,7 +1839,10 @@ describe("runConnector add --mcp — the Gateway's HITL gate (F16)", () => {
     expect(calls.map((c) => c.method)).toEqual(["connector.addMcp", "consent.respond"]);
     expect(calls[0]?.params).toEqual({
       serviceId: "mcp_brave",
-      commandLine: "npx -y @some/mcp-server",
+      argv: ["npx", "-y", "@some/mcp-server"],
+      readPaths: [],
+      netHosts: [],
+      modelAccess: false,
     });
     expect(out.stdout).toContain("Registered user MCP connector: mcp_brave");
   });
@@ -2100,7 +2109,7 @@ describe("runConnector — remaining failure shapes", () => {
       ipcClient: { call: ipc.client.call, connect: () => {}, disconnect: () => {} },
     });
     await expect(runConnector(["add", "--mcp"])).rejects.toThrow(
-      /^Usage: nimbus connector add --mcp <mcp_id> <command\.\.\.>/,
+      /^Usage: nimbus connector add --mcp <mcp_id> \[--read/,
     );
     expect(ipc.calls).toEqual([]);
   });

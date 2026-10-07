@@ -16,6 +16,7 @@ function dpapiVaultTestPaths(root: string, socketPath: string): PlatformPaths {
     socketPath,
     extensionsDir: join(root, "ext"),
     tempDir: join(root, "tmp"),
+    sandboxDir: join(root, "sandbox"),
   };
 }
 
@@ -154,6 +155,7 @@ describe("DarwinKeychainVault (macOS)", () => {
         socketPath: join(root, "nimbus-gateway.sock"),
         extensionsDir: join(root, "ext"),
         tempDir: join(root, "tmp"),
+        sandboxDir: join(root, "sandbox"),
       };
       const { DarwinKeychainVault } = await import("./darwin.ts");
       const v = new DarwinKeychainVault(paths);

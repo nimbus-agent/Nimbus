@@ -15,6 +15,7 @@ const TRACKED_ENV_KEYS = [
   "NIMBUS_DEMO",
   "NIMBUS_GATEWAY_SOCKET",
   "TMPDIR",
+  "XDG_CACHE_HOME",
   "XDG_CONFIG_HOME",
   "XDG_DATA_HOME",
   "XDG_RUNTIME_DIR",
@@ -68,6 +69,7 @@ describe("createWindowsPaths", () => {
     expect(paths.socketPath).toBe(String.raw`\\.\pipe\nimbus-gateway`);
     expect(paths.extensionsDir).toBe(join(localAppData, "Nimbus", "extensions"));
     expect(paths.tempDir).toBe(join(tmpdir(), "nimbus"));
+    expect(paths.sandboxDir).toBe(join(localAppData, "Nimbus", "sandbox"));
   });
 
   it("throws PlatformInitError when APPDATA is missing", () => {
@@ -106,6 +108,7 @@ describe("createDarwinPaths", () => {
     expect(paths.logDir).toBe(join(expectedRoot, "logs"));
     expect(paths.extensionsDir).toBe(join(expectedRoot, "extensions"));
     expect(paths.tempDir).toBe(join(tmpdir(), "nimbus"));
+    expect(paths.sandboxDir).toBe(join(homedir(), "Library", "Caches", "Nimbus", "sandbox"));
   });
 
   it("uses TMPDIR for the socketPath base when set", () => {
@@ -143,6 +146,15 @@ describe("createLinuxPaths", () => {
     expect(paths.logDir).toBe(join("/var/test/data", "nimbus", "logs"));
     expect(paths.extensionsDir).toBe(join("/var/test/data", "nimbus", "extensions"));
     expect(paths.tempDir).toBe(join(tmpdir(), "nimbus"));
+    expect(paths.sandboxDir).toBe(join(homedir(), ".cache", "nimbus", "sandbox"));
+  });
+
+  it("sandboxDir honours XDG_CACHE_HOME and stays out of data/config", () => {
+    process.env["XDG_CACHE_HOME"] = "/var/test/cache";
+    const paths = createLinuxPaths();
+    expect(paths.sandboxDir).toBe(join("/var/test/cache", "nimbus", "sandbox"));
+    expect(paths.sandboxDir.startsWith(paths.dataDir)).toBe(false);
+    expect(paths.sandboxDir.startsWith(paths.configDir)).toBe(false);
   });
 
   it("falls back to ~/.config and ~/.local/share when XDG vars are unset", () => {

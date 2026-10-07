@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 
 import { redactAuditPayload } from "../audit/format-audit-payload.ts";
+import { USER_MCP_SERVICE_ID_PATTERN } from "../connectors/user-mcp-store.ts";
 import type { EgressSink } from "../egress/egress-ledger.ts";
 import { buildEgressEntry } from "../egress/egress-record.ts";
 import type { ConsentCoordinator } from "../ipc/consent.ts";
@@ -227,6 +228,15 @@ export const HITL_REQUIRED = Object.freeze({
   },
 }) as unknown as ReadonlySet<string>;
 
+/**
+ * I42: a user-registered MCP server runs arbitrary owner-approved code, and its tools are not
+ * enumerable ahead of time, so EVERY call to one needs the local owner's approval — derived from
+ * the action TYPE alone (I3), never configurable, joined by OR so it only ever tightens.
+ */
+export function isUserMcpActionType(actionType: string): boolean {
+  return USER_MCP_SERVICE_ID_PATTERN.test(serviceOf(actionType));
+}
+
 const SENSITIVE_PAYLOAD_KEY = /(token|key|secret|password|credential|bearer|auth)/i;
 
 export function redactPayloadForConsentDisplay(value: unknown): unknown {
@@ -330,7 +340,8 @@ export class ToolExecutor {
   private async tryDelegatedApproval(
     action: PlannedAction,
   ): Promise<"approved" | "rejected" | "fallback"> {
-    if (this.delegation === undefined) return "fallback";
+    // I42: a delegate never approves a user-MCP call — the LOCAL owner always answers it.
+    if (this.delegation === undefined || isUserMcpActionType(action.type)) return "fallback";
     const del = this.delegation;
     const service = serviceOf(action.type);
     const now = Date.now();
@@ -360,11 +371,16 @@ export class ToolExecutor {
   }
 
   async gate(action: PlannedAction): Promise<ActionResult | "proceed"> {
-    // I2 first, policy second, joined by OR — never by assignment, and never the other way round.
-    // The frozen set is the floor: `HITL_REQUIRED.has(...)` alone decides `true`, so an org policy
-    // is only ever consulted about action types the frozen set does NOT already cover. That is
-    // what makes I22's overlay tighten-only and keeps I2 non-configurable (see ExecutorPolicyDep).
-    const requiresHITL = HITL_REQUIRED.has(action.type) || this.requiredByPolicy(action.type);
+    // I2 first, the I42 user-MCP floor second, policy third, joined by OR — never by assignment,
+    // and never the other way round. The frozen set and the user-MCP rule are both floors: either
+    // alone decides `true`, so an org policy is only ever consulted about action types neither
+    // already covers. That is what makes I22's overlay tighten-only and keeps I2 and I42
+    // non-configurable (see ExecutorPolicyDep). I42 derives from `action.type` alone (I3): a user
+    // MCP server's tools are not enumerable in advance, so no frozen-set entry can name them.
+    const requiresHITL =
+      HITL_REQUIRED.has(action.type) ||
+      isUserMcpActionType(action.type) ||
+      this.requiredByPolicy(action.type);
 
     let hitlStatus: "approved" | "rejected" | "not_required";
     // Reason for the rejected path. Defaults to the user-declined message (the only other

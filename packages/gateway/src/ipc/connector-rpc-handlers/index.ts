@@ -1,8 +1,11 @@
 export { handleConnectorAuth } from "./auth.ts";
 export {
+  assertUserMcpSandboxClean,
   handleConnectorAddMcp,
   handleConnectorSetConfig,
   handleConnectorSetInterval,
+  requireAddMcpPlatform,
+  resolveConnectorAddMcp,
 } from "./config.ts";
 export type { ConnectorRpcHandlerContext } from "./context.ts";
 export {
@@ -16,3 +19,4 @@ export {
   handleConnectorListStatus,
   handleConnectorStatus,
 } from "./status.ts";
+export { handleConnectorUserMcpCall, handleConnectorUserMcpTools } from "./user-mcp.ts";

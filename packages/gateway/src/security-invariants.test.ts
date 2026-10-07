@@ -895,6 +895,17 @@ describe("I15 — SandboxRunner is intrinsic to every extension spawn", () => {
     expect(src).toMatch(/runner\.spawn\s*\(/);
   });
 
+  test("no sandboxed spawn runs in the data or config directory", async () => {
+    for (const rel of ["platform/assemble.ts", "connectors/lazy-mesh/mesh.ts"]) {
+      const src = await read(`packages/gateway/src/${rel}`);
+      expect(src).not.toMatch(/sandboxCwd:\s*paths\.dataDir/);
+      expect(src).not.toMatch(/\bcwd:\s*paths\.(dataDir|configDir)/);
+      expect(src).toMatch(/sandboxCwd:\s*paths\.sandboxDir/);
+    }
+    const wrap = await read("packages/gateway/src/connectors/lazy-mesh/wrap-server-spec.ts");
+    expect(wrap).toMatch(/sandboxCwdFor\(/);
+  });
+
   test("wrap-server-spec.ts exports wrapServerSpec", async () => {
     const src = await read("packages/gateway/src/connectors/lazy-mesh/wrap-server-spec.ts");
     expect(src).toMatch(/export function wrapServerSpec\b/);
@@ -1891,8 +1902,10 @@ code_execution=true
     // assignment would each turn a tighten-only ratchet into something a policy can loosen, which
     // is precisely what I2 says must be impossible.
     const src = await read("packages/gateway/src/engine/executor.ts");
-    expect(src).toContain(
-      "const requiresHITL = HITL_REQUIRED.has(action.type) || this.requiredByPolicy(action.type);",
+    // I42's user-MCP floor sits between the two operands (also an OR), so the policy overlay is
+    // still the LAST disjunct and never the only one.
+    expect(src).toMatch(
+      /const requiresHITL =\s*HITL_REQUIRED\.has\(action\.type\)\s*\|\|\s*isUserMcpActionType\(action\.type\)\s*\|\|\s*this\.requiredByPolicy\(action\.type\);/,
     );
   });
 
@@ -5157,5 +5170,118 @@ describe("I41 — a demo-rooted process never reaches the real install", () => {
       const at = body.indexOf(construction);
       expect(at).toBeGreaterThan(guardAt);
     }
+  });
+});
+
+describe("I42 — every user-MCP tool call needs the local owner's approval", () => {
+  test("gate() ORs the user-MCP floor with I2, after the frozen set and before the policy overlay", async () => {
+    // OR, never assignment, and derived from `action.type` (I3) — so it only ever tightens and
+    // a payload field cannot opt a call out.
+    const src = await read("packages/gateway/src/engine/executor.ts");
+    expect(src).toMatch(
+      /HITL_REQUIRED\.has\(action\.type\)\s*\|\|\s*isUserMcpActionType\(action\.type\)/,
+    );
+    expect(src).toMatch(
+      /const requiresHITL =\s*HITL_REQUIRED\.has\(action\.type\)\s*\|\|\s*isUserMcpActionType\(action\.type\)\s*\|\|\s*this\.requiredByPolicy\(action\.type\);/,
+    );
+    expect(src).not.toMatch(/isUserMcpActionType\(\s*action\.payload/);
+  });
+
+  test('tryDelegatedApproval returns "fallback" for a user-MCP type before consulting any delegate (I20 not consulted)', async () => {
+    const src = await read("packages/gateway/src/engine/executor.ts");
+    const fnAt = src.indexOf("private async tryDelegatedApproval(");
+    expect(fnAt).toBeGreaterThan(-1);
+    const fnEnd = src.indexOf("\n  }\n", fnAt);
+    expect(fnEnd).toBeGreaterThan(fnAt);
+    const body = src.slice(fnAt, fnEnd);
+    expect(body).toMatch(
+      /if \(this\.delegation === undefined \|\| isUserMcpActionType\(action\.type\)\) return "fallback";/,
+    );
+    // ORDER: the early return precedes the first store lookup.
+    expect(body.indexOf("isUserMcpActionType(action.type)")).toBeLessThan(
+      body.indexOf("activeDelegateePeer("),
+    );
+  });
+
+  test("behavioural: a DENYING owner blocks a user-MCP call that no frozen-set entry or policy names", async () => {
+    const { HITL_REQUIRED, NO_POLICY_OVERLAY, ToolExecutor, isUserMcpActionType } = await import(
+      "./engine/executor.ts"
+    );
+    const type = "mcp_x.y";
+    expect(isUserMcpActionType(type)).toBe(true);
+    // Precondition: neither I2 nor a policy is what gates it here.
+    expect(HITL_REQUIRED.has(type)).toBe(false);
+    let prompts = 0;
+    let dispatches = 0;
+    const exec = new ToolExecutor(
+      {
+        requestApproval: async () => {
+          prompts += 1;
+          return false;
+        },
+      },
+      { recordAudit: () => {} },
+      {
+        dispatch: async () => {
+          dispatches += 1;
+          return {};
+        },
+      },
+      undefined,
+      NULL_EGRESS_SINK,
+      NO_POLICY_OVERLAY,
+    );
+    const res = await exec.execute({ type, payload: {} });
+    expect(res.status).toBe("rejected");
+    expect(prompts).toBe(1);
+    expect(dispatches).toBe(0);
+  });
+
+  test("share replay never runs a user-MCP tool: the classifier refuses it, and the runner refuses it again", async () => {
+    // Replay runs tools with NO consent, from a share file a third party may have supplied, so a
+    // user-MCP key must never classify read-only whatever verb it ends in.
+    const { isReadOnlyToolId } = await import("./share/read-tool-registry.ts");
+    for (const id of ["mcp_notes_search", "mcp_x_get", "mcp_a_b_list", "mcp_x_read"]) {
+      expect(isReadOnlyToolId(id)).toBe(false);
+    }
+    const reg = await read("packages/gateway/src/share/read-tool-registry.ts");
+    expect(reg).toMatch(/if \(isUserMcpToolKey\(toolId\)\) return false;/);
+    // Second layer: the replay runner treats a user-MCP key as absent before it looks the tool up.
+    const rpc = await read("packages/gateway/src/ipc/share-rpc.ts");
+    const fnAt = rpc.indexOf("async function runReplayTool(");
+    expect(fnAt).toBeGreaterThan(-1);
+    const body = rpc.slice(fnAt, rpc.indexOf("\n}\n", fnAt));
+    const guardAt = body.indexOf("if (isUserMcpToolKey(toolId))");
+    expect(guardAt).toBeGreaterThan(-1);
+    expect(guardAt).toBeLessThan(body.indexOf("tools[toolId]"));
+  });
+
+  test("the dispatcher refuses a user-MCP key under any action type but its own (gate stays type-only, I3)", async () => {
+    const { createConnectorDispatcher } = await import("./connectors/registry.ts");
+    const ran: string[] = [];
+    const d = createConnectorDispatcher({
+      listTools: async () => ({
+        mcp_x_echo: {
+          execute: async () => {
+            ran.push("mcp_x_echo");
+            return {};
+          },
+        },
+      }),
+    });
+    // An action of a first-party HITL type (delegable under I20) smuggling a user-MCP key.
+    await expect(
+      d.dispatch({ type: "github.pr_list", payload: { mcpToolId: "mcp_x_echo" } }),
+    ).rejects.toThrow(/ERR_USER_MCP_ACTION_MISMATCH/);
+    expect(ran).toEqual([]);
+    await d.dispatch({ type: "mcp_x.echo", payload: { mcpToolId: "mcp_x_echo" } });
+    expect(ran).toEqual(["mcp_x_echo"]);
+    // Source pin: the check runs on the RESOLVED key, before the tool executes.
+    const src = await read("packages/gateway/src/connectors/registry.ts");
+    const dispatchAt = src.indexOf("async dispatch(action: PlannedAction)");
+    expect(dispatchAt).toBeGreaterThan(-1);
+    const assertAt = src.indexOf("assertUserMcpKeyMatchesActionType(", dispatchAt);
+    expect(assertAt).toBeGreaterThan(dispatchAt);
+    expect(assertAt).toBeLessThan(src.indexOf("execute(input, {})", dispatchAt));
   });
 });

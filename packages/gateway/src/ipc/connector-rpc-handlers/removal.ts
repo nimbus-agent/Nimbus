@@ -16,7 +16,10 @@ import {
   getPendingRemoveIntents,
   writeRemoveIntent,
 } from "../../connectors/remove-intent.ts";
-import { deleteUserMcpConnector } from "../../connectors/user-mcp-store.ts";
+import {
+  deleteUserMcpConnector,
+  USER_MCP_SERVICE_ID_PATTERN,
+} from "../../connectors/user-mcp-store.ts";
 import type { LocalIndex } from "../../index/local-index.ts";
 import type { SyncScheduler } from "../../sync/scheduler.ts";
 import type { NimbusVault } from "../../vault/nimbus-vault.ts";
@@ -121,6 +124,10 @@ export async function handleConnectorRemove(
 
   unregisterConnectorFromSyncScheduler(syncScheduler, id);
   deleteUserMcpConnector(db, id);
+  if (ctx.connectorMesh !== undefined && USER_MCP_SERVICE_ID_PATTERN.test(id)) {
+    // Stops the child and deletes its sandbox leaf; never throws (a locked leaf is logged).
+    await ctx.connectorMesh.removeUserMcpSandbox(id);
+  }
   const itemsDeleted = removeConnectorIndexEntries(localIndex, id);
 
   let vaultKeys: string[] = [];

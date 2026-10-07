@@ -26,6 +26,8 @@
 // THIS file's own mock, which is re-installed at this file's load and so cannot be outraced.
 import { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 import { GOOGLE_OAUTH_PARSE_ERRORS } from "../../../../src/auth/google-oauth-parse-errors.ts";
 import { Config } from "../../../../src/config.ts";
@@ -323,6 +325,7 @@ function makeCtx(opts?: {
   const warnings: MeshWarning[] = [];
   const ctx: MeshSpawnContext = {
     vault,
+    sandboxCwd: join(tmpdir(), "nimbus-spawns-test-sandbox"),
     obsidianVaultPaths: opts?.obsidianVaultPaths,
     ...(opts?.healthDb === undefined ? {} : { healthDb: opts.healthDb }),
     logger: {

@@ -24,6 +24,7 @@ function makePaths(dir: string): PlatformPaths {
     socketPath: join(dir, "gw.sock"),
     extensionsDir: join(dir, "ext"),
     tempDir: dir,
+    sandboxDir: `${dir}-sandbox`,
   };
 }
 

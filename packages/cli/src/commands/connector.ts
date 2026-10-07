@@ -15,7 +15,9 @@ import { BATCH_RPC_TIMEOUT_MS, INTERACTIVE_RPC_TIMEOUT_MS } from "../lib/rpc-tim
 import { stripTrailingSlashes } from "../lib/strip-trailing-slashes.ts";
 import { withGatewayIpc } from "../lib/with-gateway-ipc.ts";
 import { getCliPlatformPaths } from "../paths.ts";
+import { ADD_MCP_USAGE } from "./connector-add-mcp-args.ts";
 import { runConnectorDetect } from "./connector-detect.ts";
+import { runConnectorAddMcp, runConnectorCall, runConnectorTools } from "./connector-user-mcp.ts";
 
 type SyncStatus = {
   serviceId: string;
@@ -1153,18 +1155,6 @@ The browser sign-in may still have completed — the gateway finishes the flow `
   }
 }
 
-async function runConnectorAddMcp(tail: string[]): Promise<void> {
-  const id = tail[0]?.trim() ?? "";
-  const commandLine = tail.slice(1).join(" ").trim();
-  if (id === "" || commandLine === "") {
-    throw new Error(
-      "Usage: nimbus connector add --mcp <mcp_id> <command...>\nExample: nimbus connector add --mcp mcp_brave npx -y @some/mcp-server",
-    );
-  }
-  await withIpc((c) => c.call("connector.addMcp", { serviceId: id, commandLine }));
-  console.log(`Registered user MCP connector: ${id}`);
-}
-
 const REMOVE_YES_FLAGS: ReadonlySet<string> = new Set(["--yes", "-y"]);
 
 type ConnectorRemoveResult = {
@@ -1320,8 +1310,14 @@ export async function runConnector(args: string[]): Promise<void> {
         await runConnectorAddMcp(tail.slice(1));
         return;
       }
-      throw new Error("Usage: nimbus connector add --mcp <mcp_id> <command...>");
+      throw new Error(ADD_MCP_USAGE);
     }
+    case "tools":
+      await runConnectorTools(tail);
+      return;
+    case "call":
+      await runConnectorCall(tail);
+      return;
     case "list":
       await runConnectorList({ json: tail.includes("--json") });
       return;
@@ -1356,7 +1352,12 @@ function printConnectorHelp(): void {
 Usage:
   nimbus connector auth <service> [--port <n>] [--scopes a,b] [--token <pat>] [--api-base <url>] [--help]
   nimbus connector detect [--json] [--source gh|aws|kubectl|gcloud] [--replace] [--project <id>]   Reuse gh/aws/kubectl/gcloud logins you already have
-  nimbus connector add --mcp <mcp_id> <command...>   Register a user MCP server (id must be mcp_*)
+  nimbus connector add --mcp <mcp_id> [--read <path>]... [--net <host[:port]>]... [--model] -- <command> [args...]
+      Register a user MCP server (id must be mcp_*). --read/--net grant filesystem/network access;
+      --model: offer this server's tools to the model; takes effect in a later release.
+      Example: nimbus connector add --mcp mcp_echo -- /abs/path/echo/dist/echo
+  nimbus connector tools <mcp_id> [--json]                         List a user MCP server's tools
+  nimbus connector call <mcp_id> <tool> [--input <json>] [--json]   Call one (asks for approval)
   nimbus connector list [--json]
   nimbus connector history <service> [--limit N]
   nimbus connector status <service> [--stats]
