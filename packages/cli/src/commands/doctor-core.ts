@@ -694,7 +694,12 @@ export function doctorPrintVectorSearchFromSnapshot(snap: { vectorSearch?: unkno
   const rec = vec as Record<string, unknown>;
   const sqliteDetail = detailField(rec, "sqliteRuntimeDetail");
   if (rec["loaded"] === true) {
-    console.log("[ok] Vector search: sqlite-vec loaded.");
+    // On macOS the extension loads only into a full SQLite the PAL installed, and that library can
+    // come from more than one place (the bundled copy beside the binary, NIMBUS_SQLITE_PATH, or a
+    // Homebrew install). Say WHICH, so a green line can be traced to the library that earned it.
+    // Only for `installed`: every other state's detail explains a problem, not a source.
+    const source = rec["sqliteRuntimeState"] === "installed" ? sqliteDetail : null;
+    console.log(`[ok] Vector search: sqlite-vec loaded${parenSuffix(source)}.`);
     return 0;
   }
   // The upstream package's message names the failure; the PAL's detail names the CAUSE and the

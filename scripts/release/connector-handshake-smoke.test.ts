@@ -4,6 +4,7 @@ import { dirname, join } from "node:path";
 
 import {
   DUMMY_ENV,
+  EXPECTED_SERVER_NAME,
   explainNoAnswer,
   findResponse,
   judgeInitialize,
@@ -51,6 +52,19 @@ describe("judgeInitialize", () => {
       ok: true,
       detail: "nimbus-github",
     });
+  });
+
+  test("FAILS a server that answers under a different name than the id must map to", () => {
+    const v = judgeInitialize(
+      { id: 1, result: { serverInfo: { name: "nimbus-gitlab" } } },
+      "nimbus-github",
+    );
+    expect(v.ok).toBe(false);
+    expect(judgeInitialize({ id: 1, result: { serverInfo: {} } }, "nimbus-github").ok).toBe(false);
+    expect(
+      judgeInitialize({ id: 1, result: { serverInfo: { name: "nimbus-github" } } }, "nimbus-github")
+        .ok,
+    ).toBe(true);
   });
 
   test("fails an error response and a result without serverInfo", () => {
@@ -116,6 +130,18 @@ describe("main", () => {
     for (const name of Object.keys(DUMMY_ENV["github"] ?? {})) {
       expect(src).toContain(`requireProcessEnv("${name}")`);
     }
+  });
+
+  test("the expected github server name is the one the INSTALLED connector package declares", () => {
+    const pkgJson = Bun.resolveSync(
+      "@nimbus-dev/connectors/package.json",
+      join(import.meta.dir, "..", "..", "packages", "gateway"),
+    );
+    const src = readFileSync(
+      join(dirname(pkgJson), "connectors", "github", "src", "server.ts"),
+      "utf8",
+    );
+    expect(src).toContain(`name: "${EXPECTED_SERVER_NAME["github"] ?? "?"}"`);
   });
 
   test("usage errors exit 2 without spawning anything", async () => {

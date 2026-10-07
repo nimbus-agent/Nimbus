@@ -119,7 +119,7 @@ other sockets.
 ## Track 0 — Shipped but dark
 
 The ecosystem's first job is not to add surfaces. It is to connect the ones that already exist.
-Every row below was verified against the tree on 2026-08-02.
+Every row below was verified against the tree on 2026-08-02; the Extension system, Desktop app, Admin console and Voice rows were re-verified and updated on 2026-10-07.
 
 | Capability | State | Evidence |
 |---|---|---|

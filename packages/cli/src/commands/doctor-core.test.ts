@@ -1,5 +1,5 @@
 import { afterAll, afterEach, beforeEach, describe, expect, it } from "bun:test";
-import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { platform, tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -175,6 +175,33 @@ describe("doctorPrintVectorSearchFromSnapshot", () => {
       }),
     ).toBe(0);
     expect(out.stdout).toContain("[ok] Vector search: sqlite-vec loaded.");
+  });
+
+  it("names WHICH full SQLite earned the [ok] when the PAL installed one (macOS)", () => {
+    expect(
+      doctorPrintVectorSearchFromSnapshot({
+        vectorSearch: {
+          loaded: true,
+          sqliteRuntimeState: "installed",
+          sqliteRuntimeDetail: "using full SQLite at /Users/x/.local/bin/libsqlite3.dylib",
+        },
+      }),
+    ).toBe(0);
+    expect(out.stdout).toContain(
+      "[ok] Vector search: sqlite-vec loaded (using full SQLite at /Users/x/.local/bin/libsqlite3.dylib).",
+    );
+  });
+
+  it("does not attach a non-`installed` state's detail to the [ok] line", () => {
+    doctorPrintVectorSearchFromSnapshot({
+      vectorSearch: {
+        loaded: true,
+        sqliteRuntimeState: "not-applicable",
+        sqliteRuntimeDetail: "not macOS; Bun's own SQLite is used",
+      },
+    });
+    expect(out.stdout).toContain("[ok] Vector search: sqlite-vec loaded.\n");
+    expect(out.stdout).not.toContain("not macOS");
   });
 
   it("returns 2 and FAILS when vec is not loaded, naming both the error and the cause", () => {
@@ -673,6 +700,11 @@ describe("runDoctor — no voice section", () => {
 
   afterEach(() => {
     process.exitCode = 0;
+    try {
+      rmSync(voiceRoot, { recursive: true, force: true });
+    } catch {
+      // best-effort temp cleanup; a lingering handle on Windows must not fail the suite
+    }
     if (origExitCode !== undefined) process.exitCode = origExitCode;
   });
 

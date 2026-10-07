@@ -6,9 +6,14 @@
  *
  * This is stricter than `scripts/connector-boot-smoke.ts` on purpose. That script boots EVERY
  * connector and accepts a `<VAR> is not set` credential refusal as a pass, because most connectors
- * cannot start without a credential the CI runner does not have. Here the connector is chosen
- * because a dummy credential is enough for it to list its tools, so a refusal means the dummy env
- * never reached it — or the env var it reads was renamed — and that is a FAILURE, not a variant.
+ * cannot start without a credential the CI runner does not have. Here a refusal, a crash, an empty
+ * tool list, or a server whose `serverInfo.name` is not the one this connector id must map to
+ * (a wrong `__nimbus-connector` registry entry) is a FAILURE.
+ *
+ * What it does NOT prove, stated plainly: github reads `GITHUB_PAT` lazily, per tool CALL, so
+ * `tools/list` succeeds with or without the dummy credential below — the env has no effect on this
+ * check. A renamed variable is caught only by the unit test that reads the connector package's
+ * source, not by running this script.
  *
  * Usage: bun scripts/release/connector-handshake-smoke.ts <path-to-nimbus-gateway> [connector-id]
  * Exit 0 when the connector listed at least one tool, 1 on any failure, 2 on a usage error.
@@ -16,13 +21,23 @@
 
 /**
  * Dummy credentials per connector. The value is never sent anywhere: `tools/list` makes no
- * outbound request, and a connector reads its token lazily, per tool CALL.
+ * outbound request. Supplied so a connector that DID read its token at startup would still list
+ * its tools; for github it is inert (see the header).
  *
  * `GITHUB_PAT` is the name `@nimbus-dev/connectors`' own `connectors/github/src/tools.ts` reads
  * (`requireProcessEnv("GITHUB_PAT")`), not merely the name the gateway's spawn table injects.
  */
 export const DUMMY_ENV: Readonly<Record<string, Readonly<Record<string, string>>>> = {
   github: { GITHUB_PAT: "install-smoke-dummy-token" },
+};
+
+/**
+ * The `serverInfo.name` each connector id must answer with — `new McpServer({ name: … })` in the
+ * connector package's `connectors/<id>/src/server.ts` (pinned against that source by a unit test).
+ * Without it, a registry that mapped `github` to some other connector's entrypoint would pass.
+ */
+export const EXPECTED_SERVER_NAME: Readonly<Record<string, string>> = {
+  github: "nimbus-github",
 };
 
 /** A healthy connector answers in ~110 ms; this bounds a hang, not the run. */
@@ -83,8 +98,11 @@ function errorText(msg: JsonRpcMessage): string {
   return JSON.stringify(err);
 }
 
-/** Judge the `initialize` response: a result carrying `serverInfo`, never an error. */
-export function judgeInitialize(msg: JsonRpcMessage): Verdict {
+/**
+ * Judge the `initialize` response: a result carrying `serverInfo`, never an error — and, when
+ * `expectedName` is given, a `serverInfo.name` equal to it.
+ */
+export function judgeInitialize(msg: JsonRpcMessage, expectedName?: string): Verdict {
   if ("error" in msg) return { ok: false, why: `initialize returned an error: ${errorText(msg)}` };
   const result = msg["result"];
   if (result === null || typeof result !== "object") {
@@ -95,6 +113,12 @@ export function judgeInitialize(msg: JsonRpcMessage): Verdict {
     return { ok: false, why: "initialize result carries no serverInfo" };
   }
   const name = (info as Record<string, unknown>)["name"];
+  if (expectedName !== undefined && name !== expectedName) {
+    return {
+      ok: false,
+      why: `initialize answered as ${JSON.stringify(name)}, expected ${JSON.stringify(expectedName)} — the connector id maps to the wrong server`,
+    };
+  }
   return { ok: true, detail: typeof name === "string" ? name : "(unnamed server)" };
 }
 
@@ -209,7 +233,7 @@ async function run(binary: string, id: string): Promise<Verdict> {
     await proc.stdin.flush();
     const init = await awaitResponse(1);
     if (init === undefined) return await failAfterEof("initialize");
-    const initVerdict = judgeInitialize(init);
+    const initVerdict = judgeInitialize(init, EXPECTED_SERVER_NAME[id]);
     if (!initVerdict.ok) return initVerdict;
 
     proc.stdin.write(
@@ -235,8 +259,10 @@ export async function main(argv: readonly string[]): Promise<number> {
     );
     return 2;
   }
-  if (DUMMY_ENV[id] === undefined) {
-    console.error(`no dummy credential is defined for connector ${JSON.stringify(id)}`);
+  if (DUMMY_ENV[id] === undefined || EXPECTED_SERVER_NAME[id] === undefined) {
+    console.error(
+      `no dummy credential / expected server name is defined for connector ${JSON.stringify(id)}`,
+    );
     return 2;
   }
   let verdict: Verdict;

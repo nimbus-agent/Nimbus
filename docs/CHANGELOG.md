@@ -23,8 +23,11 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
   INSTALLED binaries on both the Unix and Windows legs, where it previously proved only that
   `init` indexed and `why` answered. (1) `nimbus doctor` reports `[ok] Vector search` — the local
   stage now carries the sqlite-vec sidecar (and, on macOS, `libsqlite3.dylib`) that every real
-  release ships beside the binaries, and the macOS leg drops the job-wide `NIMBUS_SQLITE_PATH` so
-  the installed copy is what loads. (2) With `NIMBUS_HTTP_PORT` exported before `nimbus init`,
+  release ships beside the binaries. On macOS that alone could pass on the runner's Homebrew SQLite
+  (the PAL's fallback after the bundled copy), so the leg drops the job-wide `NIMBUS_SQLITE_PATH`
+  and also requires the line to name the library: doctor's `[ok]` line now carries the PAL's
+  `using full SQLite at <path>` detail when it installed one, and the smoke requires that path to be
+  the `libsqlite3.dylib` beside the installed gateway. (2) With `NIMBUS_HTTP_PORT` exported before `nimbus init`,
   `GET /v1/openapi.json` answers 200 with an OpenAPI document. (3) `GET /admin` refuses without a
   bearer (401), then — after `nimbus vault set http_api.deployment_token`, its HITL prompt answered
   through the CLI's own `NIMBUS_SCRIPT_CONSENT_SOURCE` handler — returns 200 with the console's
@@ -32,16 +35,21 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
   `compile-gateway.ts` / release.yml building it before every compile), so no build change was
   needed; the `ecosystem-roadmap.md` Track 0 row claiming a 503 on every installed binary was stale
   and is corrected. (4) A new `scripts/release/connector-handshake-smoke.ts` runs
-  `nimbus-gateway __nimbus-connector github` with a dummy `GITHUB_PAT` (the name the connector
-  package's own `tools.ts` reads, pinned by a test) and fails unless `initialize` → `tools/list`
-  returns a non-empty tool list — unlike `test:connector-boot`, a `<VAR> is not set` refusal FAILS
-  here. Docs subtraction: **voice** is dark (nothing constructs a `VoiceService`; every `voice.*`
-  method is `Method not found`), so the docs-site Voice page and its sidebar link, the README
-  prerequisite rows, the cli-reference and troubleshooting voice lines, and **`nimbus doctor`'s voice
-  section** are removed — `[persona] voice` and `nimbus media understand`'s local `whisper-cli`
+  `nimbus-gateway __nimbus-connector github` and fails unless `initialize` answers as
+  `nimbus-github` (so a wrong registry mapping cannot pass) and `tools/list` returns a non-empty tool
+  list; unlike `test:connector-boot`, a `<VAR> is not set` refusal FAILS here. It sets a dummy
+  `GITHUB_PAT`, but github reads that lazily per tool call, so the variable has no effect on
+  `tools/list` — a renamed variable is caught only by the unit test that reads the connector
+  package's source. Docs subtraction: **voice** is dark (nothing constructs a `VoiceService`; every `voice.*`
+  method is `Method not found`), so the docs-site Voice page and its sidebar link, the voice text in the
+  docs-site architecture diagram (`architecture-{light,dark}.svg`), the README prerequisite rows, the
+  cli-reference and troubleshooting voice lines, and **`nimbus doctor`'s voice section** are removed — `[persona] voice` and `nimbus media understand`'s local `whisper-cli`
   transcription are untouched. **Extensions** install, verify and list but never execute, and the
-  README and `nimbus extension install` reference now say so. **No desktop app** has been released
-  (FAQ, cli-reference). **No OS notifications** are delivered, so the README's per-OS notification
+  README, the `nimbus extension install` reference and the extension-author walkthrough now say so.
+  **No desktop app** has been released: the docs-site FAQ, `first-run-setup`,
+  `connect-your-first-service`, `connectors`, `troubleshooting`, `hitl-and-safety`, `profiles` and
+  `watchers` pages now say so and give the CLI path (`nimbus init`, `nimbus connector auth` /
+  `set-interval` / `remove`, the CLI consent prompt), as do the README and cli-reference. **No OS notifications** are delivered, so the README's per-OS notification
   row is gone. `audit:status-drift` now also checks the `nimbus-tauri-allowlist` skill's "Currently
   N entries" and `` `ALLOWED_METHODS.len() == N` `` against `gateway_bridge.rs`, and fails if either
   statement disappears. No migration, no invariant, no egress class. **CI-verified only:** the four

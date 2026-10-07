@@ -11,6 +11,11 @@ on:
       - ".github/workflows/release.yml"
       - "packages/gateway/src/**"
       - "packages/cli/src/**"
+      # The binary embeds the admin console (asserted by the /admin check) and is built from the
+      # gateway's manifest and the lockfile, so a change to any of them changes what is installed.
+      - "packages/admin-console/**"
+      - "packages/gateway/package.json"
+      - "bun.lock"
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -390,6 +395,20 @@ jobs:
           cat "$RUNNER_TEMP/doctor.log"
           grep -qF "[ok] Vector search" "$RUNNER_TEMP/doctor.log" || {
             echo "::error::nimbus doctor did not report '[ok] Vector search' — sqlite-vec is not loaded in the installed binary"; exit 1; }
+          # macOS: an [ok] alone is not enough. The PAL falls back to Homebrew's SQLite after the
+          # bundled copy, and this runner image HAS Homebrew SQLite, so the line would stay green
+          # with the bundled libsqlite3.dylib missing or broken. Doctor names the library that was
+          # installed ("using full SQLite at <path>"); require it to be the one beside the
+          # installed gateway. Both spellings, in case execPath resolves symlinks.
+          if [ "$(uname)" = "Darwin" ]; then
+            BIN_DIR="$HOME/.local/bin"
+            BIN_DIR_REAL="$(cd "$BIN_DIR" && pwd -P)"
+            if ! grep -qF "using full SQLite at $BIN_DIR/libsqlite3.dylib" "$RUNNER_TEMP/doctor.log" &&
+               ! grep -qF "using full SQLite at $BIN_DIR_REAL/libsqlite3.dylib" "$RUNNER_TEMP/doctor.log"; then
+              echo "::error::vector search did not load through the installed $BIN_DIR/libsqlite3.dylib — see the Vector search line above for the library that was used"
+              exit 1
+            fi
+          fi
 
           # The HTTP API answers, and serves its OpenAPI document from INSIDE the compiled binary
           # (an embedded asset, not a path relative to the source tree). Retried briefly: the

@@ -3842,7 +3842,7 @@ nimbus doctor
 - Index total item count (warns if zero — suggests connecting a service)
 - On-call push: when `[oncall.push] enabled = true`, warns if your identity is unresolved (no incident could ever be selected); otherwise reports it enabled
 - Per-connector health table
-- Vector search: whether `sqlite-vec` actually loaded on the gateway's connection, and if not, why
+- Vector search: whether `sqlite-vec` actually loaded on the gateway's connection, and if not, why. On macOS a passing line also names the full SQLite library it loaded through (`using full SQLite at <path>`), since that can be the bundled copy, `NIMBUS_SQLITE_PATH` or a Homebrew install
 
 **Exit codes:** `0` = all healthy, `1` = warnings, `2` = hard failures.
 

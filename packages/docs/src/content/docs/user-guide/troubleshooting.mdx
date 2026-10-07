@@ -147,9 +147,9 @@ Snapshots live in `<dataDir>/snapshots/` and pre-migration backups in `<dataDir>
 | Symptom | Likely cause | What to try |
 |---|---|---|
 | Gateway won't start | Port or socket already in use; stale lock file | Run `nimbus stop` to clear the stale state; check for another Nimbus process with `nimbus doctor` |
-| Connector shows `unauthenticated` | OAuth token expired or was revoked | Re-auth via Settings → Connectors → Connect, or `nimbus connector auth <service>` |
+| Connector shows `unauthenticated` | OAuth token expired or was revoked | Re-auth with `nimbus connector auth <service>` |
 | `nimbus ask` returns "no results" | Indexer hasn't completed initial sync | Run `nimbus connector list` to see sync state; wait for the first sync to finish or trigger one manually with `nimbus connector sync <service>` |
-| Tauri app banner "Gateway is not running" | Gateway process exited or was not started | Run `nimbus start` from a terminal; or click "Start Gateway" in the banner |
+| `Gateway is not running` | Gateway process exited or was not started | Run `nimbus start` from a terminal |
 | Slow queries accumulate | Large index without FTS5 vacuum; vec alignment drift | Run `nimbus diag slow-queries` to identify culprits; then `nimbus db verify` and `nimbus db repair --yes` if findings are reported |
 | `nimbus connector sync` hangs | Rate-limit or network timeout on the upstream API | Check `nimbus connector list` for `rate_limited` state; wait for backoff to expire; verify connectivity |
 
