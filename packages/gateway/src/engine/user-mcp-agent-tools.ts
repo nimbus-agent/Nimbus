@@ -14,6 +14,7 @@
  * passed as listed.
  */
 import type { ToolsInput } from "@mastra/core/agent";
+import { isStandardSchemaWithJSON, type StandardSchemaWithJSON } from "@mastra/core/schema";
 import { createTool } from "@mastra/core/tools";
 import { z } from "zod";
 
@@ -50,10 +51,17 @@ function describeFor(serviceId: string, serverDescription: string): string {
   return `${prefix}${serverDescription}`.slice(0, USER_MCP_DESCRIPTION_MAX);
 }
 
-/** A zod schema (v4 carries `_zod`; a v3 schema from another copy carries `_def`). */
-function looksLikeZodSchema(v: unknown): v is z.ZodType {
-  return typeof v === "object" && v !== null && ("_zod" in v || "_def" in v);
+/**
+ * The schema the model is shown. `@mastra/mcp` lists each tool's `inputSchema` as a
+ * StandardSchemaWithJSON wrapper (`convertInputSchema` over the server's JSON Schema — no `_zod`,
+ * no `_def`), so that shape is what is passed through. Anything else gets an open object rather
+ * than a guess, so the model still reaches the tool and the server validates.
+ */
+function offeredInputSchema(listed: unknown): StandardSchemaWithJSON | z.ZodType {
+  return isStandardSchemaWithJSON(listed) ? listed : z.looseObject({});
 }
+
+const NON_OBJECT_INPUT_REFUSAL = "input must be an object";
 
 function isPlainObject(v: unknown): v is Record<string, unknown> {
   return typeof v === "object" && v !== null && !Array.isArray(v);
@@ -71,6 +79,7 @@ export async function buildUserMcpAgentTools(
   wrap: <T>(service: string, tool: string, def: T) => T,
 ): Promise<ToolsInput> {
   const out: ToolsInput = {};
+  const offeredBy = new Map<string, { serviceId: string; tool: string }>();
   for (const serviceId of source.listModelAccessibleIds()) {
     let listing: LazyMeshToolMap | undefined;
     try {
@@ -96,13 +105,27 @@ export async function buildUserMcpAgentTools(
         );
         continue;
       }
+      // `<id>__<tool>` is not injective (`mcp_a` + `b__c` vs `mcp_a__b` + `c`): keep the first,
+      // never let a second server silently replace a tool the model may already be calling.
+      const existing = offeredBy.get(name);
+      if (existing !== undefined) {
+        source.warn(
+          {
+            serviceId,
+            tool,
+            offeredName: name,
+            keptServiceId: existing.serviceId,
+            keptTool: existing.tool,
+          },
+          "user MCP tool name collides with one already offered; not offered",
+        );
+        continue;
+      }
+      offeredBy.set(name, { serviceId, tool });
       const listed: Record<string, unknown> = entry;
       const serverDescription =
         typeof listed["description"] === "string" ? listed["description"] : "";
-      const listedSchema = listed["inputSchema"];
-      const inputSchema: z.ZodType = looksLikeZodSchema(listedSchema)
-        ? listedSchema
-        : z.object({}).passthrough();
+      const inputSchema = offeredInputSchema(listed["inputSchema"]);
       const mcpToolId = key;
       const actionType = `${serviceId}.${tool}`;
       out[name] = wrap(
@@ -115,9 +138,11 @@ export async function buildUserMcpAgentTools(
           execute: async (input: unknown) => {
             const ex = executor();
             if (ex === undefined) return { refused: NOT_OWNER_REFUSAL };
+            // Never substitute: the owner must approve exactly the input the model sent.
+            if (!isPlainObject(input)) return { refused: NON_OBJECT_INPUT_REFUSAL };
             const result = await ex.execute({
               type: actionType,
-              payload: { mcpToolId, input: isPlainObject(input) ? input : {} },
+              payload: { mcpToolId, input },
             });
             return result.status === "ok" ? result.result : { refused: result.reason };
           },
