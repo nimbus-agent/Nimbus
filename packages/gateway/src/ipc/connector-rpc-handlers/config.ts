@@ -59,6 +59,14 @@ function argvParam(rec: Record<string, unknown> | undefined): string[] {
   return stringArrayParam(rec, "argv");
 }
 
+/** The host OS `connector.addMcp` resolves for; refuses rather than guessing when none was passed. */
+export function requireAddMcpPlatform(ctx: ConnectorRpcHandlerContext): NodeJS.Platform {
+  if (ctx.platform === undefined) {
+    throw new ConnectorRpcError(-32603, "connector.addMcp requires the host platform");
+  }
+  return ctx.platform;
+}
+
 /**
  * Parses `connector.addMcp`'s params and resolves them to the FINAL values the row will store
  * (absolute command, canonical read paths, normalised hosts) — BEFORE the HITL gate, so the owner
@@ -97,7 +105,7 @@ export function resolveConnectorAddMcp(
     return resolveUserMcpRegistration(
       { serviceId, argv, readPaths, netHosts, modelAccess: modelAccessRaw === true },
       {
-        platform: process.platform,
+        platform: requireAddMcpPlatform(ctx),
         protectedRoots: connectorMesh.userMcpProtectedRoots(),
         registeredServiceIds: listUserMcpConnectors(localIndex.getDatabase()).map(
           (r) => r.service_id,
@@ -112,6 +120,27 @@ export function resolveConnectorAddMcp(
     }
     throw e;
   }
+}
+
+/**
+ * Runs AFTER the owner approved and BEFORE the row is stored: a sandbox leaf left over from an
+ * earlier registration of the same id (its removal is best-effort, so a locked leaf can survive)
+ * is cleared, or the registration is REFUSED and nothing is stored — the leaf is deterministic, so
+ * a new server would otherwise inherit the previous one's files.
+ */
+export async function assertUserMcpSandboxClean(
+  ctx: ConnectorRpcHandlerContext,
+  serviceId: string,
+): Promise<void> {
+  const { connectorMesh } = ctx;
+  if (connectorMesh === undefined) {
+    throw new ConnectorRpcError(-32603, "User MCP registration requires sync and connector mesh");
+  }
+  if (await connectorMesh.ensureUserMcpSandboxClean(serviceId)) return;
+  throw new ConnectorRpcError(
+    -32602,
+    `ERR_USER_MCP_SANDBOX_NOT_CLEAN: ${connectorMesh.userMcpSandboxLeaf(serviceId)} could not be cleared; stop any process using it and retry`,
+  );
 }
 
 /** Stores an ALREADY-APPROVED registration (resolved by `resolveConnectorAddMcp`) and registers its syncable. */

@@ -1,4 +1,4 @@
-import { rmSync } from "node:fs";
+import { existsSync, rmSync } from "node:fs";
 
 import { MCPClient } from "@mastra/mcp";
 
@@ -65,6 +65,7 @@ export class LazyConnectorMesh {
   private readonly spawnContext: MeshSpawnContext;
   private readonly paths: PlatformPaths;
   private readonly removeSandboxDir: (dir: string) => void;
+  private readonly sandboxDirExists: (dir: string) => boolean;
   private readonly filesystemSpawnGate: Promise<void> | undefined;
 
   constructor(
@@ -80,6 +81,8 @@ export class LazyConnectorMesh {
       isConnectorAllowed?: (serviceId: string) => boolean;
       /** Test seam: deletes a user MCP sandbox leaf. Production: recursive, forced `rmSync`. */
       removeSandboxDir?: (dir: string) => void;
+      /** Test seam: whether a user MCP sandbox leaf exists. Production: `existsSync`. */
+      sandboxDirExists?: (dir: string) => boolean;
       /**
        * Settles when the boot-time Windows revoke of stale `dataDir` ACEs is done. The filesystem
        * MCP is the one spawn still granted `dataDir`, and its sandbox grant rewrites that same
@@ -94,6 +97,7 @@ export class LazyConnectorMesh {
     this.paths = paths;
     this.removeSandboxDir =
       options?.removeSandboxDir ?? ((dir) => rmSync(dir, { recursive: true, force: true }));
+    this.sandboxDirExists = options?.sandboxDirExists ?? existsSync;
     this.inactivityMs = options?.inactivityMs ?? 300_000;
     this.listUserMcpConnectors = options?.listUserMcpConnectors ?? (() => []);
     this.healthDb = options?.healthDb;
@@ -230,18 +234,55 @@ export class LazyConnectorMesh {
     } catch (err) {
       this.logger?.warn({ serviceId, err }, "user MCP client not stopped before sandbox removal");
     }
-    const leaf = sandboxCwdFor(this.paths.sandboxDir, `user.${serviceId}`);
+    const leaf = this.userMcpSandboxLeaf(serviceId);
+    const lastErr = await this.deleteSandboxLeaf(leaf);
+    if (lastErr !== undefined) {
+      this.logger?.warn({ serviceId, err: lastErr }, "user MCP sandbox directory not removed");
+    }
+  }
+
+  /** The deterministic sandbox leaf a user MCP server with this id spawns in. */
+  userMcpSandboxLeaf(serviceId: string): string {
+    return sandboxCwdFor(this.paths.sandboxDir, `user.${serviceId}`);
+  }
+
+  /**
+   * Ensures no sandbox leaf is left over for `serviceId` before it is (re-)registered. The leaf is
+   * deterministic and `removeUserMcpSandbox` is best-effort, so a removed registration whose leaf a
+   * Windows lock kept alive would otherwise hand its files to the NEXT server registered under the
+   * same id — the sandbox wrapper's recursive mkdir keeps whatever is there. Deletes a leftover leaf
+   * with the same retry policy as removal; returns `false` when the leaf still exists afterwards,
+   * and the caller must then refuse the registration. Never throws.
+   */
+  async ensureUserMcpSandboxClean(serviceId: string): Promise<boolean> {
+    const leaf = this.userMcpSandboxLeaf(serviceId);
+    if (!this.sandboxDirExists(leaf)) return true;
+    const lastErr = await this.deleteSandboxLeaf(leaf);
+    if (lastErr === undefined && !this.sandboxDirExists(leaf)) return true;
+    this.logger?.warn(
+      { serviceId, err: lastErr },
+      "stale user MCP sandbox directory not cleared before registration",
+    );
+    return false;
+  }
+
+  /**
+   * Deletes a sandbox leaf, tried up to three times 100 ms apart (a Windows child releases its cwd
+   * handle a moment after it exits). Returns the last error when every attempt failed, else
+   * `undefined`. Never throws.
+   */
+  private async deleteSandboxLeaf(leaf: string): Promise<unknown> {
     let lastErr: unknown;
     for (let attempt = 1; attempt <= 3; attempt++) {
       try {
         this.removeSandboxDir(leaf);
-        return;
+        return undefined;
       } catch (err) {
-        lastErr = err;
+        lastErr = err ?? new Error("sandbox directory delete failed");
         if (attempt < 3) await Bun.sleep(100); // NOSONAR S9382: a retry backoff is sequential by definition
       }
     }
-    this.logger?.warn({ serviceId, err: lastErr }, "user MCP sandbox directory not removed");
+    return lastErr;
   }
 
   public async stopExtensionClient(extensionId: string): Promise<void> {

@@ -62,6 +62,7 @@ function baseOpts(extras: {
   connectorMesh?: {
     ensureUserMcpRunning: (id: string) => Promise<void>;
     userMcpProtectedRoots?: () => readonly string[];
+    ensureUserMcpSandboxClean?: (id: string) => Promise<boolean>;
   };
 }) {
   return {
@@ -77,12 +78,18 @@ function baseOpts(extras: {
 describe("dispatchConnectorRpc — addMcp gate", () => {
   /** Fake PATH/filesystem: nothing real is consulted. Full resolution coverage: connector-rpc-addmcp.test.ts. */
   const seams = {
+    // POSIX paths, so the platform is pinned to match on every host.
+    platform: "linux" as const,
     resolveCommand: (c: string) => `/opt/bin/${c}`,
     realpath: (p: string) => p,
   };
   const wired = () => ({
     syncScheduler: { register: () => {} },
-    connectorMesh: { ensureUserMcpRunning: async () => {}, userMcpProtectedRoots: () => [] },
+    connectorMesh: {
+      ensureUserMcpRunning: async () => {},
+      userMcpProtectedRoots: () => [],
+      ensureUserMcpSandboxClean: async () => true,
+    },
   });
 
   test("addMcp without toolExecutor -> -32603", async () => {
@@ -151,7 +158,7 @@ describe("dispatchConnectorRpc — addMcp gate", () => {
       serviceId: "mcp_probe",
       command: "/opt/bin/npx",
       args: ["-y", "@evil/pkg"],
-      readPaths: process.platform === "win32" ? [] : ["/opt/bin"],
+      readPaths: ["/opt/bin"],
       netHosts: [],
       modelAccess: false,
     });

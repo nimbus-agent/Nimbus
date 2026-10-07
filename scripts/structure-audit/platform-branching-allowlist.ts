@@ -202,16 +202,6 @@ export const PLATFORM_BRANCHING_ALLOWLIST: readonly PlatformFileEntry[] = [
     gate: "none",
     why: "named pipe vs unix socket",
   },
-  {
-    file: "packages/gateway/src/ipc/connector-rpc.ts",
-    gate: "none",
-    why: "Windows AppContainer all-or-nothing network note for user-MCP grants; no coverage scope matches src/ipc/connector-rpc*",
-  },
-  {
-    file: "packages/gateway/src/ipc/connector-rpc-handlers/config.ts",
-    gate: "none",
-    why: "per-OS path rules for user-MCP registration; no coverage scope matches src/ipc/connector-rpc-handlers/",
-  },
   { file: "packages/gateway/src/voice/tts.ts", gate: "none", why: "per-OS TTS backend" },
   {
     file: "packages/gateway/src/voice/wake-word.ts",

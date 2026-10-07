@@ -43,6 +43,13 @@ export type ConnectorRpcHandlerContext = {
   openUrl: (url: string) => Promise<void>;
   syncScheduler: SyncScheduler | undefined;
   connectorMesh: LazyConnectorMesh | undefined;
+  /**
+   * The host OS, passed in rather than read from `process.platform` here (PAL): `connector.addMcp`'s
+   * per-OS path rules and its Windows all-or-nothing network note both read it. Supplied by the one
+   * production caller (`ipc/server/dispatchers.ts`); `connector.addMcp` REFUSES without it rather
+   * than guessing, and no other method reads it.
+   */
+  platform?: NodeJS.Platform;
   notify?: (method: string, params: Record<string, unknown>) => void;
   /**
    * Test seam. Omitted in production, where `auth.ts` falls back to its

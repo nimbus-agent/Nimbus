@@ -14,6 +14,7 @@ import type {
   ConnectorRpcHit,
 } from "./connector-rpc-handlers/context.ts";
 import {
+  assertUserMcpSandboxClean,
   handleConnectorAddMcp,
   handleConnectorAuth,
   handleConnectorHealthHistory,
@@ -27,6 +28,7 @@ import {
   handleConnectorSync,
   handleConnectorUserMcpCall,
   handleConnectorUserMcpTools,
+  requireAddMcpPlatform,
   resolveConnectorAddMcp,
 } from "./connector-rpc-handlers/index.ts";
 import { asRecord, ConnectorRpcError } from "./connector-rpc-shared.ts";
@@ -55,7 +57,8 @@ export function buildReadGcpKeyPath(vault: NimbusVault): () => Promise<string | 
 
 /**
  * `connector.addMcp`, in its fixed order: resolve and validate, build the exact consent payload,
- * ask the LOCAL owner, and only then store. Each step is one line below so the order reads as a list.
+ * ask the LOCAL owner, clear any stale sandbox leaf, and only then store. Each step is one line
+ * below so the order reads as a list.
  */
 async function addMcpBehindOwnerGate(
   ctx: ConnectorRpcHandlerContext,
@@ -67,12 +70,14 @@ async function addMcpBehindOwnerGate(
   // 1. Resolve and validate FIRST: an invalid request (protected read path, unknown command,
   //    bad host, id collision) throws here and never prompts the owner.
   const resolved = resolveConnectorAddMcp(ctx);
-  // 2. The payload the owner approves IS the resolved registration that step 4 stores.
-  const payload = buildAddMcpConsentPayload(resolved);
+  // 2. The payload the owner approves IS the resolved registration that step 5 stores.
+  const payload = buildAddMcpConsentPayload(resolved, requireAddMcpPlatform(ctx));
   // 3. The HITL gate: anything but "proceed" stops here, before any write.
   const gateResult = await toolExecutor.gate({ type: "connector.addMcp", payload });
   if (gateResult !== "proceed") return { kind: "hit", value: gateResult };
-  // 4. Store exactly what was approved.
+  // 4. A sandbox leaf left by an earlier registration of this id is cleared, or this refuses.
+  await assertUserMcpSandboxClean(ctx, resolved.serviceId);
+  // 5. Store exactly what was approved.
   return handleConnectorAddMcp(ctx, resolved);
 }
 
@@ -85,7 +90,10 @@ async function addMcpBehindOwnerGate(
  * object `handleConnectorAddMcp` writes, so what the owner approves cannot disagree with
  * what is stored.
  */
-function buildAddMcpConsentPayload(resolved: ResolvedUserMcpRegistration): Record<string, unknown> {
+export function buildAddMcpConsentPayload(
+  resolved: ResolvedUserMcpRegistration,
+  platform: NodeJS.Platform,
+): Record<string, unknown> {
   const payload: Record<string, unknown> = {
     serviceId: resolved.serviceId,
     command: resolved.command,
@@ -94,7 +102,7 @@ function buildAddMcpConsentPayload(resolved: ResolvedUserMcpRegistration): Recor
     netHosts: resolved.netHosts,
     modelAccess: resolved.modelAccess,
   };
-  if (process.platform === "win32" && resolved.netHosts.length > 0) {
+  if (platform === "win32" && resolved.netHosts.length > 0) {
     payload["networkNote"] = WIN32_USER_MCP_NETWORK_NOTE;
   }
   return payload;
@@ -108,6 +116,11 @@ export async function dispatchConnectorRpc(options: {
   openUrl: (url: string) => Promise<void>;
   syncScheduler: SyncScheduler | undefined;
   connectorMesh?: LazyConnectorMesh;
+  /**
+   * The host OS (PAL: passed in, never read from `process.platform` in this module). Optional only
+   * because no method but `connector.addMcp` reads it; that one refuses without it.
+   */
+  platform?: NodeJS.Platform;
   notify?: (method: string, params: Record<string, unknown>) => void;
   toolExecutor?: ToolExecutor;
   /**
@@ -129,6 +142,7 @@ export async function dispatchConnectorRpc(options: {
     openUrl,
     syncScheduler,
     connectorMesh,
+    platform,
     notify,
     toolExecutor,
     userMcpExecutor,
@@ -143,6 +157,7 @@ export async function dispatchConnectorRpc(options: {
     openUrl,
     syncScheduler,
     connectorMesh,
+    ...(platform === undefined ? {} : { platform }),
     ...(notify === undefined ? {} : { notify }),
     ...(resolveCommand === undefined ? {} : { resolveCommand }),
     ...(realpath === undefined ? {} : { realpath }),

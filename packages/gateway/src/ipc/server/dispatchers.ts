@@ -1970,6 +1970,7 @@ export async function tryDispatchConnectorRpc(
       openUrl: openUrl ?? (async () => {}),
       syncScheduler: ctx.options.syncScheduler,
       ...(mesh === undefined ? {} : { connectorMesh: mesh }),
+      platform: process.platform,
       notify: (m, p) => ctx.broadcastNotification(m, p),
       toolExecutor,
       ...(userMcpExecutor === undefined ? {} : { userMcpExecutor }),

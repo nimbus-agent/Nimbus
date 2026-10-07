@@ -83,6 +83,7 @@ function resolveCtx(rec: Record<string, unknown>): ConnectorRpcHandlerContext {
   } as unknown as StubMesh;
   return {
     ...buildCtx({ rec, scheduler, mesh }),
+    platform: "linux", // POSIX paths below, so pinned to match on every host
     resolveCommand: (c: string) => `/opt/bin/${c}`,
     realpath: (p: string) => p,
   };
@@ -132,6 +133,17 @@ describe("resolveConnectorAddMcp — parameter validation", () => {
       expect((e as ConnectorRpcError).message.startsWith("ERR_USER_MCP_READ_PATH_RELATIVE: ")).toBe(
         true,
       );
+    }
+  });
+
+  test("no platform -> -32603: addMcp refuses rather than guessing the host OS", () => {
+    const { platform: _omit, ...ctx } = resolveCtx({ serviceId: "mcp_test", argv: ["echo"] });
+    try {
+      resolveConnectorAddMcp(ctx);
+      throw new Error("expected throw");
+    } catch (e) {
+      expect((e as ConnectorRpcError).rpcCode).toBe(-32603);
+      expect((e as ConnectorRpcError).message).toContain("platform");
     }
   });
 

@@ -223,7 +223,7 @@ Every sandboxed spawn runs in its own working directory, `<sandboxDir>/<leaf>`, 
 
 That separation holds for the defaults above and is not enforced: an override can nest them — on Linux `XDG_CACHE_HOME` set equal to `XDG_DATA_HOME`, or a `NIMBUS_CONFIG_DIR` under `~/.cache/nimbus` — and the gateway does not refuse to boot when it does. Keep the cache, data and config locations apart if you override them.
 
-The toolgen confinement probe runs in its own leaf too. `nimbus connector remove` deletes a user MCP server's leaf, best-effort.
+The toolgen confinement probe runs in its own leaf too. `nimbus connector remove` deletes a user MCP server's leaf, best-effort. Re-registering the same id clears a leftover leaf or refuses (see [Stated bounds](#user-mcp)).
 
 **Windows one-time revoke.** Earlier builds granted each connector's AppContainer SID an ACE on the data directory. On first boot after upgrading, the gateway revokes those stale ACEs once and writes the marker `sandbox-cwd-migration-v1.done` in the data directory; the step does not repeat while the marker exists. The revoke runs in the background, so the gateway accepts requests at once, but every dispatcher tool listing waits for it (`LazyConnectorMesh` awaits it at the top of `collectBuiltInToolMaps`): every connector dispatch, `connector.userMcpTools`/`userMcpCall`, share replay, tribal capture and ChatOps writes, not only the filesystem MCP (the one spawn still granted the data directory, whose grant rewrites the same DACL). Linux, macOS and demo-rooted gateways never wait, because the revoke is a Windows-only, non-demo step.
 
@@ -240,7 +240,7 @@ The toolgen confinement probe runs in its own leaf too. `nimbus connector remove
 - **No IPv6 host literals.** `--net` does not accept them.
 - **A Windows `--read` on a directory the user cannot change the ACL of** (for example under `C:\Program Files`) is not caught at registration; it fails at spawn time and appears as the connector's health error.
 - **The I15 source guard against a `dataDir`/`configDir` working directory is spelling-based.** A renamed alias would evade it; capability is the real defense.
-- **A crash between a remove's intent and its sandbox cleanup leaves that server's leaf behind.** The resumed remove does not clean it.
+- **A crash between a remove's intent and its sandbox cleanup leaves that server's leaf behind.** The resumed remove does not clean it. Neither does a remove whose delete a file lock defeated (it is retried three times, then logged). A leftover leaf is never inherited: re-registering the same id clears it after the owner approves and before the row is stored, and if it still cannot be cleared the registration is refused with `ERR_USER_MCP_SANDBOX_NOT_CLEAN` and nothing is stored.
 - **The Windows boot revoke has no per-call timeout.** The helper runs through `execFile` without one, so a hung helper holds every tool listing described above until it exits. No marker is written until the revoke completes, so the next boot retries it.
 - **A user MCP removed before upgrading keeps any stale Windows data-directory ACE.** No row is left to name its SID, so the one-time revoke cannot find it.
 - **Script-mode servers cannot run on Windows.** `bun src/server.ts` fails with `CouldntReadCurrentDirectory` under AppContainer (see the known limitation above); compile the server.

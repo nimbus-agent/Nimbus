@@ -5,7 +5,7 @@
  * `connector.remove` must not fail on a locked directory.
  */
 import { afterEach, describe, expect, test } from "bun:test";
-import { existsSync, mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -103,5 +103,85 @@ describe("LazyConnectorMesh — user MCP sandbox", () => {
     await mesh.removeUserMcpSandbox("mcp_flaky");
     expect(n).toBe(2);
     expect(warnings).toEqual([]);
+  });
+});
+
+describe("LazyConnectorMesh — ensureUserMcpSandboxClean (re-registration)", () => {
+  test("no leaf: true, and nothing is deleted", async () => {
+    const paths = makePaths();
+    const deleted: string[] = [];
+    const mesh = new LazyConnectorMesh(paths, createMockVault(), {
+      removeSandboxDir: (p) => deleted.push(p),
+    });
+    meshes.push(mesh);
+    expect(await mesh.ensureUserMcpSandboxClean("mcp_new")).toBe(true);
+    expect(deleted).toEqual([]);
+  });
+
+  test("a stale leaf holding a file is deleted, and nothing beside it", async () => {
+    const paths = makePaths();
+    const mesh = new LazyConnectorMesh(paths, createMockVault());
+    meshes.push(mesh);
+    const leaf = mesh.userMcpSandboxLeaf("mcp_reused");
+    expect(leaf).toBe(sandboxCwdFor(paths.sandboxDir, "user.mcp_reused"));
+    const sibling = sandboxCwdFor(paths.sandboxDir, "user.mcp_other");
+    mkdirSync(join(leaf, "nested"), { recursive: true });
+    writeFileSync(join(leaf, "nested", "secret.txt"), "left behind");
+    mkdirSync(sibling, { recursive: true });
+
+    expect(await mesh.ensureUserMcpSandboxClean("mcp_reused")).toBe(true);
+    expect(existsSync(leaf)).toBe(false);
+    expect(existsSync(sibling)).toBe(true);
+  });
+
+  test("an undeletable leaf: 3 attempts, logged, false — and never thrown", async () => {
+    const paths = makePaths();
+    const warnings: Array<{ bindings: Record<string, unknown>; msg: string | undefined }> = [];
+    const attempts: string[] = [];
+    const mesh = new LazyConnectorMesh(paths, createMockVault(), {
+      logger: { warn: (bindings, msg) => warnings.push({ bindings, msg }) },
+      sandboxDirExists: () => true,
+      removeSandboxDir: (p) => {
+        attempts.push(p);
+        throw new Error("EBUSY: resource busy or locked");
+      },
+    });
+    meshes.push(mesh);
+    expect(await mesh.ensureUserMcpSandboxClean("mcp_locked")).toBe(false);
+    const leaf = sandboxCwdFor(paths.sandboxDir, "user.mcp_locked");
+    expect(attempts).toEqual([leaf, leaf, leaf]);
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]?.msg).toBe(
+      "stale user MCP sandbox directory not cleared before registration",
+    );
+    expect(warnings[0]?.bindings["serviceId"]).toBe("mcp_locked");
+  });
+
+  test("a delete that reports success but leaves the leaf in place is still false", async () => {
+    const paths = makePaths();
+    const mesh = new LazyConnectorMesh(paths, createMockVault(), {
+      logger: { warn: () => {} },
+      sandboxDirExists: () => true,
+      removeSandboxDir: () => {},
+    });
+    meshes.push(mesh);
+    expect(await mesh.ensureUserMcpSandboxClean("mcp_stuck")).toBe(false);
+  });
+
+  test("a delete that succeeds on the second attempt is true", async () => {
+    const paths = makePaths();
+    let present = true;
+    let n = 0;
+    const mesh = new LazyConnectorMesh(paths, createMockVault(), {
+      sandboxDirExists: () => present,
+      removeSandboxDir: () => {
+        n += 1;
+        if (n === 1) throw new Error("EBUSY");
+        present = false;
+      },
+    });
+    meshes.push(mesh);
+    expect(await mesh.ensureUserMcpSandboxClean("mcp_flaky")).toBe(true);
+    expect(n).toBe(2);
   });
 });
