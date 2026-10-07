@@ -5284,4 +5284,55 @@ describe("I42 — every user-MCP tool call needs the local owner's approval", ()
     expect(assertAt).toBeGreaterThan(dispatchAt);
     expect(assertAt).toBeLessThan(src.indexOf("execute(input, {})", dispatchAt));
   });
+
+  test("ChatOps never offers user-MCP tools: its runAsk params say offerUserMcpTools: false explicitly", async () => {
+    // ChatOps calls runAsk with clientId "chatops", which is NOT a registered ClientKind and would
+    // read as `unknown` (= the plain CLI, an owner kind) if the decision were a lookup inside
+    // runAsk. So the flag must be a literal false at this call site.
+    const src = stripComments(await read("packages/gateway/src/gateway-main.ts"));
+    const at = src.indexOf("createChatOpsAskEngine((query) => ({");
+    expect(at).toBeGreaterThan(-1);
+    const end = src.indexOf("}))", at);
+    expect(end).toBeGreaterThan(at);
+    const body = src.slice(at, end);
+    expect(body).toContain('clientId: "chatops"');
+    expect(body).toMatch(/\bofferUserMcpTools: false,/);
+    // And runAsk itself never derives the decision from a client kind.
+    const runAsk = stripComments(await read("packages/gateway/src/engine/run-ask.ts"));
+    expect(runAsk).not.toMatch(/getClientKind|ClientKind|USER_MCP_OFFER_BY_KIND/);
+    expect(runAsk).toMatch(/if \(p\.offerUserMcpTools === true\) \{/);
+  });
+
+  test("the IPC offer table refuses every non-owner kind", async () => {
+    const { USER_MCP_OFFER_BY_KIND } = await import("./ipc/server/inline-handlers.ts");
+    for (const kind of ["chatops", "http", "mcp", "fleet", "push"] as const) {
+      expect(USER_MCP_OFFER_BY_KIND[kind]).toBe(false);
+    }
+    // The IPC invoke handler forwards the entry decision with `=== true`, never a truthy read.
+    const main = stripComments(await read("packages/gateway/src/gateway-main.ts"));
+    expect(main).toContain("offerUserMcpTools: ctx.offerUserMcpTools === true,");
+  });
+
+  test("a user-MCP agent tool never calls the listing's own execute — only the turn's executor", async () => {
+    const src = stripComments(await read("packages/gateway/src/engine/user-mcp-agent-tools.ts"));
+    // Every `<receiver>.execute(` call names the executor (`ex` or `executor`), never a listing
+    // entry; bracket access and destructuring of `execute` are refused outright.
+    // Counted, not captured: EVERY `.execute` property ACCESS — called or not, so neither
+    // `entry.execute?.(x)` nor `const f = entry.execute; f(x)` slips past — must be immediately
+    // preceded by the bare identifier `ex`/`executor`. `entry.execute`, `tools[k].execute` and
+    // `executor().execute` all make the two counts differ.
+    const allAccesses = src.match(/\.\s*execute\b/g) ?? [];
+    const executorAccesses = src.match(/(?<![\w$.])(?:ex|executor)\s*\??\.\s*execute\b/g) ?? [];
+    expect(allAccesses.length).toBeGreaterThan(0);
+    expect(executorAccesses.length).toBe(allAccesses.length);
+    expect(src).not.toMatch(/\[\s*["'`]execute["'`]\s*\]/);
+    // Destructuring `execute` off a listing entry (`const { execute } = entry`).
+    expect(src).not.toMatch(/\{[^{}]*\bexecute\b[^{}:]*\}\s*=/);
+  });
+
+  test("share replay refuses an OFFERED user-MCP tool name (<mcp_id>__<tool>) whatever its verb", async () => {
+    const { isReadOnlyToolId } = await import("./share/read-tool-registry.ts");
+    expect(isReadOnlyToolId("mcp_x__list")).toBe(false);
+    expect(isReadOnlyToolId("mcp_notes__search")).toBe(false);
+  });
 });

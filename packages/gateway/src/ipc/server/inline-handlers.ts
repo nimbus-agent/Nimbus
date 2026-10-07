@@ -20,8 +20,31 @@ import { type AgentInvokeContextLike, createAskStreamHandler } from "../engine-a
 import type { ClientSession } from "../session.ts";
 import { assertStreamIdHasNoNulByte, workflowRegistryKey } from "../workflow-cancel.ts";
 import type { WorkflowRunContext } from "../workflow-invoke.ts";
+import type { ClientKind } from "./client-kind.ts";
 import type { ServerCtx } from "./context.ts";
 import { RpcMethodError } from "./rpc-error.ts";
+
+/**
+ * Which callers may be offered the owner-registered user-MCP tools on an agent turn (I42, PR 2).
+ *
+ * Only the LOCAL OWNER: `cli`, `ui`, and `unknown` — the plain CLI never declares a kind, so it
+ * arrives as `unknown`. Never `mcp` (an MCP client reaching the index through `nimbus mcp-server`),
+ * `http` (a bearer-token holder), `chatops` (a shared room), `fleet` (unattended) or `push`.
+ *
+ * TOTAL over `ClientKind` on purpose: a new kind is a compile error here until someone decides,
+ * rather than silently inheriting either answer. The kind is the session's server-held one
+ * (`ctx.getClientKind`), looked up for the connection the request ARRIVED on — never a param.
+ */
+export const USER_MCP_OFFER_BY_KIND: Readonly<Record<ClientKind, boolean>> = {
+  cli: true,
+  ui: true,
+  unknown: true,
+  mcp: false,
+  http: false,
+  chatops: false,
+  fleet: false,
+  push: false,
+};
 
 function requireNonEmptyRpcString(rec: Record<string, unknown> | undefined, key: string): string {
   if (rec === undefined) {
@@ -82,6 +105,7 @@ export async function dispatchAgentInvoke(
   // not silently switch the answer's whole posture.
   const devil = rec?.["devil"] === true;
   const streamId = parseOptionalString(rec, "streamId");
+  const offerUserMcpTools = USER_MCP_OFFER_BY_KIND[ctx.getClientKind(clientId)];
   const handler = ctx.getAgentInvokeHandler();
   if (handler === undefined) {
     return {
@@ -102,6 +126,7 @@ export async function dispatchAgentInvoke(
         sendChunk: (text: string) => {
           sendAgentChunkIfStreaming(session, stream, text, streamId);
         },
+        offerUserMcpTools,
       };
       if (sessionId !== undefined) {
         payload.sessionId = sessionId;
@@ -353,6 +378,9 @@ export function dispatchEngineAskStream(
   if (handler === undefined) {
     throw new RpcMethodError(-32603, "No agent handler configured for engine.askStream");
   }
+  // Decided from THIS session's kind, the same way `dispatchAgentInvoke` decides it — this is the
+  // desktop/editor path, and wiring the decision into only one entry would leave the other open.
+  const offerUserMcpTools = USER_MCP_OFFER_BY_KIND[ctx.getClientKind(clientId)];
 
   const dispatch = createAskStreamHandler({
     registry: ctx.streamRegistry,
@@ -369,6 +397,7 @@ export function dispatchEngineAskStream(
         input: innerCtx.input,
         stream: innerCtx.stream,
         sendChunk: innerCtx.sendChunk ?? (() => undefined),
+        offerUserMcpTools,
       };
       if (innerCtx.sessionId !== undefined) payload.sessionId = innerCtx.sessionId;
       if (innerCtx.devil === true) payload.devil = true;

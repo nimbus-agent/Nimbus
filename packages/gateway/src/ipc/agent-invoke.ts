@@ -16,6 +16,14 @@ export type AgentInvokeContext = {
    * `engine.askStream` — and the flag has to survive both.
    */
   devil?: boolean;
+  /**
+   * Whether this turn may be offered the owner-registered user-MCP tools (`connector add --mcp
+   * --model`, I42). Decided ONCE at the IPC entry from the live session's server-held
+   * `ClientKind` (`USER_MCP_OFFER_BY_KIND` in `ipc/server/inline-handlers.ts`) — never from a
+   * request param, and never re-derived downstream: `runAsk` has a non-IPC caller (ChatOps) whose
+   * clientId is not a registered kind at all and would read as `unknown`.
+   */
+  offerUserMcpTools?: boolean;
 };
 
 export type AgentInvokeResult = {
