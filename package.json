@@ -10,7 +10,10 @@
     "sharp": "0.35.5",
     "protobufjs": "8.8.0",
     "qs": "6.16.0",
-    "zod": "4.6.5"
+    "zod": "4.6.5",
+    "@modelcontextprotocol/client": "2.2.0",
+    "@modelcontextprotocol/core": "2.2.0",
+    "@modelcontextprotocol/server": "2.2.0"
   },
   "workspaces": [
     "packages/admin-console",
