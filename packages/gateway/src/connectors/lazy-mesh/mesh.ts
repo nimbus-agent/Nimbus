@@ -92,7 +92,8 @@ export class LazyConnectorMesh {
       filesystemSpawnGate?: Promise<void>;
     },
   ) {
-    // Only stored here; `collectBuiltInToolMaps` awaits it (undefined means no gate).
+    // Only stored here; `collectBuiltInToolMaps` and `listUserMcpTools` await it (undefined means
+    // no gate).
     this.filesystemSpawnGate = options?.filesystemSpawnGate;
     this.paths = paths;
     this.removeSandboxDir =
