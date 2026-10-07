@@ -651,3 +651,41 @@ describe("listUserMcpToolsForDispatcher lists ONE slot and keeps its drain refco
     expect(drain.count).toBe(0);
   });
 });
+
+describe("listUserMcpTools waits for the boot-revoke gate", () => {
+  test("no user slot is listed until the gate settles", async () => {
+    let open: () => void = () => {};
+    const gate = new Promise<void>((r) => {
+      open = r;
+    });
+    mesh = new LazyConnectorMesh(makePaths(), createMockVault(), {
+      listUserMcpConnectors: () => [
+        {
+          service_id: "mcp_a",
+          command: "/bin/echo",
+          args_json: "[]",
+          created_at: 0,
+          read_paths_json: "[]",
+          net_hosts_json: "[]",
+          model_access: 0,
+        },
+      ],
+      filesystemSpawnGate: gate,
+    });
+    const fakeA = makeFakeMcpClient({
+      tools: { mcp_a_echo: { execute: async (): Promise<unknown> => "echo" } },
+    });
+    asPrivate(mesh).lazySlots.set(userMcpMeshKey("mcp_a"), {
+      client: fakeA as unknown as import("@mastra/mcp").MCPClient,
+      idleTimer: undefined,
+      drain: new LazyDrainTracker(),
+    });
+    const pending = mesh.listUserMcpToolsForDispatcher("mcp_a");
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(fakeA.listToolsCalls).toBe(0);
+    open();
+    expect(Object.keys((await pending) ?? {})).toEqual(["mcp_a_echo"]);
+    expect(fakeA.listToolsCalls).toBe(1);
+  });
+});

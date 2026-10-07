@@ -317,6 +317,11 @@ export class LazyConnectorMesh {
     if (!registered) {
       return undefined;
     }
+    // The same boot-revoke gate every merged listing waits on (`collectBuiltInToolMaps`): a user
+    // MCP's first listing spawns it through the Windows helper, whose grants rewrite DACLs under
+    // the directory the revoke is rewriting. The per-server dispatch path no longer goes through the
+    // merged listing, so it waits here instead.
+    await this.filesystemSpawnGate;
     await this.ensureUserMcpRunning(serviceId);
     return listLazyMeshClientTools(this.getLazyClient(userMcpMeshKey(serviceId)));
   }
