@@ -4,6 +4,7 @@ import pino from "pino";
 import { runWorkflowExecution } from "./automation/workflow-runner.ts";
 import { createConnectorWriteDispatcher } from "./connectors/connector-write-dispatch.ts";
 import { createConnectorDispatcher, type McpToolListingClient } from "./connectors/index.ts";
+import { listModelAccessibleUserMcpIds } from "./connectors/user-mcp-store.ts";
 import { makeEgressSink } from "./egress/egress-ledger.ts";
 import type { EmbeddingReadiness } from "./embedding/embedding-readiness.ts";
 import { createNimbusEngineAgent } from "./engine/agent.ts";
@@ -156,6 +157,7 @@ export async function main(): Promise<void> {
   // — the most dispatch-capable path in the product. RunAskParams.egressSink is a REQUIRED dep, so
   // it is wired here once and handed to every runAsk call rather than left to an internal fallback.
   const askEgressSink = makeEgressSink(platform.localIndex.getDatabase());
+  const userMcpLogger = pino({ name: "user-mcp-agent-tools" });
   // NO ENABLED VENDOR MEANS NO REMOTE INFERENCE ANYWHERE, including the default `nimbus ask`.
   // The agent is not merely refused, it is NOT CONSTRUCTED: `@mastra/core` resolves a vendor key
   // from the ENVIRONMENT on its own the moment an agent exists, so a constructed-but-refusing
@@ -173,6 +175,18 @@ export async function main(): Promise<void> {
           ...(platform.sessionMemoryStore === undefined
             ? {}
             : { sessionMemoryStore: platform.sessionMemoryStore }),
+          // The FIRST production-supplied agent tool family that runs owner-registered code: user
+          // MCP servers registered with `--model`. Offered only on a turn whose request context
+          // carries the user-MCP executor (the local owner); every call runs through that
+          // executor's I42 owner prompt, and every result through `wrapToolForLlm` (I11).
+          // `deps.toolgen` and `deps.computerUse` stay UNWIRED here: the model still cannot invoke
+          // a generated tool or a computer-use lane.
+          userMcp: {
+            listModelAccessibleIds: () =>
+              listModelAccessibleUserMcpIds(platform.localIndex.getDatabase()),
+            listTools: (serviceId) => platform.connectorMesh.listUserMcpTools(serviceId),
+            warn: (bindings, msg) => userMcpLogger.warn(bindings, msg),
+          },
         });
 
   function resolveEngineAgent(name: string | undefined): Agent | undefined {

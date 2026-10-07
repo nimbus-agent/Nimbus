@@ -21,7 +21,11 @@ import type { SessionMemoryStore } from "../memory/session-memory-store.ts";
 import { searchPersons } from "../people/person-store.ts";
 import { buildGeneratedTools } from "../toolgen/toolgen-agent-tools.ts";
 import type { ToolgenRegistry } from "../toolgen/toolgen-registry.ts";
-import { getAgentRequestSessionId, recordExplainToolCall } from "./agent-request-context.ts";
+import {
+  getAgentRequestSessionId,
+  getAgentRequestUserMcpExecutor,
+  recordExplainToolCall,
+} from "./agent-request-context.ts";
 import type { CollectedToolCall } from "./ask-explain-types.ts";
 import {
   buildSearchLocalIndexHealthExtras,
@@ -30,6 +34,7 @@ import {
 import { buildContextWindow } from "./context-ranker.ts";
 import { createNegationTools } from "./negation-tools.ts";
 import { wrapToolOutput } from "./tool-output-envelope.ts";
+import { buildUserMcpAgentTools, type UserMcpAgentToolSource } from "./user-mcp-agent-tools.ts";
 
 const MAX_TOOL_STRING_LEN = 2000;
 
@@ -213,6 +218,13 @@ export type NimbusEngineAgentDeps = {
     registry: ToolgenRegistry;
     invoke: (toolId: string, args: Record<string, unknown>) => Promise<unknown>;
   };
+  /**
+   * Owner-registered user MCP servers opted into model access (`connector add --mcp --model`).
+   * Offered PER REQUEST, and only when the turn carries a user-MCP executor in its request context
+   * (`getAgentRequestUserMcpExecutor`), which `runAsk` sets only for the local owner. Without one
+   * `toolsFor` never calls `listTools`, so a non-owner turn never spawns a user server.
+   */
+  userMcp?: UserMcpAgentToolSource;
 };
 
 export function createNimbusEngineAgent(deps: NimbusEngineAgentDeps): {
@@ -597,7 +609,8 @@ export function createNimbusEngineAgent(deps: NimbusEngineAgentDeps): {
   // `tools` is a DynamicArgument (@mastra/core/dist/agent/agent.d.ts:876) -- resolved PER REQUEST.
   // A static object here is fixed for the process lifetime, and this agent is constructed once at
   // boot, so a tool registered mid-session would never become visible. `baseTools` is unchanged.
-  const toolsFor = (): ToolsInput => ({
+  // Async is part of that contract (`Promise<T> | T`, @mastra/core/dist/types/dynamic-argument.d.ts).
+  const toolsFor = async (): Promise<ToolsInput> => ({
     ...baseTools,
     ...(deps.toolgen === undefined
       ? {}
@@ -607,6 +620,16 @@ export function createNimbusEngineAgent(deps: NimbusEngineAgentDeps): {
           deps.toolgen.invoke,
           // I11. `wrapToolForLlm` is module-private here, which is why it is passed rather than
           // imported by the toolgen module.
+          (service, tool, def) => wrapToolForLlm(service, tool, def, deps.auditDb),
+        )),
+    // The executor's PRESENCE is the offer decision: absent (not the local owner, or outside a
+    // turn), nothing is listed, so no user server is spawned for this request.
+    ...(deps.userMcp === undefined || getAgentRequestUserMcpExecutor() === undefined
+      ? {}
+      : await buildUserMcpAgentTools(
+          deps.userMcp,
+          getAgentRequestUserMcpExecutor,
+          // I11, passed for the same reason as the toolgen spread above.
           (service, tool, def) => wrapToolForLlm(service, tool, def, deps.auditDb),
         )),
   });

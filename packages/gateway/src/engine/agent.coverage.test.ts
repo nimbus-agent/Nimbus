@@ -10,12 +10,16 @@ import { afterAll, afterEach, describe, expect, test } from "bun:test";
 
 import type { CuRunDeps } from "../computer-use/cu-gate.ts";
 import { transitionHealth } from "../connectors/health.ts";
+import type { LazyMeshToolMap } from "../connectors/lazy-mesh/tool-map.ts";
 import type { IndexSearchQuery, TraverseGraphOptions } from "../index/local-index.ts";
 import { LocalIndex } from "../index/local-index.ts";
 import type { SessionMemoryStore } from "../memory/session-memory-store.ts";
 import type { ToolgenRegistry } from "../toolgen/toolgen-registry.ts";
 import { createNimbusEngineAgent, type NimbusEngineAgentDeps } from "./agent.ts";
 import { agentRequestContext } from "./agent-request-context.ts";
+import type { ToolExecutor } from "./executor.ts";
+import type { ActionResult, PlannedAction } from "./types.ts";
+import type { UserMcpAgentToolSource } from "./user-mcp-agent-tools.ts";
 
 const TEST_VENDOR = { providerId: "openai", modelId: "gpt-4o-mini", apiKey: "sk-test-not-used" };
 // No egress_ledger table: nothing here calls doGenerate/doStream, so nothing appends.
@@ -315,5 +319,106 @@ describe("toolgen spread", () => {
     });
     expect(asked).toContain("sess-tg");
     expect(invoked).toEqual([["weather_lookup", { city: "Haifa" }]]);
+  });
+});
+
+describe("user MCP spread", () => {
+  type ListCall = string;
+  function fakeUserMcpSource(): {
+    source: UserMcpAgentToolSource;
+    listCalls: ListCall[];
+    serverExecuteCalls: () => number;
+  } {
+    const listCalls: ListCall[] = [];
+    let serverRan = 0;
+    const listing: LazyMeshToolMap = {
+      mcp_x_echo: {
+        execute: async () => {
+          serverRan += 1;
+          return "SERVER RAN DIRECTLY";
+        },
+      },
+    };
+    const source: UserMcpAgentToolSource = {
+      listModelAccessibleIds: () => ["mcp_x"],
+      listTools: async (serviceId: string) => {
+        listCalls.push(serviceId);
+        return serviceId === "mcp_x" ? listing : undefined;
+      },
+      warn: () => {},
+    };
+    return { source, listCalls, serverExecuteCalls: () => serverRan };
+  }
+
+  function fakeExecutor(): { executor: ToolExecutor; actions: PlannedAction[] } {
+    const actions: PlannedAction[] = [];
+    const executor = {
+      execute: async (action: PlannedAction): Promise<ActionResult> => {
+        actions.push(action);
+        return { status: "ok", result: { echoed: "hi" } };
+      },
+    } as unknown as ToolExecutor;
+    return { executor, actions };
+  }
+
+  test("with the turn's executor in context, the opted-in server's tool is offered and its result reaches the model enveloped", async () => {
+    const { localIndex } = freshIndex();
+    const { source, listCalls, serverExecuteCalls } = fakeUserMcpSource();
+    const { executor, actions } = fakeExecutor();
+    const { agent } = createNimbusEngineAgent({ ...baseDeps(localIndex), userMcp: source });
+
+    await agentRequestContext.run({ userMcpExecutor: executor }, async () => {
+      const tools = await listTools(agent);
+      expect(Object.keys(tools)).toContain("mcp_x__echo");
+      const env = parseEnvelope(await (await getTool(agent, "mcp_x__echo")).execute({ s: "hi" }));
+      expect(env.service).toBe("mcp_x");
+      expect(env.tool).toBe("mcp_x__echo");
+      expect(env.payload).toEqual({ echoed: "hi" });
+    });
+    expect(listCalls.length).toBeGreaterThan(0);
+    expect(actions).toEqual([
+      { type: "mcp_x.echo", payload: { mcpToolId: "mcp_x_echo", input: { s: "hi" } } },
+    ]);
+    expect(serverExecuteCalls()).toBe(0);
+  });
+
+  test("with no executor in context the tool is absent and no server is listed (never spawned)", async () => {
+    const { localIndex } = freshIndex();
+    const { source, listCalls } = fakeUserMcpSource();
+    const { agent } = createNimbusEngineAgent({ ...baseDeps(localIndex), userMcp: source });
+
+    // Outside any request, and inside a request that carries no executor (a non-owner turn).
+    expect(Object.keys(await listTools(agent))).not.toContain("mcp_x__echo");
+    await agentRequestContext.run({ sessionId: "sess-nonowner" }, async () => {
+      expect(Object.keys(await listTools(agent))).not.toContain("mcp_x__echo");
+    });
+    expect(listCalls).toEqual([]);
+  });
+
+  test("the built-in tool keys are unchanged by the user MCP spread", async () => {
+    const { localIndex } = freshIndex();
+    const builtIns = [
+      "fetchMoreIndexResults",
+      "findDeploymentsWithoutIncident",
+      "findPeopleWithoutReviews",
+      "findPrsNotTouching",
+      "getAuditLog",
+      "listConnectors",
+      "resolvePerson",
+      "searchLocalIndex",
+      "traverseGraph",
+    ];
+    const { agent: plain } = createNimbusEngineAgent(baseDeps(localIndex));
+    expect(Object.keys(await listTools(plain)).sort()).toEqual(builtIns);
+
+    const { source } = fakeUserMcpSource();
+    const { executor } = fakeExecutor();
+    const { agent } = createNimbusEngineAgent({ ...baseDeps(localIndex), userMcp: source });
+    expect(Object.keys(await listTools(agent)).sort()).toEqual(builtIns);
+    await agentRequestContext.run({ userMcpExecutor: executor }, async () => {
+      expect(Object.keys(await listTools(agent)).sort()).toEqual(
+        [...builtIns, "mcp_x__echo"].sort(),
+      );
+    });
   });
 });
