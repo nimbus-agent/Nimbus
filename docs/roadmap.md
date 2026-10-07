@@ -515,7 +515,7 @@ The B1 security audit completed in Phase 4. Three more initiatives are active or
 - `nimbus data export` → wipe index and Vault → `nimbus data import` restores full functionality on a fresh machine with all connectors re-authenticated
 - VS Code extension installs from Open VSX and connects to a running Gateway without any manual configuration
 - Cursor can query the Nimbus local index via MCP and surface the last deployment and open PRs for a service mentioned in a code comment — verified manually by connecting Cursor to a running `nimbus mcp-server` instance
-- Voice query completes end-to-end (speech → Whisper.cpp transcription → Gateway → TTS playback) on all three platforms; audio never leaves the machine — verified by network inspection in CI
+- ~~Voice query completes end-to-end (speech → Whisper.cpp transcription → Gateway → TTS playback) on all three platforms; audio never leaves the machine — verified by network inspection in CI~~ **Not met (corrected 2026-10-07).** Voice was never wired: no production code constructs a `VoiceService`, so no user can run a voice query. Phase 4 is complete without it. See the Voice Interface correction above and [`ecosystem-roadmap.md` § Track 0](./ecosystem-roadmap.md#track-0--shipped-but-dark).
 
 > Acceptance criteria for the **community-extension Marketplace seed**, `nimbus changelog`, `nimbus standup`, `nimbus oncall`, `nimbus explain last`, and `nimbus index health` moved to the v0.1.1 batch table above.
 
