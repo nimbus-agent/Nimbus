@@ -7,6 +7,7 @@ import {
   deleteUserMcpConnector,
   getUserMcpConnector,
   insertUserMcpConnector,
+  listModelAccessibleUserMcpIds,
   listUserMcpConnectors,
   normalizeUserMcpServiceId,
   parseUserMcpCommandLine,
@@ -211,5 +212,35 @@ describe("user-mcp-store", () => {
         model_access: 0,
       }),
     ).toThrow(/v65/);
+  });
+
+  test("listModelAccessibleUserMcpIds returns only model_access = 1 ids, sorted", () => {
+    const db = new Database(":memory:");
+    LocalIndex.ensureSchema(db);
+    for (const [id, model] of [
+      ["mcp_z", 1],
+      ["mcp_off", 0],
+      ["mcp_a", 1],
+    ] as const) {
+      insertUserMcpConnector(db, {
+        service_id: id,
+        command: "bun",
+        args_json: "[]",
+        read_paths_json: "[]",
+        net_hosts_json: "[]",
+        model_access: model,
+      });
+    }
+    expect(listModelAccessibleUserMcpIds(db)).toEqual(["mcp_a", "mcp_z"]);
+  });
+
+  test("listModelAccessibleUserMcpIds is empty below v65, even with rows", () => {
+    const db = new Database(":memory:");
+    runIndexedSchemaMigrations(db, 64);
+    db.run(
+      `INSERT INTO user_mcp_connector (service_id, command, args_json, created_at) VALUES ('mcp_old', 'x', '[]', 1)`,
+    );
+    expect(listModelAccessibleUserMcpIds(db)).toEqual([]);
+    expect(listModelAccessibleUserMcpIds(makePreV11Db())).toEqual([]);
   });
 });

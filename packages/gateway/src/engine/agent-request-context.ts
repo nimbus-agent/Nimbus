@@ -3,6 +3,7 @@ import { AsyncLocalStorage } from "node:async_hooks";
 import { redactAuditPayload } from "../audit/format-audit-payload.ts";
 import { MAX_PARAMS_JSON_BYTES } from "../db/tool-call-log.ts";
 import type { CollectedToolCall } from "./ask-explain-types.ts";
+import type { ToolExecutor } from "./executor.ts";
 
 export type AgentRequestContext = {
   sessionId?: string | undefined;
@@ -24,12 +25,24 @@ export type AgentRequestContext = {
    * Created lazily, exactly as `negationDisclosures` is.
    */
   explainToolCalls?: CollectedToolCall[];
+  /**
+   * The DISPATCHING executor a model-initiated user-MCP tool call runs through (I42 owner prompt,
+   * audit row, I29 egress row). Present ONLY when this turn's caller is the local owner — set by
+   * `runAsk` from an explicit flag decided at the entry point, never inferred here. Absent, a
+   * user-MCP agent tool refuses and calls nothing (`engine/user-mcp-agent-tools.ts`).
+   */
+  userMcpExecutor?: ToolExecutor;
 };
 
 export const agentRequestContext = new AsyncLocalStorage<AgentRequestContext>();
 
 export function getAgentRequestSessionId(): string | undefined {
   return agentRequestContext.getStore()?.sessionId;
+}
+
+/** This turn's user-MCP executor, or `undefined` outside a turn / for a non-owner caller. */
+export function getAgentRequestUserMcpExecutor(): ToolExecutor | undefined {
+  return agentRequestContext.getStore()?.userMcpExecutor;
 }
 
 /**

@@ -81,6 +81,21 @@ export function listUserMcpConnectors(db: Database): UserMcpConnectorRow[] {
   return db.query(`${selectUserMcp(db)} ORDER BY service_id`).all() as UserMcpConnectorRow[];
 }
 
+/**
+ * The service ids registered with `--model` (`model_access = 1`), sorted — the ONLY servers whose
+ * tools may be offered to the model. Below V65 the column does not exist and no server was ever
+ * granted model access, so the answer is empty rather than every row.
+ */
+export function listModelAccessibleUserMcpIds(db: Database): string[] {
+  if (readIndexedUserVersion(db) < 65) {
+    return [];
+  }
+  const rows = db
+    .query("SELECT service_id FROM user_mcp_connector WHERE model_access = 1 ORDER BY service_id")
+    .all() as Array<{ service_id: string }>;
+  return rows.map((r) => r.service_id);
+}
+
 export function getUserMcpConnector(db: Database, serviceId: string): UserMcpConnectorRow | null {
   if (readIndexedUserVersion(db) < 11) {
     return null;
