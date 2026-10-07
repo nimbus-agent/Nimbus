@@ -377,7 +377,10 @@ describe("user MCP spread", () => {
     });
     expect(listCalls.length).toBeGreaterThan(0);
     expect(actions).toEqual([
-      { type: "mcp_x.echo", payload: { mcpToolId: "mcp_x_echo", input: { s: "hi" } } },
+      {
+        type: "mcp_x.echo",
+        payload: { mcpToolId: "mcp_x_echo", input: { s: "hi" }, requestedBy: "model" },
+      },
     ]);
     expect(serverExecuteCalls()).toBe(0);
   });

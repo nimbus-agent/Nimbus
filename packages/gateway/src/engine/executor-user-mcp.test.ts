@@ -169,3 +169,64 @@ describe("I42 — a delegate (I20) never approves a user-MCP action", () => {
     });
   }
 });
+
+describe("I42 — the owner sees a user-MCP payload unredacted at the consent prompt", () => {
+  const INPUT = { keywords: "kw-VALUE", author: "au-VALUE", api_key: "ak-VALUE" };
+
+  function capture(): {
+    shown: Array<{ prompt: string; details: Record<string, unknown> | undefined }>;
+    auditJson: string[];
+    exec: ToolExecutor;
+  } {
+    const shown: Array<{ prompt: string; details: Record<string, unknown> | undefined }> = [];
+    const auditJson: string[] = [];
+    const exec = new ToolExecutor(
+      {
+        requestApproval: async (prompt, details) => {
+          shown.push({ prompt, details });
+          return false;
+        },
+      },
+      { recordAudit: (row) => auditJson.push(row.actionJson) },
+      { dispatch: async () => ({}) },
+      undefined,
+      NULL_EGRESS_SINK,
+      NO_POLICY_OVERLAY,
+    );
+    return { shown, auditJson, exec };
+  }
+
+  test("a user-MCP action shows keywords, author AND api_key values, plus requestedBy", async () => {
+    const { shown, exec } = capture();
+    await exec.execute({
+      type: USER_MCP,
+      payload: { mcpToolId: "mcp_echo_echo", input: INPUT, requestedBy: "model" },
+    });
+    expect(shown).toHaveLength(1);
+    expect(shown[0]?.details).toEqual({
+      mcpToolId: "mcp_echo_echo",
+      input: INPUT,
+      requestedBy: "model",
+    });
+    for (const v of ["kw-VALUE", "au-VALUE", "ak-VALUE", '"requestedBy":"model"']) {
+      expect(shown[0]?.prompt).toContain(v);
+    }
+  });
+
+  test("a non-user-MCP action still has api_key redacted at the prompt", async () => {
+    const { shown, exec } = capture();
+    expect(HITL_REQUIRED.has("email.send")).toBe(true);
+    await exec.execute({ type: "email.send", payload: { input: { api_key: "ak-OTHER" } } });
+    expect(shown).toHaveLength(1);
+    expect(shown[0]?.prompt).not.toContain("ak-OTHER");
+    expect(JSON.stringify(shown[0]?.details)).not.toContain("ak-OTHER");
+    expect(shown[0]?.prompt).toContain("[REDACTED]");
+  });
+
+  test("the user-MCP action's AUDIT row is still redacted (display-only change)", async () => {
+    const { auditJson, exec } = capture();
+    await exec.execute({ type: USER_MCP, payload: { mcpToolId: "mcp_echo_echo", input: INPUT } });
+    expect(auditJson).toHaveLength(1);
+    expect(auditJson[0]).not.toContain("ak-VALUE");
+  });
+});

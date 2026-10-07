@@ -253,10 +253,27 @@ export function redactPayloadForConsentDisplay(value: unknown): unknown {
   return out;
 }
 
+/**
+ * The payload the local owner is SHOWN at the consent prompt — display only; the audit row keeps
+ * `redactAuditPayload` regardless (see `auditPayload`).
+ *
+ * I42: a user-MCP action's payload is shown UNREDACTED. Its values come from the model (or from the
+ * owner's own `connector call`), never from the Vault, they are shown on the owner's own terminal,
+ * and the owner's approval is the ONLY boundary on that path — while `SENSITIVE_PAYLOAD_KEY` is a
+ * substring match that also hides `author`, `keywords` or `monkey`, so a prompt-injected model could
+ * otherwise move the input it wants approved under such a key and out of the owner's sight. The
+ * global regex is deliberately left as is for every other action type.
+ */
+export function consentDisplayPayload(action: PlannedAction): Record<string, unknown> | undefined {
+  if (action.payload === undefined) return undefined;
+  if (isUserMcpActionType(action.type)) return action.payload;
+  return redactPayloadForConsentDisplay(action.payload) as Record<string, unknown>;
+}
+
 export function formatConsentPrompt(action: PlannedAction): string {
   const lines = [`Action requires your approval`, ``, `Type: ${action.type}`];
   if (action.payload !== undefined && Object.keys(action.payload).length > 0) {
-    lines.push("", `Details: ${JSON.stringify(redactPayloadForConsentDisplay(action.payload))}`);
+    lines.push("", `Details: ${JSON.stringify(consentDisplayPayload(action))}`);
   }
   return lines.join("\n");
 }
@@ -357,14 +374,11 @@ export class ToolExecutor {
   }
 
   /** Resolve a HITL action's approval: a delegated answer when one applies (I20), otherwise the
-   *  local owner consent prompt (payload shown redacted, for display only). */
+   *  local owner consent prompt (payload shown via `consentDisplayPayload`, display only). */
   private async resolveHitlApproval(action: PlannedAction): Promise<boolean> {
     const delegated = await this.tryDelegatedApproval(action);
     if (delegated === "fallback") {
-      const details =
-        action.payload === undefined
-          ? undefined
-          : (redactPayloadForConsentDisplay(action.payload) as Record<string, unknown>);
+      const details = consentDisplayPayload(action);
       return this.consent.requestApproval(formatConsentPrompt(action), details, action.type);
     }
     return delegated === "approved";

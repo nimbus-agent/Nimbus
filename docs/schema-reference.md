@@ -1024,7 +1024,9 @@ CREATE TABLE IF NOT EXISTS oncall_push_state (
 -- `user_mcp_connector` table; defaults keep every existing row at deny-all.
 -- Authoritative source: packages/gateway/src/index/user-mcp-grants-v65-sql.ts
 -- `read_paths_json` / `net_hosts_json` are JSON string arrays that become the spawn manifest's
--- filesystem.read / network; `model_access` is stored now and read by a later PR.
+-- filesystem.read / network; `model_access` (set by `--model`) is read by
+-- the engine agent's tool offer (`listModelAccessibleUserMcpIds`): only those servers' tools are
+-- offered to the model, and only on the local owner's turns.
 ALTER TABLE user_mcp_connector ADD COLUMN read_paths_json TEXT NOT NULL DEFAULT '[]';
 ALTER TABLE user_mcp_connector ADD COLUMN net_hosts_json  TEXT NOT NULL DEFAULT '[]';
 ALTER TABLE user_mcp_connector ADD COLUMN model_access    INTEGER NOT NULL DEFAULT 0;

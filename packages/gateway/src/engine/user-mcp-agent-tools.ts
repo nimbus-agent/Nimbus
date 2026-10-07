@@ -138,11 +138,15 @@ export async function buildUserMcpAgentTools(
           execute: async (input: unknown) => {
             const ex = executor();
             if (ex === undefined) return { refused: NOT_OWNER_REFUSAL };
-            // Never substitute: the owner must approve exactly the input the model sent.
+            // Never substitute: the owner approves exactly the input the model sent, and the
+            // executor shows a user-MCP payload UNREDACTED (`consentDisplayPayload`), so no key
+            // name can hide part of it from the prompt. `requestedBy` marks the call as the
+            // model's in that prompt; dispatch hands the tool `payload.input` only
+            // (`extractToolInput`), so it never reaches the server.
             if (!isPlainObject(input)) return { refused: NON_OBJECT_INPUT_REFUSAL };
             const result = await ex.execute({
               type: actionType,
-              payload: { mcpToolId, input },
+              payload: { mcpToolId, input, requestedBy: "model" },
             });
             return result.status === "ok" ? result.result : { refused: result.reason };
           },

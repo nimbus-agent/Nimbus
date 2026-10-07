@@ -188,7 +188,7 @@ describe("buildUserMcpAgentTools", () => {
     expect(ex.actions).toEqual([
       {
         type: "mcp_notes.search",
-        payload: { mcpToolId: "mcp_notes_search", input: { q: "hello" } },
+        payload: { mcpToolId: "mcp_notes_search", input: { q: "hello" }, requestedBy: "model" },
       },
     ]);
     expect(t.executeCalls).toBe(0);
@@ -233,7 +233,11 @@ describe("buildUserMcpAgentTools", () => {
     const json = standardSchemaToJSONSchema(offered) as { properties?: Record<string, unknown> };
     expect(Object.keys(json.properties ?? {})).toEqual([]);
     expect(await call(tools, "mcp_a__x", { anything: 1 })).toBe("r");
-    expect(ex.actions[0]?.payload).toEqual({ mcpToolId: "mcp_a_x", input: { anything: 1 } });
+    expect(ex.actions[0]?.payload).toEqual({
+      mcpToolId: "mcp_a_x",
+      input: { anything: 1 },
+      requestedBy: "model",
+    });
   });
 
   test("non-object input is refused, never substituted; nothing is called", async () => {
