@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1791225894792,
+  "lastUpdate": 1791389934033,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "0aafb31e9b2926b5769fe2ea61d6f4cf7c074205",
-          "message": "chore: correct drifted doc counts and versions, prune shipped plans, clear 8 advisories (#908)\n\nTwo adjacent sweeps. Every claim below was verified against source\nbefore editing — no finding was taken on trust from the audit that\nproduced it.\n\n## 1. The canonical security doc understated the live write surface by\nhalf\n\n`docs/SECURITY-INVARIANTS.md` describes I13's `WRITE_ROUTE_ALLOWLIST` as\n**six entries**. `packages/gateway/src/ipc/http-write-routes.ts:50-63`\nfreezes **twelve**, and `security-invariants.test.ts` asserts\n`toHaveLength(12)` at both `:337` and `:1148`.\n\nWorse, `.claude/commands/nimbus-http-write-surface.md` was internally\ninconsistent — **eight** in one place, **six** in another, both wrong.\nThat is the skill an agent loads *before adding an I13 write route*, so\nit would have produced a wrong count bump and a red gate.\n\nSame class of drift, same cause (hand-maintained counts in prose):\n\n| Claim | Reality |\n|---|---|\n| `NO_TIMEOUT_METHODS`: 4 entries at `gateway_bridge.rs:152` | **5** at\n`:167` (`identity.login` added with the OIDC device-code flow),\n`assert_eq!(…, 5)` at `:556` |\n| `ALLOWED_METHODS.len() == 99` | **101**, asserted at\n`gateway_bridge.rs:518` |\n| `audit:invariants` checks \"D10 + D11\" | Enforces **D10 through D22** |\n\n## 2. A documented CLI command that does not exist\n\n`docs/cli-reference.md` documented `nimbus sync`. There is no handler\nand no `commands/sync.ts` — **every example in that section exits 1**.\nThe real command is `nimbus connector sync <name>`, documented correctly\nin the same file.\n\nIt survived `audit:readme-cli` only because `COMMAND_NAMES` listed\n`\"sync\"` and `\"voice\"` with nothing behind them, so **the gate was\nreporting green on broken docs**. Both removed from the registry; the\ntwo docs that consequently failed were fixed in the same pass.\n`audit:readme-cli` now reports 32 references, down exactly the two\nremoved.\n\nAlso added the genuinely missing `nimbus janitor` / `nimbus preflight`\nreference sections, and the two shipped agents (`janitor`, `preflight`)\nmissing from `architecture.md`'s catalogue.\n\n## 3. Version strings\n\n`CLAUDE.md`/`GEMINI.md` said `v1.0.0` against an actual **`v1.4.3`**;\n`docs/roadmap.md` said `v0.22.0`; `docs/README.md`'s badge said\n`v0.13.1`. The badge is now the **dynamic** shields.io release badge, so\nit cannot drift again.\n\n## 4. Dependencies — `bun audit` 10 → 2\n\nRaised three pins in the root `overrides` block, this project's\nestablished remediation mechanism (`fast-uri`, `linkify-it`,\n`brace-expansion`, `js-yaml`, `postcss` already live there):\n\n```\ntar          7.5.20  -> 7.5.22   <- the only DIRECT PRODUCTION dep affected\nhono         4.12.25 -> 4.12.32\nprotobufjs   7.6.4   -> 7.6.5\n```\n\n`protobufjs` deliberately stayed on 7.x rather than the 8.7.1 latest — a\nmajor bump under `@xenova/transformers` (the MiniLM embedding stack) is\nnot worth a moderate advisory. The embedding suite was run to confirm:\n180 pass.\n\n> **Worth knowing:** GitHub's Dependabot API returns **zero** open\nalerts for this repo while `bun audit` found **ten**. The dependency\ngraph does not resolve `bun.lock`, so Dependabot is structurally blind\nhere and `bun audit` is the authoritative signal.\n\nTwo advisories remain, both requiring a major bump and therefore left\ndeliberately: `@hono/node-server` (patched only in 2.x; the 1.x line\ntops out at 1.19.17 with no backport) and `@ai-sdk/provider-utils` (the\npublished 3.x line ends at 3.0.30, entirely inside the vulnerable range\n— and `@mastra/core` imports it under an npm *alias* that a bare\n`overrides` key cannot target).\n\n## 5. Prune — 28 shipped plan/spec docs\n\nSix fully-shipped workstreams: P2 (both phases), P4b (measurement +\ntuning), zero-config onboarding, CLA Phase 1. **Kept** the un-executed\n`launch-execution` set, the unshipped P5/P3 spec, and `cla-design.md`\n(which `infrastructure-roadmap.md` cites for deferred scope).\n\nSix inbound references were fixed to keep the prune link-closed —\nincluding `.github/release-train.json` and `ci.yml:596-599`, which the\noriginal finding list had **missed**. Had only the listed sites been\nfixed, this would have shipped two dead paths.\n\n## Verification\n\n| Gate | Result |\n|---|---|\n| `preflight:fast` | **PASSED — all 21 gates** |\n| `lychee` (CI's exact invocation) | 1092 links, **0 errors** |\n| `bun audit --audit-level high` | exit 0 |\n| `typecheck` / `lint` | pass — 3016 files |\n| embedding · tar consumers · TUI | 180 · 5 · 152 pass |\n\n## Follow-up worth doing (not in this PR)\n\n**Nothing gates version strings or hand-maintained counts in prose** —\n`audit:status-drift` guards only the `I<N>`/`V<N>` ceilings. That is why\nhalf these findings existed, and it will recur. Two cheap fixes: extend\n`check-status-drift.ts` to compare the CLAUDE.md/GEMINI.md \"Latest\nrelease\" string against `.release-please-manifest.json`, and add a test\nasserting `COMMAND_NAMES ⊆ COMMAND_HANDLERS ∪ {bench, help}`.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nCo-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>",
-          "timestamp": "2026-07-28T15:35:57Z",
-          "tree_id": "a2f910e00536b51b99a3dbdc3671ada04cd8683b",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/0aafb31e9b2926b5769fe2ea61d6f4cf7c074205"
-        },
-        "date": 1785253682747,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 306.8094265500025,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 310.09842154999717,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 345.2705407499969,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "a00d70d8cc0bda237379f7a1eddb9babee2c47f7",
+          "message": "fix(deps): override @modelcontextprotocol client/core/server to the patched 2.2 line (#1624)\n\n## Summary\n\nGHSA-6qxp-vccf-f47h / CVE-2026-104850 is a high-severity advisory\npublished 2026-10-06. The MCP TypeScript SDK OAuth client could send\ncredentials to an authorization server chosen by the MCP server. It\naffects `@modelcontextprotocol/client` >=2.0.0 <2.2.0. It turned the\nrequired `Dependency audit` and `Trivy vulnerability scan` checks red on\n`main` and on every open PR.\n\n`@mastra/mcp` 2.1.2 is its latest release, and it pins EXACT\n`@modelcontextprotocol/{client,core,node,server}` 2.0.0. No upgrade\nwithin the declared ranges fixes it, so the fix is a root `overrides`\npin.\n\n## Versions\n\n| package | before | after |\n| --- | --- | --- |\n| `@modelcontextprotocol/client` | 2.0.0 | **2.2.0** (depends on core\n2.2.0 exactly) |\n| `@modelcontextprotocol/core` | 2.0.0 | **2.2.0** |\n| `@modelcontextprotocol/server` | 2.0.0 | **2.2.0** (depends on core\n2.2.0 exactly) |\n| `@modelcontextprotocol/node` | 2.0.0 | 2.0.0, unchanged |\n| `@modelcontextprotocol/ext-apps` | 2.0.3 | 2.0.3, unchanged |\n\n`@modelcontextprotocol/node` is deliberately not overridden. It has no\n2.2 release, and 2.1.1 peers `server ^2.3.0`, which conflicts with the\n2.2 line. node 2.0.0 does not depend on `core` at all, its `server\n^2.0.0` peer is met by 2.2.0, and it is outside the advisory range.\n`ext-apps` peers `^2.0.0` on client/core/server, which is also met.\nAfter `bun install --force` exactly ONE copy each of client, core and\nserver is installed, all 2.2.0, per `ls node_modules/.bun | grep\n'^@modelcontextprotocol+'`.\n\nNo workspace manifest declares any of these packages directly.\n`packages/cli` declares only the separate v1\n`@modelcontextprotocol/sdk`, which is untouched.\n\n## Verification, Windows 11 dev machine\n\n- The CI `bun audit` step reproduced, `bun audit --audit-level high`\nplus the `advisory-ignore-args.ts` ignores: **exit 0**, with no\n`@modelcontextprotocol/*` finding.\n- `bun run audit:override-drift`: OK.\n- `bun test packages/gateway packages/cli scripts`, the exact CI command\nin one process: **27523 pass, 95 skip, 0 fail**, 27618 tests across 1849\nfiles in 427.6s. That suite includes the lazy-mesh and chatops tests\nthat drive real MCP clients through `@mastra/mcp`.\n- `bun run typecheck`: clean. `bun run typecheck:tests`: ok, 478\nbaselined, 0 new.\n- `bun run preflight:fast`: PASSED.\n- `bun run build`: exit 0. The gateway compiles with `bun build\n--compile` into `nimbus-gateway.exe`, and the CLI and docs build too.\n\n## Not fixed here: `audit:advisories` is still red\n\n`Dependency audit` runs `bun audit` first, and its failure hid the next\nstep. With `bun audit` green, `bun run audit:advisories` fails on four\nLOW/MODERATE advisories. Those are unrelated to this change and are\npresent on `main` too:\n\n- `katex` GHSA-238p-pmpm-9mq7, low. The fix is 0.18.2, but\n`micromark-extension-math` requires `^0.16`.\n- `postcss-selector-parser` GHSA-rj75-hqrm-r3gf, moderate. The fix is\n7.1.6, but `postcss-nested` requires `^6.1.1`.\n- `smol-toml` GHSA-r4xh-jqrq-34v2, moderate. 1.9.0 is published, but\n`markdownlint-cli2` pins 1.8.0 exactly.\n- `sprintf-js` GHSA-hp3w-g68c-fv3c, moderate. No patched release exists,\nsince <=1.1.3 is affected and 1.1.3 is the latest.\n\nEach needs an override or a dated row in `accepted-advisories.ts`. That\nis an owner decision, so this PR does not make one. The required check\nstays red until those are handled, either here or in a follow-up.\n\n## Follow-up\n\nDrop the three `@modelcontextprotocol/*` overrides once `@mastra/mcp`\nships a release whose pins are at or above the fixed 2.2.0 line.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n\n## Summary by CodeRabbit\n\n* **Chores**\n* Updated the versions of internal components used by the app. This\nupdate does not add or remove user-facing features, and no changes to\nthe app’s visible behavior are included.\n\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-10-07T16:06:13Z",
+          "tree_id": "b9b2c938dab0c4182ee04b8869d272cd4eb70f85",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/a00d70d8cc0bda237379f7a1eddb9babee2c47f7"
+        },
+        "date": 1791389929096,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 362.05049214999525,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 350.51176780000316,
             "unit": "ms"
           }
         ]
