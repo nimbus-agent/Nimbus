@@ -96,11 +96,15 @@ describe("buildScaffoldFiles", () => {
 
   it("README register line is absolute and OS-specific", () => {
     const linux = fileContent(buildScaffoldFiles("echo", "linux", "/w/echo"), "README.md");
-    expect(linux).toContain("nimbus connector add --mcp mcp_echo -- /w/echo/dist/echo");
+    expect(linux).toContain('nimbus connector add --mcp mcp_echo -- "/w/echo/dist/echo"');
+    expect(linux).toContain(`--input '{"text":"hi"}'`);
+    expect(linux).not.toContain("PowerShell 5.1");
     expect(linux).not.toContain("--read <dir> --");
     // cross-platform-ok: intentional Windows-path expectation
     const win = fileContent(buildScaffoldFiles("echo", "win32", "C:\\w\\echo"), "README.md"); // cross-platform-ok
-    expect(win).toContain("-- C:\\w\\echo\\dist\\echo.exe"); // cross-platform-ok
+    expect(win).toContain('-- "C:\\w\\echo\\dist\\echo.exe"'); // cross-platform-ok
+    expect(win).toContain(String.raw`--input "{\"text\":\"hi\"}"`);
+    expect(win).toContain("Windows PowerShell 5.1 mangles embedded quotes");
     for (const readme of [linux, win]) {
       expect(readme).not.toMatch(/connector add[^\n]*--read </);
       expect(readme).toContain("nimbus connector tools mcp_echo");

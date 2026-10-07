@@ -235,9 +235,11 @@ export async function revokeLegacyDataDirGrantsAtBoot(deps: {
     const helper = s.helperPath();
     if (!s.helperExists(helper)) return;
     let userIds: string[] = [];
+    let listFailed = false;
     try {
       userIds = s.listUserServiceIds(deps.db);
     } catch (e) {
+      listFailed = true;
       deps.logger.warn(
         { err: e },
         "sandbox: could not list user MCP ids; revoking first-party only",
@@ -249,10 +251,22 @@ export async function revokeLegacyDataDirGrantsAtBoot(deps: {
       ids: legacyDataDirGrantIds(userIds),
       run: s.helperRun(helper),
       markerExists: () => s.markerExists(marker),
-      writeMarker: () => s.writeMarker(marker),
+      // A failed user listing means user-MCP SIDs were not revoked: withhold the marker so the
+      // next boot retries with a working listing.
+      writeMarker: () => {
+        if (!listFailed) s.writeMarker(marker);
+      },
       logger: deps.logger,
     });
-    if (result === "done") deps.logger.info("sandbox: revoked legacy data-directory grants");
+    if (result === "done") {
+      if (listFailed) {
+        deps.logger.warn(
+          "sandbox: migration marker withheld (user MCP listing failed); will retry next boot",
+        );
+      } else {
+        deps.logger.info("sandbox: revoked legacy data-directory grants");
+      }
+    }
   } catch (e) {
     deps.logger.warn({ err: e }, "sandbox: legacy data-directory revoke failed (non-fatal)");
   }

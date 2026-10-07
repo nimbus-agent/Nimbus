@@ -76,6 +76,10 @@ function buildReadme(name: string, platform: NodeJS.Platform, absDir: string): s
   const isWin = platform === "win32";
   const pathMod = isWin ? win32 : posix;
   const binary = pathMod.join(absDir, "dist", isWin ? `${name}.exe` : name);
+  const inputExample = isWin ? String.raw`"{\"text\":\"hi\"}"` : `'{"text":"hi"}'`;
+  const inputNote = isWin
+    ? "\nWindows PowerShell 5.1 mangles embedded quotes in native-command arguments; use PowerShell 7+ or cmd.\n"
+    : "";
   const winNote = isWin
     ? "\nOn Windows, any `--net` grant is all-or-nothing: it opens the network entirely rather than per host.\n"
     : "";
@@ -106,7 +110,7 @@ This produces \`dist/${name}${isWin ? ".exe" : ""}\`.
 ## Register
 
 \`\`\`
-nimbus connector add --mcp mcp_${name} -- ${binary}
+nimbus connector add --mcp mcp_${name} -- "${binary}"
 \`\`\`
 
 ## Granting more
@@ -118,9 +122,9 @@ ${winNote}
 
 \`\`\`
 nimbus connector tools mcp_${name}
-nimbus connector call mcp_${name} echo --input '{"text":"hi"}'
+nimbus connector call mcp_${name} echo --input ${inputExample}
 \`\`\`
-
+${inputNote}
 Each call asks for your approval first.
 `;
 }

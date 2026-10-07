@@ -238,10 +238,10 @@ describe("revokeLegacyDataDirGrantsAtBoot", () => {
         },
       },
     });
-    expect(warns).toHaveLength(1);
+    expect(warns).toHaveLength(2); // the listing failure + the withheld marker
     expect(w.runs.length).toBeGreaterThan(0);
     expect(w.runs).toHaveLength(legacyDataDirGrantIds([]).length);
-    expect(w.written).toHaveLength(1);
+    expect(w.written).toHaveLength(0); // marker withheld so the next boot retries
   });
 
   it("one failing revoke writes no marker and warns", async () => {
