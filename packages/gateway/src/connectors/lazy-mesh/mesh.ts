@@ -321,6 +321,28 @@ export class LazyConnectorMesh {
     return listLazyMeshClientTools(this.getLazyClient(userMcpMeshKey(serviceId)));
   }
 
+  /**
+   * {@link listUserMcpTools} for the connector dispatcher: the same ONE-slot listing, with each tool
+   * wrapped in that slot's drain refcount exactly as {@link listToolsForDispatcher} wraps it, so a
+   * slot stop still waits for an in-flight user-MCP call. Running a user-MCP action therefore
+   * spawns only its own server, never every connector the merged listing would start.
+   */
+  async listUserMcpToolsForDispatcher(serviceId: string): Promise<LazyMeshToolMap | undefined> {
+    const tools = await this.listUserMcpTools(serviceId);
+    if (tools === undefined) {
+      return undefined;
+    }
+    const drain = this.lazySlots.get(userMcpMeshKey(serviceId))?.drain;
+    const wrapped: LazyMeshToolMap = { ...tools };
+    if (drain !== undefined) {
+      this.wrapMergedToolsWithRefcount(
+        wrapped,
+        new Map(Object.keys(wrapped).map((key) => [key, drain])),
+      );
+    }
+    return wrapped;
+  }
+
   private async ensureUserMcpConnectorsRunning(): Promise<void> {
     const rows = this.listUserMcpConnectors();
     const active = new Set(rows.map((r) => r.service_id));

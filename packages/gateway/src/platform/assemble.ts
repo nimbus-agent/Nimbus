@@ -121,7 +121,7 @@ import { createFilesystemV2Syncable } from "../connectors/filesystem-v2-sync.ts"
 import { githubFetchOneUrlIsSupported } from "../connectors/github-sync.ts";
 import { gitlabFetchOneUrlIsSupported } from "../connectors/gitlab-sync.ts";
 import { getAllConnectorHealth } from "../connectors/health.ts";
-import { createConnectorDispatcher } from "../connectors/index.ts";
+import { createConnectorDispatcher, meshDispatcherClient } from "../connectors/index.ts";
 import { jenkinsFetchOneUrlIsSupported } from "../connectors/jenkins-sync.ts";
 import { jiraConfiguredBaseUrl, jiraFetchOneUrlIsSupported } from "../connectors/jira-sync.ts";
 import { createLazyConnectorMesh, type LazyConnectorMesh } from "../connectors/lazy-mesh/index.ts";
@@ -2314,10 +2314,7 @@ function bootTribalKnowledge(deps: {
   const tribalE2eSinkDir = processEnvGet("NIMBUS_CHATOPS_E2E_SINK_DIR");
   const tribalDispatcher: ConnectorDispatcher =
     tribalE2eSinkDir === undefined || tribalE2eSinkDir === ""
-      ? createConnectorDispatcher({
-          listTools: () => connectorMesh.listToolsForDispatcher(),
-          getToolsEpoch: () => connectorMesh.getToolsEpoch(),
-        })
+      ? createConnectorDispatcher(meshDispatcherClient(connectorMesh))
       : buildE2eSinkDispatcher(tribalE2eSinkDir);
   ipcOpts.tribalConnectorDispatcher = tribalDispatcher;
   // In-chat capture trigger (Task 19): `@nimbus tribal capture <id>` → I25 write-gate with the
@@ -2583,10 +2580,7 @@ async function bootChatopsIntoAssembly(deps: {
     dispatcher:
       chatopsE2eSinkDir === undefined || chatopsE2eSinkDir === ""
         ? createConnectorWriteDispatcher(
-            createConnectorDispatcher({
-              listTools: () => connectorMesh.listToolsForDispatcher(),
-              getToolsEpoch: () => connectorMesh.getToolsEpoch(),
-            }),
+            createConnectorDispatcher(meshDispatcherClient(connectorMesh)),
             connectorWriteDeps,
           )
         : buildE2eSinkDispatcher(chatopsE2eSinkDir),
