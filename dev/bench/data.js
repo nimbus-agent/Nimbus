@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1791441931157,
+  "lastUpdate": 1791479430963,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "306811640+nimbus-release-bot[bot]@users.noreply.github.com",
-            "name": "nimbus-release-bot[bot]",
-            "username": "nimbus-release-bot[bot]"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "8514fa228a8b670919e2b9f479fb375bdd6f7bb9",
-          "message": "chore: release main (#916)\n\n:robot: I have created a release *beep* *boop*\n---\n\n\n<details><summary>1.5.1</summary>\n\n##\n[1.5.1](https://github.com/nimbus-agent/Nimbus/compare/v1.5.0...v1.5.1)\n(2026-07-28)\n\n\n### Bug Fixes\n\n* **docs:** serve .well-known/security.txt by disabling Jekyll filtering\n([#915](https://github.com/nimbus-agent/Nimbus/issues/915))\n([393e7de](https://github.com/nimbus-agent/Nimbus/commit/393e7de7982e1a74f5544c1571b463bf66207c52))\n</details>\n\n---\nThis PR was generated with [Release\nPlease](https://github.com/googleapis/release-please). See\n[documentation](https://github.com/googleapis/release-please#release-please).\n\nCo-authored-by: nimbus-release-bot[bot] <306811640+nimbus-release-bot[bot]@users.noreply.github.com>",
-          "timestamp": "2026-07-28T19:38:16Z",
-          "tree_id": "77621f2c4ceaf0eddf38fd235812129cd5314fdd",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/8514fa228a8b670919e2b9f479fb375bdd6f7bb9"
-        },
-        "date": 1785268303937,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 310.0149639499963,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 307.9984760500003,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 265.57603525001105,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "232b778339848c2689b3ed31f2d1a240f27d75c3",
+          "message": "feat(index): canonical ci_run / pr / git_commit metadata contract (index lane A1) (#1632)\n\nEvery CI-run, pull-request and git-commit writer now emits one\ncanonical, versioned metadata shape, built by a shared contract builder.\nThis is PR A1 of the index lane contract (pre-S3 close-out item A, the\ngate half of the B4 bug-hunt row). Readers move fully onto the contract\nin A2; the census becomes an enforced gate in A3.\n\n## Why\n\nThe B4 census showed production queries reading `item.metadata` keys\nthat no writer produces. Each CI and forge writer named the same fact\ndifferently (`conclusion`/`state`/`status`/`result`,\n`branch`/`headBranch`/`ref`, `merged`/`MERGED`/`action`), and every test\nfixture hand-wrote the spelling its reader wanted. The result: preflight\npassed red builds, DORA never detected a CI deploy, changelog/standup\nnever saw non-GitHub merges, and pre-mortem's review drag was always\nempty.\n\n## What changed\n\n- **Contract modules**: `connectors/ci-run-meta.ts`,\n`connectors/pr-meta.ts`, `connectors/git-commit-meta.ts`. Each has a\nversion constant (`meta_v` = 1), exact-match `Object.hasOwn` normalizers\n(an unlisted vendor value maps to `unknown`, never to\n`success`/`open`/`merged`), a builder that strips colliding raw keys and\nomits anything the provider cannot supply, and a typed per-service\nemitted-keys table.\n- **Seven writers** go through exported pure mappers that call the\nbuilders:\n- CI runs: GitHub Actions (which now writes `repo`), CircleCI, GitLab\npipelines, Jenkins.\n- Pull requests: GitHub (which now writes `opened_at_ms`), Bitbucket,\nand GitLab MRs.\n- Commits: filesystem `git_commit` rows, which now record and resolve\ntheir author email.\n- GitLab MRs take state from `opened`/`accepted`/`closed`/`reopened`\nevents and carry the stored state forward on every other event.\n`upsertIndexedItem` replaces metadata, so without that an `approved`\nevent would erase a merge.\n- **Four keys collide** with raw keys writers already emitted; the\ncanonical value replaces the raw one, and the provider value moves to\n`*_raw`:\n  - GitHub Actions `conclusion` (`timed_out` → `failure`).\n  - CircleCI `branch` (a tag is no longer written as a branch).\n  - GitHub PR `state` (a merged PR reads `merged`, not `closed`).\n  - Bitbucket PR `state` (`MERGED` → `merged`).\n- **Rebody**: `REBODY_REQUIRED_META_VERSION` becomes\n`REBODY_META_TARGETS`, a type-scoped list. It covers\njira/linear/pagerduty (service-wide), plus `pr` on\ngithub/bitbucket/gitlab and `git_commit` on filesystem.\n- `ci_run` is deliberately not a target. The CI syncs fetch only recent\nruns, so older rows could never reach the new version.\n- **Demo corpus**: `pr`/`ci_run` rows are built through the same\nbuilders.\n- **Tests**: a drift test drives every real mapper against the\nemitted-keys tables. A collision test pins the reader results the four\ncollisions change, with rows built only by real writers.\n\n## User-visible behaviour changes\n\n- **preflight**: the failing-CI check now actually evaluates.\n- It reads the latest run per service, repo and workflow on the target\nbranch, scoped to the service's repos.\n- Under `--mode block`, a red latest GitHub Actions run, GitLab pipeline\nor errored CircleCI pipeline now fails the deploy. Before this the lane\nalways passed.\n- Two latent defects were fixed here because this PR brings the lane to\nlife: a failure superseded by a newer pass no longer reports, and a\nfailure in another repo sharing the branch name is ignored.\n- **DORA**: deploy detection now sees GitHub Actions, GitLab and Jenkins\nruns.\n- **changelog / standup**:\n- Both now list GitLab merges and count only the non-GitHub merges that\ncarry no merge time.\n  - Merged Bitbucket and GitLab PRs no longer appear as \"active\".\n- **pre-mortem review drag**: now has data for GitHub and GitLab.\n- **people graph**: local git commit authors are resolved into people.\n\n## Known limitations (follow-ups in A2)\n\n- **Jenkins and CircleCI in preflight**:\n- Jenkins records no branch, and CircleCI's pipeline state is not\npass/fail. Preflight cannot evaluate either yet.\n  - Nothing discloses this until A2.\n- **CI runs synced mid-run**: they are written once and stay `running`.\n- **DORA undercounting**: runs synced before this upgrade lack the new\nkeys, so DORA undercounts until they age out of the window.\n- **GitLab MR attribution**: rows credit the person who performed the\nevent (who merged), not the MR author.\n- **Readers on raw keys**: some readers still use the raw `headSha`.\n- **Stale docs**: some prose still says only the GitHub connector writes\n`merged_at` (`docs/cli-reference.md`, `docs/roadmap.md`).\n\n## Verification\n\n- `bun test` over connectors, agents, preflight, metrics, demo, rebody\nand the unit connector/preflight trees: 7,031 pass, 0 fail.\n- `bun run typecheck` and `typecheck:tests` are clean.\n- `preflight:fast` gates pass on Windows.\n- The census \"unmatched item reads\" count moved from 83 to 88. The\ncensus cannot yet see builder-made keys; the final review checked each\nnew entry, and none is a dead lane. A3 teaches the census about the\ncontract.\n\nNo `!`: no user action is required. Existing rows read as unknown until\nthey are re-synced, or until `nimbus index rebody` recovers PR and\ncommit depth.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n\n## Summary by CodeRabbit\n\n* **New Features**\n* `nimbus index rebody` can now identify selected records with outdated\nmetadata as well as incomplete content. Dry-run totals report body and\nmetadata work separately; a record may appear in both counts.\n* **Bug Fixes**\n* CI preflight now evaluates the latest run per repository and workflow,\nand only for configured repositories.\n* Pull-request merge reporting avoids double-counting records with merge\ntimestamps and clarifies estimates when timestamps are unavailable.\n* Connector metadata is more consistently normalized, improving CI\nstatus, pull-request dates, and commit-author attribution.\n* **Documentation**\n* Updated the CLI reference and changelog with metadata recovery\neligibility and connector data behavior.\n\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-10-08T20:02:04+03:00",
+          "tree_id": "841298f6a86427a96a2452c14e631bf0d7a266b1",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/232b778339848c2689b3ed31f2d1a240f27d75c3"
+        },
+        "date": 1791479426612,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 255.56585104999758,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 256.9721302999984,
             "unit": "ms"
           }
         ]
