@@ -30,6 +30,11 @@ export type QueuedSocketWriter = {
    * write would discard whatever is still queued; this defers the end to the flush that empties it.
    */
   end(): void;
+  /**
+   * True once `end()` was called or the peer is gone. A reader that keeps parsing after a terminal
+   * decision must check this: the socket stays open until the queue drains, so input can still arrive.
+   */
+  isEnding(): boolean;
   /** Call from the socket's `drain` handler. */
   flush(): void;
   /** Bytes accepted by a write but not yet taken by the socket. */
@@ -84,6 +89,9 @@ export function createQueuedSocketWriter(socket: RawWritableSocket): QueuedSocke
       if (closed || endRequested) return;
       endRequested = true;
       if (queue.length === 0) endNow();
+    },
+    isEnding(): boolean {
+      return closed || endRequested;
     },
     flush: drainQueue,
     pendingBytes(): number {

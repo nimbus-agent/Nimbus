@@ -92,7 +92,10 @@ describe("createQueuedSocketWriter", () => {
       end: () => ends.push(sock.received.length),
     });
     w.write("abcdefghij");
+    expect(w.isEnding()).toBe(false);
     w.end();
+    // Ending is decided now, even though the socket is not ended yet.
+    expect(w.isEnding()).toBe(true);
     expect(ends).toEqual([]);
     w.flush();
     expect(ends).toEqual([]);

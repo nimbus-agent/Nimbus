@@ -111,6 +111,10 @@ export class LanServer {
   }
 
   private async handleChunk(socket: Socket<SessionState>, chunk: Uint8Array): Promise<void> {
+    // A terminal decision ends the socket only once its last reply has drained, so input can still
+    // arrive in between. Nothing after that decision may be parsed: a rejected session must not go
+    // on to pair, say hello or dispatch.
+    if (socket.data.writer.isEnding()) return;
     const prev = socket.data.buffer;
     if (prev.length + chunk.length > MAX_PENDING_BYTES) {
       socket.data.writer.end();
@@ -122,6 +126,8 @@ export class LanServer {
     socket.data.buffer = merged;
 
     while (socket.data.buffer.length >= 4) {
+      // Re-checked every pass: the previous frame (or an await inside it) may have ended the session.
+      if (socket.data.writer.isEnding()) return;
       const view = new DataView(
         socket.data.buffer.buffer,
         socket.data.buffer.byteOffset,

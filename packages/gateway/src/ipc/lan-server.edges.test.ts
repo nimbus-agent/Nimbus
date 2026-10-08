@@ -316,6 +316,48 @@ describe("LanServer — guards below the socket protocol", () => {
     return out;
   }
 
+  // A rejection ends the socket only once its reply has drained, so input can still arrive in
+  // between. A rejected session must parse nothing more: a hello that follows a refused pair must
+  // never reach the peer lookup, whether it sits in the same chunk or arrives in a later one.
+  test.each([
+    ["the same chunk", true],
+    ["a later chunk", false],
+  ] as const)(
+    "after a terminal rejection, a hello in %s is never parsed",
+    async (_label, sameChunk) => {
+      const { internals, lookups, failures } = unstartedServer();
+      const client = generateBoxKeypair();
+      // 3 bytes per write: the pair_err reply cannot drain, so the end stays pending.
+      const sock = fakeSocket({ peerIp: "10.0.0.9", buffer: new Uint8Array(0) }, 3);
+      const pair = frame(
+        new TextEncoder().encode(
+          JSON.stringify({
+            kind: "pair",
+            client_pubkey: Buffer.from(client.publicKey).toString("base64"),
+            pairing_code: "000000",
+          }),
+        ),
+      );
+      const hello = helloFrame(client);
+
+      if (sameChunk) {
+        const both = new Uint8Array(pair.length + hello.length);
+        both.set(pair, 0);
+        both.set(hello, pair.length);
+        await internals.handleChunk(sock, both);
+      } else {
+        await internals.handleChunk(sock, pair);
+        await internals.handleChunk(sock, hello);
+      }
+
+      // The refused pair was counted (positive control: the rejection path really ran) ...
+      expect(failures).toEqual(["10.0.0.9"]);
+      expect(sock.data.writer?.isEnding()).toBe(true);
+      // ... and the hello behind it never reached the peer lookup.
+      expect(lookups).toEqual([]);
+    },
+  );
+
   test("a chunk past MAX_PENDING_BYTES is refused before ANY frame in it is parsed", async () => {
     const { internals, lookups, failures } = unstartedServer();
     // A well-formed hello at the head of the burst: under the bound it would be answered. The
