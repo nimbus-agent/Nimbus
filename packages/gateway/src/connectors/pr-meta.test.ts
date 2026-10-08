@@ -103,3 +103,16 @@ describe("buildPrMetadata", () => {
     expect(PR_EMITTED_KEYS.github.has("merged_at")).toBe(true);
   });
 });
+
+describe("buildPrMetadata — merged only for a known state", () => {
+  test("an unknown state writes state but no merged flag", () => {
+    const out = buildPrMetadata({}, { state: "unknown" });
+    expect(out["state"]).toBe("unknown");
+    expect("merged" in out).toBe(false);
+  });
+  test("open and closed still write merged: false; merged writes true", () => {
+    expect(buildPrMetadata({}, { state: "open" })["merged"]).toBe(false);
+    expect(buildPrMetadata({}, { state: "closed" })["merged"]).toBe(false);
+    expect(buildPrMetadata({}, { state: "merged" })["merged"]).toBe(true);
+  });
+});
