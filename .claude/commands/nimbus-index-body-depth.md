@@ -179,8 +179,12 @@ one.
 
 **Two eligibility reasons, reported separately.** A row is recoverable when `body_complete = 0`
 **OR** its service's `metadata.meta_v` is below the version that service must carry —
-`REBODY_META_TARGETS` (a type-scoped list) in `ipc/index-rebody-rpc.ts`, today `jira` and `linear` at
-`TICKET_META_VERSION` (`connectors/ticket-depth.ts`). **This list is where a future metadata-depth
+`REBODY_META_TARGETS` (a type-scoped list) in `ipc/index-rebody-rpc.ts`. Service-wide today:
+`jira` and `linear` at `TICKET_META_VERSION` (`connectors/ticket-depth.ts`) and `pagerduty` at
+`PAGERDUTY_INCIDENT_META_VERSION`; type-scoped: `pr` on `github`/`bitbucket`/`gitlab` at
+`PR_META_VERSION` (`connectors/pr-meta.ts`) and `git_commit` on `filesystem` at
+`GIT_COMMIT_META_VERSION` (`connectors/git-commit-meta.ts`). `ci_run` is deliberately absent —
+the CI syncs fetch only recent runs, so an older row could never reach the current `meta_v`. **This list is where a future metadata-depth
 PR registers itself** — bump the version constant and add a row; the mechanism already exists.
 The counts stay separate (`pending*` for bodies, `pendingMeta*` for metadata) and are deliberately
 never summed: `pending` has meant `body_complete = 0` since V48, a silently widened meaning would
