@@ -4769,7 +4769,7 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
 
   Recovering that depth for already-indexed rows needed two more pieces. **`rebody` now recovers
   indexed depth, not just bodies**: a row is eligible when its body is incomplete **OR** its
-  service's `metadata.meta_v` is below what `REBODY_META_TARGETS` requires (`jira` and
+  service's `metadata.meta_v` is below what `REBODY_REQUIRED_META_VERSION` requires (`jira` and
   `linear` at 1 today; a later depth PR adds a row, not a mechanism). The two reasons are counted
   and reported separately (`pending*` vs `pendingMeta*`) rather than summed — `pending` has meant
   `body_complete = 0` since V48 and still does, and a caller has to be able to tell which kind of
