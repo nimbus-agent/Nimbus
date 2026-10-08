@@ -2,6 +2,13 @@
 
 All notable changes to the `nimbus` core (headless Gateway + CLI binary + first-party MCP connectors) are documented in this file. release-please appends new entries between this header and the most recent version below when a release PR merges.
 
+## [7.37.1](https://github.com/nimbus-agent/Nimbus/compare/v7.37.0...v7.37.1) (2026-10-08)
+
+
+### Bug Fixes
+
+* **lan:** never drop the tail of a large federation frame ([#1630](https://github.com/nimbus-agent/Nimbus/issues/1630)) ([814f470](https://github.com/nimbus-agent/Nimbus/commit/814f470b84f3057e0798136d30291517c9c9f12a))
+
 ## [7.37.0](https://github.com/nimbus-agent/Nimbus/compare/v7.36.1...v7.37.0) (2026-10-08)
 
 
