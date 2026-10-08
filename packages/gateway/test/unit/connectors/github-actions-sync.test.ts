@@ -396,7 +396,7 @@ describe("github-actions-sync — with shared fixture", () => {
       expect(meta.event).toBeNull();
       // canonical conclusion is "unknown" (never guessed); the raw vendor value is omitted
       expect(meta.conclusion).toBe("unknown");
-      expect(meta.conclusion_raw).toBeUndefined();
+      expect(meta["conclusion_raw"]).toBeUndefined();
       expect(meta.headSha).toBeNull();
       expect(meta.headBranch).toBeNull();
       expect(meta.status).toBeNull();
