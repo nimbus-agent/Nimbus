@@ -1,4 +1,5 @@
 import type { SyncContext } from "../../../sync/types.ts";
+import { buildCiRunMetadata, normalizeGitlabPipelineStatus } from "../../ci-run-meta.ts";
 import { asRecord, numberField, stringField } from "../../unknown-record.ts";
 
 const SERVICE_ID = "gitlab";
@@ -8,6 +9,37 @@ type GitlabPipelineItemUpsertResult =
   | { kind: "skip" }
   | { kind: "break" }
   | { kind: "upserted"; id: number };
+
+/**
+ * The full `ci_run` metadata for one GitLab pipeline. `ref` is a branch OR a tag name; the
+ * pipeline LIST endpoint (what the periodic sync reads) does not say which — only
+ * `GET /projects/:id/pipelines/:id` returns `tag`. So canonical `branch` is omitted only when
+ * `tag === true` is present. Stated residual: a tag pipeline read from the list endpoint carries
+ * its tag name as `branch`; a reader filtering on a real branch name (`main`) never matches it.
+ */
+export function gitlabPipelineMetadata(
+  projectPath: string,
+  row: Record<string, unknown>,
+): Record<string, unknown> {
+  const status = stringField(row, "status");
+  const ref = stringField(row, "ref");
+  const sha = stringField(row, "sha");
+  const raw: Record<string, unknown> = {
+    project: projectPath,
+    pipelineId: numberField(row, "id") ?? null,
+    status: status ?? null,
+    ref: ref ?? null,
+    duration: numberField(row, "duration") ?? null,
+    sha: sha ?? null,
+  };
+  return buildCiRunMetadata(raw, {
+    conclusion: normalizeGitlabPipelineStatus(status),
+    conclusionRaw: status,
+    branch: row["tag"] === true ? undefined : ref,
+    repo: projectPath,
+    headSha: sha,
+  });
+}
 
 function tryUpsertGitlabPipelineItem(
   ctx: SyncContext,
@@ -37,22 +69,12 @@ function tryUpsertGitlabPipelineItem(
   const status = stringField(row, "status");
   const ref = stringField(row, "ref");
   const webUrl = stringField(row, "web_url");
-  const duration = numberField(row, "duration");
-  const sha = stringField(row, "sha");
   const titleBase =
     ref !== undefined && ref !== "" ? `Pipeline on ${ref}` : `Pipeline #${String(id)}`;
   const title = status !== undefined && status !== "" ? `${titleBase} — ${status}` : titleBase;
   const externalId = `${path}#pipeline-${String(id)}`;
   const modifiedAt = Number.isFinite(createdMs) ? createdMs : now;
   const linkUrl = webUrl ?? `${webOrigin}/${path}/-/pipelines/${String(id)}`;
-  const meta: Record<string, unknown> = {
-    project: path,
-    pipelineId: id,
-    status: status ?? null,
-    ref: ref ?? null,
-    duration: duration ?? null,
-    sha: sha ?? null,
-  };
   ctx.upsertItem({
     service: SERVICE_ID,
     type: "ci_run",
@@ -63,7 +85,7 @@ function tryUpsertGitlabPipelineItem(
     canonicalUrl: linkUrl,
     modifiedAt,
     authorId: null,
-    metadata: meta,
+    metadata: gitlabPipelineMetadata(path, row),
     pinned: false,
     syncedAt: now,
   });
