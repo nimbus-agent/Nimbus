@@ -11,7 +11,11 @@ import type { LlmRouter } from "../llm/router.ts";
 import type { LlmGenerateResult } from "../llm/types.ts";
 import type { SessionMemoryStore } from "../memory/session-memory-store.ts";
 import type { PlatformPaths } from "../platform/paths.ts";
-import { getAgentRequestSessionId, getExplainToolCalls } from "./agent-request-context.ts";
+import {
+  agentRequestContext,
+  getAgentRequestSessionId,
+  getExplainToolCalls,
+} from "./agent-request-context.ts";
 import { classifyCandidateOutcome } from "./ask-explain-outcome.ts";
 import type { AskExplainRecorder } from "./ask-explain-recorder.ts";
 import type {
@@ -88,6 +92,17 @@ export type RunAskParams = {
    * PREVIOUS successful ask at the moment the user most needs the truth.
    */
   explainRecorder?: AskExplainRecorder;
+  /**
+   * Offer the owner-registered user-MCP tools (`connector add --mcp --model`, I42) on this turn.
+   * Only `=== true` offers: `runAsk` then puts this turn's dispatching executor into the request
+   * context, and its PRESENCE is what `engine/agent.ts` reads as the offer signal.
+   *
+   * An explicit flag decided by the CALLER, never a kind lookup in here: the IPC entry decides it
+   * from the live session's `ClientKind` (`USER_MCP_OFFER_BY_KIND`), while ChatOps calls `runAsk`
+   * with clientId `"chatops"`, which is not a registered kind and would read as `unknown` — i.e.
+   * as the local owner — if this function looked it up.
+   */
+  offerUserMcpTools?: boolean;
 };
 
 /**
@@ -247,6 +262,23 @@ type ExplainPartial = {
 };
 
 /**
+ * Put this turn's dispatching executor into the request context when — and only when — the
+ * caller decided this is the local owner's turn (`p.offerUserMcpTools === true`). Its presence is
+ * the offer signal `engine/agent.ts` reads. Otherwise the slot is cleared, so a store reused by a
+ * caller can never carry an earlier turn's executor into a non-owner one. No store (a bare call
+ * outside any `agentRequestContext.run`) means nothing to offer through.
+ */
+function offerUserMcpExecutorIfOwner(p: RunAskParams): void {
+  const store = agentRequestContext.getStore();
+  if (store === undefined) return;
+  if (p.offerUserMcpTools === true) {
+    store.userMcpExecutor = buildAskExecutor(p);
+  } else {
+    delete store.userMcpExecutor;
+  }
+}
+
+/**
  * The conversational answer path: prior turns + optional indexed context → the agent/router,
  * then persist the turn.
  *
@@ -258,6 +290,7 @@ async function answerConversationally(
   p: RunAskParams,
   partial: ExplainPartial,
 ): Promise<{ reply: string; modelMeta?: LlmGenerateResult }> {
+  offerUserMcpExecutorIfOwner(p);
   const sessionId = getAgentRequestSessionId();
   const priorTurns = await loadRecentConversationHistory(p.sessionMemoryStore, sessionId);
   partial.stage = "retrieval";
@@ -452,10 +485,14 @@ async function classifyIntentForAskWithLocalFallback(
   }
 }
 
-async function runActionsPlan(
-  p: RunAskParams,
-  actions: PlannedAction[],
-): Promise<{ reply: string }> {
+/**
+ * The ONE place an ask turn builds its dispatching `ToolExecutor` — used by the plan path and, on
+ * an owner turn, by the user-MCP agent tools — so the two cannot drift apart on consent, egress,
+ * delegation or policy. Consent is bound to THIS turn's client, so an I42 prompt reaches the
+ * session that asked. Delegation (I20) is passed for the plan path; the executor itself never
+ * consults it for a user-MCP type (I42).
+ */
+function buildAskExecutor(p: RunAskParams): ToolExecutor {
   const consent = bindConsentChannel(p.consentCoordinator, p.clientId);
   // I29: every real connector dispatch routes through this executor, so it carries the egress sink
   // (append-before-dispatch). A connector tool call (read OR write) is an outbound event and is
@@ -463,7 +500,7 @@ async function runActionsPlan(
   // `p.egressSink` is REQUIRED (see the doc comment on `RunAskParams.egressSink`) — this used to
   // silently fall back to `NULL_EGRESS_SINK` whenever `p.localIndex.getDatabase` wasn't a function;
   // that fallback is gone, so a caller can no longer get a no-op sink without saying so.
-  const executor = new ToolExecutor(
+  return new ToolExecutor(
     consent,
     p.localIndex,
     p.dispatcher,
@@ -471,6 +508,13 @@ async function runActionsPlan(
     p.egressSink,
     p.policyHitl ?? NO_POLICY_OVERLAY,
   );
+}
+
+async function runActionsPlan(
+  p: RunAskParams,
+  actions: PlannedAction[],
+): Promise<{ reply: string }> {
+  const executor = buildAskExecutor(p);
   const summaries: string[] = [];
   const structured: unknown[] = [];
 

@@ -8,6 +8,7 @@ import {
   type McpToolListingClient,
   meshDispatcherClient,
 } from "./connectors/index.ts";
+import { listModelAccessibleUserMcpIds } from "./connectors/user-mcp-store.ts";
 import { makeEgressSink } from "./egress/egress-ledger.ts";
 import type { EmbeddingReadiness } from "./embedding/embedding-readiness.ts";
 import { createNimbusEngineAgent } from "./engine/agent.ts";
@@ -48,9 +49,10 @@ function emitSandboxPostureBannerIfDegraded(runner: SandboxRunner): void {
 /**
  * The ChatOps read path (Slice 5): `@nimbus <question>` answers run through the same `runAsk`
  * pipeline as `agent.invoke` (I11 envelope, HITL gate on any planned action). Unlike the three
- * `ipc/server/inline-handlers.ts` `runAsk`/handler callers (`:96`, `:215`, `:350`), nothing
- * upstream of this binding establishes an `agentRequestContext` request store — ChatOps is not
- * an IPC dispatch, it is a callback the `chatops` module invokes directly. Without a store here,
+ * `ipc/server/inline-handlers.ts` `runAsk`/handler callers (`dispatchAgentInvoke`,
+ * `dispatchWorkflowRunRpc`, `dispatchEngineAskStream`), nothing upstream of this binding
+ * establishes an `agentRequestContext` request store — ChatOps is not an IPC dispatch, it is a
+ * callback the `chatops` module invokes directly. Without a store here,
  * a negation tool's refusal/exclusion disclosure has nowhere to land and is dropped (see
  * `engine/negation-disclosure.ts`'s `store === undefined` branch): this wrapper is that store.
  *
@@ -157,6 +159,7 @@ export async function main(): Promise<void> {
   // — the most dispatch-capable path in the product. RunAskParams.egressSink is a REQUIRED dep, so
   // it is wired here once and handed to every runAsk call rather than left to an internal fallback.
   const askEgressSink = makeEgressSink(platform.localIndex.getDatabase());
+  const userMcpLogger = pino({ name: "user-mcp-agent-tools" });
   // NO ENABLED VENDOR MEANS NO REMOTE INFERENCE ANYWHERE, including the default `nimbus ask`.
   // The agent is not merely refused, it is NOT CONSTRUCTED: `@mastra/core` resolves a vendor key
   // from the ENVIRONMENT on its own the moment an agent exists, so a constructed-but-refusing
@@ -174,6 +177,18 @@ export async function main(): Promise<void> {
           ...(platform.sessionMemoryStore === undefined
             ? {}
             : { sessionMemoryStore: platform.sessionMemoryStore }),
+          // The FIRST production-supplied agent tool family that runs owner-registered code: user
+          // MCP servers registered with `--model`. Offered only on a turn whose request context
+          // carries the user-MCP executor (the local owner); every call runs through that
+          // executor's I42 owner prompt, and every result through `wrapToolForLlm` (I11).
+          // `deps.toolgen` and `deps.computerUse` stay UNWIRED here: the model still cannot invoke
+          // a generated tool or a computer-use lane.
+          userMcp: {
+            listModelAccessibleIds: () =>
+              listModelAccessibleUserMcpIds(platform.localIndex.getDatabase()),
+            listTools: (serviceId) => platform.connectorMesh.listUserMcpTools(serviceId),
+            warn: (bindings, msg) => userMcpLogger.warn(bindings, msg),
+          },
         });
 
   function resolveEngineAgent(name: string | undefined): Agent | undefined {
@@ -216,6 +231,9 @@ export async function main(): Promise<void> {
       // I22: agent-planned actions are the path an org's `[policy.hitl] require` list most
       // needs to reach, so the overlay rides along with the delegation dep.
       policyHitl: platform.policyHitl,
+      // I42 (user-MCP model access): decided at the IPC entry from the live session's kind
+      // (`USER_MCP_OFFER_BY_KIND`); only a literal `true` offers.
+      offerUserMcpTools: ctx.offerUserMcpTools === true,
     }),
   );
 
@@ -224,8 +242,9 @@ export async function main(): Promise<void> {
   // content filtering of local reads remains the slice's documented deferral.
   //
   // See `createChatOpsAskEngine` above: this is the only runAsk caller not already inside
-  // `agentRequestContext.run` (the other three sites are `ipc/server/inline-handlers.ts` at
-  // :96, :215, :350), so the wrapper is applied here explicitly.
+  // `agentRequestContext.run` (the other three sites are `ipc/server/inline-handlers.ts`'s
+  // `dispatchAgentInvoke`, `dispatchWorkflowRunRpc`, `dispatchEngineAskStream`), so the wrapper
+  // is applied here explicitly.
   platform.chatops?.bindAskEngine(
     createChatOpsAskEngine((query) => ({
       input: query,
@@ -247,6 +266,11 @@ export async function main(): Promise<void> {
         ? {}
         : { sessionMemoryStore: platform.sessionMemoryStore }),
       policyHitl: platform.policyHitl,
+      // I42: a ChatOps mention is never the local owner's turn, so owner-registered user-MCP
+      // tools are never offered here. Literal, not looked up: this call's clientId "chatops" is
+      // not a registered ClientKind and would read as `unknown` (the plain CLI, an OWNER kind)
+      // — which is why the decision is never a kind lookup inside runAsk.
+      offerUserMcpTools: false,
     })),
   );
 

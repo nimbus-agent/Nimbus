@@ -255,6 +255,25 @@ describe("createConnectorDispatcher — user-MCP keys dispatch only under their 
     ).resolves.toEqual({ key: "mcp_x_echo" });
     expect(ran).toEqual(["mcp_x_echo"]);
   });
+
+  test("a model-requested user-MCP call hands the tool exactly payload.input — requestedBy never reaches the server", async () => {
+    const received: unknown[] = [];
+    const d = createConnectorDispatcher({
+      listTools: async () => ({
+        mcp_x_echo: {
+          execute: async (input: unknown) => {
+            received.push(input);
+            return {};
+          },
+        },
+      }),
+    });
+    await d.dispatch({
+      type: "mcp_x.echo",
+      payload: { mcpToolId: "mcp_x_echo", input: { q: "hi" }, requestedBy: "model" },
+    });
+    expect(received).toEqual([{ q: "hi" }]);
+  });
 });
 
 // Running one user-MCP tool must not list (and so spawn) the whole mesh: the dispatcher resolves a

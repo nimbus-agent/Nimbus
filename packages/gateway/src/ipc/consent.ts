@@ -70,7 +70,8 @@ export class ConsentCoordinatorImpl implements ConsentCoordinator {
       // object straight into its text (channel names, message bodies, recipients, file paths —
       // whatever the action payload carries); `redactPayloadForConsentDisplay` masks only
       // secret-LOOKING key names (token/key/secret/password/credential/bearer/auth), so
-      // everything else survives verbatim. Broadcasting `prompt` would hand every connected
+      // everything else survives verbatim — and a user-MCP action (I42) is shown with NO
+      // masking at all (`consentDisplayPayload`). Broadcasting `prompt` would hand every connected
       // session — not only the one the gateway is asking — the argument values of an action
       // nobody has approved yet. `actionType` gives a passive observer (`nimbus tail`) what KIND
       // of action is pending without any of that riding along.

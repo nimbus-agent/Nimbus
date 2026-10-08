@@ -5284,4 +5284,113 @@ describe("I42 — every user-MCP tool call needs the local owner's approval", ()
     expect(assertAt).toBeGreaterThan(dispatchAt);
     expect(assertAt).toBeLessThan(src.indexOf("execute(input, {})", dispatchAt));
   });
+
+  test("ChatOps never offers user-MCP tools: its runAsk params say offerUserMcpTools: false explicitly", async () => {
+    // ChatOps calls runAsk with clientId "chatops", which is NOT a registered ClientKind and would
+    // read as `unknown` (= the plain CLI, an owner kind) if the decision were a lookup inside
+    // runAsk. So the flag must be a literal false at this call site.
+    const src = stripComments(await read("packages/gateway/src/gateway-main.ts"));
+    const at = src.indexOf("createChatOpsAskEngine((query) => ({");
+    expect(at).toBeGreaterThan(-1);
+    const end = src.indexOf("}))", at);
+    expect(end).toBeGreaterThan(at);
+    const body = src.slice(at, end);
+    expect(body).toContain('clientId: "chatops"');
+    expect(body).toMatch(/\bofferUserMcpTools: false,/);
+    // And runAsk itself never derives the decision from a client kind.
+    const runAsk = stripComments(await read("packages/gateway/src/engine/run-ask.ts"));
+    expect(runAsk).not.toMatch(/getClientKind|ClientKind|USER_MCP_OFFER_BY_KIND/);
+    expect(runAsk).toMatch(/if \(p\.offerUserMcpTools === true\) \{/);
+  });
+
+  test("the IPC offer table refuses every non-owner kind", async () => {
+    const { USER_MCP_OFFER_BY_KIND } = await import("./ipc/server/inline-handlers.ts");
+    for (const kind of ["chatops", "http", "mcp", "fleet", "push"] as const) {
+      expect(USER_MCP_OFFER_BY_KIND[kind]).toBe(false);
+    }
+    // The IPC invoke handler forwards the entry decision with `=== true`, never a truthy read.
+    const main = stripComments(await read("packages/gateway/src/gateway-main.ts"));
+    expect(main).toContain("offerUserMcpTools: ctx.offerUserMcpTools === true,");
+  });
+
+  test("a user-MCP agent tool never calls the listing's own execute — only the turn's executor", async () => {
+    const src = stripComments(await read("packages/gateway/src/engine/user-mcp-agent-tools.ts"));
+    // Every `.execute` property ACCESS — called or not, so neither `entry.execute?.(x)` nor
+    // `const f = entry.execute; f(x)` slips past — must be immediately preceded by the bare
+    // identifier `ex`/`executor`; `entry.execute`, `tools[k].execute` and `executor().execute`
+    // all make the two counts differ.
+    const allAccesses = src.match(/\.\s*execute\b/g) ?? [];
+    const executorAccesses = src.match(/(?<![\w$.])(?:ex|executor)\s*\??\.\s*execute\b/g) ?? [];
+    expect(allAccesses.length).toBeGreaterThan(0);
+    expect(executorAccesses.length).toBe(allAccesses.length);
+    // Bracket access (`entry["execute"]`) and reflection (`Reflect.get(entry, "execute")`).
+    expect(src).not.toMatch(/\[\s*["'`]execute["'`]\s*\]/);
+    expect(src).not.toMatch(/Reflect\s*\.\s*get\s*\([^)]*["'`]execute["'`]/);
+    // Destructuring, plain or renamed, as a binding or a parameter: `const { execute } = entry`,
+    // `const { execute: run } = entry`, `({ execute }) => …`. Must NOT match the file's own
+    // `createTool({ …, execute: async (…) => { … } })` literal, whose span contains a `{`.
+    expect(src).not.toMatch(/\{[^{}]*\bexecute\b[^{}]*\}\s*[=)]/);
+    // STATED BOUND: this check is name-based — a listing entry aliased to a variable named
+    // `ex`/`executor`, or a dynamically composed property name, evades it. The real defense is
+    // that listing entries are typed `Record<string, unknown>` and the only dispatch goes through
+    // `executor()` (the turn's ToolExecutor).
+  });
+
+  test("the owner SEES a user-MCP payload unredacted at the prompt; other types and the audit row stay redacted", async () => {
+    // The owner's approval is the only boundary on a user-MCP call, and the global
+    // SENSITIVE_PAYLOAD_KEY is a substring match (`author`, `keywords`, `monkey`), so a
+    // prompt-injected model could hide its input under such a key if the display redacted it.
+    const { NO_POLICY_OVERLAY, ToolExecutor } = await import("./engine/executor.ts");
+    const prompts: { prompt: string; details: Record<string, unknown> | undefined }[] = [];
+    const audits: string[] = [];
+    const exec = new ToolExecutor(
+      {
+        requestApproval: async (prompt, details) => {
+          prompts.push({ prompt, details });
+          return false;
+        },
+      },
+      { recordAudit: (e) => audits.push(e.actionJson) },
+      { dispatch: async () => ({}) },
+      undefined,
+      NULL_EGRESS_SINK,
+      NO_POLICY_OVERLAY,
+    );
+    const input = { keywords: "kw-VALUE", author: "au-VALUE", api_key: "ak-VALUE" };
+    await exec.execute({
+      type: "mcp_x.y",
+      payload: { mcpToolId: "mcp_x_y", input, requestedBy: "model" },
+    });
+    expect(prompts).toHaveLength(1);
+    expect(prompts[0]?.details?.["input"]).toEqual(input);
+    for (const v of ["kw-VALUE", "au-VALUE", "ak-VALUE", "requestedBy"]) {
+      expect(prompts[0]?.prompt).toContain(v);
+    }
+    // The audit row is NOT widened: it still redacts the secret-looking key.
+    expect(audits.join("\n")).not.toContain("ak-VALUE");
+    // A first-party HITL type is still redacted at the prompt.
+    await exec.execute({ type: "email.send", payload: { input: { api_key: "ak-OTHER" } } });
+    expect(prompts).toHaveLength(2);
+    expect(prompts[1]?.prompt).not.toContain("ak-OTHER");
+    expect(JSON.stringify(prompts[1]?.details)).not.toContain("ak-OTHER");
+    // Source pin: the display branch keys on the action TYPE (I3), never the payload.
+    const src = stripComments(await read("packages/gateway/src/engine/executor.ts"));
+    expect(src).toMatch(/if \(isUserMcpActionType\(action\.type\)\) return action\.payload;/);
+  });
+
+  test("gateway-main offers the agent only --model servers: listModelAccessibleIds reads listModelAccessibleUserMcpIds", async () => {
+    // `listUserMcpConnectors` would offer EVERY registered user MCP server to the model,
+    // including ones the owner registered without --model.
+    const main = stripComments(await read("packages/gateway/src/gateway-main.ts"));
+    expect(main).toMatch(
+      /listModelAccessibleIds:\s*\(\)\s*=>\s*listModelAccessibleUserMcpIds\(\s*platform\.localIndex\.getDatabase\(\)\s*\)/,
+    );
+    expect(main).not.toMatch(/listUserMcpConnectors/);
+  });
+
+  test("share replay refuses an OFFERED user-MCP tool name (<mcp_id>__<tool>) whatever its verb", async () => {
+    const { isReadOnlyToolId } = await import("./share/read-tool-registry.ts");
+    expect(isReadOnlyToolId("mcp_x__list")).toBe(false);
+    expect(isReadOnlyToolId("mcp_notes__search")).toBe(false);
+  });
 });

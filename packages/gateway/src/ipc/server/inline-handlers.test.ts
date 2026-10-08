@@ -13,6 +13,7 @@ import { createStreamRegistry } from "../engine-ask-stream.ts";
 import type { ClientSession } from "../session.ts";
 import { createWorkflowCancelHandler, workflowRegistryKey } from "../workflow-cancel.ts";
 import type { WorkflowRunContext } from "../workflow-invoke.ts";
+import type { ClientKind } from "./client-kind.ts";
 import type { ServerCtx } from "./context.ts";
 import {
   dispatchAgentInvoke,
@@ -22,6 +23,7 @@ import {
   rpcConsentRespond,
   rpcGatewayPing,
   rpcIndexSearchRanked,
+  USER_MCP_OFFER_BY_KIND,
 } from "./inline-handlers.ts";
 import { RpcMethodError } from "./rpc-error.ts";
 
@@ -53,6 +55,7 @@ interface CtxOpts {
   workflowRunHandler?: (ctx: unknown) => Promise<unknown>;
   getEmbeddingStatus?: () => Record<string, unknown>;
   embeddingReadiness?: () => EmbeddingReadiness;
+  clientKind?: ClientKind;
 }
 
 function readiness(over: Partial<EmbeddingReadiness> = {}): EmbeddingReadiness {
@@ -87,7 +90,7 @@ function makeCtx(opts: CtxOpts = {}): ServerCtx {
     broadcastNotification: () => {},
     getAgentInvokeHandler: () => opts.agentInvokeHandler,
     getWorkflowRunHandler: () => opts.workflowRunHandler as never,
-    getClientKind: () => "unknown",
+    getClientKind: () => opts.clientKind ?? "unknown",
   };
   return ctx;
 }
@@ -1005,5 +1008,91 @@ describe("rpcConsentRespond — the accepted answer", () => {
       ok: true,
     });
     expect(await pending).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// User-MCP model access (I42, PR 2): owner-registered code is offered to the model ONLY on the
+// local owner's turns. The decision is made HERE, once, from the live session's server-held
+// `ClientKind` — and BOTH agent entry points must carry it, for the same reason `devil` is
+// asserted on both above: `engine.askStream` is the desktop/editor path.
+// ---------------------------------------------------------------------------
+
+const EXPECTED_OFFER: Record<ClientKind, boolean> = {
+  cli: true,
+  ui: true,
+  // The plain CLI never declares a kind, so it arrives as `unknown`.
+  unknown: true,
+  mcp: false,
+  http: false,
+  chatops: false,
+  fleet: false,
+  push: false,
+};
+const ALL_KINDS = Object.keys(EXPECTED_OFFER) as ClientKind[];
+
+describe("USER_MCP_OFFER_BY_KIND — only the local owner's kinds are offered user-MCP tools", () => {
+  test("maps every ClientKind to the expected decision", () => {
+    // Compared as whole objects, so an extra or missing key fails too — not only a wrong value.
+    expect({ ...USER_MCP_OFFER_BY_KIND }).toEqual(EXPECTED_OFFER);
+  });
+
+  test("every non-owner kind is false", () => {
+    for (const kind of ["mcp", "http", "chatops", "fleet", "push"] as const) {
+      expect(USER_MCP_OFFER_BY_KIND[kind]).toBe(false);
+    }
+  });
+});
+
+describe("offerUserMcpTools crosses both agent entry points from the session's kind", () => {
+  for (const kind of ALL_KINDS) {
+    test(`agent.invoke, kind ${kind} -> ${String(EXPECTED_OFFER[kind])}`, async () => {
+      let captured: Record<string, unknown> | undefined;
+      const handler = async (p: unknown): Promise<{ reply: string }> => {
+        captured = p as Record<string, unknown>;
+        return { reply: "ok" };
+      };
+      const ctx = makeCtx({ agentInvokeHandler: handler, clientKind: kind });
+      const { session } = makeSession();
+      await dispatchAgentInvoke(ctx, session, "c", { input: "x" });
+      expect(captured?.["offerUserMcpTools"]).toBe(EXPECTED_OFFER[kind]);
+    });
+
+    test(`engine.askStream, kind ${kind} -> ${String(EXPECTED_OFFER[kind])}`, async () => {
+      let resolveCall: ((p: Record<string, unknown>) => void) | undefined;
+      const called = new Promise<Record<string, unknown>>((res) => {
+        resolveCall = res;
+      });
+      const handler = async (p: unknown): Promise<{ reply: string }> => {
+        resolveCall?.(p as Record<string, unknown>);
+        return { reply: "done" };
+      };
+      const ctx = makeCtx({ agentInvokeHandler: handler, clientKind: kind });
+      const { session } = makeSession();
+      await dispatchEngineAskStream(ctx, session, "c", { input: "x" });
+      const captured = await called;
+      expect(captured["offerUserMcpTools"]).toBe(EXPECTED_OFFER[kind]);
+    });
+  }
+
+  test("the kind is looked up for THIS session's clientId, never a param the caller sends", async () => {
+    const seen: string[] = [];
+    let captured: Record<string, unknown> | undefined;
+    const handler = async (p: unknown): Promise<{ reply: string }> => {
+      captured = p as Record<string, unknown>;
+      return { reply: "ok" };
+    };
+    const ctx = makeCtx({ agentInvokeHandler: handler });
+    ctx.getClientKind = (cid: string): ClientKind => {
+      seen.push(cid);
+      return "mcp";
+    };
+    const { session } = makeSession();
+    await dispatchAgentInvoke(ctx, session, "client-42", {
+      input: "x",
+      offerUserMcpTools: true,
+    });
+    expect(seen).toEqual(["client-42"]);
+    expect(captured?.["offerUserMcpTools"]).toBe(false);
   });
 });

@@ -195,6 +195,6 @@ export async function runConnectorAddMcp(
   for (const p of req.readPaths) d.log(`  read: ${p}`);
   for (const h of req.netHosts) d.log(`  net:  ${h}`);
   if (req.modelAccess) {
-    d.log("  model: tools offered to the model (takes effect in a later release)");
+    d.log("  model: tools offered to the model in nimbus ask (each call still asks for approval)");
   }
 }

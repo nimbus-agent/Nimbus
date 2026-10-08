@@ -1354,7 +1354,7 @@ Usage:
   nimbus connector detect [--json] [--source gh|aws|kubectl|gcloud] [--replace] [--project <id>]   Reuse gh/aws/kubectl/gcloud logins you already have
   nimbus connector add --mcp <mcp_id> [--read <path>]... [--net <host[:port]>]... [--model] -- <command> [args...]
       Register a user MCP server (id must be mcp_*). --read/--net grant filesystem/network access;
-      --model: offer this server's tools to the model; takes effect in a later release.
+      --model: offer this server's tools to the model in nimbus ask; each call still asks for approval.
       Example: nimbus connector add --mcp mcp_echo -- /abs/path/echo/dist/echo
   nimbus connector tools <mcp_id> [--json]                         List a user MCP server's tools
   nimbus connector call <mcp_id> <tool> [--input <json>] [--json]   Call one (asks for approval)
