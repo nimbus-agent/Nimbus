@@ -473,13 +473,15 @@ describe("computeDeployPreflight: failing_ci_runs check", () => {
     });
     seedCiRun(db, "github_actions:no_wf_2", {
       service: "github_actions",
-      title: "Build and Test",
+      // A DIFFERENT title, so this fails if partitioning ever returns to the title.
+      title: "Build and Test (failed)",
       conclusion: "failure",
       branch: "main",
       modifiedAtMs: now - 120_000,
     });
     const out = computeDeployPreflight(db, cfg(), "main", now, 10);
     expect(out.checks.failing_ci_runs.count).toBe(1);
+    expect(out.checks.failing_ci_runs.findings[0]?.id).toBe("github_actions:no_wf");
   });
 
   it("emits gap='no_repos' when cfg.repos is empty", () => {

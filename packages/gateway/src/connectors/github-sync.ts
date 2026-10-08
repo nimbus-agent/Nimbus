@@ -212,16 +212,16 @@ const PR_STAT_KEYS = ["additions", "deletions", "changed_files", "commits"] as c
 const PR_CARRIED_CONTRACT_KEYS = ["opened_at_ms"] as const;
 
 /**
- * I-2: `extractPrMetadataForIndex` only sets the four size-stat keys (and `opened_at_ms`, which
- * needs `created_at`) when the incoming payload
- * carries them — true only of the single-PR / pull-detail response, never of the events feed's
+ * I-2: `extractPrMetadataForIndex` only sets the four size-stat keys, and `opened_at_ms` (which
+ * needs `created_at`), when the incoming payload carries them — true only of the single-PR /
+ * pull-detail response, never of the events feed's
  * `PullRequestEvent`/`PullRequestReviewEvent` payloads. `upsertIndexedItem` writes metadata with
  * `metadata = excluded.metadata`, which REPLACES the row's metadata wholesale, so any later
  * events-path upsert for a PR that `enrichPrDetail` already filled in would otherwise silently
  * erase its stats — and `selectPrEnrichCandidates` would then re-queue that PR forever, since
  * `modified_at` also just advanced, pushing it to the front of the `modified_at DESC` candidate
- * list. Merge the four keys forward from the currently-indexed row whenever the incoming payload
- * omits them.
+ * list. Merge those five keys (the four size stats plus `opened_at_ms`) forward from the
+ * currently-indexed row whenever the incoming payload omits them.
  *
  * Accepted tradeoff: once merged forward, stats can go stale (an event bumps `modified_at`
  * without new commit/diff counts) until the next detail fetch refreshes them. That is strictly

@@ -503,8 +503,8 @@ describe("failing_ci_runs gaps", () => {
       conclusion: "timed_out",
       branch: "feature",
       createdAt: NOW - ONE_HOUR,
-      // The real mapper folds GitHub's timed_out into "failure"; the reader still accepts a
-      // canonical "timed_out" (other writers/legacy rows), so override it explicitly.
+      // No current writer emits a canonical "timed_out" — the GitHub mapper folds it into
+      // "failure". This pins the defensive FAILED_CONCLUSIONS entry, so override it explicitly.
       extra: { conclusion: "timed_out" },
     });
     const result = computeDeployPreflight(db, baseConfig(), "feature", NOW, 5);
