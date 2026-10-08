@@ -106,9 +106,9 @@ export type OncallDeployment = {
  *
  * **`merge_commit_sha` is written by `github-sync.ts` alone.** Neither `gitlab-sync.ts` nor
  * `bitbucket-sync.ts` populates it, so on those forges this lane is structurally empty and its
- * absence says nothing about whether a change shipped. That is the same substrate hole
- * `metrics/stats.ts` reports as `incomplete_merge_data`, and the brief discloses it under that
- * name rather than inventing a second one.
+ * absence says nothing about whether a change shipped. The brief discloses that as a
+ * `missing_connector` gap. It is a different hole from the missing merge TIMES that
+ * `metrics/stats.ts` reports as `incomplete_merge_data`.
  */
 export type OncallChange = {
   readonly id: string;

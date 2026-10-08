@@ -18,6 +18,23 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
 
 ## Post-Phase-6 deliveries
 
+- **2026-10-08 — Index lane contract (PR A2): readers disclose what the canonical contract cannot supply.**
+  The A1 contract made absence meaningful, so the readers now say so instead of reporting a clean
+  zero. **`ci_not_evaluable`** is a new gap on `nimbus preflight`'s `failing_ci_runs` (Jenkins,
+  CircleCI, Bitbucket) and on DORA deployment frequency, lead time and change failure rate
+  (CircleCI, Bitbucket); it is a gap, never a verdict change, and no count moves. **`nimbus stats
+  pr-merges`** now counts GitLab merges and emits `incomplete_merge_data` for a GitLab or
+  Bitbucket binding; `github_only_merge_data` stays in the enum but is no longer emitted.
+  **`nimbus pre-mortem`** names the forge behind unmeasurable review drag. **`nimbus negotiate`**
+  discloses `mergedCoverage` ("merge status known for N/M"). **`nimbus expert`'s** commit-authorship
+  lane now reads local git authors from filesystem `git_commit` rows, with
+  `missing_entity_type`/`missing_user_identity` gaps when they are absent. **`nimbus oncall`'s**
+  change-lane gap now says what is actually missing: a merge commit, which only GitHub records.
+  Writer fixes: a GitLab MR's author is the MR author (from the `opened` event or a fetch), never
+  the last actor, and a row without a state carries no `meta_v`; `merged` is no longer asserted
+  for an unknown PR state; CI runs synced mid-run are refreshed until they finish, with no extra
+  requests. Supersedes A1's "known limitation" that a GitLab MR row credited the merge actor. No
+  migration, no new invariant, no new egress class.
 - **2026-10-08 — Index lane contract (PR A1): one canonical metadata shape for `ci_run`, `pr` and
   `git_commit` rows.** Every connector that writes a CI run, pull request or git commit now writes
   the same snake_case canonical keys (`conclusion`, `branch`, `repo`, `workflow_name`,

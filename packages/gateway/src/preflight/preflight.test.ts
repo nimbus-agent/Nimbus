@@ -680,7 +680,7 @@ describe("failing_ci_runs gaps", () => {
   });
 
   test("a failed Jenkins build is NOT counted: Jenkins supplies no branch", () => {
-    // Jenkins supplies no branch, so preflight cannot evaluate it (disclosed as a gap in PR A2).
+    // Jenkins supplies no branch, so preflight cannot evaluate it (disclosed as the ci_not_evaluable gap).
     const cfg = baseConfig({ repos: [{ provider: "jenkins", providerId: "deploy-job" }] });
     const id = insertItem(
       db,

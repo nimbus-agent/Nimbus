@@ -2181,10 +2181,9 @@ const streamReq: JSONRPCRequest = {
 //   indexes deployment definitions with no outcome), and `github-actions-sync.ts:127` writes
 //   `conclusion` on a `ci_run` item, which `deploy_failed` does not match. `nimbus index regraph`
 //   would populate the entity, but nothing runs it automatically.
-//   **Review drag cannot currently be measured for any repo**: no connector writes
-//   `opened_at_ms` on a `pr` item — the only writer of that field anywhere in the tree is
-//   `pagerduty-sync.ts:82`, and it writes it on an `incident`, not a `pr` — so the brief reports
-//   a named gap rather than a fabricated figure for every repo, not most.
+//   **Review drag is measured only where the forge records a PR's opened time**: GitHub and
+//   GitLab write `opened_at_ms` on a `pr` item; Bitbucket does not, so the brief reports a named
+//   gap that names the forge rather than a fabricated figure for that repo.
 //   **Incident coupling** translates a cohort repo to a DORA `[ci.service.<id>]` config id via
 //   the injected `ServiceIdentityResolver`, denominates its rate on `measured` (cohort members
 //   actually queried — a resolvable service AND a usable window), never on the full cohort, and

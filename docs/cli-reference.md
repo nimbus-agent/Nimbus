@@ -847,7 +847,7 @@ Like `nimbus owners`/`nimbus glossary`, `nimbus pre-mortem` **hard-rejects** an 
 
 **No deploy-failure watcher is proposed.** Deploy failure is a watcher condition kind, not one of the five risks — the fifth risk is abandonment, and no deploy-failure risk is computed. The engine can now scope such a watcher the same way, so the earlier reason (`item.service` being the annotate provider slug) no longer holds; what does is that `deployment/annotate.ts` — the only writer of the `metadata.conclusion` a `deploy_failed` watcher matches — inserts its `item` row directly and creates no `deployment` graph entity, so such a watcher would match nothing until `nimbus index regraph` runs.
 
-**Review drag cannot currently be measured for any repo:** no connector indexes a pull request's *opened* timestamp (only `merged_at`), so the review-drag risk reports a named gap rather than a fabricated `0`. The measured path exists and activates the moment a connector starts recording that field; until then every brief reports the gap.
+**Review drag is measured only where the forge supplies a pull request's *opened* timestamp:** GitHub and GitLab record one, Bitbucket and any repo with no indexed pull request do not. Where it cannot be measured the review-drag risk reports a gap that names the forge behind it, rather than a fabricated `0`.
 
 **Read-only in the request sense, not the write sense:** a plain `nimbus pre-mortem` never triggers HITL and never calls `connectors.dispatch` — the watcher-proposal writes above are plain local SQLite inserts, not egress. `agents.premortem` is deliberately excluded from the HTTP agent-invocation surface (`POST /v1/agents/{agent}`) and the MCP tool surface, matching `agents.preflight`, because those writes have no HITL gate and an external caller must not be able to trigger them unprompted; it remains reachable from the CLI (this command) and the Tauri renderer.
 
@@ -959,7 +959,7 @@ nimbus changelog --json
 | `--format <markdown\|slack\|plain>` | A text transform over the brief's own Markdown (default `markdown`) — never a re-render from the typed findings, so a synthesized rewrite's prose survives the transform. |
 | `--json` | Print the typed findings instead of the brief. |
 
-**Output (Markdown):** `# Changelog`, a preamble stating the window and the scoped service (or "all services"), then `## Merged Pull Requests`, `## Deployments`, `## Incidents Opened`, `## Incidents Resolved` — each rendered even when empty (`_None in this window._`), because a missing heading and an empty one say different things — followed by the reserved `## Gaps` section, which is never empty: it always carries the unconditional dependency-updates/config-changes disclosure, and additionally names any merged pull request on a non-GitHub forge (`metadata.merged_at` is written by the GitHub connector alone, so GitLab/Bitbucket merges are invisible — the same substrate gap `nimbus stats` reports as `github_only_merge_data`), and any `--service` bound to no repos and no PagerDuty ids.
+**Output (Markdown):** `# Changelog`, a preamble stating the window and the scoped service (or "all services"), then `## Merged Pull Requests`, `## Deployments`, `## Incidents Opened`, `## Incidents Resolved` — each rendered even when empty (`_None in this window._`), because a missing heading and an empty one say different things — followed by the reserved `## Gaps` section, which is never empty: it always carries the unconditional dependency-updates/config-changes disclosure, and additionally names any merged pull request on a non-GitHub forge (a merged GitLab MR is listed once it carries `metadata.merged_at`, but one merged before the synced event window has none, and Bitbucket never records a merge time — the same substrate gap `nimbus stats` reports as `incomplete_merge_data`), and any `--service` bound to no repos and no PagerDuty ids.
 
 **Entry lists are capped at 50 per category**, so a 500-PR window is not handed wholesale to the synthesis model. `counts` (visible via `--json`) always carries the true pre-cap total per category, so the truncation is recoverable — a window with 53 merged PRs and a 50-entry list means 3 were dropped, not lost.
 
@@ -1055,6 +1055,8 @@ nimbus oncall --since 3d --format slack
 - **How any earlier incident was resolved.** An incident is indexed with its status as its entire body, so no resolution note, remediation step or postmortem link exists anywhere in the index. Prior incidents can say *who* closed one and *when*, never what they did — which is why that lane is framed around recurrence, the signal it can actually carry.
 - **What the change did.** No connector indexes a patch, a changed-file list or a commit message body, so a pull request is described by its title and its added/removed line counts and nothing more.
 - **Anything paged through OpsGenie.** There is no OpsGenie connector, so this brief has nothing to select from there and its silence is not evidence that nobody is paged.
+
+**A conditional gap names the missing merge commit:** a deployment is matched to its change by merge commit, and only the GitHub connector records one, so on GitLab and Bitbucket the change section is always empty. The brief says so as a `missing_connector` gap, with the fix (connect GitHub for the repository, or bind the deploy through `POST /v1/deployments` with its PR).
 
 **A fourth gap is conditional and worth fixing when you see it:** an incident whose PagerDuty service maps to no configured Nimbus service leaves the deployment, change, CI and chat sections structurally empty. The brief names the unmapped PagerDuty id and points at the `[metrics.dora.<service>]` / `[ci.service.<service>]` binding — the same one `nimbus metrics dora` already uses.
 
@@ -1313,6 +1315,8 @@ nimbus metrics dora --service payment-service --since 30d --json
 | `--since <duration>` | Window — `<n>d` or `<n>h`, e.g. `30d`, `24h` (default: `30d`) |
 | `--json` | Machine-readable JSON output |
 
+`deployment_frequency`, `lead_time` and `change_failure_rate` report a `ci_not_evaluable` gap (instead of `no_deployment_data`) when the service's only CI is CircleCI or Bitbucket, whose runs do not carry the signals those metrics read. The gap changes no number.
+
 Read-only; no HITL.
 
 ---
@@ -1371,10 +1375,13 @@ Five things worth knowing before reading the output:
   always complete rather than truncated at the last calendar boundary. The accepted cost: the
   same command run on different days covers a different absolute span each time, so two runs
   are not directly comparable point-for-point.
-- **`pr-merges` is GitHub-only.** Only `github-sync.ts` writes the `merged_at` timestamp this
-  metric buckets on — `gitlab-sync.ts` and `bitbucket-sync.ts` write nothing. A service bound
-  to a non-GitHub repo gets a `github_only_merge_data` gap alongside its count; a service with
-  no GitHub repos at all gets `no_repos` rather than a misleading zero.
+- **`pr-merges` counts GitHub and GitLab; Bitbucket never records a merge time.** GitHub and
+  GitLab MRs carry the `merged_at` timestamp this metric buckets on (a GitLab MR merged before
+  the synced event window has none); `bitbucket-sync.ts` writes nothing, because the Bitbucket
+  API records no merge time. A service bound to a GitLab or Bitbucket repo gets an
+  `incomplete_merge_data` gap alongside its count; `github_only_merge_data` is no longer
+  emitted (it stays in the enum for old clients); a service with no repos at all gets `no_repos`
+  rather than a misleading zero.
 - **A sparse bucket prints `—`, not `0`, and a caveated one prints both its number and its
   gap.** An empty bucket means "could not be computed," not "zero occurred" — the two are
   different facts, and the gap column names why. But a gap does not always mean an empty
@@ -1408,6 +1415,8 @@ nimbus deploy preflight --service payment-service --target-ref release/v2.14 --m
 | `--json` | Machine-readable JSON output |
 
 **Exit codes:** `0` = ok (or `warn` mode with findings); `1` = `block` mode triggered or usage error; `2` = infrastructure failure (gateway not running, IPC error, malformed envelope).
+
+**CI that cannot be evaluated is a gap, never a verdict change.** Jenkins, CircleCI and Bitbucket CI runs carry no branch Nimbus can match against `--target-ref`, so for a service whose CI lives there the `failing_ci_runs` check reports a `ci_not_evaluable` gap beside its count. The count and the verdict are computed exactly as before; the gap only says the zero may mean "could not be checked".
 
 **An unknown service does not pass the gate.** If `--service <id>` matches neither
 `[metrics.dora.<id>]` nor `[ci.service.<id>]` in `nimbus.toml`, none of the three checks can run,

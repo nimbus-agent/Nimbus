@@ -230,8 +230,8 @@ function upsertGitlabEventItem(f: GitlabEventUpsertFields, shape: GitlabItemShap
   const urlPath = `${shape.urlSegment}/${String(iid)}`;
   const modified = createdAt === undefined ? Number.NaN : Date.parse(createdAt);
   // The MR author is known only when THIS write describes the MR itself: the `opened` event
-  // (its actor opened the MR) or `fetchOne` (the MR resource own `author`). Every other event actor
-  // is whoever approved, merged or commented - never credit them as the author.
+  // (its actor opened the MR) or `fetchOne` (the MR resource's own `author`). Every other event actor
+  // is whoever approved, merged or commented — never credit them as the author.
   const knownAuthor =
     shape.type === "pr" &&
     (f.mr !== undefined || actionName === "opened") &&

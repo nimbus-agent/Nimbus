@@ -243,11 +243,12 @@ function runtimeGaps(args: {
       category: "missing_connector",
       detail:
         "No pull request could be matched to the deployment below. A deployment is matched to " +
-        "its change by merge commit, and that field is written by the GitHub connector alone — " +
-        "so on GitLab and Bitbucket this is always empty, and on GitHub it means the deploy " +
-        "carried a commit that no indexed pull request merged.",
+        "its change by merge commit, which only the GitHub connector records — GitLab and " +
+        "Bitbucket rows carry none, so on those forges this is always empty, and on GitHub it " +
+        "means the deploy carried a commit that no indexed pull request merged.",
       remediation:
-        "Track this as the same substrate gap `nimbus stats` reports as `incomplete_merge_data`.",
+        "Connect GitHub for this repository, or bind the deploy through `POST /v1/deployments` " +
+        "with its PR.",
     });
   }
 
