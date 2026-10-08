@@ -297,11 +297,13 @@ export function selectIncidentsResolved(db: Database, w: Window): ChangelogRow[]
 /**
  * How many merged PRs this changelog CANNOT see.
  *
- * `metadata.merged_at` is written by `connectors/github-sync.ts` alone — neither
- * `gitlab-sync.ts` nor `bitbucket-sync.ts` populates it — so every merged GitLab MR and
- * Bitbucket PR is invisible to `selectMergedPrs`. Counting them is what turns a silent
- * substrate hole into a disclosed one. `metrics/stats.ts` ships the same gap as
- * `github_only_merge_data`.
+ * A merged non-GitHub PR is listed by `selectMergedPrs` only when it carries `merged_at`.
+ * `gitlab-sync.ts` writes it from an `accepted`/`merged` event's own time and from a fetched
+ * MR's `merged_at`, so a GitLab MR merged inside the synced event window IS listed; one whose
+ * merge predates that window has none. `bitbucket-sync.ts` never writes it — the Bitbucket API
+ * records no merge time. This counts exactly the merged rows WITHOUT `merged_at` (so a listed
+ * row is never counted twice), turning a silent substrate hole into a disclosed one.
+ * `metrics/stats.ts` ships the same gap as `github_only_merge_data`.
  *
  * **This is an ESTIMATE, and its caller must say so.** The absence of `merged_at` is the whole
  * reason this function exists, so there is no merge timestamp to window on and it falls back to
@@ -320,7 +322,8 @@ export function nonGithubMergedPrCount(db: Database, w: Window): number {
           AND i.modified_at >= ?
           AND i.modified_at < ?
           AND json_valid(i.metadata)
-          AND json_extract(i.metadata, '$.state') = 'merged'`,
+          AND json_extract(i.metadata, '$.state') = 'merged'
+          AND json_extract(i.metadata, '$.merged_at') IS NULL`,
     )
     .all(w.fromMs, w.toMs) as RawRow[];
 

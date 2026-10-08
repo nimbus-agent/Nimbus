@@ -1,5 +1,6 @@
 import { syncPassCursorSuccess } from "../sync/pass-cursor-sync-result.ts";
 import { type Syncable, type SyncContext, type SyncResult, syncNoopResult } from "../sync/types.ts";
+import { buildCiRunMetadata, normalizeGithubActionsConclusion } from "./ci-run-meta.ts";
 import { decodeNimbusJsonCursorObject, encodeNimbusJsonCursor } from "./nimbus-json-cursor.ts";
 import { asRecord, numberField, stringField } from "./unknown-record.ts";
 
@@ -82,6 +83,47 @@ function parseGithubWorkflowRunsArray(text: string): unknown[] | null {
   return Array.isArray(wr) ? wr : null;
 }
 
+/**
+ * The full `ci_run` metadata for one GitHub Actions `workflow_run`. Raw keys keep their historical
+ * camelCase names for display; readers read only the canonical keys `buildCiRunMetadata` adds.
+ * `repo` is new: before the contract the repo full name lived only in `externalId`, which is why
+ * DORA's deploy lane could never match a GitHub Actions run.
+ */
+export function githubActionsRunMetadata(
+  repoFull: string,
+  run: Record<string, unknown>,
+  now: number,
+): Record<string, unknown> {
+  const conclusion = stringField(run, "conclusion");
+  const status = stringField(run, "status");
+  const name = stringField(run, "name");
+  const headBranch = stringField(run, "head_branch");
+  const headSha = stringField(run, "head_sha");
+  const runStarted = stringField(run, "run_started_at");
+  const updatedAt = stringField(run, "updated_at");
+  const tEnd = updatedAt === undefined ? now : Date.parse(updatedAt);
+  const tStart = runStarted === undefined ? tEnd : Date.parse(runStarted);
+  const durationMs =
+    Number.isFinite(tEnd) && Number.isFinite(tStart) && tEnd >= tStart ? tEnd - tStart : null;
+  const raw: Record<string, unknown> = {
+    workflowName: name ?? null,
+    runId: numberField(run, "id") ?? null,
+    event: stringField(run, "event") ?? null,
+    headSha: headSha ?? null,
+    headBranch: headBranch ?? null,
+    durationMs,
+    status: status ?? null,
+  };
+  return buildCiRunMetadata(raw, {
+    conclusion: normalizeGithubActionsConclusion(status, conclusion),
+    conclusionRaw: conclusion ?? status,
+    branch: headBranch,
+    repo: repoFull,
+    workflowName: name,
+    headSha,
+  });
+}
+
 function tryUpsertGithubActionsRun(
   ctx: SyncContext,
   full: string,
@@ -108,28 +150,9 @@ function tryUpsertGithubActionsRun(
   const display = stringField(run, "display_title");
   const conclusion = stringField(run, "conclusion");
   const status = stringField(run, "status");
-  const event = stringField(run, "event");
-  const headBranch = stringField(run, "head_branch");
-  const headSha = stringField(run, "head_sha");
-  const runStarted = stringField(run, "run_started_at");
-  const updatedAt = stringField(run, "updated_at");
-  const tEnd = updatedAt === undefined ? now : Date.parse(updatedAt);
-  const tStart = runStarted === undefined ? tEnd : Date.parse(runStarted);
-  const durationMs =
-    Number.isFinite(tEnd) && Number.isFinite(tStart) && tEnd >= tStart ? tEnd - tStart : null;
   const title = buildGithubActionsRunTitle(display, name, id, conclusion, status);
   const externalId = `${full}#run-${String(id)}`;
   const modifiedAt = Number.isFinite(createdMs) ? createdMs : now;
-  const meta: Record<string, unknown> = {
-    workflowName: name ?? null,
-    runId: id,
-    event: event ?? null,
-    conclusion: conclusion ?? null,
-    headSha: headSha ?? null,
-    headBranch: headBranch ?? null,
-    durationMs,
-    status: status ?? null,
-  };
   ctx.upsertItem({
     service: SERVICE_ID,
     type: "ci_run",
@@ -140,7 +163,7 @@ function tryUpsertGithubActionsRun(
     canonicalUrl: htmlUrl ?? null,
     modifiedAt,
     authorId: null,
-    metadata: meta,
+    metadata: githubActionsRunMetadata(full, run, now),
     pinned: false,
     syncedAt: now,
   });

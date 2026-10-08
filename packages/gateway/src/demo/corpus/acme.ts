@@ -1,7 +1,9 @@
 import { createHash } from "node:crypto";
 
 import type { TourStepKind } from "../../agents/_lib/tour-types.ts";
+import { buildCiRunMetadata } from "../../connectors/ci-run-meta.ts";
 import { PAGERDUTY_INCIDENT_META_VERSION } from "../../connectors/pagerduty-attribution.ts";
+import { buildPrMetadata } from "../../connectors/pr-meta.ts";
 import {
   DAY,
   type DemoCommit,
@@ -275,19 +277,25 @@ const STORY_PRS: readonly DemoItem[] = [
     offsetMs: -3 * HOUR,
     authorKey: "dana",
     url: PR_URL("acme/payments", 412),
-    metadata: (at) => ({
-      number: 412,
-      repo: "acme/payments",
-      state: "merged",
-      draft: false,
-      merged: true,
-      merged_at: at(-3 * HOUR),
-      merge_commit_sha: SHA_412,
-      additions: 18,
-      deletions: 6,
-      changed_files: 2,
-      labels: [],
-    }),
+    metadata: (at) =>
+      buildPrMetadata(
+        {
+          number: 412,
+          draft: false,
+          merge_commit_sha: SHA_412,
+          additions: 18,
+          deletions: 6,
+          changed_files: 2,
+          labels: [],
+        },
+        {
+          state: "merged",
+          stateRaw: "closed",
+          openedAtMs: at(-3 * HOUR - DAY),
+          mergedAtMs: at(-3 * HOUR),
+          repo: "acme/payments",
+        },
+      ),
   },
 ];
 
@@ -482,19 +490,25 @@ function background(): {
         offsetMs,
         authorKey,
         url: PR_URL(svc.repo, n),
-        metadata: (at) => ({
-          number: n,
-          repo: svc.repo,
-          state: "merged",
-          draft: false,
-          merged: true,
-          merged_at: at(offsetMs),
-          merge_commit_sha: mergeSha,
-          additions: 20 + k * 3,
-          deletions: 4 + k,
-          changed_files: 1 + (k % 4),
-          labels: [],
-        }),
+        metadata: (at) =>
+          buildPrMetadata(
+            {
+              number: n,
+              draft: false,
+              merge_commit_sha: mergeSha,
+              additions: 20 + k * 3,
+              deletions: 4 + k,
+              changed_files: 1 + (k % 4),
+              labels: [],
+            },
+            {
+              state: "merged",
+              stateRaw: "closed",
+              openedAtMs: at(offsetMs - DAY),
+              mergedAtMs: at(offsetMs),
+              repo: svc.repo,
+            },
+          ),
       });
       reviews.push({
         service: "github",
@@ -514,11 +528,25 @@ function background(): {
         title: "Deploy production",
         body: failed ? "failure" : "success",
         offsetMs: offsetMs + 2 * HOUR,
-        metadata: () => ({
-          conclusion: failed ? "failure" : "success",
-          repo: svc.repo,
-          headSha: mergeSha,
-        }),
+        metadata: () =>
+          buildCiRunMetadata(
+            {
+              workflowName: "Deploy production",
+              runId,
+              event: "push",
+              headSha: mergeSha,
+              headBranch: "main",
+              status: "completed",
+            },
+            {
+              conclusion: failed ? "failure" : "success",
+              conclusionRaw: failed ? "failure" : "success",
+              branch: "main",
+              repo: svc.repo,
+              workflowName: "Deploy production",
+              headSha: mergeSha,
+            },
+          ),
       });
       deployments.push({
         serviceId: svc.id,
@@ -556,14 +584,11 @@ const SAM_TODAY_PRS: readonly DemoItem[] = [
     offsetMs: -5 * HOUR,
     authorKey: "sam",
     url: PR_URL("acme/payments", 415),
-    metadata: () => ({
-      number: 415,
-      repo: "acme/payments",
-      state: "open",
-      draft: false,
-      merged: false,
-      labels: [],
-    }),
+    metadata: (at) =>
+      buildPrMetadata(
+        { number: 415, draft: false, labels: [] },
+        { state: "open", stateRaw: "open", openedAtMs: at(-5 * HOUR), repo: "acme/payments" },
+      ),
   },
 ];
 const SAM_TODAY_REVIEWS: readonly DemoItem[] = [

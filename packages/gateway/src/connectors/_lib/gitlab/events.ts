@@ -1,5 +1,13 @@
+import { itemPrimaryKey } from "../../../index/item-key.ts";
 import { stripTrailingSlashes } from "../../../string/strip-trailing-slashes.ts";
 import type { SyncContext } from "../../../sync/types.ts";
+import {
+  buildPrMetadata,
+  canonicalEpochMs,
+  gitlabEventTransition,
+  normalizeGitlabMrState,
+  type PrFields,
+} from "../../pr-meta.ts";
 import { asRecord, numberField, stringField } from "../../unknown-record.ts";
 
 const SERVICE_ID = "gitlab";
@@ -27,7 +35,12 @@ export type GitlabEventUpsertFields = {
   iid: number;
   title: string;
   actionName: string;
-  createdAt: string;
+  /**
+   * The event's own `created_at`, VERBATIM — `undefined` when the event carried none. Never
+   * substituted with the sync time: it becomes `opened_at_ms`/`merged_at`, where a guessed value
+   * would be a false claim. Only the row's `modifiedAt` falls back to `now`.
+   */
+  createdAt: string | undefined;
   now: number;
   webOrigin: string;
   authorUsername: string | undefined;
@@ -49,6 +62,15 @@ export type GitlabEventUpsertFields = {
    * behavior is unchanged.
    */
   webUrl?: string;
+  /**
+   * The MR resource's own fields, present only on the `fetchOne` path (`gitlab-sync.ts`), where
+   * the full merge request was fetched. The periodic events path has only the event.
+   */
+  mr?: {
+    readonly state?: string | undefined;
+    readonly createdAt?: string | undefined;
+    readonly mergedAt?: string | undefined;
+  };
 };
 
 /**
@@ -71,6 +93,77 @@ type GitlabItemShape = {
   urlSegment: string;
 };
 
+function storedPrFields(stored: Record<string, unknown> | null): PrFields {
+  if (stored === null) {
+    return {};
+  }
+  const st = stored["state"];
+  const state =
+    st === "open" || st === "merged" || st === "closed" || st === "unknown" ? st : undefined;
+  const raw = stored["state_raw"];
+  return {
+    state,
+    stateRaw: typeof raw === "string" ? raw : undefined,
+    openedAtMs: canonicalEpochMs(stored["opened_at_ms"]),
+    mergedAtMs: canonicalEpochMs(stored["merged_at"]),
+  };
+}
+
+/**
+ * The full `pr` metadata for a GitLab MR row. `upsertIndexedItem` REPLACES metadata wholesale, so
+ * every canonical key this event does not itself establish is carried from the stored row
+ * (`stored`) — otherwise an `approved` event after a merge would erase the merge. An `opened`
+ * event's own `created_at` IS the opening time and an `accepted`/`merged` event's IS the merge
+ * time (events are fetched `sort=asc`, so a later transition always wins).
+ */
+export function gitlabMrMetadata(
+  f: {
+    readonly pathWithNamespace: string;
+    readonly iid: number;
+    readonly actionName: string;
+    readonly eventCreatedAt: string | undefined;
+    readonly mr?: GitlabEventUpsertFields["mr"];
+  },
+  stored: Record<string, unknown> | null,
+): Record<string, unknown> {
+  const raw = { iid: f.iid, project: f.pathWithNamespace, action: f.actionName };
+  const prior = storedPrFields(stored);
+  if (f.mr !== undefined) {
+    return buildPrMetadata(raw, {
+      state: normalizeGitlabMrState(f.mr.state) ?? prior.state,
+      stateRaw: f.mr.state ?? prior.stateRaw,
+      openedAtMs: canonicalEpochMs(f.mr.createdAt) ?? prior.openedAtMs,
+      mergedAtMs: canonicalEpochMs(f.mr.mergedAt) ?? prior.mergedAtMs,
+      repo: f.pathWithNamespace,
+    });
+  }
+  const transition = gitlabEventTransition(f.actionName);
+  if (transition === null) {
+    return buildPrMetadata(raw, { ...prior, repo: f.pathWithNamespace });
+  }
+  const eventMs = canonicalEpochMs(f.eventCreatedAt);
+  return buildPrMetadata(raw, {
+    state: transition,
+    stateRaw: f.actionName,
+    openedAtMs: f.actionName === "opened" ? (eventMs ?? prior.openedAtMs) : prior.openedAtMs,
+    mergedAtMs: transition === "merged" ? (eventMs ?? prior.mergedAtMs) : undefined,
+    repo: f.pathWithNamespace,
+  });
+}
+
+function readStoredMetadata(ctx: SyncContext, itemId: string): Record<string, unknown> | null {
+  const json = ctx.itemMetadata(itemId);
+  if (json === null) {
+    return null;
+  }
+  try {
+    const parsed = JSON.parse(json) as unknown;
+    return asRecord(parsed) ?? null;
+  } catch {
+    return null;
+  }
+}
+
 function upsertGitlabEventItem(f: GitlabEventUpsertFields, shape: GitlabItemShape): void {
   const {
     ctx,
@@ -88,12 +181,20 @@ function upsertGitlabEventItem(f: GitlabEventUpsertFields, shape: GitlabItemShap
   const externalId = shape.externalId(pathWithNamespace, iid);
   const encPath = encodeURIComponent(pathWithNamespace);
   const urlPath = `${shape.urlSegment}/${String(iid)}`;
-  const modified = Date.parse(createdAt);
-  const meta: Record<string, unknown> = {
-    iid,
-    project: pathWithNamespace,
-    action: actionName,
-  };
+  const modified = createdAt === undefined ? Number.NaN : Date.parse(createdAt);
+  const meta: Record<string, unknown> =
+    shape.type === "pr"
+      ? gitlabMrMetadata(
+          {
+            pathWithNamespace,
+            iid,
+            actionName,
+            eventCreatedAt: createdAt,
+            ...(f.mr === undefined ? {} : { mr: f.mr }),
+          },
+          readStoredMetadata(ctx, itemPrimaryKey(SERVICE_ID, externalId)),
+        )
+      : { iid, project: pathWithNamespace, action: actionName };
   const authorId =
     authorUsername !== undefined && authorUsername !== ""
       ? ctx.resolvePerson({
@@ -150,7 +251,9 @@ function processEvent(
   const targetIid = numberField(ev, "target_iid");
   const title = stringField(ev, "target_title") ?? "(no title)";
   const actionName = stringField(ev, "action_name") ?? "unknown";
-  const createdAt = stringField(ev, "created_at") ?? new Date(now).toISOString();
+  // No sync-time fallback here: `createdAt` feeds `opened_at_ms`/`merged_at`, and only the row's
+  // `modifiedAt` (in `upsertGitlabEventItem`) may fall back to `now`.
+  const createdAt = stringField(ev, "created_at");
   const authorUsername = stringField(ev, "author_username");
   const authorName = stringField(ev, "author_name");
   const project = asRecord(ev["project"]);

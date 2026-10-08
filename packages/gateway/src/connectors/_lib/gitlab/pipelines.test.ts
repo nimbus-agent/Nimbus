@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-
+import { type CanonicalCiRunKey, CI_RUN_EMITTED_KEYS } from "../../ci-run-meta.ts";
 import {
   createMemoryIndexDb,
   createStubVault,
@@ -9,7 +9,7 @@ import {
   syncTestContext,
   urlFromFetchInput,
 } from "../../connector-sync-test-helpers.ts";
-import { syncGitlabPipelinesForIndexedProjects } from "./pipelines.ts";
+import { gitlabPipelineMetadata, syncGitlabPipelinesForIndexedProjects } from "./pipelines.ts";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -729,5 +729,41 @@ describe("syncGitlabPipelinesForIndexedProjects — 429 retry-after NaN (non-num
     } finally {
       globalThis.fetch = origFetch;
     }
+  });
+});
+
+describe("gitlabPipelineMetadata (ci_run contract)", () => {
+  const row = (o: Record<string, unknown> = {}): Record<string, unknown> => ({
+    id: 501,
+    status: "failed",
+    ref: "main",
+    sha: "9f9f",
+    duration: 120,
+    ...o,
+  });
+
+  test("writes canonical keys from the list-endpoint shape", () => {
+    const m = gitlabPipelineMetadata("acme/app", row());
+    expect(m["conclusion"]).toBe("failure");
+    expect(m["conclusion_raw"]).toBe("failed");
+    expect(m["branch"]).toBe("main");
+    expect(m["repo"]).toBe("acme/app");
+    expect(m["head_sha"]).toBe("9f9f");
+    expect(m["meta_v"]).toBe(1);
+    expect(m["ref"]).toBe("main");
+  });
+
+  test("a pipeline the API marks as a tag pipeline has no branch", () => {
+    expect("branch" in gitlabPipelineMetadata("acme/app", row({ ref: "v2.0.0", tag: true }))).toBe(
+      false,
+    );
+  });
+
+  test("emits exactly the keys the contract table declares", () => {
+    const m = gitlabPipelineMetadata("acme/app", row());
+    const canonical = Object.keys(m).filter((k) =>
+      CI_RUN_EMITTED_KEYS.gitlab.has(k as CanonicalCiRunKey),
+    );
+    expect(new Set(canonical)).toEqual(new Set(CI_RUN_EMITTED_KEYS.gitlab));
   });
 });

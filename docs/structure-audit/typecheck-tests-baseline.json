@@ -271,7 +271,7 @@
       "TS2698": 2
     },
     "packages/gateway/test/unit/connectors/circleci-sync.test.ts": {
-      "TS4111": 4
+      "TS4111": 3
     },
     "packages/gateway/test/unit/connectors/data-profile-mapping.test.ts": {
       "TS4111": 3

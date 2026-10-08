@@ -171,6 +171,11 @@ async function fetchOneMergeRequest(ctx: SyncContext, url: string): Promise<Fetc
     authorUsername,
     authorName,
     webUrl,
+    mr: {
+      state: stringField(mr, "state"),
+      createdAt: stringField(mr, "created_at"),
+      mergedAt: stringField(mr, "merged_at"),
+    },
   });
   return {
     status: "indexed",

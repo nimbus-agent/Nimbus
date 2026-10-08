@@ -18,6 +18,7 @@ import {
 } from "../sync/types.ts";
 import { fetchOneMissForResponse } from "./fetch-miss-reason.ts";
 import { decodeNimbusJsonCursorObject, encodeNimbusJsonCursor } from "./nimbus-json-cursor.ts";
+import { buildPrMetadata, canonicalEpochMs, normalizeGithubPrState } from "./pr-meta.ts";
 import { asRecord, numberField, stringField } from "./unknown-record.ts";
 
 const SERVICE_ID = "github";
@@ -75,22 +76,10 @@ export function shouldRefreshMergeableState(input: MergeableStateRefreshInput): 
 }
 
 /**
- * The merged-only half of {@link extractPrMetadataForIndex}: fields that exist solely
- * on a merged PR. Three levels of nesting on their own, which is most of why that
- * function was over the cognitive-complexity gate (Sonar `S3776`).
- *
- * Both fields are written only when genuinely present and parseable — an unparseable
- * `merged_at` writes nothing rather than `NaN`, since a NaN timestamp in the index reads
- * as a real value everywhere downstream.
+ * The merged-only raw field: `merge_commit_sha` exists solely on a merged PR. `merged_at` is a
+ * canonical contract key now, produced by `buildPrMetadata`.
  */
-function applyMergeFields(out: Record<string, unknown>, pr: Record<string, unknown>): void {
-  const mergedAtIso = stringField(pr, "merged_at");
-  if (mergedAtIso !== undefined) {
-    const ms = Date.parse(mergedAtIso);
-    if (Number.isFinite(ms)) {
-      out["merged_at"] = ms;
-    }
-  }
+function applyMergeCommitSha(out: Record<string, unknown>, pr: Record<string, unknown>): void {
   const sha = stringField(pr, "merge_commit_sha");
   if (sha !== undefined && sha.length > 0) {
     out["merge_commit_sha"] = sha;
@@ -103,14 +92,12 @@ export function extractPrMetadataForIndex(
   nowMs: number = Date.now(),
 ): Record<string, unknown> {
   const merged = pr["merged"] === true;
+  const rawState = stringField(pr, "state");
   const user = asRecord(pr["user"]);
   const login = user === undefined ? undefined : stringField(user, "login");
   const out: Record<string, unknown> = {
     number: numberField(pr, "number"),
-    repo: repoFull,
-    state: stringField(pr, "state"),
     draft: pr["draft"] === true,
-    merged,
     user: login,
     labels: extractLabelNames(pr["labels"]),
   };
@@ -130,9 +117,15 @@ export function extractPrMetadataForIndex(
     }
   }
   if (merged) {
-    applyMergeFields(out, pr);
+    applyMergeCommitSha(out, pr);
   }
-  return out;
+  return buildPrMetadata(out, {
+    state: normalizeGithubPrState(rawState, merged),
+    stateRaw: rawState,
+    openedAtMs: canonicalEpochMs(stringField(pr, "created_at")),
+    mergedAtMs: merged ? canonicalEpochMs(stringField(pr, "merged_at")) : undefined,
+    repo: repoFull,
+  });
 }
 
 function eventsUrlFor(login: string): string {
@@ -215,22 +208,26 @@ function githubPrExternalId(repoFull: string, num: number): string {
 
 const PR_STAT_KEYS = ["additions", "deletions", "changed_files", "commits"] as const;
 
+/** Contract keys an events-feed payload can lack; carried from the stored row like the stats. */
+const PR_CARRIED_CONTRACT_KEYS = ["opened_at_ms"] as const;
+
 /**
- * I-2: `extractPrMetadataForIndex` only sets the four size-stat keys when the incoming payload
- * carries them — true only of the single-PR / pull-detail response, never of the events feed's
+ * I-2: `extractPrMetadataForIndex` only sets the four size-stat keys, and `opened_at_ms` (which
+ * needs `created_at`), when the incoming payload carries them — true only of the single-PR /
+ * pull-detail response, never of the events feed's
  * `PullRequestEvent`/`PullRequestReviewEvent` payloads. `upsertIndexedItem` writes metadata with
  * `metadata = excluded.metadata`, which REPLACES the row's metadata wholesale, so any later
  * events-path upsert for a PR that `enrichPrDetail` already filled in would otherwise silently
  * erase its stats — and `selectPrEnrichCandidates` would then re-queue that PR forever, since
  * `modified_at` also just advanced, pushing it to the front of the `modified_at DESC` candidate
- * list. Merge the four keys forward from the currently-indexed row whenever the incoming payload
- * omits them.
+ * list. Merge those five keys (the four size stats plus `opened_at_ms`) forward from the
+ * currently-indexed row whenever the incoming payload omits them.
  *
  * Accepted tradeoff: once merged forward, stats can go stale (an event bumps `modified_at`
  * without new commit/diff counts) until the next detail fetch refreshes them. That is strictly
  * better than losing the stats outright and re-enriching the same PR on every tick.
  *
- * Scope, deliberately: this merges forward the four `PR_STAT_KEYS` only. `mergeable`,
+ * Scope, deliberately: this merges forward the four `PR_STAT_KEYS` and `opened_at_ms` only. `mergeable`,
  * `mergeable_state`, and `mergeable_state_fetched_at_ms` are subject to the same wholesale
  * `metadata = excluded.metadata` replacement and are NOT merged forward here — left as-is
  * because no re-queue loop results: `shouldRefreshMergeableState` currently has no production
@@ -252,7 +249,9 @@ function mergeForwardPrStats(
   meta: Record<string, unknown>,
   externalId: string,
 ): Record<string, unknown> {
-  const missing = PR_STAT_KEYS.filter((k) => meta[k] === undefined);
+  const missing = [...PR_STAT_KEYS, ...PR_CARRIED_CONTRACT_KEYS].filter(
+    (k) => meta[k] === undefined,
+  );
   if (missing.length === 0) {
     return meta;
   }

@@ -1,4 +1,4 @@
-import { expect, test } from "bun:test";
+import { describe, expect, test } from "bun:test";
 
 import { resolveItemByUrl } from "../index/resolve-by-url.ts";
 import { PR_FILES_PAGE_SIZE } from "../prfiles/pr-file-fetch.ts";
@@ -24,6 +24,7 @@ import {
   throwGithubRateLimitErrorIfApplicable,
   upsertPr,
 } from "./github-sync.ts";
+import { type CanonicalPrKey, PR_EMITTED_KEYS } from "./pr-meta.ts";
 
 function ctxWithPat(db: ReturnType<typeof createMemoryIndexDb>, pat: string | null) {
   return {
@@ -823,4 +824,61 @@ describeWithFetchRestore("github-sync pull files pass", () => {
     expect(s.c).toBe(0);
     db.close();
   });
+});
+
+describe("extractPrMetadataForIndex (pr contract)", () => {
+  test("a merged PR reads state=merged, keeps the raw state and gains opened_at_ms", () => {
+    const m = extractPrMetadataForIndex(
+      "acme/app",
+      prPayload({
+        state: "closed",
+        merged: true,
+        created_at: "2026-10-01T09:00:00Z",
+        merged_at: "2026-10-02T09:00:00Z",
+        merge_commit_sha: "m1",
+      }),
+    );
+    expect(m["state"]).toBe("merged");
+    expect(m["state_raw"]).toBe("closed");
+    expect(m["merged"]).toBe(true);
+    expect(m["opened_at_ms"]).toBe(Date.parse("2026-10-01T09:00:00Z"));
+    expect(m["merged_at"]).toBe(Date.parse("2026-10-02T09:00:00Z"));
+    expect(m["merge_commit_sha"]).toBe("m1");
+    expect(m["repo"]).toBe("acme/app");
+    expect(m["meta_v"]).toBe(1);
+  });
+
+  test("an unparseable created_at is omitted, never NaN", () => {
+    const m = extractPrMetadataForIndex("acme/app", prPayload({ created_at: "garbage" }));
+    expect("opened_at_ms" in m).toBe(false);
+  });
+
+  test("emits exactly the keys the contract table declares (merged PR)", () => {
+    const m = extractPrMetadataForIndex(
+      "acme/app",
+      prPayload({
+        state: "closed",
+        merged: true,
+        created_at: "2026-10-01T09:00:00Z",
+        merged_at: "2026-10-02T09:00:00Z",
+      }),
+    );
+    const canonical = Object.keys(m).filter((k) => PR_EMITTED_KEYS.github.has(k as CanonicalPrKey));
+    expect(new Set(canonical)).toEqual(new Set(PR_EMITTED_KEYS.github));
+  });
+});
+
+test("upsertPr carries opened_at_ms forward when an events payload omits created_at", () => {
+  const db = createMemoryIndexDb();
+  const ctx = ctxWithPat(db, "pat");
+  upsertPr(ctx, "acme/app", prPayload({ created_at: "2026-10-01T09:00:00Z" }), Date.now());
+  // An events-feed payload with no `created_at` (`stringField` reads `undefined` as absent).
+  upsertPr(ctx, "acme/app", prPayload({ created_at: undefined }), Date.now());
+  const row = db
+    .query("SELECT metadata FROM item WHERE service = 'github' AND type = 'pr'")
+    .get() as { metadata: string };
+  expect((JSON.parse(row.metadata) as Record<string, unknown>)["opened_at_ms"]).toBe(
+    Date.parse("2026-10-01T09:00:00Z"),
+  );
+  db.close();
 });

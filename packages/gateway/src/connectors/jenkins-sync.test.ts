@@ -1,6 +1,7 @@
-import { expect, test } from "bun:test";
+import { describe, expect, test } from "bun:test";
 
 import { resolveItemByUrl } from "../index/resolve-by-url.ts";
+import { type CanonicalCiRunKey, CI_RUN_EMITTED_KEYS } from "./ci-run-meta.ts";
 import {
   boundTestCapabilities,
   createMemoryIndexDb,
@@ -9,7 +10,7 @@ import {
   type SyncTestFetchParams,
   silentSyncContextExtras,
 } from "./connector-sync-test-helpers.ts";
-import { createJenkinsSyncable } from "./jenkins-sync.ts";
+import { createJenkinsSyncable, jenkinsBuildMetadata } from "./jenkins-sync.ts";
 
 function ctxWithCreds(
   db: ReturnType<typeof createMemoryIndexDb>,
@@ -378,5 +379,36 @@ describeWithFetchRestore("jenkins-sync fetchOne", () => {
       Promise.resolve(new Response("nope", { status: 401 }))) as unknown as typeof fetch;
     const out401 = await syncable.fetchOne?.(ctx401, "https://ci.corp.example/job/build/12/");
     expect(out401).toEqual({ status: "not_found", reason: "unauthorized" });
+  });
+});
+
+describe("jenkinsBuildMetadata (ci_run contract)", () => {
+  test("folder-qualified job name is kept verbatim as workflow_name", () => {
+    const m = jenkinsBuildMetadata("platform/deploys/Deploy Prod", {
+      number: 7,
+      result: "UNSTABLE",
+      building: false,
+      duration: 900,
+    });
+    expect(m["workflow_name"]).toBe("platform/deploys/Deploy Prod");
+    expect(m["conclusion"]).toBe("failure");
+    expect(m["conclusion_raw"]).toBe("UNSTABLE");
+    expect(m["jobName"]).toBe("platform/deploys/Deploy Prod");
+    expect("branch" in m).toBe(false);
+    expect("repo" in m).toBe(false);
+  });
+
+  test("a running build is running even with a stale result", () => {
+    expect(
+      jenkinsBuildMetadata("j", { number: 8, result: null, building: true })["conclusion"],
+    ).toBe("running");
+  });
+
+  test("emits exactly the keys the contract table declares", () => {
+    const m = jenkinsBuildMetadata("j", { number: 9, result: "SUCCESS", building: false });
+    const canonical = Object.keys(m).filter((k) =>
+      CI_RUN_EMITTED_KEYS.jenkins.has(k as CanonicalCiRunKey),
+    );
+    expect(new Set(canonical)).toEqual(new Set(CI_RUN_EMITTED_KEYS.jenkins));
   });
 });

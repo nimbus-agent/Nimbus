@@ -221,6 +221,39 @@ test("gitAware=true on a real git repo records git_commit items (covers gitLogRe
     .query(`SELECT title FROM item WHERE service = 'filesystem' AND type = 'git_commit' LIMIT 1`)
     .get() as { title: string } | null;
   expect(commitRow?.title).toContain("initial commit");
+  const commit = db
+    .query(
+      `SELECT author_id, metadata FROM item WHERE service = 'filesystem' AND type = 'git_commit'`,
+    )
+    .get() as { author_id: string | null; metadata: string };
+  const meta = JSON.parse(commit.metadata) as Record<string, unknown>;
+  expect(meta["author_email"]).toBe("test@example.com");
+  expect(meta["meta_v"]).toBe(1);
+  expect(commit.author_id).not.toBeNull();
+});
+
+test("gitLogRecords parses author email and name, tolerating an empty email", async () => {
+  const out = [
+    `${"a".repeat(40)}\u00001700000000\u0000first\u0000ada@example.com\u0000Ada`,
+    `${"b".repeat(40)}\u00001700000100\u0000second\u0000\u0000Anon`,
+  ].join("\u0000");
+  const recs = await gitLogRecords("/repo", 40, fakeSpawn({ code: 0, stdout: out }));
+  expect(recs).toEqual([
+    {
+      sha: "a".repeat(40),
+      ct: 1_700_000_000_000,
+      subject: "first",
+      authorEmail: "ada@example.com",
+      authorName: "Ada",
+    },
+    {
+      sha: "b".repeat(40),
+      ct: 1_700_000_100_000,
+      subject: "second",
+      authorEmail: "",
+      authorName: "Anon",
+    },
+  ]);
 });
 
 test("gitAware=true on a non-git directory returns zero commits (covers isGitRepo false branch)", async () => {
@@ -580,7 +613,7 @@ describe("gitLogRecords (injected spawn)", () => {
 
   test("sha with wrong length is skipped", async () => {
     // valid triplet but sha is only 8 chars → skip
-    const stdout = "badf00d1\x000\x00short sha subject\x00";
+    const stdout = "badf00d1\x000\x00short sha subject\x00a@b.c\x00A";
     const records = await gitLogRecords("/fake-root", 40, fakeSpawn({ code: 0, stdout }));
     expect(records).toEqual([]);
   });
@@ -589,7 +622,7 @@ describe("gitLogRecords (injected spawn)", () => {
     const sha40 = "a".repeat(40);
     // ct = "NaN" → Number.parseInt("NaN",10) = NaN → not finite → Date.now() fallback
     const before = Date.now();
-    const stdout = `${sha40}\x00NaN\x00subject line\x00`;
+    const stdout = `${sha40}\x00NaN\x00subject line\x00a@b.c\x00A`;
     const records = await gitLogRecords("/fake-root", 40, fakeSpawn({ code: 0, stdout }));
     const after = Date.now();
     expect(records).toHaveLength(1);
@@ -601,7 +634,7 @@ describe("gitLogRecords (injected spawn)", () => {
   test("valid triplet is parsed correctly (finite ct)", async () => {
     const sha40 = "b".repeat(40);
     const ctEpoch = Math.floor(Date.now() / 1000) - 3600;
-    const stdout = `${sha40}\x00${String(ctEpoch)}\x00my commit message\x00`;
+    const stdout = `${sha40}\x00${String(ctEpoch)}\x00my commit message\x00a@b.c\x00A`;
     const records = await gitLogRecords("/fake-root", 40, fakeSpawn({ code: 0, stdout }));
     expect(records).toHaveLength(1);
     expect(records[0]?.sha).toBe(sha40);

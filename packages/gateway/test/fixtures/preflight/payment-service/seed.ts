@@ -98,6 +98,7 @@ export async function seedPaymentServicePreflightFixture(
     metadata: {
       conclusion: "success",
       branch: "main",
+      repo: "nimbus-agent/payments",
       headSha: "sha_main_1",
       workflow_name: "CI lint",
     },
@@ -113,6 +114,7 @@ export async function seedPaymentServicePreflightFixture(
     metadata: {
       conclusion: "failure",
       branch: "main",
+      repo: "nimbus-agent/payments",
       headSha: "sha_main_2",
       workflow_name: "Build and Test",
     },
@@ -128,6 +130,7 @@ export async function seedPaymentServicePreflightFixture(
     metadata: {
       conclusion: "failure",
       branch: "feature-x",
+      repo: "nimbus-agent/payments",
       headSha: "sha_feature_1",
       workflow_name: "Build and Test",
     },
@@ -143,6 +146,7 @@ export async function seedPaymentServicePreflightFixture(
     metadata: {
       conclusion: "failure",
       branch: "feature-x",
+      repo: "nimbus-agent/payments",
       headSha: "sha_feature_2",
       workflow_name: "Lint",
     },

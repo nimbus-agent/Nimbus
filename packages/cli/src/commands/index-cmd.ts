@@ -316,7 +316,7 @@ function formatCounts(counts: Record<string, number>): string {
  * `cannotImprove` names services outside `REBODY_IMPROVABLE_SERVICES` — their BODY count can
  * never move. That is a correct statement about bodies, but `rebody` recovers TWO independent
  * kinds of depth (see `pendingMeta`/`RebodyDonePayload`'s docstring), and `pagerduty` is the
- * first service in `REBODY_REQUIRED_META_VERSION` that is ALSO in `cannotImprove` — its
+ * first service in `REBODY_META_TARGETS` that is ALSO in `cannotImprove` — its
  * incidents carry `bodyPreview` only, never a full body, but DO carry recoverable metadata
  * (actor emails). Printing the bare "cannot improve" line for such a service reads as "don't
  * bother running this", which defeats the exact recovery path a caller was told to use. A

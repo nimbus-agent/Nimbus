@@ -311,11 +311,11 @@ describe("circleci-sync — with shared fixture", () => {
         .query<{ metadata: string }, []>("SELECT metadata FROM item WHERE service = 'circleci'")
         .get();
       const meta = JSON.parse(row?.metadata ?? "{}") as Record<string, unknown>;
-      expect(meta.branch).toBeNull();
+      expect("branch" in meta).toBe(false);
       expect(meta.revision).toBeNull();
     });
 
-    test("vcs record with branch + revision → metadata populated; missing branch falls back to tag", async () => {
+    test("vcs record with branch + revision → metadata populated; a tag is kept as raw tag, not branch", async () => {
       seedGithubRepo(fixture.createSyncContext("circleci"), "acme/repo-a");
       const recentTs = new Date(Date.now() - 60_000).toISOString();
       fixture.fetchMock.respond("GET", PIPELINES_URL_ACME_REPO_A, {
@@ -336,7 +336,8 @@ describe("circleci-sync — with shared fixture", () => {
         .query<{ metadata: string }, []>("SELECT metadata FROM item WHERE service = 'circleci'")
         .get();
       const meta = JSON.parse(row?.metadata ?? "{}") as Record<string, unknown>;
-      expect(meta.branch).toBe("v1.0.0");
+      expect("branch" in meta).toBe(false);
+      expect(meta.tag).toBe("v1.0.0");
       expect(meta.revision).toBe("abc123");
     });
 

@@ -1,6 +1,8 @@
 import type { Database } from "bun:sqlite";
 import type { Logger } from "pino";
+import { GIT_COMMIT_META_VERSION } from "../connectors/git-commit-meta.ts";
 import { PAGERDUTY_INCIDENT_META_VERSION } from "../connectors/pagerduty-attribution.ts";
+import { PR_META_VERSION } from "../connectors/pr-meta.ts";
 import { TICKET_META_VERSION } from "../connectors/ticket-depth.ts";
 import type { SyncScheduler } from "../sync/scheduler.ts";
 import { clearSchedulerCursor } from "../sync/scheduler-store.ts";
@@ -125,21 +127,39 @@ export type RebodyParams = {
   sinceDays?: number;
 };
 
+export type RebodyMetaTarget = {
+  readonly service: string;
+  /** Absent = every item type of the service must carry the version. */
+  readonly type?: string;
+  readonly requiredMetaVersion: number;
+};
+
 /**
- * Services whose rows must carry at least this `metadata.meta_v` to count as
- * fully recovered. This is the SECOND eligibility reason, alongside
- * `body_complete = 0` — `rebody` recovers indexed DEPTH, of which bodies were
- * the first kind. A later depth PR adds a row here; it does not add a
- * mechanism.
+ * Rows that must carry at least `requiredMetaVersion` in `metadata.meta_v` to count as fully
+ * recovered — the SECOND eligibility reason beside `body_complete = 0`. Type-scoped where a service
+ * writes several item types and only one carries the contract (`github`/`gitlab` also write
+ * `issue` rows, which would otherwise stay eligible forever).
+ *
+ * A future metadata-depth bump for any item type (`issue`, `incident`, `message`...) adds an entry
+ * HERE; it does not add a mechanism or touch the RPC dispatch.
  */
-export const REBODY_REQUIRED_META_VERSION: ReadonlyMap<string, number> = new Map([
-  ["jira", TICKET_META_VERSION],
-  ["linear", TICKET_META_VERSION],
+export const REBODY_META_TARGETS: readonly RebodyMetaTarget[] = [
+  { service: "jira", requiredMetaVersion: TICKET_META_VERSION },
+  { service: "linear", requiredMetaVersion: TICKET_META_VERSION },
   // Incidents indexed before Spec B carry no actor emails. The data was never
   // fetched, so unlike Sentry this is not recoverable from stored rows —
   // it needs a re-fetch.
-  ["pagerduty", PAGERDUTY_INCIDENT_META_VERSION],
-]);
+  { service: "pagerduty", requiredMetaVersion: PAGERDUTY_INCIDENT_META_VERSION },
+  // `ci_run` is deliberately NOT listed. The CI syncs fetch only the most recent runs (GitHub
+  // Actions `per_page=30` with no paging, Jenkins `{0,25}`), so rebody can never bring an older
+  // `ci_run` row to the current `meta_v`: listing it would keep `pendingMeta` non-zero forever and
+  // make every no-argument `nimbus index rebody` re-run outbound resyncs for no gain. Old CI rows
+  // age out of the DORA/preflight windows on their own.
+  { service: "github", type: "pr", requiredMetaVersion: PR_META_VERSION },
+  { service: "bitbucket", type: "pr", requiredMetaVersion: PR_META_VERSION },
+  { service: "gitlab", type: "pr", requiredMetaVersion: PR_META_VERSION },
+  { service: "filesystem", type: "git_commit", requiredMetaVersion: GIT_COMMIT_META_VERSION },
+];
 
 /**
  * Services whose connector passes `body:` (the declared-full variant of
@@ -396,11 +416,23 @@ export function computePendingByService(db: Database): Record<string, number> {
   return out;
 }
 
+function metaTargetClause(t: RebodyMetaTarget): { sql: string; params: Array<string | number> } {
+  return t.type === undefined
+    ? {
+        sql: `(service = ? AND COALESCE(json_extract(metadata, '$.meta_v'), 0) < ?)`,
+        params: [t.service, t.requiredMetaVersion],
+      }
+    : {
+        sql: `(service = ? AND type = ? AND COALESCE(json_extract(metadata, '$.meta_v'), 0) < ?)`,
+        params: [t.service, t.type, t.requiredMetaVersion],
+      };
+}
+
 /**
  * The SECOND recovery reason, counted SEPARATELY rather than folded into
- * `computePendingByService`: rows whose service is registered in
- * `REBODY_REQUIRED_META_VERSION` and whose `metadata.meta_v` is below the
- * required version.
+ * `computePendingByService`: rows below a registered `REBODY_META_TARGETS` entry.
+ * One query per service with that service's clauses OR-joined, so a row two
+ * targets both match is counted ONCE.
  *
  * The two counts are deliberately not summed. `pending` has meant
  * "body_complete = 0" since V48 and still does — silently widening it to also
@@ -409,15 +441,22 @@ export function computePendingByService(db: Database): Record<string, number> {
  * missing. A row can be counted in BOTH maps (incomplete body AND stale
  * metadata); they are separate questions, not a partition.
  */
-export function computePendingMetaByService(db: Database): Record<string, number> {
+export function computePendingMetaByService(
+  db: Database,
+  targets: readonly RebodyMetaTarget[] = REBODY_META_TARGETS,
+): Record<string, number> {
+  const byService = new Map<string, RebodyMetaTarget[]>();
+  for (const t of targets) {
+    const list = byService.get(t.service) ?? [];
+    list.push(t);
+    byService.set(t.service, list);
+  }
   const out: Record<string, number> = {};
-  for (const [service, version] of REBODY_REQUIRED_META_VERSION) {
+  for (const [service, list] of byService) {
+    const clauses = list.map(metaTargetClause);
     const row = db
-      .query(
-        `SELECT COUNT(*) AS pending FROM item
-          WHERE service = ? AND COALESCE(json_extract(metadata, '$.meta_v'), 0) < ?`,
-      )
-      .get(service, version) as { pending: number } | undefined;
+      .query(`SELECT COUNT(*) AS pending FROM item WHERE ${clauses.map((c) => c.sql).join(" OR ")}`)
+      .get(...clauses.flatMap((c) => c.params)) as { pending: number } | undefined;
     const pending = row?.pending ?? 0;
     if (pending > 0) {
       out[service] = pending;
@@ -427,21 +466,16 @@ export function computePendingMetaByService(db: Database): Record<string, number
 }
 
 /**
- * A row is recoverable when its body is incomplete OR its service's metadata
- * is below the version that service is required to carry. Bound parameters
- * only — never interpolation (I9).
+ * A row is recoverable when its body is incomplete OR it is below a registered metadata target.
+ * Bound parameters only — never interpolation (I9); the interpolated text is fixed clause shapes.
  */
 export function buildTargetServicesSql(p: RebodyParams): {
   sql: string;
   params: Array<string | number>;
 } {
-  const params: Array<string | number> = [];
-  const metaClauses: string[] = [];
-  for (const [service, version] of REBODY_REQUIRED_META_VERSION) {
-    metaClauses.push(`(service = ? AND COALESCE(json_extract(metadata, '$.meta_v'), 0) < ?)`);
-    params.push(service, version);
-  }
-  let sql = `SELECT DISTINCT service FROM item WHERE (body_complete = 0 OR ${metaClauses.join(" OR ")})`;
+  const clauses = REBODY_META_TARGETS.map(metaTargetClause);
+  const params: Array<string | number> = clauses.flatMap((c) => c.params);
+  let sql = `SELECT DISTINCT service FROM item WHERE (body_complete = 0 OR ${clauses.map((c) => c.sql).join(" OR ")})`;
   if (p.type !== undefined) {
     sql += ` AND type = ?`;
     params.push(p.type);
@@ -454,7 +488,7 @@ export function buildTargetServicesSql(p: RebodyParams): {
  * An explicit `service` is validated against the SAME eligibility query used
  * for auto-detection — never trusted blind. Eligibility has TWO reasons since
  * the ticket-depth change: an incomplete body, OR a metadata version below
- * what `REBODY_REQUIRED_META_VERSION` requires for that service. "Nothing to
+ * what `REBODY_META_TARGETS` requires (type-scoped where a target names a type). "Nothing to
  * recover" below therefore means "nothing to recover BY BODY OR BY METADATA
  * VERSION", not bodies alone. Two failure modes this closes, both real
  * API-quota spend for zero benefit if left silent:

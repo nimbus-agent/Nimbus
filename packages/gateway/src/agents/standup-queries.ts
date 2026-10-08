@@ -28,8 +28,9 @@ export type Window = {
  *
  * `timeBasis` travels WITH the row rather than being a per-lane constant the renderer looks up,
  * because `nonGithubMergedPrCount` and the merged lane disagree about it for the same item type:
- * a GitHub PR is placed by `metadata.merged_at` (`event_field`) and a GitLab MR has no such
- * field at all. A lane-keyed lookup would have to state one answer for `pr`.
+ * a PR carrying `metadata.merged_at` is placed by it (`event_field`), while a merged PR without
+ * that field (every Bitbucket PR, and a GitLab MR merged before the synced event window) can
+ * only be placed by last touch. A lane-keyed lookup would have to state one answer for `pr`.
  */
 export type StandupRow = {
   readonly id: string;
@@ -169,9 +170,9 @@ function selectByModifiedAt(
  * merged AT ALL, not merged within the window: a PR merged last month that a comment touched
  * yesterday is finished work, not something in flight.
  *
- * Both merge signals are checked. `metadata.merged_at` is written by `github-sync.ts` alone, so
- * on GitLab and Bitbucket rows the only evidence of a merge is `metadata.state`. Testing just
- * one would leave every merged MR on those forges sitting in the "active" list.
+ * Both merge signals are checked. `metadata.merged_at` is absent on every Bitbucket row and on a
+ * GitLab MR merged before the synced event window, so on those rows the only evidence of a merge
+ * is `metadata.state`. Testing just one would leave such merged PRs in the "active" list.
  */
 export function selectActivePrs(db: Database, w: Window, personId: string): StandupRow[] {
   return selectByModifiedAt(db, w, personId, {
@@ -188,9 +189,11 @@ export function selectActivePrs(db: Database, w: Window, personId: string): Stan
 /**
  * Pull requests of mine merged in the window, placed by `metadata.merged_at`.
  *
- * GitHub-only by substrate, not by choice: `github-sync.ts`'s `applyMergeFields` is the only
- * writer of `merged_at` in the repo. {@link nonGithubMergedPrCount} counts what this therefore
- * cannot see, so the brief can disclose it instead of reporting a quiet day.
+ * `merged_at` is written by `github-sync.ts` and by `gitlab-sync.ts` (from an `accepted`/`merged`
+ * event's own time and from a fetched MR's `merged_at`); `bitbucket-sync.ts` never writes it, and
+ * a GitLab MR merged before the synced event window has none. {@link nonGithubMergedPrCount}
+ * counts the merged rows this therefore cannot see, so the brief can disclose them instead of
+ * reporting a quiet day.
  */
 export function selectMergedPrs(db: Database, w: Window, personId: string): StandupRow[] {
   return selectByEventField(db, w, personId, { type: "pr", jsonPath: "$.merged_at" });
@@ -329,10 +332,11 @@ export function selectIncidentsResponded(db: Database, w: Window, personId: stri
 /**
  * How many merged pull requests of mine this standup CANNOT place.
  *
- * `metadata.merged_at` is written by `github-sync.ts` alone — neither `gitlab-sync.ts` nor
- * `bitbucket-sync.ts` populates it — so every merged GitLab MR and Bitbucket PR is invisible to
- * {@link selectMergedPrs}. Counting them turns a silent substrate hole into a disclosed one,
- * reusing the gap `metrics/stats.ts` already ships as `github_only_merge_data`.
+ * A merged PR is listed by {@link selectMergedPrs} only when it carries `metadata.merged_at`.
+ * `bitbucket-sync.ts` never writes it (the Bitbucket API records no merge time), and a GitLab MR
+ * merged before the synced event window has none. This counts exactly those merged rows WITHOUT
+ * `merged_at` — a listed row is never counted twice — turning a silent substrate hole into a
+ * disclosed one, reusing the gap `metrics/stats.ts` already ships as `github_only_merge_data`.
  *
  * **This is an ESTIMATE and its caller must say so.** The absence of `merged_at` is the entire
  * reason this function exists, so there is no merge timestamp to window on and it falls back to
@@ -341,9 +345,9 @@ export function selectIncidentsResponded(db: Database, w: Window, personId: stri
  * touched during the window is. A bare count printed beside event-windowed ones would read as
  * the same kind of number.
  *
- * `i.service <> 'github'` rather than a forge allow-list: the property that matters is "no
- * connector wrote `merged_at` for this row", which is true of every non-GitHub forge including
- * one added later.
+ * `i.service <> 'github'` rather than a forge allow-list, plus `merged_at IS NULL`: the property
+ * that matters is "no connector wrote `merged_at` for this row", whichever non-GitHub forge it
+ * came from, including one added later.
  */
 export function nonGithubMergedPrCount(db: Database, w: Window, personId: string): number {
   const row = db
@@ -357,7 +361,8 @@ export function nonGithubMergedPrCount(db: Database, w: Window, personId: string
           AND i.modified_at < ?
           AND json_valid(i.metadata)
           AND (json_extract(i.metadata, '$.state') = 'merged'
-               OR json_extract(i.metadata, '$.merged') = 1)`,
+               OR json_extract(i.metadata, '$.merged') = 1)
+          AND json_extract(i.metadata, '$.merged_at') IS NULL`,
     )
     .get(personId, w.fromMs, w.toMs) as { n: number } | null;
   return row?.n ?? 0;
