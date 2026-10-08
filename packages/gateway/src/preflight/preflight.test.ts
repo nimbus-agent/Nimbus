@@ -1,7 +1,9 @@
 import { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { circleciPipelineMetadata } from "../connectors/circleci-sync.ts";
 import { githubActionsRunMetadata } from "../connectors/github-actions-sync.ts";
-import type { DoraProvider, ServiceConfig } from "../metrics/dora-config.ts";
+import { jenkinsBuildMetadata } from "../connectors/jenkins-sync.ts";
+import type { ServiceConfig } from "../metrics/dora-config.ts";
 import { computeDeployPreflight } from "./preflight.ts";
 
 // ---------------------------------------------------------------------------
@@ -607,41 +609,58 @@ describe("failing_ci_runs gaps", () => {
     expect(result.checks.failing_ci_runs.count).toBe(1);
   });
 
-  // Every non-github provider reads its failing ci_run rows from its own service column, so a
-  // single failure row seeded under that column must be counted.
-  const OWN_COLUMN_PROVIDERS: ReadonlyArray<readonly [DoraProvider, string, string]> = [
-    ["gitlab", "group/proj", "Pipeline"],
-    ["bitbucket", "org/bb-repo", "Pipeline"],
-    ["jenkins", "deploy-job", "Build"],
-    ["circleci", "org/repo", "Pipeline"],
-  ];
+  test("gitlab repo uses its own service column", () => {
+    const cfg = baseConfig({ repos: [{ provider: "gitlab", providerId: "group/proj" }] });
+    insertItem(db, "gitlab", "ci_run", "Pipeline", NOW - ONE_HOUR, {
+      branch: "main",
+      conclusion: "failure",
+      project: "group/proj",
+    });
+    const result = computeDeployPreflight(db, cfg, "main", NOW, 5);
+    expect(result.checks.failing_ci_runs.count).toBe(1);
+  });
 
-  test.each(OWN_COLUMN_PROVIDERS)(
-    "%s repo uses its own service column",
-    (provider, providerId, runTitle) => {
-      const cfg = baseConfig({ repos: [{ provider, providerId }] });
-      // The key repoLikeMatchesUrn reads for each provider (project/repo/jobName; circleci
-      // matches on external_id, which insertItem writes as ext-N, so it gets its own insert).
-      const repoKey: Record<string, unknown> =
-        provider === "gitlab"
-          ? { project: providerId }
-          : provider === "bitbucket"
-            ? { repo: providerId }
-            : provider === "jenkins"
-              ? { jobName: providerId }
-              : {};
-      const id = insertItem(db, provider, "ci_run", runTitle, NOW - ONE_HOUR, {
-        branch: "main",
-        conclusion: "failure",
-        ...repoKey,
-      });
-      if (provider === "circleci") {
-        db.run("UPDATE item SET external_id = ? WHERE id = ?", [`${providerId}#pipeline-1`, id]);
-      }
-      const result = computeDeployPreflight(db, cfg, "main", NOW, 5);
-      expect(result.checks.failing_ci_runs.count).toBe(1);
-    },
-  );
+  test("circleci repo uses its own service column (real writer shape)", () => {
+    const cfg = baseConfig({ repos: [{ provider: "circleci", providerId: "org/repo" }] });
+    const slug = "gh/org/repo";
+    const id = insertItem(
+      db,
+      "circleci",
+      "ci_run",
+      "Pipeline",
+      NOW - ONE_HOUR,
+      circleciPipelineMetadata("org/repo", slug, {
+        state: "errored",
+        number: 1,
+        vcs: { branch: "main" },
+      }),
+    );
+    db.run("UPDATE item SET external_id = ? WHERE id = ?", [`${slug}#p1`, id]);
+    const result = computeDeployPreflight(db, cfg, "main", NOW, 5);
+    expect(result.checks.failing_ci_runs.count).toBe(1);
+  });
+
+  test("a failed Jenkins build is NOT counted: Jenkins supplies no branch", () => {
+    // Jenkins supplies no branch, so preflight cannot evaluate it (disclosed as a gap in PR A2).
+    const cfg = baseConfig({ repos: [{ provider: "jenkins", providerId: "deploy-job" }] });
+    const id = insertItem(
+      db,
+      "jenkins",
+      "ci_run",
+      "Build",
+      NOW - ONE_HOUR,
+      jenkinsBuildMetadata("deploy-job", { number: 7, result: "FAILURE", building: false }),
+    );
+    db.run("UPDATE item SET external_id = ? WHERE id = ?", ["deploy-job#7", id]);
+    const result = computeDeployPreflight(db, cfg, "main", NOW, 5);
+    expect(result.checks.failing_ci_runs.count).toBe(0);
+  });
+
+  test("a bitbucket repo yields no failing CI runs: no bitbucket ci_run writer exists", () => {
+    const cfg = baseConfig({ repos: [{ provider: "bitbucket", providerId: "org/bb-repo" }] });
+    const result = computeDeployPreflight(db, cfg, "main", NOW, 5);
+    expect(result.checks.failing_ci_runs.count).toBe(0);
+  });
 
   test("multiple repos deduplicates service columns", () => {
     // Two github repos → only one 'github_actions' column entry
