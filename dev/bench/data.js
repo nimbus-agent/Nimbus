@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1791438477658,
+  "lastUpdate": 1791440148005,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "e684541cc4fb6efaab93283f72795e3de7eeac67",
-          "message": "docs(roadmap): sequence the client surfaces (#914)\n\nFollow-up to #913, which merged before this commit landed on the branch.\n#913 deleted `ecosystem-roadmap.md` and declared that the Spine now owns\nsurface sequencing; **this is that ownership made real rather than\nasserted.**\n\nAdds a **Client surfaces** table to Track 2 (Scale & Surface), where\nproductization already lives.\n\n## The order, and why\n\nSequenced by thesis fit, not by ease:\n\n| Surface | State | Position |\n|---|---|---|\n| `nimbus-vscode` · `nimbus-web-clipper` | ✅ shipping | — |\n| **`nimbus-statuspage`** | 🧱 scaffold | **First.** \"On-call\nintelligence for DevOps and platform teams\" is the Nimbus repo's own\ndescription, and statuspage is that sentence rendered. Its entire data\ndependency already ships — the DORA calculators, `incident`/`alert`\nitems — and it is read-only, so it cannot violate an invariant. |\n| `nimbus-postmortem` | 🧱 scaffold | Second. Same thesis, same read-only\nshape, but needs incident-narrative assembly over the relationship graph\nthat doesn't exist yet. |\n| `nimbus-raycast` | 🧱 scaffold | Third. Pleasant but generic — a\nquick-ask surface differentiates least, and it's macOS-only. |\n\n## What changed outside this PR\n\nAll three scaffolds are now **public and MIT**, with private\nvulnerability reporting enabled to match the other public repos.\n`nimbus-postmortem` was **created** — it was named in the retired\necosystem roadmap and handed off to \"its own repo's `ROADMAP.md`\",\nexcept the repository didn't exist. It now carries the same\nvision-README + build-prompt shape its two siblings already had.\n\n## One deliberate omission\n\n**None of the three gets its own `ROADMAP.md`.** A vision README, a\nbuild prompt *and* a roadmap is three documents answering one question\nin a repo with no code — which is precisely how `ecosystem-roadmap.md`,\n`nimbus-client` and `nimbus-vscode` ended up claiming the same\nauthority. The scaffolds say what they are; this table says when they\nget built.\n\nVerification: `lint:markdown` 0 issues · `audit:doc-refs` 626 refs all\nresolve · `lychee` 78 links, 0 errors.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nCo-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>",
-          "timestamp": "2026-07-28T22:00:34+03:00",
-          "tree_id": "7e4ab389ec240cf03f0d2f6e559c0a8a17248d54",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/e684541cc4fb6efaab93283f72795e3de7eeac67"
-        },
-        "date": 1785266122731,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 315.7374384000024,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 309.3038538500008,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 323.8953004999959,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "814f470b84f3057e0798136d30291517c9c9f12a",
+          "message": "fix(lan): never drop the tail of a large federation frame (#1630)\n\n## Summary\n\nThis is the follow-up #1627 named as a stated bound. The LAN server\n(`ipc/lan-server.ts`) and client (`ipc/lan-client.ts`) wrote with Bun's\nraw `socket.write()`. That call sends only what the kernel accepts at\nthat moment and drops the rest. A federation frame larger than the free\nsend buffer therefore reached the peer cut short, and the peer's frame\nreader waited until the exchange timed out. An encrypted federation RPC\ncan be up to `MAX_ENCRYPTED_FRAME` (4 MiB), so large federated requests\nand replies were exposed.\n\nBoth sides now write through the queued socket writer from #1627\n(`ipc/server/queued-socket-writer.ts`), and Bun's `drain` handler\nflushes it:\n\n- **Server:** each connection's session data carries a writer. Every\nframe write goes through it, and so do all 14 `socket.end()` calls. The\nserver ends the socket right after writing a `pair_err`/`hello_err`\nframe, and a bare `end()` would discard whatever the writer still had\nqueued.\n- **Client:** sockets carry no per-connection data, so a `WeakMap` holds\none writer per outbound socket. Both connect paths flush it on `drain`.\n- **Writer:** it gains `writeBytes`, for the length-prefixed binary\nframes, and an `end()` that waits until the queue is empty before ending\nthe socket. A write after `end()` is dropped.\n\nNo new invariant, no migration, no egress class. I5 is unaffected:\n`checkLanMethodAllowed` and the frame guards run exactly as before, and\nonly how the bytes leave changed.\n\n## Test plan\n\n- [x] Client, real loopback TCP: a 3 MiB request frame reaches the peer\nwhole.\n  - Red on Linux with the old write: the exchange times out after 20 s.\n  - Green with the fix.\n- Windows passes either way. Its loopback accepted the whole write,\nwhich is why this was never seen on a Windows machine.\n- [x] Server, using the existing fake-socket harness with a 5-byte write\ncapacity: the sealed reply is finished on drain and decrypts.\n  - Red with the old write.\n  - Green with the fix.\n- [x] Writer unit tests:\n  - `writeBytes` keeps byte order when mixed with string writes;\n  - `end()` waits for queued bytes and ends the socket exactly once;\n  - `end()` with nothing queued ends immediately.\n- [x] On Linux (WSL, Bun matching CI), 744 tests pass, 0 fail. They\ncover the LAN suites, the IPC server suites, and the federation,\nteamvault and `lan-rpc` integration tests, including the two- and\nthree-gateway runs over real sockets.\n- [x] `typecheck` and `preflight:fast` pass.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n\n## Summary by CodeRabbit\n\n* **Bug Fixes**\n* Large requests and replies now transmit reliably, even when a\nconnection can accept only part of the data at a time.\n* Connections remain open until queued response data has been sent,\npreventing incomplete or unreadable replies.\n\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-10-08T09:01:52+03:00",
+          "tree_id": "908d705d714ce0f75fca21456266fb36049e6b79",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/814f470b84f3057e0798136d30291517c9c9f12a"
+        },
+        "date": 1791440144224,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 205.73286235000523,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 203.5060325000042,
             "unit": "ms"
           }
         ]
