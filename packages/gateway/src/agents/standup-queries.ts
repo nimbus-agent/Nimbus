@@ -188,8 +188,8 @@ export function selectActivePrs(db: Database, w: Window, personId: string): Stan
 /**
  * Pull requests of mine merged in the window, placed by `metadata.merged_at`.
  *
- * GitHub-only by substrate, not by choice: `github-sync.ts`'s `applyMergeFields` is the only
- * writer of `merged_at` in the repo. {@link nonGithubMergedPrCount} counts what this therefore
+ * GitHub-only by substrate, not by choice: `github-sync.ts`'s `extractPrMetadataForIndex` is the only
+ * writer of `merged_at` in the repo (via `buildPrMetadata`). {@link nonGithubMergedPrCount} counts what this therefore
  * cannot see, so the brief can disclose it instead of reporting a quiet day.
  */
 export function selectMergedPrs(db: Database, w: Window, personId: string): StandupRow[] {
