@@ -1315,7 +1315,7 @@ nimbus metrics dora --service payment-service --since 30d --json
 | `--since <duration>` | Window — `<n>d` or `<n>h`, e.g. `30d`, `24h` (default: `30d`) |
 | `--json` | Machine-readable JSON output |
 
-`deployment_frequency`, `lead_time` and `change_failure_rate` report a `ci_not_evaluable` gap (instead of `no_deployment_data`) when the service's only CI is CircleCI or Bitbucket, whose runs do not carry the signals those metrics read. The gap changes no number.
+`deployment_frequency`, `lead_time` and `change_failure_rate` report `ci_not_evaluable` in place of `no_deployment_data` when every CI provider bound to the service is unevaluable (CircleCI, Bitbucket). `deployment_frequency` also carries it BESIDE a real value when only some bound providers are unevaluable, since their deploys are invisible and the count undercounts by an unknown amount. The gap changes no number.
 
 Read-only; no HITL.
 
@@ -1339,7 +1339,7 @@ nimbus stats pr-merges --service payment-service --window 90d --bucket 1w --json
 | `lead-time` | median lead time for changes | wraps the DORA calculator, unchanged — windows on `item.modified_at`, **last touch** for the `pr` rows it reads |
 | `change-failure-rate` | share of deploys that caused an incident | wraps the DORA calculator, unchanged — windows on `item.modified_at`, **last touch** for the `incident` rows it reads |
 | `mttr` | median incident-resolution time | wraps the DORA calculator, unchanged — same `modified_at` windowing, plus DORA's `synced_at` fallback for an incident with no `opened_at_ms`; sparse buckets are common — see below |
-| `pr-merges` | PRs merged, by `metadata.merged_at` | **GitHub-only** — see below |
+| `pr-merges` | PRs merged, by `metadata.merged_at` | GitHub and GitLab counted; Bitbucket records no merge time — see below |
 | `incidents-opened` | incidents opened, by `metadata.opened_at_ms` | excludes incidents with no `opened_at_ms`, reported via an `incidents_missing_opened_at` gap |
 
 **Options:**
@@ -1416,7 +1416,7 @@ nimbus deploy preflight --service payment-service --target-ref release/v2.14 --m
 
 **Exit codes:** `0` = ok (or `warn` mode with findings); `1` = `block` mode triggered or usage error; `2` = infrastructure failure (gateway not running, IPC error, malformed envelope).
 
-**CI that cannot be evaluated is a gap, never a verdict change.** Jenkins, CircleCI and Bitbucket CI runs carry no branch Nimbus can match against `--target-ref`, so for a service whose CI lives there the `failing_ci_runs` check reports a `ci_not_evaluable` gap beside its count. The count and the verdict are computed exactly as before; the gap only says the zero may mean "could not be checked".
+**CI that cannot be evaluated is a gap, never a verdict change.** Jenkins records no branch, CircleCI no pass/fail signal (an errored pipeline still counts as a failure) and Bitbucket no CI runs at all, so for a service whose CI lives there the `failing_ci_runs` check reports a `ci_not_evaluable` gap beside its count. The count and the verdict are computed exactly as before; the gap only says the zero may mean "could not be checked".
 
 **An unknown service does not pass the gate.** If `--service <id>` matches neither
 `[metrics.dora.<id>]` nor `[ci.service.<id>]` in `nimbus.toml`, none of the three checks can run,
