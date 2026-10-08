@@ -1,5 +1,6 @@
 import { clampSyncTitle, syncPassCursorSuccess } from "../sync/pass-cursor-sync-result.ts";
 import { type Syncable, type SyncContext, type SyncResult, syncNoopResult } from "../sync/types.ts";
+import { buildCiRunMetadata, normalizeCircleciPipelineState } from "./ci-run-meta.ts";
 import { decodeNimbusJsonCursorObject, encodeNimbusJsonCursor } from "./nimbus-json-cursor.ts";
 import { asRecord, numberField, stringField } from "./unknown-record.ts";
 
@@ -84,6 +85,40 @@ function circleciPipelineCreatedMs(createdRaw: string | undefined): number {
   return Date.parse(createdRaw);
 }
 
+/**
+ * The full `ci_run` metadata for one CircleCI pipeline. The pipeline `state` is a CREATION state,
+ * not pass/fail (see `CI_RUN_NO_SUCCESS_SIGNAL`), so `conclusion` is `failure` for `errored` and
+ * `unknown` otherwise. A tag pipeline has no branch: `vcs.tag` is kept as raw `tag` for display and
+ * canonical `branch` is omitted (before the contract the tag was written AS the branch).
+ */
+export function circleciPipelineMetadata(
+  githubRepoFull: string,
+  projectSlug: string,
+  row: Record<string, unknown>,
+): Record<string, unknown> {
+  const state = stringField(row, "state");
+  const vcs = asRecord(row["vcs"]);
+  const branch = vcs === undefined ? undefined : stringField(vcs, "branch");
+  const tag = vcs === undefined ? undefined : stringField(vcs, "tag");
+  const revision = vcs === undefined ? undefined : stringField(vcs, "revision");
+  const raw: Record<string, unknown> = {
+    projectSlug,
+    pipelineNumber: numberField(row, "number") ?? null,
+    pipelineId: stringField(row, "id") ?? null,
+    state: state ?? null,
+    revision: revision ?? null,
+    githubRepo: githubRepoFull,
+    ...(tag === undefined || tag === "" ? {} : { tag }),
+  };
+  return buildCiRunMetadata(raw, {
+    conclusion: normalizeCircleciPipelineState(state),
+    conclusionRaw: state,
+    branch,
+    repo: githubRepoFull,
+    headSha: revision,
+  });
+}
+
 function tryUpsertCircleciPipeline(
   ctx: SyncContext,
   full: string,
@@ -106,30 +141,11 @@ function tryUpsertCircleciPipeline(
     return { upserted: 0, pipelineNum: lastSeen };
   }
   const state = stringField(row, "state");
-  const id = stringField(row, "id");
-  const vcs = asRecord(row["vcs"]);
-  let branch: string | null = null;
-  let revision: string | null = null;
-  if (vcs !== undefined) {
-    const br = stringField(vcs, "branch");
-    const tag = stringField(vcs, "tag");
-    branch = br ?? tag ?? null;
-    revision = stringField(vcs, "revision") ?? null;
-  }
   const titleBase = `Pipeline #${String(num)}`;
   const title = state !== undefined && state !== "" ? `${titleBase} — ${state}` : titleBase;
   const externalId = `${slug}#p${String(num)}`;
   const modifiedAt = Number.isFinite(createdMs) ? createdMs : now;
   const htmlUrl = appPipelineUrl(slug, num);
-  const meta: Record<string, unknown> = {
-    projectSlug: slug,
-    pipelineNumber: num,
-    pipelineId: id ?? null,
-    state: state ?? null,
-    branch,
-    revision,
-    githubRepo: full,
-  };
   ctx.upsertItem({
     service: SERVICE_ID,
     type: "ci_run",
@@ -140,7 +156,7 @@ function tryUpsertCircleciPipeline(
     canonicalUrl: htmlUrl,
     modifiedAt,
     authorId: null,
-    metadata: meta,
+    metadata: circleciPipelineMetadata(full, slug, row),
     pinned: false,
     syncedAt: now,
   });
