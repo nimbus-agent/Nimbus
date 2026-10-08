@@ -13,6 +13,7 @@ import {
   type ConnectorSyncFixture,
   createConnectorSyncFixture,
 } from "../../helpers/connector-sync-harness.ts";
+import { MockFetch } from "../../helpers/mock-fetch.ts";
 
 const ENSURE_MCP = { ensureGithubMcpRunning: async (): Promise<void> => {} };
 const CURSOR_PREFIX = "nimbus-gha1:";
@@ -726,5 +727,88 @@ describe("githubActionsRunMetadata (ci_run contract)", () => {
       CI_RUN_EMITTED_KEYS.github_actions.has(k as CanonicalCiRunKey),
     );
     expect(new Set(canonical)).toEqual(new Set(CI_RUN_EMITTED_KEYS.github_actions));
+  });
+});
+
+describe("github-actions-sync — refreshing a run first synced mid-run", () => {
+  const RUN_ONE_REPO = RUNS_URL_ACME_REPO_A;
+
+  function storedConclusion(f: ConnectorSyncFixture, externalId: string): unknown {
+    const row = f.db
+      .query<{ metadata: string }, [string]>(
+        "SELECT metadata FROM item WHERE service = 'github_actions' AND external_id = ?",
+      )
+      .get(externalId);
+    return (JSON.parse(row?.metadata ?? "{}") as Record<string, unknown>)["conclusion"];
+  }
+
+  test("a run stored as in_progress is re-written when the list returns it finished, cursor intact", async () => {
+    await withIsolatedFixture(async (iso) => {
+      await iso.vault.set("github.pat", "github-stub-pat");
+      seedGithubRepo(iso.createSyncContext("github_actions"), "acme/repo-a");
+      const recentTs = new Date(Date.now() - 60_000).toISOString();
+      iso.fetchMock.respond("GET", RUN_ONE_REPO, {
+        workflow_runs: [{ id: 5, created_at: recentTs, status: "in_progress", conclusion: null }],
+      });
+      const first = await createGithubActionsSyncable(ENSURE_MCP).sync(
+        iso.createSyncContext("github_actions"),
+        null,
+      );
+      expect(storedConclusion(iso, "acme/repo-a#run-5")).toBe("running");
+      iso.fetchMock.restore();
+
+      const second = new MockFetch();
+      second.install();
+      try {
+        second.respond("GET", RUN_ONE_REPO, {
+          workflow_runs: [
+            { id: 5, created_at: recentTs, status: "completed", conclusion: "failure" },
+          ],
+        });
+        const res = await createGithubActionsSyncable(ENSURE_MCP).sync(
+          iso.createSyncContext("github_actions"),
+          first.cursor,
+        );
+        expect(res.itemsUpserted).toBe(1);
+        expect(storedConclusion(iso, "acme/repo-a#run-5")).toBe("failure");
+        expect(decodeCursorJson(res.cursor!)).toEqual({ repos: { "acme/repo-a": 5 } });
+      } finally {
+        second.restore();
+      }
+    });
+  });
+
+  test("a run that fell off the list stays running, and no extra request is made", async () => {
+    await withIsolatedFixture(async (iso) => {
+      await iso.vault.set("github.pat", "github-stub-pat");
+      seedGithubRepo(iso.createSyncContext("github_actions"), "acme/repo-a");
+      const recentTs = new Date(Date.now() - 60_000).toISOString();
+      iso.fetchMock.respond("GET", RUN_ONE_REPO, {
+        workflow_runs: [{ id: 5, created_at: recentTs, status: "in_progress", conclusion: null }],
+      });
+      const first = await createGithubActionsSyncable(ENSURE_MCP).sync(
+        iso.createSyncContext("github_actions"),
+        null,
+      );
+      iso.fetchMock.restore();
+
+      const second = new MockFetch();
+      second.install();
+      try {
+        second.respond("GET", RUN_ONE_REPO, {
+          workflow_runs: [
+            { id: 6, created_at: recentTs, status: "completed", conclusion: "success" },
+          ],
+        });
+        await createGithubActionsSyncable(ENSURE_MCP).sync(
+          iso.createSyncContext("github_actions"),
+          first.cursor,
+        );
+        expect(storedConclusion(iso, "acme/repo-a#run-5")).toBe("running");
+        expect(second.calls).toHaveLength(1);
+      } finally {
+        second.restore();
+      }
+    });
   });
 });

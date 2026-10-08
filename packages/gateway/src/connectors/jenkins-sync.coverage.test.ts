@@ -101,6 +101,37 @@ describe("jenkins-sync — periodic walk edge cases", () => {
     expect(ids).toEqual(["svc#10", "svc#11", "svc#12"]);
   });
 
+  test("a build first synced while building is re-written when it finishes, cursor intact", async () => {
+    const now = Date.now();
+    fetchStub.respond("GET", JOBS_RE, { jobs: [{ name: "svc", url: `${BASE}/job/svc/` }] });
+    fetchStub.respond("GET", /\/job\/svc\/api\/json\?tree=/, {
+      builds: [{ number: 7, building: true, timestamp: now - 1_000 }],
+    });
+    const first = await createJenkinsSyncable(ENSURE).sync(ctx(), null);
+    const conclusion = (): unknown =>
+      JSON.parse(
+        (
+          db.query("SELECT metadata FROM item WHERE external_id = 'svc#7'").get() as {
+            metadata: string;
+          }
+        ).metadata,
+      ).conclusion;
+    expect(conclusion()).toBe("running");
+
+    fetchStub.restore();
+    fetchStub = new StubFetch();
+    fetchStub.install();
+    fetchStub.respond("GET", JOBS_RE, { jobs: [{ name: "svc", url: `${BASE}/job/svc/` }] });
+    fetchStub.respond("GET", /\/job\/svc\/api\/json\?tree=/, {
+      builds: [{ number: 7, building: false, result: "FAILURE", timestamp: now - 1_000 }],
+    });
+    const second = await createJenkinsSyncable(ENSURE).sync(ctx(), first.cursor);
+
+    expect(second.itemsUpserted).toBe(1);
+    expect(conclusion()).toBe("failure");
+    expect(cursorJobs(second.cursor)).toEqual({ svc: 7 });
+  });
+
   test("a build with no timestamp is dated at the sync time, not dropped", async () => {
     fetchStub.respond("GET", JOBS_RE, { jobs: [{ name: "nightly" }] });
     fetchStub.respond("GET", /\/job\/nightly\/api\/json\?tree=/, {

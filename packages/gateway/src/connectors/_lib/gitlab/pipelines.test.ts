@@ -767,3 +767,58 @@ describe("gitlabPipelineMetadata (ci_run contract)", () => {
     expect(new Set(canonical)).toEqual(new Set(CI_RUN_EMITTED_KEYS.gitlab));
   });
 });
+
+describeWithFetchRestore(
+  "syncGitlabPipelinesForIndexedProjects — refresh of a running pipeline",
+  () => {
+    test("a pipeline stored as running is re-written when the same list shows it failed", async () => {
+      const db = createMemoryIndexDb();
+      seedGitlabProject(db, "group/proj");
+      const ctx = syncTestContext(db, createStubVault({}), "gitlab");
+      let requests = 0;
+      let status = "running";
+      globalThis.fetch = (async (): Promise<Response> => {
+        requests += 1;
+        return makePipelineResponse([
+          makePipeline({ id: 3002, status: "success" }),
+          makePipeline({ id: 3001, status }),
+        ]);
+      }) as unknown as typeof fetch;
+      const conclusionOf = (id: number): unknown =>
+        JSON.parse(
+          (
+            db
+              .query("SELECT metadata FROM item WHERE external_id = ?")
+              .get(`group/proj#pipeline-${String(id)}`) as { metadata: string }
+          ).metadata,
+        ).conclusion;
+
+      const first = await syncGitlabPipelinesForIndexedProjects(
+        ctx,
+        PAT,
+        API_BASE,
+        WEB_ORIGIN,
+        {},
+        0,
+      );
+      expect(conclusionOf(3001)).toBe("running");
+      const requestsFirst = requests;
+
+      // Cursor is already at 3002, so BOTH pipelines are at or below it; only 3001 is unfinished.
+      status = "failed";
+      const second = await syncGitlabPipelinesForIndexedProjects(
+        ctx,
+        PAT,
+        API_BASE,
+        WEB_ORIGIN,
+        first.pipelines,
+        0,
+      );
+
+      expect(second.upserted).toBe(1);
+      expect(conclusionOf(3001)).toBe("failure");
+      expect(second.pipelines["group/proj"]).toBe(3002);
+      expect(requests - requestsFirst).toBe(requestsFirst);
+    });
+  },
+);
