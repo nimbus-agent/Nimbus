@@ -7,6 +7,10 @@ import {
   MAX_HANDSHAKE_FRAME,
   MAX_PENDING_BYTES,
 } from "./lan-server.ts";
+import {
+  createQueuedSocketWriter,
+  type QueuedSocketWriter,
+} from "./server/queued-socket-writer.ts";
 
 /**
  * Three refusals `lan-server.test.ts` does not reach, each asserted as "the server CLOSED the
@@ -234,6 +238,8 @@ describe("LanServer — guards below the socket protocol", () => {
     buffer: Uint8Array;
     peerPubkey?: Uint8Array;
     peerMatch?: LanPeerMatch;
+    /** Attached by `fakeSocket`, as the server's own `open` handler attaches one. */
+    writer?: QueuedSocketWriter;
   };
   type FakeSocket = {
     data: SessionData;
@@ -248,7 +254,8 @@ describe("LanServer — guards below the socket protocol", () => {
     handleEncryptedMessage(socket: FakeSocket, frame: Uint8Array): Promise<void>;
   };
 
-  function fakeSocket(data: SessionData): FakeSocket {
+  /** `capacity` caps the bytes one `write` accepts, like a full kernel send buffer. */
+  function fakeSocket(data: SessionData, capacity = Number.POSITIVE_INFINITY): FakeSocket {
     const s: FakeSocket = {
       data,
       ended: 0,
@@ -257,10 +264,12 @@ describe("LanServer — guards below the socket protocol", () => {
         s.ended++;
       },
       write(bytes) {
-        s.written.push(bytes);
-        return bytes.length;
+        const n = Math.min(capacity, bytes.length);
+        s.written.push(bytes.slice(0, n));
+        return n;
       },
     };
+    s.data.writer = createQueuedSocketWriter(s);
     return s;
   }
 
@@ -306,6 +315,48 @@ describe("LanServer — guards below the socket protocol", () => {
     new DataView(out.buffer).setUint32(0, length, false);
     return out;
   }
+
+  // A rejection ends the socket only once its reply has drained, so input can still arrive in
+  // between. A rejected session must parse nothing more: a hello that follows a refused pair must
+  // never reach the peer lookup, whether it sits in the same chunk or arrives in a later one.
+  test.each([
+    ["the same chunk", true],
+    ["a later chunk", false],
+  ] as const)(
+    "after a terminal rejection, a hello in %s is never parsed",
+    async (_label, sameChunk) => {
+      const { internals, lookups, failures } = unstartedServer();
+      const client = generateBoxKeypair();
+      // 3 bytes per write: the pair_err reply cannot drain, so the end stays pending.
+      const sock = fakeSocket({ peerIp: "10.0.0.9", buffer: new Uint8Array(0) }, 3);
+      const pair = frame(
+        new TextEncoder().encode(
+          JSON.stringify({
+            kind: "pair",
+            client_pubkey: Buffer.from(client.publicKey).toString("base64"),
+            pairing_code: "000000",
+          }),
+        ),
+      );
+      const hello = helloFrame(client);
+
+      if (sameChunk) {
+        const both = new Uint8Array(pair.length + hello.length);
+        both.set(pair, 0);
+        both.set(hello, pair.length);
+        await internals.handleChunk(sock, both);
+      } else {
+        await internals.handleChunk(sock, pair);
+        await internals.handleChunk(sock, hello);
+      }
+
+      // The refused pair was counted (positive control: the rejection path really ran) ...
+      expect(failures).toEqual(["10.0.0.9"]);
+      expect(sock.data.writer?.isEnding()).toBe(true);
+      // ... and the hello behind it never reached the peer lookup.
+      expect(lookups).toEqual([]);
+    },
+  );
 
   test("a chunk past MAX_PENDING_BYTES is refused before ANY frame in it is parsed", async () => {
     const { internals, lookups, failures } = unstartedServer();
@@ -422,6 +473,42 @@ describe("LanServer — guards below the socket protocol", () => {
         client.secretKey,
       );
       expect(JSON.parse(new TextDecoder().decode(reply))).toEqual({ id: 1, result: { ok: true } });
+    });
+
+    // Regression: Bun's raw socket write drops what the kernel does not accept. A reply larger than
+    // the free send buffer used to lose its tail, so the peer's frame reader waited forever.
+    test("a reply the socket cannot take in one write is finished on drain, never dropped", async () => {
+      const { internals, hostKeypair } = unstartedServer();
+      const client = generateBoxKeypair();
+      const sock = fakeSocket(
+        {
+          peerIp: "10.0.0.9",
+          buffer: new Uint8Array(0),
+          peerPubkey: client.publicKey,
+          peerMatch: PEER,
+        },
+        5,
+      );
+
+      await internals.handleEncryptedMessage(sock, sealedRpc(hostKeypair.publicKey, client));
+
+      const writer = sock.data.writer;
+      if (writer === undefined) throw new Error("fakeSocket attaches a writer");
+      expect(writer.pendingBytes()).toBeGreaterThan(0);
+      // What Bun's drain handler does each time the socket can take more.
+      while (writer.pendingBytes() > 0) writer.flush();
+
+      const all = new Uint8Array(sock.written.reduce((n, c) => n + c.length, 0));
+      let at = 0;
+      for (const c of sock.written) {
+        all.set(c, at);
+        at += c.length;
+      }
+      const len = new DataView(all.buffer).getUint32(0, false);
+      expect(all.length).toBe(4 + len);
+      const reply = openBoxFrame(all.subarray(4), hostKeypair.publicKey, client.secretKey);
+      expect(JSON.parse(new TextDecoder().decode(reply))).toEqual({ id: 1, result: { ok: true } });
+      expect(sock.ended).toBe(0);
     });
   });
 });

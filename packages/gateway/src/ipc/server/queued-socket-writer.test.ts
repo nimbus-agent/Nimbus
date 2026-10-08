@@ -73,4 +73,46 @@ describe("createQueuedSocketWriter", () => {
     expect(w.pendingBytes()).toBe(0);
     expect(decode(sock.received)).toBe("small\n");
   });
+
+  test("writeBytes sends raw bytes in full and in order with string writes", () => {
+    const sock = partialSocket(3);
+    const w = createQueuedSocketWriter(sock);
+    w.writeBytes(new Uint8Array([0, 0, 0, 5]));
+    w.write("hello");
+    while (w.pendingBytes() > 0) w.flush();
+    expect(sock.received).toEqual([0, 0, 0, 5, 104, 101, 108, 108, 111]);
+  });
+
+  test("end() waits for queued bytes: the socket is ended only by the flush that empties it", () => {
+    const ends: number[] = [];
+    const sock = partialSocket(4);
+    const w = createQueuedSocketWriter({
+      ...sock,
+      write: sock.write,
+      end: () => ends.push(sock.received.length),
+    });
+    w.write("abcdefghij");
+    expect(w.isEnding()).toBe(false);
+    w.end();
+    // Ending is decided now, even though the socket is not ended yet.
+    expect(w.isEnding()).toBe(true);
+    expect(ends).toEqual([]);
+    w.flush();
+    expect(ends).toEqual([]);
+    w.flush();
+    // Ended exactly once, and only after all ten bytes were taken.
+    expect(ends).toEqual([10]);
+    w.flush();
+    w.write("late");
+    expect(ends).toEqual([10]);
+    expect(decode(sock.received)).toBe("abcdefghij");
+  });
+
+  test("end() with nothing queued ends immediately", () => {
+    const ends: number[] = [];
+    const w = createQueuedSocketWriter({ write: () => 0, end: () => ends.push(1) });
+    w.end();
+    w.end();
+    expect(ends).toEqual([1]);
+  });
 });

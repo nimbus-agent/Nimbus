@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import type { Socket, TCPSocketListener } from "bun";
-import { exchangeOneFrame, sendFederatedOverWire } from "./lan-client.ts";
+import { exchangeOneFrame, sendFederatedOverWire, writeFrame } from "./lan-client.ts";
 import { generateBoxKeypair } from "./lan-crypto.ts";
 import { MAX_HANDSHAKE_FRAME } from "./lan-server.ts";
 
@@ -57,6 +57,29 @@ function listen(onFrame: (socket: Socket<undefined>, ordinal: number) => void): 
 }
 
 describe("exchangeOneFrame", () => {
+  // Regression: Bun's raw socket write sends only what the kernel accepts and drops the rest, so a
+  // request frame larger than the free send buffer reached the peer truncated and never parsed. An
+  // encrypted federation RPC may be up to MAX_ENCRYPTED_FRAME; 3 MiB is far past any loopback buffer.
+  test("a request frame far larger than the send buffer reaches the peer whole", async () => {
+    const big = new Uint8Array(3 * 1024 * 1024).fill(7);
+    let receivedFrames = 0;
+    const port = listen((socket) => {
+      receivedFrames++;
+      socket.write(frame(new TextEncoder().encode('{"ok":true}')));
+    });
+    const body = await exchangeOneFrame(
+      "127.0.0.1",
+      port,
+      (s) => {
+        writeFrame(s, big);
+      },
+      4 * 1024 * 1024,
+      20_000,
+    );
+    expect(new TextDecoder().decode(body)).toBe('{"ok":true}');
+    expect(receivedFrames).toBe(1);
+  }, 30_000);
+
   test("a reply still incomplete when the peer closes is 'closed without reply', not a timeout", async () => {
     const port = listen((socket) => {
       // Advertise 10 body bytes, deliver 3, then close: the reader has a partial frame and

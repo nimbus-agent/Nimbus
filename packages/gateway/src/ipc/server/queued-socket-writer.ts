@@ -16,14 +16,28 @@
 export type RawWritableSocket = {
   /** Bytes accepted, or a negative number when the socket is closed. */
   write(data: Uint8Array): number;
+  /** Half-closes the socket. Needed only by callers that use the writer's `end()`. */
+  end?(): void;
 };
 
 export type QueuedSocketWriter = {
-  /** Sends `line` in full, now or on a later `flush()`. */
+  /** Sends `line` (UTF-8) in full, now or on a later `flush()`. */
   write(line: string): void;
+  /** Sends `bytes` in full, now or on a later `flush()`. The caller must not mutate them afterwards. */
+  writeBytes(bytes: Uint8Array): void;
+  /**
+   * Ends the socket once everything queued has been sent. Calling `socket.end()` directly after a
+   * write would discard whatever is still queued; this defers the end to the flush that empties it.
+   */
+  end(): void;
+  /**
+   * True once `end()` was called or the peer is gone. A reader that keeps parsing after a terminal
+   * decision must check this: the socket stays open until the queue drains, so input can still arrive.
+   */
+  isEnding(): boolean;
   /** Call from the socket's `drain` handler. */
   flush(): void;
-  /** Bytes accepted by `write()` but not yet taken by the socket. */
+  /** Bytes accepted by a write but not yet taken by the socket. */
   pendingBytes(): number;
 };
 
@@ -32,6 +46,12 @@ const encoder = new TextEncoder();
 export function createQueuedSocketWriter(socket: RawWritableSocket): QueuedSocketWriter {
   const queue: Uint8Array[] = [];
   let closed = false;
+  let endRequested = false;
+
+  const endNow = (): void => {
+    closed = true;
+    socket.end?.();
+  };
 
   /** Writes from the head of the queue until it is empty or the socket stops accepting. */
   const drainQueue = (): void => {
@@ -50,14 +70,28 @@ export function createQueuedSocketWriter(socket: RawWritableSocket): QueuedSocke
       }
       queue.shift();
     }
+    if (!closed && endRequested) endNow();
+  };
+
+  const enqueue = (bytes: Uint8Array): void => {
+    if (closed || endRequested || bytes.byteLength === 0) return;
+    queue.push(bytes);
+    // Only the head may be written: later bytes written past a stalled chunk would interleave.
+    if (queue.length === 1) drainQueue();
   };
 
   return {
     write(line: string): void {
-      if (closed) return;
-      queue.push(encoder.encode(line));
-      // Only the head may be written: a later line written past a stalled one would interleave.
-      if (queue.length === 1) drainQueue();
+      enqueue(encoder.encode(line));
+    },
+    writeBytes: enqueue,
+    end(): void {
+      if (closed || endRequested) return;
+      endRequested = true;
+      if (queue.length === 0) endNow();
+    },
+    isEnding(): boolean {
+      return closed || endRequested;
     },
     flush: drainQueue,
     pendingBytes(): number {

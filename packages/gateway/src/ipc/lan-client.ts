@@ -2,6 +2,10 @@ import type { Socket } from "bun";
 import type { BoxKeypair } from "./lan-crypto.ts";
 import { openBoxFrame, sealBoxFrame } from "./lan-crypto.ts";
 import { MAX_ENCRYPTED_FRAME, MAX_HANDSHAKE_FRAME } from "./lan-server.ts";
+import {
+  createQueuedSocketWriter,
+  type QueuedSocketWriter,
+} from "./server/queued-socket-writer.ts";
 
 export { MAX_HANDSHAKE_FRAME } from "./lan-server.ts";
 
@@ -135,6 +139,9 @@ export function exchangeOneFrame(
             socket.end();
           }
         },
+        drain(socket) {
+          flushWriter(socket);
+        },
         close() {
           finish(undefined);
         },
@@ -146,8 +153,29 @@ export function exchangeOneFrame(
   });
 }
 
+/**
+ * One queued writer per outbound socket. Bun's raw `write()` sends only what the kernel accepts
+ * right now and drops the rest, so a request frame larger than the free send buffer (an encrypted
+ * federation RPC can be up to MAX_ENCRYPTED_FRAME) would reach the peer truncated and never parse.
+ */
+const writers = new WeakMap<Socket<undefined>, QueuedSocketWriter>();
+
+function writerFor(socket: Socket<undefined>): QueuedSocketWriter {
+  let w = writers.get(socket);
+  if (w === undefined) {
+    w = createQueuedSocketWriter(socket);
+    writers.set(socket, w);
+  }
+  return w;
+}
+
+/** Call from a socket's `drain` handler. */
+function flushWriter(socket: Socket<undefined>): void {
+  writers.get(socket)?.flush();
+}
+
 export function writeFrame(socket: Socket<undefined>, payload: Uint8Array): void {
-  socket.write(buildFrame(payload));
+  writerFor(socket).writeBytes(buildFrame(payload));
 }
 
 /** Two-frame exchange: send req frame A (hello), read reply A, send req frame B (from reply A), read reply B. */
@@ -217,6 +245,9 @@ function exchangeHelloThenRpc(
           // from winning the race with an "undefined body" rejection.
           finish(body);
           socket.end();
+        },
+        drain(socket) {
+          flushWriter(socket);
         },
         close() {
           finish(undefined);

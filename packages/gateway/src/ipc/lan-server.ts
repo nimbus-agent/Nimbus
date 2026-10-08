@@ -4,6 +4,10 @@ import { registerListener } from "../locality/listener-registry.ts";
 import type { BoxKeypair } from "./lan-crypto.ts";
 import { openBoxFrame, sealBoxFrame } from "./lan-crypto.ts";
 import { checkLanMethodAllowed, LanError } from "./lan-rpc.ts";
+import {
+  createQueuedSocketWriter,
+  type QueuedSocketWriter,
+} from "./server/queued-socket-writer.ts";
 
 export const MAX_HANDSHAKE_FRAME = 4_096;
 export const MAX_ENCRYPTED_FRAME = 4 * 1024 * 1024;
@@ -44,6 +48,8 @@ interface SessionState {
   peerMatch?: LanPeerMatch;
   peerIp: string;
   buffer: Uint8Array;
+  /** Every write and end goes through this; Bun's raw `write()` drops what the kernel refuses. */
+  writer: QueuedSocketWriter;
 }
 
 export class LanServer {
@@ -64,7 +70,11 @@ export class LanServer {
             socket.data = {
               peerIp: socket.remoteAddress,
               buffer: new Uint8Array(0),
+              writer: createQueuedSocketWriter(socket),
             };
+          },
+          drain: (socket) => {
+            socket.data.writer.flush();
           },
           data: (socket, chunk) => {
             void this.handleChunk(socket, chunk);
@@ -101,9 +111,13 @@ export class LanServer {
   }
 
   private async handleChunk(socket: Socket<SessionState>, chunk: Uint8Array): Promise<void> {
+    // A terminal decision ends the socket only once its last reply has drained, so input can still
+    // arrive in between. Nothing after that decision may be parsed: a rejected session must not go
+    // on to pair, say hello or dispatch.
+    if (socket.data.writer.isEnding()) return;
     const prev = socket.data.buffer;
     if (prev.length + chunk.length > MAX_PENDING_BYTES) {
-      socket.end();
+      socket.data.writer.end();
       return;
     }
     const merged = new Uint8Array(prev.length + chunk.length);
@@ -112,6 +126,8 @@ export class LanServer {
     socket.data.buffer = merged;
 
     while (socket.data.buffer.length >= 4) {
+      // Re-checked every pass: the previous frame (or an await inside it) may have ended the session.
+      if (socket.data.writer.isEnding()) return;
       const view = new DataView(
         socket.data.buffer.buffer,
         socket.data.buffer.byteOffset,
@@ -123,7 +139,7 @@ export class LanServer {
         if (!socket.data.peerPubkey) {
           this.opts.rateLimit.recordFailure(socket.data.peerIp);
         }
-        socket.end();
+        socket.data.writer.end();
         return;
       }
       if (socket.data.buffer.length < 4 + length) return;
@@ -147,20 +163,20 @@ export class LanServer {
         pairing_code?: string;
       };
     } catch {
-      socket.end();
+      socket.data.writer.end();
       return;
     }
     if (msg.kind !== "pair" && msg.kind !== "hello") {
-      socket.end();
+      socket.data.writer.end();
       return;
     }
     if (typeof msg.client_pubkey !== "string") {
-      socket.end();
+      socket.data.writer.end();
       return;
     }
     const clientPubkey = new Uint8Array(Buffer.from(msg.client_pubkey, "base64"));
     if (clientPubkey.length !== 32) {
-      socket.end();
+      socket.data.writer.end();
       return;
     }
 
@@ -170,7 +186,7 @@ export class LanServer {
         socket,
         JSON.stringify({ kind: msg.kind === "hello" ? "hello_err" : "pair_err" }),
       );
-      socket.end();
+      socket.data.writer.end();
       return;
     }
 
@@ -178,14 +194,14 @@ export class LanServer {
       if (typeof msg.pairing_code !== "string" || !this.opts.pairing.isOpen()) {
         this.opts.rateLimit.recordFailure(ip);
         this.writeFrame(socket, JSON.stringify({ kind: "pair_err" }));
-        socket.end();
+        socket.data.writer.end();
         return;
       }
       const ok = this.opts.pairing.consume(msg.pairing_code);
       if (!ok) {
         this.opts.rateLimit.recordFailure(ip);
         this.writeFrame(socket, JSON.stringify({ kind: "pair_err" }));
-        socket.end();
+        socket.data.writer.end();
         return;
       }
       const peerId = this.opts.registerPeer(clientPubkey, ip);
@@ -207,7 +223,7 @@ export class LanServer {
     if (!match) {
       this.opts.rateLimit.recordFailure(ip);
       this.writeFrame(socket, JSON.stringify({ kind: "hello_err" }));
-      socket.end();
+      socket.data.writer.end();
       return;
     }
     socket.data.peerPubkey = clientPubkey;
@@ -226,14 +242,14 @@ export class LanServer {
     frame: Uint8Array,
   ): Promise<void> {
     if (!socket.data.peerPubkey || !socket.data.peerMatch) {
-      socket.end();
+      socket.data.writer.end();
       return;
     }
     let plain: Uint8Array;
     try {
       plain = openBoxFrame(frame, socket.data.peerPubkey, this.opts.hostKeypair.secretKey);
     } catch {
-      socket.end();
+      socket.data.writer.end();
       return;
     }
     let msg: { id?: string | number; method?: string; params?: unknown };
@@ -244,11 +260,11 @@ export class LanServer {
         params?: unknown;
       };
     } catch {
-      socket.end();
+      socket.data.writer.end();
       return;
     }
     if (typeof msg.method !== "string") {
-      socket.end();
+      socket.data.writer.end();
       return;
     }
     let result: unknown;
@@ -280,7 +296,7 @@ export class LanServer {
   private writeFrameRaw(socket: Socket<SessionState>, payload: Uint8Array): void {
     const header = new Uint8Array(4);
     new DataView(header.buffer).setUint32(0, payload.length, false);
-    socket.write(header);
-    socket.write(payload);
+    socket.data.writer.writeBytes(header);
+    socket.data.writer.writeBytes(payload);
   }
 }
