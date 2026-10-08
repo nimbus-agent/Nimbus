@@ -125,7 +125,7 @@ const FORGE_TIMING_REASON: Readonly<Record<string, string>> = {
   gitlab:
     "GitLab records opened and merged times only for merge requests whose open or merge event falls inside the synced window.",
   github:
-    "GitHub pull requests indexed before this release carry no opened time until re-synced (`nimbus index rebody --service github`).",
+    "GitHub pull requests that are not yet merged carry no merge time, and those indexed before this release carry no opened time until re-synced (`nimbus index rebody --service github`).",
 };
 
 function missingTimingSummary(forges: readonly string[]): string {

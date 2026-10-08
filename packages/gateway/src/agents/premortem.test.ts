@@ -780,6 +780,8 @@ describe("runPremortem", () => {
       expect(reviewDrag?.summary).not.toMatch(
         /no connector indexes a pull request's opened timestamp/i,
       );
+      // Real open-PR writer output: opened time present, no merge time by design.
+      expect(reviewDrag?.summary).toContain("not yet merged carry no merge time");
       expect(reviewDrag?.summary.toLowerCase()).toContain(
         "none records both an opened and a merged",
       );
