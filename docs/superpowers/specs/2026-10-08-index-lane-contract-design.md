@@ -31,7 +31,10 @@ time for changes is always `null`.
    `$.conclusion` (only GitHub Actions writes it). No provider writes both. Its dedupe partitions
    on `$.workflow_name` (writer emits `workflowName`) and falls back to `title`, which embeds the
    conclusion, so runs never group. Fixtures (`preflight.test.ts`) hand-write
-   `{branch, conclusion}` on `github_actions` rows.
+   `{branch, conclusion}` on `github_actions` rows. Two latent logic defects sit behind the dead
+   keys and would surface the moment they are fixed: the failure filter is applied *inside* the
+   ranking CTE (so a superseded failure still reports), and CI runs are not scoped to the
+   service's repos (any repo sharing the CI service and branch name contaminates the verdict).
 2. **DORA CI deploy lane is dead** (above).
 3. **expert blame lane is silently empty.** `agents/expert.ts` `subBlame` reads
    `service='github' AND type='commit'`; the only commit rows are `filesystem`/`git_commit`
@@ -65,7 +68,9 @@ mapping and over disclose-only). Precedent: `connectors/ticket-depth.ts` (Jira/L
 
 Delivered as **three PRs from this one spec, landed in order**:
 
-- **A1 — contract + writers.** Additive only; no reader changes; nothing user-visible changes.
+- **A1 — contract + writers.** No reader code changes. **Not purely additive:** four canonical
+  keys collide with raw keys some writers already emit (§3.1.1), so a few existing reads change
+  meaning in A1 — each is listed and pinned by a test there.
 - **A2 — readers.** Switch to canonical keys; fixtures from real writers; honest gaps. Closes the
   defects in §1.1.
 - **A3 — gate.** Census noise fixes, contract-aware matching, ambiguous-read scoping, enforced CI
@@ -87,6 +92,39 @@ Delivered as **three PRs from this one spec, landed in order**:
   canonical keys through the module's builder; the census (§5.2) and reader disclosures read the
   same table.
 - Every row written through the builder carries `meta_v = <VERSION>`.
+- **Writers never assemble canonical keys by hand.** Each module exports a pure builder
+  (`buildCiRunMetadata(service, raw, fields)`, `buildPrMetadata(...)`) that normalizes, omits,
+  and stamps `meta_v`; a connector passes the fields it extracted and spreads the result. The
+  emitted-keys table is typed (`CanonicalCiRunKey` / `CanonicalPrKey` unions, a
+  `Record<Service, ReadonlySet<Key>>`), so a key the builder can emit but the table omits is a
+  compile error, not drift.
+- **Timestamps:** every canonical `*_at` / `*_ms` field is an integer epoch-millisecond `number`.
+  ISO strings are parsed in the builder; seconds (git `ct`) are multiplied; an absent or
+  unparseable value is omitted — never `NaN`, never `0`, never a string.
+- **Identifiers are verbatim.** Jenkins `workflow_name` is `job.fullName` including folder
+  slashes (`folder/sub/job`); no trimming or case folding anywhere, so `preflight` and `dora`
+  keep exact matching.
+
+#### 3.1.1 Key collisions (where "alongside" is not true)
+
+Four canonical keys share a name with a raw key a writer already emits. For these the canonical
+value **replaces** the raw one and the raw value moves to `*_raw`:
+
+| Writer | Key | Before | After |
+|---|---|---|---|
+| `github_actions` | `conclusion` | vendor vocabulary (`timed_out`, `skipped`, `null` while running…) | canonical (`timed_out`→`failure`, running→`running`); raw in `conclusion_raw` |
+| `circleci` | `branch` | `vcs.branch ?? vcs.tag` | `vcs.branch` only (tag omitted) |
+| `github` (pr) | `state` | `open`/`closed` (a merged PR reads `closed`) | `open`/`merged`/`closed`; raw in `state_raw` |
+| `bitbucket` (pr) | `state` | `OPEN`/`MERGED`/`DECLINED`/`SUPERSEDED` | lowercase canonical; raw in `state_raw` |
+
+Every production read of these four keys was enumerated (`grep` of `$.conclusion` / `$.state` /
+`["conclusion"]` / `["state"]` / `$.branch`); readers on other item types (`deployment`'s
+`watcher-condition-kinds.ts`, `review`'s `negotiate.ts:453`) are unaffected. The `ci_run`/`pr`
+readers that see the change in A1 — `preflight.ts`, `dora.ts`, `changelog-queries.ts`
+(`selectDeployments` and the merged lane), `standup-queries.ts` — are exactly A2's readers, and
+each changes in the direction of the fix (e.g. a Bitbucket merged PR starts matching
+`state = 'merged'`). A1 pins each of these with a before/after test so the change is
+deliberate, not incidental.
 
 ### 3.2 `connectors/ci-run-meta.ts` — `CI_RUN_META_VERSION = 1`
 
@@ -96,7 +134,7 @@ Delivered as **three PRs from this one spec, landed in order**:
 |---|---|---|---|---|
 | `conclusion` | `status` ≠ `completed` → `running`; else `conclusion`: `success`→success, `failure`/`timed_out`/`startup_failure`→failure, `cancelled`→cancelled, `skipped`/`neutral`/`action_required`/`stale`/other→unknown | `state`: `success`→success, `failed`/`errored`/`failing`→failure, `canceled`→cancelled, `created`/`running`/`on_hold`→running, other→unknown | `status`: `success`→success, `failed`→failure, `canceled`→cancelled, `created`/`waiting_for_resource`/`preparing`/`pending`/`running`/`scheduled`/`manual`→running, `skipped`/other→unknown | `building` → running; else `result`: `SUCCESS`→success, `FAILURE`/`UNSTABLE`→failure, `ABORTED`→cancelled, `NOT_BUILT`/other→unknown |
 | `conclusion_raw` | raw `conclusion` ?? `status` | `state` | `status` | `result` |
-| `branch` | `headBranch` | `vcs.branch` only (a tag is not a branch → omitted) | `ref` | omitted |
+| `branch` | `headBranch` | `vcs.branch` only (a tag is not a branch → omitted) | `ref`, **omitted when the pipeline is a tag pipeline** (`tag === true` where the API supplies it — planning confirms whether the list endpoint carries `tag` or only the single-pipeline endpoint; if absent, `branch` is written from `ref` and the residual is stated) | omitted |
 | `repo` | repo full name (**new**) | `githubRepo` | `project` | omitted |
 | `workflow_name` | `workflowName` | omitted | omitted | `jobName` |
 | `head_sha` | `headSha` | `revision` | `sha` | omitted |
@@ -117,21 +155,33 @@ planning; any value not listed maps to `unknown`.
 | `merged_at` | already written (merged only) | **omitted** — Bitbucket's PR resource has no merge timestamp; `updated_on` is not one | MR `merged_at` from `fetchOne` |
 | `repo` | already written | already written | `project` |
 
+**GitLab coverage is thin by construction.** The periodic sync indexes MRs from the *events*
+API, which carries no MR creation or merge time; only a targeted `fetchOne` fills
+`opened_at_ms`/`merged_at`. So in practice GitLab MR rows carry `state`/`merged` but not the
+timestamps, and the emitted-keys table marks `opened_at_ms`/`merged_at` as **not emitted** for
+`gitlab` (an occasional `fetchOne` value is a bonus, not coverage). Readers therefore disclose
+GitLab alongside Bitbucket wherever they need either timestamp (§4).
+
 ### 3.4 `git_commit` author (for expert, §4)
 
 `filesystem-v2-sync.ts`'s `gitLogRecords` adds the author email (`%ae`) and name (`%an`) to its
 format. The writer records `author_email` in metadata and resolves `authorId` through
 `ctx.resolvePerson` by email (the same resolution other connectors use). A commit whose email
-resolves to no person keeps `authorId: null`. Spawns stay `windowsHide: true` (D25).
+resolves to no person keeps `authorId: null`. Spawns stay `windowsHide: true` (D25). The version
+constant is `GIT_COMMIT_META_VERSION = 1` in a new `connectors/git-commit-meta.ts`, beside the
+other two contract modules.
 
 ### 3.5 GitLab event upserts must not regress state
 
 A comment event upserts the same MR row and today overwrites `action`, so a merged MR can read
-as open. Rule: an event whose action is not a state transition omits `state`/`merged`/`state_raw`
-from the metadata it writes. **Planning must verify whether `upsertItem` merges or replaces
-`metadata`.** If it replaces, the event path reads the stored row's canonical keys and carries
-them forward (read-merge-write inside the same sync pass); a test covers merged → comment event
-→ still merged.
+as open. **Verified:** `upsertIndexedItem` (`index/item-store.ts`, `ON CONFLICT … metadata =
+excluded.metadata`) **replaces** metadata wholesale, so omitting keys is not enough — it would
+erase them. Rule: for an event whose action is not a state transition, the event path reads the
+stored row through the existing `ctx.itemMetadata(itemId)` capability
+(`sync/sync-capabilities.ts`) and carries the canonical keys forward (`state`, `state_raw`,
+`merged`, `opened_at_ms`, `merged_at`, `meta_v`). A state-transition event writes its own values.
+Tests: merged → comment → still merged; no stored row → comment → `state` omitted (unknown, not
+open); merged → `reopened` → open.
 
 ### 3.6 Rebody recovery, type-scoped
 
@@ -145,10 +195,19 @@ them forward (read-merge-write inside the same sync pass); a test covers merged 
 Existing service-keyed entries (`jira`, `linear`, `pagerduty`) keep working unchanged. No
 schema migration.
 
+Shape: the map becomes a readonly array of
+`{ service: string; type?: string; requiredMetaVersion: number }` (`type` absent = every type of
+that service), replacing string-keyed lookup — no composite-key parsing. The eligibility SQL
+(`buildTargetServicesSql`) emits `(service = ? AND type = ? AND COALESCE(json_extract(metadata,
+'$.meta_v'), 0) < ?)` for a typed target and the same without `type` for a service-wide one,
+OR-joined; `computePendingMetaByService` counts each row once even when two targets could match
+it (a test registers overlapping targets and asserts no double count).
+
 ### 3.7 Demo corpus
 
 `demo/corpus/acme.ts` builds its `ci_run` and `pr` rows through the contract builders, so the
-demo exercises the same shape production writes. `nimbus demo`'s e2e test must stay green.
+demo exercises the same shape production writes. `nimbus demo`'s e2e test and the release judge
+`scripts/release/assert-demo-tour.ts` must stay green.
 
 ### 3.8 A1 tests
 
@@ -169,18 +228,26 @@ impossible for this provider* (from the emitted-keys table) from *empty in this 
 
 | Reader | Change | Disclosure |
 |---|---|---|
-| `preflight/preflight.ts` | `branch`, `conclusion`, `workflow_name`; partition `(service, repo, COALESCE(workflow_name, ''))` — a provider without `workflow_name` collapses to the latest run per repo+branch — **never the title** | a targeted provider without `branch` (Jenkins) is "cannot evaluate" (`count: 0` + gap), never a clean pass |
+| `preflight/preflight.ts` `selectFailingCiRuns` | `branch`, `conclusion`, `workflow_name`. **Two further defects fixed here:** (a) the `conclusion IN (failure, cancelled)` filter moves from inside the `ranked` CTE to the outer `rn = 1` query — today it ranks only failing runs, so a workflow that failed yesterday and passed ten minutes ago still reports red; (b) runs are **scoped to the service's repos** with the same URN matching as DORA (`repoLikeMatchesUrn` semantics, Jenkins on `jobName`) — today any repo sharing the CI service and branch name contaminates the verdict. Partition `(service, repo, COALESCE(workflow_name, ''))` — **never the title** | a targeted provider without `branch` (Jenkins) is "cannot evaluate" (`count: 0` + gap), never a clean pass |
 | `metrics/dora.ts` `selectDeploys` / `repoLikeMatchesUrn` | `conclusion = 'success'`, `repo`; Jenkins keeps `jobName` | unchanged |
-| `metrics/stats.ts`, `agents/_lib/oncall-queries.ts` | canonical names | `github_only_merge_data` kept, now accurate (Bitbucket omits `merged_at`) |
+| `agents/changelog-queries.ts` `selectDeployments` | `conclusion = 'success'` canonical, `repo` via `keepByRepo` (missed in the first draft; found while enumerating §3.1.1) | unchanged |
+| `metrics/stats.ts`, `agents/_lib/oncall-queries.ts` | canonical names | `github_only_merge_data` kept and **reworded to name both** GitLab (events carry no merge time, §3.3) and Bitbucket (API has none) |
 | `agents/changelog-queries.ts`, `agents/standup-queries.ts` | `state = 'merged'` canonical | non-GitHub gap now fires; reworded to name the forge lacking the data |
-| `agents/premortem.ts` review drag | `opened_at_ms`, `merged_at` canonical | replace the "missing for this cohort" message (and the `risks.test.ts` assertion of it) with a per-forge disclosure |
+| `agents/premortem.ts` review drag | `opened_at_ms`, `merged_at` canonical | replace the "missing for this cohort" message (and the `risks.test.ts` assertion of it) with a per-forge disclosure naming GitLab and Bitbucket |
 | `agents/negotiate.ts` | `merged` canonical | merged count discloses forges without merge data, as `statsCoverage` does |
 | `agents/expert.ts` `subBlame` | `service='filesystem' AND type='git_commit'` joined on the now-populated `author_id` | no resolved author → explicit "commit authorship unavailable" gap; the GitHub missing-connector check is replaced by a filesystem/git one |
 
 ### 4.1 A2 tests (wire, not ends)
 
+- **Fixture helper:** one shared test helper (`connectors/testing/lane-fixtures.ts`, following
+  the repo's `*/testing/*-test-helpers.ts` pattern) builds rows by driving the **real connector
+  mapper** with API-shaped input (e.g. a GitHub Actions `workflow_run` object), not by calling the
+  contract builder directly — calling the builder would skip the writer's own field extraction,
+  which is where `headBranch`-style bugs live.
 - **Red-proof:** preflight over a real-writer-built failing GitHub Actions run on the target
   branch returns a failing verdict (fails on today's code).
+- preflight: a newer passing run of the same workflow supersedes an older failing one; a failing
+  run in a repo outside the service's URNs is ignored.
 - DORA lead time over real-writer `ci_run` + `pr` rows is non-null.
 - changelog / standup count a real-writer Bitbucket `MERGED` PR and a GitLab merged MR.
 - pre-mortem review drag non-null over real-writer GitHub PRs; Bitbucket disclosed.
@@ -243,8 +310,10 @@ today's always-exit-0 report.
 
 ## 7. Risks
 
-- **GitLab metadata replace semantics (§3.5)** — the one unverified mechanic; planning resolves
-  it first.
+- **GitLab metadata replace semantics (§3.5)** — verified (replace); handled by read-merge-write.
+- **Key collisions (§3.1.1)** change four existing keys' values in A1; every reader was
+  enumerated and each change is pinned by a test.
+- **GitLab `tag` field availability (§3.2)** — the one remaining unverified vendor detail.
 - **Stored rows below version** read as "unknown" until resync/`nimbus index rebody`; readers
   must disclose rather than undercount silently. The version bump makes them recoverable.
 - **Raw-key readers outside this list** keep working because raw keys are retained.
