@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1791431266204,
+  "lastUpdate": 1791432751594,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "84d4f3d70017d5749a32f6c5b54bb5421cfef933",
-          "message": "docs(ci-secrets): correct the release-environment scope claim (#910)\n\n## Why\n\nWhile adding deployment branch policies to the `release` environments\nacross the org, I checked this repo's claim against the live API and the\nworkflow sources. The intro of `docs/ci-secrets.md` was wrong, and wrong\nin a way that would break a release if someone followed it.\n\nIt said:\n\n> Release/publish secrets are scoped to the **`release`** GitHub\ndeployment environment (jobs that read them declare `environment:\nrelease`); add those under **Settings → Environments → release →\nEnvironment secrets**.\n\nTwo problems:\n\n1. **The `release` environment holds zero environment secrets.** All\nseven repo secrets sit at repository scope:\n   ```\n   $ gh api repos/nimbus-agent/Nimbus/environments/release/secrets\n   {\"total_count\":0,\"secrets\":[]}\n   ```\n2. **Most of them cannot move there as the workflows stand.** Only three\njobs declare `environment: release` — `release.yml`'s `publish-release`\nand `update-manifest`, and `secret-health.yml`'s `check`. Every other\nconsumer would stop seeing the secret.\n\nThe second point is the dangerous one, because an environment secret\ninvisible to a job **resolves to the empty string rather than\nerroring**. Following the old instruction for `GPG_SIGNING_SUBKEY` would\nnot break the environment-scoped `publish-release` job — it would break\n`release.yml`'s `build-gateway` job, which is what actually signs the\nartifacts.\n\nThe page was also self-contradictory: the RELEASE_BOT_* section already\nexplains this exact mechanism correctly (\"`release-please.yml` … mint a\ntoken without declaring `environment: release`, so an environment-scoped\nsecret would be invisible to them\"). Only the intro was stale.\n\n## What changed\n\nDocs only — one section of `docs/ci-secrets.md`. It now states the real\nscope, warns about the silent-empty failure mode, and carries a\nper-secret table naming the job that blocks each move:\n\n| Secret | Blocked by |\n|---|---|\n| `SECRET_AUDITOR_CLIENT_ID` / `SECRET_AUDITOR_PRIVATE_KEY` | — **safe\nto move today** |\n| `GPG_SIGNING_SUBKEY`, `GPG_PASSPHRASE` | `release:build-gateway`,\n`publish-linux-repo` |\n| `UPDATER_SIGNING_KEY` | `release:build-gateway` |\n| `WINGET_PAT` | `publish-package-managers:winget` |\n| `WINDOWS_CERT_*` | `release:build-msi` |\n| `APPLE_*` (7) | `release:build-pkg` |\n| `RELEASE_BOT_*` | `release-please`, `publish-package-managers`,\n`publish-linux-repo`, `org-drift-sweep` |\n\nDerived by parsing every workflow, attributing each `secrets.*`\nreference to its job, and checking that job's `environment:` key — not\nby reading prose.\n\n## Also done (API, outside this PR)\n\nThe `release` environment had `protection_rules: []` and\n`deployment_branch_policy: null` — no gate at all. It now has a\ndeployment branch policy mirroring how `github-pages` is already\nconfigured in this repo (`custom_branch_policies: true` + explicit\npolicies):\n\n```\nPUT  /repos/nimbus-agent/Nimbus/environments/release\n     {\"deployment_branch_policy\":{\"protected_branches\":false,\"custom_branch_policies\":true}}\nPOST /repos/nimbus-agent/Nimbus/environments/release/deployment-branch-policies  {\"name\":\"v*\",\"type\":\"tag\"}\nPOST /repos/nimbus-agent/Nimbus/environments/release/deployment-branch-policies  {\"name\":\"main\",\"type\":\"branch\"}\n```\n\n`main` is included deliberately: `secret-health.yml` declares\n`environment: release` and runs on a Monday cron, which executes from\nthe default branch. A tags-only policy would have broken that job.\n\n## Not done — needs your call\n\nMaking the release credentials genuinely non-readable by every job\nrequires adding `environment: release` to `build-gateway`, `build-msi`,\n`build-pkg`, `publish-linux-repo` and `publish-package-managers:winget`,\nthen moving the secrets. That restructures the release pipeline of a\nrepo that cut v1.5.0 today, so I did not do it unilaterally. Happy to\nopen it as a follow-up if you want it.\n\n## Verification\n\n- `bun run audit:secret-inventory` — `OK (24 secrets referenced, all\ndocumented)`\n- `bun test scripts/structure-audit/check-secret-inventory.test.ts` — 16\npass, 0 fail\n- `bun run audit:doc-refs` — 627 refs across 16 docs, all resolve\n- No new links introduced (the one external link is reused from the text\nit replaced)\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nCo-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>",
-          "timestamp": "2026-07-28T20:07:41+03:00",
-          "tree_id": "b90837d7e5719f9be65ee5e0e2d9af2b761dec47",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/84d4f3d70017d5749a32f6c5b54bb5421cfef933"
-        },
-        "date": 1785259845629,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 311.8752297499959,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 314.9176818000109,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 304.71030335000466,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "e1850af265e2ac81053fea2b0826ed2091286d32",
+          "message": "fix(user-mcp): per-server dispatch listing, no sync.run egress rows, bounded Windows boot revoke (#1629)\n\n## Summary\n\nThree follow-ups to the user MCP work in #1623.\n\n### List only the action's own server\nBefore this change, dispatching an `mcp_*` action listed the whole lazy\nmesh to find one tool, which spawned every connector.\n\n- The dispatcher now lists only that server, through the mesh's\nper-server `listUserMcpTools`.\n- The I42 mismatch check now also runs before any listing. The expected\nkey is derived from `action.type` alone (I3). A payload `mcpToolId` that\nnames a different key is refused before anything spawns.\n- The post-resolution check is unchanged.\n- Under a non-`mcp_*` action type, dispatch takes the unchanged\nwhole-mesh path, where the existing post-check still refuses a user-MCP\nkey.\n- A server whose `user_mcp_connector` row is gone resolves to nothing\nand cannot be dispatched, even while its process is still alive.\n- The per-server listing now waits for the Windows boot-revoke gate, the\nsame way the whole-mesh listing does.\n\n### No `sync.run` egress row for a registered user MCP server\n- `recordSyncEgress` writes no row when the destination is a registered\nuser MCP id. \"Registered\" is derived inside the appender: an `mcp_` id\nthat has a `user_mcp_connector` row.\n- An `mcp_*` id with no row still appends a row.\n- A store read error throws and aborts the run, so the check fails\nclosed.\n- Stated bound, added to the I29 text in CLAUDE.md, GEMINI.md,\n`docs/SECURITY-INVARIANTS.md` and `docs/sandbox.md`: a user MCP server's\nown `--net` traffic is not ledgered by Nimbus. It leaves through the\nper-host grant the owner approved at registration. Only the `mcp_*` tool\ncalls the owner approves are ledgered, at the executor.\n\n### A 15 s deadline per Windows boot-revoke helper call\n- Each call is an async spawn with its own 15 000 ms deadline, killed if\nit misses it, instead of the ambiguous `spawnSync` timeout.\n- A timeout counts as failure: a warning is logged, no marker is\nwritten, and the next boot retries.\n- The pass stops at the first timeout and marks the remaining ids as\nfailed. Otherwise a hung helper would block tool listings for about 90 ×\n15 s.\n- Stated bound: each call re-applies the data directory's ACL across its\nwhole subtree. On a very large or antivirus-scanned data directory, a\ncall can legitimately take longer than 15 s. In that case the revoke\nnever completes, and every boot waits out one deadline. The next pass\nrepairs any half-propagated subtree, so nothing is left damaged.\n\n### Behaviour change\nA user-MCP action with no `payload.mcpToolId` now fails with\n`ERR_USER_MCP_ACTION_MISMATCH` instead of \"Tool not found\". Neither\noutcome ran the tool, and the only production caller always sends the\nid.\n\n## Test plan\n- [x] Each change has new tests that assert call counts and row counts,\nand each new test was proven red by reverting its fix:\n- (a) the per-server listing is called once and the whole-mesh listing\nzero times; a mismatched key is refused before listing;\n- (b) a user-MCP scheduler run writes 0 rows, while a configured\nconnector still writes 1;\n- (c) a helper that never exits produces no marker, a warning, and\nresolves within the injected deadline.\n- [x] The I22 (j) source pin in `security-invariants.test.ts` is updated\nfor the ChatOps dispatcher's new mesh client.\n- [x] The touched suites pass on Linux (WSL, Bun matching CI): 427/427.\n- [x] `typecheck` and `preflight:fast` pass.\n- [x] An independent review found nothing blocking. Its three doc and\ncomment points are fixed in the last commit.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n---------\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-10-08T06:36:18+03:00",
+          "tree_id": "5ba4ba8b14e13319ab6270406bae68ccb59c6762",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/e1850af265e2ac81053fea2b0826ed2091286d32"
+        },
+        "date": 1791432746785,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 361.05170850000246,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 364.9142152999942,
             "unit": "ms"
           }
         ]
