@@ -132,7 +132,7 @@ deliberate, not incidental.
 
 | Canonical key | `github_actions` | `circleci` | `gitlab` | `jenkins` |
 |---|---|---|---|---|
-| `conclusion` | `status` ≠ `completed` → `running`; else `conclusion`: `success`→success, `failure`/`timed_out`/`startup_failure`→failure, `cancelled`→cancelled, `skipped`/`neutral`/`action_required`/`stale`/other→unknown | `state`: `success`→success, `failed`/`errored`/`failing`→failure, `canceled`→cancelled, `created`/`running`/`on_hold`→running, other→unknown | `status`: `success`→success, `failed`→failure, `canceled`→cancelled, `created`/`waiting_for_resource`/`preparing`/`pending`/`running`/`scheduled`/`manual`→running, `skipped`/other→unknown | `building` → running; else `result`: `SUCCESS`→success, `FAILURE`/`UNSTABLE`→failure, `ABORTED`→cancelled, `NOT_BUILT`/other→unknown |
+| `conclusion` | `status` ≠ `completed` → `running`; else `conclusion`: `success`→success, `failure`/`timed_out`/`startup_failure`→failure, `cancelled`→cancelled, `skipped`/`neutral`/`action_required`/`stale`/other→unknown | pipeline `state` (`created`/`errored`/`setup-pending`/`setup`/`pending` — a PIPELINE state, not a pass/fail; pass/fail lives on workflows, which the sync does not fetch): `errored`→failure, every other value→unknown. **CircleCI therefore cannot supply a success/failure conclusion** and readers disclose it (deferred: fetching workflow statuses) | `status`: `success`→success, `failed`→failure, `canceled`→cancelled, `created`/`waiting_for_resource`/`preparing`/`pending`/`running`/`scheduled`/`manual`→running, `skipped`/other→unknown | `building` → running; else `result`: `SUCCESS`→success, `FAILURE`/`UNSTABLE`→failure, `ABORTED`→cancelled, `NOT_BUILT`/other→unknown |
 | `conclusion_raw` | raw `conclusion` ?? `status` | `state` | `status` | `result` |
 | `branch` | `headBranch` | `vcs.branch` only (a tag is not a branch → omitted) | `ref`, **omitted when the pipeline is a tag pipeline** (`tag === true` where the API supplies it — planning confirms whether the list endpoint carries `tag` or only the single-pipeline endpoint; if absent, `branch` is written from `ref` and the residual is stated) | omitted |
 | `repo` | repo full name (**new**) | `githubRepo` | `project` | omitted |
@@ -151,16 +151,11 @@ planning; any value not listed maps to `unknown`.
 | `state` | `merged === true` → merged; else `state` (`open`/`closed`) | `MERGED`→merged, `OPEN`→open, `DECLINED`/`SUPERSEDED`→closed | MR `state` (`opened`→open, `merged`→merged, `closed`/`locked`→closed) from `fetchOne`; from events: `accepted`/`merged`→merged, `opened`/`reopened`→open, `closed`→closed; any other event action **does not write `state`** (§3.5) |
 | `state_raw` | `state` | `state` | MR `state` or event `action` |
 | `merged` | boolean | derived from `state` | derived from `state` (only when `state` is written) |
-| `opened_at_ms` | `created_at` (**new**) | `created_on` (**new**) | MR `created_at` from `fetchOne` only — an event timestamp is not the opening time |
-| `merged_at` | already written (merged only) | **omitted** — Bitbucket's PR resource has no merge timestamp; `updated_on` is not one | MR `merged_at` from `fetchOne` |
+| `opened_at_ms` | `created_at` (**new**) | `created_on` (**new**) | the `opened` event’s own `created_at` (that event IS the opening), or MR `created_at` from `fetchOne`; carried forward otherwise |
+| `merged_at` | already written (merged only) | **omitted** — Bitbucket's PR resource has no merge timestamp; `updated_on` is not one | the `accepted`/`merged` event’s `created_at` (that event IS the merge), or MR `merged_at` from `fetchOne`; carried forward otherwise |
 | `repo` | already written | already written | `project` |
 
-**GitLab coverage is thin by construction.** The periodic sync indexes MRs from the *events*
-API, which carries no MR creation or merge time; only a targeted `fetchOne` fills
-`opened_at_ms`/`merged_at`. So in practice GitLab MR rows carry `state`/`merged` but not the
-timestamps, and the emitted-keys table marks `opened_at_ms`/`merged_at` as **not emitted** for
-`gitlab` (an occasional `fetchOne` value is a bonus, not coverage). Readers therefore disclose
-GitLab alongside Bitbucket wherever they need either timestamp (§4).
+**GitLab timestamps come from transition events.** The periodic sync reads the events API in ascending order (`sort=asc`); an `opened` event’s `created_at` is the opening time and an `accepted`/`merged` event’s is the merge time, so both are honest. An MR whose opening (or merge) predates the sync window has no such event and its row lacks the key — per-row absence, which readers already treat as unknown. Non-transition events carry every canonical key forward (§3.5). (Amended 2026-10-08 during planning: the first draft said GitLab could not supply these at all.)
 
 ### 3.4 `git_commit` author (for expert, §4)
 
@@ -228,7 +223,7 @@ impossible for this provider* (from the emitted-keys table) from *empty in this 
 
 | Reader | Change | Disclosure |
 |---|---|---|
-| `preflight/preflight.ts` `selectFailingCiRuns` | `branch`, `conclusion`, `workflow_name`. **Two further defects fixed here:** (a) the `conclusion IN (failure, cancelled)` filter moves from inside the `ranked` CTE to the outer `rn = 1` query — today it ranks only failing runs, so a workflow that failed yesterday and passed ten minutes ago still reports red; (b) runs are **scoped to the service's repos** with the same URN matching as DORA (`repoLikeMatchesUrn` semantics, Jenkins on `jobName`) — today any repo sharing the CI service and branch name contaminates the verdict. Partition `(service, repo, COALESCE(workflow_name, ''))` — **never the title** | a targeted provider without `branch` (Jenkins) is "cannot evaluate" (`count: 0` + gap), never a clean pass |
+| `preflight/preflight.ts` `selectFailingCiRuns` | `branch`, `conclusion`, `workflow_name`. **Two further defects fixed here:** (a) the `conclusion IN (failure, cancelled)` filter moves from inside the `ranked` CTE to the outer `rn = 1` query — today it ranks only failing runs, so a workflow that failed yesterday and passed ten minutes ago still reports red; (b) runs are **scoped to the service's repos** with the same URN matching as DORA (`repoLikeMatchesUrn` semantics, Jenkins on `jobName`) — today any repo sharing the CI service and branch name contaminates the verdict. Partition `(service, repo, COALESCE(workflow_name, ''))` — **never the title** | a targeted provider without `branch` (Jenkins) or without a pass/fail conclusion (CircleCI, §3.2) is "cannot evaluate" (`count: 0` + gap), never a clean pass; the same applies to DORA deploy detection for CircleCI |
 | `metrics/dora.ts` `selectDeploys` / `repoLikeMatchesUrn` | `conclusion = 'success'`, `repo`; Jenkins keeps `jobName` | unchanged |
 | `agents/changelog-queries.ts` `selectDeployments` | `conclusion = 'success'` canonical, `repo` via `keepByRepo` (missed in the first draft; found while enumerating §3.1.1) | unchanged |
 | `metrics/stats.ts`, `agents/_lib/oncall-queries.ts` | canonical names | `github_only_merge_data` kept and **reworded to name both** GitLab (events carry no merge time, §3.3) and Bitbucket (API has none) |
