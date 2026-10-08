@@ -7,6 +7,10 @@ import {
   MAX_HANDSHAKE_FRAME,
   MAX_PENDING_BYTES,
 } from "./lan-server.ts";
+import {
+  createQueuedSocketWriter,
+  type QueuedSocketWriter,
+} from "./server/queued-socket-writer.ts";
 
 /**
  * Three refusals `lan-server.test.ts` does not reach, each asserted as "the server CLOSED the
@@ -234,6 +238,8 @@ describe("LanServer — guards below the socket protocol", () => {
     buffer: Uint8Array;
     peerPubkey?: Uint8Array;
     peerMatch?: LanPeerMatch;
+    /** Attached by `fakeSocket`, as the server's own `open` handler attaches one. */
+    writer?: QueuedSocketWriter;
   };
   type FakeSocket = {
     data: SessionData;
@@ -248,7 +254,8 @@ describe("LanServer — guards below the socket protocol", () => {
     handleEncryptedMessage(socket: FakeSocket, frame: Uint8Array): Promise<void>;
   };
 
-  function fakeSocket(data: SessionData): FakeSocket {
+  /** `capacity` caps the bytes one `write` accepts, like a full kernel send buffer. */
+  function fakeSocket(data: SessionData, capacity = Number.POSITIVE_INFINITY): FakeSocket {
     const s: FakeSocket = {
       data,
       ended: 0,
@@ -257,10 +264,12 @@ describe("LanServer — guards below the socket protocol", () => {
         s.ended++;
       },
       write(bytes) {
-        s.written.push(bytes);
-        return bytes.length;
+        const n = Math.min(capacity, bytes.length);
+        s.written.push(bytes.slice(0, n));
+        return n;
       },
     };
+    s.data.writer = createQueuedSocketWriter(s);
     return s;
   }
 
@@ -422,6 +431,42 @@ describe("LanServer — guards below the socket protocol", () => {
         client.secretKey,
       );
       expect(JSON.parse(new TextDecoder().decode(reply))).toEqual({ id: 1, result: { ok: true } });
+    });
+
+    // Regression: Bun's raw socket write drops what the kernel does not accept. A reply larger than
+    // the free send buffer used to lose its tail, so the peer's frame reader waited forever.
+    test("a reply the socket cannot take in one write is finished on drain, never dropped", async () => {
+      const { internals, hostKeypair } = unstartedServer();
+      const client = generateBoxKeypair();
+      const sock = fakeSocket(
+        {
+          peerIp: "10.0.0.9",
+          buffer: new Uint8Array(0),
+          peerPubkey: client.publicKey,
+          peerMatch: PEER,
+        },
+        5,
+      );
+
+      await internals.handleEncryptedMessage(sock, sealedRpc(hostKeypair.publicKey, client));
+
+      const writer = sock.data.writer;
+      if (writer === undefined) throw new Error("fakeSocket attaches a writer");
+      expect(writer.pendingBytes()).toBeGreaterThan(0);
+      // What Bun's drain handler does each time the socket can take more.
+      while (writer.pendingBytes() > 0) writer.flush();
+
+      const all = new Uint8Array(sock.written.reduce((n, c) => n + c.length, 0));
+      let at = 0;
+      for (const c of sock.written) {
+        all.set(c, at);
+        at += c.length;
+      }
+      const len = new DataView(all.buffer).getUint32(0, false);
+      expect(all.length).toBe(4 + len);
+      const reply = openBoxFrame(all.subarray(4), hostKeypair.publicKey, client.secretKey);
+      expect(JSON.parse(new TextDecoder().decode(reply))).toEqual({ id: 1, result: { ok: true } });
+      expect(sock.ended).toBe(0);
     });
   });
 });
