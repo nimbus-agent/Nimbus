@@ -21,7 +21,7 @@
 - No `any`; external data as `unknown` + `asRecord` / `stringField` / `numberField` (`connectors/unknown-record.ts`).
 - All SQL bound-parameter (I9); index writes only through `ctx.upsertItem` (I14 — unchanged here).
 - Spawns keep `windowsHide: true` (D25); child env via `extensionProcessEnv` (I1).
-- No reader code changes in A1 (readers are A2). Reader *results* that change because of §3.1.1 collisions are pinned by Task 12.
+- No reader code changes in A1 (readers are A2), with ONE exception: Task 12b fixes preflight's two latent CI defects, because A1 itself brings that lane to life (Ruling R7). Reader *results* that change because of §3.1.1 collisions are pinned by Task 12.
 - Commit with `git commit -F <file>` (backticks in `-m` are eaten by the shell). Every commit message ends with `Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>`.
 - Run commands from the worktree root `C:\gitrep\Nimbus\.claude\worktrees\index-lane-contract`. Verify `git rev-parse --abbrev-ref HEAD` is `dev/asaf/index-lane-contract` before every commit.
 
@@ -2334,6 +2334,106 @@ bunx biome check --write packages/gateway/src/connectors/lane-contract-collision
 git rev-parse --abbrev-ref HEAD
 git add packages/gateway/src/connectors/lane-contract-collisions.test.ts packages/gateway/src/connectors/lane-contract-drift.test.ts
 printf 'test(index): pin the reader results the contract collisions change\n\nCo-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>\n' > "$TEMP/msg.txt"
+git commit -F "$TEMP/msg.txt"
+```
+
+---
+
+### Task 12b: preflight's two latent CI defects (added during execution — ledger Ruling R7)
+
+**Why this is in A1:** Tasks 3–5 give GitHub Actions rows a canonical `branch` (and CircleCI `errored` a `failure` conclusion), so `preflight.ts`'s `$.branch = ? AND $.conclusion IN (…)` filter starts MATCHING in A1. Before A1 the lane was dead (fail-open). Live, it exposes two defects spec §4 already names: the failure filter sits inside the ranking CTE (a failure superseded by a newer pass still reports), and runs are not scoped to the service's repos (any repo sharing the CI service and branch name contaminates the verdict). `--mode block` would then fail deploys on stale or foreign failures. This task fixes exactly those two, nothing else in preflight.
+
+**Files:**
+- Modify: `packages/gateway/src/preflight/preflight.ts` (`selectFailingCiRuns`, ~148–206)
+- Test: `packages/gateway/src/preflight/preflight.test.ts`
+
+**Interfaces:**
+- Consumes: `repoLikeMatchesUrn(metadata, externalId, urn)` (exported from `metrics/dora.ts`); `githubActionsRunMetadata(repoFull, run, now)` (Task 3) for fixtures.
+- Produces: `selectFailingCiRuns` — same signature and return shape.
+
+- [ ] **Step 1: Write the failing tests.** In `preflight.test.ts`, add a helper that inserts a `github_actions` `ci_run` row whose `metadata` is `JSON.stringify(githubActionsRunMetadata(repo, run, NOW))` and whose `external_id` is `` `${repo}#run-${id}` `` (the real writer's shape), using the file's existing item-insert idiom and `ServiceConfig` builder. Then:
+
+```ts
+test("a red GitHub Actions run on the target branch fails CI (real writer shape)", () => {
+  // insert run {id: 1, name: "CI", status: "completed", conclusion: "failure", head_branch: "main", created_at T-1h} for "acme/app"
+  // cfg.repos = [github URN for acme/app]; expect failing_ci_runs.count === 1
+});
+test("a newer passing run of the same workflow supersedes an older failure", () => {
+  // insert failure at T-2h and success at T-1h, same name "CI", branch main, repo acme/app
+  // expect failing_ci_runs.count === 0
+});
+test("a failing run in a repo outside the service's URNs is ignored", () => {
+  // insert failure for "acme/other" on main; cfg.repos only acme/app
+  // expect failing_ci_runs.count === 0
+});
+```
+
+Write these as real tests against the file's existing entry point (the exported function the other preflight tests call), with explicit row values. Existing tests whose fixtures hand-write `{branch, conclusion}` with no `repo` will now be filtered out by repo scoping: rebuild those fixtures through `githubActionsRunMetadata` (keeping each test's intent and expected numbers), and say which ones in the report.
+
+- [ ] **Step 2: Run to verify failure**
+
+Run: `bun test packages/gateway/src/preflight/preflight.test.ts`
+Expected: the supersede and other-repo tests FAIL (count 1, not 0).
+
+- [ ] **Step 3: Implement** — rank over ALL runs of the target branch, filter failures OUTSIDE the CTE, and scope by repo in TypeScript with DORA's matcher:
+
+```ts
+import { repoLikeMatchesUrn } from "../metrics/dora.ts";
+```
+
+```ts
+  const sql = `
+    WITH ranked AS (
+      SELECT
+        id, external_id, title, url, modified_at, metadata,
+        ROW_NUMBER() OVER (
+          PARTITION BY service,
+            COALESCE(json_extract(metadata, '$.repo'), ''),
+            COALESCE(json_extract(metadata, '$.workflow_name'), '')
+          ORDER BY modified_at DESC
+        ) AS rn
+      FROM item
+      WHERE service IN (${servicePlaceholders})
+        AND type = 'ci_run'
+        AND json_valid(metadata)
+        AND json_extract(metadata, '$.branch') = ?
+    )
+    SELECT id, external_id, title, url, modified_at, metadata FROM ranked
+     WHERE rn = 1
+       AND json_extract(metadata, '$.conclusion') IN (${conclusionPlaceholders})
+  `;
+  const params = [...ciServices, targetRef, ...FAILED_CONCLUSIONS];
+  const rows = db.query(sql).all(...params) as {
+    id: string;
+    external_id: string;
+    title: string;
+    url: string | null;
+    modified_at: number;
+    metadata: string;
+  }[];
+  // Scope to THIS service's repos with the same URN matching DORA uses, so a repo that merely
+  // shares the CI service and a branch name cannot fail this service's deploy gate.
+  const allLatest = rows.filter((r) => {
+    const meta = JSON.parse(r.metadata) as Record<string, unknown>;
+    return cfg.repos.some((u) => repoLikeMatchesUrn(meta, r.external_id, u));
+  });
+```
+
+Keep the rest of the function (count, findings mapping) operating on `allLatest` unchanged. A provider without `workflow_name` (CircleCI, GitLab) collapses to the latest run per repo + branch — the intended fallback (spec §4); the title is never a partition key, because it embeds the conclusion.
+
+- [ ] **Step 4: Run tests**
+
+Run: `bun test packages/gateway/src/preflight packages/gateway/src/ipc/preflight-rpc.test.ts`
+Expected: PASS (skip the second path if that file does not exist).
+
+- [ ] **Step 5: Commit**
+
+```bash
+bunx biome check packages/gateway/src/preflight/preflight.ts packages/gateway/src/preflight/preflight.test.ts
+bun run typecheck
+git rev-parse --abbrev-ref HEAD
+git add packages/gateway/src/preflight/preflight.ts packages/gateway/src/preflight/preflight.test.ts
+printf 'fix(preflight): a superseded or foreign-repo CI failure no longer fails the gate\n\nCo-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>\n' > "$TEMP/msg.txt"
 git commit -F "$TEMP/msg.txt"
 ```
 
