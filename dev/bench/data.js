@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1791440148005,
+  "lastUpdate": 1791441931157,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "393e7de7982e1a74f5544c1571b463bf66207c52",
-          "message": "fix(docs): serve .well-known/security.txt by disabling Jekyll filtering (#915)\n\n`security.txt` was added to `packages/docs/public/.well-known/` in #909,\nthe docs deploy succeeded — and the file **404s**:\n\n```\nGET https://nimbus-agent.dev/.well-known/security.txt   → 404\nGET https://nimbus-agent.dev/perf/latest.json           → 200\n```\n\nBoth live in `packages/docs/public/`. Both are emitted by the same\nbuild. The only difference is the **leading dot** — GitHub Pages filters\ndot-directories out of the published site unless a `.nojekyll` marker is\npresent, and `public/` had none.\n\nFix: an empty `packages/docs/public/.nojekyll`, which Astro copies to\n`dist/` and which disables that filtering. Verified locally — `dist/`\nnow contains both `.nojekyll` and `.well-known/security.txt`.\n\n## How this was missed\n\nThe original verification was that `astro build` **produced**\n`dist/.well-known/security.txt`. It did. That proved nothing about what\nPages *serves*.\n\nBuilding a file and serving it are different claims, and only one of\nthem was checked — the same presence-vs-validity error behind today's\nother failures: seven store secrets that existed but didn't work, and\nDependabot reporting zero alerts while `bun audit` found ten.\n\n## Post-merge check\n\n```bash\ncurl -o /dev/null -w '%{http_code}' https://nimbus-agent.dev/.well-known/security.txt\n```\n\nMust return **200**. Until it does, RFC 9116 discovery doesn't work and\nthe org's public disclosure policy has no machine-readable entry point —\nwhich was the entire point of publishing it.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nCo-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>",
-          "timestamp": "2026-07-28T22:01:00+03:00",
-          "tree_id": "dce32267c8bf23468b1ace63905471190bcfeb0f",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/393e7de7982e1a74f5544c1571b463bf66207c52"
-        },
-        "date": 1785266875734,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 308.1464588500006,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 313.8771685500084,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 203.5060325000042,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "306811640+nimbus-release-bot[bot]@users.noreply.github.com",
+            "name": "nimbus-release-bot[bot]",
+            "username": "nimbus-release-bot[bot]"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "49977cb92e704a529ae3a1ce931fccc65c9afd36",
+          "message": "chore: release main (#1631)\n\n:robot: I have created a release *beep* *boop*\n---\n\n\n<details><summary>7.37.1</summary>\n\n##\n[7.37.1](https://github.com/nimbus-agent/Nimbus/compare/v7.37.0...v7.37.1)\n(2026-10-08)\n\n\n### Bug Fixes\n\n* **lan:** never drop the tail of a large federation frame\n([#1630](https://github.com/nimbus-agent/Nimbus/issues/1630))\n([814f470](https://github.com/nimbus-agent/Nimbus/commit/814f470b84f3057e0798136d30291517c9c9f12a))\n</details>\n\n---\nThis PR was generated with [Release\nPlease](https://github.com/googleapis/release-please). See\n[documentation](https://github.com/googleapis/release-please#release-please).\n\nCo-authored-by: nimbus-release-bot[bot] <306811640+nimbus-release-bot[bot]@users.noreply.github.com>",
+          "timestamp": "2026-10-08T06:35:38Z",
+          "tree_id": "6eff2138ee4f92343070a1e7c61c3dcab9b3a736",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/49977cb92e704a529ae3a1ce931fccc65c9afd36"
+        },
+        "date": 1791441926346,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 266.26283479999984,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 265.57603525001105,
             "unit": "ms"
           }
         ]
