@@ -41,6 +41,15 @@ For per-service setup details, scopes, and known limitations, see the
 
 ## Worked example: Google Drive
 
+:::caution[The desktop app is not released yet]
+The Settings steps below describe the desktop app, which has not shipped. Today, connect a
+service from the CLI — the same OAuth flow opens in your browser:
+
+```bash
+nimbus connector auth google_drive
+```
+:::
+
 ### 1. Open the Connectors panel
 
 In the Nimbus desktop app, click **Settings** in the sidebar (or press `S`),
@@ -119,29 +128,35 @@ and location (if you opt in to location data in the connector settings).
 | Incremental sync | Every 60 seconds by default |
 | Delta sync | Drive, Gmail, and OneDrive use the API's native change token — only changed items are fetched |
 
-You can adjust the per-connector sync interval in **Settings → Connectors →
-(connector name) → Sync interval**. The minimum supported value is 60 seconds.
+You can adjust the per-connector sync interval with
+`nimbus connector set-interval <service> <duration>` (for example
+`nimbus connector set-interval google_drive 5m`). The desktop app's
+**Settings → Connectors → (connector name) → Sync interval** does the same once
+the desktop app is released.
 
 ---
 
 ## Authorising more services
 
 Repeat the same flow for each additional service. Multiple connectors sync in
-parallel; the dashboard shows a per-connector item count and a last-synced
-timestamp. There is no limit to the number of connectors you can configure.
+parallel; `nimbus connector list` shows each connector's item count and
+last-synced time. There is no limit to the number of connectors you can configure.
 
 ---
 
 ## Disconnecting or removing a connector
 
-To remove a connector:
+To remove a connector, run `nimbus connector remove <service>` (the desktop
+app's **Settings → Connectors → (connector name) → Remove** does the same once
+the desktop app is released):
 
-1. **Settings → Connectors → (connector name) → Remove**
-2. Nimbus shows a confirmation dialog listing what will be deleted:
+1. `nimbus connector remove google_drive`
+2. Nimbus asks you to confirm before deleting
    the stored OAuth credential (from the system vault) and all indexed items
    from that service.
-3. Because this is a destructive operation, a **HITL consent prompt** fires
-   before any data is removed. Approve to proceed; reject to cancel.
+3. Because this is a destructive operation, removal is **HITL-gated** in the
+   Gateway; the CLI's confirmation is the answer to that consent request, so you
+   are asked once. Decline and nothing is sent.
 
 The removal cascade deletes the vault credential first, then the indexed items.
 If you reconnect the same service later, a fresh initial sync re-populates the
@@ -155,7 +170,7 @@ index.
   <LinkCard
     title="Your first query"
     href="/user-guide/your-first-query/"
-    description="Ask Nimbus a question against your indexed data from the desktop app or CLI."
+    description="Ask Nimbus a question against your indexed data from the CLI."
   />
   <LinkCard
     title="HITL & safety"

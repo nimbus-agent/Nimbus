@@ -1,5 +1,5 @@
 import { afterAll, afterEach, beforeEach, describe, expect, it } from "bun:test";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -25,7 +25,7 @@ import {
 /**
  * Branches `doctor-core.test.ts` and `doctor-vault.test.ts` leave unexercised: the Bun-version
  * failure line, every way the Secret Service D-Bus reads can fail short of a verdict, a spawn that
- * cannot start, the embedding edge shapes, and `runDoctor`'s IPC + voice-config edges. Every
+ * cannot start, the embedding edge shapes, and `runDoctor`'s IPC edges. Every
  * `runDoctor` run here uses a DEMO-rooted path set, so the real OS keyring is never probed.
  */
 
@@ -279,7 +279,7 @@ describe("doctorPrintEmbeddingFromSnapshot — edge shapes", () => {
   });
 });
 
-describe("runDoctor — IPC and voice-config edges", () => {
+describe("runDoctor — IPC edges", () => {
   const roots: string[] = [];
   let priorExitCode: typeof process.exitCode;
 
@@ -428,27 +428,5 @@ describe("runDoctor — IPC and voice-config edges", () => {
     expect(failing).toEqual(control);
     expect(control.stdout).toContain("[ok] Gateway: IPC OK (uptime ~5s).\n");
     expect(failing.stdout).not.toContain("socket already closed");
-  });
-
-  it("a nimbus.toml that cannot be read is treated as no voice config — doctor carries on", async () => {
-    const paths = demoPaths();
-    // A DIRECTORY named nimbus.toml: it exists, so the reader is reached, and reading it fails.
-    mkdirSync(join(paths.configDir, "nimbus.toml"));
-    await runDoctor([], deps(paths));
-    expect(out.stdout).not.toContain("Voice:");
-    expect(out.stdout).toContain("[fail] Gateway: not running");
-    expect(process.exitCode).toBe(2);
-  });
-
-  it("an unknown [voice] key is ignored, not mistaken for a piper setting", async () => {
-    const paths = demoPaths();
-    writeFileSync(
-      join(paths.configDir, "nimbus.toml"),
-      '[voice]\nenabled = true\nwhisper_path = "/opt/whisper-cli"\nmystery_key = "piper.onnx"\n',
-    );
-    await runDoctor([], deps(paths));
-    expect(out.stdout).toContain("[ok] Voice: whisper-cli is available.\n");
-    // Had `mystery_key` been read as piper_path or piper_model, a piper warning would appear.
-    expect(out.stdout).not.toContain("piper");
   });
 });

@@ -152,21 +152,22 @@ export type FullSqliteState =
   /** darwin, and no candidate library exists. `loadExtension` will fail; the user must act. */
   | "not-found"
   /**
-   * darwin, `setCustomSQLite` returned false, AND the discriminator probe proved this process can
-   * still load a SQLite extension. Benign: another realm got here first.
+   * darwin, `setCustomSQLite` refused (see `discriminateRejection`), AND the discriminator probe
+   * proved this process can still load a SQLite extension. Benign: another realm got here first —
+   * the EXPECTED state of every Worker realm on a healthy macOS gateway.
    */
   | "rejected"
   /**
-   * darwin, `setCustomSQLite` returned false, AND the probe proved this process CANNOT load a
+   * darwin, `setCustomSQLite` refused, AND the probe proved this process CANNOT load a
    * SQLite extension. Semantic search is off for this run and the install ran too late.
    */
   | "no-extensions"
   /**
-   * darwin, `setCustomSQLite` returned false, and the probe could not run at all — so which of the
+   * darwin, `setCustomSQLite` refused, and the probe could not run at all — so which of the
    * two above holds is unknown. Reported loudly rather than assumed benign.
    */
   | "unverified"
-  /** darwin, a library existed, and `setCustomSQLite` threw. */
+  /** darwin, a library existed, and `setCustomSQLite` threw anything but "already loaded". */
   | "error";
 
 /**
@@ -204,9 +205,10 @@ export interface FullSqliteDeps {
   /**
    * Can THIS process load a SQLite extension right now?
    *
-   * Called ONLY on darwin, and only after `setCustomSQLite` returned false — see
-   * {@link discriminateRejection}. It opens a throwaway `:memory:` database, so it never runs on
-   * a healthy path.
+   * Called ONLY on darwin, and only after `setCustomSQLite` refused (`false`, or Bun's "already
+   * loaded" throw) — see {@link discriminateRejection}. It opens a throwaway `:memory:` database.
+   * The FIRST realm of a healthy process never reaches it; every later realm does, once, because
+   * Bun refuses a second install process-wide.
    */
   readonly probeExtensionLoad: () => ExtensionProbeResult;
   readonly warn: (fields: Record<string, unknown>, msg: string) => void;
@@ -233,7 +235,24 @@ export function fullSqliteCandidates(
 }
 
 /**
- * `setCustomSQLite` returned `false`. Decide, by MEASUREMENT, whether that mattered.
+ * Bun's darwin `setCustomSQLite` refusal, VERBATIM from `JSSQLStatement.cpp` (Bun 1.3.14).
+ *
+ * Bun keeps the loaded library in ONE process-global handle (`sqlite3_handle`), and on darwin the
+ * native function checks it first: if ANY realm has already loaded SQLite — by an earlier
+ * `setCustomSQLite` or by opening a `Database` — it THROWS this, and otherwise it returns `true`.
+ * It never returns `false` at all. So the second and later realms of a HEALTHY gateway (the
+ * embedding worker, the query guard) land here, not on the `false` branch this module was written
+ * around — and until this was matched they were reported as `error` at warn on every macOS boot,
+ * which is what PR #1627's install-smoke log showed (CI job 112973084399) and what the `nimbus
+ * init` spinner then displayed as the gateway's latest line.
+ *
+ * Matched on the first line only, the stable part; the rest is advice text.
+ */
+const BUN_SQLITE_ALREADY_LOADED = "SQLite already loaded";
+
+/**
+ * `setCustomSQLite` refused — returned `false`, or threw {@link BUN_SQLITE_ALREADY_LOADED}, which
+ * is how Bun 1.3 actually refuses on darwin. Decide, by MEASUREMENT, whether that mattered.
  *
  * Bun's typedoc documents two preconditions — the call "only works before SQLite is loaded" and
  * "can only be run once because it loads the SQLite library into the process" — and says nothing
@@ -273,8 +292,9 @@ function discriminateRejection(
   deps: FullSqliteDeps,
   found: string,
   candidates: readonly string[],
+  refusal: string,
 ): FullSqliteStatus {
-  const prefix = `Database.setCustomSQLite(${found}) returned false`;
+  const prefix = `Database.setCustomSQLite(${found}) ${refusal}`;
   const probe = deps.probeExtensionLoad();
   if (probe === "works") {
     const detail =
@@ -351,13 +371,18 @@ export function installFullSqlite(deps: FullSqliteDeps): FullSqliteStatus {
     accepted = deps.setCustomSQLite(found);
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
+    if (msg.startsWith(BUN_SQLITE_ALREADY_LOADED)) {
+      // Not an install failure: another realm (or an earlier open) loaded SQLite first. Whether
+      // that left this process WITH extensions is the only question, and only the probe answers it.
+      return discriminateRejection(deps, found, candidates, `threw "${BUN_SQLITE_ALREADY_LOADED}"`);
+    }
     const detail = `Database.setCustomSQLite(${found}) threw: ${msg}`;
     deps.warn({ path: found, err: msg }, detail);
     return { state: "error", path: found, candidates, detail };
   }
 
   if (!accepted) {
-    return discriminateRejection(deps, found, candidates);
+    return discriminateRejection(deps, found, candidates, "returned false");
   }
 
   const detail = `using full SQLite at ${found}`;

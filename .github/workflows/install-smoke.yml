@@ -6,10 +6,16 @@ on:
     paths:
       - "scripts/install/**"
       - "scripts/package-linux-installers.ts"
+      - "scripts/release/connector-handshake-smoke.ts"
       - ".github/workflows/install-smoke.yml"
       - ".github/workflows/release.yml"
       - "packages/gateway/src/**"
       - "packages/cli/src/**"
+      # The binary embeds the admin console (asserted by the /admin check) and is built from the
+      # gateway's manifest and the lockfile, so a change to any of them changes what is installed.
+      - "packages/admin-console/**"
+      - "packages/gateway/package.json"
+      - "bun.lock"
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -50,7 +56,7 @@ jobs:
           # refs on a pull_request checkout, and `origin/main` can fail with
           # "ambiguous argument". Both SHAs are present because fetch-depth: 0.
           CHANGED=$(git diff --name-only "$BASE_SHA...$HEAD_SHA")
-          if echo "$CHANGED" | grep -qE '^(scripts/install/|scripts/package-linux-installers\.ts|\.github/workflows/(install-smoke|release)\.yml)'; then
+          if echo "$CHANGED" | grep -qE '^(scripts/install/|scripts/package-linux-installers\.ts|scripts/release/connector-handshake-smoke\.ts|\.github/workflows/(install-smoke|release)\.yml)'; then
             echo "matrix=$FULL" >> "$GITHUB_OUTPUT"
           else
             echo 'matrix=["ubuntu-24.04"]' >> "$GITHUB_OUTPUT"
@@ -174,6 +180,18 @@ jobs:
           cp packages/cli/dist/nimbus         "$STAGE/nimbus"
           cp dist/nimbus-gateway              "$STAGE/nimbus-gateway"
           chmod +x "$STAGE/nimbus" "$STAGE/nimbus-gateway"
+          # The sqlite-vec sidecar (and, on macOS, the full SQLite it needs to load — #1505) travel
+          # beside the binaries in every real release, and install.sh's sidecar-copy loop picks
+          # them up from here. Without them this LOCAL install would be one no user receives, and
+          # the "Vector search" assertion in the quickstart step below would be testing that.
+          if [ "$RUNNER_OS" = "Linux" ]; then
+            cp dist/vec0.so "$STAGE/vec0.so"
+          else
+            cp dist/vec0.dylib "$STAGE/vec0.dylib"
+            test -n "${NIMBUS_SQLITE_PATH:-}" || {
+              echo "::error::NIMBUS_SQLITE_PATH unset — setup-nimbus-ci did not build the bundled SQLite"; exit 1; }
+            cp "$NIMBUS_SQLITE_PATH" "$STAGE/libsqlite3.dylib"
+          fi
           cp scripts/install/unix/install.sh   "$STAGE/"
           cp scripts/install/unix/uninstall.sh "$STAGE/"
           chmod +x "$STAGE/install.sh" "$STAGE/uninstall.sh"
@@ -303,6 +321,17 @@ jobs:
           git config user.name  "Smoke Test"
           git add -A && git commit -q -m "add auth helpers"
 
+          # The read-only HTTP API starts ONLY when NIMBUS_HTTP_PORT is a positive integer at the
+          # moment the gateway spawns (platform/assemble.ts collectSidecarsFromEnv), and `nimbus
+          # init` is what spawns it here — so this has to be exported BEFORE init, not before the
+          # curl below. A fixed port, because the runner is ours alone for the job's lifetime.
+          export NIMBUS_HTTP_PORT=17474
+          # setup-nimbus-ci exports NIMBUS_SQLITE_PATH (the build tree's libsqlite3.dylib) for the
+          # whole job on macOS. A user has no such variable, so drop it: the "Vector search"
+          # assertion below must be satisfied by the libsqlite3.dylib install.sh placed beside
+          # the installed gateway, not by a path into this checkout.
+          unset NIMBUS_SQLITE_PATH
+
           nimbus init | tee "$RUNNER_TEMP/init.log"
           # `nimbus init` EXITS 0 even when indexing fails: syncAndPickDemo()
           # catches every error and degrades to null, by design, because the
@@ -358,7 +387,83 @@ jobs:
               ;;
           esac
 
+          # sqlite-vec must actually LOAD in the installed binary — semantic search, hybrid ranking
+          # and session recall are all off without it, and the only other signal is one log line.
+          # `nimbus doctor`'s exit code is deliberately ignored: other lines (no LLM, no connector
+          # credentials) legitimately fail on a bare runner. The Vector search line is the claim.
+          nimbus doctor > "$RUNNER_TEMP/doctor.log" 2>&1 || true
+          cat "$RUNNER_TEMP/doctor.log"
+          grep -qF "[ok] Vector search" "$RUNNER_TEMP/doctor.log" || {
+            echo "::error::nimbus doctor did not report '[ok] Vector search' — sqlite-vec is not loaded in the installed binary"; exit 1; }
+          # macOS: an [ok] alone is not enough. The PAL falls back to Homebrew's SQLite after the
+          # bundled copy, and this runner image HAS Homebrew SQLite, so the line would stay green
+          # with the bundled libsqlite3.dylib missing or broken. Doctor names the library that was
+          # installed ("using full SQLite at <path>"); require it to be the one beside the
+          # installed gateway. Both spellings, in case execPath resolves symlinks.
+          if [ "$(uname)" = "Darwin" ]; then
+            BIN_DIR="$HOME/.local/bin"
+            BIN_DIR_REAL="$(cd "$BIN_DIR" && pwd -P)"
+            if ! grep -qF "using full SQLite at $BIN_DIR/libsqlite3.dylib" "$RUNNER_TEMP/doctor.log" &&
+               ! grep -qF "using full SQLite at $BIN_DIR_REAL/libsqlite3.dylib" "$RUNNER_TEMP/doctor.log"; then
+              echo "::error::vector search did not load through the installed $BIN_DIR/libsqlite3.dylib — see the Vector search line above for the library that was used"
+              exit 1
+            fi
+          fi
+
+          # The HTTP API answers, and serves its OpenAPI document from INSIDE the compiled binary
+          # (an embedded asset, not a path relative to the source tree). Retried briefly: the
+          # sidecar binds during gateway boot, which `nimbus init` does not wait on specifically.
+          API="http://127.0.0.1:${NIMBUS_HTTP_PORT}"
+          code=""
+          for _ in $(seq 1 30); do
+            code="$(curl -s -o "$RUNNER_TEMP/openapi.json" -w '%{http_code}' "$API/v1/openapi.json" || true)"
+            [ "$code" = "200" ] && break
+            sleep 1
+          done
+          [ "$code" = "200" ] || {
+            echo "::error::GET /v1/openapi.json returned '${code}', expected 200 — is the HTTP API up on $API?"; exit 1; }
+          grep -q '"openapi"' "$RUNNER_TEMP/openapi.json" || {
+            echo "::error::GET /v1/openapi.json returned 200 but the body is not an OpenAPI document"; head -c 400 "$RUNNER_TEMP/openapi.json"; exit 1; }
+
+          # The admin console, embedded in the binary and bearer-gated by the vault key
+          # http_api.deployment_token. Negative control first: without a token the route must
+          # refuse — otherwise the 200 below would not prove the bearer was checked at all.
+          code="$(curl -s -o /dev/null -w '%{http_code}' "$API/admin" || true)"
+          [ "$code" = "401" ] || {
+            echo "::error::GET /admin without a bearer returned '${code}', expected 401"; exit 1; }
+          # The token is resolved per request, so setting it on the running gateway is enough.
+          # `vault.set` is HITL-gated (I2); NIMBUS_SCRIPT_CONSENT_SOURCE answers that ONE prompt
+          # through the CLI's own scripted-consent handler — the gate still fires.
+          ADMIN_TOKEN="$(od -An -N24 -tx1 /dev/urandom | tr -d ' \n')"
+          echo "::add-mask::$ADMIN_TOKEN"
+          printf '%s\n' '{"approved":true,"note":"install-smoke admin token"}' > "$RUNNER_TEMP/consent.jsonl"
+          NIMBUS_SCRIPT_CONSENT_SOURCE="$RUNNER_TEMP/consent.jsonl" \
+            nimbus vault set http_api.deployment_token "$ADMIN_TOKEN"
+          code="$(curl -s -o "$RUNNER_TEMP/admin.html" -w '%{http_code}' \
+            -H "Authorization: Bearer $ADMIN_TOKEN" "$API/admin" || true)"
+          if [ "$code" != "200" ]; then
+            echo "::error::GET /admin with the bearer returned '${code}', expected 200 (503 = the admin console was not embedded in this binary)"
+            cat "$RUNNER_TEMP/admin.html" || true
+            exit 1
+          fi
+          grep -q "<title>Nimbus Admin Console</title>" "$RUNNER_TEMP/admin.html" || {
+            echo "::error::GET /admin returned 200 but not the admin console's index.html"; head -c 400 "$RUNNER_TEMP/admin.html"; exit 1; }
+          code="$(curl -s -o /dev/null -w '%{http_code}' \
+            -H "Authorization: Bearer $ADMIN_TOKEN" "$API/admin/main.js" || true)"
+          [ "$code" = "200" ] || {
+            echo "::error::GET /admin/main.js returned '${code}', expected 200 — index.html is embedded but its script is not"; exit 1; }
+
           nimbus stop || true
+
+      # A bundled connector, run out of the INSTALLED gateway binary, must answer an MCP client
+      # with a non-empty tool list. Stricter than test:connector-boot on purpose: there a
+      # "<VAR> is not set" refusal passes; here it fails (see the script's header).
+      - name: Connector answers an MCP client (Unix)
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          set -euo pipefail
+          bun scripts/release/connector-handshake-smoke.ts "$RUNNER_TEMP/fake-home/.local/bin/nimbus-gateway" github
 
         # Name is quoted: an unquoted ` #932)` would be parsed as a YAML comment
         # and silently truncate the step name in the Actions UI.
@@ -618,6 +723,10 @@ jobs:
           Copy-Item packages\cli\dist\nimbus.exe             $stage\
           Copy-Item dist\nimbus-gateway.exe                  $stage\
           Copy-Item dist\nimbus-sandbox-helper.exe           $stage\
+          # The sqlite-vec sidecar ships beside the binaries in the real Windows zip and install.ps1
+          # copies it from here; without it this local install is one no user receives, and the
+          # "Vector search" assertion in the quickstart step would be testing that.
+          Copy-Item dist\vec0.dll                            $stage\
           Copy-Item scripts\install\windows\install.ps1      $stage\
           Copy-Item scripts\install\windows\uninstall.ps1    $stage\
           "STAGE=$stage" | Out-File -FilePath $env:GITHUB_ENV -Append
@@ -657,6 +766,10 @@ jobs:
           git config user.email "smoke@example.com"
           git config user.name  "Smoke Test"
           git add -A; git commit -q -m "add auth helpers"
+
+          # The read-only HTTP API starts ONLY when NIMBUS_HTTP_PORT is set at the moment the
+          # gateway spawns, and `nimbus init` is what spawns it — so export it BEFORE init.
+          $env:NIMBUS_HTTP_PORT = "17474"
 
           $init = nimbus init 2>&1 | Out-String
           Write-Host $init
@@ -705,7 +818,90 @@ jobs:
             exit 1
           }
 
+          # sqlite-vec must LOAD in the installed binary. doctor's exit code is ignored on purpose
+          # (other lines legitimately fail on a bare runner) and LASTEXITCODE is reset so the
+          # Actions pwsh wrapper does not fail the step on it later.
+          $doctor = nimbus doctor 2>&1 | Out-String
+          $global:LASTEXITCODE = 0
+          Write-Host $doctor
+          if ($doctor -notmatch [regex]::Escape("[ok] Vector search")) {
+            Write-Error "nimbus doctor did not report '[ok] Vector search' — sqlite-vec is not loaded in the installed binary"
+            exit 1
+          }
+
+          # curl.exe (not Invoke-WebRequest): it reports a status code without throwing on non-2xx,
+          # and behaves the same under Windows PowerShell 5.1 and pwsh.
+          $api = "http://127.0.0.1:$($env:NIMBUS_HTTP_PORT)"
+          $openapiFile = Join-Path $env:RUNNER_TEMP "openapi.json"
+          $code = ""
+          for ($i = 0; $i -lt 30; $i++) {
+            $code = curl.exe -s -o $openapiFile -w "%{http_code}" "$api/v1/openapi.json"
+            if ($code -eq "200") { break }
+            Start-Sleep -Seconds 1
+          }
+          if ($code -ne "200") {
+            Write-Error "GET /v1/openapi.json returned '$code', expected 200 — is the HTTP API up on $api?"
+            exit 1
+          }
+          if ((Get-Content -Raw $openapiFile) -notmatch '"openapi"') {
+            Write-Error "GET /v1/openapi.json returned 200 but the body is not an OpenAPI document"
+            exit 1
+          }
+
+          # Admin console: negative control first (no bearer → 401), then set the vault key the
+          # route is gated on and expect the embedded index.html. vault.set is HITL-gated (I2);
+          # NIMBUS_SCRIPT_CONSENT_SOURCE answers that one prompt via the CLI's scripted handler.
+          $code = curl.exe -s -o NUL -w "%{http_code}" "$api/admin"
+          if ($code -ne "401") {
+            Write-Error "GET /admin without a bearer returned '$code', expected 401"
+            exit 1
+          }
+          $adminToken = [guid]::NewGuid().ToString("N") + [guid]::NewGuid().ToString("N")
+          Write-Host "::add-mask::$adminToken"
+          $consentFile = Join-Path $env:RUNNER_TEMP "consent.jsonl"
+          '{"approved":true,"note":"install-smoke admin token"}' |
+            Set-Content -Path $consentFile -Encoding ascii
+          $env:NIMBUS_SCRIPT_CONSENT_SOURCE = $consentFile
+          nimbus vault set http_api.deployment_token $adminToken
+          $vaultExit = $LASTEXITCODE
+          Remove-Item Env:\NIMBUS_SCRIPT_CONSENT_SOURCE
+          if ($vaultExit -ne 0) {
+            Write-Error "nimbus vault set http_api.deployment_token exited $vaultExit"
+            exit 1
+          }
+          $adminFile = Join-Path $env:RUNNER_TEMP "admin.html"
+          $code = curl.exe -s -o $adminFile -w "%{http_code}" -H "Authorization: Bearer $adminToken" "$api/admin"
+          if ($code -ne "200") {
+            if (Test-Path $adminFile) { Get-Content -Raw $adminFile | Write-Host }
+            Write-Error "GET /admin with the bearer returned '$code', expected 200 (503 = the admin console was not embedded in this binary)"
+            exit 1
+          }
+          if ((Get-Content -Raw $adminFile) -notmatch [regex]::Escape("<title>Nimbus Admin Console</title>")) {
+            Write-Error "GET /admin returned 200 but not the admin console's index.html"
+            exit 1
+          }
+          $code = curl.exe -s -o NUL -w "%{http_code}" -H "Authorization: Bearer $adminToken" "$api/admin/main.js"
+          if ($code -ne "200") {
+            Write-Error "GET /admin/main.js returned '$code', expected 200 — index.html is embedded but its script is not"
+            exit 1
+          }
+          $global:LASTEXITCODE = 0
+
           nimbus stop
+
+      # Mirrors the Unix step: a bundled connector, run out of the INSTALLED gateway binary, must
+      # answer an MCP client with a non-empty tool list; a credential refusal is a failure here.
+      - name: Connector answers an MCP client (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $gw = Join-Path $env:RUNNER_TEMP "fake-localappdata\Programs\Nimbus\bin\nimbus-gateway.exe"
+          bun scripts/release/connector-handshake-smoke.ts $gw github
+          if ($LASTEXITCODE -ne 0) {
+            Write-Error "connector handshake smoke failed (exit $LASTEXITCODE)"
+            exit 1
+          }
 
       - name: Run uninstall.ps1 + verify (Windows)
         if: runner.os == 'Windows'

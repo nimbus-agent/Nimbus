@@ -407,6 +407,8 @@ First-party demonstrations of multi-agent orchestration. **Deferred to the v0.1.
 
 #### Voice Interface
 
+> **Correction (2026-10-07): the code below was written but never wired.** No production code constructs a `VoiceService`, so every `voice.*` IPC method answers `Method not found` and there is no CLI or desktop entry point; the boxes record code that exists, not a capability a user can reach. Tracked in [`ecosystem-roadmap.md` § Track 0](./ecosystem-roadmap.md#track-0--shipped-but-dark).
+
 - [x] **Local STT** — `whisper-cli` subprocess called by the Gateway voice service; model: `whisper-base.en` (default) / user-selectable via config; audio never leaves the machine
 - [x] **Voice queries** — `voice.transcribe` + `voice.speak` IPC methods; TTS via `NativeTtsProvider` (`say` on macOS, PowerShell SAPI on Windows, `espeak-ng`/`spd-say` on Linux)
 - [x] **Wake word** (opt-in, disabled by default) — background loop in Gateway voice service; `voice.startWakeWord` / `voice.stopWakeWord` IPC
@@ -513,7 +515,7 @@ The B1 security audit completed in Phase 4. Three more initiatives are active or
 - `nimbus data export` → wipe index and Vault → `nimbus data import` restores full functionality on a fresh machine with all connectors re-authenticated
 - VS Code extension installs from Open VSX and connects to a running Gateway without any manual configuration
 - Cursor can query the Nimbus local index via MCP and surface the last deployment and open PRs for a service mentioned in a code comment — verified manually by connecting Cursor to a running `nimbus mcp-server` instance
-- Voice query completes end-to-end (speech → Whisper.cpp transcription → Gateway → TTS playback) on all three platforms; audio never leaves the machine — verified by network inspection in CI
+- ~~Voice query completes end-to-end (speech → Whisper.cpp transcription → Gateway → TTS playback) on all three platforms; audio never leaves the machine — verified by network inspection in CI~~ **Not met (corrected 2026-10-07).** Voice was never wired: no production code constructs a `VoiceService`, so no user can run a voice query. Phase 4 is complete without it. See the Voice Interface correction above and [`ecosystem-roadmap.md` § Track 0](./ecosystem-roadmap.md#track-0--shipped-but-dark).
 
 > Acceptance criteria for the **community-extension Marketplace seed**, `nimbus changelog`, `nimbus standup`, `nimbus oncall`, `nimbus explain last`, and `nimbus index health` moved to the v0.1.1 batch table above.
 

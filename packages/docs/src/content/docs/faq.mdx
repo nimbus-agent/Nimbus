@@ -15,7 +15,7 @@ What air-gap mode does **not** cover, stated plainly because this answer used to
 
 ### Can I run Nimbus offline?
 
-Yes — with a local LLM. Install Ollama or llama.cpp, configure `[llm].local_model` in `nimbus.toml` to any local model name you have pulled, and set `[llm].prefer_local = true`. Nimbus routes open-ended `ask` answers through the local router and can answer from already-indexed context even when no remote classifier key is configured. Connector sync pauses automatically while the machine is offline and resumes on reconnect without data loss. Queries against already-indexed data continue working in full during an outage. The Tauri desktop UI shows an offline banner so you always know the current network state.
+Yes — with a local LLM. Install Ollama or llama.cpp, configure `[llm].local_model` in `nimbus.toml` to any local model name you have pulled, and set `[llm].prefer_local = true`. Nimbus routes open-ended `ask` answers through the local router and can answer from already-indexed context even when no remote classifier key is configured. Connector sync pauses automatically while the machine is offline and resumes on reconnect without data loss. Queries against already-indexed data continue working in full during an outage. The Tauri desktop UI — once it is released; no desktop build has shipped yet — is designed to show an offline banner for the current network state.
 
 ### What's the difference between Nimbus and ChatGPT or Claude?
 
@@ -54,4 +54,4 @@ Stop the Gateway, remove your OS keystore entries for Nimbus (platform-specific)
 
 ### What is HITL?
 
-**Human-in-the-loop:** destructive or outbound actions (delete, send email, post to Slack, trigger CI, etc.) require explicit approval in the CLI, the Tauri desktop UI, or the VS Code extension. The consent gate is enforced in the Gateway executor, not by model instructions.
+**Human-in-the-loop:** destructive or outbound actions (delete, send email, post to Slack, trigger CI, etc.) require explicit approval in the CLI or the VS Code extension (and, once it is released, the Tauri desktop UI — no desktop build has shipped yet). The consent gate is enforced in the Gateway executor, not by model instructions.

@@ -1,11 +1,25 @@
 ---
 title: First-run setup
-description: What happens the first time you launch Nimbus. The desktop onboarding wizard, the system tray, and the global Quick Query hotkey.
+description: First run today is the CLI's nimbus init. This page also describes the desktop onboarding wizard, system tray and Quick Query hotkey, which ship with the desktop app — not released yet.
 ---
 
 import { Image } from "astro:assets";
 import { CardGrid, LinkCard } from "@astrojs/starlight/components";
 import onboardingWelcomeImg from "../../../assets/onboarding-welcome.png";
+
+:::caution[The desktop app is not released yet]
+No desktop build has shipped, so the onboarding wizard, system tray and Quick Query hotkey
+described below cannot be used today. The `nimbus` CLI commands this page names do work now.
+First run is the CLI:
+
+```bash
+nimbus init                        # starts the Gateway and indexes the current repository
+nimbus connector auth github       # connect a service (or google_drive, slack, …)
+nimbus ask "what changed this week?"
+```
+
+The rest of this page describes the desktop app as it is built, for when it ships.
+:::
 
 When you start the Nimbus desktop app for the first time, it launches the
 headless Gateway, opens the onboarding wizard, registers a system tray icon,
@@ -92,6 +106,9 @@ and queries return progressively better results as more items are indexed.
 
 ## Skipping onboarding
 
+Desktop app only (the desktop app has not been released yet); from the CLI, add a connector with
+`nimbus connector auth <service>`.
+
 If you clicked **Skip** on the welcome page, you land on the dashboard with
 no connectors configured. The connector grid shows empty tiles. To add
 connectors later:
@@ -103,6 +120,9 @@ connectors later:
 ---
 
 ## System tray
+
+Desktop app only — the desktop app has not been released yet. From a terminal, `nimbus status` and
+`nimbus connector list` report the same health.
 
 The Nimbus system tray icon reflects aggregate connector health:
 
@@ -126,6 +146,8 @@ The Nimbus system tray icon reflects aggregate connector health:
 ---
 
 ## Quick Query (global hotkey)
+
+Desktop app only — the desktop app has not been released yet. From a terminal, use `nimbus ask "<question>"`.
 
 Quick Query is a frameless popup window that lets you ask Nimbus anything
 without switching away from your current application.
@@ -179,7 +201,7 @@ registered — use the tray icon's **Quick Query** menu item as an alternative.
   <LinkCard
     title="Your first query"
     href="/user-guide/your-first-query/"
-    description="Run your first query from the CLI or the Tauri desktop app."
+    description="Run your first query from the CLI."
   />
   <LinkCard
     title="HITL & safety"

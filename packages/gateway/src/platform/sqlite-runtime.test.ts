@@ -296,6 +296,69 @@ describe("installFullSqlite — darwin", () => {
     expect(calls.warn[0]).toContain("could not be determined");
   });
 
+  // Bun 1.3's darwin `setCustomSQLite` NEVER returns false: it returns true or THROWS, and the
+  // throw below is what every realm after the first gets, because the loaded-library handle is
+  // process-global (`sqlite3_handle` in Bun's `JSSQLStatement.cpp`). So on a HEALTHY macOS boot
+  // the embedding-worker realm lands here — and before this case existed it was reported as
+  // `error` at warn, on every boot (CI job 112973084399, macos-14 install smoke). The throw is
+  // exactly as ambiguous as `false` was, so it must go through the same measurement.
+  const BUN_ALREADY_LOADED =
+    "SQLite already loaded\nThis function can only be called before SQLite has been loaded and " +
+    "exactly once. SQLite auto-loads when the first time you open a Database.";
+
+  test("Bun's 'SQLite already loaded' throw + probe WORKS: benign, debug, state `rejected`", () => {
+    const { deps, calls } = makeDeps({
+      existing: [DARWIN_SQLITE_CANDIDATES[0] as string],
+      setCustomSQLite: (): boolean => {
+        throw new Error(BUN_ALREADY_LOADED);
+      },
+      probe: "works",
+    });
+    const status = installFullSqlite(deps);
+    expect(status.state).toBe("rejected");
+    expect(calls.probes).toBe(1);
+    expect(calls.warn).toEqual([]);
+    expect(calls.debug).toHaveLength(1);
+    expect(status.detail).toContain("CAN still load SQLite extensions");
+  });
+
+  test("Bun's 'SQLite already loaded' throw + probe BROKEN: WARNS, state `no-extensions`", () => {
+    const { deps, calls } = makeDeps({
+      existing: [DARWIN_SQLITE_CANDIDATES[0] as string],
+      setCustomSQLite: (): boolean => {
+        throw new Error(BUN_ALREADY_LOADED);
+      },
+      probe: "broken",
+    });
+    const status = installFullSqlite(deps);
+    expect(status.state).toBe("no-extensions");
+    expect(calls.warn).toHaveLength(1);
+    expect(calls.warn[0]).toContain("CANNOT load SQLite extensions");
+  });
+
+  test("Bun's 'SQLite already loaded' throw + probe could not run: WARNS, `unverified`", () => {
+    const { deps, calls } = makeDeps({
+      existing: [DARWIN_SQLITE_CANDIDATES[0] as string],
+      setCustomSQLite: (): boolean => {
+        throw new Error(BUN_ALREADY_LOADED);
+      },
+      probe: "unverified",
+    });
+    expect(installFullSqlite(deps).state).toBe("unverified");
+    expect(calls.warn).toHaveLength(1);
+  });
+
+  test("any OTHER throw is still `error` and never probed", () => {
+    const { deps, calls } = makeDeps({
+      existing: [DARWIN_SQLITE_CANDIDATES[0] as string],
+      setCustomSQLite: (): boolean => {
+        throw new Error("dlopen(/x/libsqlite3.dylib, 0x0001): image not found");
+      },
+    });
+    expect(installFullSqlite(deps).state).toBe("error");
+    expect(calls.probes).toBe(0);
+  });
+
   test("the probe runs ONLY after a false return, never on a healthy install", () => {
     const { deps, calls } = makeDeps({ existing: [DARWIN_SQLITE_CANDIDATES[0] as string] });
     expect(installFullSqlite(deps).state).toBe("installed");

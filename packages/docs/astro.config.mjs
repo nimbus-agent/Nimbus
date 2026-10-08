@@ -42,7 +42,6 @@ export default defineConfig({
             { label: "Workflows", link: "/user-guide/workflows/" },
             { label: "Built-in agents", link: "/user-guide/agents/" },
             { label: "Profiles", link: "/user-guide/profiles/" },
-            { label: "Voice", link: "/user-guide/voice/" },
             { label: "VS Code extension", link: "/user-guide/vscode-extension/" },
             { label: "Nimbus Companion", link: "/user-guide/web-clipper/" },
             { label: "Connectors", link: "/user-guide/connectors/" },

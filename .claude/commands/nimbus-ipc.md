@@ -235,7 +235,9 @@ Available to LAN peers. Never mutates data.
 
 ---
 
-### `voice.*` — Voice interface (Phase 4)
+### `voice.*` — Voice interface (Phase 4) — NOT WIRED
+
+No production code constructs a `VoiceService` (`ctx.options.voiceService` is set only in tests), so every `voice.*` call falls through to `Method not found`. Do not document or build on these as a live surface.
 
 | Method | Type | Description |
 |---|---|---|

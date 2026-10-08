@@ -11,7 +11,7 @@ A **connector** is an MCP server that the Nimbus Gateway spawns on demand to fet
 
 ## Supported services
 
-The table below covers every connector that ships in the current release. The **Sync interval** column shows the default cadence; you can override it per connector in Settings → Connectors (minimum 60 s, enforced inline). The **Auth** column summarises how credentials are stored — all of them end up in the OS-native Vault (DPAPI on Windows, Keychain on macOS, libsecret on Linux) and are never written to disk in plaintext.
+The table below covers every connector that ships in the current release. The **Sync interval** column shows the default cadence; you can override it per connector with `nimbus connector set-interval <service> <duration>`. The **Auth** column summarises how credentials are stored — all of them end up in the OS-native Vault (DPAPI on Windows, Keychain on macOS, libsecret on Linux) and are never written to disk in plaintext.
 
 ### File and mail
 
@@ -96,7 +96,7 @@ The filesystem connector is disabled by default. Enable it by adding one or more
 
 Nimbus follows a strict **credential-injection model**:
 
-1. You authenticate a service via `nimbus connector auth <service>` (or Settings → Connectors → Connect). Nimbus runs the OAuth PKCE flow in a browser window or prompts you for a PAT / API key at the terminal.
+1. You authenticate a service via `nimbus connector auth <service>` (or the desktop app's Settings → Connectors → Connect, once the desktop app is released). Nimbus runs the OAuth PKCE flow in a browser window or prompts you for a PAT / API key at the terminal.
 2. The Gateway stores the credential in the OS-native Vault under a service-scoped key. **No credential is ever written to disk in plaintext or included in a log line.**
 3. When the Gateway spawns a connector process, it reads the credential from the Vault and injects it as an environment variable into the connector's process environment. The connector reads `process.env` — it has no Vault access of its own.
 4. When you switch profiles, Nimbus re-binds the Vault namespace for the new profile and re-spawns each connector with the correct credentials.
@@ -116,7 +116,7 @@ Every connector reports one of six health states:
 | `unauthenticated` | The stored token is expired or missing; re-auth required. |
 | `paused` | Connector is manually paused or waiting for a scheduled window. |
 
-The Tauri app tray reflects the **worst state across all connectors**. The CLI shows per-connector state:
+The desktop app's tray is built to reflect the **worst state across all connectors**, but the desktop app has not been released yet. The CLI shows per-connector state:
 
 ```
 nimbus connector list
@@ -135,7 +135,7 @@ jira            unauthenticated  → re-auth: nimbus connector auth jira
 
 Each connector runs on its default sync cadence (shown in the tables above). Connectors that support delta APIs — Google Drive, Gmail, OneDrive, Outlook — only fetch changes since the last sync token, so each incremental sync is fast regardless of the total corpus size.
 
-Override the interval per connector in **Settings → Connectors** — click the connector row and adjust the interval field. The minimum is **60 seconds**, enforced inline; you cannot set a shorter cadence.
+Override the interval per connector with `nimbus connector set-interval <service> <duration>` — for example `nimbus connector set-interval github 5m`. (The desktop app's **Settings → Connectors** interval field does the same once the desktop app is released.)
 
 ---
 
@@ -193,7 +193,7 @@ See [Connect your first service](/user-guide/connect-your-first-service/) for th
 
 ## Removing a connector
 
-Go to **Settings → Connectors**, click the connector row, and choose **Remove**. The remove action is HITL-gated — you will be prompted to approve it before anything is deleted. On approval, Nimbus:
+Run `nimbus connector remove <service>` (or, once the desktop app is released, **Settings → Connectors → Remove**). The remove action is HITL-gated — you will be prompted to approve it before anything is deleted. On approval, Nimbus:
 
 1. Removes the connector's Vault credentials (OAuth tokens or API keys).
 2. Deletes all indexed items that came from that service.
