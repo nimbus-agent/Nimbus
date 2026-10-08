@@ -384,6 +384,7 @@ components:
               low_sample,
               approximate_lead_time,
               mixed_source,
+              ci_not_evaluable,
             ]
     StatsSeries:
       type: object
@@ -427,6 +428,7 @@ components:
               low_sample,
               approximate_lead_time,
               mixed_source,
+              ci_not_evaluable,
               github_only_merge_data,
               incidents_missing_opened_at,
             ]

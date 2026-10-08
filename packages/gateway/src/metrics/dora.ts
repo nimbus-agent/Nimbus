@@ -1,4 +1,5 @@
 import type { Database } from "bun:sqlite";
+import { unevaluableCiServices } from "./ci-evaluability.ts";
 import type { ParsedDoraRepoUrn, ServiceConfig } from "./dora-config.ts";
 import { distinctCiServiceColumns, distinctPrServiceColumns } from "./dora-config.ts";
 
@@ -13,7 +14,10 @@ export type DoraGap =
   | "no_deployment_data"
   | "low_sample"
   | "approximate_lead_time"
-  | "mixed_source";
+  | "mixed_source"
+  // A CI provider bound to the service cannot be judged from the index (no writer, or no success
+  // signal), so "no deploys" or a low count may only mean we cannot see them. Disclosure only.
+  | "ci_not_evaluable";
 
 export type DoraMetricValue = {
   readonly value: number | null;
@@ -167,12 +171,29 @@ export function deploymentFrequency(
       gap: mixedSource ? "mixed_source" : null,
     });
   }
+  const unevaluable = unevaluableCiServices(cfg.repos, "dora_deploys");
   if (regex.length === 0) {
-    return { value: null, unit: "deploys_per_day", sample: 0, gap: "no_deployment_data" };
+    // Only when EVERY bound CI provider is unevaluable is "no deploys" really "cannot see any".
+    const allUnevaluable =
+      unevaluable.length > 0 && unevaluable.length === distinctCiServiceColumns(cfg.repos).length;
+    return {
+      value: null,
+      unit: "deploys_per_day",
+      sample: 0,
+      gap: allUnevaluable ? "ci_not_evaluable" : "no_deployment_data",
+    };
   }
   const days = sinceMs / 86_400_000;
   const value = regex.length / days;
-  return gapOrNull({ value, unit: "deploys_per_day", sample: regex.length, gap: null });
+  // Precedence: gapOrNull only fills a null gap, so ci_not_evaluable wins over low_sample. Some
+  // bound provider's deploys are invisible, so the count undercounts by an unknown amount; that
+  // matters more than the sample being small.
+  return gapOrNull({
+    value,
+    unit: "deploys_per_day",
+    sample: regex.length,
+    gap: unevaluable.length > 0 ? "ci_not_evaluable" : null,
+  });
 }
 
 type PrRow = {
@@ -189,8 +210,15 @@ type DeployIdx = {
 function buildDeployIndex(deploys: readonly CiRunRow[]): DeployIdx[] {
   return deploys.map((d) => {
     const meta = d.metadata ? (JSON.parse(d.metadata) as Record<string, unknown>) : null;
+    // Canonical `head_sha`; raw `headSha` only for rows written before A1 (no `meta_v`).
+    const canonicalHead = meta === null ? undefined : meta["head_sha"];
     const rawHead = meta === null ? undefined : meta["headSha"];
-    const headSha = typeof rawHead === "string" ? rawHead : null;
+    const headSha =
+      typeof canonicalHead === "string"
+        ? canonicalHead
+        : typeof rawHead === "string" && meta?.["meta_v"] === undefined
+          ? rawHead
+          : null;
     return { headSha, modifiedAt: d.modified_at };
   });
 }
