@@ -14,6 +14,7 @@ import {
 } from "../sync/types.ts";
 import { fetchOneMissForResponse } from "./fetch-miss-reason.ts";
 import { decodeNimbusJsonCursorObject, encodeNimbusJsonCursor } from "./nimbus-json-cursor.ts";
+import { buildPrMetadata, canonicalEpochMs, normalizeBitbucketPrState } from "./pr-meta.ts";
 import { asRecord, numberField, stringField } from "./unknown-record.ts";
 
 const SERVICE_ID = "bitbucket";
@@ -107,6 +108,28 @@ function bitbucketPrExternalId(repoFull: string, id: number): string {
   return `${repoFull}#${String(id)}`;
 }
 
+/**
+ * The full `pr` metadata for one Bitbucket pull request. Bitbucket's PR resource carries no merge
+ * timestamp (`updated_on` is the last change of any kind, not the merge), so `merged_at` is never
+ * written and readers disclose Bitbucket where they need it (PR A2).
+ */
+export function bitbucketPrMetadata(
+  repoFull: string,
+  pr: Record<string, unknown>,
+  authorDisplayName: string | undefined,
+): Record<string, unknown> {
+  const rawState = stringField(pr, "state");
+  return buildPrMetadata(
+    { id: numberField(pr, "id"), author: authorDisplayName },
+    {
+      state: normalizeBitbucketPrState(rawState),
+      stateRaw: rawState,
+      openedAtMs: canonicalEpochMs(stringField(pr, "created_on")),
+      repo: repoFull,
+    },
+  );
+}
+
 function upsertFromPullRequest(
   ctx: SyncContext,
   repoFull: string,
@@ -133,7 +156,6 @@ function upsertFromPullRequest(
   const desc = stringField(pr, "description") ?? "";
   const updatedOn = stringField(pr, "updated_on");
   const modified = updatedOn === undefined ? now : Date.parse(updatedOn);
-  const state = stringField(pr, "state");
   const url = webUrl ?? htmlHref(pr);
   const author = asRecord(pr["author"]);
   const displayName = author === undefined ? undefined : stringField(author, "display_name");
@@ -147,12 +169,7 @@ function upsertFromPullRequest(
           displayName: displayName ?? bbUuid,
         })
       : null;
-  const meta: Record<string, unknown> = {
-    id,
-    repo: repoFull,
-    state,
-    author: displayName,
-  };
+  const meta = bitbucketPrMetadata(repoFull, pr, displayName);
   const externalId = bitbucketPrExternalId(repoFull, id);
   ctx.upsertItem({
     service: SERVICE_ID,

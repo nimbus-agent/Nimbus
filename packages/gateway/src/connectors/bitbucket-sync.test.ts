@@ -1,7 +1,8 @@
-import { expect, test } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import { resolveItemByUrl } from "../index/resolve-by-url.ts";
 import {
   bitbucketDiffstatHasMore,
+  bitbucketPrMetadata,
   createBitbucketSyncable,
   prDiffstatUrl,
 } from "./bitbucket-sync.ts";
@@ -13,6 +14,7 @@ import {
   type SyncTestFetchParams,
   silentSyncContextExtras,
 } from "./connector-sync-test-helpers.ts";
+import { type CanonicalPrKey, PR_EMITTED_KEYS } from "./pr-meta.ts";
 
 function ctxWithCreds(
   db: ReturnType<typeof createMemoryIndexDb>,
@@ -307,4 +309,33 @@ test("bitbucketDiffstatHasMore reads the next-URL, not page length", () => {
   // the driver paging to `MAX_PAGES_PER_PR` and records a fully-stored PR as `truncated` —
   // permanently excluding it from negation.
   expect(bitbucketDiffstatHasMore({ next: "", values: [] })).toBe(false);
+});
+
+describe("bitbucketPrMetadata (pr contract)", () => {
+  test("MERGED normalizes to merged; created_on becomes opened_at_ms; no merged_at", () => {
+    const m = bitbucketPrMetadata(
+      "acme/app",
+      prPayload({ state: "MERGED", created_on: "2026-09-30T08:00:00Z" }),
+      "Dana",
+    );
+    expect(m["state"]).toBe("merged");
+    expect(m["state_raw"]).toBe("MERGED");
+    expect(m["merged"]).toBe(true);
+    expect(m["opened_at_ms"]).toBe(Date.parse("2026-09-30T08:00:00Z"));
+    expect("merged_at" in m).toBe(false);
+    expect(m["repo"]).toBe("acme/app");
+    expect(m["author"]).toBe("Dana");
+  });
+
+  test("emits exactly the keys the contract table declares", () => {
+    const m = bitbucketPrMetadata(
+      "acme/app",
+      prPayload({ state: "MERGED", created_on: "2026-09-30T08:00:00Z" }),
+      "Dana",
+    );
+    const canonical = Object.keys(m).filter((k) =>
+      PR_EMITTED_KEYS.bitbucket.has(k as CanonicalPrKey),
+    );
+    expect(new Set(canonical)).toEqual(new Set(PR_EMITTED_KEYS.bitbucket));
+  });
 });
