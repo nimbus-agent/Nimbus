@@ -1,7 +1,12 @@
 import { Database } from "bun:sqlite";
 import { describe, expect, test } from "bun:test";
 import pino from "pino";
+import { CI_RUN_META_VERSION } from "../connectors/ci-run-meta.ts";
+import { createMemoryIndexDb } from "../connectors/connector-sync-test-helpers.ts";
+import { GIT_COMMIT_META_VERSION } from "../connectors/git-commit-meta.ts";
 import { PAGERDUTY_INCIDENT_META_VERSION } from "../connectors/pagerduty-attribution.ts";
+import { PR_META_VERSION } from "../connectors/pr-meta.ts";
+import { TICKET_META_VERSION } from "../connectors/ticket-depth.ts";
 import { upsertIndexedItem } from "../index/item-store.ts";
 import { CURRENT_SCHEMA_VERSION } from "../index/local-index.ts";
 import { runIndexedSchemaMigrations } from "../index/migrations/runner.ts";
@@ -11,12 +16,13 @@ import {
   cannotImproveAmong,
   clearedWatermarkWarning,
   computePendingByService,
+  computePendingMetaByService,
   dispatchIndexRebodyRpc,
   type IndexRebodyRpcContext,
   IndexRebodyRpcError,
   parseRebodyParams,
   REBODY_IMPROVABLE_SERVICES,
-  REBODY_REQUIRED_META_VERSION,
+  REBODY_META_TARGETS,
   resolveTargetServices,
 } from "./index-rebody-rpc.ts";
 
@@ -592,9 +598,15 @@ describe("computePendingByService", () => {
 describe("buildTargetServicesSql", () => {
   test("no type filter", () => {
     const { sql, params } = buildTargetServicesSql({});
-    expect(sql).not.toContain("AND type");
+    expect(sql).not.toContain(") AND type = ? ORDER BY");
     // One (service, version) pair per registered service, and nothing else.
-    expect(params).toEqual([...REBODY_REQUIRED_META_VERSION].flat());
+    expect(params).toEqual(
+      REBODY_META_TARGETS.flatMap((t) =>
+        t.type === undefined
+          ? [t.service, t.requiredMetaVersion]
+          : [t.service, t.type, t.requiredMetaVersion],
+      ),
+    );
   });
 
   test("with type filter", () => {
@@ -603,7 +615,13 @@ describe("buildTargetServicesSql", () => {
     // The type filter is appended AFTER the metadata pairs — order is load-bearing,
     // since these are positional `?` bindings.
     expect(params.at(-1)).toBe("issue");
-    expect(params).toHaveLength([...REBODY_REQUIRED_META_VERSION].flat().length + 1);
+    expect(params).toHaveLength(
+      REBODY_META_TARGETS.flatMap((t) =>
+        t.type === undefined
+          ? [t.service, t.requiredMetaVersion]
+          : [t.service, t.type, t.requiredMetaVersion],
+      ).length + 1,
+    );
   });
 });
 
@@ -737,8 +755,64 @@ describe("resolveTargetServices", () => {
   });
 });
 
-describe("REBODY_REQUIRED_META_VERSION", () => {
-  test("pagerduty rows below the attribution meta version are eligible for rebody", () => {
-    expect(REBODY_REQUIRED_META_VERSION.get("pagerduty")).toBe(PAGERDUTY_INCIDENT_META_VERSION);
+describe("REBODY_META_TARGETS", () => {
+  test("keeps the service-wide ticket and incident targets", () => {
+    expect(REBODY_META_TARGETS).toContainEqual({
+      service: "pagerduty",
+      requiredMetaVersion: PAGERDUTY_INCIDENT_META_VERSION,
+    });
+    expect(REBODY_META_TARGETS).toContainEqual({
+      service: "jira",
+      requiredMetaVersion: TICKET_META_VERSION,
+    });
+  });
+
+  test("registers the contract targets type-scoped", () => {
+    expect(REBODY_META_TARGETS).toContainEqual({
+      service: "github",
+      type: "pr",
+      requiredMetaVersion: PR_META_VERSION,
+    });
+    expect(REBODY_META_TARGETS).toContainEqual({
+      service: "github_actions",
+      type: "ci_run",
+      requiredMetaVersion: CI_RUN_META_VERSION,
+    });
+    expect(REBODY_META_TARGETS).toContainEqual({
+      service: "filesystem",
+      type: "git_commit",
+      requiredMetaVersion: GIT_COMMIT_META_VERSION,
+    });
+  });
+
+  test("a github issue below version is NOT pending; a github pr below version is", () => {
+    const db = createMemoryIndexDb();
+    const ins = (id: string, type: string, meta: unknown): void => {
+      db.run(
+        `INSERT INTO item (id, service, type, external_id, title, url, modified_at, metadata, synced_at, body_complete)
+         VALUES (?, 'github', ?, ?, ?, NULL, 1, ?, 1, 1)`,
+        [id, type, id, id, JSON.stringify(meta)],
+      );
+    };
+    ins("github:i1", "issue", {});
+    ins("github:p1", "pr", {});
+    ins("github:p2", "pr", { meta_v: PR_META_VERSION });
+    expect(computePendingMetaByService(db)).toEqual({ github: 1 });
+    db.close();
+  });
+
+  test("a row matched by two targets of one service counts once", () => {
+    const db = createMemoryIndexDb();
+    db.run(
+      `INSERT INTO item (id, service, type, external_id, title, url, modified_at, metadata, synced_at, body_complete)
+       VALUES ('jira:1', 'jira', 'issue', 'k1', 't', NULL, 1, '{}', 1, 1)`,
+    );
+    expect(
+      computePendingMetaByService(db, [
+        { service: "jira", requiredMetaVersion: 1 },
+        { service: "jira", type: "issue", requiredMetaVersion: 1 },
+      ]),
+    ).toEqual({ jira: 1 });
+    db.close();
   });
 });

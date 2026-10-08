@@ -3,7 +3,7 @@ import { asRecord, stringField } from "./unknown-record.ts";
 
 /**
  * Bumped whenever an incident row must be re-fetched to gain indexed depth.
- * Read by `ipc/index-rebody-rpc.ts`'s `REBODY_REQUIRED_META_VERSION`, which is
+ * Read by `ipc/index-rebody-rpc.ts`'s `REBODY_META_TARGETS`, which is
  * why this lives in a pure module: the IPC layer must not import a sync module.
  *
  * 1 — assignee/resolver attribution (Spec B).
