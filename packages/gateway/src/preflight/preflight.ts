@@ -1,4 +1,5 @@
 import type { Database } from "bun:sqlite";
+import { repoLikeMatchesUrn } from "../metrics/dora.ts";
 import type { ParsedDoraRepoUrn, ServiceConfig } from "../metrics/dora-config.ts";
 import { distinctCiServiceColumns, distinctPrServiceColumns } from "../metrics/dora-config.ts";
 
@@ -160,31 +161,38 @@ function selectFailingCiRuns(
   const sql = `
     WITH ranked AS (
       SELECT
-        id, service, type, title, url, modified_at, metadata,
+        id, external_id, title, url, modified_at, metadata,
         ROW_NUMBER() OVER (
-          PARTITION BY service, COALESCE(
-            json_extract(metadata, '$.workflow_name'),
-            title,
-            COALESCE(json_extract(metadata, '$.headSha'), '') || ':' || COALESCE(json_extract(metadata, '$.branch'), '')
-          )
+          PARTITION BY service,
+            COALESCE(json_extract(metadata, '$.repo'), ''),
+            COALESCE(json_extract(metadata, '$.workflow_name'), '')
           ORDER BY modified_at DESC
         ) AS rn
       FROM item
       WHERE service IN (${servicePlaceholders})
         AND type = 'ci_run'
+        AND json_valid(metadata)
         AND json_extract(metadata, '$.branch') = ?
-        AND json_extract(metadata, '$.conclusion') IN (${conclusionPlaceholders})
     )
-    SELECT id, title, url, modified_at, metadata FROM ranked WHERE rn = 1
+    SELECT id, external_id, title, url, modified_at, metadata FROM ranked
+     WHERE rn = 1
+       AND json_extract(metadata, '$.conclusion') IN (${conclusionPlaceholders})
   `;
   const params = [...ciServices, targetRef, ...FAILED_CONCLUSIONS];
-  const allLatest = db.query(sql).all(...params) as {
+  const rows = db.query(sql).all(...params) as {
     id: string;
+    external_id: string;
     title: string;
     url: string | null;
     modified_at: number;
     metadata: string;
   }[];
+  // Scope to THIS service's repos with the same URN matching DORA uses, so a repo that merely
+  // shares the CI service and a branch name cannot fail this service's deploy gate.
+  const allLatest = rows.filter((r) => {
+    const meta = JSON.parse(r.metadata) as Record<string, unknown>;
+    return cfg.repos.some((u) => repoLikeMatchesUrn(meta, r.external_id, u));
+  });
   const count = allLatest.length;
   const findings: CiFinding[] = allLatest
     .slice()

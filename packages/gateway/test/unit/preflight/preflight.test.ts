@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { githubActionsRunMetadata } from "../../../src/connectors/github-actions-sync.ts";
 import type { ServiceConfig } from "../../../src/metrics/dora-config.ts";
 import { computeDeployPreflight } from "../../../src/preflight/preflight.ts";
 import { openSeededDbFile } from "../../helpers/migrated-db-seed.ts";
@@ -43,6 +44,8 @@ function seedIncident(
   );
 }
 
+let ciRunSeq = 0;
+
 function seedCiRun(
   db: Database,
   id: string,
@@ -57,12 +60,18 @@ function seedCiRun(
     url?: string;
   },
 ) {
-  const meta: Record<string, unknown> = {
+  // Built through the real writer's mapper (canonical branch/repo/workflow_name/conclusion),
+  // with the external_id shape it writes: `${repo}#run-${n}`.
+  const repo = "nimbus-agent/payments";
+  const run: Record<string, unknown> = {
+    id: ++ciRunSeq,
+    status: "completed",
     conclusion: opts.conclusion,
-    branch: opts.branch,
+    head_branch: opts.branch,
   };
-  if (opts.headSha) meta.headSha = opts.headSha;
-  if (opts.workflowName) meta.workflow_name = opts.workflowName;
+  if (opts.headSha) run.head_sha = opts.headSha;
+  if (opts.workflowName) run.name = opts.workflowName;
+  const meta = githubActionsRunMetadata(repo, run, opts.modifiedAtMs);
   db.run(
     `INSERT INTO item (id, service, type, external_id, title, body_preview, url, canonical_url,
                        modified_at, author_id, metadata, synced_at, pinned)
@@ -70,7 +79,7 @@ function seedCiRun(
     [
       id,
       opts.service,
-      id,
+      `${repo}#run-${ciRunSeq}`,
       opts.title,
       opts.url ?? null,
       opts.modifiedAtMs,
@@ -452,7 +461,9 @@ describe("computeDeployPreflight: failing_ci_runs check", () => {
     expect(out.checks.failing_ci_runs.findings[0]?.id).toBe("github_actions:newest");
   });
 
-  it("falls back to title when workflow_name is missing", () => {
+  // Spec §4: a provider with no workflow_name collapses to the latest run per repo + branch.
+  // The title is never a partition key (it embeds the conclusion).
+  it("collapses to the latest run per repo and branch when workflow_name is missing", () => {
     seedCiRun(db, "github_actions:no_wf", {
       service: "github_actions",
       title: "Build and Test",

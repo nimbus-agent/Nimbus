@@ -1,5 +1,6 @@
 import { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { githubActionsRunMetadata } from "../connectors/github-actions-sync.ts";
 import type { DoraProvider, ServiceConfig } from "../metrics/dora-config.ts";
 import { computeDeployPreflight } from "./preflight.ts";
 
@@ -68,6 +69,53 @@ function insertItem(
 const NOW = Date.now();
 const ONE_HOUR = 3_600_000;
 
+type GhRun = {
+  readonly id: number;
+  readonly name: string;
+  readonly conclusion: string;
+  readonly branch: string;
+  readonly createdAt: number;
+  readonly repo?: string;
+  readonly title?: string;
+  readonly extra?: Record<string, unknown>;
+};
+
+// Inserts a github_actions ci_run row in the REAL writer's shape: metadata from
+// githubActionsRunMetadata, external_id `${repo}#run-${id}`.
+function insertGhRun(db: Database, r: GhRun): string {
+  itemSeq += 1;
+  const repo = r.repo ?? "org/repo";
+  const id = `item-${itemSeq}`;
+  const metadata = {
+    ...githubActionsRunMetadata(
+      repo,
+      {
+        id: r.id,
+        name: r.name,
+        status: "completed",
+        conclusion: r.conclusion,
+        head_branch: r.branch,
+        created_at: new Date(r.createdAt).toISOString(),
+      },
+      NOW,
+    ),
+    ...r.extra,
+  };
+  db.run(
+    `INSERT INTO item (id, service, type, external_id, title, modified_at, metadata, synced_at, url)
+     VALUES (?, 'github_actions', 'ci_run', ?, ?, ?, ?, ?, NULL)`,
+    [
+      id,
+      `${repo}#run-${r.id}`,
+      r.title ?? r.name,
+      r.createdAt,
+      JSON.stringify(metadata),
+      r.createdAt,
+    ],
+  );
+  return id;
+}
+
 function baseConfig(overrides?: Partial<ServiceConfig>): ServiceConfig {
   return {
     serviceId: "svc-test",
@@ -118,9 +166,12 @@ describe("computeDeployPreflight verdict", () => {
   });
 
   test("returns 'warn' when there is a failing CI run", () => {
-    insertItem(db, "github_actions", "ci_run", "Build", NOW - ONE_HOUR, {
-      branch: "main",
+    insertGhRun(db, {
+      id: 100,
+      name: "Build",
       conclusion: "failure",
+      branch: "main",
+      createdAt: NOW - ONE_HOUR,
     });
     const result = computeDeployPreflight(db, baseConfig(), "main", NOW, 5);
     expect(result.verdict).toBe("warn");
@@ -417,9 +468,12 @@ describe("failing_ci_runs gaps", () => {
   });
 
   test("null gap when failing ci run exists on target branch", () => {
-    insertItem(db, "github_actions", "ci_run", "Build", NOW - ONE_HOUR, {
-      branch: "main",
+    insertGhRun(db, {
+      id: 101,
+      name: "Build",
       conclusion: "failure",
+      branch: "main",
+      createdAt: NOW - ONE_HOUR,
     });
     const result = computeDeployPreflight(db, baseConfig(), "main", NOW, 5);
     expect(result.checks.failing_ci_runs.gap).toBeNull();
@@ -428,9 +482,12 @@ describe("failing_ci_runs gaps", () => {
   });
 
   test("cancelled conclusion is included as failing", () => {
-    insertItem(db, "github_actions", "ci_run", "Build", NOW - ONE_HOUR, {
-      branch: "main",
+    insertGhRun(db, {
+      id: 103,
+      name: "Build",
       conclusion: "cancelled",
+      branch: "main",
+      createdAt: NOW - ONE_HOUR,
     });
     const result = computeDeployPreflight(db, baseConfig(), "main", NOW, 5);
     expect(result.checks.failing_ci_runs.count).toBe(1);
@@ -438,9 +495,15 @@ describe("failing_ci_runs gaps", () => {
   });
 
   test("timed_out conclusion is included as failing", () => {
-    insertItem(db, "github_actions", "ci_run", "Build", NOW - ONE_HOUR, {
-      branch: "feature",
+    insertGhRun(db, {
+      id: 104,
+      name: "Build",
       conclusion: "timed_out",
+      branch: "feature",
+      createdAt: NOW - ONE_HOUR,
+      // The real mapper folds GitHub's timed_out into "failure"; the reader still accepts a
+      // canonical "timed_out" (other writers/legacy rows), so override it explicitly.
+      extra: { conclusion: "timed_out" },
     });
     const result = computeDeployPreflight(db, baseConfig(), "feature", NOW, 5);
     expect(result.checks.failing_ci_runs.count).toBe(1);
@@ -448,18 +511,24 @@ describe("failing_ci_runs gaps", () => {
   });
 
   test("ci run on different branch is excluded", () => {
-    insertItem(db, "github_actions", "ci_run", "Build", NOW - ONE_HOUR, {
-      branch: "develop",
+    insertGhRun(db, {
+      id: 105,
+      name: "Build",
       conclusion: "failure",
+      branch: "develop",
+      createdAt: NOW - ONE_HOUR,
     });
     const result = computeDeployPreflight(db, baseConfig(), "main", NOW, 5);
     expect(result.checks.failing_ci_runs.count).toBe(0);
   });
 
   test("ci run with success conclusion is excluded", () => {
-    insertItem(db, "github_actions", "ci_run", "Build", NOW - ONE_HOUR, {
-      branch: "main",
+    insertGhRun(db, {
+      id: 106,
+      name: "Build",
       conclusion: "success",
+      branch: "main",
+      createdAt: NOW - ONE_HOUR,
     });
     const result = computeDeployPreflight(db, baseConfig(), "main", NOW, 5);
     expect(result.checks.failing_ci_runs.count).toBe(0);
@@ -467,18 +536,15 @@ describe("failing_ci_runs gaps", () => {
 
   test("branch metadata fallback to targetRef when not a string", () => {
     // Insert a ci_run where branch is a number in metadata
-    itemSeq += 1;
-    const id = `item-${itemSeq}`;
-    const metadata = JSON.stringify({
-      branch: "main", // must match target ref for the WHERE
+    // The mapper always writes a string head_sha / headSha when the run has one; the run here
+    // carries none, so the camelCase headSha the finding reads is null.
+    insertGhRun(db, {
+      id: 110,
+      name: "No HeadSha",
       conclusion: "failure",
-      // headSha absent → null fallback
+      branch: "main",
+      createdAt: NOW - ONE_HOUR,
     });
-    db.run(
-      `INSERT INTO item (id, service, type, external_id, title, modified_at, metadata, synced_at, url)
-       VALUES (?, 'github_actions', 'ci_run', ?, 'No HeadSha', ?, ?, ?, NULL)`,
-      [id, `ext-${itemSeq}`, NOW - ONE_HOUR, metadata, NOW - ONE_HOUR],
-    );
     const result = computeDeployPreflight(db, baseConfig(), "main", NOW, 5);
     expect(result.checks.failing_ci_runs.count).toBe(1);
     const finding = result.checks.failing_ci_runs.findings[0];
@@ -487,18 +553,14 @@ describe("failing_ci_runs gaps", () => {
   });
 
   test("headSha fallback to null when not a string in metadata", () => {
-    itemSeq += 1;
-    const id = `item-${itemSeq}`;
-    const metadata = JSON.stringify({
-      branch: "main",
+    insertGhRun(db, {
+      id: 111,
+      name: "Num HeadSha",
       conclusion: "failure",
-      headSha: 12345, // number → typeof !== "string" → null fallback
+      branch: "main",
+      createdAt: NOW - ONE_HOUR,
+      extra: { headSha: 12345 }, // number → typeof !== "string" → null fallback
     });
-    db.run(
-      `INSERT INTO item (id, service, type, external_id, title, modified_at, metadata, synced_at, url)
-       VALUES (?, 'github_actions', 'ci_run', ?, 'Num HeadSha', ?, ?, ?, NULL)`,
-      [id, `ext-${itemSeq}`, NOW - ONE_HOUR, metadata, NOW - ONE_HOUR],
-    );
     const result = computeDeployPreflight(db, baseConfig(), "main", NOW, 5);
     expect(result.checks.failing_ci_runs.count).toBe(1);
     const finding = result.checks.failing_ci_runs.findings[0];
@@ -506,18 +568,14 @@ describe("failing_ci_runs gaps", () => {
   });
 
   test("ci run with string headSha is included in finding", () => {
-    itemSeq += 1;
-    const id = `item-${itemSeq}`;
-    const metadata = JSON.stringify({
-      branch: "main",
+    insertGhRun(db, {
+      id: 112,
+      name: "String HeadSha",
       conclusion: "failure",
-      headSha: "abc123def456",
+      branch: "main",
+      createdAt: NOW - ONE_HOUR,
+      extra: { headSha: "abc123def456" },
     });
-    db.run(
-      `INSERT INTO item (id, service, type, external_id, title, modified_at, metadata, synced_at, url)
-       VALUES (?, 'github_actions', 'ci_run', ?, 'String HeadSha', ?, ?, ?, NULL)`,
-      [id, `ext-${itemSeq}`, NOW - ONE_HOUR, metadata, NOW - ONE_HOUR],
-    );
     const result = computeDeployPreflight(db, baseConfig(), "main", NOW, 5);
     expect(result.checks.failing_ci_runs.count).toBe(1);
     const finding = result.checks.failing_ci_runs.findings[0];
@@ -528,15 +586,21 @@ describe("failing_ci_runs gaps", () => {
     // Two ci_run items with same workflow_name but different modified_at
     const olderAt = NOW - 2 * ONE_HOUR;
     const newerAt = NOW - ONE_HOUR;
-    insertItem(db, "github_actions", "ci_run", "CI Workflow", olderAt, {
-      branch: "main",
+    insertGhRun(db, {
+      id: 120,
+      name: "build-and-test",
+      title: "CI Workflow",
       conclusion: "failure",
-      workflow_name: "build-and-test",
+      branch: "main",
+      createdAt: olderAt,
     });
-    insertItem(db, "github_actions", "ci_run", "CI Workflow", newerAt, {
-      branch: "main",
+    insertGhRun(db, {
+      id: 121,
+      name: "build-and-test",
+      title: "CI Workflow",
       conclusion: "failure",
-      workflow_name: "build-and-test",
+      branch: "main",
+      createdAt: newerAt,
     });
     const result = computeDeployPreflight(db, baseConfig(), "main", NOW, 5);
     // ROW_NUMBER deduplication: only the most recent per workflow_name
@@ -556,10 +620,24 @@ describe("failing_ci_runs gaps", () => {
     "%s repo uses its own service column",
     (provider, providerId, runTitle) => {
       const cfg = baseConfig({ repos: [{ provider, providerId }] });
-      insertItem(db, provider, "ci_run", runTitle, NOW - ONE_HOUR, {
+      // The key repoLikeMatchesUrn reads for each provider (project/repo/jobName; circleci
+      // matches on external_id, which insertItem writes as ext-N, so it gets its own insert).
+      const repoKey: Record<string, unknown> =
+        provider === "gitlab"
+          ? { project: providerId }
+          : provider === "bitbucket"
+            ? { repo: providerId }
+            : provider === "jenkins"
+              ? { jobName: providerId }
+              : {};
+      const id = insertItem(db, provider, "ci_run", runTitle, NOW - ONE_HOUR, {
         branch: "main",
         conclusion: "failure",
+        ...repoKey,
       });
+      if (provider === "circleci") {
+        db.run("UPDATE item SET external_id = ? WHERE id = ?", [`${providerId}#pipeline-1`, id]);
+      }
       const result = computeDeployPreflight(db, cfg, "main", NOW, 5);
       expect(result.checks.failing_ci_runs.count).toBe(1);
     },
@@ -573,12 +651,67 @@ describe("failing_ci_runs gaps", () => {
         { provider: "github", providerId: "org/repo2" },
       ],
     });
-    insertItem(db, "github_actions", "ci_run", "Build", NOW - ONE_HOUR, {
-      branch: "main",
+    insertGhRun(db, {
+      id: 102,
+      repo: "org/repo1",
+      name: "Build",
       conclusion: "failure",
+      branch: "main",
+      createdAt: NOW - ONE_HOUR,
     });
     const result = computeDeployPreflight(db, cfg, "main", NOW, 5);
     expect(result.checks.failing_ci_runs.count).toBe(1);
+  });
+
+  test("a red GitHub Actions run on the target branch fails CI (real writer shape)", () => {
+    insertGhRun(db, {
+      id: 1,
+      repo: "acme/app",
+      name: "CI",
+      conclusion: "failure",
+      branch: "main",
+      createdAt: NOW - ONE_HOUR,
+    });
+    const cfg = baseConfig({ repos: [{ provider: "github", providerId: "acme/app" }] });
+    const result = computeDeployPreflight(db, cfg, "main", NOW, 5);
+    expect(result.checks.failing_ci_runs.count).toBe(1);
+    expect(result.checks.failing_ci_runs.findings[0]?.conclusion).toBe("failure");
+  });
+
+  test("a newer passing run of the same workflow supersedes an older failure", () => {
+    insertGhRun(db, {
+      id: 1,
+      repo: "acme/app",
+      name: "CI",
+      conclusion: "failure",
+      branch: "main",
+      createdAt: NOW - 2 * ONE_HOUR,
+    });
+    insertGhRun(db, {
+      id: 2,
+      repo: "acme/app",
+      name: "CI",
+      conclusion: "success",
+      branch: "main",
+      createdAt: NOW - ONE_HOUR,
+    });
+    const cfg = baseConfig({ repos: [{ provider: "github", providerId: "acme/app" }] });
+    const result = computeDeployPreflight(db, cfg, "main", NOW, 5);
+    expect(result.checks.failing_ci_runs.count).toBe(0);
+  });
+
+  test("a failing run in a repo outside the service's URNs is ignored", () => {
+    insertGhRun(db, {
+      id: 1,
+      repo: "acme/other",
+      name: "CI",
+      conclusion: "failure",
+      branch: "main",
+      createdAt: NOW - ONE_HOUR,
+    });
+    const cfg = baseConfig({ repos: [{ provider: "github", providerId: "acme/app" }] });
+    const result = computeDeployPreflight(db, cfg, "main", NOW, 5);
+    expect(result.checks.failing_ci_runs.count).toBe(0);
   });
 });
 
