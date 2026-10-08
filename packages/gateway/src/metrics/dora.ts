@@ -149,6 +149,17 @@ function selectAnnotatedDeploys(
   return rows;
 }
 
+/**
+ * The gap for "found no CI deploys": `ci_not_evaluable` when EVERY bound CI provider is one the
+ * index cannot judge (the absence may just be blindness), else `no_deployment_data`.
+ */
+function noCiDeploysGap(cfg: ServiceConfig): "ci_not_evaluable" | "no_deployment_data" {
+  const unevaluable = unevaluableCiServices(cfg.repos, "dora_deploys");
+  return unevaluable.length > 0 && unevaluable.length === distinctCiServiceColumns(cfg.repos).length
+    ? "ci_not_evaluable"
+    : "no_deployment_data";
+}
+
 export function deploymentFrequency(
   db: Database,
   cfg: ServiceConfig,
@@ -173,14 +184,11 @@ export function deploymentFrequency(
   }
   const unevaluable = unevaluableCiServices(cfg.repos, "dora_deploys");
   if (regex.length === 0) {
-    // Only when EVERY bound CI provider is unevaluable is "no deploys" really "cannot see any".
-    const allUnevaluable =
-      unevaluable.length > 0 && unevaluable.length === distinctCiServiceColumns(cfg.repos).length;
     return {
       value: null,
       unit: "deploys_per_day",
       sample: 0,
-      gap: allUnevaluable ? "ci_not_evaluable" : "no_deployment_data",
+      gap: noCiDeploysGap(cfg),
     };
   }
   const days = sinceMs / 86_400_000;
@@ -259,7 +267,7 @@ export function leadTimeForChanges(
   }
   const deploys = selectDeploys(db, cfg, nowMs, sinceMs);
   if (deploys.length === 0) {
-    return { value: null, unit: "seconds_median", sample: 0, gap: "no_deployment_data" };
+    return { value: null, unit: "seconds_median", sample: 0, gap: noCiDeploysGap(cfg) };
   }
   const prServices = distinctPrServiceColumns(cfg.repos);
   if (prServices.length === 0) {
@@ -432,7 +440,7 @@ export function changeFailureRate(
   }
   const deploys = selectDeploys(db, cfg, nowMs, sinceMs);
   if (deploys.length === 0) {
-    return { value: null, unit: "ratio", sample: 0, gap: "no_deployment_data" };
+    return { value: null, unit: "ratio", sample: 0, gap: noCiDeploysGap(cfg) };
   }
   if (cfg.pagerdutyServices.length === 0) {
     return { value: null, unit: "ratio", sample: deploys.length, gap: "no_pagerduty_mapping" };

@@ -435,6 +435,48 @@ describe("deploymentFrequency", () => {
   });
 });
 
+describe("ci_not_evaluable across all three deploy-dependent metrics", () => {
+  let db: Database;
+  beforeEach(() => {
+    db = freshDb();
+    resetSeq();
+  });
+  afterEach(() => {
+    db.close();
+  });
+
+  const circleOnly = () =>
+    baseConfig({
+      repos: [{ provider: "circleci", providerId: "gh/org/repo" }],
+      deployEnvironments: [],
+    });
+  const mixed = () =>
+    baseConfig({
+      repos: [
+        { provider: "circleci", providerId: "gh/org/repo" },
+        { provider: "github", providerId: "org/repo" },
+      ],
+      deployEnvironments: [],
+    });
+
+  test("CircleCI-only: lead time and change failure rate report ci_not_evaluable", () => {
+    expect(leadTimeForChanges(db, circleOnly(), NOW, SINCE).gap).toBe("ci_not_evaluable");
+    expect(changeFailureRate(db, circleOnly(), NOW, SINCE).gap).toBe("ci_not_evaluable");
+  });
+
+  test("github + circleci with no deploys keeps no_deployment_data for them", () => {
+    expect(leadTimeForChanges(db, mixed(), NOW, SINCE).gap).toBe("no_deployment_data");
+    expect(changeFailureRate(db, mixed(), NOW, SINCE).gap).toBe("no_deployment_data");
+  });
+
+  test("ci_not_evaluable wins over low_sample when deploys are found but a provider is blind", () => {
+    insertCiRun(db, "github_actions", "Deploy main", NOW - ONE_DAY, "org/repo");
+    const result = deploymentFrequency(db, mixed(), NOW, SINCE);
+    expect(result.sample).toBe(1); // would be low_sample if the provider were evaluable
+    expect(result.gap).toBe("ci_not_evaluable");
+  });
+});
+
 // ---------------------------------------------------------------------------
 // leadTimeForChanges
 // ---------------------------------------------------------------------------
