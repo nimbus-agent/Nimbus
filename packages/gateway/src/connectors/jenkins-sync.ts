@@ -9,6 +9,7 @@ import {
   type SyncResult,
   syncNoopResult,
 } from "../sync/types.ts";
+import { buildCiRunMetadata, normalizeJenkinsResult } from "./ci-run-meta.ts";
 import { fetchOneMissForResponse } from "./fetch-miss-reason.ts";
 import {
   flattenJenkinsApiJobs,
@@ -120,6 +121,32 @@ function jenkinsBuildExternalId(jobFullName: string, num: number): string {
   return `${jobFullName}#${String(num)}`;
 }
 
+/**
+ * The full `ci_run` metadata for one Jenkins build. `workflow_name` is the job's `fullName`
+ * VERBATIM, folder slashes included, so DORA/preflight URN matching on `jobName` stays exact.
+ * Jenkins supplies no branch, repo or sha; those canonical keys are omitted, and readers that need
+ * them disclose Jenkins as "cannot evaluate" (PR A2).
+ */
+export function jenkinsBuildMetadata(
+  jobFullName: string,
+  build: Record<string, unknown>,
+): Record<string, unknown> {
+  const result = stringField(build, "result");
+  const building = build["building"] === true;
+  const raw: Record<string, unknown> = {
+    jobName: jobFullName,
+    buildNumber: numberField(build, "number") ?? null,
+    result: result ?? null,
+    building,
+    duration_ms: numberField(build, "duration") ?? null,
+  };
+  return buildCiRunMetadata(raw, {
+    conclusion: normalizeJenkinsResult(result, building),
+    conclusionRaw: result,
+    workflowName: jobFullName,
+  });
+}
+
 function upsertJenkinsBuildRowIfNew(
   ctx: SyncContext,
   job: { fullName: string; url?: string },
@@ -159,16 +186,8 @@ function upsertJenkinsBuildRowIfNew(
   const result = stringField(b, "result");
   const building = b["building"] === true;
   const url = webUrl ?? stringField(b, "url") ?? job.url ?? null;
-  const duration = numberField(b, "duration");
   const titleRaw = buildTitle(job.fullName, num, result, building);
   const externalId = jenkinsBuildExternalId(job.fullName, num);
-  const meta: Record<string, unknown> = {
-    jobName: job.fullName,
-    buildNumber: num,
-    result: result ?? null,
-    building,
-    duration_ms: duration ?? null,
-  };
   ctx.upsertItem({
     service: SERVICE_ID,
     type: "ci_run",
@@ -179,7 +198,7 @@ function upsertJenkinsBuildRowIfNew(
     canonicalUrl: url,
     modifiedAt,
     authorId: null,
-    metadata: meta,
+    metadata: jenkinsBuildMetadata(job.fullName, b),
     pinned: false,
     syncedAt: now,
   });
