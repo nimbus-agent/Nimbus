@@ -250,6 +250,49 @@ impossible for this provider* (from the emitted-keys table) from *empty in this 
   resolves.
 - Existing hand-shaped fixtures for these readers are deleted or rebuilt, not left alongside.
 
+### 4.2 A2 decisions and scope (amended 2026-10-08, after A1 merged as #1632)
+
+A1 already moved most readers onto canonical keys (preflight, DORA `selectDeploys`, changelog,
+standup, premortem, negotiate); A2 is what remains, plus four writer fixes from A1's final review.
+**One PR** (user decision).
+
+**Decisions (user, 2026-10-08):**
+1. **Unevaluable CI is a gap, never a verdict change.** A service bound to a CI provider the index
+   cannot judge gets a new gap `ci_not_evaluable` on preflight's `failing_ci_runs` check; the
+   verdict is unchanged (`ok` when nothing else is wrong). Unevaluable for preflight: `jenkins`
+   (no branch), `circleci` (no pass/fail signal), `bitbucket` (no `ci_run` writer at all). For DORA
+   deploy detection: `circleci` and `bitbucket` (Jenkins `SUCCESS` + `jobName` is evaluable). One
+   helper owns both sets so they cannot drift.
+2. **`pr-merges` counts GitLab.** GitLab MR rows with canonical `merged_at` and `repo` are counted
+   beside GitHub. `github_only_merge_data` is no longer emitted by stats (it stays in the type and
+   OpenAPI enum so a consumer matching it does not break); a new gap `incomplete_merge_data` is
+   emitted whenever the service binds a Bitbucket repo (never records a merge time) or a GitLab
+   repo (merges before the synced window carry none). The changelog/standup remediation strings
+   that name the old gap point at the new one.
+3. **Scope:** readers + the four writer fixes below, in one PR.
+
+**Writer fixes (amend §3):**
+- **`merged` only for a known state.** `buildPrMetadata` writes `merged` only when `state` is
+  `open`/`merged`/`closed`; an `unknown` state writes no `merged` (absent = unknown, §3.1).
+- **GitLab MR author is the MR author.** The `opened` event's actor IS the author; it is recorded
+  as raw `author_login`/`author_name` in the MR row's metadata (and from `mr.author` on `fetchOne`)
+  and carried forward like the canonical keys. `authorId` is resolved from the carried login,
+  never from a later event's actor; with no known author it is `null` rather than the actor.
+- **No version stamp without recovered state.** A GitLab MR row whose state is still unknown after
+  carry-forward does not get `meta_v`, so `nimbus index rebody` keeps it eligible.
+- **CI runs are refreshed until they finish.** A run already at or below the cursor is re-upserted
+  when its stored canonical `conclusion` is `running` and the provider's existing fetch returns it
+  again (GitHub Actions latest 30, CircleCI first page, Jenkins last 25; GitLab's loop stops
+  breaking at the first seen id and skips instead). No new requests are made.
+
+**Fixture rule (amends §4.1's helper):** fixtures pass real-mapper output into each test file's
+existing insert helper; no shared `lane-fixtures.ts` is created, because the test files use three
+different `item` schemas and a shared inserter would have to guess one.
+
+**Other §4 amendments:** the stats/oncall row's "GitLab events carry no merge time" is superseded
+by §3.3 (they do, inside the synced window). oncall's change lane matches on `merge_commit_sha`,
+which only GitHub writes; that stays a disclosed GitHub-only limit, reworded to say so directly.
+
 ## 5. A3 — the gate
 
 ### 5.1 Census noise fixes
