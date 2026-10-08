@@ -1,5 +1,6 @@
 import { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { gitlabPipelineMetadata } from "../connectors/_lib/gitlab/pipelines.ts";
 import { circleciPipelineMetadata } from "../connectors/circleci-sync.ts";
 import { githubActionsRunMetadata } from "../connectors/github-actions-sync.ts";
 import { jenkinsBuildMetadata } from "../connectors/jenkins-sync.ts";
@@ -611,13 +612,50 @@ describe("failing_ci_runs gaps", () => {
 
   test("gitlab repo uses its own service column", () => {
     const cfg = baseConfig({ repos: [{ provider: "gitlab", providerId: "group/proj" }] });
-    insertItem(db, "gitlab", "ci_run", "Pipeline", NOW - ONE_HOUR, {
-      branch: "main",
+    insertItem(
+      db,
+      "gitlab",
+      "ci_run",
+      "Pipeline",
+      NOW - ONE_HOUR,
+      gitlabPipelineMetadata("group/proj", { id: 1, status: "failed", ref: "main" }),
+    );
+    const result = computeDeployPreflight(db, cfg, "main", NOW, 5);
+    expect(result.checks.failing_ci_runs.count).toBe(1);
+    expect(result.checks.failing_ci_runs.gap).toBeNull();
+  });
+
+  test("a finding's head_sha comes from canonical head_sha (gitlab pipeline)", () => {
+    const cfg = baseConfig({ repos: [{ provider: "gitlab", providerId: "group/proj" }] });
+    insertItem(
+      db,
+      "gitlab",
+      "ci_run",
+      "Pipeline",
+      NOW - ONE_HOUR,
+      gitlabPipelineMetadata("group/proj", { id: 2, status: "failed", ref: "main", sha: "abc123" }),
+    );
+    const result = computeDeployPreflight(db, cfg, "main", NOW, 5);
+    expect(result.checks.failing_ci_runs.findings[0]?.head_sha).toBe("abc123");
+  });
+
+  test("a service bound to GitHub Actions and Jenkins reports the Actions failure AND the gap", () => {
+    const cfg = baseConfig({
+      repos: [
+        { provider: "github", providerId: "org/repo" },
+        { provider: "jenkins", providerId: "deploy-job" },
+      ],
+    });
+    insertGhRun(db, {
+      id: 301,
+      name: "Build",
       conclusion: "failure",
-      project: "group/proj",
+      branch: "main",
+      createdAt: NOW - ONE_HOUR,
     });
     const result = computeDeployPreflight(db, cfg, "main", NOW, 5);
     expect(result.checks.failing_ci_runs.count).toBe(1);
+    expect(result.checks.failing_ci_runs.gap).toBe("ci_not_evaluable");
   });
 
   test("circleci repo uses its own service column (real writer shape)", () => {
@@ -638,6 +676,7 @@ describe("failing_ci_runs gaps", () => {
     db.run("UPDATE item SET external_id = ? WHERE id = ?", [`${slug}#p1`, id]);
     const result = computeDeployPreflight(db, cfg, "main", NOW, 5);
     expect(result.checks.failing_ci_runs.count).toBe(1);
+    expect(result.checks.failing_ci_runs.gap).toBe("ci_not_evaluable");
   });
 
   test("a failed Jenkins build is NOT counted: Jenkins supplies no branch", () => {
@@ -654,12 +693,14 @@ describe("failing_ci_runs gaps", () => {
     db.run("UPDATE item SET external_id = ? WHERE id = ?", ["deploy-job#7", id]);
     const result = computeDeployPreflight(db, cfg, "main", NOW, 5);
     expect(result.checks.failing_ci_runs.count).toBe(0);
+    expect(result.checks.failing_ci_runs.gap).toBe("ci_not_evaluable");
   });
 
   test("a bitbucket repo yields no failing CI runs: no bitbucket ci_run writer exists", () => {
     const cfg = baseConfig({ repos: [{ provider: "bitbucket", providerId: "org/bb-repo" }] });
     const result = computeDeployPreflight(db, cfg, "main", NOW, 5);
     expect(result.checks.failing_ci_runs.count).toBe(0);
+    expect(result.checks.failing_ci_runs.gap).toBe("ci_not_evaluable");
   });
 
   test("multiple repos deduplicates service columns", () => {

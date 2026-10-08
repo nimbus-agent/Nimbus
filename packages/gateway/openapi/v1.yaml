@@ -489,6 +489,7 @@ components:
           no_repos,
           unknown_mergeable_state,
           pagerduty_urgency_without_priority,
+          ci_not_evaluable,
         ]
     IncidentFinding:
       type: object
