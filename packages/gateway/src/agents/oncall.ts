@@ -247,7 +247,7 @@ function runtimeGaps(args: {
         "so on GitLab and Bitbucket this is always empty, and on GitHub it means the deploy " +
         "carried a commit that no indexed pull request merged.",
       remediation:
-        "Track this as the same substrate gap `nimbus stats` reports as `github_only_merge_data`.",
+        "Track this as the same substrate gap `nimbus stats` reports as `incomplete_merge_data`.",
     });
   }
 

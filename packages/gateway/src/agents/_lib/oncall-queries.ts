@@ -310,7 +310,7 @@ export function selectLastDeploymentBefore(
  *
  * `merge_commit_sha` is written by `github-sync.ts` ALONE, so this is structurally empty on
  * GitLab and Bitbucket and its emptiness says nothing about whether a change shipped. The caller
- * discloses that under the existing `github_only_merge_data` gap name rather than inventing one.
+ * discloses that under the existing `incomplete_merge_data` gap name rather than inventing one.
  */
 export function selectChangeForDeployment(
   db: Database,

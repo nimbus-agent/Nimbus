@@ -1,5 +1,7 @@
 import { Database } from "bun:sqlite";
 import { describe, expect, test } from "bun:test";
+import { gitlabMrMetadata } from "../connectors/_lib/gitlab/events.ts";
+import { extractPrMetadataForIndex } from "../connectors/github-sync.ts";
 import { mttr } from "./dora.ts";
 import type { ServiceConfig } from "./dora-config.ts";
 import { computeStatsSeries, STATS_METRIC_IDS } from "./stats.ts";
@@ -26,12 +28,42 @@ function makeDb(): Database {
   return db;
 }
 
-function insertPr(db: Database, id: string, repo: string, mergedAtMs: number | null): void {
-  const meta = mergedAtMs === null ? { repo } : { repo, merged_at: mergedAtMs };
+function insertPrRow(
+  db: Database,
+  id: string,
+  service: string,
+  metadata: Record<string, unknown>,
+): void {
   db.run(
     `INSERT INTO item (id, service, type, external_id, title, modified_at, metadata, synced_at)
-     VALUES (?, 'github', 'pr', ?, 'x', ?, ?, ?)`,
-    [id, id, NOW, JSON.stringify(meta), NOW],
+     VALUES (?, ?, 'pr', ?, 'x', ?, ?, ?)`,
+    [id, service, id, NOW, JSON.stringify(metadata), NOW],
+  );
+}
+
+// GitHub PR rows carry the metadata the real mapper writes.
+function insertPr(db: Database, id: string, repo: string, mergedAtMs: number | null): void {
+  const pr =
+    mergedAtMs === null
+      ? { number: 1, state: "open", merged: false }
+      : { number: 1, state: "closed", merged: true, merged_at: new Date(mergedAtMs).toISOString() };
+  insertPrRow(db, id, "github", extractPrMetadataForIndex(repo, pr, NOW));
+}
+
+function insertGitlabMr(db: Database, id: string, path: string, mergedAtMs: number): void {
+  insertPrRow(
+    db,
+    id,
+    "gitlab",
+    gitlabMrMetadata(
+      {
+        pathWithNamespace: path,
+        iid: 2,
+        actionName: "accepted",
+        eventCreatedAt: new Date(mergedAtMs).toISOString(),
+      },
+      null,
+    ),
   );
 }
 
@@ -117,28 +149,60 @@ describe("computeStatsSeries — pr-merges", () => {
     expect(s.points[0]?.value).toBe(1);
   });
 
-  test("a mixed-forge service flags github_only_merge_data", () => {
+  test("pr-merges counts a GitLab MR merged in the window", () => {
     const db = makeDb();
     insertPr(db, "a", "acme/web", NOW - 0.5 * DAY);
+    insertGitlabMr(db, "g", "acme/api", NOW - 0.4 * DAY);
     const s = computeStatsSeries(db, cfg(GL), "pr-merges", NOW, DAY, DAY);
-    expect(s.points[0]?.gap).toBe("github_only_merge_data");
+    expect(s.points[0]?.value).toBe(2);
+    expect(s.points[0]?.gap).toBe("incomplete_merge_data");
   });
 
-  test("a github-only service does NOT flag github_only_merge_data", () => {
+  test("a GitLab merge outside the window is not counted and the gap stays", () => {
+    const db = makeDb();
+    insertPr(db, "a", "acme/web", NOW - 0.5 * DAY);
+    insertGitlabMr(db, "g", "acme/api", NOW - 3 * DAY);
+    const s = computeStatsSeries(db, cfg(GL), "pr-merges", NOW, DAY, DAY);
+    expect(s.points[0]?.value).toBe(1);
+    expect(s.points[0]?.gap).toBe("incomplete_merge_data");
+  });
+
+  test("a github-only service reports no gap", () => {
     const db = makeDb();
     insertPr(db, "a", "acme/web", NOW - 0.5 * DAY);
     const s = computeStatsSeries(db, cfg(GH), "pr-merges", NOW, DAY, DAY);
-    expect(s.points[0]?.gap).not.toBe("github_only_merge_data");
+    expect(s.points[0]?.gap).toBeNull();
   });
 
-  // An empty bucket on a MIXED-forge service must still say "the untracked forge might hold
-  // the real answer" rather than the generic low_sample — this is a distinct branch from the
-  // count>0 case above.
-  test("an empty bucket on a mixed-forge service still flags github_only_merge_data", () => {
+  test("a Jenkins binding beside GitHub does not mark merge data incomplete", () => {
+    const db = makeDb();
+    insertPr(db, "a", "acme/web", NOW - 0.5 * DAY);
+    const repos: ServiceConfig["repos"] = [
+      { provider: "github", providerId: "acme/web" },
+      { provider: "jenkins", providerId: "deploy" },
+    ];
+    const s = computeStatsSeries(db, cfg(repos), "pr-merges", NOW, DAY, DAY);
+    expect(s.points[0]?.value).toBe(1);
+    expect(s.points[0]?.gap).toBeNull();
+  });
+
+  test("an empty bucket on a mixed-forge service still flags incomplete_merge_data", () => {
     const db = makeDb();
     const s = computeStatsSeries(db, cfg(GL), "pr-merges", NOW, DAY, DAY);
     expect(s.points[0]?.value).toBeNull();
-    expect(s.points[0]?.gap).toBe("github_only_merge_data");
+    expect(s.points[0]?.gap).toBe("incomplete_merge_data");
+  });
+
+  test("stats never emits github_only_merge_data any more", () => {
+    const db = makeDb();
+    insertPr(db, "a", "acme/web", NOW - 0.5 * DAY);
+    const bb: ServiceConfig["repos"] = [{ provider: "bitbucket", providerId: "acme/web" }];
+    for (const repos of [GH, GL, bb]) {
+      const s = computeStatsSeries(db, cfg(repos), "pr-merges", NOW, DAY, DAY);
+      for (const p of s.points) {
+        expect(p.gap).not.toBe("github_only_merge_data");
+      }
+    }
   });
 
   // Spec § 5: scoped to the SERVICE's bound repos. Without the metadata.repo predicate this
@@ -167,11 +231,19 @@ describe("computeStatsSeries — pr-merges", () => {
     expect(s.points[0]?.value).toBeNull();
   });
 
-  test("a service binding no github repos yields no_repos, not zero", () => {
+  test("a Bitbucket-only service reports incomplete_merge_data, not no_repos", () => {
     const db = makeDb();
     insertPr(db, "a", "acme/web", NOW - 0.5 * DAY);
-    const gitlabOnly: ServiceConfig["repos"] = [{ provider: "gitlab", providerId: "acme/api" }];
-    const s = computeStatsSeries(db, cfg(gitlabOnly), "pr-merges", NOW, DAY, DAY);
+    const bb: ServiceConfig["repos"] = [{ provider: "bitbucket", providerId: "acme/api" }];
+    const s = computeStatsSeries(db, cfg(bb), "pr-merges", NOW, DAY, DAY);
+    expect(s.points[0]?.value).toBeNull();
+    expect(s.points[0]?.gap).toBe("incomplete_merge_data");
+  });
+
+  test("a service binding no PR-forge repos yields no_repos, not zero", () => {
+    const db = makeDb();
+    const jenkins: ServiceConfig["repos"] = [{ provider: "jenkins", providerId: "deploy" }];
+    const s = computeStatsSeries(db, cfg(jenkins), "pr-merges", NOW, DAY, DAY);
     expect(s.points[0]?.value).toBeNull();
     expect(s.points[0]?.gap).toBe("no_repos");
   });

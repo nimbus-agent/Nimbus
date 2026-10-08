@@ -303,7 +303,7 @@ export function selectIncidentsResolved(db: Database, w: Window): ChangelogRow[]
  * merge predates that window has none. `bitbucket-sync.ts` never writes it — the Bitbucket API
  * records no merge time. This counts exactly the merged rows WITHOUT `merged_at` (so a listed
  * row is never counted twice), turning a silent substrate hole into a disclosed one.
- * `metrics/stats.ts` ships the same gap as `github_only_merge_data`.
+ * `metrics/stats.ts` ships the same gap as `incomplete_merge_data`.
  *
  * **This is an ESTIMATE, and its caller must say so.** The absence of `merged_at` is the whole
  * reason this function exists, so there is no merge timestamp to window on and it falls back to

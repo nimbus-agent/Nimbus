@@ -19,13 +19,19 @@ export type StatsMetricId =
   | "incidents-opened";
 
 /** DORA's own union stays frozen; this feature's extra reasons live here. */
-export type StatsGap = DoraGap | "github_only_merge_data" | "incidents_missing_opened_at";
+export type StatsGap =
+  | DoraGap
+  // Retained for API compatibility (public OpenAPI enum); no longer emitted — superseded by
+  // "incomplete_merge_data".
+  | "github_only_merge_data"
+  | "incomplete_merge_data"
+  | "incidents_missing_opened_at";
 
 /**
  * `DoraMetricValue` with its `gap` field widened from `DoraGap` to `StatsGap`. A DORA
  * calculator's `DoraMetricValue` is still assignable here — `DoraGap` is a subset of
  * `StatsGap` — so `wrapDora` needs no conversion; only the two evaluators that return a
- * `StatsGap`-only reason (`github_only_merge_data`, `incidents_missing_opened_at`) need the
+ * `StatsGap`-only reason (`incomplete_merge_data`, `incidents_missing_opened_at`) need the
  * wider type, and get it without a cast.
  */
 type StatsMetricValue = Omit<DoraMetricValue, "gap"> & { readonly gap: StatsGap };
@@ -117,10 +123,12 @@ const wrapDora =
     fn(db, cfg, endMs, endMs - startMs);
 
 /**
- * `merged_at` is written ONLY by `connectors/github-sync.ts`; gitlab-sync and bitbucket-sync
- * write nothing. `json_valid(metadata)` guards `json_extract`, which RAISES on malformed
- * JSON in this codebase — and the guard is context-dependent, so it must sit in the WHERE
- * clause beside the extract, not merely somewhere in the statement.
+ * Merge counts come from the two forges that record a merge time on the PR row: GitHub always,
+ * GitLab from its `accepted`/`merged` events (only for merges inside the synced window).
+ * Bitbucket never records one. `service` is matched per forge so an `owner/name` shared across
+ * forges is never counted twice. `json_valid(metadata)` guards `json_extract`, which RAISES on
+ * malformed JSON in this codebase — and the guard is context-dependent, so it must sit in the
+ * WHERE clause beside the extract, not merely somewhere in the statement.
  */
 function prMerges(
   db: Database,
@@ -128,54 +136,49 @@ function prMerges(
   startMs: number,
   endMs: number,
 ): StatsMetricValue {
-  // `ParsedDoraRepoUrn` is `{ provider: DoraProvider; providerId: string }` — there is NO
-  // `forge` field. `DoraProvider` is "github" | "gitlab" | "bitbucket" | "jenkins" | "circleci".
   const githubRepos = cfg.repos.filter((r) => r.provider === "github").map((r) => r.providerId);
-  if (githubRepos.length === 0) {
-    // Either the service binds no repos at all, or none of them are GitHub — and only
-    // github-sync.ts writes `merged_at`, so there is nothing this metric can count.
-    return { value: null, unit: "merges", sample: 0, gap: "no_repos" };
-  }
-  const nonGithub = cfg.repos.some((r) => r.provider !== "github");
-  const ph = githubRepos.map(() => "?").join(",");
-  // Spec § 5: scoped to the SERVICE's bound repos. `metadata.repo` is the key
-  // `repoLikeMatchesUrn` (dora.ts:65) matches GitHub URNs on — that helper is module-private
-  // in dora.ts, so this mirrors its predicate rather than importing it.
-  // `service = 'github'` mirrors `dora-config.ts`'s `providerServiceColumns("github").prServices`
-  // — the same column `dora.ts`'s own PR selection filters on. It is not redundant with the
-  // `merged_at IS NOT NULL` predicate: `connectors/bitbucket-sync.ts` writes the same
-  // `metadata.repo` key, so without it an `owner/name` collision across forges would be
-  // counted here, and the metric's GitHub-only property would rest on which connectors happen
-  // not to write `merged_at` today rather than on a predicate. It is also the cheaper filter.
-  // `json_valid` guards `json_extract`, which RAISES on malformed JSON here, and the guard is
-  // context-dependent — it must sit in the WHERE clause beside every extract.
-  const row = db
-    .query(
-      `SELECT COUNT(*) AS c FROM item
-       WHERE service = 'github'
-         AND type = 'pr'
-         AND json_valid(metadata)
-         AND json_extract(metadata, '$.repo') IN (${ph})
-         AND json_extract(metadata, '$.merged_at') IS NOT NULL
-         AND json_extract(metadata, '$.merged_at') >= ?
-         AND json_extract(metadata, '$.merged_at') < ?`,
-    )
-    .get(...githubRepos, startMs, endMs) as { c: number } | null;
-  const count = row?.c ?? 0;
-  if (count === 0) {
+  const gitlabRepos = cfg.repos.filter((r) => r.provider === "gitlab").map((r) => r.providerId);
+  const incomplete = cfg.repos.some((r) => r.provider === "gitlab" || r.provider === "bitbucket");
+  if (githubRepos.length === 0 && gitlabRepos.length === 0) {
     return {
       value: null,
       unit: "merges",
       sample: 0,
-      gap: nonGithub ? "github_only_merge_data" : "low_sample",
+      gap: incomplete ? "incomplete_merge_data" : "no_repos",
     };
   }
-  return {
-    value: count,
-    unit: "merges",
-    sample: count,
-    gap: nonGithub ? "github_only_merge_data" : null,
-  };
+  // Scoped to the SERVICE's bound repos on `metadata.repo` (mirrors dora.ts's predicate).
+  const forgeClauses: string[] = [];
+  const params: Array<string | number> = [];
+  if (githubRepos.length > 0) {
+    forgeClauses.push(
+      `(service = 'github' AND json_extract(metadata, '$.repo') IN (${githubRepos.map(() => "?").join(",")}))`,
+    );
+    params.push(...githubRepos);
+  }
+  if (gitlabRepos.length > 0) {
+    forgeClauses.push(
+      `(service = 'gitlab' AND json_extract(metadata, '$.repo') IN (${gitlabRepos.map(() => "?").join(",")}))`,
+    );
+    params.push(...gitlabRepos);
+  }
+  const row = db
+    .query(
+      `SELECT COUNT(*) AS c FROM item
+       WHERE type = 'pr'
+         AND json_valid(metadata)
+         AND (${forgeClauses.join(" OR ")})
+         AND json_extract(metadata, '$.merged_at') IS NOT NULL
+         AND json_extract(metadata, '$.merged_at') >= ?
+         AND json_extract(metadata, '$.merged_at') < ?`,
+    )
+    .get(...params, startMs, endMs) as { c: number } | null;
+  const count = row?.c ?? 0;
+  const gap: StatsGap | null = incomplete ? "incomplete_merge_data" : null;
+  if (count === 0) {
+    return { value: null, unit: "merges", sample: 0, gap: gap ?? "low_sample" };
+  }
+  return { value: count, unit: "merges", sample: count, gap };
 }
 
 /** The service-scoping half of the incident predicate, shared by the count and the probe. */

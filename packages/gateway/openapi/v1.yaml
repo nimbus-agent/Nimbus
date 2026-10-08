@@ -430,6 +430,7 @@ components:
               mixed_source,
               ci_not_evaluable,
               github_only_merge_data,
+              incomplete_merge_data,
               incidents_missing_opened_at,
             ]
     DeployPreflightResult:

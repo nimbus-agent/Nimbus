@@ -206,7 +206,7 @@ function dominantGap(points: readonly StatsPoint[]): string | undefined {
 /**
  * Rule 2: a summary line beneath the table. EMPTY buckets and CAVEATED ones are counted
  * separately and never merged: a gap next to a real value (`low_sample` on an `mttr` median
- * of two incidents, `github_only_merge_data`, `approximate_lead_time`, `mixed_source`) means
+ * of two incidents, `incomplete_merge_data`, `approximate_lead_time`, `mixed_source`) means
  * "this number, with a caveat", while a gap next to a `—` means "no number at all". Reporting
  * one combined count read as "N buckets had no data" and understated how many buckets
  * actually held a value.

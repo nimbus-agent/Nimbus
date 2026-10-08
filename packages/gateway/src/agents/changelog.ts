@@ -175,7 +175,7 @@ export function buildChangelogBrief(args: BuildChangelogArgs): ChangelogBrief {
         "it omits a merge whose row has not been re-synced and includes an older merge that was " +
         "touched during the window.",
       remediation:
-        "Track this as the same substrate gap `nimbus stats` reports as `github_only_merge_data`.",
+        "Track this as the same substrate gap `nimbus stats` reports as `incomplete_merge_data`.",
     });
   }
 
