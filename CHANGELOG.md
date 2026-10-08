@@ -2,6 +2,20 @@
 
 All notable changes to the `nimbus` core (headless Gateway + CLI binary + first-party MCP connectors) are documented in this file. release-please appends new entries between this header and the most recent version below when a release PR merges.
 
+## [7.37.0](https://github.com/nimbus-agent/Nimbus/compare/v7.36.1...v7.37.0) (2026-10-08)
+
+
+### Features
+
+* **user-mcp:** let the model call opted-in user MCP tools for the local owner ([#1628](https://github.com/nimbus-agent/Nimbus/issues/1628)) ([fee3b25](https://github.com/nimbus-agent/Nimbus/commit/fee3b2552287d381ee7ae5085e62430bd76163d5))
+* **user-mcp:** run user MCP servers confined, with owner-approved grants ([#1623](https://github.com/nimbus-agent/Nimbus/issues/1623)) ([7797aa1](https://github.com/nimbus-agent/Nimbus/commit/7797aa17b178229afd8f68348ab745b7c96f1bb0))
+
+
+### Bug Fixes
+
+* prove the installed binary's claims in install-smoke and retract the dark ones from the docs ([#1627](https://github.com/nimbus-agent/Nimbus/issues/1627)) ([d40fbcd](https://github.com/nimbus-agent/Nimbus/commit/d40fbcd9cf23eeed2f7fdcce8572147c2d454332))
+* **user-mcp:** per-server dispatch listing, no sync.run egress rows, bounded Windows boot revoke ([#1629](https://github.com/nimbus-agent/Nimbus/issues/1629)) ([e1850af](https://github.com/nimbus-agent/Nimbus/commit/e1850af265e2ac81053fea2b0826ed2091286d32))
+
 ## [7.36.1](https://github.com/nimbus-agent/Nimbus/compare/v7.36.0...v7.36.1) (2026-10-07)
 
 
